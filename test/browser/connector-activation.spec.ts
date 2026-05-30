@@ -221,12 +221,12 @@ test.describe('Connector activation', () => {
 		// blocks window.open from synthetic clicks). Replays the same HTTP flow
 		// the popup would have taken: auth-start → follow authorize URL → callback.
 		const authStartRes = await page.request.post(
-			`/api/teams/${sharedWorkspace.team.id}/connectors/${connectorId}/auth-start`,
-			{ headers, data: {} },
+			`/api/teams/${sharedWorkspace.team.id}/auth-start`,
+			{ headers, data: { connector_id: connectorId } },
 		);
 		expect(authStartRes.ok()).toBeTruthy();
 		const { data: authStartData } = (await authStartRes.json()) as {
-			data: { auth_url: string };
+			data: { flow: string; auth_url: string };
 		};
 
 		const authorizeRes = await page.request.get(authStartData.auth_url, {

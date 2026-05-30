@@ -49,16 +49,6 @@ export function useMcpConnection(teamId: string, connectorId: string | undefined
 	});
 }
 
-export function useConnectorAuthStart(teamId: string) {
-	return useMutation({
-		mutationFn: (connectorId: string) =>
-			api.post<{ auth_url: string }>(
-				`/api/teams/${teamId}/connectors/${connectorId}/auth-start`,
-				{},
-			),
-	});
-}
-
 export function useRevokeConnector(teamId: string) {
 	return useMutation({
 		mutationFn: (connectorId: string) =>

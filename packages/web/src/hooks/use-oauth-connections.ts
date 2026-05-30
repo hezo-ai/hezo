@@ -14,7 +14,13 @@ export interface OAuthConnection {
 	updated_at: string;
 }
 
-export interface DeviceFlowStart {
+export interface AuthStartAuthCode {
+	flow: 'auth_code';
+	auth_url: string;
+}
+
+export interface AuthStartDevice {
+	flow: 'device';
 	flow_id: string;
 	user_code: string;
 	verification_uri: string;
@@ -22,17 +28,25 @@ export interface DeviceFlowStart {
 	interval: number;
 }
 
-export interface DeviceFlowSuccess {
+export type AuthStartResult = AuthStartAuthCode | AuthStartDevice;
+
+export interface AuthPollSuccess {
 	status: 'success';
 	connection: OAuthConnection;
 }
 
-export interface DeviceFlowPending {
+export interface AuthPollPending {
 	status: 'pending';
 	retry_after: number;
 }
 
-export type DeviceFlowPollResult = DeviceFlowSuccess | DeviceFlowPending;
+export type AuthPollResult = AuthPollSuccess | AuthPollPending;
+
+export interface AuthStartBody {
+	connector_id?: string;
+	provider?: 'github';
+	scopes?: string[];
+}
 
 export function useOAuthConnections(teamId: string) {
 	return useQuery({
@@ -52,12 +66,10 @@ export function useDeleteOAuthConnection(teamId: string) {
 	});
 }
 
-export function useStartGitHubDeviceFlow(teamId: string) {
+export function useAuthStart(teamId: string) {
 	return useMutation({
-		mutationFn: (scopes?: string[]) =>
-			api.post<DeviceFlowStart>(`/api/teams/${teamId}/oauth/github/device-start`, {
-				scopes: scopes ?? [],
-			}),
+		mutationFn: (body: AuthStartBody) =>
+			api.post<AuthStartResult>(`/api/teams/${teamId}/auth-start`, body),
 	});
 }
 
@@ -76,12 +88,9 @@ export function useConnectionScopeStatus(teamId: string, connectionId: string | 
 	});
 }
 
-export async function pollGitHubDeviceFlow(
-	teamId: string,
-	flowId: string,
-): Promise<DeviceFlowPollResult> {
+export async function pollAuth(teamId: string, flowId: string): Promise<AuthPollResult> {
 	const token = api.getToken();
-	const res = await fetch(`/api/teams/${teamId}/oauth/github/device-poll`, {
+	const res = await fetch(`/api/teams/${teamId}/auth-poll`, {
 		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json',
@@ -89,12 +98,12 @@ export async function pollGitHubDeviceFlow(
 		},
 		body: JSON.stringify({ flow_id: flowId }),
 	});
-	const json = (await res.json()) as { data?: DeviceFlowPollResult; error?: { message: string } };
+	const json = (await res.json()) as { data?: AuthPollResult; error?: { message: string } };
 	if (!res.ok && res.status !== 202) {
-		throw new Error(json.error?.message ?? `device poll failed (${res.status})`);
+		throw new Error(json.error?.message ?? `auth poll failed (${res.status})`);
 	}
 	if (json.data?.status === 'success') {
 		queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'oauth-connections'] });
 	}
-	return json.data as DeviceFlowPollResult;
+	return json.data as AuthPollResult;
 }

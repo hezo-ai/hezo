@@ -2,7 +2,7 @@ import { AlertTriangle, GitBranch, Github, Loader2, Lock, Trash2 } from 'lucide-
 import { useState } from 'react';
 import { useConnectionScopeStatus, useOAuthConnections } from '../hooks/use-oauth-connections';
 import { useDeleteRepo, useRepos } from '../hooks/use-repos';
-import { GitHubDeviceFlowDialog } from './github-device-flow-dialog';
+import { DeviceFlowDialog } from './device-flow-dialog';
 import { RepoPickerModal } from './repo-picker-modal';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -140,10 +140,11 @@ export function RepoSetupSection({ teamId, projectId }: RepoSetupSectionProps) {
 				</div>
 			) : null}
 
-			<GitHubDeviceFlowDialog
+			<DeviceFlowDialog
 				open={oauthDialogOpen}
 				onOpenChange={setOauthDialogOpen}
 				teamId={teamId}
+				provider="github"
 				scopes={reauthScopes}
 			/>
 

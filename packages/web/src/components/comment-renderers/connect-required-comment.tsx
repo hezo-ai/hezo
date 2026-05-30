@@ -1,11 +1,8 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Check, Plug } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import {
-	connectorStatus,
-	useConnectorAuthStart,
-	useMcpConnection,
-} from '../../hooks/use-mcp-connections';
+import { connectorStatus, useMcpConnection } from '../../hooks/use-mcp-connections';
+import { useAuthStart } from '../../hooks/use-oauth-connections';
 import { Button } from '../ui/button';
 import type { CommentDataOf } from './comment-data';
 
@@ -17,7 +14,7 @@ interface Props {
 export function ConnectRequiredComment({ comment, teamId }: Props) {
 	const { connector_id, display_name, provider_id } = comment.content;
 	const connectorQuery = useMcpConnection(teamId ?? '', connector_id);
-	const authStart = useConnectorAuthStart(teamId ?? '');
+	const authStart = useAuthStart(teamId ?? '');
 	const queryClient = useQueryClient();
 	const [error, setError] = useState<string | null>(null);
 
@@ -55,17 +52,24 @@ export function ConnectRequiredComment({ comment, teamId }: Props) {
 
 	const openConnect = () => {
 		setError(null);
-		authStart.mutate(connector_id, {
-			onSuccess: ({ auth_url }) => {
-				const popup = window.open(auth_url, 'hezo-connect', 'width=600,height=720');
-				if (!popup) {
-					setError('Pop-up blocked. Allow pop-ups for Hezo and try again.');
-				}
+		authStart.mutate(
+			{ connector_id },
+			{
+				onSuccess: (result) => {
+					if (result.flow !== 'auth_code') {
+						setError('Unexpected device flow response for MCP connector');
+						return;
+					}
+					const popup = window.open(result.auth_url, 'hezo-connect', 'width=600,height=720');
+					if (!popup) {
+						setError('Pop-up blocked. Allow pop-ups for Hezo and try again.');
+					}
+				},
+				onError: (e: unknown) => {
+					setError(e instanceof Error ? e.message : 'Failed to start OAuth flow');
+				},
 			},
-			onError: (e: unknown) => {
-				setError(e instanceof Error ? e.message : 'Failed to start OAuth flow');
-			},
-		});
+		);
 	};
 
 	if (status === 'active') {

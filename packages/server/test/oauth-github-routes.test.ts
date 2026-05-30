@@ -59,16 +59,19 @@ describe('GitHub device-flow routes', () => {
 			authKeys: [],
 		});
 
-		const startRes = await app.request(`/api/teams/${teamId}/oauth/github/device-start`, {
+		const startRes = await app.request(`/api/teams/${teamId}/auth-start`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({}),
+			body: JSON.stringify({ provider: 'github' }),
 		});
 		expect(startRes.status).toBe(200);
-		const startBody = (await startRes.json()) as { data: { flow_id: string; user_code: string } };
+		const startBody = (await startRes.json()) as {
+			data: { flow: string; flow_id: string; user_code: string };
+		};
+		expect(startBody.data.flow).toBe('device');
 		const { flow_id: flowId, user_code: userCode } = startBody.data;
 
-		const pendingRes = await app.request(`/api/teams/${teamId}/oauth/github/device-poll`, {
+		const pendingRes = await app.request(`/api/teams/${teamId}/auth-poll`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ flow_id: flowId }),
@@ -78,7 +81,7 @@ describe('GitHub device-flow routes', () => {
 
 		sim.approveDeviceFlow(userCode);
 
-		const successRes = await app.request(`/api/teams/${teamId}/oauth/github/device-poll`, {
+		const successRes = await app.request(`/api/teams/${teamId}/auth-poll`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ flow_id: flowId }),
@@ -123,7 +126,7 @@ describe('GitHub device-flow routes', () => {
 	});
 
 	it('rejects a poll with an unknown flow_id', async () => {
-		const res = await app.request(`/api/teams/${teamId}/oauth/github/device-poll`, {
+		const res = await app.request(`/api/teams/${teamId}/auth-poll`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ flow_id: 'bad' }),

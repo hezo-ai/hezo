@@ -226,13 +226,14 @@ describe('OAuth callback route (end-to-end against fake AS)', () => {
 	});
 
 	it('auth-start performs DCR and returns an authorize URL', async () => {
-		const res = await app.request(`/api/teams/${teamId}/connectors/${connectorId}/auth-start`, {
+		const res = await app.request(`/api/teams/${teamId}/auth-start`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: '{}',
+			body: JSON.stringify({ connector_id: connectorId }),
 		});
 		expect(res.status).toBe(200);
-		const { data } = (await res.json()) as { data: { auth_url: string } };
+		const { data } = (await res.json()) as { data: { flow: string; auth_url: string } };
+		expect(data.flow).toBe('auth_code');
 		expect(data.auth_url).toContain(`${fake.url}/authorize`);
 		expect(data.auth_url).toContain('client_id=fake_');
 		expect(data.auth_url).toContain('code_challenge=');
@@ -245,15 +246,14 @@ describe('OAuth callback route (end-to-end against fake AS)', () => {
 
 	it('callback completes the flow: stores token, marks active, fires wakeup', async () => {
 		// Drive auth-start to get a real authorize URL.
-		const startRes = await app.request(
-			`/api/teams/${teamId}/connectors/${connectorId}/auth-start`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: '{}',
-			},
-		);
-		const { data: startData } = (await startRes.json()) as { data: { auth_url: string } };
+		const startRes = await app.request(`/api/teams/${teamId}/auth-start`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ connector_id: connectorId }),
+		});
+		const { data: startData } = (await startRes.json()) as {
+			data: { flow: string; auth_url: string };
+		};
 
 		// Follow the authorize URL by hand — the fake AS auto-approves and would
 		// redirect to the redirect_uri with `code` + `state`. We capture those
@@ -311,14 +311,11 @@ describe('OAuth callback route (end-to-end against fake AS)', () => {
 				mcpTransport: 'http',
 				createdByTaskId: taskId,
 			});
-			const startRes = await app.request(
-				`/api/teams/${teamId}/connectors/${brokenConn.id}/auth-start`,
-				{
-					method: 'POST',
-					headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-					body: '{}',
-				},
-			);
+			const startRes = await app.request(`/api/teams/${teamId}/auth-start`, {
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ connector_id: brokenConn.id }),
+			});
 			const { data } = (await startRes.json()) as { data: { auth_url: string } };
 			const authorizeRes = await fetch(data.auth_url, { redirect: 'manual' });
 			const location = authorizeRes.headers.get('location')!;

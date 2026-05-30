@@ -1,18 +1,18 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Check, ExternalLink, Github, Plug, Trash2, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
-import { GitHubDeviceFlowDialog } from '../../../components/github-device-flow-dialog';
+import { DeviceFlowDialog } from '../../../components/device-flow-dialog';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import {
 	connectorStatus,
 	type McpConnection,
-	useConnectorAuthStart,
 	useMcpConnections,
 	useRevokeConnector,
 } from '../../../hooks/use-mcp-connections';
 import {
 	type OAuthConnection,
+	useAuthStart,
 	useDeleteOAuthConnection,
 	useOAuthConnections,
 } from '../../../hooks/use-oauth-connections';
@@ -149,7 +149,12 @@ function GitHubRow({ teamId, connection }: GitHubRowProps) {
 				</div>
 			</div>
 
-			<GitHubDeviceFlowDialog open={dialogOpen} onOpenChange={setDialogOpen} teamId={teamId} />
+			<DeviceFlowDialog
+				open={dialogOpen}
+				onOpenChange={setDialogOpen}
+				teamId={teamId}
+				provider="github"
+			/>
 		</li>
 	);
 }
@@ -163,7 +168,7 @@ interface ConnectorRowProps {
 
 function ConnectorRow({ connector, teamId, focused, focusRef }: ConnectorRowProps) {
 	const status = connectorStatus(connector);
-	const authStart = useConnectorAuthStart(teamId);
+	const authStart = useAuthStart(teamId);
 	const revoke = useRevokeConnector(teamId);
 	const [error, setError] = useState<string | null>(null);
 
@@ -176,17 +181,24 @@ function ConnectorRow({ connector, teamId, focused, focusRef }: ConnectorRowProp
 
 	const openConnect = () => {
 		setError(null);
-		authStart.mutate(connector.id, {
-			onSuccess: ({ auth_url }) => {
-				const popup = window.open(auth_url, 'hezo-connect', 'width=600,height=720');
-				if (!popup) {
-					setError('Pop-up blocked. Allow pop-ups for Hezo and try again.');
-				}
+		authStart.mutate(
+			{ connector_id: connector.id },
+			{
+				onSuccess: (result) => {
+					if (result.flow !== 'auth_code') {
+						setError('Unexpected device flow response for MCP connector');
+						return;
+					}
+					const popup = window.open(result.auth_url, 'hezo-connect', 'width=600,height=720');
+					if (!popup) {
+						setError('Pop-up blocked. Allow pop-ups for Hezo and try again.');
+					}
+				},
+				onError: (e: unknown) => {
+					setError(e instanceof Error ? e.message : 'Failed to start OAuth');
+				},
 			},
-			onError: (e: unknown) => {
-				setError(e instanceof Error ? e.message : 'Failed to start OAuth');
-			},
-		});
+		);
 	};
 
 	const doRevoke = () => {
