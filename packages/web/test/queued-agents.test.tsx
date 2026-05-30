@@ -1,0 +1,62 @@
+import { waitFor } from '@testing-library/react';
+import { expect, test } from 'vitest';
+import { renderApp } from './helpers/render';
+import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
+
+test('task sidebar lists a queued agent and cancels it via the confirm dialog', async () => {
+	const seeded = { teamSlug: '', taskId: '', wakeupId: '', queuedAgentTitle: '' };
+
+	const { findByTestId, findByText, getByTestId, queryByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async (ctx) => {
+			const ws = await seedWorkspace();
+			const captain = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
+			// Queue a *different* agent than the assignee so the inserted wakeup is
+			// unambiguous regardless of any auto 'assignment' wakeup.
+			const queuedAgent = ws.agents.find((a) => a.id !== captain.id) ?? ws.agents[0];
+			const project = await seedProject(ws, { name: 'Queued Demo' });
+			const task = await seedTask(ws, project, { title: 'Queued Task', assignee_id: captain.id });
+
+			const r = await ctx.db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload)
+				 VALUES ($1, $2, 'mention'::wakeup_source, 'queued'::wakeup_status,
+				         jsonb_build_object('task_id', $3::text))
+				 RETURNING id`,
+				[queuedAgent.id, ws.team.id, task.id],
+			);
+
+			seeded.teamSlug = ws.team.slug;
+			seeded.taskId = task.id;
+			seeded.wakeupId = r.rows[0].id;
+			seeded.queuedAgentTitle = queuedAgent.title;
+		},
+	});
+
+	await router.navigate({
+		to: '/teams/$teamId/tasks/$taskId',
+		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+	});
+
+	// The queued-agents list renders in the sidebar with the queued agent's name.
+	const list = await findByTestId('queued-agents-list', undefined, { timeout: 15_000 });
+	expect(list.textContent).toContain(seeded.queuedAgentTitle);
+
+	// Open the confirm dialog and cancel.
+	const cancelBtn = await findByTestId(`cancel-queued-wakeup-${seeded.wakeupId}`);
+	await user.click(cancelBtn);
+
+	const dialog = await findByText('Cancel queued agent?');
+	expect(dialog).toBeTruthy();
+
+	const confirm = getByTestId('confirm-dialog-confirm');
+	await user.click(confirm);
+
+	// The real backend cancels the wakeup; the mutation's invalidation forces an
+	// immediate refetch, so the row disappears.
+	await waitFor(
+		() => {
+			expect(queryByTestId(`queued-agent-${seeded.wakeupId}`)).toBeNull();
+		},
+		{ timeout: 15_000 },
+	);
+});

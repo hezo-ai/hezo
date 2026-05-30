@@ -12,11 +12,13 @@ import { useEffect, useRef, useState } from 'react';
 import type { Agent } from '../../hooks/use-agents';
 import type { Comment } from '../../hooks/use-comments';
 import type { ExecutionLockState } from '../../hooks/use-execution-locks';
+import { useQueuedWakeups } from '../../hooks/use-queued-wakeups';
 import type { Task, useUpdateTask } from '../../hooks/use-tasks';
 import { AgentStatusLabel } from '../agent-status-label';
 import { Button } from '../ui/button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
 import { InfoTooltip } from '../ui/info-tooltip';
+import { QueuedAgentsList } from './queued-agents-list';
 import { RunningAgentsLine } from './running-agents-line';
 
 const EFFORT_LEVELS: { value: AgentEffort; label: string }[] = [
@@ -68,6 +70,8 @@ export function TaskSidebar({
 		return () => document.removeEventListener('pointerdown', onPointerDown);
 	}, [assigneeOpen]);
 
+	const { data: queued } = useQueuedWakeups(teamId, task.id);
+
 	const assignedAgent = agents?.find((a) => a.id === task.assignee_id);
 	const effectiveDefaultEffort: AgentEffort =
 		assignedAgent?.slug === CAPTAIN_AGENT_SLUG
@@ -86,6 +90,10 @@ export function TaskSidebar({
 			>
 				{lock && lock.locks.length > 0 && (
 					<RunningAgentsLine locks={lock.locks} comments={comments ?? []} />
+				)}
+
+				{queued && queued.wakeups.length > 0 && (
+					<QueuedAgentsList teamId={teamId} taskId={task.id} wakeups={queued.wakeups} />
 				)}
 
 				<div>
