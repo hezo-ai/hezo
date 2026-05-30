@@ -10,7 +10,7 @@ When your markdown (ticket descriptions, `progress_summary`, comments, project d
 - `<TASK-ID>` — ticket, using the project-scoped uppercase identifier. Example: `IN-42`, `BE-7`. Shape: `<project-prefix>-<number>`. No prefix — write the bare identifier.
 - `<project-doc-filename>` — project doc in the current project. Example: `prd.md`, `spec.md`. Available filenames are listed in the project-docs block injected into your context. No prefix — write the bare filename.
 
-Skills in the team skills database are referenced by their slug as shown in the injected skills manifest, not by filename. Only reference skills you know exist.
+Skills in the team skills database are referenced by their slug (e.g. `deploy-runbook`) as shown in the injected skills manifest, not by filename. Only reference skills you know exist.
 
 **Rules:**
 

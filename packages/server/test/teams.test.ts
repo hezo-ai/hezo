@@ -51,12 +51,12 @@ describe('teams CRUD', () => {
 		);
 		expect(internalPrefix.rows[0].task_prefix).toBe('IN');
 
-		const kbRes = await app.request(`/api/teams/${body.data.id}/kb-docs`, {
+		const skillsRes = await app.request(`/api/teams/${body.data.id}/skills`, {
 			headers: authHeader(token),
 		});
-		const kbBody = await kbRes.json();
-		expect(kbBody.data.length).toBe(4);
-		const slugs = kbBody.data.map((d: any) => d.slug).sort();
+		const skillsBody = await skillsRes.json();
+		expect(skillsBody.data.length).toBe(4);
+		const slugs = skillsBody.data.map((d: any) => d.slug).sort();
 		expect(slugs).toEqual([
 			'architecture-guidelines.md',
 			'code-review-standards.md',
@@ -378,20 +378,20 @@ describe('template-based team creation', () => {
 		expect(joinRows.rows.length).toBe(1);
 	});
 
-	it('creates KB docs from template with kb_docs_config', async () => {
+	it('creates skills from template with inline skills_config', async () => {
 		const typeRes = await app.request('/api/team-templates', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				name: 'Docs Template',
-				description: 'Template with KB docs',
-				kb_docs_config: [
+				name: 'Skills Template',
+				description: 'Template with starter skills',
+				skills_config: [
 					{
-						title: 'Getting Started',
+						name: 'Getting Started',
 						slug: 'getting-started',
 						content: '# Getting Started\n\nWelcome!',
 					},
-					{ title: 'API Guide', slug: 'api-guide', content: '# API Guide\n\nEndpoints...' },
+					{ name: 'API Guide', slug: 'api-guide', content: '# API Guide\n\nEndpoints...' },
 				],
 			}),
 		});
@@ -402,41 +402,21 @@ describe('template-based team creation', () => {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				name: 'Docs Co',
-
+				name: 'Skills Co',
 				template_id: templateId,
 			}),
 		});
 		expect(res.status).toBe(201);
 		const teamId = (await res.json()).data.id;
 
-		const kbRes = await app.request(`/api/teams/${teamId}/kb-docs`, {
+		const skillsRes = await app.request(`/api/teams/${teamId}/skills`, {
 			headers: authHeader(token),
 		});
-		const kbBody = await kbRes.json();
-		expect(kbBody.data.length).toBe(2);
-		expect(kbBody.data.map((d: any) => d.slug).sort()).toEqual(['api-guide', 'getting-started']);
-	});
-
-	it('creates no KB docs when template has empty kb_docs_config', async () => {
-		const res = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'No Docs Co',
-
-				template_id: builtinTypeId,
-			}),
-		});
-		expect(res.status).toBe(201);
-		const teamId = (await res.json()).data.id;
-
-		const kbRes = await app.request(`/api/teams/${teamId}/kb-docs`, {
-			headers: authHeader(token),
-		});
-		const kbBody = await kbRes.json();
-		// Builtin template has KB docs configured in seed
-		expect(kbBody.data.length).toBe(4);
+		const skillsBody = await skillsRes.json();
+		expect(skillsBody.data.map((d: any) => d.slug).sort()).toEqual([
+			'api-guide',
+			'getting-started',
+		]);
 	});
 });
 
