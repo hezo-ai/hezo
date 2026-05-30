@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { SkillRecord } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
+import { deriveSkillSummary } from '../lib/skill-summary';
 import { toSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
 import { downloadSkillContent, SkillDownloadError } from '../services/skill-downloader';
@@ -62,7 +63,8 @@ skillsRoutes.post('/teams/:teamId/skills', async (c) => {
 
 	const body = await c.req.json<{
 		name: string;
-		source_url: string;
+		source_url?: string;
+		content?: string;
 		description?: string;
 		slug?: string;
 		tags?: string[];
@@ -71,8 +73,10 @@ skillsRoutes.post('/teams/:teamId/skills', async (c) => {
 	if (!body.name?.trim()) {
 		return err(c, 'INVALID_REQUEST', 'name is required', 400);
 	}
-	if (!body.source_url?.trim()) {
-		return err(c, 'INVALID_REQUEST', 'source_url is required', 400);
+	const hasSourceUrl = !!body.source_url?.trim();
+	const hasContent = typeof body.content === 'string' && body.content.length > 0;
+	if (!hasSourceUrl && !hasContent) {
+		return err(c, 'INVALID_REQUEST', 'source_url or content is required', 400);
 	}
 
 	const slug = body.slug?.trim() || toSlug(body.name);
@@ -80,8 +84,42 @@ skillsRoutes.post('/teams/:teamId/skills', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'slug could not be derived from name', 400);
 	}
 
+	// Inline-content path: the skill body is supplied directly (no download).
+	if (!hasSourceUrl) {
+		const content = body.content as string;
+		const hash = createHash('sha256').update(content).digest('hex');
+		const description = body.description?.trim() || deriveSkillSummary(content);
+
+		const result = await db.query<SkillRecord>(
+			`INSERT INTO skills (team_id, name, slug, description, content, source_url, content_hash, tags)
+			 VALUES ($1, $2, $3, $4, $5, NULL, $6, $7::jsonb)
+			 ON CONFLICT (team_id, slug) DO UPDATE SET
+			   name = EXCLUDED.name,
+			   description = EXCLUDED.description,
+			   content = EXCLUDED.content,
+			   source_url = EXCLUDED.source_url,
+			   content_hash = EXCLUDED.content_hash,
+			   tags = EXCLUDED.tags,
+			   updated_at = now()
+			 RETURNING *`,
+			[teamId, body.name.trim(), slug, description, content, hash, JSON.stringify(body.tags ?? [])],
+		);
+
+		const skill = result.rows[0];
+
+		// Create initial revision
+		await db.query(
+			`INSERT INTO skill_revisions (skill_id, revision_number, content, content_hash, change_summary)
+			 VALUES ($1, 1, $2, $3, 'Initial version')
+			 ON CONFLICT (skill_id, revision_number) DO NOTHING`,
+			[skill.id, content, hash],
+		);
+
+		return ok(c, skill, 201);
+	}
+
 	try {
-		const { content, hash } = await downloadSkillContent(body.source_url.trim());
+		const { content, hash } = await downloadSkillContent((body.source_url as string).trim());
 
 		const result = await db.query<SkillRecord>(
 			`INSERT INTO skills (team_id, name, slug, description, content, source_url, content_hash, tags)
@@ -99,9 +137,9 @@ skillsRoutes.post('/teams/:teamId/skills', async (c) => {
 				teamId,
 				body.name.trim(),
 				slug,
-				body.description?.trim() ?? '',
+				body.description?.trim() || deriveSkillSummary(content),
 				content,
-				body.source_url.trim(),
+				(body.source_url as string).trim(),
 				hash,
 				JSON.stringify(body.tags ?? []),
 			],
@@ -146,9 +184,18 @@ skillsRoutes.patch('/teams/:teamId/skills/:slug', async (c) => {
 		sets.push(`name = $${paramIdx++}`);
 		params.push(body.name.trim());
 	}
-	if (body.description !== undefined) {
+	// Resolve description: an explicit non-empty value wins; otherwise, when it is
+	// empty/missing and new content is supplied, backfill a one-line summary from
+	// the body so the per-run skills manifest always has a usable description.
+	const trimmedDescription = body.description?.trim();
+	let resolvedDescription: string | undefined =
+		body.description !== undefined ? trimmedDescription : undefined;
+	if (!trimmedDescription && body.content !== undefined) {
+		resolvedDescription = deriveSkillSummary(body.content);
+	}
+	if (resolvedDescription !== undefined) {
 		sets.push(`description = $${paramIdx++}`);
-		params.push(body.description.trim());
+		params.push(resolvedDescription);
 	}
 	if (body.tags !== undefined) {
 		sets.push(`tags = $${paramIdx++}::jsonb`);

@@ -48,8 +48,8 @@ const TABLE_TO_QUERY_KEY: Record<
 		switch (row.type) {
 			case 'project_doc':
 				return [['teams', cid, 'projects']];
-			case 'kb_doc':
-				return [['teams', cid, 'kb-docs']];
+			case 'skill':
+				return [['teams', cid, 'skills']];
 			case 'team_preferences':
 				return [['teams', cid, 'preferences']];
 			default:

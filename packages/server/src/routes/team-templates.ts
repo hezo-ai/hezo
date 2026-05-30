@@ -41,7 +41,6 @@ teamTemplatesRoutes.post('/team-templates', async (c) => {
 		name: string;
 		description?: string;
 		agent_types?: { agent_type_id: string; reports_to_slug?: string; sort_order?: number }[];
-		kb_docs_config?: unknown[];
 		skills_config?: unknown[];
 		preferences_config?: Record<string, unknown>;
 		mcp_servers?: unknown[];
@@ -56,13 +55,12 @@ teamTemplatesRoutes.post('/team-templates', async (c) => {
 
 	const teamTemplate = await withTransaction(db, async () => {
 		const ctResult = await db.query(
-			`INSERT INTO team_templates (name, description, kb_docs_config, skills_config, preferences_config, mcp_servers, mpp_config)
-			 VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb)
+			`INSERT INTO team_templates (name, description, skills_config, preferences_config, mcp_servers, mpp_config)
+			 VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb)
 			 RETURNING *`,
 			[
 				body.name.trim(),
 				body.description ?? '',
-				JSON.stringify(body.kb_docs_config ?? []),
 				JSON.stringify(body.skills_config ?? []),
 				JSON.stringify(body.preferences_config ?? {}),
 				JSON.stringify(body.mcp_servers ?? []),
@@ -113,7 +111,6 @@ teamTemplatesRoutes.patch('/team-templates/:id', async (c) => {
 		name?: string;
 		description?: string;
 		agent_types?: { agent_type_id: string; reports_to_slug?: string; sort_order?: number }[];
-		kb_docs_config?: unknown[];
 		skills_config?: unknown[];
 		preferences_config?: Record<string, unknown>;
 		mcp_servers?: unknown[];
@@ -135,7 +132,6 @@ teamTemplatesRoutes.patch('/team-templates/:id', async (c) => {
 
 		addField('name', body.name?.trim());
 		addField('description', body.description);
-		addField('kb_docs_config', body.kb_docs_config, true);
 		addField('skills_config', body.skills_config, true);
 		addField('preferences_config', body.preferences_config, true);
 		addField('mcp_servers', body.mcp_servers, true);

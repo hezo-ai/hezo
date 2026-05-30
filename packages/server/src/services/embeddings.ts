@@ -71,14 +71,14 @@ export async function embedAndStore(
 }
 
 export interface SearchResult {
-	type: 'kb_doc' | 'task' | 'skill' | 'project_doc';
+	type: 'task' | 'skill' | 'project_doc';
 	id: string;
 	title: string;
 	snippet: string;
 	score: number;
 }
 
-export type SearchScope = 'all' | 'kb_docs' | 'tasks' | 'skills' | 'project_docs';
+export type SearchScope = 'all' | 'tasks' | 'skills' | 'project_docs';
 
 export async function semanticSearch(
 	db: PGlite,
@@ -97,15 +97,13 @@ export async function semanticSearch(
 	const scope = options.scope ?? 'all';
 	const results: SearchResult[] = [];
 
-	const wantKb = scope === 'all' || scope === 'kb_docs';
 	const wantProjectDocs = scope === 'all' || scope === 'project_docs';
-	if (wantKb || wantProjectDocs) {
+	if (wantProjectDocs) {
 		const types: string[] = [];
-		if (wantKb) types.push('kb_doc');
 		if (wantProjectDocs) types.push('project_doc');
 		const docResults = await db.query<{
 			id: string;
-			type: 'kb_doc' | 'project_doc';
+			type: 'project_doc';
 			title: string;
 			slug: string;
 			content: string;
@@ -193,7 +191,7 @@ export async function processPendingEmbeddings(db: PGlite): Promise<number> {
 	}>(
 		`SELECT id, type, title, slug, content
 		 FROM documents
-		 WHERE embedding IS NULL AND type IN ('kb_doc', 'project_doc')
+		 WHERE embedding IS NULL AND type IN ('project_doc')
 		 LIMIT 5`,
 	);
 	for (const doc of docs.rows) {

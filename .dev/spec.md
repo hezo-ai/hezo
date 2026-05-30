@@ -230,8 +230,6 @@ MCP tools mirror the REST API surface. Both call the same underlying business lo
 | `approve_request` | Approve a pending approval |
 | `deny_request` | Deny a pending approval |
 | `list_approvals` | List pending approvals |
-| `search_kb` | Search knowledge base documents |
-| `update_kb_doc` | Create or update a KB document |
 | `get_cost_summary` | Get cost breakdown by agent, project, or time period |
 | `list_projects` | List projects in a team |
 | `list_secrets` | List secret names (not values) in a team |
@@ -258,7 +256,7 @@ Hezo serves a **skill file** that teaches external AI agents (like Claude Code) 
 
 ### Skills (DB-backed)
 
-Skills are reusable instruction documents stored in the `skills` table (team-scoped). They are injected into every agent's system prompt via the `{{skills_context}}` template variable.
+Skills are reusable instruction documents stored in the `skills` table (team-scoped) — the team's single reference store. A **manifest** (name + slug + one-line description per active skill) is injected into every agent's system prompt via the `{{skills_context}}` template variable; agents load full bodies on demand.
 
 Skills have: name, slug, description, content (markdown), tags (JSONB array), source URL (optional, for skills downloaded from GitHub), content hash, creator tracking, and revision history (`skill_revisions` table).
 
@@ -267,13 +265,13 @@ Skills have: name, slug, description, content (markdown), tags (JSONB array), so
 - Agent proposes via `propose_skill` MCP tool (creates approval)
 - Agent creates directly via `create_skill` MCP tool
 
-**Agent access:** `list_skills`, `get_skill`, `create_skill` MCP tools. Skills are also injected into prompts at activation time.
+**Agent access:** `list_skills` (returns the manifest), `get_skill` (full body, on demand), `create_skill` (direct), and `propose_skill` (board approval via `skill_proposal`). The manifest is injected into prompts at activation time.
 
 ### Semantic search (pgvector + local embeddings)
 
 Hezo includes built-in semantic search powered by pgvector (enabled in PGlite) and a local embedding model (`BAAI/bge-small-en-v1.5`, 33M params, ~50MB RAM). The model downloads on first use and runs in-process — no API key, no cost, fully offline after first download.
 
-**Searchable content:** KB docs, tasks, skills, and project docs all have `embedding vector(384)` columns. A background job generates embeddings for new content every 30 seconds.
+**Searchable content:** tasks, skills, and project docs all have `embedding vector(384)` columns. A background job generates embeddings for new content every 30 seconds.
 
 **Agent access:** `semantic_search` MCP tool searches across all content types by natural language query, returning ranked results with relevance scores. Scope can be limited to specific content types.
 
@@ -316,11 +314,11 @@ A **team type** (stored as `team_templates`) specifies:
 - **Name** — e.g., "Software Development", "Research Lab", "Marketing Agency"
 - **Description** — what this type of team does
 - **Agent types** — which agent types to include, their org chart hierarchy (reports_to), and optional config overrides (via the `team_template_agent_types` join table)
-- **Default KB documents** — starter knowledge base content (coding standards, guidelines, etc.)
+- **Default skills** — starter skills-database content (coding standards, guidelines, etc.)
 - **Default preferences** — initial team preferences
 - **Default MCP servers** — team-level MCP server configuration
 
-A team is created from a single **template** (`template_id`). The selected template determines the starting agent roster, knowledge base, and preferences.
+A team is created from a single **template** (`template_id`). The selected template determines the starting agent roster, skills database, and preferences.
 
 The current 11-agent team (Captain, Product Lead, Architect, Engineer, QA Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher, Security Engineer, Coach) is the built-in **"Software Development"** team type. It ships with Hezo and is pre-selected by default in the UI. Users are not limited to the agent types that come with their template — they can add other agent types later.
 
@@ -389,12 +387,12 @@ Each connected platform auto-registers as a **team-level MCP server** so agents 
 
 ### Team creation and team types
 
-A team is created from a single **template** (`template_id`). The selected template determines the starting agent roster, knowledge base, and preferences. Agents are provisioned by querying the `team_template_agent_types` join table for the selected template and creating instances from each referenced agent type. Each created agent stores an `agent_type_id` for provenance tracking. After creation, the team is fully independent of its source template — changes to the team do not affect the template, and vice versa.
+A team is created from a single **template** (`template_id`). The selected template determines the starting agent roster, skills database, and preferences. Agents are provisioned by querying the `team_template_agent_types` join table for the selected template and creating instances from each referenced agent type. Each created agent stores an `agent_type_id` for provenance tracking. After creation, the team is fully independent of its source template — changes to the team do not affect the template, and vice versa.
 
 Users can also **save an existing team as a new team type**. This snapshots:
 
 - **Agent type references** — which agent types to include, their org chart hierarchy, and any config overrides
-- **Knowledge base** — all documents (coding standards, guidelines, etc.)
+- **Skills database** — all skills (coding standards, guidelines, etc.)
 - **Team preferences** — board working style preferences
 - **MCP server config** — team-level MCP servers
 - **MPP config** — wallet config structure (not actual wallet keys)
@@ -437,7 +435,7 @@ The system prompt editor supports variables that are resolved at runtime:
 | `{{team_description}}` | Team description |
 | `{{reports_to}}` | Title of the agent's manager |
 | `{{project_context}}` | Current project goal + recent task summaries |
-| `{{kb_context}}` | Relevant knowledge base documents (auto-selected based on current task) |
+| `{{skills_context}}` | The team's skills manifest (name + slug + one-line description for each active skill); agents load full bodies on demand via `get_skill(slug)` |
 | `{{team_preferences_context}}` | Team preferences document — board working style preferences observed by agents |
 | `{{project_docs_context}}` | All project documents for the current task's project (tech spec, implementation plan, research, UI decisions, marketing plan) |
 | `{{agent_role}}` | The agent's own title |
@@ -479,7 +477,7 @@ Role docs for different team templates frequently share boilerplate — the same
 - Partials live under `agents/_partials/**/*.md`. They are plain Markdown with no frontmatter and are not seeded as role docs themselves.
 - A role doc pulls one in with a **whole-line** directive: `{{> partials/<name>}}` (leading whitespace tolerated; anything else on the line makes it literal text). The name mirrors the path under `_partials/` without the `.md` suffix.
 - Resolution runs in `scripts/bundle-agents.ts` before the bundle is zipped into `packages/server/src/db/agents-bundle.json`, and in the filesystem fallback (`loadAgentRoles` in `packages/server/src/db/agent-roles.ts`) used by tests and dev mode. The DB still stores fully expanded prompts; nothing reads partials at runtime.
-- Partials may include other partials; cycles and unknown refs hard-fail the bundler. Runtime variable substitutions (`{{team_name}}`, `{{kb_context}}`, …) are untouched — those happen later in `template-resolver.ts` per-run.
+- Partials may include other partials; cycles and unknown refs hard-fail the bundler. Runtime variable substitutions (`{{team_name}}`, `{{skills_context}}`, …) are untouched — those happen later in `template-resolver.ts` per-run.
 
 Scope note: partials are strictly an **authoring-time convenience inside the Hezo repo**. Bundle-time resolution means the on-disk contract with the seed system is unchanged (flat Markdown). Future downloadable team bundles from a marketplace are expected to ship pre-expanded prompts; we do not plan to treat platform partials as a live dependency of third-party bundles, because that would force a compat contract across Hezo versions that we are not ready to make.
 
@@ -549,7 +547,7 @@ Feature work uses a **single ticket** for both design and implementation. When a
 
 ### AGENTS.md — two tiers
 
-**Team-level AGENTS.md** is a KB doc stored in the `kb_docs` table. It contains team-wide rules and conventions. Editable via the Hezo UI. Injected into agent context at runtime via `{{kb_context}}` or `{{team_agents_md}}`. It is NOT written to disk or symlinked — it lives purely in the DB.
+**Team-level AGENTS.md** holds team-wide rules and conventions, editable via the Hezo UI. Injected into agent context at runtime via `{{team_agents_md}}`.
 
 **Project-level AGENTS.md** lives at the root of each project's designated repo. This is the primary mechanism for enforcing project-specific engineering standards. Any coding agent (Claude Code, Codex, Gemini) automatically reads it from the repo root — no runtime-specific configuration needed.
 
@@ -867,7 +865,7 @@ Each heartbeat spawns a **fresh subprocess** inside the project's container via 
 - The agent's runtime command (e.g., `claude-code`, `codex`, `gemini`)
 - Handoff markdown from the previous session as initial context (for session continuity)
 
-All template variables (`{{kb_context}}`, `{{project_docs_context}}`, `{{team_preferences_context}}`, etc.) are pre-resolved by the orchestrator before spawning. All KB docs and project docs are included for MVP.
+All template variables (`{{skills_context}}`, `{{project_docs_context}}`, `{{team_preferences_context}}`, etc.) are pre-resolved by the orchestrator before spawning. The skills manifest and all project docs are included for MVP.
 
 Agents can be killed and restarted independently without affecting the container or other agents. When budget is exceeded, the subprocess is terminated immediately. If a project container leaves the `running` state — whether through removal (`error`) or stop (`stopped`) — the container-sync loop synchronously fails every in-flight heartbeat run for that project's tasks with an `error` of `container_error` or `container_stopped` respectively, resets the affected agents' `runtime_status` to `idle`, releases their execution locks, and broadcasts the row changes. When the container is later rebuilt or re-provisioned, runs that died with `container_error` are auto-re-queued via fresh wakeups; runs that died with `container_stopped` are intentionally left alone (the user paused work; they restart it manually).
 
@@ -1436,7 +1434,7 @@ Members can participate in the day-to-day work within their project scope:
 - Create tasks, post comments
 - Be assigned tasks and work on them
 - Direct agents (except Captain by default) — subject to `permissions_text` boundaries
-- Read knowledge base and project documents
+- Read the skills database and project documents
 - Receive notifications via inbox and configured messaging channels (Telegram, Slack)
 
 Members **cannot**: modify team settings, manage budgets, hire/fire agents, access secrets, view audit log, manage plugins, or create invites.
@@ -1480,12 +1478,9 @@ Full action reference:
 | `approval.denied` | approval | Board |
 | `api_key.created` | api_key | Board |
 | `api_key.revoked` | api_key | Board |
-| `kb_doc.created` | kb_doc | Board or agent (via approval) |
-| `kb_doc.updated` | kb_doc | Board or agent (via approval) |
-| `kb_doc.deleted` | kb_doc | Board |
-| `kb_update.proposed` | approval | Agent |
-| `kb_update.approved` | approval | Board |
-| `kb_update.denied` | approval | Board |
+| `skill_proposal.proposed` | approval | Agent |
+| `skill_proposal.approved` | approval | Board |
+| `skill_proposal.denied` | approval | Board |
 | `team_preferences.updated` | team_preferences | Board or agent |
 | `project_doc.created` | project_doc | Board or agent |
 | `project_doc.updated` | project_doc | Board or agent |
@@ -1692,55 +1687,43 @@ Paginated, filterable by entity type, action, actor, and date range. Read-only.
 
 ---
 
-## 15. Team knowledge base (DB-stored, team-level)
+## 15. Team skills database (DB-stored, team-level)
 
-Each team has a knowledge base — a collection of Markdown documents stored in the `kb_docs` table that define team-wide standards across all projects. These include team-level AGENTS.md. They are living documents that agents reference and update as the team evolves.
+The skills database is the team's single reference store of reusable instructions, playbooks, and durable knowledge — conventions, architecture notes, runbooks, domain glossaries — stored in the `skills` table and scoped to a team (not per project). They are living documents that agents and humans both read and update as the team evolves.
 
-Note: project-level documents (tech spec, PRD, implementation plan) are stored in the `project_docs` table, not in the KB. See section 17.
+The skills database holds team-wide standards and practices:
 
-### Purpose
-
-The knowledge base holds team-wide standards and practices:
 - Coding standards and conventions
-- UX design guidelines
-- Architecture decision records
-- Team ethos and communication style
-- Testing and QA processes
-- Deployment and DevOps procedures
-- Onboarding guides for new agents
-- Team-level AGENTS.md (rules for all agents across all projects)
+- Architecture notes and runbooks
+- Domain glossaries and reference material
+- Reusable playbooks and procedures
 
-### How it works
+### Storage and retrieval (manifest injection + load on demand)
 
-Knowledge base documents are stored in the `kb_docs` table, scoped to a team. Every agent in the team can read them. The knowledge base content is injected into agent context at runtime via the `{{kb_context}}` template variable. Team-level AGENTS.md is injected via `{{team_agents_md}}`.
+Each skill is a row in the `skills` table with a `name`, `slug`, `description`, Markdown `content`, optional `source_url` (set when downloaded from a URL), `content_hash`, `tags`, `is_active` flag, and an embedding. Skills are team-scoped — every agent in the team can read them.
 
-### Agent-driven updates
+Runs do **not** inject full skill bodies. Instead, every agent run injects a **manifest** — name + slug + one-line description for each active skill — into the system prompt via the `{{skills_context}}` template variable. Agents load a skill's full content on demand with the `get_skill(slug)` MCP tool, list the manifest at runtime with `list_skills`, or query skills with `semantic_search` (scope `skills` or `all`).
 
-Agents can propose updates to knowledge base documents as they work. For example, if a dev agent establishes a new pattern during implementation, it can propose adding that pattern to the coding standards doc.
+### Authoring
 
-**Update flow:**
-1. Agent proposes a change (new doc or edit to existing doc) via the Agent API
-2. The proposal creates a pending `kb_update` approval with a diff view
-3. Board reviews the diff in the approval inbox and approves or denies
-4. On approval, the document is updated and all agents see the new version on their next context fetch
+- Humans author and edit skills manually in the **Skills database** tab under Resources in the web UI.
+- Agents create skills directly via the `create_skill` MCP tool, or propose one via the `propose_skill` MCP tool, which raises a `skill_proposal` board approval. For example, if a dev agent establishes a new pattern during implementation, it can propose adding that pattern to the coding standards skill.
+- Skills can be downloaded from a URL (`POST /teams/:teamId/skills` with `source_url`); `POST /teams/:teamId/skills/:slug/sync` re-pulls a downloaded skill from its source.
+- Saving a skill without a description auto-derives a one-line summary from its content (`lib/skill-summary.ts`).
 
-This means the knowledge base stays current without the board having to manually maintain it — agents surface improvements, board approves them.
+Board approval keeps the skills database current without the board having to maintain it manually — agents surface improvements, board approves them.
 
-### Document revisions
+### Revisions
 
-Every change to a knowledge base document creates a revision in the `kb_doc_revisions` table. Revisions track:
-- The full content at that point in time
-- Who made the change (board member or agent via approval)
-- Timestamp
-- Optional change summary
+Every change to a skill creates a row in the `skill_revisions` table. Revisions track the prior content, the change author, and the timestamp, so each skill has a full version history.
 
-The UI shows version history for each document with the ability to view diffs between any two revisions and revert to a previous version.
+### Skills database in the UI
 
-### Knowledge base in the UI
+Accessible from the team workspace as the **Skills database** tab under Resources. Shows a list of skills with name, description, last updated, and last updated by. Click to view/edit. The board can create and edit skills directly. Version history is accessible from the skill view.
 
-Accessible from the team workspace as a new **Knowledge base** tab. Shows a list of documents with title, last updated, last updated by (agent). Click to view/edit. Board can also create and edit docs directly. Version history accessible from the document view.
+### Run summary comment
 
----
+When an agent run completes, its summary comment lists not only the tasks the agent created during the run but also the project docs it added or updated and the skills it added or updated, so humans can follow up.
 
 ## 16. Team preferences
 
@@ -1926,7 +1909,7 @@ When a member is added, the inviting board member specifies:
 **Example permissions_text values:**
 - *"Frontend developer. Can direct Engineer and QA Engineer on frontend tasks. Cannot modify architecture decisions or PRDs — escalate to Architect or Captain."*
 - *"Project manager for the mobile app. Full authority over tasks in the Mobile project. Can direct all agents on mobile-related work."*
-- *"Intern. Can comment on tasks but cannot create or assign them. Read-only access to knowledge base."*
+- *"Intern. Can comment on tasks but cannot create or assign them. Read-only access to the skills database."*
 
 ### Invites
 
@@ -2093,7 +2076,7 @@ All of this happens within one ticket. The Comments thread is the single convers
 | 7 | **Board inbox** | Drawer accessible from any screen. Pending approvals, design reviews, escalations, budget alerts, agent errors, QA findings, OAuth requests. One-click actionable. Unread badge. |
 | 8 | **Team workspace — Team page** | Reached via the sidebar "Team" link. Read-only org chart tree with status indicators, team summary, and a "Hire agent" action. Click a node to inspect the agent. |
 | 9 | **Team workspace — Projects tab** | List of projects with goal, repo count, task count. Click to see filtered task list + repo management. Project detail includes a Documents tab showing project-level shared documents (tech spec, implementation plan, research, UI decisions, marketing plan). |
-| 10 | **Team workspace — Knowledge base tab** | List of .md docs with title, last updated, updated by. Click to view/edit. Version history. Board can create docs directly. |
+| 10 | **Team workspace — Skills database tab** | List of skills with name, description, last updated, updated by. Click to view/edit. Version history. Board can create skills directly. |
 | 11 | **Team workspace — Settings tab** | Board-only. Team description editor, connected platforms (OAuth), secrets vault, MCP servers, MPP config, budget overview, team preferences, plugin management, Slack integration, member management. |
 | 12 | **Account settings** | All roles. Profile, Telegram bot setup, notification preferences. |
 
@@ -2115,7 +2098,7 @@ The UI uses a three-column layout: a narrow team icon rail on the far left, a si
 - Projects (collapsible section; header links to the projects list, children are per-project links)
 - Team (collapsible section; header links to the team org chart page, children are per-agent links)
 - Resources
-  - Knowledge base
+  - Skills database
   - Settings
   - Audit log
 
@@ -2141,7 +2124,7 @@ Team Rail → Team workspace (side menu)
         │     ├── Agent detail / edit
         │     └── Hire agent (creates onboarding task for Captain)
         └── Resources
-              ├── Knowledge base
+              ├── Skills database
               │     └── Document view / edit / version history
               ├── Settings
               │     ├── General
@@ -2200,7 +2183,7 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 | `approvals` | Pending board decisions. Polymorphic payload. |
 | `cost_entries` | Immutable spend records. Includes `provider` and `model` fields. |
 | `audit_log` | Append-only. Never updated or deleted. |
-| `kb_docs` | Knowledge base documents. AGENTS.md is a special KB doc written to disk. |
+| `skills` | The team-level skills database. Reusable skills with revisions, tags, and embeddings. |
 | `project_docs` | Project documentation (PRD, spec, implementation plan, etc.) — DB-backed, team-scoped, with embeddings. |
 | `skills` | Reusable instruction documents — DB-backed, team-scoped, with tags, revisions, and embeddings. |
 | `skill_revisions` | Version history for skills. |
@@ -2225,7 +2208,7 @@ comment_content_type: text, options, preview, trace, system
 tool_call_status:     running, success, error
 secret_category:      ssh_key, credential, api_token, certificate, other
 grant_scope:          single, project, team
-approval_type:        secret_access, hire, strategy, plan_review, kb_update, deploy_production
+approval_type:        secret_access, hire, strategy, plan_review, skill_proposal, deploy_production
 approval_status:      pending, approved, denied
 audit_actor_type:     board, agent, system
 repo_host_type:       github

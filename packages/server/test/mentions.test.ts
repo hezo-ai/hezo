@@ -51,10 +51,16 @@ beforeAll(async () => {
 	const projBData = (await projB.json()).data as { id: string; slug: string };
 	otherProjectSlug = projBData.slug;
 
-	await app.request(`/api/teams/${teamId}/kb-docs`, {
+	// kb docs were unified into the skills database; mentions resolve/search read from skills.
+	// Skills are referenced by slug; mentions still address them by a filename-shaped slug.
+	await app.request(`/api/teams/${teamId}/skills`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ title: 'Onboarding Guide', content: 'Hello onboarding world' }),
+		body: JSON.stringify({
+			name: 'Onboarding Guide',
+			slug: 'onboarding-guide.md',
+			content: 'Hello onboarding world',
+		}),
 	});
 
 	await app.request(`/api/teams/${teamId}/projects/${projectSlug}/docs/notes.md`, {

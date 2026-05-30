@@ -36,9 +36,9 @@ afterAll(async () => {
 });
 
 describe('documents service', () => {
-	it('upserts a kb_doc and creates no revision on first insert', async () => {
+	it('upserts a project_doc and creates no revision on first insert', async () => {
 		const doc = await upsertDocument(db, undefined, {
-			scope: { type: DocumentType.KbDoc, teamId, slug: 'svc-test' },
+			scope: { type: DocumentType.ProjectDoc, teamId, projectId, slug: 'svc-test' },
 			title: 'Service Test',
 			content: 'first',
 			authorMemberId: null,
@@ -52,7 +52,7 @@ describe('documents service', () => {
 
 	it('creates a revision when content changes', async () => {
 		const initial = await upsertDocument(db, undefined, {
-			scope: { type: DocumentType.KbDoc, teamId, slug: 'svc-test' },
+			scope: { type: DocumentType.ProjectDoc, teamId, projectId, slug: 'svc-test' },
 			content: 'second',
 			changeSummary: 'bumped',
 			authorMemberId: null,
@@ -67,13 +67,14 @@ describe('documents service', () => {
 
 	it('does not create a revision when content is identical', async () => {
 		const doc = await getDocument(db, {
-			type: DocumentType.KbDoc,
+			type: DocumentType.ProjectDoc,
 			teamId,
+			projectId,
 			slug: 'svc-test',
 		});
 		expect(doc).not.toBeNull();
 		await upsertDocument(db, undefined, {
-			scope: { type: DocumentType.KbDoc, teamId, slug: 'svc-test' },
+			scope: { type: DocumentType.ProjectDoc, teamId, projectId, slug: 'svc-test' },
 			content: 'second',
 			authorMemberId: null,
 		});
@@ -84,12 +85,13 @@ describe('documents service', () => {
 
 	it('restores to a prior revision and snapshots current', async () => {
 		const doc = await getDocument(db, {
-			type: DocumentType.KbDoc,
+			type: DocumentType.ProjectDoc,
 			teamId,
+			projectId,
 			slug: 'svc-test',
 		});
 		await upsertDocument(db, undefined, {
-			scope: { type: DocumentType.KbDoc, teamId, slug: 'svc-test' },
+			scope: { type: DocumentType.ProjectDoc, teamId, projectId, slug: 'svc-test' },
 			content: 'third',
 			authorMemberId: null,
 		});
@@ -109,8 +111,9 @@ describe('documents service', () => {
 
 	it('returns null when restoring a missing revision', async () => {
 		const doc = await getDocument(db, {
-			type: DocumentType.KbDoc,
+			type: DocumentType.ProjectDoc,
 			teamId,
+			projectId,
 			slug: 'svc-test',
 		});
 		const result = await restoreRevision(db, undefined, {

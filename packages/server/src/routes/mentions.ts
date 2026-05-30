@@ -71,9 +71,9 @@ mentionsRoutes.post('/teams/:teamId/docs/resolve', async (c) => {
 			size: number;
 			updated_at: string;
 		}>(
-			`SELECT slug, title, octet_length(content)::int AS size, updated_at
-			 FROM documents
-			 WHERE type = 'kb_doc' AND team_id = $1 AND LOWER(slug) = ANY($2::text[])`,
+			`SELECT slug, name AS title, octet_length(content)::int AS size, updated_at
+			 FROM skills
+			 WHERE team_id = $1 AND LOWER(slug) = ANY($2::text[])`,
 			[teamId, kbSlugs],
 		);
 		kbDocs = result.rows;
@@ -182,11 +182,11 @@ mentionsRoutes.get('/teams/:teamId/mentions/search', async (c) => {
 
 	if (kinds.includes('kb')) {
 		const r = await db.query<{ slug: string; title: string }>(
-			`SELECT slug, title
-			 FROM documents
-			 WHERE type = 'kb_doc' AND team_id = $1
-			   AND ($2 = '' OR slug ILIKE $3 OR title ILIKE $3)
-			 ORDER BY title
+			`SELECT slug, name AS title
+			 FROM skills
+			 WHERE team_id = $1
+			   AND ($2 = '' OR slug ILIKE $3 OR name ILIKE $3)
+			 ORDER BY name
 			 LIMIT $4`,
 			[teamId, q, pattern, perKind],
 		);
@@ -195,7 +195,7 @@ mentionsRoutes.get('/teams/:teamId/mentions/search', async (c) => {
 				kind: 'kb',
 				handle: row.slug,
 				label: row.title,
-				sublabel: 'KB doc',
+				sublabel: 'Skill',
 			});
 		}
 	}

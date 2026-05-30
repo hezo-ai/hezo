@@ -118,7 +118,7 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 				'## Linking to Hezo entities',
 			);
 			expect(docs[key], `${key} should include a project-doc example`).toContain('spec.md');
-			expect(docs[key], `${key} should include a kb-doc example`).toContain('coding-standards.md');
+			expect(docs[key], `${key} should include a skill example`).toContain('deploy-runbook');
 			expect(docs[key], `${key} should include an agent-mention example`).toContain('@engineer');
 			expect(docs[key], `${key} should require slug-not-title for teammate references`).toContain(
 				'Always use the slug form for teammates, never the title',

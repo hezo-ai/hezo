@@ -220,9 +220,9 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 		);
 	}
 
-	const kbDocsConfig = [
+	const skillsConfig = [
 		{
-			title: 'Team Overview',
+			name: 'Team Overview',
 			slug: 'team-overview.md',
 			content: `# Team Overview
 
@@ -245,7 +245,7 @@ Describe your product, its target users, and key value propositions.
 `,
 		},
 		{
-			title: 'Development Workflow',
+			name: 'Development Workflow',
 			slug: 'development-workflow.md',
 			content: `# Development Workflow
 
@@ -276,7 +276,7 @@ Approval is conveyed via comment, not status. From **Review**, the ticket either
 `,
 		},
 		{
-			title: 'Architecture Guidelines',
+			name: 'Architecture Guidelines',
 			slug: 'architecture-guidelines.md',
 			content: `# Architecture Guidelines
 
@@ -306,7 +306,7 @@ Significant technical decisions should be documented with:
 `,
 		},
 		{
-			title: 'Code Review Standards',
+			name: 'Code Review Standards',
 			slug: 'code-review-standards.md',
 			content: `# Code Review Standards
 
@@ -334,24 +334,20 @@ Significant technical decisions should be documented with:
 		},
 	];
 
-	const skillsConfig: Array<{ name: string; source_url: string; description?: string }> = [];
-
 	const startupResult = await db.query<{ id: string }>(
 		`INSERT INTO team_templates (name, description, default_summary, is_builtin, source,
-		                             kb_docs_config, skills_config)
-		 VALUES ($1, $2, $3, true, 'builtin'::team_template_source, $4::jsonb, $5::jsonb)
+		                             skills_config)
+		 VALUES ($1, $2, $3, true, 'builtin'::team_template_source, $4::jsonb)
 		 ON CONFLICT (name) DO UPDATE SET
 		     description = EXCLUDED.description,
 		     default_summary = EXCLUDED.default_summary,
-		     kb_docs_config = EXCLUDED.kb_docs_config,
 		     skills_config = EXCLUDED.skills_config,
 		     source = EXCLUDED.source
 		 RETURNING id`,
 		[
 			'Startup',
-			'Full-stack software development team with 10 specialized agents and starter knowledge base',
+			'Full-stack software development team with 10 specialized agents and a starter skills database',
 			summaries.teams.Startup ?? '',
-			JSON.stringify(kbDocsConfig),
 			JSON.stringify(skillsConfig),
 		],
 	);

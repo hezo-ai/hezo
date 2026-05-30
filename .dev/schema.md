@@ -11,7 +11,7 @@
 | `member_agents` | Agent-specific extension. System prompt, runtime type, `default_effort` (reasoning level applied to runs), budget, heartbeat, org chart, `summary` (auto-generated agent description, ≤5 lines), `touches_code` (capability flag used by the job manager to gate runs on designated-repo setup). `model_override_provider` + `model_override_model` let a single agent target a specific provider/model; when set they take precedence over the instance-default provider and the provider config's `default_model` (both must be set together — enforced by `model_override_requires_provider` CHECK). References agent_type_id for provenance. | extends member (PK = member.id), optionally references agent_type |
 | `member_users` | User-in-team extension. Role (board/member), role_title, permissions_text, project_ids. Links to global user. | extends member (PK = member.id), references user |
 | `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget, `default_summary` (pre-generated description loaded from `packages/server/src/db/agent-summaries.json`), `touches_code` (default capability flag — seeded true for builder roles, copied onto `member_agents` at hire time). Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by team_template_agent_types, member_agents. |
-| `team_templates` | Team blueprints (team type recipes). Groups of agent types plus default KB docs, preferences, MCP servers, `default_summary` (pre-generated team collaboration description). | Referenced by team_template_assignments. |
+| `team_templates` | Team blueprints (team type recipes). Groups of agent types plus default skills, preferences, MCP servers, `default_summary` (pre-generated team collaboration description). | Referenced by team_template_assignments. |
 | `team_template_agent_types` | Join table linking team types to agent types. Stores org chart hierarchy (reports_to_slug) and per-team-type config overrides (runtime type, heartbeat, budget). | belongs to team_template + agent_type |
 | `teams` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), team-level budget, `summary` (auto-generated team collaboration description, ≤20 lines). | Parent of everything. |
 | `team_template_assignments` | Many-to-many join table linking teams to the team types they were created from. | belongs to team + team_template |
@@ -29,13 +29,13 @@
 | `approvals` | Pending board decisions. Polymorphic payload. | belongs to team, requested by member_agent |
 | `cost_entries` | Immutable spend records per agent per task. | belongs to team + member_agent, optionally task/project |
 | `audit_log` | Append-only. Never updated or deleted. | belongs to team |
-| `documents` | Unified Markdown document store keyed by `type` (`project_doc` / `kb_doc` / `team_preferences` / `agent_system_prompt`). Project docs scope by `(project_id, slug)`; KB docs by `(team_id, slug)`; preferences by `(team_id)` (one per team); agent system prompts by `(member_agent_id)` (one per agent). Embeddings live on this table for KB and project docs. | belongs to team, optionally project or member_agent |
+| `documents` | Unified Markdown document store keyed by `type` (`project_doc` / `team_preferences` / `agent_system_prompt`). Project docs scope by `(project_id, slug)`; preferences by `(team_id)` (one per team); agent system prompts by `(member_agent_id)` (one per agent). Embeddings live on this table for project docs. The team-level reference store is the `skills` table, not this one. | belongs to team, optionally project or member_agent |
 | `document_revisions` | Snapshot of prior content created on every change. `change_summary` captures intent; `Restored to revision N` is set automatically by the rollback path. Shared by all document types — agent system prompt history lives here too. | belongs to document |
 | `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. | belongs to team |
 | `team_ssh_keys` | Generated SSH key pairs per team. Private key stored encrypted in secrets vault. Registered on GitHub via OAuth API. | belongs to team |
 | `execution_locks` | Task work ownership tracking. Read/write locks — multiple readers (reviewers) or one exclusive writer. | belongs to task + member_agent |
-| `skills` | Reusable instruction documents (DB-backed). Tags, content, source URL, creator tracking, embeddings. | belongs to team |
-| `skill_revisions` | Version history for skills. | belongs to skill |
+| `skills` | The team-level reference store (unified skills database). Each row has `name`, `slug`, `description`, `content`, optional `source_url` (set for downloaded skills), `content_hash`, `tags`, `is_active`, `embedding`. Authored manually in the UI, created by agents via MCP, or downloaded from a URL. Surfaces in `semantic_search` and is injected into runs as a manifest. | belongs to team |
+| `skill_revisions` | Version history for skills — a snapshot row on every content change. | belongs to skill |
 | `agent_wakeup_requests` | Wakeup queue with coalescing and idempotency. Every run row points back to the wakeup that triggered it via `heartbeat_runs.wakeup_id`. | belongs to member_agent + team |
 | `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. Links to the task being worked on via `task_id`, and to the wakeup that triggered the run via `wakeup_id`. | belongs to member_agent + team, optionally task, optionally wakeup |
 | `agent_task_sessions` | Per-task session persistence for session compaction. | belongs to member_agent, keyed by task |
@@ -348,7 +348,7 @@ agents from the selected team type via the `team_template_agent_types` join tabl
    - Config overrides applied from the join table (runtime type, heartbeat, budget)
    - `budget_used_cents` reset to 0
 4. Second pass resolves `reports_to_slug` → `reports_to` UUID for the org chart
-5. Creates `documents` rows of type `kb_doc` from `team_templates.kb_docs_config`
+5. Creates `skills` rows from the team type's default skills
 6. Creates `documents` row of type `team_preferences` from `team_templates.preferences_config`
 7. Copies `mcp_servers` array from team type
 8. Copies `mpp_config` structure (with `enabled: false` — wallet keys must be set up fresh)
@@ -422,8 +422,8 @@ for undo; the board surface is the revisions panel on the agent settings page.
 
 ### Documents
 
-`documents` is a single table that backs four kinds of Markdown content,
-distinguished by the `type` column (`project_doc` / `kb_doc` /
+`documents` is a single table that backs three kinds of Markdown content,
+distinguished by the `type` column (`project_doc` /
 `team_preferences` / `agent_system_prompt`). The same write path, revision
 capture, restore, embedding, and broadcast logic apply to all of them;
 per-type quirks (URL surface, agent approval gates) live in thin route
@@ -433,9 +433,6 @@ Scoping is enforced by partial unique indexes:
 
 - `project_doc` — unique on `(project_id, slug)`. Slug holds the filename
   (e.g. `spec.md`); `title` is empty (the filename is the display label).
-- `kb_doc` — unique on `(team_id, slug)`. Slug is the Markdown filename
-  (e.g. `coding-standards.md`); auto-derived as `${toSlug(title)}.md` when
-  not provided. `title` carries the human label.
 - `team_preferences` — partial unique on `(team_id)` with slug fixed
   to `preferences`. Enforces one row per team.
 - `agent_system_prompt` — partial unique on `(member_agent_id)` with slug
@@ -450,23 +447,22 @@ the pre-restore content (`change_summary = 'Restored to revision N'`,
 content back to the parent row.
 
 Project doc PRD updates (`slug = 'prd.md'`) from agents create a Strategy
-approval instead of writing directly. KB doc updates from agents create a
-KbUpdate approval. Preferences updates from agents apply directly. Approval
-apply paths flow through the same `upsertDocument` service so revisions are
-recorded on materialisation.
+approval instead of writing directly. Preferences updates from agents apply
+directly. Approval apply paths flow through the same `upsertDocument` service
+so revisions are recorded on materialisation. Team-level reference content is
+not a document type — it lives in the `skills` table (see the Skills database).
 
-The `{{kb_context}}`, `{{team_preferences_context}}`, and
-`{{project_docs_context}}` template variables in system prompts pull from
-this table filtered by type, so agents see the current document set.
+The `{{team_preferences_context}}` and `{{project_docs_context}}` template
+variables in system prompts pull from this table filtered by type, so agents
+see the current document set. Team skills are injected separately as a manifest
+via `{{skills_context}}` (see the Skills database) — not from this table.
 
 AGENTS.md remains a filesystem file in the repo (git tracks its history) and
 is not part of the documents table.
 
-**AGENTS.md** is a special KB doc that contains team-wide engineering rules
-and agent conventions. It is stored in the database like any other KB doc but
-also written to the project root filesystem (`AGENTS.md`) so that any coding
-agent (Claude Code, Codex, Gemini) automatically reads it. On every update to
-this KB doc, the file on disk is re-written.
+**AGENTS.md** is a filesystem file that contains team-wide engineering rules
+and agent conventions, written to the project root (`AGENTS.md`) so that any
+coding agent (Claude Code, Codex, Gemini) automatically reads it.
 
 ### Connected platforms (Hezo Connect)
 

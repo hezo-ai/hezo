@@ -255,7 +255,7 @@ UI:
 
 ---
 
-## Phase 5: Knowledge + Observability
+## Phase 5: Skills database + Observability
 
 **Status:** Done (2026-04). Documents unified into a single `documents` + `document_revisions` schema (2026-04-22) — project docs, KB docs, and team preferences all share one revision-with-rollback path; project docs and preferences gained the rollback UI as part of that.
 
@@ -264,7 +264,7 @@ UI:
 **What's included:**
 
 Backend:
-- Knowledge base revisions, agent proposals, approval flow
+- Skills database revisions, agent proposals (`propose_skill` -> `skill_proposal`), approval flow
 - Team preferences revisions, agent-driven updates
 - Project-level shared documents (tech spec, implementation plan, research, UI decisions, marketing plan)
 - Audit log (append-only, never updated/deleted)
@@ -384,7 +384,7 @@ Backend:
 
 Frontend:
 - Team icon rail (left sidebar) with home, team avatars, theme switcher, inbox badge
-- Unified side menu grouping: Inbox, Work (Tasks, Goals), Projects (header links to projects list), Team (header links to org chart), Resources (Knowledge base, Settings, Audit log)
+- Unified side menu grouping: Inbox, Work (Tasks, Goals), Projects (header links to projects list), Team (header links to org chart), Resources (Skills database, Settings, Audit log)
 - Removed top header with breadcrumbs
 - Tab-based project view (Tasks, Agents, Container, Settings) replacing project sidebar
 - Full-page Inbox route for pending approvals
@@ -832,7 +832,7 @@ After successful container provisioning or rebuild, runs that died with `error='
 | 3 | GitHub Integration | OAuth flow, token storage, repo validation and cloning |
 | 3.5 | UI Foundation + Core Screens | React app with all CRUD screens for Phases 0–3 APIs, master key gate, board inbox |
 | 4 | Agent Execution + UI | Docker per project, subprocesses, heartbeats, budgets + agent status UI, cost views |
-| 5 | Knowledge + Observability + UI | KB revisions, audit log, WebSocket + TanStack Query, real-time updates |
+| 5 | Skills database + Observability + UI | Skills revisions, audit log, WebSocket + TanStack Query, real-time updates |
 | 6 | MCP + Skill File + Binary Build | MCP endpoint, skill file + `bun build --compile` single binary, Playwright E2E |
 | 6.5 | Auth + Session Compaction | Custom OAuth auth (board members only), session compaction + login page, account settings |
 | 6.6 | UI Redesign + Agent Onboarding | Team icon rail, unified side menu, tab-based project view, agent onboarding via Captain |

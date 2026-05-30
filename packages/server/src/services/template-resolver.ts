@@ -18,7 +18,7 @@ const SHARED_INSTRUCTIONS = `
 
 ### Ticket Maintenance
 - **Progress**: Update the current ticket's progress_summary via \`update_task\` at natural milestones to reflect what you've accomplished and what remains.
-- **Rules**: The ticket \`rules\` field captures *how this ticket should be worked on* — approach constraints, guardrails, or required workflows that shape execution (e.g. "run the full suite before pushing", "consult the architect before touching auth", "do not edit migrations"). Add these via \`update_task\` as you discover them. Do NOT use \`rules\` to pass project domain knowledge to a future agent — domain and scope context belongs in the ticket \`description\`; work-in-flight status belongs in \`progress_summary\`; project- or team-wide knowledge belongs in project docs (\`write_project_doc\`) or the team KB (\`upsert_kb_doc\`).
+- **Rules**: The ticket \`rules\` field captures *how this ticket should be worked on* — approach constraints, guardrails, or required workflows that shape execution (e.g. "run the full suite before pushing", "consult the architect before touching auth", "do not edit migrations"). Add these via \`update_task\` as you discover them. Do NOT use \`rules\` to pass project domain knowledge to a future agent — domain and scope context belongs in the ticket \`description\`; work-in-flight status belongs in \`progress_summary\`; project- or team-wide knowledge belongs in project docs (\`write_project_doc\`) or the team skills database (\`create_skill\`).
 - **Status**: Update the ticket status as you progress:
   - \`in_progress\` — when you begin active work
   - \`review\` — when handing off for review
@@ -40,7 +40,7 @@ const SHARED_INSTRUCTIONS = `
 ### Knowledge Maintenance
 - **Project docs**: Use \`list_project_docs\`, \`read_project_doc\`, and \`write_project_doc\` for high-level project context — PRDs, architecture decisions, API designs, schemas, implementation plans. Docs live in the project-doc store and are addressed by bare filename (e.g. \`prd.md\`, \`spec.md\`, \`research.md\`) — they are NOT filesystem paths, so never prefix a folder. Keep them aligned with the actual codebase. Do NOT put agent-specific working knowledge here.
 - **AGENTS.md**: For practical conventions, commands, and constraints that agents need when working on this project. Update via git in the repo.
-- **Team KB**: Use the \`upsert_kb_doc\` tool for organizational knowledge that spans projects — team policies, standards, and shared conventions.
+- **Skills database**: Use \`create_skill\` (or \`propose_skill\` when approval is required) to capture reusable, cross-project team know-how — MCP server usage, integration steps, conventions, how agents coordinate. A manifest of available skills is injected each run; call \`get_skill(slug)\` to read one in full.
 
 ### Sub-Agents & Parallel Exploration
 - Use sub-agents aggressively to split up your work and explore alternative approaches in parallel.
@@ -135,28 +135,30 @@ export async function resolveSystemPrompt(
 		resolved = resolved.replace(/\{\{team_context\}\}/g, teamContext);
 	}
 
+	// kb_context retired: the knowledge base merged into the skills database.
+	// Strip any leftover placeholder so it never leaks into a prompt.
 	if (resolved.includes('{{kb_context}}')) {
-		const docs = await db.query<{ title: string; slug: string; content: string }>(
-			"SELECT title, slug, content FROM documents WHERE type = 'kb_doc' AND team_id = $1 ORDER BY title",
-			[ctx.teamId],
-		);
-		const kbText =
-			docs.rows.length > 0
-				? docs.rows.map((d) => `## ${d.title} (link: ${d.slug})\n${d.content}`).join('\n\n---\n\n')
-				: 'No knowledge base documents available.';
-		resolved = resolved.replace(/\{\{kb_context\}\}/g, kbText);
+		resolved = resolved.replace(/\{\{kb_context\}\}\n?/g, '');
 	}
 
+	// Skills are injected as a manifest (name + slug + summary), not full bodies.
+	// The agent calls get_skill(slug) to load a skill's content on demand.
 	if (resolved.includes('{{skills_context}}')) {
-		let skillsText = 'No skills configured.';
-		const dbSkills = await db.query<{ name: string; content: string }>(
-			'SELECT name, content FROM skills WHERE team_id = $1 AND is_active = true ORDER BY name',
+		const dbSkills = await db.query<{ name: string; slug: string; description: string }>(
+			'SELECT name, slug, description FROM skills WHERE team_id = $1 AND is_active = true ORDER BY name',
 			[ctx.teamId],
 		);
+		let skillsText = 'No skills in the team skills database yet.';
 		if (dbSkills.rows.length > 0) {
-			skillsText = dbSkills.rows
-				.map((s) => `## Skill: ${s.name}\n${s.content}`)
-				.join('\n\n---\n\n');
+			const lines = dbSkills.rows
+				.map((s) => `- ${s.name} (slug: ${s.slug})${s.description ? `: ${s.description}` : ''}`)
+				.join('\n');
+			skillsText = [
+				'The team skills database holds reusable know-how. Entries are listed below by name and slug.',
+				"Call get_skill(slug) to load a skill's full instructions when it is relevant to your task.",
+				'',
+				lines,
+			].join('\n');
 		}
 		resolved = resolved.replace(/\{\{skills_context\}\}/g, skillsText);
 	}
@@ -281,7 +283,7 @@ async function buildTeammatesBlock(db: PGlite, ctx: ResolveContext): Promise<str
 
 ## Teammates
 
-Whenever you reference a teammate in any output you author (comments, ticket descriptions, progress summaries, project docs, KB docs, chat messages), write \`@<slug>\` (active) or \`@@<slug>\` (passive) from this list — never the role title. Bare titles do not linkify. See "@-Mention Discipline" below for when to use which: \`@\` for direct asks on this ticket, \`@@\` for naming, attribution, plan tables, and summaries.
+Whenever you reference a teammate in any output you author (comments, ticket descriptions, progress summaries, project docs, skills, chat messages), write \`@<slug>\` (active) or \`@@<slug>\` (passive) from this list — never the role title. Bare titles do not linkify. See "@-Mention Discipline" below for when to use which: \`@\` for direct asks on this ticket, \`@@\` for naming, attribution, plan tables, and summaries.
 
 ${list}`;
 }

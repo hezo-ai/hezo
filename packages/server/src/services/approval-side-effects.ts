@@ -192,27 +192,6 @@ export async function applyApprovalSideEffect(
 			);
 			break;
 		}
-		case ApprovalType.KbUpdate: {
-			const slug = payload.slug as string;
-			const requestedBy = (approval.requested_by_member_id as string) ?? null;
-			const doc = await upsertDocument(db, undefined, {
-				scope: {
-					type: DocumentType.KbDoc,
-					teamId: approval.team_id as string,
-					slug,
-				},
-				title: typeof payload.title === 'string' ? payload.title : undefined,
-				content: typeof payload.content === 'string' ? payload.content : '',
-				changeSummary: (payload.change_summary as string) ?? '',
-				authorMemberId: requestedBy,
-			});
-			broadcasts.push({
-				table: 'documents',
-				op: 'UPDATE',
-				row: doc as unknown as Record<string, unknown>,
-			});
-			break;
-		}
 		case ApprovalType.Strategy: {
 			if (
 				typeof payload.action === 'string' &&

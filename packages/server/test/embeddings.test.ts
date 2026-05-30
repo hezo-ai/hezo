@@ -76,9 +76,9 @@ describe('generateEmbedding', () => {
 describe('embedAndStore', () => {
 	it('is a no-op when model is not loaded', async () => {
 		const docResult = await db.query<{ id: string }>(
-			`INSERT INTO documents (team_id, type, slug, title, content)
-			 VALUES ($1, 'kb_doc', 'embed-test', 'Embed Test', 'content') RETURNING id`,
-			[teamId],
+			`INSERT INTO documents (team_id, project_id, type, slug, title, content)
+			 VALUES ($1, $2, 'project_doc', 'embed-test', 'Embed Test', 'content') RETURNING id`,
+			[teamId, projectId],
 		);
 		const docId = docResult.rows[0].id;
 
@@ -99,23 +99,16 @@ describe('semanticSearch', () => {
 	});
 
 	it('returns empty array with scope filter when model is not loaded', async () => {
-		const results = await semanticSearch(db, teamId, 'test', { scope: 'kb_docs' });
+		const results = await semanticSearch(db, teamId, 'test', { scope: 'project_docs' });
 		expect(results).toEqual([]);
 	});
 });
 
 describe('semanticSearch with pre-populated embeddings', () => {
 	beforeAll(async () => {
-		const vec1 = fakeVector(0.3);
 		const vec2 = fakeVector(0.6);
 		const vec3 = fakeVector(0.9);
 		const vec4 = fakeVector(1.2);
-
-		await db.query(
-			`INSERT INTO documents (team_id, type, slug, title, content, embedding)
-			 VALUES ($1, 'kb_doc', 'arch-guide', 'Architecture Guide', 'How the system architecture works', $2::vector)`,
-			[teamId, vectorStr(vec1)],
-		);
 
 		const numRes = await db.query<{ number: number }>(
 			'SELECT next_project_task_number($1) AS number',
@@ -140,21 +133,6 @@ describe('semanticSearch with pre-populated embeddings', () => {
 			 VALUES ($1, $2, 'project_doc', 'spec.md', 'Product spec for the project', $3::vector)`,
 			[teamId, projectId, vectorStr(vec4)],
 		);
-	});
-
-	it('kb_docs query returns results with valid embeddings', async () => {
-		const queryVec = fakeVector(0.31);
-		const r = await db.query<{ id: string; title: string; score: number }>(
-			`SELECT id, title, 1 - (embedding <=> $1::vector) AS score
-			 FROM documents
-			 WHERE type = 'kb_doc' AND team_id = $2 AND embedding IS NOT NULL
-			 ORDER BY embedding <=> $1::vector
-			 LIMIT 5`,
-			[vectorStr(queryVec), teamId],
-		);
-		expect(r.rows.length).toBeGreaterThanOrEqual(1);
-		expect(r.rows[0].title).toBe('Architecture Guide');
-		expect(typeof r.rows[0].score).toBe('number');
 	});
 
 	it('tasks query returns results with valid embeddings', async () => {
@@ -208,7 +186,7 @@ describe('semanticSearch with pre-populated embeddings', () => {
 		const queryVec = fakeVector(0.31);
 		const r = await db.query<{ id: string }>(
 			`SELECT id FROM documents
-			 WHERE type = 'kb_doc' AND team_id = $2 AND embedding IS NOT NULL
+			 WHERE type = 'project_doc' AND team_id = $2 AND embedding IS NOT NULL
 			 ORDER BY embedding <=> $1::vector
 			 LIMIT 5`,
 			[vectorStr(queryVec), otherTeamId],
