@@ -2,7 +2,8 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 
-export interface Skill {
+/** Row returned by the list endpoint (no content). */
+export interface SkillListItem {
 	id: string;
 	team_id: string;
 	name: string;
@@ -17,48 +18,81 @@ export interface Skill {
 	updated_at: string;
 }
 
-export interface SkillDetail extends Skill {
+/** Full row returned by the detail endpoint (includes content). */
+export interface Skill extends SkillListItem {
 	content: string;
+}
+
+export interface CreateSkillInput {
+	name: string;
+	description?: string;
+	/** Provide content for an inline skill … */
+	content?: string;
+	/** … or source_url to download the skill. */
+	source_url?: string;
+	tags?: string[];
+}
+
+export interface UpdateSkillInput {
+	name?: string;
+	description?: string;
+	content?: string;
+	tags?: string[];
 }
 
 export function useSkills(teamId: string) {
 	return useQuery({
 		queryKey: ['teams', teamId, 'skills'],
-		queryFn: () => api.get<Skill[]>(`/api/teams/${teamId}/skills`),
+		queryFn: () => api.get<SkillListItem[]>(`/api/teams/${teamId}/skills`),
+		enabled: !!teamId,
 	});
 }
 
-export function useSkillDetail(teamId: string, slug: string | null) {
+export function useSkill(teamId: string, slug: string | null) {
 	return useQuery({
 		queryKey: ['teams', teamId, 'skills', slug],
-		queryFn: () => api.get<SkillDetail>(`/api/teams/${teamId}/skills/${slug}`),
-		enabled: slug !== null,
+		queryFn: () => api.get<Skill>(`/api/teams/${teamId}/skills/${slug}`),
+		enabled: !!teamId && slug !== null,
 	});
 }
 
 export function useCreateSkill(teamId: string) {
 	return useMutation({
-		mutationFn: (data: {
-			name: string;
-			source_url: string;
-			description?: string;
-			tags?: string[];
-		}) => api.post<SkillDetail>(`/api/teams/${teamId}/skills`, data),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] }),
+		mutationFn: (input: CreateSkillInput) => api.post<Skill>(`/api/teams/${teamId}/skills`, input),
+		onSuccess: (created) => {
+			queryClient.setQueryData<Skill>(['teams', teamId, 'skills', created.slug], created);
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] });
+		},
+	});
+}
+
+export function useUpdateSkill(teamId: string) {
+	return useMutation({
+		mutationFn: ({ slug, input }: { slug: string; input: UpdateSkillInput }) =>
+			api.patch<Skill>(`/api/teams/${teamId}/skills/${slug}`, input),
+		onSuccess: (updated, { slug }) => {
+			queryClient.setQueryData<Skill>(['teams', teamId, 'skills', slug], updated);
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] });
+		},
 	});
 }
 
 export function useSyncSkill(teamId: string) {
 	return useMutation({
-		mutationFn: (slug: string) =>
-			api.post<SkillDetail>(`/api/teams/${teamId}/skills/${slug}/sync`, {}),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] }),
+		mutationFn: (slug: string) => api.post<Skill>(`/api/teams/${teamId}/skills/${slug}/sync`, {}),
+		onSuccess: (updated, slug) => {
+			queryClient.setQueryData<Skill>(['teams', teamId, 'skills', slug], updated);
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] });
+		},
 	});
 }
 
 export function useDeleteSkill(teamId: string) {
 	return useMutation({
 		mutationFn: (slug: string) => api.delete(`/api/teams/${teamId}/skills/${slug}`),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] }),
+		onSuccess: (_, slug) => {
+			queryClient.removeQueries({ queryKey: ['teams', teamId, 'skills', slug] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] });
+		},
 	});
 }

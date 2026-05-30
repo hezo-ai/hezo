@@ -123,7 +123,7 @@ export function TeamSidebar() {
 		},
 		{
 			title: 'Resources',
-			items: [{ to: '/teams/$teamId/kb', params, label: 'Knowledge base' }],
+			items: [{ to: '/teams/$teamId/skills', params, label: 'Skills database' }],
 		},
 		{
 			title: 'Settings',

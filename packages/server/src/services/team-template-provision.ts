@@ -1,10 +1,26 @@
+import { createHash } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
 import { MemberType } from '@hezo/shared';
+import { deriveSkillSummary } from '../lib/skill-summary';
 import { toSlug } from '../lib/slug';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { initAgentSystemPrompt } from './documents';
 import { downloadSkillContent, SkillDownloadError } from './skill-downloader';
+
+/**
+ * A template skill entry is either inline (carries `content`) or downloaded
+ * (carries `source_url`). `name`/`title` are interchangeable for backwards
+ * compatibility with older template configs.
+ */
+interface TemplateSkillConfig {
+	name?: string;
+	title?: string;
+	slug?: string;
+	description?: string;
+	content?: string;
+	source_url?: string;
+}
 
 const log = logger.child('team-template-provision');
 
@@ -60,52 +76,73 @@ async function loadTemplateAgentTypes(db: PGlite, templateIds: string[]): Promis
 	return dedupedRows;
 }
 
-async function createKbDocsFromTemplate(
+async function loadTemplateSkills(db: PGlite, templateId: string): Promise<TemplateSkillConfig[]> {
+	const result = await db.query<{ skills_config: TemplateSkillConfig[] }>(
+		'SELECT skills_config FROM team_templates WHERE id = $1',
+		[templateId],
+	);
+	return result.rows[0]?.skills_config ?? [];
+}
+
+function templateSkillName(skill: TemplateSkillConfig): string {
+	return (skill.name ?? skill.title ?? '').trim();
+}
+
+/**
+ * Provision the template's inline skills (those carrying `content`) directly
+ * into the team's skills database. No network — safe to run inside the
+ * provisioning transaction.
+ */
+async function createInlineSkillsFromTemplate(
 	db: PGlite,
 	teamId: string,
 	templateId: string,
 ): Promise<void> {
-	const result = await db.query<{
-		kb_docs_config: Array<{ title: string; slug: string; content: string }>;
-	}>('SELECT kb_docs_config FROM team_templates WHERE id = $1', [templateId]);
-
-	const docs = result.rows[0]?.kb_docs_config ?? [];
-	for (const doc of docs) {
+	const skills = await loadTemplateSkills(db, templateId);
+	for (const skill of skills) {
+		if (!skill.content) continue;
+		const name = templateSkillName(skill);
+		const slug = skill.slug?.trim() || toSlug(name);
+		if (!name || !slug) continue;
+		const description = skill.description?.trim() || deriveSkillSummary(skill.content);
+		const hash = createHash('sha256').update(skill.content).digest('hex');
 		await db.query(
-			`INSERT INTO documents (team_id, type, slug, title, content)
-			 VALUES ($1, 'kb_doc', $2, $3, $4)
-			 ON CONFLICT DO NOTHING`,
-			[teamId, doc.slug, doc.title, doc.content],
+			`INSERT INTO skills (team_id, name, slug, description, content, content_hash)
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT (team_id, slug) DO NOTHING`,
+			[teamId, name, slug, description, skill.content, hash],
 		);
 	}
 }
 
+/**
+ * Provision the template's downloaded skills (those carrying `source_url`) by
+ * fetching each from its source. Runs outside the transaction because it makes
+ * network calls.
+ */
 export async function createSkillsFromTemplate(
 	db: PGlite,
 	teamId: string,
 	templateId: string,
 ): Promise<void> {
-	const result = await db.query<{
-		skills_config: Array<{ name: string; source_url: string; description?: string }>;
-	}>('SELECT skills_config FROM team_templates WHERE id = $1', [templateId]);
-
-	const skills = result.rows[0]?.skills_config ?? [];
-	if (skills.length === 0) return;
-
+	const skills = await loadTemplateSkills(db, templateId);
 	for (const skill of skills) {
-		const slug = toSlug(skill.name);
-		if (!slug) continue;
+		if (!skill.source_url) continue;
+		const name = templateSkillName(skill);
+		const slug = skill.slug?.trim() || toSlug(name);
+		if (!name || !slug) continue;
 		try {
 			const { content, hash } = await downloadSkillContent(skill.source_url);
+			const description = skill.description?.trim() || deriveSkillSummary(content);
 			await db.query(
 				`INSERT INTO skills (team_id, name, slug, description, content, source_url, content_hash)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7)
 				 ON CONFLICT (team_id, slug) DO NOTHING`,
-				[teamId, skill.name, slug, skill.description ?? '', content, skill.source_url, hash],
+				[teamId, name, slug, description, content, skill.source_url, hash],
 			);
 		} catch (e) {
 			if (e instanceof SkillDownloadError) {
-				log.warn(`Failed to download template skill "${skill.name}": ${e.message}`);
+				log.warn(`Failed to download template skill "${name}": ${e.message}`);
 				continue;
 			}
 			throw e;
@@ -114,7 +151,7 @@ export async function createSkillsFromTemplate(
 }
 
 /**
- * Adds agents (and optional KB docs / skills) from a team template onto an existing team.
+ * Adds agents (and optional inline/downloaded skills) from a team template onto an existing team.
  * Skips agent slugs that already exist when skipExistingSlugs is true (default).
  */
 export async function provisionTeamTemplate(
@@ -209,7 +246,7 @@ export async function provisionTeamTemplate(
 			[teamId, templateId],
 		);
 
-		await createKbDocsFromTemplate(db, teamId, templateId);
+		await createInlineSkillsFromTemplate(db, teamId, templateId);
 	});
 
 	if (options?.dataDir) {

@@ -54,12 +54,12 @@ You are the second step in the ticket workflow (after the Researcher).
 {{> partials/common/check-before-create}}
 {{> partials/common/assignment-hierarchy}}
 {{> partials/common/mention-handoff}}
+{{> partials/common/skills-database}}
+{{> partials/common/delivery-knowledge}}
 
 ---
 
 Current date: {{current_date}}
-
-{{kb_context}}
 
 {{skills_context}}
 

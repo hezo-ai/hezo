@@ -1508,7 +1508,7 @@ Natural language search across team content.
 
 Query params:
 - `?q=query` — search query (required)
-- `?scope=all` — `all`, `kb_docs`, `tasks`, or `skills` (default `all`)
+- `?scope=all` — `all`, `tasks`, `skills`, or `project_docs` (default `all`)
 - `?limit=10` — max results (default 10)
 
 ---
@@ -1541,80 +1541,9 @@ have board access to the team. Paths are sanitized (no path traversal).
 
 ---
 
-### Knowledge Base
+### Skills database (board-side)
 
-#### `GET /teams/:teamId/kb-docs`
-List all knowledge base documents for a team.
-
-Response:
-```json
-{
-  "data": [
-    {
-      "id": "uuid",
-      "team_id": "uuid",
-      "title": "Coding Standards",
-      "slug": "coding-standards.md",
-      "last_updated_by_agent_id": "uuid | null",
-      "last_updated_by_agent_title": "CTO",
-      "created_at": "...",
-      "updated_at": "..."
-    }
-  ]
-}
-```
-
-#### `POST /teams/:teamId/kb-docs`
-Create a knowledge base document (board action).
-
-Request:
-```json
-{
-  "title": "Coding Standards",
-  "content": "# Coding Standards\n\n## TypeScript\n- Always use strict mode...",
-  "slug": "coding-standards.md"
-}
-```
-
-`slug` is optional — auto-derived from the title if not provided (lowercased, spaces → hyphens, with a `.md` extension appended). KB docs are always stored as Markdown filenames.
-
-#### `GET /teams/:teamId/kb-docs/:slug`
-Get full document content.
-
-Response: full doc object including `content` field.
-
-#### `PATCH /teams/:teamId/kb-docs/:slug`
-Update a document. Direct edits by the board do not require approval.
-Agent edits create a pending approval instead (returns 202).
-
-Request:
-```json
-{
-  "title": "Coding Standards",
-  "content": "# Coding Standards\n\n## Updated content...",
-  "change_summary": "Updated TypeScript guidelines"
-}
-```
-
-#### `DELETE /teams/:teamId/kb-docs/:slug`
-Delete a knowledge base document.
-
-#### `POST /teams/:teamId/kb-docs/:slug/restore`
-Restore a document to a previous revision. Board-only (agents cannot restore).
-
-Request:
-```json
-{
-  "revision_number": 3
-}
-```
-
-#### `GET /teams/:teamId/kb-docs/:slug/revisions`
-List revision history for a knowledge base document, ordered by revision_number descending.
-
----
-
-### Skills
+The team-level reference store is the `skills` table (with `skill_revisions` for version history). Each skill has a `name`, `slug`, `description`, `content`, optional `source_url` (set when downloaded), `content_hash`, `tags`, and `is_active`. Saving a skill without a description auto-derives a one-line summary from its content (`lib/skill-summary.ts`). Every content change writes a `skill_revisions` row. Skills carry embeddings and surface in `semantic_search`.
 
 #### `GET /teams/:teamId/skills`
 List the skills manifest for a team. Returns all installed skills with metadata.
@@ -2531,7 +2460,7 @@ Response:
       { "name": "db", "url": "stdio://npx -y @modelcontextprotocol/server-postgres", "description": "Project database" }
     ],
     "mpp_enabled": true,
-    "kb_docs": [
+    "skills": [
       { "id": "uuid", "title": "Coding Standards", "slug": "coding-standards.md", "updated_at": "..." }
     ],
     "team_preferences": {
@@ -2593,97 +2522,21 @@ Agent writes to `prd.md` create an approval request instead of updating the docu
 
 ---
 
-### Knowledge Base (agent-side)
+### Skills (agent-side)
 
-#### `GET /kb-docs`
-**Not yet implemented.**
+The agent-side skills tools mirror the board API.
 
-Agent lists all knowledge base documents for its team.
+#### `GET /skills`
 
-Response: array of doc metadata (same shape as board list, without content).
+Agent lists the team's skills **manifest** (name + slug + one-line description). Full bodies are not returned here.
 
-#### `GET /kb-docs/:docId`
-**Not yet implemented.**
+#### `GET /skills/:slug`
 
-Agent reads a full knowledge base document.
+Agent loads one skill's full content on demand. Agents also receive the manifest injected into every run via `{{skills_context}}` and call this to pull a body when needed.
 
-Response: full doc object including `content`.
+#### `POST /skills`
 
-#### `POST /kb-docs/propose-update`
-**Not yet implemented.**
-
-Agent proposes a new document or an edit to an existing document. Creates a
-`kb_update` approval with a diff.
-
-Request (new doc):
-```json
-{
-  "title": "Error Handling Patterns",
-  "content": "# Error Handling Patterns\n\n## API Errors\n...",
-  "reason": "Established consistent error handling during WebSocket implementation"
-}
-```
-
-Request (edit existing):
-```json
-{
-  "doc_id": "uuid",
-  "content": "# Coding Standards\n\n## Updated with new patterns...",
-  "reason": "Added React Server Components conventions after frontend refactor"
-}
-```
-
-Response:
-```json
-{
-  "data": {
-    "approval_id": "uuid",
-    "status": "pending"
-  }
-}
-```
-
-The board sees the proposal in the approval inbox as a diff view (for edits)
-or a full preview (for new docs). On approval, the document is created/updated.
-
-#### `POST /plans/submit-for-review`
-**Not yet implemented.**
-
-Agent (typically Architect) submits an implementation plan for Product Lead
-review. Creates a `plan_review` approval.
-
-Request:
-```json
-{
-  "task_id": "uuid",
-  "plan_summary": "Implementation plan for WebSocket auth...",
-  "plan_content": "## PRD\n...\n## Technical Spec\n...\n## Phases\n...",
-  "reason": "Ready for Product Lead review before dev work begins"
-}
-```
-
-Response:
-```json
-{
-  "data": {
-    "approval_id": "uuid",
-    "status": "pending"
-  }
-}
-```
-
-The Product Lead (or any board member) reviews the plan in the approval inbox.
-On approval, the Engineer can begin implementation.
-
-#### `POST /tasks/:taskId/attachments`
-**Not yet implemented.**
-
-Agent uploads a file attachment to an task (screenshot, log, diagram, etc.).
-Multipart form data, same constraints as the board endpoint.
-
----
-
-## WebSocket (real-time updates)
+Agent creates a skill directly (`create_skill`) or proposes one via board approval (`propose_skill`, raising a `skill_proposal` approval).
 
 ### `WS /ws`
 
@@ -2783,12 +2636,12 @@ Every mutating operation writes to `audit_log`. Standard action names:
 | `approval.denied` | approval | Board denies |
 | `api_key.created` | api_key | Board generates API key |
 | `api_key.revoked` | api_key | Board revokes API key |
-| `documents.INSERT` | document | Board, agent, or approval-apply creates any document (`type` in row payload selects KB / project doc / preferences). Restore is published as `UPDATE`. |
+| `documents.INSERT` | document | Board, agent, or approval-apply creates any document (`type` in row payload selects project doc / preferences / agent system prompt). Restore is published as `UPDATE`. |
 | `documents.UPDATE` | document | Document content edited or restored to a prior revision |
 | `documents.DELETE` | document | Document removed |
-| `kb_update.proposed` | approval | Agent proposes KB change |
-| `kb_update.approved` | approval | Board approves KB change |
-| `kb_update.denied` | approval | Board denies KB change |
+| `skill_proposal.proposed` | approval | Agent proposes a new skill |
+| `skill_proposal.approved` | approval | Board approves a proposed skill |
+| `skill_proposal.denied` | approval | Board denies a proposed skill |
 | `budget.warning` | agent | Agent hits 80% budget |
 | `budget.exceeded` | agent | Agent hits 100% budget |
 | `budget.reset` | agent | Monthly budget reset |
@@ -2835,9 +2688,6 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 | `create_comment` | Add comment to task | `team_id`, `task_id`, `content`, `content_type?` |
 | `list_approvals` | List pending approvals | `team_id` |
 | `resolve_approval` | Resolve an approval | `team_id`, `approval_id`, `status` (`approved`/`denied`), `resolution_note?` |
-| `list_kb_docs` | List knowledge base documents | `team_id` |
-| `get_kb_doc` | Get KB doc by slug | `team_id`, `slug` |
-| `upsert_kb_doc` | Create or update a KB document | `team_id`, `slug`, `title`, `content` |
 | `get_costs` | Get cost summary | `team_id`, `group_by?` (`agent`/`project`/`day`) |
 | `get_agent_system_prompt` | Read agent's system prompt. Any agent or board user in the same team. | `team_id`, `agent_id` |
 | `update_agent_system_prompt` | Apply a system prompt change. **Coach-only.** Writes immediately and snapshots a revision for board rollback. | `team_id`, `agent_id`, `new_system_prompt`, `change_summary` |
@@ -2845,9 +2695,9 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 | `read_project_doc` | Read project doc by filename | `team_id`, `project_id`, `filename` |
 | `write_project_doc` | Write project doc | `team_id`, `project_id`, `filename`, `content` |
 | `propose_skill` | Create approval for new skill | `team_id`, `name`, `content`, `description?` |
-| `semantic_search` | Natural language search | `team_id`, `query`, `scope?` (`all`/`kb_docs`/`tasks`/`skills`/`project_docs`), `limit?` |
-| `list_skills` | List active skills | `team_id`, `tags?` |
-| `get_skill` | Get skill by slug | `team_id`, `slug` |
+| `semantic_search` | Natural language search | `team_id`, `query`, `scope?` (`all`/`tasks`/`skills`/`project_docs`), `limit?` |
+| `list_skills` | List the skills manifest (name + slug + description) | `team_id`, `tags?` |
+| `get_skill` | Get a skill's full content by slug (load on demand) | `team_id`, `slug` |
 | `create_skill` | Create skill directly | `team_id`, `name`, `content`, `description?` |
 | `set_agent_summary` | Set an agent's auto-generated description | `team_id`, `agent_id`, `summary` (≤1000 chars) |
 | `set_team_summary` | Set the team collaboration description (Captain only) | `team_id`, `summary` (≤4000 chars) |

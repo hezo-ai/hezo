@@ -8,7 +8,6 @@ import { McpServersSection } from '../../../../components/settings/mcp-section';
 import { PreferencesSection } from '../../../../components/settings/preferences-section';
 import { SecretsSection } from '../../../../components/settings/secrets-section';
 import { SkillFileSection } from '../../../../components/settings/skill-file-section';
-import { SkillsSection } from '../../../../components/settings/skills-section';
 import { useTeam } from '../../../../hooks/use-teams';
 
 const settingsNav = [
@@ -19,7 +18,6 @@ const settingsNav = [
 	{ id: 'mcp', label: 'MCP servers' },
 	{ id: 'budget', label: 'Budget' },
 	{ id: 'preferences', label: 'Preferences' },
-	{ id: 'skills', label: 'Skills' },
 	{ id: 'skill-file', label: 'Skill file' },
 ];
 
@@ -73,9 +71,6 @@ function SettingsPage() {
 				</div>
 				<div id="settings-preferences">
 					<PreferencesSection teamId={teamId} />
-				</div>
-				<div id="settings-skills">
-					<SkillsSection teamId={teamId} />
 				</div>
 				<div id="settings-skill-file">
 					<SkillFileSection />

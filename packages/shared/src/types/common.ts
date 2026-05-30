@@ -228,7 +228,6 @@ export const ApprovalType = {
 	TeamTemplate: 'team_template',
 	ProjectCreation: 'project_creation',
 	Strategy: 'strategy',
-	KbUpdate: 'kb_update',
 	PlanReview: 'plan_review',
 	DeployProduction: 'deploy_production',
 	DesignatedRepoRequest: 'designated_repo_request',
@@ -360,7 +359,6 @@ export type PluginStatus = (typeof PluginStatus)[keyof typeof PluginStatus];
 
 export const DocumentType = {
 	ProjectDoc: 'project_doc',
-	KbDoc: 'kb_doc',
 	TeamPreferences: 'team_preferences',
 	AgentSystemPrompt: 'agent_system_prompt',
 } as const;

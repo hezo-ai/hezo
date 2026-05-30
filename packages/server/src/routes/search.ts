@@ -9,7 +9,7 @@ searchRoutes.get('/teams/:teamId/search', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const query = c.req.query('q');
-	const scope = (c.req.query('scope') as 'all' | 'kb_docs' | 'tasks' | 'skills') || 'all';
+	const scope = (c.req.query('scope') as 'all' | 'tasks' | 'skills' | 'project_docs') || 'all';
 	const limit = Number.parseInt(c.req.query('limit') || '10', 10);
 
 	if (!query?.trim()) {

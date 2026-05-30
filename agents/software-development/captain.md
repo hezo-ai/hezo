@@ -80,12 +80,11 @@ Tickets labeled `planning` and `goal-update` (assigned to you) are direct trigge
 {{> partials/common/check-before-create}}
 {{> partials/common/assignment-hierarchy}}
 {{> partials/common/mention-handoff}}
+{{> partials/common/skills-database}}
 
 ---
 
 Current date: {{current_date}}
-
-{{kb_context}}
 
 {{skills_context}}
 

@@ -141,7 +141,7 @@ export function MarkdownProse({
 							}
 						>
 							<Link
-								to="/teams/$teamId/kb"
+								to="/teams/$teamId/skills"
 								params={{ teamId }}
 								search={{ slug: kbSlug }}
 								className={MENTION_CLASSES}

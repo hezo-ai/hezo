@@ -9,7 +9,6 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 
 const typeColors: Record<string, string> = {
-	kb_update: 'blue',
 	strategy: 'purple',
 	designated_repo_request: 'yellow',
 	secret_access: 'red',
@@ -171,20 +170,6 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 						</>
 					)}
 				</span>
-			);
-		}
-		case ApprovalType.KbUpdate: {
-			const docTitle = (p.title as string) ?? 'a document';
-			const changeSummary = p.change_summary as string | undefined;
-			return (
-				<>
-					<span>
-						Proposing update to KB doc "<span className="font-medium">{docTitle}</span>"
-					</span>
-					{changeSummary && (
-						<span className="block text-xs text-text-muted mt-1">{changeSummary}</span>
-					)}
-				</>
 			);
 		}
 		case ApprovalType.SkillProposal: {

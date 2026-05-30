@@ -18,7 +18,7 @@ const SHARED_INSTRUCTIONS = `
 
 ### Ticket Maintenance
 - **Progress**: Update the current ticket's progress_summary via \`update_task\` at natural milestones to reflect what you've accomplished and what remains.
-- **Rules**: The ticket \`rules\` field captures *how this ticket should be worked on* — approach constraints, guardrails, or required workflows that shape execution (e.g. "run the full suite before pushing", "consult the architect before touching auth", "do not edit migrations"). Add these via \`update_task\` as you discover them. Do NOT use \`rules\` to pass project domain knowledge to a future agent — domain and scope context belongs in the ticket \`description\`; work-in-flight status belongs in \`progress_summary\`; project- or team-wide knowledge belongs in project docs (\`write_project_doc\`) or the team KB (\`upsert_kb_doc\`).
+- **Rules**: The ticket \`rules\` field captures *how this ticket should be worked on* — approach constraints, guardrails, or required workflows that shape execution (e.g. "run the full suite before pushing", "consult the architect before touching auth", "do not edit migrations"). Add these via \`update_task\` as you discover them. Do NOT use \`rules\` to pass project domain knowledge to a future agent — domain and scope context belongs in the ticket \`description\`; work-in-flight status belongs in \`progress_summary\`; project- or team-wide knowledge belongs in project docs (\`write_project_doc\`) or the team skills database (\`create_skill\`).
 - **Status**: Update the ticket status as you progress:
   - \`in_progress\` — when you begin active work
   - \`review\` — when handing off for review
@@ -111,28 +111,30 @@ export async function resolveSystemPrompt(
 		resolved = resolved.replace(/\{\{team_context\}\}/g, teamContext);
 	}
 
+	// kb_context retired: the knowledge base merged into the skills database.
+	// Strip any leftover placeholder so it never leaks into a prompt.
 	if (resolved.includes('{{kb_context}}')) {
-		const docs = await db.query<{ title: string; slug: string; content: string }>(
-			"SELECT title, slug, content FROM documents WHERE type = 'kb_doc' AND team_id = $1 ORDER BY title",
-			[ctx.teamId],
-		);
-		const kbText =
-			docs.rows.length > 0
-				? docs.rows.map((d) => `## ${d.title} (link: ${d.slug})\n${d.content}`).join('\n\n---\n\n')
-				: 'No knowledge base documents available.';
-		resolved = resolved.replace(/\{\{kb_context\}\}/g, kbText);
+		resolved = resolved.replace(/\{\{kb_context\}\}\n?/g, '');
 	}
 
+	// Skills are injected as a manifest (name + slug + summary), not full bodies.
+	// The agent calls get_skill(slug) to load a skill's content on demand.
 	if (resolved.includes('{{skills_context}}')) {
-		let skillsText = 'No skills configured.';
-		const dbSkills = await db.query<{ name: string; content: string }>(
-			'SELECT name, content FROM skills WHERE team_id = $1 AND is_active = true ORDER BY name',
+		const dbSkills = await db.query<{ name: string; slug: string; description: string }>(
+			'SELECT name, slug, description FROM skills WHERE team_id = $1 AND is_active = true ORDER BY name',
 			[ctx.teamId],
 		);
+		let skillsText = 'No skills in the team skills database yet.';
 		if (dbSkills.rows.length > 0) {
-			skillsText = dbSkills.rows
-				.map((s) => `## Skill: ${s.name}\n${s.content}`)
-				.join('\n\n---\n\n');
+			const lines = dbSkills.rows
+				.map((s) => `- ${s.name} (slug: ${s.slug})${s.description ? `: ${s.description}` : ''}`)
+				.join('\n');
+			skillsText = [
+				'The team skills database holds reusable know-how. Entries are listed below by name and slug.',
+				"Call get_skill(slug) to load a skill's full instructions when it is relevant to your task.",
+				'',
+				lines,
+			].join('\n');
 		}
 		resolved = resolved.replace(/\{\{skills_context\}\}/g, skillsText);
 	}

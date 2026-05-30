@@ -33,6 +33,7 @@ import {
 } from '../lib/dependencies';
 import { assertInternalAssignee } from '../lib/internal-assignee';
 import { resolveActorMemberId, resolveTaskId } from '../lib/resolve';
+import { deriveSkillSummary } from '../lib/skill-summary';
 import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/task-relationships';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
@@ -510,7 +511,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_task',
-		'Create a new task. Use parent_task_id for sub-tasks — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates — to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites — the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, closed, cancelled). In title/description, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. IN-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Create a new task. Use parent_task_id for sub-tasks — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates — to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites — the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, closed, cancelled). In title/description, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			team_id: z.string().describe('Team ID'),
 			project_id: z.string().describe('Project ID'),
@@ -646,7 +647,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_task',
-		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` — that wakes Coach for review, who will set the ticket to `closed` after the review passes. Agents other than Coach cannot set status to `closed` directly. Re-opening a closed task is board-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. IN-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` — that wakes Coach for review, who will set the ticket to `closed` after the review passes. Agents other than Coach cannot set status to `closed` directly. Re-opening a closed task is board-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			team_id: z.string().describe('Team ID'),
 			task_id: z.string().describe('Task ID'),
@@ -1540,7 +1541,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_comment',
-		'Add a comment to an task. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. IN-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert. When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID — it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.',
+		'Add a comment to an task. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert. When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID — it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.',
 		{
 			team_id: z.string().describe('Team ID'),
 			task_id: z.string().describe('Task ID'),
@@ -1833,51 +1834,6 @@ export function registerTools(
 				}
 			}
 			return row;
-		},
-		db,
-	);
-
-	// KB Docs
-	tool(
-		server,
-		'list_kb_docs',
-		'List knowledge base documents',
-		{
-			team_id: z.string().describe('Team ID'),
-		},
-		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			const docs = await listDocuments(db, {
-				type: DocumentType.KbDoc,
-				teamId: args.team_id as string,
-			});
-			return docs.map((d) => ({
-				id: d.id,
-				title: d.title,
-				slug: d.slug,
-				updated_at: d.updated_at,
-			}));
-		},
-		db,
-	);
-
-	tool(
-		server,
-		'get_kb_doc',
-		'Get a KB document by slug',
-		{
-			team_id: z.string().describe('Team ID'),
-			slug: z.string().describe('Document slug'),
-		},
-		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			return await getDocument(db, {
-				type: DocumentType.KbDoc,
-				teamId: args.team_id as string,
-				slug: args.slug as string,
-			});
 		},
 		db,
 	);
@@ -2216,35 +2172,6 @@ export function registerTools(
 		db,
 	);
 
-	// KB Docs: upsert
-	tool(
-		server,
-		'upsert_kb_doc',
-		'Create or update a knowledge base document. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. IN-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
-		{
-			team_id: z.string().describe('Team ID'),
-			title: z.string().describe('Document title'),
-			slug: z.string().describe('URL-safe filename ending in .md (e.g. "coding-standards.md")'),
-			content: z.string().describe('Document content (markdown)'),
-		},
-		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			return await upsertDocument(db, wsManager, {
-				scope: {
-					type: DocumentType.KbDoc,
-					teamId: args.team_id as string,
-					slug: args.slug as string,
-				},
-				title: args.title as string,
-				content: args.content as string,
-				authorMemberId: callerMemberId,
-			});
-		},
-		db,
-	);
-
 	// Project docs
 	tool(
 		server,
@@ -2304,7 +2231,7 @@ export function registerTools(
 	tool(
 		server,
 		'write_project_doc',
-		'Write a project documentation file. For high-level project context: PRD, spec, implementation plan, research. In content, reference teammates with @<agent-slug>. Reference tickets, KB docs, and project docs by their bare identifier/filename (e.g. IN-42, coding-standards.md, spec.md) — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Write a project documentation file. For high-level project context: PRD, spec, implementation plan, research. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			team_id: z.string().describe('Team ID'),
 			project_id: z.string().describe('Project ID'),
@@ -2336,7 +2263,7 @@ export function registerTools(
 	tool(
 		server,
 		'propose_skill',
-		'Propose a new skill. Creates an approval request that, when approved, writes the skill file.',
+		"Propose a new skill for the team's skills database (reusable team know-how: MCP server usage, integration steps, conventions, how agents coordinate). Creates an approval request; when approved the skill is written to the skills database.",
 		{
 			team_id: z.string().describe('Team ID'),
 			skill_name: z.string().describe('Human-readable skill name'),
@@ -2378,12 +2305,12 @@ export function registerTools(
 	tool(
 		server,
 		'semantic_search',
-		'Search across knowledge base docs, tasks, and skills using natural language. Returns ranked results by relevance.',
+		'Search the team skills database, tasks, and project docs using natural language. Returns ranked results by relevance.',
 		{
 			team_id: z.string().describe('Team ID'),
 			query: z.string().describe('Natural language search query'),
 			scope: z
-				.enum(['all', 'kb_docs', 'tasks', 'skills', 'project_docs'])
+				.enum(['all', 'tasks', 'skills', 'project_docs'])
 				.optional()
 				.describe('Limit search to specific content type (default: all)'),
 			limit: z.number().optional().describe('Max results (default: 10)'),
@@ -2401,7 +2328,7 @@ export function registerTools(
 			}
 
 			const results = await semanticSearch(db, args.team_id as string, args.query as string, {
-				scope: (args.scope as 'all' | 'kb_docs' | 'tasks' | 'skills' | 'project_docs') ?? 'all',
+				scope: (args.scope as 'all' | 'tasks' | 'skills' | 'project_docs') ?? 'all',
 				limit: (args.limit as number) ?? 10,
 			});
 
@@ -2414,7 +2341,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_skills',
-		'List all active skills for a team. Returns name, slug, description, and tags.',
+		"List the team's skills database — the manifest of reusable team know-how (MCP server usage, integration steps, conventions, how agents coordinate). Returns each skill's name, slug, and description; call get_skill to load a skill's full body on demand.",
 		{
 			team_id: z.string().describe('Team ID'),
 			tags: z.string().optional().describe('Filter by tag (comma-separated)'),
@@ -2443,7 +2370,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_skill',
-		'Get the full content of a skill by slug.',
+		"Load the full body of a skill from the team's skills database by slug. Use after list_skills surfaces a relevant skill in the manifest.",
 		{
 			team_id: z.string().describe('Team ID'),
 			slug: z.string().describe('Skill slug'),
@@ -2465,7 +2392,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_skill',
-		'Create a new skill directly (no approval needed). Use propose_skill if approval is required.',
+		"Add or update a skill in the team's skills database directly (no approval needed) — record reusable team know-how such as MCP server usage, integration steps, conventions, and how agents coordinate. Use propose_skill when approval is required. If description is omitted it is derived from the skill body.",
 		{
 			team_id: z.string().describe('Team ID'),
 			name: z.string().describe('Human-readable skill name'),
@@ -2484,6 +2411,10 @@ export function registerTools(
 				.update(args.content as string)
 				.digest('hex');
 			const tagList = args.tags ? (args.tags as string).split(',').map((t) => t.trim()) : [];
+			// Backfill the manifest description from the body when omitted, so the
+			// per-run skills manifest always has a usable one-line summary.
+			const description =
+				(args.description as string)?.trim() || deriveSkillSummary(args.content as string);
 
 			const result = await db.query<{ id: string; slug: string }>(
 				`INSERT INTO skills (team_id, name, slug, description, content, content_hash, created_by_member_id, tags)
@@ -2499,7 +2430,7 @@ export function registerTools(
 					args.team_id,
 					args.name,
 					args.slug,
-					(args.description as string) ?? '',
+					description,
 					args.content,
 					contentHash,
 					callerMemberId,

@@ -43,12 +43,6 @@ interface ScopeProjectDoc {
 	slug: string;
 }
 
-interface ScopeKbDoc {
-	type: typeof DocumentType.KbDoc;
-	teamId: string;
-	slug: string;
-}
-
 interface ScopePreferences {
 	type: typeof DocumentType.TeamPreferences;
 	teamId: string;
@@ -60,11 +54,7 @@ interface ScopeAgentSystemPrompt {
 	memberAgentId: string;
 }
 
-export type DocumentScope =
-	| ScopeProjectDoc
-	| ScopeKbDoc
-	| ScopePreferences
-	| ScopeAgentSystemPrompt;
+export type DocumentScope = ScopeProjectDoc | ScopePreferences | ScopeAgentSystemPrompt;
 
 const PREFERENCES_SLUG = 'preferences';
 const AGENT_SYSTEM_PROMPT_SLUG = 'system-prompt';
@@ -75,12 +65,6 @@ function scopeWhere(scope: DocumentScope, alias = ''): { sql: string; params: un
 		return {
 			sql: `${p}type = $1 AND ${p}team_id = $2 AND ${p}project_id = $3 AND ${p}slug = $4`,
 			params: [scope.type, scope.teamId, scope.projectId, scope.slug],
-		};
-	}
-	if (scope.type === DocumentType.KbDoc) {
-		return {
-			sql: `${p}type = $1 AND ${p}team_id = $2 AND ${p}slug = $3`,
-			params: [scope.type, scope.teamId, scope.slug],
 		};
 	}
 	if (scope.type === DocumentType.AgentSystemPrompt) {

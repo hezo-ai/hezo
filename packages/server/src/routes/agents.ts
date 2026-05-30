@@ -94,7 +94,57 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr
 		JOIN projects cp ON cp.id = ci.project_id
 		WHERE ci.created_by_run_id = hr.id),
 		'[]'::jsonb
-	) AS created_tasks`;
+	) AS created_tasks,
+	-- Project docs the agent added/updated during this run. Docs aren't stamped
+	-- with a run id, so they're attributed to the run's agent within its
+	-- wall-clock window (started_at .. finished_at). Mirrors created_tasks.
+	COALESCE(
+		(SELECT jsonb_agg(
+			jsonb_build_object('filename', d.slug)
+			ORDER BY d.updated_at ASC
+		)
+		FROM documents d
+		WHERE d.type = 'project_doc'
+		  AND d.team_id = hr.team_id
+		  AND d.last_updated_by_member_id = hr.member_id
+		  AND hr.started_at IS NOT NULL
+		  AND d.updated_at >= hr.started_at
+		  AND (hr.finished_at IS NULL OR d.updated_at <= hr.finished_at)),
+		'[]'::jsonb
+	) AS created_docs,
+	-- Skills the agent added/updated directly in the skills database this run.
+	COALESCE(
+		(SELECT jsonb_agg(
+			jsonb_build_object('name', s.name, 'slug', s.slug)
+			ORDER BY s.updated_at ASC
+		)
+		FROM skills s
+		WHERE s.team_id = hr.team_id
+		  AND s.created_by_member_id = hr.member_id
+		  AND hr.started_at IS NOT NULL
+		  AND s.updated_at >= hr.started_at
+		  AND (hr.finished_at IS NULL OR s.updated_at <= hr.finished_at)),
+		'[]'::jsonb
+	) AS created_skills,
+	-- Skills the agent proposed this run (propose_skill) — pending approval.
+	COALESCE(
+		(SELECT jsonb_agg(
+			jsonb_build_object(
+				'name', a.payload->>'skill_name',
+				'slug', a.payload->>'skill_slug'
+			)
+			ORDER BY a.created_at ASC
+		)
+		FROM approvals a
+		WHERE a.type = 'skill_proposal'
+		  AND a.status = 'pending'
+		  AND a.team_id = hr.team_id
+		  AND a.requested_by_member_id = hr.member_id
+		  AND hr.started_at IS NOT NULL
+		  AND a.created_at >= hr.started_at
+		  AND (hr.finished_at IS NULL OR a.created_at <= hr.finished_at)),
+		'[]'::jsonb
+	) AS proposed_skills`;
 
 const HEARTBEAT_RUN_TRIGGER_JOINS = `LEFT JOIN agent_wakeup_requests aw ON aw.id = hr.wakeup_id
 	LEFT JOIN task_comments tic ON tic.id = NULLIF(aw.payload->>'comment_id', '')::uuid

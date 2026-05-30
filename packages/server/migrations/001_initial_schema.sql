@@ -52,7 +52,7 @@ CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace',
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
 CREATE TYPE grant_scope AS ENUM ('single', 'project', 'team');
-CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'team_template', 'project_creation', 'strategy', 'kb_update', 'plan_review', 'deploy_production', 'designated_repo_request', 'skill_proposal');
+CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'team_template', 'project_creation', 'strategy', 'plan_review', 'deploy_production', 'designated_repo_request', 'skill_proposal');
 CREATE TYPE approval_status AS ENUM ('pending', 'approved', 'denied');
 CREATE TYPE audit_actor_type AS ENUM ('board', 'agent', 'system');
 CREATE TYPE repo_host_type AS ENUM ('github');
@@ -110,7 +110,6 @@ CREATE TABLE team_templates (
     source_url          TEXT,
     source_version      TEXT,
     metadata            JSONB NOT NULL DEFAULT '{}'::jsonb,
-    kb_docs_config      JSONB NOT NULL DEFAULT '[]'::jsonb,
     skills_config       JSONB NOT NULL DEFAULT '[]'::jsonb,
     preferences_config  JSONB NOT NULL DEFAULT '{}'::jsonb,
     mcp_servers         JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -685,10 +684,10 @@ CREATE INDEX idx_audit_created ON audit_log(team_id, created_at);
 CREATE INDEX idx_audit_entity ON audit_log(entity_type, entity_id);
 
 -------------------------------------------------------------------------------
--- DOCUMENTS (unified: project docs, knowledge base, team preferences)
+-- DOCUMENTS (unified: project docs, team preferences, agent system prompts)
 -------------------------------------------------------------------------------
 
-CREATE TYPE document_type AS ENUM ('project_doc', 'kb_doc', 'team_preferences', 'agent_system_prompt');
+CREATE TYPE document_type AS ENUM ('project_doc', 'team_preferences', 'agent_system_prompt');
 
 CREATE TABLE documents (
     id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -710,9 +709,6 @@ CREATE TABLE documents (
 CREATE UNIQUE INDEX idx_documents_project_doc
     ON documents (project_id, slug)
     WHERE type = 'project_doc';
-CREATE UNIQUE INDEX idx_documents_kb_doc
-    ON documents (team_id, slug)
-    WHERE type = 'kb_doc';
 CREATE UNIQUE INDEX idx_documents_team_preferences
     ON documents (team_id)
     WHERE type = 'team_preferences';

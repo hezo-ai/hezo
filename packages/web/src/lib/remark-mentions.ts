@@ -232,7 +232,7 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 		if (kbData) {
 			return {
 				type: 'link',
-				url: `/teams/${teamId}/kb?slug=${encodeURIComponent(kbKey)}`,
+				url: `/teams/${teamId}/skills?slug=${encodeURIComponent(kbKey)}`,
 				children: [{ type: 'text', value: display }],
 				data: {
 					hProperties: {

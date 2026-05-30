@@ -506,6 +506,81 @@ describe('created_tasks tracking', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.created_tasks).toEqual([]);
+		expect(body.data.created_docs).toEqual([]);
+		expect(body.data.created_skills).toEqual([]);
+		expect(body.data.proposed_skills).toEqual([]);
+	});
+
+	it('lists project docs and skills the agent produced during the run', async () => {
+		const { token: agentToken, runId } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+		);
+		// The run window opens when the run starts; docs/skills/approvals are
+		// attributed by the agent within [started_at, finished_at].
+		await db.query(
+			`UPDATE heartbeat_runs SET started_at = now() - interval '1 minute' WHERE id = $1`,
+			[runId],
+		);
+
+		const callMcp = async (name: string, args: Record<string, unknown>) => {
+			const res = await app.request('/mcp', {
+				method: 'POST',
+				headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					method: 'tools/call',
+					params: { name, arguments: args },
+					id: Math.floor(Math.random() * 1e6),
+				}),
+			});
+			expect(res.status).toBe(200);
+		};
+
+		await callMcp('write_project_doc', {
+			team_id: teamId,
+			project_id: projectId,
+			filename: 'spec.md',
+			content: '# Spec\n\nDetails.',
+		});
+		await callMcp('create_skill', {
+			team_id: teamId,
+			name: 'Deploy Flow',
+			slug: 'deploy-flow',
+			content: '# Deploy Flow\n\nHow to deploy.',
+		});
+		await callMcp('propose_skill', {
+			team_id: teamId,
+			skill_name: 'Linear Triage',
+			skill_slug: 'linear-triage',
+			content: '# Linear Triage',
+			reason: 'Reusable triage steps',
+		});
+
+		const res = await app.request(
+			`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs/${runId}`,
+			{ headers: authHeader(token) },
+		);
+		expect(res.status).toBe(200);
+		const body = await res.json();
+
+		const docFilenames = (body.data.created_docs as Array<{ filename: string }>).map(
+			(d) => d.filename,
+		);
+		expect(docFilenames).toContain('spec.md');
+
+		const skillSlugs = (body.data.created_skills as Array<{ name: string; slug: string }>).map(
+			(s) => s.slug,
+		);
+		expect(skillSlugs).toContain('deploy-flow');
+
+		const proposedSlugs = (body.data.proposed_skills as Array<{ name: string; slug: string }>).map(
+			(s) => s.slug,
+		);
+		expect(proposedSlugs).toContain('linear-triage');
 	});
 
 	it('leaves created_by_run_id null when a board user creates an task via MCP', async () => {

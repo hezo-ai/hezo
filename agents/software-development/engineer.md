@@ -63,12 +63,12 @@ If the spec is unclear, ask the Architect — don't guess. If you disagree with 
 {{> partials/common/check-before-create}}
 {{> partials/common/assignment-hierarchy}}
 {{> partials/common/mention-handoff}}
+{{> partials/common/skills-database}}
+{{> partials/common/delivery-knowledge}}
 
 ---
 
 Current date: {{current_date}}
-
-{{kb_context}}
 
 {{skills_context}}
 
