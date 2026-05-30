@@ -336,7 +336,12 @@ async function buildRunContext(
 			url: `http://host.docker.internal:${deps.serverPort}/mcp`,
 			bearerToken: agentJwt,
 		},
-		...(await loadMcpConnectionDescriptors(deps.db, agent.team_id, project.id)),
+		...(await loadMcpConnectionDescriptors(
+			deps.db,
+			agent.team_id,
+			project.id,
+			deps.masterKeyManager,
+		)),
 	];
 
 	const skillFiles = await loadSkillFilesForTeam(deps.db, agent.team_id);

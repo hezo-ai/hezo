@@ -33,7 +33,17 @@ afterAll(async () => {
 });
 
 describe('mcp connection descriptor with oauth_connection_id', () => {
-	it('emits Authorization: Bearer __HEZO_SECRET_OAUTH_<...>__ for SaaS MCPs linked to an OAuth connection', async () => {
+	it('materializes the real access token in Authorization for OAuth-backed SaaS MCPs', async () => {
+		// Materialize-at-descriptor-build is the deliberate trade-off: the
+		// agent's --mcp-config gets the real Bearer token (visible in
+		// /proc/<pid>/cmdline inside the container) rather than a placeholder
+		// to be substituted at egress. Claude Code's undici-based MCP client
+		// doesn't reliably go through HTTPS_PROXY for streamable-http
+		// transports, so placeholder substitution silently fails and the MCP
+		// tools never load. Same precedent as the AI-adapter API key carve-out
+		// in agent-runner.ts:buildProviderEnv. The vault remains source of
+		// truth; each run fetches and materializes a fresh value, so revoke
+		// cascades on next run.
 		const conn = await createConnection(
 			{ db, masterKeyManager },
 			{
@@ -60,19 +70,13 @@ describe('mcp connection descriptor with oauth_connection_id', () => {
 			],
 		);
 
-		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId);
+		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId, masterKeyManager);
 		const dato = descriptors.find((d) => d.name === 'datocms');
 		expect(dato).toBeTruthy();
 		if (dato?.kind !== 'http') throw new Error('expected http descriptor');
-		expect(dato.headers?.Authorization).toBe(
-			`Bearer ${conn.accessTokenSecretName}`.replace(
-				conn.accessTokenSecretName,
-				`__HEZO_SECRET_${conn.accessTokenSecretName}__`,
-			),
-		);
+		expect(dato.headers?.Authorization).toBe('Bearer real-secret-token-value');
 		expect(dato.headers?.['X-Custom']).toBe('keep-me');
 		expect(dato.url).toBe('https://site-api.datocms.com/mcp');
-		expect(JSON.stringify(dato)).not.toContain('real-secret-token-value');
 	});
 
 	it('overrides any user-provided Authorization header when oauth_connection_id is set', async () => {
@@ -102,16 +106,18 @@ describe('mcp connection descriptor with oauth_connection_id', () => {
 			],
 		);
 
-		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId);
+		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId, masterKeyManager);
 		const linear = descriptors.find((d) => d.name === 'linear');
 		if (linear?.kind !== 'http') throw new Error('expected http descriptor');
 		expect(linear.headers?.authorization).toBeUndefined();
-		expect(linear.headers?.Authorization).toBe(
-			`Bearer __HEZO_SECRET_${conn.accessTokenSecretName}__`,
-		);
+		expect(linear.headers?.Authorization).toBe('Bearer linear-token');
 	});
 
 	it('preserves headers verbatim when oauth_connection_id is not set', async () => {
+		// Non-OAuth-backed SaaS MCPs (operator-supplied headers, possibly with
+		// __HEZO_SECRET_<NAME>__ placeholders for separately-managed secrets)
+		// still flow through untouched — those secrets are independent of the
+		// connector OAuth lifecycle and rely on the egress proxy substitution.
 		await db.query(
 			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
 			 VALUES ($1, NULL, 'plain', 'saas', $2::jsonb, 'installed')`,
@@ -123,7 +129,7 @@ describe('mcp connection descriptor with oauth_connection_id', () => {
 				}),
 			],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId);
+		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId, masterKeyManager);
 		const plain = descriptors.find((d) => d.name === 'plain');
 		if (plain?.kind !== 'http') throw new Error('expected http descriptor');
 		expect(plain.headers?.authorization).toBe('Bearer __HEZO_SECRET_RAW_KEY__');
