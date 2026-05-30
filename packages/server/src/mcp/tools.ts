@@ -2748,7 +2748,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_mcp_connections',
-		'List MCP server connections registered for the team (and optionally a project). Returns name, kind (saas|local), config (URL or command), and install_status.',
+		'List MCP server connections registered for the team (and optionally a project). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`.',
 		{
 			team_id: z.string().describe('Team ID'),
 			project_id: z
@@ -2771,16 +2771,51 @@ export function registerTools(
 			} else {
 				where += ' AND project_id IS NULL';
 			}
-			const r = await db.query(
-				`SELECT id, team_id, project_id, name, kind::text AS kind,
-				        config, install_status::text AS install_status, install_error,
+			const r = await db.query<{
+				id: string;
+				team_id: string;
+				project_id: string | null;
+				name: string;
+				display_name: string | null;
+				kind: string;
+				config: Record<string, unknown>;
+				oauth_connection_id: string | null;
+				install_status: string;
+				install_error: string | null;
+				skill_doc_id: string | null;
+				created_by_task_id: string | null;
+				activated_at: string | null;
+				revoked_at: string | null;
+				auth_error: string | null;
+				created_at: string;
+				updated_at: string;
+			}>(
+				`SELECT id, team_id, project_id, name, display_name, kind::text AS kind,
+				        config, oauth_connection_id, install_status::text AS install_status, install_error,
+				        skill_doc_id, created_by_task_id,
+				        activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
 				        created_at::text, updated_at::text
 				 FROM mcp_connections
 				 WHERE ${where}
 				 ORDER BY name ASC`,
 				params,
 			);
-			return r.rows;
+			// Derive a single oauth_status field that's the load-bearing signal
+			// for whether the connector is usable by agents on subsequent runs.
+			const cfg = (row: { config: Record<string, unknown> }): boolean => {
+				const c = row.config as { dcr?: unknown };
+				return !!c?.dcr;
+			};
+			return r.rows.map((row) => {
+				let oauth_status: 'active' | 'pending' | 'failed' | 'revoked' | 'none';
+				if (row.kind !== 'saas') oauth_status = 'none';
+				else if (row.revoked_at) oauth_status = 'revoked';
+				else if (row.auth_error && !row.activated_at) oauth_status = 'failed';
+				else if (row.oauth_connection_id && row.activated_at) oauth_status = 'active';
+				else if (cfg(row) || row.created_by_task_id) oauth_status = 'pending';
+				else oauth_status = 'none';
+				return { ...row, oauth_status };
+			});
 		},
 		db,
 	);

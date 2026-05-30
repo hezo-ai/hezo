@@ -63,6 +63,19 @@ const SHARED_INSTRUCTIONS = `
 - For bare API credentials (no MCP): call \`request_credential\` to ask the human for a paste, then reference the credential by its \`__HEZO_SECRET_<NAME>__\` placeholder in env vars or HTTP headers. The egress proxy substitutes the real value at request time; you never see it.
 - If a CLI you ran has captured a token to disk in the container (e.g. a vendor login wrote \`~/.<vendor>/config.json\`), read that file, post the contents back to Hezo via \`request_credential\` so the value lands in the vault, then delete the local copy. The container is ephemeral; the vault is the long-term store.
 - Whatever you do, do NOT commit credentials, paste them into a comment, log them, or write them into a file we'll persist. If you suspect a credential has leaked, mark it for rotation and surface the incident in a wrap-up comment.
+
+#### Discovering MCP server URLs and skill files
+- Most providers publish their MCP server URL on a docs page (e.g. \`https://www.<vendor>.com/docs/mcp-server\` or \`https://docs.<vendor>.com/mcp\`). When the user gives you a vendor name without a URL, \`WebSearch\` for \`"<vendor> MCP server"\` or fetch their docs page directly.
+- An "agent skill file" is just markdown a vendor publishes describing how to use their MCP — same idea as \`AGENTS.md\`. Try in order: (1) the vendor's docs page itself (often the skill file content IS the docs page); (2) common GitHub paths like \`https://raw.githubusercontent.com/<vendor>/mcp-server/{main,master}/{AGENTS,SKILL,README}.md\`; (3) the MCP server's own discovery endpoints (after the connector is active, call \`tools/list\` to enumerate its capabilities).
+- \`fetch_skill_file\` is not mandatory. If you can't find one, register the connector anyway — the MCP server's \`tools/list\` is the authoritative source of truth for what tools exist, and once auth completes those tools appear in your tool list with \`mcp__<connector_name>__<tool>\` names.
+
+#### Interpreting connector status
+- After calling \`register_connector\` or seeing an existing connector via \`list_mcp_connections\`, the field that tells you whether the MCP is **usable** is \`oauth_status\` (NOT \`install_status\`, which tracks local-package install for stdio MCPs and is meaningless for SaaS).
+  - \`oauth_status = "active"\` → OAuth done, the MCP's tools appear in your tool list on this and future runs as \`mcp__<connector_name>__<tool>\`. If you've registered the connector and a previous run posted a Connect button, but you see "active" now AND no tools — flag it as a bug (auth completed but token isn't being used) rather than re-asking the human to connect.
+  - \`oauth_status = "pending"\` → human hasn't clicked Connect yet. Don't repost the ask; the connect_required comment is still live.
+  - \`oauth_status = "failed"\` → an attempt errored (read \`auth_error\` for the AS's message). Surface this to the human; they may need to retry or fix something.
+  - \`oauth_status = "revoked"\` → a human explicitly disconnected. Don't auto-reconnect; ask first.
+- If your tool list doesn't include the MCP's tools but \`oauth_status\` is \`"active"\`, it's NOT a "waiting on auth" situation — log a comment describing the inconsistency so the human can investigate.
 `;
 
 export async function resolveSystemPrompt(
