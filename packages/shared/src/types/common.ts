@@ -653,6 +653,20 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
 };
 
 /**
+ * Tools removed from a runtime's available set. Claude Code's built-in WebFetch
+ * runs a preflight domain-safety check against an upstream that is unreachable
+ * from inside a headless container, so it fails for every URL; agents fetch
+ * pages with curl/wget instead. The runtime's native web-search tool is left
+ * intact. Other runtimes fetch through their own provider-side tooling, so they
+ * disallow nothing.
+ */
+export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string[]> = {
+	[AgentRuntime.ClaudeCode]: ['--disallowedTools', 'WebFetch'],
+	[AgentRuntime.Codex]: [],
+	[AgentRuntime.Gemini]: [],
+};
+
+/**
  * Flags that make each CLI emit structured per-turn events to stdout while
  * the run is in flight, so the run log shows tool calls, thinking, and
  * partial assistant text live instead of silence until the final result.

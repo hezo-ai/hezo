@@ -51,6 +51,10 @@ const SHARED_INSTRUCTIONS = `
 ### Sub-Task Delegation
 - Use \`create_task\` with \`parent_task_id\` and \`assignee_slug\` to create sub-tasks and delegate work to other agents. The Teammates block above lists every enabled peer's slug — use \`list_agents\` only when you need details (description / reports_to) on a specific teammate.
 
+### Fetching External URLs
+- To read a web page or hit an HTTP endpoint, use \`curl\` (or \`wget\`) from the shell. The container's proxy and CA trust are preconfigured, so HTTPS to any host works with no extra flags.
+- Use your native web-search tool for discovery, then fetch the resulting pages with \`curl\`/\`wget\`.
+
 ### Comment Timing
 - Post comments at the end of your run, after every other action. A comment almost always tends to be either a summary of what you did and/or a request for someone else to take a look — both are end-of-run moves.
 - If your run will create new tickets (sub-tasks, follow-ups, delegations) that the comment should reference, call \`create_task\` first and quote the resulting identifiers in the wrap-up comment. A comment announcing work you have not yet filed leaves readers without anywhere to look.

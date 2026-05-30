@@ -195,6 +195,8 @@ describe('template resolver', () => {
 		expect(result).toContain('### Knowledge Maintenance');
 		expect(result).toContain('### Sub-Agents & Parallel Exploration');
 		expect(result).toContain('### Sub-Task Delegation');
+		expect(result).toContain('### Fetching External URLs');
+		expect(result).toContain('curl');
 		expect(result).toContain('### Comment Timing');
 		expect(result).toContain('update_task');
 		expect(result).toContain('write_project_doc');

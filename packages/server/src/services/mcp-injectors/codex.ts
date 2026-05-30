@@ -102,7 +102,10 @@ export const codexAdapter: RuntimeMcpAdapter = {
 		const judgeScriptHostPath = join(ctx.hostHomeDir, JUDGE_SCRIPT_BASENAME);
 		const judgeScriptContainerPath = join(ctx.containerHomeDir, JUDGE_SCRIPT_BASENAME);
 
-		const blocks: string[] = [];
+		// Top-level keys must precede every [table] header in TOML, so the
+		// web-search mode leads the file. "live" fetches current pages rather
+		// than the cached index, giving agents real-time web search.
+		const blocks: string[] = ['web_search = "live"'];
 		for (const d of descriptors) {
 			blocks.push(d.kind === 'http' ? renderHttpBlock(d) : renderStdioBlock(d));
 		}
