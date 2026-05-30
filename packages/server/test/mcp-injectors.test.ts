@@ -138,6 +138,18 @@ describe('codex adapter', () => {
 		expect(injection.envEntries).toEqual([`HEZO_MCP_BEARER_TOKEN_HEZO=${TOKEN}`]);
 	});
 
+	it('enables live web search ahead of every TOML table', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+		const config = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
+		if (!config) throw new Error('config.toml not emitted');
+		expect(config.contents).toContain('web_search = "live"');
+		// Top-level keys must precede any [table] header or TOML parsing fails.
+		expect(config.contents.indexOf('web_search')).toBeLessThan(config.contents.indexOf('['));
+	});
+
 	it('throws when no host home dir is provided', () => {
 		expect(() =>
 			adapter.build([HEZO_DESCRIPTOR], { hostHomeDir: null, containerHomeDir: null }),

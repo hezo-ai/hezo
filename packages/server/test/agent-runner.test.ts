@@ -1269,6 +1269,62 @@ describe('runAgent', () => {
 			expect(capturedCmd).toContain('--dangerously-skip-permissions');
 		});
 
+		it('disables WebFetch but keeps WebSearch for claude_code runtime', async () => {
+			let capturedCmd: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					return 'exec-claude-disallow';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
+			};
+
+			await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+			expect(capturedCmd).toContain('--disallowedTools');
+			const idx = capturedCmd.indexOf('--disallowedTools');
+			expect(capturedCmd[idx + 1]).toBe('WebFetch');
+			expect(capturedCmd).not.toContain('WebSearch');
+		});
+
+		it('does not pass --disallowedTools for codex runtime', async () => {
+			let capturedCmd: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					return 'exec-codex-disallow';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
+			};
+
+			await runAgent(
+				deps,
+				makeAgent(),
+				{ ...makeTask(), runtime_type: 'codex' as const },
+				makeProject(),
+			);
+
+			expect(capturedCmd).not.toContain('--disallowedTools');
+		});
+
 		it('passes --dangerously-bypass-approvals-and-sandbox for codex runtime', async () => {
 			let capturedCmd: string[] = [];
 			const docker = createMockDocker({
