@@ -91,6 +91,20 @@ describe('PRM + AS discovery', () => {
 		expect(discovery.asMetadata.token_endpoint).toBe(`${fake.url}/token`);
 		expect(discovery.asMetadata.registration_endpoint).toBe(`${fake.url}/register`);
 	});
+
+	it('falls back to well-known PRM when 401 has no resource_metadata hint (DatoCMS shape)', async () => {
+		const realistic = await startFakeMcpServer({ omitWwwAuthenticateResourceMetadata: true });
+		try {
+			const prmUrl = await probeForProtectedResourceMetadata(`${realistic.url}/mcp`);
+			expect(prmUrl).toBe(`${realistic.url}/.well-known/oauth-protected-resource`);
+
+			const discovery = await discoverMcpAuthorization(`${realistic.url}/mcp`);
+			expect(discovery.authorizationServerUrl).toBe(realistic.url);
+			expect(discovery.asMetadata.registration_endpoint).toBe(`${realistic.url}/register`);
+		} finally {
+			await realistic.close();
+		}
+	});
 });
 
 describe('DCR (RFC 7591)', () => {

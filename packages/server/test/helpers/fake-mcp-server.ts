@@ -27,6 +27,13 @@ export interface FakeMcpServerOptions {
 	rejectDcr?: boolean;
 	rejectExchange?: boolean;
 	noRegistrationEndpoint?: boolean;
+	/**
+	 * Mimic real-world servers (DatoCMS as of 2026-05) that return
+	 * `WWW-Authenticate: Bearer error="invalid_token", error_description="..."`
+	 * without the RFC 9728 `resource_metadata=` hint. PRM is still served at
+	 * the standard well-known path; the client must fall back.
+	 */
+	omitWwwAuthenticateResourceMetadata?: boolean;
 }
 
 export interface FakeMcpServer {
@@ -63,7 +70,9 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions = {}): Promi
 		}
 		c.header(
 			'WWW-Authenticate',
-			`Bearer resource_metadata="${base}/.well-known/oauth-protected-resource"`,
+			opts.omitWwwAuthenticateResourceMetadata
+				? `Bearer error="invalid_token", error_description="Missing Authorization header"`
+				: `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource"`,
 		);
 		return c.json({ error: 'unauthorized' }, 401);
 	});

@@ -24,29 +24,59 @@ export interface DiscoveryResult {
 }
 
 /**
- * Probe an MCP server URL once, expecting a 401 with `WWW-Authenticate: Bearer
- * resource_metadata="..."`. Returns the extracted resource_metadata URL, or
- * null when the server responded successfully (no auth needed) or with a
- * different challenge.
+ * Build the standard Protected Resource Metadata URL for a resource. We use
+ * the origin-level variant (`${origin}/.well-known/oauth-protected-resource`)
+ * because that's what real servers publish (DatoCMS, Linear, …), even when
+ * the MCP endpoint is at a sub-path. RFC 9728 §3.1's path-aware "insert
+ * /.well-known between host and path" variant is rarely served in practice;
+ * we can add it as a secondary fallback if a real server forces the issue.
+ */
+export function wellKnownPrmUrl(mcpUrl: string): string {
+	const u = new URL(mcpUrl);
+	return `${u.protocol}//${u.host}/.well-known/oauth-protected-resource`;
+}
+
+/**
+ * Probe an MCP server URL once, expecting either:
+ *   (a) a 401 with `WWW-Authenticate: Bearer resource_metadata="..."` per
+ *       MCP 2025-06-18 / RFC 9728 — return the pointed-to URL; or
+ *   (b) the server advertises PRM only at the standard well-known location
+ *       per RFC 9728 §3.1 — fall back to that URL.
+ *
+ * Returns the URL the caller should `fetchProtectedResourceMetadata` against.
+ * Falls back to the well-known URL whenever the WWW-Authenticate-hint path
+ * doesn't yield one (401 without the hint, 200/404/405, or network error).
+ * Real-world implementations (DatoCMS as of 2026-05) only do (b).
  */
 export async function probeForProtectedResourceMetadata(
 	mcpUrl: string,
 	fetchFn: FetchFn = globalThis.fetch,
-): Promise<string | null> {
+): Promise<string> {
+	const fallback = wellKnownPrmUrl(mcpUrl);
 	let res: Response;
 	try {
 		res = await fetchFn(mcpUrl, { method: 'GET', headers: { Accept: 'application/json' } });
 	} catch (e) {
-		throw new Error(`MCP server probe failed: ${(e as Error).message}`);
+		log.debug('MCP probe failed; using well-known fallback', {
+			mcpUrl,
+			error: (e as Error).message,
+		});
+		return fallback;
 	}
 	if (res.status !== 401) {
-		log.debug('MCP probe did not yield 401', { mcpUrl, status: res.status });
-		return null;
+		log.debug('MCP probe did not yield 401; using well-known fallback', {
+			mcpUrl,
+			status: res.status,
+		});
+		return fallback;
 	}
 	const challenge = res.headers.get('WWW-Authenticate') ?? res.headers.get('www-authenticate');
-	if (!challenge) return null;
-	const match = /resource_metadata\s*=\s*"([^"]+)"/i.exec(challenge);
-	return match?.[1] ?? null;
+	if (challenge) {
+		const match = /resource_metadata\s*=\s*"([^"]+)"/i.exec(challenge);
+		if (match?.[1]) return match[1];
+	}
+	log.debug('MCP 401 lacked resource_metadata hint; using well-known fallback', { mcpUrl });
+	return fallback;
 }
 
 /**
@@ -77,12 +107,14 @@ export async function discoverMcpAuthorization(
 	fetchFn: FetchFn = globalThis.fetch,
 ): Promise<DiscoveryResult> {
 	const prmUrl = await probeForProtectedResourceMetadata(mcpUrl, fetchFn);
-	if (!prmUrl) {
+	let prm: ProtectedResourceMetadata;
+	try {
+		prm = await fetchProtectedResourceMetadata(prmUrl, fetchFn);
+	} catch (e) {
 		throw new Error(
-			`MCP server at ${mcpUrl} did not advertise PRM via WWW-Authenticate; cannot discover OAuth endpoints`,
+			`Could not discover OAuth endpoints for ${mcpUrl}: WWW-Authenticate had no resource_metadata pointer, and ${prmUrl} failed (${(e as Error).message})`,
 		);
 	}
-	const prm = await fetchProtectedResourceMetadata(prmUrl, fetchFn);
 	const asUrl = prm.authorization_servers[0]!;
 	const asMetadata = await discoverMetadata(asUrl, fetchFn);
 	return {
