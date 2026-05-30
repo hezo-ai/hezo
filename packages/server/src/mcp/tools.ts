@@ -305,7 +305,7 @@ export function registerTools(
 	server: McpServer,
 	db: PGlite,
 	dataDir: string,
-	_masterKeyManager: MasterKeyManager,
+	masterKeyManager: MasterKeyManager,
 	wsManager?: WebSocketManager,
 ): ToolDef[] {
 	registeredTools.length = 0;
@@ -2816,6 +2816,112 @@ export function registerTools(
 				else oauth_status = 'none';
 				return { ...row, oauth_status };
 			});
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'test_connector',
+		'Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server (bypassing the agent container and its egress proxy entirely). Returns the upstream status code, response excerpt, and the secret name + masked-token-prefix used. Use this when oauth_status says "active" but the MCP\'s tools are absent from your tool list — it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?".',
+		{
+			team_id: z.string().describe('Team ID'),
+			connector_id: z.string().describe('mcp_connections.id from list_mcp_connections'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
+			if (denied) return { error: denied };
+			const teamId = args.team_id as string;
+			const connectorId = args.connector_id as string;
+
+			const row = await db.query<{
+				id: string;
+				team_id: string;
+				name: string;
+				kind: string;
+				config: Record<string, unknown>;
+				oauth_connection_id: string | null;
+			}>(
+				`SELECT id, team_id, name, kind::text AS kind, config, oauth_connection_id
+				 FROM mcp_connections WHERE id = $1 AND team_id = $2`,
+				[connectorId, teamId],
+			);
+			if (row.rows.length === 0) return { error: 'connector not found in this team' };
+			const connector = row.rows[0];
+			if (connector.kind !== 'saas') {
+				return { error: `connector kind=${connector.kind}; test only meaningful for kind=saas` };
+			}
+			const config = connector.config as { url?: string };
+			if (!config.url) return { error: 'connector has no mcp url' };
+
+			let bearerToken: string | null = null;
+			let secretName: string | null = null;
+			let tokenPrefix: string | null = null;
+			if (connector.oauth_connection_id) {
+				const secret = await db.query<{ name: string; encrypted_value: string }>(
+					`SELECT s.name, s.encrypted_value FROM oauth_connections oc
+					 JOIN secrets s ON s.id = oc.access_token_secret_id
+					 WHERE oc.id = $1`,
+					[connector.oauth_connection_id],
+				);
+				if (secret.rows.length === 0) {
+					return {
+						error:
+							'oauth_connection_id is set but no matching secret row found — vault is corrupted for this connector',
+						connector_id: connector.id,
+						oauth_connection_id: connector.oauth_connection_id,
+					};
+				}
+				const key = masterKeyManager.getKey();
+				if (!key) return { error: 'master key is locked; cannot decrypt secret to test' };
+				const { decrypt } = await import('../crypto/encryption');
+				try {
+					bearerToken = decrypt(secret.rows[0].encrypted_value, key);
+				} catch (e) {
+					return {
+						error: `failed to decrypt stored token: ${(e as Error).message}`,
+						secret_name: secret.rows[0].name,
+					};
+				}
+				secretName = secret.rows[0].name;
+				tokenPrefix = bearerToken.slice(0, 8);
+			}
+
+			const headers: Record<string, string> = { Accept: 'application/json' };
+			if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`;
+
+			let probeRes: Response;
+			try {
+				probeRes = await fetch(config.url, { method: 'GET', headers });
+			} catch (e) {
+				return {
+					ok: false,
+					error: `network probe failed: ${(e as Error).message}`,
+					mcp_url: config.url,
+					secret_name: secretName,
+					token_prefix: tokenPrefix,
+				};
+			}
+			const bodyText = await probeRes.text().catch(() => '');
+			const wwwAuth = probeRes.headers.get('WWW-Authenticate') ?? null;
+			return {
+				ok: probeRes.ok,
+				status: probeRes.status,
+				mcp_url: config.url,
+				secret_name: secretName,
+				token_prefix: tokenPrefix,
+				token_length: bearerToken?.length ?? 0,
+				www_authenticate: wwwAuth,
+				body_excerpt: bodyText.slice(0, 400),
+				hint:
+					probeRes.status === 401
+						? bearerToken
+							? 'Token rejected by upstream. Either the token expired, the scopes are insufficient, or the provider revoked it. Surface to the user; they may need to reconnect.'
+							: 'No token sent (connector has no oauth_connection_id). OAuth never completed for this connector.'
+						: probeRes.ok
+							? "Token valid against upstream. If the MCP tools still don't appear in your tool list, the issue is in the container/proxy chain — file a bug with the launch-command headers and any audit_log entries for this host."
+							: `Upstream returned ${probeRes.status}; check body_excerpt for details.`,
+			};
 		},
 		db,
 	);

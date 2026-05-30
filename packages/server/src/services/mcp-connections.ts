@@ -130,11 +130,28 @@ export async function loadMcpConnectionDescriptors(
 				continue;
 			}
 			let headers = { ...(config.headers ?? {}) };
+			let host = '';
+			try {
+				host = new URL(config.url).host;
+			} catch {
+				log.warn('skipping saas mcp connection with malformed url', {
+					id: row.id,
+					name: row.name,
+					url: config.url,
+				});
+				continue;
+			}
 			if (row.oauth_connection_id) {
 				const secretName = oauthSecretNames.get(row.oauth_connection_id);
 				if (secretName) {
 					headers = stripExistingAuth(headers);
 					headers.Authorization = `Bearer ${credentialPlaceholder(secretName)}`;
+					log.info('mcp descriptor built with oauth placeholder', {
+						name: row.name,
+						url: config.url,
+						host,
+						secret_name: secretName,
+					});
 				} else {
 					log.warn('mcp connection references missing oauth_connection_id; skipping', {
 						id: row.id,
@@ -142,6 +159,12 @@ export async function loadMcpConnectionDescriptors(
 					});
 					continue;
 				}
+			} else {
+				log.info('mcp descriptor built without oauth (no oauth_connection_id)', {
+					name: row.name,
+					url: config.url,
+					host,
+				});
 			}
 			descriptors.push({
 				kind: 'http',
