@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { Check, ExternalLink, Plug, Trash2, X } from 'lucide-react';
+import { Check, ExternalLink, Github, Plug, Trash2, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
+import { GitHubDeviceFlowDialog } from '../../../components/github-device-flow-dialog';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import {
@@ -10,6 +11,11 @@ import {
 	useMcpConnections,
 	useRevokeConnector,
 } from '../../../hooks/use-mcp-connections';
+import {
+	type OAuthConnection,
+	useDeleteOAuthConnection,
+	useOAuthConnections,
+} from '../../../hooks/use-oauth-connections';
 
 interface ConnectorsSearch {
 	focus?: string;
@@ -26,6 +32,7 @@ function ConnectorsPage() {
 	const { teamId } = Route.useParams();
 	const { focus } = Route.useSearch();
 	const { data: connectors = [] } = useMcpConnections(teamId);
+	const { data: oauthConnections = [] } = useOAuthConnections(teamId);
 
 	// Ref callback fires when the focused <li> mounts (which can happen after
 	// the initial render once the connectors query resolves). Scrolls into view
@@ -33,6 +40,9 @@ function ConnectorsPage() {
 	const focusRef = useCallback((el: HTMLLIElement | null) => {
 		if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 	}, []);
+
+	const githubConnection = oauthConnections.find((c) => c.provider === 'github') ?? null;
+	const isEmpty = connectors.length === 0 && oauthConnections.length === 0;
 
 	return (
 		<div className="space-y-6 p-4 sm:p-6 max-w-4xl mx-auto">
@@ -42,31 +52,105 @@ function ConnectorsPage() {
 					Connectors
 				</h1>
 				<p className="text-sm text-text-subtle mt-1">
-					Third-party MCP servers and skill files agents use. Tokens are stored in the Hezo vault
-					and substituted at egress; agents never see them.
+					Third-party services agents use — GitHub for git operations, MCP servers + skill files for
+					everything else. Tokens are stored in the Hezo vault and substituted at egress; agents
+					never see them.
 				</p>
 			</header>
 
-			{connectors.length === 0 ? (
-				<div className="rounded-md border border-border-default p-6 text-center text-text-subtle">
-					No connectors yet. When an agent calls{' '}
+			<ul className="space-y-3" data-testid="connectors-list">
+				<GitHubRow teamId={teamId} connection={githubConnection} />
+				{connectors.map((connector) => (
+					<ConnectorRow
+						key={connector.id}
+						connector={connector}
+						teamId={teamId}
+						focused={connector.id === focus}
+						focusRef={connector.id === focus ? focusRef : undefined}
+					/>
+				))}
+			</ul>
+
+			{isEmpty && (
+				<p className="text-xs text-text-subtle text-center">
+					No third-party MCP servers yet. When an agent calls{' '}
 					<code className="px-1 py-0.5 rounded bg-bg-subtle text-xs">register_connector</code>, a
 					Connect button appears here and on the task that requested it.
-				</div>
-			) : (
-				<ul className="space-y-3" data-testid="connectors-list">
-					{connectors.map((connector) => (
-						<ConnectorRow
-							key={connector.id}
-							connector={connector}
-							teamId={teamId}
-							focused={connector.id === focus}
-							focusRef={connector.id === focus ? focusRef : undefined}
-						/>
-					))}
-				</ul>
+				</p>
 			)}
 		</div>
+	);
+}
+
+interface GitHubRowProps {
+	teamId: string;
+	connection: OAuthConnection | null;
+}
+
+function GitHubRow({ teamId, connection }: GitHubRowProps) {
+	const [dialogOpen, setDialogOpen] = useState(false);
+	const deleteConn = useDeleteOAuthConnection(teamId);
+	const status = connection ? 'active' : 'pending';
+
+	const doRevoke = () => {
+		if (!connection) return;
+		if (!window.confirm(`Remove ${connection.provider_account_label}?`)) return;
+		deleteConn.mutate(connection.id);
+	};
+
+	return (
+		<li
+			className="rounded-lg border p-4 border-border-default"
+			data-testid="connector-row"
+			data-connector-name="github"
+			data-status={status}
+		>
+			<div className="flex items-start justify-between gap-4">
+				<div className="flex-1 min-w-0">
+					<div className="flex items-center gap-2">
+						<Github className="size-4 shrink-0" />
+						<h2 className="text-base font-medium truncate">GitHub</h2>
+						<StatusBadge status={status} />
+					</div>
+					{connection ? (
+						<>
+							<p className="text-xs text-text-muted mt-1">
+								Connected as <span className="font-mono">{connection.provider_account_label}</span>
+							</p>
+							<p className="text-xs text-text-subtle mt-1 font-mono">
+								scopes: {connection.scopes.join(' ')}
+							</p>
+						</>
+					) : (
+						<p className="text-xs text-text-muted mt-1">
+							Authorizes git clone/push and registers your team SSH key on the connecting account.
+							Uses device flow — no callback URL configuration needed.
+						</p>
+					)}
+				</div>
+
+				<div className="flex items-center gap-2 shrink-0">
+					{connection ? (
+						<Button
+							size="sm"
+							variant="outline"
+							onClick={doRevoke}
+							disabled={deleteConn.isPending}
+							data-testid="connector-revoke"
+						>
+							<Trash2 className="size-3.5 mr-1" />
+							{deleteConn.isPending ? 'Removing…' : 'Disconnect'}
+						</Button>
+					) : (
+						<Button size="sm" onClick={() => setDialogOpen(true)} data-testid="connector-connect">
+							Connect
+						</Button>
+					)}
+				</div>
+			</div>
+
+			<GitHubDeviceFlowDialog open={dialogOpen} onOpenChange={setDialogOpen} teamId={teamId} />
+		</li>
 	);
 }
 

@@ -26,7 +26,6 @@ import { Route as TeamsTeamIdAgentsIndexRouteImport } from './routes/teams/$team
 import { Route as TeamsTeamIdTasksTaskIdRouteImport } from './routes/teams/$teamId/tasks/$taskId'
 import { Route as TeamsTeamIdSettingsGeneralRouteImport } from './routes/teams/$teamId/settings/general'
 import { Route as TeamsTeamIdSettingsCredentialsRouteImport } from './routes/teams/$teamId/settings/credentials'
-import { Route as TeamsTeamIdSettingsConnectionsRouteImport } from './routes/teams/$teamId/settings/connections'
 import { Route as TeamsTeamIdSettingsAuditLogRouteImport } from './routes/teams/$teamId/settings/audit-log'
 import { Route as TeamsTeamIdAgentsHireRouteImport } from './routes/teams/$teamId/agents/hire'
 import { Route as TeamsTeamIdProjectsProjectIdRouteRouteImport } from './routes/teams/$teamId/projects/$projectId/route'
@@ -130,12 +129,6 @@ const TeamsTeamIdSettingsCredentialsRoute =
     path: '/settings/credentials',
     getParentRoute: () => TeamsTeamIdRouteRoute,
   } as any)
-const TeamsTeamIdSettingsConnectionsRoute =
-  TeamsTeamIdSettingsConnectionsRouteImport.update({
-    id: '/settings/connections',
-    path: '/settings/connections',
-    getParentRoute: () => TeamsTeamIdRouteRoute,
-  } as any)
 const TeamsTeamIdSettingsAuditLogRoute =
   TeamsTeamIdSettingsAuditLogRouteImport.update({
     id: '/settings/audit-log',
@@ -233,7 +226,6 @@ export interface FileRoutesByFullPath {
   '/teams/$teamId/projects/$projectId': typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
   '/teams/$teamId/agents/hire': typeof TeamsTeamIdAgentsHireRoute
   '/teams/$teamId/settings/audit-log': typeof TeamsTeamIdSettingsAuditLogRoute
-  '/teams/$teamId/settings/connections': typeof TeamsTeamIdSettingsConnectionsRoute
   '/teams/$teamId/settings/credentials': typeof TeamsTeamIdSettingsCredentialsRoute
   '/teams/$teamId/settings/general': typeof TeamsTeamIdSettingsGeneralRoute
   '/teams/$teamId/tasks/$taskId': typeof TeamsTeamIdTasksTaskIdRoute
@@ -264,7 +256,6 @@ export interface FileRoutesByTo {
   '/teams/$teamId': typeof TeamsTeamIdIndexRoute
   '/teams/$teamId/agents/hire': typeof TeamsTeamIdAgentsHireRoute
   '/teams/$teamId/settings/audit-log': typeof TeamsTeamIdSettingsAuditLogRoute
-  '/teams/$teamId/settings/connections': typeof TeamsTeamIdSettingsConnectionsRoute
   '/teams/$teamId/settings/credentials': typeof TeamsTeamIdSettingsCredentialsRoute
   '/teams/$teamId/settings/general': typeof TeamsTeamIdSettingsGeneralRoute
   '/teams/$teamId/tasks/$taskId': typeof TeamsTeamIdTasksTaskIdRoute
@@ -299,7 +290,6 @@ export interface FileRoutesById {
   '/teams/$teamId/projects/$projectId': typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
   '/teams/$teamId/agents/hire': typeof TeamsTeamIdAgentsHireRoute
   '/teams/$teamId/settings/audit-log': typeof TeamsTeamIdSettingsAuditLogRoute
-  '/teams/$teamId/settings/connections': typeof TeamsTeamIdSettingsConnectionsRoute
   '/teams/$teamId/settings/credentials': typeof TeamsTeamIdSettingsCredentialsRoute
   '/teams/$teamId/settings/general': typeof TeamsTeamIdSettingsGeneralRoute
   '/teams/$teamId/tasks/$taskId': typeof TeamsTeamIdTasksTaskIdRoute
@@ -335,7 +325,6 @@ export interface FileRouteTypes {
     | '/teams/$teamId/projects/$projectId'
     | '/teams/$teamId/agents/hire'
     | '/teams/$teamId/settings/audit-log'
-    | '/teams/$teamId/settings/connections'
     | '/teams/$teamId/settings/credentials'
     | '/teams/$teamId/settings/general'
     | '/teams/$teamId/tasks/$taskId'
@@ -366,7 +355,6 @@ export interface FileRouteTypes {
     | '/teams/$teamId'
     | '/teams/$teamId/agents/hire'
     | '/teams/$teamId/settings/audit-log'
-    | '/teams/$teamId/settings/connections'
     | '/teams/$teamId/settings/credentials'
     | '/teams/$teamId/settings/general'
     | '/teams/$teamId/tasks/$taskId'
@@ -400,7 +388,6 @@ export interface FileRouteTypes {
     | '/teams/$teamId/projects/$projectId'
     | '/teams/$teamId/agents/hire'
     | '/teams/$teamId/settings/audit-log'
-    | '/teams/$teamId/settings/connections'
     | '/teams/$teamId/settings/credentials'
     | '/teams/$teamId/settings/general'
     | '/teams/$teamId/tasks/$taskId'
@@ -550,13 +537,6 @@ declare module '@tanstack/react-router' {
       path: '/settings/credentials'
       fullPath: '/teams/$teamId/settings/credentials'
       preLoaderRoute: typeof TeamsTeamIdSettingsCredentialsRouteImport
-      parentRoute: typeof TeamsTeamIdRouteRoute
-    }
-    '/teams/$teamId/settings/connections': {
-      id: '/teams/$teamId/settings/connections'
-      path: '/settings/connections'
-      fullPath: '/teams/$teamId/settings/connections'
-      preLoaderRoute: typeof TeamsTeamIdSettingsConnectionsRouteImport
       parentRoute: typeof TeamsTeamIdRouteRoute
     }
     '/teams/$teamId/settings/audit-log': {
@@ -720,7 +700,6 @@ interface TeamsTeamIdRouteRouteChildren {
   TeamsTeamIdProjectsProjectIdRouteRoute: typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
   TeamsTeamIdAgentsHireRoute: typeof TeamsTeamIdAgentsHireRoute
   TeamsTeamIdSettingsAuditLogRoute: typeof TeamsTeamIdSettingsAuditLogRoute
-  TeamsTeamIdSettingsConnectionsRoute: typeof TeamsTeamIdSettingsConnectionsRoute
   TeamsTeamIdSettingsCredentialsRoute: typeof TeamsTeamIdSettingsCredentialsRoute
   TeamsTeamIdSettingsGeneralRoute: typeof TeamsTeamIdSettingsGeneralRoute
   TeamsTeamIdTasksTaskIdRoute: typeof TeamsTeamIdTasksTaskIdRoute
@@ -741,7 +720,6 @@ const TeamsTeamIdRouteRouteChildren: TeamsTeamIdRouteRouteChildren = {
     TeamsTeamIdProjectsProjectIdRouteRouteWithChildren,
   TeamsTeamIdAgentsHireRoute: TeamsTeamIdAgentsHireRoute,
   TeamsTeamIdSettingsAuditLogRoute: TeamsTeamIdSettingsAuditLogRoute,
-  TeamsTeamIdSettingsConnectionsRoute: TeamsTeamIdSettingsConnectionsRoute,
   TeamsTeamIdSettingsCredentialsRoute: TeamsTeamIdSettingsCredentialsRoute,
   TeamsTeamIdSettingsGeneralRoute: TeamsTeamIdSettingsGeneralRoute,
   TeamsTeamIdTasksTaskIdRoute: TeamsTeamIdTasksTaskIdRoute,
