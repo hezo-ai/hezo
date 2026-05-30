@@ -2,36 +2,13 @@ import { logger } from '../../logger';
 
 const log = logger.child('oauth-github');
 
-const DEFAULT_OAUTH_BASE_URL = 'https://github.com';
 const DEFAULT_API_BASE_URL = 'https://api.github.com';
-// TODO: replace with the real Hezo OAuth App client IDs once both Apps are created.
-// Both Apps must have "Enable Device Flow" checked. Client IDs are public and safe to commit.
-const DEV_CLIENT_ID = 'Ov23liSH5q35gMqGTKH9';
-const PROD_CLIENT_ID = '__REPLACE_WITH_PROD_CLIENT_ID__';
-const DEFAULT_SCOPES = [
-	'repo',
-	'workflow',
-	'read:org',
-	'write:ssh_signing_key',
-	'write:public_key',
-];
+// Mirrors the `github` capability registry entry — the union of scopes the
+// REST helpers need to register SSH keys, list orgs/repos, and create repos.
 const REQUIRED_REPO_SETUP_SCOPES = ['repo', 'read:org', 'write:public_key'];
-
-export function getOAuthBaseUrl(): string {
-	return process.env.GITHUB_OAUTH_BASE_URL || DEFAULT_OAUTH_BASE_URL;
-}
 
 export function getApiBaseUrl(): string {
 	return process.env.GITHUB_API_BASE_URL || DEFAULT_API_BASE_URL;
-}
-
-export function getClientId(): string {
-	if (process.env.GITHUB_OAUTH_CLIENT_ID) return process.env.GITHUB_OAUTH_CLIENT_ID;
-	return process.env.NODE_ENV === 'production' ? PROD_CLIENT_ID : DEV_CLIENT_ID;
-}
-
-export function defaultGitHubScopes(): string[] {
-	return [...DEFAULT_SCOPES];
 }
 
 export function requiredRepoSetupScopes(): string[] {
@@ -49,35 +26,6 @@ export function computeScopeStatus(have: string[] | null | undefined): {
 	return { sufficient: missing.length === 0, missing, required };
 }
 
-export interface DeviceFlowStart {
-	deviceCode: string;
-	userCode: string;
-	verificationUri: string;
-	expiresIn: number;
-	interval: number;
-}
-
-export interface DeviceFlowPollPending {
-	status: 'pending';
-	retryAfter: number;
-}
-
-export interface DeviceFlowPollSuccess {
-	status: 'success';
-	accessToken: string;
-	scope: string;
-}
-
-export interface DeviceFlowPollFailure {
-	status: 'failed';
-	error: string;
-}
-
-export type DeviceFlowPollResult =
-	| DeviceFlowPollPending
-	| DeviceFlowPollSuccess
-	| DeviceFlowPollFailure;
-
 export interface GitHubAccount {
 	id: number;
 	login: string;
@@ -94,71 +42,6 @@ export type AuthKeyResult =
 	| { status: 'already_exists' };
 
 export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
-
-export async function startDeviceFlow(
-	opts: { scopes?: string[]; clientId?: string; fetchFn?: FetchFn } = {},
-): Promise<DeviceFlowStart> {
-	const fetchFn = opts.fetchFn ?? globalThis.fetch;
-	const scopes = (opts.scopes ?? defaultGitHubScopes()).join(' ');
-	const clientId = opts.clientId ?? getClientId();
-
-	const body = new URLSearchParams({ client_id: clientId, scope: scopes });
-	const res = await fetchFn(`${getOAuthBaseUrl()}/login/device/code`, {
-		method: 'POST',
-		headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
-		body,
-	});
-	if (!res.ok) {
-		const text = await res.text();
-		throw new Error(`GitHub device-code request failed (${res.status}): ${text}`);
-	}
-	const data = (await res.json()) as {
-		device_code: string;
-		user_code: string;
-		verification_uri: string;
-		expires_in: number;
-		interval: number;
-	};
-	return {
-		deviceCode: data.device_code,
-		userCode: data.user_code,
-		verificationUri: data.verification_uri,
-		expiresIn: data.expires_in,
-		interval: data.interval,
-	};
-}
-
-export async function pollDeviceFlow(
-	deviceCode: string,
-	opts: { clientId?: string; fetchFn?: FetchFn } = {},
-): Promise<DeviceFlowPollResult> {
-	const fetchFn = opts.fetchFn ?? globalThis.fetch;
-	const clientId = opts.clientId ?? getClientId();
-
-	const body = new URLSearchParams({
-		client_id: clientId,
-		device_code: deviceCode,
-		grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-	});
-	const res = await fetchFn(`${getOAuthBaseUrl()}/login/oauth/access_token`, {
-		method: 'POST',
-		headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
-		body,
-	});
-	const data = (await res.json()) as {
-		access_token?: string;
-		scope?: string;
-		error?: string;
-		interval?: number;
-	};
-	if (data.error === 'authorization_pending' || data.error === 'slow_down') {
-		return { status: 'pending', retryAfter: data.interval ?? 5 };
-	}
-	if (data.access_token) {
-		return { status: 'success', accessToken: data.access_token, scope: data.scope ?? '' };
-	}
-	return { status: 'failed', error: data.error ?? 'unknown_error' };
-}
 
 export async function fetchAccount(
 	accessToken: string,

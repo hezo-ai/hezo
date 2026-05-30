@@ -130,7 +130,7 @@ test('State A — no GitHub connection: shows Connect GitHub CTA', async () => {
 		params: { teamId: ws.team.slug, projectId: projectSlug },
 	});
 
-	await findByRole('heading', { name: 'Repositories' }, { timeout: 15_000 });
-	await findByTestId('repo-setup-state-a');
-	await findByTestId('repo-setup-connect-github');
+	await findByRole('heading', { name: 'GitHub' }, { timeout: 15_000 });
+	await findByTestId('github-state-disconnected');
+	await findByTestId('github-connect');
 });

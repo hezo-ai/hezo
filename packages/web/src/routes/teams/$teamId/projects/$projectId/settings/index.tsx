@@ -2,7 +2,7 @@ import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { useState } from 'react';
-import { RepoSetupSection } from '../../../../../../components/repo-setup-section';
+import { GitHubSection } from '../../../../../../components/github-section';
 import { Button } from '../../../../../../components/ui/button';
 import { Input } from '../../../../../../components/ui/input';
 import { Textarea } from '../../../../../../components/ui/textarea';
@@ -93,7 +93,7 @@ function ProjectSettingsPage() {
 				</section>
 			)}
 
-			<RepoSetupSection teamId={teamId} projectId={projectId} />
+			<GitHubSection teamId={teamId} projectId={projectId} />
 		</div>
 	);
 }

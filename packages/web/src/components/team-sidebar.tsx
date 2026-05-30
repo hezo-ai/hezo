@@ -123,13 +123,15 @@ export function TeamSidebar() {
 		},
 		{
 			title: 'Resources',
-			items: [{ to: '/teams/$teamId/kb', params, label: 'Knowledge base' }],
+			items: [
+				{ to: '/teams/$teamId/kb', params, label: 'Knowledge base' },
+				{ to: '/teams/$teamId/connectors', params, label: 'Connectors' },
+			],
 		},
 		{
 			title: 'Settings',
 			items: [
 				{ to: '/teams/$teamId/settings/general', params, label: 'General' },
-				{ to: '/teams/$teamId/settings/connections', params, label: 'Connections' },
 				{ to: '/teams/$teamId/settings/credentials', params, label: 'Credentials' },
 				{ to: '/teams/$teamId/settings/audit-log', params, label: 'Audit log' },
 			],

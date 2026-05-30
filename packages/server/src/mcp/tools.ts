@@ -305,7 +305,7 @@ export function registerTools(
 	server: McpServer,
 	db: PGlite,
 	dataDir: string,
-	_masterKeyManager: MasterKeyManager,
+	masterKeyManager: MasterKeyManager,
 	wsManager?: WebSocketManager,
 ): ToolDef[] {
 	registeredTools.length = 0;
@@ -1744,6 +1744,232 @@ export function registerTools(
 		db,
 	);
 
+	tool(
+		server,
+		'register_connector',
+		'Register a third-party MCP server connector for the team and ask the human to authenticate. Posts a connect_required comment on the task with a Connect button; the human clicks it to run OAuth in their own browser. The agent never sees the token; subsequent runs receive the MCP via the egress proxy + placeholder substitution. Idempotent: re-registering an already-active connector returns its current state and fires the wakeup immediately.',
+		{
+			team_id: z.string().describe('Team ID'),
+			task_id: z.string().describe('Task ID where the connect_required comment is posted'),
+			display_name: z
+				.string()
+				.describe(
+					'Human-readable connector name shown in the task chat and on the Connectors page (e.g. "DatoCMS", "Linear").',
+				),
+			mcp_url: z
+				.string()
+				.describe(
+					'URL of the MCP server (HTTP / SSE). The OAuth dance is discovered by probing this URL for a 401 + WWW-Authenticate header.',
+				),
+			mcp_transport: z
+				.enum(['http', 'sse'])
+				.optional()
+				.describe('Transport for the MCP server. Defaults to http.'),
+			provider_id: z
+				.string()
+				.optional()
+				.describe(
+					'Optional registry key (e.g. "datocms"). When set, capability defaults from the shared registry pre-fill display name and allowed hosts.',
+				),
+			skill_doc_id: z
+				.string()
+				.optional()
+				.describe(
+					'Optional ID of a previously-fetched skill document (see fetch_skill_file). When set, the skill file is exposed to every team agent run via the per-adapter skill path.',
+				),
+		},
+		async (args, db, auth) => {
+			const teamId = args.team_id as string;
+			const taskId = args.task_id as string;
+			const denied = await verifyTeamAccess(db, auth, teamId);
+			if (denied) return { error: denied };
+
+			const taskRow = await db.query<{ id: string; project_id: string | null }>(
+				'SELECT id, project_id FROM tasks WHERE id = $1 AND team_id = $2',
+				[taskId, teamId],
+			);
+			if (taskRow.rows.length === 0) return { error: 'Task not found in this team' };
+			const projectId = taskRow.rows[0].project_id;
+			if (projectId) {
+				const pDenied = assertProjectAccess(auth, projectId);
+				if (pDenied) return { error: pDenied };
+			}
+
+			const displayName = (args.display_name as string).trim();
+			const providerId = (args.provider_id as string | undefined)?.trim() || null;
+			const mcpUrl = (args.mcp_url as string).trim();
+			const mcpTransport = (args.mcp_transport as 'http' | 'sse' | undefined) ?? 'http';
+			const skillDocId = (args.skill_doc_id as string | undefined) ?? null;
+
+			// Slug from providerId if available, else from display_name. The
+			// (team_id, project_id, name) UNIQUE constraint makes this the
+			// idempotency key.
+			const slugSource = providerId ?? displayName;
+			const name = slugSource
+				.toLowerCase()
+				.replace(/[^a-z0-9]+/g, '-')
+				.replace(/^-|-$/g, '')
+				.slice(0, 64);
+			if (!name) return { error: 'display_name produced an empty slug' };
+
+			const { createOrFetchConnector, statusOf } = await import('../services/connectors/lifecycle');
+			const { row, alreadyExisted } = await createOrFetchConnector(db, {
+				teamId,
+				projectId: null, // connectors are team-scoped today
+				name,
+				displayName,
+				mcpUrl,
+				mcpTransport,
+				skillDocId,
+				createdByTaskId: taskId,
+				providerId,
+			});
+
+			const status = statusOf(row);
+
+			// If already active, no need for a Connect comment — just signal the
+			// caller; they should retry whatever needed the connector.
+			if (status === 'active') {
+				return {
+					connector_id: row.id,
+					status,
+					name: row.name,
+					display_name: row.display_name,
+					reused: true,
+				};
+			}
+
+			// Idempotent comment: don't post a second connect_required for the same
+			// connector_id on the same task.
+			const existingComment = await db.query<{ id: string }>(
+				`SELECT id FROM task_comments
+				 WHERE task_id = $1
+				   AND content_type = 'connect_required'::comment_content_type
+				   AND content->>'connector_id' = $2
+				 ORDER BY created_at ASC LIMIT 1`,
+				[taskId, row.id],
+			);
+
+			let commentId: string;
+			if (existingComment.rows.length > 0) {
+				commentId = existingComment.rows[0].id;
+			} else {
+				const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+				const content = {
+					connector_id: row.id,
+					display_name: displayName,
+					provider_id: providerId,
+				};
+				const inserted = await db.query<{ id: string }>(
+					`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+					 VALUES ($1, $2, 'connect_required'::comment_content_type, $3::jsonb)
+					 RETURNING id`,
+					[taskId, authorMemberId, JSON.stringify(content)],
+				);
+				commentId = inserted.rows[0].id;
+			}
+
+			return {
+				connector_id: row.id,
+				status,
+				name: row.name,
+				display_name: row.display_name,
+				comment_id: commentId,
+				reused: alreadyExisted,
+			};
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'fetch_skill_file',
+		"Fetch a remote agent skill file (Markdown describing how to use a third-party MCP server) and store it in the team knowledge base as a doc with kind=mcp_skill. Returns the doc_id and slug. Subsequent agent runs across every project in the team get this skill file injected into their adapter's skills directory. Idempotent on (team_id, url) — re-fetching the same URL updates the existing doc.",
+		{
+			team_id: z.string().describe('Team ID'),
+			url: z
+				.string()
+				.describe(
+					'HTTPS URL of the skill file. Only http/https schemes are allowed; response must be < 256KB; 10s timeout.',
+				),
+			title: z
+				.string()
+				.optional()
+				.describe('Human-readable title shown in the team KB. Defaults to the URL pathname.'),
+		},
+		async (args, db, auth) => {
+			const teamId = args.team_id as string;
+			const denied = await verifyTeamAccess(db, auth, teamId);
+			if (denied) return { error: denied };
+
+			const url = (args.url as string).trim();
+			let parsed: URL;
+			try {
+				parsed = new URL(url);
+			} catch {
+				return { error: 'Invalid URL' };
+			}
+			if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+				return { error: 'Only http/https URLs are allowed' };
+			}
+
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(), 10_000);
+			let res: Response;
+			try {
+				res = await fetch(url, { signal: controller.signal });
+			} catch (e) {
+				clearTimeout(timeout);
+				return { error: `Fetch failed: ${(e as Error).message}` };
+			}
+			clearTimeout(timeout);
+			if (!res.ok) {
+				return { error: `Fetch failed: HTTP ${res.status}` };
+			}
+			const contentLength = res.headers.get('content-length');
+			if (contentLength && Number(contentLength) > 256 * 1024) {
+				return { error: 'Response too large (>256KB)' };
+			}
+			const body = await res.text();
+			if (body.length > 256 * 1024) {
+				return { error: 'Response too large (>256KB)' };
+			}
+
+			// Slug from URL pathname (e.g. /docs/mcp-server/agent-skill.md → agent-skill).
+			const pathSlug = parsed.pathname
+				.split('/')
+				.filter(Boolean)
+				.pop()
+				?.replace(/\.[a-z0-9]+$/i, '')
+				.toLowerCase()
+				.replace(/[^a-z0-9]+/g, '-')
+				.replace(/^-|-$/g, '');
+			const hostSlug = parsed.host.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+			const slug = `${hostSlug}--${pathSlug || 'skill'}`.slice(0, 64);
+			const title = (args.title as string | undefined) ?? parsed.pathname;
+
+			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const doc = await upsertDocument(db, wsManager, {
+				scope: { type: DocumentType.McpSkill, teamId, slug },
+				title,
+				content: body,
+				authorMemberId,
+				changeSummary: `Fetched from ${url}`,
+			});
+
+			// Track source_url in a separate small table? For v1 we encode it in
+			// the title prefix so the doc is self-describing.
+			return {
+				doc_id: doc.id,
+				slug: doc.slug,
+				source_url: url,
+				size_bytes: body.length,
+				reused: false,
+			};
+		},
+		db,
+	);
+
 	// Approvals
 	tool(
 		server,
@@ -2522,7 +2748,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_mcp_connections',
-		'List MCP server connections registered for the team (and optionally a project). Returns name, kind (saas|local), config (URL or command), and install_status.',
+		'List MCP server connections registered for the team (and optionally a project). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`.',
 		{
 			team_id: z.string().describe('Team ID'),
 			project_id: z
@@ -2545,16 +2771,157 @@ export function registerTools(
 			} else {
 				where += ' AND project_id IS NULL';
 			}
-			const r = await db.query(
-				`SELECT id, team_id, project_id, name, kind::text AS kind,
-				        config, install_status::text AS install_status, install_error,
+			const r = await db.query<{
+				id: string;
+				team_id: string;
+				project_id: string | null;
+				name: string;
+				display_name: string | null;
+				kind: string;
+				config: Record<string, unknown>;
+				oauth_connection_id: string | null;
+				install_status: string;
+				install_error: string | null;
+				skill_doc_id: string | null;
+				created_by_task_id: string | null;
+				activated_at: string | null;
+				revoked_at: string | null;
+				auth_error: string | null;
+				created_at: string;
+				updated_at: string;
+			}>(
+				`SELECT id, team_id, project_id, name, display_name, kind::text AS kind,
+				        config, oauth_connection_id, install_status::text AS install_status, install_error,
+				        skill_doc_id, created_by_task_id,
+				        activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
 				        created_at::text, updated_at::text
 				 FROM mcp_connections
 				 WHERE ${where}
 				 ORDER BY name ASC`,
 				params,
 			);
-			return r.rows;
+			// Derive a single oauth_status field that's the load-bearing signal
+			// for whether the connector is usable by agents on subsequent runs.
+			const cfg = (row: { config: Record<string, unknown> }): boolean => {
+				const c = row.config as { dcr?: unknown };
+				return !!c?.dcr;
+			};
+			return r.rows.map((row) => {
+				let oauth_status: 'active' | 'pending' | 'failed' | 'revoked' | 'none';
+				if (row.kind !== 'saas') oauth_status = 'none';
+				else if (row.revoked_at) oauth_status = 'revoked';
+				else if (row.auth_error && !row.activated_at) oauth_status = 'failed';
+				else if (row.oauth_connection_id && row.activated_at) oauth_status = 'active';
+				else if (cfg(row) || row.created_by_task_id) oauth_status = 'pending';
+				else oauth_status = 'none';
+				return { ...row, oauth_status };
+			});
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'test_connector',
+		'Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server (bypassing the agent container and its egress proxy entirely). Returns the upstream status code, response excerpt, and the secret name + masked-token-prefix used. Use this when oauth_status says "active" but the MCP\'s tools are absent from your tool list — it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?".',
+		{
+			team_id: z.string().describe('Team ID'),
+			connector_id: z.string().describe('mcp_connections.id from list_mcp_connections'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
+			if (denied) return { error: denied };
+			const teamId = args.team_id as string;
+			const connectorId = args.connector_id as string;
+
+			const row = await db.query<{
+				id: string;
+				team_id: string;
+				name: string;
+				kind: string;
+				config: Record<string, unknown>;
+				oauth_connection_id: string | null;
+			}>(
+				`SELECT id, team_id, name, kind::text AS kind, config, oauth_connection_id
+				 FROM mcp_connections WHERE id = $1 AND team_id = $2`,
+				[connectorId, teamId],
+			);
+			if (row.rows.length === 0) return { error: 'connector not found in this team' };
+			const connector = row.rows[0];
+			if (connector.kind !== 'saas') {
+				return { error: `connector kind=${connector.kind}; test only meaningful for kind=saas` };
+			}
+			const config = connector.config as { url?: string };
+			if (!config.url) return { error: 'connector has no mcp url' };
+
+			let bearerToken: string | null = null;
+			let secretName: string | null = null;
+			let tokenPrefix: string | null = null;
+			if (connector.oauth_connection_id) {
+				const secret = await db.query<{ name: string; encrypted_value: string }>(
+					`SELECT s.name, s.encrypted_value FROM oauth_connections oc
+					 JOIN secrets s ON s.id = oc.access_token_secret_id
+					 WHERE oc.id = $1`,
+					[connector.oauth_connection_id],
+				);
+				if (secret.rows.length === 0) {
+					return {
+						error:
+							'oauth_connection_id is set but no matching secret row found — vault is corrupted for this connector',
+						connector_id: connector.id,
+						oauth_connection_id: connector.oauth_connection_id,
+					};
+				}
+				const key = masterKeyManager.getKey();
+				if (!key) return { error: 'master key is locked; cannot decrypt secret to test' };
+				const { decrypt } = await import('../crypto/encryption');
+				try {
+					bearerToken = decrypt(secret.rows[0].encrypted_value, key);
+				} catch (e) {
+					return {
+						error: `failed to decrypt stored token: ${(e as Error).message}`,
+						secret_name: secret.rows[0].name,
+					};
+				}
+				secretName = secret.rows[0].name;
+				tokenPrefix = bearerToken.slice(0, 8);
+			}
+
+			const headers: Record<string, string> = { Accept: 'application/json' };
+			if (bearerToken) headers.Authorization = `Bearer ${bearerToken}`;
+
+			let probeRes: Response;
+			try {
+				probeRes = await fetch(config.url, { method: 'GET', headers });
+			} catch (e) {
+				return {
+					ok: false,
+					error: `network probe failed: ${(e as Error).message}`,
+					mcp_url: config.url,
+					secret_name: secretName,
+					token_prefix: tokenPrefix,
+				};
+			}
+			const bodyText = await probeRes.text().catch(() => '');
+			const wwwAuth = probeRes.headers.get('WWW-Authenticate') ?? null;
+			return {
+				ok: probeRes.ok,
+				status: probeRes.status,
+				mcp_url: config.url,
+				secret_name: secretName,
+				token_prefix: tokenPrefix,
+				token_length: bearerToken?.length ?? 0,
+				www_authenticate: wwwAuth,
+				body_excerpt: bodyText.slice(0, 400),
+				hint:
+					probeRes.status === 401
+						? bearerToken
+							? 'Token rejected by upstream. Either the token expired, the scopes are insufficient, or the provider revoked it. Surface to the user; they may need to reconnect.'
+							: 'No token sent (connector has no oauth_connection_id). OAuth never completed for this connector.'
+						: probeRes.ok
+							? "Token valid against upstream. If the MCP tools still don't appear in your tool list, the issue is in the container/proxy chain — file a bug with the launch-command headers and any audit_log entries for this host."
+							: `Upstream returned ${probeRes.status}; check body_excerpt for details.`,
+			};
 		},
 		db,
 	);

@@ -1,46 +1,79 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, GitBranch, Github, Loader2, Lock, Trash2 } from 'lucide-react';
-import { useState } from 'react';
-import { useConnectionScopeStatus, useOAuthConnections } from '../hooks/use-oauth-connections';
+import { useEffect, useState } from 'react';
+import { useMcpConnections } from '../hooks/use-mcp-connections';
+import {
+	useAuthStart,
+	useConnectionScopeStatus,
+	useEnsureConnector,
+	useOAuthConnections,
+} from '../hooks/use-oauth-connections';
 import { useDeleteRepo, useRepos } from '../hooks/use-repos';
-import { GitHubDeviceFlowDialog } from './github-device-flow-dialog';
 import { RepoPickerModal } from './repo-picker-modal';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Tooltip } from './ui/tooltip';
 
-interface RepoSetupSectionProps {
+interface GitHubSectionProps {
 	teamId: string;
 	projectId: string;
 }
 
-export function RepoSetupSection({ teamId, projectId }: RepoSetupSectionProps) {
+export function GitHubSection({ teamId, projectId }: GitHubSectionProps) {
 	const { data: connections = [], isLoading: connectionsLoading } = useOAuthConnections(teamId);
+	const { data: connectors = [] } = useMcpConnections(teamId);
 	const { data: repos } = useRepos(teamId, projectId);
 	const deleteRepo = useDeleteRepo(teamId, projectId);
+	const queryClient = useQueryClient();
 
-	const githubConnections = connections.filter((c) => c.provider === 'github');
-	const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
-	const activeConnection =
-		githubConnections.find((c) => c.id === selectedConnectionId) ?? githubConnections[0] ?? null;
+	const githubConnection = connections.find((c) => c.provider === 'github') ?? null;
+	const githubConnector = connectors.find((c) => c.name === 'github') ?? null;
+	const scopeStatusQuery = useConnectionScopeStatus(teamId, githubConnection?.id);
 
-	const scopeStatusQuery = useConnectionScopeStatus(teamId, activeConnection?.id);
-
-	const [oauthDialogOpen, setOauthDialogOpen] = useState(false);
-	const [reauthScopes, setReauthScopes] = useState<string[] | undefined>(undefined);
+	const ensure = useEnsureConnector(teamId);
+	const authStart = useAuthStart(teamId);
 	const [pickerOpen, setPickerOpen] = useState(false);
+	const [error, setError] = useState<string | null>(null);
 
-	const isReady = !!activeConnection && scopeStatusQuery.data?.sufficient === true;
+	const isReady = !!githubConnection && scopeStatusQuery.data?.sufficient === true;
 	const needsReauth =
-		!!activeConnection && scopeStatusQuery.data && scopeStatusQuery.data.sufficient === false;
-	const hasConnection = !!activeConnection;
-
+		!!githubConnection && scopeStatusQuery.data && scopeStatusQuery.data.sufficient === false;
+	const hasConnection = !!githubConnection;
 	const hasRepos = !!repos && repos.length > 0;
+	const connecting = ensure.isPending || authStart.isPending;
+
+	// Refetch when the OAuth popup signals completion (server origin posts back
+	// from the callback page). The data-flow is server→opener postMessage; we
+	// just invalidate to pick up the new oauth_connections + mcp_connections rows.
+	useEffect(() => {
+		const onMessage = (e: MessageEvent) => {
+			if (!e.data || typeof e.data !== 'object') return;
+			const type = (e.data as { type?: string }).type;
+			if (type !== 'hezo-oauth-success' && type !== 'hezo-oauth-error') return;
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'oauth-connections'] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'mcp-connections'] });
+		};
+		window.addEventListener('message', onMessage);
+		return () => window.removeEventListener('message', onMessage);
+	}, [teamId, queryClient]);
+
+	const startConnect = async () => {
+		setError(null);
+		try {
+			const connector = githubConnector ?? (await ensure.mutateAsync('github'));
+			const { auth_url } = await authStart.mutateAsync(connector.id);
+			const popup = window.open(auth_url, 'hezo-connect', 'width=600,height=720');
+			if (!popup) setError('Pop-up blocked. Allow pop-ups for Hezo and try again.');
+		} catch (e) {
+			setError(e instanceof Error ? e.message : 'Failed to start GitHub OAuth');
+		}
+	};
 
 	return (
-		<section data-testid="repo-setup-section">
+		<section data-testid="github-section">
 			<div className="flex items-center justify-between mb-3">
 				<h2 className="text-sm font-medium text-text-muted flex items-center gap-1.5">
-					<GitBranch className="w-4 h-4" /> Repositories
+					<Github className="w-4 h-4" /> GitHub
 				</h2>
 				{isReady && hasRepos && (
 					<Button
@@ -54,28 +87,13 @@ export function RepoSetupSection({ teamId, projectId }: RepoSetupSectionProps) {
 				)}
 			</div>
 			<p className="text-xs text-text-subtle mb-3">
-				The designated repository is where primary source code and per-project{' '}
-				<code>AGENTS.md</code> live. It is set on the first repo you link and cannot be changed
-				later. Repos clone over HTTPS using a GitHub OAuth connection.
+				Connects this team to GitHub for both git operations (clone, push, signed commits) and the
+				official GitHub MCP server (agent-callable tools for issues, PRs, search). One OAuth flow,
+				both surfaces. Tokens stay in the Hezo vault; agents see them as substituted placeholders at
+				egress.
 			</p>
 
-			{githubConnections.length > 1 && (
-				<label className="block mb-3 text-xs text-text-muted">
-					GitHub account
-					<select
-						className="mt-1 block w-full rounded border border-border bg-bg px-2 py-1 text-sm"
-						value={activeConnection?.id ?? ''}
-						onChange={(e) => setSelectedConnectionId(e.target.value)}
-						data-testid="repo-setup-connection"
-					>
-						{githubConnections.map((c) => (
-							<option key={c.id} value={c.id}>
-								{c.provider_account_label}
-							</option>
-						))}
-					</select>
-				</label>
-			)}
+			{error && <p className="text-xs text-accent-red-text mb-2">{error}</p>}
 
 			{connectionsLoading ? (
 				<div className="flex items-center gap-2 text-sm text-text-muted">
@@ -84,41 +102,39 @@ export function RepoSetupSection({ teamId, projectId }: RepoSetupSectionProps) {
 			) : !hasConnection ? (
 				<div
 					className="rounded-radius-md border border-border bg-bg-subtle p-4 flex items-start gap-3"
-					data-testid="repo-setup-state-a"
+					data-testid="github-state-disconnected"
 				>
 					<Github className="size-5 text-text-muted shrink-0 mt-0.5" />
 					<div className="flex-1 space-y-2">
 						<div>
 							<p className="text-sm font-medium">Connect GitHub</p>
 							<p className="text-xs text-text-subtle">
-								Agents need a connected GitHub account to clone, push, and create repositories on
-								your behalf.
+								Authorize Hezo to manage repos on your behalf and give agents first-class GitHub
+								tools.
 							</p>
 						</div>
 						<Button
 							size="sm"
-							onClick={() => {
-								setReauthScopes(undefined);
-								setOauthDialogOpen(true);
-							}}
-							data-testid="repo-setup-connect-github"
+							onClick={startConnect}
+							disabled={connecting}
+							data-testid="github-connect"
 						>
 							<Github className="size-4 mr-2" />
-							Connect GitHub
+							{connecting ? 'Starting…' : 'Connect GitHub'}
 						</Button>
 					</div>
 				</div>
 			) : needsReauth ? (
 				<div
 					className="rounded-radius-md border border-accent-yellow/40 bg-accent-yellow/10 p-4 flex items-start gap-3"
-					data-testid="repo-setup-state-b"
+					data-testid="github-state-reauth"
 				>
 					<AlertTriangle className="size-5 text-accent-yellow shrink-0 mt-0.5" />
 					<div className="flex-1 space-y-2">
 						<div>
 							<p className="text-sm font-medium">Permissions needed</p>
 							<p className="text-xs text-text-subtle">
-								Re-authorize <strong>{activeConnection.provider_account_label}</strong> to set up a
+								Re-authorize <strong>{githubConnection.provider_account_label}</strong> to set up a
 								GitHub repository. Missing scopes:{' '}
 								<code className="text-text-muted">{scopeStatusQuery.data?.missing.join(', ')}</code>
 								.
@@ -126,34 +142,27 @@ export function RepoSetupSection({ teamId, projectId }: RepoSetupSectionProps) {
 						</div>
 						<Button
 							size="sm"
-							onClick={() => {
-								const required = scopeStatusQuery.data?.required ?? [];
-								const union = Array.from(new Set([...activeConnection.scopes, ...required]));
-								setReauthScopes(union);
-								setOauthDialogOpen(true);
-							}}
-							data-testid="repo-setup-reauth"
+							onClick={startConnect}
+							disabled={connecting}
+							data-testid="github-reauth"
 						>
-							Re-authorize
+							{connecting ? 'Starting…' : 'Re-authorize'}
 						</Button>
 					</div>
 				</div>
-			) : null}
+			) : (
+				<div className="text-xs text-text-subtle mb-3">
+					Connected as <span className="font-mono">{githubConnection.provider_account_label}</span>.
+				</div>
+			)}
 
-			<GitHubDeviceFlowDialog
-				open={oauthDialogOpen}
-				onOpenChange={setOauthDialogOpen}
-				teamId={teamId}
-				scopes={reauthScopes}
-			/>
-
-			{isReady && activeConnection && (
+			{isReady && githubConnection && (
 				<RepoPickerModal
 					open={pickerOpen}
 					onOpenChange={setPickerOpen}
 					teamId={teamId}
 					projectId={projectId}
-					oauthConnectionId={activeConnection.id}
+					oauthConnectionId={githubConnection.id}
 				/>
 			)}
 
@@ -198,7 +207,7 @@ export function RepoSetupSection({ teamId, projectId }: RepoSetupSectionProps) {
 					isReady && (
 						<div
 							className="rounded-radius-md border border-border bg-bg-subtle p-4 flex items-start gap-3"
-							data-testid="repo-setup-state-c-empty"
+							data-testid="github-state-ready"
 						>
 							<GitBranch className="size-5 text-text-muted shrink-0 mt-0.5" />
 							<div className="flex-1 space-y-2">
