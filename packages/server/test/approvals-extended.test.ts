@@ -226,13 +226,13 @@ describe('Deny flow', () => {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				type: 'kb_update',
+				type: ApprovalType.SkillProposal,
 				requested_by_member_id: agentId,
 				payload: {
-					slug: 'deny-test',
-					title: 'Deny Test',
+					skill_name: 'Deny Test',
+					skill_slug: 'deny-test',
 					content: 'should not be applied',
-					change_summary: 'testing deny flow',
+					reason: 'testing deny flow',
 				},
 			}),
 		});
@@ -247,11 +247,11 @@ describe('Deny flow', () => {
 		expect(resolveRes.status).toBe(200);
 		expect((await resolveRes.json()).data.status).toBe('denied');
 
-		const kbDoc = await db.query<{ id: string }>(
-			`SELECT id FROM documents WHERE type = 'kb_doc' AND team_id = $1 AND slug = $2`,
+		const skill = await db.query<{ id: string }>(
+			`SELECT id FROM skills WHERE team_id = $1 AND slug = $2`,
 			[teamId, 'deny-test'],
 		);
-		expect(kbDoc.rows.length).toBe(0);
+		expect(skill.rows.length).toBe(0);
 	});
 });
 

@@ -40,7 +40,7 @@ const SHARED_INSTRUCTIONS = `
 ### Knowledge Maintenance
 - **Project docs**: Use \`list_project_docs\`, \`read_project_doc\`, and \`write_project_doc\` for high-level project context — PRDs, architecture decisions, API designs, schemas, implementation plans. Docs live in the project-doc store and are addressed by bare filename (e.g. \`prd.md\`, \`spec.md\`, \`research.md\`) — they are NOT filesystem paths, so never prefix a folder. Keep them aligned with the actual codebase. Do NOT put agent-specific working knowledge here.
 - **AGENTS.md**: For practical conventions, commands, and constraints that agents need when working on this project. Update via git in the repo.
-- **Team KB**: Use the \`upsert_kb_doc\` tool for organizational knowledge that spans projects — team policies, standards, and shared conventions.
+- **Skills database**: Use \`create_skill\` (or \`propose_skill\` when approval is required) to capture reusable, cross-project team know-how — MCP server usage, integration steps, conventions, how agents coordinate. A manifest of available skills is injected each run; call \`get_skill(slug)\` to read one in full.
 
 ### Sub-Agents & Parallel Exploration
 - Use sub-agents aggressively to split up your work and explore alternative approaches in parallel.
@@ -259,7 +259,7 @@ async function buildTeammatesBlock(db: PGlite, ctx: ResolveContext): Promise<str
 
 ## Teammates
 
-Whenever you reference a teammate in any output you author (comments, ticket descriptions, progress summaries, project docs, KB docs, chat messages), write \`@<slug>\` (active) or \`@@<slug>\` (passive) from this list — never the role title. Bare titles do not linkify. See "@-Mention Discipline" below for when to use which: \`@\` for direct asks on this ticket, \`@@\` for naming, attribution, plan tables, and summaries.
+Whenever you reference a teammate in any output you author (comments, ticket descriptions, progress summaries, project docs, skills, chat messages), write \`@<slug>\` (active) or \`@@<slug>\` (passive) from this list — never the role title. Bare titles do not linkify. See "@-Mention Discipline" below for when to use which: \`@\` for direct asks on this ticket, \`@@\` for naming, attribution, plan tables, and summaries.
 
 ${list}`;
 }

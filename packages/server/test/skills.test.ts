@@ -269,8 +269,9 @@ describe('Template resolver with skills_context', () => {
 			dataDir: tempDataDir,
 		});
 
-		expect(resolved).toContain('## Skill: Direct Skill');
-		expect(resolved).toContain('Do the thing.');
+		// Manifest lists name + slug, not the full body.
+		expect(resolved).toContain('- Direct Skill (slug: direct-skill)');
+		expect(resolved).not.toContain('Do the thing.');
 	});
 
 	it('falls back to placeholder when no skills', async () => {
@@ -280,7 +281,7 @@ describe('Template resolver with skills_context', () => {
 			teamId,
 			dataDir: tempDataDir,
 		});
-		expect(resolved).toContain('No skills configured.');
+		expect(resolved).toContain('No skills in the team skills database yet.');
 	});
 });
 

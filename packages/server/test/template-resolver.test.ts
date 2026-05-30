@@ -78,30 +78,6 @@ describe('template resolver', () => {
 		expect(result).toContain('Template Co - Build amazing things (Build amazing things)');
 	});
 
-	it('resolves {{kb_context}} with no docs', async () => {
-		const result = await resolveSystemPrompt(db, 'KB: {{kb_context}}', {
-			teamId,
-		});
-		expect(result).toContain('No knowledge base documents available');
-	});
-
-	it('renders {{kb_context}} with bare-filename link tokens when docs exist', async () => {
-		const kbRes = await app.request(`/api/teams/${teamId}/kb-docs`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				title: 'Coding Standards',
-				slug: 'coding-standards.md',
-				content: 'Prefer early returns.',
-			}),
-		});
-		expect(kbRes.status).toBe(201);
-
-		const result = await resolveSystemPrompt(db, '{{kb_context}}', { teamId });
-		expect(result).toContain('## Coding Standards (link: coding-standards.md)');
-		expect(result).toContain('Prefer early returns.');
-	});
-
 	it('resolves {{team_preferences_context}} with no prefs', async () => {
 		const result = await resolveSystemPrompt(db, 'Prefs: {{team_preferences_context}}', {
 			teamId,
@@ -222,7 +198,7 @@ describe('template resolver', () => {
 		expect(result).toContain('### Comment Timing');
 		expect(result).toContain('update_task');
 		expect(result).toContain('write_project_doc');
-		expect(result).toContain('upsert_kb_doc');
+		expect(result).toContain('create_skill');
 		expect(result).toContain('create_task');
 	});
 
@@ -357,13 +333,18 @@ You report to: Architect ({{reports_to}})
 
 Current date: {{current_date}}
 
-{{kb_context}}
+{{skills_context}}
 
 {{team_preferences_context}}
 
 {{project_docs_context}}
 
 {{requester_context}}`;
+
+		await db.query(
+			"INSERT INTO skills (team_id, name, slug, description, content) VALUES ($1, 'Team Overview', 'team-overview', 'Team overview summary', '# Team Overview')",
+			[agentTeamId],
+		);
 
 		const result = await resolveSystemPrompt(db, template, {
 			teamId: agentTeamId,
@@ -400,7 +381,7 @@ Current date: {{current_date}}
 			expect(prompt).toContain('{{team_name}}');
 			expect(prompt).toContain('{{team_mission}}');
 			expect(prompt).toContain('{{current_date}}');
-			expect(prompt).toContain('{{kb_context}}');
+			expect(prompt).toContain('{{skills_context}}');
 			expect(prompt).toMatch(/##\s*Rules/);
 		}
 	});

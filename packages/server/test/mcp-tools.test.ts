@@ -142,12 +142,13 @@ describe('MCP endpoint: tool registration', () => {
 		expect(toolNames).toContain('create_comment');
 		expect(toolNames).toContain('list_approvals');
 		expect(toolNames).toContain('resolve_approval');
-		expect(toolNames).toContain('list_kb_docs');
-		expect(toolNames).toContain('get_kb_doc');
+		expect(toolNames).toContain('list_skills');
+		expect(toolNames).toContain('get_skill');
+		expect(toolNames).toContain('create_skill');
+		expect(toolNames).toContain('propose_skill');
 		expect(toolNames).toContain('get_costs');
 		expect(toolNames).toContain('get_agent_system_prompt');
 		expect(toolNames).toContain('update_agent_system_prompt');
-		expect(toolNames).toContain('upsert_kb_doc');
 		expect(toolNames).toContain('list_project_docs');
 		expect(toolNames).toContain('read_project_doc');
 		expect(toolNames).toContain('write_project_doc');
@@ -339,12 +340,12 @@ describe('MCP tool handlers: data queries via DB', () => {
 		expect(r.rows.length).toBeGreaterThanOrEqual(1);
 	});
 
-	it('list_kb_docs returns kb docs for team', async () => {
+	it('list_skills returns skills for team', async () => {
 		const r = await db.query(
-			"SELECT id, title, slug, updated_at FROM documents WHERE type = 'kb_doc' AND team_id = $1 ORDER BY title",
+			'SELECT id, name, slug, updated_at FROM skills WHERE team_id = $1 ORDER BY name',
 			[teamId],
 		);
-		// May have kb docs from template, or may be empty — just verify query works
+		// May have skills from template, or may be empty — just verify query works
 		expect(Array.isArray(r.rows)).toBe(true);
 	});
 });
@@ -360,7 +361,7 @@ describe('MCP tool: skill file includes all tools', () => {
 		expect(text).toContain('resolve_approval');
 		expect(text).toContain('get_agent_system_prompt');
 		expect(text).toContain('update_agent_system_prompt');
-		expect(text).toContain('upsert_kb_doc');
+		expect(text).toContain('create_skill');
 		expect(text).toContain('list_project_docs');
 		expect(text).toContain('read_project_doc');
 		expect(text).toContain('write_project_doc');
@@ -661,25 +662,25 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 		expect(r.rows.length).toBeGreaterThanOrEqual(1);
 	});
 
-	it('upsert_kb_doc inserts a new doc', async () => {
+	it('create_skill inserts a new skill', async () => {
 		const r = await db.query(
-			`INSERT INTO documents (team_id, type, slug, title, content)
-			 VALUES ($1, 'kb_doc', 'mcp-kb-doc', 'MCP KB Doc', 'Created via MCP')
+			`INSERT INTO skills (team_id, name, slug, description, content)
+			 VALUES ($1, 'MCP Skill', 'mcp-skill', 'Created via MCP', 'How to do the thing')
 			 RETURNING *`,
 			[teamId],
 		);
 		expect(r.rows.length).toBe(1);
-		expect((r.rows[0] as any).slug).toBe('mcp-kb-doc');
+		expect((r.rows[0] as any).slug).toBe('mcp-skill');
 	});
 
-	it('get_kb_doc query returns doc by slug', async () => {
-		const r = await db.query(
-			"SELECT * FROM documents WHERE type = 'kb_doc' AND team_id = $1 AND slug = $2",
-			[teamId, 'mcp-kb-doc'],
-		);
+	it('get_skill query returns skill by slug', async () => {
+		const r = await db.query('SELECT * FROM skills WHERE team_id = $1 AND slug = $2', [
+			teamId,
+			'mcp-skill',
+		]);
 		expect(r.rows.length).toBe(1);
-		expect((r.rows[0] as any).title).toBe('MCP KB Doc');
-		expect((r.rows[0] as any).content).toBe('Created via MCP');
+		expect((r.rows[0] as any).name).toBe('MCP Skill');
+		expect((r.rows[0] as any).content).toBe('How to do the thing');
 	});
 
 	it('resolve_approval updates approval status', async () => {
