@@ -23,6 +23,14 @@ export interface ConnectorCapability {
 	};
 	allowedHosts: string[];
 	/**
+	 * Explicit OAuth scope list to request during DCR + authorize. When set,
+	 * overrides the Authorization Server's `scopes_supported`. Required for
+	 * providers whose AS advertises a broad scope universe (e.g. GitHub's
+	 * MCP server, which surfaces every standard GitHub OAuth scope and would
+	 * otherwise produce an unreviewable consent screen).
+	 */
+	scopes?: string[];
+	/**
 	 * Paste fallback for providers that don't expose OAuth on their MCP
 	 * server. Omit when OAuth is the only path.
 	 */
@@ -34,6 +42,13 @@ export interface ConnectorCapability {
 }
 
 export const CONNECTOR_CAPABILITIES: Record<string, ConnectorCapability> = {
+	github: {
+		id: 'github',
+		displayName: 'GitHub',
+		mcpServer: { url: 'https://api.githubcopilot.com/mcp/', transport: 'http' },
+		allowedHosts: ['api.githubcopilot.com', 'api.github.com', 'github.com'],
+		scopes: ['repo', 'workflow', 'read:org', 'write:ssh_signing_key', 'write:public_key'],
+	},
 	datocms: {
 		id: 'datocms',
 		displayName: 'DatoCMS',

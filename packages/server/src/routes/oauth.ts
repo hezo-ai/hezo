@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { WakeupSource, wsRoom } from '@hezo/shared';
+import { getConnectorCapability, WakeupSource, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
@@ -11,7 +11,6 @@ import { pushConnectorToTeamContainers } from '../services/connectors/live-push'
 import {
 	createConnection,
 	deleteConnection,
-	findConnectionByAccount,
 	getConnectionForTeam,
 	listConnectionsForTeam,
 } from '../services/oauth/connection-store';
@@ -24,12 +23,9 @@ import {
 } from '../services/oauth/provider-generic';
 import {
 	computeScopeStatus,
-	defaultGitHubScopes,
 	fetchAccount,
-	pollDeviceFlow,
 	registerAuthKey,
 	registerSigningKey,
-	startDeviceFlow,
 } from '../services/oauth/provider-github';
 import { type ManualOAuthConfig, signState, verifyState } from '../services/oauth/state';
 import { generateTeamSSHKey, getTeamSSHKey } from '../services/ssh-keys';
@@ -38,146 +34,6 @@ import { createWakeup } from '../services/wakeup';
 const log = logger.child('oauth-route');
 
 export const oauthRoutes = new Hono<Env>();
-
-interface DeviceFlowEntry {
-	deviceCode: string;
-	teamId: string;
-	provider: 'github';
-	scopes: string[];
-	expiresAt: number;
-}
-
-const deviceFlows = new Map<string, DeviceFlowEntry>();
-const DEVICE_FLOW_TTL_MS = 15 * 60 * 1000;
-
-function pruneDeviceFlows(): void {
-	const now = Date.now();
-	for (const [id, entry] of deviceFlows) {
-		if (entry.expiresAt < now) deviceFlows.delete(id);
-	}
-}
-
-interface DeviceFlowStartResult {
-	flow_id: string;
-	user_code: string;
-	verification_uri: string;
-	expires_in: number;
-	interval: number;
-}
-
-async function startGitHubDeviceFlow(
-	teamId: string,
-	scopes: string[],
-): Promise<DeviceFlowStartResult> {
-	pruneDeviceFlows();
-	const started = await startDeviceFlow({ scopes });
-	const flowId = randomBytes(16).toString('hex');
-	deviceFlows.set(flowId, {
-		deviceCode: started.deviceCode,
-		teamId,
-		provider: 'github',
-		scopes,
-		expiresAt: Date.now() + DEVICE_FLOW_TTL_MS,
-	});
-	return {
-		flow_id: flowId,
-		user_code: started.userCode,
-		verification_uri: started.verificationUri,
-		expires_in: started.expiresIn,
-		interval: started.interval,
-	};
-}
-
-type GitHubDevicePollOutcome =
-	| { kind: 'pending'; retryAfter: number }
-	| { kind: 'failed'; error: string }
-	| {
-			kind: 'success';
-			connection: {
-				id: string;
-				provider: string;
-				provider_account_id: string;
-				provider_account_label: string;
-				scopes: string[];
-				expires_at: Date | null;
-				metadata: Record<string, unknown>;
-			};
-			isNew: boolean;
-	  };
-
-async function completeGitHubDeviceFlow(
-	entry: DeviceFlowEntry,
-	flowId: string,
-	db: import('@electric-sql/pglite').PGlite,
-	masterKeyManager: import('../crypto/master-key').MasterKeyManager,
-): Promise<GitHubDevicePollOutcome> {
-	const result = await pollDeviceFlow(entry.deviceCode);
-	if (result.status === 'pending') {
-		return { kind: 'pending', retryAfter: result.retryAfter };
-	}
-	if (result.status === 'failed') {
-		deviceFlows.delete(flowId);
-		return { kind: 'failed', error: result.error };
-	}
-
-	deviceFlows.delete(flowId);
-
-	const account = await fetchAccount(result.accessToken);
-
-	const existing = await findConnectionByAccount(
-		{ db, masterKeyManager },
-		entry.teamId,
-		'github',
-		String(account.id),
-	);
-
-	const conn = await createConnection(
-		{ db, masterKeyManager },
-		{
-			teamId: entry.teamId,
-			provider: 'github',
-			providerAccountId: String(account.id),
-			providerAccountLabel: account.login,
-			accessToken: result.accessToken,
-			scopes: result.scope ? result.scope.split(/[,\s]+/).filter(Boolean) : entry.scopes,
-			expiresAt: null,
-			allowedHosts: ['github.com', 'api.github.com'],
-			metadata: {
-				avatar_url: account.avatarUrl,
-				email: account.email,
-				login: account.login,
-				github_user_id: account.id,
-			},
-		},
-	);
-
-	// Always attempt registration — both helpers treat 422 "already in use" as
-	// a no-op, so this is idempotent. Critical for the re-auth path where a
-	// pre-existing connection is upgraded to broader scopes (write:public_key);
-	// without this, the newly-required auth key would never get registered.
-	await ensureTeamKeyRegisteredOnGitHub(
-		db,
-		masterKeyManager,
-		entry.teamId,
-		result.accessToken,
-	).catch((e) =>
-		log.warn('team-key registration failed (non-fatal)', { error: (e as Error).message }),
-	);
-
-	return {
-		kind: 'success',
-		isNew: !existing,
-		connection: {
-			id: conn.id,
-			provider: conn.provider,
-			provider_account_id: conn.providerAccountId,
-			provider_account_label: conn.providerAccountLabel,
-			scopes: conn.scopes,
-			expires_at: conn.expiresAt,
-			metadata: conn.metadata,
-		},
-	};
-}
 
 oauthRoutes.get('/oauth/callback', async (c) => {
 	const masterKeyManager = c.get('masterKeyManager');
@@ -418,6 +274,8 @@ async function startConnectorAuthCode(
 	const host = c.req.header('host') ?? 'localhost';
 	const redirectUri = `${protocol}://${host}/api/oauth/mcp-callback`;
 
+	const capability = getConnectorCapability(connector.name);
+
 	let dcr = config.dcr;
 	let scopesSupported: string[] = config.dcr?.scopes_supported ?? [];
 
@@ -480,6 +338,12 @@ async function startConnectorAuthCode(
 		);
 	}
 
+	// Registry override: capabilities with an explicit scope list narrow the
+	// request to a known-good union. Without this, providers whose AS
+	// advertises every OAuth scope (e.g. GitHub) would produce an
+	// unreviewable consent screen.
+	const requestedScopes = capability?.scopes ?? scopesSupported;
+
 	const { state, codeChallenge } = await signState(masterKeyManager, {
 		teamId,
 		provider: `mcp:${connector.id}`,
@@ -491,7 +355,7 @@ async function startConnectorAuthCode(
 			authorize_url: dcr.authorization_endpoint,
 			token_url: dcr.token_endpoint,
 			client_id: dcr.client_id,
-			scopes: scopesSupported,
+			scopes: requestedScopes,
 		},
 		resourceUrl: config.url,
 	});
@@ -499,7 +363,7 @@ async function startConnectorAuthCode(
 	const authUrl = buildAuthorizationUrl({
 		authorizeUrl: dcr.authorization_endpoint,
 		clientId: dcr.client_id,
-		scopes: scopesSupported,
+		scopes: requestedScopes,
 		redirectUri,
 		state,
 		codeChallenge,
@@ -510,93 +374,19 @@ async function startConnectorAuthCode(
 }
 
 /**
- * Unified OAuth kickoff. The body picks the flow:
- *   { connector_id: "..." }            → auth-code + PKCE for an MCP connector
- *   { provider: "github", scopes?: [] } → GitHub device flow
- * Response is a discriminated union on `flow`. The web layer dispatches off
- * `flow` to either open a popup (auth_code) or render the device-code modal
- * and start polling `/auth-poll` (device).
+ * OAuth kickoff for an MCP connector. Returns the authorize URL the UI opens
+ * in a popup; the flow completes server-side via /oauth/mcp-callback and a
+ * window.postMessage back to the opener.
  */
 oauthRoutes.post('/teams/:teamId/auth-start', async (c) => {
 	const teamId = c.get('teamId') as string;
-	const body = (await c.req.json().catch(() => ({}))) as {
-		connector_id?: string;
-		provider?: string;
-		scopes?: string[];
-	};
+	const body = (await c.req.json().catch(() => ({}))) as { connector_id?: string };
 
-	if (body.connector_id) {
-		const result = await startConnectorAuthCode(c, teamId, body.connector_id);
-		if (result.kind === 'error') return err(c, result.code, result.message, result.status);
-		return ok(c, { flow: 'auth_code' as const, auth_url: result.authUrl });
-	}
+	if (!body.connector_id) return err(c, 'INVALID_REQUEST', 'connector_id is required', 400);
 
-	if (body.provider === 'github') {
-		const scopes = body.scopes && body.scopes.length > 0 ? body.scopes : defaultGitHubScopes();
-		let started: DeviceFlowStartResult;
-		try {
-			started = await startGitHubDeviceFlow(teamId, scopes);
-		} catch (e) {
-			log.warn('github device-flow start failed', { error: (e as Error).message });
-			return err(c, 'GITHUB_DEVICE_START_FAILED', (e as Error).message, 503);
-		}
-		return ok(c, { flow: 'device' as const, ...started });
-	}
-
-	return err(
-		c,
-		'INVALID_REQUEST',
-		'body must include connector_id (for MCP connectors) or provider (for device-flow providers)',
-		400,
-	);
-});
-
-/**
- * Unified OAuth polling. Only device flows need polling — the auth-code flow
- * resolves out-of-band via /oauth/mcp-callback and a postMessage to the opener
- * window. Returns 202 with status="pending" while the user is still authorizing,
- * or 200 with status="success" once the connection has been provisioned.
- */
-oauthRoutes.post('/teams/:teamId/auth-poll', async (c) => {
-	const teamId = c.get('teamId') as string;
-	const body = (await c.req.json().catch(() => ({}))) as { flow_id?: string };
-	const flowId = body.flow_id;
-	if (!flowId) return err(c, 'INVALID_REQUEST', 'flow_id is required', 400);
-
-	const entry = deviceFlows.get(flowId);
-	if (!entry) return err(c, 'NOT_FOUND', 'unknown or expired flow_id', 404);
-	if (entry.teamId !== teamId) return err(c, 'FORBIDDEN', 'flow does not belong to this team', 403);
-
-	const db = c.get('db');
-	const masterKeyManager = c.get('masterKeyManager');
-
-	let outcome: GitHubDevicePollOutcome;
-	try {
-		outcome = await completeGitHubDeviceFlow(entry, flowId, db, masterKeyManager);
-	} catch (e) {
-		return err(c, 'GITHUB_ACCOUNT_FETCH_FAILED', (e as Error).message, 503);
-	}
-
-	if (outcome.kind === 'pending') {
-		return c.json({ data: { status: 'pending' as const, retry_after: outcome.retryAfter } }, 202);
-	}
-	if (outcome.kind === 'failed') {
-		return err(c, 'GITHUB_DEVICE_FAILED', outcome.error, 400);
-	}
-
-	broadcastChange(
-		c,
-		wsRoom.team(teamId),
-		'oauth_connections',
-		outcome.isNew ? 'INSERT' : 'UPDATE',
-		{
-			id: outcome.connection.id,
-			provider: outcome.connection.provider,
-			provider_account_label: outcome.connection.provider_account_label,
-		},
-	);
-
-	return ok(c, { status: 'success' as const, connection: outcome.connection });
+	const result = await startConnectorAuthCode(c, teamId, body.connector_id);
+	if (result.kind === 'error') return err(c, result.code, result.message, result.status);
+	return ok(c, { auth_url: result.authUrl });
 });
 
 /**
@@ -651,15 +441,63 @@ oauthRoutes.get('/oauth/mcp-callback', async (c) => {
 		return c.html(buildCallbackPage('error', 'exchange_failed'), 200);
 	}
 
-	const allowedHosts = inferAllowedHosts(payload.resourceUrl, payload.manualConfig.token_url);
-	const accountId = `${payload.provider}:${randomBytes(8).toString('hex')}`;
+	const capability = getConnectorCapability(connector.name);
+
+	// GitHub carve-out: the registry's `github` entry doubles as the source of
+	// truth for SSH-based git ops (clone/push, SSH-key registration). When the
+	// connector resolves to it, we use the GitHub user identity for the
+	// oauth_connections row (so consumers filtering on `provider === 'github'`
+	// filter matches) and run the same key-registration side effect the
+	// retired device-flow callback used to do.
+	let providerName: string;
+	let providerAccountId: string;
+	let providerAccountLabel: string;
+	let allowedHosts: string[];
+	let metadata: Record<string, unknown>;
+	let githubAccount: Awaited<ReturnType<typeof fetchAccount>> | null = null;
+
+	if (capability?.id === 'github') {
+		try {
+			githubAccount = await fetchAccount(token.accessToken);
+		} catch (e) {
+			log.warn('github account fetch failed', { error: (e as Error).message });
+			await markFailed(db, connector.id, `account_fetch: ${(e as Error).message}`);
+			return c.html(buildCallbackPage('error', 'github_account_fetch_failed'), 200);
+		}
+		providerName = 'github';
+		providerAccountId = String(githubAccount.id);
+		providerAccountLabel = githubAccount.login;
+		allowedHosts = capability.allowedHosts;
+		metadata = {
+			resource_url: payload.resourceUrl,
+			token_url: payload.manualConfig.token_url,
+			authorize_url: payload.manualConfig.authorize_url,
+			connector_id: connector.id,
+			avatar_url: githubAccount.avatarUrl,
+			email: githubAccount.email,
+			login: githubAccount.login,
+			github_user_id: githubAccount.id,
+		};
+	} else {
+		providerName = payload.provider;
+		providerAccountId = `${payload.provider}:${randomBytes(8).toString('hex')}`;
+		providerAccountLabel = payload.mcpConnectionName ?? payload.provider;
+		allowedHosts = inferAllowedHosts(payload.resourceUrl, payload.manualConfig.token_url);
+		metadata = {
+			resource_url: payload.resourceUrl,
+			token_url: payload.manualConfig.token_url,
+			authorize_url: payload.manualConfig.authorize_url,
+			connector_id: connector.id,
+		};
+	}
+
 	const conn = await createConnection(
 		{ db, masterKeyManager },
 		{
 			teamId: payload.teamId,
-			provider: payload.provider,
-			providerAccountId: accountId,
-			providerAccountLabel: payload.mcpConnectionName ?? payload.provider,
+			provider: providerName,
+			providerAccountId,
+			providerAccountLabel,
 			accessToken: token.accessToken,
 			refreshToken: token.refreshToken,
 			scopes: token.scope
@@ -667,16 +505,22 @@ oauthRoutes.get('/oauth/mcp-callback', async (c) => {
 				: payload.manualConfig.scopes,
 			expiresAt: token.expiresAt ?? null,
 			allowedHosts,
-			metadata: {
-				resource_url: payload.resourceUrl,
-				token_url: payload.manualConfig.token_url,
-				authorize_url: payload.manualConfig.authorize_url,
-				connector_id: connector.id,
-			},
+			metadata,
 		},
 	);
 
 	await markActive(db, connector.id, conn.id);
+
+	if (capability?.id === 'github') {
+		await ensureTeamKeyRegisteredOnGitHub(
+			db,
+			masterKeyManager,
+			payload.teamId,
+			token.accessToken,
+		).catch((e) =>
+			log.warn('team-key registration failed (non-fatal)', { error: (e as Error).message }),
+		);
+	}
 
 	// Sync push to the parent task's container so the calling agent sees the
 	// MCP on its next tool call; other team containers updated best-effort.

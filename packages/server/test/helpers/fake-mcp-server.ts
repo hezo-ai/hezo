@@ -34,6 +34,12 @@ export interface FakeMcpServerOptions {
 	 * the standard well-known path; the client must fall back.
 	 */
 	omitWwwAuthenticateResourceMetadata?: boolean;
+	/**
+	 * Issue this exact access token on /token instead of a random value. Useful
+	 * when the test needs the issued token to also authenticate against a
+	 * downstream service (e.g. github-sim) that pre-seeds an expected token.
+	 */
+	issueToken?: string;
 }
 
 export interface FakeMcpServer {
@@ -181,7 +187,7 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions = {}): Promi
 			return c.json({ error: 'invalid_grant', error_description: 'missing verifier' }, 400);
 		}
 		codes.delete(code);
-		const accessToken = `tok_${randomBytes(16).toString('hex')}`;
+		const accessToken = opts.issueToken ?? `tok_${randomBytes(16).toString('hex')}`;
 		tokens.add(accessToken);
 		lastAccessToken = accessToken;
 		return c.json({

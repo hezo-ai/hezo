@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import type { McpConnection } from './use-mcp-connections';
 
 export interface OAuthConnection {
 	id: string;
@@ -14,38 +15,8 @@ export interface OAuthConnection {
 	updated_at: string;
 }
 
-export interface AuthStartAuthCode {
-	flow: 'auth_code';
+export interface AuthStartResult {
 	auth_url: string;
-}
-
-export interface AuthStartDevice {
-	flow: 'device';
-	flow_id: string;
-	user_code: string;
-	verification_uri: string;
-	expires_in: number;
-	interval: number;
-}
-
-export type AuthStartResult = AuthStartAuthCode | AuthStartDevice;
-
-export interface AuthPollSuccess {
-	status: 'success';
-	connection: OAuthConnection;
-}
-
-export interface AuthPollPending {
-	status: 'pending';
-	retry_after: number;
-}
-
-export type AuthPollResult = AuthPollSuccess | AuthPollPending;
-
-export interface AuthStartBody {
-	connector_id?: string;
-	provider?: 'github';
-	scopes?: string[];
 }
 
 export function useOAuthConnections(teamId: string) {
@@ -68,8 +39,29 @@ export function useDeleteOAuthConnection(teamId: string) {
 
 export function useAuthStart(teamId: string) {
 	return useMutation({
-		mutationFn: (body: AuthStartBody) =>
-			api.post<AuthStartResult>(`/api/teams/${teamId}/auth-start`, body),
+		mutationFn: (connectorId: string) =>
+			api.post<AuthStartResult>(`/api/teams/${teamId}/auth-start`, {
+				connector_id: connectorId,
+			}),
+	});
+}
+
+/**
+ * Idempotently materializes a connector row from the capability registry,
+ * returning the existing or newly-created row. Used by the project-settings
+ * GitHub section and the Connectors-page GitHub row so neither has to know
+ * how to construct the connector — they just say "ensure github" then call
+ * useAuthStart with the resulting id.
+ */
+export function useEnsureConnector(teamId: string) {
+	return useMutation({
+		mutationFn: (providerId: string) =>
+			api.post<McpConnection>(`/api/teams/${teamId}/connectors/ensure`, {
+				provider_id: providerId,
+			}),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'mcp-connections'] });
+		},
 	});
 }
 
@@ -86,24 +78,4 @@ export function useConnectionScopeStatus(teamId: string, connectionId: string | 
 			api.get<ScopeStatus>(`/api/teams/${teamId}/oauth-connections/${connectionId}/scope-status`),
 		enabled: !!connectionId,
 	});
-}
-
-export async function pollAuth(teamId: string, flowId: string): Promise<AuthPollResult> {
-	const token = api.getToken();
-	const res = await fetch(`/api/teams/${teamId}/auth-poll`, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			...(token ? { Authorization: `Bearer ${token}` } : {}),
-		},
-		body: JSON.stringify({ flow_id: flowId }),
-	});
-	const json = (await res.json()) as { data?: AuthPollResult; error?: { message: string } };
-	if (!res.ok && res.status !== 202) {
-		throw new Error(json.error?.message ?? `auth poll failed (${res.status})`);
-	}
-	if (json.data?.status === 'success') {
-		queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'oauth-connections'] });
-	}
-	return json.data as AuthPollResult;
 }

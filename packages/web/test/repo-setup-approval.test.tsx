@@ -161,5 +161,5 @@ test('CTA navigates to the project settings page', async () => {
 	const expected = `/teams/${seed.ws.team.slug}/projects/${seed.projectSlug}/settings`;
 	await new Promise((r) => setTimeout(r, 500));
 	expect(router.state.location.pathname).toBe(expected);
-	await findByRole('heading', { name: 'Repositories' }, { timeout: 15_000 });
+	await findByRole('heading', { name: 'GitHub' }, { timeout: 15_000 });
 });

@@ -117,6 +117,61 @@ describe('mcp_connections REST routes', () => {
 	});
 });
 
+describe('POST /teams/:teamId/connectors/ensure', () => {
+	it('creates a connector from the registry on first call, returns the same row on second', async () => {
+		const ctx = await createTestApp();
+		const co = await ctx.app.request('/api/teams', {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Ensure Co' }),
+		});
+		const cid = (await co.json()).data.id;
+
+		const first = await ctx.app.request(`/api/teams/${cid}/connectors/ensure`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ provider_id: 'github' }),
+		});
+		expect(first.status).toBe(200);
+		const firstRow = (await first.json()).data as {
+			id: string;
+			name: string;
+			config: { url: string };
+		};
+		expect(firstRow.name).toBe('github');
+		expect(firstRow.config.url).toBe('https://api.githubcopilot.com/mcp/');
+
+		const second = await ctx.app.request(`/api/teams/${cid}/connectors/ensure`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ provider_id: 'github' }),
+		});
+		expect(second.status).toBe(200);
+		const secondRow = (await second.json()).data as { id: string };
+		expect(secondRow.id).toBe(firstRow.id);
+
+		await safeClose(ctx.db);
+	});
+
+	it('rejects unknown provider_id', async () => {
+		const ctx = await createTestApp();
+		const co = await ctx.app.request('/api/teams', {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Unknown Co' }),
+		});
+		const cid = (await co.json()).data.id;
+
+		const res = await ctx.app.request(`/api/teams/${cid}/connectors/ensure`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ provider_id: 'not-a-real-provider' }),
+		});
+		expect(res.status).toBe(404);
+		await safeClose(ctx.db);
+	});
+});
+
 describe('loadMcpConnectionDescriptors', () => {
 	it('returns saas connections as http descriptors', async () => {
 		await db.query(

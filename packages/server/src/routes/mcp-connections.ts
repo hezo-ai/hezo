@@ -1,10 +1,11 @@
-import { McpConnectionKind, wsRoom } from '@hezo/shared';
+import { getConnectorCapability, McpConnectionKind, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
+import { createOrFetchConnector } from '../services/connectors/lifecycle';
 import { installLocalMcpById } from '../services/mcp-installer';
 
 const log = logger.child('mcp-connections-route');
@@ -198,6 +199,39 @@ async function kickoffLocalInstall(
 		}
 	}
 }
+
+/**
+ * Idempotently materialize a connector row from the capability registry.
+ * Used by the UI's "Connect <provider>" buttons (project settings page,
+ * connectors page) so the user never has to manually create the row before
+ * starting auth. Same shape as the `register_connector` MCP tool, just
+ * keyed on the registry id instead of free-form input.
+ */
+mcpConnectionsRoutes.post('/teams/:teamId/connectors/ensure', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const body = (await c.req.json().catch(() => ({}))) as { provider_id?: string };
+	const providerId = body.provider_id?.trim();
+	if (!providerId) return err(c, 'INVALID_REQUEST', 'provider_id is required', 400);
+	const capability = getConnectorCapability(providerId);
+	if (!capability)
+		return err(c, 'NOT_FOUND', `no registered capability for provider_id=${providerId}`, 404);
+	if (!capability.mcpServer.url)
+		return err(c, 'INVALID_REQUEST', `provider ${providerId} has no MCP server url`, 400);
+
+	const { row, alreadyExisted } = await createOrFetchConnector(db, {
+		teamId,
+		name: capability.id,
+		displayName: capability.displayName,
+		mcpUrl: capability.mcpServer.url,
+		mcpTransport: capability.mcpServer.transport,
+		providerId: capability.id,
+	});
+	if (!alreadyExisted) {
+		broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'INSERT', { id: row.id });
+	}
+	return ok(c, row);
+});
 
 mcpConnectionsRoutes.delete('/teams/:teamId/mcp-connections/:id', async (c) => {
 	const teamId = c.get('teamId') as string;

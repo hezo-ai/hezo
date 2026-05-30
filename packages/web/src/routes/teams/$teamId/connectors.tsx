@@ -1,7 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Check, ExternalLink, Github, Plug, Trash2, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
-import { DeviceFlowDialog } from '../../../components/device-flow-dialog';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import {
@@ -14,6 +13,7 @@ import {
 	type OAuthConnection,
 	useAuthStart,
 	useDeleteOAuthConnection,
+	useEnsureConnector,
 	useOAuthConnections,
 } from '../../../hooks/use-oauth-connections';
 
@@ -88,14 +88,29 @@ interface GitHubRowProps {
 }
 
 function GitHubRow({ teamId, connection }: GitHubRowProps) {
-	const [dialogOpen, setDialogOpen] = useState(false);
 	const deleteConn = useDeleteOAuthConnection(teamId);
+	const ensure = useEnsureConnector(teamId);
+	const authStart = useAuthStart(teamId);
+	const [error, setError] = useState<string | null>(null);
 	const status = connection ? 'active' : 'pending';
+	const connecting = ensure.isPending || authStart.isPending;
 
 	const doRevoke = () => {
 		if (!connection) return;
 		if (!window.confirm(`Remove ${connection.provider_account_label}?`)) return;
 		deleteConn.mutate(connection.id);
+	};
+
+	const startConnect = async () => {
+		setError(null);
+		try {
+			const connector = await ensure.mutateAsync('github');
+			const { auth_url } = await authStart.mutateAsync(connector.id);
+			const popup = window.open(auth_url, 'hezo-connect', 'width=600,height=720');
+			if (!popup) setError('Pop-up blocked. Allow pop-ups for Hezo and try again.');
+		} catch (e) {
+			setError(e instanceof Error ? e.message : 'Failed to start GitHub OAuth');
+		}
 	};
 
 	return (
@@ -123,10 +138,11 @@ function GitHubRow({ teamId, connection }: GitHubRowProps) {
 						</>
 					) : (
 						<p className="text-xs text-text-muted mt-1">
-							Authorizes git clone/push and registers your team SSH key on the connecting account.
-							Uses device flow — no callback URL configuration needed.
+							One connection covers both git operations (clone, push, SSH-key registration) and the
+							official GitHub MCP server (agent-callable issue/PR/search tools).
 						</p>
 					)}
+					{error && <p className="text-xs text-accent-red-text mt-2">{error}</p>}
 				</div>
 
 				<div className="flex items-center gap-2 shrink-0">
@@ -142,19 +158,17 @@ function GitHubRow({ teamId, connection }: GitHubRowProps) {
 							{deleteConn.isPending ? 'Removing…' : 'Disconnect'}
 						</Button>
 					) : (
-						<Button size="sm" onClick={() => setDialogOpen(true)} data-testid="connector-connect">
-							Connect
+						<Button
+							size="sm"
+							onClick={startConnect}
+							disabled={connecting}
+							data-testid="connector-connect"
+						>
+							{connecting ? 'Starting…' : 'Connect'}
 						</Button>
 					)}
 				</div>
 			</div>
-
-			<DeviceFlowDialog
-				open={dialogOpen}
-				onOpenChange={setDialogOpen}
-				teamId={teamId}
-				provider="github"
-			/>
 		</li>
 	);
 }
@@ -181,24 +195,17 @@ function ConnectorRow({ connector, teamId, focused, focusRef }: ConnectorRowProp
 
 	const openConnect = () => {
 		setError(null);
-		authStart.mutate(
-			{ connector_id: connector.id },
-			{
-				onSuccess: (result) => {
-					if (result.flow !== 'auth_code') {
-						setError('Unexpected device flow response for MCP connector');
-						return;
-					}
-					const popup = window.open(result.auth_url, 'hezo-connect', 'width=600,height=720');
-					if (!popup) {
-						setError('Pop-up blocked. Allow pop-ups for Hezo and try again.');
-					}
-				},
-				onError: (e: unknown) => {
-					setError(e instanceof Error ? e.message : 'Failed to start OAuth');
-				},
+		authStart.mutate(connector.id, {
+			onSuccess: ({ auth_url }) => {
+				const popup = window.open(auth_url, 'hezo-connect', 'width=600,height=720');
+				if (!popup) {
+					setError('Pop-up blocked. Allow pop-ups for Hezo and try again.');
+				}
 			},
-		);
+			onError: (e: unknown) => {
+				setError(e instanceof Error ? e.message : 'Failed to start OAuth');
+			},
+		});
 	};
 
 	const doRevoke = () => {

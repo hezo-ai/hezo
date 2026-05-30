@@ -52,24 +52,17 @@ export function ConnectRequiredComment({ comment, teamId }: Props) {
 
 	const openConnect = () => {
 		setError(null);
-		authStart.mutate(
-			{ connector_id },
-			{
-				onSuccess: (result) => {
-					if (result.flow !== 'auth_code') {
-						setError('Unexpected device flow response for MCP connector');
-						return;
-					}
-					const popup = window.open(result.auth_url, 'hezo-connect', 'width=600,height=720');
-					if (!popup) {
-						setError('Pop-up blocked. Allow pop-ups for Hezo and try again.');
-					}
-				},
-				onError: (e: unknown) => {
-					setError(e instanceof Error ? e.message : 'Failed to start OAuth flow');
-				},
+		authStart.mutate(connector_id, {
+			onSuccess: ({ auth_url }) => {
+				const popup = window.open(auth_url, 'hezo-connect', 'width=600,height=720');
+				if (!popup) {
+					setError('Pop-up blocked. Allow pop-ups for Hezo and try again.');
+				}
 			},
-		);
+			onError: (e: unknown) => {
+				setError(e instanceof Error ? e.message : 'Failed to start OAuth flow');
+			},
+		});
 	};
 
 	if (status === 'active') {
