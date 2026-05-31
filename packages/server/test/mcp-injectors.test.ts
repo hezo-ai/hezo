@@ -1,6 +1,7 @@
 import { AgentRuntime } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from '../src/services/mcp-injectors';
+import { STOP_HOOK_RULES } from '../src/services/stop-hook-prompt';
 
 const HOME = '/workspace/.hezo/subscription/codex/run-1';
 const URL = 'http://host.docker.internal:3000/mcp';
@@ -21,6 +22,20 @@ describe('MCP_ADAPTERS', () => {
 			expect(MCP_ADAPTERS[runtime]).toBeDefined();
 		}
 		expect(Object.keys(MCP_ADAPTERS).sort()).toEqual([...runtimes].sort());
+	});
+
+	describe('STOP_HOOK_RULES deferral semantics', () => {
+		it('admits closing a ticket when the gated tail is filed as a blocked_by follow-up', () => {
+			expect(STOP_HOOK_RULES).toContain(
+				'filing the deferred work as a SEPARATE ticket whose blocked_by_task_ids points at',
+			);
+			expect(STOP_HOOK_RULES).toContain('marking the current ticket terminal is fine');
+		});
+
+		it('still rejects an unguarded top-level task or close-while-deferring', () => {
+			expect(STOP_HOOK_RULES).toContain('A new TOP-LEVEL task with NO such blocker edge');
+			expect(STOP_HOOK_RULES).toContain('is still NOT an acceptable deferral');
+		});
 	});
 
 	it('every adapter produces a valid injection for a single Hezo descriptor', () => {
