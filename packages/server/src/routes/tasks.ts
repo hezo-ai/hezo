@@ -651,7 +651,7 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 					const locator = await getProjectLocator(db, taskInfo.project_id);
 					if (locator) {
 						try {
-							removeTaskWorktrees(dataDir, locator.teamSlug, locator.slug, taskInfo.identifier);
+							removeTaskWorktrees(dataDir, locator.teamId, locator.id, taskInfo.identifier);
 						} catch (error) {
 							log.error(`Failed to clean up worktrees for task ${taskInfo.identifier}:`, error);
 						}

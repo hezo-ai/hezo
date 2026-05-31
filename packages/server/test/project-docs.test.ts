@@ -56,13 +56,13 @@ afterAll(async () => {
 });
 
 describe('Project docs (DB-backed)', () => {
-	it('lists docs (empty initially)', async () => {
+	it('lists the default doc seeded at creation', async () => {
 		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/docs`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data).toEqual([]);
+		expect(body.data.map((d: any) => d.filename)).toEqual(['architecture-guidelines.md']);
 	});
 
 	it('creates a doc via PUT', async () => {

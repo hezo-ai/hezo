@@ -3,6 +3,7 @@ import { ContainerStatus, WakeupSource, wsRoom } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
+import { ref } from '../lib/log-ref';
 import { resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toProjectTaskPrefix, toSlug, uniqueSlug } from '../lib/slug';
@@ -328,20 +329,11 @@ projectsRoutes.delete('/teams/:teamId/projects/:projectId', async (c) => {
 		return err(c, 'CONFLICT', 'Cannot delete project with open tasks', 409);
 	}
 
-	const teamSlugResult = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
-		teamId,
-	]);
-	const teamSlug = teamSlugResult.rows[0]?.slug;
-
-	if (teamSlug) {
-		await trackBackground(
-			teardownContainer(buildContainerDeps(c), projectId, teamSlug, existing.rows[0].slug).catch(
-				(error) => {
-					log.error(`Failed to teardown container for project ${existing.rows[0].slug}:`, error);
-				},
-			),
-		);
-	}
+	await trackBackground(
+		teardownContainer(buildContainerDeps(c), projectId, teamId).catch((error) => {
+			log.error(`Failed to teardown container for project ${existing.rows[0].slug}:`, error);
+		}),
+	);
 
 	await db.query('DELETE FROM projects WHERE id = $1', [projectId]);
 	broadcastChange(c, wsRoom.team(teamId), 'projects', 'DELETE', { id: projectId });
@@ -488,7 +480,10 @@ projectsRoutes.post('/teams/:teamId/projects/:projectId/container/rebuild', asyn
 				await rebuildContainer(containerDeps, projectResult.rows[0] as ProjectRow, teamSlug);
 				wakeAgentsWithPendingWork(db, projectId, teamId);
 			} catch (error) {
-				log.error(`Container rebuild failed for project ${projectId}:`, error);
+				log.error(
+					`Container rebuild failed for project ${ref((projectResult.rows[0] as ProjectRow).slug, projectId)}:`,
+					error,
+				);
 			}
 		},
 		REBUILD_TIMEOUT_MS,

@@ -43,7 +43,6 @@ beforeAll(async () => {
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
-	const teamSlug = team.slug;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Preview Project',
@@ -51,10 +50,9 @@ beforeAll(async () => {
 	});
 	const project = (await projectRes.json()).data;
 	projectId = project.id;
-	const projectSlug = project.slug;
 
 	// Create workspace directory with test files matching getWorkspacePath layout
-	const workspacePath = join(dataDir, 'teams', teamSlug, 'projects', projectSlug, 'workspace');
+	const workspacePath = join(dataDir, 'teams', teamId, 'projects', projectId, 'workspace');
 	mkdirSync(workspacePath, { recursive: true });
 	writeFileSync(join(workspacePath, 'index.html'), '<html><body>Hello</body></html>');
 	writeFileSync(join(workspacePath, 'style.css'), 'body { color: red; }');

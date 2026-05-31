@@ -216,8 +216,6 @@ reposRoutes.post('/teams/:teamId/projects/:projectId/repos', async (c) => {
 				{
 					id: projectId,
 					team_id: teamId,
-					teamSlug: locator.teamSlug,
-					projectSlug: locator.slug,
 				},
 				dataDir,
 				c.get('sshAgentServer'),
@@ -309,7 +307,7 @@ reposRoutes.delete('/teams/:teamId/projects/:projectId/repos/:repoId', async (c)
 		const locator = await getProjectLocator(db, projectId);
 		if (locator) {
 			try {
-				removeRepoFromWorkspace(dataDir, locator.teamSlug, locator.slug, result.rows[0].short_name);
+				removeRepoFromWorkspace(dataDir, locator.teamId, locator.id, result.rows[0].short_name);
 			} catch (error) {
 				log.error(`Failed to clean up workspace for repo ${result.rows[0].short_name}:`, error);
 			}

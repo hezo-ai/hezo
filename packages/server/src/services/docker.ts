@@ -6,6 +6,7 @@ interface ContainerConfig {
 	Cmd?: string[];
 	Env?: string[];
 	WorkingDir?: string;
+	Labels?: Record<string, string>;
 	HostConfig: {
 		Binds?: string[];
 		PortBindings?: Record<string, Array<{ HostPort: string }>>;

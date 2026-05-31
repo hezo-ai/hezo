@@ -3,6 +3,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { IContext, IProxy } from 'http-mitm-proxy';
 import { Proxy as MitmProxy } from 'http-mitm-proxy';
 import type { MasterKeyManager } from '../../crypto/master-key';
+import { ref } from '../../lib/log-ref';
 import { logger } from '../../logger';
 import { type EgressAuditEvent, recordEgressEvent } from './audit';
 import type { HezoCA } from './ca';
@@ -48,6 +49,8 @@ export interface RunProxyScope {
 	teamId: string;
 	agentId: string;
 	projectId?: string | null;
+	/** Human-friendly label (agentSlug/taskIdentifier) for run-scoped logs. */
+	label?: string | null;
 }
 
 export interface AllocatedRunProxy {
@@ -88,7 +91,7 @@ export class EgressProxy {
 		proxy.onError((ctx, err, errorKind) => {
 			if (!err) return;
 			log.warn('mitm proxy error', {
-				runId,
+				run: ref(scope.label, runId),
 				kind: errorKind,
 				error: err.message,
 				...describeErrorContext(proxy, ctx, err),
@@ -134,12 +137,12 @@ export class EgressProxy {
 		} catch (e) {
 			this.portAllocator.release(port);
 			const reason = (e as Error).message;
-			log.warn('egress proxy unavailable for run', { runId, reason });
+			log.warn('egress proxy unavailable for run', { run: ref(scope.label, runId), reason });
 			throw new EgressProxyUnavailableError(reason);
 		}
 
 		this.runs.set(runId, { proxy, port, scope });
-		log.debug('egress proxy allocated', { runId, port });
+		log.debug('egress proxy allocated', { run: ref(scope.label, runId), port });
 
 		return { proxyHost: this.proxyHost, proxyPort: port };
 	}
@@ -150,11 +153,14 @@ export class EgressProxy {
 		try {
 			record.proxy.close();
 		} catch (e) {
-			log.warn('egress proxy close failed', { runId, error: (e as Error).message });
+			log.warn('egress proxy close failed', {
+				run: ref(record.scope.label, runId),
+				error: (e as Error).message,
+			});
 		}
 		this.portAllocator.release(record.port);
 		this.runs.delete(runId);
-		log.debug('egress proxy released', { runId });
+		log.debug('egress proxy released', { run: ref(record.scope.label, runId) });
 	}
 
 	async releaseAll(): Promise<void> {

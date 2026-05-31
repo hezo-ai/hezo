@@ -16,9 +16,7 @@ let token: string;
 let masterKeyManager: MasterKeyManager;
 let dataDir: string;
 let teamId: string;
-let teamSlug: string;
 let projectId: string;
-let projectSlug: string;
 let taskId: string;
 let otherProjectId: string;
 let otherTaskId: string;
@@ -65,7 +63,6 @@ beforeAll(async () => {
 	});
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	teamSlug = teamData.slug;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Main',
@@ -73,7 +70,6 @@ beforeAll(async () => {
 	});
 	const projectData = (await projectRes.json()).data;
 	projectId = projectData.id;
-	projectSlug = projectData.slug;
 
 	const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
 		method: 'POST',
@@ -143,15 +139,7 @@ describe('asset upload', () => {
 		expect(body.data.byte_size).toBe(bytes.byteLength);
 		expect(body.data.url).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
 
-		const onDisk = join(
-			dataDir,
-			'teams',
-			teamSlug,
-			'projects',
-			projectSlug,
-			'assets',
-			body.data.id,
-		);
+		const onDisk = join(dataDir, 'teams', teamId, 'projects', projectId, 'assets', body.data.id);
 		expect(existsSync(onDisk)).toBe(true);
 		const written = readFileSync(onDisk);
 		expect(createHash('sha256').update(written).digest('hex')).toBe(expectedSha);

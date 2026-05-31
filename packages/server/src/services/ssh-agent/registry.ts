@@ -10,6 +10,8 @@ export interface RunIdentity {
 	runId: string;
 	teamId: string;
 	agentId: string;
+	/** Human-friendly label (agentSlug/taskIdentifier) for run-scoped logs. */
+	label?: string | null;
 }
 
 export interface RegistryEntry {

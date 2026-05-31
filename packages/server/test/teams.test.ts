@@ -55,14 +55,9 @@ describe('teams CRUD', () => {
 			headers: authHeader(token),
 		});
 		const skillsBody = await skillsRes.json();
-		expect(skillsBody.data.length).toBe(4);
+		expect(skillsBody.data.length).toBe(2);
 		const slugs = skillsBody.data.map((d: any) => d.slug).sort();
-		expect(slugs).toEqual([
-			'architecture-guidelines.md',
-			'code-review-standards.md',
-			'development-workflow.md',
-			'team-overview.md',
-		]);
+		expect(slugs).toEqual(['code-review-standards.md', 'development-workflow.md']);
 	});
 
 	it('creates a team without a type and includes built-in agents', async () => {
