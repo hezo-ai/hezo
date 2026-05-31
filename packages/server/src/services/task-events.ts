@@ -167,6 +167,39 @@ export async function recordWakeupCancelled(
 	}
 }
 
+export async function recordWakeupStarted(
+	db: PGlite,
+	teamId: string,
+	taskId: string,
+	wakeupId: string,
+	agentName: string,
+	actorMemberId: string | null,
+	wsManager: WebSocketManager | undefined,
+): Promise<void> {
+	const actorName = await resolveActorName(db, actorMemberId);
+	const text = `${actorName} started queued run for ${agentName}`;
+	const r = await db.query<Record<string, unknown>>(
+		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb) RETURNING *`,
+		[
+			taskId,
+			actorMemberId,
+			CommentContentType.System,
+			JSON.stringify({
+				kind: 'wakeup_started',
+				wakeup_id: wakeupId,
+				actor_id: actorMemberId,
+				actor_name: actorName,
+				agent_name: agentName,
+				text,
+			}),
+		],
+	);
+	if (r.rows[0] && wsManager) {
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
+	}
+}
+
 export async function recordTitleChange(
 	db: PGlite,
 	teamId: string,

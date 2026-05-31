@@ -93,7 +93,12 @@ export function TaskSidebar({
 				)}
 
 				{queued && queued.wakeups.length > 0 && (
-					<QueuedAgentsList teamId={teamId} taskId={task.id} wakeups={queued.wakeups} />
+					<QueuedAgentsList
+						teamId={teamId}
+						taskId={task.id}
+						wakeups={queued.wakeups}
+						dispatch={queued.dispatch}
+					/>
 				)}
 
 				<div>

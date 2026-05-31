@@ -41,6 +41,11 @@ import type { EgressProxy } from './egress';
 import type { LogStreamBroker } from './log-stream-broker';
 import { detectOrphans } from './orphan-detector';
 import { ensureRepoSetupAction } from './repo-setup';
+import {
+	findBusyTaskOnProject as findBusyTaskOnProjectInDb,
+	isProjectBusyInDb,
+	isTaskBusyInDb,
+} from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
 import { recordStatusChange } from './task-events';
 import { absorbQueuedTaskWakeups, createWakeup } from './wakeup';
@@ -77,6 +82,13 @@ export interface LiveRun {
 	teamId: string;
 	taskKey: string;
 }
+
+export type DispatchNowResult =
+	| { dispatched: true }
+	| {
+			dispatched: false;
+			reason: 'task_busy' | 'project_busy' | 'blocked' | 'not_queued' | 'not_found';
+	  };
 
 export interface JobManagerDeps {
 	db: PGlite;
@@ -157,6 +169,124 @@ export class JobManager {
 			this.liveRuns.delete(run.runId);
 		}
 		return runs.length;
+	}
+
+	/**
+	 * Dispatch a single queued wakeup immediately, bypassing the cron's
+	 * coalescing window. Applies the exact per-wakeup gating `processWakeups`
+	 * does — task busy, project busy, and source-gated dependency blockers — so
+	 * the two run rules and the scheduler's blocker policy stay respected. The
+	 * in-memory `activeTaskRuns`/`activeProjectRuns` guards (checked inside
+	 * `isTaskBusy`/`isProjectBusy` and set synchronously by `activateAgent`)
+	 * make back-to-back calls race-safe. Returns a discriminated result the
+	 * route maps to 200 / 409 / 404.
+	 */
+	async dispatchWakeupNow(wakeupId: string): Promise<DispatchNowResult> {
+		const { db } = this.deps;
+		const lookup = await db.query<{
+			id: string;
+			member_id: string;
+			team_id: string;
+			source: string;
+			payload: Record<string, unknown>;
+			status: string;
+		}>(
+			`SELECT id, member_id, team_id, source, payload, status
+			 FROM agent_wakeup_requests WHERE id = $1`,
+			[wakeupId],
+		);
+		const wakeup = lookup.rows[0];
+		if (!wakeup) return { dispatched: false, reason: 'not_found' };
+		if (wakeup.status !== WakeupStatus.Queued) return { dispatched: false, reason: 'not_queued' };
+
+		const wakeupTaskId =
+			typeof wakeup.payload?.task_id === 'string' ? wakeup.payload.task_id : null;
+
+		if (wakeupTaskId) {
+			if (await this.isTaskBusy(wakeup.payload)) {
+				await this.markWakeupSkipped(
+					wakeup.id,
+					WakeupSkipReason.TaskBusy,
+					wakeupTaskId,
+					wakeup.team_id,
+					wakeupTaskId,
+				);
+				return { dispatched: false, reason: 'task_busy' };
+			}
+			const projectId = await this.resolveProjectForTask(wakeupTaskId);
+			if (projectId && (await this.isProjectBusy(projectId))) {
+				const busyTaskId = await this.findBusyTaskOnProject(projectId);
+				await this.markWakeupSkipped(
+					wakeup.id,
+					WakeupSkipReason.ProjectBusy,
+					wakeupTaskId,
+					wakeup.team_id,
+					busyTaskId,
+				);
+				return { dispatched: false, reason: 'project_busy' };
+			}
+			if (await shouldDeferWakeupForBlockers(db, wakeup.source, wakeupTaskId)) {
+				await db.query(
+					`UPDATE agent_wakeup_requests
+					 SET status = $1::wakeup_status, payload = payload || $2::jsonb
+					 WHERE id = $3`,
+					[WakeupStatus.Deferred, JSON.stringify({ reason: 'blocked' }), wakeup.id],
+				);
+				return { dispatched: false, reason: 'blocked' };
+			}
+		}
+
+		// Race-safe claim — the 5s dispatcher may have flipped queued->claimed
+		// between the lookup and here. The conditional WHERE guards against it.
+		const claimed = await db.query<{ id: string }>(
+			`UPDATE agent_wakeup_requests
+			 SET status = $1::wakeup_status,
+			     claimed_at = now(),
+			     last_skipped_at = NULL,
+			     last_skipped_reason = NULL,
+			     last_skipped_blocker_task_id = NULL
+			 WHERE id = $2 AND status = $3::wakeup_status
+			 RETURNING id`,
+			[WakeupStatus.Claimed, wakeup.id, WakeupStatus.Queued],
+		);
+		if (claimed.rows.length === 0) return { dispatched: false, reason: 'not_queued' };
+
+		if (wakeupTaskId) {
+			const refreshed = await db.query<Record<string, unknown>>(
+				'SELECT * FROM tasks WHERE id = $1',
+				[wakeupTaskId],
+			);
+			if (refreshed.rows[0]) {
+				broadcastRowChange(
+					this.deps.wsManager,
+					wsRoom.team(wakeup.team_id),
+					'tasks',
+					'UPDATE',
+					refreshed.rows[0],
+				);
+			}
+		}
+
+		try {
+			await this.activateAgent(
+				wakeup.member_id,
+				wakeup.team_id,
+				wakeup.id,
+				wakeup.payload,
+				wakeup.source,
+			);
+		} catch (error) {
+			log.error(`activateAgent threw for run-now wakeup ${wakeup.id}:`, error);
+			await db
+				.query('UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2', [
+					WakeupStatus.Failed,
+					wakeup.id,
+				])
+				.catch(() => {});
+			throw error;
+		}
+
+		return { dispatched: true };
 	}
 
 	private buildContainerDeps(): ContainerDeps {
@@ -471,44 +601,19 @@ export class JobManager {
 	private async isTaskBusy(payload: Record<string, unknown> | null | undefined): Promise<boolean> {
 		const taskId = typeof payload?.task_id === 'string' ? payload.task_id : null;
 		if (!taskId) return false;
+		// In-memory guard closes the race window between dispatch and
+		// createHeartbeatRun, before the DB-backed check is authoritative.
 		if (this.activeTaskRuns.has(taskId)) return true;
-		const { db } = this.deps;
-		const active = await db.query(
-			`SELECT 1 FROM heartbeat_runs
-			 WHERE task_id = $1
-			   AND status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)
-			 LIMIT 1`,
-			[taskId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
-		);
-		return active.rows.length > 0;
+		return isTaskBusyInDb(this.deps.db, taskId);
 	}
 
 	private async isProjectBusy(projectId: string): Promise<boolean> {
 		if (this.activeProjectRuns.has(projectId)) return true;
-		const { db } = this.deps;
-		const active = await db.query(
-			`SELECT 1 FROM heartbeat_runs r
-			 JOIN tasks t ON t.id = r.task_id
-			 WHERE t.project_id = $1
-			   AND r.status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)
-			 LIMIT 1`,
-			[projectId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
-		);
-		return active.rows.length > 0;
+		return isProjectBusyInDb(this.deps.db, projectId);
 	}
 
-	private async findBusyTaskOnProject(projectId: string): Promise<string | null> {
-		const { db } = this.deps;
-		const active = await db.query<{ task_id: string }>(
-			`SELECT r.task_id FROM heartbeat_runs r
-			 JOIN tasks t ON t.id = r.task_id
-			 WHERE t.project_id = $1
-			   AND r.status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)
-			 ORDER BY r.created_at ASC
-			 LIMIT 1`,
-			[projectId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
-		);
-		return active.rows[0]?.task_id ?? null;
+	private findBusyTaskOnProject(projectId: string): Promise<string | null> {
+		return findBusyTaskOnProjectInDb(this.deps.db, projectId);
 	}
 
 	private async markWakeupSkipped(
