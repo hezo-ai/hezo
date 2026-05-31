@@ -328,20 +328,11 @@ projectsRoutes.delete('/teams/:teamId/projects/:projectId', async (c) => {
 		return err(c, 'CONFLICT', 'Cannot delete project with open tasks', 409);
 	}
 
-	const teamSlugResult = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
-		teamId,
-	]);
-	const teamSlug = teamSlugResult.rows[0]?.slug;
-
-	if (teamSlug) {
-		await trackBackground(
-			teardownContainer(buildContainerDeps(c), projectId, teamSlug, existing.rows[0].slug).catch(
-				(error) => {
-					log.error(`Failed to teardown container for project ${existing.rows[0].slug}:`, error);
-				},
-			),
-		);
-	}
+	await trackBackground(
+		teardownContainer(buildContainerDeps(c), projectId, teamId).catch((error) => {
+			log.error(`Failed to teardown container for project ${existing.rows[0].slug}:`, error);
+		}),
+	);
 
 	await db.query('DELETE FROM projects WHERE id = $1', [projectId]);
 	broadcastChange(c, wsRoom.team(teamId), 'projects', 'DELETE', { id: projectId });

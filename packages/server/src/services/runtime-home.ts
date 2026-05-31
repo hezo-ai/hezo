@@ -66,14 +66,14 @@ export function getContainerSubscriptionRoot(
 export function getHostSubscriptionRoot(
 	provider: AiProvider,
 	dataDir: string,
-	teamSlug: string,
-	projectSlug: string,
+	teamId: string,
+	projectId: string,
 	heartbeatRunId: string,
 ): string | null {
 	const layout = SUBSCRIPTION_LAYOUTS[provider];
 	if (!layout) return null;
 	return join(
-		getWorkspacePath(dataDir, teamSlug, projectSlug),
+		getWorkspacePath(dataDir, teamId, projectId),
 		'.hezo',
 		'subscription',
 		layout.dirName,
@@ -91,8 +91,8 @@ export interface SubscriptionMount {
 
 export function buildSubscriptionMount(
 	dataDir: string,
-	teamSlug: string,
-	projectSlug: string,
+	teamId: string,
+	projectId: string,
 	heartbeatRunId: string,
 	provider: AiProvider,
 	credential: AiProviderCredential,
@@ -105,8 +105,8 @@ export function buildSubscriptionMount(
 	const hostDir = getHostSubscriptionRoot(
 		provider,
 		dataDir,
-		teamSlug,
-		projectSlug,
+		teamId,
+		projectId,
 		heartbeatRunId,
 	) as string;
 	const containerDir = getContainerSubscriptionRoot(provider, heartbeatRunId) as string;
@@ -140,8 +140,8 @@ export interface RuntimeHomeMount {
 export function ensureRuntimeHomeDir(
 	provider: AiProvider,
 	dataDir: string,
-	teamSlug: string,
-	projectSlug: string,
+	teamId: string,
+	projectId: string,
 	heartbeatRunId: string,
 	existing: SubscriptionMount | null,
 ): RuntimeHomeMount | null {
@@ -159,8 +159,8 @@ export function ensureRuntimeHomeDir(
 	const hostDir = getHostSubscriptionRoot(
 		provider,
 		dataDir,
-		teamSlug,
-		projectSlug,
+		teamId,
+		projectId,
 		heartbeatRunId,
 	) as string;
 	const containerDir = getContainerSubscriptionRoot(provider, heartbeatRunId) as string;

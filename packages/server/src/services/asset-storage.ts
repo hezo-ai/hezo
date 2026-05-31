@@ -18,8 +18,8 @@ export class AttachmentTooLargeError extends Error {
 
 export async function writeAsset(
 	dataDir: string,
-	teamSlug: string,
-	projectSlug: string,
+	teamId: string,
+	projectId: string,
 	assetId: string,
 	source: Blob,
 ): Promise<WriteAssetResult> {
@@ -33,7 +33,7 @@ export async function writeAsset(
 	}
 
 	const sha256 = createHash('sha256').update(buf).digest('hex');
-	const diskPath = getAssetPath(dataDir, teamSlug, projectSlug, assetId);
+	const diskPath = getAssetPath(dataDir, teamId, projectId, assetId);
 	mkdirSync(dirname(diskPath), { recursive: true });
 
 	try {
@@ -48,21 +48,21 @@ export async function writeAsset(
 
 export async function deleteAsset(
 	dataDir: string,
-	teamSlug: string,
-	projectSlug: string,
+	teamId: string,
+	projectId: string,
 	assetId: string,
 ): Promise<void> {
-	const diskPath = getAssetPath(dataDir, teamSlug, projectSlug, assetId);
+	const diskPath = getAssetPath(dataDir, teamId, projectId, assetId);
 	await unlink(diskPath).catch(() => {});
 }
 
 export function assetExists(
 	dataDir: string,
-	teamSlug: string,
-	projectSlug: string,
+	teamId: string,
+	projectId: string,
 	assetId: string,
 ): boolean {
-	return existsSync(getAssetPath(dataDir, teamSlug, projectSlug, assetId));
+	return existsSync(getAssetPath(dataDir, teamId, projectId, assetId));
 }
 
 export { getAssetPath, getAssetsPath };

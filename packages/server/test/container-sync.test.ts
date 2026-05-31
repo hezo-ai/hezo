@@ -355,8 +355,63 @@ describe('provisionContainer broadcasting', () => {
 		const assetsBind = binds.find((b) => b.endsWith(':/workspace/.hezo/assets:ro'));
 		expect(assetsBind).toBeDefined();
 		expect(assetsBind).toContain(
-			`${dataDir}/teams/container-sync-co/projects/${project.slug}/assets`,
+			`${dataDir}/teams/${project.team_id}/projects/${project.id}/assets`,
 		);
+	});
+
+	it('keeps container name and bind mounts stable when the project is renamed', async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
+		const makeMockDocker = () =>
+			createStubDocker({
+				imageExists: vi.fn().mockResolvedValue(false),
+				pullImage: vi.fn().mockResolvedValue(undefined),
+				createContainer: vi.fn().mockResolvedValue({ Id: 'renamed-container' }),
+				startContainer: vi.fn().mockResolvedValue(undefined),
+			});
+
+		const createRes = await createTestProject(db, teamId, {
+			name: 'Rename Target',
+			description: 'Rename invariance test.',
+		});
+		const renameProjectId = (await createRes.json()).data.id;
+		await db.query(
+			"UPDATE projects SET container_id = NULL, container_status = NULL, docker_base_image = 'test-unregistered:latest' WHERE id = $1",
+			[renameProjectId],
+		);
+
+		const before = (
+			await db.query<ProjectRow>('SELECT * FROM projects WHERE id = $1', [renameProjectId])
+		).rows[0];
+
+		const dockerBefore = makeMockDocker();
+		await provisionContainer({ db, docker: dockerBefore, dataDir }, before, 'container-sync-co');
+		const nameBefore = dockerBefore.createContainer.mock.calls[0][0];
+		const bindsBefore = dockerBefore.createContainer.mock.calls[0][1].HostConfig.Binds as string[];
+
+		// Rename the project — exactly what the PATCH handler does (new name + new slug).
+		await db.query(
+			'UPDATE projects SET name = $1, slug = $2, container_id = NULL, container_status = NULL WHERE id = $3',
+			['Renamed Project', 'renamed-project-slug', renameProjectId],
+		);
+
+		const after = (
+			await db.query<ProjectRow>('SELECT * FROM projects WHERE id = $1', [renameProjectId])
+		).rows[0];
+		expect(after.slug).toBe('renamed-project-slug');
+		expect(after.slug).not.toBe(before.slug);
+
+		const dockerAfter = makeMockDocker();
+		await provisionContainer({ db, docker: dockerAfter, dataDir }, after, 'container-sync-co');
+		const nameAfter = dockerAfter.createContainer.mock.calls[0][0];
+		const bindsAfter = dockerAfter.createContainer.mock.calls[0][1].HostConfig.Binds as string[];
+
+		// Identity and mounts are keyed on the immutable id, so the rename changes nothing.
+		expect(nameAfter).toBe(nameBefore);
+		expect(nameAfter).toBe(`hezo-${renameProjectId}`);
+		expect(bindsAfter).toEqual(bindsBefore);
+		expect(bindsAfter.join('\n')).toContain(`/projects/${renameProjectId}/`);
+		expect(bindsAfter.join('\n')).not.toContain(before.slug);
+		expect(bindsAfter.join('\n')).not.toContain('renamed-project-slug');
 	});
 
 	it('bind-mounts the egress CA when egressCAPath is provided', async () => {

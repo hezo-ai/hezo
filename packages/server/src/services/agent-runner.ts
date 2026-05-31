@@ -212,12 +212,12 @@ export function getContainerPromptPath(heartbeatRunId: string): string {
 
 export function getHostPromptPath(
 	dataDir: string,
-	teamSlug: string,
-	projectSlug: string,
+	teamId: string,
+	projectId: string,
 	heartbeatRunId: string,
 ): string {
 	return join(
-		getWorkspacePath(dataDir, teamSlug, projectSlug),
+		getWorkspacePath(dataDir, teamId, projectId),
 		'.hezo',
 		'prompts',
 		`${heartbeatRunId}.txt`,
@@ -311,8 +311,8 @@ async function buildRunContext(
 
 	const subscriptionMount = buildSubscriptionMount(
 		deps.dataDir,
-		project.team_slug,
-		project.slug,
+		project.team_id,
+		project.id,
 		heartbeatRunId,
 		provider,
 		credential,
@@ -323,8 +323,8 @@ async function buildRunContext(
 		? ensureRuntimeHomeDir(
 				provider,
 				deps.dataDir,
-				project.team_slug,
-				project.slug,
+				project.team_id,
+				project.id,
 				heartbeatRunId,
 				subscriptionMount,
 			)
@@ -689,8 +689,8 @@ export async function runAgent(
 
 	const hostPromptPath = getHostPromptPath(
 		deps.dataDir,
-		project.team_slug,
-		project.slug,
+		project.team_id,
+		project.id,
 		heartbeatRunId,
 	);
 	mkdirSync(dirname(hostPromptPath), { recursive: true });
@@ -864,8 +864,6 @@ async function prepareWorktrees(
 		{
 			id: project.id,
 			team_id: project.team_id,
-			teamSlug: project.team_slug,
-			projectSlug: project.slug,
 		},
 		deps.dataDir,
 		deps.sshAgentServer,
@@ -877,8 +875,8 @@ async function prepareWorktrees(
 
 	if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null };
 
-	const workspaceRoot = getWorkspacePath(deps.dataDir, project.team_slug, project.slug);
-	const worktreesRoot = getWorktreesPath(deps.dataDir, project.team_slug, project.slug);
+	const workspaceRoot = getWorkspacePath(deps.dataDir, project.team_id, project.id);
+	const worktreesRoot = getWorktreesPath(deps.dataDir, project.team_id, project.id);
 	const taskWorktreeRoot = join(worktreesRoot, task.identifier);
 	mkdirSync(taskWorktreeRoot, { recursive: true });
 

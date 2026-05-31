@@ -21,15 +21,11 @@ export function forceRmRecursive(path: string): void {
 	rmSync(path, { recursive: true, force: true });
 }
 
-export function ensureProjectWorkspace(
-	dataDir: string,
-	teamSlug: string,
-	projectSlug: string,
-): string {
-	if (!dataDir || !teamSlug || !projectSlug) {
-		throw new Error('dataDir, teamSlug, and projectSlug are required');
+export function ensureProjectWorkspace(dataDir: string, teamId: string, projectId: string): string {
+	if (!dataDir || !teamId || !projectId) {
+		throw new Error('dataDir, teamId, and projectId are required');
 	}
-	const projectDir = getProjectDir(dataDir, teamSlug, projectSlug);
+	const projectDir = getProjectDir(dataDir, teamId, projectId);
 	for (const sub of ['workspace', 'worktrees', '.previews', 'assets']) {
 		mkdirSync(join(projectDir, sub), { recursive: true });
 	}
@@ -46,62 +42,61 @@ export function getRunSocketPath(dataDir: string, runId: string): string {
 	return join(getRunSocketDir(dataDir), `${id}.sock`);
 }
 
-export function removeProjectWorkspace(
-	dataDir: string,
-	teamSlug: string,
-	projectSlug: string,
-): void {
-	if (!dataDir || !teamSlug || !projectSlug) return;
-	const projectDir = getProjectDir(dataDir, teamSlug, projectSlug);
+export function removeProjectWorkspace(dataDir: string, teamId: string, projectId: string): void {
+	if (!dataDir || !teamId || !projectId) return;
+	const projectDir = getProjectDir(dataDir, teamId, projectId);
 	forceRmRecursive(projectDir);
 }
 
-export function getProjectDir(dataDir: string, teamSlug: string, projectSlug: string): string {
-	return join(dataDir, 'teams', teamSlug, 'projects', projectSlug);
+// Project infrastructure (workspace, worktrees, previews, assets) is keyed on the
+// immutable team and project ids — never their slugs — so renaming a team or
+// project never changes where files live or which directory a container mounts.
+export function getProjectDir(dataDir: string, teamId: string, projectId: string): string {
+	return join(dataDir, 'teams', teamId, 'projects', projectId);
 }
 
-export function getWorkspacePath(dataDir: string, teamSlug: string, projectSlug: string): string {
-	return join(getProjectDir(dataDir, teamSlug, projectSlug), 'workspace');
+export function getWorkspacePath(dataDir: string, teamId: string, projectId: string): string {
+	return join(getProjectDir(dataDir, teamId, projectId), 'workspace');
 }
 
-export function getAssetsPath(dataDir: string, teamSlug: string, projectSlug: string): string {
-	return join(getProjectDir(dataDir, teamSlug, projectSlug), 'assets');
+export function getAssetsPath(dataDir: string, teamId: string, projectId: string): string {
+	return join(getProjectDir(dataDir, teamId, projectId), 'assets');
 }
 
 export function getAssetPath(
 	dataDir: string,
-	teamSlug: string,
-	projectSlug: string,
+	teamId: string,
+	projectId: string,
 	assetId: string,
 ): string {
-	return join(getAssetsPath(dataDir, teamSlug, projectSlug), assetId);
+	return join(getAssetsPath(dataDir, teamId, projectId), assetId);
 }
 
-export function getWorktreesPath(dataDir: string, teamSlug: string, projectSlug: string): string {
-	return join(getProjectDir(dataDir, teamSlug, projectSlug), 'worktrees');
+export function getWorktreesPath(dataDir: string, teamId: string, projectId: string): string {
+	return join(getProjectDir(dataDir, teamId, projectId), 'worktrees');
 }
 
 export function getWorktreePath(
 	dataDir: string,
-	teamSlug: string,
-	projectSlug: string,
+	teamId: string,
+	projectId: string,
 	repoShortName: string,
 	branchSlug: string,
 	agentIdShort: string,
 ): string {
 	return join(
-		getWorktreesPath(dataDir, teamSlug, projectSlug),
+		getWorktreesPath(dataDir, teamId, projectId),
 		`${repoShortName}-${branchSlug}-agent-${agentIdShort}`,
 	);
 }
 
 export function getPreviewsPath(
 	dataDir: string,
-	teamSlug: string,
-	projectSlug: string,
+	teamId: string,
+	projectId: string,
 	agentId: string,
 ): string {
-	return join(getProjectDir(dataDir, teamSlug, projectSlug), '.previews', agentId);
+	return join(getProjectDir(dataDir, teamId, projectId), '.previews', agentId);
 }
 
 export function clearAllProjectWorkspaces(dataDir: string): string[] {
@@ -110,12 +105,12 @@ export function clearAllProjectWorkspaces(dataDir: string): string[] {
 	if (!existsSync(teamsRoot)) return [];
 
 	const cleared: string[] = [];
-	for (const teamSlug of safeReaddir(teamsRoot)) {
-		const projectsRoot = join(teamsRoot, teamSlug, 'projects');
+	for (const teamDir of safeReaddir(teamsRoot)) {
+		const projectsRoot = join(teamsRoot, teamDir, 'projects');
 		if (!isDirectory(projectsRoot)) continue;
 
-		for (const projectSlug of safeReaddir(projectsRoot)) {
-			const workspaceDir = join(projectsRoot, projectSlug, 'workspace');
+		for (const projectDir of safeReaddir(projectsRoot)) {
+			const workspaceDir = join(projectsRoot, projectDir, 'workspace');
 			if (!isDirectory(workspaceDir)) continue;
 			forceRmRecursive(workspaceDir);
 			mkdirSync(workspaceDir, { recursive: true });

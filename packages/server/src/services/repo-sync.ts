@@ -21,8 +21,6 @@ export interface RepoSyncResult {
 export interface ProjectIdentity {
 	id: string;
 	team_id: string;
-	teamSlug: string;
-	projectSlug: string;
 }
 
 export async function ensureProjectRepos(
@@ -43,7 +41,7 @@ export async function ensureProjectRepos(
 
 	if (repos.rows.length === 0) return result;
 
-	const workspacePath = getWorkspacePath(dataDir, project.teamSlug, project.projectSlug);
+	const workspacePath = getWorkspacePath(dataDir, project.team_id, project.id);
 	mkdirSync(workspacePath, { recursive: true });
 
 	const pending: RepoRow[] = [];
@@ -96,18 +94,18 @@ interface RepoRow {
 
 export function removeRepoFromWorkspace(
 	dataDir: string,
-	teamSlug: string,
-	projectSlug: string,
+	teamId: string,
+	projectId: string,
 	shortName: string,
 ): void {
 	if (!shortName || shortName.includes('/') || shortName === '..' || shortName === '.') return;
-	const workspacePath = getWorkspacePath(dataDir, teamSlug, projectSlug);
+	const workspacePath = getWorkspacePath(dataDir, teamId, projectId);
 	const repoDir = join(workspacePath, shortName);
 	if (existsSync(repoDir)) {
 		rmSync(repoDir, { recursive: true, force: true });
 	}
 
-	const worktreesRoot = getWorktreesPath(dataDir, teamSlug, projectSlug);
+	const worktreesRoot = getWorktreesPath(dataDir, teamId, projectId);
 	if (!existsSync(worktreesRoot)) return;
 
 	for (const entry of readdirSync(worktreesRoot, { withFileTypes: true })) {
@@ -121,8 +119,8 @@ export function removeRepoFromWorkspace(
 
 export function removeTaskWorktrees(
 	dataDir: string,
-	teamSlug: string,
-	projectSlug: string,
+	teamId: string,
+	projectId: string,
 	taskIdentifier: string,
 ): void {
 	if (
@@ -132,7 +130,7 @@ export function removeTaskWorktrees(
 		taskIdentifier === '.'
 	)
 		return;
-	const worktreesRoot = getWorktreesPath(dataDir, teamSlug, projectSlug);
+	const worktreesRoot = getWorktreesPath(dataDir, teamId, projectId);
 	const taskDir = join(worktreesRoot, taskIdentifier);
 	if (existsSync(taskDir)) {
 		rmSync(taskDir, { recursive: true, force: true });

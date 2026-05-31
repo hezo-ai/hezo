@@ -35,20 +35,7 @@ previewRoutes.get('/teams/:teamId/projects/:projectId/preview/*', async (c) => {
 		return err(c, 'NOT_CONFIGURED', 'Data directory not configured', 500);
 	}
 
-	const project = await db.query<{ slug: string }>(
-		'SELECT slug FROM projects WHERE id = $1 AND team_id = $2',
-		[projectId, teamId],
-	);
-	if (project.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Project not found', 404);
-	}
-
-	const team = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [teamId]);
-	if (team.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Team not found', 404);
-	}
-
-	const workspacePath = getWorkspacePath(dataDir, team.rows[0].slug, project.rows[0].slug);
+	const workspacePath = getWorkspacePath(dataDir, teamId, projectId);
 	const requestedPath = c.req.path.split('/preview/')[1] || 'index.html';
 	const resolvedPath = resolve(join(workspacePath, requestedPath));
 

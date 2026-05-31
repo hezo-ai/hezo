@@ -29,7 +29,7 @@ import { authHeader, createTestApp, createTestProject } from './helpers/app';
 function readPromptFromExec(
 	opts: { Env: string[] },
 	dataDir: string,
-	project: { team_slug: string; slug: string },
+	project: { team_id: string; id: string },
 ): string {
 	const entry = opts.Env.find((e) => e.startsWith('HEZO_PROMPT_FILE='));
 	if (!entry) throw new Error('HEZO_PROMPT_FILE env var missing from exec');
@@ -38,7 +38,7 @@ function readPromptFromExec(
 		.split('/')
 		.pop()!
 		.replace(/\.txt$/, '');
-	return readFileSync(getHostPromptPath(dataDir, project.team_slug, project.slug, runId), 'utf8');
+	return readFileSync(getHostPromptPath(dataDir, project.team_id, project.id, runId), 'utf8');
 }
 
 let app: Hono<Env>;
@@ -881,8 +881,8 @@ describe('runAgent', () => {
 						stagedTomlPath = `${getHostSubscriptionRoot(
 							AiProvider.OpenAI,
 							'/tmp/test-data',
-							'runner-co',
-							'runner-project',
+							teamId,
+							projectId,
 							runId,
 						)}/config.toml`;
 						stagedTomlContents = readFileSync(stagedTomlPath, 'utf8');
@@ -966,8 +966,8 @@ describe('runAgent', () => {
 						const hostDir = getHostSubscriptionRoot(
 							AiProvider.OpenAI,
 							'/tmp/test-data',
-							'runner-co',
-							'runner-project',
+							teamId,
+							projectId,
 							runId,
 						);
 						observedAuthFile = `${hostDir}/auth.json`;
@@ -1054,8 +1054,8 @@ describe('runAgent', () => {
 						settingsPath = `${getHostSubscriptionRoot(
 							AiProvider.Google,
 							'/tmp/test-data',
-							'runner-co',
-							'runner-project',
+							teamId,
+							projectId,
 							runId,
 						)}/.gemini/settings.json`;
 						settingsContents = readFileSync(settingsPath, 'utf8');
@@ -1831,8 +1831,8 @@ describe('runAgent', () => {
 						stagedFile = `${getHostSubscriptionRoot(
 							AiProvider.OpenAI,
 							'/tmp/test-data',
-							'runner-co',
-							'runner-project',
+							teamId,
+							projectId,
 							runId,
 						)}/auth.json`;
 					}
@@ -1887,8 +1887,8 @@ describe('runAgent', () => {
 					const hostFile = `${getHostSubscriptionRoot(
 						AiProvider.OpenAI,
 						'/tmp/test-data',
-						'runner-co',
-						'runner-project',
+						teamId,
+						projectId,
 						runId,
 					)}/auth.json`;
 					// Simulate codex rotating the refresh token mid-run.

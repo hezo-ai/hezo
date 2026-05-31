@@ -151,7 +151,7 @@ export async function provisionContainer(
 
 	try {
 		emit('stdout', `→ Preparing workspace for ${teamSlug}/${project.slug}`);
-		const projectDir = ensureProjectWorkspace(dataDir, teamSlug, project.slug);
+		const projectDir = ensureProjectWorkspace(dataDir, project.team_id, project.id);
 		const workspacePath = join(projectDir, 'workspace');
 		const worktreesPath = join(projectDir, 'worktrees');
 		const previewsPath = join(projectDir, '.previews');
@@ -186,7 +186,11 @@ export async function provisionContainer(
 			]);
 		}
 
-		const containerName = `hezo-${teamSlug}-${project.slug}`;
+		// Container identity is keyed on the immutable project id so a team/project
+		// rename never orphans the container or shifts its bind mounts. The slugs ride
+		// along as labels purely for `docker ps` readability.
+		const containerName = `hezo-${project.id}`;
+		const containerLabels = { 'hezo.team': teamSlug, 'hezo.project': project.slug };
 		const extraHosts = ['host.docker.internal:host-gateway'];
 
 		const env = ['HEZO_API_URL=http://host.docker.internal:3100/agent-api'];
@@ -208,6 +212,7 @@ export async function provisionContainer(
 			Cmd: ['sleep', 'infinity'],
 			Env: env,
 			WorkingDir: '/workspace',
+			Labels: containerLabels,
 			HostConfig: {
 				Binds: binds,
 				PortBindings: portBindings,
@@ -251,8 +256,6 @@ export async function provisionContainer(
 				{
 					id: project.id,
 					team_id: teamId,
-					teamSlug,
-					projectSlug: project.slug,
 				},
 				dataDir,
 				deps.sshAgentServer ?? null,
@@ -311,8 +314,7 @@ export async function provisionContainer(
 export async function teardownContainer(
 	deps: ContainerDeps,
 	projectId: string,
-	teamSlug: string,
-	projectSlug: string,
+	teamId: string,
 ): Promise<void> {
 	const { db, docker, dataDir } = deps;
 
@@ -338,7 +340,7 @@ export async function teardownContainer(
 		projectId,
 	]);
 
-	removeProjectWorkspace(dataDir, teamSlug, projectSlug);
+	removeProjectWorkspace(dataDir, teamId, projectId);
 }
 
 export async function stopContainerGracefully(

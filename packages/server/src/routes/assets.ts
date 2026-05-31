@@ -33,25 +33,17 @@ assetsRoutes.post(
 		if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 
 		const taskLocator = await db.query<{
-			team_slug: string;
 			project_id: string;
-			project_slug: string;
 		}>(
-			`SELECT t.slug AS team_slug, p.id AS project_id, p.slug AS project_slug
+			`SELECT i.project_id
 			 FROM tasks i
-			 JOIN teams t ON t.id = i.team_id
-			 JOIN projects p ON p.id = i.project_id
 			 WHERE i.id = $1 AND i.team_id = $2`,
 			[taskId, teamId],
 		);
 		if (taskLocator.rows.length === 0) {
 			return err(c, 'NOT_FOUND', 'Task not found', 404);
 		}
-		const {
-			team_slug: teamSlug,
-			project_id: projectId,
-			project_slug: projectSlug,
-		} = taskLocator.rows[0];
+		const { project_id: projectId } = taskLocator.rows[0];
 
 		let form: Awaited<ReturnType<typeof c.req.parseBody>>;
 		try {
@@ -82,7 +74,7 @@ assetsRoutes.post(
 		let byteSize: number;
 		let sha256: string;
 		try {
-			const result = await writeAsset(dataDir, teamSlug, projectSlug, assetId, file);
+			const result = await writeAsset(dataDir, teamId, projectId, assetId, file);
 			byteSize = result.byteSize;
 			sha256 = result.sha256;
 		} catch (e) {
@@ -131,23 +123,20 @@ publicAssetsRoutes.get('/api/assets/:assetId', async (c) => {
 		content_type: string;
 		original_filename: string;
 		byte_size: number;
-		team_slug: string;
-		project_slug: string;
+		team_id: string;
+		project_id: string;
 	}>(
-		`SELECT a.content_type, a.original_filename, a.byte_size,
-		        t.slug AS team_slug, p.slug AS project_slug
-		 FROM assets a
-		 JOIN teams t ON t.id = a.team_id
-		 JOIN projects p ON p.id = a.project_id
-		 WHERE a.id = $1`,
+		`SELECT content_type, original_filename, byte_size, team_id, project_id
+		 FROM assets
+		 WHERE id = $1`,
 		[assetId],
 	);
 	if (row.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Asset not found', 404);
 	}
-	const { content_type, original_filename, team_slug, project_slug } = row.rows[0];
+	const { content_type, original_filename, team_id, project_id } = row.rows[0];
 
-	const diskPath = getAssetPath(c.get('dataDir'), team_slug, project_slug, assetId);
+	const diskPath = getAssetPath(c.get('dataDir'), team_id, project_id, assetId);
 	let buf: Buffer;
 	try {
 		buf = await readFile(diskPath);
