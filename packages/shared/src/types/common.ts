@@ -321,7 +321,7 @@ export type WakeupStatus = (typeof WakeupStatus)[keyof typeof WakeupStatus];
 
 export const WakeupSkipReason = {
 	TaskBusy: 'task_busy',
-	ProjectBusy: 'project_busy',
+	ProjectAtCapacity: 'project_at_capacity',
 	AgentRunning: 'agent_running',
 } as const;
 export type WakeupSkipReason = (typeof WakeupSkipReason)[keyof typeof WakeupSkipReason];

@@ -255,6 +255,7 @@ projectsRoutes.patch('/teams/:teamId/projects/:projectId', async (c) => {
 	const body = await c.req.json<{
 		name?: string;
 		description?: string;
+		max_concurrent_runs?: number;
 	}>();
 
 	const sets: string[] = [];
@@ -279,6 +280,14 @@ projectsRoutes.patch('/teams/:teamId/projects/:projectId', async (c) => {
 	if (body.description !== undefined) {
 		sets.push(`description = $${idx}`);
 		params.push(body.description);
+		idx++;
+	}
+	if (body.max_concurrent_runs !== undefined) {
+		if (!Number.isInteger(body.max_concurrent_runs) || body.max_concurrent_runs < 1) {
+			return err(c, 'INVALID_REQUEST', 'max_concurrent_runs must be an integer ≥ 1', 400);
+		}
+		sets.push(`max_concurrent_runs = $${idx}`);
+		params.push(body.max_concurrent_runs);
 		idx++;
 	}
 

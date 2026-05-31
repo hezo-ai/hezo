@@ -88,13 +88,6 @@ async function clearBlockers(forTaskId: string): Promise<void> {
 	await db.query('DELETE FROM task_dependencies WHERE task_id = $1', [forTaskId]);
 }
 
-async function taskIdentifier(forTaskId: string): Promise<string> {
-	const r = await db.query<{ identifier: string }>('SELECT identifier FROM tasks WHERE id = $1', [
-		forTaskId,
-	]);
-	return r.rows[0].identifier;
-}
-
 function runNow(forTaskId: string, wakeupId: string) {
 	return app.request(`/api/teams/${teamId}/tasks/${forTaskId}/queued-wakeups/${wakeupId}/run-now`, {
 		method: 'POST',
@@ -126,8 +119,7 @@ interface WakeupRow {
 
 interface DispatchState {
 	task_busy: boolean;
-	project_busy: boolean;
-	blocker_task_identifier: string | null;
+	project_at_capacity: boolean;
 }
 
 beforeAll(async () => {
@@ -194,8 +186,7 @@ describe('GET /teams/:teamId/tasks/:taskId/queued-wakeups', () => {
 
 		const { body } = await listQueued(taskId);
 		expect(body.data.dispatch.task_busy).toBe(false);
-		expect(body.data.dispatch.project_busy).toBe(false);
-		expect(body.data.dispatch.blocker_task_identifier).toBeNull();
+		expect(body.data.dispatch.project_at_capacity).toBe(false);
 		expect(body.data.wakeups[0].run_now_blocked).toBeNull();
 	});
 
@@ -210,17 +201,31 @@ describe('GET /teams/:teamId/tasks/:taskId/queued-wakeups', () => {
 		await clearRuns();
 	});
 
-	it('reports project_busy with the busy task identifier', async () => {
+	it('reports project_at_capacity when the project is at its run limit', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
+		await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
 		const sibling = await createTask('Busy Sibling');
 		await insertRunningRun(agentA, sibling);
 		await insertQueuedWakeup(agentB, taskId);
 
 		const { body } = await listQueued(taskId);
 		expect(body.data.dispatch.task_busy).toBe(false);
-		expect(body.data.dispatch.project_busy).toBe(true);
-		expect(body.data.dispatch.blocker_task_identifier).toBe(await taskIdentifier(sibling));
+		expect(body.data.dispatch.project_at_capacity).toBe(true);
+		await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
+		await clearRuns();
+	});
+
+	it('still has capacity while running runs stay below the limit', async () => {
+		await clearWakeups(taskId);
+		await clearRuns();
+		await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
+		const sibling = await createTask('One Of Three');
+		await insertRunningRun(agentA, sibling);
+		await insertQueuedWakeup(agentB, taskId);
+
+		const { body } = await listQueued(taskId);
+		expect(body.data.dispatch.project_at_capacity).toBe(false);
 		await clearRuns();
 	});
 
@@ -293,9 +298,10 @@ describe('POST /teams/:teamId/tasks/:taskId/queued-wakeups/:wakeupId/run-now', (
 		await clearRuns();
 	});
 
-	it('returns 409 and records project_busy when a sibling task in the project is running', async () => {
+	it('returns 409 and records project_at_capacity when the project is at its run limit', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
+		await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
 		const sibling = await createTask('Run-now Busy Sibling');
 		await insertRunningRun(agentA, sibling);
 		const wakeupId = await insertQueuedWakeup(agentB, taskId);
@@ -308,7 +314,8 @@ describe('POST /teams/:teamId/tasks/:taskId/queued-wakeups/:wakeupId/run-now', (
 			[wakeupId],
 		);
 		expect(row.rows[0].status).toBe('queued');
-		expect(row.rows[0].last_skipped_reason).toBe('project_busy');
+		expect(row.rows[0].last_skipped_reason).toBe('project_at_capacity');
+		await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
 		await clearRuns();
 	});
 

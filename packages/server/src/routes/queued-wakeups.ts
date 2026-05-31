@@ -6,11 +6,7 @@ import { resolveActorMemberId, resolveTaskId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import {
-	findBusyTaskOnProject,
-	isProjectBusyInDb,
-	isTaskBusyInDb,
-} from '../services/run-concurrency';
+import { isProjectAtCapacityInDb, isTaskBusyInDb } from '../services/run-concurrency';
 import { recordWakeupCancelled, recordWakeupStarted } from '../services/task-events';
 
 const log = logger.child('routes');
@@ -45,9 +41,10 @@ queuedWakeupsRoutes.get('/teams/:teamId/tasks/:taskId/queued-wakeups', async (c)
 		[teamId, WakeupStatus.Queued, taskId],
 	);
 
-	// Live run-now gating. Task/project busy state is shared by every wakeup on
-	// this task, so compute it once; dependency-blocker state is per-wakeup
-	// because shouldDeferWakeupForBlockers only gates certain wakeup sources.
+	// Live run-now gating. Task busy state and project capacity are shared by
+	// every wakeup on this task, so compute them once; dependency-blocker state
+	// is per-wakeup because shouldDeferWakeupForBlockers only gates certain
+	// wakeup sources.
 	const projRow = await db.query<{ project_id: string }>(
 		'SELECT project_id FROM tasks WHERE id = $1',
 		[taskId],
@@ -55,20 +52,11 @@ queuedWakeupsRoutes.get('/teams/:teamId/tasks/:taskId/queued-wakeups', async (c)
 	const projectId = projRow.rows[0]?.project_id ?? null;
 
 	let taskBusy = false;
-	let projectBusy = false;
-	let blockerTaskIdentifier: string | null = null;
+	let projectAtCapacity = false;
 	if (await isTaskBusyInDb(db, taskId)) {
 		taskBusy = true;
-	} else if (projectId && (await isProjectBusyInDb(db, projectId))) {
-		projectBusy = true;
-		const busyTaskId = await findBusyTaskOnProject(db, projectId);
-		if (busyTaskId) {
-			const idRow = await db.query<{ identifier: string }>(
-				'SELECT identifier FROM tasks WHERE id = $1',
-				[busyTaskId],
-			);
-			blockerTaskIdentifier = idRow.rows[0]?.identifier ?? null;
-		}
+	} else if (projectId && (await isProjectAtCapacityInDb(db, projectId))) {
+		projectAtCapacity = true;
 	}
 
 	const wakeups = await Promise.all(
@@ -84,8 +72,7 @@ queuedWakeupsRoutes.get('/teams/:teamId/tasks/:taskId/queued-wakeups', async (c)
 		wakeups,
 		dispatch: {
 			task_busy: taskBusy,
-			project_busy: projectBusy,
-			blocker_task_identifier: blockerTaskIdentifier,
+			project_at_capacity: projectAtCapacity,
 		},
 	});
 });
@@ -189,7 +176,7 @@ queuedWakeupsRoutes.post(
 			}
 			const messages: Record<string, string> = {
 				task_busy: 'This ticket already has a run in progress',
-				project_busy: 'Another ticket in this project is already running',
+				project_at_capacity: 'This project is at its concurrent-run limit',
 				blocked: 'This ticket is blocked by an open dependency',
 				not_queued: 'Wakeup is no longer queued and cannot be run',
 			};
