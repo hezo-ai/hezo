@@ -222,29 +222,6 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 
 	const skillsConfig = [
 		{
-			name: 'Team Overview',
-			slug: 'team-overview.md',
-			content: `# Team Overview
-
-<!-- TODO: customize this document for your team -->
-
-## Mission
-
-Describe your team's mission and what problem you're solving.
-
-## Product
-
-Describe your product, its target users, and key value propositions.
-
-## Decision Making
-
-- Strategic decisions escalate to the board
-- Technical architecture decisions go through the Architect
-- Product scope decisions go through the Product Lead
-- Day-to-day implementation decisions are made by the assigned agent
-`,
-		},
-		{
 			name: 'Development Workflow',
 			slug: 'development-workflow.md',
 			content: `# Development Workflow
@@ -273,36 +250,6 @@ Approval is conveyed via comment, not status. From **Review**, the ticket either
 - Every change requires a PR with a clear description
 - PRs must pass CI checks before merge
 - QA Engineer performs final review before approval
-`,
-		},
-		{
-			name: 'Architecture Guidelines',
-			slug: 'architecture-guidelines.md',
-			content: `# Architecture Guidelines
-
-<!-- TODO: customize for your tech stack -->
-
-## Tech Stack
-
-Describe your primary languages, frameworks, and infrastructure.
-
-## Project Structure
-
-Describe your repository layout and key directories.
-
-## Coding Conventions
-
-- Follow the language's standard style guide
-- Write self-documenting code with minimal comments
-- Prefer composition over inheritance
-- Keep functions focused and small
-
-## Architecture Decision Records
-
-Significant technical decisions should be documented with:
-- **Context** — what prompted the decision
-- **Decision** — what was chosen
-- **Consequences** — trade-offs and implications
 `,
 		},
 		{

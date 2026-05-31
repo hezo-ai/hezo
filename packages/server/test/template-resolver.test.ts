@@ -85,10 +85,16 @@ describe('template resolver', () => {
 		expect(result).toContain('No preferences set');
 	});
 
-	it('resolves {{project_docs_context}} without designated repo', async () => {
+	it('resolves {{project_docs_context}} to empty-state when the project has no docs', async () => {
+		const bare = await db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix, description, docker_base_image)
+			 VALUES ($1, 'Docless', 'docless', 'DL', 'No docs here', 'hezo/agent-base:latest')
+			 RETURNING id`,
+			[teamId],
+		);
 		const result = await resolveSystemPrompt(db, 'Docs: {{project_docs_context}}', {
 			teamId,
-			projectId,
+			projectId: bare.rows[0].id,
 		});
 		expect(result).toContain('No project documentation available');
 	});
