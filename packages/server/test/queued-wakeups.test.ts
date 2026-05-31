@@ -58,11 +58,59 @@ async function clearWakeups(forTaskId: string): Promise<void> {
 	]);
 }
 
+async function insertRunningRun(memberId: string, forTaskId: string): Promise<string> {
+	const r = await db.query<{ id: string }>(
+		`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+		 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())
+		 RETURNING id`,
+		[memberId, teamId, forTaskId],
+	);
+	return r.rows[0].id;
+}
+
+async function clearRuns(): Promise<void> {
+	await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
+}
+
+// Creates a fresh (backlog, i.e. non-terminal) task and links it as a blocker
+// of `forTaskId`, leaving `forTaskId` with an open dependency.
+async function addOpenBlocker(forTaskId: string): Promise<string> {
+	const blocker = await createTask('Blocker Task');
+	await db.query(
+		`INSERT INTO task_dependencies (task_id, blocked_by_task_id)
+		 VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+		[forTaskId, blocker],
+	);
+	return blocker;
+}
+
+async function clearBlockers(forTaskId: string): Promise<void> {
+	await db.query('DELETE FROM task_dependencies WHERE task_id = $1', [forTaskId]);
+}
+
+async function taskIdentifier(forTaskId: string): Promise<string> {
+	const r = await db.query<{ identifier: string }>('SELECT identifier FROM tasks WHERE id = $1', [
+		forTaskId,
+	]);
+	return r.rows[0].identifier;
+}
+
+function runNow(forTaskId: string, wakeupId: string) {
+	return app.request(`/api/teams/${teamId}/tasks/${forTaskId}/queued-wakeups/${wakeupId}/run-now`, {
+		method: 'POST',
+		headers: { ...authHeader(token), ...json },
+		body: '{}',
+	});
+}
+
 async function listQueued(forTaskId: string) {
 	const res = await app.request(`/api/teams/${teamId}/tasks/${forTaskId}/queued-wakeups`, {
 		headers: authHeader(token),
 	});
-	return { status: res.status, body: (await res.json()) as { data: { wakeups: WakeupRow[] } } };
+	return {
+		status: res.status,
+		body: (await res.json()) as { data: { wakeups: WakeupRow[]; dispatch: DispatchState } },
+	};
 }
 
 interface WakeupRow {
@@ -73,6 +121,13 @@ interface WakeupRow {
 	created_at: string;
 	coalesced_count: number;
 	last_skipped_reason: string | null;
+	run_now_blocked: 'blocked_by_dependency' | null;
+}
+
+interface DispatchState {
+	task_busy: boolean;
+	project_busy: boolean;
+	blocker_task_identifier: string | null;
 }
 
 beforeAll(async () => {
@@ -129,6 +184,174 @@ describe('GET /teams/:teamId/tasks/:taskId/queued-wakeups', () => {
 
 		// Ordered by created_at ASC — A was inserted first.
 		expect(wakeups[0].id).toBe(wA);
+	});
+
+	it('reports an idle dispatch state when nothing is running', async () => {
+		await clearWakeups(taskId);
+		await clearRuns();
+		await clearBlockers(taskId);
+		await insertQueuedWakeup(agentB, taskId);
+
+		const { body } = await listQueued(taskId);
+		expect(body.data.dispatch.task_busy).toBe(false);
+		expect(body.data.dispatch.project_busy).toBe(false);
+		expect(body.data.dispatch.blocker_task_identifier).toBeNull();
+		expect(body.data.wakeups[0].run_now_blocked).toBeNull();
+	});
+
+	it('reports task_busy when the task already has an active run', async () => {
+		await clearWakeups(taskId);
+		await clearRuns();
+		await insertRunningRun(agentA, taskId);
+		await insertQueuedWakeup(agentB, taskId);
+
+		const { body } = await listQueued(taskId);
+		expect(body.data.dispatch.task_busy).toBe(true);
+		await clearRuns();
+	});
+
+	it('reports project_busy with the busy task identifier', async () => {
+		await clearWakeups(taskId);
+		await clearRuns();
+		const sibling = await createTask('Busy Sibling');
+		await insertRunningRun(agentA, sibling);
+		await insertQueuedWakeup(agentB, taskId);
+
+		const { body } = await listQueued(taskId);
+		expect(body.data.dispatch.task_busy).toBe(false);
+		expect(body.data.dispatch.project_busy).toBe(true);
+		expect(body.data.dispatch.blocker_task_identifier).toBe(await taskIdentifier(sibling));
+		await clearRuns();
+	});
+
+	it('flags run_now_blocked per source when the task has an open dependency', async () => {
+		await clearWakeups(taskId);
+		await clearRuns();
+		await addOpenBlocker(taskId);
+		// 'assignment' is a gated source (deferred by open blockers); 'mention' is not.
+		const gated = await insertQueuedWakeup(agentA, taskId, { source: 'assignment' });
+		const ungated = await insertQueuedWakeup(agentB, taskId, { source: 'mention' });
+
+		const { body } = await listQueued(taskId);
+		const byId = Object.fromEntries(body.data.wakeups.map((w) => [w.id, w]));
+		expect(byId[gated].run_now_blocked).toBe('blocked_by_dependency');
+		expect(byId[ungated].run_now_blocked).toBeNull();
+		await clearBlockers(taskId);
+	});
+});
+
+describe('POST /teams/:teamId/tasks/:taskId/queued-wakeups/:wakeupId/run-now', () => {
+	it('dispatches a runnable queued wakeup and records a wakeup_started comment', async () => {
+		await clearWakeups(taskId);
+		await clearRuns();
+		await clearBlockers(taskId);
+		const wakeupId = await insertQueuedWakeup(agentB, taskId);
+
+		const res = await runNow(taskId, wakeupId);
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.dispatched).toBe(true);
+
+		// The wakeup is claimed out of the queue. The seeded project has no
+		// designated repo / container, so activateAgent no-ops before launching a
+		// container (keeping the stub-docker run from firing) — but the route's
+		// claim + dispatch + system-comment path is fully exercised.
+		const row = await db.query<{ status: string }>(
+			'SELECT status FROM agent_wakeup_requests WHERE id = $1',
+			[wakeupId],
+		);
+		expect(row.rows[0].status).not.toBe('queued');
+
+		const sys = await db.query<{ content: { kind?: string; wakeup_id?: string } }>(
+			"SELECT content FROM task_comments WHERE task_id = $1 AND content_type = 'system' ORDER BY created_at DESC",
+			[taskId],
+		);
+		expect(
+			sys.rows.some(
+				(s) => s.content?.kind === 'wakeup_started' && s.content?.wakeup_id === wakeupId,
+			),
+		).toBe(true);
+
+		const { body } = await listQueued(taskId);
+		expect(body.data.wakeups.map((w) => w.id)).not.toContain(wakeupId);
+	});
+
+	it('returns 409 and records task_busy when the task already has an active run', async () => {
+		await clearWakeups(taskId);
+		await clearRuns();
+		await insertRunningRun(agentA, taskId);
+		const wakeupId = await insertQueuedWakeup(agentB, taskId);
+
+		const res = await runNow(taskId, wakeupId);
+		expect(res.status).toBe(409);
+
+		const row = await db.query<{ status: string; last_skipped_reason: string | null }>(
+			'SELECT status, last_skipped_reason FROM agent_wakeup_requests WHERE id = $1',
+			[wakeupId],
+		);
+		expect(row.rows[0].status).toBe('queued');
+		expect(row.rows[0].last_skipped_reason).toBe('task_busy');
+		await clearRuns();
+	});
+
+	it('returns 409 and records project_busy when a sibling task in the project is running', async () => {
+		await clearWakeups(taskId);
+		await clearRuns();
+		const sibling = await createTask('Run-now Busy Sibling');
+		await insertRunningRun(agentA, sibling);
+		const wakeupId = await insertQueuedWakeup(agentB, taskId);
+
+		const res = await runNow(taskId, wakeupId);
+		expect(res.status).toBe(409);
+
+		const row = await db.query<{ status: string; last_skipped_reason: string | null }>(
+			'SELECT status, last_skipped_reason FROM agent_wakeup_requests WHERE id = $1',
+			[wakeupId],
+		);
+		expect(row.rows[0].status).toBe('queued');
+		expect(row.rows[0].last_skipped_reason).toBe('project_busy');
+		await clearRuns();
+	});
+
+	it('returns 409 when the task has an open dependency and the wakeup source is gated', async () => {
+		await clearWakeups(taskId);
+		await clearRuns();
+		await addOpenBlocker(taskId);
+		const wakeupId = await insertQueuedWakeup(agentB, taskId, { source: 'assignment' });
+
+		const res = await runNow(taskId, wakeupId);
+		expect(res.status).toBe(409);
+		expect((await res.json()).error.message).toMatch(/dependency/i);
+
+		// A blocked wakeup is parked as deferred by dispatchWakeupNow.
+		const row = await db.query<{ status: string }>(
+			'SELECT status FROM agent_wakeup_requests WHERE id = $1',
+			[wakeupId],
+		);
+		expect(row.rows[0].status).toBe('deferred');
+		await clearBlockers(taskId);
+	});
+
+	it('returns 409 when the wakeup is not queued', async () => {
+		const wakeupId = await insertQueuedWakeup(agentB, taskId, { status: 'claimed' });
+		const res = await runNow(taskId, wakeupId);
+		expect(res.status).toBe(409);
+	});
+
+	it('returns 404 for an unknown wakeup id', async () => {
+		const res = await runNow(taskId, '00000000-0000-0000-0000-000000000000');
+		expect(res.status).toBe(404);
+	});
+
+	it('returns 404 when the wakeup belongs to a different task', async () => {
+		const otherTask = await createTask('Run-now Other Task');
+		const wakeupId = await insertQueuedWakeup(agentB, otherTask);
+		const res = await runNow(taskId, wakeupId);
+		expect(res.status).toBe(404);
+		const row = await db.query<{ status: string }>(
+			'SELECT status FROM agent_wakeup_requests WHERE id = $1',
+			[wakeupId],
+		);
+		expect(row.rows[0].status).toBe('queued');
 	});
 });
 

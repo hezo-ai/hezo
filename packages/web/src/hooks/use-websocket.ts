@@ -19,6 +19,11 @@ const TABLE_TO_QUERY_KEY: Record<
 	],
 	heartbeat_runs: (cid, row) => {
 		const keys: string[][] = [['teams', cid, 'tasks']];
+		// A run starting/finishing flips the task's run-now availability (task_busy),
+		// so refresh that task's queued-wakeups (and their dispatch state).
+		if (row.task_id) {
+			keys.push(['teams', cid, 'tasks', row.task_id as string, 'queued-wakeups']);
+		}
 		if (row.member_id) {
 			keys.push(['teams', cid, 'agents', row.member_id as string, 'heartbeat-runs']);
 			if (row.id) {
@@ -31,6 +36,13 @@ const TABLE_TO_QUERY_KEY: Record<
 					row.id as string,
 				]);
 			}
+		}
+		return keys;
+	},
+	agent_wakeup_requests: (cid, row) => {
+		const keys: string[][] = [['teams', cid, 'tasks']];
+		if (row.task_id) {
+			keys.push(['teams', cid, 'tasks', row.task_id as string, 'queued-wakeups']);
 		}
 		return keys;
 	},
