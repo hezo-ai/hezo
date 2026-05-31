@@ -706,7 +706,7 @@ describe('mention wakeup idempotency by (task, mentioned, author)', () => {
 		expect(afterSecond[0].payload.comment_id).toBe(firstCommentId);
 	});
 
-	it('keeps separate queued wakeups when different authors mention the same agent on the same task', async () => {
+	it('collapses queued wakeups when different authors mention the same agent on the same task', async () => {
 		const taskId = await insertTask(captainId, 'Two authors, one target');
 		const { token: productLeadToken } = await mintAgentToken(
 			db,
@@ -730,7 +730,8 @@ describe('mention wakeup idempotency by (task, mentioned, author)', () => {
 
 		await postAgentApiComment(engineerToken, taskId, '@architect peer-review note from engineer.');
 		const afterSecond = await queuedMentionsFor(taskId, architectId);
-		expect(afterSecond).toHaveLength(2);
+		expect(afterSecond).toHaveLength(1);
+		expect(afterSecond[0].id).toBe(afterFirst[0].id);
 	});
 
 	it('lets a new wakeup be created once the queued one transitions out of queued', async () => {
@@ -751,7 +752,7 @@ describe('mention wakeup idempotency by (task, mentioned, author)', () => {
 		expect(afterDrain[0].id).not.toBe(queued[0].id);
 	});
 
-	it('collapses repeated board-authored @-mentions but keeps board and agent scopes separate', async () => {
+	it('collapses repeated @-mentions across board and agent authors', async () => {
 		const taskId = await insertTask(captainId, 'Board scoping');
 
 		const firstBoard = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
@@ -790,6 +791,7 @@ describe('mention wakeup idempotency by (task, mentioned, author)', () => {
 		);
 		await postAgentApiComment(productLeadToken, taskId, '@architect agent-side ping.');
 		const afterAgent = await queuedMentionsFor(taskId, architectId);
-		expect(afterAgent).toHaveLength(2);
+		expect(afterAgent).toHaveLength(1);
+		expect(afterAgent[0].id).toBe(afterSecondBoard[0].id);
 	});
 });
