@@ -1,4 +1,10 @@
-import type { MasterKeyState } from '@hezo/shared';
+import {
+	generateMnemonic,
+	type MasterKeyState,
+	mnemonicToMasterKey,
+	normalizeMnemonic,
+	validateMnemonic,
+} from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
 import { KeyRound, Loader2, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
@@ -6,15 +12,6 @@ import { authenticate } from '../lib/auth';
 import { queryClient } from '../lib/query-client';
 import { Button } from './ui/button';
 import { dialogContentClassName } from './ui/dialog';
-import { Input } from './ui/input';
-
-function generateKey(): string {
-	const bytes = new Uint8Array(32);
-	crypto.getRandomValues(bytes);
-	return Array.from(bytes)
-		.map((b) => b.toString(16).padStart(2, '0'))
-		.join('');
-}
 
 interface MasterKeyFormProps {
 	state: MasterKeyState;
@@ -31,19 +28,22 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 
 	const isUnset = state === 'unset';
 
-	async function handleGenerate() {
-		const k = generateKey();
-		setGeneratedKey(k);
-		setKey(k);
+	function handleGenerate() {
+		setGeneratedKey(generateMnemonic());
 	}
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
-		if (!key.trim()) return;
+		const phrase = isUnset ? (generatedKey ?? '') : normalizeMnemonic(key);
+		if (!phrase) return;
 		setError('');
+		if (!validateMnemonic(phrase)) {
+			setError('That is not a valid 12-word master key.');
+			return;
+		}
 		setLoading(true);
 		try {
-			await authenticate(key.trim());
+			await authenticate(mnemonicToMasterKey(phrase));
 			queryClient.invalidateQueries({ queryKey: ['status'] });
 		} catch (err: unknown) {
 			const apiErr = err as { message?: string };
@@ -54,7 +54,7 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 	}
 
 	async function handleCopy() {
-		await navigator.clipboard.writeText(key);
+		await navigator.clipboard.writeText(generatedKey ?? '');
 		setCopied(true);
 		setTimeout(() => setCopied(false), 2000);
 	}
@@ -75,8 +75,8 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 					</Dialog.Title>
 					<Dialog.Description className="text-sm text-text-muted text-center">
 						{isUnset
-							? "Create a master key to encrypt your data. Save it somewhere safe — you'll need it to unlock Hezo on restart."
-							: 'Enter your master key to unlock the server.'}
+							? "Your master key is these 12 words. Save them somewhere safe — you'll need them to unlock Hezo on restart."
+							: 'Enter your 12-word master key to unlock the server.'}
 					</Dialog.Description>
 				</div>
 			)}
@@ -90,10 +90,25 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 				)}
 
 				{generatedKey && (
-					<div className="flex flex-col gap-2">
-						<div className="flex items-center gap-2 rounded-md border border-border bg-bg p-2.5 font-mono text-xs break-all">
-							{generatedKey}
-						</div>
+					<div className="flex flex-col gap-3">
+						<ol
+							className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2"
+							aria-label="Master key"
+						>
+							{generatedKey.split(' ').map((word, index) => (
+								<li
+									// biome-ignore lint/suspicious/noArrayIndexKey: fixed-length, never-reordered list with possibly-repeating words; position is the stable identity
+									key={index}
+									data-testid="mnemonic-word"
+									className="flex items-center gap-1.5 rounded-md border border-border bg-bg px-2 py-1.5"
+								>
+									<span className="w-4 text-right text-[10px] tabular-nums text-text-muted select-none">
+										{index + 1}
+									</span>
+									<span className="font-mono text-xs text-text">{word}</span>
+								</li>
+							))}
+						</ol>
 						<Button type="button" variant="ghost" size="sm" onClick={handleCopy}>
 							{copied ? 'Copied!' : 'Copy to clipboard'}
 						</Button>
@@ -101,19 +116,27 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 				)}
 
 				{!isUnset && (
-					<Input
-						label="Master Key"
-						type="password"
-						value={key}
-						onChange={(e) => setKey(e.target.value)}
-						placeholder="Enter master key"
-						autoFocus
-					/>
+					<div className="flex flex-col gap-1.5">
+						<label htmlFor="mnemonic-entry" className="text-sm font-medium text-text">
+							Master Key
+						</label>
+						<textarea
+							id="mnemonic-entry"
+							value={key}
+							onChange={(e) => setKey(e.target.value)}
+							placeholder="Enter your 12-word master key"
+							rows={3}
+							autoComplete="off"
+							autoCapitalize="none"
+							spellCheck={false}
+							className="w-full resize-none rounded-md border border-border bg-bg p-2.5 font-mono text-xs text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent-blue-text"
+						/>
+					</div>
 				)}
 
 				{error && <p className="text-sm text-accent-red">{error}</p>}
 
-				<Button type="submit" disabled={loading || !key.trim()}>
+				<Button type="submit" disabled={loading || (isUnset ? !generatedKey : !key.trim())}>
 					{loading && <Loader2 className="w-4 h-4 animate-spin" />}
 					{isUnset ? 'Set Key & Continue' : 'Unlock'}
 				</Button>
