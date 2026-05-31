@@ -75,7 +75,7 @@ describe('wakeup service', () => {
 		expect(taskIds).toEqual(['coalesce-task-a', 'coalesce-task-b']);
 	});
 
-	it('coalesces wakeups for the same task within the window', async () => {
+	it('coalesces wakeups for the same task regardless of timing', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 
 		const id1 = await createWakeup(db, agentId, teamId, 'mention', {
@@ -87,11 +87,54 @@ describe('wakeup service', () => {
 
 		expect(id2).toBe(id1);
 
-		const result = await db.query<{ coalesced_count: number }>(
+		const queued = await db.query<{ coalesced_count: number }>(
+			"SELECT coalesced_count FROM agent_wakeup_requests WHERE member_id = $1 AND status = 'queued' AND payload->>'task_id' = 'same-task'",
+			[agentId],
+		);
+		expect(queued.rows.length).toBe(1);
+		expect(queued.rows[0].coalesced_count).toBeGreaterThanOrEqual(1);
+	});
+
+	it('collapses repeated triggers from different sources onto one queued wakeup', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+		const id1 = await createWakeup(db, agentId, teamId, 'assignment', { task_id: 'busy-task' });
+		const id2 = await createWakeup(db, agentId, teamId, 'comment', { task_id: 'busy-task' });
+		const id3 = await createWakeup(db, agentId, teamId, 'mention', { task_id: 'busy-task' });
+
+		expect(id2).toBe(id1);
+		expect(id3).toBe(id1);
+
+		const queued = await db.query(
+			"SELECT id FROM agent_wakeup_requests WHERE member_id = $1 AND status = 'queued' AND payload->>'task_id' = 'busy-task'",
+			[agentId],
+		);
+		expect(queued.rows.length).toBe(1);
+	});
+
+	it('does not coalesce onto a wakeup the dispatcher already claimed', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+		const id1 = await createWakeup(db, agentId, teamId, 'mention', { task_id: 'claim-task' });
+		await db.query(
+			"UPDATE agent_wakeup_requests SET status = 'claimed', claimed_at = now() WHERE id = $1",
+			[id1],
+		);
+
+		const id2 = await createWakeup(db, agentId, teamId, 'mention', { task_id: 'claim-task' });
+		expect(id2).not.toBe(id1);
+
+		const claimed = await db.query<{ coalesced_count: number }>(
 			'SELECT coalesced_count FROM agent_wakeup_requests WHERE id = $1',
 			[id1],
 		);
-		expect(result.rows[0].coalesced_count).toBeGreaterThanOrEqual(1);
+		expect(claimed.rows[0].coalesced_count).toBe(0);
+
+		const queued = await db.query(
+			"SELECT id FROM agent_wakeup_requests WHERE member_id = $1 AND status = 'queued' AND payload->>'task_id' = 'claim-task'",
+			[agentId],
+		);
+		expect(queued.rows.length).toBe(1);
 	});
 
 	it('coalesces wakeups that have no task_id', async () => {
