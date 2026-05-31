@@ -10,6 +10,26 @@
 
 export type McpTransport = 'http' | 'sse' | 'stdio';
 
+/**
+ * OAuth 2.0 Device Authorization Grant (RFC 8628) configuration for providers
+ * whose Authorization Server supports neither Dynamic Client Registration nor a
+ * redirect-friendly secret-less client (GitHub, and similarly GitLab / Google /
+ * Microsoft). The device flow needs only a pre-registered *public* client_id —
+ * no redirect URI, no client secret — so it works on any self-hosted origin.
+ *
+ * Endpoints are plain public URLs. `clientIdEnv` names the env var holding the
+ * instance's client_id; `clientIdDefault` is an optional committed public dev
+ * fallback used outside production. `baseUrlEnv`, when set, lets tests (and
+ * self-hosted GitHub Enterprise) redirect the endpoint origins.
+ */
+export interface DeviceAuthConfig {
+	deviceCodeUrl: string;
+	tokenUrl: string;
+	clientIdEnv: string;
+	clientIdDefault?: string;
+	baseUrlEnv?: string;
+}
+
 export interface ConnectorCapability {
 	id: string;
 	displayName: string;
@@ -31,6 +51,13 @@ export interface ConnectorCapability {
 	 */
 	scopes?: string[];
 	/**
+	 * Token acquisition via the device flow instead of the default auth-code +
+	 * PKCE + DCR path. Present only for providers whose AS can't do DCR. When
+	 * set, the connector's Connect button drives the device flow; `auth-start`
+	 * (DCR) is never used for it.
+	 */
+	deviceAuth?: DeviceAuthConfig;
+	/**
 	 * Paste fallback for providers that don't expose OAuth on their MCP
 	 * server. Omit when OAuth is the only path.
 	 */
@@ -48,6 +75,15 @@ export const CONNECTOR_CAPABILITIES: Record<string, ConnectorCapability> = {
 		mcpServer: { url: 'https://api.githubcopilot.com/mcp/', transport: 'http' },
 		allowedHosts: ['api.githubcopilot.com', 'api.github.com', 'github.com'],
 		scopes: ['repo', 'workflow', 'read:org', 'write:ssh_signing_key', 'write:public_key'],
+		deviceAuth: {
+			deviceCodeUrl: 'https://github.com/login/device/code',
+			tokenUrl: 'https://github.com/login/oauth/access_token',
+			clientIdEnv: 'GITHUB_OAUTH_CLIENT_ID',
+			// Public OAuth-App client_id with device flow enabled; safe to commit.
+			// Production overrides via GITHUB_OAUTH_CLIENT_ID.
+			clientIdDefault: 'Ov23liSH5q35gMqGTKH9',
+			baseUrlEnv: 'GITHUB_OAUTH_BASE_URL',
+		},
 	},
 	datocms: {
 		id: 'datocms',

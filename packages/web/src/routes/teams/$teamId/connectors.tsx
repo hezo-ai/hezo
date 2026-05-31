@@ -1,6 +1,8 @@
+import { getConnectorCapability } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Check, ExternalLink, Github, Plug, Trash2, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
+import { ConnectorDeviceFlowDialog } from '../../../components/connector-device-flow-dialog';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import {
@@ -60,15 +62,17 @@ function ConnectorsPage() {
 
 			<ul className="space-y-3" data-testid="connectors-list">
 				<GitHubRow teamId={teamId} connection={githubConnection} />
-				{connectors.map((connector) => (
-					<ConnectorRow
-						key={connector.id}
-						connector={connector}
-						teamId={teamId}
-						focused={connector.id === focus}
-						focusRef={connector.id === focus ? focusRef : undefined}
-					/>
-				))}
+				{connectors
+					.filter((connector) => connector.name !== 'github')
+					.map((connector) => (
+						<ConnectorRow
+							key={connector.id}
+							connector={connector}
+							teamId={teamId}
+							focused={connector.id === focus}
+							focusRef={connector.id === focus ? focusRef : undefined}
+						/>
+					))}
 			</ul>
 
 			{isEmpty && (
@@ -90,10 +94,10 @@ interface GitHubRowProps {
 function GitHubRow({ teamId, connection }: GitHubRowProps) {
 	const deleteConn = useDeleteOAuthConnection(teamId);
 	const ensure = useEnsureConnector(teamId);
-	const authStart = useAuthStart(teamId);
+	const [deviceConnectorId, setDeviceConnectorId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const status = connection ? 'active' : 'pending';
-	const connecting = ensure.isPending || authStart.isPending;
+	const connecting = ensure.isPending;
 
 	const doRevoke = () => {
 		if (!connection) return;
@@ -105,9 +109,7 @@ function GitHubRow({ teamId, connection }: GitHubRowProps) {
 		setError(null);
 		try {
 			const connector = await ensure.mutateAsync('github');
-			const { auth_url } = await authStart.mutateAsync(connector.id);
-			const popup = window.open(auth_url, 'hezo-connect', 'width=600,height=720');
-			if (!popup) setError('Pop-up blocked. Allow pop-ups for Hezo and try again.');
+			setDeviceConnectorId(connector.id);
 		} catch (e) {
 			setError(e instanceof Error ? e.message : 'Failed to start GitHub OAuth');
 		}
@@ -120,6 +122,17 @@ function GitHubRow({ teamId, connection }: GitHubRowProps) {
 			data-connector-name="github"
 			data-status={status}
 		>
+			{deviceConnectorId && (
+				<ConnectorDeviceFlowDialog
+					open={!!deviceConnectorId}
+					onOpenChange={(open) => {
+						if (!open) setDeviceConnectorId(null);
+					}}
+					teamId={teamId}
+					connectorId={deviceConnectorId}
+					providerLabel="GitHub"
+				/>
+			)}
 			<div className="flex items-start justify-between gap-4">
 				<div className="flex-1 min-w-0">
 					<div className="flex items-center gap-2">
@@ -185,6 +198,10 @@ function ConnectorRow({ connector, teamId, focused, focusRef }: ConnectorRowProp
 	const authStart = useAuthStart(teamId);
 	const revoke = useRevokeConnector(teamId);
 	const [error, setError] = useState<string | null>(null);
+	const [deviceOpen, setDeviceOpen] = useState(false);
+
+	const capability = getConnectorCapability(connector.name);
+	const usesDeviceFlow = !!capability?.deviceAuth;
 
 	const url =
 		typeof connector.config === 'object' &&
@@ -195,6 +212,12 @@ function ConnectorRow({ connector, teamId, focused, focusRef }: ConnectorRowProp
 
 	const openConnect = () => {
 		setError(null);
+		// Providers whose AS can't do DCR (declared via `deviceAuth`) authorize
+		// through the device flow; everything else uses the redirect popup.
+		if (usesDeviceFlow) {
+			setDeviceOpen(true);
+			return;
+		}
 		authStart.mutate(connector.id, {
 			onSuccess: ({ auth_url }) => {
 				const popup = window.open(auth_url, 'hezo-connect', 'width=600,height=720');
@@ -232,6 +255,15 @@ function ConnectorRow({ connector, teamId, focused, focusRef }: ConnectorRowProp
 			data-connector-id={connector.id}
 			data-status={status}
 		>
+			{usesDeviceFlow && deviceOpen && (
+				<ConnectorDeviceFlowDialog
+					open={deviceOpen}
+					onOpenChange={setDeviceOpen}
+					teamId={teamId}
+					connectorId={connector.id}
+					providerLabel={connector.display_name ?? capability?.displayName ?? connector.name}
+				/>
+			)}
 			<div className="flex items-start justify-between gap-4">
 				<div className="flex-1 min-w-0">
 					<div className="flex items-center gap-2">
