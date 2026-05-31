@@ -34,8 +34,8 @@ export interface HeartbeatRun {
 	trigger_comment_project_slug: string | null;
 	run_comment_id: string | null;
 	created_tasks: { id: string; identifier: string; title: string; project_slug: string }[];
-	created_docs: { filename: string }[];
-	created_skills: { name: string; slug: string }[];
+	created_docs: { filename: string; project_slug: string }[];
+	created_skills: { name: string; slug: string; created: boolean }[];
 	proposed_skills: { name: string; slug: string }[];
 }
 

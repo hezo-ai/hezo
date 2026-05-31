@@ -181,7 +181,6 @@ function RunCommentBody({
 			)}
 			{createdTasks.length > 0 && (
 				<div className="flex flex-col gap-1 pt-1" data-testid="run-comment-created-tasks">
-					<span className="text-xs text-text-subtle">Created tickets</span>
 					{createdTasks.map((task) => (
 						<Link
 							key={task.id}
@@ -193,24 +192,28 @@ function RunCommentBody({
 							}}
 							className="text-xs text-accent-blue-text hover:underline self-start"
 						>
-							{task.identifier} — {task.title}
+							Created ticket {task.identifier} — {task.title}
 						</Link>
 					))}
 				</div>
 			)}
 			{createdDocs.length > 0 && (
 				<div className="flex flex-col gap-1 pt-1" data-testid="run-comment-created-docs">
-					<span className="text-xs text-text-subtle">Updated project docs</span>
 					{createdDocs.map((doc) => (
-						<span key={doc.filename} className="text-xs text-text-muted self-start">
-							{doc.filename}
-						</span>
+						<Link
+							key={doc.filename}
+							to="/teams/$teamId/projects/$projectId/documents"
+							params={{ teamId, projectId: doc.project_slug }}
+							search={{ file: doc.filename }}
+							className="text-xs text-accent-blue-text hover:underline self-start"
+						>
+							Updated {doc.filename}
+						</Link>
 					))}
 				</div>
 			)}
 			{createdSkills.length > 0 && (
 				<div className="flex flex-col gap-1 pt-1" data-testid="run-comment-created-skills">
-					<span className="text-xs text-text-subtle">Updated skills</span>
 					{createdSkills.map((skill) => (
 						<Link
 							key={skill.slug}
@@ -219,18 +222,22 @@ function RunCommentBody({
 							search={{ slug: skill.slug }}
 							className="text-xs text-accent-blue-text hover:underline self-start"
 						>
-							{skill.name}
+							{skill.created ? 'Added' : 'Updated'} skill {skill.name}
 						</Link>
 					))}
 				</div>
 			)}
 			{proposedSkills.length > 0 && (
 				<div className="flex flex-col gap-1 pt-1" data-testid="run-comment-proposed-skills">
-					<span className="text-xs text-text-subtle">Proposed skills (pending approval)</span>
 					{proposedSkills.map((skill) => (
-						<span key={skill.slug} className="text-xs text-text-muted self-start">
-							{skill.name}
-						</span>
+						<Link
+							key={skill.slug}
+							to="/teams/$teamId/inbox"
+							params={{ teamId }}
+							className="text-xs text-accent-blue-text hover:underline self-start"
+						>
+							Proposed skill {skill.name}
+						</Link>
 					))}
 				</div>
 			)}

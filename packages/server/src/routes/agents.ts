@@ -100,10 +100,11 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr
 	-- wall-clock window (started_at .. finished_at). Mirrors created_tasks.
 	COALESCE(
 		(SELECT jsonb_agg(
-			jsonb_build_object('filename', d.slug)
+			jsonb_build_object('filename', d.slug, 'project_slug', p.slug)
 			ORDER BY d.updated_at ASC
 		)
 		FROM documents d
+		JOIN projects p ON p.id = d.project_id
 		WHERE d.type = 'project_doc'
 		  AND d.team_id = hr.team_id
 		  AND d.last_updated_by_member_id = hr.member_id
@@ -115,7 +116,7 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr
 	-- Skills the agent added/updated directly in the skills database this run.
 	COALESCE(
 		(SELECT jsonb_agg(
-			jsonb_build_object('name', s.name, 'slug', s.slug)
+			jsonb_build_object('name', s.name, 'slug', s.slug, 'created', (s.created_at >= hr.started_at))
 			ORDER BY s.updated_at ASC
 		)
 		FROM skills s
