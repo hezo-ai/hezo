@@ -18,6 +18,7 @@ let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let agentId: string;
 let projectId: string;
+let projectSlug: string;
 let taskId: string;
 
 async function mintTestWakeup(memberId: string, cId: string): Promise<string> {
@@ -48,7 +49,9 @@ beforeAll(async () => {
 		name: 'Main',
 		description: 'Test project.',
 	});
-	projectId = (await projectRes.json()).data.id;
+	const projectData = (await projectRes.json()).data;
+	projectId = projectData.id;
+	projectSlug = projectData.slug;
 
 	const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
 		method: 'POST',
@@ -567,15 +570,22 @@ describe('created_tasks tracking', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 
-		const docFilenames = (body.data.created_docs as Array<{ filename: string }>).map(
-			(d) => d.filename,
-		);
-		expect(docFilenames).toContain('spec.md');
+		const createdDocs = body.data.created_docs as Array<{
+			filename: string;
+			project_slug: string;
+		}>;
+		const specDoc = createdDocs.find((d) => d.filename === 'spec.md');
+		expect(specDoc).toBeDefined();
+		expect(specDoc?.project_slug).toBe(projectSlug);
 
-		const skillSlugs = (body.data.created_skills as Array<{ name: string; slug: string }>).map(
-			(s) => s.slug,
-		);
-		expect(skillSlugs).toContain('deploy-flow');
+		const createdSkills = body.data.created_skills as Array<{
+			name: string;
+			slug: string;
+			created: boolean;
+		}>;
+		const deploySkill = createdSkills.find((s) => s.slug === 'deploy-flow');
+		expect(deploySkill).toBeDefined();
+		expect(deploySkill?.created).toBe(true);
 
 		const proposedSlugs = (body.data.proposed_skills as Array<{ name: string; slug: string }>).map(
 			(s) => s.slug,
