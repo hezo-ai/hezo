@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { fetchAccount, registerSigningKey } from '../src/services/oauth/provider-github';
+import { fetchAccount, registerSigningKey } from '../src/services/github';
 import { createGitHubSim, type GitHubSim } from './helpers/github-sim';
 
 let sim: GitHubSim;

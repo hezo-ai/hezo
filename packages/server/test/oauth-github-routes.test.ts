@@ -1,11 +1,9 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { McpConnectionKind } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp } from './helpers/app';
-import { type FakeMcpServer, startFakeMcpServer } from './helpers/fake-mcp-server';
 import { createGitHubSim, type GitHubSim } from './helpers/github-sim';
 
 let app: Hono<Env>;
@@ -13,15 +11,19 @@ let db: PGlite;
 let token: string;
 let teamId: string;
 let sim: GitHubSim;
-let fakeAS: FakeMcpServer;
 
 let prevApi: string | undefined;
-const issuedToken = 'gho_unified_test_token';
+let prevOAuth: string | undefined;
+const issuedToken = 'gho_device_test_token';
 
 beforeAll(async () => {
 	sim = await createGitHubSim();
 	prevApi = process.env.GITHUB_API_BASE_URL;
+	prevOAuth = process.env.GITHUB_OAUTH_BASE_URL;
+	// The sim serves both the REST API (/user, /user/keys) and the OAuth device
+	// endpoints (/login/device/code, /login/oauth/access_token) on one origin.
 	process.env.GITHUB_API_BASE_URL = sim.baseUrl;
+	process.env.GITHUB_OAUTH_BASE_URL = sim.baseUrl;
 
 	sim.seed({
 		token: issuedToken,
@@ -29,8 +31,6 @@ beforeAll(async () => {
 		signingKeys: [],
 		authKeys: [],
 	});
-
-	fakeAS = await startFakeMcpServer({ issueToken: issuedToken });
 
 	const ctx = await createTestApp();
 	app = ctx.app;
@@ -51,70 +51,84 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	process.env.GITHUB_API_BASE_URL = prevApi;
+	process.env.GITHUB_OAUTH_BASE_URL = prevOAuth;
 	await sim.destroy();
-	await fakeAS.close();
 	await safeClose(db);
 });
 
-describe('GitHub unified connector (auth-code via MCP server)', () => {
-	it('drives the full auth-code flow: ensure → auth-start (registry scopes) → callback (oauth row + SSH key)', async () => {
-		// Override the GitHub MCP URL to point at our fake AS for this test —
-		// the production registry points at https://api.githubcopilot.com/mcp/
-		// which we can't reach from CI.
-		await db.query(
-			`INSERT INTO mcp_connections (team_id, name, display_name, kind, config, install_status)
-			 VALUES ($1, 'github', 'GitHub', $2::mcp_connection_kind, $3::jsonb, 'installed')`,
-			[teamId, McpConnectionKind.Saas, JSON.stringify({ url: `${fakeAS.url}/mcp` })],
-		);
-		const connRow = await db.query<{ id: string }>(
-			`SELECT id FROM mcp_connections WHERE team_id = $1 AND name = 'github'`,
-			[teamId],
-		);
-		const connectorId = connRow.rows[0].id;
+describe('GitHub device-flow connector', () => {
+	it('drives the full device flow: ensure → device/start → poll(pending) → approve → poll(success) → oauth row + SSH keys + active connector', async () => {
+		// Materialize the connector the real way, from the registry capability.
+		const ensureRes = await app.request(`/api/teams/${teamId}/connectors/ensure`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ provider_id: 'github' }),
+		});
+		expect(ensureRes.status).toBe(200);
+		const connectorId = ((await ensureRes.json()) as { data: { id: string } }).data.id;
 
-		// auth-start must produce an authorize URL with the capability registry's
-		// scope list — not the AS's broad `scopes_supported`.
-		const startRes = await app.request(`/api/teams/${teamId}/auth-start`, {
+		// GitHub can't do DCR, so auth-start must refuse and point at the device flow.
+		const authStartRes = await app.request(`/api/teams/${teamId}/auth-start`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ connector_id: connectorId }),
 		});
-		expect(startRes.status).toBe(200);
-		const { data: startData } = (await startRes.json()) as { data: { auth_url: string } };
-
-		const startUrl = new URL(startData.auth_url);
-		const requestedScopes = (startUrl.searchParams.get('scope') ?? '').split(' ');
-		expect(requestedScopes).toEqual([
-			'repo',
-			'workflow',
-			'read:org',
-			'write:ssh_signing_key',
-			'write:public_key',
-		]);
-
-		// Follow the authorize URL — fake AS auto-approves and 302s with code+state.
-		const authorizeRes = await fetch(startData.auth_url, { redirect: 'manual' });
-		expect(authorizeRes.status).toBe(302);
-		const location = authorizeRes.headers.get('location')!;
-		const locUrl = new URL(location);
-		const code = locUrl.searchParams.get('code')!;
-		const state = locUrl.searchParams.get('state')!;
-
-		const cbRes = await app.request(
-			`/api/oauth/mcp-callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`,
+		expect(authStartRes.status).toBe(400);
+		expect(((await authStartRes.json()) as { error: { code: string } }).error.code).toBe(
+			'USE_DEVICE_FLOW',
 		);
-		expect(cbRes.status).toBe(200);
-		const html = await cbRes.text();
-		expect(html).toContain('OAuth connection complete');
 
-		// oauth_connections row landed with provider='github' and the user identity
+		// device/start hands back a user code + the registry scope list.
+		const startRes = await app.request(
+			`/api/teams/${teamId}/connectors/${connectorId}/device/start`,
+			{ method: 'POST', headers: { ...authHeader(token), 'Content-Type': 'application/json' } },
+		);
+		expect(startRes.status).toBe(200);
+		const { data: start } = (await startRes.json()) as {
+			data: { flow_id: string; user_code: string; verification_uri: string };
+		};
+		expect(start.user_code).toBeTruthy();
+		expect(start.flow_id).toBeTruthy();
+
+		// Before the user authorizes, polling is pending (202).
+		const pendingRes = await app.request(
+			`/api/teams/${teamId}/connectors/${connectorId}/device/poll`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ flow_id: start.flow_id }),
+			},
+		);
+		expect(pendingRes.status).toBe(202);
+		expect(((await pendingRes.json()) as { data: { status: string } }).data.status).toBe('pending');
+
+		// User authorizes at github.com/login/device → sim mints the token.
+		sim.approveDeviceFlow(start.user_code, issuedToken);
+
+		const successRes = await app.request(
+			`/api/teams/${teamId}/connectors/${connectorId}/device/poll`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ flow_id: start.flow_id }),
+			},
+		);
+		expect(successRes.status).toBe(200);
+		const { data: success } = (await successRes.json()) as {
+			data: { status: string; connection: { provider_account_label: string } };
+		};
+		expect(success.status).toBe('success');
+		expect(success.connection.provider_account_label).toBe('octo-e2e');
+
+		// oauth_connections row landed with provider='github' and the real identity
 		// from github-sim, not a synthetic mcp:* account id.
 		const conn = await db.query<{
 			provider: string;
 			provider_account_id: string;
 			provider_account_label: string;
+			scopes: string[];
 		}>(
-			`SELECT provider, provider_account_id, provider_account_label
+			`SELECT provider, provider_account_id, provider_account_label, scopes
 			 FROM oauth_connections WHERE team_id = $1`,
 			[teamId],
 		);
@@ -124,8 +138,16 @@ describe('GitHub unified connector (auth-code via MCP server)', () => {
 			provider_account_id: '7',
 			provider_account_label: 'octo-e2e',
 		});
+		expect(conn.rows[0].scopes).toEqual([
+			'repo',
+			'workflow',
+			'read:org',
+			'write:ssh_signing_key',
+			'write:public_key',
+		]);
 
-		// The capability registry's allowed_hosts lands on the secret (egress proxy).
+		// The capability registry's allowed_hosts lands on the secret (egress proxy)
+		// — including the GitHub MCP host so the injector can authorize MCP calls.
 		const secret = await db.query<{ allowed_hosts: string[] }>(
 			`SELECT s.allowed_hosts FROM oauth_connections oc
 			 JOIN secrets s ON s.id = oc.access_token_secret_id
@@ -154,6 +176,31 @@ describe('GitHub unified connector (auth-code via MCP server)', () => {
 		]);
 		expect(conRow.rows[0].oauth_connection_id).toBeTruthy();
 		expect(conRow.rows[0].activated_at).toBeTruthy();
+	});
+
+	it('rejects a poll for a flow that belongs to another connector', async () => {
+		const otherConnector = await db.query<{ id: string }>(
+			`INSERT INTO mcp_connections (team_id, name, display_name, kind, config, install_status)
+			 VALUES ($1, 'github', 'GitHub', 'saas'::mcp_connection_kind, '{}'::jsonb, 'installed')
+			 RETURNING id`,
+			[teamId],
+		);
+		const start = await app.request(
+			`/api/teams/${teamId}/connectors/${otherConnector.rows[0].id}/device/start`,
+			{ method: 'POST', headers: { ...authHeader(token), 'Content-Type': 'application/json' } },
+		);
+		const { data } = (await start.json()) as { data: { flow_id: string } };
+
+		// Poll the same flow_id against a different connector path → forbidden.
+		const mismatched = await app.request(
+			`/api/teams/${teamId}/connectors/${crypto.randomUUID()}/device/poll`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ flow_id: data.flow_id }),
+			},
+		);
+		expect([403, 404]).toContain(mismatched.status);
 	});
 
 	it('lists connections — does not leak token values', async () => {

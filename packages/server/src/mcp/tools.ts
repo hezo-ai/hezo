@@ -1748,7 +1748,7 @@ export function registerTools(
 	tool(
 		server,
 		'register_connector',
-		'Register a third-party MCP server connector for the team and ask the human to authenticate. Posts a connect_required comment on the task with a Connect button; the human clicks it to run OAuth in their own browser. The agent never sees the token; subsequent runs receive the MCP via the egress proxy + placeholder substitution. Idempotent: re-registering an already-active connector returns its current state and fires the wakeup immediately.',
+		'Register a third-party MCP server connector for the team and ask the human to authenticate. Posts a connect_required comment on the task with a Connect button; the human clicks it to run OAuth in their own browser. The agent never sees the token; subsequent runs receive the MCP via the egress proxy + placeholder substitution. Idempotent: re-registering an already-active connector returns its current state and fires the wakeup immediately. Auth mechanism is chosen automatically by what the provider supports: servers that advertise OAuth Dynamic Client Registration (most MCP servers) need only mcp_url and authorize with zero config. Providers whose Authorization Server cannot do DCR (e.g. GitHub) require a pre-registered client_id and use the device flow instead — these MUST be registered with provider_id set to a known registry key (e.g. "github"); passing only a raw mcp_url for such a provider will fail to authorize.',
 		{
 			team_id: z.string().describe('Team ID'),
 			task_id: z.string().describe('Task ID where the connect_required comment is posted'),

@@ -1,8 +1,10 @@
+import { getConnectorCapability } from '@hezo/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { Check, Plug } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { connectorStatus, useMcpConnection } from '../../hooks/use-mcp-connections';
 import { useAuthStart } from '../../hooks/use-oauth-connections';
+import { ConnectorDeviceFlowDialog } from '../connector-device-flow-dialog';
 import { Button } from '../ui/button';
 import type { CommentDataOf } from './comment-data';
 
@@ -17,6 +19,7 @@ export function ConnectRequiredComment({ comment, teamId }: Props) {
 	const authStart = useAuthStart(teamId ?? '');
 	const queryClient = useQueryClient();
 	const [error, setError] = useState<string | null>(null);
+	const [deviceOpen, setDeviceOpen] = useState(false);
 
 	// Refetch the connector immediately when the OAuth popup signals success,
 	// without waiting for the WebSocket invalidation round-trip. The popup
@@ -50,8 +53,17 @@ export function ConnectRequiredComment({ comment, teamId }: Props) {
 	const connectorsUrl = `/teams/${teamId}/connectors`;
 	const focusedConnectorUrl = `${connectorsUrl}?focus=${connector_id}#${connector_id}`;
 
+	// Providers whose AS can't do DCR (declared via `deviceAuth`) authorize
+	// through the device flow; everything else uses the redirect popup.
+	const capability = getConnectorCapability(connector?.name ?? provider_id ?? '');
+	const usesDeviceFlow = !!capability?.deviceAuth;
+
 	const openConnect = () => {
 		setError(null);
+		if (usesDeviceFlow) {
+			setDeviceOpen(true);
+			return;
+		}
 		authStart.mutate(connector_id, {
 			onSuccess: ({ auth_url }) => {
 				const popup = window.open(auth_url, 'hezo-connect', 'width=600,height=720');
@@ -118,6 +130,18 @@ export function ConnectRequiredComment({ comment, teamId }: Props) {
 				</div>
 			</div>
 			{error && <p className="text-xs text-accent-red-text">{error}</p>}
+			{usesDeviceFlow && deviceOpen && (
+				<ConnectorDeviceFlowDialog
+					open={deviceOpen}
+					onOpenChange={setDeviceOpen}
+					teamId={teamId}
+					connectorId={connector_id}
+					providerLabel={display_name ?? capability?.displayName ?? provider_id ?? 'provider'}
+					onSuccess={() =>
+						queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'mcp-connections'] })
+					}
+				/>
+			)}
 			<div className="flex items-center gap-2">
 				<Button
 					size="sm"

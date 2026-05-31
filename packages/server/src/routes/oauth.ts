@@ -1,13 +1,29 @@
 import { randomBytes } from 'node:crypto';
-import { getConnectorCapability, WakeupSource, wsRoom } from '@hezo/shared';
+import {
+	type ConnectorCapability,
+	getConnectorCapability,
+	WakeupSource,
+	wsRoom,
+} from '@hezo/shared';
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { getConnector, markActive, markFailed } from '../services/connectors/lifecycle';
+import {
+	type ConnectorRow,
+	getConnector,
+	markActive,
+	markFailed,
+} from '../services/connectors/lifecycle';
 import { pushConnectorToTeamContainers } from '../services/connectors/live-push';
+import {
+	computeScopeStatus,
+	fetchAccount,
+	registerAuthKey,
+	registerSigningKey,
+} from '../services/github';
 import {
 	createConnection,
 	deleteConnection,
@@ -15,18 +31,13 @@ import {
 	listConnectionsForTeam,
 } from '../services/oauth/connection-store';
 import { registerClient } from '../services/oauth/dcr';
+import { pollDeviceFlow, resolveDeviceAuth, startDeviceFlow } from '../services/oauth/device-flow';
 import { discoverMcpAuthorization } from '../services/oauth/prm-discovery';
 import {
 	buildAuthorizationUrl,
 	discoverMetadata,
 	exchangeCode,
 } from '../services/oauth/provider-generic';
-import {
-	computeScopeStatus,
-	fetchAccount,
-	registerAuthKey,
-	registerSigningKey,
-} from '../services/oauth/provider-github';
 import { type ManualOAuthConfig, signState, verifyState } from '../services/oauth/state';
 import { generateTeamSSHKey, getTeamSSHKey } from '../services/ssh-keys';
 import { createWakeup } from '../services/wakeup';
@@ -34,6 +45,29 @@ import { createWakeup } from '../services/wakeup';
 const log = logger.child('oauth-route');
 
 export const oauthRoutes = new Hono<Env>();
+
+/**
+ * In-flight GitHub device-flow handshakes, keyed by an opaque flow id handed
+ * to the client. The device code never leaves the server. Entries are pruned
+ * lazily on each start; a TTL bounds memory if a flow is abandoned.
+ */
+interface DeviceFlowEntry {
+	deviceCode: string;
+	teamId: string;
+	connectorId: string;
+	scopes: string[];
+	expiresAt: number;
+}
+
+const deviceFlows = new Map<string, DeviceFlowEntry>();
+const DEVICE_FLOW_TTL_MS = 15 * 60 * 1000;
+
+function pruneDeviceFlows(): void {
+	const now = Date.now();
+	for (const [id, entry] of deviceFlows) {
+		if (entry.expiresAt < now) deviceFlows.delete(id);
+	}
+}
 
 oauthRoutes.get('/oauth/callback', async (c) => {
 	const masterKeyManager = c.get('masterKeyManager');
@@ -252,6 +286,17 @@ async function startConnectorAuthCode(
 			status: 400,
 		};
 
+	// Providers whose AS can't do DCR declare a `deviceAuth` capability and
+	// authorize through the device flow instead. The UI routes them there
+	// directly; this guards the API from a misdirected auth-start.
+	if (getConnectorCapability(connector.name)?.deviceAuth)
+		return {
+			kind: 'error',
+			code: 'USE_DEVICE_FLOW',
+			message: 'this connector authorizes via the device flow; call connectors/:id/device/start',
+			status: 400,
+		};
+
 	const config = connector.config as {
 		url?: string;
 		dcr?: {
@@ -302,7 +347,7 @@ async function startConnectorAuthCode(
 				kind: 'error',
 				code: 'OAUTH_DCR_UNSUPPORTED',
 				message:
-					'Authorization Server does not support Dynamic Client Registration; manual client_id setup is not yet implemented',
+					"This provider's Authorization Server does not support Dynamic Client Registration. If it supports the OAuth device flow, add a registry capability with a `deviceAuth` client_id (see the github entry); otherwise connect it with a pasted token.",
 				status: 400,
 			};
 		}
@@ -441,136 +486,36 @@ oauthRoutes.get('/oauth/mcp-callback', async (c) => {
 		return c.html(buildCallbackPage('error', 'exchange_failed'), 200);
 	}
 
-	const capability = getConnectorCapability(connector.name);
+	// The DCR/auth-code path only ever lands non-device providers here: GitHub
+	// (the lone device-flow provider today) can't complete `auth-start` at all,
+	// since its AS advertises no registration_endpoint. So this is the generic
+	// MCP branch — finalize through the same helper the device flow uses.
+	const grantedScopes = token.scope
+		? token.scope.split(/[,\s]+/).filter(Boolean)
+		: payload.manualConfig.scopes;
 
-	// GitHub carve-out: the registry's `github` entry doubles as the source of
-	// truth for SSH-based git ops (clone/push, SSH-key registration). When the
-	// connector resolves to it, we use the GitHub user identity for the
-	// oauth_connections row (so consumers filtering on `provider === 'github'`
-	// filter matches) and run the same key-registration side effect the
-	// retired device-flow callback used to do.
-	let providerName: string;
-	let providerAccountId: string;
-	let providerAccountLabel: string;
-	let allowedHosts: string[];
-	let metadata: Record<string, unknown>;
-	let githubAccount: Awaited<ReturnType<typeof fetchAccount>> | null = null;
-
-	if (capability?.id === 'github') {
-		try {
-			githubAccount = await fetchAccount(token.accessToken);
-		} catch (e) {
-			log.warn('github account fetch failed', { error: (e as Error).message });
-			await markFailed(db, connector.id, `account_fetch: ${(e as Error).message}`);
-			return c.html(buildCallbackPage('error', 'github_account_fetch_failed'), 200);
-		}
-		providerName = 'github';
-		providerAccountId = String(githubAccount.id);
-		providerAccountLabel = githubAccount.login;
-		allowedHosts = capability.allowedHosts;
-		metadata = {
-			resource_url: payload.resourceUrl,
-			token_url: payload.manualConfig.token_url,
-			authorize_url: payload.manualConfig.authorize_url,
-			connector_id: connector.id,
-			avatar_url: githubAccount.avatarUrl,
-			email: githubAccount.email,
-			login: githubAccount.login,
-			github_user_id: githubAccount.id,
-		};
-	} else {
-		providerName = payload.provider;
-		providerAccountId = `${payload.provider}:${randomBytes(8).toString('hex')}`;
-		providerAccountLabel = payload.mcpConnectionName ?? payload.provider;
-		allowedHosts = inferAllowedHosts(payload.resourceUrl, payload.manualConfig.token_url);
-		metadata = {
-			resource_url: payload.resourceUrl,
-			token_url: payload.manualConfig.token_url,
-			authorize_url: payload.manualConfig.authorize_url,
-			connector_id: connector.id,
-		};
-	}
-
-	const conn = await createConnection(
-		{ db, masterKeyManager },
-		{
-			teamId: payload.teamId,
-			provider: providerName,
-			providerAccountId,
-			providerAccountLabel,
+	try {
+		await finalizeConnectorConnection(c, {
+			connector,
+			capability: getConnectorCapability(connector.name),
+			provider: payload.provider,
 			accessToken: token.accessToken,
 			refreshToken: token.refreshToken,
-			scopes: token.scope
-				? token.scope.split(/[,\s]+/).filter(Boolean)
-				: payload.manualConfig.scopes,
+			scopes: grantedScopes,
 			expiresAt: token.expiresAt ?? null,
-			allowedHosts,
-			metadata,
-		},
-	);
-
-	await markActive(db, connector.id, conn.id);
-
-	if (capability?.id === 'github') {
-		await ensureTeamKeyRegisteredOnGitHub(
-			db,
-			masterKeyManager,
-			payload.teamId,
-			token.accessToken,
-		).catch((e) =>
-			log.warn('team-key registration failed (non-fatal)', { error: (e as Error).message }),
-		);
-	}
-
-	// Sync push to the parent task's container so the calling agent sees the
-	// MCP on its next tool call; other team containers updated best-effort.
-	try {
-		await pushConnectorToTeamContainers(
-			{ db, docker },
-			{
-				teamId: payload.teamId,
-				connectorId: connector.id,
-				syncTaskId: connector.created_by_task_id,
+			allowedHosts: inferAllowedHosts(payload.resourceUrl, payload.manualConfig.token_url),
+			label: payload.mcpConnectionName ?? payload.provider,
+			baseMetadata: {
+				resource_url: payload.resourceUrl,
+				token_url: payload.manualConfig.token_url,
+				authorize_url: payload.manualConfig.authorize_url,
 			},
-		);
+		});
 	} catch (e) {
-		log.warn('live-push failed (non-fatal)', { error: (e as Error).message });
+		log.warn('mcp oauth finalize failed', { error: (e as Error).message });
+		await markFailed(db, connector.id, `finalize: ${(e as Error).message}`);
+		return c.html(buildCallbackPage('error', 'finalize_failed'), 200);
 	}
-
-	// Fire CredentialProvided wakeup on the calling task's assignee, if any.
-	if (connector.created_by_task_id) {
-		const row = await db.query<{ assignee_id: string | null }>(
-			`SELECT assignee_id FROM tasks WHERE id = $1`,
-			[connector.created_by_task_id],
-		);
-		const assigneeId = row.rows[0]?.assignee_id;
-		if (assigneeId) {
-			trackBackground(
-				createWakeup(
-					db,
-					assigneeId,
-					payload.teamId,
-					WakeupSource.CredentialProvided,
-					{ connector_id: connector.id, task_id: connector.created_by_task_id },
-					`connector:${connector.id}`,
-				).catch((e) =>
-					log.warn('wakeup enqueue failed (non-fatal)', { error: (e as Error).message }),
-				),
-			);
-		}
-	}
-
-	broadcastChange(c, wsRoom.team(payload.teamId), 'mcp_connections', 'UPDATE', {
-		id: connector.id,
-		team_id: payload.teamId,
-		oauth_connection_id: conn.id,
-		status: 'active',
-	});
-	broadcastChange(c, wsRoom.team(payload.teamId), 'oauth_connections', 'INSERT', {
-		id: conn.id,
-		provider: conn.provider,
-		provider_account_label: conn.providerAccountLabel,
-	});
 
 	return c.html(buildCallbackPage('success', undefined, payload.returnTo), 200);
 });
@@ -630,6 +575,127 @@ oauthRoutes.delete('/teams/:teamId/oauth-connections/:id', async (c) => {
 	broadcastChange(c, wsRoom.team(teamId), 'oauth_connections', 'DELETE', { id });
 
 	return ok(c, { deleted: true });
+});
+
+/**
+ * Begin the OAuth device flow (RFC 8628) for a connector. Used by providers
+ * whose Authorization Server supports neither Dynamic Client Registration nor a
+ * redirect-friendly public client (GitHub today; GitLab / Google / Microsoft
+ * fit the same shape). Such a provider declares a `deviceAuth` descriptor in
+ * the capability registry and never goes through the DCR `auth-start` path.
+ * Returns the user code + verification URL for the UI to display; the device
+ * code stays server side, referenced by an opaque flow id.
+ */
+oauthRoutes.post('/teams/:teamId/connectors/:connectorId/device/start', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const connectorId = c.req.param('connectorId');
+	const db = c.get('db');
+
+	const connector = await getConnector(db, connectorId);
+	if (!connector || connector.team_id !== teamId)
+		return err(c, 'NOT_FOUND', 'connector not found', 404);
+	const capability = getConnectorCapability(connector.name);
+	if (!capability?.deviceAuth)
+		return err(c, 'INVALID_REQUEST', 'connector does not support the device flow', 400);
+
+	pruneDeviceFlows();
+
+	const scopes = capability.scopes ?? [];
+	let started: Awaited<ReturnType<typeof startDeviceFlow>>;
+	try {
+		const resolved = resolveDeviceAuth(capability.deviceAuth);
+		started = await startDeviceFlow({
+			deviceCodeUrl: resolved.deviceCodeUrl,
+			clientId: resolved.clientId,
+			scopes,
+		});
+	} catch (e) {
+		log.warn('device-flow start failed', { connector: capability.id, error: (e as Error).message });
+		return err(c, 'DEVICE_START_FAILED', (e as Error).message, 503);
+	}
+
+	const flowId = randomBytes(16).toString('hex');
+	deviceFlows.set(flowId, {
+		deviceCode: started.deviceCode,
+		teamId,
+		connectorId,
+		scopes,
+		expiresAt: Date.now() + DEVICE_FLOW_TTL_MS,
+	});
+
+	return ok(c, {
+		flow_id: flowId,
+		user_code: started.userCode,
+		verification_uri: started.verificationUri,
+		expires_in: started.expiresIn,
+		interval: started.interval,
+	});
+});
+
+/**
+ * Poll a device flow. Returns 202 `pending` while the user hasn't yet
+ * authorized; on success, finalizes the connection (token storage, connector
+ * activation, provider side effects) via the same helper the OAuth callback
+ * uses, so the connector ends up identical regardless of acquisition path.
+ */
+oauthRoutes.post('/teams/:teamId/connectors/:connectorId/device/poll', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const connectorId = c.req.param('connectorId');
+
+	const body = (await c.req.json().catch(() => ({}))) as { flow_id?: string };
+	const flowId = body.flow_id;
+	if (!flowId) return err(c, 'INVALID_REQUEST', 'flow_id is required', 400);
+
+	const entry = deviceFlows.get(flowId);
+	if (!entry) return err(c, 'NOT_FOUND', 'unknown or expired flow_id', 404);
+	if (entry.teamId !== teamId || entry.connectorId !== connectorId)
+		return err(c, 'FORBIDDEN', 'flow does not belong to this connector', 403);
+
+	const db = c.get('db');
+	const connector = await getConnector(db, connectorId);
+	if (!connector || connector.team_id !== teamId)
+		return err(c, 'NOT_FOUND', 'connector not found', 404);
+	const capability = getConnectorCapability(connector.name);
+	if (!capability?.deviceAuth)
+		return err(c, 'INVALID_REQUEST', 'connector does not support the device flow', 400);
+
+	const resolved = resolveDeviceAuth(capability.deviceAuth);
+	const result = await pollDeviceFlow({
+		tokenUrl: resolved.tokenUrl,
+		clientId: resolved.clientId,
+		deviceCode: entry.deviceCode,
+	});
+	if (result.status === 'pending') {
+		return c.json({ data: { status: 'pending', retry_after: result.retryAfter } }, 202);
+	}
+	if (result.status === 'failed') {
+		deviceFlows.delete(flowId);
+		return err(c, 'DEVICE_FAILED', result.error, 400);
+	}
+
+	deviceFlows.delete(flowId);
+
+	const scopes = result.scope ? result.scope.split(/[,\s]+/).filter(Boolean) : entry.scopes;
+	let finalized: Awaited<ReturnType<typeof finalizeConnectorConnection>>;
+	try {
+		finalized = await finalizeConnectorConnection(c, {
+			connector,
+			capability,
+			provider: capability.id,
+			accessToken: result.accessToken,
+			scopes,
+			allowedHosts: capability.allowedHosts,
+		});
+	} catch (e) {
+		log.warn('device finalize failed', { connector: capability.id, error: (e as Error).message });
+		await markFailed(db, connector.id, `finalize: ${(e as Error).message}`);
+		return err(c, 'DEVICE_FINALIZE_FAILED', (e as Error).message, 503);
+	}
+
+	return ok(c, {
+		status: 'success',
+		connection: { id: finalized.connectionId, provider_account_label: finalized.label },
+	});
 });
 
 function inferAllowedHosts(resourceUrl: string | undefined, tokenUrl: string): string[] {
@@ -707,5 +773,178 @@ async function ensureTeamKeyRegisteredOnGitHub(
 			? 'team ssh auth key already registered on GitHub'
 			: 'registered team ssh key on GitHub for authentication',
 		{ teamId },
+	);
+}
+
+/**
+ * The upstream account a connection authenticates as. For providers with no
+ * identity endpoint we synthesize an opaque id; providers that expose one (e.g.
+ * GitHub `/user`) resolve the real account via {@link ProviderConnectHooks}.
+ */
+interface ConnectIdentity {
+	accountId: string;
+	label: string;
+	metadata: Record<string, unknown>;
+}
+
+/**
+ * Provider-specific behavior layered onto the otherwise-uniform connect flow.
+ * Keyed by capability id; absent for the generic case (synthetic identity, no
+ * side effects). GitHub resolves its real identity and registers the team SSH
+ * key so signed-commit + SSH git ops work.
+ */
+interface ProviderConnectHooks {
+	fetchIdentity?(accessToken: string): Promise<ConnectIdentity>;
+	afterConnect?(
+		ctx: {
+			db: import('@electric-sql/pglite').PGlite;
+			masterKeyManager: import('../crypto/master-key').MasterKeyManager;
+			teamId: string;
+		},
+		accessToken: string,
+	): Promise<void>;
+}
+
+const PROVIDER_CONNECT_HOOKS: Record<string, ProviderConnectHooks> = {
+	github: {
+		async fetchIdentity(accessToken) {
+			const account = await fetchAccount(accessToken);
+			return {
+				accountId: String(account.id),
+				label: account.login,
+				metadata: {
+					avatar_url: account.avatarUrl,
+					email: account.email,
+					login: account.login,
+					github_user_id: account.id,
+				},
+			};
+		},
+		afterConnect: ({ db, masterKeyManager, teamId }, accessToken) =>
+			ensureTeamKeyRegisteredOnGitHub(db, masterKeyManager, teamId, accessToken),
+	},
+};
+
+/**
+ * Persist a freshly-acquired access token against a connector: resolve the
+ * provider identity, store the token in the vault as an `oauth_connections`
+ * row, link + activate the connector, run provider side effects, push the live
+ * config to running containers, and wake any agent waiting on the connector.
+ * Shared by the device-flow poll route and the auth-code OAuth callback so the
+ * resulting state is identical regardless of how the token was obtained. Throws
+ * if identity resolution fails (the caller maps that to a connector failure).
+ */
+async function finalizeConnectorConnection(
+	c: import('hono').Context<Env>,
+	opts: {
+		connector: ConnectorRow;
+		capability: ConnectorCapability | undefined;
+		provider: string;
+		accessToken: string;
+		refreshToken?: string | null;
+		scopes: string[];
+		expiresAt?: Date | null;
+		allowedHosts: string[];
+		label?: string;
+		baseMetadata?: Record<string, unknown>;
+	},
+): Promise<{ connectionId: string; label: string }> {
+	const db = c.get('db');
+	const masterKeyManager = c.get('masterKeyManager');
+	const docker = c.get('docker');
+	const { connector, capability, provider, accessToken } = opts;
+	const teamId = connector.team_id;
+	const hooks = PROVIDER_CONNECT_HOOKS[capability?.id ?? ''] ?? {};
+
+	const identity: ConnectIdentity = hooks.fetchIdentity
+		? await hooks.fetchIdentity(accessToken)
+		: {
+				accountId: `${provider}:${randomBytes(8).toString('hex')}`,
+				label: opts.label ?? connector.display_name ?? connector.name,
+				metadata: {},
+			};
+
+	const conn = await createConnection(
+		{ db, masterKeyManager },
+		{
+			teamId,
+			provider,
+			providerAccountId: identity.accountId,
+			providerAccountLabel: identity.label,
+			accessToken,
+			refreshToken: opts.refreshToken,
+			scopes: opts.scopes,
+			expiresAt: opts.expiresAt ?? null,
+			allowedHosts: opts.allowedHosts,
+			metadata: { connector_id: connector.id, ...opts.baseMetadata, ...identity.metadata },
+		},
+	);
+
+	await markActive(db, connector.id, conn.id);
+
+	// Provider side effects (e.g. GitHub SSH-key registration) are non-fatal —
+	// the connection itself is already usable; a failed key registration just
+	// degrades git ops and is logged, not surfaced as a connect failure.
+	if (hooks.afterConnect) {
+		await hooks.afterConnect({ db, masterKeyManager, teamId }, accessToken).catch((e) =>
+			log.warn('post-connect side effect failed (non-fatal)', {
+				connector: capability?.id,
+				error: (e as Error).message,
+			}),
+		);
+	}
+
+	// Sync push to the parent task's container so the calling agent sees the
+	// MCP on its next tool call; other team containers updated best-effort.
+	try {
+		await pushConnectorToTeamContainers(
+			{ db, docker },
+			{ teamId, connectorId: connector.id, syncTaskId: connector.created_by_task_id },
+		);
+	} catch (e) {
+		log.warn('live-push failed (non-fatal)', { error: (e as Error).message });
+	}
+
+	await fireCredentialProvidedWakeup(db, connector);
+
+	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', {
+		id: connector.id,
+		team_id: teamId,
+		oauth_connection_id: conn.id,
+		status: 'active',
+	});
+	broadcastChange(c, wsRoom.team(teamId), 'oauth_connections', 'INSERT', {
+		id: conn.id,
+		provider: conn.provider,
+		provider_account_label: conn.providerAccountLabel,
+	});
+
+	return { connectionId: conn.id, label: conn.providerAccountLabel };
+}
+
+/**
+ * Fire a CredentialProvided wakeup on the assignee of the task that requested
+ * the connector, if any. Fire-and-forget — the agent's run is inherently async.
+ */
+async function fireCredentialProvidedWakeup(
+	db: import('@electric-sql/pglite').PGlite,
+	connector: ConnectorRow,
+): Promise<void> {
+	if (!connector.created_by_task_id) return;
+	const row = await db.query<{ assignee_id: string | null }>(
+		`SELECT assignee_id FROM tasks WHERE id = $1`,
+		[connector.created_by_task_id],
+	);
+	const assigneeId = row.rows[0]?.assignee_id;
+	if (!assigneeId) return;
+	trackBackground(
+		createWakeup(
+			db,
+			assigneeId,
+			connector.team_id,
+			WakeupSource.CredentialProvided,
+			{ connector_id: connector.id, task_id: connector.created_by_task_id },
+			`connector:${connector.id}`,
+		).catch((e) => log.warn('wakeup enqueue failed (non-fatal)', { error: (e as Error).message })),
 	);
 }

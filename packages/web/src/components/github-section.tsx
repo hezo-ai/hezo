@@ -1,14 +1,14 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, GitBranch, Github, Loader2, Lock, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useMcpConnections } from '../hooks/use-mcp-connections';
 import {
-	useAuthStart,
 	useConnectionScopeStatus,
 	useEnsureConnector,
 	useOAuthConnections,
 } from '../hooks/use-oauth-connections';
 import { useDeleteRepo, useRepos } from '../hooks/use-repos';
+import { ConnectorDeviceFlowDialog } from './connector-device-flow-dialog';
 import { RepoPickerModal } from './repo-picker-modal';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -31,8 +31,8 @@ export function GitHubSection({ teamId, projectId }: GitHubSectionProps) {
 	const scopeStatusQuery = useConnectionScopeStatus(teamId, githubConnection?.id);
 
 	const ensure = useEnsureConnector(teamId);
-	const authStart = useAuthStart(teamId);
 	const [pickerOpen, setPickerOpen] = useState(false);
+	const [deviceConnectorId, setDeviceConnectorId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
 	const isReady = !!githubConnection && scopeStatusQuery.data?.sufficient === true;
@@ -40,30 +40,13 @@ export function GitHubSection({ teamId, projectId }: GitHubSectionProps) {
 		!!githubConnection && scopeStatusQuery.data && scopeStatusQuery.data.sufficient === false;
 	const hasConnection = !!githubConnection;
 	const hasRepos = !!repos && repos.length > 0;
-	const connecting = ensure.isPending || authStart.isPending;
-
-	// Refetch when the OAuth popup signals completion (server origin posts back
-	// from the callback page). The data-flow is server→opener postMessage; we
-	// just invalidate to pick up the new oauth_connections + mcp_connections rows.
-	useEffect(() => {
-		const onMessage = (e: MessageEvent) => {
-			if (!e.data || typeof e.data !== 'object') return;
-			const type = (e.data as { type?: string }).type;
-			if (type !== 'hezo-oauth-success' && type !== 'hezo-oauth-error') return;
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'oauth-connections'] });
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'mcp-connections'] });
-		};
-		window.addEventListener('message', onMessage);
-		return () => window.removeEventListener('message', onMessage);
-	}, [teamId, queryClient]);
+	const connecting = ensure.isPending;
 
 	const startConnect = async () => {
 		setError(null);
 		try {
 			const connector = githubConnector ?? (await ensure.mutateAsync('github'));
-			const { auth_url } = await authStart.mutateAsync(connector.id);
-			const popup = window.open(auth_url, 'hezo-connect', 'width=600,height=720');
-			if (!popup) setError('Pop-up blocked. Allow pop-ups for Hezo and try again.');
+			setDeviceConnectorId(connector.id);
 		} catch (e) {
 			setError(e instanceof Error ? e.message : 'Failed to start GitHub OAuth');
 		}
@@ -154,6 +137,22 @@ export function GitHubSection({ teamId, projectId }: GitHubSectionProps) {
 				<div className="text-xs text-text-subtle mb-3">
 					Connected as <span className="font-mono">{githubConnection.provider_account_label}</span>.
 				</div>
+			)}
+
+			{deviceConnectorId && (
+				<ConnectorDeviceFlowDialog
+					open={!!deviceConnectorId}
+					onOpenChange={(open) => {
+						if (!open) setDeviceConnectorId(null);
+					}}
+					teamId={teamId}
+					connectorId={deviceConnectorId}
+					providerLabel="GitHub"
+					onSuccess={() => {
+						queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'oauth-connections'] });
+						queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'mcp-connections'] });
+					}}
+				/>
 			)}
 
 			{isReady && githubConnection && (
