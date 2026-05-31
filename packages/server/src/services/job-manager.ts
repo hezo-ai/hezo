@@ -21,6 +21,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
+import { ref } from '../lib/log-ref';
 import { assertChildrenAllClosed } from '../lib/task-relationships';
 import { logger } from '../logger';
 import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
@@ -793,7 +794,9 @@ export class JobManager {
 				[payloadTaskId, teamId],
 			);
 			if (payloadTask.rows.length === 0) {
-				log.debug(`Payload task ${payloadTaskId} not found for agent ${memberId}`);
+				log.debug(
+					`Payload task ${payloadTaskId} not found for agent ${ref(agent.rows[0].slug, memberId)}`,
+				);
 				if (wakeupId) {
 					await db.query(
 						`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
@@ -830,7 +833,7 @@ export class JobManager {
 				],
 			);
 			if (tasks.rows.length === 0) {
-				log.debug(`No actionable tasks for agent ${memberId}`);
+				log.debug(`No actionable tasks for agent ${ref(agent.rows[0].slug, memberId)}`);
 				if (wakeupId) {
 					await db.query(
 						`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
@@ -851,7 +854,7 @@ export class JobManager {
 		// between the dispatcher check and now.
 		if (await this.isTaskBusy({ task_id: task.id })) {
 			log.debug(
-				`Task ${task.identifier} already has an active run — re-queuing wakeup for ${memberId}`,
+				`Task ${ref(task.identifier, task.id)} already has an active run — re-queuing wakeup for ${ref(agent.rows[0].slug, memberId)}`,
 			);
 			if (wakeupId) {
 				await db.query(
@@ -863,7 +866,7 @@ export class JobManager {
 		}
 		if (await this.isProjectBusy(task.project_id)) {
 			log.debug(
-				`Project ${task.project_id} already has an active run — re-queuing wakeup for ${memberId}`,
+				`Project ${task.project_id} already has an active run — re-queuing wakeup for ${ref(agent.rows[0].slug, memberId)}`,
 			);
 			if (wakeupId) {
 				await db.query(
@@ -935,7 +938,7 @@ export class JobManager {
 					);
 				}
 			} catch (e) {
-				log.error(`Failed to ensure repo setup action for agent ${agentSlug}:`, e);
+				log.error(`Failed to ensure repo setup action for agent ${ref(agentSlug, memberId)}:`, e);
 			}
 
 			if (wakeupId) {
@@ -956,13 +959,15 @@ export class JobManager {
 				);
 			}
 			log.debug(
-				`Agent ${agentSlug} deferred on task ${task.identifier} — project has no designated repo`,
+				`Agent ${ref(agentSlug, memberId)} deferred on task ${ref(task.identifier, task.id)} — project has no designated repo`,
 			);
 			return;
 		}
 
 		if (!projectRow.container_id) {
-			log.debug(`No container for project ${task.project_id} — wakeup failed`);
+			log.debug(
+				`No container for project ${ref(projectRow.slug, task.project_id)} — wakeup failed`,
+			);
 			if (wakeupId) {
 				await db.query(
 					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
@@ -988,7 +993,7 @@ export class JobManager {
 
 		if (lockResult.rows.length === 0) {
 			log.debug(
-				`Agent ${agent.rows[0].slug} already holds a lock on task ${task.identifier} — deferring wakeup`,
+				`Agent ${ref(agent.rows[0].slug, memberId)} already holds a lock on task ${ref(task.identifier, task.id)} — deferring wakeup`,
 			);
 			if (wakeupId) {
 				await db.query(
@@ -1008,7 +1013,9 @@ export class JobManager {
 			runtime_status: AgentRuntimeStatus.Active,
 		});
 
-		log.debug(`Launching agent ${agent.rows[0].title} for task ${task.identifier}`);
+		log.debug(
+			`Launching agent ${ref(agentSlug, memberId)} for task ${ref(task.identifier, task.id)}`,
+		);
 
 		const deps: RunnerDeps = {
 			db,
@@ -1069,6 +1076,7 @@ export class JobManager {
 						memberId,
 						agent.rows[0].slug,
 						task.id,
+						task.identifier,
 						teamId,
 						wakeupId,
 						wakeupPayload,
@@ -1079,7 +1087,10 @@ export class JobManager {
 					// Background run errors must not become unhandled rejections — they
 					// most commonly fire when a test or shutdown closes the DB while a
 					// run is still cleaning up. Log and swallow.
-					log.error(`Background run for agent ${memberId} on task ${task.id} failed:`, err);
+					log.error(
+						`Background run for agent ${ref(agent.rows[0].slug, memberId)} on task ${ref(task.identifier, task.id)} failed:`,
+						err,
+					);
 					if (registeredRunId) this.unregisterLiveRun(registeredRunId);
 					return null;
 				} finally {
@@ -1096,6 +1107,7 @@ export class JobManager {
 		memberId: string,
 		agentSlug: string,
 		taskId: string,
+		taskIdentifier: string,
 		teamId: string,
 		wakeupId: string | undefined,
 		wakeupPayload: Record<string, unknown> | undefined,
@@ -1104,7 +1116,7 @@ export class JobManager {
 		const { db } = this.deps;
 
 		log.debug(
-			`Agent ${memberId} completed: success=${result.success}, exit=${result.exitCode}, duration=${result.durationMs}ms`,
+			`Agent ${ref(agentSlug, memberId)} completed: success=${result.success}, exit=${result.exitCode}, duration=${result.durationMs}ms`,
 		);
 
 		await db.query(
@@ -1128,7 +1140,14 @@ export class JobManager {
 		}
 
 		if (!result.success && result.heartbeatRunId) {
-			await this.postFailurePing(memberId, agentSlug, taskId, teamId, result.heartbeatRunId);
+			await this.postFailurePing(
+				memberId,
+				agentSlug,
+				taskId,
+				taskIdentifier,
+				teamId,
+				result.heartbeatRunId,
+			);
 		}
 
 		if (
@@ -1138,7 +1157,9 @@ export class JobManager {
 		) {
 			const childrenCheck = await assertChildrenAllClosed(db, teamId, taskId);
 			if (!childrenCheck.ok) {
-				log.warn(`Skipping coach auto-close for task ${taskId}: ${childrenCheck.message}`);
+				log.warn(
+					`Skipping coach auto-close for task ${ref(taskIdentifier, taskId)}: ${childrenCheck.message}`,
+				);
 			} else {
 				const closed = await db.query<Record<string, unknown>>(
 					`UPDATE tasks SET status = $1::task_status, updated_at = now()
@@ -1167,13 +1188,14 @@ export class JobManager {
 			}
 		}
 
-		await this.chainNextTaskWakeup(memberId, taskId, teamId);
+		await this.chainNextTaskWakeup(memberId, agentSlug, taskId, teamId);
 	}
 
 	private async postFailurePing(
 		memberId: string,
 		agentSlug: string,
 		taskId: string,
+		taskIdentifier: string,
 		teamId: string,
 		runId: string,
 	): Promise<void> {
@@ -1203,7 +1225,7 @@ export class JobManager {
 		const streak = recent.rows.every((r) => FAILURE_TERMINAL_STATUSES.includes(r.status));
 		if (recent.rows.length >= MAX_CONSECUTIVE_FAILURE_PINGS && streak) {
 			log.warn(
-				`Suppressing failure ping for agent ${agentSlug} on task ${taskId}: ${MAX_CONSECUTIVE_FAILURE_PINGS} consecutive failed runs`,
+				`Suppressing failure ping for agent ${ref(agentSlug, memberId)} on task ${ref(taskIdentifier, taskId)}: ${MAX_CONSECUTIVE_FAILURE_PINGS} consecutive failed runs`,
 			);
 			return;
 		}
@@ -1254,6 +1276,7 @@ export class JobManager {
 
 	private async chainNextTaskWakeup(
 		memberId: string,
+		agentSlug: string,
 		justCompletedTaskId: string,
 		teamId: string,
 	): Promise<void> {
@@ -1313,7 +1336,7 @@ export class JobManager {
 				reason: 'chain_after_completion',
 			});
 		} catch (e) {
-			log.error(`Failed to chain wakeup for agent ${memberId}:`, e);
+			log.error(`Failed to chain wakeup for agent ${ref(agentSlug, memberId)}:`, e);
 		}
 	}
 

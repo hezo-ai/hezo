@@ -9,6 +9,7 @@ import {
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { signAssetUrl, verifyAssetUrl } from '../lib/asset-urls';
+import { ref } from '../lib/log-ref';
 import { resolveActorMemberId, resolveTaskId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
@@ -141,7 +142,7 @@ publicAssetsRoutes.get('/api/assets/:assetId', async (c) => {
 	try {
 		buf = await readFile(diskPath);
 	} catch (e) {
-		log.error(`Failed to read asset ${assetId} from disk:`, e);
+		log.error(`Failed to read asset ${ref(original_filename, assetId)} from disk:`, e);
 		return err(c, 'NOT_FOUND', 'Asset file missing', 404);
 	}
 

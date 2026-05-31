@@ -615,6 +615,10 @@ export async function runAgent(
 
 	await markHeartbeatRunRunning(deps.db, heartbeatRunId, runBroadcast);
 
+	// Human-friendly label for run-scoped logs (egress proxy, ssh-agent),
+	// since a run has no friendly identifier of its own.
+	const runLabel = `${agent.slug}/${task.identifier}`;
+
 	let sshSocketContainerPath: string | null = null;
 	let sshSocketHostPath: string | null = null;
 	let bridge: BridgeRunnerArgs | null = null;
@@ -622,7 +626,7 @@ export async function runAgent(
 		sshSocketHostPath = getRunSocketPath(deps.dataDir, heartbeatRunId);
 		const allocated = await deps.sshAgentServer.allocateRunSocket(
 			heartbeatRunId,
-			{ teamId: agent.team_id, agentId: agent.id },
+			{ teamId: agent.team_id, agentId: agent.id, label: runLabel },
 			sshSocketHostPath,
 		);
 		sshSocketContainerPath = `/run/hezo/${heartbeatRunId}.sock`;
@@ -645,6 +649,7 @@ export async function runAgent(
 			teamId: agent.team_id,
 			agentId: agent.id,
 			projectId: project.id,
+			label: runLabel,
 		});
 		egressAllocated = true;
 		egressEnv = {

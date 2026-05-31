@@ -19,7 +19,7 @@ export async function withHostAgentSocket<T>(
 	const socketHostPath = getRunSocketPath(dataDir, runId);
 	const allocated = await sshAgentServer.allocateRunSocket(
 		runId,
-		{ teamId, agentId: 'host' },
+		{ teamId, agentId: 'host', label: 'host-git' },
 		socketHostPath,
 	);
 	try {

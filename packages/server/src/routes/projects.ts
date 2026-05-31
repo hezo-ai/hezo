@@ -3,6 +3,7 @@ import { ContainerStatus, WakeupSource, wsRoom } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
+import { ref } from '../lib/log-ref';
 import { resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toProjectTaskPrefix, toSlug, uniqueSlug } from '../lib/slug';
@@ -479,7 +480,10 @@ projectsRoutes.post('/teams/:teamId/projects/:projectId/container/rebuild', asyn
 				await rebuildContainer(containerDeps, projectResult.rows[0] as ProjectRow, teamSlug);
 				wakeAgentsWithPendingWork(db, projectId, teamId);
 			} catch (error) {
-				log.error(`Container rebuild failed for project ${projectId}:`, error);
+				log.error(
+					`Container rebuild failed for project ${ref((projectResult.rows[0] as ProjectRow).slug, projectId)}:`,
+					error,
+				);
 			}
 		},
 		REBUILD_TIMEOUT_MS,

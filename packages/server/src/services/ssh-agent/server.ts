@@ -6,6 +6,7 @@ import { dirname } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import { decrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
+import { ref } from '../../lib/log-ref';
 import { logger } from '../../logger';
 import {
 	type AgentIdentity,
@@ -48,7 +49,7 @@ export class SshAgentServer {
 
 	async allocateRunSocket(
 		runId: string,
-		identity: { teamId: string; agentId: string },
+		identity: { teamId: string; agentId: string; label?: string | null },
 		socketHostPath: string,
 	): Promise<AllocatedSocket> {
 		await mkdir(dirname(socketHostPath), { recursive: true, mode: 0o700 });
@@ -65,12 +66,18 @@ export class SshAgentServer {
 
 		const unixServer = createServer((socket) => {
 			this.handleAuthenticatedConnection(socket, runId).catch((e) => {
-				log.error('ssh-agent connection error', { runId, error: (e as Error).message });
+				log.error('ssh-agent connection error', {
+					run: ref(fullIdentity.label, runId),
+					error: (e as Error).message,
+				});
 				socket.destroy();
 			});
 		});
 		unixServer.on('error', (e) =>
-			log.error('ssh-agent listener error', { runId, error: e.message }),
+			log.error('ssh-agent listener error', {
+				run: ref(fullIdentity.label, runId),
+				error: e.message,
+			}),
 		);
 		await new Promise<void>((resolve, reject) => {
 			unixServer.once('error', reject);
@@ -84,14 +91,17 @@ export class SshAgentServer {
 		const tcpServer = createServer((socket) => {
 			this.handleTcpConnection(socket, runId).catch((e) => {
 				log.error('ssh-agent tcp connection error', {
-					runId,
+					run: ref(fullIdentity.label, runId),
 					error: (e as Error).message,
 				});
 				socket.destroy();
 			});
 		});
 		tcpServer.on('error', (e) =>
-			log.error('ssh-agent tcp listener error', { runId, error: e.message }),
+			log.error('ssh-agent tcp listener error', {
+				run: ref(fullIdentity.label, runId),
+				error: e.message,
+			}),
 		);
 		await new Promise<void>((resolve, reject) => {
 			tcpServer.once('error', reject);
@@ -105,7 +115,7 @@ export class SshAgentServer {
 		const tokenHex = tokenBytes.toString('hex');
 
 		log.debug('ssh-agent socket allocated', {
-			runId,
+			run: ref(fullIdentity.label, runId),
 			socketHostPath,
 			tcpHostPort,
 		});
@@ -129,7 +139,7 @@ export class SshAgentServer {
 			await rm(entry.socketHostPath, { force: true });
 			this.registry.delete(runId);
 		}
-		log.debug('ssh-agent socket released', { runId });
+		log.debug('ssh-agent socket released', { run: ref(entry?.identity.label, runId) });
 	}
 
 	async releaseAll(): Promise<void> {
@@ -180,7 +190,7 @@ export class SshAgentServer {
 			const candidate = all.subarray(0, TCP_TOKEN_BYTES);
 			const remainder = all.subarray(TCP_TOKEN_BYTES);
 			if (candidate.length !== expectedToken.length || !timingSafeEqual(candidate, expectedToken)) {
-				log.warn('ssh-agent tcp auth failed', { runId });
+				log.warn('ssh-agent tcp auth failed', { run: ref(entry.identity.label, runId) });
 				try {
 					socket.write(encodeFailure());
 				} catch {
@@ -226,7 +236,9 @@ export class SshAgentServer {
 						if (response) {
 							socket.write(encodeSignResponse(response));
 						} else {
-							log.warn('ssh-agent sign rejected: unknown key', { runId: identity.runId });
+							log.warn('ssh-agent sign rejected: unknown key', {
+								run: ref(identity.label, identity.runId),
+							});
 							socket.write(encodeFailure());
 						}
 						break;
@@ -236,7 +248,7 @@ export class SshAgentServer {
 				}
 			} catch (e) {
 				log.error('ssh-agent handler error', {
-					runId: identity.runId,
+					run: ref(identity.label, identity.runId),
 					error: (e as Error).message,
 				});
 				socket.write(encodeFailure());

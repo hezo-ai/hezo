@@ -19,6 +19,7 @@ let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let projectId: string;
 let taskId: string;
+let taskIdentifier: string;
 let agentId: string;
 
 function createMockDocker(): DockerClient {
@@ -94,7 +95,9 @@ beforeAll(async () => {
 			assignee_id: agentId,
 		}),
 	});
-	taskId = (await taskRes.json()).data.id;
+	const createdTask = (await taskRes.json()).data;
+	taskId = createdTask.id;
+	taskIdentifier = createdTask.identifier;
 
 	// These tests focus on wakeup/lock lifecycle, not the designated-repo gate.
 	// Seed a designated repo on the project so the gate short-circuit is bypassed.
@@ -638,6 +641,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'test-agent',
 				taskId,
+				taskIdentifier,
 				teamId,
 				wakeupId,
 				undefined,
@@ -691,6 +695,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'test-agent',
 				taskId,
+				taskIdentifier,
 				teamId,
 				wakeupId,
 				undefined,
@@ -730,6 +735,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'test-agent',
 				taskId,
+				taskIdentifier,
 				teamId,
 				undefined,
 				undefined,
@@ -801,6 +807,7 @@ describe('JobManager workflow methods', () => {
 					agentId,
 					'researcher',
 					taskId,
+					taskIdentifier,
 					teamId,
 					undefined,
 					undefined,
@@ -849,6 +856,7 @@ describe('JobManager workflow methods', () => {
 					agentId,
 					'researcher',
 					taskId,
+					taskIdentifier,
 					teamId,
 					undefined,
 					undefined,
@@ -881,6 +889,7 @@ describe('JobManager workflow methods', () => {
 					agentId,
 					'researcher',
 					taskId,
+					taskIdentifier,
 					teamId,
 					undefined,
 					undefined,
@@ -919,6 +928,7 @@ describe('JobManager workflow methods', () => {
 					agentId,
 					'researcher',
 					taskId,
+					taskIdentifier,
 					teamId,
 					undefined,
 					undefined,
@@ -948,6 +958,7 @@ describe('JobManager workflow methods', () => {
 					agentId,
 					'researcher',
 					taskId,
+					taskIdentifier,
 					teamId,
 					undefined,
 					undefined,
@@ -982,6 +993,7 @@ describe('JobManager workflow methods', () => {
 					agentId,
 					'researcher',
 					taskId,
+					taskIdentifier,
 					teamId,
 					undefined,
 					undefined,
@@ -1039,6 +1051,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'test-agent',
 				taskId,
+				taskIdentifier,
 				teamId,
 				undefined,
 				undefined,
@@ -1082,6 +1095,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'test-agent',
 				taskId,
+				taskIdentifier,
 				teamId,
 				undefined,
 				undefined,
@@ -1147,6 +1161,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'test-agent',
 				taskId,
+				taskIdentifier,
 				teamId,
 				undefined,
 				undefined,
@@ -1208,6 +1223,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'test-agent',
 				taskId,
+				taskIdentifier,
 				teamId,
 				undefined,
 				undefined,
@@ -1251,6 +1267,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'coach',
 				taskId,
+				taskIdentifier,
 				teamId,
 				undefined,
 				{ trigger: 'task_done', task_id: taskId },
@@ -1269,6 +1286,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'coach',
 				taskId,
+				taskIdentifier,
 				teamId,
 				undefined,
 				{ trigger: 'task_done', task_id: taskId },
@@ -1287,6 +1305,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'engineer',
 				taskId,
+				taskIdentifier,
 				teamId,
 				undefined,
 				{ trigger: 'task_done', task_id: taskId },
@@ -1308,6 +1327,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'coach',
 				taskId,
+				taskIdentifier,
 				teamId,
 				undefined,
 				{ trigger: 'task_done', task_id: taskId },
@@ -1326,6 +1346,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'coach',
 				taskId,
+				taskIdentifier,
 				teamId,
 				undefined,
 				{ trigger: 'mention', task_id: taskId },
@@ -1353,6 +1374,7 @@ describe('JobManager workflow methods', () => {
 				agentId,
 				'coach',
 				taskId,
+				taskIdentifier,
 				teamId,
 				undefined,
 				{ trigger: 'task_done', task_id: taskId },
