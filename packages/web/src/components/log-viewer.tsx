@@ -125,7 +125,7 @@ export function LogViewer({
 							onClick={() => setAutoScroll((v) => !v)}
 							aria-pressed={autoScroll}
 							aria-label="Toggle auto-scroll"
-							className={`text-xs h-6 px-2 ${autoScroll ? 'bg-bg-muted text-text' : ''}`}
+							className={`text-xs h-6 px-2 ${autoScroll ? 'bg-bg-muted text-text border border-border shadow-inner' : ''}`}
 						>
 							<MoveVertical className="w-3 h-3" />
 						</Button>

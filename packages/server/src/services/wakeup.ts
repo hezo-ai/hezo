@@ -1,8 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { type WakeupSource, WakeupStatus } from '@hezo/shared';
 
-const COALESCING_WINDOW_MS = 2_000;
-
 export async function createWakeup(
 	db: PGlite,
 	memberId: string,
@@ -22,31 +20,39 @@ export async function createWakeup(
 		}
 	}
 
+	// Collapse onto any pending (still-queued) wakeup for the same agent and
+	// target task. A single pending run picks up everything that accumulated
+	// since it was queued, so an agent never needs more than one queued wakeup
+	// per task — regardless of how far apart the triggers arrive.
 	const taskId = typeof payload.task_id === 'string' ? payload.task_id : null;
-	const coalescingCutoff = new Date(Date.now() - COALESCING_WINDOW_MS).toISOString();
 	const coalesceResult = await db.query<{ id: string; payload: Record<string, unknown> }>(
 		`SELECT id, payload FROM agent_wakeup_requests
-		 WHERE member_id = $1 AND status = $3::wakeup_status
-		   AND created_at > $2
-		   AND (($4::text IS NULL AND payload->>'task_id' IS NULL)
-		     OR payload->>'task_id' = $4::text)
+		 WHERE member_id = $1 AND status = $2::wakeup_status
+		   AND (($3::text IS NULL AND payload->>'task_id' IS NULL)
+		     OR payload->>'task_id' = $3::text)
 		 ORDER BY created_at DESC LIMIT 1`,
-		[memberId, coalescingCutoff, WakeupStatus.Queued, taskId],
+		[memberId, WakeupStatus.Queued, taskId],
 	);
 
 	if (coalesceResult.rows.length > 0) {
 		const existingRow = coalesceResult.rows[0];
 		const mergedPayload = mergePayloads(existingRow.payload, payload);
 
-		await db.query(
+		// Guard against the dispatcher claiming the row between the SELECT and
+		// here. If it already moved out of `queued`, fall through to a fresh
+		// insert so this trigger still produces a pending run.
+		const merged = await db.query<{ id: string }>(
 			`UPDATE agent_wakeup_requests
 			 SET coalesced_count = coalesced_count + 1,
 			     payload = $1::jsonb
-			 WHERE id = $2`,
-			[JSON.stringify(mergedPayload), existingRow.id],
+			 WHERE id = $2 AND status = $3::wakeup_status
+			 RETURNING id`,
+			[JSON.stringify(mergedPayload), existingRow.id, WakeupStatus.Queued],
 		);
 
-		return existingRow.id;
+		if (merged.rows.length > 0) {
+			return existingRow.id;
+		}
 	}
 
 	const result = await db.query<{ id: string }>(

@@ -45,12 +45,7 @@ function QueuedAgentRow({
 			data-testid={`queued-agent-${wakeup.id}`}
 			className="flex items-center justify-between gap-2 text-[13px] text-text"
 		>
-			<span className="truncate min-w-0">
-				{wakeup.member_name}
-				{wakeup.coalesced_count > 0 && (
-					<span className="text-text-subtle"> ×{wakeup.coalesced_count + 1}</span>
-				)}
-			</span>
+			<span className="truncate min-w-0">{wakeup.member_name}</span>
 			<Tooltip content="Cancel queued run">
 				<button
 					type="button"
