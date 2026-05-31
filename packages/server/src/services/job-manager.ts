@@ -43,7 +43,7 @@ import { detectOrphans } from './orphan-detector';
 import { ensureRepoSetupAction } from './repo-setup';
 import type { SshAgentServer } from './ssh-agent';
 import { recordStatusChange } from './task-events';
-import { createWakeup } from './wakeup';
+import { absorbQueuedTaskWakeups, createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('job-manager');
@@ -1036,6 +1036,28 @@ export class JobManager {
 		const lockedTaskId = task.id;
 		this.activeTaskRuns.add(lockedTaskId);
 		this.activeProjectRuns.add(projectId);
+
+		// A run reads the full task context at boot, so any wakeup already queued
+		// for this agent+task is served by this run. Retire those siblings so they
+		// don't fire a redundant back-to-back run once the task frees up. Wakeups
+		// created later (new comments/assignments during the run) stay queued and
+		// correctly drive a follow-up run.
+		const absorbed = await absorbQueuedTaskWakeups(db, memberId, lockedTaskId, wakeupId);
+		if (absorbed.length > 0) {
+			const refreshed = await db.query<Record<string, unknown>>(
+				'SELECT * FROM tasks WHERE id = $1',
+				[lockedTaskId],
+			);
+			if (refreshed.rows[0]) {
+				broadcastRowChange(
+					this.deps.wsManager,
+					wsRoom.team(teamId),
+					'tasks',
+					'UPDATE',
+					refreshed.rows[0],
+				);
+			}
+		}
 
 		this.launchTask(
 			taskKey,

@@ -2,7 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
-import { createWakeup } from '../src/services/wakeup';
+import { absorbQueuedTaskWakeups, createWakeup } from '../src/services/wakeup';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject } from './helpers/app';
 
@@ -275,5 +275,91 @@ describe('wakeup service', () => {
 			[agentId],
 		);
 		expect(wakeups.rows.length).toBeGreaterThanOrEqual(1);
+	});
+});
+
+describe('absorbQueuedTaskWakeups', () => {
+	let otherAgentId: string;
+
+	beforeAll(async () => {
+		const agent2Res = await app.request(`/api/teams/${teamId}/agents`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Absorb Other Agent' }),
+		});
+		otherAgentId = (await agent2Res.json()).data.id;
+	});
+
+	async function status(id: string): Promise<string> {
+		const r = await db.query<{ status: string }>(
+			'SELECT status FROM agent_wakeup_requests WHERE id = $1',
+			[id],
+		);
+		return r.rows[0].status;
+	}
+
+	it('retires every other queued wakeup for the same agent + task, keeping the run trigger', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+		// The wakeup that drives the run is claimed by the dispatcher first.
+		const trigger = await createWakeup(db, agentId, teamId, 'heartbeat', {
+			task_id: 'absorb-task',
+		});
+		await db.query("UPDATE agent_wakeup_requests SET status = 'claimed' WHERE id = $1", [trigger]);
+
+		// A stale assignment wakeup queued before the run started would otherwise
+		// fire a redundant back-to-back run once the task frees up.
+		const stale = await createWakeup(db, agentId, teamId, 'assignment', { task_id: 'absorb-task' });
+		expect(stale).not.toBe(trigger);
+
+		const absorbed = await absorbQueuedTaskWakeups(db, agentId, 'absorb-task', trigger);
+
+		expect(absorbed).toEqual([stale]);
+		expect(await status(stale)).toBe('coalesced');
+		expect(await status(trigger)).toBe('claimed');
+	});
+
+	it('leaves deferred (blocker-parked) wakeups untouched', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+		const trigger = await createWakeup(db, agentId, teamId, 'heartbeat', {
+			task_id: 'deferred-task',
+		});
+		await db.query("UPDATE agent_wakeup_requests SET status = 'claimed' WHERE id = $1", [trigger]);
+
+		const deferred = await createWakeup(db, agentId, teamId, 'assignment', {
+			task_id: 'deferred-task',
+		});
+		await db.query("UPDATE agent_wakeup_requests SET status = 'deferred' WHERE id = $1", [
+			deferred,
+		]);
+
+		const absorbed = await absorbQueuedTaskWakeups(db, agentId, 'deferred-task', trigger);
+
+		expect(absorbed).toEqual([]);
+		expect(await status(deferred)).toBe('deferred');
+	});
+
+	it('does not touch wakeups for a different agent or a different task', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [otherAgentId]);
+
+		const trigger = await createWakeup(db, agentId, teamId, 'heartbeat', {
+			task_id: 'scoped-task',
+		});
+		await db.query("UPDATE agent_wakeup_requests SET status = 'claimed' WHERE id = $1", [trigger]);
+
+		const otherAgent = await createWakeup(db, otherAgentId, teamId, 'assignment', {
+			task_id: 'scoped-task',
+		});
+		const otherTask = await createWakeup(db, agentId, teamId, 'assignment', {
+			task_id: 'different-task',
+		});
+
+		const absorbed = await absorbQueuedTaskWakeups(db, agentId, 'scoped-task', trigger);
+
+		expect(absorbed).toEqual([]);
+		expect(await status(otherAgent)).toBe('queued');
+		expect(await status(otherTask)).toBe('queued');
 	});
 });

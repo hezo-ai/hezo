@@ -65,6 +65,35 @@ export async function createWakeup(
 	return result.rows[0].id;
 }
 
+/**
+ * Retire every still-queued wakeup for one agent + task except the one that is
+ * driving the run that is about to start. A run reads the full task context at
+ * boot, so any trigger already queued when it starts is served by that run;
+ * leaving the siblings queued would fire a redundant back-to-back run once the
+ * task frees up. Only `queued` rows are touched — `deferred` (blocker-parked)
+ * wakeups stay put for the unblock path, and triggers created after the run
+ * starts remain queued to drive a legitimate follow-up. Returns the ids that
+ * were absorbed so the caller can refresh any task-derived UI.
+ */
+export async function absorbQueuedTaskWakeups(
+	db: PGlite,
+	memberId: string,
+	taskId: string,
+	exceptWakeupId: string,
+): Promise<string[]> {
+	const absorbed = await db.query<{ id: string }>(
+		`UPDATE agent_wakeup_requests
+		 SET status = $1::wakeup_status
+		 WHERE member_id = $2
+		   AND status = $3::wakeup_status
+		   AND payload->>'task_id' = $4
+		   AND id <> $5
+		 RETURNING id`,
+		[WakeupStatus.Coalesced, memberId, WakeupStatus.Queued, taskId, exceptWakeupId],
+	);
+	return absorbed.rows.map((r) => r.id);
+}
+
 function mergePayloads(
 	existing: Record<string, unknown>,
 	incoming: Record<string, unknown>,

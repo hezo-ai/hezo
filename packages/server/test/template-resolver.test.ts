@@ -218,6 +218,15 @@ describe('template resolver', () => {
 		expect(result).toContain('do not `@`-mention any agent in that comment');
 	});
 
+	it('tells agents not to park a done deliverable as blocked and to spin off the gated tail', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		expect(result).toContain(
+			"Don't park a ticket `blocked` when your own deliverable is already done",
+		);
+		expect(result).toContain('blocked_by_task_ids');
+		expect(result).toContain('deliverable-feed test');
+	});
+
 	it('mention discipline names the three structural-routing channels and the handoff carve-out', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('### @-Mention Discipline');
