@@ -261,6 +261,43 @@ describe('initial PRD upload', () => {
 	});
 });
 
+describe('default project docs', () => {
+	it('seeds architecture-guidelines.md for every new project', async () => {
+		const res = await createTestProject(db, teamId, {
+			name: 'Defaults Project',
+			description: VALID_DESCRIPTION,
+		});
+		expect(res.status).toBe(201);
+		const project = (await res.json()).data;
+
+		const docResult = await db.query<{ title: string; content: string }>(
+			"SELECT title, content FROM documents WHERE type = 'project_doc' AND project_id = $1 AND slug = $2",
+			[project.id, 'architecture-guidelines.md'],
+		);
+		expect(docResult.rows.length).toBe(1);
+		expect(docResult.rows[0].title).toBe('Architecture Guidelines');
+		expect(docResult.rows[0].content.length).toBeGreaterThan(0);
+	});
+
+	it('seeds the architecture-guidelines.md default alongside an initial PRD', async () => {
+		const res = await createTestProject(db, teamId, {
+			name: 'Defaults With PRD Project',
+			description: VALID_DESCRIPTION,
+			initial_prd: '# PRD\n\nSome requirements.',
+		});
+		expect(res.status).toBe(201);
+		const project = (await res.json()).data;
+
+		const docResult = await db.query<{ slug: string }>(
+			"SELECT slug FROM documents WHERE type = 'project_doc' AND project_id = $1 ORDER BY slug",
+			[project.id],
+		);
+		const slugs = docResult.rows.map((d) => d.slug);
+		expect(slugs).toContain('architecture-guidelines.md');
+		expect(slugs).toContain('initial-prd.md');
+	});
+});
+
 describe('slug-based project access', () => {
 	it('gets a project by slug', async () => {
 		const listRes = await app.request(`/api/teams/${teamId}/projects`, {

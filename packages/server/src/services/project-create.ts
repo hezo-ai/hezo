@@ -3,6 +3,44 @@ import { TaskPriority, TaskStatus } from '@hezo/shared';
 import { withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 
+/**
+ * Project documents seeded into every new project. These are starting-point
+ * templates the team fills in — project-specific knowledge that does not belong
+ * in the team-wide skills database.
+ */
+const DEFAULT_PROJECT_DOCS: ReadonlyArray<{ slug: string; title: string; content: string }> = [
+	{
+		slug: 'architecture-guidelines.md',
+		title: 'Architecture Guidelines',
+		content: `# Architecture Guidelines
+
+<!-- TODO: customize for your tech stack -->
+
+## Tech Stack
+
+Describe your primary languages, frameworks, and infrastructure.
+
+## Project Structure
+
+Describe your repository layout and key directories.
+
+## Coding Conventions
+
+- Follow the language's standard style guide
+- Write self-documenting code with minimal comments
+- Prefer composition over inheritance
+- Keep functions focused and small
+
+## Architecture Decision Records
+
+Significant technical decisions should be documented with:
+- **Context** — what prompted the decision
+- **Decision** — what was chosen
+- **Consequences** — trade-offs and implications
+`,
+	},
+];
+
 export interface CreateProjectWithPlanningInput {
 	teamId: string;
 	captainMemberId: string;
@@ -62,6 +100,14 @@ export async function createProjectWithPlanningTask(
 				`INSERT INTO documents (project_id, team_id, type, slug, content)
 				 VALUES ($1, $2, 'project_doc', 'initial-prd.md', $3)`,
 				[project.id, input.teamId, initialPrd],
+			);
+		}
+
+		for (const doc of DEFAULT_PROJECT_DOCS) {
+			await db.query(
+				`INSERT INTO documents (project_id, team_id, type, slug, title, content)
+				 VALUES ($1, $2, 'project_doc', $3, $4, $5)`,
+				[project.id, input.teamId, doc.slug, doc.title, doc.content],
 			);
 		}
 
