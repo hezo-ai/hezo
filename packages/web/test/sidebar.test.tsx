@@ -256,7 +256,12 @@ test('creating a project from the sidebar surfaces it in the sidebar after intak
 		});
 
 	await router.navigate({ to: '/teams/$teamId/projects', params: { teamId: ws.team.slug } });
-	await findByText('(Internal)', undefined, { timeout: 20_000 });
+	// On the projects list route the Internal project renders in both the sidebar
+	// nav and the main content, so a plain findByText trips on duplicates — wait
+	// for it to appear inside the nav specifically.
+	await waitFor(() => expect(within(getNav(container)).getByText('(Internal)')).toBeTruthy(), {
+		timeout: 20_000,
+	});
 
 	const navEl = getNav(container);
 	// The sidebar's Projects section has an "add" button with the addLabel tooltip.
