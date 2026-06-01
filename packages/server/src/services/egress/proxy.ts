@@ -112,37 +112,34 @@ export class EgressProxy {
 						reject(err ?? new Error('HTTPS_SERVER_ERROR'));
 					}
 				});
-				// forceSNI collapses the library's per-host internal MITM TLS
-				// servers into a single SNI-multiplexed server created once at
-				// listen() and torn down only at close(). Without it the library
-				// spins up and tears down a separate loopback HTTPS server per
-				// host, and the loopback connect from the CONNECT handler can race
-				// that lifecycle and be refused — leaving the client tunnel hung.
-				// Every TLS client we proxy (Claude Code / undici / curl) sends SNI.
-				withConsoleInfoSuppressed(() => {
-					proxy.listen(
-						{
-							port,
-							host: '127.0.0.1',
-							sslCaDir: this.deps.ca.rootDir,
-							forceSNI: true,
-							...(upstreamHttpsAgent ? { httpsAgent: upstreamHttpsAgent } : {}),
-						},
-						((err?: Error | null) => {
-							if (err) {
-								if (!settled) {
-									settled = true;
-									reject(err);
-								}
-								return;
-							}
+				// The library terminates TLS with a separate internal HTTPS
+				// server per host, each presenting a statically-minted leaf cert.
+				// (forceSNI — a single SNI-multiplexed server via addContext — is
+				// unusable here: the runtime's https.Server has no addContext and
+				// ignores SNICallback, so dynamic SNI never fires. The patched
+				// loopback connect retries then fails fast instead of hanging when
+				// a per-host server is mid-listen or closing under run churn.)
+				proxy.listen(
+					{
+						port,
+						host: '127.0.0.1',
+						sslCaDir: this.deps.ca.rootDir,
+						...(upstreamHttpsAgent ? { httpsAgent: upstreamHttpsAgent } : {}),
+					},
+					((err?: Error | null) => {
+						if (err) {
 							if (!settled) {
 								settled = true;
-								resolve();
+								reject(err);
 							}
-						}) as () => void,
-					);
-				});
+							return;
+						}
+						if (!settled) {
+							settled = true;
+							resolve();
+						}
+					}) as () => void,
+				);
 			});
 		} catch (e) {
 			this.portAllocator.release(port);
@@ -188,6 +185,18 @@ export class EgressProxy {
 		const headers = opts.headers ?? {};
 		const protocol = ctx.isSSL ? 'https' : 'http';
 		const url = `${protocol}://${host}${urlPath}`;
+
+		if (ctx.isSSL) {
+			// Drop the client-forwarded Host header so the runtime regenerates it
+			// from the connection target. Some runtimes verify the upstream cert
+			// against the Host header verbatim — which carries the port for
+			// non-default ports and so fails hostname validation against a cert
+			// whose SAN is the bare host. With no Host header, verification uses
+			// the connection host and the regenerated header still carries the
+			// correct host:port to the upstream.
+			delete headers.host;
+			delete headers.Host;
+		}
 
 		const probeInUrlOrHeaders =
 			PLACEHOLDER_PROBE_REGEX.test(urlPath) || headersContainProbe(headers);
@@ -313,21 +322,6 @@ function respondEarly(ctx: IContext, statusCode: number, code: string, message: 
 		'content-length': Buffer.byteLength(body).toString(),
 	});
 	res.end(body);
-}
-
-/**
- * Run a synchronous block with `console.info` silenced. The MITM library emits
- * a single "SNI enabled" info line at listen() time under forceSNI; suppressing
- * it keeps run/test output free of per-proxy noise without touching other logs.
- */
-function withConsoleInfoSuppressed(fn: () => void): void {
-	const original = console.info;
-	console.info = () => {};
-	try {
-		fn();
-	} finally {
-		console.info = original;
-	}
 }
 
 function headersContainProbe(headers: Record<string, string>): boolean {

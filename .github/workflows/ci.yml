@@ -39,6 +39,9 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - run: bun install --frozen-lockfile
+      # Runs the server vitest suite (Node runtime) followed by the Bun-native
+      # tier (test/bun/** under `bun test`), which exercises runtime-sensitive
+      # code — e.g. egress TLS — on the production Bun runtime.
       - run: bun run test --package server
 
   test-integration:
