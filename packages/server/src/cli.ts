@@ -1,6 +1,11 @@
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import { DEFAULT_DATA_DIR, DEFAULT_PORT } from '@hezo/shared';
+import {
+	DEFAULT_DATA_DIR,
+	DEFAULT_PORT,
+	mnemonicToMasterKey,
+	validateMnemonic,
+} from '@hezo/shared';
 import { Command } from 'commander';
 
 export interface HezoConfig {
@@ -38,10 +43,18 @@ export function parseArgs(argv: string[] = process.argv): HezoConfig {
 		dataDir = resolve(dataDir);
 	}
 
+	// The user-facing master key is a 12-word BIP39 phrase; convert it to the
+	// internal hex. Anything that isn't a valid phrase (raw hex, opaque e2e key)
+	// passes through unchanged.
+	let masterKey: string | undefined = opts.masterKey;
+	if (masterKey && validateMnemonic(masterKey)) {
+		masterKey = mnemonicToMasterKey(masterKey);
+	}
+
 	return {
 		port,
 		dataDir,
-		masterKey: opts.masterKey,
+		masterKey,
 		webUrl: opts.webUrl ?? '',
 		reset: opts.reset ?? false,
 		open: opts.open ?? false,

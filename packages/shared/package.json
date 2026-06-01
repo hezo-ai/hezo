@@ -10,6 +10,10 @@
 		"build": "tsc",
 		"typecheck": "tsc --noEmit"
 	},
+	"dependencies": {
+		"@noble/hashes": "^1.8.0",
+		"@scure/bip39": "^1.6.0"
+	},
 	"devDependencies": {
 		"typescript": "^5"
 	}

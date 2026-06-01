@@ -43,8 +43,8 @@ export function MasterKeyStep({ state }: { state: MasterKeyState }) {
 			<div data-testid="setup-step-master-key">
 				<h2 className="text-base sm:text-lg font-semibold mb-1">Set Master Key</h2>
 				<p className="text-[13px] text-text-muted mb-5">
-					Create a master key to encrypt your data. Save it somewhere safe — you'll need it to
-					unlock Hezo on restart.
+					Your master key is 12 words that encrypt your data. Save them somewhere safe — you'll need
+					them to unlock Hezo on restart.
 				</p>
 				<MasterKeyForm state={state} embedded />
 			</div>
