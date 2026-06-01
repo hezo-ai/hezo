@@ -98,6 +98,11 @@ export function TeamSidebar() {
 								params: projectParams,
 								label: 'Documents',
 							},
+							{
+								to: '/teams/$teamId/projects/$projectId/assets',
+								params: projectParams,
+								label: 'Assets',
+							},
 							containerItem,
 							{
 								to: '/teams/$teamId/projects/$projectId/settings',

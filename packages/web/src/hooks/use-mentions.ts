@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 export interface DocMentionsRequest {
 	kbSlugs: string[];
 	projectDocs: Array<{ project_slug: string; filename: string }>;
+	assets: Array<{ project_slug: string; filename: string }>;
 }
 
 export interface ResolvedKbDoc {
@@ -21,9 +22,18 @@ export interface ResolvedProjectDoc {
 	updated_at: string;
 }
 
+export interface ResolvedAsset {
+	project_slug: string;
+	filename: string;
+	id: string;
+	content_type: string;
+	signed_url: string;
+}
+
 interface DocMentionsResponse {
 	kb_docs: ResolvedKbDoc[];
 	project_docs: ResolvedProjectDoc[];
+	assets: ResolvedAsset[];
 }
 
 export function useDocMentions(teamId: string, candidates: DocMentionsRequest) {
@@ -36,7 +46,12 @@ export function useDocMentions(teamId: string, candidates: DocMentionsRequest) {
 				),
 			),
 		].sort();
-		return { kbSlugs, projectDocs };
+		const assets = [
+			...new Set(
+				candidates.assets.map((a) => `${a.project_slug.toLowerCase()}/${a.filename.toLowerCase()}`),
+			),
+		].sort();
+		return { kbSlugs, projectDocs, assets };
 	}, [candidates]);
 
 	return useQuery({
@@ -48,8 +63,13 @@ export function useDocMentions(teamId: string, candidates: DocMentionsRequest) {
 					project_slug: d.project_slug.toLowerCase(),
 					filename: d.filename,
 				})),
+				assets: candidates.assets.map((a) => ({
+					project_slug: a.project_slug.toLowerCase(),
+					filename: a.filename,
+				})),
 			}),
-		enabled: !!teamId && (key.kbSlugs.length > 0 || key.projectDocs.length > 0),
+		enabled:
+			!!teamId && (key.kbSlugs.length > 0 || key.projectDocs.length > 0 || key.assets.length > 0),
 		staleTime: 60_000,
 	});
 }

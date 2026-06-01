@@ -35,6 +35,7 @@ import { Route as TeamsTeamIdProjectsProjectIdIndexRouteImport } from './routes/
 import { Route as TeamsTeamIdAgentsAgentIdIndexRouteImport } from './routes/teams/$teamId/agents/$agentId/index'
 import { Route as TeamsTeamIdProjectsProjectIdDocumentsRouteImport } from './routes/teams/$teamId/projects/$projectId/documents'
 import { Route as TeamsTeamIdProjectsProjectIdContainerRouteImport } from './routes/teams/$teamId/projects/$projectId/container'
+import { Route as TeamsTeamIdProjectsProjectIdAssetsRouteImport } from './routes/teams/$teamId/projects/$projectId/assets'
 import { Route as TeamsTeamIdAgentsAgentIdSettingsRouteImport } from './routes/teams/$teamId/agents/$agentId/settings'
 import { Route as TeamsTeamIdProjectsProjectIdTasksIndexRouteImport } from './routes/teams/$teamId/projects/$projectId/tasks/index'
 import { Route as TeamsTeamIdProjectsProjectIdSettingsIndexRouteImport } from './routes/teams/$teamId/projects/$projectId/settings/index'
@@ -183,6 +184,12 @@ const TeamsTeamIdProjectsProjectIdContainerRoute =
     path: '/container',
     getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
   } as any)
+const TeamsTeamIdProjectsProjectIdAssetsRoute =
+  TeamsTeamIdProjectsProjectIdAssetsRouteImport.update({
+    id: '/assets',
+    path: '/assets',
+    getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
+  } as any)
 const TeamsTeamIdAgentsAgentIdSettingsRoute =
   TeamsTeamIdAgentsAgentIdSettingsRouteImport.update({
     id: '/settings',
@@ -244,6 +251,7 @@ export interface FileRoutesByFullPath {
   '/teams/$teamId/skills/': typeof TeamsTeamIdSkillsIndexRoute
   '/teams/$teamId/tasks/': typeof TeamsTeamIdTasksIndexRoute
   '/teams/$teamId/agents/$agentId/settings': typeof TeamsTeamIdAgentsAgentIdSettingsRoute
+  '/teams/$teamId/projects/$projectId/assets': typeof TeamsTeamIdProjectsProjectIdAssetsRoute
   '/teams/$teamId/projects/$projectId/container': typeof TeamsTeamIdProjectsProjectIdContainerRoute
   '/teams/$teamId/projects/$projectId/documents': typeof TeamsTeamIdProjectsProjectIdDocumentsRoute
   '/teams/$teamId/agents/$agentId/': typeof TeamsTeamIdAgentsAgentIdIndexRoute
@@ -275,6 +283,7 @@ export interface FileRoutesByTo {
   '/teams/$teamId/skills': typeof TeamsTeamIdSkillsIndexRoute
   '/teams/$teamId/tasks': typeof TeamsTeamIdTasksIndexRoute
   '/teams/$teamId/agents/$agentId/settings': typeof TeamsTeamIdAgentsAgentIdSettingsRoute
+  '/teams/$teamId/projects/$projectId/assets': typeof TeamsTeamIdProjectsProjectIdAssetsRoute
   '/teams/$teamId/projects/$projectId/container': typeof TeamsTeamIdProjectsProjectIdContainerRoute
   '/teams/$teamId/projects/$projectId/documents': typeof TeamsTeamIdProjectsProjectIdDocumentsRoute
   '/teams/$teamId/agents/$agentId': typeof TeamsTeamIdAgentsAgentIdIndexRoute
@@ -310,6 +319,7 @@ export interface FileRoutesById {
   '/teams/$teamId/skills/': typeof TeamsTeamIdSkillsIndexRoute
   '/teams/$teamId/tasks/': typeof TeamsTeamIdTasksIndexRoute
   '/teams/$teamId/agents/$agentId/settings': typeof TeamsTeamIdAgentsAgentIdSettingsRoute
+  '/teams/$teamId/projects/$projectId/assets': typeof TeamsTeamIdProjectsProjectIdAssetsRoute
   '/teams/$teamId/projects/$projectId/container': typeof TeamsTeamIdProjectsProjectIdContainerRoute
   '/teams/$teamId/projects/$projectId/documents': typeof TeamsTeamIdProjectsProjectIdDocumentsRoute
   '/teams/$teamId/agents/$agentId/': typeof TeamsTeamIdAgentsAgentIdIndexRoute
@@ -346,6 +356,7 @@ export interface FileRouteTypes {
     | '/teams/$teamId/skills/'
     | '/teams/$teamId/tasks/'
     | '/teams/$teamId/agents/$agentId/settings'
+    | '/teams/$teamId/projects/$projectId/assets'
     | '/teams/$teamId/projects/$projectId/container'
     | '/teams/$teamId/projects/$projectId/documents'
     | '/teams/$teamId/agents/$agentId/'
@@ -377,6 +388,7 @@ export interface FileRouteTypes {
     | '/teams/$teamId/skills'
     | '/teams/$teamId/tasks'
     | '/teams/$teamId/agents/$agentId/settings'
+    | '/teams/$teamId/projects/$projectId/assets'
     | '/teams/$teamId/projects/$projectId/container'
     | '/teams/$teamId/projects/$projectId/documents'
     | '/teams/$teamId/agents/$agentId'
@@ -411,6 +423,7 @@ export interface FileRouteTypes {
     | '/teams/$teamId/skills/'
     | '/teams/$teamId/tasks/'
     | '/teams/$teamId/agents/$agentId/settings'
+    | '/teams/$teamId/projects/$projectId/assets'
     | '/teams/$teamId/projects/$projectId/container'
     | '/teams/$teamId/projects/$projectId/documents'
     | '/teams/$teamId/agents/$agentId/'
@@ -616,6 +629,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdContainerRouteImport
       parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
     }
+    '/teams/$teamId/projects/$projectId/assets': {
+      id: '/teams/$teamId/projects/$projectId/assets'
+      path: '/assets'
+      fullPath: '/teams/$teamId/projects/$projectId/assets'
+      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdAssetsRouteImport
+      parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
+    }
     '/teams/$teamId/agents/$agentId/settings': {
       id: '/teams/$teamId/agents/$agentId/settings'
       path: '/settings'
@@ -685,6 +705,7 @@ const TeamsTeamIdAgentsAgentIdRouteRouteWithChildren =
   )
 
 interface TeamsTeamIdProjectsProjectIdRouteRouteChildren {
+  TeamsTeamIdProjectsProjectIdAssetsRoute: typeof TeamsTeamIdProjectsProjectIdAssetsRoute
   TeamsTeamIdProjectsProjectIdContainerRoute: typeof TeamsTeamIdProjectsProjectIdContainerRoute
   TeamsTeamIdProjectsProjectIdDocumentsRoute: typeof TeamsTeamIdProjectsProjectIdDocumentsRoute
   TeamsTeamIdProjectsProjectIdIndexRoute: typeof TeamsTeamIdProjectsProjectIdIndexRoute
@@ -695,6 +716,8 @@ interface TeamsTeamIdProjectsProjectIdRouteRouteChildren {
 
 const TeamsTeamIdProjectsProjectIdRouteRouteChildren: TeamsTeamIdProjectsProjectIdRouteRouteChildren =
   {
+    TeamsTeamIdProjectsProjectIdAssetsRoute:
+      TeamsTeamIdProjectsProjectIdAssetsRoute,
     TeamsTeamIdProjectsProjectIdContainerRoute:
       TeamsTeamIdProjectsProjectIdContainerRoute,
     TeamsTeamIdProjectsProjectIdDocumentsRoute:

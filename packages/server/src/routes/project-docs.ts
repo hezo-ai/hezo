@@ -1,4 +1,4 @@
-import { ApprovalType, AuthType, DocumentType } from '@hezo/shared';
+import { ApprovalType, AuthType, DocumentType, isMarkdownDocSlug } from '@hezo/shared';
 import { Hono } from 'hono';
 import { resolveAgentsMdPath } from '../lib/docs';
 import { resolveActorMemberId, resolveProjectId } from '../lib/resolve';
@@ -64,6 +64,10 @@ projectDocsRoutes.put('/teams/:teamId/projects/:projectId/docs/:filename', async
 	const auth = c.get('auth');
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+
+	if (!isMarkdownDocSlug(filename)) {
+		return err(c, 'INVALID_REQUEST', 'Project docs must be markdown (.md)', 400);
+	}
 
 	const body = await c.req.json<{ content: string; change_summary?: string }>();
 	if (body.content === undefined) {

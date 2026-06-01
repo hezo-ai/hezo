@@ -11,6 +11,7 @@ import {
 	CredentialInputType,
 	CredentialKind,
 	DocumentType,
+	isMarkdownDocSlug,
 	ReactionKind,
 	TaskStatus,
 	WakeupSource,
@@ -2430,6 +2431,41 @@ export function registerTools(
 
 	tool(
 		server,
+		'list_project_assets',
+		"List the project's assets — uploaded non-markdown files (UI mockups, wireframes, diagrams, PDFs). Reference one in a comment or doc as `assets/<filename>` (e.g. assets/login-mockup.png), no backticks. Assets are view-only and human-managed; you cannot upload or edit them.",
+		{
+			team_id: z.string().describe('Team ID'),
+			project_id: z.string().describe('Project ID'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
+			if (denied) return { error: denied };
+			const pDenied = assertProjectAccess(auth, args.project_id as string);
+			if (pDenied) return { error: pDenied };
+			const assets = await db.query<{
+				id: string;
+				original_filename: string;
+				content_type: string;
+				created_at: string;
+			}>(
+				`SELECT id, original_filename, content_type, created_at
+				 FROM assets WHERE project_id = $1 ORDER BY created_at DESC`,
+				[args.project_id as string],
+			);
+			return {
+				files: assets.rows.map((a) => ({
+					id: a.id,
+					filename: a.original_filename,
+					content_type: a.content_type,
+					created_at: a.created_at,
+				})),
+			};
+		},
+		db,
+	);
+
+	tool(
+		server,
 		'read_project_doc',
 		'Read a project documentation file by filename',
 		{
@@ -2457,11 +2493,11 @@ export function registerTools(
 	tool(
 		server,
 		'write_project_doc',
-		'Write a project documentation file. For high-level project context: PRD, spec, implementation plan, research. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Write a project documentation file. Project docs are markdown only — the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead — reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			team_id: z.string().describe('Team ID'),
 			project_id: z.string().describe('Project ID'),
-			filename: z.string().describe('Filename to write (e.g. "spec.md")'),
+			filename: z.string().describe('Markdown filename to write (e.g. "spec.md")'),
 			content: z.string().describe('File content (markdown)'),
 		},
 		async (args, db, auth) => {
@@ -2469,6 +2505,12 @@ export function registerTools(
 			if (denied) return { error: denied };
 			const pDenied = assertProjectAccess(auth, args.project_id as string);
 			if (pDenied) return { error: pDenied };
+			if (!isMarkdownDocSlug(args.filename as string)) {
+				return {
+					error:
+						'Project docs must be markdown (.md). Non-markdown files belong in the assets library, referenced as assets/<filename>.',
+				};
+			}
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const doc = await upsertDocument(db, wsManager, {
 				scope: {

@@ -717,9 +717,15 @@ member to approve or deny a request locks the decision.
 
 ### File attachments
 
-`assets` stores uploaded file metadata (provider, storage key, content type,
-SHA-256 hash). `task_attachments` links assets to tasks. Storage is local
-filesystem for MVP (`~/.hezo/data/assets/`), with S3 support planned for V2.
+`assets` stores uploaded file metadata (content type, byte size, SHA-256 hash,
+original filename), scoped to a `(team_id, project_id)`. Filenames are unique per
+project — `UNIQUE (project_id, original_filename)` — so `assets/<filename>`
+references resolve to exactly one asset; uploads auto-suffix on collision.
+`comment_attachments` links assets to task comments. The same project-scoped rows
+back the per-project **Assets library** (view-only files: mockups, wireframes,
+PDFs — everything that isn't a markdown project doc). Bytes live on the local
+filesystem at `data/teams/{team_id}/projects/{project_id}/assets/{asset_id}` and
+are served over time-limited HMAC-signed URLs (S3 support planned for V2).
 
 ### Plugins
 

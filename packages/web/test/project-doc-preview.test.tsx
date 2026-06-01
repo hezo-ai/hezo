@@ -23,18 +23,6 @@ async function seedDoc(
 	});
 }
 
-const HTML_BODY =
-	'<!DOCTYPE html><html><head><style>h1{color:red}</style></head><body><h1>Mockup heading</h1></body></html>';
-
-async function waitForIframe(container: HTMLElement): Promise<HTMLIFrameElement> {
-	for (let i = 0; i < 50; i++) {
-		const el = container.querySelector('iframe');
-		if (el) return el as HTMLIFrameElement;
-		await new Promise((r) => setTimeout(r, 20));
-	}
-	throw new Error('iframe never appeared');
-}
-
 test('document viewer pop-out button opens the standalone preview in a new tab', async () => {
 	let ctx!: { teamSlug: string; projectSlug: string };
 	const { findByTestId, user, router } = await renderApp({
@@ -42,7 +30,7 @@ test('document viewer pop-out button opens the standalone preview in a new tab',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Popout Demo' });
-			await seedDoc(ws, project, 'ui-mockups.html', HTML_BODY);
+			await seedDoc(ws, project, 'ui-mockups.md', '# Mockups');
 			ctx = { teamSlug: ws.team.slug, projectSlug: project.slug };
 		},
 	});
@@ -50,14 +38,14 @@ test('document viewer pop-out button opens the standalone preview in a new tab',
 	await router.navigate({
 		to: '/teams/$teamId/projects/$projectId/documents',
 		params: { teamId: ctx.teamSlug, projectId: ctx.projectSlug },
-		search: { file: 'ui-mockups.html' },
+		search: { file: 'ui-mockups.md' },
 	});
 
 	const popout = await findByTestId('doc-popout');
 	const open = vi.spyOn(window, 'open').mockReturnValue(null);
 	await user.click(popout);
 	expect(open).toHaveBeenCalledWith(
-		`/preview/${ctx.teamSlug}/${ctx.projectSlug}/ui-mockups.html`,
+		`/preview/${ctx.teamSlug}/${ctx.projectSlug}/ui-mockups.md`,
 		'_blank',
 		'noopener',
 	);
@@ -94,36 +82,6 @@ test('pop-out button shows for markdown docs too, but not for the repo AGENTS.md
 	expect(queryByTestId('doc-popout')).toBeNull();
 });
 
-test('standalone preview route renders an HTML doc full-page with no app chrome', async () => {
-	let ctx!: { teamSlug: string; projectSlug: string };
-	const { container, queryByTestId, router } = await renderApp({
-		initialPath: '/',
-		seed: async () => {
-			const ws = await seedWorkspace();
-			const project = await seedProject(ws, { name: 'Bare HTML' });
-			await seedDoc(ws, project, 'ui-mockups.html', HTML_BODY);
-			ctx = { teamSlug: ws.team.slug, projectSlug: project.slug };
-		},
-	});
-
-	await router.navigate({
-		to: '/preview/$teamId/$projectId/$filename',
-		params: {
-			teamId: ctx.teamSlug,
-			projectId: ctx.projectSlug,
-			filename: 'ui-mockups.html',
-		},
-	});
-
-	const iframe = await waitForIframe(container);
-	expect(iframe.getAttribute('sandbox')).toBe('allow-scripts');
-	expect(iframe.getAttribute('srcdoc')).toContain('Mockup heading');
-	expect(iframe.className).toContain('h-screen');
-	// No team rail / sidebar / mobile drawer toggle in bare mode.
-	expect(queryByTestId('sidebar-toggle')).toBeNull();
-	expect(queryByTestId('mobile-nav-toggle')).toBeNull();
-});
-
 test('standalone preview route renders a markdown doc without an iframe', async () => {
 	let ctx!: { teamSlug: string; projectSlug: string };
 	const { container, findByText, queryByTestId, router } = await renderApp({
@@ -153,9 +111,9 @@ test('a doc mention in a task comment gets a suffix link to the standalone previ
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Mention Demo' });
-			await seedDoc(ws, project, 'ui-mockups.html', HTML_BODY);
+			await seedDoc(ws, project, 'ui-mockups.md', '# Mockups');
 			const task = await seedTask(ws, project, { title: 'Review the mockup' });
-			await seedComment(ws, task, 'Please review ui-mockups.html before the demo.');
+			await seedComment(ws, task, 'Please review ui-mockups.md before the demo.');
 			ctx = { teamSlug: ws.team.slug, projectSlug: project.slug, taskId: task.id };
 		},
 	});
@@ -169,7 +127,7 @@ test('a doc mention in a task comment gets a suffix link to the standalone previ
 	await findByTestId('text-comment-body', undefined, { timeout: 15_000 });
 	const preview = await findByTestId('doc-mention-preview-link', undefined, { timeout: 15_000 });
 	expect(preview.getAttribute('href')).toBe(
-		`/preview/${ctx.teamSlug}/${ctx.projectSlug}/ui-mockups.html`,
+		`/preview/${ctx.teamSlug}/${ctx.projectSlug}/ui-mockups.md`,
 	);
 	expect(preview.getAttribute('target')).toBe('_blank');
 });

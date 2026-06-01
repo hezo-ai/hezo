@@ -798,7 +798,11 @@ CREATE TABLE assets (
     sha256                TEXT NOT NULL,
     original_filename     TEXT NOT NULL,
     uploaded_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
-    created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- Filenames are unique within a project so `assets/<name>.<ext>` references
+    -- resolve to exactly one asset. Uploads auto-suffix on collision.
+    UNIQUE (project_id, original_filename)
 );
 
 CREATE INDEX idx_assets_project ON assets(project_id);

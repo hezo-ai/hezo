@@ -1670,7 +1670,7 @@ Response:
 ```
 
 #### `PUT /teams/:teamId/projects/:projectId/docs/:filename`
-Write a project document (upsert). Agent writes to `prd.md` create an approval request (202 response) instead of writing directly. When the content changes, the prior content is captured as a new revision before the update.
+Write a project document (upsert). Project docs are **markdown-only** — a `:filename` not ending in `.md` returns `400` (non-markdown files belong in the project assets library). Agent writes to `prd.md` create an approval request (202 response) instead of writing directly. When the content changes, the prior content is captured as a new revision before the update.
 
 Request:
 ```json
@@ -1695,6 +1695,38 @@ Request:
   "revision_number": 2
 }
 ```
+
+### Project Assets
+
+A per-project, view-only library for uploaded files (UI mockups, wireframes, images, PDFs) — everything that isn't a markdown project doc. Assets are not version-tracked and not injected into agent context. They are referenced in comments and docs as `assets/<filename>`.
+
+#### `POST /teams/:teamId/projects/:projectId/assets`
+Upload a file (multipart `file` field; 10 MB max; same extension/MIME allowlist as comment attachments, plus `webp` and `svg`). The stored filename is normalized to a link-safe form and **auto-suffixed if it would collide** with an existing asset in the project (e.g. `login.png` → `login-3f9a.png`), so every asset name is unique. Returns the asset plus a signed read URL.
+
+#### `GET /teams/:teamId/projects/:projectId/assets`
+List every asset in the project (including files attached to task comments), newest first. Each entry carries a freshly-signed read URL and `comment_attachment_count` (how many comments reference it).
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "original_filename": "login-mockup.png",
+      "content_type": "image/png",
+      "byte_size": 20480,
+      "created_at": "...",
+      "url": "/api/assets/{id}?exp=...&sig=...",
+      "comment_attachment_count": 0
+    }
+  ]
+}
+```
+
+#### `DELETE /teams/:teamId/projects/:projectId/assets/:assetId`
+Delete an asset (board-only; agents receive `403`). Removes the row, cascades any `comment_attachments`, and deletes the blob from disk.
+
+Assets are fetched and viewed in a new tab via the existing signed-URL endpoint `GET /api/assets/:assetId?exp=…&sig=…`. SVGs are served with `Content-Disposition: attachment` (never inline) to avoid stored XSS; all other types are inline.
 
 #### `GET /teams/:teamId/projects/:projectId/agents-md`
 Read the project's AGENTS.md file.
@@ -2693,7 +2725,8 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 | `update_agent_system_prompt` | Apply a system prompt change. **Coach-only.** Writes immediately and snapshots a revision for board rollback. | `team_id`, `agent_id`, `new_system_prompt`, `change_summary` |
 | `list_project_docs` | List project docs | `team_id`, `project_id` |
 | `read_project_doc` | Read project doc by filename | `team_id`, `project_id`, `filename` |
-| `write_project_doc` | Write project doc | `team_id`, `project_id`, `filename`, `content` |
+| `write_project_doc` | Write project doc (markdown only) | `team_id`, `project_id`, `filename`, `content` |
+| `list_project_assets` | List project assets (uploaded non-markdown files; reference as `assets/<filename>`) | `team_id`, `project_id` |
 | `propose_skill` | Create approval for new skill | `team_id`, `name`, `content`, `description?` |
 | `semantic_search` | Natural language search | `team_id`, `query`, `scope?` (`all`/`tasks`/`skills`/`project_docs`), `limit?` |
 | `list_skills` | List the skills manifest (name + slug + description) | `team_id`, `tags?` |

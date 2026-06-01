@@ -43,6 +43,12 @@ export interface ProjectDocMentionData {
 
 export type ProjectDocsMap = Map<string, Map<string, ProjectDocMentionData>>;
 
+export interface AssetMentionData {
+	id: string;
+	contentType: string;
+	signedUrl: string;
+}
+
 interface Options {
 	teamId: string;
 	projectSlug?: string;
@@ -50,15 +56,20 @@ interface Options {
 	tasks: Map<string, TaskMentionData>;
 	kbDocs: Map<string, KbDocMentionData>;
 	projectDocs: ProjectDocsMap;
+	assets: Map<string, AssetMentionData>;
 }
 
 const PASSIVE_AGENT_RE_SRC = String.raw`(?<![\w@])@@([a-z][\w-]*)(?![\w/])`;
 const AGENT_RE_SRC = String.raw`(?<![\w@])@([a-z][\w-]*)(?![\w/])`;
 const TASK_RE_SRC = String.raw`(?<![\w-])([A-Z][A-Z0-9]{1,3}-\d+)(?![\w-])`;
 const FILENAME_RE_SRC = String.raw`(?<![\w/.-])([a-z0-9][\w-]*\.[a-z0-9]+)(?![\w/.-])`;
+// Asset references are path-prefixed (`assets/<name>.<ext>`) and may contain
+// uppercase (e.g. a task identifier embedded in the name). The leading `assets/`
+// keeps them from colliding with the bare project-doc filenames above.
+const ASSET_RE_SRC = String.raw`(?<![\w/.-])assets/([A-Za-z0-9][\w.-]*\.[A-Za-z0-9]+)(?![\w/.-])`;
 
 const MENTION_RE = new RegExp(
-	`${PASSIVE_AGENT_RE_SRC}|${AGENT_RE_SRC}|${TASK_RE_SRC}|${FILENAME_RE_SRC}`,
+	`${PASSIVE_AGENT_RE_SRC}|${AGENT_RE_SRC}|${TASK_RE_SRC}|${FILENAME_RE_SRC}|${ASSET_RE_SRC}`,
 	'g',
 );
 
@@ -120,12 +131,33 @@ function splitTextNode(node: TextNode, opts: Options): MdNode[] {
 }
 
 function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
-	const { teamId, projectSlug, agents, tasks, kbDocs, projectDocs } = opts;
+	const { teamId, projectSlug, agents, tasks, kbDocs, projectDocs, assets } = opts;
 	const display = match[0];
 	const passiveAgentToken = match[1];
 	const agentToken = match[2];
 	const taskToken = match[3];
 	const filenameToken = match[4];
+	const assetToken = match[5];
+
+	if (assetToken) {
+		if (!projectSlug) return null;
+		const slug = projectSlug.toLowerCase();
+		const data = assets.get(assetToken);
+		if (!data) return null;
+		return {
+			type: 'link',
+			url: `/teams/${teamId}/projects/${slug}/assets?file=${encodeURIComponent(assetToken)}`,
+			children: [{ type: 'text', value: display }],
+			data: {
+				hProperties: {
+					'data-mention-asset-project-slug': slug,
+					'data-mention-asset-filename': assetToken,
+					'data-mention-asset-content-type': data.contentType,
+					'data-mention-asset-url': data.signedUrl,
+				},
+			},
+		};
+	}
 
 	if (passiveAgentToken) {
 		const slug = passiveAgentToken.toLowerCase();
@@ -264,6 +296,7 @@ export function extractTaskCandidates(value: string): string[] {
 export interface DocCandidates {
 	kbSlugs: string[];
 	projectDocs: Array<{ project_slug: string; filename: string }>;
+	assets: Array<{ project_slug: string; filename: string }>;
 }
 
 export function extractDocCandidates(value: string, projectSlug?: string): DocCandidates {
@@ -277,16 +310,28 @@ export function extractDocCandidates(value: string, projectSlug?: string): DocCa
 		m = re.exec(stripped);
 	}
 
+	const assetSet = new Set<string>();
+	const assetRe = new RegExp(ASSET_RE_SRC, 'g');
+	let am = assetRe.exec(stripped);
+	while (am !== null) {
+		assetSet.add(am[1]);
+		am = assetRe.exec(stripped);
+	}
+
 	const kbSlugs = Array.from(filenameSet, (f) => f.toLowerCase());
 	const projectDocs: Array<{ project_slug: string; filename: string }> = [];
+	const assets: Array<{ project_slug: string; filename: string }> = [];
 	if (projectSlug) {
 		const slug = projectSlug.toLowerCase();
 		for (const filename of filenameSet) {
 			projectDocs.push({ project_slug: slug, filename });
 		}
+		for (const filename of assetSet) {
+			assets.push({ project_slug: slug, filename });
+		}
 	}
 
-	return { kbSlugs, projectDocs };
+	return { kbSlugs, projectDocs, assets };
 }
 
 function stripCode(value: string): string {

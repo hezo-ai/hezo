@@ -563,7 +563,7 @@ Project documents are stored in the database (`project_docs` table), not the fil
 - `ui-design-decisions.md` — design rationale
 - Other ad-hoc documents
 
-Agents read/write project docs via MCP tools (`list_project_docs`, `read_project_doc`, `write_project_doc`). PRD changes by agents require board approval; all other docs are updated freely. Project docs support semantic search via pgvector embeddings.
+Agents read/write project docs via MCP tools (`list_project_docs`, `read_project_doc`, `write_project_doc`). Project docs are **markdown-only**; non-markdown files (mockups, wireframes, images, PDFs) live in the project **Assets** library and are listed via `list_project_assets` and referenced as `assets/<filename>`. PRD changes by agents require board approval; all other docs are updated freely. Project docs support semantic search via pgvector embeddings.
 
 `AGENTS.md` is the exception — it stays as a git-tracked file at the repo root of the designated repo, since it needs to be discoverable by coding agents working in the repo.
 
@@ -1793,7 +1793,7 @@ Documents live in the `project_docs` table. Agents access them via MCP tools (`l
 
 ### Project documents in the UI
 
-Accessible from the project detail view as a **Documents tab**. The UI uses the project docs API (`GET/PUT/DELETE /projects/:id/docs/:filename`) to browse and edit documents.
+Accessible from the project's sidebar as **Documents** (markdown, editable, version-tracked) and **Assets** (view-only uploaded files — mockups, wireframes, PDFs). The Documents UI uses the project docs API (`GET/PUT/DELETE /projects/:id/docs/:filename`) to browse and edit; the Assets UI uses the project assets API (`GET/POST/DELETE /projects/:id/assets`) to upload, view, and delete.
 
 ---
 
@@ -1976,35 +1976,36 @@ Tasks and comments can have file attachments. Files are stored locally on the ho
 
 ### Assets table
 
-The `assets` table stores metadata for uploaded files:
+The `assets` table stores metadata for uploaded files, scoped to a project:
 - `id` — UUID
-- `team_id` — team scope
-- `filename` — original filename (sanitized)
+- `team_id` / `project_id` — owning team and project
+- `original_filename` — link-safe filename, unique within the project (`UNIQUE (project_id, original_filename)`); uploads auto-suffix on collision (e.g. `login.png` → `login-3f9a.png`)
 - `content_type` — MIME type
-- `size_bytes` — file size
-- `storage_path` — path on host filesystem
-- `uploaded_by_type` — `board` or `agent`
-- `uploaded_by_id` — user or agent ID
+- `byte_size` — file size
+- `sha256` — content hash
+- `uploaded_by_member_id` — uploader (nullable)
 - `created_at` — upload timestamp
 
-### Task attachments
+### Project Assets library
 
-The `task_attachments` join table links assets to tasks:
-- `task_id` — the task
-- `asset_id` — the file
-- `comment_id` — optional, if attached to a specific comment
+Each project has a view-only **Assets** library (a sidebar entry beside Documents) holding every non-markdown upload — UI mockups, wireframes, images, PDFs. Project docs are markdown-only; everything else lives here. Assets can be uploaded, viewed (including open-in-new-tab), and deleted (board-only), but not edited and not version-tracked, and they are **not** injected into agent context. The library lists all of the project's assets, including files attached to task comments. Assets are referenced in comments and docs as `assets/<filename>` (vs. a bare `<filename>.md` for docs); agents discover them via the `list_project_assets` MCP tool.
+
+### Comment attachments
+
+The `comment_attachments` join table links assets to task comments (`comment_id`, `asset_id`). Deleting an asset cascades these rows; the project Assets library surfaces `comment_attachment_count` so deletion can warn when a file is still referenced by comments.
 
 ### Storage
 
-MVP uses local filesystem storage:
+MVP uses local filesystem storage, keyed by asset id:
 ```
-~/.hezo/data/assets/{team_id}/{asset_id}/{filename}
+data/teams/{team_id}/projects/{project_id}/assets/{asset_id}
 ```
 
-Files are served via:
+Files are served over time-limited HMAC-signed URLs:
 ```
-GET /api/teams/:id/assets/:asset_id
+GET /api/assets/:asset_id?exp=…&sig=…
 ```
+The signature is the credential — the route is reachable without a bearer token, so a bare browser "open in new tab" works. SVGs are served as a download (`Content-Disposition: attachment`) rather than inline to avoid stored XSS; other types render inline.
 
 ### Upload pipeline
 
