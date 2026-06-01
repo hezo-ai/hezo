@@ -114,6 +114,7 @@ interface WakeupRow {
 	created_at: string;
 	coalesced_count: number;
 	last_skipped_reason: string | null;
+	agent_busy: boolean;
 	run_now_blocked: 'blocked_by_dependency' | null;
 }
 
@@ -242,6 +243,26 @@ describe('GET /teams/:teamId/tasks/:taskId/queued-wakeups', () => {
 		expect(byId[gated].run_now_blocked).toBe('blocked_by_dependency');
 		expect(byId[ungated].run_now_blocked).toBeNull();
 		await clearBlockers(taskId);
+	});
+
+	it('flags agent_busy per agent when that agent runs on another task in the project', async () => {
+		await clearWakeups(taskId);
+		await clearRuns();
+		await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
+		// Agent Alpha is running on a sibling task, so its dispatch slot is taken
+		// even though the project still has capacity. Agent Beta is free.
+		const sibling = await createTask('Agent-busy GET Sibling');
+		await insertRunningRun(agentA, sibling);
+		const busy = await insertQueuedWakeup(agentA, taskId, { source: 'mention' });
+		const free = await insertQueuedWakeup(agentB, taskId, { source: 'mention' });
+
+		const { body } = await listQueued(taskId);
+		const byId = Object.fromEntries(body.data.wakeups.map((w) => [w.id, w]));
+		expect(byId[busy].agent_busy).toBe(true);
+		expect(byId[free].agent_busy).toBe(false);
+		expect(body.data.dispatch.task_busy).toBe(false);
+		expect(body.data.dispatch.project_at_capacity).toBe(false);
+		await clearRuns();
 	});
 });
 

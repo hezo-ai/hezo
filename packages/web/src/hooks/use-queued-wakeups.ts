@@ -9,6 +9,8 @@ export interface QueuedWakeup {
 	created_at: string;
 	coalesced_count: number;
 	last_skipped_reason: string | null;
+	/** This agent already has an active run on another task in the same project. */
+	agent_busy: boolean;
 	/** Set when the wakeup's source is gated and the task has open dependency blockers. */
 	run_now_blocked: 'blocked_by_dependency' | null;
 }

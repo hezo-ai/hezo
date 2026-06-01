@@ -161,6 +161,56 @@ test('disables run-now with a capacity reason when the project is at its run lim
 	expect(playBtn.getAttribute('aria-label')).toMatch(/concurrent-run limit/i);
 });
 
+test('disables run-now when the queued agent is already running on another task in the project', async () => {
+	const seeded = { teamSlug: '', taskId: '', wakeupId: '' };
+
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async (ctx) => {
+			const ws = await seedWorkspace();
+			const captain = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
+			const queuedAgent = ws.agents.find((a) => a.id !== captain.id) ?? ws.agents[0];
+			const project = await seedProject(ws, { name: 'Agent Busy Demo' });
+			// Plenty of capacity, so the only blocker is the agent's own slot.
+			await ctx.db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [project.id]);
+
+			// The queued agent is already running on a sibling task in this project.
+			const sibling = await seedTask(ws, project, { title: 'Occupying Agent Slot' });
+			await ctx.db.query(
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+				 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())`,
+				[queuedAgent.id, ws.team.id, sibling.id],
+			);
+
+			const task = await seedTask(ws, project, { title: 'Waiting Task', assignee_id: captain.id });
+			const r = await ctx.db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload)
+				 VALUES ($1, $2, 'mention'::wakeup_source, 'queued'::wakeup_status,
+				         jsonb_build_object('task_id', $3::text))
+				 RETURNING id`,
+				[queuedAgent.id, ws.team.id, task.id],
+			);
+
+			seeded.teamSlug = ws.team.slug;
+			seeded.taskId = task.id;
+			seeded.wakeupId = r.rows[0].id;
+		},
+	});
+
+	await router.navigate({
+		to: '/teams/$teamId/tasks/$taskId',
+		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+	});
+
+	const playBtn = (await findByTestId(`run-queued-wakeup-${seeded.wakeupId}`, undefined, {
+		timeout: 15_000,
+	})) as HTMLButtonElement;
+	await waitFor(() => {
+		expect(playBtn.getAttribute('aria-disabled')).toBe('true');
+	});
+	expect(playBtn.getAttribute('aria-label')).toMatch(/another task in this project/i);
+});
+
 test('disables the play button with a reason when the ticket already has a run', async () => {
 	const seeded = { teamSlug: '', taskId: '', wakeupId: '' };
 
