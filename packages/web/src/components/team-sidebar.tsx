@@ -3,6 +3,7 @@ import { Link, useNavigate } from '@tanstack/react-router';
 import { Settings } from 'lucide-react';
 import { useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
+import { useInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useProjects } from '../hooks/use-projects';
 import { useRouteTeamId } from '../hooks/use-route-team-id';
 import { useTeam } from '../hooks/use-teams';
@@ -19,6 +20,7 @@ export function TeamSidebar() {
 	const { data: agents } = useAgents(teamId);
 	const { data: projects } = useProjects(teamId);
 	const { data: team } = useTeam(teamId);
+	const { data: inboxCount } = useInboxUnreadCount(teamId);
 	const { data: uiState } = useUiState(teamId);
 	const updateUiState = useUpdateUiState(teamId);
 	const [createProjectOpen, setCreateProjectOpen] = useState(false);
@@ -38,7 +40,15 @@ export function TeamSidebar() {
 
 	const sections: SidebarNavSection[] = [
 		{
-			items: [{ to: '/teams/$teamId/inbox', params, label: 'Inbox' }],
+			items: [
+				{
+					to: '/teams/$teamId/inbox',
+					params,
+					label: 'Inbox',
+					count: inboxCount?.unread,
+					testId: 'sidebar-link-inbox',
+				},
+			],
 		},
 		{
 			title: 'Work',

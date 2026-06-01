@@ -61,7 +61,7 @@ describe('JobManager', () => {
 				resolve = r;
 			});
 
-			manager.launchTask(
+			const first = manager.launchTask(
 				'test:dup',
 				async () => {
 					callCount++;
@@ -69,7 +69,7 @@ describe('JobManager', () => {
 				},
 				LONG_TIMEOUT,
 			);
-			manager.launchTask(
+			const second = manager.launchTask(
 				'test:dup',
 				async () => {
 					callCount++;
@@ -77,6 +77,8 @@ describe('JobManager', () => {
 				LONG_TIMEOUT,
 			);
 
+			expect(first).toBe(true);
+			expect(second).toBe(false);
 			expect(callCount).toBe(1);
 			resolve!();
 			await new Promise((r) => setTimeout(r, 10));

@@ -1,4 +1,4 @@
-import { AuthType, wsRoom } from '@hezo/shared';
+import { ApprovalStatus, AuthType, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
@@ -40,7 +40,7 @@ inboxRoutes.get('/teams/:teamId/inbox/mentions', async (c) => {
 		return err(c, 'FORBIDDEN', 'Only board members have an inbox', 403);
 	}
 
-	const includeRead = c.req.query('include_read') === 'true';
+	const archived = c.req.query('archived') === 'true';
 	const db = c.get('db');
 
 	const result = await db.query<BoardMentionRow>(
@@ -58,10 +58,10 @@ inboxRoutes.get('/teams/:teamId/inbox/mentions', async (c) => {
 		 LEFT JOIN members m ON m.id = tc.author_member_id
 		 LEFT JOIN member_agents ma ON ma.id = tc.author_member_id
 		 WHERE bm.team_id = $1 AND bm.user_id = $2
-		   AND ($3::boolean OR bm.read_at IS NULL)
+		   AND (bm.archived_at IS NOT NULL) = $3::boolean
 		 ORDER BY bm.created_at DESC
 		 LIMIT 200`,
-		[teamId, auth.userId, includeRead],
+		[teamId, auth.userId, archived],
 	);
 
 	return ok(
@@ -82,6 +82,27 @@ inboxRoutes.get('/teams/:teamId/inbox/mentions', async (c) => {
 			read_at: r.read_at,
 		})),
 	);
+});
+
+inboxRoutes.get('/teams/:teamId/inbox/count', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const auth = c.get('auth');
+	if (auth.type !== AuthType.Board) {
+		return err(c, 'FORBIDDEN', 'Only board members have an inbox', 403);
+	}
+
+	const db = c.get('db');
+	const result = await db.query<{ unread: number }>(
+		`SELECT (
+		          (SELECT count(*) FROM board_mentions
+		           WHERE team_id = $1 AND user_id = $2 AND read_at IS NULL)
+		        + (SELECT count(*) FROM approvals
+		           WHERE team_id = $1 AND status = $3::approval_status)
+		        )::int AS unread`,
+		[teamId, auth.userId, ApprovalStatus.Pending],
+	);
+
+	return ok(c, { unread: result.rows[0]?.unread ?? 0 });
 });
 
 inboxRoutes.post('/teams/:teamId/inbox/mentions/:mentionId/read', async (c) => {

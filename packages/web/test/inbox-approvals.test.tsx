@@ -31,7 +31,7 @@ test('inbox shows empty state when no approvals', async () => {
 	});
 
 	await findByText('All clear', undefined, { timeout: 10_000 });
-	await findByText(/No pending approvals/);
+	await findByText(/No approvals or mentions/);
 });
 
 test('inbox shows pending approval with type badge', async () => {
@@ -86,7 +86,9 @@ test('can approve a pending approval', async () => {
 
 	await findByText('Proposing to hire', undefined, { timeout: 10_000 });
 	await user.click(await findByRole('button', { name: 'Approve' }));
-	await findByText('All clear', undefined, { timeout: 15_000 });
+	// Resolved approvals stay in the inbox as read history with a status badge.
+	await findByText('approved', undefined, { timeout: 15_000 });
+	await findByText('Proposing to hire');
 });
 
 test('can deny a pending approval', async () => {
@@ -110,7 +112,9 @@ test('can deny a pending approval', async () => {
 
 	await findByText(/Requesting access to secret/, undefined, { timeout: 10_000 });
 	await user.click(await findByRole('button', { name: 'Deny' }));
-	await findByText('All clear', undefined, { timeout: 15_000 });
+	// Resolved approvals stay in the inbox as read history with a status badge.
+	await findByText('denied', undefined, { timeout: 15_000 });
+	await findByText(/Requesting access to secret/);
 });
 
 test('sidebar has Inbox link', async () => {

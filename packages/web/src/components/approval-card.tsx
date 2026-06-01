@@ -230,11 +230,32 @@ interface ApprovalCardProps {
 const baseCardClass = 'block p-4 border border-border rounded-radius-md';
 const linkCardClass = `${baseCardClass} hover:bg-bg-subtle transition-colors`;
 
-function CardBody({ approval, showTeam }: { approval: Approval; showTeam: boolean }) {
+function CardBody({
+	approval,
+	showTeam,
+	unread,
+}: {
+	approval: Approval;
+	showTeam: boolean;
+	unread: boolean;
+}) {
+	const resolved = approval.status !== ApprovalStatus.Pending;
 	return (
 		<>
 			<div className="flex items-center gap-2 mb-1.5 flex-wrap">
+				{unread && (
+					<span
+						role="img"
+						aria-label="Unread"
+						className="w-2 h-2 rounded-full bg-primary shrink-0"
+					/>
+				)}
 				<Badge color={typeColors[approval.type] as 'gray'}>{approval.type.replace('_', ' ')}</Badge>
+				{resolved && (
+					<Badge color={approval.status === ApprovalStatus.Approved ? 'green' : 'red'}>
+						{approval.status}
+					</Badge>
+				)}
 				{showTeam && approval.team_name && (
 					<span className="text-xs text-text-muted">{approval.team_name}</span>
 				)}
@@ -245,6 +266,9 @@ function CardBody({ approval, showTeam }: { approval: Approval; showTeam: boolea
 			<div className="text-sm text-text-subtle break-words">
 				<ApprovalMessage approval={approval} />
 			</div>
+			{resolved && approval.resolution_note && (
+				<p className="text-xs text-text-muted mt-2">Note: {approval.resolution_note}</p>
+			)}
 		</>
 	);
 }
@@ -268,6 +292,17 @@ function resolveOauthDestination(approval: Approval) {
 export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) {
 	const resolveApproval = useResolveApproval();
 	const [modalOpen, setModalOpen] = useState(false);
+	const unread = approval.status === ApprovalStatus.Pending;
+	const highlight = unread ? ' border-l-2 border-l-primary bg-bg-subtle' : '';
+
+	// Resolved approvals are inbox history: read-only, no actions or navigation.
+	if (!unread) {
+		return (
+			<div className={baseCardClass} data-testid="approval-card" data-unread={false}>
+				<CardBody approval={approval} showTeam={showTeam} unread={false} />
+			</div>
+		);
+	}
 
 	if (approval.type === ApprovalType.DesignatedRepoRequest) {
 		const reason = approval.payload.reason as string | undefined;
@@ -277,11 +312,12 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 				<>
 					<button
 						type="button"
-						className={`${linkCardClass} w-full text-left`}
+						className={`${linkCardClass}${highlight} w-full text-left`}
 						data-testid="approval-card"
+						data-unread={true}
 						onClick={() => setModalOpen(true)}
 					>
-						<CardBody approval={approval} showTeam={showTeam} />
+						<CardBody approval={approval} showTeam={showTeam} unread />
 					</button>
 					<RepoSetupApprovalModal
 						approval={approval}
@@ -297,17 +333,18 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 			<Link
 				to={dest.to as never}
 				params={dest.params as never}
-				className={linkCardClass}
+				className={`${linkCardClass}${highlight}`}
 				data-testid="approval-card"
+				data-unread={true}
 			>
-				<CardBody approval={approval} showTeam={showTeam} />
+				<CardBody approval={approval} showTeam={showTeam} unread />
 			</Link>
 		);
 	}
 
 	return (
-		<div className={baseCardClass} data-testid="approval-card">
-			<CardBody approval={approval} showTeam={showTeam} />
+		<div className={`${baseCardClass}${highlight}`} data-testid="approval-card" data-unread={true}>
+			<CardBody approval={approval} showTeam={showTeam} unread />
 			<div className="flex gap-2 mt-3">
 				<Button
 					size="sm"

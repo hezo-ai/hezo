@@ -13,13 +13,17 @@ export function useBoardMentions(teamSlug: string, enabled = true) {
 	});
 }
 
-export function useAllBoardMentions(teamSlugs: string[]) {
+export function useAllBoardMentions(teamSlugs: string[], { archived = false } = {}) {
 	const teamKey = [...teamSlugs].sort().join(',');
 	return useQuery({
-		queryKey: ['inbox-mentions', teamKey],
+		queryKey: ['inbox-mentions', teamKey, { archived }],
 		queryFn: async () => {
 			const results = await Promise.all(
-				teamSlugs.map((slug) => api.get<BoardMentionItem[]>(`/api/teams/${slug}/inbox/mentions`)),
+				teamSlugs.map((slug) =>
+					api.get<BoardMentionItem[]>(`/api/teams/${slug}/inbox/mentions`, {
+						archived: String(archived),
+					}),
+				),
 			);
 			return results.flat();
 		},
@@ -48,7 +52,7 @@ export function useMarkMentionRead() {
 			if (teamSnapshot) {
 				queryClient.setQueryData<BoardMentionItem[]>(
 					['teams', teamSlug, 'inbox-mentions'],
-					teamSnapshot.filter((m) => m.id !== mentionId),
+					teamSnapshot.map((m) => (m.id === mentionId ? { ...m, read_at: now } : m)),
 				);
 			}
 
@@ -78,6 +82,7 @@ export function useMarkMentionRead() {
 		onSettled: (_data, _err, { teamSlug }) => {
 			queryClient.invalidateQueries({ queryKey: ['teams', teamSlug, 'inbox-mentions'] });
 			queryClient.invalidateQueries({ queryKey: ['inbox-mentions'] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamSlug, 'inbox-count'] });
 		},
 	});
 }
@@ -89,6 +94,7 @@ export function useMarkAllMentionsRead() {
 		onSuccess: (_data, teamSlug) => {
 			queryClient.invalidateQueries({ queryKey: ['teams', teamSlug, 'inbox-mentions'] });
 			queryClient.invalidateQueries({ queryKey: ['inbox-mentions'] });
+			queryClient.invalidateQueries({ queryKey: ['teams', teamSlug, 'inbox-count'] });
 		},
 	});
 }

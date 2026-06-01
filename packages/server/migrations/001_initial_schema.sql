@@ -638,6 +638,7 @@ CREATE TABLE approvals (
     payload                JSONB NOT NULL,
     resolved_at            TIMESTAMPTZ,
     resolution_note        TEXT,
+    archived_at            TIMESTAMPTZ,
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -1046,6 +1047,7 @@ CREATE TABLE board_mentions (
     user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     read_at     TIMESTAMPTZ,
+    archived_at TIMESTAMPTZ,
     UNIQUE (comment_id, user_id)
 );
 
@@ -1055,6 +1057,12 @@ CREATE INDEX idx_board_mentions_user_unread
 CREATE INDEX idx_board_mentions_team_unread
     ON board_mentions (team_id, created_at DESC)
     WHERE read_at IS NULL;
+CREATE INDEX idx_board_mentions_user_active
+    ON board_mentions (user_id, team_id, created_at DESC)
+    WHERE archived_at IS NULL;
+CREATE INDEX idx_board_mentions_user_archived
+    ON board_mentions (user_id, team_id, created_at DESC)
+    WHERE archived_at IS NOT NULL;
 
 -------------------------------------------------------------------------------
 -- TRIGGERS: auto-update updated_at

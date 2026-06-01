@@ -83,7 +83,13 @@ export type DispatchNowResult =
 	| { dispatched: true }
 	| {
 			dispatched: false;
-			reason: 'task_busy' | 'project_at_capacity' | 'blocked' | 'not_queued' | 'not_found';
+			reason:
+				| 'task_busy'
+				| 'project_at_capacity'
+				| 'agent_busy'
+				| 'blocked'
+				| 'not_queued'
+				| 'not_found';
 	  };
 
 export interface JobManagerDeps {
@@ -103,6 +109,8 @@ export interface JobManagerDeps {
 const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
 const WAKEUP_CRON = process.env.HEZO_WAKEUP_CRON ?? '*/5 * * * * *';
 const HEARTBEAT_CRON = process.env.HEZO_HEARTBEAT_CRON ?? '*/5 * * * * *';
+const INBOX_ARCHIVE_CRON = process.env.HEZO_INBOX_ARCHIVE_CRON ?? '0 0 3 * * *';
+const INBOX_RETENTION_DAYS = Number(process.env.HEZO_INBOX_RETENTION_DAYS ?? 30);
 // Lower bound on how often a heartbeat can fire, regardless of an agent's
 // configured `heartbeat_interval_min`. Defends against misconfigured low/zero
 // intervals producing a tight 5-second-cron loop on the same agent.
@@ -223,6 +231,16 @@ export class JobManager {
 				);
 				return { dispatched: false, reason: 'project_at_capacity' };
 			}
+			if (projectId && (await this.isAgentBusyInProject(wakeup.member_id, projectId))) {
+				await this.markWakeupSkipped(
+					wakeup.id,
+					WakeupSkipReason.AgentRunning,
+					wakeupTaskId,
+					wakeup.team_id,
+					null,
+				);
+				return { dispatched: false, reason: 'agent_busy' };
+			}
 			if (await shouldDeferWakeupForBlockers(db, wakeup.source, wakeupTaskId)) {
 				await db.query(
 					`UPDATE agent_wakeup_requests
@@ -329,11 +347,20 @@ export class JobManager {
 			log: cronLog,
 			onTick: () => this.guarded('embeddings', () => this.processEmbeddingQueue()),
 		});
+		this.cron.createJob('inbox-archive', {
+			cron: INBOX_ARCHIVE_CRON,
+			log: cronLog,
+			onTick: () => this.guarded('inbox-archive', () => this.archiveInboxItems()),
+		});
 		log.info('Job manager started.');
 	}
 
-	launchTask(key: string, fn: (signal: AbortSignal) => Promise<unknown>, timeoutMs: number): void {
-		if (this.runningTasks.has(key)) return;
+	launchTask(
+		key: string,
+		fn: (signal: AbortSignal) => Promise<unknown>,
+		timeoutMs: number,
+	): boolean {
+		if (this.runningTasks.has(key)) return false;
 		const ac = new AbortController();
 
 		const timeoutId = setTimeout(() => {
@@ -355,6 +382,7 @@ export class JobManager {
 			startedAt: Date.now(),
 			timeoutId,
 		});
+		return true;
 	}
 
 	cancelTask(key: string, reason?: unknown): boolean {
@@ -660,6 +688,36 @@ export class JobManager {
 		return r.rows[0]?.project_id ?? null;
 	}
 
+	/** Return a claimed wakeup to the queue so a later dispatch can retry it. */
+	private async requeueWakeup(wakeupId: string | undefined): Promise<void> {
+		if (!wakeupId) return;
+		await this.deps.db.query(
+			'UPDATE agent_wakeup_requests SET status = $1::wakeup_status, claimed_at = NULL WHERE id = $2',
+			[WakeupStatus.Queued, wakeupId],
+		);
+	}
+
+	/**
+	 * True when this agent already has an in-flight run in the project. Dispatch
+	 * serialises per agent+project (the launchTask key), so a second run for the
+	 * same pair would be dropped — callers re-queue instead. The in-memory guard
+	 * leads the DB during the window between launch and the run row landing; the
+	 * `heartbeat_runs` query is authoritative once the row exists.
+	 */
+	private async isAgentBusyInProject(memberId: string, projectId: string): Promise<boolean> {
+		if (this.isTaskRunning(`${memberId}:${projectId}`)) return true;
+		const active = await this.deps.db.query(
+			`SELECT 1 FROM heartbeat_runs hr
+			 JOIN tasks t ON t.id = hr.task_id
+			 WHERE hr.member_id = $1
+			   AND t.project_id = $2
+			   AND hr.status IN ($3::heartbeat_run_status, $4::heartbeat_run_status)
+			 LIMIT 1`,
+			[memberId, projectId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
+		);
+		return active.rows.length > 0;
+	}
+
 	private async processWakeups(): Promise<void> {
 		const { db } = this.deps;
 		const coalescingCutoff = new Date(Date.now() - COALESCING_WINDOW_MS).toISOString();
@@ -705,6 +763,19 @@ export class JobManager {
 					await this.markWakeupSkipped(
 						wakeup.id,
 						WakeupSkipReason.ProjectAtCapacity,
+						wakeupTaskId,
+						wakeup.team_id,
+						null,
+					);
+					continue;
+				}
+				if (projectId && (await this.isAgentBusyInProject(wakeup.member_id, projectId))) {
+					log.debug(
+						`Skipping wakeup ${wakeup.id} — agent ${wakeup.member_id} already running in project ${projectId}`,
+					);
+					await this.markWakeupSkipped(
+						wakeup.id,
+						WakeupSkipReason.AgentRunning,
 						wakeupTaskId,
 						wakeup.team_id,
 						null,
@@ -967,24 +1038,25 @@ export class JobManager {
 			log.debug(
 				`Task ${ref(task.identifier, task.id)} already has an active run — re-queuing wakeup for ${ref(agent.rows[0].slug, memberId)}`,
 			);
-			if (wakeupId) {
-				await db.query(
-					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status, claimed_at = NULL WHERE id = $2',
-					[WakeupStatus.Queued, wakeupId],
-				);
-			}
+			await this.requeueWakeup(wakeupId);
 			return;
 		}
 		if (await this.isProjectAtCapacity(task.project_id)) {
 			log.debug(
 				`Project ${task.project_id} is at run capacity — re-queuing wakeup for ${ref(agent.rows[0].slug, memberId)}`,
 			);
-			if (wakeupId) {
-				await db.query(
-					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status, claimed_at = NULL WHERE id = $2',
-					[WakeupStatus.Queued, wakeupId],
-				);
-			}
+			await this.requeueWakeup(wakeupId);
+			return;
+		}
+		// A given agent runs at most one task at a time within a project: dispatch
+		// serialises on the agent+project pair and a second concurrent run would be
+		// dropped. Re-queue before any lock or status side-effects so the wakeup
+		// fires once the in-flight run frees the slot.
+		if (await this.isAgentBusyInProject(memberId, task.project_id)) {
+			log.debug(
+				`Agent ${ref(agent.rows[0].slug, memberId)} already running in project ${task.project_id} — re-queuing wakeup`,
+			);
+			await this.requeueWakeup(wakeupId);
 			return;
 		}
 
@@ -1148,29 +1220,7 @@ export class JobManager {
 		this.activeTaskRuns.add(lockedTaskId);
 		this.acquireProjectRun(projectId);
 
-		// A run reads the full task context at boot, so any wakeup already queued
-		// for this agent+task is served by this run. Retire those siblings so they
-		// don't fire a redundant back-to-back run once the task frees up. Wakeups
-		// created later (new comments/assignments during the run) stay queued and
-		// correctly drive a follow-up run.
-		const absorbed = await absorbQueuedTaskWakeups(db, memberId, lockedTaskId, wakeupId);
-		if (absorbed.length > 0) {
-			const refreshed = await db.query<Record<string, unknown>>(
-				'SELECT * FROM tasks WHERE id = $1',
-				[lockedTaskId],
-			);
-			if (refreshed.rows[0]) {
-				broadcastRowChange(
-					this.deps.wsManager,
-					wsRoom.team(teamId),
-					'tasks',
-					'UPDATE',
-					refreshed.rows[0],
-				);
-			}
-		}
-
-		this.launchTask(
+		const launched = this.launchTask(
 			taskKey,
 			async (signal) => {
 				let registeredRunId: string | undefined;
@@ -1234,6 +1284,43 @@ export class JobManager {
 			},
 			timeoutMs,
 		);
+
+		if (!launched) {
+			// A concurrent dispatch already holds this agent's per-project run slot,
+			// so the launch was dropped. Undo the lock and status side-effects so the
+			// task badge doesn't stick, and re-queue for a later slot.
+			this.activeTaskRuns.delete(lockedTaskId);
+			this.releaseProjectRun(projectId);
+			await db.query(
+				'UPDATE execution_locks SET released_at = now() WHERE task_id = $1 AND member_id = $2 AND released_at IS NULL',
+				[lockedTaskId, memberId],
+			);
+			await setAgentIdleIfNoActiveRuns(db, memberId, teamId, undefined, this.deps.wsManager);
+			await this.requeueWakeup(wakeupId);
+			return;
+		}
+
+		// A run reads the full task context at boot, so any wakeup already queued
+		// for this agent+task is served by this run. Retire those siblings so they
+		// don't fire a redundant back-to-back run once the task frees up. Wakeups
+		// created later (new comments/assignments during the run) stay queued and
+		// correctly drive a follow-up run.
+		const absorbed = await absorbQueuedTaskWakeups(db, memberId, lockedTaskId, wakeupId);
+		if (absorbed.length > 0) {
+			const refreshed = await db.query<Record<string, unknown>>(
+				'SELECT * FROM tasks WHERE id = $1',
+				[lockedTaskId],
+			);
+			if (refreshed.rows[0]) {
+				broadcastRowChange(
+					this.deps.wsManager,
+					wsRoom.team(teamId),
+					'tasks',
+					'UPDATE',
+					refreshed.rows[0],
+				);
+			}
+		}
 	}
 
 	private async onAgentComplete(
@@ -1513,6 +1600,14 @@ export class JobManager {
 		const count = await processPendingEmbeddings(this.deps.db);
 		if (count > 0) {
 			log.debug(`Processed ${count} embedding(s)`);
+		}
+	}
+
+	private async archiveInboxItems(): Promise<void> {
+		const { archiveOldInboxItems } = await import('./inbox-archive');
+		const count = await archiveOldInboxItems(this.deps.db, INBOX_RETENTION_DAYS);
+		if (count > 0) {
+			log.debug(`Archived ${count} inbox item(s)`);
 		}
 	}
 }

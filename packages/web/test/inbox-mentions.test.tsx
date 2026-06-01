@@ -1,3 +1,4 @@
+import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import {
@@ -8,6 +9,19 @@ import {
 	seedTask,
 	seedWorkspace,
 } from './helpers/seed';
+
+async function markMentionRead(mentionId: string): Promise<void> {
+	const { db } = getTestContext();
+	await db.query('UPDATE board_mentions SET read_at = now() WHERE id = $1', [mentionId]);
+}
+
+async function markMentionArchived(mentionId: string): Promise<void> {
+	const { db } = getTestContext();
+	await db.query(
+		'UPDATE board_mentions SET read_at = COALESCE(read_at, now()), archived_at = now() WHERE id = $1',
+		[mentionId],
+	);
+}
 
 async function seedAgentBoardMention(
 	workspace: SeededWorkspace,
@@ -133,4 +147,142 @@ test('clicking a mention navigates to the task and marks it read', async () => {
 		updated = again.rows[0]?.read_at;
 	}
 	expect(updated).not.toBeNull();
+});
+
+test('inbox shows read mentions as history and highlights unread ones', async () => {
+	let ctx: { teamSlug: string };
+	const { findAllByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Demo' });
+			const unreadTask = await seedTask(ws, project, { title: 'Unread ticket' });
+			const readTask = await seedTask(ws, project, { title: 'Read ticket' });
+			await seedAgentBoardMention(ws, unreadTask, '@board fresh decision needed.');
+			const { mentionId } = await seedAgentBoardMention(ws, readTask, '@board already handled.');
+			await markMentionRead(mentionId);
+			ctx = { teamSlug: ws.team.slug };
+		},
+	});
+
+	await router.navigate({
+		to: '/teams/$teamId/inbox',
+		params: { teamId: ctx!.teamSlug },
+	});
+
+	await waitFor(async () => expect((await findAllByTestId('mention-card')).length).toBe(2), {
+		timeout: 10_000,
+	});
+	const cards = await findAllByTestId('mention-card');
+	const flags = cards.map((c) => c.getAttribute('data-unread')).sort();
+	expect(flags).toEqual(['false', 'true']);
+});
+
+test('read/unread filter and keyword search narrow the inbox', async () => {
+	let ctx: { teamSlug: string };
+	const { findAllByTestId, findByText, findByLabelText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Demo' });
+			const unreadTask = await seedTask(ws, project, { title: 'Apple ticket' });
+			const readTask = await seedTask(ws, project, { title: 'Banana ticket' });
+			await seedAgentBoardMention(ws, unreadTask, '@board apple decision.');
+			const { mentionId } = await seedAgentBoardMention(ws, readTask, '@board banana decision.');
+			await markMentionRead(mentionId);
+			ctx = { teamSlug: ws.team.slug };
+		},
+	});
+
+	await router.navigate({
+		to: '/teams/$teamId/inbox',
+		params: { teamId: ctx!.teamSlug },
+	});
+
+	await waitFor(async () => expect((await findAllByTestId('mention-card')).length).toBe(2), {
+		timeout: 10_000,
+	});
+
+	// Unread filter keeps only the unread card.
+	await user.click(await findByText('Unread'));
+	await waitFor(async () => {
+		const cards = await findAllByTestId('mention-card');
+		expect(cards.length).toBe(1);
+		expect(cards[0].getAttribute('data-unread')).toBe('true');
+	});
+
+	// Read filter keeps only the read card.
+	await user.click(await findByText('Read'));
+	await waitFor(async () => {
+		const cards = await findAllByTestId('mention-card');
+		expect(cards.length).toBe(1);
+		expect(cards[0].getAttribute('data-unread')).toBe('false');
+	});
+
+	// Back to all, then keyword search narrows to the matching ticket.
+	await user.click(await findByText('All'));
+	await waitFor(async () => expect((await findAllByTestId('mention-card')).length).toBe(2));
+	const searchBox = await findByLabelText('Search inbox');
+	await user.type(searchBox, 'banana');
+	await waitFor(async () => {
+		const cards = await findAllByTestId('mention-card');
+		expect(cards.length).toBe(1);
+		expect(cards[0].getAttribute('data-unread')).toBe('false');
+	});
+});
+
+test('archived mentions are hidden by default and shown under the Archived filter', async () => {
+	let ctx: { teamSlug: string };
+	const { findAllByTestId, findByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Demo' });
+			const activeTask = await seedTask(ws, project, { title: 'Active ticket' });
+			const archivedTask = await seedTask(ws, project, { title: 'Archived ticket' });
+			const active = await seedAgentBoardMention(ws, activeTask, '@board active decision.');
+			await markMentionRead(active.mentionId);
+			const archived = await seedAgentBoardMention(ws, archivedTask, '@board old decision.');
+			await markMentionArchived(archived.mentionId);
+			ctx = { teamSlug: ws.team.slug };
+		},
+	});
+
+	await router.navigate({
+		to: '/teams/$teamId/inbox',
+		params: { teamId: ctx!.teamSlug },
+	});
+
+	// Default view shows only the active (non-archived) mention.
+	await findByText(/active decision/, undefined, { timeout: 10_000 });
+	await waitFor(async () => expect((await findAllByTestId('mention-card')).length).toBe(1));
+
+	// The Archived filter reveals the archived mention and hides the active one.
+	await user.click(await findByText('Archived'));
+	await findByText(/old decision/, undefined, { timeout: 10_000 });
+	await waitFor(async () => expect((await findAllByTestId('mention-card')).length).toBe(1));
+});
+
+test('sidebar inbox link shows the unread count badge', async () => {
+	let ctx: { teamSlug: string };
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Demo' });
+			const t1 = await seedTask(ws, project, { title: 'Decision one' });
+			const t2 = await seedTask(ws, project, { title: 'Decision two' });
+			await seedAgentBoardMention(ws, t1, '@board decision one.');
+			await seedAgentBoardMention(ws, t2, '@board decision two.');
+			ctx = { teamSlug: ws.team.slug };
+		},
+	});
+
+	await router.navigate({
+		to: '/teams/$teamId/projects',
+		params: { teamId: ctx!.teamSlug },
+	});
+
+	const link = await findByTestId('sidebar-link-inbox', undefined, { timeout: 10_000 });
+	await waitFor(() => expect(link.textContent).toContain('2'));
 });

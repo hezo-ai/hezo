@@ -319,6 +319,36 @@ describe('POST /teams/:teamId/tasks/:taskId/queued-wakeups/:wakeupId/run-now', (
 		await clearRuns();
 	});
 
+	it('returns 409 and leaks no lock when the agent already runs in the project', async () => {
+		await clearWakeups(taskId);
+		await clearRuns();
+		await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
+		// The same agent is already running on a sibling task in this project, so
+		// its per agent+project dispatch slot is taken even though capacity remains.
+		const sibling = await createTask('Agent-busy Sibling');
+		await insertRunningRun(agentA, sibling);
+		const wakeupId = await insertQueuedWakeup(agentA, taskId, { source: 'mention' });
+
+		const res = await runNow(taskId, wakeupId);
+		expect(res.status).toBe(409);
+
+		const row = await db.query<{ status: string; last_skipped_reason: string | null }>(
+			'SELECT status, last_skipped_reason FROM agent_wakeup_requests WHERE id = $1',
+			[wakeupId],
+		);
+		expect(row.rows[0].status).toBe('queued');
+		expect(row.rows[0].last_skipped_reason).toBe('agent_running');
+
+		// The target task must not be left with an unreleased execution lock — that
+		// stale lock is what drives a phantom "agent is running" badge.
+		const locks = await db.query(
+			'SELECT id FROM execution_locks WHERE task_id = $1 AND released_at IS NULL',
+			[taskId],
+		);
+		expect(locks.rows.length).toBe(0);
+		await clearRuns();
+	});
+
 	it('returns 409 when the task has an open dependency and the wakeup source is gated', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
