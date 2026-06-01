@@ -112,27 +112,37 @@ export class EgressProxy {
 						reject(err ?? new Error('HTTPS_SERVER_ERROR'));
 					}
 				});
-				proxy.listen(
-					{
-						port,
-						host: '127.0.0.1',
-						sslCaDir: this.deps.ca.rootDir,
-						...(upstreamHttpsAgent ? { httpsAgent: upstreamHttpsAgent } : {}),
-					},
-					((err?: Error | null) => {
-						if (err) {
+				// forceSNI collapses the library's per-host internal MITM TLS
+				// servers into a single SNI-multiplexed server created once at
+				// listen() and torn down only at close(). Without it the library
+				// spins up and tears down a separate loopback HTTPS server per
+				// host, and the loopback connect from the CONNECT handler can race
+				// that lifecycle and be refused — leaving the client tunnel hung.
+				// Every TLS client we proxy (Claude Code / undici / curl) sends SNI.
+				withConsoleInfoSuppressed(() => {
+					proxy.listen(
+						{
+							port,
+							host: '127.0.0.1',
+							sslCaDir: this.deps.ca.rootDir,
+							forceSNI: true,
+							...(upstreamHttpsAgent ? { httpsAgent: upstreamHttpsAgent } : {}),
+						},
+						((err?: Error | null) => {
+							if (err) {
+								if (!settled) {
+									settled = true;
+									reject(err);
+								}
+								return;
+							}
 							if (!settled) {
 								settled = true;
-								reject(err);
+								resolve();
 							}
-							return;
-						}
-						if (!settled) {
-							settled = true;
-							resolve();
-						}
-					}) as () => void,
-				);
+						}) as () => void,
+					);
+				});
 			});
 		} catch (e) {
 			this.portAllocator.release(port);
@@ -303,6 +313,21 @@ function respondEarly(ctx: IContext, statusCode: number, code: string, message: 
 		'content-length': Buffer.byteLength(body).toString(),
 	});
 	res.end(body);
+}
+
+/**
+ * Run a synchronous block with `console.info` silenced. The MITM library emits
+ * a single "SNI enabled" info line at listen() time under forceSNI; suppressing
+ * it keeps run/test output free of per-proxy noise without touching other logs.
+ */
+function withConsoleInfoSuppressed(fn: () => void): void {
+	const original = console.info;
+	console.info = () => {};
+	try {
+		fn();
+	} finally {
+		console.info = original;
+	}
 }
 
 function headersContainProbe(headers: Record<string, string>): boolean {

@@ -1,12 +1,14 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
+import type { Server as HttpsServer } from 'node:https';
+import type { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
-import { loadOrCreateCA } from '../src/services/egress/ca';
+import { type HezoCA, loadOrCreateCA } from '../src/services/egress/ca';
 import { EgressProxy } from '../src/services/egress/proxy';
 import { safeClose } from './helpers';
 import { createTestApp } from './helpers/app';
@@ -19,6 +21,7 @@ let proxy: EgressProxy;
 let upstream: Server;
 let upstreamUrl: string;
 let dataDir: string;
+let ca: HezoCA;
 
 interface UpstreamRequest {
 	method: string;
@@ -28,6 +31,7 @@ interface UpstreamRequest {
 }
 
 const upstreamRequests: UpstreamRequest[] = [];
+const httpsUpstreamHits: UpstreamRequest[] = [];
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -51,9 +55,8 @@ beforeAll(async () => {
 	upstream = await startUpstream();
 	upstreamUrl = `http://127.0.0.1:${(upstream.address() as { port: number }).port}`;
 
-	const ca = await loadOrCreateCA(dataDir);
+	ca = await loadOrCreateCA(dataDir);
 	proxy = new EgressProxy({ db, masterKeyManager, ca });
-	void ca;
 }, 30_000);
 
 afterAll(async () => {
@@ -170,6 +173,48 @@ describe('EgressProxy', () => {
 			await proxy.releaseRunProxy(runId);
 		}
 	}, 30_000);
+
+	it('terminates HTTPS via the shared SNI MITM server and substitutes a header placeholder', async () => {
+		// Exercises the CONNECT → internal MITM TLS server path that forceSNI
+		// reshapes. The agent's TLS terminates on a proxy-minted leaf (signed by
+		// the Hezo CA), the placeholder is substituted, then the request is
+		// re-encrypted to the upstream — all without a container.
+		const httpsProxy = new EgressProxy({
+			db,
+			masterKeyManager,
+			ca,
+			extraUpstreamTrustedCAs: ca.cert,
+		});
+		const httpsUpstream = await startHttpsUpstream(ca);
+		const httpsPort = (httpsUpstream.address() as { port: number }).port;
+		const runId = `run-${Date.now()}-https`;
+		await insertSecret('TEST_HTTPS_HEADER', 'real-https-value', ['localhost']);
+		const allocated = await httpsProxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const res = await fetchHttpsThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				targetHost: 'localhost',
+				targetPort: httpsPort,
+				path: '/echo',
+				headers: { authorization: 'Bearer __HEZO_SECRET_TEST_HTTPS_HEADER__' },
+				caCert: ca.cert,
+			});
+			expect(res.status).toBe(200);
+			const lastHit = httpsUpstreamHits.at(-1);
+			expect(lastHit?.headers.authorization).toBe('Bearer real-https-value');
+		} finally {
+			await httpsProxy.releaseRunProxy(runId);
+			await new Promise<void>((resolve) => httpsUpstream.close(() => resolve()));
+		}
+		const audit = await db.query(
+			`SELECT details FROM audit_log WHERE entity_type = 'egress_request' AND details->>'run_id' = $1 ORDER BY created_at DESC LIMIT 1`,
+			[runId],
+		);
+		expect(audit.rows.length).toBe(1);
+		const details = (audit.rows[0] as { details: Record<string, unknown> }).details;
+		expect(details.substitutions_count).toBe(1);
+	}, 30_000);
 });
 
 interface ProxyFetchOpts {
@@ -253,4 +298,98 @@ async function startUpstream(): Promise<Server> {
 	});
 	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
 	return server;
+}
+
+async function startHttpsUpstream(rootCa: { cert: string; key: string }): Promise<HttpsServer> {
+	const { createServer: createHttpsServer } = await import('node:https');
+	const { mintCertFromCA } = await import('./helpers/self-signed-cert');
+	const { cert, key } = await mintCertFromCA(rootCa, 'localhost');
+	const server = createHttpsServer({ cert, key }, (req: IncomingMessage, res) => {
+		const chunks: Buffer[] = [];
+		req.on('data', (chunk) => chunks.push(chunk));
+		req.on('end', () => {
+			httpsUpstreamHits.push({
+				method: req.method ?? 'GET',
+				url: req.url ?? '',
+				headers: req.headers as Record<string, string | string[] | undefined>,
+				body: Buffer.concat(chunks).toString(),
+			});
+			res.writeHead(200, { 'content-type': 'application/json' });
+			res.end(JSON.stringify({ ok: true }));
+		});
+	});
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+	return server;
+}
+
+interface HttpsProxyFetchOpts {
+	proxyHost: string;
+	proxyPort: number;
+	targetHost: string;
+	targetPort: number;
+	path: string;
+	method?: string;
+	headers?: Record<string, string>;
+	body?: string;
+	caCert: string;
+}
+
+async function fetchHttpsThroughProxy(
+	opts: HttpsProxyFetchOpts,
+): Promise<{ status: number; body: string }> {
+	const { connect: netConnect } = await import('node:net');
+	const { connect: tlsConnect } = await import('node:tls');
+
+	const tunnel = await new Promise<Socket>((resolve, reject) => {
+		const sock = netConnect({ host: opts.proxyHost, port: opts.proxyPort });
+		const onData = (chunk: Buffer) => {
+			const statusLine = chunk.toString().split('\r\n')[0] ?? '';
+			sock.removeListener('data', onData);
+			if (/^HTTP\/1\.[01] 200/.test(statusLine)) {
+				resolve(sock);
+			} else {
+				reject(new Error(`CONNECT failed: ${statusLine}`));
+			}
+		};
+		sock.on('connect', () => {
+			sock.write(
+				`CONNECT ${opts.targetHost}:${opts.targetPort} HTTP/1.1\r\n` +
+					`Host: ${opts.targetHost}:${opts.targetPort}\r\n\r\n`,
+			);
+		});
+		sock.on('data', onData);
+		sock.on('error', reject);
+		sock.setTimeout(20_000, () => sock.destroy(new Error('CONNECT timed out')));
+	});
+
+	return new Promise((resolve, reject) => {
+		const tls = tlsConnect(
+			{ socket: tunnel, servername: opts.targetHost, ca: [opts.caCert] },
+			() => {
+				const headerLines = [
+					`${opts.method ?? 'GET'} ${opts.path} HTTP/1.1`,
+					`Host: ${opts.targetHost}:${opts.targetPort}`,
+					'Connection: close',
+					...Object.entries(opts.headers ?? {}).map(([k, v]) => `${k}: ${v}`),
+				];
+				if (opts.body !== undefined) {
+					headerLines.push(`Content-Length: ${Buffer.byteLength(opts.body)}`);
+				}
+				tls.write(`${headerLines.join('\r\n')}\r\n\r\n${opts.body ?? ''}`);
+			},
+		);
+		const chunks: Buffer[] = [];
+		tls.on('data', (chunk: Buffer) => chunks.push(chunk));
+		tls.on('end', () => {
+			const all = Buffer.concat(chunks).toString();
+			const sep = all.indexOf('\r\n\r\n');
+			const headPart = sep === -1 ? all : all.slice(0, sep);
+			const body = sep === -1 ? '' : all.slice(sep + 4);
+			const statusLine = headPart.split('\r\n')[0] ?? '';
+			const status = Number(statusLine.split(' ')[1] ?? '0');
+			resolve({ status, body });
+		});
+		tls.on('error', reject);
+		tls.setTimeout(20_000, () => tls.destroy(new Error('https fetch timed out')));
+	});
 }
