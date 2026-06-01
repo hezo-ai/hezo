@@ -17,6 +17,7 @@ import {
 	useUpdateProjectAgentsMd,
 	useUpdateProjectDoc,
 } from '../../../../../hooks/use-project-docs';
+import { docPreviewPath } from '../../../../../lib/doc-preview';
 
 const AGENTS_MD_KEY = '__agents_md__';
 
@@ -111,6 +112,9 @@ function ProjectDocumentsPage() {
 				});
 			}}
 			isCreating={isCreating}
+			getPopOutUrl={(key) =>
+				key === AGENTS_MD_KEY ? null : docPreviewPath(teamId, projectId, key)
+			}
 			newForm={
 				<NewProjectDocForm
 					teamId={teamId}

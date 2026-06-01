@@ -1,4 +1,4 @@
-import { ArrowLeft, FileText, Loader2, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, ExternalLink, FileText, Loader2, Plus, Trash2 } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { HtmlPreview } from './html-preview';
 import { MarkdownProse } from './markdown-prose';
@@ -36,6 +36,9 @@ interface DocsLibraryProps {
 	isCreating?: boolean;
 	newForm?: ReactNode;
 
+	/** When it returns a URL for the selected doc, a button opens it in a new tab. */
+	getPopOutUrl?: (key: string) => string | null;
+
 	viewerExtras?: ReactNode;
 
 	emptyTitle?: string;
@@ -60,6 +63,7 @@ export function DocsLibrary({
 	onNewDoc,
 	isCreating,
 	newForm,
+	getPopOutUrl,
 	viewerExtras,
 	emptyTitle = 'No documents yet',
 	emptyDescription,
@@ -89,6 +93,7 @@ export function DocsLibrary({
 	const showNewForm = isCreating && !!newForm;
 	const selectedItem = selectedKey ? items.find((it) => it.key === selectedKey) : undefined;
 	const showRightPane = showNewForm || selectedKey;
+	const popOutUrl = selectedKey && getPopOutUrl ? getPopOutUrl(selectedKey) : null;
 
 	async function handleSave() {
 		await onSave(draft);
@@ -199,6 +204,17 @@ export function DocsLibrary({
 													</button>
 												))}
 											</div>
+										)}
+										{popOutUrl && (
+											<Button
+												variant="ghost"
+												size="sm"
+												onClick={() => window.open(popOutUrl, '_blank', 'noopener')}
+												aria-label="Open in new tab"
+												data-testid="doc-popout"
+											>
+												<ExternalLink className="w-3.5 h-3.5" />
+											</Button>
 										)}
 										<Button variant="ghost" size="sm" onClick={() => setMode('edit')}>
 											Edit
