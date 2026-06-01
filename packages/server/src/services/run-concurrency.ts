@@ -58,3 +58,22 @@ export async function isProjectAtCapacityInDb(db: PGlite, projectId: string): Pr
 	const { limit, active } = await getProjectConcurrency(db, projectId);
 	return active >= limit;
 }
+
+/**
+ * Member ids with an active (queued/running) run anywhere in the project — the
+ * set whose per-agent dispatch slot is taken. The stateless run-now route uses
+ * this to mirror `JobManager.isAgentBusyInProject` minus its in-memory guard.
+ */
+export async function getBusyAgentIdsInProject(
+	db: PGlite,
+	projectId: string,
+): Promise<Set<string>> {
+	const res = await db.query<{ member_id: string }>(
+		`SELECT DISTINCT hr.member_id FROM heartbeat_runs hr
+		 JOIN tasks t ON t.id = hr.task_id
+		 WHERE t.project_id = $1
+		   AND hr.status IN ($2::heartbeat_run_status, $3::heartbeat_run_status)`,
+		[projectId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
+	);
+	return new Set(res.rows.map((r) => r.member_id));
+}

@@ -6,7 +6,11 @@ import { resolveActorMemberId, resolveTaskId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { isProjectAtCapacityInDb, isTaskBusyInDb } from '../services/run-concurrency';
+import {
+	getBusyAgentIdsInProject,
+	isProjectAtCapacityInDb,
+	isTaskBusyInDb,
+} from '../services/run-concurrency';
 import { recordWakeupCancelled, recordWakeupStarted } from '../services/task-events';
 
 const log = logger.child('routes');
@@ -59,9 +63,17 @@ queuedWakeupsRoutes.get('/teams/:teamId/tasks/:taskId/queued-wakeups', async (c)
 		projectAtCapacity = true;
 	}
 
+	// agent_busy is per-agent (each wakeup has its own member), so it lives on
+	// the wakeup rather than the shared dispatch state. One query for the whole
+	// project; per-wakeup is a set membership check.
+	const busyAgentIds = projectId
+		? await getBusyAgentIdsInProject(db, projectId)
+		: new Set<string>();
+
 	const wakeups = await Promise.all(
 		result.rows.map(async (w) => ({
 			...w,
+			agent_busy: busyAgentIds.has(w.member_id),
 			run_now_blocked: (await shouldDeferWakeupForBlockers(db, w.source, taskId))
 				? ('blocked_by_dependency' as const)
 				: null,
@@ -177,7 +189,7 @@ queuedWakeupsRoutes.post(
 			const messages: Record<string, string> = {
 				task_busy: 'This ticket already has a run in progress',
 				project_at_capacity: 'This project is at its concurrent-run limit',
-				agent_busy: 'This agent is already running in this project',
+				agent_busy: 'This agent is currently running on another task in this project',
 				blocked: 'This ticket is blocked by an open dependency',
 				not_queued: 'Wakeup is no longer queued and cannot be run',
 			};
