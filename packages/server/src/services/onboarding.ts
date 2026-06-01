@@ -1,15 +1,9 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { GoalStatus, type OnboardingStageKey, type OnboardingStageStatus } from '@hezo/shared';
+import type { OnboardingStageKey, OnboardingStageStatus } from '@hezo/shared';
 import { terminalStatusParams } from '../lib/sql';
 import { ONBOARDING_INTAKE_LABEL } from './onboarding-intake';
 
 export type { OnboardingStageKey, OnboardingStageStatus };
-
-export interface OnboardingGoalSummary {
-	id: string;
-	title: string;
-	status: string;
-}
 
 export interface OnboardingPrimaryProject {
 	id: string;
@@ -27,7 +21,6 @@ export interface OnboardingStatus {
 	current_stage: OnboardingStageKey;
 	stages: Record<OnboardingStageKey, OnboardingStageStatus>;
 	primary_project: OnboardingPrimaryProject | null;
-	goals: OnboardingGoalSummary[];
 }
 
 async function hasOpenIntakeLabel(db: PGlite, teamId: string, label: string): Promise<boolean> {
@@ -99,24 +92,11 @@ export async function getOnboardingStatus(db: PGlite, teamId: string): Promise<O
 
 	const currentStage: OnboardingStageKey = intakeOpen || !primaryProject ? 'intake' : 'done';
 
-	let goals: OnboardingGoalSummary[] = [];
-	if (primaryProject) {
-		const goalRows = await db.query<{ id: string; title: string; status: string }>(
-			`SELECT id, title, status::text
-			 FROM goals
-			 WHERE team_id = $1 AND project_id = $2 AND status = $3::goal_status
-			 ORDER BY created_at ASC`,
-			[teamId, primaryProject.id, GoalStatus.Active],
-		);
-		goals = goalRows.rows;
-	}
-
 	return {
 		show_welcome: !primaryProject,
 		current_stage: currentStage,
 		stages,
 		primary_project: primaryProject,
-		goals,
 	};
 }
 

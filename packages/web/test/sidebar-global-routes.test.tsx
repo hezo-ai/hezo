@@ -17,7 +17,7 @@ test('sidebar renders on /home with links pointing at the default team', async (
 	const nav = container.querySelector('nav') as HTMLElement;
 	expect(nav).toBeTruthy();
 	expect(nav.textContent).toMatch(/Inbox/);
-	expect(nav.textContent).toMatch(/Work/);
+	expect(nav.textContent).toMatch(/All Tasks/);
 	expect(nav.textContent).toMatch(/Projects/);
 	expect(nav.textContent).toMatch(/Team/);
 	expect(nav.textContent).toMatch(/Resources/);

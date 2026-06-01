@@ -202,8 +202,7 @@ Response:
       "hire_team": "pending",
       "start_project": "pending"
     },
-    "primary_project": null,
-    "goals": []
+    "primary_project": null
   }
 }
 ```

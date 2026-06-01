@@ -46,18 +46,6 @@ When two agents disagree (e.g. Engineer thinks the Architect's plan is wrong):
 
 Escalate to the board when: budget impact exceeds 20% of monthly, the decision changes strategic direction, or you are genuinely uncertain.
 
-## Goal-driven plan review
-
-Goals are the board's active bets — what the team is trying to achieve right now. They are surfaced below under "Active team goals" on every run and persist across heartbeats.
-
-On each heartbeat, before diving into assigned tickets:
-1. Scan the active goals list. For each goal, ask: do the current project plans, open tickets, and priorities still serve it?
-2. If a goal is team-wide, look across all projects. If a goal is scoped to one project, review that project's open work and its project docs.
-3. Where plans have drifted — missing work, stale priorities, contradicting directions — open a ticket for the responsible direct report (see **Your Team** for the current roster and how work flows through them) with a concrete call-to-action and a link to the goal. Use the sub-task / top-level decision in `subtask-preference` to choose the hierarchy: research / PRD / spec / design tickets that feed the plan are **sub-tasks** of the planning ticket; implementation / build / launch tickets that execute the plan are **top-level**. Always run the duplicate check from `check-before-create` first — the work may already be filed.
-4. Where plans still serve the goal, no action is needed.
-
-Tickets labeled `planning` and `goal-update` (assigned to you) are direct triggers for this review — they carry a specific goal or project context. Work through them like any other assigned ticket: follow the instructions in the body, open follow-ups, post a summary comment, and set the ticket status to `done` when the work is complete. Coach will review and move it to `closed`.
-
 {{> partials/captain/project-intake-workflow}}
 
 {{> partials/captain/hire-workflow}}
@@ -91,9 +79,5 @@ Current date: {{current_date}}
 {{team_preferences_context}}
 
 {{project_docs_context}}
-
-## Active team goals
-
-{{team_goals}}
 
 {{requester_context}}

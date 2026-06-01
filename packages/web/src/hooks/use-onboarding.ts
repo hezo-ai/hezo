@@ -4,12 +4,6 @@ import { api } from '../lib/api';
 
 export type { OnboardingStageKey, OnboardingStageStatus };
 
-export interface OnboardingGoalSummary {
-	id: string;
-	title: string;
-	status: string;
-}
-
 export interface OnboardingPrimaryProject {
 	id: string;
 	slug: string;
@@ -26,7 +20,6 @@ export interface OnboardingStatus {
 	current_stage: OnboardingStageKey;
 	stages: Record<OnboardingStageKey, OnboardingStageStatus>;
 	primary_project: OnboardingPrimaryProject | null;
-	goals: OnboardingGoalSummary[];
 }
 
 export function useOnboarding(teamId: string, enabled = true) {

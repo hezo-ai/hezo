@@ -197,32 +197,6 @@ export async function resolveSystemPrompt(
 		resolved = resolved.replace(/\{\{project_docs_context\}\}/g, docsText);
 	}
 
-	if (resolved.includes('{{team_goals}}')) {
-		const goals = await db.query<{
-			title: string;
-			description: string;
-			project_name: string | null;
-		}>(
-			`SELECT g.title, g.description,
-			        (SELECT name FROM projects p WHERE p.id = g.project_id) AS project_name
-			 FROM goals g
-			 WHERE g.team_id = $1 AND g.status = 'active'
-			 ORDER BY g.created_at DESC`,
-			[ctx.teamId],
-		);
-		const goalsText =
-			goals.rows.length === 0
-				? 'No active goals.'
-				: goals.rows
-						.map((g) => {
-							const scope = g.project_name ? `Project: ${g.project_name}` : 'Team-wide';
-							const desc = g.description?.trim() ? `\n  ${g.description}` : '';
-							return `- **${g.title}** _(${scope})_${desc}`;
-						})
-						.join('\n\n');
-		resolved = resolved.replace(/\{\{team_goals\}\}/g, goalsText);
-	}
-
 	resolved = resolved.replace(/\{\{requester_context\}\}/g, '');
 
 	if (ctx.mode === 'placeholders') {

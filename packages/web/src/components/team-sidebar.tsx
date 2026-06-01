@@ -48,19 +48,13 @@ export function TeamSidebar() {
 					count: inboxCount?.unread,
 					testId: 'sidebar-link-inbox',
 				},
-			],
-		},
-		{
-			title: 'Work',
-			items: [
 				{
 					to: '/teams/$teamId/tasks',
 					params,
-					label: 'Tasks',
+					label: 'All Tasks',
 					count: team?.open_task_count,
 					testId: 'sidebar-link-tasks',
 				},
-				{ to: '/teams/$teamId/goals', params, label: 'Goals' },
 			],
 		},
 		{

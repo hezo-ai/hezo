@@ -66,7 +66,6 @@ CREATE TYPE membership_role AS ENUM ('board', 'member');
 CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
 CREATE TYPE agent_type_source AS ENUM ('builtin', 'custom', 'remote');
 CREATE TYPE team_template_source AS ENUM ('builtin', 'custom', 'marketplace');
-CREATE TYPE goal_status AS ENUM ('active', 'achieved', 'archived');
 CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'google', 'deepseek', 'z_ai');
 CREATE TYPE ai_auth_method AS ENUM ('api_key', 'subscription');
 
@@ -440,26 +439,6 @@ CREATE INDEX idx_mcp_connections_pending_auth
 CREATE INDEX idx_mcp_connections_team ON mcp_connections(team_id);
 CREATE INDEX idx_mcp_connections_project ON mcp_connections(project_id);
 CREATE INDEX idx_mcp_connections_oauth ON mcp_connections(oauth_connection_id) WHERE oauth_connection_id IS NOT NULL;
-
--------------------------------------------------------------------------------
--- GOALS
--------------------------------------------------------------------------------
-
-CREATE TABLE goals (
-    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id              UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    project_id           UUID REFERENCES projects(id) ON DELETE CASCADE,
-    title                TEXT NOT NULL,
-    description          TEXT NOT NULL DEFAULT '',
-    status               goal_status NOT NULL DEFAULT 'active',
-    created_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
-    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX idx_goals_team ON goals(team_id);
-CREATE INDEX idx_goals_project ON goals(project_id);
-CREATE INDEX idx_goals_status  ON goals(status);
 
 -------------------------------------------------------------------------------
 -- TEAM SSH KEYS
