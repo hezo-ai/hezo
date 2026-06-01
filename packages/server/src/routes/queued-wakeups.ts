@@ -177,6 +177,7 @@ queuedWakeupsRoutes.post(
 			const messages: Record<string, string> = {
 				task_busy: 'This ticket already has a run in progress',
 				project_at_capacity: 'This project is at its concurrent-run limit',
+				agent_busy: 'This agent is already running in this project',
 				blocked: 'This ticket is blocked by an open dependency',
 				not_queued: 'Wakeup is no longer queued and cannot be run',
 			};
