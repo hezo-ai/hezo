@@ -43,24 +43,9 @@ export function TaskHeader({ task, teamId, taskProjectSlug }: TaskHeaderProps) {
 				{!task.has_active_run && task.queued_wakeup && (
 					<Badge color="blue" className="gap-1" data-testid="task-queued-badge">
 						<span className="inline-block w-1.5 h-1.5 rounded-full bg-accent-blue-text" />
-						{task.queued_wakeup.blocker_identifier && task.queued_wakeup.blocker_project_slug ? (
-							<>
-								Queued behind{' '}
-								<Link
-									to="/teams/$teamId/projects/$projectId/tasks/$taskId"
-									params={{
-										teamId,
-										projectId: task.queued_wakeup.blocker_project_slug,
-										taskId: task.queued_wakeup.blocker_identifier.toLowerCase(),
-									}}
-									className="underline"
-								>
-									{task.queued_wakeup.blocker_identifier}
-								</Link>
-							</>
-						) : (
-							'Run queued'
-						)}
+						{task.queued_wakeup.reason === 'project_at_capacity'
+							? 'Queued — project at capacity'
+							: 'Run queued'}
 					</Badge>
 				)}
 			</div>

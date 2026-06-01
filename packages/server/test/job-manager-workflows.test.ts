@@ -186,8 +186,9 @@ describe('JobManager workflow methods', () => {
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
 		});
 
-		it('records project_busy on a task wakeup when another task in the project is running', async () => {
+		it('records project_at_capacity on a task wakeup when the project is at its run limit', async () => {
 			const manager = createJobManager();
+			await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
 
 			const otherTaskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 				method: 'POST',
@@ -227,8 +228,8 @@ describe('JobManager workflow methods', () => {
 				[wakeupId],
 			);
 			expect(wakeup.rows[0].status).toBe(WakeupStatus.Queued);
-			expect(wakeup.rows[0].last_skipped_reason).toBe('project_busy');
-			expect(wakeup.rows[0].last_skipped_blocker_task_id).toBe(otherTask.id);
+			expect(wakeup.rows[0].last_skipped_reason).toBe('project_at_capacity');
+			expect(wakeup.rows[0].last_skipped_blocker_task_id).toBeNull();
 
 			const taskRes = await app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
 				headers: authHeader(token),
@@ -240,10 +241,10 @@ describe('JobManager workflow methods', () => {
 				} | null;
 			};
 			expect(task.queued_wakeup).not.toBeNull();
-			expect(task.queued_wakeup?.reason).toBe('project_busy');
-			expect(task.queued_wakeup?.blocker_identifier).toBe(otherTask.identifier);
+			expect(task.queued_wakeup?.reason).toBe('project_at_capacity');
 
 			manager.shutdown();
+			await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
 			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [otherTask.id]);
 		});
@@ -256,7 +257,7 @@ describe('JobManager workflow methods', () => {
 				   (member_id, team_id, source, status, payload, last_skipped_at,
 				    last_skipped_reason, created_at)
 				 VALUES ($1, $2, 'assignment', 'queued', $3::jsonb, now(),
-				         'project_busy', now() - interval '30 seconds')
+				         'project_at_capacity', now() - interval '30 seconds')
 				 RETURNING id`,
 				[agentId, teamId, JSON.stringify({ task_id: taskId, reason: 'unblocked' })],
 			);
@@ -1772,8 +1773,9 @@ describe('JobManager workflow methods', () => {
 	});
 
 	describe('per-project serialisation and cross-project parallelism', () => {
-		it('isProjectBusy returns true while another task in the same project is running', async () => {
+		it('isProjectAtCapacity returns true once running runs reach the limit', async () => {
 			const manager = createJobManager();
+			await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
 
 			const otherTaskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 				method: 'POST',
@@ -1792,26 +1794,55 @@ describe('JobManager workflow methods', () => {
 				[agentId, teamId, otherTaskId, HeartbeatRunStatus.Running],
 			);
 
-			const busy = await (manager as any).isProjectBusy(projectId);
+			const busy = await (manager as any).isProjectAtCapacity(projectId);
 			expect(busy).toBe(true);
 
 			await db.query(
 				"UPDATE heartbeat_runs SET status = 'succeeded', finished_at = now() WHERE task_id = $1",
 				[otherTaskId],
 			);
-			const busyAfter = await (manager as any).isProjectBusy(projectId);
+			const busyAfter = await (manager as any).isProjectAtCapacity(projectId);
 			expect(busyAfter).toBe(false);
 
 			manager.shutdown();
+			await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
 			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [otherTaskId]);
 			await db.query('DELETE FROM tasks WHERE id = $1', [otherTaskId]);
 		});
 
-		it('re-queues a wakeup when its project already has a different active run', async () => {
+		it('isProjectAtCapacity stays false while running runs are below the limit', async () => {
 			const manager = createJobManager();
+			await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
 
-			// Stand up a sibling project + task for this team so an unrelated active
-			// run in project A blocks a wakeup targeting another task in project A.
+			const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					project_id: projectId,
+					title: 'One of three slots',
+					assignee_id: agentId,
+				}),
+			});
+			const oneOfThree = (await taskRes.json()).data.id;
+			await db.query(
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
+				[agentId, teamId, oneOfThree, HeartbeatRunStatus.Running],
+			);
+
+			expect(await (manager as any).isProjectAtCapacity(projectId)).toBe(false);
+
+			manager.shutdown();
+			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [oneOfThree]);
+			await db.query('DELETE FROM tasks WHERE id = $1', [oneOfThree]);
+		});
+
+		it('re-queues a wakeup when its project is already at its run limit', async () => {
+			const manager = createJobManager();
+			await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
+
+			// An active run in project A at the limit blocks a wakeup targeting
+			// another task in project A.
 			const sibTaskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -1846,6 +1877,7 @@ describe('JobManager workflow methods', () => {
 			expect(status.rows[0].status).toBe(WakeupStatus.Queued);
 
 			manager.shutdown();
+			await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
 			await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [taskId]);
 			await db.query('DELETE FROM tasks WHERE id = $1', [sibTaskId]);
@@ -1853,6 +1885,7 @@ describe('JobManager workflow methods', () => {
 
 		it('the per-agent lock is gone: agent busy in project A does not block a wakeup for project B', async () => {
 			const manager = createJobManager();
+			await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
 
 			// Project B (sibling) with a task assigned to the same agent. We never
 			// dispatch on this one — we just need the row to exist so resolveProjectForTask
@@ -1874,10 +1907,10 @@ describe('JobManager workflow methods', () => {
 			const taskBId = (await taskBRes.json()).data.id;
 
 			// Pretend the agent is mid-run in project A by pre-populating the
-			// in-memory project lock. This is what activateAgent does synchronously
-			// before launchTask; using it directly here avoids spinning up a real
-			// runAgent that would then race with cleanup.
-			(manager as any).activeProjectRuns.add(projectId);
+			// in-memory project refcount. This is what activateAgent does
+			// synchronously before launchTask; using it directly here avoids spinning
+			// up a real runAgent that would then race with cleanup.
+			(manager as any).acquireProjectRun(projectId);
 			(manager as any).runningTasks.set(`${agentId}:${projectId}`, {
 				key: `${agentId}:${projectId}`,
 				abortController: new AbortController(),
@@ -1887,12 +1920,13 @@ describe('JobManager workflow methods', () => {
 			});
 
 			// The legacy per-agent check would have skipped this wakeup. The
-			// per-project check should not: project B has no active run.
+			// per-project capacity check should not: project B has no active run.
 			expect(manager.isMemberRunning(agentId)).toBe(true);
-			expect(await (manager as any).isProjectBusy(projectId)).toBe(true);
-			expect(await (manager as any).isProjectBusy(projectBId)).toBe(false);
+			expect(await (manager as any).isProjectAtCapacity(projectId)).toBe(true);
+			expect(await (manager as any).isProjectAtCapacity(projectBId)).toBe(false);
 
 			manager.shutdown();
+			await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
 			await db.query('DELETE FROM tasks WHERE id = $1', [taskBId]);
 			await db.query('DELETE FROM projects WHERE id = $1', [projectBId]);
 		});

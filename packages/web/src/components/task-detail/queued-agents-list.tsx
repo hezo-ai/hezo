@@ -19,9 +19,7 @@ interface QueuedAgentsListProps {
  */
 function runNowBlockReason(wakeup: QueuedWakeup, dispatch: QueuedDispatchState): string | null {
 	if (dispatch.task_busy) return 'This ticket already has a run in progress';
-	if (dispatch.project_busy) {
-		return `Project is busy — ${dispatch.blocker_task_identifier ?? 'another ticket'} is running`;
-	}
+	if (dispatch.project_at_capacity) return 'Project is at its concurrent-run limit';
 	if (wakeup.run_now_blocked === 'blocked_by_dependency') return 'Blocked by an open dependency';
 	return null;
 }

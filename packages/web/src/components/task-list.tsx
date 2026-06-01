@@ -57,7 +57,7 @@ interface TaskRow {
 	assignee_type: 'agent' | 'user' | null;
 	has_active_run: boolean;
 	queued_wakeup: {
-		reason: 'task_busy' | 'project_busy' | 'agent_running';
+		reason: 'task_busy' | 'project_at_capacity' | 'agent_running';
 		blocker_identifier: string | null;
 	} | null;
 }
@@ -185,16 +185,16 @@ export function TaskList({ teamId, projectId }: TaskListProps) {
 					{!row.has_active_run && row.queued_wakeup && (
 						<Tooltip
 							content={
-								row.queued_wakeup.blocker_identifier
-									? `Run queued — waiting on ${row.queued_wakeup.blocker_identifier}`
+								row.queued_wakeup.reason === 'project_at_capacity'
+									? 'Run queued — project at capacity'
 									: 'Run queued — waiting'
 							}
 						>
 							<span
 								role="img"
 								aria-label={
-									row.queued_wakeup.blocker_identifier
-										? `Run queued — waiting on ${row.queued_wakeup.blocker_identifier}`
+									row.queued_wakeup.reason === 'project_at_capacity'
+										? 'Run queued — project at capacity'
 										: 'Run queued — waiting'
 								}
 								data-testid="task-queued-dot"

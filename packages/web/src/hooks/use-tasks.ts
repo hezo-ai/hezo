@@ -5,7 +5,7 @@ import { queryClient } from '../lib/query-client';
 import { useOptimisticMutation } from './use-optimistic-mutation';
 
 export interface QueuedWakeup {
-	reason: 'task_busy' | 'project_busy' | 'agent_running';
+	reason: 'task_busy' | 'project_at_capacity' | 'agent_running';
 	since: string;
 	blocker_task_id: string | null;
 	blocker_identifier: string | null;

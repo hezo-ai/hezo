@@ -12,6 +12,7 @@ export interface Project {
 	task_prefix: string;
 	description: string;
 	is_internal?: boolean;
+	max_concurrent_runs: number;
 	docker_base_image: string | null;
 	container_id: string | null;
 	container_status: 'creating' | 'running' | 'stopping' | 'stopped' | 'error' | null;
@@ -106,7 +107,11 @@ export function useCreateProject(teamId: string) {
 }
 
 export function useUpdateProject(teamId: string, projectId: string) {
-	return useOptimisticMutation<{ name?: string; description?: string }, Project, Project>({
+	return useOptimisticMutation<
+		{ name?: string; description?: string; max_concurrent_runs?: number },
+		Project,
+		Project
+	>({
 		mutationFn: (data) => api.patch<Project>(`/api/teams/${teamId}/projects/${projectId}`, data),
 		queryKey: ['teams', teamId, 'projects', projectId],
 		applyOptimistic: (current, vars) => (current ? { ...current, ...vars } : current),

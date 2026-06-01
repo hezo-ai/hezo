@@ -15,6 +15,7 @@ function ProjectSettingsPage() {
 
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
+	const [maxRuns, setMaxRuns] = useState('1');
 	const [editing, setEditing] = useState(false);
 
 	if (!project) return null;
@@ -23,14 +24,18 @@ function ProjectSettingsPage() {
 		if (!project) return;
 		setName(project.name);
 		setDescription(project.description ?? '');
+		setMaxRuns(String(project.max_concurrent_runs));
 		setEditing(true);
 	}
 
 	async function handleSave(e: React.FormEvent) {
 		e.preventDefault();
+		const parsedMaxRuns = Number(maxRuns);
 		await updateProject.mutateAsync({
 			name: name.trim() || undefined,
 			description: description.trim(),
+			max_concurrent_runs:
+				Number.isInteger(parsedMaxRuns) && parsedMaxRuns >= 1 ? parsedMaxRuns : undefined,
 		});
 		setEditing(false);
 	}
@@ -48,6 +53,19 @@ function ProjectSettingsPage() {
 							onChange={(e) => setDescription(e.target.value)}
 							rows={4}
 						/>
+						<Input
+							label="Max concurrent runs"
+							type="number"
+							min={1}
+							className="w-28"
+							value={maxRuns}
+							onChange={(e) => setMaxRuns(e.target.value)}
+							data-testid="max-concurrent-runs-input"
+						/>
+						<p className="text-xs text-text-subtle -mt-1">
+							Agents that may run at once in this project. Different agents work different tickets
+							in parallel; one ticket still runs a single agent at a time.
+						</p>
 						<div className="flex gap-2">
 							<Button type="submit" size="sm" disabled={updateProject.isPending}>
 								{updateProject.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Save'}
@@ -67,6 +85,10 @@ function ProjectSettingsPage() {
 								<span className="text-text-muted">Description:</span> {project.description}
 							</div>
 						)}
+						<div data-testid="max-concurrent-runs-value">
+							<span className="text-text-muted">Max concurrent runs:</span>{' '}
+							{project.max_concurrent_runs}
+						</div>
 						<Button variant="ghost" size="sm" onClick={startEditing} className="mt-2">
 							Edit
 						</Button>

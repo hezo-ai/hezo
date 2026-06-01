@@ -108,6 +108,55 @@ test('cancel button discards edits', async () => {
 	expect(queryByText('Should Not Save')).toBeNull();
 });
 
+test('edits the per-project concurrency cap and persists it', async () => {
+	const projectName = uniqueName('Concurrency Project');
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+	let projectId = '';
+
+	const { findByRole, findByTestId, getByRole, ctx, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, {
+				name: projectName,
+				description: 'Concurrency settings.',
+			});
+			projectSlug = project.slug;
+			projectId = project.id;
+		},
+	});
+
+	await router.navigate({
+		to: '/teams/$teamId/projects/$projectId/settings',
+		params: { teamId: ws.team.slug, projectId: projectSlug },
+	});
+
+	// Read view shows the seeded default of 3.
+	const readValue = await findByTestId('max-concurrent-runs-value', undefined, { timeout: 8_000 });
+	expect(readValue.textContent).toContain('3');
+
+	await user.click(await findByRole('button', { name: 'Edit' }));
+	const input = (await findByTestId('max-concurrent-runs-input', undefined, {
+		timeout: 8_000,
+	})) as HTMLInputElement;
+	await user.clear(input);
+	await user.type(input, '5');
+	await user.click(getByRole('button', { name: 'Save' }));
+
+	// The optimistic mutation hits the real backend; the project row reflects it.
+	await waitFor(
+		async () => {
+			const row = await ctx.db.query<{ max_concurrent_runs: number }>(
+				'SELECT max_concurrent_runs FROM projects WHERE id = $1',
+				[projectId],
+			);
+			expect(row.rows[0]?.max_concurrent_runs).toBe(5);
+		},
+		{ timeout: 8_000 },
+	);
+});
+
 test('State A — no GitHub connection: shows Connect GitHub CTA', async () => {
 	const projectName = uniqueName('Settings Project');
 	let ws!: SeededWorkspace;

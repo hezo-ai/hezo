@@ -844,6 +844,23 @@ export function shellQuoteArg(arg: string): string {
 	return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
+// Serializes git operations that mutate a repo's shared .git store (clone,
+// fetch, worktree add) per project. Concurrent runs on the same project work in
+// separate per-task worktrees but share one .git per repo, so these brief setup
+// steps must not overlap or they race on git's index/ref locks. Keyed by
+// project id, so different projects never block one another.
+const projectGitLocks = new Map<string, Promise<unknown>>();
+function withProjectGitLock<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
+	const prev = projectGitLocks.get(projectId) ?? Promise.resolve();
+	const run = prev.then(() => fn());
+	const tail = run.catch(() => {});
+	projectGitLocks.set(projectId, tail);
+	void tail.then(() => {
+		if (projectGitLocks.get(projectId) === tail) projectGitLocks.delete(projectId);
+	});
+	return run;
+}
+
 async function prepareWorktrees(
 	deps: RunnerDeps,
 	project: ProjectInfo,
@@ -862,83 +879,85 @@ async function prepareWorktrees(
 		return { workingDir: '/workspace', designatedRepo: null };
 	}
 
-	emit('stdout', '(syncing repos...)\n');
-	const syncRes = await ensureProjectRepos(
-		deps.db,
-		deps.masterKeyManager,
-		{
-			id: project.id,
-			team_id: project.team_id,
-		},
-		deps.dataDir,
-		deps.sshAgentServer,
-		(stream, text) => emit(stream, `${text}\n`),
-	);
-	if (syncRes.cloned.length > 0) {
-		emit('stdout', `(cloned ${syncRes.cloned.length} repo(s) on demand)\n`);
-	}
-
-	if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null };
-
-	const workspaceRoot = getWorkspacePath(deps.dataDir, project.team_id, project.id);
-	const worktreesRoot = getWorktreesPath(deps.dataDir, project.team_id, project.id);
-	const taskWorktreeRoot = join(worktreesRoot, task.identifier);
-	mkdirSync(taskWorktreeRoot, { recursive: true });
-
-	const branchName = `hezo/${task.identifier}`;
-	const knownHostsPath = await ensureGithubKnownHosts(deps.dataDir);
-	const reposNeedingWorktree = repos.rows.filter(
-		(r) => !signal?.aborted && existsSync(join(workspaceRoot, r.short_name, '.git')),
-	);
-
-	if (reposNeedingWorktree.length > 0 && deps.sshAgentServer) {
-		await withHostAgentSocket(
-			deps.sshAgentServer,
-			project.team_id,
-			deps.dataDir,
-			async ({ sshAuthSock }) => {
-				for (const repo of reposNeedingWorktree) {
-					if (signal?.aborted) break;
-					const repoDir = join(workspaceRoot, repo.short_name);
-
-					emit('stdout', `git fetch ${repo.short_name}...\n`);
-					const fetchRes = await fetchRepo(repoDir, sshAuthSock, knownHostsPath);
-					if (fetchRes.success) {
-						emit('stdout', `git fetch ${repo.short_name} done\n`);
-					} else {
-						emit('stderr', `git fetch ${repo.short_name} failed: ${fetchRes.error ?? '?'}\n`);
-					}
-				}
+	return withProjectGitLock(project.id, async () => {
+		emit('stdout', '(syncing repos...)\n');
+		const syncRes = await ensureProjectRepos(
+			deps.db,
+			deps.masterKeyManager,
+			{
+				id: project.id,
+				team_id: project.team_id,
 			},
+			deps.dataDir,
+			deps.sshAgentServer,
+			(stream, text) => emit(stream, `${text}\n`),
 		);
-	}
-
-	for (const repo of repos.rows) {
-		if (signal?.aborted) break;
-		const repoDir = join(workspaceRoot, repo.short_name);
-		const worktreePath = join(taskWorktreeRoot, repo.short_name);
-
-		if (!existsSync(join(repoDir, '.git'))) {
-			emit('stderr', `(skipping worktree for ${repo.short_name} — not cloned)\n`);
-			continue;
+		if (syncRes.cloned.length > 0) {
+			emit('stdout', `(cloned ${syncRes.cloned.length} repo(s) on demand)\n`);
 		}
 
-		emit('stdout', `git worktree ${repo.short_name}...\n`);
-		const wt = await ensureTaskWorktree(repoDir, worktreePath, branchName);
-		if (!wt.success) {
-			emit('stderr', `git worktree for ${repo.short_name} failed: ${wt.error ?? 'unknown'}\n`);
-		} else if (wt.created) {
-			emit('stdout', `git worktree add ${repo.short_name} @ ${branchName}\n`);
+		if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null };
+
+		const workspaceRoot = getWorkspacePath(deps.dataDir, project.team_id, project.id);
+		const worktreesRoot = getWorktreesPath(deps.dataDir, project.team_id, project.id);
+		const taskWorktreeRoot = join(worktreesRoot, task.identifier);
+		mkdirSync(taskWorktreeRoot, { recursive: true });
+
+		const branchName = `hezo/${task.identifier}`;
+		const knownHostsPath = await ensureGithubKnownHosts(deps.dataDir);
+		const reposNeedingWorktree = repos.rows.filter(
+			(r) => !signal?.aborted && existsSync(join(workspaceRoot, r.short_name, '.git')),
+		);
+
+		if (reposNeedingWorktree.length > 0 && deps.sshAgentServer) {
+			await withHostAgentSocket(
+				deps.sshAgentServer,
+				project.team_id,
+				deps.dataDir,
+				async ({ sshAuthSock }) => {
+					for (const repo of reposNeedingWorktree) {
+						if (signal?.aborted) break;
+						const repoDir = join(workspaceRoot, repo.short_name);
+
+						emit('stdout', `git fetch ${repo.short_name}...\n`);
+						const fetchRes = await fetchRepo(repoDir, sshAuthSock, knownHostsPath);
+						if (fetchRes.success) {
+							emit('stdout', `git fetch ${repo.short_name} done\n`);
+						} else {
+							emit('stderr', `git fetch ${repo.short_name} failed: ${fetchRes.error ?? '?'}\n`);
+						}
+					}
+				},
+			);
 		}
-	}
 
-	const designated = project.designated_repo_id
-		? repos.rows.find((r) => r.id === project.designated_repo_id)
-		: null;
-	const primary = designated ?? repos.rows[0];
-	const workingDir = `/worktrees/${task.identifier}/${primary.short_name}`;
+		for (const repo of repos.rows) {
+			if (signal?.aborted) break;
+			const repoDir = join(workspaceRoot, repo.short_name);
+			const worktreePath = join(taskWorktreeRoot, repo.short_name);
 
-	return { workingDir, designatedRepo: primary ?? null };
+			if (!existsSync(join(repoDir, '.git'))) {
+				emit('stderr', `(skipping worktree for ${repo.short_name} — not cloned)\n`);
+				continue;
+			}
+
+			emit('stdout', `git worktree ${repo.short_name}...\n`);
+			const wt = await ensureTaskWorktree(repoDir, worktreePath, branchName);
+			if (!wt.success) {
+				emit('stderr', `git worktree for ${repo.short_name} failed: ${wt.error ?? 'unknown'}\n`);
+			} else if (wt.created) {
+				emit('stdout', `git worktree add ${repo.short_name} @ ${branchName}\n`);
+			}
+		}
+
+		const designated = project.designated_repo_id
+			? repos.rows.find((r) => r.id === project.designated_repo_id)
+			: null;
+		const primary = designated ?? repos.rows[0];
+		const workingDir = `/worktrees/${task.identifier}/${primary.short_name}`;
+
+		return { workingDir, designatedRepo: primary ?? null };
+	});
 }
 
 export interface MentionOpenTicket {

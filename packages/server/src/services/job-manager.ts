@@ -41,11 +41,7 @@ import type { EgressProxy } from './egress';
 import type { LogStreamBroker } from './log-stream-broker';
 import { detectOrphans } from './orphan-detector';
 import { ensureRepoSetupAction } from './repo-setup';
-import {
-	findBusyTaskOnProject as findBusyTaskOnProjectInDb,
-	isProjectBusyInDb,
-	isTaskBusyInDb,
-} from './run-concurrency';
+import { getProjectConcurrency, isTaskBusyInDb } from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
 import { recordStatusChange } from './task-events';
 import { absorbQueuedTaskWakeups, createWakeup } from './wakeup';
@@ -87,7 +83,7 @@ export type DispatchNowResult =
 	| { dispatched: true }
 	| {
 			dispatched: false;
-			reason: 'task_busy' | 'project_busy' | 'blocked' | 'not_queued' | 'not_found';
+			reason: 'task_busy' | 'project_at_capacity' | 'blocked' | 'not_queued' | 'not_found';
 	  };
 
 export interface JobManagerDeps {
@@ -125,11 +121,14 @@ export class JobManager {
 	// before launchTask, cleared in the launchTask finally. Closes the race window between
 	// dispatch and createHeartbeatRun where the DB-backed check is not yet authoritative.
 	private activeTaskRuns = new Set<string>();
-	// Projects whose container/workspace is currently held by a dispatched run.
-	// Same in-memory guard as activeTaskRuns, scoped at the project level so a
-	// second run cannot enter the project's shared workspace until the first
-	// releases. Tracked in parallel with activeTaskRuns in activateAgent.
-	private activeProjectRuns = new Set<string>();
+	// Refcount of dispatched runs per project, scoped at the project level so the
+	// number of concurrent runs entering a project's shared container never
+	// exceeds its configured ceiling. Incremented synchronously in activateAgent
+	// before launchTask and decremented in the launchTask finally — this closes
+	// the race window where the DB-backed count is not yet authoritative. A Set
+	// would be wrong here: with several runs in flight, the first to finish would
+	// free the guard for the rest.
+	private activeProjectRuns = new Map<string, number>();
 	private deps: JobManagerDeps;
 	private started = false;
 
@@ -174,10 +173,10 @@ export class JobManager {
 	/**
 	 * Dispatch a single queued wakeup immediately, bypassing the cron's
 	 * coalescing window. Applies the exact per-wakeup gating `processWakeups`
-	 * does — task busy, project busy, and source-gated dependency blockers — so
-	 * the two run rules and the scheduler's blocker policy stay respected. The
+	 * does — task busy, project at capacity, and source-gated dependency blockers
+	 * — so the run rules and the scheduler's blocker policy stay respected. The
 	 * in-memory `activeTaskRuns`/`activeProjectRuns` guards (checked inside
-	 * `isTaskBusy`/`isProjectBusy` and set synchronously by `activateAgent`)
+	 * `isTaskBusy`/`isProjectAtCapacity` and set synchronously by `activateAgent`)
 	 * make back-to-back calls race-safe. Returns a discriminated result the
 	 * route maps to 200 / 409 / 404.
 	 */
@@ -214,16 +213,15 @@ export class JobManager {
 				return { dispatched: false, reason: 'task_busy' };
 			}
 			const projectId = await this.resolveProjectForTask(wakeupTaskId);
-			if (projectId && (await this.isProjectBusy(projectId))) {
-				const busyTaskId = await this.findBusyTaskOnProject(projectId);
+			if (projectId && (await this.isProjectAtCapacity(projectId))) {
 				await this.markWakeupSkipped(
 					wakeup.id,
-					WakeupSkipReason.ProjectBusy,
+					WakeupSkipReason.ProjectAtCapacity,
 					wakeupTaskId,
 					wakeup.team_id,
-					busyTaskId,
+					null,
 				);
-				return { dispatched: false, reason: 'project_busy' };
+				return { dispatched: false, reason: 'project_at_capacity' };
 			}
 			if (await shouldDeferWakeupForBlockers(db, wakeup.source, wakeupTaskId)) {
 				await db.query(
@@ -607,13 +605,24 @@ export class JobManager {
 		return isTaskBusyInDb(this.deps.db, taskId);
 	}
 
-	private async isProjectBusy(projectId: string): Promise<boolean> {
-		if (this.activeProjectRuns.has(projectId)) return true;
-		return isProjectBusyInDb(this.deps.db, projectId);
+	private async isProjectAtCapacity(projectId: string): Promise<boolean> {
+		const { limit, active } = await getProjectConcurrency(this.deps.db, projectId);
+		// The in-memory refcount leads the DB during the dispatch window; once a
+		// run's row lands both refer to the same run, so `max` dedupes rather than
+		// double-counting. Using the larger of the two never under-counts, so the
+		// ceiling is never exceeded.
+		const inFlight = Math.max(this.activeProjectRuns.get(projectId) ?? 0, active);
+		return inFlight >= limit;
 	}
 
-	private findBusyTaskOnProject(projectId: string): Promise<string | null> {
-		return findBusyTaskOnProjectInDb(this.deps.db, projectId);
+	private acquireProjectRun(projectId: string): void {
+		this.activeProjectRuns.set(projectId, (this.activeProjectRuns.get(projectId) ?? 0) + 1);
+	}
+
+	private releaseProjectRun(projectId: string): void {
+		const next = (this.activeProjectRuns.get(projectId) ?? 0) - 1;
+		if (next > 0) this.activeProjectRuns.set(projectId, next);
+		else this.activeProjectRuns.delete(projectId);
 	}
 
 	private async markWakeupSkipped(
@@ -691,17 +700,14 @@ export class JobManager {
 					continue;
 				}
 				const projectId = await this.resolveProjectForTask(wakeupTaskId);
-				if (projectId && (await this.isProjectBusy(projectId))) {
-					log.debug(
-						`Skipping wakeup ${wakeup.id} — project ${projectId} already has an active run`,
-					);
-					const busyTaskId = await this.findBusyTaskOnProject(projectId);
+				if (projectId && (await this.isProjectAtCapacity(projectId))) {
+					log.debug(`Skipping wakeup ${wakeup.id} — project ${projectId} is at run capacity`);
 					await this.markWakeupSkipped(
 						wakeup.id,
-						WakeupSkipReason.ProjectBusy,
+						WakeupSkipReason.ProjectAtCapacity,
 						wakeupTaskId,
 						wakeup.team_id,
-						busyTaskId,
+						null,
 					);
 					continue;
 				}
@@ -950,13 +956,13 @@ export class JobManager {
 			task = tasks.rows[0];
 		}
 
-		// Per-task and per-project serialisation: only one agent runs on a given
-		// task at a time, and only one run is allowed per project at a time (the
-		// container/workspace is shared at the project level). Most blocked
-		// wakeups are filtered earlier by processWakeups; this guard catches
+		// Per-task serialisation plus the per-project concurrency ceiling: only one
+		// agent runs on a given task at a time, and no more than the project's
+		// configured limit of agents run concurrently in its shared container. Most
+		// blocked wakeups are filtered earlier by processWakeups; this guard catches
 		// heartbeat-style wakeups (no payload.task_id) where the chosen task is
-		// determined here, plus any race where the task or project became busy
-		// between the dispatcher check and now.
+		// determined here, plus any race where the task became busy or the project
+		// reached capacity between the dispatcher check and now.
 		if (await this.isTaskBusy({ task_id: task.id })) {
 			log.debug(
 				`Task ${ref(task.identifier, task.id)} already has an active run — re-queuing wakeup for ${ref(agent.rows[0].slug, memberId)}`,
@@ -969,9 +975,9 @@ export class JobManager {
 			}
 			return;
 		}
-		if (await this.isProjectBusy(task.project_id)) {
+		if (await this.isProjectAtCapacity(task.project_id)) {
 			log.debug(
-				`Project ${task.project_id} already has an active run — re-queuing wakeup for ${ref(agent.rows[0].slug, memberId)}`,
+				`Project ${task.project_id} is at run capacity — re-queuing wakeup for ${ref(agent.rows[0].slug, memberId)}`,
 			);
 			if (wakeupId) {
 				await db.query(
@@ -1140,7 +1146,7 @@ export class JobManager {
 		const taskKey = `${memberId}:${projectId}`;
 		const lockedTaskId = task.id;
 		this.activeTaskRuns.add(lockedTaskId);
-		this.activeProjectRuns.add(projectId);
+		this.acquireProjectRun(projectId);
 
 		// A run reads the full task context at boot, so any wakeup already queued
 		// for this agent+task is served by this run. Retire those siblings so they
@@ -1222,7 +1228,7 @@ export class JobManager {
 					return null;
 				} finally {
 					this.activeTaskRuns.delete(lockedTaskId);
-					this.activeProjectRuns.delete(projectId);
+					this.releaseProjectRun(projectId);
 					void trackBackground(this.guarded('wakeups', () => this.processWakeups()));
 				}
 			},
