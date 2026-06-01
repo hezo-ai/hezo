@@ -410,32 +410,6 @@ export const TeamTemplateSource = {
 } as const;
 export type TeamTemplateSource = (typeof TeamTemplateSource)[keyof typeof TeamTemplateSource];
 
-export const GoalStatus = {
-	Active: 'active',
-	Achieved: 'achieved',
-	Archived: 'archived',
-} as const;
-export type GoalStatus = (typeof GoalStatus)[keyof typeof GoalStatus];
-
-export const TERMINAL_GOAL_STATUSES = [GoalStatus.Achieved, GoalStatus.Archived] as const;
-
-export interface Goal {
-	id: string;
-	team_id: string;
-	project_id: string | null;
-	title: string;
-	description: string;
-	status: GoalStatus;
-	created_by_member_id: string | null;
-	created_at: string;
-	updated_at: string;
-}
-
-export interface GoalWithProject extends Goal {
-	project_name: string | null;
-	project_slug: string | null;
-}
-
 export interface SkillTemplateConfig {
 	name: string;
 	source_url: string;

@@ -1096,16 +1096,15 @@ Once set, `designated_repo_id` cannot be changed and the designated repo cannot 
 
 ## 7. Goal and project hierarchy
 
-Four-level hierarchy with full goal ancestry:
+Context flows down the hierarchy, with each task tracing its lineage to the team's objectives:
 
 ```
 Team Description
-  └── Project Goal
-        └── Agent Goal (implicit from assigned tasks)
-              └── Task / Task
+  └── Project (description / objectives)
+        └── Task / Task
 ```
 
-Every task carries context tracing back to the team description. Agents always know *what* to do and *why*. The goal chain is visible in the task detail sidebar.
+Every task carries context tracing back to the team description. Agents always know *what* to do and *why*. The context chain is visible in the task detail sidebar.
 
 ### Projects
 
@@ -1223,7 +1222,7 @@ Use a sub-task when the new work is a parallelisable slice of the parent's deliv
 
 The hierarchy is capped at depth 2 — top-level tickets can have sub-tasks, and each sub-task can have its own sub-tasks, but no further. The server enforces this on `POST .../sub-tasks` and on MCP `create_task` calls that set `parent_task_id`.
 
-**Planning tickets are never parents.** Tickets labeled `planning` or `goal-update` (Captain-owned plan-drafting tickets — the auto-created "Draft execution plan for …" ticket on project creation, or a goal-driven plan-review ticket) are by convention never used as `parent_task_id`. Milestone / report tickets spawned from a draft execution plan are top-level — each is the assignee's own first-class deliverable, not a slice of the plan. This convention is enforced in the agent prompts (`agents/_partials/common/mention-handoff.md`, `subtask-preference.md`, `captain/delegation-top-level.md`) and in the body of the auto-created planning ticket itself (`routes/projects.ts`). The closure rules above make the consequence concrete: nesting a report's ticket under a planning ticket would freeze the planning ticket's lifecycle to every report's work.
+**Planning tickets are never parents.** Tickets labeled `planning` (Captain-owned plan-drafting tickets — the auto-created "Draft execution plan for …" ticket on project creation) are by convention never used as `parent_task_id`. Milestone / report tickets spawned from a draft execution plan are top-level — each is the assignee's own first-class deliverable, not a slice of the plan. This convention is enforced in the agent prompts (`agents/_partials/common/mention-handoff.md`, `subtask-preference.md`, `captain/delegation-top-level.md`) and in the body of the auto-created planning ticket itself (`routes/projects.ts`). The closure rules above make the consequence concrete: nesting a report's ticket under a planning ticket would freeze the planning ticket's lifecycle to every report's work.
 
 ### Agent-to-agent communication
 
@@ -2092,9 +2091,7 @@ The UI uses a three-column layout: a narrow team icon rail on the far left, a si
 
 **Side Menu** (200px, visible when a team is selected):
 - Inbox (pending approvals — full page)
-- Work
-  - Tasks (team-level)
-  - Goals
+- All Tasks (team-level)
 - Projects (collapsible section; header links to the projects list, children are per-project links)
 - Team (collapsible section; header links to the team org chart page, children are per-agent links)
 - Resources
@@ -2110,10 +2107,8 @@ Team Rail → Team List (home)
 
 Team Rail → Team workspace (side menu)
         ├── Inbox (pending approvals)
-        ├── Work
-        │     ├── Tasks
-        │     │     └── Task detail (Comments)
-        │     └── Goals
+        ├── All Tasks
+        │     └── Task detail (Comments)
         ├── Projects (header links to projects list)
         │     └── Project detail (tabs)
         │           ├── Tasks tab (filtered)

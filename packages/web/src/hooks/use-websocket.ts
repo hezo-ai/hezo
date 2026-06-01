@@ -84,10 +84,6 @@ const TABLE_TO_QUERY_KEY: Record<
 	cost_entries: (cid) => [['teams', cid, 'costs']],
 	execution_locks: (cid) => [['teams', cid, 'execution-locks']],
 	repos: (cid) => [['teams', cid, 'projects']],
-	goals: (cid) => [
-		['teams', cid, 'goals'],
-		['teams', cid, 'onboarding'],
-	],
 };
 
 /** Invalidate TanStack Query caches for a realtime row_change event. */

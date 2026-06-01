@@ -23,11 +23,10 @@ test('sidebar shows all top-level sections with the expected nav links', async (
 
 	const nav = getNav(container);
 	expect(within(nav).getByText('Inbox', { exact: true })).toBeTruthy();
-	expect(within(nav).getByText('Work', { exact: true })).toBeTruthy();
 	expect(within(nav).getByText('Projects', { exact: true })).toBeTruthy();
 	expect(within(nav).getByText('Team', { exact: true })).toBeTruthy();
 	expect(within(nav).getByText('Resources', { exact: true })).toBeTruthy();
-	expect(within(nav).getByRole('link', { name: 'Tasks' })).toBeTruthy();
+	expect(within(nav).getByRole('link', { name: 'All Tasks' })).toBeTruthy();
 	expect(within(nav).getByRole('link', { name: 'Projects' })).toBeTruthy();
 	expect(within(nav).getByRole('link', { name: 'Team' })).toBeTruthy();
 });
