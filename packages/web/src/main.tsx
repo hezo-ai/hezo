@@ -12,6 +12,10 @@ declare module '@tanstack/react-router' {
 	interface Register {
 		router: typeof router;
 	}
+	interface StaticDataRouteOption {
+		// Routes that render full-viewport without the global app shell.
+		bare?: boolean;
+	}
 }
 
 createRoot(document.getElementById('root') as HTMLElement).render(

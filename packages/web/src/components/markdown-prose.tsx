@@ -1,10 +1,12 @@
 import { Link } from '@tanstack/react-router';
+import { ExternalLink } from 'lucide-react';
 import { useMemo } from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAgents } from '../hooks/use-agents';
 import { useDocMentions } from '../hooks/use-mentions';
 import { useTaskMentions } from '../hooks/use-tasks';
+import { docPreviewPath } from '../lib/doc-preview';
 import {
 	type AgentMentionData,
 	extractDocCandidates,
@@ -157,25 +159,37 @@ export function MarkdownProse({
 				const docFilename = attrs['data-mention-doc-filename'];
 				if (docProject && docFilename && teamId) {
 					return (
-						<Tooltip
-							content={
-								<DocTooltipContent
-									title={docFilename}
-									size={Number(attrs['data-mention-size'] ?? 0)}
-									updatedAt={attrs['data-mention-updated-at'] ?? ''}
-								/>
-							}
-						>
-							<Link
-								to="/teams/$teamId/projects/$projectId/documents"
-								params={{ teamId, projectId: docProject }}
-								search={{ file: docFilename }}
-								className={MENTION_CLASSES}
-								data-testid="doc-mention-link"
+						<span className="inline-flex items-baseline gap-0.5">
+							<Tooltip
+								content={
+									<DocTooltipContent
+										title={docFilename}
+										size={Number(attrs['data-mention-size'] ?? 0)}
+										updatedAt={attrs['data-mention-updated-at'] ?? ''}
+									/>
+								}
 							>
-								{props.children}
-							</Link>
-						</Tooltip>
+								<Link
+									to="/teams/$teamId/projects/$projectId/documents"
+									params={{ teamId, projectId: docProject }}
+									search={{ file: docFilename }}
+									className={MENTION_CLASSES}
+									data-testid="doc-mention-link"
+								>
+									{props.children}
+								</Link>
+							</Tooltip>
+							<a
+								href={docPreviewPath(teamId, docProject, docFilename)}
+								target="_blank"
+								rel="noopener noreferrer"
+								aria-label="Open preview in new tab"
+								data-testid="doc-mention-preview-link"
+								className="text-accent-blue-text hover:underline"
+							>
+								<ExternalLink className="w-3 h-3" />
+							</a>
+						</span>
 					);
 				}
 

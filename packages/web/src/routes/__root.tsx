@@ -1,5 +1,5 @@
 import { QueryClientProvider } from '@tanstack/react-query';
-import { createRootRoute, Outlet, useNavigate } from '@tanstack/react-router';
+import { createRootRoute, Outlet, useMatches, useNavigate } from '@tanstack/react-router';
 import { ChevronsLeft, ChevronsRight, Menu, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { MasterKeyGate } from '../components/master-key-gate';
@@ -84,6 +84,12 @@ function ShellLayout() {
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const { data: teams } = useTeams();
 	useShellWebSockets(teams);
+	const matches = useMatches();
+	const bare = matches.some((m) => m.staticData?.bare);
+
+	// Bare routes (e.g. the standalone document preview) render full-viewport
+	// without the team rail, sidebar, or mobile drawer.
+	if (bare) return <Outlet />;
 
 	return (
 		<div className="h-screen flex flex-row overflow-hidden">
