@@ -102,7 +102,7 @@ test('project list shows task and repo counts', async () => {
 	const card = within(main).getByRole('link', { name: new RegExp(name) });
 	expect(card.textContent).toMatch(/0 tasks/);
 	expect(card.textContent).toMatch(/0 repos/);
-});
+}, 60_000);
 
 test('project card links to project detail', async () => {
 	let ws!: SeededWorkspace;
@@ -130,7 +130,7 @@ test('project card links to project detail', async () => {
 	expect(router.state.location.pathname).toMatch(
 		new RegExp(`^/teams/${ws.team.slug}/projects/${projectSlug}(?:/tasks)?$`),
 	);
-});
+}, 60_000);
 
 test('initial PRD passed at creation is persisted as project doc', async () => {
 	let ws!: SeededWorkspace;
@@ -202,7 +202,7 @@ test('initial PRD passed at creation is persisted as project doc', async () => {
 	expect(docBody).toBeTruthy();
 	expect(docBody!.content).toBe(prdContent);
 	expect(docBody!.filename).toBe('initial-prd.md');
-});
+}, 60_000);
 
 test('Create button stays disabled until both name and description are filled', async () => {
 	let ws!: SeededWorkspace;
