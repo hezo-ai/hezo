@@ -174,11 +174,11 @@ describe('EgressProxy', () => {
 		}
 	}, 30_000);
 
-	it('terminates HTTPS via the shared SNI MITM server and substitutes a header placeholder', async () => {
-		// Exercises the CONNECT → internal MITM TLS server path that forceSNI
-		// reshapes. The agent's TLS terminates on a proxy-minted leaf (signed by
-		// the Hezo CA), the placeholder is substituted, then the request is
-		// re-encrypted to the upstream — all without a container.
+	it('terminates HTTPS via the internal MITM server and substitutes a header placeholder', async () => {
+		// Exercises the CONNECT → internal MITM TLS server path. The agent's TLS
+		// terminates on a proxy-minted leaf (signed by the Hezo CA), the
+		// placeholder is substituted, then the request is re-encrypted to the
+		// upstream — all without a container.
 		const httpsProxy = new EgressProxy({
 			db,
 			masterKeyManager,

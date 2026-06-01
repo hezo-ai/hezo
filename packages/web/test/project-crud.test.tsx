@@ -1,4 +1,4 @@
-import { within } from '@testing-library/react';
+import { waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import {
@@ -82,7 +82,7 @@ test('project list shows the default (Internal) project', async () => {
 test('project list shows task and repo counts', async () => {
 	let ws!: SeededWorkspace;
 	const name = uniqueName('Count Test');
-	const { findByText, router } = await renderApp({
+	const { router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			ws = await seedWorkspace();
@@ -96,10 +96,17 @@ test('project list shows task and repo counts', async () => {
 		params: { teamId: ws.team.slug },
 	});
 
-	// Scope to <main> — the same project name appears in the sidebar nav.
-	await findByText(name, undefined, { timeout: 15_000 });
-	const main = document.querySelector('main') as HTMLElement;
-	const card = within(main).getByRole('link', { name: new RegExp(name) });
+	// Scope to <main> — the same project name appears in the sidebar nav, so an
+	// unscoped query races the two renders and can match both. Wait for <main>
+	// to mount and contain the card link before asserting.
+	const card = await waitFor(
+		() => {
+			const main = document.querySelector('main');
+			if (!main) throw new Error('main not mounted yet');
+			return within(main).getByRole('link', { name: new RegExp(name) });
+		},
+		{ timeout: 15_000 },
+	);
 	expect(card.textContent).toMatch(/0 tasks/);
 	expect(card.textContent).toMatch(/0 repos/);
 }, 60_000);

@@ -2,7 +2,7 @@
 
 ## Commands
 
-- `bun run test` — server unit/integration (vitest) + web component tier (vitest) + browser (Playwright), in that order
+- `bun run test` — server unit/integration (vitest, Node) + server Bun-native tier (`bun test`) + web component tier (vitest) + browser (Playwright), in that order
 - `bun run test --skip-browser` — drop Playwright; runs server + web vitest only (~30s)
 - `bun run test --browser` — Playwright only
 - `bun run test --pattern <substring>` — filter by file-path substring (works across all tiers; combine with `--browser` to narrow browser tests)
@@ -18,6 +18,7 @@
 - One vitest file: `cd packages/<pkg> && bunx vitest run <path>` (e.g. `cd packages/web && bunx vitest run test/task-comments.test.tsx`). Same flags as `bun run test`.
 - Filter by test name: `bunx vitest run <path> -t '<substring>'`.
 - Watch mode while iterating: drop `run` (`bunx vitest <path>`).
+- One Bun-native file: `cd packages/server && bun test ./test/bun/<spec>.bun.test.ts` (must run under `bun test`, never vitest).
 - One Playwright spec: `bunx playwright test test/browser/<spec>.spec.ts` from the root.
 - Headed Playwright for debugging: `bunx playwright test --headed --debug test/browser/<spec>.spec.ts`.
 
@@ -39,13 +40,14 @@ Pre-v1: modify `packages/server/migrations/001_initial_schema.sql` in place and 
 
 ## Testing
 
-All changes ship with tests that exercise functionality (not "code runs without throwing"). Prefer integration over heavily-mocked unit tests. Three tiers:
+All changes ship with tests that exercise functionality (not "code runs without throwing"). Prefer integration over heavily-mocked unit tests. Four tiers:
 
 | Tier | Where | Run cost | What it tests | When to use |
 |---|---|---|---|---|
 | Server unit/integration | `packages/server/test/**/*.test.ts` | ~ms each | API handlers, DB queries, services, MCP tools, agent run plumbing. Each test boots a fresh PGlite + Hono app via `createTestContext()`. | Everything backend. |
 | Web component | `packages/web/test/**/*.test.tsx` | ~100-700ms each | React tree rendered in happy-dom against an **in-process** Hono + PGlite backend via `renderApp()` in `packages/web/test/helpers/render.tsx`. Asserts on DOM, forms, React Query refetches, navigation, mention rendering. Stubs WebSocket (`reconnecting-websocket`'s constructor checks) and `IntersectionObserver`. | Anything render-driven that doesn't depend on a real browser layout engine or WebSocket stream. ~80% of what would otherwise be a browser test. |
 | Playwright browser | `test/browser/**/*.spec.ts` | ~10-30s each | Real Chromium. Mobile viewport (responsive checks at 375px), drag-drop file events, `boundingBox()` / sticky positioning, Virtuoso virtualization windows + scroll, scroll-to-bottom buttons, real `clientHeight`/`scrollHeight` comparisons, real WebSocket-streamed logs, the master-key gate flow before any token is set. | The thin slice that genuinely needs the browser. Default: write a component test instead. |
+| Bun-native runtime | `packages/server/test/bun/**/*.bun.test.ts` | ~ms each | Code whose behaviour diverges between Node and Bun, exercised on the **production Bun runtime** via `bun test` (not vitest, which runs under Node). Today: the egress proxy's TLS MITM path. Imports `bun:test`; reuses the server helpers (`createTestApp`, etc.). | Anything that relies on runtime-specific `node:` API behaviour (TLS, `net`, `crypto`, `child_process`) where a Node-only test would give false confidence. |
 
 ### Server unit/integration rules
 
@@ -55,6 +57,15 @@ All changes ship with tests that exercise functionality (not "code runs without 
 - Always `destroyTestContext()` in `afterAll` (resource leak otherwise).
 - Pure logic tests (crypto, parsing) can call functions directly.
 - GitHub OAuth/repo/SSH-key tests use the local simulator at `packages/server/test/helpers/github-sim.ts` — set `GITHUB_API_BASE_URL` and `GITHUB_OAUTH_BASE_URL` before the test context boots.
+
+### Bun-native runtime rules
+
+The server runs on **Bun** in dev/prod, but vitest runs on **Node** (`bunx vitest` resolves vitest's `#!/usr/bin/env node` shebang, and the forks pool spawns Node workers). So a green vitest run says nothing about runtime-specific `node:` API behaviour under Bun — Bun's `https.Server` has no `addContext` and ignores `SNICallback`, and its TLS verifies the upstream cert against the `Host` header. Vitest can't be flipped to Bun (`bunx --bun vitest` breaks module interop — `import { z } from 'zod'` resolves to `undefined`). So runtime-sensitive code gets a Bun-native tier instead.
+
+- Files are `packages/server/test/bun/**/*.bun.test.ts`, import from `bun:test`, and run via `bun test test/bun/`. `bun run test --package server` runs them automatically after the vitest suite; `--pattern bun` narrows to this tier.
+- They are **excluded from vitest** (`vitest.config.ts` `exclude: ['test/bun/**']`) — vitest's `test/**/*.test.ts` glob would otherwise import `bun:test` and fail.
+- Reuse the existing server helpers — `createTestApp`, `loadOrCreateCA`, `mintCertFromCA`, `encrypt` all import cleanly under Bun (no vitest coupling). `bun:test`'s `expect` is close to vitest's but not identical; keep assertions simple.
+- Default to a normal vitest test. Reach here only when the assertion depends on `node:` runtime behaviour that differs between Node and Bun (TLS, `net`, `crypto`, `child_process`) and a Node-only test would pass while production breaks.
 
 ### Web component rules
 

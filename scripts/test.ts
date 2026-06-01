@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Command } from 'commander';
 
@@ -83,6 +84,27 @@ async function runVitestForPackage(pkg: string): Promise<boolean> {
 	return passed;
 }
 
+async function runBunNativeForPackage(pkg: string): Promise<boolean> {
+	const bunDir = resolve(ROOT, pkg, 'test/bun');
+	if (!existsSync(bunDir)) return true;
+
+	console.log(`\n── Running ${pkg} Bun-native tier (bun test test/bun/) ──`);
+	const start = Date.now();
+	const proc = Bun.spawn(['bun', 'test', 'test/bun/'], {
+		cwd: resolve(ROOT, pkg),
+		stdout: 'inherit',
+		stderr: 'inherit',
+		env: { ...process.env, NODE_ENV: 'test' },
+	});
+	const exitCode = await proc.exited;
+	const duration = Date.now() - start;
+	const passed = exitCode === 0;
+	console.log(
+		`\n${pkg} (Bun-native): ${passed ? 'passed' : 'FAILED'} (${(duration / 1000).toFixed(1)}s)`,
+	);
+	return passed;
+}
+
 async function runBrowserTests(): Promise<boolean> {
 	console.log('\n── Browser Tests ──');
 	const playwrightArgs = ['playwright', 'test'];
@@ -114,11 +136,24 @@ async function main() {
 			process.exit(1);
 		}
 
+		// The Bun-native tier runs under `bun test` (production runtime). Its
+		// files live in test/bun/ and contain "bun" in their path, so honour
+		// --pattern by running it only when no pattern is set or the pattern
+		// targets that tier.
+		const runBunNative = !pattern || pattern.includes('bun');
+
 		for (const pkg of packages) {
 			const passed = await runVitestForPackage(pkg);
 			if (!passed) {
 				integrationPassed = false;
 				if (bail) break;
+			}
+			if (runBunNative) {
+				const bunPassed = await runBunNativeForPackage(pkg);
+				if (!bunPassed) {
+					integrationPassed = false;
+					if (bail) break;
+				}
 			}
 		}
 	}
