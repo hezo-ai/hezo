@@ -278,7 +278,7 @@ describe('@board fan-out via MCP create_comment', () => {
 });
 
 describe('GET /teams/:teamId/inbox/mentions', () => {
-	it('returns the caller-scoped unread mentions only', async () => {
+	it('returns the caller-scoped active mentions', async () => {
 		const taskIdLocal = await insertTask(captainId, 'Inbox listing test');
 		const { token: agentToken } = await mintAgentToken(
 			db,
@@ -304,8 +304,8 @@ describe('GET /teams/:teamId/inbox/mentions', () => {
 		expect(data[0].read_at).toBeNull();
 	});
 
-	it('omits read mentions by default but includes them with include_read=true', async () => {
-		const taskIdLocal = await insertTask(captainId, 'Read filter test');
+	it('returns active (non-archived) mentions by default; archived=true returns only archived', async () => {
+		const taskIdLocal = await insertTask(captainId, 'Archive filter test');
 		const { token: agentToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -313,24 +313,84 @@ describe('GET /teams/:teamId/inbox/mentions', () => {
 			teamId,
 			taskIdLocal,
 		);
-		const commentId = await mcpComment(agentToken, taskIdLocal, '@board check this.');
+		const readCommentId = await mcpComment(agentToken, taskIdLocal, '@board read but active.');
+		const archivedCommentId = await mcpComment(agentToken, taskIdLocal, '@board archived already.');
 
 		await db.query(
 			`UPDATE board_mentions SET read_at = now() WHERE comment_id = $1 AND user_id = $2`,
-			[commentId, testAdminUserId],
+			[readCommentId, testAdminUserId],
+		);
+		await db.query(
+			`UPDATE board_mentions SET read_at = now(), archived_at = now()
+			 WHERE comment_id = $1 AND user_id = $2`,
+			[archivedCommentId, testAdminUserId],
 		);
 
-		const unreadOnly = await app.request(`/api/teams/${teamId}/inbox/mentions`, {
+		const active = await app.request(`/api/teams/${teamId}/inbox/mentions`, {
 			headers: authHeader(token),
 		});
-		const unread = (await unreadOnly.json()).data as Array<{ comment_id: string }>;
-		expect(unread.some((m) => m.comment_id === commentId)).toBe(false);
+		const activeRows = (await active.json()).data as Array<{ comment_id: string }>;
+		// A read-but-not-archived mention stays in the default view; archived is hidden.
+		expect(activeRows.some((m) => m.comment_id === readCommentId)).toBe(true);
+		expect(activeRows.some((m) => m.comment_id === archivedCommentId)).toBe(false);
 
-		const withRead = await app.request(`/api/teams/${teamId}/inbox/mentions?include_read=true`, {
+		const archivedRes = await app.request(`/api/teams/${teamId}/inbox/mentions?archived=true`, {
 			headers: authHeader(token),
 		});
-		const all = (await withRead.json()).data as Array<{ comment_id: string }>;
-		expect(all.some((m) => m.comment_id === commentId)).toBe(true);
+		const archivedRows = (await archivedRes.json()).data as Array<{ comment_id: string }>;
+		expect(archivedRows.some((m) => m.comment_id === archivedCommentId)).toBe(true);
+		expect(archivedRows.some((m) => m.comment_id === readCommentId)).toBe(false);
+	});
+});
+
+describe('GET /teams/:teamId/inbox/count', () => {
+	it('counts the caller-unread mentions plus pending approvals', async () => {
+		await db.query('DELETE FROM approvals WHERE team_id = $1', [teamId]);
+
+		const taskIdLocal = await insertTask(captainId, 'Count test');
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			architectId,
+			teamId,
+			taskIdLocal,
+		);
+		await mcpComment(agentToken, taskIdLocal, '@board first decision.');
+		const readComment = await mcpComment(agentToken, taskIdLocal, '@board second decision.');
+		await db.query(
+			`UPDATE board_mentions SET read_at = now() WHERE comment_id = $1 AND user_id = $2`,
+			[readComment, testAdminUserId],
+		);
+
+		await db.query(
+			`INSERT INTO approvals (team_id, type, requested_by_member_id, payload, status)
+			 VALUES ($1, 'strategy'::approval_type, $2, '{}'::jsonb, 'pending'::approval_status),
+			        ($1, 'strategy'::approval_type, $2, '{}'::jsonb, 'approved'::approval_status)`,
+			[teamId, architectId],
+		);
+
+		const res = await app.request(`/api/teams/${teamId}/inbox/count`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const data = (await res.json()).data as { unread: number };
+		// One unread mention (the read one is excluded) plus one pending approval.
+		expect(data.unread).toBe(2);
+	});
+
+	it('rejects non-board auth', async () => {
+		const taskIdLocal = await insertTask(captainId, 'Count auth test');
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			architectId,
+			teamId,
+			taskIdLocal,
+		);
+		const res = await app.request(`/api/teams/${teamId}/inbox/count`, {
+			headers: authHeader(agentToken),
+		});
+		expect(res.status).toBe(403);
 	});
 });
 
@@ -412,5 +472,73 @@ describe('reserved agent slug "board"', () => {
 		expect(res.status).toBe(201);
 		const body = (await res.json()) as { data: { slug: string } };
 		expect(body.data.slug).toBe('board-member');
+	});
+});
+
+describe('archiveOldInboxItems sweep', () => {
+	async function seedMention(readAtSql: string): Promise<string> {
+		const taskIdLocal = await insertTask(captainId, `Sweep ${Math.random()}`);
+		const comment = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, $2, 'text'::comment_content_type, '{"text":"sweep"}'::jsonb)
+			 RETURNING id`,
+			[taskIdLocal, architectId],
+		);
+		const mention = await db.query<{ id: string }>(
+			`INSERT INTO board_mentions (team_id, task_id, comment_id, user_id, read_at)
+			 VALUES ($1, $2, $3, $4, ${readAtSql})
+			 RETURNING id`,
+			[teamId, taskIdLocal, comment.rows[0].id, testAdminUserId],
+		);
+		return mention.rows[0].id;
+	}
+
+	async function seedApproval(status: string, resolvedAtSql: string): Promise<string> {
+		const r = await db.query<{ id: string }>(
+			`INSERT INTO approvals (team_id, type, requested_by_member_id, payload, status, resolved_at)
+			 VALUES ($1, 'strategy'::approval_type, $2, '{}'::jsonb, $3::approval_status, ${resolvedAtSql})
+			 RETURNING id`,
+			[teamId, architectId, status],
+		);
+		return r.rows[0].id;
+	}
+
+	const mentionArchived = async (id: string) =>
+		(
+			await db.query<{ archived_at: string | null }>(
+				'SELECT archived_at FROM board_mentions WHERE id = $1',
+				[id],
+			)
+		).rows[0].archived_at;
+	const approvalArchived = async (id: string) =>
+		(
+			await db.query<{ archived_at: string | null }>(
+				'SELECT archived_at FROM approvals WHERE id = $1',
+				[id],
+			)
+		).rows[0].archived_at;
+
+	it('archives only seen items past the retention window, and is idempotent', async () => {
+		await db.query('DELETE FROM approvals WHERE team_id = $1', [teamId]);
+
+		const oldMention = await seedMention(`now() - interval '40 days'`);
+		const recentMention = await seedMention(`now() - interval '10 days'`);
+		const unreadMention = await seedMention('NULL');
+		const oldApproval = await seedApproval('approved', `now() - interval '40 days'`);
+		const recentApproval = await seedApproval('denied', `now() - interval '10 days'`);
+		const pendingApproval = await seedApproval('pending', 'NULL');
+
+		const { archiveOldInboxItems } = await import('../src/services/inbox-archive');
+		const archived = await archiveOldInboxItems(db, 30);
+		expect(archived).toBe(2);
+
+		expect(await mentionArchived(oldMention)).not.toBeNull();
+		expect(await mentionArchived(recentMention)).toBeNull();
+		expect(await mentionArchived(unreadMention)).toBeNull();
+		expect(await approvalArchived(oldApproval)).not.toBeNull();
+		expect(await approvalArchived(recentApproval)).toBeNull();
+		expect(await approvalArchived(pendingApproval)).toBeNull();
+
+		expect(await archiveOldInboxItems(db, 30)).toBe(0);
 	});
 });

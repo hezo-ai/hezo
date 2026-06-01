@@ -54,8 +54,12 @@ const TABLE_TO_QUERY_KEY: Record<
 		['teams', cid, 'projects'],
 		['teams', cid, 'onboarding'],
 	],
-	approvals: (cid) => [['teams', cid, 'approvals'], ['approvals'], ['approvals', 'pending']],
-	board_mentions: (cid) => [['teams', cid, 'inbox-mentions'], ['inbox-mentions']],
+	approvals: (cid) => [['teams', cid, 'approvals'], ['teams', cid, 'inbox-count'], ['approvals']],
+	board_mentions: (cid) => [
+		['teams', cid, 'inbox-mentions'],
+		['teams', cid, 'inbox-count'],
+		['inbox-mentions'],
+	],
 	documents: (cid, row) => {
 		switch (row.type) {
 			case 'project_doc':

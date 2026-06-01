@@ -109,6 +109,8 @@ export interface JobManagerDeps {
 const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
 const WAKEUP_CRON = process.env.HEZO_WAKEUP_CRON ?? '*/5 * * * * *';
 const HEARTBEAT_CRON = process.env.HEZO_HEARTBEAT_CRON ?? '*/5 * * * * *';
+const INBOX_ARCHIVE_CRON = process.env.HEZO_INBOX_ARCHIVE_CRON ?? '0 0 3 * * *';
+const INBOX_RETENTION_DAYS = Number(process.env.HEZO_INBOX_RETENTION_DAYS ?? 30);
 // Lower bound on how often a heartbeat can fire, regardless of an agent's
 // configured `heartbeat_interval_min`. Defends against misconfigured low/zero
 // intervals producing a tight 5-second-cron loop on the same agent.
@@ -344,6 +346,11 @@ export class JobManager {
 			cron: '*/30 * * * * *',
 			log: cronLog,
 			onTick: () => this.guarded('embeddings', () => this.processEmbeddingQueue()),
+		});
+		this.cron.createJob('inbox-archive', {
+			cron: INBOX_ARCHIVE_CRON,
+			log: cronLog,
+			onTick: () => this.guarded('inbox-archive', () => this.archiveInboxItems()),
 		});
 		log.info('Job manager started.');
 	}
@@ -1593,6 +1600,14 @@ export class JobManager {
 		const count = await processPendingEmbeddings(this.deps.db);
 		if (count > 0) {
 			log.debug(`Processed ${count} embedding(s)`);
+		}
+	}
+
+	private async archiveInboxItems(): Promise<void> {
+		const { archiveOldInboxItems } = await import('./inbox-archive');
+		const count = await archiveOldInboxItems(this.deps.db, INBOX_RETENTION_DAYS);
+		if (count > 0) {
+			log.debug(`Archived ${count} inbox item(s)`);
 		}
 	}
 }

@@ -12,10 +12,17 @@ approvalsRoutes.get('/teams/:teamId/approvals', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const statusFilter = c.req.query('status') || ApprovalStatus.Pending;
+	const archivedParam = c.req.query('archived');
+	const archivedClause =
+		archivedParam === 'true'
+			? ' AND a.archived_at IS NOT NULL'
+			: archivedParam === 'false'
+				? ' AND a.archived_at IS NULL'
+				: '';
 
 	const result = await db.query(
 		`SELECT a.id, a.team_id, a.type, a.status, a.payload, a.resolution_note,
-            a.resolved_at, a.created_at,
+            a.resolved_at, a.archived_at, a.created_at,
             co.name AS team_name,
             co.slug AS team_slug,
             COALESCE(ma.title, m.display_name) AS requested_by_name,
@@ -36,7 +43,7 @@ approvalsRoutes.get('/teams/:teamId/approvals', async (c) => {
      WHERE a.team_id = $1 AND a.status IN (${statusFilter
 				.split(',')
 				.map((_, i) => `$${i + 2}::approval_status`)
-				.join(', ')})
+				.join(', ')})${archivedClause}
      ORDER BY a.created_at DESC`,
 		[teamId, ...statusFilter.split(',').map((s) => s.trim())],
 	);

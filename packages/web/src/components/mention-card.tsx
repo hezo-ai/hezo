@@ -42,15 +42,24 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 	};
 
 	const author = mention.author_slug ? `@${mention.author_slug}` : mention.author_display_name;
+	const unread = !mention.read_at;
 
 	return (
 		<button
 			type="button"
 			onClick={handleClick}
-			className={linkCardClass}
+			className={`${linkCardClass}${unread ? ' border-l-2 border-l-primary bg-bg-subtle' : ''}`}
 			data-testid="mention-card"
+			data-unread={unread}
 		>
 			<div className="flex items-center gap-2 mb-1.5 flex-wrap">
+				{unread && (
+					<span
+						role="img"
+						aria-label="Unread"
+						className="w-2 h-2 rounded-full bg-primary shrink-0"
+					/>
+				)}
 				<Badge color="blue">
 					<MessageSquare className="w-3 h-3 mr-1 inline" />
 					mention
