@@ -54,21 +54,40 @@ jobs:
       # The workflow-runs API rolls all CI jobs into one conclusion, which is
       # exactly the "last build on main passed" semantic we want. Uses the
       # built-in token (the job has actions:read) so the app needs no Actions perm.
+      #
+      # We WAIT for an in-flight run rather than failing fast: triggering Release
+      # right after a merge (while that commit's CI is still running) is normal,
+      # so poll until the run for this SHA reaches a terminal state, then require
+      # success. Also tolerates the brief window where the run hasn't registered.
       - name: Verify CI passed for HEAD
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           sha="$(git rev-parse HEAD)"
-          echo "Checking CI conclusion for $sha"
-          conclusion="$(gh run list \
-            --workflow=ci.yml \
-            --branch=main \
-            --commit="$sha" \
-            --json conclusion,headSha \
-            --jq 'map(select(.headSha=="'"$sha"'")) | first | .conclusion')"
-          echo "CI conclusion: '${conclusion}'"
+          deadline=$(( $(date +%s) + 3600 )) # wait up to 60m (test-browser alone is ~40m)
+          status=""
+          conclusion=""
+          while :; do
+            info="$(gh run list \
+              --workflow=ci.yml \
+              --branch=main \
+              --commit="$sha" \
+              --json status,conclusion,headSha \
+              --jq 'map(select(.headSha=="'"$sha"'")) | first | "\(.status)|\(.conclusion)"' || true)"
+            status="${info%%|*}"
+            conclusion="${info##*|}"
+            echo "CI for $sha: status='${status}' conclusion='${conclusion}'"
+            if [ "$status" = "completed" ]; then
+              break
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::Timed out waiting for CI on $sha to complete (last status: '${status:-none}'). Aborting release."
+              exit 1
+            fi
+            sleep 30
+          done
           if [ "$conclusion" != "success" ]; then
-            echo "::error::CI for $sha did not conclude successfully (got: '${conclusion}'). Aborting release."
+            echo "::error::CI for $sha concluded '${conclusion}', not success. Aborting release."
             exit 1
           fi
 
