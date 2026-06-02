@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0 - 2026-06-02
+
+### Features
+
+- **release:** always cut a release on manual dispatch ([#113](https://github.com/hezo-ai/hezo/pull/113))
+
+### Other
+
+- Add update notifications and self-contained binary support ([#112](https://github.com/hezo-ai/hezo/pull/112))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.1.0...0.2.0
+
 ## 0.1.0 - 2026-06-02
 
 ### Features
