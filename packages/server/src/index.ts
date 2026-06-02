@@ -2,7 +2,7 @@ import './console-shim';
 import type { PGlite } from '@electric-sql/pglite';
 import { AuthType, DEFAULT_WEB_PORT } from '@hezo/shared';
 import { app } from './app';
-import { parseArgs } from './cli';
+import { parseArgs, runRestore } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
 import { logger } from './logger';
 import { loadAdminAuth, verifyToken } from './middleware/auth';
@@ -60,6 +60,11 @@ process.on('uncaughtException', (err) => {
 
 interface WsConnectionData extends WsData {
 	_token?: string;
+}
+
+// `hezo restore <backup>` runs and exits before any server startup.
+if (await runRestore()) {
+	process.exit(0);
 }
 
 const config = parseArgs();

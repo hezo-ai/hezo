@@ -9,6 +9,8 @@ dist/
 .turbo/
 migrations-bundle.json
 agents-bundle.json
+static-bundle.json
+packages/server/src/generated/
 packages/server/static/
 *.db
 .hezo/
@@ -21,5 +23,7 @@ packages/*/src/**/*.js
 packages/*/src/**/*.js.map
 packages/*/src/**/*.d.ts
 packages/*/src/**/*.d.ts.map
+# Hand-written ambient module declarations (not compiled output) — keep tracked.
+!packages/server/src/asset-modules.d.ts
 .http-mitm-proxy/
 .claude/plans/

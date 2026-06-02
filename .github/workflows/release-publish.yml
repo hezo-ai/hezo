@@ -36,6 +36,13 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
       - run: bun install --frozen-lockfile
 
+      # Bun cross-compiles every platform from this one Linux runner. Each
+      # binary embeds the frontend, migrations, agent roles, and version, so
+      # the artifacts are fully self-contained. macOS binaries are unsigned —
+      # see CHANGELOG/docs for the Gatekeeper quarantine note.
+      - name: Build release binaries
+        run: bun run build:release
+
       - name: Tag and publish the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -55,4 +62,5 @@ jobs:
           git push origin "refs/tags/${version}"
 
           bun run release --notes "$version" > /tmp/release-notes.md
-          gh release create "$version" --title "$version" --notes-file /tmp/release-notes.md
+          gh release create "$version" --title "$version" --notes-file /tmp/release-notes.md \
+            dist/binaries/*

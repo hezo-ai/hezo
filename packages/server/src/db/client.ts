@@ -41,10 +41,22 @@ export async function openPersistentDb(
 	mkdirSync(dataDir, { recursive: true });
 
 	const { NodeFS } = await import('@electric-sql/pglite/nodefs');
+	const { loadPgliteAssets } = await import('./pglite-assets');
+
+	// In the compiled binary, PGlite's WASM/data assets are embedded and injected
+	// from memory; in dev this is null and PGlite resolves them from node_modules.
+	const assets = await loadPgliteAssets(dataDir);
 
 	for (let attempt = 0; attempt < 2; attempt++) {
 		try {
-			const db = new PGlite({ fs: new NodeFS(pgDataPath), extensions: { vector } });
+			const db = assets
+				? new PGlite({
+						fs: new NodeFS(pgDataPath),
+						extensions: { vector: assets.vectorExtension },
+						wasmModule: assets.wasmModule,
+						fsBundle: assets.fsBundle,
+					})
+				: new PGlite({ fs: new NodeFS(pgDataPath), extensions: { vector } });
 			await db.query('SELECT 1');
 			return db;
 		} catch (err) {

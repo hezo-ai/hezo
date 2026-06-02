@@ -48,38 +48,42 @@ export async function runMigrations(db: PGlite, migrations: Record<string, strin
 	}
 }
 
-export async function loadBundledMigrations(): Promise<Record<string, string>> {
-	const { unzip, list } = await import('@hiddentao/zip-json');
-	const { readFile, mkdir, rm } = await import('node:fs/promises');
-	const { join } = await import('node:path');
-	const { tmpdir } = await import('node:os');
-
-	const currentDir = new URL('.', import.meta.url).pathname;
-	const bundlePath = join(currentDir, 'migrations-bundle.json');
-	// biome-ignore lint/suspicious/noExplicitAny: JSON.parse returns unknown, zip-json expects its own type
-	let archive: any;
+/** Bundled migration filenames (sorted) not yet recorded in `_migrations`. */
+export async function getPendingMigrations(
+	db: PGlite,
+	migrations: Record<string, string>,
+): Promise<string[]> {
+	let appliedSet = new Set<string>();
 	try {
-		archive = JSON.parse(await readFile(bundlePath, 'utf-8'));
+		const applied = await db.query<{ filename: string }>('SELECT filename FROM _migrations');
+		appliedSet = new Set(applied.rows.map((r) => r.filename));
+	} catch {
+		// `_migrations` doesn't exist yet → a brand-new DB, everything is pending.
+	}
+	return Object.keys(migrations)
+		.sort()
+		.filter((f) => !appliedSet.has(f));
+}
+
+export async function loadBundledMigrations(): Promise<Record<string, string>> {
+	// A *literal* dynamic import is statically analyzable, so `bun build --compile`
+	// embeds the JSON into the binary's virtual FS. A runtime `readFile` of a
+	// sibling path is NOT embedded (it resolves to `/$bunfs/root/...` and ENOENTs).
+	// In dev (`bun run`) the file may be absent — the import rejects and the caller
+	// falls back to `loadFilesystemMigrations`.
+	let mod: { default: Record<string, string> };
+	try {
+		mod = (await import('./migrations-bundle.json')) as { default: Record<string, string> };
 	} catch {
 		throw new Error("Failed to load migration bundle. Run 'bun run build:migrations' first.");
 	}
-
-	const files = list(archive);
-	const tmpExtractDir = join(tmpdir(), `hezo-migrations-${Date.now()}`);
-	await mkdir(tmpExtractDir, { recursive: true });
-
-	try {
-		await unzip(archive, { outputDir: tmpExtractDir });
-		const migrations: Record<string, string> = {};
-		await Promise.all(
-			files.map(async (file: { path: string }) => {
-				migrations[file.path] = await readFile(join(tmpExtractDir, file.path), 'utf-8');
-			}),
-		);
-		return migrations;
-	} finally {
-		await rm(tmpExtractDir, { recursive: true, force: true });
+	// An empty stub (written by `scripts/ensure-bundles.ts` so tsc/vite can
+	// resolve the literal import) means the bundle was never generated — treat it
+	// as absent so the caller falls back to the filesystem.
+	if (Object.keys(mod.default).length === 0) {
+		throw new Error('Migration bundle is empty. Run "bun run build:migrations" first.');
 	}
+	return mod.default;
 }
 
 export async function loadFilesystemMigrations(

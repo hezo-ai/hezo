@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createMemoryDb } from '../src/db/client';
-import { runMigrations } from '../src/db/migrate';
+import { getPendingMigrations, runMigrations } from '../src/db/migrate';
 import { safeClose } from './helpers';
 
 describe('migration runner', () => {
@@ -62,6 +62,27 @@ describe('migration runner', () => {
 			expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('001_test.sql'));
 		} finally {
 			logSpy.mockRestore();
+			await safeClose(db);
+		}
+	});
+
+	it('reports pending migrations before and after applying', async () => {
+		const db = await createMemoryDb();
+		try {
+			const migrations = {
+				'001_a.sql': 'CREATE TABLE a (id SERIAL PRIMARY KEY);',
+				'002_b.sql': 'CREATE TABLE b (id SERIAL PRIMARY KEY);',
+			};
+
+			// No `_migrations` table yet → everything pending, sorted.
+			expect(await getPendingMigrations(db, migrations)).toEqual(['001_a.sql', '002_b.sql']);
+
+			await runMigrations(db, { '001_a.sql': migrations['001_a.sql'] });
+			expect(await getPendingMigrations(db, migrations)).toEqual(['002_b.sql']);
+
+			await runMigrations(db, migrations);
+			expect(await getPendingMigrations(db, migrations)).toEqual([]);
+		} finally {
 			await safeClose(db);
 		}
 	});
