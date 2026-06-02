@@ -88,12 +88,28 @@ jobs:
           NOTES: ${{ steps.release.outputs.changelog }}
         run: |
           branch="release/${VERSION}"
+
+          # Supersede any prior, still-open release PR. A release branch is
+          # generated and disposable: if you need more commits in a release you
+          # land them on main and re-run this workflow, which should replace the
+          # stale PR rather than collide with it. Close every open release/* PR
+          # (deleting its head branch), then make sure our target branch is gone
+          # remotely so the push + gh pr create below start clean — even when the
+          # recomputed version matches the stale one (same branch name).
+          stale="$(gh pr list --state open --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("release/")) | .number')"
+          for pr in $stale; do
+            echo "Superseding stale release PR #${pr}"
+            gh pr close "$pr" --delete-branch || true
+          done
+          git push origin --delete "$branch" 2>/dev/null || true
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
           git add -A
           git commit -m "chore(release): ${VERSION}"
-          git push -u origin "$branch" --force-with-lease
+          git push -u origin "$branch"
 
           # Idempotent label so the PR is easy to filter / for publish gating.
           gh label create release --color 0e8a16 --description "Release PR" --force || true
