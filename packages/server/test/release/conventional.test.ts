@@ -72,9 +72,10 @@ describe('parseCommit', () => {
 		expect(c.breaking).toBe(false);
 	});
 
-	it('still extracts a PR number from a non-conventional subject', () => {
-		const c = parseCommit({ subject: 'Merge pull request stuff (#42)', body: '', hash: 'h' });
+	it('extracts the PR number and strips it from a non-conventional subject', () => {
+		const c = parseCommit({ subject: 'Add update notifications (#42)', body: '', hash: 'h' });
 		expect(c.type).toBe('');
 		expect(c.pr).toBe(42);
+		expect(c.description).toBe('Add update notifications');
 	});
 });

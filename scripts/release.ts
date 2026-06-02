@@ -164,14 +164,16 @@ try {
 const prev = previousTag();
 const commits = collectCommits(prev);
 const auto = computeBump(commits);
-const bump = applyOverride(auto, override);
+let bump = applyOverride(auto, override);
 
+// A manual release dispatch should always cut a release. When nothing
+// releasable is detected (e.g. only chore(release) commits since the last tag),
+// fall back to a patch bump rather than aborting.
 if (bump === 'none') {
-	console.error(
-		`No releasable commits since ${prev ?? 'the start of history'}. ` +
-			'Use --release-type to force a release.',
+	console.warn(
+		`No releasable commits since ${prev ?? 'the start of history'}; defaulting to a patch release.`,
 	);
-	process.exit(1);
+	bump = 'patch';
 }
 
 const base = prev ?? '0.0.0';
