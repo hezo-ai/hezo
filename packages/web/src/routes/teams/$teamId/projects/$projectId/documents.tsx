@@ -1,4 +1,4 @@
-import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
+import { INTERNAL_PROJECT_SLUG, isMarkdownDocSlug } from '@hezo/shared';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -65,7 +65,6 @@ function ProjectDocumentsPage() {
 	}, [agentsMd, docs]);
 
 	const docContent = isAgentsMd ? (agentsMd?.content ?? null) : (doc?.content ?? null);
-	const docFormat = file && !isAgentsMd && /\.html?$/i.test(file) ? 'html' : 'markdown';
 
 	function selectFile(key: string | null) {
 		navigate({
@@ -100,7 +99,6 @@ function ProjectDocumentsPage() {
 			docContent={docContent}
 			isLoadingDoc={isLoadingDoc}
 			docTitle={isAgentsMd ? 'AGENTS.md' : (file ?? undefined)}
-			docFormat={docFormat}
 			onSave={handleSave}
 			isSaving={updateDoc.isPending || updateAgentsMd.isPending}
 			onDelete={handleDelete}
@@ -179,14 +177,12 @@ function NewProjectDocForm({
 	const [content, setContent] = useState('');
 	const [error, setError] = useState<string | null>(null);
 
-	const isHtml = /\.html?$/i.test(filename.trim());
-
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		const name = filename.trim();
-		if (!/^[a-z0-9][a-z0-9._-]*\.(md|html?)$/i.test(name)) {
+		if (!isMarkdownDocSlug(name)) {
 			setError(
-				'Filename must end with .md or .html and contain only letters, digits, dot, dash, underscore',
+				'Filename must end with .md and contain only letters, digits, dot, dash, underscore',
 			);
 			return;
 		}
@@ -199,7 +195,7 @@ function NewProjectDocForm({
 			<h2 className="text-base font-semibold">New document</h2>
 			<Input
 				label="Filename"
-				placeholder="notes.md or mockup.html"
+				placeholder="notes.md"
 				value={filename}
 				onChange={(e) => setFilename(e.target.value)}
 				required
@@ -207,7 +203,7 @@ function NewProjectDocForm({
 			<MentionTextarea
 				teamId={teamId}
 				projectSlug={projectSlug}
-				label={isHtml ? 'Content (HTML)' : 'Content (Markdown)'}
+				label="Content (Markdown)"
 				value={content}
 				onChange={(e) => setContent(e.target.value)}
 				className="min-h-[300px] font-mono text-xs"

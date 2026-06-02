@@ -21,17 +21,13 @@ async function seedDoc(
 	});
 }
 
-const HTML_BODY =
-	'<!DOCTYPE html><html><head><style>h1{color:red}</style></head><body><h1>Mockup heading</h1></body></html>';
-
-test('renders an .html project doc in a sandboxed preview iframe with a source toggle', async () => {
+test('the New Document form rejects non-markdown filenames', async () => {
 	let ctx!: { teamSlug: string; projectSlug: string };
-	const { container, findByText, getByText, user, router } = await renderApp({
+	const { findByText, findByPlaceholderText, getByRole, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			const project = await seedProject(ws, { name: 'Docs Demo' });
-			await seedDoc(ws, project, 'ui-mockups.html', HTML_BODY);
+			const project = await seedProject(ws, { name: 'MD Only' });
 			ctx = { teamSlug: ws.team.slug, projectSlug: project.slug };
 		},
 	});
@@ -39,28 +35,22 @@ test('renders an .html project doc in a sandboxed preview iframe with a source t
 	await router.navigate({
 		to: '/teams/$teamId/projects/$projectId/documents',
 		params: { teamId: ctx.teamSlug, projectId: ctx.projectSlug },
-		search: { file: 'ui-mockups.html' },
 	});
 
-	// Preview is the default: a sandboxed iframe carrying the doc in srcDoc.
-	await findByText('ui-mockups.html');
-	const iframe = await waitForIframe(container);
-	expect(iframe.getAttribute('sandbox')).toBe('allow-scripts');
-	expect(iframe.getAttribute('srcdoc')).toContain('Mockup heading');
+	await user.click(await findByText('New document'));
+	await user.type(await findByPlaceholderText('notes.md'), 'mockup.html');
+	await user.click(getByRole('button', { name: 'Create' }));
 
-	// Flipping to Source swaps the iframe for the raw HTML text.
-	await user.click(getByText('source'));
-	await findByText(HTML_BODY, { exact: false });
-	expect(container.querySelector('iframe')).toBeNull();
+	await findByText(/must end with \.md/i);
 });
 
-test('renders an .md project doc as markdown, not an iframe', async () => {
+test('a markdown project doc renders as markdown, not an iframe', async () => {
 	let ctx!: { teamSlug: string; projectSlug: string };
 	const { container, findByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			const project = await seedProject(ws, { name: 'Docs Demo MD' });
+			const project = await seedProject(ws, { name: 'MD Render' });
 			await seedDoc(ws, project, 'notes.md', '# Hello markdown');
 			ctx = { teamSlug: ws.team.slug, projectSlug: project.slug };
 		},
@@ -75,12 +65,3 @@ test('renders an .md project doc as markdown, not an iframe', async () => {
 	await findByText('Hello markdown');
 	expect(container.querySelector('iframe')).toBeNull();
 });
-
-async function waitForIframe(container: HTMLElement): Promise<HTMLIFrameElement> {
-	for (let i = 0; i < 50; i++) {
-		const el = container.querySelector('iframe');
-		if (el) return el as HTMLIFrameElement;
-		await new Promise((r) => setTimeout(r, 20));
-	}
-	throw new Error('iframe never appeared');
-}

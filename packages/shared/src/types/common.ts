@@ -116,6 +116,8 @@ export const ATTACHMENT_EXTENSIONS = {
 	jpg: 'image/jpeg',
 	jpeg: 'image/jpeg',
 	gif: 'image/gif',
+	webp: 'image/webp',
+	svg: 'image/svg+xml',
 	mp3: 'audio/mpeg',
 	opus: 'audio/opus',
 	aac: 'audio/aac',
@@ -129,6 +131,35 @@ export type AttachmentExtension = keyof typeof ATTACHMENT_EXTENSIONS;
 export const ATTACHMENT_MIME_ALLOWLIST: ReadonlySet<string> = new Set(
 	Object.values(ATTACHMENT_EXTENSIONS),
 );
+
+// Content types that can carry active script and must never be served inline on
+// our own origin — a top-level navigation to one would execute as us (stored
+// XSS). They are served as a forced download instead. Rendering them inside an
+// <img> tag (as the asset gallery does) is still safe: browsers disable scripting
+// for image-loaded SVGs.
+export const ASSET_INLINE_UNSAFE_MIME: ReadonlySet<string> = new Set(['image/svg+xml']);
+
+export function assetContentDisposition(contentType: string): 'inline' | 'attachment' {
+	return ASSET_INLINE_UNSAFE_MIME.has(contentType) ? 'attachment' : 'inline';
+}
+
+// Normalize an uploaded filename into a link-safe identity. This is the name an
+// asset is referenced by (`assets/<name>.<ext>`) so it must match the mention
+// parser's asset rule: start with an alphanumeric, then `[A-Za-z0-9._-]`.
+export function normalizeAssetFilename(name: string): string {
+	const base = name.split(/[/\\]/).pop() ?? name;
+	const cleaned = base
+		.replace(/[^A-Za-z0-9._-]+/g, '-')
+		.replace(/-+/g, '-')
+		.replace(/^[._-]+/, '')
+		.replace(/-(\.[^.]*)$/, '$1');
+	return cleaned.length > 0 ? cleaned : 'file';
+}
+
+// Project docs are markdown-only. Other file types live in the assets library.
+export function isMarkdownDocSlug(name: string): boolean {
+	return /^[a-z0-9][a-z0-9._-]*\.md$/i.test(name);
+}
 
 export function extensionOf(filename: string): string | null {
 	const dot = filename.lastIndexOf('.');
@@ -151,6 +182,19 @@ export interface CommentAttachment {
 	byte_size: number;
 	original_filename: string;
 	url: string;
+}
+
+// A project-scoped asset as surfaced in the project Assets library. `url` is a
+// freshly-signed, time-limited read URL; `comment_attachment_count` is how many
+// task comments reference this asset (used to warn before deletion).
+export interface ProjectAsset {
+	id: string;
+	content_type: string;
+	byte_size: number;
+	original_filename: string;
+	created_at: string;
+	url: string;
+	comment_attachment_count: number;
 }
 
 export const CredentialKind = {

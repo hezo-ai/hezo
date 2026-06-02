@@ -1,6 +1,5 @@
 import { ArrowLeft, ExternalLink, FileText, Loader2, Plus, Trash2 } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { HtmlPreview } from './html-preview';
 import { MarkdownProse } from './markdown-prose';
 import { MentionTextarea } from './mention-textarea';
 import { Button } from './ui/button';
@@ -25,8 +24,6 @@ interface DocsLibraryProps {
 	isLoadingDoc?: boolean;
 	/** Heading shown for the loaded doc; falls back to the items entry or selectedKey. */
 	docTitle?: ReactNode;
-	/** Controls how the doc body renders in view mode. Defaults to markdown. */
-	docFormat?: 'markdown' | 'html';
 
 	onSave: (content: string) => Promise<void> | void;
 	isSaving?: boolean;
@@ -56,7 +53,6 @@ export function DocsLibrary({
 	docContent,
 	isLoadingDoc,
 	docTitle,
-	docFormat = 'markdown',
 	onSave,
 	isSaving,
 	onDelete,
@@ -71,7 +67,6 @@ export function DocsLibrary({
 	projectSlug,
 }: DocsLibraryProps) {
 	const [mode, setMode] = useState<'view' | 'edit'>('view');
-	const [viewFormat, setViewFormat] = useState<'preview' | 'source'>('preview');
 	const [modeKey, setModeKey] = useState<string | null>(selectedKey);
 	const [draft, setDraft] = useState('');
 	const [deleteOpen, setDeleteOpen] = useState(false);
@@ -80,7 +75,6 @@ export function DocsLibrary({
 	if (modeKey !== selectedKey) {
 		setModeKey(selectedKey);
 		setMode('view');
-		setViewFormat('preview');
 	}
 
 	useEffect(() => {
@@ -187,24 +181,6 @@ export function DocsLibrary({
 							<div className="flex items-center gap-2 shrink-0">
 								{mode === 'view' ? (
 									<>
-										{docFormat === 'html' && (
-											<div className="flex items-center rounded-radius-md border border-border p-0.5">
-												{(['preview', 'source'] as const).map((fmt) => (
-													<button
-														key={fmt}
-														type="button"
-														onClick={() => setViewFormat(fmt)}
-														className={`px-2 py-0.5 text-[12px] rounded-radius-sm capitalize transition-colors ${
-															viewFormat === fmt
-																? 'bg-bg-subtle text-text'
-																: 'text-text-muted hover:text-text'
-														}`}
-													>
-														{fmt}
-													</button>
-												))}
-											</div>
-										)}
 										{popOutUrl && (
 											<Button
 												variant="ghost"
@@ -246,22 +222,9 @@ export function DocsLibrary({
 						</div>
 
 						{mode === 'view' ? (
-							docFormat === 'html' ? (
-								viewFormat === 'preview' ? (
-									<HtmlPreview
-										html={docContent || ''}
-										title={String(docTitle ?? 'Document preview')}
-									/>
-								) : (
-									<pre className="overflow-auto rounded-radius-md border border-border bg-bg-muted p-3 text-xs font-mono text-text whitespace-pre-wrap break-words">
-										{docContent || ''}
-									</pre>
-								)
-							) : (
-								<MarkdownProse teamId={teamId} projectSlug={projectSlug}>
-									{docContent || '_(empty)_'}
-								</MarkdownProse>
-							)
+							<MarkdownProse teamId={teamId} projectSlug={projectSlug}>
+								{docContent || '_(empty)_'}
+							</MarkdownProse>
 						) : (
 							<MentionTextarea
 								teamId={teamId}

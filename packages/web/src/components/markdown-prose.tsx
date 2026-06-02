@@ -9,6 +9,7 @@ import { useTaskMentions } from '../hooks/use-tasks';
 import { docPreviewPath } from '../lib/doc-preview';
 import {
 	type AgentMentionData,
+	type AssetMentionData,
 	extractDocCandidates,
 	extractTaskCandidates,
 	type KbDocMentionData,
@@ -90,11 +91,24 @@ export function MarkdownProse({
 		return m;
 	}, [resolvedDocs]);
 
+	const assetsMap = useMemo<Map<string, AssetMentionData>>(() => {
+		const m = new Map<string, AssetMentionData>();
+		if (!resolvedDocs) return m;
+		for (const a of resolvedDocs.assets) {
+			m.set(a.filename, { id: a.id, contentType: a.content_type, signedUrl: a.signed_url });
+		}
+		return m;
+	}, [resolvedDocs]);
+
 	const remarkPlugins = useMemo<RemarkPlugin>(() => {
 		const plugins: NonNullable<RemarkPlugin> = [remarkGfm];
 		if (
 			teamId &&
-			(agentsMap.size > 0 || tasksMap.size > 0 || kbDocsMap.size > 0 || projectDocsMap.size > 0)
+			(agentsMap.size > 0 ||
+				tasksMap.size > 0 ||
+				kbDocsMap.size > 0 ||
+				projectDocsMap.size > 0 ||
+				assetsMap.size > 0)
 		) {
 			plugins.push([
 				remarkMentions,
@@ -105,11 +119,12 @@ export function MarkdownProse({
 					tasks: tasksMap,
 					kbDocs: kbDocsMap,
 					projectDocs: projectDocsMap,
+					assets: assetsMap,
 				},
 			]);
 		}
 		return plugins;
-	}, [teamId, projectSlug, agentsMap, tasksMap, kbDocsMap, projectDocsMap]);
+	}, [teamId, projectSlug, agentsMap, tasksMap, kbDocsMap, projectDocsMap, assetsMap]);
 
 	const components = useMemo<Components>(
 		() => ({
@@ -125,6 +140,10 @@ export function MarkdownProse({
 					'data-mention-kb-title'?: string;
 					'data-mention-doc-project-slug'?: string;
 					'data-mention-doc-filename'?: string;
+					'data-mention-asset-project-slug'?: string;
+					'data-mention-asset-filename'?: string;
+					'data-mention-asset-content-type'?: string;
+					'data-mention-asset-url'?: string;
 					'data-mention-size'?: string;
 					'data-mention-updated-at'?: string;
 				};
@@ -189,6 +208,37 @@ export function MarkdownProse({
 							>
 								<ExternalLink className="w-3 h-3" />
 							</a>
+						</span>
+					);
+				}
+
+				const assetProject = attrs['data-mention-asset-project-slug'];
+				const assetFilename = attrs['data-mention-asset-filename'];
+				const assetUrl = attrs['data-mention-asset-url'];
+				if (assetProject && assetFilename && teamId) {
+					return (
+						<span className="inline-flex items-baseline gap-0.5">
+							<Link
+								to="/teams/$teamId/projects/$projectId/assets"
+								params={{ teamId, projectId: assetProject }}
+								search={{ file: assetFilename }}
+								className={MENTION_CLASSES}
+								data-testid="asset-mention-link"
+							>
+								{props.children}
+							</Link>
+							{assetUrl && (
+								<a
+									href={assetUrl}
+									target="_blank"
+									rel="noopener noreferrer"
+									aria-label="Open asset in new tab"
+									data-testid="asset-mention-preview-link"
+									className="text-accent-blue-text hover:underline"
+								>
+									<ExternalLink className="w-3 h-3" />
+								</a>
+							)}
 						</span>
 					);
 				}

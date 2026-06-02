@@ -78,6 +78,16 @@ describe('Project docs (DB-backed)', () => {
 		expect(body.data.id).toBeDefined();
 	});
 
+	it('rejects non-markdown filenames (docs are markdown-only)', async () => {
+		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/docs/page.html`, {
+			method: 'PUT',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: '<h1>nope</h1>' }),
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.code).toBe('INVALID_REQUEST');
+	});
+
 	it('reads the doc back', async () => {
 		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/docs/spec.md`, {
 			headers: authHeader(token),

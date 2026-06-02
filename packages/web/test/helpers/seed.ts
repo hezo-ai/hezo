@@ -117,6 +117,32 @@ export async function seedTask(
 	return task;
 }
 
+export interface SeededAsset {
+	id: string;
+	original_filename: string;
+	content_type: string;
+	url: string;
+}
+
+/** Upload a file to the project assets library via the real API. */
+export async function seedAsset(
+	workspace: SeededWorkspace,
+	project: SeededProject,
+	input: { filename: string; contentType?: string; bytes?: Uint8Array },
+): Promise<SeededAsset> {
+	const { apiBase } = getTestContext();
+	const bytes = input.bytes ?? new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]);
+	const fd = new FormData();
+	fd.set('file', new File([bytes], input.filename, { type: input.contentType ?? 'image/png' }));
+	const res = await apiBase(`/api/teams/${workspace.team.id}/projects/${project.id}/assets`, {
+		method: 'POST',
+		// No Content-Type header: let fetch set the multipart boundary.
+		headers: { Authorization: workspace.headers.Authorization },
+		body: fd,
+	});
+	return ((await res.json()) as { data: SeededAsset }).data;
+}
+
 export async function seedComment(
 	workspace: SeededWorkspace,
 	task: SeededTask,

@@ -1,12 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { HtmlPreview } from '../../../../components/html-preview';
 import { MarkdownProse } from '../../../../components/markdown-prose';
 import { useProjectDoc } from '../../../../hooks/use-project-docs';
 
 function DocPreviewPage() {
 	const { teamId, projectId, filename } = Route.useParams();
 	const { data: doc, isLoading, isError } = useProjectDoc(teamId, projectId, filename);
-	const isHtml = /\.html?$/i.test(filename);
 
 	if (isLoading) {
 		return <CenteredMessage>Loading…</CenteredMessage>;
@@ -14,10 +12,6 @@ function DocPreviewPage() {
 
 	if (isError || doc?.content == null) {
 		return <CenteredMessage>Document not found.</CenteredMessage>;
-	}
-
-	if (isHtml) {
-		return <HtmlPreview html={doc.content} title={filename} fill />;
 	}
 
 	return (
