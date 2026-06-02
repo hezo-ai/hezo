@@ -26,12 +26,6 @@ test('running-agents line links each name to its run comment and scrolls into vi
 	});
 	const task = (await taskRes.json()).data;
 
-	const lockRes = await page.request.post(`/api/teams/${team.id}/tasks/${task.id}/lock`, {
-		headers,
-		data: { member_id: agent.id },
-	});
-	expect(lockRes.ok()).toBeTruthy();
-
 	const commentId = 'bbbb0000-0000-0000-0000-000000000001';
 	const runId = 'cccc0000-0000-0000-0000-000000000001';
 	const runComment = {
@@ -44,6 +38,19 @@ test('running-agents line links each name to its run comment and scrolls into vi
 		author_type: 'agent',
 		author_name: agent.title,
 		author_member_id: agent.id,
+	};
+
+	// Drive RunningAgentsLine from a mocked lock rather than a real POST /lock:
+	// creating an agent-assigned task posts a background wakeup whose cron can
+	// acquire (and then roll back) the execution lock first, racing the test.
+	// The line only reads the locks + comments queries, so mocking both keeps
+	// this scroll-into-view assertion hermetic.
+	const lock = {
+		id: 'aaaa0000-0000-0000-0000-000000000001',
+		task_id: task.id,
+		member_id: agent.id,
+		member_name: agent.title,
+		locked_at: new Date().toISOString(),
 	};
 
 	const filler = Array.from({ length: 20 }, (_, i) => ({
@@ -64,6 +71,15 @@ test('running-agents line links each name to its run comment and scrolls into vi
 			status: 200,
 			contentType: 'application/json',
 			body: JSON.stringify({ data: [...filler, runComment] }),
+		});
+	});
+
+	await page.route(`**/api/teams/*/tasks/*/lock`, async (route) => {
+		if (route.request().method() !== 'GET') return route.continue();
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ data: { locks: [lock] } }),
 		});
 	});
 
