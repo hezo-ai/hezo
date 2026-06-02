@@ -30,3 +30,22 @@ export const wsRoom = {
 	team: (id: string) => `team:${id}`,
 	agent: (id: string) => `agent:${id}`,
 } as const;
+
+/**
+ * Conventional-commit type → changelog heading, in render order. Single source
+ * of truth shared by the release script and its tests. Commit types not listed
+ * here (and non-conventional commits) fall into the "Other" section.
+ */
+export const CHANGELOG_SECTIONS = [
+	['feat', 'Features'],
+	['fix', 'Bug Fixes'],
+	['perf', 'Performance'],
+	['refactor', 'Refactors'],
+	['docs', 'Documentation'],
+	['build', 'Build System'],
+	['test', 'Tests'],
+	['chore', 'Chores'],
+] as const;
+
+export const CHANGELOG_OTHER_HEADING = 'Other';
+export const CHANGELOG_BREAKING_HEADING = 'Breaking Changes';

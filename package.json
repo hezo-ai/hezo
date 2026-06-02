@@ -30,6 +30,7 @@
 		"check": "bunx biome check .",
 		"check:fix": "bunx biome check --write .",
 		"dev": "bun run scripts/dev.ts",
+		"release": "bun run scripts/release.ts",
 		"test": "bun run scripts/test.ts",
 		"typecheck": "turbo typecheck",
 		"prepare": "husky"

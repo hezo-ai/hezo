@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release-type:
+        description: Version bump (auto = derive from conventional commits)
+        type: choice
+        options: [auto, major, minor, patch]
+        default: auto
+
+permissions:
+  contents: write # commit the version bump, push the tag, create the Release
+  actions: read # read the CI conclusion for the build-passed guard
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  BUN_VERSION: "1.3.11"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Releases are only ever cut from main.
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # Guard: the latest CI run for this exact commit on main must have passed.
+      # The workflow-runs API rolls all CI jobs into one conclusion, which is
+      # exactly the "last build on main passed" semantic we want.
+      - name: Verify CI passed for HEAD
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sha="$(git rev-parse HEAD)"
+          echo "Checking CI conclusion for $sha"
+          conclusion="$(gh run list \
+            --workflow=ci.yml \
+            --branch=main \
+            --commit="$sha" \
+            --json conclusion,headSha \
+            --jq 'map(select(.headSha=="'"$sha"'")) | first | .conclusion')"
+          echo "CI conclusion: '${conclusion}'"
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::CI for $sha did not conclude successfully (got: '${conclusion}'). Aborting release."
+            exit 1
+          fi
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+
+      - name: Compute version, bump files, generate changelog
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun run release --release-type "${{ inputs.release-type }}" --apply
+
+      - name: Commit, tag, and push
+        env:
+          TAG: ${{ steps.release.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore(release): ${TAG}"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin HEAD:main
+          git push origin "refs/tags/${TAG}"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.version }}
+          NOTES: ${{ steps.release.outputs.changelog }}
+        run: |
+          printf '%s' "$NOTES" | gh release create "$TAG" --title "$TAG" --notes-file -
