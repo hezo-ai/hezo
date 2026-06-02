@@ -73,3 +73,23 @@ export function renderChangelog(opts: RenderChangelogOptions): string {
 
 	return `${blocks.join('\n').trimEnd()}\n`;
 }
+
+/**
+ * Extract a single version's notes from a rendered `CHANGELOG.md` — everything
+ * below the `## <version> - <date>` heading up to the next `## ` heading (or end
+ * of file). The version heading itself is omitted (the GitHub Release title
+ * already carries the version). Returns null when the version is not present.
+ */
+export function extractReleaseNotes(changelog: string, version: string): string | null {
+	const lines = changelog.split('\n');
+	const start = lines.findIndex(
+		(l) => l.startsWith(`## ${version} `) || l.trim() === `## ${version}`,
+	);
+	if (start === -1) {
+		return null;
+	}
+	const rest = lines.slice(start + 1);
+	const end = rest.findIndex((l) => l.startsWith('## '));
+	const section = end === -1 ? rest : rest.slice(0, end);
+	return section.join('\n').trim();
+}

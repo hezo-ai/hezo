@@ -1,5 +1,10 @@
 name: Release
 
+# Manually-triggered "prepare release": opens a PR that bumps the version and
+# updates CHANGELOG.md. Merging that PR triggers release-publish.yml, which
+# creates the tag and GitHub Release. This keeps releases off direct pushes to
+# main and lets the PR's own CI gate the merge.
+
 on:
   workflow_dispatch:
     inputs:
@@ -10,7 +15,8 @@ on:
         default: auto
 
 permissions:
-  contents: write # commit the version bump, push the tag, create the Release
+  contents: write # push the release branch
+  pull-requests: write # open the release PR
   actions: read # read the CI conclusion for the build-passed guard
 
 concurrency:
@@ -19,24 +25,26 @@ concurrency:
 
 env:
   BUN_VERSION: "1.3.11"
+  # A PAT / app token (RELEASE_TOKEN) is preferred so the opened PR triggers CI;
+  # PRs opened with the default GITHUB_TOKEN do not start new workflow runs.
+  GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
 jobs:
-  release:
+  prepare:
     runs-on: ubuntu-latest
-    # Releases are only ever cut from main.
+    # Releases are only ever prepared from main.
     if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           fetch-tags: true
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
       # Guard: the latest CI run for this exact commit on main must have passed.
       # The workflow-runs API rolls all CI jobs into one conclusion, which is
       # exactly the "last build on main passed" semantic we want.
       - name: Verify CI passed for HEAD
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           sha="$(git rev-parse HEAD)"
           echo "Checking CI conclusion for $sha"
@@ -59,26 +67,28 @@ jobs:
 
       - name: Compute version, bump files, generate changelog
         id: release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun run release --release-type "${{ inputs.release-type }}" --apply
 
-      - name: Commit, tag, and push
+      - name: Push release branch and open PR
         env:
-          TAG: ${{ steps.release.outputs.version }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "chore(release): ${TAG}"
-          git tag -a "${TAG}" -m "Release ${TAG}"
-          git push origin HEAD:main
-          git push origin "refs/tags/${TAG}"
-
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.release.outputs.version }}
+          VERSION: ${{ steps.release.outputs.version }}
           NOTES: ${{ steps.release.outputs.changelog }}
         run: |
-          printf '%s' "$NOTES" | gh release create "$TAG" --title "$TAG" --notes-file -
+          branch="release/${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add -A
+          git commit -m "chore(release): ${VERSION}"
+          git push -u origin "$branch" --force-with-lease
+
+          # Idempotent label so the PR is easy to filter / for publish gating.
+          gh label create release --color 0e8a16 --description "Release PR" --force || true
+
+          body="$(printf 'Automated release for **%s**.\n\nMerging this PR tags the release and publishes the GitHub Release.\n\n---\n\n%s' "$VERSION" "$NOTES")"
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "chore(release): ${VERSION}" \
+            --label release \
+            --body "$body"

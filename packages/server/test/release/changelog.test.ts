@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderChangelog } from '../../src/release/changelog';
+import { extractReleaseNotes, renderChangelog } from '../../src/release/changelog';
 import type { ParsedCommit } from '../../src/release/conventional';
 
 function commit(overrides: Partial<ParsedCommit>): ParsedCommit {
@@ -130,5 +130,52 @@ describe('renderChangelog', () => {
 		expect(out).toContain('### Other');
 		expect(out).toContain('- random commit');
 		expect(out).toContain('- unknown type');
+	});
+});
+
+const SAMPLE_CHANGELOG = `# Changelog
+
+## 1.1.0 - 2026-06-10
+
+### Features
+
+- a new thing (#10)
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/1.0.0...1.1.0
+
+## 1.0.0 - 2026-06-01
+
+### Bug Fixes
+
+- an old fix (#1)
+`;
+
+describe('extractReleaseNotes', () => {
+	it('extracts the latest version section without the heading', () => {
+		const notes = extractReleaseNotes(SAMPLE_CHANGELOG, '1.1.0');
+		expect(notes).toContain('### Features');
+		expect(notes).toContain('- a new thing (#10)');
+		expect(notes).toContain('**Full Changelog**');
+		// Stops before the previous version and drops its own heading. (The
+		// compare link legitimately mentions 1.0.0, so assert on section content.)
+		expect(notes).not.toContain('## 1.1.0');
+		expect(notes).not.toContain('## 1.0.0');
+		expect(notes).not.toContain('### Bug Fixes');
+		expect(notes).not.toContain('an old fix');
+	});
+
+	it('extracts a trailing (oldest) version section through end of file', () => {
+		const notes = extractReleaseNotes(SAMPLE_CHANGELOG, '1.0.0');
+		expect(notes).toContain('### Bug Fixes');
+		expect(notes).toContain('- an old fix (#1)');
+	});
+
+	it('returns null when the version is absent', () => {
+		expect(extractReleaseNotes(SAMPLE_CHANGELOG, '9.9.9')).toBeNull();
+	});
+
+	it('does not prefix-match a longer version', () => {
+		const cl = '# Changelog\n\n## 1.2.10 - 2026-06-10\n\n### Features\n\n- ten\n';
+		expect(extractReleaseNotes(cl, '1.2.1')).toBeNull();
 	});
 });

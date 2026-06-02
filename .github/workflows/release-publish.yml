@@ -1,0 +1,58 @@
+name: Release Publish
+
+# Fires when a release PR (head branch release/<version>, opened by release.yml)
+# is merged into main. Tags the merge commit (no v-prefix) and publishes a
+# GitHub Release whose body is the just-merged CHANGELOG.md section.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write # create + push the tag, create the Release
+
+concurrency:
+  group: release-publish
+  cancel-in-progress: false
+
+env:
+  BUN_VERSION: "1.3.11"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'release/')
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main # post-merge main, which includes the bump + changelog
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+
+      - name: Tag and publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          version="${HEAD_REF#release/}"
+          echo "Publishing release ${version}"
+
+          if git rev-parse "$version" >/dev/null 2>&1; then
+            echo "::error::Tag ${version} already exists. Aborting."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$version" -m "Release ${version}"
+          git push origin "refs/tags/${version}"
+
+          bun run release --notes "$version" > /tmp/release-notes.md
+          gh release create "$version" --title "$version" --notes-file /tmp/release-notes.md

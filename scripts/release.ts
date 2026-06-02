@@ -5,12 +5,14 @@
  * logic in `@hezo/server`'s release module.
  *
  * Modes:
- *   --dry-run   print the computed version and changelog body; mutate nothing.
- *   --apply     write package.json versions + prepend CHANGELOG.md, and (when
- *               run in CI) emit `version`/`changelog` to $GITHUB_OUTPUT.
+ *   --dry-run         print the computed version and changelog body; mutate nothing.
+ *   --apply           write package.json versions + prepend CHANGELOG.md, and
+ *                     (when run in CI) emit `version`/`changelog` to $GITHUB_OUTPUT.
+ *   --notes <version> print an already-written CHANGELOG.md section and exit.
  *
- * Tag creation, commit, push, and GitHub Release publishing happen in
- * .github/workflows/release.yml — this script stays locally runnable.
+ * The release runs as a PR flow: release.yml prepares the bump on a release
+ * branch and opens a PR; release-publish.yml tags + publishes the GitHub Release
+ * when that PR merges. This script stays side-effect-light and locally runnable.
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -18,6 +20,7 @@ import { Command } from 'commander';
 import {
 	applyOverride,
 	computeBump,
+	extractReleaseNotes,
 	nextVersion,
 	type ParsedCommit,
 	parseCommit,
@@ -119,9 +122,32 @@ const program = new Command()
 	.option('--release-type <type>', 'version bump: auto | major | minor | patch', 'auto')
 	.option('--dry-run', 'print the version and changelog without writing anything')
 	.option('--apply', 'write package.json versions, prepend CHANGELOG.md, emit $GITHUB_OUTPUT')
+	.option('--notes <version>', 'print the CHANGELOG.md section for a version and exit')
 	.parse();
 
-const opts = program.opts<{ releaseType: string; dryRun?: boolean; apply?: boolean }>();
+const opts = program.opts<{
+	releaseType: string;
+	dryRun?: boolean;
+	apply?: boolean;
+	notes?: string;
+}>();
+
+// --notes is a standalone read of an already-written CHANGELOG.md (used by the
+// publish workflow to build the GitHub Release body); it ignores git history.
+if (opts.notes) {
+	if (!existsSync(CHANGELOG_PATH)) {
+		console.error('CHANGELOG.md not found');
+		process.exit(1);
+	}
+	const notes = extractReleaseNotes(readFileSync(CHANGELOG_PATH, 'utf8'), opts.notes);
+	if (notes === null) {
+		console.error(`No CHANGELOG.md section found for version ${opts.notes}`);
+		process.exit(1);
+	}
+	console.log(notes);
+	process.exit(0);
+}
+
 const overrideRaw = opts.releaseType;
 if (!['auto', 'major', 'minor', 'patch'].includes(overrideRaw)) {
 	console.error(`Invalid --release-type: ${overrideRaw} (expected auto|major|minor|patch)`);
