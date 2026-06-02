@@ -26,6 +26,10 @@ export async function loadStaticBundle(): Promise<Map<string, StaticAsset> | nul
 	} catch {
 		return null;
 	}
+	// An empty stub (written by `scripts/ensure-bundles.ts` so tsc/vite can
+	// resolve the literal import) means the bundle was never generated — treat it
+	// as absent so the caller falls back to reading `packages/web/dist` off disk.
+	if (Object.keys(mod.default).length === 0) return null;
 	const map = new Map<string, StaticAsset>();
 	for (const [path, { type, b64 }] of Object.entries(mod.default)) {
 		map.set(path, { type, body: new Blob([Buffer.from(b64, 'base64')], { type }) });

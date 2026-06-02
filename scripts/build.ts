@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Command } from 'commander';
+import { ensureBundles } from './ensure-bundles';
 
 const ROOT = resolve(import.meta.dir, '..');
 
@@ -65,6 +66,12 @@ async function compile(version: string, target: string | null, outfile: string) 
 
 // shared must build first (dependency of server)
 await run('packages/shared', ['bun', 'run', 'build']);
+
+// Stub any missing embed bundles before tsc (server) and vite (web, which
+// imports server's static-assets.ts) run in parallel — both statically resolve
+// the literal `import('./xxx-bundle.json')` and error if the file is absent.
+// The real content is written by the build:* steps below / the binary path.
+ensureBundles();
 
 // server and web build in parallel
 await Promise.all([

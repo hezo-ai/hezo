@@ -77,6 +77,12 @@ export async function loadBundledMigrations(): Promise<Record<string, string>> {
 	} catch {
 		throw new Error("Failed to load migration bundle. Run 'bun run build:migrations' first.");
 	}
+	// An empty stub (written by `scripts/ensure-bundles.ts` so tsc/vite can
+	// resolve the literal import) means the bundle was never generated — treat it
+	// as absent so the caller falls back to the filesystem.
+	if (Object.keys(mod.default).length === 0) {
+		throw new Error('Migration bundle is empty. Run "bun run build:migrations" first.');
+	}
 	return mod.default;
 }
 

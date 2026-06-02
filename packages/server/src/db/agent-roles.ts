@@ -11,6 +11,12 @@ export async function loadBundledAgentRoles(): Promise<Record<string, string>> {
 	} catch {
 		throw new Error("Failed to load agent roles bundle. Run 'bun run build:agents' first.");
 	}
+	// An empty stub (written by `scripts/ensure-bundles.ts` so tsc/vite can
+	// resolve the literal import) means the bundle was never generated — treat it
+	// as absent so `loadAgentRoles` falls back to the filesystem walk.
+	if (Object.keys(mod.default).length === 0) {
+		throw new Error('Agent roles bundle is empty. Run "bun run build:agents" first.');
+	}
 	return mod.default;
 }
 

@@ -2,6 +2,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Command } from 'commander';
+import { ensureBundles } from './ensure-bundles';
 
 const ROOT = resolve(import.meta.dir, '..');
 
@@ -121,6 +122,12 @@ async function runBrowserTests(): Promise<boolean> {
 }
 
 async function main() {
+	// vitest transforms through vite, which statically resolves the literal
+	// `import('./xxx-bundle.json')` in the server's migrate/agent-roles/static
+	// loaders and errors if the file is absent. buildAgentBundle fills the agents
+	// bundle with real content; stub the rest so both the server and web suites
+	// resolve. An empty stub is treated as "absent" at runtime → filesystem fallback.
+	ensureBundles();
 	await Promise.all([buildShared(), buildAgentBundle()]);
 
 	const browserOnly = browserFlag;
