@@ -131,6 +131,20 @@ describe('renderChangelog', () => {
 		expect(out).toContain('- random commit');
 		expect(out).toContain('- unknown type');
 	});
+
+	it('renders a placeholder when there are no entries (forced release)', () => {
+		const out = renderChangelog({
+			version: '0.1.1',
+			date: '2026-06-02',
+			commits: [],
+			previousTag: '0.1.0',
+			repoUrl: REPO,
+		});
+		expect(out).toContain('## 0.1.1 - 2026-06-02');
+		expect(out).toContain('_No notable changes._');
+		expect(out).toContain(`**Full Changelog**: ${REPO}/compare/0.1.0...0.1.1`);
+		expect(out).not.toContain('###');
+	});
 });
 
 const SAMPLE_CHANGELOG = `# Changelog

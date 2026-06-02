@@ -64,6 +64,12 @@ export function renderChangelog(opts: RenderChangelogOptions): string {
 		blocks.push(otherBlock);
 	}
 
+	// A forced release can have no categorized entries (e.g. only chore commits);
+	// keep the body meaningful rather than just a bare heading.
+	if (blocks.length === 1) {
+		blocks.push('_No notable changes._\n');
+	}
+
 	if (repoUrl) {
 		const link = previousTag
 			? `${repoUrl}/compare/${previousTag}...${version}`

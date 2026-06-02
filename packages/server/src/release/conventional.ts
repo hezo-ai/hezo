@@ -41,7 +41,10 @@ export function parseCommit({ subject, body, hash }: RawCommit): ParsedCommit {
 	const breaking = Boolean(match?.[3]) || BREAKING_FOOTER_RE.test(body);
 
 	if (!match) {
-		return { type: '', scope: null, breaking, description: trimmed, hash, pr };
+		// Strip the trailing PR suffix from the description too, so the renderer's
+		// appended "(#N)" isn't duplicated for non-conventional subjects.
+		const description = trimmed.replace(PR_SUFFIX_RE, '').trim();
+		return { type: '', scope: null, breaking, description, hash, pr };
 	}
 
 	const description = match[4].replace(PR_SUFFIX_RE, '').trim();
