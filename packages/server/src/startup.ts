@@ -44,6 +44,7 @@ import { tasksRoutes } from './routes/tasks';
 import { teamTemplatesRoutes } from './routes/team-templates';
 import { teamsRoutes } from './routes/teams';
 import { uiStateRoutes } from './routes/ui-state';
+import { updatesRoutes } from './routes/updates';
 import { ContainerLogStreamer } from './services/container-logs';
 import { DockerClient } from './services/docker';
 import { EgressProxy, loadOrCreateCA } from './services/egress';
@@ -52,6 +53,8 @@ import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
 import { SshAgentServer } from './services/ssh-agent';
 import { WebSocketManager } from './services/ws';
+import { loadStaticBundle } from './static-assets';
+import { HEZO_VERSION } from './version';
 
 export type { HezoConfig };
 
@@ -83,7 +86,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	const db = await openPersistentDb(config.dataDir, { reset: config.reset });
 
 	await db.exec(BASE_SCHEMA);
-	await runAvailableMigrations(db);
+	await runAvailableMigrations(db, config.dataDir);
 	await runSeed(db);
 
 	const masterKeyManager = new MasterKeyManager();
@@ -231,9 +234,10 @@ export function buildApp(
 	// Public routes
 	app.route('/', healthRoutes);
 
+	// `/api/status` carries master-key state + version. `/` is left to the SPA
+	// catch-all below (the compiled binary serves index.html there).
 	const statusHandler = (c: Context<Env>) =>
-		c.json({ masterKeyState: masterKeyManager.getState(), version: '0.1.0' });
-	app.get('/', statusHandler);
+		c.json({ masterKeyState: masterKeyManager.getState(), version: HEZO_VERSION });
 	app.get('/api/status', statusHandler);
 
 	// Skill file (public)
@@ -295,49 +299,59 @@ export function buildApp(
 	app.route('/api', oauthRoutes);
 	app.route('/api', previewRoutes);
 	app.route('/api', searchRoutes);
+	app.route('/api', updatesRoutes);
 
-	// Static file serving for compiled binary (frontend assets)
-	const staticDir = resolve(new URL('.', import.meta.url).pathname, '..', 'static');
-	if (existsSync(staticDir)) {
-		const STATIC_MIME: Record<string, string> = {
-			'.html': 'text/html',
-			'.css': 'text/css',
-			'.js': 'application/javascript',
-			'.json': 'application/json',
-			'.png': 'image/png',
-			'.jpg': 'image/jpeg',
-			'.svg': 'image/svg+xml',
-			'.ico': 'image/x-icon',
-			'.woff2': 'font/woff2',
-		};
+	// Frontend (SPA) serving. The compiled binary serves from the in-memory
+	// bundle embedded at build time (`loadStaticBundle`); in dev that bundle is
+	// absent, so we fall back to reading `packages/web/dist` off disk. Run the
+	// vite dev server for hot-reload during development.
+	const STATIC_MIME: Record<string, string> = {
+		'.html': 'text/html; charset=utf-8',
+		'.css': 'text/css; charset=utf-8',
+		'.js': 'application/javascript; charset=utf-8',
+		'.json': 'application/json; charset=utf-8',
+		'.png': 'image/png',
+		'.jpg': 'image/jpeg',
+		'.svg': 'image/svg+xml',
+		'.ico': 'image/x-icon',
+		'.woff2': 'font/woff2',
+	};
+	const webDistDir = resolve(new URL('.', import.meta.url).pathname, '..', '..', 'web', 'dist');
 
-		app.get('*', async (c) => {
-			const urlPath = new URL(c.req.url).pathname;
+	app.get('*', async (c) => {
+		const urlPath = new URL(c.req.url).pathname;
+		if (urlPath.startsWith('/api/') || urlPath.startsWith('/agent-api/')) {
+			return c.text('Not found', 404);
+		}
+		const filePath = urlPath === '/' ? '/index.html' : urlPath;
 
-			if (urlPath.startsWith('/api/') || urlPath.startsWith('/agent-api/')) {
-				return c.text('Not found', 404);
-			}
-			const filePath = urlPath === '/' ? '/index.html' : urlPath;
-			const fullPath = join(staticDir, filePath);
+		// In-memory bundle (compiled binary).
+		const bundle = await loadStaticBundle();
+		if (bundle) {
+			const asset = bundle.get(filePath) ?? bundle.get('/index.html');
+			if (!asset) return c.text('Not found', 404);
+			return new Response(asset.body, { headers: { 'Content-Type': asset.type } });
+		}
 
+		// Filesystem fallback (dev / `bun run`).
+		if (existsSync(webDistDir)) {
+			const fullPath = join(webDistDir, filePath);
 			if (existsSync(fullPath)) {
 				const ext = extname(fullPath).toLowerCase();
-				const content = readFileSync(fullPath);
-				return new Response(content, {
+				return new Response(readFileSync(fullPath), {
 					headers: { 'Content-Type': STATIC_MIME[ext] || 'application/octet-stream' },
 				});
 			}
-
-			// SPA fallback
-			const indexPath = join(staticDir, 'index.html');
+			const indexPath = join(webDistDir, 'index.html');
 			if (existsSync(indexPath)) {
-				const content = readFileSync(indexPath);
-				return new Response(content, { headers: { 'Content-Type': 'text/html' } });
+				return new Response(readFileSync(indexPath), {
+					headers: { 'Content-Type': 'text/html; charset=utf-8' },
+				});
 			}
+		}
 
-			return c.text('Not found', 404);
-		});
-	}
+		return c.text('Not found', 404);
+	});
 
 	return app;
 }
@@ -353,20 +367,64 @@ async function cleanupOrphanRunSockets(_db: PGlite, dataDir: string): Promise<vo
 	}
 }
 
-async function runAvailableMigrations(db: PGlite): Promise<void> {
+async function loadMigrations(): Promise<Record<string, string> | null> {
+	const { loadBundledMigrations, loadFilesystemMigrations } = await import('./db/migrate.js');
 	try {
-		const { runMigrations, loadBundledMigrations } = await import('./db/migrate.js');
-		const migrations = await loadBundledMigrations();
-		await runMigrations(db, migrations);
+		return await loadBundledMigrations();
 	} catch {
+		// Dev (`bun run`): the bundle isn't generated — read from the source tree.
+	}
+	try {
+		const migrationsDir = join(new URL('.', import.meta.url).pathname, '..', 'migrations');
+		return await loadFilesystemMigrations(migrationsDir);
+	} catch {
+		return null;
+	}
+}
+
+async function runAvailableMigrations(db: PGlite, dataDir: string): Promise<void> {
+	const migrations = await loadMigrations();
+	if (!migrations) {
+		log.warn('No migrations found. Run build:migrations or add migration files.');
+		return;
+	}
+
+	const { getPendingMigrations, runMigrations } = await import('./db/migrate.js');
+	const pending = await getPendingMigrations(db, migrations);
+	if (pending.length === 0) return;
+
+	// Snapshot before mutating an *existing* instance. A brand-new DB (nothing
+	// applied yet) has no data worth saving, so skip the backup there.
+	const applied = await countAppliedMigrations(db);
+	if (applied > 0) {
 		try {
-			const { runMigrations, loadFilesystemMigrations } = await import('./db/migrate.js');
-			const migrationsDir = join(new URL('.', import.meta.url).pathname, '..', 'migrations');
-			const migrations = await loadFilesystemMigrations(migrationsDir);
-			await runMigrations(db, migrations);
-		} catch {
-			log.warn('No migrations found. Run build:migrations or add migration files.');
+			const { backupDataDir } = await import('./db/backup.js');
+			await backupDataDir(db, dataDir, { version: HEZO_VERSION, pending });
+		} catch (err) {
+			log.error('Pre-migration backup failed; aborting migrations to protect existing data', err);
+			throw err;
 		}
+	}
+
+	try {
+		await runMigrations(db, migrations);
+	} catch (err) {
+		log.error(
+			`Migration failed. To recover, downgrade to the previous Hezo version and restore the ` +
+				`pre-migration snapshot from ${join(dataDir, 'backups')} ` +
+				`(\`hezo restore <backup.tar.gz>\`).`,
+			err,
+		);
+		throw err;
+	}
+}
+
+async function countAppliedMigrations(db: PGlite): Promise<number> {
+	try {
+		const r = await db.query<{ c: number }>('SELECT COUNT(*)::int AS c FROM _migrations');
+		return r.rows[0]?.c ?? 0;
+	} catch {
+		return 0;
 	}
 }
 

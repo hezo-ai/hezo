@@ -1,18 +1,17 @@
 import { resolvePartials } from './resolve-partials';
 
 export async function loadBundledAgentRoles(): Promise<Record<string, string>> {
-	const { readFile } = await import('node:fs/promises');
-	const { join } = await import('node:path');
-
-	const currentDir = new URL('.', import.meta.url).pathname;
-	const bundlePath = join(currentDir, 'agents-bundle.json');
-	let raw: string;
+	// Literal dynamic import so `bun build --compile` embeds the JSON into the
+	// binary's virtual FS (a runtime `readFile` of a sibling path is not embedded
+	// and ENOENTs at `/$bunfs/root/...`). In dev the file may be absent — the
+	// import rejects and `loadAgentRoles` falls back to the filesystem walk.
+	let mod: { default: Record<string, string> };
 	try {
-		raw = await readFile(bundlePath, 'utf-8');
+		mod = (await import('./agents-bundle.json')) as { default: Record<string, string> };
 	} catch {
 		throw new Error("Failed to load agent roles bundle. Run 'bun run build:agents' first.");
 	}
-	return JSON.parse(raw) as Record<string, string>;
+	return mod.default;
 }
 
 export async function loadFilesystemAgentRoles(agentsDir: string): Promise<Record<string, string>> {

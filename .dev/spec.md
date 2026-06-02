@@ -159,12 +159,12 @@ migrations/
 └── ...
 ```
 
-**Bundling into the binary:** Migration SQL files are compressed into a JSON archive at build time using `@hiddentao/zip-json` and embedded into the compiled binary. At startup, the server loads the compressed migrations from memory — no filesystem access needed for migration files. This ensures the binary is fully self-contained.
+**Bundling into the binary:** `scripts/bundle-migrations.ts` writes all `migrations/*.sql` files into a plain `{ filename: sql }` JSON map (`migrations-bundle.json`). `db/migrate.ts` pulls it in with a *literal* dynamic `import('./migrations-bundle.json')` — Bun embeds statically-analyzable imports into the compiled binary's virtual FS, so the SQL travels through the module graph and is run straight from memory (a runtime `readFile` of a sibling path is *not* embedded — it resolves to `/$bunfs/...` and ENOENTs). In dev the bundle doesn't exist; the import rejects and the runner falls back to reading the `migrations/` directory. See `.dev/upgrades.md` for the full binary-embedding story (frontend, agent roles, PGlite runtime, version).
 
 **Build process:**
-1. `zip()` compresses all `migrations/*.sql` files into a JSON object (base64-encoded gzip with metadata)
-2. The compressed archive is written to `migrations-bundle.json` and imported by the binary entry point
-3. At startup, `unzip()` extracts the SQL content in memory and the migration runner processes it
+1. `bundle-migrations.ts` writes `migrations-bundle.json` (`{ filename: sql }`)
+2. The compiled binary embeds it via the literal dynamic import in `db/migrate.ts`
+3. At startup the map is loaded from memory and the migration runner processes it
 
 **Tracking table** (`_migrations`) records which migrations have been applied:
 ```sql
@@ -178,10 +178,13 @@ CREATE TABLE IF NOT EXISTS _migrations (
 
 **Startup behavior:**
 1. Ensure `_migrations` table exists (create if not)
-2. Load migration SQL from the bundled archive (in memory)
-3. Skip files already recorded in `_migrations`
-4. For each unapplied migration: run inside a transaction, record in `_migrations` with checksum
-5. Checksum verification: if a previously-applied migration file has changed, log a warning (indicates the migration was modified after being applied — this should not happen)
+2. Load migration SQL from the bundled map (in memory)
+3. Compute the pending set (files not recorded in `_migrations`)
+4. **Pre-migration backup:** if there are pending migrations *and* the instance already has applied migrations (a real upgrade, not a fresh DB), snapshot `pgdata` with PGlite `dumpDataDir('gzip')` to `<dataDir>/backups/` (last 5 kept) before applying anything. If the backup fails, abort.
+5. For each unapplied migration: run inside a transaction, record in `_migrations` with checksum
+6. Checksum verification: if a previously-applied migration file has changed, log a warning (indicates the migration was modified after being applied — this should not happen)
+
+**Recovery from a bad migration (manual downgrade):** `hezo restore <backup.tar.gz>` wipes `pgdata` and reloads the pre-migration snapshot via PGlite `loadDataDir`; the operator then runs the previous Hezo version. Full lifecycle: `.dev/upgrades.md`.
 
 **`--reset` flag:** When provided, the server wipes the existing database directory and starts fresh before running migrations. This is useful during local development. The user is warned and must confirm (unless also providing `--master-key`, which implies non-interactive mode).
 

@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { MasterKeyGate } from '../components/master-key-gate';
 import { MasterKeyStep, SetupGate } from '../components/setup/setup-wizard';
 import { TeamSidebar } from '../components/team-sidebar';
+import { UpdateBanner } from '../components/update-banner';
 import { SocketProvider } from '../contexts/socket-context';
 import { useRouteTeamId } from '../hooks/use-route-team-id';
 import { useStatus } from '../hooks/use-status';
@@ -106,6 +107,7 @@ function ShellLayout() {
 				>
 					<Menu className="w-4 h-4" />
 				</button>
+				<UpdateBanner />
 				<Outlet />
 			</main>
 			{drawerOpen && (
