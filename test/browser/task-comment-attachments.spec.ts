@@ -127,14 +127,22 @@ test.describe('Task Comment Attachments', () => {
 		await expect(hint).toContainText('Drag and drop files to attach');
 
 		const info = page.locator('[data-testid="comment-attachment-hint-info"]');
-		await info.hover();
 		const tooltip = page.getByRole('tooltip');
-		await expect(tooltip).toBeVisible({ timeout: 5000 });
-		await expect(tooltip).toContainText('PNG');
-		await expect(tooltip).toContainText('PDF');
-		await expect(tooltip).toContainText('MP3');
-		await expect(tooltip).toContainText('MP4');
-		await expect(tooltip).toContainText('10');
+		// The Radix hover tooltip is transient: a single open can be missed while the
+		// comment form is still settling, and it closes on any pointer drift or
+		// re-render. Re-trigger a fresh pointerenter on each poll and assert the whole
+		// content as one snapshot, so a missed open or mid-assertion close self-heals.
+		await expect(async () => {
+			await page.mouse.move(0, 0);
+			await info.hover();
+			await expect(tooltip).toBeVisible({ timeout: 1500 });
+			const text = (await tooltip.textContent()) ?? '';
+			expect(text).toContain('PNG');
+			expect(text).toContain('PDF');
+			expect(text).toContain('MP3');
+			expect(text).toContain('MP4');
+			expect(text).toContain('10');
+		}).toPass({ timeout: 15000 });
 
 		await dropFile(
 			page,
