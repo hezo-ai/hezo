@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type HezoConfig, startup } from '../src/startup';
+import { HEZO_VERSION } from '../src/version';
 
 function makeTempDir(): string {
 	return mkdtempSync(join(tmpdir(), 'hezo-test-'));
@@ -54,7 +55,10 @@ describe('startup', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body).toHaveProperty('masterKeyState');
-		expect(body).toHaveProperty('version', '0.1.0');
+		// Assert against the live version source, not a literal — otherwise this
+		// breaks on every release bump (the status endpoint returns HEZO_VERSION).
+		expect(body).toHaveProperty('version', HEZO_VERSION);
+		expect(body.version).toMatch(/^\d+\.\d+\.\d+/);
 	});
 
 	it('handles --reset flag with a fresh data directory', async () => {
