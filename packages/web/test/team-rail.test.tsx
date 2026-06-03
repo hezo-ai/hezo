@@ -1,0 +1,45 @@
+import { screen, waitFor } from '@testing-library/react';
+import { expect, test } from 'vitest';
+import { renderApp } from './helpers/render';
+import { seedWorkspace } from './helpers/seed';
+
+test('team rail lists the user teams and switches between them', async () => {
+	let teamA = '';
+	let teamB = '';
+	const { findByTestId, getByTestId, user, router } = await renderApp({
+		initialPath: '/home',
+		seed: async () => {
+			const a = await seedWorkspace();
+			const b = await seedWorkspace();
+			teamA = a.team.slug;
+			teamB = b.team.slug;
+		},
+	});
+
+	// Both teams appear in the rail, and (as superuser) the create affordance.
+	await findByTestId(`team-rail-team-${teamA}`);
+	await findByTestId(`team-rail-team-${teamB}`);
+	await findByTestId('team-rail-new');
+
+	// Clicking a team navigates to it.
+	await user.click(getByTestId(`team-rail-team-${teamB}`));
+	await waitFor(() => expect(router.state.location.pathname).toBe(`/teams/${teamB}/tasks`));
+});
+
+test('superuser creates a new team from the rail', async () => {
+	const { findByTestId, user, router } = await renderApp({
+		initialPath: '/home',
+		seed: async () => {
+			await seedWorkspace();
+		},
+	});
+
+	await user.click(await findByTestId('team-rail-new'));
+
+	// Dialog content renders into a Radix portal on document.body — query via screen.
+	await user.click(await screen.findByTestId('team-type-card-Blank'));
+	await user.type(screen.getByPlaceholderText('e.g. Web, Research, Marketing'), 'Research Squad');
+	await user.click(screen.getByTestId('create-team-submit'));
+
+	await waitFor(() => expect(router.state.location.pathname).toBe('/teams/research-squad/tasks'));
+});

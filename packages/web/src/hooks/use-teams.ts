@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useOptimisticMutation } from './use-optimistic-mutation';
 
@@ -62,5 +62,32 @@ export function useUpdateTeam(id: string) {
 		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
 		invalidateOnSettled: [['teams']],
 		errorMessage: 'Failed to update team',
+	});
+}
+
+export function useCreateTeam() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (vars: { name: string; description?: string; template_id?: string }) =>
+			api.post<Team>('/api/teams', vars),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['teams'] });
+		},
+	});
+}
+
+export interface SaveTeamAsTemplateResult {
+	template_id: string;
+	skipped_agents: string[];
+}
+
+export function useSaveTeamAsTemplate(teamSlug: string) {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (vars: { name: string; description?: string }) =>
+			api.post<SaveTeamAsTemplateResult>(`/api/teams/${teamSlug}/save-as-template`, vars),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['team-templates'] });
+		},
 	});
 }

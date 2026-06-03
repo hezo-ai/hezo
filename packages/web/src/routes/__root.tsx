@@ -4,6 +4,7 @@ import { ChevronsLeft, ChevronsRight, Menu, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { MasterKeyGate } from '../components/master-key-gate';
 import { MasterKeyStep, SetupGate } from '../components/setup/setup-wizard';
+import { TeamRail } from '../components/team-rail';
 import { TeamSidebar } from '../components/team-sidebar';
 import { UpdateBanner } from '../components/update-banner';
 import { SocketProvider } from '../contexts/socket-context';
@@ -94,6 +95,9 @@ function ShellLayout() {
 
 	return (
 		<div className="h-screen flex flex-row overflow-hidden">
+			<div className="hidden md:block">
+				<TeamRail />
+			</div>
 			<div className="hidden lg:block">
 				<TeamSidebarShell />
 			</div>
@@ -119,6 +123,7 @@ function ShellLayout() {
 						className="absolute inset-0 bg-black/50 cursor-default"
 					/>
 					<div className="relative flex h-full bg-bg shadow-xl">
+						<TeamRail />
 						<div className="w-[260px] h-full overflow-y-auto py-2 border-r border-border bg-bg">
 							<TeamSidebar />
 						</div>

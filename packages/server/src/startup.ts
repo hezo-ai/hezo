@@ -29,6 +29,7 @@ import { executionLocksRoutes } from './routes/execution-locks';
 import { healthRoutes } from './routes/health';
 import { inboxRoutes } from './routes/inbox';
 import { mcpConnectionsRoutes } from './routes/mcp-connections';
+import { meRoutes } from './routes/me';
 import { mentionsRoutes } from './routes/mentions';
 import { oauthRoutes } from './routes/oauth';
 import { preferencesRoutes } from './routes/preferences';
@@ -275,6 +276,7 @@ export function buildApp(
 	app.route('/api', agentTypesRoutes);
 	app.route('/api', teamTemplatesRoutes);
 	app.route('/api', teamsRoutes);
+	app.route('/api', meRoutes);
 	app.route('/api', agentsRoutes);
 	app.route('/api', projectsRoutes);
 	app.route('/api', tasksRoutes);
