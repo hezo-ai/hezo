@@ -1,9 +1,13 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AgentEffort, CEO_AGENT_SLUG } from '@hezo/shared';
+import { AgentEffort, CAPTAIN_AGENT_SLUG, CEO_AGENT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { resolveEffort } from '../src/services/effort';
+import {
+	ensureInstanceCeo,
+	linkTeamCaptainToInstanceCeo,
+} from '../src/services/team-template-apply';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp } from './helpers/app';
 
@@ -67,5 +71,62 @@ describe('instance CEO agent type', () => {
 		expect(resolveEffort(AgentEffort.Low, AgentEffort.Low, CEO_AGENT_SLUG)).toBe(AgentEffort.Max);
 		// Non-leaders keep their configured default.
 		expect(resolveEffort(undefined, AgentEffort.Low, 'engineer')).toBe(AgentEffort.Low);
+	});
+});
+
+describe('instance CEO provisioning + Captain reporting line', () => {
+	async function createTeamViaApi(name: string): Promise<string> {
+		const res = await app.request('/api/teams', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name }),
+		});
+		expect(res.status).toBe(201);
+		return (await res.json()).data.id as string;
+	}
+
+	async function memberIdFor(teamId: string, slug: string): Promise<string | null> {
+		const r = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.slug = $2`,
+			[teamId, slug],
+		);
+		return r.rows[0]?.id ?? null;
+	}
+
+	async function reportsToOf(memberAgentId: string): Promise<string | null> {
+		const r = await db.query<{ reports_to: string | null }>(
+			`SELECT reports_to FROM member_agents WHERE id = $1`,
+			[memberAgentId],
+		);
+		return r.rows[0]?.reports_to ?? null;
+	}
+
+	it('provisions one CEO and points Captains across teams at it', async () => {
+		// First team — no CEO exists yet, so its Captain isn't linked on creation.
+		const teamA = await createTeamViaApi('CEO Test A');
+		const ceoId = await ensureInstanceCeo(db, teamA);
+		expect(ceoId).toBeTruthy();
+		// The CEO reports to the board (no manager).
+		expect(await reportsToOf(ceoId!)).toBeNull();
+
+		await linkTeamCaptainToInstanceCeo(db, teamA);
+		const captainA = await memberIdFor(teamA, CAPTAIN_AGENT_SLUG);
+		expect(captainA).toBeTruthy();
+		expect(await reportsToOf(captainA!)).toBe(ceoId);
+
+		// A team created afterwards is auto-linked to the same CEO on creation
+		// (a cross-team reporting line, since the CEO lives in team A).
+		const teamB = await createTeamViaApi('CEO Test B');
+		const captainB = await memberIdFor(teamB, CAPTAIN_AGENT_SLUG);
+		expect(await reportsToOf(captainB!)).toBe(ceoId);
+
+		// Idempotent: still exactly one CEO instance-wide.
+		expect(await ensureInstanceCeo(db, teamB)).toBe(ceoId);
+		const count = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM member_agents WHERE slug = $1`,
+			[CEO_AGENT_SLUG],
+		);
+		expect(count.rows[0].n).toBe(1);
 	});
 });

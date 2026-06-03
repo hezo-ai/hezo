@@ -1,5 +1,11 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { BUILTIN_AGENT_SLUGS, DocumentType, MemberType } from '@hezo/shared';
+import {
+	BUILTIN_AGENT_SLUGS,
+	CAPTAIN_AGENT_SLUG,
+	CEO_AGENT_SLUG,
+	DocumentType,
+	MemberType,
+} from '@hezo/shared';
 import { logger } from '../logger';
 import { enqueueTeamCoherenceReviewTask } from './description-tasks';
 import { initAgentSystemPrompt, upsertDocument } from './documents';
@@ -56,6 +62,58 @@ export async function ensureBuiltinAgents(db: PGlite, teamId: string): Promise<s
 		inserted.push(slug);
 	}
 	return inserted;
+}
+
+/**
+ * Ensures the single instance-level CEO exists. If no CEO exists anywhere yet,
+ * it is provisioned into the given team (the default/HQ team). Idempotent — one
+ * CEO per instance. Returns the CEO's member id (or null if the `ceo` agent
+ * type isn't seeded).
+ */
+export async function ensureInstanceCeo(db: PGlite, teamId: string): Promise<string | null> {
+	const existing = await db.query<{ id: string }>(
+		`SELECT id FROM member_agents WHERE slug = $1 LIMIT 1`,
+		[CEO_AGENT_SLUG],
+	);
+	if (existing.rows[0]) return existing.rows[0].id;
+
+	const config = await loadBuiltinDefaults(db, CEO_AGENT_SLUG);
+	if (!config) return null;
+	await insertBuiltinAgent(db, teamId, config);
+
+	const created = await db.query<{ id: string }>(
+		`SELECT ma.id FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE m.team_id = $1 AND ma.slug = $2`,
+		[teamId, CEO_AGENT_SLUG],
+	);
+	return created.rows[0]?.id ?? null;
+}
+
+/**
+ * Points the given team's Captain at the instance CEO. No-op when there is no
+ * CEO yet (e.g. before the default team is seeded) or the team has no Captain,
+ * so seed/test paths that never create a CEO stay safe. The CEO lives in the
+ * default team, so for other teams this is a cross-team reporting line.
+ */
+export async function linkTeamCaptainToInstanceCeo(db: PGlite, teamId: string): Promise<void> {
+	const ceo = await db.query<{ id: string }>(
+		`SELECT id FROM member_agents WHERE slug = $1 LIMIT 1`,
+		[CEO_AGENT_SLUG],
+	);
+	const ceoId = ceo.rows[0]?.id;
+	if (!ceoId) return;
+
+	const captain = await db.query<{ id: string }>(
+		`SELECT ma.id FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE m.team_id = $1 AND ma.slug = $2`,
+		[teamId, CAPTAIN_AGENT_SLUG],
+	);
+	const captainId = captain.rows[0]?.id;
+	if (!captainId || captainId === ceoId) return;
+
+	await db.query(`UPDATE member_agents SET reports_to = $1 WHERE id = $2`, [ceoId, captainId]);
 }
 
 /**

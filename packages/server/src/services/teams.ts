@@ -17,7 +17,12 @@ import type { ContainerLogStreamer } from './container-logs';
 import { type ProjectRow, provisionContainer } from './containers';
 import type { DockerClient } from './docker';
 import type { LogStreamBroker } from './log-stream-broker';
-import { applyTemplateToTeam, ensureBuiltinAgents } from './team-template-apply';
+import {
+	applyTemplateToTeam,
+	ensureBuiltinAgents,
+	ensureInstanceCeo,
+	linkTeamCaptainToInstanceCeo,
+} from './team-template-apply';
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('teams');
@@ -135,6 +140,10 @@ export async function createTeam(
 		await ensureBuiltinAgents(db, teamId);
 	}
 
+	// A new team's Captain reports to the single instance CEO. No-op while the
+	// default team (which hosts the CEO) is itself being seeded.
+	await linkTeamCaptainToInstanceCeo(db, teamId);
+
 	const internalProject = await db.query<ProjectRow>(
 		`SELECT id, team_id, slug, docker_base_image, container_id, container_status, dev_ports
 		 FROM projects WHERE team_id = $1 AND slug = $2`,
@@ -192,6 +201,10 @@ export async function seedDefaultTeam(deps: CreateTeamDeps): Promise<void> {
 		name: DEFAULT_TEAM_NAME,
 		templateId,
 	});
+
+	// The single instance CEO lives in the default team; its Captain reports to it.
+	await ensureInstanceCeo(deps.db, DEFAULT_TEAM_ID);
+	await linkTeamCaptainToInstanceCeo(deps.db, DEFAULT_TEAM_ID);
 
 	log.info(
 		`Seeded default team (${DEFAULT_TEAM_SLUG}) using template "${DEFAULT_TEAM_TEMPLATE_NAME}"`,
