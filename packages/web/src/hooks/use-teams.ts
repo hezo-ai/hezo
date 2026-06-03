@@ -91,3 +91,23 @@ export function useSaveTeamAsTemplate(teamSlug: string) {
 		},
 	});
 }
+
+export interface ApplyTeamTypeResult {
+	created_slugs: string[];
+	skipped_slugs: string[];
+	builtin_inserted_slugs: string[];
+	builtin_updated_slugs: string[];
+}
+
+export function useApplyTeamType(teamSlug: string) {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (vars: { template_id: string }) =>
+			api.post<ApplyTeamTypeResult>(`/api/teams/${teamSlug}/apply-type`, vars),
+		onSuccess: () => {
+			// A merge can add agents — refetch the roster and team views.
+			queryClient.invalidateQueries({ queryKey: ['agents'] });
+			queryClient.invalidateQueries({ queryKey: ['teams'] });
+		},
+	});
+}

@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useState } from 'react';
 import { ApiKeysSection } from '../../../../components/settings/api-keys-section';
+import { ApplyTypeSection } from '../../../../components/settings/apply-type-section';
 import { AutomationsSection } from '../../../../components/settings/automations-section';
 import { BudgetSection } from '../../../../components/settings/budget-section';
 import { GeneralSection } from '../../../../components/settings/general-section';
@@ -22,6 +23,7 @@ const settingsNav = [
 	{ id: 'preferences', label: 'Preferences' },
 	{ id: 'skill-file', label: 'Skill file' },
 	{ id: 'save-as-type', label: 'Save as type' },
+	{ id: 'apply-type', label: 'Refresh from type' },
 ];
 
 function SettingsPage() {
@@ -31,7 +33,7 @@ function SettingsPage() {
 	const [activeSection, setActiveSection] = useState('general');
 	const nav = me?.is_superuser
 		? settingsNav
-		: settingsNav.filter((item) => item.id !== 'save-as-type');
+		: settingsNav.filter((item) => item.id !== 'save-as-type' && item.id !== 'apply-type');
 
 	function scrollTo(id: string) {
 		setActiveSection(id);
@@ -84,6 +86,9 @@ function SettingsPage() {
 				</div>
 				<div id="settings-save-as-type">
 					<SaveAsTypeSection teamId={teamId} />
+				</div>
+				<div id="settings-apply-type">
+					<ApplyTypeSection teamId={teamId} />
 				</div>
 			</div>
 		</div>
