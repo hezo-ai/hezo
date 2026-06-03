@@ -6,8 +6,10 @@ import { BudgetSection } from '../../../../components/settings/budget-section';
 import { GeneralSection } from '../../../../components/settings/general-section';
 import { McpServersSection } from '../../../../components/settings/mcp-section';
 import { PreferencesSection } from '../../../../components/settings/preferences-section';
+import { SaveAsTypeSection } from '../../../../components/settings/save-as-type-section';
 import { SecretsSection } from '../../../../components/settings/secrets-section';
 import { SkillFileSection } from '../../../../components/settings/skill-file-section';
+import { useMe } from '../../../../hooks/use-me';
 import { useTeam } from '../../../../hooks/use-teams';
 
 const settingsNav = [
@@ -19,12 +21,17 @@ const settingsNav = [
 	{ id: 'budget', label: 'Budget' },
 	{ id: 'preferences', label: 'Preferences' },
 	{ id: 'skill-file', label: 'Skill file' },
+	{ id: 'save-as-type', label: 'Save as type' },
 ];
 
 function SettingsPage() {
 	const { teamId } = Route.useParams();
 	const { data: team } = useTeam(teamId);
+	const { data: me } = useMe();
 	const [activeSection, setActiveSection] = useState('general');
+	const nav = me?.is_superuser
+		? settingsNav
+		: settingsNav.filter((item) => item.id !== 'save-as-type');
 
 	function scrollTo(id: string) {
 		setActiveSection(id);
@@ -34,7 +41,7 @@ function SettingsPage() {
 	return (
 		<div className="flex flex-col gap-4 md:grid md:grid-cols-[160px_1fr] md:gap-6">
 			<nav className="flex flex-col gap-0.5 sticky top-0">
-				{settingsNav.map((item) => (
+				{nav.map((item) => (
 					<button
 						key={item.id}
 						type="button"
@@ -74,6 +81,9 @@ function SettingsPage() {
 				</div>
 				<div id="settings-skill-file">
 					<SkillFileSection />
+				</div>
+				<div id="settings-save-as-type">
+					<SaveAsTypeSection teamId={teamId} />
 				</div>
 			</div>
 		</div>
