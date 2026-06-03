@@ -4,6 +4,8 @@ export const DEFAULT_DATA_DIR = '~/.hezo';
 export const CANARY_PLAINTEXT = 'CANARY';
 export const CAPTAIN_AGENT_SLUG = 'captain';
 export const COACH_AGENT_SLUG = 'coach';
+/** Instance-level CEO role: one per Hezo instance, sits above every team Captain. */
+export const CEO_AGENT_SLUG = 'ceo';
 export const BUILTIN_AGENT_SLUGS = [CAPTAIN_AGENT_SLUG, COACH_AGENT_SLUG] as const;
 
 export const BOARD_MENTION_SLUG = 'board';

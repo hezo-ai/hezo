@@ -4,10 +4,10 @@
  * A run's effective effort level is resolved at activation time with this
  * precedence (highest wins):
  *
- *   0. The Captain always runs at max effort. Strategic, delegation, and hiring
- *      decisions cascade to the whole org, so the Captain is never allowed to
- *      think shallow. Wakeup payloads and column defaults are ignored for the
- *      Captain.
+ *   0. The CEO and team Captains always run at max effort. Strategic,
+ *      delegation, and hiring decisions cascade across the org, so these
+ *      leaders are never allowed to think shallow. Wakeup payloads and column
+ *      defaults are ignored for them.
  *   1. An explicit `effort` value carried in the wakeup payload — typically
  *      set by the human who posted the triggering comment, or by the caller of
  *      an MCP tool that wants to ask an agent to re-think a problem.
@@ -26,6 +26,7 @@ import {
 	AgentEffort,
 	AgentRuntime,
 	CAPTAIN_AGENT_SLUG,
+	CEO_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	isAgentEffort,
 } from '@hezo/shared';
@@ -41,7 +42,7 @@ export function resolveEffort(
 	agentDefault: string | null | undefined,
 	agentSlug?: string | null,
 ): AgentEffort {
-	if (agentSlug === CAPTAIN_AGENT_SLUG) return AgentEffort.Max;
+	if (agentSlug === CAPTAIN_AGENT_SLUG || agentSlug === CEO_AGENT_SLUG) return AgentEffort.Max;
 	if (isAgentEffort(wakeupEffort)) return wakeupEffort;
 	if (isAgentEffort(agentDefault)) return agentDefault;
 	return DEFAULT_EFFORT;
