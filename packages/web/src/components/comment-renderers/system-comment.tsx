@@ -1,7 +1,9 @@
 import { formatTaskStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
+import { repoWebUrl } from '../../lib/github';
 import type {
 	SystemContent,
+	SystemRepoDesignatedContent,
 	SystemRunFailedContent,
 	SystemStatusChangeContent,
 	SystemTaskLinkContent,
@@ -21,6 +23,9 @@ function isStatusChange(c: SystemContent): c is SystemStatusChangeContent {
 }
 function isRunFailed(c: SystemContent): c is SystemRunFailedContent {
 	return c.kind === 'run_failed';
+}
+function isRepoDesignated(c: SystemContent): c is SystemRepoDesignatedContent {
+	return c.kind === 'repo_designated';
 }
 
 export function SystemComment({ comment, teamId }: Props) {
@@ -49,6 +54,10 @@ export function SystemComment({ comment, teamId }: Props) {
 
 	if (content && isRunFailed(content)) {
 		return <RunFailedBody content={content} teamId={teamId} timestamp={timestamp} />;
+	}
+
+	if (content && isRepoDesignated(content)) {
+		return <RepoDesignatedBody content={content} timestamp={timestamp} />;
 	}
 
 	const text = content
@@ -156,6 +165,39 @@ function RunFailedBody({
 			<span className="text-xs text-text-muted">
 				Run for {agentNode} {statusLabel}
 				{error ? <span className="text-text-subtle">: {error}</span> : null}. Waking agent to retry.
+			</span>
+			{timestamp}
+		</div>
+	);
+}
+
+function RepoDesignatedBody({
+	content,
+	timestamp,
+}: {
+	content: SystemRepoDesignatedContent;
+	timestamp: React.ReactNode;
+}) {
+	const identifier = typeof content.repo_identifier === 'string' ? content.repo_identifier : '';
+	const hostType = typeof content.host_type === 'string' ? content.host_type : '';
+	const url = identifier ? repoWebUrl(identifier, hostType) : null;
+	const repoNode = url ? (
+		<a
+			href={url}
+			target="_blank"
+			rel="noopener noreferrer"
+			className="text-xs text-accent-blue-text hover:underline"
+			data-testid="repo-designated-link"
+		>
+			{identifier}
+		</a>
+	) : (
+		<span className="text-xs text-text-muted">{identifier}</span>
+	);
+	return (
+		<div className="flex items-baseline gap-2 leading-[26px]" data-testid="repo-designated-comment">
+			<span className="text-xs text-text-muted">
+				Repository {repoNode} set as the designated repo.
 			</span>
 			{timestamp}
 		</div>

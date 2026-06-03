@@ -157,11 +157,17 @@ describe('finalizePendingRepoSetup + enqueueRepoSetupResumeWakeups (multi-agent)
 			}
 
 			for (const taskId of [taskA, taskB, taskC]) {
-				const sys = await db.query<{ id: string }>(
-					`SELECT id FROM task_comments WHERE task_id = $1 AND content_type = 'system'::comment_content_type`,
+				const sys = await db.query<{
+					id: string;
+					content: { kind?: string; repo_identifier?: string; host_type?: string };
+				}>(
+					`SELECT id, content FROM task_comments WHERE task_id = $1 AND content_type = 'system'::comment_content_type`,
 					[taskId],
 				);
 				expect(sys.rows).toHaveLength(1);
+				expect(sys.rows[0].content.kind).toBe('repo_designated');
+				expect(sys.rows[0].content.repo_identifier).toBe('octo/multi');
+				expect(sys.rows[0].content.host_type).toBe('github');
 			}
 
 			await enqueueRepoSetupResumeWakeups(

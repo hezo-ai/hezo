@@ -9,6 +9,7 @@ When your markdown (ticket descriptions, `progress_summary`, comments, project d
 - `@board` — **active** board reference. The board is the team's human project-owner group. Active `@board` lands a row in every board user's inbox, surfacing your question for human review. Use only when you genuinely cannot proceed without a human decision (product/strategy/sensitive trade-off) — then stop your turn and leave the task in a non-terminal status; the board's reply wakes you automatically. `@@board` is the passive form for narrative references and does not notify.
 - `<TASK-ID>` — ticket, using the project-scoped uppercase identifier. Example: `IN-42`, `BE-7`. Shape: `<project-prefix>-<number>`. No prefix — write the bare identifier.
 - `<project-doc-filename>` — project doc in the current project. Example: `prd.md`, `spec.md`. Available filenames are listed in the project-docs block injected into your context. No prefix — write the bare filename.
+- `assets/<filename>` — a file in the project assets library (mockups, wireframes, diagrams, exports). Example: `assets/ui-mockups.html`, `assets/login-wireframe.png`. Keep the `assets/` prefix and write it bare. Non-markdown deliverables belong in the assets library (author text-based ones with `write_project_asset`) — never commit them to the source repo.
 
 Skills in the team skills database are referenced by their slug (e.g. `deploy-runbook`) as shown in the injected skills manifest, not by filename. Only reference skills you know exist.
 
@@ -20,7 +21,7 @@ Skills in the team skills database are referenced by their slug (e.g. `deploy-ru
 - No other prefix is valid. Never write `#doc/<filename>` or `doc/<filename>` — those forms are not recognised. Just the bare filename or identifier.
 - Never wrap any of these in backticks or fence them in a code block — inline code suppresses the link. Write them as bare prose.
 - Only link entities that actually exist. Available targets come from: the project-docs block in your context, teammates (you can `list_agents`), and tickets you have read, created, or that the board has referenced. Do not guess identifiers.
-- Use backticks for things that are not Hezo entities — file paths inside a repo, package names, shell commands, code identifiers (e.g. `` `create_task` ``, `` `orzogc/grok3_api` ``, `` `src/app.ts` ``).
+- Use backticks for things that are not Hezo entities — file paths inside a repo, package names, shell commands, code identifiers (e.g. `` `create_task` ``, `` `orzogc/grok3_api` ``, `` `src/app.ts` ``). An `assets/<filename>` reference is a Hezo entity, not a repo path — write it bare, never in backticks.
 
 **Example rewrite:**
 

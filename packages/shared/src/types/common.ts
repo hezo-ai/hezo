@@ -111,6 +111,7 @@ export const ATTACHMENT_SIGNED_URL_TTL_SECONDS = 3600;
 
 export const ATTACHMENT_EXTENSIONS = {
 	txt: 'text/plain',
+	html: 'text/html',
 	pdf: 'application/pdf',
 	png: 'image/png',
 	jpg: 'image/jpeg',
@@ -141,6 +142,30 @@ export const ASSET_INLINE_UNSAFE_MIME: ReadonlySet<string> = new Set(['image/svg
 
 export function assetContentDisposition(contentType: string): 'inline' | 'attachment' {
 	return ASSET_INLINE_UNSAFE_MIME.has(contentType) ? 'attachment' : 'inline';
+}
+
+// Content types that may carry active script yet are meant to render inline (an
+// interactive HTML mockup a human opens in a new tab). Serving them on our own
+// origin would let agent-authored script read the app's credentials, so they are
+// pinned to an opaque origin via a `sandbox` Content-Security-Policy: scripts run,
+// but they cannot reach same-origin cookies/storage.
+const ASSET_SANDBOX_CSP = 'sandbox allow-scripts allow-forms allow-popups allow-modals';
+const ASSET_SANDBOX_SERVE_MIME: ReadonlySet<string> = new Set(['text/html']);
+
+export function assetServeCsp(contentType: string): string | null {
+	return ASSET_SANDBOX_SERVE_MIME.has(contentType) ? ASSET_SANDBOX_CSP : null;
+}
+
+// File types an agent may author directly into the assets library (text-based,
+// reviewable). Binary assets (images, PDF, media) stay human-uploaded.
+export const AGENT_AUTHORABLE_ASSET_MIME: ReadonlySet<string> = new Set([
+	'text/html',
+	'image/svg+xml',
+	'text/plain',
+]);
+
+export function isAgentAuthorableAssetMime(mime: string): boolean {
+	return AGENT_AUTHORABLE_ASSET_MIME.has(mime);
 }
 
 // Normalize an uploaded filename into a link-safe identity. This is the name an
