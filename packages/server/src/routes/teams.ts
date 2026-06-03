@@ -14,6 +14,7 @@ import {
 	postSkipQuestionsSignal,
 } from '../services/onboarding-intake';
 import { postSkipQuestionsSignalForProjectIntake } from '../services/project-intake';
+import { snapshotTeamAsTemplate } from '../services/team-template-snapshot';
 import { createTeam } from '../services/teams';
 
 export const teamsRoutes = new Hono<Env>();
@@ -199,6 +200,26 @@ teamsRoutes.get('/teams/:teamId', async (c) => {
 	}
 
 	return ok(c, result.rows[0]);
+});
+
+// Snapshot the live team into a new reusable custom team template ("save this
+// team as a type"). Superuser-only: templates are a global catalog visible to
+// every team's New-team flow.
+teamsRoutes.post('/teams/:teamId/save-as-template', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+
+	const teamId = c.get('teamId') as string;
+	const body = await c.req.json<{ name: string; description?: string }>();
+	if (!body.name?.trim()) {
+		return err(c, 'INVALID_REQUEST', 'name is required', 400);
+	}
+
+	const result = await snapshotTeamAsTemplate(c.get('db'), teamId, {
+		name: body.name,
+		description: body.description,
+	});
+	return ok(c, result, 201);
 });
 
 teamsRoutes.patch('/teams/:teamId', async (c) => {
