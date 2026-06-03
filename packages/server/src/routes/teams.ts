@@ -14,6 +14,7 @@ import {
 	postSkipQuestionsSignal,
 } from '../services/onboarding-intake';
 import { postSkipQuestionsSignalForProjectIntake } from '../services/project-intake';
+import { applyTemplateToTeam } from '../services/team-template-apply';
 import { snapshotTeamAsTemplate } from '../services/team-template-snapshot';
 import { createTeam } from '../services/teams';
 
@@ -220,6 +221,32 @@ teamsRoutes.post('/teams/:teamId/save-as-template', async (c) => {
 		description: body.description,
 	});
 	return ok(c, result, 201);
+});
+
+// Refresh / apply a team type onto an existing team (merge: adds any missing
+// roster roles and refreshes the built-in prompts; never destructive). Powers
+// "Refresh from type" and "Copy from another team" (save-as-template, then
+// apply the saved type here).
+teamsRoutes.post('/teams/:teamId/apply-type', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const body = await c.req.json<{ template_id: string }>();
+	if (!body.template_id) {
+		return err(c, 'INVALID_REQUEST', 'template_id is required', 400);
+	}
+	const tmpl = await db.query('SELECT id FROM team_templates WHERE id = $1', [body.template_id]);
+	if (tmpl.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Team type not found', 404);
+	}
+
+	const result = await applyTemplateToTeam(db, teamId, body.template_id, {
+		dataDir: c.get('dataDir'),
+		wsManager: c.get('wsManager'),
+	});
+	return ok(c, result);
 });
 
 teamsRoutes.patch('/teams/:teamId', async (c) => {

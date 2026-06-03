@@ -91,3 +91,35 @@ describe('save team as a type (template snapshot)', () => {
 		expect(res.status).toBe(400);
 	});
 });
+
+describe('apply a team type (refresh / merge)', () => {
+	it('merges a type onto an existing team — adds missing roles, keeps built-ins', async () => {
+		const team = await createTeam('Apply Type Co'); // no template → captain + coach
+		expect(await agentSlugs(team)).toEqual(['captain', 'coach']);
+
+		const res = await app.request(`/api/teams/${team}/apply-type`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ template_id: startupTemplateId }),
+		});
+		expect(res.status).toBe(200);
+
+		const after = await agentSlugs(team);
+		// Merge is additive: built-ins preserved, Startup roles added.
+		expect(after).toContain('captain');
+		expect(after).toContain('coach');
+		expect(after).toContain('architect');
+		expect(after).toContain('engineer');
+		expect(after.length).toBeGreaterThan(2);
+	});
+
+	it('404s for an unknown type', async () => {
+		const team = await createTeam('Apply Type 404 Co');
+		const res = await app.request(`/api/teams/${team}/apply-type`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ template_id: '00000000-0000-0000-0000-000000000000' }),
+		});
+		expect(res.status).toBe(404);
+	});
+});
