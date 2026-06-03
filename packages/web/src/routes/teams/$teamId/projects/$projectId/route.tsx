@@ -4,12 +4,14 @@ import { Info } from 'lucide-react';
 import { Breadcrumb } from '../../../../../components/ui/breadcrumb';
 import { useProject } from '../../../../../hooks/use-projects';
 import { useTaskAncestors } from '../../../../../hooks/use-tasks';
+import { useTeam } from '../../../../../hooks/use-teams';
 
 const AGENTS_MD_KEY = '__agents_md__';
 
 function ProjectLayout() {
 	const { teamId, projectId } = Route.useParams();
 	const { data: project } = useProject(teamId, projectId);
+	const { data: team } = useTeam(teamId);
 	const allParams = useParams({ strict: false }) as { taskId?: string };
 	const search = useSearch({ strict: false }) as { file?: string };
 	const { pathname } = useLocation();
@@ -28,6 +30,12 @@ function ProjectLayout() {
 		params?: Record<string, string>;
 		key?: string;
 	}> = [
+		{
+			key: 'team',
+			label: `Team: ${team?.name ?? teamId}`,
+			to: '/teams/$teamId/settings/general',
+			params: { teamId },
+		},
 		{
 			label: isInternal ? (
 				<span className="italic">{project?.name}</span>

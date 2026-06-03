@@ -219,6 +219,21 @@ describe('Board user cross-team isolation', () => {
 		});
 		expect(res.status).toBe(200);
 	});
+
+	it('GET /teams lists only the teams the non-superuser belongs to', async () => {
+		const res = await app.request('/api/teams', { headers: authHeader(userAToken) });
+		expect(res.status).toBe(200);
+		const ids = ((await res.json()).data as { id: string }[]).map((t) => t.id);
+		expect(ids).toContain(teamAId);
+		expect(ids).not.toContain(teamBId);
+	});
+
+	it('GET /teams lists every team for the superuser', async () => {
+		const res = await app.request('/api/teams', { headers: authHeader(superuserToken) });
+		const ids = ((await res.json()).data as { id: string }[]).map((t) => t.id);
+		expect(ids).toContain(teamAId);
+		expect(ids).toContain(teamBId);
+	});
 });
 
 describe('Superuser cross-team access', () => {
