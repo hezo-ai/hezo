@@ -31,6 +31,25 @@ function buildPng(seed = 0): Uint8Array {
 const SVG_BYTES = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
 const WEBP_BYTES = new TextEncoder().encode('RIFF....WEBPVP8 ');
 
+async function callToolViaMcp(
+	authToken: string,
+	toolName: string,
+	args: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+	const res = await app.request('/mcp', {
+		method: 'POST',
+		headers: { ...authHeader(authToken), 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			jsonrpc: '2.0',
+			method: 'tools/call',
+			params: { name: toolName, arguments: args },
+			id: 1,
+		}),
+	});
+	const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
+	return JSON.parse(body.result.content[0].text);
+}
+
 async function uploadProjectAsset(
 	filename: string,
 	mime: string,
@@ -152,6 +171,107 @@ describe('asset serving disposition', () => {
 
 		const svgRes = await app.request(svg.data.url);
 		expect(svgRes.headers.get('content-disposition')).toContain('attachment');
+	});
+
+	it('serves html inline pinned to an opaque origin via a sandbox CSP', async () => {
+		const html = await (
+			await uploadProjectAsset('page.html', 'text/html', new TextEncoder().encode('<h1>hi</h1>'))
+		).json();
+		const res = await app.request(html.data.url);
+		expect(res.headers.get('content-disposition')).toContain('inline');
+		const csp = res.headers.get('content-security-policy');
+		expect(csp).toContain('sandbox');
+		expect(csp).toContain('allow-scripts');
+		expect(csp).not.toContain('allow-same-origin');
+	});
+});
+
+describe('agent-authored assets (write_project_asset)', () => {
+	it('writes an html mockup and returns its assets/<name> reference', async () => {
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+		);
+		const result = await callToolViaMcp(agentToken, 'write_project_asset', {
+			team_id: teamId,
+			project_id: projectId,
+			filename: 'ui-mockups.html',
+			content: '<!doctype html><title>Mock</title><h1>v1</h1>',
+		});
+		expect(result.written).toBe(true);
+		expect(result.reference).toBe('assets/ui-mockups.html');
+
+		const row = await db.query<{ id: string; content_type: string }>(
+			'SELECT id, content_type FROM assets WHERE project_id = $1 AND original_filename = $2',
+			[projectId, 'ui-mockups.html'],
+		);
+		expect(row.rows).toHaveLength(1);
+		expect(row.rows[0].content_type).toBe('text/html');
+		const onDisk = join(dataDir, 'teams', teamId, 'projects', projectId, 'assets', row.rows[0].id);
+		expect(existsSync(onDisk)).toBe(true);
+	});
+
+	it('overwrites the same filename on re-save, keeping a single stable reference', async () => {
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+		);
+		const first = await callToolViaMcp(agentToken, 'write_project_asset', {
+			team_id: teamId,
+			project_id: projectId,
+			filename: 'iterate.html',
+			content: '<h1>first</h1>',
+		});
+		const second = await callToolViaMcp(agentToken, 'write_project_asset', {
+			team_id: teamId,
+			project_id: projectId,
+			filename: 'iterate.html',
+			content: '<h1>second-and-longer</h1>',
+		});
+		expect(second.reference).toBe('assets/iterate.html');
+
+		const rows = await db.query<{ id: string; byte_size: number }>(
+			'SELECT id, byte_size FROM assets WHERE project_id = $1 AND original_filename = $2',
+			[projectId, 'iterate.html'],
+		);
+		expect(rows.rows).toHaveLength(1);
+		expect(rows.rows[0].id).toBe(second.id);
+		// The replaced asset's bytes are cleaned off disk.
+		expect(first.id).not.toBe(second.id);
+		const oldDisk = join(
+			dataDir,
+			'teams',
+			teamId,
+			'projects',
+			projectId,
+			'assets',
+			first.id as string,
+		);
+		expect(existsSync(oldDisk)).toBe(false);
+	});
+
+	it('rejects a binary asset type', async () => {
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+		);
+		const result = await callToolViaMcp(agentToken, 'write_project_asset', {
+			team_id: teamId,
+			project_id: projectId,
+			filename: 'diagram.png',
+			content: 'not really a png',
+		});
+		expect(result.written).toBeUndefined();
+		expect(String(result.error)).toMatch(/text-based|\.html|\.svg|\.txt/i);
 	});
 });
 

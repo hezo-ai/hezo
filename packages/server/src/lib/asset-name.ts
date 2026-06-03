@@ -102,3 +102,57 @@ export async function insertAssetWithUniqueName(
 	}
 	throw lastErr ?? new Error('Failed to insert asset with a unique name');
 }
+
+/**
+ * Insert an asset under an exact filename, or overwrite the row if one already
+ * exists for that `(project_id, original_filename)`. Used by agent-authored
+ * assets (e.g. an iterated HTML mockup) so the reference stays stable at
+ * `assets/<filename>` instead of accreting random suffixes on each re-save. The
+ * caller writes the new blob keyed by `assetId`; on overwrite the previous
+ * `assetId`'s blob is orphaned and should be cleaned up by the caller.
+ */
+export async function upsertProjectAsset(
+	db: PGlite,
+	input: InsertAssetInput,
+): Promise<InsertedAsset & { replacedAssetId: string | null }> {
+	const existing = await db.query<{ id: string }>(
+		'SELECT id FROM assets WHERE project_id = $1 AND original_filename = $2 LIMIT 1',
+		[input.projectId, input.desiredName],
+	);
+	const prior = existing.rows[0]?.id ?? null;
+	if (prior) {
+		const r = await db.query<InsertedAsset>(
+			`UPDATE assets
+			 SET id = $1, content_type = $2, byte_size = $3, sha256 = $4,
+			     uploaded_by_member_id = $5, created_at = now()
+			 WHERE project_id = $6 AND original_filename = $7
+			 RETURNING id, content_type, byte_size, original_filename`,
+			[
+				input.assetId,
+				input.contentType,
+				input.byteSize,
+				input.sha256,
+				input.uploadedByMemberId,
+				input.projectId,
+				input.desiredName,
+			],
+		);
+		return { ...r.rows[0], replacedAssetId: prior };
+	}
+	const r = await db.query<InsertedAsset>(
+		`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 RETURNING id, content_type, byte_size, original_filename`,
+		[
+			input.assetId,
+			input.teamId,
+			input.projectId,
+			input.contentType,
+			input.byteSize,
+			input.sha256,
+			input.desiredName,
+			input.uploadedByMemberId,
+		],
+	);
+	return { ...r.rows[0], replacedAssetId: null };
+}

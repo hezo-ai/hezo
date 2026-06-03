@@ -8,6 +8,7 @@ import {
 	useOAuthConnections,
 } from '../hooks/use-oauth-connections';
 import { useDeleteRepo, useRepos } from '../hooks/use-repos';
+import { repoWebUrl } from '../lib/github';
 import { ConnectorDeviceFlowDialog } from './connector-device-flow-dialog';
 import { RepoPickerModal } from './repo-picker-modal';
 import { Badge } from './ui/badge';
@@ -176,7 +177,22 @@ export function GitHubSection({ teamId, projectId }: GitHubSectionProps) {
 								<div className="flex items-center gap-2">
 									<Badge color="gray">{r.host_type}</Badge>
 									<span className="font-medium">{r.short_name}</span>
-									<span className="text-text-muted">{r.repo_identifier}</span>
+									{(() => {
+										const url = repoWebUrl(r.repo_identifier, r.host_type);
+										return url ? (
+											<a
+												href={url}
+												target="_blank"
+												rel="noopener noreferrer"
+												className="text-accent-blue-text hover:underline"
+												data-testid={`repo-link-${r.short_name}`}
+											>
+												{r.repo_identifier}
+											</a>
+										) : (
+											<span className="text-text-muted">{r.repo_identifier}</span>
+										);
+									})()}
 									{r.is_designated && <Badge color="blue">Designated</Badge>}
 								</div>
 								{r.is_designated ? (

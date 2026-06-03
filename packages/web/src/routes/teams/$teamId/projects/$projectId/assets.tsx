@@ -1,6 +1,7 @@
 import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import {
+	Code,
 	ExternalLink,
 	FileAudio,
 	File as FileIcon,
@@ -37,6 +38,7 @@ function AssetIcon({ contentType }: { contentType: string }) {
 	const cls = 'h-8 w-8 text-text-subtle';
 	if (contentType.startsWith('audio/')) return <FileAudio className={cls} />;
 	if (contentType.startsWith('video/')) return <FileVideo className={cls} />;
+	if (contentType === 'text/html') return <Code className={cls} />;
 	if (contentType === 'application/pdf' || contentType === 'text/plain') {
 		return <FileText className={cls} />;
 	}
@@ -251,6 +253,7 @@ function AssetCard({
 	}, [highlighted]);
 
 	const isImage = asset.content_type.startsWith('image/');
+	const isHtml = asset.content_type === 'text/html';
 	return (
 		<li
 			ref={ref}
@@ -273,6 +276,13 @@ function AssetCard({
 						src={asset.url}
 						alt={asset.original_filename}
 						className="h-full w-full object-cover"
+					/>
+				) : isHtml ? (
+					<iframe
+						src={asset.url}
+						title={asset.original_filename}
+						sandbox=""
+						className="pointer-events-none h-full w-full bg-white"
 					/>
 				) : (
 					<AssetIcon contentType={asset.content_type} />

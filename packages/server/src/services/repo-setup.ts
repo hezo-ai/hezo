@@ -216,6 +216,9 @@ export async function finalizePendingRepoSetup(
 				row.task_id,
 				CommentContentType.System,
 				JSON.stringify({
+					kind: 'repo_designated',
+					repo_identifier: input.repoIdentifier,
+					host_type: 'github',
 					text: `Repository ${input.repoIdentifier} set as the designated repo.`,
 				}),
 			],
