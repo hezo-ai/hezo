@@ -16,7 +16,8 @@ export interface Team {
 	slug: string;
 	description: string | null;
 	summary: string | null;
-	team_type_ids: string[];
+	/** Name of the team template this team was created from ("its type"), or null. */
+	primary_template_name: string | null;
 	mcp_servers: unknown[];
 	settings: TeamSettings;
 	agent_count: number;

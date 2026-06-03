@@ -34,13 +34,15 @@ teamsRoutes.get('/teams', async (c) => {
 	if (!isBoard || isSuperuser) {
 		query = `SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $1)::int AS agent_count,
-       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count
+       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count,
+       (SELECT tt.name FROM team_template_assignments tta JOIN team_templates tt ON tt.id = tta.team_template_id WHERE tta.team_id = c.id ORDER BY tt.is_builtin DESC LIMIT 1) AS primary_template_name
      FROM teams c
      ORDER BY c.created_at DESC`;
 	} else {
 		query = `SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $1)::int AS agent_count,
-       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count
+       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count,
+       (SELECT tt.name FROM team_template_assignments tta JOIN team_templates tt ON tt.id = tta.team_template_id WHERE tta.team_id = c.id ORDER BY tt.is_builtin DESC LIMIT 1) AS primary_template_name
      FROM teams c
      JOIN members m2 ON m2.team_id = c.id
      JOIN member_users mu ON mu.id = m2.id
@@ -186,7 +188,8 @@ teamsRoutes.get('/teams/:teamId', async (c) => {
 	const result = await db.query(
 		`SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $2)::int AS agent_count,
-       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_task_count
+       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_task_count,
+       (SELECT tt.name FROM team_template_assignments tta JOIN team_templates tt ON tt.id = tta.team_template_id WHERE tta.team_id = c.id ORDER BY tt.is_builtin DESC LIMIT 1) AS primary_template_name
      FROM teams c WHERE c.id = $1`,
 		[teamId, MemberType.Agent, ...ts2.values],
 	);
