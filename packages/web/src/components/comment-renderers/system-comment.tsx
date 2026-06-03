@@ -109,7 +109,7 @@ function StatusChangeBody({
 			</div>
 		);
 	}
-	const actorName = comment.author_name ?? 'Board';
+	const actorName = comment.author_name ?? 'Admin';
 	return (
 		<div className="flex items-baseline gap-2 leading-[26px]">
 			<span className="text-xs text-text-muted">
@@ -173,7 +173,7 @@ function TaskLinkSystemBody({
 }) {
 	const sourceIdentifier = content.source_identifier ?? '';
 	const sourceProjectSlug = content.source_project_slug ?? '';
-	const actorName = content.actor_name ?? comment.author_name ?? 'Board';
+	const actorName = content.actor_name ?? comment.author_name ?? 'Admin';
 	const actorKind = content.actor_kind ?? null;
 	const actorSlug = content.actor_slug ?? null;
 

@@ -34,7 +34,7 @@ commentsRoutes.get('/teams/:teamId/tasks/:taskId/comments', async (c) => {
 	const result = await db.query(
 		`SELECT ic.id, ic.task_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
             m.member_type AS author_type,
-            COALESCE(ma.title, m.display_name, 'Board') AS author_name,
+            COALESCE(ma.title, m.display_name, 'Admin') AS author_name,
             ic.author_member_id,
             ic.parent_comment_id
      FROM task_comments ic
@@ -204,7 +204,7 @@ commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments', async (c) => {
 		}
 	}
 
-	// Optional per-comment effort override. Board users set this to dial up/down
+	// Optional per-comment effort override. Admin users set this to dial up/down
 	// the reasoning budget of the agent run that the comment triggers.
 	const commentEffort = parseEffortFromCommentBody(body);
 
@@ -221,16 +221,16 @@ commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments', async (c) => {
 	}
 
 	let authorMemberId: string | null = null;
-	if (auth.type === AuthType.Board) {
+	if (auth.type === AuthType.Admin) {
 		authorMemberId = null;
 	} else if (auth.type === AuthType.Agent) {
 		authorMemberId = auth.memberId;
 	}
 
-	// Only Board (human) callers can opt into waking the assignee on a plain
+	// Only Admin (human) callers can opt into waking the assignee on a plain
 	// comment. Agent-authored paths (/agent-api, /mcp) keep mention-only behavior
 	// regardless of the body field.
-	const wakeAssignee = auth.type === AuthType.Board && body.wake_assignee === true;
+	const wakeAssignee = auth.type === AuthType.Admin && body.wake_assignee === true;
 
 	const result = await withTransaction(db, async () => {
 		const inserted = await db.query<{ id: string }>(
@@ -265,7 +265,7 @@ commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments', async (c) => {
 		content: body.content,
 		contentType: body.content_type ?? CommentContentType.Text,
 		authorMemberId,
-		authorUserId: auth.type === AuthType.Board ? auth.userId : null,
+		authorUserId: auth.type === AuthType.Admin ? auth.userId : null,
 		authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
 		effort: commentEffort,
 		wakeAssignee,
@@ -339,7 +339,7 @@ commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments/:commentId/choose', a
 			[
 				existing.rows[0].task_id,
 				CommentContentType.System,
-				JSON.stringify({ text: `Board selected option: ${body.chosen_id}` }),
+				JSON.stringify({ text: `Admin selected option: ${body.chosen_id}` }),
 			],
 		);
 		return updated;

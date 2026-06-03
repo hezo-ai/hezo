@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
-import { signBoardJwt } from '../src/middleware/auth';
+import { signAdminJwt } from '../src/middleware/auth';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, mintAgentToken } from './helpers/app';
 
@@ -25,7 +25,7 @@ let teamBId: string;
 let agentBId: string;
 let agentBToken: string;
 
-// Non-superuser board user (member of Team A only)
+// Non-superuser the admin (member of Team A only)
 let userAToken: string;
 
 beforeAll(async () => {
@@ -97,7 +97,7 @@ beforeAll(async () => {
 		"INSERT INTO users (display_name, is_superuser) VALUES ('User A', false) RETURNING id",
 	);
 	const userAId = userRes.rows[0].id;
-	userAToken = await signBoardJwt(masterKeyManager, userAId);
+	userAToken = await signAdminJwt(masterKeyManager, userAId);
 
 	// Add User A as a member of Team A
 	const memberRes = await db.query<{ id: string }>(
@@ -168,7 +168,7 @@ describe('Agent token cross-team isolation', () => {
 	});
 });
 
-describe('Board user cross-team isolation', () => {
+describe('Admin user cross-team isolation', () => {
 	it('user A (member of A only) cannot access Team B agents', async () => {
 		const res = await app.request(`/api/teams/${teamBId}/agents`, {
 			headers: authHeader(userAToken),

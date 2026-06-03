@@ -240,7 +240,7 @@ describe('template-based team creation', () => {
 				name: 'Research Lab',
 				description: 'Research-focused team',
 				agent_types: [
-					{ agent_type_id: captain.id, reports_to_slug: 'board', sort_order: 0 },
+					{ agent_type_id: captain.id, reports_to_slug: 'admin', sort_order: 0 },
 					{ agent_type_id: researcher.id, reports_to_slug: 'captain', sort_order: 1 },
 				],
 			}),

@@ -14,7 +14,7 @@ test('sidebar renders on /home with links pointing at the default team', async (
 
 	await findByText('Resources', undefined, { timeout: 10_000 });
 
-	const nav = container.querySelector('nav') as HTMLElement;
+	const nav = container.querySelector('nav[aria-label="Sidebar"]') as HTMLElement;
 	expect(nav).toBeTruthy();
 	expect(nav.textContent).toMatch(/Inbox/);
 	expect(nav.textContent).toMatch(/All Tasks/);
@@ -37,7 +37,7 @@ test('sidebar renders on /settings', async () => {
 	});
 
 	await findByText('Resources', undefined, { timeout: 10_000 });
-	const nav = container.querySelector('nav') as HTMLElement;
+	const nav = container.querySelector('nav[aria-label="Sidebar"]') as HTMLElement;
 	expect(nav.textContent).toMatch(/Inbox/);
 	// We arrived at /settings without any team route.
 	expect(router.state.location.pathname).toBe('/settings');
@@ -52,7 +52,7 @@ test('sidebar renders on /settings/ai-providers', async () => {
 	});
 
 	await findByText('Resources', undefined, { timeout: 10_000 });
-	const nav = container.querySelector('nav') as HTMLElement;
+	const nav = container.querySelector('nav[aria-label="Sidebar"]') as HTMLElement;
 	expect(nav.textContent).toMatch(/Inbox/);
 	expect(router.state.location.pathname).toBe('/settings/ai-providers');
 });

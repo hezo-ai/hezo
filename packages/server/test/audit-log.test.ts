@@ -31,7 +31,7 @@ afterAll(async () => {
 
 describe('audit log', () => {
 	it('inserts an audit entry via helper', async () => {
-		await auditLog(db, teamId, 'board', null, 'created', 'task', null, {
+		await auditLog(db, teamId, 'admin', null, 'created', 'task', null, {
 			title: 'Test',
 		});
 
@@ -60,7 +60,7 @@ describe('audit log', () => {
 	});
 
 	it('filters by action', async () => {
-		await auditLog(db, teamId, 'board', null, 'deleted', 'project', null);
+		await auditLog(db, teamId, 'admin', null, 'deleted', 'project', null);
 
 		const res = await app.request(`/api/teams/${teamId}/audit-log?action=deleted`, {
 			headers: authHeader(token),

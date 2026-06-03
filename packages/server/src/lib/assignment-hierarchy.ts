@@ -12,7 +12,7 @@ export function assignmentHierarchyError(assigneeSlug: string): string {
  * unaffected — the rule is specifically about agent-to-agent delegation.
  *
  * Caller must already be authenticated as AuthType.Agent; the check is a no-op
- * for board / API-key auth and should be gated by the caller.
+ * for admin / API-key auth and should be gated by the caller.
  */
 export async function assertSubordinateAssignee(
 	db: PGlite,

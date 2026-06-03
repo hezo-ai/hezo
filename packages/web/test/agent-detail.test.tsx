@@ -14,7 +14,7 @@ test('team org chart renders with status legend', async () => {
 		},
 	});
 	await router.navigate({ to: '/teams/$teamId/agents', params: { teamId: teamSlug } });
-	await findByText('You (Board)', undefined, { timeout: 15_000 });
+	await findByText('You (Admin)', undefined, { timeout: 15_000 });
 	await findByText('Active', undefined, { timeout: 15_000 });
 });
 

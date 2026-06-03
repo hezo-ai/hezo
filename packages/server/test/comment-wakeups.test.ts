@@ -310,8 +310,8 @@ describe('agent-api POST comments fires mention-only wakeups', () => {
 	});
 });
 
-describe('board POST comments honors wake_assignee opt-in', () => {
-	async function postBoardComment(taskId: string, body: Record<string, unknown>): Promise<string> {
+describe('admin POST comments honors wake_assignee opt-in', () => {
+	async function postAdminComment(taskId: string, body: Record<string, unknown>): Promise<string> {
 		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -322,8 +322,8 @@ describe('board POST comments honors wake_assignee opt-in', () => {
 	}
 
 	it('wakes the assignee when wake_assignee is true', async () => {
-		const taskId = await insertTask(architectId, 'Board wake true');
-		const commentId = await postBoardComment(taskId, {
+		const taskId = await insertTask(architectId, 'Admin wake true');
+		const commentId = await postAdminComment(taskId, {
 			content_type: CommentContentType.Text,
 			content: { text: 'Take a look when you can.' },
 			wake_assignee: true,
@@ -338,8 +338,8 @@ describe('board POST comments honors wake_assignee opt-in', () => {
 	});
 
 	it('does not wake the assignee when wake_assignee is false', async () => {
-		const taskId = await insertTask(architectId, 'Board wake false');
-		const commentId = await postBoardComment(taskId, {
+		const taskId = await insertTask(architectId, 'Admin wake false');
+		const commentId = await postAdminComment(taskId, {
 			content_type: CommentContentType.Text,
 			content: { text: 'Just a note.' },
 			wake_assignee: false,
@@ -350,8 +350,8 @@ describe('board POST comments honors wake_assignee opt-in', () => {
 	});
 
 	it('does not wake the assignee when wake_assignee is omitted', async () => {
-		const taskId = await insertTask(architectId, 'Board wake omitted');
-		const commentId = await postBoardComment(taskId, {
+		const taskId = await insertTask(architectId, 'Admin wake omitted');
+		const commentId = await postAdminComment(taskId, {
 			content_type: CommentContentType.Text,
 			content: { text: 'No flag at all.' },
 		});
@@ -361,8 +361,8 @@ describe('board POST comments honors wake_assignee opt-in', () => {
 	});
 
 	it('does not double-fire when the assignee is also @-mentioned', async () => {
-		const taskId = await insertTask(architectId, 'Board wake mention overlap');
-		const commentId = await postBoardComment(taskId, {
+		const taskId = await insertTask(architectId, 'Admin wake mention overlap');
+		const commentId = await postAdminComment(taskId, {
 			content_type: CommentContentType.Text,
 			content: { text: '@architect please weigh in.' },
 			wake_assignee: true,
@@ -505,8 +505,8 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 		);
 	});
 
-	it('fires when a Board (human) user posts the reply', async () => {
-		const taskId = await insertTask(architectId, 'Board reply');
+	it('fires when a Admin (human) user posts the reply', async () => {
+		const taskId = await insertTask(architectId, 'Admin reply');
 		const parentId = await insertCommentBy(taskId, architectId, 'Update from architect.');
 
 		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
@@ -530,7 +530,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 
 	it('does not wake when the parent author is a human (no member id)', async () => {
 		const taskId = await insertTask(architectId, 'Human parent');
-		const parentId = await insertCommentBy(taskId, null, 'Board user kicked this off.');
+		const parentId = await insertCommentBy(taskId, null, 'Admin user kicked this off.');
 		const { token: architectToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -752,10 +752,10 @@ describe('mention wakeup idempotency by (task, mentioned, author)', () => {
 		expect(afterDrain[0].id).not.toBe(queued[0].id);
 	});
 
-	it('collapses repeated @-mentions across board and agent authors', async () => {
-		const taskId = await insertTask(captainId, 'Board scoping');
+	it('collapses repeated @-mentions across admin and agent authors', async () => {
+		const taskId = await insertTask(captainId, 'Admin scoping');
 
-		const firstBoard = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+		const firstAdmin = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -763,25 +763,25 @@ describe('mention wakeup idempotency by (task, mentioned, author)', () => {
 				content: { text: '@architect please respond.' },
 			}),
 		});
-		expect(firstBoard.status).toBe(201);
-		const afterFirstBoard = await queuedMentionsFor(taskId, architectId);
-		expect(afterFirstBoard).toHaveLength(1);
-		await backdateWakeup(afterFirstBoard[0].id);
+		expect(firstAdmin.status).toBe(201);
+		const afterFirstAdmin = await queuedMentionsFor(taskId, architectId);
+		expect(afterFirstAdmin).toHaveLength(1);
+		await backdateWakeup(afterFirstAdmin[0].id);
 
-		const secondBoard = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+		const secondAdmin = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				content_type: CommentContentType.Text,
-				content: { text: '@architect bumping again from the board.' },
+				content: { text: '@architect bumping again from the admin.' },
 			}),
 		});
-		expect(secondBoard.status).toBe(201);
-		const afterSecondBoard = await queuedMentionsFor(taskId, architectId);
-		expect(afterSecondBoard).toHaveLength(1);
-		expect(afterSecondBoard[0].id).toBe(afterFirstBoard[0].id);
+		expect(secondAdmin.status).toBe(201);
+		const afterSecondAdmin = await queuedMentionsFor(taskId, architectId);
+		expect(afterSecondAdmin).toHaveLength(1);
+		expect(afterSecondAdmin[0].id).toBe(afterFirstAdmin[0].id);
 
-		await backdateWakeup(afterSecondBoard[0].id);
+		await backdateWakeup(afterSecondAdmin[0].id);
 		const { token: productLeadToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -792,6 +792,6 @@ describe('mention wakeup idempotency by (task, mentioned, author)', () => {
 		await postAgentApiComment(productLeadToken, taskId, '@architect agent-side ping.');
 		const afterAgent = await queuedMentionsFor(taskId, architectId);
 		expect(afterAgent).toHaveLength(1);
-		expect(afterAgent[0].id).toBe(afterSecondBoard[0].id);
+		expect(afterAgent[0].id).toBe(afterSecondAdmin[0].id);
 	});
 });

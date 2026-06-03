@@ -8,8 +8,8 @@ export const COACH_AGENT_SLUG = 'coach';
 export const CEO_AGENT_SLUG = 'ceo';
 export const BUILTIN_AGENT_SLUGS = [CAPTAIN_AGENT_SLUG, COACH_AGENT_SLUG] as const;
 
-export const BOARD_MENTION_SLUG = 'board';
-export const RESERVED_AGENT_SLUGS = [BOARD_MENTION_SLUG] as const;
+export const ADMIN_MENTION_SLUG = 'admin';
+export const RESERVED_AGENT_SLUGS = [ADMIN_MENTION_SLUG] as const;
 export function isReservedAgentSlug(slug: string): boolean {
 	return (RESERVED_AGENT_SLUGS as readonly string[]).includes(slug);
 }
@@ -22,11 +22,11 @@ export const DEFAULT_TEAM_NAME = 'Team';
 export const DEFAULT_TEAM_TEMPLATE_NAME = 'Blank';
 
 export const ONBOARDING_INTAKE_SKIP_SIGNAL_TEXT =
-	'Board chose to skip further questions — propose a template and a project based on what we have so far.';
+	'Admin chose to skip further questions — propose a template and a project based on what we have so far.';
 
 export const PROJECT_INTAKE_LABEL = 'project-intake';
 export const PROJECT_INTAKE_SKIP_SIGNAL_TEXT =
-	'Board chose to skip further questions — finalise the project proposal with what we have so far.';
+	'Admin chose to skip further questions — finalise the project proposal with what we have so far.';
 
 export const wsRoom = {
 	team: (id: string) => `team:${id}`,

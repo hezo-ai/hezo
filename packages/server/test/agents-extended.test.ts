@@ -385,7 +385,7 @@ describe('PATCH /teams/:teamId/agents/:agentId (partial updates)', () => {
 			change_summary: string;
 		}>;
 		expect(revisions.length).toBeGreaterThanOrEqual(1);
-		expect(revisions[0].change_summary).toBe('Manual edit by board member');
+		expect(revisions[0].change_summary).toBe('Manual edit by the admin');
 	});
 
 	it('updates title and syncs display_name on the members record', async () => {

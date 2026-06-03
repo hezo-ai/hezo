@@ -80,7 +80,7 @@ async function callMcpTool(
 	return JSON.parse(body.result.content[0].text);
 }
 
-describe('POST /teams/:teamId/tasks/batch (board caller)', () => {
+describe('POST /teams/:teamId/tasks/batch (admin caller)', () => {
 	it('creates all valid items with sequential identifiers in one project', async () => {
 		const r = await app.request(`/api/teams/${teamId}/tasks/batch`, {
 			method: 'POST',
@@ -128,7 +128,7 @@ describe('POST /teams/:teamId/tasks/batch (board caller)', () => {
 		expect(body.data[3]).toMatchObject({ index: 3, ok: false, code: 'NOT_FOUND' });
 	});
 
-	it('records created_by_member_id consistently for board callers', async () => {
+	it('records created_by_member_id consistently for admin callers', async () => {
 		const r = await app.request(`/api/teams/${teamId}/tasks/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },

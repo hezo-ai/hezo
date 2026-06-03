@@ -13,10 +13,10 @@ When you are @-mentioned on a ticket, your run opens on the triggering ticket fo
 
 Reactions never wake the comment author; comments still do (per-team `settings.wake_mentioner_on_reply`). Choose between reaction and comment with that in mind.
 
-## When to ask the board
+## When to ask the admin
 
-`@board` is reserved for asks only a human can resolve: product or strategy decisions, sensitive trade-offs, ambiguity in scope that no teammate has authority to settle, or explicit permission to take a high-impact action. Do not use it as a substitute for picking up the work yourself or asking a teammate. If a teammate can answer, `@<agent-slug>` them instead.
+`@admin` is reserved for asks only a human can resolve: product or strategy decisions, sensitive trade-offs, ambiguity in scope that no teammate has authority to settle, or explicit permission to take a high-impact action. Do not use it as a substitute for picking up the work yourself or asking a teammate. If a teammate can answer, `@<agent-slug>` them instead.
 
-When you do `@board`, write the question concretely (what you're stuck on, what you've already considered, what you need decided), then stop your turn and leave the task in a non-terminal status. Posting `@board` and stopping with the task left in a non-terminal status is a recognized "waiting on input" state — the stop-hook will not block it. The board's reply on the same task wakes you automatically; you don't need to schedule a follow-up.
+When you do `@admin`, write the question concretely (what you're stuck on, what you've already considered, what you need decided), then stop your turn and leave the task in a non-terminal status. Posting `@admin` and stopping with the task left in a non-terminal status is a recognized "waiting on input" state — the stop-hook will not block it. The admin's reply on the same task wakes you automatically; you don't need to schedule a follow-up.
 
-Use `@@board` only for narrative references ("Board approved on PRD-2") — it does not notify.
+Use `@@admin` only for narrative references ("Admin approved on PRD-2") — it does not notify.

@@ -990,7 +990,7 @@ export async function loadMentionContext(
 		author_name: string | null;
 	}>(
 		`SELECT ic.content,
-		        COALESCE(ma.title, m.display_name, 'Board') AS author_name
+		        COALESCE(ma.title, m.display_name, 'Admin') AS author_name
 		 FROM task_comments ic
 		 LEFT JOIN members m ON m.id = ic.author_member_id
 		 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
@@ -1016,7 +1016,7 @@ export async function loadMentionContext(
 	);
 
 	return {
-		authorName: row.rows[0].author_name ?? 'Board',
+		authorName: row.rows[0].author_name ?? 'Admin',
 		excerpt,
 		openTickets: tickets.rows,
 	};
@@ -1209,7 +1209,7 @@ export async function loadReplyContext(
 		author_slug: string | null;
 	}>(
 		`SELECT ic.content, ic.task_id,
-		        COALESCE(ma.title, m.display_name, 'Board') AS author_name,
+		        COALESCE(ma.title, m.display_name, 'Admin') AS author_name,
 		        ma.slug AS author_slug
 		 FROM task_comments ic
 		 LEFT JOIN members m ON m.id = ic.author_member_id
@@ -1429,7 +1429,7 @@ export async function buildCoachReviewPrompt(
 		"use `get_agent_system_prompt` with `placeholders: false` to read the affected agent's raw prompt",
 		'(you need the `{{…}}` placeholders intact for a safe round-trip), then use `update_agent_system_prompt`',
 		'to add a specific rule to their `## Learned Rules` section. Updates apply immediately and a revision',
-		'snapshot is recorded so the board can roll back from the agent settings page if needed.',
+		'snapshot is recorded so the admin can roll back from the agent settings page if needed.',
 		'',
 		'If the ticket completed smoothly without significant rework or feedback, no changes are needed.',
 		'',

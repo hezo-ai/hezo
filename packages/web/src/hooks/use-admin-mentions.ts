@@ -1,26 +1,26 @@
-import type { BoardMentionItem } from '@hezo/shared';
+import type { AdminMentionItem } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 
-export type { BoardMentionItem };
+export type { AdminMentionItem };
 
-export function useBoardMentions(teamSlug: string, enabled = true) {
+export function useAdminMentions(teamSlug: string, enabled = true) {
 	return useQuery({
 		queryKey: ['teams', teamSlug, 'inbox-mentions'],
-		queryFn: () => api.get<BoardMentionItem[]>(`/api/teams/${teamSlug}/inbox/mentions`),
+		queryFn: () => api.get<AdminMentionItem[]>(`/api/teams/${teamSlug}/inbox/mentions`),
 		enabled: enabled && !!teamSlug,
 	});
 }
 
-export function useAllBoardMentions(teamSlugs: string[], { archived = false } = {}) {
+export function useAllAdminMentions(teamSlugs: string[], { archived = false } = {}) {
 	const teamKey = [...teamSlugs].sort().join(',');
 	return useQuery({
 		queryKey: ['inbox-mentions', teamKey, { archived }],
 		queryFn: async () => {
 			const results = await Promise.all(
 				teamSlugs.map((slug) =>
-					api.get<BoardMentionItem[]>(`/api/teams/${slug}/inbox/mentions`, {
+					api.get<AdminMentionItem[]>(`/api/teams/${slug}/inbox/mentions`, {
 						archived: String(archived),
 					}),
 				),
@@ -43,27 +43,27 @@ export function useMarkMentionRead() {
 			await queryClient.cancelQueries({ queryKey: ['teams', teamSlug, 'inbox-mentions'] });
 			await queryClient.cancelQueries({ queryKey: ['inbox-mentions'] });
 
-			const teamSnapshot = queryClient.getQueryData<BoardMentionItem[]>([
+			const teamSnapshot = queryClient.getQueryData<AdminMentionItem[]>([
 				'teams',
 				teamSlug,
 				'inbox-mentions',
 			]);
 			const now = new Date().toISOString();
 			if (teamSnapshot) {
-				queryClient.setQueryData<BoardMentionItem[]>(
+				queryClient.setQueryData<AdminMentionItem[]>(
 					['teams', teamSlug, 'inbox-mentions'],
 					teamSnapshot.map((m) => (m.id === mentionId ? { ...m, read_at: now } : m)),
 				);
 			}
 
-			const aggregatedSnapshots: Array<[readonly unknown[], BoardMentionItem[] | undefined]> = [];
-			const aggregated = queryClient.getQueriesData<BoardMentionItem[]>({
+			const aggregatedSnapshots: Array<[readonly unknown[], AdminMentionItem[] | undefined]> = [];
+			const aggregated = queryClient.getQueriesData<AdminMentionItem[]>({
 				queryKey: ['inbox-mentions'],
 			});
 			for (const [key, data] of aggregated) {
 				aggregatedSnapshots.push([key, data]);
 				if (!data) continue;
-				queryClient.setQueryData<BoardMentionItem[]>(
+				queryClient.setQueryData<AdminMentionItem[]>(
 					key,
 					data.map((m) => (m.id === mentionId ? { ...m, read_at: now } : m)),
 				);

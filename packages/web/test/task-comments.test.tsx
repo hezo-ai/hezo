@@ -124,7 +124,7 @@ test('renders markdown in comment bodies and shows author label', async () => {
 
 	const author = container.querySelector('[data-testid="comment-author"]') as HTMLElement;
 	expect(author).toBeTruthy();
-	expect(author.textContent).toBe('Board');
+	expect(author.textContent).toBe('Admin');
 });
 
 test('effort dropdown marks the agent default and omits it from the submit body', async () => {

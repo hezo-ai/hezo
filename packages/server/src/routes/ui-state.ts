@@ -7,7 +7,7 @@ export const uiStateRoutes = new Hono<Env>();
 
 async function resolveMemberUser(c: import('hono').Context<Env>, teamId: string) {
 	const auth = c.get('auth');
-	if (auth.type !== AuthType.Board) return null;
+	if (auth.type !== AuthType.Admin) return null;
 
 	const db = c.get('db');
 	const result = await db.query<{ id: string; settings: Record<string, unknown> }>(
@@ -24,7 +24,7 @@ uiStateRoutes.get('/teams/:teamId/ui-state', async (c) => {
 
 	const member = await resolveMemberUser(c, teamId);
 	if (!member) {
-		return err(c, 'FORBIDDEN', 'Only board users have UI state', 403);
+		return err(c, 'FORBIDDEN', 'Only the admin have UI state', 403);
 	}
 
 	return ok(c, member.settings);
@@ -35,7 +35,7 @@ uiStateRoutes.patch('/teams/:teamId/ui-state', async (c) => {
 
 	const member = await resolveMemberUser(c, teamId);
 	if (!member) {
-		return err(c, 'FORBIDDEN', 'Only board users have UI state', 403);
+		return err(c, 'FORBIDDEN', 'Only the admin have UI state', 403);
 	}
 
 	const body = await c.req.json();

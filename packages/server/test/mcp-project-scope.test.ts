@@ -9,7 +9,7 @@ import { authHeader, createTestApp, createTestProject, mintAgentToken } from './
 
 let app: Hono<Env>;
 let db: PGlite;
-let boardToken: string;
+let adminToken: string;
 let masterKeyManager: MasterKeyManager;
 
 let teamId: string;
@@ -42,18 +42,18 @@ beforeAll(async () => {
 	const ctx = await createTestApp();
 	app = ctx.app;
 	db = ctx.db;
-	boardToken = ctx.token;
+	adminToken = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
 	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
-		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Project Scope Test Co' }),
 	});
 	teamId = (await teamRes.json()).data.id;
 
 	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
-		headers: authHeader(boardToken),
+		headers: authHeader(adminToken),
 	});
 	const captain = (await agentsRes.json()).data.find((a: { slug: string }) => a.slug === 'captain');
 	captainId = captain.id;
@@ -78,7 +78,7 @@ beforeAll(async () => {
 
 	const taskARes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
-		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			project_id: projectAId,
 			title: 'Task in A',
@@ -89,7 +89,7 @@ beforeAll(async () => {
 
 	const taskBRes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
-		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			project_id: projectBId,
 			title: 'Task in B',
@@ -100,7 +100,7 @@ beforeAll(async () => {
 
 	const taskInternalRes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
-		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			project_id: internalProjectId,
 			title: 'Task in Internal',
@@ -248,13 +248,13 @@ describe('MCP project scope — agent run in the Internal project has cross-proj
 	});
 });
 
-describe('MCP project scope — board / api-key auth bypasses the new check', () => {
-	it('board token can read tasks from any project (regression guard)', async () => {
-		const a = (await callMcp(boardToken, 'get_task', {
+describe('MCP project scope — admin / api-key auth bypasses the new check', () => {
+	it('admin token can read tasks from any project (regression guard)', async () => {
+		const a = (await callMcp(adminToken, 'get_task', {
 			team_id: teamId,
 			task_id: taskInAId,
 		})) as { id: string };
-		const b = (await callMcp(boardToken, 'get_task', {
+		const b = (await callMcp(adminToken, 'get_task', {
 			team_id: teamId,
 			task_id: taskInBId,
 		})) as { id: string };

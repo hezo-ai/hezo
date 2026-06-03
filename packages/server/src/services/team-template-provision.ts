@@ -227,7 +227,7 @@ export async function provisionTeamTemplate(
 		}
 
 		for (const row of dedupedRows) {
-			if (row.reports_to_slug && row.reports_to_slug !== 'board') {
+			if (row.reports_to_slug && row.reports_to_slug !== 'admin') {
 				const reportsToId = slugToMemberId.get(row.reports_to_slug);
 				const memberId = slugToMemberId.get(row.slug);
 				if (reportsToId && memberId) {

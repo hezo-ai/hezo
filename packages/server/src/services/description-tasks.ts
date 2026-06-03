@@ -132,17 +132,17 @@ The team changed (reason: ${reason}). Audit the roster, then rewrite the descrip
 1. Call \`list_agents(team_id)\` to enumerate every enabled agent and their \`reports_to\` relationships.
 2. For each agent, call \`get_agent_system_prompt(team_id, agent_id=...)\` to read its current system prompt.
 3. Audit for problems:
-   - **Orphans** — agents with no manager who should report to someone (only the Captain and the Coach legitimately report to the board).
+   - **Orphans** — agents with no manager who should report to someone (only the Captain and the Coach legitimately report to the admin).
    - **Cycles** — reports_to chains that loop.
    - **Stale prompts** — system prompts that describe a manager, peer, or report that no longer matches the actual team structure.
    - **Coverage gaps** — responsibilities the team is expected to own but no agent describes itself as covering.
    - **Conflicts** — two agents claiming the same responsibility with no division of work.
 4. Reconcile what you can:
    - Use \`update_agent_system_prompt(agent_id, content)\` to rewrite a prompt so it matches the current team structure.
-   - For changes you cannot make through MCP tools (re-parenting an agent, removing an agent, hiring a new role), post a single summary comment on this ticket explaining what should change and request board confirmation. Do NOT block on the comment — finish steps 5 and 6 with the current roster.
+   - For changes you cannot make through MCP tools (re-parenting an agent, removing an agent, hiring a new role), post a single summary comment on this ticket explaining what should change and request admin confirmation. Do NOT block on the comment — finish steps 5 and 6 with the current roster.
 5. **Rewrite the descriptive blobs.** For every enabled agent:
    - \`set_agent_summary(agent_id, summary="...")\` — distill the agent's prompt into a single plain-prose paragraph (≤5 lines, third person, no bullets, no greetings) describing what the agent does and how it works.
-   - \`set_agent_team_context(agent_id, content="...")\` — write a relationships narrative addressed to that agent ("you"), up to ~30 lines, covering its manager (and how to escalate), direct reports (and how to delegate to each), peers (and typical handoffs), indirect reports / agents two+ levels away (and the correct routing path), and any humans on the board (and when to involve them).
+   - \`set_agent_team_context(agent_id, content="...")\` — write a relationships narrative addressed to that agent ("you"), up to ~30 lines, covering its manager (and how to escalate), direct reports (and how to delegate to each), peers (and typical handoffs), indirect reports / agents two+ levels away (and the correct routing path), and any humans on the admin (and when to involve them).
    - This blob is injected into the agent's own system prompt at the start of every run, so it doesn't need to derive its place in the org chart from scratch.
 6. \`set_team_summary(summary="...")\` — synthesise a team-level summary (≤20 lines, plain prose, may span paragraphs) covering reporting structure, handoffs, and escalation paths.
 7. Move this task to **done** once the audit and rewrites are complete.`;

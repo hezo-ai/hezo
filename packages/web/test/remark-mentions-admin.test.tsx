@@ -29,28 +29,28 @@ function renderMarkdown(text: string, opts: RenderOptions = {}) {
 	);
 }
 
-test('@board renders as a link to the team inbox with data-mention-board="true"', () => {
-	const { container } = renderMarkdown('@board please confirm.');
-	const link = container.querySelector('a[data-mention-board="true"]');
+test('@admin renders as a link to the team inbox with data-mention-admin="true"', () => {
+	const { container } = renderMarkdown('@admin please confirm.');
+	const link = container.querySelector('a[data-mention-admin="true"]');
 	expect(link).not.toBeNull();
 	expect(link?.getAttribute('href')).toBe('/teams/demo-team/inbox');
-	expect(link?.textContent).toBe('@board');
+	expect(link?.textContent).toBe('@admin');
 	expect(link?.getAttribute('data-mention-passive')).toBeNull();
 });
 
-test('@@board renders the passive variant', () => {
-	const { container } = renderMarkdown('Board approved — @@board.');
-	const link = container.querySelector('a[data-mention-board="true"]');
+test('@@admin renders the passive variant', () => {
+	const { container } = renderMarkdown('Admin approved — @@admin.');
+	const link = container.querySelector('a[data-mention-admin="true"]');
 	expect(link).not.toBeNull();
 	expect(link?.getAttribute('data-mention-passive')).toBe('true');
 });
 
-test('@board inside a code fence is not linked', () => {
-	const { container } = renderMarkdown('```\n@board hi\n```');
-	expect(container.querySelector('a[data-mention-board="true"]')).toBeNull();
+test('@admin inside a code fence is not linked', () => {
+	const { container } = renderMarkdown('```\n@admin hi\n```');
+	expect(container.querySelector('a[data-mention-admin="true"]')).toBeNull();
 });
 
-test('@board inside inline code is not linked', () => {
-	const { container } = renderMarkdown('Mention syntax is `@board` literally.');
-	expect(container.querySelector('a[data-mention-board="true"]')).toBeNull();
+test('@admin inside inline code is not linked', () => {
+	const { container } = renderMarkdown('Mention syntax is `@admin` literally.');
+	expect(container.querySelector('a[data-mention-admin="true"]')).toBeNull();
 });

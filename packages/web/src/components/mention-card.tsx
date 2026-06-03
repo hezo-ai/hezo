@@ -1,11 +1,11 @@
-import type { BoardMentionItem } from '@hezo/shared';
+import type { AdminMentionItem } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { MessageSquare } from 'lucide-react';
-import { useMarkMentionRead } from '../hooks/use-board-mentions';
+import { useMarkMentionRead } from '../hooks/use-admin-mentions';
 import { Badge } from './ui/badge';
 
 interface MentionCardProps {
-	mention: BoardMentionItem;
+	mention: AdminMentionItem;
 	showTeam?: boolean;
 }
 

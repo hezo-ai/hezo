@@ -107,7 +107,7 @@ describe('instance CEO provisioning + Captain reporting line', () => {
 		const teamA = await createTeamViaApi('CEO Test A');
 		const ceoId = await ensureInstanceCeo(db, teamA);
 		expect(ceoId).toBeTruthy();
-		// The CEO reports to the board (no manager).
+		// The CEO reports to the admin (no manager).
 		expect(await reportsToOf(ceoId!)).toBeNull();
 
 		await linkTeamCaptainToInstanceCeo(db, teamA);

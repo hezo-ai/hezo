@@ -6,7 +6,7 @@ function createMockWs(): WsSocket & { _sent: string[] } {
 	const sent: string[] = [];
 	return {
 		data: {
-			auth: { type: 'board', userId: 'test-user' },
+			auth: { type: 'admin', userId: 'test-user' },
 			rooms: new Set<string>(),
 		},
 		send(msg: string) {

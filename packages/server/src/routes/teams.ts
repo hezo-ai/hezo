@@ -24,8 +24,8 @@ teamsRoutes.get('/teams', async (c) => {
 	const db = c.get('db');
 	const auth = c.get('auth');
 
-	const isSuperuser = auth.type === AuthType.Board && auth.isSuperuser;
-	const isBoard = auth.type === AuthType.Board;
+	const isSuperuser = auth.type === AuthType.Admin && auth.isSuperuser;
+	const isAdmin = auth.type === AuthType.Admin;
 
 	let query: string;
 	const params: unknown[] = [MemberType.Agent];
@@ -33,7 +33,7 @@ teamsRoutes.get('/teams', async (c) => {
 	params.push(...ts.values);
 	const nextIdx = 2 + ts.values.length;
 
-	if (!isBoard || isSuperuser) {
+	if (!isAdmin || isSuperuser) {
 		query = `SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $1)::int AS agent_count,
        (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count,
@@ -86,7 +86,7 @@ teamsRoutes.post('/teams', async (c) => {
 			name: body.name.trim(),
 			description: body.description,
 			templateId: body.template_id,
-			creatorUserId: auth.type === AuthType.Board ? auth.userId : undefined,
+			creatorUserId: auth.type === AuthType.Admin ? auth.userId : undefined,
 		},
 	);
 

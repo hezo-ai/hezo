@@ -69,7 +69,7 @@ function buildGreetingText(input: CreateProjectIntakeInput): string {
 	}
 	lines.push(
 		'',
-		`Tell me anything you'd like me to know — users, constraints, deadlines, integrations. Once I'm satisfied the team can deliver it, I'll ask the board to approve creating the project. If you'd rather move fast, click "Skip questions" and I'll finalise with what we have.`,
+		`Tell me anything you'd like me to know — users, constraints, deadlines, integrations. Once I'm satisfied the team can deliver it, I'll ask the admin to approve creating the project. If you'd rather move fast, click "Skip questions" and I'll finalise with what we have.`,
 	);
 	return lines.join('\n');
 }
@@ -81,7 +81,7 @@ Approval ID: \`${approvalId}\`
 
 ## Open a new project
 
-The board submitted the Create Project form. Use this ticket as the single conversation thread to confirm scope, check team fit, and finalise the project shape before it's created.
+The admin submitted the Create Project form. Use this ticket as the single conversation thread to confirm scope, check team fit, and finalise the project shape before it's created.
 
 ### Form data
 
@@ -95,10 +95,10 @@ ${input.description}
 
 ### Your task
 
-1. **Clarify scope.** Ask anything you need to understand the problem, the users, integrations, and constraints. The board may click "Skip questions" — when they do, finalise with what you have.
+1. **Clarify scope.** Ask anything you need to understand the problem, the users, integrations, and constraints. The admin may click "Skip questions" — when they do, finalise with what you have.
 2. **Check team fit.** Use \`list_agents\` / \`get_agent_system_prompt\` to assess whether the current roster covers the work. If there are gaps, open a hire via the standard hire flow before finalising this approval.
 3. **Refine the proposal.** Use \`update_project_creation_proposal\` to update the payload as the conversation evolves (name, description, task_prefix, initial_prd).
-4. **Ask for board approval.** Post a summary comment, @-mention the board, and ask them to approve the pending \`project_creation\` approval in the inbox.
+4. **Ask for admin approval.** Post a summary comment, @-mention the admin, and ask them to approve the pending \`project_creation\` approval in the inbox.
 5. **Wait.** On approval, the server creates the project and the planning task, wakes you on the planning task, and closes this ticket automatically.`;
 }
 
@@ -390,8 +390,8 @@ export async function postProjectCreationDeniedNote(
 
 	const note = resolutionNote?.trim();
 	const text = note
-		? `The board declined the project creation approval (${note}). Reply here if you'd like me to revise the proposal.`
-		: `The board declined the project creation approval. Reply here if you'd like me to revise the proposal.`;
+		? `The admin declined the project creation approval (${note}). Reply here if you'd like me to revise the proposal.`
+		: `The admin declined the project creation approval. Reply here if you'd like me to revise the proposal.`;
 
 	const commentResult = await db.query<Record<string, unknown>>(
 		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)

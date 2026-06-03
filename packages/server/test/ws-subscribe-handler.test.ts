@@ -58,7 +58,7 @@ function canAccessTeamFactory(db: PGlite) {
 		if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
 			return auth.teamId === teamId;
 		}
-		if (auth.type === AuthType.Board) {
+		if (auth.type === AuthType.Admin) {
 			if (auth.isSuperuser) return true;
 			const result = await db.query(
 				'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.team_id = $2',
@@ -103,9 +103,9 @@ describe('handleWsSubscribe', () => {
 		};
 	}
 
-	it('subscribes a board member to project-runs and delivers broadcasts', async () => {
+	it('subscribes a the admin to project-runs and delivers broadcasts', async () => {
 		const { userId, projectId } = await seedTeamWithProject(db);
-		const ws = createMockWs({ type: AuthType.Board, userId });
+		const ws = createMockWs({ type: AuthType.Admin, userId });
 
 		await handleWsSubscribe(ws, `project-runs:${projectId}`, deps());
 
@@ -126,7 +126,7 @@ describe('handleWsSubscribe', () => {
 		const other = await db.query<{ id: string }>(
 			"INSERT INTO users (display_name) VALUES ('Other') RETURNING id",
 		);
-		const ws = createMockWs({ type: AuthType.Board, userId: other.rows[0].id });
+		const ws = createMockWs({ type: AuthType.Admin, userId: other.rows[0].id });
 
 		await handleWsSubscribe(ws, `project-runs:${projectId}`, deps());
 
@@ -140,7 +140,7 @@ describe('handleWsSubscribe', () => {
 		const user = await db.query<{ id: string }>(
 			"INSERT INTO users (display_name) VALUES ('U') RETURNING id",
 		);
-		const ws = createMockWs({ type: AuthType.Board, userId: user.rows[0].id });
+		const ws = createMockWs({ type: AuthType.Admin, userId: user.rows[0].id });
 
 		await expect(handleWsSubscribe(ws, `project-runs:${fakeId}`, deps())).resolves.toBeUndefined();
 		expect(wsManager.getRoomSize(`project-runs:${fakeId}`)).toBe(0);
@@ -168,9 +168,9 @@ describe('handleWsSubscribe', () => {
 		expect(wsManager.getRoomSize(`project-runs:${projectId}`)).toBe(0);
 	});
 
-	it('subscribes a board member to team room when canAccessTeam passes', async () => {
+	it('subscribes a the admin to team room when canAccessTeam passes', async () => {
 		const { userId, teamId } = await seedTeamWithProject(db);
-		const ws = createMockWs({ type: AuthType.Board, userId });
+		const ws = createMockWs({ type: AuthType.Admin, userId });
 
 		await handleWsSubscribe(ws, wsRoom.team(teamId), deps());
 
@@ -179,7 +179,7 @@ describe('handleWsSubscribe', () => {
 
 	it('subscribes to container-logs and replays buffered logs for that room', async () => {
 		const { userId, projectId } = await seedTeamWithProject(db);
-		const ws = createMockWs({ type: AuthType.Board, userId });
+		const ws = createMockWs({ type: AuthType.Admin, userId });
 
 		logs.begin({
 			streamId: `provision:${projectId}`,
@@ -217,7 +217,7 @@ describe('handleWsSubscribe', () => {
 
 	it('replays buffered run logs as a single snapshot when subscribing to project-runs', async () => {
 		const { userId, projectId } = await seedTeamWithProject(db);
-		const ws = createMockWs({ type: AuthType.Board, userId });
+		const ws = createMockWs({ type: AuthType.Admin, userId });
 
 		const runId = 'run-abc';
 		logs.begin({
@@ -266,7 +266,7 @@ describe('handleWsUnsubscribe', () => {
 		const wsManager = new WebSocketManager();
 		const containerLogStreamer = new ContainerLogStreamer();
 		const logs = new LogStreamBroker();
-		const ws = createMockWs({ type: AuthType.Board, userId: 'u1' });
+		const ws = createMockWs({ type: AuthType.Admin, userId: 'u1' });
 
 		wsManager.subscribe(ws, 'team:abc');
 		handleWsUnsubscribe(ws, 'team:abc', { wsManager, containerLogStreamer, logs });
@@ -279,7 +279,7 @@ describe('handleWsUnsubscribe', () => {
 		const containerLogStreamer = new ContainerLogStreamer();
 		const logs = new LogStreamBroker();
 		const stopSpy = vi.spyOn(containerLogStreamer, 'unsubscribe');
-		const ws = createMockWs({ type: AuthType.Board, userId: 'u1' });
+		const ws = createMockWs({ type: AuthType.Admin, userId: 'u1' });
 
 		wsManager.subscribe(ws, 'container-logs:proj-1');
 		handleWsUnsubscribe(ws, 'container-logs:proj-1', {

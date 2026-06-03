@@ -32,17 +32,17 @@ function buildTaskDescription(): string {
 
 ## Set up the first project
 
-The board is starting fresh. Use this ticket as a single conversation thread to learn what they want to build, propose the right team template, and propose the first project.
+The admin is starting fresh. Use this ticket as a single conversation thread to learn what they want to build, propose the right team template, and propose the first project.
 
 ### Your task
 
-1. **Discuss requirements.** Ask clarifying questions on this ticket until you understand goals, users, scope, and constraints. The board may click "Skip questions" at any point — if they do, finalise a proposal based on what you have so far.
-2. **Propose a team template AND a project.** When you have enough context (or when the board asks you to finalise), call \`list_team_templates\` and pick the best-fit built-in or custom template. Post a single comment that:
+1. **Discuss requirements.** Ask clarifying questions on this ticket until you understand goals, users, scope, and constraints. The admin may click "Skip questions" at any point — if they do, finalise a proposal based on what you have so far.
+2. **Propose a team template AND a project.** When you have enough context (or when the admin asks you to finalise), call \`list_team_templates\` and pick the best-fit built-in or custom template. Post a single comment that:
    - Names the template and lists who would be on the team and why.
    - Proposes a project \`name\` and \`description\`.
-   - @-mentions the board and asks them to confirm before you file an approval.
-3. **File the approval.** Once the board confirms, call \`request_team_template_approval\` with the chosen \`template_id\`, this task's id, your rationale, AND the agreed \`project_name\` and \`project_description\`.
-4. **Wait for the board to approve in the inbox.** When they do, the server provisions the template agents AND creates the user project automatically. You'll then be woken to run a team coherence review on the new roster.
+   - @-mentions the admin and asks them to confirm before you file an approval.
+3. **File the approval.** Once the admin confirms, call \`request_team_template_approval\` with the chosen \`template_id\`, this task's id, your rationale, AND the agreed \`project_name\` and \`project_description\`.
+4. **Wait for the admin to approve in the inbox.** When they do, the server provisions the template agents AND creates the user project automatically. You'll then be woken to run a team coherence review on the new roster.
 5. **Close.** The server posts a "Setup complete" comment on this ticket and closes it once provisioning + project creation finish. From there, you and the team can dive into the new project.`;
 }
 
@@ -198,9 +198,9 @@ export function buildOnboardingTemplateApprovedAckText(templateName: string): st
 export function buildOnboardingTemplateDeniedText(resolutionNote: string | null): string {
 	const note = resolutionNote?.trim();
 	if (note) {
-		return `The board declined the team template approval (${note}). Reply here if you'd like me to recommend a different structure.`;
+		return `The admin declined the team template approval (${note}). Reply here if you'd like me to recommend a different structure.`;
 	}
-	return `The board declined the team template approval. Reply here if you'd like me to recommend a different structure.`;
+	return `The admin declined the team template approval. Reply here if you'd like me to recommend a different structure.`;
 }
 
 export function buildOnboardingProvisioningCompleteText(
@@ -333,7 +333,7 @@ export async function completeOnboardingIntakeAfterProvisioning(
 	return { summaryComment, task };
 }
 
-/** Captain ack comment when the board approves the template in the inbox. */
+/** Captain ack comment when the admin approves the template in the inbox. */
 export async function postOnboardingTemplateApprovedAck(
 	db: PGlite,
 	teamId: string,
@@ -365,7 +365,7 @@ export async function postOnboardingTemplateApprovedAck(
 	return commentResult.rows[0] ?? null;
 }
 
-/** Captain note when the board denies the template approval. */
+/** Captain note when the admin denies the template approval. */
 export async function postOnboardingTemplateDeniedNote(
 	db: PGlite,
 	teamId: string,
@@ -398,7 +398,7 @@ export async function postOnboardingTemplateDeniedNote(
 }
 
 /**
- * Posts a system comment + wakes Captain when the board chooses to skip further
+ * Posts a system comment + wakes Captain when the admin chooses to skip further
  * questions during the chat flow. Captain should then move directly to the
  * template + project proposal step.
  */

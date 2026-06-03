@@ -16,7 +16,7 @@ export function OnboardingOrgChart({ teamId }: { teamId: string }) {
 		);
 	}
 
-	const roots = orgChart?.board.children ?? [];
+	const roots = orgChart?.admin.children ?? [];
 	if (roots.length === 0) {
 		return (
 			<p className="text-sm text-text-muted" data-testid="onboarding-org-chart-empty">

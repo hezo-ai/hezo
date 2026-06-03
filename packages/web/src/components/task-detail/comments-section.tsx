@@ -169,7 +169,7 @@ export function CommentsSection({
 					increaseViewportBy={{ top: 600, bottom: 600 }}
 					itemContent={(_, c) => {
 						const commentData = c as unknown as CommentData;
-						const authorName = c.author_name ?? 'Board';
+						const authorName = c.author_name ?? 'Admin';
 						const isAgent = c.author_type === 'agent';
 						const content = typeof c.content === 'object' ? (c.content as { kind?: string }) : null;
 						const isPendingSetupRepo =

@@ -287,7 +287,7 @@ export const ApprovalStatus = {
 } as const;
 export type ApprovalStatus = (typeof ApprovalStatus)[keyof typeof ApprovalStatus];
 
-export interface BoardMentionItem {
+export interface AdminMentionItem {
 	id: string;
 	team_id: string;
 	team_slug: string;
@@ -303,7 +303,7 @@ export interface BoardMentionItem {
 	read_at: string | null;
 }
 
-export const MembershipRole = { Board: 'board', Member: 'member' } as const;
+export const MembershipRole = { Admin: 'admin', Member: 'member' } as const;
 export type MembershipRole = (typeof MembershipRole)[keyof typeof MembershipRole];
 
 export const InviteStatus = {
@@ -410,13 +410,13 @@ export const DocumentType = {
 } as const;
 export type DocumentType = (typeof DocumentType)[keyof typeof DocumentType];
 
-export const AuditActorType = { Board: 'board', Agent: 'agent', System: 'system' } as const;
+export const AuditActorType = { Admin: 'admin', Agent: 'agent', System: 'system' } as const;
 export type AuditActorType = (typeof AuditActorType)[keyof typeof AuditActorType];
 
 export const RepoHostType = { GitHub: 'github' } as const;
 export type RepoHostType = (typeof RepoHostType)[keyof typeof RepoHostType];
 
-export const AuthType = { Board: 'board', ApiKey: 'api_key', Agent: 'agent' } as const;
+export const AuthType = { Admin: 'admin', ApiKey: 'api_key', Agent: 'agent' } as const;
 export type AuthType = (typeof AuthType)[keyof typeof AuthType];
 
 export const AuditEntityType = {

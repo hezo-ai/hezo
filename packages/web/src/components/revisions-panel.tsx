@@ -44,7 +44,7 @@ export function RevisionsPanel({ revisions, onRestore, isRestoring }: RevisionsP
 							<Card key={rev.id} className="p-3">
 								<div className="flex items-center gap-2 mb-1">
 									<span className="text-xs font-medium text-text">Rev {rev.revision_number}</span>
-									<span className="text-xs text-text-muted">{rev.author_name || 'Board'}</span>
+									<span className="text-xs text-text-muted">{rev.author_name || 'Admin'}</span>
 									<span className="text-xs text-text-subtle ml-auto">
 										{new Date(rev.created_at).toLocaleString()}
 									</span>

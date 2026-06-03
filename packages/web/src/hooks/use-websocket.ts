@@ -55,7 +55,7 @@ const TABLE_TO_QUERY_KEY: Record<
 		['teams', cid, 'onboarding'],
 	],
 	approvals: (cid) => [['teams', cid, 'approvals'], ['teams', cid, 'inbox-count'], ['approvals']],
-	board_mentions: (cid) => [
+	admin_mentions: (cid) => [
 		['teams', cid, 'inbox-mentions'],
 		['teams', cid, 'inbox-count'],
 		['inbox-mentions'],

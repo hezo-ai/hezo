@@ -528,7 +528,7 @@ test('sidebar shows agent status badges', async () => {
 	// load, but that arrives later).
 	await waitFor(
 		() => {
-			const nav = container.querySelector('nav');
+			const nav = container.querySelector('nav[aria-label="Sidebar"]');
 			expect(nav?.textContent ?? '').toContain('Idle');
 		},
 		{ timeout: 5000 },

@@ -47,7 +47,7 @@ const log = logger.child('routes');
 const MAX_BATCH_TASKS = 50;
 
 function actorTypeFromAuth(auth: AuthInfo): AuditActorType {
-	return auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Board;
+	return auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Admin;
 }
 
 async function buildCreateTaskCaller(c: Context<Env>, teamId: string): Promise<CreateTaskCaller> {
@@ -435,7 +435,7 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 		auth.type === AuthType.Agent &&
 		existing.rows[0].status === TaskStatus.Closed
 	) {
-		return err(c, 'FORBIDDEN', 'Only board members can re-open a closed task', 403);
+		return err(c, 'FORBIDDEN', 'Only the admin can re-open a closed task', 403);
 	}
 
 	if (

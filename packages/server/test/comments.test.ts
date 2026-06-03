@@ -94,7 +94,7 @@ describe('comments CRUD', () => {
 		expect(body.data[0].content.text).toBe('Hello world');
 	});
 
-	it('labels board-authored comments as "Board" and agent-authored as the agent title', async () => {
+	it('labels admin-authored comments as "Admin" and agent-authored as the agent title', async () => {
 		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 		await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
 			method: 'POST',
@@ -112,11 +112,11 @@ describe('comments CRUD', () => {
 		const agentComment = body.data.find(
 			(c: { content: { text?: string } }) => c.content.text === 'From the agent',
 		);
-		const boardComment = body.data.find(
+		const adminComment = body.data.find(
 			(c: { content: { text?: string } }) => c.content.text === 'Hello world',
 		);
 		expect(agentComment.author_name).toBe('Comment Bot');
-		expect(boardComment.author_name).toBe('Board');
+		expect(adminComment.author_name).toBe('Admin');
 	});
 
 	it('creates an options comment and chooses an option', async () => {
@@ -244,7 +244,7 @@ describe('comment wakeups on assigned tasks', () => {
 		await new Promise((r) => setTimeout(r, 100));
 	});
 
-	it('does not wake the assignee when a plain board comment is posted', async () => {
+	it('does not wake the assignee when a plain admin comment is posted', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
 
 		const res = await app.request(`/api/teams/${teamId}/tasks/${assignedTaskId}/comments`, {

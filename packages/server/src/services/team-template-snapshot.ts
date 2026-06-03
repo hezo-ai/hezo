@@ -123,7 +123,7 @@ export async function snapshotTeamAsTemplate(
 				continue;
 			}
 			// Manager's in-team slug, or null when the manager is outside the team
-			// (e.g. the instance CEO) or there is none (reports to the board).
+			// (e.g. the instance CEO) or there is none (reports to the admin).
 			const reportsToSlug = a.reports_to ? (idToSlug.get(a.reports_to) ?? null) : null;
 			await db.query(
 				`INSERT INTO team_template_agent_types

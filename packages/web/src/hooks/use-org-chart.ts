@@ -13,7 +13,7 @@ export interface OrgNode {
 }
 
 export interface OrgChart {
-	board: { children: OrgNode[] };
+	admin: { children: OrgNode[] };
 }
 
 export function useOrgChart(teamId: string) {

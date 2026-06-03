@@ -10,7 +10,7 @@ import type { SshAgentServer } from '../services/ssh-agent';
 import type { WebSocketManager } from '../services/ws';
 
 export type AuthInfo =
-	| { type: typeof AuthType.Board; userId: string; isSuperuser: boolean }
+	| { type: typeof AuthType.Admin; userId: string; isSuperuser: boolean }
 	| { type: typeof AuthType.ApiKey; teamId: string }
 	| {
 			type: typeof AuthType.Agent;

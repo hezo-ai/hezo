@@ -43,7 +43,7 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 	const matchRoute = useMatchRoute();
 
 	return (
-		<nav className="flex flex-col gap-0.5">
+		<nav aria-label="Sidebar" className="flex flex-col gap-0.5">
 			{sections.map((section) => (
 				<div key={section.title ?? `section-${sections.indexOf(section)}`}>
 					{section.title && <SectionHeader section={section} />}

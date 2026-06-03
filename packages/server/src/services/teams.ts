@@ -47,7 +47,7 @@ export interface CreateTeamInput {
 	id?: string;
 	/** Fixed slug. Defaults to a unique slug derived from name. */
 	slug?: string;
-	/** When provided, the user is inserted as a board member of the new team. */
+	/** When provided, the user is inserted as a the admin of the new team. */
 	creatorUserId?: string;
 }
 
@@ -106,7 +106,7 @@ export async function createTeam(
 				 RETURNING id`,
 				[teamId, MemberType.User, input.creatorUserId],
 			);
-			await db.query(`INSERT INTO member_users (id, user_id, role) VALUES ($1, $2, 'board')`, [
+			await db.query(`INSERT INTO member_users (id, user_id, role) VALUES ($1, $2, 'admin')`, [
 				memberResult.rows[0].id,
 				input.creatorUserId,
 			]);

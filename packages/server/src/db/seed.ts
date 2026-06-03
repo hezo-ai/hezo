@@ -104,7 +104,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			monthly_budget_cents: 3000,
 			touches_code: true,
 			role_description:
-				'Reviews implementation plans and code for security vulnerabilities, threat models new features, and escalates uncertainties to the board.',
+				'Reviews implementation plans and code for security vulnerabilities, threat models new features, and escalates uncertainties to the admin.',
 		},
 		{
 			name: 'UI Designer',

@@ -12,18 +12,18 @@ import {
 
 async function markMentionRead(mentionId: string): Promise<void> {
 	const { db } = getTestContext();
-	await db.query('UPDATE board_mentions SET read_at = now() WHERE id = $1', [mentionId]);
+	await db.query('UPDATE admin_mentions SET read_at = now() WHERE id = $1', [mentionId]);
 }
 
 async function markMentionArchived(mentionId: string): Promise<void> {
 	const { db } = getTestContext();
 	await db.query(
-		'UPDATE board_mentions SET read_at = COALESCE(read_at, now()), archived_at = now() WHERE id = $1',
+		'UPDATE admin_mentions SET read_at = COALESCE(read_at, now()), archived_at = now() WHERE id = $1',
 		[mentionId],
 	);
 }
 
-async function seedAgentBoardMention(
+async function seedAgentAdminMention(
 	workspace: SeededWorkspace,
 	task: SeededTask,
 	text: string,
@@ -31,17 +31,17 @@ async function seedAgentBoardMention(
 	const { db } = getTestContext();
 
 	const architect = workspace.agents.find((a) => a.slug === 'architect');
-	if (!architect) throw new Error('seedAgentBoardMention: architect agent missing');
+	if (!architect) throw new Error('seedAgentAdminMention: architect agent missing');
 
 	const userRow = await db.query<{ user_id: string }>(
 		`SELECT mu.user_id FROM member_users mu
 		 JOIN members m ON m.id = mu.id
-		 WHERE m.team_id = $1 AND mu.role = 'board'
+		 WHERE m.team_id = $1 AND mu.role = 'admin'
 		 LIMIT 1`,
 		[workspace.team.id],
 	);
 	const userId = userRow.rows[0]?.user_id;
-	if (!userId) throw new Error('seedAgentBoardMention: no board user on team');
+	if (!userId) throw new Error('seedAgentAdminMention: no the admin on team');
 
 	const commentRow = await db.query<{ id: string }>(
 		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
@@ -52,7 +52,7 @@ async function seedAgentBoardMention(
 	const commentId = commentRow.rows[0].id;
 
 	const mentionRow = await db.query<{ id: string }>(
-		`INSERT INTO board_mentions (team_id, task_id, comment_id, user_id)
+		`INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id)
 		 VALUES ($1, $2, $3, $4)
 		 RETURNING id`,
 		[workspace.team.id, task.id, commentId, userId],
@@ -61,15 +61,15 @@ async function seedAgentBoardMention(
 	return { commentId, mentionId: mentionRow.rows[0].id };
 }
 
-test('inbox renders a board mention card with author + snippet', async () => {
+test('inbox renders a admin mention card with author + snippet', async () => {
 	let ctx: { teamSlug: string; taskIdentifier: string };
 	const { findByTestId, findByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Demo' });
-			const task = await seedTask(ws, project, { title: 'A board-decision ticket' });
-			await seedAgentBoardMention(ws, task, '@board — should we ship the new auth flow?');
+			const task = await seedTask(ws, project, { title: 'A admin-decision ticket' });
+			await seedAgentAdminMention(ws, task, '@admin — should we ship the new auth flow?');
 			ctx = { teamSlug: ws.team.slug, taskIdentifier: task.identifier };
 		},
 	});
@@ -100,7 +100,7 @@ test('clicking a mention navigates to the task and marks it read', async () => {
 			const ws = await seedWorkspace();
 			const project: SeededProject = await seedProject(ws, { name: 'Demo' });
 			const task = await seedTask(ws, project, { title: 'Click-to-read ticket' });
-			const { mentionId } = await seedAgentBoardMention(ws, task, '@board please weigh in here.');
+			const { mentionId } = await seedAgentAdminMention(ws, task, '@admin please weigh in here.');
 			ctx = {
 				teamSlug: ws.team.slug,
 				taskId: task.id,
@@ -133,7 +133,7 @@ test('clicking a mention navigates to the task and marks it read', async () => {
 	// Mark-as-read mutation fires optimistically and persists via the server.
 	const { db } = getTestContext();
 	const read = await db.query<{ read_at: string | null }>(
-		'SELECT read_at FROM board_mentions WHERE id = $1',
+		'SELECT read_at FROM admin_mentions WHERE id = $1',
 		[ctx!.mentionId],
 	);
 	// Allow the mutation to land — retry a few times so the test isn't racy.
@@ -141,7 +141,7 @@ test('clicking a mention navigates to the task and marks it read', async () => {
 	for (let i = 0; i < 20 && !updated; i++) {
 		await new Promise((r) => setTimeout(r, 25));
 		const again = await db.query<{ read_at: string | null }>(
-			'SELECT read_at FROM board_mentions WHERE id = $1',
+			'SELECT read_at FROM admin_mentions WHERE id = $1',
 			[ctx!.mentionId],
 		);
 		updated = again.rows[0]?.read_at;
@@ -158,8 +158,8 @@ test('inbox shows read mentions as history and highlights unread ones', async ()
 			const project = await seedProject(ws, { name: 'Demo' });
 			const unreadTask = await seedTask(ws, project, { title: 'Unread ticket' });
 			const readTask = await seedTask(ws, project, { title: 'Read ticket' });
-			await seedAgentBoardMention(ws, unreadTask, '@board fresh decision needed.');
-			const { mentionId } = await seedAgentBoardMention(ws, readTask, '@board already handled.');
+			await seedAgentAdminMention(ws, unreadTask, '@admin fresh decision needed.');
+			const { mentionId } = await seedAgentAdminMention(ws, readTask, '@admin already handled.');
 			await markMentionRead(mentionId);
 			ctx = { teamSlug: ws.team.slug };
 		},
@@ -187,8 +187,8 @@ test('read/unread filter and keyword search narrow the inbox', async () => {
 			const project = await seedProject(ws, { name: 'Demo' });
 			const unreadTask = await seedTask(ws, project, { title: 'Apple ticket' });
 			const readTask = await seedTask(ws, project, { title: 'Banana ticket' });
-			await seedAgentBoardMention(ws, unreadTask, '@board apple decision.');
-			const { mentionId } = await seedAgentBoardMention(ws, readTask, '@board banana decision.');
+			await seedAgentAdminMention(ws, unreadTask, '@admin apple decision.');
+			const { mentionId } = await seedAgentAdminMention(ws, readTask, '@admin banana decision.');
 			await markMentionRead(mentionId);
 			ctx = { teamSlug: ws.team.slug };
 		},
@@ -240,9 +240,9 @@ test('archived mentions are hidden by default and shown under the Archived filte
 			const project = await seedProject(ws, { name: 'Demo' });
 			const activeTask = await seedTask(ws, project, { title: 'Active ticket' });
 			const archivedTask = await seedTask(ws, project, { title: 'Archived ticket' });
-			const active = await seedAgentBoardMention(ws, activeTask, '@board active decision.');
+			const active = await seedAgentAdminMention(ws, activeTask, '@admin active decision.');
 			await markMentionRead(active.mentionId);
-			const archived = await seedAgentBoardMention(ws, archivedTask, '@board old decision.');
+			const archived = await seedAgentAdminMention(ws, archivedTask, '@admin old decision.');
 			await markMentionArchived(archived.mentionId);
 			ctx = { teamSlug: ws.team.slug };
 		},
@@ -272,8 +272,8 @@ test('sidebar inbox link shows the unread count badge', async () => {
 			const project = await seedProject(ws, { name: 'Demo' });
 			const t1 = await seedTask(ws, project, { title: 'Decision one' });
 			const t2 = await seedTask(ws, project, { title: 'Decision two' });
-			await seedAgentBoardMention(ws, t1, '@board decision one.');
-			await seedAgentBoardMention(ws, t2, '@board decision two.');
+			await seedAgentAdminMention(ws, t1, '@admin decision one.');
+			await seedAgentAdminMention(ws, t2, '@admin decision two.');
 			ctx = { teamSlug: ws.team.slug };
 		},
 	});

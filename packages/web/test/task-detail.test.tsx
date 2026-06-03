@@ -116,8 +116,8 @@ test('breadcrumb on a top-level task shows no ancestors', async () => {
 	const breadcrumb = await findByTestId('breadcrumb');
 	expect(breadcrumb.textContent).toContain('Tasks');
 	expect(breadcrumb.textContent).toContain(taskIdentifier);
-	// Project link + Tasks link = 2 anchors before the final, non-linked identifier
-	expect(breadcrumb.querySelectorAll('a').length).toBe(2);
+	// Team chip + Project + Tasks = 3 anchors before the final, non-linked identifier
+	expect(breadcrumb.querySelectorAll('a').length).toBe(3);
 });
 
 test('UI surfaces the depth-cap error when creating a sub-task under a depth-2 ticket', async () => {

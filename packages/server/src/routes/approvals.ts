@@ -192,7 +192,7 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 	let actorMemberId: string | null = null;
 	if (auth.type === AuthType.Agent) {
 		actorMemberId = auth.memberId;
-	} else if (auth.type === AuthType.Board) {
+	} else if (auth.type === AuthType.Admin) {
 		const r = await db.query<{ id: string }>(
 			`SELECT m.id FROM members m
 			   JOIN member_users mu ON mu.id = m.id

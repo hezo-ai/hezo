@@ -593,7 +593,7 @@ describe('created_tasks tracking', () => {
 		expect(proposedSlugs).toContain('linear-triage');
 	});
 
-	it('leaves created_by_run_id null when a board user creates an task via MCP', async () => {
+	it('leaves created_by_run_id null when a the admin creates an task via MCP', async () => {
 		const mcpRes = await app.request('/mcp', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -605,7 +605,7 @@ describe('created_tasks tracking', () => {
 					arguments: {
 						team_id: teamId,
 						project_id: projectId,
-						title: 'Board-created Task',
+						title: 'Admin-created Task',
 						assignee_id: agentId,
 					},
 				},

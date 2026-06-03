@@ -381,7 +381,7 @@ describe('agent triggering', () => {
 		await new Promise((r) => setTimeout(r, 50));
 		await clearWakeups();
 
-		// Baseline: board-posted @captain DOES create a mention wakeup for Captain.
+		// Baseline: admin-posted @captain DOES create a mention wakeup for Captain.
 		await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },

@@ -11,6 +11,6 @@ export const meRoutes = new Hono<Env>();
  */
 meRoutes.get('/me', (c) => {
 	const auth = c.get('auth');
-	const isSuperuser = auth.type === AuthType.Board ? auth.isSuperuser : false;
+	const isSuperuser = auth.type === AuthType.Admin ? auth.isSuperuser : false;
 	return ok(c, { type: auth.type, is_superuser: isSuperuser });
 });
