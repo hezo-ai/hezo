@@ -3,10 +3,10 @@ import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedWorkspace } from './helpers/seed';
 
-test('team rail lists the user teams and switches between them', async () => {
+test('rail is a thin global rail with no per-team avatars', async () => {
 	let teamA = '';
 	let teamB = '';
-	const { findByTestId, getByTestId, user, router } = await renderApp({
+	const { findByTestId, queryByTestId } = await renderApp({
 		initialPath: '/home',
 		seed: async () => {
 			const a = await seedWorkspace();
@@ -16,14 +16,15 @@ test('team rail lists the user teams and switches between them', async () => {
 		},
 	});
 
-	// Both teams appear in the rail, and (as superuser) the create affordance.
-	await findByTestId(`team-rail-team-${teamA}`);
-	await findByTestId(`team-rail-team-${teamB}`);
+	// Global quick links + the create affordance are present.
+	await findByTestId('team-rail-home');
+	await findByTestId('team-rail-all-tasks');
 	await findByTestId('team-rail-new');
 
-	// Clicking a team navigates to it.
-	await user.click(getByTestId(`team-rail-team-${teamB}`));
-	await waitFor(() => expect(router.state.location.pathname).toBe(`/teams/${teamB}/tasks`));
+	// Projects-primary: the rail no longer lists per-team avatars — project-teams
+	// are reached through Home / All Tasks.
+	expect(queryByTestId(`team-rail-team-${teamA}`)).toBeNull();
+	expect(queryByTestId(`team-rail-team-${teamB}`)).toBeNull();
 });
 
 test('rail exposes instance-resource shortcuts that navigate to the settings pages', async () => {
