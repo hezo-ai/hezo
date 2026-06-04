@@ -3,11 +3,13 @@ import { createRootRoute, Outlet, useMatches, useNavigate } from '@tanstack/reac
 import { ChevronsLeft, ChevronsRight, Menu, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { MasterKeyGate } from '../components/master-key-gate';
+import { ProjectSidebar } from '../components/project-sidebar';
 import { MasterKeyStep, SetupGate } from '../components/setup/setup-wizard';
 import { TeamRail } from '../components/team-rail';
 import { TeamSidebar } from '../components/team-sidebar';
 import { UpdateBanner } from '../components/update-banner';
 import { SocketProvider } from '../contexts/socket-context';
+import { useRouteProjectId } from '../hooks/use-route-project-id';
 import { useRouteTeamId } from '../hooks/use-route-team-id';
 import { useStatus } from '../hooks/use-status';
 import { useTeams } from '../hooks/use-teams';
@@ -125,7 +127,7 @@ function ShellLayout() {
 					<div className="relative flex h-full bg-bg shadow-xl">
 						<TeamRail />
 						<div className="w-[260px] h-full overflow-y-auto py-2 border-r border-border bg-bg">
-							<TeamSidebar />
+							<SidebarContent />
 						</div>
 						<button
 							type="button"
@@ -141,6 +143,13 @@ function ShellLayout() {
 			)}
 		</div>
 	);
+}
+
+// Pick the sidebar variant by route: project-scoped when inside a project,
+// team-scoped otherwise. Both the desktop shell and the mobile drawer use this.
+function SidebarContent() {
+	const projectId = useRouteProjectId();
+	return projectId ? <ProjectSidebar /> : <TeamSidebar />;
 }
 
 function TeamSidebarShell() {
@@ -160,7 +169,7 @@ function TeamSidebarShell() {
 					className={`w-[260px] h-full overflow-y-auto py-2 ${collapsed ? 'invisible' : ''}`}
 					aria-hidden={collapsed}
 				>
-					<TeamSidebar />
+					<SidebarContent />
 				</div>
 			</div>
 			<button
