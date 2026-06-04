@@ -1,7 +1,11 @@
 # Per-project teams (1:1)
 
-Status: **design — locking semantics before implementation.** Pre-v1, no
-backwards-compat; the DB is reset, not migrated.
+Status: **slices 1–5 implemented** (creation flow, projects-primary rail/home,
+refresh-from-type). Remaining follow-up: the first-run **onboarding** migration
+so the bootstrap project gets its own team and the HQ team stays CEO-only (open
+decision A) — a deeper change to the heavily-tested onboarding flow, scoped at
+the bottom of this doc. Pre-v1, no backwards-compat; the DB is reset, not
+migrated.
 
 ## The shift
 
@@ -64,10 +68,10 @@ Marketing Site team"); the operator can override the team name later in settings
 
 - **Project-scoped sidebar** — *shipped* (`project-sidebar.tsx`): the project's
   pages are primary; the team drops to a secondary "Team" section.
-- **Home / far-left rail** — the project list becomes the primary axis. The
-  rail's per-team avatars become redundant (each "team" is a project) and move
-  toward a **project list** instead. *Deferred to a later slice* — it's the most
-  test-affecting and needs the creation flow first.
+- **Home / far-left rail** — *shipped*. `/home` is the cross-team project list
+  (the primary axis); the rail (`team-rail.tsx`) dropped its per-team avatars and
+  is now a thin global icon rail (Home / Inbox / All Tasks / New project +
+  instance shortcuts). Project-teams are reached via Home / All Tasks.
 - **URLs stay team-scoped** (`/teams/$teamId/projects/$projectId/...`) initially —
   teamId still resolves the project's team; a global `/projects/$id` routing
   refactor is out of scope for the first slices.
@@ -82,30 +86,44 @@ constraint (keeping the multi-project code paths intact and reversible).
 
 ## Sequencing (reversible slices, each green + tested)
 
-1. **Combined create-project-with-team endpoint + service** (`POST /projects`):
+1. **[DONE]** Combined create-project-with-team endpoint (`POST /api/projects`):
    orchestrates `createTeam` + `createProjectIntake`; returns the new team slug +
-   project slug + intake/approval ids. Server test: one call yields a new team
-   (Captain → CEO) with its Internal project and a user-project intake. *Additive;
-   nothing existing changes.*
-2. **Create-project-with-team UI**: a "New project" dialog (type picker from
-   `setup/direct-flow` + name/description) that calls `POST /projects` and
-   navigates into the new project. Wire it to the projects-primary entry points.
-3. **Home as project list**: surface all project-teams as the primary axis
-   (cross-team project list), keeping the team rail until slice 4.
-4. **Rail reshape**: replace per-team avatars with the project list / thin global
-   rail. Most test-affecting — do last, with Playwright mobile coverage.
-5. **Refresh-from-type** on the project-team settings (apply-type button →
-   additive re-apply), surfaced in the project sidebar's Team → Settings.
+   project slug + intake/approval ids. Superuser-gated; additive. Test:
+   `server/test/project-with-team.test.ts`.
+2. **[DONE]** Create-project-with-team UI: the `CreateProjectWithTeamDialog`
+   (type picker + name/description), wired to the **rail "+"** and the **Home
+   "New project"** button; navigates into the new team's intake conversation.
+3. **[DONE]** Home as project list — the `/home` landing was already a cross-team
+   project list (`useAllVisibleProjects`); its "New project" now creates a
+   project-with-team.
+4. **[DONE]** Rail reshape: per-team avatars dropped; the rail is now a thin
+   global axis. Mobile Playwright coverage in `test/browser/team-rail.mobile.spec.ts`.
+5. **[DONE]** Refresh-from-type: `POST /teams/:teamId/apply-type`
+   (additive `applyTemplateToTeam`) + the `ApplyTypeSection` ("Refresh from
+   type") on the team settings page, reachable from the project sidebar's
+   Team → Settings. (Built earlier alongside save-as-type.)
 
-## Open decisions (resolve at review)
+### Remaining follow-up — HQ-CEO-only onboarding migration
 
-- **A. Default team's own project.** The default/HQ team hosts the instance CEO
-  and (today) a user project. Does the HQ team get a user project, or is it
-  CEO-only (HQ becomes an executive team with just the Internal project)? Default:
-  **HQ is CEO-only** — cleaner separation; its Internal project is where the CEO
-  works.
-- **B. Team name vs project name.** Default to **team name = project name**;
-  editable later. (Locked above, flag for confirmation.)
+Open decision A is **HQ is CEO-only**. The rail/Home "New project" already create
+separate per-project teams, but the first-run **onboarding** flow
+(`services/onboarding-intake.ts`, `onboarding-direct.ts`, `approval-side-effects.ts`)
+still creates the bootstrap project inside the default team. Migrating it to the
+create-project-with-team path (so the first project also gets its own team and HQ
+stays CEO-only) is a deeper change to a heavily-tested first-run flow
+(`onboarding*.test.*`, `route-redirects`, `repo-setup-*`) and is the one piece
+deferred to its own focused slice.
+
+## Open decisions
+
+- **A. Default team's own project — RESOLVED: HQ is CEO-only.** The default/HQ
+  team is the CEO's executive team; its Internal project is where the CEO works,
+  and it does not host user projects. Implemented for all new projects (rail/Home
+  create their own teams); the first-run onboarding migration is the remaining
+  follow-up above.
+- **B. Team name vs project name — RESOLVED: team name = project name** by
+  default (the create-project-with-team flow names the team after the project);
+  editable later in team settings.
 - **C. Enforce the 1:1 invariant hard?** Default: **soft** — the primary UI only
   ever creates one user project per team; the multi-project service path stays
   for tests/escape-hatch. Revisit hardening (a DB partial unique index on
