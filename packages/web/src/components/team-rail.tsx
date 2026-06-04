@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import { FolderKanban, House, Inbox, Plus } from 'lucide-react';
+import { BookOpen, FolderKanban, House, Inbox, KeyRound, Plug, Plus, Settings } from 'lucide-react';
 import { useState } from 'react';
 import { setActiveTeamSlug } from '../hooks/use-active-team-slug';
 import { useMe } from '../hooks/use-me';
@@ -20,7 +20,9 @@ const iconLinkClass =
 /**
  * The 60px team rail: a parallel navigation axis listing every team the user
  * belongs to, with quick links to the projects-primary home and the cross-team
- * inbox. The superuser sees a "+" to create a new team.
+ * inbox. The superuser sees a "+" to create a new team, plus shortcuts to the
+ * instance-level resources (Skills / Connectors / Credentials) pinned at the
+ * bottom. Settings is available to everyone.
  */
 export function TeamRail() {
 	const { data: teams } = useTeams();
@@ -95,6 +97,53 @@ export function TeamRail() {
 						<Plus className="w-4 h-4" />
 					</button>
 				)}
+
+				{/* Instance-level resources, pinned to the bottom of the rail. The
+				    Skills/Connectors/Credentials shortcuts are Admin-only; Settings is
+				    available to everyone. */}
+				<div className="mt-auto flex flex-col items-center gap-2 pt-2">
+					<div className="w-7 border-t border-border my-1" />
+					{me?.is_superuser && (
+						<>
+							<Link
+								to="/settings/skills"
+								aria-label="Skills"
+								title="Skills"
+								data-testid="team-rail-skills"
+								className={iconLinkClass}
+							>
+								<BookOpen className="w-4 h-4" />
+							</Link>
+							<Link
+								to="/settings/connectors"
+								aria-label="Connectors"
+								title="Connectors"
+								data-testid="team-rail-connectors"
+								className={iconLinkClass}
+							>
+								<Plug className="w-4 h-4" />
+							</Link>
+							<Link
+								to="/settings/credentials"
+								aria-label="Credentials"
+								title="Credentials"
+								data-testid="team-rail-credentials"
+								className={iconLinkClass}
+							>
+								<KeyRound className="w-4 h-4" />
+							</Link>
+						</>
+					)}
+					<Link
+						to="/settings"
+						aria-label="Settings"
+						title="Settings"
+						data-testid="team-rail-settings"
+						className={iconLinkClass}
+					>
+						<Settings className="w-4 h-4" />
+					</Link>
+				</div>
 			</nav>
 			<CreateTeamDialog open={createOpen} onOpenChange={setCreateOpen} />
 		</>

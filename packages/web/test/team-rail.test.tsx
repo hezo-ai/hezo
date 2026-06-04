@@ -26,6 +26,24 @@ test('team rail lists the user teams and switches between them', async () => {
 	await waitFor(() => expect(router.state.location.pathname).toBe(`/teams/${teamB}/tasks`));
 });
 
+test('rail exposes instance-resource shortcuts that navigate to the settings pages', async () => {
+	const { findByTestId, getByTestId, user, router } = await renderApp({
+		initialPath: '/home',
+		seed: async () => {
+			await seedWorkspace();
+		},
+	});
+
+	// Superuser sees the instance shortcuts + Settings.
+	await findByTestId('team-rail-skills');
+	getByTestId('team-rail-connectors');
+	getByTestId('team-rail-credentials');
+	getByTestId('team-rail-settings');
+
+	await user.click(getByTestId('team-rail-skills'));
+	await waitFor(() => expect(router.state.location.pathname).toBe('/settings/skills'));
+});
+
 test('superuser creates a new team from the rail', async () => {
 	const { findByTestId, user, router } = await renderApp({
 		initialPath: '/home',
