@@ -2,7 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { Building2, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { CaptainHomeIntakePanel } from '../../components/captain-home-intake-panel';
-import { CreateProjectDialog } from '../../components/create-project-dialog';
+import { CreateProjectWithTeamDialog } from '../../components/create-project-with-team-dialog';
 import { OnboardingProgress } from '../../components/onboarding-progress';
 import { OnboardingChoice } from '../../components/setup/onboarding-choice';
 import { Avatar, avatarColorFromString } from '../../components/ui/avatar';
@@ -54,7 +54,6 @@ function HomeProjectsSection({
 }) {
 	const [createOpen, setCreateOpen] = useState(false);
 	const showTeamName = teams.length > 1;
-	const primaryTeamSlug = teams[0]?.slug ?? '';
 
 	if (isLoading) {
 		return (
@@ -117,13 +116,7 @@ function HomeProjectsSection({
 					</Link>
 				))}
 			</div>
-			{primaryTeamSlug && (
-				<CreateProjectDialog
-					teamId={primaryTeamSlug}
-					open={createOpen}
-					onOpenChange={setCreateOpen}
-				/>
-			)}
+			<CreateProjectWithTeamDialog open={createOpen} onOpenChange={setCreateOpen} />
 		</section>
 	);
 }
