@@ -4,7 +4,7 @@ import { renderApp } from './helpers/render';
 import { seedWorkspace } from './helpers/seed';
 
 test('sidebar renders on /home with links pointing at the default team', async () => {
-	const { container, findByText, getByRole, user, router } = await renderApp({
+	const { container, findByText, user, router } = await renderApp({
 		initialPath: '/home',
 		seed: async () => {
 			// Seed a workspace so the sidebar has data to display.
@@ -23,7 +23,9 @@ test('sidebar renders on /home with links pointing at the default team', async (
 	expect(nav.textContent).toMatch(/Resources/);
 
 	// Clicking Inbox in the sidebar navigates to the default team's inbox.
-	const inboxLink = getByRole('link', { name: 'Inbox' });
+	// Scope to the sidebar nav — the team rail also renders an "Inbox" link.
+	const inboxLink = nav.querySelector('[data-testid="sidebar-link-inbox"]') as HTMLElement;
+	expect(inboxLink).toBeTruthy();
 	await user.click(inboxLink);
 	expect(router.state.location.pathname).toBe(`/teams/${DEFAULT_TEAM_SLUG}/inbox`);
 });
