@@ -296,6 +296,137 @@ test('wake-assignee checkbox is default-checked and reflected in submit body', a
 	expect(posts[1].wake_assignee).toBe(false);
 });
 
+test('replying to an agent hides the wake-assignee toggle and omits the flag', async () => {
+	const seeded = { teamSlug: '', taskId: '' };
+	const { findByPlaceholderText, findByTestId, findByText, getByRole, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Agent Reply Project' });
+			const task = await seedTask(ws, project, { title: 'Agent Reply Task' });
+			// Author the parent as the assignee agent so author_type is 'agent'.
+			await seedComment(ws, task, 'Agent original comment', { authorMemberId: ws.agents[0].id });
+			seeded.teamSlug = ws.team.slug;
+			seeded.taskId = task.id;
+		},
+	});
+	await router.navigate({
+		to: '/teams/$teamId/tasks/$taskId',
+		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+	});
+
+	await findByText('Agent original comment');
+
+	const userMod = await import('@testing-library/user-event');
+	const user = userMod.default.setup({ delay: null });
+
+	const replyButtons = document.querySelectorAll('[data-testid="comment-reply"]');
+	expect(replyButtons.length).toBeGreaterThan(0);
+	await user.click(replyButtons[0] as HTMLElement);
+
+	const indicator = await findByTestId('reply-indicator');
+	expect(indicator.textContent).toContain('Agent original comment');
+
+	const composer = (await findByPlaceholderText('Add a comment...')) as HTMLTextAreaElement;
+	const form = composer.closest('form');
+	expect(form).not.toBeNull();
+	// The toggle is gone when the parent is an agent.
+	const wakeCheckbox = form?.querySelector(
+		'input[type="checkbox"][aria-label="Wake assignee on submit"]',
+	);
+	expect(wakeCheckbox).toBeNull();
+
+	const original = globalThis.fetch;
+	const posts: Array<Record<string, unknown>> = [];
+	globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+		const url = typeof input === 'string' ? input : input.toString();
+		if (init?.method === 'POST' && /\/tasks\/[^/]+\/comments$/.test(url)) {
+			const body = init.body;
+			if (typeof body === 'string') {
+				try {
+					posts.push(JSON.parse(body) as Record<string, unknown>);
+				} catch {}
+			}
+		}
+		return original(input, init);
+	};
+	try {
+		await user.type(composer, 'My reply to the agent');
+		await user.click(getByRole('button', { name: 'Comment' }));
+		await findByText('My reply to the agent');
+	} finally {
+		globalThis.fetch = original;
+	}
+
+	expect(posts.length).toBe(1);
+	expect('wake_assignee' in posts[0]).toBe(false);
+	// Sanity: it really was sent as a reply to the agent's comment.
+	expect(posts[0].parent_comment_id).toBeTruthy();
+});
+
+test('replying to a human keeps the wake-assignee toggle and sends the flag', async () => {
+	const seeded = { teamSlug: '', taskId: '' };
+	const { findByPlaceholderText, findByTestId, findByText, getByRole, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Human Reply Project' });
+			const task = await seedTask(ws, project, { title: 'Human Reply Task' });
+			// seedComment posts via the board token => author_type 'user'.
+			await seedComment(ws, task, 'Human original comment');
+			seeded.teamSlug = ws.team.slug;
+			seeded.taskId = task.id;
+		},
+	});
+	await router.navigate({
+		to: '/teams/$teamId/tasks/$taskId',
+		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+	});
+
+	await findByText('Human original comment');
+
+	const userMod = await import('@testing-library/user-event');
+	const user = userMod.default.setup({ delay: null });
+
+	const replyButtons = document.querySelectorAll('[data-testid="comment-reply"]');
+	expect(replyButtons.length).toBeGreaterThan(0);
+	await user.click(replyButtons[0] as HTMLElement);
+
+	const indicator = await findByTestId('reply-indicator');
+	expect(indicator.textContent).toContain('Human original comment');
+
+	const composer = (await findByPlaceholderText('Add a comment...')) as HTMLTextAreaElement;
+	// The toggle stays for a human-authored parent — nothing else wakes the assignee.
+	const checkbox = await findByRoleClosest(composer, 'checkbox', 'Wake assignee on submit');
+	expect(checkbox.checked).toBe(true);
+
+	const original = globalThis.fetch;
+	const posts: Array<Record<string, unknown>> = [];
+	globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+		const url = typeof input === 'string' ? input : input.toString();
+		if (init?.method === 'POST' && /\/tasks\/[^/]+\/comments$/.test(url)) {
+			const body = init.body;
+			if (typeof body === 'string') {
+				try {
+					posts.push(JSON.parse(body) as Record<string, unknown>);
+				} catch {}
+			}
+		}
+		return original(input, init);
+	};
+	try {
+		await user.type(composer, 'My reply to the human');
+		await user.click(getByRole('button', { name: 'Comment' }));
+		await findByText('My reply to the human');
+	} finally {
+		globalThis.fetch = original;
+	}
+
+	expect(posts.length).toBe(1);
+	expect(posts[0].wake_assignee).toBe(true);
+	expect(posts[0].parent_comment_id).toBeTruthy();
+});
+
 test('reply icon focuses composer, shows in-response-to, and persists parent link', async () => {
 	const seeded = { teamSlug: '', taskId: '', parentId: '' };
 	const { findByPlaceholderText, findByTestId, queryByTestId, findByText, getByRole, router } =
