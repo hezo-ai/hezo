@@ -1,6 +1,6 @@
 import type { AgentEffort } from '@hezo/shared';
 import { CornerDownRight, Loader2, Trash2 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import type { Comment, useCreateComment } from '../../hooks/use-comments';
 import type { Task } from '../../hooks/use-tasks';
 import { CommentAttachmentsDrop } from '../comment-attachments-drop';
@@ -41,7 +41,8 @@ function previewCommentText(c: Comment): string {
 
 /**
  * The bottom-of-page comment-entry form: a MentionTextarea wrapped in a
- * drag-drop attachments target, a "wake assignee on submit" toggle, the
+ * drag-drop attachments target, a "wake assignee on submit" toggle (hidden when
+ * replying to an agent's comment, since the reply already wakes that agent), the
  * project-intake skip affordance, and the submit button. The "Effort" select
  * lives in the sidebar but writes into the same commentEffort state — owned
  * by the route component and passed in. `replyTarget` is similarly owned
@@ -66,13 +67,17 @@ export function CommentComposer({
 	const [wakeAssignee, setWakeAssignee] = useState(true);
 	const [pendingAttachmentIds, setPendingAttachmentIds] = useState<string[]>([]);
 
+	// Replying to an agent's comment already wakes that agent (WakeupSource.Reply),
+	// so the "wake assignee" toggle is redundant there — hide it and omit the flag.
+	const replyingToAgent = replyTarget?.author_type === 'agent';
+
 	async function handleComment(e: React.FormEvent) {
 		e.preventDefault();
 		if (!commentText.trim() && pendingAttachmentIds.length === 0) return;
 		await createComment.mutateAsync({
 			content: commentText,
 			...(commentEffort ? { effort: commentEffort } : {}),
-			...(task.assignee_id ? { wake_assignee: wakeAssignee } : {}),
+			...(task.assignee_id && !replyingToAgent ? { wake_assignee: wakeAssignee } : {}),
 			...(replyTarget ? { parent_comment_id: replyTarget.id } : {}),
 			...(pendingAttachmentIds.length > 0 ? { attachment_ids: pendingAttachmentIds } : {}),
 		});
@@ -136,7 +141,7 @@ export function CommentComposer({
 				)}
 				<div className="flex items-center justify-end gap-2">
 					<ProjectIntakeBanner task={task} teamId={teamId} taskId={taskId} comments={comments} />
-					{task.assignee_id && (
+					{task.assignee_id && !replyingToAgent && (
 						<label className="flex items-center gap-2 text-[13px] text-text-muted cursor-pointer select-none">
 							<input
 								type="checkbox"
