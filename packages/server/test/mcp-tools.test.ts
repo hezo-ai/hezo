@@ -1221,3 +1221,55 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		}
 	});
 });
+
+describe('read_project_asset', () => {
+	it('round-trips a text asset written via write_project_asset', async () => {
+		const html = '<html><body><h1>Login mockup</h1></body></html>';
+		const write = (await callToolViaMcp('write_project_asset', {
+			team_id: teamId,
+			project_id: projectId,
+			filename: 'ui-mockups.html',
+			content: html,
+		})) as { written?: boolean };
+		expect(write.written).toBe(true);
+
+		const read = (await callToolViaMcp('read_project_asset', {
+			team_id: teamId,
+			project_id: projectId,
+			filename: 'ui-mockups.html',
+		})) as { filename?: string; content_type?: string; content?: string };
+		expect(read.filename).toBe('ui-mockups.html');
+		expect(read.content_type).toBe('text/html');
+		expect(read.content).toBe(html);
+	});
+
+	it('returns an error for an unknown asset', async () => {
+		const res = (await callToolViaMcp('read_project_asset', {
+			team_id: teamId,
+			project_id: projectId,
+			filename: 'does-not-exist.html',
+		})) as { error?: string };
+		expect(res.error).toMatch(/not found/i);
+	});
+
+	it('denies a caller from another team', async () => {
+		const { token: bToken } = await mintAgentToken(db, masterKeyManager, agentBId, teamBId);
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(bToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: {
+					name: 'read_project_asset',
+					arguments: { team_id: teamId, project_id: projectId, filename: 'ui-mockups.html' },
+				},
+				id: 1,
+			}),
+		});
+		const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
+		const parsed = JSON.parse(body.result.content[0].text) as { error?: string; content?: string };
+		expect(parsed.error).toBeTruthy();
+		expect(parsed.content).toBeUndefined();
+	});
+});

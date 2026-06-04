@@ -45,7 +45,7 @@ import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/tas
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
 import { resolveProjectTaskPrefix } from '../routes/projects';
-import { loadAgentAttachmentsForComments } from '../services/agent-runner';
+import { AGENT_ATTACHMENT_DIR, loadAgentAttachmentsForComments } from '../services/agent-runner';
 import {
 	AgentSystemPromptError,
 	fetchAgentSystemPromptForBatch,
@@ -53,7 +53,7 @@ import {
 } from '../services/agent-system-prompts';
 import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
-import { deleteAsset, writeAsset } from '../services/asset-storage';
+import { deleteAsset, readAsset, writeAsset } from '../services/asset-storage';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import {
@@ -2529,6 +2529,62 @@ export function registerTools(
 				await deleteAsset(dataDir, teamId, projectId, result.replacedAssetId).catch(() => {});
 			}
 			return { written: true, id: result.id, reference: `assets/${result.original_filename}` };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'read_project_asset',
+		'Read a project asset\'s contents by filename (e.g. "ui-mockups.html") — the non-markdown files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports). Text-based assets (HTML, SVG, plain text) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a read-only container path under /workspace/.hezo/assets/ to open directly. For markdown project docs use read_project_doc instead.',
+		{
+			team_id: z.string().describe('Team ID'),
+			project_id: z.string().describe('Project ID'),
+			filename: z.string().describe('Asset filename to read (e.g. "ui-mockups.html")'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
+			if (denied) return { error: denied };
+			const pDenied = assertProjectAccess(auth, args.project_id as string);
+			if (pDenied) return { error: pDenied };
+
+			const teamId = args.team_id as string;
+			const projectId = args.project_id as string;
+			const filename = normalizeAssetFilename(args.filename as string);
+
+			const found = await db.query<{
+				id: string;
+				original_filename: string;
+				content_type: string;
+				byte_size: string;
+			}>(
+				`SELECT id, original_filename, content_type, byte_size
+				 FROM assets WHERE project_id = $1 AND original_filename = $2`,
+				[projectId, filename],
+			);
+			if (found.rows.length === 0) return { error: `Asset '${filename}' not found` };
+			const asset = found.rows[0];
+
+			// Text-based assets are returned inline; binary assets are left on the
+			// read-only bind mount for the agent to open directly.
+			const isText =
+				asset.content_type.startsWith('text/') || asset.content_type === 'image/svg+xml';
+			if (!isText) {
+				return {
+					filename: asset.original_filename,
+					content_type: asset.content_type,
+					byte_size: Number(asset.byte_size),
+					binary: true,
+					path: `${AGENT_ATTACHMENT_DIR}/${asset.id}`,
+				};
+			}
+
+			const buf = await readAsset(dataDir, teamId, projectId, asset.id);
+			return {
+				filename: asset.original_filename,
+				content_type: asset.content_type,
+				content: buf.toString('utf-8'),
+			};
 		},
 		db,
 	);

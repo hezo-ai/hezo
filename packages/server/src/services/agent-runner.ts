@@ -40,6 +40,7 @@ import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import type { EgressProxy } from './egress';
 import { ensureGithubKnownHosts, ensureTaskWorktree, fetchRepo } from './git';
+import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
 import { loadMcpConnectionDescriptors } from './mcp-connections';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
@@ -379,6 +380,10 @@ async function buildRunContext(
 	if (sshSocketContainerPath) {
 		env.push(`SSH_AUTH_SOCK=${sshSocketContainerPath}`);
 	}
+	// Configure git author/committer identity and SSH commit signing from the
+	// team's connected GitHub account + Ed25519 key, so in-container commits
+	// don't fail for lack of an author and land Verified via the agent socket.
+	env.push(...(await buildGitIdentityEnv(deps.db, deps.masterKeyManager, agent.team_id)));
 	if (egress) {
 		const proxyUrl = `http://${egress.host}:${egress.port}`;
 		const noProxyHosts = [
