@@ -145,6 +145,9 @@ function RunCommentBody({
 					<LogViewer
 						lines={lines}
 						compact
+						formattable
+						teamId={teamId}
+						projectSlug={run?.project_slug ?? undefined}
 						heightClassName="h-[180px]"
 						testId="run-comment-log"
 						liveLabel={

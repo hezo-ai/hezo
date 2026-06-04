@@ -394,3 +394,52 @@ test('completed run header stays on one line when the log expands (mobile)', asy
 	const expandedDelta = Math.abs((await centerY(chevron)) - (await centerY(summary)));
 	expect(expandedDelta).toBeLessThan(8);
 });
+
+// #1 (real CSS layout): asserts the formatted log body keeps the dark terminal
+// surface (#0d1117) even with the app forced into light mode — a computed-style
+// check happy-dom can't make. Runs on mobile to satisfy the mobile-layout rule.
+test('task-page run log offers the formatted/raw switcher on a dark surface in light mode (mobile)', async ({
+	page,
+}) => {
+	await page.emulateMedia({ colorScheme: 'light' });
+	await page.addInitScript(() => localStorage.setItem('theme', 'light'));
+	await page.setViewportSize({ width: 375, height: 800 });
+	await authenticate(page);
+	const { team, token } = await createTeamWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
+
+	const { task } = await mockCompletedRun(page, team.id, captain.id, token);
+
+	await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
+
+	const runCommentEl = page.getByTestId('run-comment').first();
+	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
+	await runCommentEl.getByTestId('run-comment-header').click();
+
+	const log = runCommentEl.getByTestId('run-comment-log');
+	await expect(log).toBeVisible();
+
+	// The formatted/raw switcher is available on task-page run logs, defaulting to
+	// formatted.
+	const formattedBtn = runCommentEl.getByRole('button', { name: 'Formatted view' });
+	const rawBtn = runCommentEl.getByRole('button', { name: 'Raw logs' });
+	await expect(formattedBtn).toBeVisible();
+	await expect(rawBtn).toBeVisible();
+	await expect(formattedBtn).toHaveAttribute('aria-pressed', 'true');
+
+	// In light mode the formatted body still uses the dark terminal surface.
+	const formattedBg = await log.evaluate((el) => getComputedStyle(el).backgroundColor);
+	expect(formattedBg).toBe('rgb(13, 17, 23)');
+
+	// Raw stays on the same dark surface.
+	await rawBtn.click();
+	await expect(rawBtn).toHaveAttribute('aria-pressed', 'true');
+	const rawBg = await runCommentEl
+		.getByTestId('run-comment-log')
+		.evaluate((el) => getComputedStyle(el).backgroundColor);
+	expect(rawBg).toBe('rgb(13, 17, 23)');
+});

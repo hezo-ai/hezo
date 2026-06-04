@@ -45,7 +45,11 @@
 	--radius-lg: 12px;
 }
 
-html.dark {
+/* `.log-surface-dark` opts a subtree into the dark palette regardless of the
+   active theme — used by the log viewer's formatted view so it keeps the same
+   terminal-dark surface as the raw view even in light mode. */
+html.dark,
+.log-surface-dark {
 	--color-bg: #1a1a1a;
 	--color-bg-subtle: #2c2c2a;
 	--color-bg-muted: #3d3d3a;
