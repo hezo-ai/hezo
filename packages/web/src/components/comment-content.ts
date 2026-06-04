@@ -59,6 +59,13 @@ export interface SystemRunFailedContent {
 	text?: string;
 }
 
+export interface SystemRepoDesignatedContent {
+	kind: 'repo_designated';
+	repo_identifier?: string;
+	host_type?: string;
+	text?: string;
+}
+
 /**
  * Catch-all for system events that don't have a dedicated renderer branch
  * (`title_change`, `assignee_change`, `run_terminated`, future kinds). Renderers
@@ -75,6 +82,7 @@ export type SystemContent =
 	| SystemStatusChangeContent
 	| SystemTaskLinkContent
 	| SystemRunFailedContent
+	| SystemRepoDesignatedContent
 	| SystemGenericContent;
 
 export interface RunContent {

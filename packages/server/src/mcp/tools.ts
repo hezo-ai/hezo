@@ -4,6 +4,8 @@ import {
 	AgentAdminStatus,
 	ApprovalStatus,
 	ApprovalType,
+	ATTACHMENT_EXTENSIONS,
+	ATTACHMENT_MAX_BYTES,
 	AuditActorType,
 	AuthType,
 	CAPTAIN_AGENT_SLUG,
@@ -11,7 +13,10 @@ import {
 	CredentialInputType,
 	CredentialKind,
 	DocumentType,
+	extensionOf,
+	isAgentAuthorableAssetMime,
 	isMarkdownDocSlug,
+	normalizeAssetFilename,
 	ReactionKind,
 	TaskStatus,
 	WakeupSource,
@@ -22,6 +27,7 @@ import { z } from 'zod';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { assertNoActiveRun } from '../lib/active-run';
 import { isCoach } from '../lib/agent-roles';
+import { upsertProjectAsset } from '../lib/asset-name';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
@@ -47,6 +53,7 @@ import {
 } from '../services/agent-system-prompts';
 import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
+import { deleteAsset, writeAsset } from '../services/asset-storage';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import {
@@ -2432,7 +2439,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_project_assets',
-		"List the project's assets — uploaded non-markdown files (UI mockups, wireframes, diagrams, PDFs). Reference one in a comment or doc as `assets/<filename>` (e.g. assets/login-mockup.png), no backticks. Assets are view-only and human-managed; you cannot upload or edit them.",
+		"List the project's assets — non-markdown files (UI mockups, wireframes, diagrams, PDFs). Reference one in a comment or doc as `assets/<filename>` (e.g. assets/login-mockup.png), no backticks. You can author text-based assets (.html, .svg, .txt) with write_project_asset; binary assets (images, PDFs) are human-uploaded.",
 		{
 			team_id: z.string().describe('Team ID'),
 			project_id: z.string().describe('Project ID'),
@@ -2460,6 +2467,68 @@ export function registerTools(
 					created_at: a.created_at,
 				})),
 			};
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'write_project_asset',
+		'Save a text-based file to the project assets library so a human can open it (an interactive HTML mockup, an SVG diagram, a plain-text export). Allowed extensions: .html, .svg, .txt. Re-saving the same filename overwrites it, so the reference stays stable. Returns the reference string to drop into a comment as `assets/<filename>` (no backticks). HTML opens interactively in a new tab. Mockups and other deliverables belong here, never committed to the source repo.',
+		{
+			team_id: z.string().describe('Team ID'),
+			project_id: z.string().describe('Project ID'),
+			filename: z.string().describe('Filename to write (e.g. "ui-mockups.html")'),
+			content: z.string().describe('File content'),
+		},
+		async (args, db, auth) => {
+			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
+			if (denied) return { error: denied };
+			const pDenied = assertProjectAccess(auth, args.project_id as string);
+			if (pDenied) return { error: pDenied };
+
+			const teamId = args.team_id as string;
+			const projectId = args.project_id as string;
+			const filename = normalizeAssetFilename(args.filename as string);
+			const ext = extensionOf(filename);
+			const contentType = ext
+				? ATTACHMENT_EXTENSIONS[ext as keyof typeof ATTACHMENT_EXTENSIONS]
+				: undefined;
+			if (!contentType || !isAgentAuthorableAssetMime(contentType)) {
+				return {
+					error:
+						'Asset must be a text-based file: .html, .svg, or .txt. Other types are human-uploaded.',
+				};
+			}
+
+			const blob = new Blob([args.content as string], { type: contentType });
+			if (blob.size > ATTACHMENT_MAX_BYTES) {
+				return { error: 'Asset exceeds 10 MB.' };
+			}
+
+			const assetId = crypto.randomUUID();
+			const { byteSize, sha256 } = await writeAsset(dataDir, teamId, projectId, assetId, blob);
+			const uploadedBy = auth.type === AuthType.Agent ? auth.memberId : null;
+			let result: Awaited<ReturnType<typeof upsertProjectAsset>>;
+			try {
+				result = await upsertProjectAsset(db, {
+					assetId,
+					teamId,
+					projectId,
+					contentType,
+					byteSize,
+					sha256,
+					desiredName: filename,
+					uploadedByMemberId: uploadedBy,
+				});
+			} catch (e) {
+				await deleteAsset(dataDir, teamId, projectId, assetId).catch(() => {});
+				throw e;
+			}
+			if (result.replacedAssetId) {
+				await deleteAsset(dataDir, teamId, projectId, result.replacedAssetId).catch(() => {});
+			}
+			return { written: true, id: result.id, reference: `assets/${result.original_filename}` };
 		},
 		db,
 	);

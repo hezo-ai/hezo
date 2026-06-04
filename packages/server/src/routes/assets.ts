@@ -5,6 +5,7 @@ import {
 	ATTACHMENT_MAX_BYTES,
 	AuthType,
 	assetContentDisposition,
+	assetServeCsp,
 	isAllowedAttachmentExtension,
 	isAllowedAttachmentMime,
 	normalizeAssetFilename,
@@ -245,14 +246,19 @@ publicAssetsRoutes.get('/api/assets/:assetId', async (c) => {
 	const filenameSafe = original_filename.replace(/"/g, '');
 	const ab = new ArrayBuffer(buf.byteLength);
 	new Uint8Array(ab).set(buf);
-	return c.body(new Uint8Array(ab), 200, {
+	const headers: Record<string, string> = {
 		'Content-Type': content_type,
 		'Content-Length': String(buf.byteLength),
 		// SVGs (and other active-content types) download instead of rendering as a
 		// top-level document on our origin — see `assetContentDisposition`.
 		'Content-Disposition': `${assetContentDisposition(content_type)}; filename="${filenameSafe}"`,
 		'Cache-Control': 'private, max-age=3600',
-	});
+	};
+	// HTML mockups render inline but are pinned to an opaque origin so their
+	// script can't reach the app's same-origin credentials.
+	const csp = assetServeCsp(content_type);
+	if (csp) headers['Content-Security-Policy'] = csp;
+	return c.body(new Uint8Array(ab), 200, headers);
 });
 
 // Re-export the allowed extensions for tests
