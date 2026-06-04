@@ -1033,6 +1033,45 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		expect(task).toHaveProperty('description');
 	});
 
+	it('get_task resolves a human-readable task identifier to its UUID', async () => {
+		const created = (await callToolViaMcp('create_task', {
+			team_id: teamId,
+			project_id: projectId,
+			title: 'Identifier resolution target',
+			assignee_id: agentId,
+		})) as { id: string; identifier: string };
+
+		const byIdentifier = (await callToolViaMcp('get_task', {
+			team_id: teamId,
+			task_id: created.identifier,
+		})) as Record<string, unknown>;
+		expect(byIdentifier.id).toBe(created.id);
+		expect(byIdentifier.identifier).toBe(created.identifier);
+	});
+
+	it('get_task returns a clean error for an unknown identifier instead of crashing', async () => {
+		const result = (await callToolViaMcp('get_task', {
+			team_id: teamId,
+			task_id: 'ZZ-999',
+		})) as { error?: string };
+		expect(result.error).toContain('ZZ-999');
+	});
+
+	it('list_comments accepts a task identifier (centralized resolution)', async () => {
+		const created = (await callToolViaMcp('create_task', {
+			team_id: teamId,
+			project_id: projectId,
+			title: 'Identifier resolution for comments',
+			assignee_id: agentId,
+		})) as { id: string; identifier: string };
+
+		const comments = await callToolViaMcp('list_comments', {
+			team_id: teamId,
+			task_id: created.identifier,
+		});
+		expect(Array.isArray(comments)).toBe(true);
+	});
+
 	it('get_task returns blockers and dependents symmetrically', async () => {
 		const upstream = (await callToolViaMcp('create_task', {
 			team_id: teamId,

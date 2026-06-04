@@ -1,12 +1,13 @@
 // Most task-CRUD coverage now lives in the component tier
 // (`packages/web/test/task-crud.test.tsx`). The one test that stays in
-// Playwright is the running-agents scroll-into-view path, because it asserts
-// on `toBeInViewport()` which only a real browser layout engine can resolve.
+// Playwright is the Agent Queue running-row scroll-into-view path, because it
+// asserts on `toBeInViewport()` which only a real browser layout engine can
+// resolve.
 
 import { expect, test } from './fixtures';
 import { createProjectAndClearPlanning, uniqueName, waitForPageLoad } from './helpers';
 
-test('running-agents line links each name to its run comment and scrolls into view', async ({
+test('Agent Queue running row links the agent name to its run comment and scrolls into view', async ({
 	sharedPage: page,
 	sharedWorkspace,
 }) => {
@@ -40,10 +41,10 @@ test('running-agents line links each name to its run comment and scrolls into vi
 		author_member_id: agent.id,
 	};
 
-	// Drive RunningAgentsLine from a mocked lock rather than a real POST /lock:
+	// Drive the running row from a mocked lock rather than a real POST /lock:
 	// creating an agent-assigned task posts a background wakeup whose cron can
 	// acquire (and then roll back) the execution lock first, racing the test.
-	// The line only reads the locks + comments queries, so mocking both keeps
+	// The row only reads the locks + comments queries, so mocking both keeps
 	// this scroll-into-view assertion hermetic.
 	const lock = {
 		id: 'aaaa0000-0000-0000-0000-000000000001',
@@ -86,10 +87,10 @@ test('running-agents line links each name to its run comment and scrolls into vi
 	await page.goto(`/teams/${team.id}/tasks/${task.id}`);
 	await waitForPageLoad(page);
 
-	const runningLine = page.getByTestId('running-agents-line');
-	await expect(runningLine).toBeVisible({ timeout: 15000 });
+	const agentQueue = page.getByTestId('agent-queue-section');
+	await expect(agentQueue).toBeVisible({ timeout: 15000 });
 
-	const link = runningLine.getByRole('link', { name: agent.title });
+	const link = agentQueue.getByRole('link', { name: agent.title });
 	await expect(link).toHaveAttribute('href', `#comment-${commentId}`);
 
 	const targetComment = page.locator(`#comment-${commentId}`);
