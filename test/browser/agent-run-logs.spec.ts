@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Locator, type Page, test } from '@playwright/test';
 import {
 	authenticate,
 	createProjectAndClearPlanning,
@@ -345,4 +345,52 @@ test('completed run expansion works on mobile viewport', async ({ page }) => {
 	const log = runCommentEl.getByTestId('run-comment-log');
 	await expect(log).toBeVisible();
 	await expect(log).toContainText('[synthetic] line 1');
+});
+
+// #1 (real CSS layout): asserts the summary row and its expand chevron share a
+// single horizontal line via boundingBox y-centres — happy-dom can't lay out
+// the flex row, so this can only be verified in a real browser. Mobile width is
+// the forcing function: the full header (title · status · lines · duration ·
+// timestamp · chevron) is wider than a 375px row, so a wrapping container would
+// drop the chevron to a second line.
+test('completed run header stays on one line when the log expands (mobile)', async ({ page }) => {
+	await page.setViewportSize({ width: 375, height: 800 });
+	await authenticate(page);
+	const { team, token } = await createTeamWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
+
+	const { task } = await mockCompletedRun(page, team.id, captain.id, token);
+
+	await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
+
+	const runCommentEl = page.getByTestId('run-comment').first();
+	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
+
+	const header = runCommentEl.getByTestId('run-comment-header');
+	const summary = header.getByTestId('run-comment-summary');
+	await expect(summary).toBeVisible({ timeout: 20_000 });
+	// The chevron is the only <svg> in the header (the status dot is a <span>).
+	const chevron = header.locator('svg');
+
+	const centerY = async (loc: Locator): Promise<number> => {
+		const box = await loc.boundingBox();
+		if (!box) throw new Error('element has no bounding box');
+		return box.y + box.height / 2;
+	};
+
+	// Line height is ~16px (text-xs); a wrapped chevron would sit a full line
+	// below the summary, so an 8px tolerance cleanly separates one line from two.
+	const collapsedDelta = Math.abs((await centerY(chevron)) - (await centerY(summary)));
+	expect(collapsedDelta).toBeLessThan(8);
+
+	// Opening the inline log grows the comment and can introduce a scrollbar that
+	// narrows the row — the header must not reflow onto a second line.
+	await header.click();
+	await expect(runCommentEl.getByTestId('run-comment-log')).toBeVisible();
+	const expandedDelta = Math.abs((await centerY(chevron)) - (await centerY(summary)));
+	expect(expandedDelta).toBeLessThan(8);
 });
