@@ -17,7 +17,7 @@ const SHARED_INSTRUCTIONS = `
 ## Working Guidelines
 
 ### Ticket Maintenance
-- **Progress**: Update the current ticket's progress_summary via \`update_task\` at natural milestones to reflect what you've accomplished and what remains.
+- **Progress**: Update the current ticket's progress_summary via \`update_task\` at natural milestones to reflect what you've accomplished and what remains. The latest progress_summary is surfaced (in full, alongside the description and rules) at the top of every run, so each run picks up where the last one left off — keep it current.
 - **Rules**: The ticket \`rules\` field captures *how this ticket should be worked on* — approach constraints, guardrails, or required workflows that shape execution (e.g. "run the full suite before pushing", "consult the architect before touching auth", "do not edit migrations"). Add these via \`update_task\` as you discover them. Do NOT use \`rules\` to pass project domain knowledge to a future agent — domain and scope context belongs in the ticket \`description\`; work-in-flight status belongs in \`progress_summary\`; project- or team-wide knowledge belongs in project docs (\`write_project_doc\`) or the team skills database (\`create_skill\`).
 - **Status**: Update the ticket status as you progress:
   - \`in_progress\` — when you begin active work

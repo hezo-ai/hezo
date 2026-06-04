@@ -81,6 +81,7 @@ export interface TaskInfo {
 	priority: string;
 	project_id: string;
 	rules: string | null;
+	progress_summary: string | null;
 	assignee_id?: string | null;
 	runtime_type?: AgentRuntime | null;
 	parent_task_id?: string | null;
@@ -1131,7 +1132,14 @@ export function buildTaskPrompt(
 		parts.push('');
 	}
 
+	parts.push('### Description');
 	parts.push(task.description || 'No description provided.');
+
+	if (task.progress_summary) {
+		parts.push('');
+		parts.push('### Progress Summary');
+		parts.push(task.progress_summary);
+	}
 
 	if (wakeupPayload?.previous_failure) {
 		const pf = wakeupPayload.previous_failure as Record<string, unknown>;
@@ -1417,6 +1425,8 @@ export async function buildCoachReviewPrompt(
 		'### Description',
 		task.description || 'No description provided.',
 		'',
+		...(task.rules ? ['### Rules', task.rules, ''] : []),
+		...(task.progress_summary ? ['### Progress Summary', task.progress_summary, ''] : []),
 		'### Agents Involved',
 		agentList || 'No agents identified.',
 		'',

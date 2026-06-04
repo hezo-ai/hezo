@@ -2265,6 +2265,14 @@ line to the task block, regardless of whether the new ticket is a sub-task
 task and its structural parent is the same as the spawning ticket, the prompt
 collapses to a single **Parent ticket:** line.
 
+**Run context (every run).** Independent of the wakeup source, the task block
+opens with the ticket's full `description` (labeled `### Description`), its
+`rules` (approach constraints), and its latest `progress_summary` (the
+agent-maintained running checkpoint) — all untruncated. This lets a run resume
+exactly where the last one left off without a `get_task` round-trip; agents keep
+`progress_summary` current via `update_task`. The Coach's post-completion review
+prompt carries the same three fields alongside the full comment history.
+
 Agents can use this to: ask questions, request reviews, escalate blockers, hand
 off context, or coordinate work across teams — all visible in the task thread,
 all traceable in the audit log.

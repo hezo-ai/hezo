@@ -164,6 +164,7 @@ function makeTask() {
 		priority: 'medium',
 		project_id: projectId,
 		rules: null,
+		progress_summary: null,
 	};
 }
 
@@ -376,6 +377,36 @@ describe('runAgent', () => {
 
 		const taskWithRules = { ...makeTask(), rules: 'Always write tests' };
 		const result = await runAgent(deps, makeAgent(), taskWithRules, project);
+		expect(result.success).toBe(true);
+	});
+
+	it('includes task progress summary in task prompt when present', async () => {
+		const project = makeProject();
+		const docker = createMockDocker({
+			execCreate: async (_containerId: string, opts: any) => {
+				const prompt = readPromptFromExec(opts, '/tmp/test-data', project);
+				expect(prompt).toContain('### Progress Summary');
+				expect(prompt).toContain('Parser landed; tests still failing');
+				return 'exec-progress';
+			},
+			execStart: async () => ({ stdout: 'ok', stderr: '' }),
+			execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+		});
+
+		const deps: RunnerDeps = {
+			db,
+			docker,
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
+		};
+
+		const taskWithSummary = {
+			...makeTask(),
+			progress_summary: 'Parser landed; tests still failing',
+		};
+		const result = await runAgent(deps, makeAgent(), taskWithSummary, project);
 		expect(result.success).toBe(true);
 	});
 
