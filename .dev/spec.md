@@ -1237,7 +1237,7 @@ Every agent's resolved system prompt is auto-appended with a **Teammates** block
 
 Repo short names can also be @-mentioned: `@frontend`, `@api` — these reference the repo, not an agent.
 
-**Handoff contract.** When an agent is woken by a mention, its run opens on the triggering ticket for *triage only* — not as new assigned work. The agent's task prompt is prepended with a Mention Handoff block showing the mentioner, the comment excerpt, and the agent's own open tickets. The expected behaviour is:
+**Handoff contract.** When an agent is woken by a mention, its run opens on the triggering ticket for *triage only* — not as new assigned work. The agent's task prompt is prepended with a Mention Handoff block showing the mentioner, the full comment, and the agent's own open tickets. The expected behaviour is:
 
 - If one of the agent's open tickets already covers the topic of the mention, the agent updates that ticket's description, rules, or progress_summary to reflect what was communicated and references the triggering ticket so the handoff is traceable.
 - If no existing ticket covers it, the agent opens one via `create_task`. The new ticket is the mentioned agent's own first-class work and may be shaped as a sub-task of the triggering ticket, a sibling/peer, or a top-level ticket depending on context. The system records the triggering ticket as provenance automatically via `created_by_run_id`.

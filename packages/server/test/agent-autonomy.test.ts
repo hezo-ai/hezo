@@ -490,17 +490,13 @@ describe('agent-runner: mention handoff prompt', () => {
 });
 
 describe('agent-runner: mention context loader', () => {
-	it('truncateExcerpt behaviour via loadMentionContext return: strips fenced code', async () => {
-		// Unit-level excerpt shape test via buildTaskPrompt: long excerpt with code fence gets stripped.
+	it('renders the full mention comment, code blocks included', async () => {
 		const { buildTaskPrompt } = await import('../src/services/agent-runner');
 
-		const longCode = `Here is the plan\n\`\`\`\n${'x'.repeat(1200)}\n\`\`\`\nend`;
+		const fullComment = `Here is the plan\n\`\`\`\n${'x'.repeat(1200)}\n\`\`\`\nend`;
 		const ctx = {
 			authorName: 'Captain',
-			excerpt: longCode.replace(
-				/(?:^|\n)(?:```|~~~)[^\n]*\n[\s\S]*?(?:```|~~~)(?=\n|$)/g,
-				'[code omitted]',
-			),
+			excerpt: fullComment,
 			openTickets: [],
 		};
 
@@ -521,8 +517,10 @@ describe('agent-runner: mention context loader', () => {
 			{ mentionContext: ctx },
 		);
 
-		expect(prompt).toContain('[code omitted]');
-		expect(prompt).not.toContain('x'.repeat(600));
+		// The code block is rendered verbatim (no stripping, no truncation).
+		expect(prompt).toContain('x'.repeat(1200));
+		expect(prompt).not.toContain('[code omitted]');
+		expect(prompt).toContain('their full comment:');
 	});
 });
 

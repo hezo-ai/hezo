@@ -2231,8 +2231,8 @@ explicitly `@`-mentioned themselves.
 
 **Handoff semantics.** A mention-triggered run opens on the triggering ticket
 for triage. The agent's task prompt includes a "Mention Handoff" section that
-names the mentioner, quotes an excerpt of the comment (≤ 500 chars, with code
-fences stripped), and lists the agent's own open tickets. The agent is expected
+names the mentioner, quotes the comment in full (untruncated, code blocks
+intact), and lists the agent's own open tickets. The agent is expected
 to route the work: update one of its own open tickets, or create a new one
 (sub-task of the triggering ticket, a sibling/peer, or top-level — the new
 ticket is first-class work owned by that agent; the system records the
@@ -2249,7 +2249,7 @@ wakeup for the original mentioner if both are agents and the team has
 carries `{ source: "reply", task_id, comment_id, triggering_comment_id,
 responder_member_id }`, idempotency key `reply:<triggering_comment_id>:<reply_comment_id>`.
 The mentioner's next run opens with a "Reply Received" prompt block that shows
-the responder's name, their reply excerpt, the original comment excerpt, and
+the responder's name, their full reply, the full original comment, and
 any tickets referenced in the reply. When one comment @-mentions several
 agents, each responder fires its own reply wakeup; nearby wakeups are coalesced
 by the standard 2-second window. Teams that prefer to batch replies can
