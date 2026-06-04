@@ -5,6 +5,7 @@ import { seedWorkspace } from './helpers/seed';
 const LOG_TEXT = [
 	'[session] model=deepseek-v4-pro tools=115',
 	'[thinking] Planning the approach now.',
+	'[thinking] My plan: 1. Investigate storage 2. Survey implementations 3. Write the report',
 	'Here is the plan to follow:',
 	'- first item',
 	'- second item',
@@ -44,6 +45,11 @@ test('run log defaults to the formatted view and toggles to raw via the icon but
 	const toolLabel = await findByText('Bash', undefined, { timeout: 15_000 });
 	const listItem = await findByText('first item');
 	expect(listItem.closest('li')).not.toBeNull();
+
+	// A collapsed thinking enumeration (`1. … 2. … 3. …` on one line) is reflowed into a
+	// real list inside the thinking block, not shown as a run-on paragraph.
+	const thinkingItem = await findByText('Investigate storage');
+	expect(thinkingItem.closest('li')).not.toBeNull();
 
 	const body = await findByTestId('run-log');
 	expect(body.textContent).not.toContain('[tool]');

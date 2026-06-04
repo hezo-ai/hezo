@@ -1,5 +1,7 @@
 import { Boxes, ChevronDown, ChevronRight, Cpu, Sparkles, Terminal, Wrench } from 'lucide-react';
 import { type ComponentType, useMemo, useState } from 'react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
 	type CommandBlock,
 	type DoneBlock,
@@ -11,6 +13,7 @@ import {
 	type ThinkingBlock,
 	type ToolBlock,
 } from '../lib/parse-agent-log';
+import { reflowEnumerations } from '../lib/reflow-thinking-lists';
 import { MarkdownProse } from './markdown-prose';
 import { Badge } from './ui/badge';
 
@@ -98,14 +101,24 @@ function TextView({
 	);
 }
 
+// Markers (`1.`/`2.`/`•`) the server flattened onto a single line are reflowed into
+// markdown so they render as lists; the de-emphasized thinking look (small, italic,
+// subtle) is preserved with explicit list styling rather than the full `prose` plugin,
+// which would impose its own font size and colours.
+const THINKING_PROSE =
+	'text-xs italic leading-relaxed [&_ol]:list-decimal [&_ul]:list-disc [&_ol]:pl-5 [&_ul]:pl-5 [&_li]:my-0.5 [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_li]:marker:text-text-subtle';
+
 function ThinkingView({ block }: { block: ThinkingBlock }) {
+	const reflowed = useMemo(() => reflowEnumerations(block.text), [block.text]);
 	return (
 		<div className="border-l-2 border-border-subtle pl-3 text-text-subtle">
 			<div className="mb-0.5 flex items-center gap-1 text-[10px] uppercase tracking-wider">
 				<Sparkles className="w-3 h-3 shrink-0" />
 				Thinking
 			</div>
-			<p className="whitespace-pre-wrap text-xs italic leading-relaxed">{block.text}</p>
+			<div className={THINKING_PROSE}>
+				<Markdown remarkPlugins={[remarkGfm]}>{reflowed}</Markdown>
+			</div>
 		</div>
 	);
 }
