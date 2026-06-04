@@ -10,7 +10,8 @@ CREATE TYPE mcp_install_status AS ENUM ('pending', 'installed', 'failed');
 
 CREATE TABLE mcp_connections (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id           UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    -- team_id NULL = an instance-level connector, available to every team.
+    team_id              UUID REFERENCES teams(id) ON DELETE CASCADE,
     project_id           UUID REFERENCES projects(id) ON DELETE CASCADE,
     name                 TEXT NOT NULL,
     kind                 mcp_connection_kind NOT NULL,
@@ -22,9 +23,13 @@ CREATE TABLE mcp_connections (
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (team_id, project_id, name)
 );
+-- Instance-level connectors (team_id NULL) are unique by name across the instance.
+CREATE UNIQUE INDEX idx_mcp_connections_instance_name ON mcp_connections (name) WHERE team_id IS NULL;
 ```
 
 `project_id NULL` means team-wide. A project-scoped row with the same name shadows the team-wide one for runs in that project — useful for swapping a sandbox MCP server in dev while production agents use a different one.
+
+`team_id NULL` means an **instance-level** connector, shared with every team's runs and managed by the Admin (superuser) via the un-prefixed `GET/POST /api/mcp-connections` and `DELETE /api/mcp-connections/:id` routes. Instance connectors are **SaaS only** — local (stdio) MCPs carry per-container install state that can't be shared from a single row, so they stay per-team. The run loader resolves the most specific scope on a name clash: **project > team > instance**.
 
 ## Config shapes
 

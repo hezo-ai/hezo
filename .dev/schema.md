@@ -24,7 +24,7 @@
 | `task_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. Includes execution-type comments auto-created when agent runs complete. | belongs to task |
 | `task_attachments` | Links uploaded files to tasks. | links asset ↔ task |
 | `tool_calls` | Trace log entries. Linked to a comment (the agent message that triggered them). | belongs to comment + member_agent |
-| `secrets` | Encrypted key/value. Scoped to team or team+project. | belongs to team, optionally project |
+| `secrets` | Encrypted key/value. Scoped to team or team+project; `team_id NULL` = an instance-level credential shared with every team's egress (Admin-managed, unique by name). | belongs to team (or instance), optionally project |
 | `secret_grants` | Which agent has access to which secret. Revocable. | links secret ↔ member_agent |
 | `approvals` | Pending board decisions. Polymorphic payload. | belongs to team, requested by member_agent |
 | `cost_entries` | Immutable spend records per agent per task. | belongs to team + member_agent, optionally task/project |
@@ -34,7 +34,7 @@
 | `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. | belongs to team |
 | `team_ssh_keys` | Generated SSH key pairs per team. Private key stored encrypted in secrets vault. Registered on GitHub via OAuth API. | belongs to team |
 | `execution_locks` | Task work ownership tracking. Read/write locks — multiple readers (reviewers) or one exclusive writer. | belongs to task + member_agent |
-| `skills` | The team-level reference store (unified skills database). Each row has `name`, `slug`, `description`, `content`, optional `source_url` (set for downloaded skills), `content_hash`, `tags`, `is_active`, `embedding`. Authored manually in the UI, created by agents via MCP, or downloaded from a URL. Surfaces in `semantic_search` and is injected into runs as a manifest. | belongs to team |
+| `skills` | The reference store (unified skills database). Each row has `name`, `slug`, `description`, `content`, optional `source_url` (set for downloaded skills), `content_hash`, `tags`, `is_active`, `embedding`. Authored manually in the UI, created by agents via MCP, or downloaded from a URL. Surfaces in `semantic_search` and is injected into runs as a manifest. `team_id NULL` = an instance-level skill shared with every team (Admin-managed, unique by slug). | belongs to team (or instance) |
 | `skill_revisions` | Version history for skills — a snapshot row on every content change. | belongs to skill |
 | `agent_wakeup_requests` | Wakeup queue with coalescing and idempotency. Every run row points back to the wakeup that triggered it via `heartbeat_runs.wakeup_id`. | belongs to member_agent + team |
 | `heartbeat_runs` | One row per agent execution. Status, timing, usage, logs. Links to the task being worked on via `task_id`, and to the wakeup that triggered the run via `wakeup_id`. | belongs to member_agent + team, optionally task, optionally wakeup |
@@ -136,6 +136,14 @@ Team-wide secrets have `project_id = NULL`. Project-scoped secrets have both
 `team_id` and `project_id` set. The unique constraint `(team_id, project_id, name)`
 allows the same secret name at different scopes (e.g. a team-level secret
 and a project-level secret with the same name — project scope takes precedence).
+
+Instance-level secrets have `team_id = NULL` (and `project_id = NULL`); they are
+shared with every team's egress and are unique by name across the instance
+(partial unique index `WHERE team_id IS NULL`). The egress substitution loader
+resolves the most specific scope on a name clash: **project > team > instance**.
+The same nullable-`team_id` + partial-unique-index pattern applies to `skills`
+(unique by slug) and `mcp_connections` (SaaS only, unique by name) — `team_id
+NULL` means an instance-level row shared across teams, managed by the Admin.
 
 ### Repo storage and validation
 

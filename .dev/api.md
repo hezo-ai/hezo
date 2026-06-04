@@ -1206,6 +1206,15 @@ matching secret.
 #### `DELETE /teams/:teamId/secret-grants/:grantId`
 Revoke a grant. Sets `revoked_at`.
 
+#### Instance-level credentials (Admin / superuser)
+
+Secrets with `team_id NULL` are shared with every team's egress (still bounded by `allowed_hosts`; the agent never sees the raw value). The per-team credentials/secrets reads above surface them read-only; the team mutation routes keep their `team_id` guard, so a team cannot edit or delete an instance secret. Project scope never applies at the instance level. Managed by the superuser:
+
+- `GET /credentials` — list instance credentials with cross-team usage stats.
+- `POST /secrets` — create/upsert an instance secret (unique by name; `ON CONFLICT` rotates the value).
+- `PATCH /secrets/:secretId` — rotate the value and/or change `allowed_hosts` / `allow_all_hosts`.
+- `DELETE /secrets/:secretId` — revoke.
+
 ---
 
 ### Approvals
@@ -1574,6 +1583,16 @@ Remove a skill.
 
 #### `POST /teams/:teamId/skills/:slug/sync`
 Sync a skill from its source URL, pulling the latest version.
+
+#### Instance-level skills (Admin / superuser)
+
+Skills with `team_id NULL` are shared with every team. The per-team reads above already include them (via `team_id = :teamId OR team_id IS NULL`); a team-scoped skill with the same slug overrides the instance one for that team. The superuser manages them through the un-prefixed routes:
+
+- `GET /skills` — list instance skills.
+- `GET /skills/:slug` — get an instance skill (with content).
+- `POST /skills` — create/upsert an instance skill (inline `content`, unique by slug).
+- `PATCH /skills/:slug` — update metadata/content (writes a revision on content change).
+- `DELETE /skills/:slug` — remove.
 
 ---
 
