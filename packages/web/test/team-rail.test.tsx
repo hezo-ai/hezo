@@ -44,7 +44,7 @@ test('rail exposes instance-resource shortcuts that navigate to the settings pag
 	await waitFor(() => expect(router.state.location.pathname).toBe('/settings/skills'));
 });
 
-test('superuser creates a new team from the rail', async () => {
+test('superuser creates a new project (with its own team) from the rail', async () => {
 	const { findByTestId, user, router } = await renderApp({
 		initialPath: '/home',
 		seed: async () => {
@@ -55,9 +55,18 @@ test('superuser creates a new team from the rail', async () => {
 	await user.click(await findByTestId('team-rail-new'));
 
 	// Dialog content renders into a Radix portal on document.body — query via screen.
+	await user.type(screen.getByPlaceholderText('e.g. Marketing Site'), 'Research Squad');
+	await user.type(
+		screen.getByPlaceholderText(/What is this project/),
+		'A research project for the launch.',
+	);
 	await user.click(await screen.findByTestId('team-type-card-Blank'));
-	await user.type(screen.getByPlaceholderText('e.g. Web, Research, Marketing'), 'Research Squad');
-	await user.click(screen.getByTestId('create-team-submit'));
+	await user.click(screen.getByTestId('create-project-submit'));
 
-	await waitFor(() => expect(router.state.location.pathname).toBe('/teams/research-squad/tasks'));
+	// Navigates into the new team's intake conversation (its Internal project).
+	await waitFor(() =>
+		expect(router.state.location.pathname).toMatch(
+			/^\/teams\/research-squad\/projects\/internal\/tasks\//,
+		),
+	);
 });

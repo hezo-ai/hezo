@@ -5,7 +5,7 @@ import { setActiveTeamSlug } from '../hooks/use-active-team-slug';
 import { useMe } from '../hooks/use-me';
 import { useRouteTeamId } from '../hooks/use-route-team-id';
 import { useTeams } from '../hooks/use-teams';
-import { CreateTeamDialog } from './create-team-dialog';
+import { CreateProjectWithTeamDialog } from './create-project-with-team-dialog';
 import { Avatar, avatarColorFromString } from './ui/avatar';
 
 function initials(name: string): string {
@@ -89,8 +89,8 @@ export function TeamRail() {
 					<button
 						type="button"
 						onClick={() => setCreateOpen(true)}
-						title="New team"
-						aria-label="New team"
+						title="New project"
+						aria-label="New project"
 						data-testid="team-rail-new"
 						className="w-9 h-9 rounded-radius-md flex items-center justify-center text-text-muted hover:text-text hover:bg-bg-elevated border border-dashed border-border transition-colors"
 					>
@@ -145,7 +145,7 @@ export function TeamRail() {
 					</Link>
 				</div>
 			</nav>
-			<CreateTeamDialog open={createOpen} onOpenChange={setCreateOpen} />
+			<CreateProjectWithTeamDialog open={createOpen} onOpenChange={setCreateOpen} />
 		</>
 	);
 }
