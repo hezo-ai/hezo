@@ -78,17 +78,21 @@ function RunCommentBody({
 	const [expanded, setExpanded] = useState(false);
 	const logRegionId = `run-comment-log-${runId}`;
 
+	// Single non-wrapping row: the agent title and status block keep their width,
+	// the timestamp truncates first under pressure, and the status block clips
+	// last — so the header (and its expand chevron) stay on one horizontal line at
+	// any width, including once the log opens and a scrollbar narrows the row.
 	const summaryRow = (
-		<>
-			<span className="text-xs text-text-muted">{agentTitle} run</span>
+		<span className="flex flex-1 items-center gap-x-2 min-w-0 overflow-hidden">
+			<span className="text-xs text-text-muted shrink-0 whitespace-nowrap">{agentTitle} run</span>
 			{completed && (
 				<span
-					className="inline-flex items-baseline gap-1.5 text-xs text-text-subtle"
+					className="inline-flex items-center gap-1.5 text-xs text-text-subtle shrink-0 whitespace-nowrap"
 					data-testid="run-comment-summary"
 				>
 					<span
 						aria-hidden="true"
-						className={`inline-block w-2 h-2 rounded-full self-center ${runStatusDotClass(status)}`}
+						className={`inline-block w-2 h-2 rounded-full ${runStatusDotClass(status)}`}
 					/>
 					<span>{runStatusLabel(status)}</span>
 					<span aria-hidden="true">·</span>
@@ -103,8 +107,10 @@ function RunCommentBody({
 					)}
 				</span>
 			)}
-			<span className="text-[11px] text-text-subtle">{new Date(createdAt).toLocaleString()}</span>
-		</>
+			<span className="text-[11px] text-text-subtle truncate min-w-0">
+				{new Date(createdAt).toLocaleString()}
+			</span>
+		</span>
 	);
 
 	return (
@@ -117,12 +123,12 @@ function RunCommentBody({
 						aria-expanded={expanded}
 						aria-controls={logRegionId}
 						data-testid="run-comment-header"
-						className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-left -mx-1 px-1 rounded-radius-md hover:bg-bg-muted cursor-pointer"
+						className="flex items-center gap-2 min-w-0 text-left -mx-1 px-1 rounded-radius-md hover:bg-bg-muted cursor-pointer"
 					>
 						{summaryRow}
 						<svg
 							aria-hidden="true"
-							className={`w-3 h-3 self-center shrink-0 ml-auto text-text-subtle transition-transform ${expanded ? 'rotate-90' : ''}`}
+							className={`w-3 h-3 shrink-0 text-text-subtle transition-transform ${expanded ? 'rotate-90' : ''}`}
 							viewBox="0 0 16 16"
 							fill="currentColor"
 						>
@@ -130,10 +136,7 @@ function RunCommentBody({
 						</svg>
 					</button>
 				) : (
-					<div
-						className="flex flex-wrap items-baseline gap-x-2 gap-y-1"
-						data-testid="run-comment-header"
-					>
+					<div className="flex items-center min-w-0" data-testid="run-comment-header">
 						{summaryRow}
 					</div>
 				))}
@@ -142,6 +145,9 @@ function RunCommentBody({
 					<LogViewer
 						lines={lines}
 						compact
+						formattable
+						teamId={teamId}
+						projectSlug={run?.project_slug ?? undefined}
 						heightClassName="h-[180px]"
 						testId="run-comment-log"
 						liveLabel={

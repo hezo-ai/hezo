@@ -116,7 +116,7 @@ export function LogViewer({
 	const isFormatted = formattable && viewMode === 'formatted';
 	const sizing = isExpanded ? 'flex-1 min-h-0' : heightClassName;
 	const bodyClassName = isFormatted
-		? `bg-bg text-text ${sizing} overflow-y-auto p-3 text-sm leading-relaxed`
+		? `bg-[#0d1117] log-surface-dark text-text ${sizing} overflow-y-auto p-3 text-sm leading-relaxed`
 		: `bg-[#0d1117] ${sizing} overflow-y-auto p-3 font-mono text-xs leading-relaxed`;
 
 	const content = (
