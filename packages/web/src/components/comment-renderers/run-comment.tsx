@@ -123,7 +123,7 @@ function RunCommentBody({
 						aria-expanded={expanded}
 						aria-controls={logRegionId}
 						data-testid="run-comment-header"
-						className="flex items-center gap-2 min-w-0 text-left -mx-1 px-1 rounded-radius-md hover:bg-bg-muted cursor-pointer"
+						className="flex items-center gap-2 min-h-[26px] min-w-0 text-left -mx-1 px-1 rounded-radius-md hover:bg-bg-muted cursor-pointer"
 					>
 						{summaryRow}
 						<svg
@@ -136,7 +136,7 @@ function RunCommentBody({
 						</svg>
 					</button>
 				) : (
-					<div className="flex items-center min-w-0" data-testid="run-comment-header">
+					<div className="flex items-center min-h-[26px] min-w-0" data-testid="run-comment-header">
 						{summaryRow}
 					</div>
 				))}

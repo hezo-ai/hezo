@@ -185,7 +185,10 @@ export function CommentsSection({
 									data-testid="comment-item"
 									data-comment-highlighted={isHighlighted ? 'true' : undefined}
 								>
-									<div className="w-[26px] h-[26px] flex items-center justify-center shrink-0 text-text-subtle">
+									<div
+										data-testid="inline-event-icon"
+										className="w-[26px] h-[26px] flex items-center justify-center shrink-0 text-text-subtle"
+									>
 										<Icon className="w-3.5 h-3.5" />
 									</div>
 									<div className="flex-1 min-w-0">

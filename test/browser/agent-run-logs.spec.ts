@@ -395,6 +395,47 @@ test('completed run header stays on one line when the log expands (mobile)', asy
 	expect(expandedDelta).toBeLessThan(8);
 });
 
+// #1 (real CSS layout): the leading inline-event icon must share a vertical
+// centre-line with the run summary's "<agent> run" label. The icon sits in a
+// 26px slot while the label is a 16px text-xs line, so their centres only line
+// up if the header row is also 26px tall — a layout fact happy-dom can't compute
+// (boundingBox returns 0). Guards the regression where the icon sat ~5px low.
+test('completed run inline icon is vertically centred on the summary label', async ({ page }) => {
+	await authenticate(page);
+	const { team, token } = await createTeamWithAgents(page);
+	const headers = { Authorization: `Bearer ${token}` };
+
+	const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, { headers });
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
+
+	const { task } = await mockCompletedRun(page, team.id, captain.id, token);
+
+	await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
+
+	const runCommentEl = page.getByTestId('run-comment').first();
+	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
+	await expect(runCommentEl.getByTestId('run-comment-summary')).toBeVisible({ timeout: 20_000 });
+
+	const commentItem = page
+		.getByTestId('comment-item')
+		.filter({ has: page.getByTestId('run-comment') })
+		.first();
+	const icon = commentItem.getByTestId('inline-event-icon');
+	const label = runCommentEl.getByText('Product Lead run', { exact: true });
+
+	const centerY = async (loc: Locator): Promise<number> => {
+		const box = await loc.boundingBox();
+		if (!box) throw new Error('element has no bounding box');
+		return box.y + box.height / 2;
+	};
+
+	// Buggy layout left the icon centre ~5px below the label centre; aligned
+	// centres sit within a sub-pixel. 2px cleanly separates the two states.
+	const delta = Math.abs((await centerY(icon)) - (await centerY(label)));
+	expect(delta).toBeLessThan(2);
+});
+
 // #1 (real CSS layout): asserts the formatted log body keeps the dark terminal
 // surface (#0d1117) even with the app forced into light mode — a computed-style
 // check happy-dom can't make. Runs on mobile to satisfy the mobile-layout rule.
