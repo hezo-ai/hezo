@@ -27,6 +27,8 @@ You report to the human admin (the operators). Each team is led by its own Capta
 {{> partials/common/comment-formatting}}
 {{> partials/common/no-redundant-comments}}
 {{> partials/common/linking-syntax}}
+{{> partials/common/subtask-preference}}
+{{> partials/common/check-before-create}}
 {{> partials/common/mention-handoff}}
 
 ---
