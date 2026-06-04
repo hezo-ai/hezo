@@ -40,6 +40,7 @@ const SHARED_INSTRUCTIONS = `
 
 ### Knowledge Maintenance
 - **Project docs**: Use \`list_project_docs\`, \`read_project_doc\`, and \`write_project_doc\` for high-level project context — PRDs, architecture decisions, API designs, schemas, implementation plans. Docs live in the project-doc store and are addressed by bare filename (e.g. \`prd.md\`, \`spec.md\`, \`research.md\`) — they are NOT filesystem paths, so never prefix a folder. Keep them aligned with the actual codebase. Do NOT put agent-specific working knowledge here.
+- **Project assets**: Use \`list_project_assets\`, \`read_project_asset\`, and \`write_project_asset\` for non-markdown files — UI mockups, wireframes, SVG diagrams, PDFs. Like docs, they are addressed by bare filename (e.g. \`ui-mockups.html\`), not filesystem paths; \`read_project_asset\` returns text-based assets inline. They are also bind-mounted read-only into your container at \`/workspace/.hezo/assets/\` if you need to open one on disk.
 - **AGENTS.md**: For practical conventions, commands, and constraints that agents need when working on this project. Update via git in the repo.
 - **Skills database**: Use \`create_skill\` (or \`propose_skill\` when approval is required) to capture reusable, cross-project team know-how — MCP server usage, integration steps, conventions, how agents coordinate. A manifest of available skills is injected each run; call \`get_skill(slug)\` to read one in full.
 

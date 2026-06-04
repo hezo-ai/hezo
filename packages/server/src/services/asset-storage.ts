@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { unlink, writeFile } from 'node:fs/promises';
+import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { ATTACHMENT_MAX_BYTES } from '@hezo/shared';
 import { getAssetPath, getAssetsPath } from './workspace';
@@ -44,6 +44,15 @@ export async function writeAsset(
 	}
 
 	return { byteSize: buf.byteLength, sha256 };
+}
+
+export async function readAsset(
+	dataDir: string,
+	teamId: string,
+	projectId: string,
+	assetId: string,
+): Promise<Buffer> {
+	return readFile(getAssetPath(dataDir, teamId, projectId, assetId));
 }
 
 export async function deleteAsset(
