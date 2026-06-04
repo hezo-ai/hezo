@@ -114,7 +114,7 @@ export async function createWorktree(
 ): Promise<{ success: boolean; error?: string }> {
 	const { exitCode, stderr } = await spawn(
 		'git',
-		['worktree', 'add', '-b', branchName, worktreePath],
+		['worktree', 'add', '--relative-paths', '-b', branchName, worktreePath],
 		{ cwd: repoDir },
 	);
 
@@ -128,6 +128,13 @@ export async function ensureTaskWorktree(
 	branchName: string,
 ): Promise<{ success: boolean; created: boolean; error?: string }> {
 	if (existsSync(join(worktreePath, '.git'))) {
+		// Rewrite the worktree's gitdir links to relative form. Worktrees created
+		// before this used absolute host paths, which resolve on the host but not
+		// inside the container's bind mounts; relativizing makes them portable.
+		await spawn('git', ['worktree', 'repair', '--relative-paths', worktreePath], {
+			cwd: repoDir,
+			timeout: 30_000,
+		});
 		const ff = await spawn('git', ['merge', '--ff-only', `origin/${branchName}`], {
 			cwd: worktreePath,
 			timeout: 30_000,
@@ -147,14 +154,24 @@ export async function ensureTaskWorktree(
 	if (remoteCheck.exitCode === 0) {
 		result = await spawn(
 			'git',
-			['worktree', 'add', '--track', '-b', branchName, worktreePath, `origin/${branchName}`],
+			[
+				'worktree',
+				'add',
+				'--relative-paths',
+				'--track',
+				'-b',
+				branchName,
+				worktreePath,
+				`origin/${branchName}`,
+			],
 			{ cwd: repoDir, timeout: 30_000 },
 		);
 	} else {
-		result = await spawn('git', ['worktree', 'add', '-b', branchName, worktreePath], {
-			cwd: repoDir,
-			timeout: 30_000,
-		});
+		result = await spawn(
+			'git',
+			['worktree', 'add', '--relative-paths', '-b', branchName, worktreePath],
+			{ cwd: repoDir, timeout: 30_000 },
+		);
 	}
 
 	if (result.exitCode !== 0) {

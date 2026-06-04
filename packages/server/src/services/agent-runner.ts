@@ -40,6 +40,7 @@ import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import type { EgressProxy } from './egress';
 import { ensureGithubKnownHosts, ensureTaskWorktree, fetchRepo } from './git';
+import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
 import { loadMcpConnectionDescriptors } from './mcp-connections';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
@@ -379,6 +380,10 @@ async function buildRunContext(
 	if (sshSocketContainerPath) {
 		env.push(`SSH_AUTH_SOCK=${sshSocketContainerPath}`);
 	}
+	// Configure git author/committer identity and SSH commit signing from the
+	// team's connected GitHub account + Ed25519 key, so in-container commits
+	// don't fail for lack of an author and land Verified via the agent socket.
+	env.push(...(await buildGitIdentityEnv(deps.db, deps.masterKeyManager, agent.team_id)));
 	if (egress) {
 		const proxyUrl = `http://${egress.host}:${egress.port}`;
 		const noProxyHosts = [
@@ -974,9 +979,6 @@ export interface MentionContext {
 	openTickets: MentionOpenTicket[];
 }
 
-const MENTION_EXCERPT_MAX = 500;
-const FENCED_CODE_STRIP_RE = /(?:^|\n)(?:```|~~~)[^\n]*\n[\s\S]*?(?:```|~~~)(?=\n|$)/g;
-
 export async function loadMentionContext(
 	db: PGlite,
 	agentMemberId: string,
@@ -1000,8 +1002,9 @@ export async function loadMentionContext(
 	);
 	if (row.rows.length === 0) return null;
 
-	const commentText = extractCommentText(row.rows[0].content);
-	const excerpt = truncateExcerpt(commentText, MENTION_EXCERPT_MAX);
+	// The full comment body is injected verbatim into the handoff — no truncation,
+	// no code-fence stripping — so the agent sees exactly what was said.
+	const excerpt = extractCommentText(row.rows[0].content).trim();
 
 	const tickets = await db.query<MentionOpenTicket>(
 		`SELECT identifier, title, status::text AS status, priority::text AS priority
@@ -1092,12 +1095,6 @@ function extractCommentText(content: unknown): string {
 		.join('\n');
 }
 
-function truncateExcerpt(text: string, max: number): string {
-	const stripped = text.replace(FENCED_CODE_STRIP_RE, '[code omitted]').trim();
-	if (stripped.length <= max) return stripped;
-	return `${stripped.slice(0, max).trimEnd()}…`;
-}
-
 export interface BuildTaskPromptContext {
 	mentionContext?: MentionContext | null;
 	replyContext?: ReplyContext | null;
@@ -1173,7 +1170,7 @@ function renderMentionHandoff(task: TaskInfo, ctx: MentionContext): string[] {
 		: '> (empty)';
 	return [
 		'## Mention Handoff',
-		`You were mentioned by ${ctx.authorName} in ${task.identifier} — a comment excerpt:`,
+		`You were mentioned by ${ctx.authorName} in ${task.identifier} — their full comment:`,
 		'',
 		excerptBlock,
 		'',
@@ -1195,8 +1192,6 @@ export interface ReplyContext {
 	originalExcerpt: string;
 	referencedTasks: Array<{ identifier: string; title: string; status: string }>;
 }
-
-const REPLY_EXCERPT_MAX = 500;
 
 export async function loadReplyContext(
 	db: PGlite,
@@ -1253,8 +1248,8 @@ export async function loadReplyContext(
 	return {
 		responderName: reply.rows[0].author_name ?? 'Agent',
 		responderSlug: reply.rows[0].author_slug,
-		replyExcerpt: truncateExcerpt(replyText, REPLY_EXCERPT_MAX),
-		originalExcerpt: truncateExcerpt(originalText, REPLY_EXCERPT_MAX),
+		replyExcerpt: replyText.trim(),
+		originalExcerpt: originalText.trim(),
 		referencedTasks,
 	};
 }
