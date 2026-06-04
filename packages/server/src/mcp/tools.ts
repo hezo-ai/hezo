@@ -199,6 +199,30 @@ function tool(
 				],
 			};
 		}
+		// Agents reference tickets by their project-scoped identifier (e.g. "TO-8")
+		// as readily as by UUID. Normalize the canonical task argument to a UUID
+		// once here so every task-scoped tool handler can query tasks.id directly.
+		// resolveTaskId returns a UUID input unchanged (no DB round-trip), so this
+		// is a no-op for callers that already pass UUIDs.
+		if (
+			typeof args.task_id === 'string' &&
+			args.task_id.length > 0 &&
+			typeof args.team_id === 'string' &&
+			args.team_id.length > 0
+		) {
+			const resolved = await resolveTaskId(db, args.team_id, args.task_id);
+			if (!resolved) {
+				return {
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify({ error: `Task not found: ${args.task_id}` }),
+						},
+					],
+				};
+			}
+			args.task_id = resolved;
+		}
 		const result = await handler(args, db, auth);
 		const text = JSON.stringify(result, null, 2);
 		const sizeBytes = Buffer.byteLength(text, 'utf8');
@@ -878,8 +902,7 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const teamId = args.team_id as string;
-			const taskId = await resolveTaskId(db, teamId, args.task_id as string);
-			if (!taskId) return { error: 'Task not found' };
+			const taskId = args.task_id as string;
 			const taskScope = await assertProjectAccessForTask(db, auth, taskId);
 			if (taskScope) return { error: taskScope };
 			const blockerId = await resolveTaskId(db, teamId, args.blocked_by_task_id as string);
@@ -917,8 +940,7 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const teamId = args.team_id as string;
-			const taskId = await resolveTaskId(db, teamId, args.task_id as string);
-			if (!taskId) return { error: 'Task not found' };
+			const taskId = args.task_id as string;
 			const taskScope = await assertProjectAccessForTask(db, auth, taskId);
 			if (taskScope) return { error: taskScope };
 			const blockerId = await resolveTaskId(db, teamId, args.blocked_by_task_id as string);
