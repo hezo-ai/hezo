@@ -278,7 +278,7 @@ describe('mention handoff prompt (integration)', () => {
 		expect(prompt).toContain('check-before-create');
 	});
 
-	it('truncates long comment excerpts and strips fenced code', async () => {
+	it('injects the full comment verbatim — no truncation, no code stripping', async () => {
 		const longBody = `Here is a proposal:\n\`\`\`\n${'payload'.repeat(100)}\n\`\`\`\nand ${'x'.repeat(700)} tail`;
 		const { triggeringTaskId, commentId } = await createTriggeringTaskWithComment(longBody);
 
@@ -288,11 +288,14 @@ describe('mention handoff prompt (integration)', () => {
 			comment_id: commentId,
 		});
 		expect(ctx).not.toBeNull();
-		const excerpt = ctx?.excerpt ?? '';
-		expect(excerpt.length).toBeLessThanOrEqual(501);
-		expect(excerpt).toContain('[code omitted]');
-		expect(excerpt).not.toContain('payload'.repeat(10));
-		expect(excerpt.endsWith('…')).toBe(true);
+		const comment = ctx?.excerpt ?? '';
+		// The whole comment is present: the fenced code block survives and the long
+		// tail is not cut off at 500 chars.
+		expect(comment).toContain('payload'.repeat(100));
+		expect(comment).toContain('x'.repeat(700));
+		expect(comment).toContain('```');
+		expect(comment).not.toContain('[code omitted]');
+		expect(comment.endsWith('…')).toBe(false);
 	});
 });
 
