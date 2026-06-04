@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -11,6 +11,7 @@ import {
 	useCreateInstanceSecret,
 	useDeleteInstanceSecret,
 	useInstanceCredentials,
+	useUpdateInstanceSecret,
 } from '../../hooks/use-instance-credentials';
 import { useMe } from '../../hooks/use-me';
 
@@ -26,31 +27,48 @@ function formatRelative(iso: string | null): string {
 	return `${Math.floor(ms / day)}d ago`;
 }
 
-function BackLink() {
-	return (
-		<Link
-			to="/settings"
-			className="text-text-muted hover:text-text inline-flex items-center gap-1 text-[13px]"
-		>
-			<ArrowLeft className="w-3.5 h-3.5" /> Settings
-		</Link>
-	);
-}
-
 function InstanceCredentialsPage() {
 	const { data: me } = useMe();
 	const { data: rows = [] } = useInstanceCredentials();
 	const createSecret = useCreateInstanceSecret();
+	const updateSecret = useUpdateInstanceSecret();
 	const deleteSecret = useDeleteInstanceSecret();
 
+	// `editing` null = the form (when open) creates; otherwise it edits that row.
 	const [showForm, setShowForm] = useState(false);
+	const [editing, setEditing] = useState<CredentialUsage | null>(null);
 	const [name, setName] = useState('');
 	const [value, setValue] = useState('');
 	const [allowedHosts, setAllowedHosts] = useState('');
 	const [allowAllHosts, setAllowAllHosts] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
-	async function handleCreate(e: React.FormEvent) {
+	function resetForm() {
+		setShowForm(false);
+		setEditing(null);
+		setName('');
+		setValue('');
+		setAllowedHosts('');
+		setAllowAllHosts(false);
+		setError(null);
+	}
+
+	function openCreate() {
+		resetForm();
+		setShowForm(true);
+	}
+
+	function openEdit(row: CredentialUsage) {
+		setEditing(row);
+		setName(row.name);
+		setValue('');
+		setAllowedHosts(row.allowed_hosts.join(', '));
+		setAllowAllHosts(row.allow_all_hosts);
+		setError(null);
+		setShowForm(true);
+	}
+
+	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		setError(null);
 		const hosts = allowedHosts
@@ -64,19 +82,25 @@ function InstanceCredentialsPage() {
 			return;
 		}
 		try {
-			await createSecret.mutateAsync({
-				name: name.trim(),
-				value,
-				allowed_hosts: hosts,
-				allow_all_hosts: allowAllHosts,
-			});
-			setName('');
-			setValue('');
-			setAllowedHosts('');
-			setAllowAllHosts(false);
-			setShowForm(false);
+			if (editing) {
+				await updateSecret.mutateAsync({
+					secretId: editing.id,
+					// Blank value = keep the existing secret; only rotate when provided.
+					value: value ? value : undefined,
+					allowed_hosts: hosts,
+					allow_all_hosts: allowAllHosts,
+				});
+			} else {
+				await createSecret.mutateAsync({
+					name: name.trim(),
+					value,
+					allowed_hosts: hosts,
+					allow_all_hosts: allowAllHosts,
+				});
+			}
+			resetForm();
 		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to create credential');
+			setError(err instanceof Error ? err.message : 'Failed to save credential');
 		}
 	}
 
@@ -131,24 +155,36 @@ function InstanceCredentialsPage() {
 			key: 'actions',
 			header: '',
 			render: (r) => (
-				<Tooltip content="Revoke">
-					<button
-						type="button"
-						onClick={() => {
-							if (
-								confirm(
-									`Revoke instance credential "${r.name}"? Every team that references the placeholder will get an unknown_secret 400 from the proxy on the next outbound call.`,
-								)
-							) {
-								deleteSecret.mutate(r.id);
-							}
-						}}
-						aria-label="Revoke"
-						className="text-text-subtle hover:text-accent-red"
-					>
-						<Trash2 className="w-3.5 h-3.5" />
-					</button>
-				</Tooltip>
+				<span className="flex items-center gap-2 justify-end">
+					<Tooltip content="Edit">
+						<button
+							type="button"
+							onClick={() => openEdit(r)}
+							aria-label={`Edit ${r.name}`}
+							className="text-text-subtle hover:text-text"
+						>
+							<Pencil className="w-3.5 h-3.5" />
+						</button>
+					</Tooltip>
+					<Tooltip content="Revoke">
+						<button
+							type="button"
+							onClick={() => {
+								if (
+									confirm(
+										`Revoke instance credential "${r.name}"? Every team that references the placeholder will get an unknown_secret 400 from the proxy on the next outbound call.`,
+									)
+								) {
+									deleteSecret.mutate(r.id);
+								}
+							}}
+							aria-label={`Revoke ${r.name}`}
+							className="text-text-subtle hover:text-accent-red"
+						>
+							<Trash2 className="w-3.5 h-3.5" />
+						</button>
+					</Tooltip>
+				</span>
 			),
 		},
 	];
@@ -170,27 +206,32 @@ function InstanceCredentialsPage() {
 							secret with the same name overrides the instance one for that team.
 						</p>
 					</div>
-					<Button variant="secondary" size="sm" onClick={() => setShowForm((s) => !s)}>
+					<Button
+						variant="secondary"
+						size="sm"
+						onClick={() => (showForm ? resetForm() : openCreate())}
+					>
 						<Plus className="w-3 h-3" /> Add
 					</Button>
 				</div>
 
 				{showForm && (
-					<form onSubmit={handleCreate} className="flex flex-col gap-2 mb-4">
+					<form onSubmit={handleSubmit} className="flex flex-col gap-2 mb-4">
 						<div className="flex flex-col sm:flex-row gap-2">
 							<Input
 								placeholder="Name (e.g. SHARED_API_KEY)"
 								value={name}
 								onChange={(e) => setName(e.target.value)}
 								required
+								disabled={!!editing}
 								className="flex-1"
 							/>
 							<Input
-								placeholder="Value"
+								placeholder={editing ? 'New value (leave blank to keep)' : 'Value'}
 								type="password"
 								value={value}
 								onChange={(e) => setValue(e.target.value)}
-								required
+								required={!editing}
 								className="flex-1"
 							/>
 						</div>
@@ -210,18 +251,14 @@ function InstanceCredentialsPage() {
 						</label>
 						{error && <p className="text-[13px] text-accent-red">{error}</p>}
 						<div className="flex gap-2">
-							<Button type="submit" size="sm" disabled={createSecret.isPending}>
-								Add credential
-							</Button>
 							<Button
-								type="button"
-								variant="secondary"
+								type="submit"
 								size="sm"
-								onClick={() => {
-									setShowForm(false);
-									setError(null);
-								}}
+								disabled={createSecret.isPending || updateSecret.isPending}
 							>
+								{editing ? 'Save changes' : 'Add credential'}
+							</Button>
+							<Button type="button" variant="secondary" size="sm" onClick={resetForm}>
 								Cancel
 							</Button>
 						</div>
@@ -241,7 +278,12 @@ function InstanceCredentialsPage() {
 	return (
 		<div className="max-w-[900px] mx-auto w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
 			<div className="flex items-center gap-3 mb-6">
-				<BackLink />
+				<Link
+					to="/settings"
+					className="text-text-muted hover:text-text inline-flex items-center gap-1 text-[13px]"
+				>
+					<ArrowLeft className="w-3.5 h-3.5" /> Settings
+				</Link>
 			</div>
 			{content}
 		</div>

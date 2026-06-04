@@ -40,6 +40,32 @@ test('lists seeded instance credentials and creates a new one via the form', asy
 	await findByText('NEW_KEY');
 });
 
+test('edits an instance credential host policy via the row edit affordance', async () => {
+	const { findByText, getByRole, getByPlaceholderText, user } = await renderApp({
+		initialPath: '/settings/credentials',
+		seed: async (ctx) => {
+			await seedInstanceSecret(ctx, {
+				name: 'EDIT_ME',
+				value: 'v1',
+				allowed_hosts: ['api.old.example'],
+			});
+		},
+	});
+
+	await findByText('EDIT_ME');
+	await findByText('api.old.example');
+
+	// Open the row's edit form, change the allowed hosts, save.
+	await user.click(getByRole('button', { name: 'Edit EDIT_ME' }));
+	const hostsInput = getByPlaceholderText(/Allowed hosts/) as HTMLInputElement;
+	await user.clear(hostsInput);
+	await user.type(hostsInput, 'api.new.example');
+	await user.click(getByRole('button', { name: 'Save changes' }));
+
+	// After the invalidate + refetch the table shows the new host policy.
+	await findByText('api.new.example');
+});
+
 test('settings page shows the superuser Instance > Credentials link and navigates to it', async () => {
 	const { findByText, getAllByRole, user, router } = await renderApp({ initialPath: '/settings' });
 
