@@ -146,7 +146,7 @@ export async function resolveSystemPrompt(
 	// The agent calls get_skill(slug) to load a skill's content on demand.
 	if (resolved.includes('{{skills_context}}')) {
 		const dbSkills = await db.query<{ name: string; slug: string; description: string }>(
-			'SELECT name, slug, description FROM skills WHERE team_id = $1 AND is_active = true ORDER BY name',
+			'SELECT name, slug, description FROM skills WHERE (team_id = $1 OR team_id IS NULL) AND is_active = true ORDER BY name',
 			[ctx.teamId],
 		);
 		let skillsText = 'No skills in the team skills database yet.';

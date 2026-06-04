@@ -2688,7 +2688,7 @@ export function registerTools(
 			if (denied) return { error: denied };
 
 			let query = `SELECT id, name, slug, description, tags, created_at, updated_at
-			             FROM skills WHERE team_id = $1 AND is_active = true`;
+			             FROM skills WHERE (team_id = $1 OR team_id IS NULL) AND is_active = true`;
 			const params: unknown[] = [args.team_id];
 
 			if (args.tags) {
@@ -2717,7 +2717,7 @@ export function registerTools(
 			if (denied) return { error: denied };
 
 			const result = await db.query(
-				`SELECT ${SKILL_COLUMNS} FROM skills WHERE team_id = $1 AND slug = $2`,
+				`SELECT ${SKILL_COLUMNS} FROM skills WHERE (team_id = $1 OR team_id IS NULL) AND slug = $2 ORDER BY team_id NULLS LAST LIMIT 1`,
 				[args.team_id, args.slug],
 			);
 			if (result.rows.length === 0) return { error: 'Skill not found' };

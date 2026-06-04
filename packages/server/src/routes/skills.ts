@@ -5,6 +5,7 @@ import { err, ok } from '../lib/response';
 import { deriveSkillSummary } from '../lib/skill-summary';
 import { toSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
+import { requireSuperuser } from '../middleware/auth';
 import { downloadSkillContent, SkillDownloadError } from '../services/skill-downloader';
 
 export const skillsRoutes = new Hono<Env>();
@@ -24,6 +25,58 @@ function downloadErrorStatus(reason: SkillDownloadError['reason']): 400 | 404 | 
 	}
 }
 
+// Instance-level skills (team_id NULL) are shared across every team. The Admin
+// (superuser) manages them here; the per-team skills reads include them.
+skillsRoutes.get('/skills', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	const db = c.get('db');
+	const result = await db.query<Omit<SkillRecord, 'content'>>(
+		`SELECT id, team_id, name, slug, description, source_url, content_hash,
+		        created_by_member_id, tags, is_active, created_at, updated_at
+		 FROM skills
+		 WHERE team_id IS NULL AND is_active = true
+		 ORDER BY name`,
+	);
+	return ok(c, result.rows);
+});
+
+skillsRoutes.post('/skills', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	const db = c.get('db');
+	const body = await c.req.json<{
+		name: string;
+		content?: string;
+		description?: string;
+		slug?: string;
+		tags?: string[];
+	}>();
+	if (!body.name?.trim()) return err(c, 'INVALID_REQUEST', 'name is required', 400);
+	if (!body.content?.trim()) return err(c, 'INVALID_REQUEST', 'content is required', 400);
+	const slug = body.slug?.trim() || toSlug(body.name);
+	if (!slug) return err(c, 'INVALID_REQUEST', 'slug could not be derived from name', 400);
+
+	const content = body.content;
+	const hash = createHash('sha256').update(content).digest('hex');
+	const description = body.description?.trim() || deriveSkillSummary(content);
+
+	const result = await db.query<SkillRecord>(
+		`INSERT INTO skills (team_id, name, slug, description, content, source_url, content_hash, tags)
+		 VALUES (NULL, $1, $2, $3, $4, NULL, $5, $6::jsonb)
+		 ON CONFLICT (slug) WHERE team_id IS NULL DO UPDATE SET
+		   name = EXCLUDED.name,
+		   description = EXCLUDED.description,
+		   content = EXCLUDED.content,
+		   content_hash = EXCLUDED.content_hash,
+		   tags = EXCLUDED.tags,
+		   updated_at = now()
+		 RETURNING *`,
+		[body.name.trim(), slug, description, content, hash, JSON.stringify(body.tags ?? [])],
+	);
+	return ok(c, result.rows[0], 201);
+});
+
 skillsRoutes.get('/teams/:teamId/skills', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
@@ -32,7 +85,7 @@ skillsRoutes.get('/teams/:teamId/skills', async (c) => {
 		`SELECT id, team_id, name, slug, description, source_url, content_hash,
 		        created_by_member_id, tags, is_active, created_at, updated_at
 		 FROM skills
-		 WHERE team_id = $1 AND is_active = true
+		 WHERE (team_id = $1 OR team_id IS NULL) AND is_active = true
 		 ORDER BY name`,
 		[teamId],
 	);
@@ -46,7 +99,7 @@ skillsRoutes.get('/teams/:teamId/skills/:slug', async (c) => {
 	const slug = c.req.param('slug');
 
 	const result = await db.query<SkillRecord>(
-		'SELECT * FROM skills WHERE team_id = $1 AND slug = $2',
+		'SELECT * FROM skills WHERE (team_id = $1 OR team_id IS NULL) AND slug = $2 ORDER BY team_id NULLS LAST LIMIT 1',
 		[teamId, slug],
 	);
 

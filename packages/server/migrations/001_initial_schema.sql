@@ -814,7 +814,8 @@ CREATE INDEX idx_comment_attachments_comment ON comment_attachments(comment_id);
 
 CREATE TABLE skills (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id               UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    -- team_id NULL = an instance-level skill, shared across every team.
+    team_id               UUID REFERENCES teams(id) ON DELETE CASCADE,
     name                  TEXT NOT NULL,
     slug                  TEXT NOT NULL,
     description           TEXT NOT NULL DEFAULT '',
@@ -831,6 +832,8 @@ CREATE TABLE skills (
     UNIQUE(team_id, slug)
 );
 
+-- Instance-level skills (team_id NULL) are unique by slug across the instance.
+CREATE UNIQUE INDEX idx_skills_instance_slug ON skills (slug) WHERE team_id IS NULL;
 CREATE INDEX idx_skills_team ON skills(team_id);
 CREATE INDEX idx_skills_embedding ON skills USING hnsw (embedding vector_cosine_ops);
 
