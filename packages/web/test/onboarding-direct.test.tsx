@@ -1,4 +1,4 @@
-import { fireEvent, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 
@@ -125,6 +125,24 @@ test("the wizard navigates straight to Captain's planning task after creation", 
 	);
 	expect(container).toBeTruthy();
 }, 40_000);
+
+test('onboarding "Chat with the Captain" opens the create-project-with-team dialog', async () => {
+	const { findByTestId, user } = await renderApp({
+		initialPath: '/home',
+		seed: async () => {
+			const team = await createBlankTeam(`Onboard Chat ${Date.now()}`);
+			sessionStorage.setItem('hezo:activeTeamSlug', team.slug);
+		},
+	});
+
+	const choiceChat = await findByTestId('choice-chat', { timeout: 15_000 });
+	await user.click(within(choiceChat).getByRole('button', { name: 'Start chat' }));
+
+	// The Captain-scoped path reuses the project-with-team dialog (its own team +
+	// Captain intake), so HQ stays CEO-only. Dialog renders into a portal.
+	await screen.findByTestId('create-project-submit');
+	expect(screen.getByText('Team type')).toBeTruthy();
+});
 
 test('the first-time choice screen no longer exposes a "general help" escape hatch', async () => {
 	const { findByTestId, container } = await renderApp({
