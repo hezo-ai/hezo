@@ -1,6 +1,16 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { Check, Copy, Maximize2, Minimize2, MoveVertical, Trash2 } from 'lucide-react';
+import {
+	AlignLeft,
+	Check,
+	Code,
+	Copy,
+	Maximize2,
+	Minimize2,
+	MoveVertical,
+	Trash2,
+} from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { FormattedLogView } from './formatted-log-view';
 import { Button } from './ui/button';
 import { Tooltip } from './ui/tooltip';
 
@@ -20,6 +30,13 @@ interface LogViewerProps {
 	compact?: boolean;
 	headerAction?: ReactNode;
 	headerActionLeading?: ReactNode;
+	/** Enables the Formatted/Raw switcher and defaults to the formatted view.
+	 *  Only meaningful for agent-run logs (prefixed lines); container logs leave
+	 *  it off and stay raw. */
+	formattable?: boolean;
+	/** Threaded to the formatted view's markdown renderer for @mention links. */
+	teamId?: string;
+	projectSlug?: string;
 }
 
 export function LogViewer({
@@ -32,10 +49,14 @@ export function LogViewer({
 	compact = false,
 	headerAction,
 	headerActionLeading,
+	formattable = false,
+	teamId,
+	projectSlug,
 }: LogViewerProps) {
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [copied, setCopied] = useState(false);
 	const [isExpanded, setIsExpanded] = useState(false);
+	const [viewMode, setViewMode] = useState<'formatted' | 'raw'>(formattable ? 'formatted' : 'raw');
 	const scrollRef = useRef<HTMLDivElement | null>(null);
 	const lastCountRef = useRef(0);
 	const pendingBottomOffsetRef = useRef<number | null>(null);
@@ -92,9 +113,11 @@ export function LogViewer({
 		}
 	};
 
-	const bodyClassName = isExpanded
-		? 'bg-[#0d1117] flex-1 min-h-0 overflow-y-auto p-3 font-mono text-xs leading-relaxed'
-		: `bg-[#0d1117] ${heightClassName} overflow-y-auto p-3 font-mono text-xs leading-relaxed`;
+	const isFormatted = formattable && viewMode === 'formatted';
+	const sizing = isExpanded ? 'flex-1 min-h-0' : heightClassName;
+	const bodyClassName = isFormatted
+		? `bg-bg text-text ${sizing} overflow-y-auto p-3 text-sm leading-relaxed`
+		: `bg-[#0d1117] ${sizing} overflow-y-auto p-3 font-mono text-xs leading-relaxed`;
 
 	const content = (
 		<>
@@ -103,6 +126,34 @@ export function LogViewer({
 					<span>Logs</span>
 					{liveLabel}
 					<span className="text-text-subtle font-normal">{lines.length} lines</span>
+					{formattable && (
+						<div className="flex items-center gap-0.5">
+							<Tooltip content="Formatted view">
+								<Button
+									variant="ghost"
+									size="sm"
+									onClick={() => setViewMode('formatted')}
+									aria-pressed={viewMode === 'formatted'}
+									aria-label="Formatted view"
+									className={`h-6 px-1.5 ${viewMode === 'formatted' ? 'bg-bg-muted text-text border border-border shadow-inner' : ''}`}
+								>
+									<AlignLeft className="w-3 h-3" />
+								</Button>
+							</Tooltip>
+							<Tooltip content="Raw logs">
+								<Button
+									variant="ghost"
+									size="sm"
+									onClick={() => setViewMode('raw')}
+									aria-pressed={viewMode === 'raw'}
+									aria-label="Raw logs"
+									className={`h-6 px-1.5 ${viewMode === 'raw' ? 'bg-bg-muted text-text border border-border shadow-inner' : ''}`}
+								>
+									<Code className="w-3 h-3" />
+								</Button>
+							</Tooltip>
+						</div>
+					)}
 				</div>
 				<div className="flex items-center gap-2">
 					{headerActionLeading}
@@ -160,6 +211,8 @@ export function LogViewer({
 			<div ref={attachScrollRef} data-testid={testId} className={bodyClassName}>
 				{lines.length === 0 ? (
 					<span className="text-text-subtle">{emptyState ?? 'No output.'}</span>
+				) : isFormatted ? (
+					<FormattedLogView lines={lines} teamId={teamId} projectSlug={projectSlug} />
 				) : (
 					lines.map((line) => (
 						<div

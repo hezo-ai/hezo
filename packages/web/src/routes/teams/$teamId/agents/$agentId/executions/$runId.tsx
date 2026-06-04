@@ -211,6 +211,9 @@ function ExecutionDetailPage() {
 			<div className="mb-4">
 				<LogViewer
 					lines={lines}
+					formattable
+					teamId={teamId}
+					projectSlug={run.project_slug ?? undefined}
 					emptyState={isActive ? getRunWaitingMessage(run.status) : 'No output captured.'}
 					liveLabel={isActive ? <span className="text-accent-amber">(live)</span> : null}
 					heightClassName="max-h-[60vh]"
