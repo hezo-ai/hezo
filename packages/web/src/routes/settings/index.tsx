@@ -1,10 +1,15 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { AiProvidersSection } from '../../components/ai-providers-section';
+import { useMe } from '../../hooks/use-me';
 
 const settingsNav = [{ id: 'ai-providers', label: 'AI providers' }];
 
+// Instance-level resources shared across every team — Admin (superuser) only.
+const instanceNav = [{ to: '/settings/credentials', label: 'Credentials' }] as const;
+
 function GlobalSettingsPage() {
+	const { data: me } = useMe();
 	const [activeSection, setActiveSection] = useState('ai-providers');
 
 	function scrollTo(id: string) {
@@ -31,6 +36,22 @@ function GlobalSettingsPage() {
 							{item.label}
 						</button>
 					))}
+					{me?.is_superuser && (
+						<>
+							<div className="mt-3 mb-0.5 px-3 text-[11px] font-medium uppercase tracking-wide text-text-subtle">
+								Instance
+							</div>
+							{instanceNav.map((item) => (
+								<Link
+									key={item.to}
+									to={item.to}
+									className="text-left text-[13px] px-3 py-1.5 rounded-radius-md transition-colors text-text-muted hover:text-text hover:bg-bg-subtle"
+								>
+									{item.label}
+								</Link>
+							))}
+						</>
+					)}
 				</nav>
 				<div className="space-y-8">
 					<div id="settings-ai-providers">

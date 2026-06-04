@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as TeamsIndexRouteImport } from './routes/teams/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as HomeIndexRouteImport } from './routes/home/index'
+import { Route as SettingsCredentialsRouteImport } from './routes/settings/credentials'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
 import { Route as TeamsTeamIdRouteRouteImport } from './routes/teams/$teamId/route'
 import { Route as TeamsTeamIdIndexRouteImport } from './routes/teams/$teamId/index'
@@ -62,6 +63,11 @@ const SettingsIndexRoute = SettingsIndexRouteImport.update({
 const HomeIndexRoute = HomeIndexRouteImport.update({
   id: '/home/',
   path: '/home/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
+  id: '/settings/credentials',
+  path: '/settings/credentials',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsAiProvidersRoute = SettingsAiProvidersRouteImport.update({
@@ -237,6 +243,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/teams/$teamId': typeof TeamsTeamIdRouteRouteWithChildren
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
+  '/settings/credentials': typeof SettingsCredentialsRoute
   '/home/': typeof HomeIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/teams/': typeof TeamsIndexRoute
@@ -272,6 +279,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
+  '/settings/credentials': typeof SettingsCredentialsRoute
   '/home': typeof HomeIndexRoute
   '/settings': typeof SettingsIndexRoute
   '/teams': typeof TeamsIndexRoute
@@ -307,6 +315,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/teams/$teamId': typeof TeamsTeamIdRouteRouteWithChildren
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
+  '/settings/credentials': typeof SettingsCredentialsRoute
   '/home/': typeof HomeIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/teams/': typeof TeamsIndexRoute
@@ -345,6 +354,7 @@ export interface FileRouteTypes {
     | '/'
     | '/teams/$teamId'
     | '/settings/ai-providers'
+    | '/settings/credentials'
     | '/home/'
     | '/settings/'
     | '/teams/'
@@ -380,6 +390,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/settings/ai-providers'
+    | '/settings/credentials'
     | '/home'
     | '/settings'
     | '/teams'
@@ -414,6 +425,7 @@ export interface FileRouteTypes {
     | '/'
     | '/teams/$teamId'
     | '/settings/ai-providers'
+    | '/settings/credentials'
     | '/home/'
     | '/settings/'
     | '/teams/'
@@ -451,6 +463,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   TeamsTeamIdRouteRoute: typeof TeamsTeamIdRouteRouteWithChildren
   SettingsAiProvidersRoute: typeof SettingsAiProvidersRoute
+  SettingsCredentialsRoute: typeof SettingsCredentialsRoute
   HomeIndexRoute: typeof HomeIndexRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
   TeamsIndexRoute: typeof TeamsIndexRoute
@@ -487,6 +500,13 @@ declare module '@tanstack/react-router' {
       path: '/home'
       fullPath: '/home/'
       preLoaderRoute: typeof HomeIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/credentials': {
+      id: '/settings/credentials'
+      path: '/settings/credentials'
+      fullPath: '/settings/credentials'
+      preLoaderRoute: typeof SettingsCredentialsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/ai-providers': {
@@ -801,6 +821,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   TeamsTeamIdRouteRoute: TeamsTeamIdRouteRouteWithChildren,
   SettingsAiProvidersRoute: SettingsAiProvidersRoute,
+  SettingsCredentialsRoute: SettingsCredentialsRoute,
   HomeIndexRoute: HomeIndexRoute,
   SettingsIndexRoute: SettingsIndexRoute,
   TeamsIndexRoute: TeamsIndexRoute,
