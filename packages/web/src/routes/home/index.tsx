@@ -125,7 +125,12 @@ function HomePage() {
 	const { data: teams, isLoading: teamsLoading } = useTeams();
 	const primaryTeamSlug = useActiveTeamSlug();
 	const { projects, isLoading: projectsLoading } = useAllVisibleProjects(teams);
-	const { data: intake } = useOnboardingIntake(primaryTeamSlug, true);
+	// Only ensure/open an onboarding intake during true first-run — i.e. when no
+	// visible team has a project yet. Per-project teams mean the first project may
+	// land in its own team; once any project exists we must not re-open an intake
+	// on the default/HQ team.
+	const noProjectsYet = !projectsLoading && projects.length === 0;
+	const { data: intake } = useOnboardingIntake(primaryTeamSlug, noProjectsYet);
 	const { data: onboarding } = useOnboarding(primaryTeamSlug, true);
 
 	if (teamsLoading) {
@@ -135,7 +140,10 @@ function HomePage() {
 	}
 
 	const hasIntake = !!intake;
-	const hasProject = !!onboarding?.primary_project;
+	// Onboarding is complete once any visible team has a user-facing project —
+	// per-project teams mean the first project may live in its own new team, not
+	// the default/HQ team (which stays CEO-only).
+	const hasProject = projects.length > 0;
 	const showChoice = !hasIntake && !hasProject;
 	const showProgress = !!onboarding && (showChoice || hasIntake);
 

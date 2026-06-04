@@ -144,8 +144,6 @@ teamsRoutes.get('/teams/:teamId/onboarding', async (c) => {
 });
 
 teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
-	const teamId = c.get('teamId') as string;
-
 	const body = await c.req.json<{
 		template_id?: string;
 		project_name?: string;
@@ -159,12 +157,13 @@ teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'project_name is required', 400);
 	}
 
+	const auth = c.get('auth');
 	const result = await runOnboardingDirect(c.get('db'), {
-		teamId: teamId,
 		templateId: body.template_id.trim(),
 		projectName: body.project_name.trim(),
 		projectDescription: body.project_description,
 		initialPrd: body.initial_prd,
+		creatorUserId: auth.type === AuthType.Admin ? auth.userId : undefined,
 		dataDir: c.get('dataDir'),
 		wsManager: c.get('wsManager'),
 		docker: c.get('docker'),

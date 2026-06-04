@@ -1,6 +1,7 @@
 import { useNavigate } from '@tanstack/react-router';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { useState } from 'react';
+import { setActiveTeamSlug } from '../../hooks/use-active-team-slug';
 import { useOnboardingDirect } from '../../hooks/use-onboarding-direct';
 import { type TeamTemplate, useTeamTemplates } from '../../hooks/use-team-templates';
 import { PrdUpload } from '../prd-upload';
@@ -34,11 +35,13 @@ export function DirectFlow({ teamId, onCancel, onDone }: DirectFlowProps) {
 			project_description: projectDescription.trim() || undefined,
 			initial_prd: initialPrd.trim() || undefined,
 		});
+		// The first project gets its own team — switch to it and open its planning task.
+		setActiveTeamSlug(result.team_slug);
 		onDone();
 		navigate({
 			to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
 			params: {
-				teamId,
+				teamId: result.team_slug,
 				projectId: result.project_slug,
 				taskId: result.planning_task_identifier.toLowerCase(),
 			},

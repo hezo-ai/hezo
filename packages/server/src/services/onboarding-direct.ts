@@ -11,18 +11,19 @@ import type { DockerClient } from './docker';
 import type { LogStreamBroker } from './log-stream-broker';
 import { createProjectWithPlanningTask } from './project-create';
 import type { SshAgentServer } from './ssh-agent';
-import { applyTemplateToTeam } from './team-template-apply';
+import { createTeam } from './teams';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('onboarding-direct');
 
 export interface OnboardingDirectInput {
-	teamId: string;
 	templateId: string;
 	projectName: string;
 	projectDescription?: string;
 	initialPrd?: string;
+	/** The admin who ran the wizard, added as a member of the new project-team. */
+	creatorUserId?: string;
 	dataDir: string;
 	wsManager?: WebSocketManager;
 	docker: DockerClient;
@@ -37,6 +38,8 @@ export interface OnboardingDirectInput {
 export type OnboardingDirectResult =
 	| {
 			ok: true;
+			team_id: string;
+			team_slug: string;
 			project_id: string;
 			project_slug: string;
 			planning_task_id: string;
@@ -46,14 +49,12 @@ export type OnboardingDirectResult =
 	| { ok: false; code: 'INVALID_REQUEST' | 'CONFLICT' | 'NOT_FOUND' | 'INTERNAL'; message: string };
 
 /**
- * Direct-flow onboarding: user picked a template + named a project in the
- * wizard preview-and-confirm step. We apply the template and create the
- * project in a single server call. The user's explicit click in the wizard
- * is the approval — no team_template approval row is filed.
- *
- * The team must already exist (the seeded default team in single-team mode).
- * If the team already has a user-facing project, this still adds the template
- * agents and creates the new project alongside it.
+ * Direct-flow onboarding (projects-primary): the user picked a template + named
+ * a project in the wizard. We provision the project's **own team** (roster from
+ * the template, named after the project, Captain linked to the instance CEO) and
+ * create the project + planning task in it directly — the wizard click is the
+ * approval, so no intake/approval ticket is filed. The default/HQ team is left
+ * untouched (it stays CEO-only). See .dev/per-project-teams.md.
  */
 export async function runOnboardingDirect(
 	db: PGlite,
@@ -84,46 +85,49 @@ export async function runOnboardingDirect(
 		};
 	}
 
-	const slugCollision = await db.query('SELECT 1 FROM projects WHERE team_id = $1 AND slug = $2', [
-		input.teamId,
-		projectSlug,
-	]);
-	if (slugCollision.rows.length > 0) {
-		return {
-			ok: false,
-			code: 'CONFLICT',
-			message: `A project with slug "${projectSlug}" already exists in this team`,
-		};
-	}
+	// Provision the project's dedicated team (named after the project).
+	const team = await createTeam(
+		{
+			db,
+			docker: input.docker,
+			dataDir: input.dataDir,
+			wsManager: input.wsManager,
+			masterKeyManager: input.masterKeyManager,
+			logs: input.logs,
+			containerLogStreamer: input.containerLogStreamer,
+			egressCAPath: input.egressCAPath ?? null,
+		},
+		{
+			name: projectName,
+			description: input.projectDescription?.trim(),
+			templateId: input.templateId,
+			creatorUserId: input.creatorUserId,
+		},
+	);
 
-	const prefixResult = await resolveProjectTaskPrefix(db, input.teamId, undefined, projectName);
+	const prefixResult = await resolveProjectTaskPrefix(db, team.id, undefined, projectName);
 	if (!prefixResult.ok) {
 		return { ok: false, code: prefixResult.code, message: prefixResult.message };
 	}
-
-	const apply = await applyTemplateToTeam(db, input.teamId, input.templateId, {
-		dataDir: input.dataDir,
-		wsManager: input.wsManager,
-	});
 
 	const captain = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
 		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
 		 LIMIT 1`,
-		[input.teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
+		[team.id, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
 	);
 	const captainMemberId = captain.rows[0]?.id;
 	if (!captainMemberId) {
 		return {
 			ok: false,
 			code: 'INTERNAL',
-			message: 'No enabled Captain on team after template apply',
+			message: 'No enabled Captain on the new project-team',
 		};
 	}
 
 	const { project, planningTask } = await createProjectWithPlanningTask(db, {
-		teamId: input.teamId,
+		teamId: team.id,
 		captainMemberId,
 		name: projectName,
 		slug: projectSlug,
@@ -132,50 +136,49 @@ export async function runOnboardingDirect(
 		initialPrd: input.initialPrd?.trim() || null,
 	});
 
-	broadcastRowChange(input.wsManager, wsRoom.team(input.teamId), 'projects', 'INSERT', project);
-	broadcastRowChange(input.wsManager, wsRoom.team(input.teamId), 'tasks', 'INSERT', planningTask);
+	broadcastRowChange(input.wsManager, wsRoom.team(team.id), 'projects', 'INSERT', project);
+	broadcastRowChange(input.wsManager, wsRoom.team(team.id), 'tasks', 'INSERT', planningTask);
 	try {
-		await createWakeup(db, captainMemberId, input.teamId, WakeupSource.Assignment, {
+		await createWakeup(db, captainMemberId, team.id, WakeupSource.Assignment, {
 			task_id: planningTask.id as string,
 		});
 	} catch (e) {
 		log.error('Failed to wake Captain on planning task after direct onboarding:', e);
 	}
 
-	const teamSlugRow = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
-		input.teamId,
-	]);
-	const teamSlug = teamSlugRow.rows[0]?.slug;
-	if (teamSlug) {
-		trackBackground(
-			provisionContainer(
-				{
-					db,
-					docker: input.docker,
-					dataDir: input.dataDir,
-					wsManager: input.wsManager,
-					masterKeyManager: input.masterKeyManager,
-					logs: input.logs,
-					containerLogStreamer: input.containerLogStreamer,
-					sshAgentServer: input.sshAgentServer,
-					egressCAPath: input.egressCAPath ?? null,
-				},
-				project as unknown as ProjectRow,
-				teamSlug,
-			).catch((error) => {
-				log.error(`Failed to provision container for project ${project.slug}:`, error);
-			}),
-		);
-	} else {
-		log.error(`Team ${input.teamId} not found when provisioning container after direct onboarding`);
-	}
+	trackBackground(
+		provisionContainer(
+			{
+				db,
+				docker: input.docker,
+				dataDir: input.dataDir,
+				wsManager: input.wsManager,
+				masterKeyManager: input.masterKeyManager,
+				logs: input.logs,
+				containerLogStreamer: input.containerLogStreamer,
+				sshAgentServer: input.sshAgentServer,
+				egressCAPath: input.egressCAPath ?? null,
+			},
+			project as unknown as ProjectRow,
+			team.slug,
+		).catch((error) => {
+			log.error(`Failed to provision container for project ${project.slug}:`, error);
+		}),
+	);
+
+	const agentSlugs = await db.query<{ slug: string }>(
+		`SELECT ma.slug FROM member_agents ma JOIN members m ON m.id = ma.id WHERE m.team_id = $1`,
+		[team.id],
+	);
 
 	return {
 		ok: true,
+		team_id: team.id,
+		team_slug: team.slug,
 		project_id: project.id as string,
 		project_slug: project.slug as string,
 		planning_task_id: planningTask.id as string,
 		planning_task_identifier: planningTask.identifier as string,
-		created_agent_slugs: apply.created_slugs,
+		created_agent_slugs: agentSlugs.rows.map((r) => r.slug),
 	};
 }
