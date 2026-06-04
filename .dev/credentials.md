@@ -11,7 +11,7 @@ Every secret lives in the `secrets` table, encrypted with the master key (AES-25
 - `allowed_hosts` — the set of upstream hostnames the secret is permitted to reach (e.g. `['api.stripe.com']`); `*.example.com` works
 - `allow_all_hosts` — escape hatch for the rare case where the secret should reach any host
 - `category` — informational tag (`api_token`, `ssh_key`, `credential`, …)
-- `team_id`, optional `project_id` — scope. Project-scoped rows shadow team-wide entries with the same name.
+- `team_id`, optional `project_id` — scope. Project-scoped rows shadow team-wide entries with the same name. **`team_id` NULL = an instance-level credential**, shared with every team's egress (still bounded by `allowed_hosts`); the Admin (superuser) manages these via `GET /api/credentials` + `POST/PATCH/DELETE /api/secrets[/:id]`, and they cannot be mutated through a team's `/teams/:teamId/secrets` routes. On a name clash the most specific scope wins: project > team > instance.
 
 An agent never sees the value. Wherever it would write the secret it instead writes the placeholder `__HEZO_SECRET_<NAME>__`. The egress proxy substitutes at request time — see `.dev/egress.md`.
 

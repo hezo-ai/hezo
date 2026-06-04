@@ -64,8 +64,10 @@ export async function loadSecretsForScope(
 		scope.teamId,
 	);
 
+	// `team_id IS NULL` rows are instance-level credentials, shared with every
+	// team's egress (still bounded by allowed_hosts).
 	const params: unknown[] = [scope.teamId];
-	let where = 'team_id = $1';
+	let where = '(team_id = $1 OR team_id IS NULL)';
 	if (scope.projectId) {
 		where += ' AND (project_id IS NULL OR project_id = $2)';
 		params.push(scope.projectId);
@@ -83,14 +85,15 @@ export async function loadSecretsForScope(
 		`SELECT name, encrypted_value, allowed_hosts, allow_all_hosts, project_id
 		 FROM secrets
 		 WHERE ${where}
-		 ORDER BY project_id NULLS FIRST`,
+		 ORDER BY project_id NULLS FIRST, team_id NULLS FIRST`,
 		params,
 	);
 
 	const out = new Map<string, ResolvedSecret>();
 	for (const row of result.rows) {
-		// Project-scoped rows arrive after team-scoped rows in the ordering
-		// so the project row wins on identical names.
+		// Ordering puts instance rows (team NULL) before team-scoped rows, and
+		// team-wide rows (project NULL) before project-scoped rows, so on
+		// identical names the most specific wins: project > team > instance.
 		out.set(row.name, {
 			name: row.name,
 			value: decrypt(row.encrypted_value, key),

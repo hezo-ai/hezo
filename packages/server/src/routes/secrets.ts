@@ -3,8 +3,182 @@ import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { requireSuperuser } from '../middleware/auth';
 
 export const secretsRoutes = new Hono<Env>();
+
+// ---------------------------------------------------------------------------
+// Instance-level credentials (team_id NULL) are shared with every team's
+// egress (still bounded by allowed_hosts). The Admin (superuser) manages them
+// here; the per-team reads below surface them read-only so a team can see which
+// inherited placeholders it may emit. Project scope never applies at the
+// instance level, so project_id is always NULL for these rows.
+// ---------------------------------------------------------------------------
+
+secretsRoutes.get('/credentials', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	const db = c.get('db');
+
+	// Usage stats aggregate across every team's egress audit, since an instance
+	// credential can be used by any team.
+	const result = await db.query(
+		`SELECT s.id, s.team_id, s.project_id, s.name, s.category,
+		        s.allowed_hosts, s.allow_all_hosts, s.created_at, s.updated_at,
+		        NULL AS project_name,
+		        usage.last_used_at,
+		        usage.use_count,
+		        usage.last_host
+		 FROM secrets s
+		 LEFT JOIN LATERAL (
+		     SELECT max(al.created_at) AS last_used_at,
+		            count(*)::int AS use_count,
+		            (SELECT al2.details->>'host'
+		             FROM audit_log al2
+		             WHERE al2.entity_type = 'egress_request'
+		               AND al2.details->'secret_names_used' ? s.name
+		             ORDER BY al2.created_at DESC LIMIT 1) AS last_host
+		     FROM audit_log al
+		     WHERE al.entity_type = 'egress_request'
+		       AND al.details->'secret_names_used' ? s.name
+		 ) usage ON TRUE
+		 WHERE s.team_id IS NULL
+		 ORDER BY usage.last_used_at DESC NULLS LAST, s.name ASC`,
+	);
+	return ok(c, result.rows);
+});
+
+secretsRoutes.post('/secrets', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	const db = c.get('db');
+	const masterKeyManager = c.get('masterKeyManager');
+
+	const body = await c.req.json<{
+		name: string;
+		value: string;
+		category?: string;
+		allowed_hosts?: string[];
+		allow_all_hosts?: boolean;
+	}>();
+
+	if (!body.name?.trim() || !body.value) {
+		return err(c, 'INVALID_REQUEST', 'name and value are required', 400);
+	}
+
+	const key = masterKeyManager.getKey();
+	if (!key) {
+		return err(c, 'LOCKED', 'Server must be unlocked to manage secrets', 401);
+	}
+
+	const { encrypt } = await import('../crypto/encryption');
+	const encryptedValue = encrypt(body.value, key);
+	const allowedHosts = Array.isArray(body.allowed_hosts) ? body.allowed_hosts : [];
+	const allowAllHosts = !!body.allow_all_hosts;
+
+	const result = await db.query(
+		`INSERT INTO secrets (team_id, project_id, name, encrypted_value, category, allowed_hosts, allow_all_hosts)
+		 VALUES (NULL, NULL, $1, $2, $3::secret_category, $4, $5)
+		 ON CONFLICT (name) WHERE team_id IS NULL DO UPDATE
+		 SET encrypted_value = EXCLUDED.encrypted_value,
+		     category = EXCLUDED.category,
+		     allowed_hosts = EXCLUDED.allowed_hosts,
+		     allow_all_hosts = EXCLUDED.allow_all_hosts,
+		     updated_at = now()
+		 RETURNING id, team_id, project_id, name, category, allowed_hosts, allow_all_hosts, created_at, updated_at`,
+		[
+			body.name.trim(),
+			encryptedValue,
+			body.category ?? SecretCategory.Other,
+			allowedHosts,
+			allowAllHosts,
+		],
+	);
+	return ok(c, result.rows[0], 201);
+});
+
+secretsRoutes.patch('/secrets/:secretId', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	const db = c.get('db');
+	const secretId = c.req.param('secretId');
+	const masterKeyManager = c.get('masterKeyManager');
+
+	const existing = await db.query('SELECT id FROM secrets WHERE id = $1 AND team_id IS NULL', [
+		secretId,
+	]);
+	if (existing.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Secret not found', 404);
+	}
+
+	const body = await c.req.json<{
+		value?: string;
+		category?: string;
+		allowed_hosts?: string[];
+		allow_all_hosts?: boolean;
+	}>();
+
+	const sets: string[] = [];
+	const params: unknown[] = [];
+	let idx = 1;
+
+	if (body.value !== undefined) {
+		const key = masterKeyManager.getKey();
+		if (!key) {
+			return err(c, 'LOCKED', 'Server must be unlocked to manage secrets', 401);
+		}
+		const { encrypt } = await import('../crypto/encryption');
+		sets.push(`encrypted_value = $${idx}`);
+		params.push(encrypt(body.value, key));
+		idx++;
+	}
+	if (body.category !== undefined) {
+		sets.push(`category = $${idx}::secret_category`);
+		params.push(body.category);
+		idx++;
+	}
+	if (body.allowed_hosts !== undefined) {
+		if (!Array.isArray(body.allowed_hosts)) {
+			return err(c, 'INVALID_REQUEST', 'allowed_hosts must be an array of strings', 400);
+		}
+		sets.push(`allowed_hosts = $${idx}`);
+		params.push(body.allowed_hosts);
+		idx++;
+	}
+	if (body.allow_all_hosts !== undefined) {
+		sets.push(`allow_all_hosts = $${idx}`);
+		params.push(!!body.allow_all_hosts);
+		idx++;
+	}
+
+	if (sets.length === 0) {
+		return ok(c, existing.rows[0]);
+	}
+
+	params.push(secretId);
+	const result = await db.query(
+		`UPDATE secrets SET ${sets.join(', ')} WHERE id = $${idx} AND team_id IS NULL
+		 RETURNING id, team_id, project_id, name, category, allowed_hosts, allow_all_hosts, created_at, updated_at`,
+		params,
+	);
+	return ok(c, result.rows[0]);
+});
+
+secretsRoutes.delete('/secrets/:secretId', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	const db = c.get('db');
+	const secretId = c.req.param('secretId');
+
+	const result = await db.query(
+		'DELETE FROM secrets WHERE id = $1 AND team_id IS NULL RETURNING id',
+		[secretId],
+	);
+	if (result.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Secret not found', 404);
+	}
+	return c.json({ data: null }, 200);
+});
 
 /**
  * Augmented secrets list joined with the most recent egress-request audit
@@ -39,7 +213,7 @@ secretsRoutes.get('/teams/:teamId/credentials', async (c) => {
 		       AND al.entity_type = 'egress_request'
 		       AND al.details->'secret_names_used' ? s.name
 		 ) usage ON TRUE
-		 WHERE s.team_id = $1
+		 WHERE (s.team_id = $1 OR s.team_id IS NULL)
 		 ORDER BY usage.last_used_at DESC NULLS LAST, s.name ASC`,
 		[teamId],
 	);
@@ -58,7 +232,7 @@ secretsRoutes.get('/teams/:teamId/secrets', async (c) => {
            (SELECT count(*) FROM secret_grants sg WHERE sg.secret_id = s.id AND sg.revoked_at IS NULL)::int AS grant_count
     FROM secrets s
     LEFT JOIN projects p ON p.id = s.project_id
-    WHERE s.team_id = $1`;
+    WHERE (s.team_id = $1 OR s.team_id IS NULL)`;
 	const params: unknown[] = [teamId];
 
 	if (projectId) {

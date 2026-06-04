@@ -335,7 +335,9 @@ ALTER TABLE projects ADD CONSTRAINT fk_projects_designated_repo
 
 CREATE TABLE secrets (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id          UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    -- team_id NULL = an instance-level credential, available to every team's
+    -- egress (still bounded by allowed_hosts). Managed by the Admin (superuser).
+    team_id          UUID REFERENCES teams(id) ON DELETE CASCADE,
     project_id       UUID REFERENCES projects(id) ON DELETE CASCADE,
     name             TEXT NOT NULL,
     encrypted_value  TEXT NOT NULL,
@@ -349,6 +351,8 @@ CREATE TABLE secrets (
 );
 
 CREATE INDEX idx_secrets_team ON secrets(team_id);
+-- Instance-level credentials (team_id NULL) are unique by name across the instance.
+CREATE UNIQUE INDEX idx_secrets_instance_name ON secrets (name) WHERE team_id IS NULL;
 CREATE INDEX idx_secrets_project ON secrets(project_id);
 
 -------------------------------------------------------------------------------
