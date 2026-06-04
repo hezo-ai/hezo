@@ -77,6 +77,19 @@ skillsRoutes.post('/skills', async (c) => {
 	return ok(c, result.rows[0], 201);
 });
 
+skillsRoutes.get('/skills/:slug', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	const db = c.get('db');
+	const slug = c.req.param('slug');
+	const result = await db.query<SkillRecord>(
+		'SELECT * FROM skills WHERE team_id IS NULL AND slug = $1',
+		[slug],
+	);
+	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Skill not found', 404);
+	return ok(c, result.rows[0]);
+});
+
 skillsRoutes.patch('/skills/:slug', async (c) => {
 	const denied = requireSuperuser(c);
 	if (denied) return denied;

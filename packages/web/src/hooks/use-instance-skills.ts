@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
-import type { CreateSkillInput, SkillListItem } from './use-skills';
+import type { CreateSkillInput, Skill, SkillListItem } from './use-skills';
 
 // Instance-level skills (team_id NULL) are shared with every team. Only the
 // Admin (superuser) manages them, via the un-prefixed /api/skills routes.
@@ -17,6 +17,32 @@ export function useInstanceSkills() {
 export function useCreateInstanceSkill() {
 	return useMutation({
 		mutationFn: (data: CreateSkillInput) => api.post<SkillListItem>('/api/skills', data),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: INSTANCE_SKILLS_KEY });
+		},
+	});
+}
+
+export function useInstanceSkill(slug: string | null) {
+	return useQuery({
+		queryKey: [...INSTANCE_SKILLS_KEY, slug],
+		queryFn: () => api.get<Skill>(`/api/skills/${slug}`),
+		enabled: !!slug,
+	});
+}
+
+export interface UpdateInstanceSkillPayload {
+	slug: string;
+	name?: string;
+	description?: string;
+	tags?: string[];
+	content?: string;
+}
+
+export function useUpdateInstanceSkill() {
+	return useMutation({
+		mutationFn: ({ slug, ...data }: UpdateInstanceSkillPayload) =>
+			api.patch<SkillListItem>(`/api/skills/${slug}`, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: INSTANCE_SKILLS_KEY });
 		},

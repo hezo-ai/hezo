@@ -32,6 +32,30 @@ test('lists seeded instance skills and creates a new one via the form', async ()
 	await findByText('New Skill');
 });
 
+test('edits an instance skill via the row edit affordance', async () => {
+	const { findByText, getByRole, findByDisplayValue, user } = await renderApp({
+		initialPath: '/settings/skills',
+		seed: async (ctx) => {
+			await seedInstanceSkill(ctx, {
+				name: 'Editable Skill',
+				description: 'old desc',
+				content: '# body',
+			});
+		},
+	});
+
+	await findByText('Editable Skill');
+	await user.click(getByRole('button', { name: 'Edit Editable Skill' }));
+
+	// The form populates from the GET-by-slug fetch (content omitted from list).
+	const descInput = await findByDisplayValue('old desc');
+	await user.clear(descInput);
+	await user.type(descInput, 'new desc');
+	await user.click(getByRole('button', { name: 'Save changes' }));
+
+	await findByText('new desc');
+});
+
 test('settings page Instance group links to skills', async () => {
 	const { findByText, getAllByRole, user, router } = await renderApp({ initialPath: '/settings' });
 

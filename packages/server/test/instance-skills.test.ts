@@ -59,6 +59,24 @@ describe('instance-level skills', () => {
 		expect((await oneRes.json()).data.team_id).toBeNull();
 	});
 
+	it('reads an instance skill by slug (with content)', async () => {
+		const createRes = await app.request('/api/skills', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Readable', content: '# readable body' }),
+		});
+		const slug = (await createRes.json()).data.slug;
+
+		const getRes = await app.request(`/api/skills/${slug}`, { headers: authHeader(token) });
+		expect(getRes.status).toBe(200);
+		const data = (await getRes.json()).data;
+		expect(data.content).toBe('# readable body');
+		expect(data.team_id).toBeNull();
+
+		const missing = await app.request('/api/skills/does-not-exist', { headers: authHeader(token) });
+		expect(missing.status).toBe(404);
+	});
+
 	it('edits and deletes an instance skill', async () => {
 		const createRes = await app.request('/api/skills', {
 			method: 'POST',

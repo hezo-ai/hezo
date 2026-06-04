@@ -1,13 +1,15 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { ArrowLeft, Pencil, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import {
 	useCreateInstanceSkill,
 	useDeleteInstanceSkill,
+	useInstanceSkill,
 	useInstanceSkills,
+	useUpdateInstanceSkill,
 } from '../../hooks/use-instance-skills';
 import { useMe } from '../../hooks/use-me';
 
@@ -15,16 +17,52 @@ function InstanceSkillsPage() {
 	const { data: me } = useMe();
 	const { data: skills = [] } = useInstanceSkills();
 	const createSkill = useCreateInstanceSkill();
+	const updateSkill = useUpdateInstanceSkill();
 	const deleteSkill = useDeleteInstanceSkill();
 
 	const [showForm, setShowForm] = useState(false);
+	// `editingSlug` null = the form (when open) creates; otherwise it edits.
+	const [editingSlug, setEditingSlug] = useState<string | null>(null);
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
 	const [content, setContent] = useState('');
 	const [tags, setTags] = useState('');
 	const [error, setError] = useState<string | null>(null);
 
-	async function handleCreate(e: React.FormEvent) {
+	// Editing needs the full row (content is omitted from the list endpoint), so
+	// fetch it by slug and populate the form once it arrives.
+	const { data: editingSkill } = useInstanceSkill(editingSlug);
+	useEffect(() => {
+		if (editingSkill && editingSkill.slug === editingSlug) {
+			setName(editingSkill.name);
+			setDescription(editingSkill.description ?? '');
+			setContent(editingSkill.content);
+			setTags((editingSkill.tags ?? []).join(', '));
+		}
+	}, [editingSkill, editingSlug]);
+
+	function resetForm() {
+		setShowForm(false);
+		setEditingSlug(null);
+		setName('');
+		setDescription('');
+		setContent('');
+		setTags('');
+		setError(null);
+	}
+
+	function openCreate() {
+		resetForm();
+		setShowForm(true);
+	}
+
+	function openEdit(slug: string) {
+		setEditingSlug(slug);
+		setError(null);
+		setShowForm(true);
+	}
+
+	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		setError(null);
 		if (!name.trim() || !content.trim()) {
@@ -36,19 +74,25 @@ function InstanceSkillsPage() {
 			.map((t) => t.trim())
 			.filter(Boolean);
 		try {
-			await createSkill.mutateAsync({
-				name: name.trim(),
-				description: description.trim() || undefined,
-				content,
-				tags: tagList,
-			});
-			setName('');
-			setDescription('');
-			setContent('');
-			setTags('');
-			setShowForm(false);
+			if (editingSlug) {
+				await updateSkill.mutateAsync({
+					slug: editingSlug,
+					name: name.trim(),
+					description: description.trim(),
+					content,
+					tags: tagList,
+				});
+			} else {
+				await createSkill.mutateAsync({
+					name: name.trim(),
+					description: description.trim() || undefined,
+					content,
+					tags: tagList,
+				});
+			}
+			resetForm();
 		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to create skill');
+			setError(err instanceof Error ? err.message : 'Failed to save skill');
 		}
 	}
 
@@ -67,13 +111,17 @@ function InstanceSkillsPage() {
 							slug overrides the instance one for that team.
 						</p>
 					</div>
-					<Button variant="secondary" size="sm" onClick={() => setShowForm((s) => !s)}>
+					<Button
+						variant="secondary"
+						size="sm"
+						onClick={() => (showForm ? resetForm() : openCreate())}
+					>
 						<Plus className="w-3 h-3" /> Add
 					</Button>
 				</div>
 
 				{showForm && (
-					<form onSubmit={handleCreate} className="flex flex-col gap-2 mb-4">
+					<form onSubmit={handleSubmit} className="flex flex-col gap-2 mb-4">
 						<div className="flex flex-col sm:flex-row gap-2">
 							<Input
 								placeholder="Name (e.g. Commit conventions)"
@@ -104,18 +152,14 @@ function InstanceSkillsPage() {
 						/>
 						{error && <p className="text-[13px] text-accent-red">{error}</p>}
 						<div className="flex gap-2">
-							<Button type="submit" size="sm" disabled={createSkill.isPending}>
-								Add skill
-							</Button>
 							<Button
-								type="button"
-								variant="secondary"
+								type="submit"
 								size="sm"
-								onClick={() => {
-									setShowForm(false);
-									setError(null);
-								}}
+								disabled={createSkill.isPending || updateSkill.isPending}
 							>
+								{editingSlug ? 'Save changes' : 'Add skill'}
+							</Button>
+							<Button type="button" variant="secondary" size="sm" onClick={resetForm}>
 								Cancel
 							</Button>
 						</div>
@@ -144,18 +188,28 @@ function InstanceSkillsPage() {
 										<span className="text-xs text-text-subtle truncate">{s.description}</span>
 									)}
 								</div>
-								<button
-									type="button"
-									onClick={() => {
-										if (confirm(`Delete instance skill "${s.name}"?`)) {
-											deleteSkill.mutate(s.slug);
-										}
-									}}
-									aria-label="Delete"
-									className="text-text-subtle hover:text-accent-red"
-								>
-									<Trash2 className="w-3.5 h-3.5" />
-								</button>
+								<span className="flex items-center gap-2 shrink-0">
+									<button
+										type="button"
+										onClick={() => openEdit(s.slug)}
+										aria-label={`Edit ${s.name}`}
+										className="text-text-subtle hover:text-text"
+									>
+										<Pencil className="w-3.5 h-3.5" />
+									</button>
+									<button
+										type="button"
+										onClick={() => {
+											if (confirm(`Delete instance skill "${s.name}"?`)) {
+												deleteSkill.mutate(s.slug);
+											}
+										}}
+										aria-label={`Delete ${s.name}`}
+										className="text-text-subtle hover:text-accent-red"
+									>
+										<Trash2 className="w-3.5 h-3.5" />
+									</button>
+								</span>
 							</div>
 						))}
 					</div>
