@@ -136,6 +136,35 @@ describe('instance-level connectors', () => {
 		expect(res.status).toBe(400);
 	});
 
+	it('deletes an instance connector', async () => {
+		const createRes = await app.request('/api/mcp-connections', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'to-delete',
+				kind: 'saas',
+				config: { url: 'https://delete.example.com/mcp' },
+			}),
+		});
+		const id = (await createRes.json()).data.id;
+
+		const del = await app.request(`/api/mcp-connections/${id}`, {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
+		expect(del.status).toBe(200);
+
+		const instRes = await app.request('/api/mcp-connections', { headers: authHeader(token) });
+		expect((await instRes.json()).data.some((r: { id: string }) => r.id === id)).toBe(false);
+
+		// Deleting again is a 404.
+		const again = await app.request(`/api/mcp-connections/${id}`, {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
+		expect(again.status).toBe(404);
+	});
+
 	it('requires superuser for instance connector management', async () => {
 		const nonSuper = await db.query<{ id: string }>(
 			"INSERT INTO users (display_name, is_superuser) VALUES ('Member', false) RETURNING id",

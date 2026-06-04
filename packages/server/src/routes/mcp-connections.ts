@@ -105,6 +105,21 @@ mcpConnectionsRoutes.post('/mcp-connections', async (c) => {
 	return ok(c, result.rows[0], 201);
 });
 
+mcpConnectionsRoutes.delete('/mcp-connections/:id', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	const db = c.get('db');
+	const id = c.req.param('id');
+	const result = await db.query<{ id: string }>(
+		'DELETE FROM mcp_connections WHERE id = $1 AND team_id IS NULL RETURNING id',
+		[id],
+	);
+	if (result.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'instance connector not found', 404);
+	}
+	return c.json({ data: null }, 200);
+});
+
 mcpConnectionsRoutes.get('/teams/:teamId/mcp-connections/:id', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
