@@ -123,6 +123,39 @@ describe('signAgentJwt + verifyToken', () => {
 		}
 	});
 
+	it('exposes auth.taskId from the run when bound to a task', async () => {
+		const project = await db.query<{ id: string }>(
+			`SELECT id FROM projects WHERE team_id = $1 ORDER BY created_at LIMIT 1`,
+			[teamId],
+		);
+		const task = await db.query<{ id: string }>(
+			`INSERT INTO tasks (team_id, project_id, number, identifier, title, status, priority, labels)
+			 VALUES ($1, $2, 90001, 'SCOPE-90001', 'Run-scope task', 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
+			 RETURNING id`,
+			[teamId, project.rows[0].id],
+		);
+		const taskId = task.rows[0].id;
+		const { token } = await mintAgentToken(db, masterKeyManager, agentId, teamId, taskId);
+		const auth = await verifyToken(token, db, masterKeyManager);
+
+		expect(auth).not.toBeNull();
+		expect(auth!.type).toBe(AuthType.Agent);
+		if (auth!.type === AuthType.Agent) {
+			expect(auth!.taskId).toBe(taskId);
+		}
+	});
+
+	it('sets auth.taskId to null when the run is not bound to a task', async () => {
+		const { token } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+		const auth = await verifyToken(token, db, masterKeyManager);
+
+		expect(auth).not.toBeNull();
+		expect(auth!.type).toBe(AuthType.Agent);
+		if (auth!.type === AuthType.Agent) {
+			expect(auth!.taskId).toBeNull();
+		}
+	});
+
 	it('rejects an agent JWT with no run_id claim', async () => {
 		const runId = await createAgentRun(db, agentId, teamId);
 		const internalProject = await db.query<{ id: string }>(

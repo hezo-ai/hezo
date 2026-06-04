@@ -17,6 +17,7 @@ export type AuthInfo =
 			memberId: string;
 			teamId: string;
 			runId: string;
+			taskId: string | null;
 			projectId: string;
 			crossProject: boolean;
 	  };

@@ -120,6 +120,39 @@ describe('tasks CRUD', () => {
 		expect((await patchRes.json()).data.runtime_type).toBe('gemini');
 	});
 
+	it('PATCH blocks an agent run from starting a different ticket (run-task scope)', async () => {
+		const runTask = await insertTaskDirect(agentId, 'REST scope run ticket');
+		const otherTask = await insertTaskDirect(agentId, 'REST scope other ticket');
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			runTask.id,
+		);
+
+		// Blocked: a DIFFERENT ticket moved to in_progress inside this run.
+		const blocked = await app.request(`/api/teams/${teamId}/tasks/${otherTask.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'in_progress' }),
+		});
+		expect(blocked.status).toBe(403);
+		const otherRow = await db.query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [
+			otherTask.id,
+		]);
+		expect(otherRow.rows[0].status).toBe('backlog');
+
+		// Allowed: the run's OWN ticket moved to in_progress.
+		const allowed = await app.request(`/api/teams/${teamId}/tasks/${runTask.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'in_progress' }),
+		});
+		expect(allowed.status).toBe(200);
+		expect((await allowed.json()).data.status).toBe('in_progress');
+	});
+
 	it('creates sequential task numbers', async () => {
 		const firstRes = await app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',

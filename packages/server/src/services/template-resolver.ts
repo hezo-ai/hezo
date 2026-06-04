@@ -24,6 +24,7 @@ const SHARED_INSTRUCTIONS = `
   - \`review\` — when handing off for review
   - \`approved\` — after QA approval (QA sets this)
   - \`done\` — when work is complete and merged (triggers Coach review)
+- **One ticket per run.** This run is scoped to the single ticket shown in the Current Task block above. Drive only *that* ticket to \`in_progress\` and do only its work in this run. If another of your tickets needs progressing, leave it — its own run (your next heartbeat, or an assignment) picks it up. Route work elsewhere through the structural channels (a sub-task, a \`blocked_by\` dependency, or a comment/@-mention), but never flip a *different* ticket to \`in_progress\` or start executing it inside this run.
 
 ### Completion Handoff
 - **Mark \`done\` instead of announcing completion via mentions.** When your work on the current ticket is genuinely complete (the deliverable exists, no further step from you is expected), call \`update_task(status: "done")\`. Do not skip the status update and try to hand off via an \`@\`-mention to the next owner — the status transition *is* the handoff.
