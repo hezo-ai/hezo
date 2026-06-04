@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import { ChevronRight, Inbox } from 'lucide-react';
+import { useAdminMentions } from '../hooks/use-admin-mentions';
 import { useApprovals } from '../hooks/use-approvals';
-import { useBoardMentions } from '../hooks/use-board-mentions';
 
 function pluralize(count: number, noun: string): string {
 	return `${count} ${noun}${count === 1 ? '' : 's'}`;
@@ -15,14 +15,14 @@ function buildMessage(approvalCount: number, mentionCount: number): string {
 }
 
 /**
- * Persistent banner surfacing the board's outstanding inbox backlog (pending approvals + unread
+ * Persistent banner surfacing the admin's outstanding inbox backlog (pending approvals + unread
  * mentions) at the top of the task list. Clicking navigates to the Inbox where items are resolved.
- * Renders nothing when the backlog is empty — which also hides it for non-board users, whose
+ * Renders nothing when the backlog is empty — which also hides it for non-admin users, whose
  * approval/mention queries 403 and leave the counts at zero.
  */
-export function BoardApprovalsBanner({ teamId }: { teamId: string }) {
+export function AdminApprovalsBanner({ teamId }: { teamId: string }) {
 	const { data: approvals } = useApprovals(teamId);
-	const { data: mentions } = useBoardMentions(teamId);
+	const { data: mentions } = useAdminMentions(teamId);
 
 	const approvalCount = approvals?.length ?? 0;
 	const mentionCount = mentions?.filter((m) => m.read_at === null).length ?? 0;
@@ -34,7 +34,7 @@ export function BoardApprovalsBanner({ teamId }: { teamId: string }) {
 		<Link
 			to="/teams/$teamId/inbox"
 			params={{ teamId }}
-			data-testid="board-approvals-banner"
+			data-testid="admin-approvals-banner"
 			className="mb-4 flex items-center gap-2 rounded-md bg-primary/10 px-4 py-2 text-[13px] font-medium text-primary hover:bg-primary/15 transition-colors"
 		>
 			<Inbox className="w-3.5 h-3.5 shrink-0" />

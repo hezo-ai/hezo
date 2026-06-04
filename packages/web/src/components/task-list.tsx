@@ -4,7 +4,7 @@ import { ChevronDown, ListPlus, Plus, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { type TaskFilters, useTasks } from '../hooks/use-tasks';
-import { BoardApprovalsBanner } from './board-approvals-banner';
+import { AdminApprovalsBanner } from './admin-approvals-banner';
 import { CreateTaskDialog } from './create-task-dialog';
 import { TaskStatusBadge } from './task-status-badge';
 import { Badge } from './ui/badge';
@@ -254,7 +254,7 @@ export function TaskList({ teamId, projectId }: TaskListProps) {
 
 	return (
 		<div>
-			<BoardApprovalsBanner teamId={teamId} />
+			<AdminApprovalsBanner teamId={teamId} />
 			<div className="mb-4 flex flex-col sm:flex-row items-stretch sm:items-start gap-2">
 				<div
 					data-testid="task-filter-bar"
