@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import { House, Inbox, Plus } from 'lucide-react';
+import { FolderKanban, House, Inbox, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { setActiveTeamSlug } from '../hooks/use-active-team-slug';
 import { useMe } from '../hooks/use-me';
@@ -46,12 +46,21 @@ export function TeamRail() {
 				</Link>
 				<Link
 					to="/home/inbox"
-					aria-label="All inboxes"
-					title="All inboxes"
+					aria-label="Inbox"
+					title="Inbox"
 					data-testid="team-rail-inbox"
 					className={iconLinkClass}
 				>
 					<Inbox className="w-4 h-4" />
+				</Link>
+				<Link
+					to="/home/tasks"
+					aria-label="All Tasks"
+					title="All Tasks"
+					data-testid="team-rail-all-tasks"
+					className={iconLinkClass}
+				>
+					<FolderKanban className="w-4 h-4" />
 				</Link>
 				<div className="w-7 border-t border-border my-1" />
 				{(teams ?? []).map((team) => {

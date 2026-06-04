@@ -16,6 +16,7 @@ import { Route as HomeIndexRouteImport } from './routes/home/index'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
 import { Route as TeamsTeamIdRouteRouteImport } from './routes/teams/$teamId/route'
 import { Route as TeamsTeamIdIndexRouteImport } from './routes/teams/$teamId/index'
+import { Route as HomeTasksIndexRouteImport } from './routes/home/tasks/index'
 import { Route as HomeInboxIndexRouteImport } from './routes/home/inbox/index'
 import { Route as TeamsTeamIdConnectorsRouteImport } from './routes/teams/$teamId/connectors'
 import { Route as TeamsTeamIdTasksIndexRouteImport } from './routes/teams/$teamId/tasks/index'
@@ -77,6 +78,11 @@ const TeamsTeamIdIndexRoute = TeamsTeamIdIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => TeamsTeamIdRouteRoute,
+} as any)
+const HomeTasksIndexRoute = HomeTasksIndexRouteImport.update({
+  id: '/home/tasks/',
+  path: '/home/tasks/',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const HomeInboxIndexRoute = HomeInboxIndexRouteImport.update({
   id: '/home/inbox/',
@@ -236,6 +242,7 @@ export interface FileRoutesByFullPath {
   '/teams/': typeof TeamsIndexRoute
   '/teams/$teamId/connectors': typeof TeamsTeamIdConnectorsRoute
   '/home/inbox/': typeof HomeInboxIndexRoute
+  '/home/tasks/': typeof HomeTasksIndexRoute
   '/teams/$teamId/': typeof TeamsTeamIdIndexRoute
   '/teams/$teamId/agents/$agentId': typeof TeamsTeamIdAgentsAgentIdRouteRouteWithChildren
   '/teams/$teamId/projects/$projectId': typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
@@ -270,6 +277,7 @@ export interface FileRoutesByTo {
   '/teams': typeof TeamsIndexRoute
   '/teams/$teamId/connectors': typeof TeamsTeamIdConnectorsRoute
   '/home/inbox': typeof HomeInboxIndexRoute
+  '/home/tasks': typeof HomeTasksIndexRoute
   '/teams/$teamId': typeof TeamsTeamIdIndexRoute
   '/preview/$teamId/$projectId/$filename': typeof PreviewTeamIdProjectIdFilenameRoute
   '/teams/$teamId/agents/hire': typeof TeamsTeamIdAgentsHireRoute
@@ -304,6 +312,7 @@ export interface FileRoutesById {
   '/teams/': typeof TeamsIndexRoute
   '/teams/$teamId/connectors': typeof TeamsTeamIdConnectorsRoute
   '/home/inbox/': typeof HomeInboxIndexRoute
+  '/home/tasks/': typeof HomeTasksIndexRoute
   '/teams/$teamId/': typeof TeamsTeamIdIndexRoute
   '/teams/$teamId/agents/$agentId': typeof TeamsTeamIdAgentsAgentIdRouteRouteWithChildren
   '/teams/$teamId/projects/$projectId': typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
@@ -341,6 +350,7 @@ export interface FileRouteTypes {
     | '/teams/'
     | '/teams/$teamId/connectors'
     | '/home/inbox/'
+    | '/home/tasks/'
     | '/teams/$teamId/'
     | '/teams/$teamId/agents/$agentId'
     | '/teams/$teamId/projects/$projectId'
@@ -375,6 +385,7 @@ export interface FileRouteTypes {
     | '/teams'
     | '/teams/$teamId/connectors'
     | '/home/inbox'
+    | '/home/tasks'
     | '/teams/$teamId'
     | '/preview/$teamId/$projectId/$filename'
     | '/teams/$teamId/agents/hire'
@@ -408,6 +419,7 @@ export interface FileRouteTypes {
     | '/teams/'
     | '/teams/$teamId/connectors'
     | '/home/inbox/'
+    | '/home/tasks/'
     | '/teams/$teamId/'
     | '/teams/$teamId/agents/$agentId'
     | '/teams/$teamId/projects/$projectId'
@@ -443,6 +455,7 @@ export interface RootRouteChildren {
   SettingsIndexRoute: typeof SettingsIndexRoute
   TeamsIndexRoute: typeof TeamsIndexRoute
   HomeInboxIndexRoute: typeof HomeInboxIndexRoute
+  HomeTasksIndexRoute: typeof HomeTasksIndexRoute
   PreviewTeamIdProjectIdFilenameRoute: typeof PreviewTeamIdProjectIdFilenameRoute
 }
 
@@ -496,6 +509,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/teams/$teamId/'
       preLoaderRoute: typeof TeamsTeamIdIndexRouteImport
       parentRoute: typeof TeamsTeamIdRouteRoute
+    }
+    '/home/tasks/': {
+      id: '/home/tasks/'
+      path: '/home/tasks'
+      fullPath: '/home/tasks/'
+      preLoaderRoute: typeof HomeTasksIndexRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/home/inbox/': {
       id: '/home/inbox/'
@@ -785,6 +805,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsIndexRoute: SettingsIndexRoute,
   TeamsIndexRoute: TeamsIndexRoute,
   HomeInboxIndexRoute: HomeInboxIndexRoute,
+  HomeTasksIndexRoute: HomeTasksIndexRoute,
   PreviewTeamIdProjectIdFilenameRoute: PreviewTeamIdProjectIdFilenameRoute,
 }
 export const routeTree = rootRouteImport

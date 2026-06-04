@@ -70,6 +70,32 @@ export function useTasks(teamId: string, filters?: TaskFilters, options?: { enab
 	});
 }
 
+export interface GlobalTask extends Task {
+	team_slug: string;
+	team_name: string;
+}
+
+/** Aggregates tasks across every team the user belongs to (the global "All Tasks"). */
+export function useAllTasks(teams: { slug: string; name: string }[]) {
+	const slugs = teams.map((t) => t.slug).sort();
+	return useQuery({
+		queryKey: ['tasks', 'all', slugs],
+		queryFn: async (): Promise<GlobalTask[]> => {
+			const perTeam = await Promise.all(
+				teams.map(async (t) => {
+					const res = await api.get<TaskListResponse | Task[]>(`/api/teams/${t.slug}/tasks`, {
+						per_page: '200',
+					});
+					const rows = Array.isArray(res) ? res : res.data;
+					return rows.map((task) => ({ ...task, team_slug: t.slug, team_name: t.name }));
+				}),
+			);
+			return perTeam.flat();
+		},
+		enabled: teams.length > 0,
+	});
+}
+
 export function useTask(teamId: string, taskId: string) {
 	return useQuery({
 		queryKey: ['teams', teamId, 'tasks', taskId],
