@@ -1087,11 +1087,14 @@ export async function loadAgentAttachmentsForComments(
 }
 
 function extractCommentText(content: unknown): string {
-	if (!content || typeof content !== 'object') return '';
+	if (content == null) return '';
+	if (typeof content === 'string') return content;
+	if (typeof content !== 'object') return String(content);
 	const obj = content as Record<string, unknown>;
 	if (typeof obj.text === 'string') return obj.text;
 	return Object.values(obj)
-		.filter((v): v is string => typeof v === 'string')
+		.map(extractCommentText)
+		.filter((v) => v.length > 0)
 		.join('\n');
 }
 
@@ -1390,9 +1393,7 @@ export async function buildCoachReviewPrompt(
 	const commentLog = comments.rows
 		.map((c) => {
 			const text =
-				c.content_type === 'text'
-					? (c.content as Record<string, unknown>).text
-					: JSON.stringify(c.content);
+				c.content_type === 'text' ? extractCommentText(c.content) : JSON.stringify(c.content);
 			const base = `[${c.created_at}] ${c.author_name} (${c.content_type}): ${text}`;
 			const reactionLine = formatReactionLine(reactionsByComment.get(c.id));
 			const attachmentLines = (attachmentsByComment.get(c.id) ?? []).map(
