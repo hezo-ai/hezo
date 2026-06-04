@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { ContainerStatus, WakeupSource, wsRoom } from '@hezo/shared';
+import { AuthType, ContainerStatus, WakeupSource, wsRoom } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
@@ -10,6 +10,7 @@ import { toProjectTaskPrefix, toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
+import { requireSuperuser } from '../middleware/auth';
 import {
 	type ContainerDeps,
 	type ProjectRow,
@@ -20,6 +21,7 @@ import {
 } from '../services/containers';
 import type { JobManager } from '../services/job-manager';
 import { createProjectIntake } from '../services/project-intake';
+import { createTeam } from '../services/teams';
 import { createWakeup } from '../services/wakeup';
 
 function buildContainerDeps(c: Context<Env>): ContainerDeps {
@@ -155,6 +157,80 @@ projectsRoutes.get('/teams/:teamId/projects', async (c) => {
 		[teamId, ...ts.values],
 	);
 	return ok(c, result.rows);
+});
+
+// Projects-primary creation: a project owns its own team. "Create a project"
+// provisions a fresh team (roster from the chosen type), named after the
+// project, and opens the project intake in that team's Internal project — the
+// new team's Captain runs intake/planning. See .dev/per-project-teams.md.
+// Superuser-gated, like team creation (the Admin owns the instance roster).
+projectsRoutes.post('/projects', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+
+	const db = c.get('db');
+	const body = await c.req.json<{
+		name: string;
+		description?: string;
+		template_id?: string;
+		task_prefix?: string;
+		initial_prd?: string;
+	}>();
+
+	if (!body.name?.trim()) return err(c, 'INVALID_REQUEST', 'name is required', 400);
+	if (!body.description?.trim()) return err(c, 'INVALID_REQUEST', 'description is required', 400);
+
+	// 1. Create the project's dedicated team (its roster), named after the project.
+	const auth = c.get('auth');
+	const team = await createTeam(
+		{
+			db,
+			docker: c.get('docker'),
+			dataDir: c.get('dataDir'),
+			wsManager: c.get('wsManager'),
+			masterKeyManager: c.get('masterKeyManager'),
+			logs: c.get('logs'),
+			egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
+		},
+		{
+			name: body.name.trim(),
+			description: body.description.trim(),
+			templateId: body.template_id,
+			creatorUserId: auth.type === AuthType.Admin ? auth.userId : undefined,
+		},
+	);
+
+	// 2. Open the project intake on the new team (its Captain runs intake/planning).
+	const prefixResult = await resolveProjectTaskPrefix(db, team.id, body.task_prefix, body.name);
+	if (!prefixResult.ok) return err(c, prefixResult.code, prefixResult.message, prefixResult.status);
+
+	const intake = await createProjectIntake(
+		db,
+		team.id,
+		{
+			name: body.name.trim(),
+			description: body.description.trim(),
+			taskPrefix: prefixResult.prefix,
+			initialPrd: body.initial_prd?.trim() || null,
+		},
+		c.get('wsManager'),
+	);
+	if (!intake) {
+		return err(c, 'INTERNAL', 'New team is missing its Captain or Internal project', 500);
+	}
+
+	return ok(
+		c,
+		{
+			team_id: team.id,
+			team_slug: team.slug,
+			intake_task_id: intake.intakeTaskId,
+			intake_task_identifier: intake.intakeTaskIdentifier,
+			project_slug: intake.projectSlug,
+			approval_id: intake.approvalId,
+		},
+		201,
+	);
 });
 
 projectsRoutes.post('/teams/:teamId/projects', async (c) => {
