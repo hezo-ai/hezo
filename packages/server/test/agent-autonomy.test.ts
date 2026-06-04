@@ -279,6 +279,7 @@ describe('agent-runner: retry context in task prompt', () => {
 			priority: 'high',
 			project_id: 'test-project',
 			rules: null,
+			progress_summary: null,
 		};
 
 		const wakeupPayload = {
@@ -314,6 +315,7 @@ describe('agent-runner: retry context in task prompt', () => {
 			priority: 'medium',
 			project_id: 'test-project',
 			rules: null,
+			progress_summary: null,
 		};
 
 		const prompt = buildTaskPrompt('System prompt', task);
@@ -322,6 +324,8 @@ describe('agent-runner: retry context in task prompt', () => {
 		expect(prompt).not.toContain('previous attempt FAILED');
 		expect(prompt).toContain('AUT-2');
 		expect(prompt).toContain('Add feature');
+		// Progress Summary section is omitted when the field is empty.
+		expect(prompt).not.toContain('### Progress Summary');
 	});
 
 	it('buildTaskPrompt includes rules when present', async () => {
@@ -336,6 +340,7 @@ describe('agent-runner: retry context in task prompt', () => {
 			priority: 'high',
 			project_id: 'test-project',
 			rules: 'Must use PostgreSQL transactions\nNo raw SQL in route handlers',
+			progress_summary: null,
 		};
 
 		const prompt = buildTaskPrompt('System prompt', task);
@@ -343,6 +348,29 @@ describe('agent-runner: retry context in task prompt', () => {
 		expect(prompt).toContain('### Rules for this task');
 		expect(prompt).toContain('Must use PostgreSQL transactions');
 		expect(prompt).toContain('No raw SQL in route handlers');
+	});
+
+	it('buildTaskPrompt includes a labeled Description and the full progress summary', async () => {
+		const { buildTaskPrompt } = await import('../src/services/agent-runner');
+
+		const task = {
+			id: 'test-id',
+			identifier: 'AUT-4',
+			title: 'Resumable task',
+			description: 'Implement the CSV exporter end to end',
+			status: 'in_progress',
+			priority: 'high',
+			project_id: 'test-project',
+			rules: null,
+			progress_summary: 'Exporter scaffolded; header row done, body rows pending',
+		};
+
+		const prompt = buildTaskPrompt('System prompt', task);
+
+		expect(prompt).toContain('### Description');
+		expect(prompt).toContain('Implement the CSV exporter end to end');
+		expect(prompt).toContain('### Progress Summary');
+		expect(prompt).toContain('Exporter scaffolded; header row done, body rows pending');
 	});
 });
 
@@ -356,6 +384,7 @@ describe('agent-runner: mention handoff prompt', () => {
 		priority: 'high',
 		project_id: 'proj-uuid',
 		rules: null,
+		progress_summary: null,
 	};
 
 	const mentionPayload = {
@@ -461,17 +490,13 @@ describe('agent-runner: mention handoff prompt', () => {
 });
 
 describe('agent-runner: mention context loader', () => {
-	it('truncateExcerpt behaviour via loadMentionContext return: strips fenced code', async () => {
-		// Unit-level excerpt shape test via buildTaskPrompt: long excerpt with code fence gets stripped.
+	it('renders the full mention comment, code blocks included', async () => {
 		const { buildTaskPrompt } = await import('../src/services/agent-runner');
 
-		const longCode = `Here is the plan\n\`\`\`\n${'x'.repeat(1200)}\n\`\`\`\nend`;
+		const fullComment = `Here is the plan\n\`\`\`\n${'x'.repeat(1200)}\n\`\`\`\nend`;
 		const ctx = {
 			authorName: 'Captain',
-			excerpt: longCode.replace(
-				/(?:^|\n)(?:```|~~~)[^\n]*\n[\s\S]*?(?:```|~~~)(?=\n|$)/g,
-				'[code omitted]',
-			),
+			excerpt: fullComment,
 			openTickets: [],
 		};
 
@@ -486,13 +511,16 @@ describe('agent-runner: mention context loader', () => {
 				priority: 'low',
 				project_id: 'p',
 				rules: null,
+				progress_summary: null,
 			},
 			{ source: 'mention', comment_id: 'c', task_id: 'i' },
 			{ mentionContext: ctx },
 		);
 
-		expect(prompt).toContain('[code omitted]');
-		expect(prompt).not.toContain('x'.repeat(600));
+		// The code block is rendered verbatim (no stripping, no truncation).
+		expect(prompt).toContain('x'.repeat(1200));
+		expect(prompt).not.toContain('[code omitted]');
+		expect(prompt).toContain('their full comment:');
 	});
 });
 

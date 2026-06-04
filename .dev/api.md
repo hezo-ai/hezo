@@ -2231,8 +2231,8 @@ explicitly `@`-mentioned themselves.
 
 **Handoff semantics.** A mention-triggered run opens on the triggering ticket
 for triage. The agent's task prompt includes a "Mention Handoff" section that
-names the mentioner, quotes an excerpt of the comment (≤ 500 chars, with code
-fences stripped), and lists the agent's own open tickets. The agent is expected
+names the mentioner, quotes the comment in full (untruncated, code blocks
+intact), and lists the agent's own open tickets. The agent is expected
 to route the work: update one of its own open tickets, or create a new one
 (sub-task of the triggering ticket, a sibling/peer, or top-level — the new
 ticket is first-class work owned by that agent; the system records the
@@ -2249,7 +2249,7 @@ wakeup for the original mentioner if both are agents and the team has
 carries `{ source: "reply", task_id, comment_id, triggering_comment_id,
 responder_member_id }`, idempotency key `reply:<triggering_comment_id>:<reply_comment_id>`.
 The mentioner's next run opens with a "Reply Received" prompt block that shows
-the responder's name, their reply excerpt, the original comment excerpt, and
+the responder's name, their full reply, the full original comment, and
 any tickets referenced in the reply. When one comment @-mentions several
 agents, each responder fires its own reply wakeup; nearby wakeups are coalesced
 by the standard 2-second window. Teams that prefer to batch replies can
@@ -2264,6 +2264,14 @@ line to the task block, regardless of whether the new ticket is a sub-task
 (`parent_task_id` set), a sibling, or top-level. If the new ticket is a sub-
 task and its structural parent is the same as the spawning ticket, the prompt
 collapses to a single **Parent ticket:** line.
+
+**Run context (every run).** Independent of the wakeup source, the task block
+opens with the ticket's full `description` (labeled `### Description`), its
+`rules` (approach constraints), and its latest `progress_summary` (the
+agent-maintained running checkpoint) — all untruncated. This lets a run resume
+exactly where the last one left off without a `get_task` round-trip; agents keep
+`progress_summary` current via `update_task`. The Coach's post-completion review
+prompt carries the same three fields alongside the full comment history.
 
 Agents can use this to: ask questions, request reviews, escalate blockers, hand
 off context, or coordinate work across teams — all visible in the task thread,

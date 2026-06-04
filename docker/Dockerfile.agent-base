@@ -2,8 +2,16 @@ FROM node:24-slim
 
 # Install common development tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl jq openssh-client ca-certificates python3 socat \
+    git curl jq openssh-client ca-certificates python3 socat sudo \
     && rm -rf /var/lib/apt/lists/*
+
+# The container runs as the unprivileged `node` user (so bind-mounted worktree
+# files stay node-owned), but agents need to install system packages at runtime
+# (e.g. `npx playwright install-deps`). Grant passwordless sudo: the container is
+# an ephemeral, egress-constrained sandbox in which the agent already executes
+# arbitrary code, so in-container root does not widen the trust boundary.
+RUN echo 'node ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/node \
+    && chmod 0440 /etc/sudoers.d/node
 
 ENV PATH="/root/.local/bin:${PATH}"
 

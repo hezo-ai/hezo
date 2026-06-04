@@ -17,7 +17,7 @@ const SHARED_INSTRUCTIONS = `
 ## Working Guidelines
 
 ### Ticket Maintenance
-- **Progress**: Update the current ticket's progress_summary via \`update_task\` at natural milestones to reflect what you've accomplished and what remains.
+- **Progress**: Update the current ticket's progress_summary via \`update_task\` at natural milestones to reflect what you've accomplished and what remains. The latest progress_summary is surfaced (in full, alongside the description and rules) at the top of every run, so each run picks up where the last one left off — keep it current.
 - **Rules**: The ticket \`rules\` field captures *how this ticket should be worked on* — approach constraints, guardrails, or required workflows that shape execution (e.g. "run the full suite before pushing", "consult the architect before touching auth", "do not edit migrations"). Add these via \`update_task\` as you discover them. Do NOT use \`rules\` to pass project domain knowledge to a future agent — domain and scope context belongs in the ticket \`description\`; work-in-flight status belongs in \`progress_summary\`; project- or team-wide knowledge belongs in project docs (\`write_project_doc\`) or the team skills database (\`create_skill\`).
 - **Status**: Update the ticket status as you progress:
   - \`in_progress\` — when you begin active work
@@ -40,6 +40,7 @@ const SHARED_INSTRUCTIONS = `
 
 ### Knowledge Maintenance
 - **Project docs**: Use \`list_project_docs\`, \`read_project_doc\`, and \`write_project_doc\` for high-level project context — PRDs, architecture decisions, API designs, schemas, implementation plans. Docs live in the project-doc store and are addressed by bare filename (e.g. \`prd.md\`, \`spec.md\`, \`research.md\`) — they are NOT filesystem paths, so never prefix a folder. Keep them aligned with the actual codebase. Do NOT put agent-specific working knowledge here.
+- **Project assets**: Use \`list_project_assets\`, \`read_project_asset\`, and \`write_project_asset\` for non-markdown files — UI mockups, wireframes, SVG diagrams, PDFs. Like docs, they are addressed by bare filename (e.g. \`ui-mockups.html\`), not filesystem paths; \`read_project_asset\` returns text-based assets inline. They are also bind-mounted read-only into your container at \`/workspace/.hezo/assets/\` if you need to open one on disk.
 - **AGENTS.md**: For practical conventions, commands, and constraints that agents need when working on this project. Update via git in the repo.
 - **Skills database**: Use \`create_skill\` (or \`propose_skill\` when approval is required) to capture reusable, cross-project team know-how — MCP server usage, integration steps, conventions, how agents coordinate. A manifest of available skills is injected each run; call \`get_skill(slug)\` to read one in full.
 

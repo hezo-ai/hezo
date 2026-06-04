@@ -958,6 +958,7 @@ export class JobManager {
 			priority: string;
 			project_id: string;
 			rules: string | null;
+			progress_summary: string | null;
 			assignee_id: string | null;
 			runtime_type: AgentRuntime | null;
 			parent_task_id: string | null;
@@ -972,7 +973,7 @@ export class JobManager {
 			typeof wakeupPayload?.task_id === 'string' ? wakeupPayload.task_id : undefined;
 		if (payloadTaskId) {
 			const payloadTask = await db.query<TaskRow>(
-				'SELECT id, identifier, title, description, status, priority, project_id, rules, assignee_id, runtime_type, parent_task_id, created_by_run_id FROM tasks WHERE id = $1 AND team_id = $2',
+				'SELECT id, identifier, title, description, status, priority, project_id, rules, progress_summary, assignee_id, runtime_type, parent_task_id, created_by_run_id FROM tasks WHERE id = $1 AND team_id = $2',
 				[payloadTaskId, teamId],
 			);
 			if (payloadTask.rows.length === 0) {
@@ -990,7 +991,7 @@ export class JobManager {
 			task = payloadTask.rows[0];
 		} else {
 			const tasks = await db.query<TaskRow>(
-				`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
+				`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
 				 FROM tasks i
 				 WHERE i.assignee_id = $1 AND i.team_id = $2
 				   AND i.status NOT IN ($3, $4, $5)
