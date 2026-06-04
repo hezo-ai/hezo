@@ -6,7 +6,10 @@ import { useMe } from '../../hooks/use-me';
 const settingsNav = [{ id: 'ai-providers', label: 'AI providers' }];
 
 // Instance-level resources shared across every team — Admin (superuser) only.
-const instanceNav = [{ to: '/settings/credentials', label: 'Credentials' }] as const;
+const instanceNav = [
+	{ to: '/settings/connectors', label: 'Connectors' },
+	{ to: '/settings/credentials', label: 'Credentials' },
+] as const;
 
 function GlobalSettingsPage() {
 	const { data: me } = useMe();

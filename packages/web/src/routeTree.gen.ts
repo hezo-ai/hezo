@@ -14,6 +14,7 @@ import { Route as TeamsIndexRouteImport } from './routes/teams/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as HomeIndexRouteImport } from './routes/home/index'
 import { Route as SettingsCredentialsRouteImport } from './routes/settings/credentials'
+import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
 import { Route as TeamsTeamIdRouteRouteImport } from './routes/teams/$teamId/route'
 import { Route as TeamsTeamIdIndexRouteImport } from './routes/teams/$teamId/index'
@@ -68,6 +69,11 @@ const HomeIndexRoute = HomeIndexRouteImport.update({
 const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
   id: '/settings/credentials',
   path: '/settings/credentials',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsConnectorsRoute = SettingsConnectorsRouteImport.update({
+  id: '/settings/connectors',
+  path: '/settings/connectors',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsAiProvidersRoute = SettingsAiProvidersRouteImport.update({
@@ -243,6 +249,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/teams/$teamId': typeof TeamsTeamIdRouteRouteWithChildren
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
+  '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/home/': typeof HomeIndexRoute
   '/settings/': typeof SettingsIndexRoute
@@ -279,6 +286,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
+  '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/home': typeof HomeIndexRoute
   '/settings': typeof SettingsIndexRoute
@@ -315,6 +323,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/teams/$teamId': typeof TeamsTeamIdRouteRouteWithChildren
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
+  '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/home/': typeof HomeIndexRoute
   '/settings/': typeof SettingsIndexRoute
@@ -354,6 +363,7 @@ export interface FileRouteTypes {
     | '/'
     | '/teams/$teamId'
     | '/settings/ai-providers'
+    | '/settings/connectors'
     | '/settings/credentials'
     | '/home/'
     | '/settings/'
@@ -390,6 +400,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/settings/ai-providers'
+    | '/settings/connectors'
     | '/settings/credentials'
     | '/home'
     | '/settings'
@@ -425,6 +436,7 @@ export interface FileRouteTypes {
     | '/'
     | '/teams/$teamId'
     | '/settings/ai-providers'
+    | '/settings/connectors'
     | '/settings/credentials'
     | '/home/'
     | '/settings/'
@@ -463,6 +475,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   TeamsTeamIdRouteRoute: typeof TeamsTeamIdRouteRouteWithChildren
   SettingsAiProvidersRoute: typeof SettingsAiProvidersRoute
+  SettingsConnectorsRoute: typeof SettingsConnectorsRoute
   SettingsCredentialsRoute: typeof SettingsCredentialsRoute
   HomeIndexRoute: typeof HomeIndexRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
@@ -507,6 +520,13 @@ declare module '@tanstack/react-router' {
       path: '/settings/credentials'
       fullPath: '/settings/credentials'
       preLoaderRoute: typeof SettingsCredentialsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/connectors': {
+      id: '/settings/connectors'
+      path: '/settings/connectors'
+      fullPath: '/settings/connectors'
+      preLoaderRoute: typeof SettingsConnectorsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/ai-providers': {
@@ -821,6 +841,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   TeamsTeamIdRouteRoute: TeamsTeamIdRouteRouteWithChildren,
   SettingsAiProvidersRoute: SettingsAiProvidersRoute,
+  SettingsConnectorsRoute: SettingsConnectorsRoute,
   SettingsCredentialsRoute: SettingsCredentialsRoute,
   HomeIndexRoute: HomeIndexRoute,
   SettingsIndexRoute: SettingsIndexRoute,
