@@ -103,16 +103,25 @@ constraint (keeping the multi-project code paths intact and reversible).
    type") on the team settings page, reachable from the project sidebar's
    Team → Settings. (Built earlier alongside save-as-type.)
 
-### Remaining follow-up — HQ-CEO-only onboarding migration
+### First-run onboarding (HQ-CEO-only)
 
-Open decision A is **HQ is CEO-only**. The rail/Home "New project" already create
-separate per-project teams, but the first-run **onboarding** flow
-(`services/onboarding-intake.ts`, `onboarding-direct.ts`, `approval-side-effects.ts`)
-still creates the bootstrap project inside the default team. Migrating it to the
-create-project-with-team path (so the first project also gets its own team and HQ
-stays CEO-only) is a deeper change to a heavily-tested first-run flow
-(`onboarding*.test.*`, `route-redirects`, `repo-setup-*`) and is the one piece
-deferred to its own focused slice.
+Open decision A is **HQ is CEO-only**. Status:
+
+- **[DONE] Direct flow** (the prominent "Pick a template" path). `runOnboardingDirect`
+  now provisions the project's **own team** (named after the project, Captain →
+  CEO) and creates the project + planning task there; the wizard navigates into
+  the new team. The default/HQ team is left untouched. Home recognises onboarding
+  completion across all visible teams and only opens an intake during true
+  first-run. Tests: `web/test/onboarding-direct.test.tsx` (rewritten).
+- **[FOLLOW-UP] Captain-chat flow** (the secondary "Chat with the Captain"
+  option). It's conversation-first (no template/name upfront) and routes through
+  `onboarding-intake.ts` → `approval-side-effects.ts` (`TeamTemplate` approval),
+  which still applies the template to — and creates the project in — the
+  **default team**. Migrating it to a new team means either creating the team
+  up-front (it has no name until the Captain proposes one) or creating it at
+  approval-finalize time in `approval-side-effects.ts` (a core, multi-type flow).
+  Deferred to its own focused slice to avoid destabilising the approval path;
+  until then, the first project via the chat option lands in the default team.
 
 ## Open decisions
 
