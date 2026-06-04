@@ -113,15 +113,20 @@ Open decision A is **HQ is CEO-only**. Status:
   the new team. The default/HQ team is left untouched. Home recognises onboarding
   completion across all visible teams and only opens an intake during true
   first-run. Tests: `web/test/onboarding-direct.test.tsx` (rewritten).
-- **[FOLLOW-UP] Captain-chat flow** (the secondary "Chat with the Captain"
-  option). It's conversation-first (no template/name upfront) and routes through
-  `onboarding-intake.ts` → `approval-side-effects.ts` (`TeamTemplate` approval),
-  which still applies the template to — and creates the project in — the
-  **default team**. Migrating it to a new team means either creating the team
-  up-front (it has no name until the Captain proposes one) or creating it at
-  approval-finalize time in `approval-side-effects.ts` (a core, multi-type flow).
-  Deferred to its own focused slice to avoid destabilising the approval path;
-  until then, the first project via the chat option lands in the default team.
+- **[DONE] Captain-chat flow** (the "Chat with the Captain" option). Rerouted to
+  the project-with-team dialog: it now creates the project's own team and the
+  Captain scopes it in that team's `project_creation` intake thread — reusing the
+  tested `POST /api/projects` flow rather than reworking the core
+  `approval-side-effects` path. So **neither onboarding path lands a user project
+  in the default team**. The legacy home onboarding-intake panel +
+  `onboarding-intake.ts` machinery stay intact (API-reachable + tested) but are no
+  longer triggered by the first-run UI.
+
+**Optional cleanup (not done):** `seedDefaultTeam` still seeds the default/HQ team
+with a bootstrap Captain + Coach (from the Blank template) alongside the CEO.
+HQ no longer hosts user projects (so this is invisible in the projects-primary
+UI), but stripping HQ to a literal CEO-only roster would be a `seedDefaultTeam`
+change with startup/seed-test blast radius — left as an optional follow-up.
 
 ## Open decisions
 
