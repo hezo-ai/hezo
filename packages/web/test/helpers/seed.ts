@@ -168,3 +168,53 @@ export async function seedComment(
 	});
 	return ((await res.json()) as { data: { id: string } }).data;
 }
+
+/**
+ * Put an agent into the "running on this task" state the way a live run does:
+ * a running `heartbeat_runs` row, the `run` task comment that carries the run id
+ * to the client, and the execution lock that drives the sidebar's running list.
+ * `wakeup_id` is nullable, so no wakeup row is needed.
+ */
+export async function seedRunningAgent(
+	workspace: SeededWorkspace,
+	task: SeededTask,
+	agentId: string,
+): Promise<{ runId: string; lockId: string; commentId: string }> {
+	const { db } = getTestContext();
+
+	const titleRes = await db.query<{ title: string }>(
+		`SELECT title FROM member_agents WHERE id = $1`,
+		[agentId],
+	);
+	const agentTitle = titleRes.rows[0]?.title ?? 'Agent';
+
+	const runRes = await db.query<{ id: string }>(
+		`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+		 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())
+		 RETURNING id`,
+		[agentId, workspace.team.id, task.id],
+	);
+	const runId = runRes.rows[0].id;
+
+	const commentRes = await db.query<{ id: string }>(
+		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+		 VALUES ($1, $2, 'run'::comment_content_type, $3::jsonb)
+		 RETURNING id`,
+		[
+			task.id,
+			agentId,
+			JSON.stringify({ run_id: runId, agent_id: agentId, agent_title: agentTitle }),
+		],
+	);
+	const commentId = commentRes.rows[0].id;
+
+	const lockRes = await db.query<{ id: string }>(
+		`INSERT INTO execution_locks (task_id, member_id, lock_type)
+		 VALUES ($1, $2, 'read')
+		 RETURNING id`,
+		[task.id, agentId],
+	);
+	const lockId = lockRes.rows[0].id;
+
+	return { runId, lockId, commentId };
+}

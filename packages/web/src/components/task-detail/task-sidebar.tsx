@@ -18,8 +18,7 @@ import { AgentStatusLabel } from '../agent-status-label';
 import { Button } from '../ui/button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
 import { InfoTooltip } from '../ui/info-tooltip';
-import { QueuedAgentsList } from './queued-agents-list';
-import { RunningAgentsLine } from './running-agents-line';
+import { AgentQueueSection } from './agent-queue-section';
 
 const EFFORT_LEVELS: { value: AgentEffort; label: string }[] = [
 	{ value: AgentEffort.Minimal, label: 'Minimal' },
@@ -88,18 +87,14 @@ export function TaskSidebar({
 				data-testid="task-sidebar"
 				className="flex flex-col gap-4 text-xs lg:sticky lg:top-0 lg:self-start"
 			>
-				{lock && lock.locks.length > 0 && (
-					<RunningAgentsLine locks={lock.locks} comments={comments ?? []} />
-				)}
-
-				{queued && queued.wakeups.length > 0 && (
-					<QueuedAgentsList
-						teamId={teamId}
-						taskId={task.id}
-						wakeups={queued.wakeups}
-						dispatch={queued.dispatch}
-					/>
-				)}
+				<AgentQueueSection
+					teamId={teamId}
+					taskId={task.id}
+					locks={lock?.locks ?? []}
+					comments={comments ?? []}
+					wakeups={queued?.wakeups ?? []}
+					dispatch={queued?.dispatch}
+				/>
 
 				<div>
 					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">

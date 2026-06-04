@@ -80,8 +80,8 @@ test('can create a task with required assignee', async () => {
 	expect(heading).toBeTruthy();
 });
 
-test('task detail shows execution lock banner when locked', async () => {
-	const seeded = { teamSlug: '', taskId: '' };
+test('task detail shows the running agent in the Agent Queue section when locked', async () => {
+	const seeded = { teamSlug: '', taskId: '', agentTitle: '' };
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async (_ctx) => {
@@ -91,6 +91,7 @@ test('task detail shows execution lock banner when locked', async () => {
 			await lockTask(ws.headers, ws.team.id, task.id, ws.agents[0].id);
 			seeded.teamSlug = ws.team.slug;
 			seeded.taskId = task.id;
+			seeded.agentTitle = ws.agents[0].title;
 		},
 	});
 
@@ -99,8 +100,9 @@ test('task detail shows execution lock banner when locked', async () => {
 		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
 	});
 
-	const runningLine = await findByTestId('running-agents-line');
-	expect(runningLine.textContent).toContain('is running');
+	const section = await findByTestId('agent-queue-section');
+	expect(section.textContent).toContain('Agent Queue');
+	expect(section.textContent).toContain(seeded.agentTitle);
 });
 
 test('task detail lists every agent running concurrently on a ticket', async () => {
@@ -131,11 +133,9 @@ test('task detail lists every agent running concurrently on a ticket', async () 
 		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
 	});
 
-	const runningLine = await findByTestId('running-agents-line');
-	expect(runningLine.textContent).toContain('are running');
-	expect(runningLine.textContent).toContain(seeded.firstTitle);
-	expect(runningLine.textContent).toContain(seeded.secondTitle);
-	expect(runningLine.textContent).toContain(' and ');
+	const section = await findByTestId('agent-queue-section');
+	expect(section.textContent).toContain(seeded.firstTitle);
+	expect(section.textContent).toContain(seeded.secondTitle);
 });
 
 test('can edit task rules and progress summary', async () => {
