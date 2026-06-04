@@ -58,4 +58,42 @@ describe('instance-level skills', () => {
 		expect(oneRes.status).toBe(200);
 		expect((await oneRes.json()).data.team_id).toBeNull();
 	});
+
+	it('edits and deletes an instance skill', async () => {
+		const createRes = await app.request('/api/skills', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Editable', content: '# v1' }),
+		});
+		const slug = (await createRes.json()).data.slug;
+
+		// PATCH content + tags.
+		const patch = await app.request(`/api/skills/${slug}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: '# v2 updated', tags: ['ops'] }),
+		});
+		expect(patch.status).toBe(200);
+		const patched = (await patch.json()).data;
+		expect(patched.content).toBe('# v2 updated');
+		expect(patched.tags).toEqual(['ops']);
+		expect(patched.team_id).toBeNull();
+
+		// DELETE.
+		const del = await app.request(`/api/skills/${slug}`, {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
+		expect(del.status).toBe(200);
+
+		const list = await app.request('/api/skills', { headers: authHeader(token) });
+		expect((await list.json()).data.some((s: { slug: string }) => s.slug === slug)).toBe(false);
+
+		// DELETE again → 404.
+		const again = await app.request(`/api/skills/${slug}`, {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
+		expect(again.status).toBe(404);
+	});
 });

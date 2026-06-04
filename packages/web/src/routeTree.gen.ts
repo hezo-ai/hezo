@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as TeamsIndexRouteImport } from './routes/teams/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as HomeIndexRouteImport } from './routes/home/index'
+import { Route as SettingsSkillsRouteImport } from './routes/settings/skills'
 import { Route as SettingsCredentialsRouteImport } from './routes/settings/credentials'
 import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
@@ -64,6 +65,11 @@ const SettingsIndexRoute = SettingsIndexRouteImport.update({
 const HomeIndexRoute = HomeIndexRouteImport.update({
   id: '/home/',
   path: '/home/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
+  id: '/settings/skills',
+  path: '/settings/skills',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
@@ -251,6 +257,7 @@ export interface FileRoutesByFullPath {
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/skills': typeof SettingsSkillsRoute
   '/home/': typeof HomeIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/teams/': typeof TeamsIndexRoute
@@ -288,6 +295,7 @@ export interface FileRoutesByTo {
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/skills': typeof SettingsSkillsRoute
   '/home': typeof HomeIndexRoute
   '/settings': typeof SettingsIndexRoute
   '/teams': typeof TeamsIndexRoute
@@ -325,6 +333,7 @@ export interface FileRoutesById {
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/skills': typeof SettingsSkillsRoute
   '/home/': typeof HomeIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/teams/': typeof TeamsIndexRoute
@@ -365,6 +374,7 @@ export interface FileRouteTypes {
     | '/settings/ai-providers'
     | '/settings/connectors'
     | '/settings/credentials'
+    | '/settings/skills'
     | '/home/'
     | '/settings/'
     | '/teams/'
@@ -402,6 +412,7 @@ export interface FileRouteTypes {
     | '/settings/ai-providers'
     | '/settings/connectors'
     | '/settings/credentials'
+    | '/settings/skills'
     | '/home'
     | '/settings'
     | '/teams'
@@ -438,6 +449,7 @@ export interface FileRouteTypes {
     | '/settings/ai-providers'
     | '/settings/connectors'
     | '/settings/credentials'
+    | '/settings/skills'
     | '/home/'
     | '/settings/'
     | '/teams/'
@@ -477,6 +489,7 @@ export interface RootRouteChildren {
   SettingsAiProvidersRoute: typeof SettingsAiProvidersRoute
   SettingsConnectorsRoute: typeof SettingsConnectorsRoute
   SettingsCredentialsRoute: typeof SettingsCredentialsRoute
+  SettingsSkillsRoute: typeof SettingsSkillsRoute
   HomeIndexRoute: typeof HomeIndexRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
   TeamsIndexRoute: typeof TeamsIndexRoute
@@ -513,6 +526,13 @@ declare module '@tanstack/react-router' {
       path: '/home'
       fullPath: '/home/'
       preLoaderRoute: typeof HomeIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/skills': {
+      id: '/settings/skills'
+      path: '/settings/skills'
+      fullPath: '/settings/skills'
+      preLoaderRoute: typeof SettingsSkillsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/credentials': {
@@ -843,6 +863,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsAiProvidersRoute: SettingsAiProvidersRoute,
   SettingsConnectorsRoute: SettingsConnectorsRoute,
   SettingsCredentialsRoute: SettingsCredentialsRoute,
+  SettingsSkillsRoute: SettingsSkillsRoute,
   HomeIndexRoute: HomeIndexRoute,
   SettingsIndexRoute: SettingsIndexRoute,
   TeamsIndexRoute: TeamsIndexRoute,

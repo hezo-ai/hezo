@@ -77,6 +77,95 @@ skillsRoutes.post('/skills', async (c) => {
 	return ok(c, result.rows[0], 201);
 });
 
+skillsRoutes.patch('/skills/:slug', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	const db = c.get('db');
+	const slug = c.req.param('slug');
+
+	const body = await c.req.json<{
+		name?: string;
+		description?: string;
+		tags?: string[];
+		content?: string;
+	}>();
+
+	const sets: string[] = [];
+	const params: unknown[] = [];
+	let paramIdx = 2; // $1 = slug
+
+	if (body.name !== undefined) {
+		sets.push(`name = $${paramIdx++}`);
+		params.push(body.name.trim());
+	}
+	const trimmedDescription = body.description?.trim();
+	let resolvedDescription: string | undefined =
+		body.description !== undefined ? trimmedDescription : undefined;
+	if (!trimmedDescription && body.content !== undefined) {
+		resolvedDescription = deriveSkillSummary(body.content);
+	}
+	if (resolvedDescription !== undefined) {
+		sets.push(`description = $${paramIdx++}`);
+		params.push(resolvedDescription);
+	}
+	if (body.tags !== undefined) {
+		sets.push(`tags = $${paramIdx++}::jsonb`);
+		params.push(JSON.stringify(body.tags));
+	}
+	if (body.content !== undefined) {
+		const hash = createHash('sha256').update(body.content).digest('hex');
+		sets.push(`content = $${paramIdx++}`);
+		params.push(body.content);
+		sets.push(`content_hash = $${paramIdx++}`);
+		params.push(hash);
+	}
+
+	if (sets.length === 0) {
+		return err(c, 'INVALID_REQUEST', 'No fields to update', 400);
+	}
+	sets.push('updated_at = now()');
+
+	const result = await db.query<SkillRecord>(
+		`UPDATE skills SET ${sets.join(', ')}
+		 WHERE team_id IS NULL AND slug = $1
+		 RETURNING *`,
+		[slug, ...params],
+	);
+	if (result.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Skill not found', 404);
+	}
+	const skill = result.rows[0];
+
+	if (body.content !== undefined) {
+		const revCount = await db.query<{ cnt: string }>(
+			'SELECT COUNT(*)::text AS cnt FROM skill_revisions WHERE skill_id = $1',
+			[skill.id],
+		);
+		const nextRev = Number.parseInt(revCount.rows[0].cnt, 10) + 1;
+		await db.query(
+			`INSERT INTO skill_revisions (skill_id, revision_number, content, content_hash, change_summary)
+			 VALUES ($1, $2, $3, $4, 'Content updated')`,
+			[skill.id, nextRev, body.content, skill.content_hash],
+		);
+	}
+	return ok(c, skill);
+});
+
+skillsRoutes.delete('/skills/:slug', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	const db = c.get('db');
+	const slug = c.req.param('slug');
+	const result = await db.query(
+		'DELETE FROM skills WHERE team_id IS NULL AND slug = $1 RETURNING id',
+		[slug],
+	);
+	if (result.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Skill not found', 404);
+	}
+	return c.json({ data: null }, 200);
+});
+
 skillsRoutes.get('/teams/:teamId/skills', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
