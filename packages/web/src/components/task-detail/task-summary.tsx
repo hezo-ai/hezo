@@ -39,7 +39,7 @@ export function TaskSummary({ task, teamId, taskProjectSlug, updateTask }: TaskS
 						<InfoTooltip
 							label="About Progress Summary"
 							data-testid="progress-summary-info"
-							content="A running checkpoint of what's been done and what's left on this task. Agents update it at natural milestones via the update_task tool. Not auto-included in the agent's prompt — agents fetch it on demand to stay continuous across runs."
+							content="A running checkpoint of what's been done and what's left on this task. Automatically included in every agent run's prompt — alongside the description and rules — so work stays continuous across runs. Agents update it at natural milestones via the update_task tool."
 						/>
 					</div>
 					{!editingSummary && (

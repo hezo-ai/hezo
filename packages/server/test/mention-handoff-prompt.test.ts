@@ -31,6 +31,7 @@ const TRIGGERING_TASK: Parameters<typeof buildTaskPrompt>[1] = {
 	priority: 'high',
 	project_id: 'filled-below',
 	rules: null,
+	progress_summary: null,
 };
 
 beforeAll(async () => {
@@ -238,6 +239,7 @@ describe('mention handoff prompt (integration)', () => {
 				priority: 'medium',
 				project_id: soloProjectId,
 				rules: null,
+				progress_summary: null,
 			},
 			payload,
 			{ mentionContext: ctx },

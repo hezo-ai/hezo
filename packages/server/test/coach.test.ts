@@ -152,7 +152,7 @@ describe('Coach review prompt builder', () => {
 	it('prepends the system prompt and points the coach back to it for the final summary comment', async () => {
 		const taskRow = await db.query<TaskInfo>(
 			`SELECT id, identifier, title, description, status::text AS status,
-			        priority::text AS priority, project_id, rules,
+			        priority::text AS priority, project_id, rules, progress_summary,
 			        parent_task_id, created_by_run_id
 			 FROM tasks WHERE id = $1`,
 			[taskId],
@@ -168,10 +168,33 @@ describe('Coach review prompt builder', () => {
 		expect(prompt).toMatch(/following the format defined in your system prompt/i);
 	});
 
+	it('includes the task rules and progress summary when present', async () => {
+		await db.query(`UPDATE tasks SET rules = $2, progress_summary = $3 WHERE id = $1`, [
+			taskId,
+			'Run the full suite before pushing',
+			'Schema migration done; API wiring pending',
+		]);
+
+		const taskRow = await db.query<TaskInfo>(
+			`SELECT id, identifier, title, description, status::text AS status,
+			        priority::text AS priority, project_id, rules, progress_summary,
+			        parent_task_id, created_by_run_id
+			 FROM tasks WHERE id = $1`,
+			[taskId],
+		);
+
+		const prompt = await buildCoachReviewPrompt(db, 'SYS', taskRow.rows[0], teamId);
+
+		expect(prompt).toContain('### Rules');
+		expect(prompt).toContain('Run the full suite before pushing');
+		expect(prompt).toContain('### Progress Summary');
+		expect(prompt).toContain('Schema migration done; API wiring pending');
+	});
+
 	it('includes attachment paths in the comment log so the agent can read them', async () => {
 		const taskRow = await db.query<TaskInfo>(
 			`SELECT id, identifier, title, description, status::text AS status,
-			        priority::text AS priority, project_id, rules,
+			        priority::text AS priority, project_id, rules, progress_summary,
 			        parent_task_id, created_by_run_id
 			 FROM tasks WHERE id = $1`,
 			[taskId],
