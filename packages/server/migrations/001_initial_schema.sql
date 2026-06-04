@@ -412,7 +412,8 @@ CREATE TYPE mcp_install_status AS ENUM ('pending', 'installed', 'failed');
 --                   provision the server under /workspace/.hezo/mcp/<name>/.
 CREATE TABLE mcp_connections (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id              UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    -- team_id NULL = an instance-level connector, available to every team.
+    team_id              UUID REFERENCES teams(id) ON DELETE CASCADE,
     project_id           UUID REFERENCES projects(id) ON DELETE CASCADE,
     name                 TEXT NOT NULL,
     display_name         TEXT,
@@ -439,6 +440,8 @@ CREATE INDEX idx_mcp_connections_pending_auth
 CREATE INDEX idx_mcp_connections_team ON mcp_connections(team_id);
 CREATE INDEX idx_mcp_connections_project ON mcp_connections(project_id);
 CREATE INDEX idx_mcp_connections_oauth ON mcp_connections(oauth_connection_id) WHERE oauth_connection_id IS NOT NULL;
+-- Instance-level connectors (team_id NULL) are unique by name across the instance.
+CREATE UNIQUE INDEX idx_mcp_connections_instance_name ON mcp_connections (name) WHERE team_id IS NULL;
 
 -------------------------------------------------------------------------------
 -- TEAM SSH KEYS

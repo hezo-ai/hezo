@@ -66,11 +66,11 @@ export async function loadMcpConnectionsForRun(
 		        config, oauth_connection_id, install_status::text AS install_status, install_error,
 		        created_at::text, updated_at::text
 		 FROM mcp_connections
-		 WHERE team_id = $1
+		 WHERE (team_id = $1 OR team_id IS NULL)
 		   AND (project_id IS NULL OR project_id = $2)
 		   AND revoked_at IS NULL
 		   AND NOT (kind = 'saas' AND created_by_task_id IS NOT NULL AND oauth_connection_id IS NULL)
-		 ORDER BY project_id NULLS FIRST`,
+		 ORDER BY project_id NULLS FIRST, team_id NULLS FIRST`,
 		[teamId, projectId],
 	);
 
