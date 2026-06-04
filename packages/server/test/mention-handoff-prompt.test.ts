@@ -397,6 +397,28 @@ describe('reply handoff prompt (integration)', () => {
 		});
 		expect(ctx).toBeNull();
 	});
+
+	it('extracts the reply excerpt when the body is a bare string (web-composer shape)', async () => {
+		const { triggeringTaskId, commentId: triggeringCommentId } =
+			await createTriggeringTaskWithComment('Please review and approve the PRD.');
+
+		const replyInsert = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, NULL, $2::comment_content_type, $3::jsonb)
+			 RETURNING id`,
+			[triggeringTaskId, CommentContentType.Text, JSON.stringify('APPROVED')],
+		);
+
+		const ctx = await loadReplyContext(db, {
+			source: WakeupSource.Reply,
+			task_id: triggeringTaskId,
+			comment_id: replyInsert.rows[0].id,
+			triggering_comment_id: triggeringCommentId,
+		});
+
+		expect(ctx?.replyExcerpt).toBe('APPROVED');
+		expect(ctx?.originalExcerpt).toContain('approve the PRD');
+	});
 });
 
 describe('spawned-from prompt line', () => {
