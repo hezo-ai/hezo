@@ -40,6 +40,7 @@ import {
 } from '../lib/dependencies';
 import { assertInternalAssignee } from '../lib/internal-assignee';
 import { resolveActorMemberId, resolveTaskId } from '../lib/resolve';
+import { assertRunTaskScope } from '../lib/run-scope';
 import { deriveSkillSummary } from '../lib/skill-summary';
 import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/task-relationships';
 import type { AuthInfo } from '../lib/types';
@@ -725,6 +726,14 @@ export function registerTools(
 				const pDenied = assertProjectAccess(auth, currentRow.project_id);
 				if (pDenied) return { error: pDenied };
 			}
+
+			const scopeDenied = assertRunTaskScope(
+				auth,
+				args.task_id as string,
+				args.status as string | undefined,
+			);
+			if (scopeDenied) return { error: scopeDenied };
+
 			const currentStatus = currentRow?.status;
 			const previousAssigneeId = currentRow?.assignee_id ?? null;
 

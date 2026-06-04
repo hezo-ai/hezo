@@ -187,6 +187,7 @@ describe('MCP tool: verifyTeamAccess (direct DB tests)', () => {
 			memberId: agentId,
 			teamId,
 			runId: '00000000-0000-0000-0000-000000000001',
+			taskId: null,
 			projectId: '00000000-0000-0000-0000-000000000010',
 			crossProject: true,
 		};
@@ -199,6 +200,7 @@ describe('MCP tool: verifyTeamAccess (direct DB tests)', () => {
 			memberId: agentBId,
 			teamId: teamBId,
 			runId: '00000000-0000-0000-0000-000000000002',
+			taskId: null,
 			projectId: '00000000-0000-0000-0000-000000000011',
 			crossProject: true,
 		};
@@ -573,6 +575,164 @@ describe('MCP endpoint: tool call integration', () => {
 		const assignmentWakeups = wakeups.rows.filter((r) => r.source === 'assignment');
 		expect(assignmentWakeups.length).toBe(1);
 		expect(assignmentWakeups[0].member_id).toBe(agentId);
+	});
+
+	// An agent run is scoped to its own task (heartbeat_runs.task_id). It must not
+	// START a *different* ticket — i.e. flip some other task to in_progress — inside
+	// the run. Other edits to other tickets, and setting the run's OWN task to
+	// in_progress (e.g. QA handing a ticket back to the Engineer), stay allowed.
+	async function callUpdateTaskScoped(
+		agentToken: string,
+		args: Record<string, unknown>,
+	): Promise<{ status?: string; error?: string }> {
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: { name: 'update_task', arguments: args },
+				id: 1,
+			}),
+		});
+		const body = (await res.json()) as {
+			result: { content: Array<{ type: string; text: string }> };
+		};
+		return JSON.parse(body.result.content[0].text);
+	}
+
+	it('update_task lets an agent run set its OWN task to in_progress', async () => {
+		const own = (await callToolViaMcp('create_task', {
+			team_id: teamId,
+			project_id: projectId,
+			title: 'Scope gate — own run task',
+			assignee_id: agentId,
+		})) as { id: string };
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			own.id,
+		);
+
+		const result = await callUpdateTaskScoped(agentToken, {
+			team_id: teamId,
+			task_id: own.id,
+			status: 'in_progress',
+		});
+		expect(result.error).toBeUndefined();
+		expect(result.status).toBe('in_progress');
+	});
+
+	it('update_task blocks an agent run from moving a DIFFERENT task to in_progress', async () => {
+		const own = (await callToolViaMcp('create_task', {
+			team_id: teamId,
+			project_id: projectId,
+			title: 'Scope gate — run task',
+			assignee_id: agentId,
+		})) as { id: string };
+		const other = (await callToolViaMcp('create_task', {
+			team_id: teamId,
+			project_id: projectId,
+			title: 'Scope gate — different task',
+			assignee_id: agentId,
+		})) as { id: string };
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			own.id,
+		);
+
+		const result = await callUpdateTaskScoped(agentToken, {
+			team_id: teamId,
+			task_id: other.id,
+			status: 'in_progress',
+		});
+		expect(result.error).toMatch(/scoped to its own ticket/i);
+		expect(result.status).toBeUndefined();
+
+		const row = await db.query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [
+			other.id,
+		]);
+		expect(row.rows[0].status).toBe('backlog');
+	});
+
+	it('update_task lets an agent run edit a DIFFERENT task without starting it', async () => {
+		const own = (await callToolViaMcp('create_task', {
+			team_id: teamId,
+			project_id: projectId,
+			title: 'Scope gate — run task 2',
+			assignee_id: agentId,
+		})) as { id: string };
+		const other = (await callToolViaMcp('create_task', {
+			team_id: teamId,
+			project_id: projectId,
+			title: 'Scope gate — field-edit target',
+			assignee_id: agentId,
+		})) as { id: string };
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			own.id,
+		);
+
+		// Non-status field edit on another ticket (the mention-handoff fold) is allowed.
+		const summary = await callUpdateTaskScoped(agentToken, {
+			team_id: teamId,
+			task_id: other.id,
+			progress_summary: 'context folded in from the run ticket',
+		});
+		expect(summary.error).toBeUndefined();
+
+		// A non-in_progress status change on another ticket is also allowed.
+		const review = await callUpdateTaskScoped(agentToken, {
+			team_id: teamId,
+			task_id: other.id,
+			status: 'review',
+		});
+		expect(review.error).toBeUndefined();
+		expect(review.status).toBe('review');
+	});
+
+	it('update_task scope gate does not apply to board callers', async () => {
+		const other = (await callToolViaMcp('create_task', {
+			team_id: teamId,
+			project_id: projectId,
+			title: 'Scope gate — board target',
+			assignee_id: agentId,
+		})) as { id: string };
+
+		const result = (await callToolViaMcp('update_task', {
+			team_id: teamId,
+			task_id: other.id,
+			status: 'in_progress',
+		})) as { status?: string; error?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.status).toBe('in_progress');
+	});
+
+	it('update_task scope gate does not apply to runs not bound to a task', async () => {
+		const other = (await callToolViaMcp('create_task', {
+			team_id: teamId,
+			project_id: projectId,
+			title: 'Scope gate — null-run target',
+			assignee_id: agentId,
+		})) as { id: string };
+		// mintAgentToken with no taskId → heartbeat_runs.task_id IS NULL → pass-through.
+		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+
+		const result = await callUpdateTaskScoped(agentToken, {
+			team_id: teamId,
+			task_id: other.id,
+			status: 'in_progress',
+		});
+		expect(result.error).toBeUndefined();
+		expect(result.status).toBe('in_progress');
 	});
 
 	it('get_agent_system_prompt defaults to substituting placeholders without appending runtime blocks', async () => {

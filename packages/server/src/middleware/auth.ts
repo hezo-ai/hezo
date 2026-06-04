@@ -55,17 +55,18 @@ export async function verifyToken(
 			const runId = payload.run_id as string;
 			const projectId = payload.project_id as string;
 			const crossProject = payload.cross_project === true;
-			const runResult = await db.query<{ status: string }>(
-				'SELECT status FROM heartbeat_runs WHERE id = $1 AND member_id = $2 AND team_id = $3',
+			const runResult = await db.query<{ status: string; task_id: string | null }>(
+				'SELECT status, task_id FROM heartbeat_runs WHERE id = $1 AND member_id = $2 AND team_id = $3',
 				[runId, memberId, teamId],
 			);
-			const status = runResult.rows[0]?.status;
-			if (status !== HeartbeatRunStatus.Running) return null;
+			const runRow = runResult.rows[0];
+			if (runRow?.status !== HeartbeatRunStatus.Running) return null;
 			return {
 				type: AuthType.Agent,
 				memberId,
 				teamId,
 				runId,
+				taskId: runRow.task_id ?? null,
 				projectId,
 				crossProject,
 			};

@@ -27,6 +27,7 @@ import {
 	resolveTaskId,
 } from '../lib/resolve';
 import { err, ok } from '../lib/response';
+import { assertRunTaskScope } from '../lib/run-scope';
 import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/task-relationships';
 import type { AuthInfo, Env } from '../lib/types';
 import { logger } from '../logger';
@@ -430,6 +431,10 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 	}>();
 
 	const auth = c.get('auth');
+
+	const scopeDenied = assertRunTaskScope(auth, taskId, body.status);
+	if (scopeDenied) return err(c, 'FORBIDDEN', scopeDenied, 403);
+
 	if (
 		body.status !== undefined &&
 		auth.type === AuthType.Agent &&
