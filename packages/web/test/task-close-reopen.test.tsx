@@ -2,7 +2,7 @@ import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
-test('board member can close and re-open a task via themed modal', async () => {
+test('the admin can close and re-open a task via themed modal', async () => {
 	const seeded = { teamSlug: '', taskId: '', identifier: '' };
 	const { findByTestId, findByText, queryByTestId, router, user } = await renderApp({
 		initialPath: '/',

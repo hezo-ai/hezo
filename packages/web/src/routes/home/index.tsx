@@ -2,7 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { Building2, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { CaptainHomeIntakePanel } from '../../components/captain-home-intake-panel';
-import { CreateProjectDialog } from '../../components/create-project-dialog';
+import { CreateProjectWithTeamDialog } from '../../components/create-project-with-team-dialog';
 import { OnboardingProgress } from '../../components/onboarding-progress';
 import { OnboardingChoice } from '../../components/setup/onboarding-choice';
 import { Avatar, avatarColorFromString } from '../../components/ui/avatar';
@@ -54,7 +54,6 @@ function HomeProjectsSection({
 }) {
 	const [createOpen, setCreateOpen] = useState(false);
 	const showTeamName = teams.length > 1;
-	const primaryTeamSlug = teams[0]?.slug ?? '';
 
 	if (isLoading) {
 		return (
@@ -117,13 +116,7 @@ function HomeProjectsSection({
 					</Link>
 				))}
 			</div>
-			{primaryTeamSlug && (
-				<CreateProjectDialog
-					teamId={primaryTeamSlug}
-					open={createOpen}
-					onOpenChange={setCreateOpen}
-				/>
-			)}
+			<CreateProjectWithTeamDialog open={createOpen} onOpenChange={setCreateOpen} />
 		</section>
 	);
 }
@@ -132,7 +125,12 @@ function HomePage() {
 	const { data: teams, isLoading: teamsLoading } = useTeams();
 	const primaryTeamSlug = useActiveTeamSlug();
 	const { projects, isLoading: projectsLoading } = useAllVisibleProjects(teams);
-	const { data: intake } = useOnboardingIntake(primaryTeamSlug, true);
+	// Only ensure/open an onboarding intake during true first-run — i.e. when no
+	// visible team has a project yet. Per-project teams mean the first project may
+	// land in its own team; once any project exists we must not re-open an intake
+	// on the default/HQ team.
+	const noProjectsYet = !projectsLoading && projects.length === 0;
+	const { data: intake } = useOnboardingIntake(primaryTeamSlug, noProjectsYet);
 	const { data: onboarding } = useOnboarding(primaryTeamSlug, true);
 
 	if (teamsLoading) {
@@ -142,7 +140,10 @@ function HomePage() {
 	}
 
 	const hasIntake = !!intake;
-	const hasProject = !!onboarding?.primary_project;
+	// Onboarding is complete once any visible team has a user-facing project —
+	// per-project teams mean the first project may live in its own new team, not
+	// the default/HQ team (which stays CEO-only).
+	const hasProject = projects.length > 0;
 	const showChoice = !hasIntake && !hasProject;
 	const showProgress = !!onboarding && (showChoice || hasIntake);
 

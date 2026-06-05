@@ -2,7 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/lib/types';
-import { signBoardJwt } from '../src/middleware/auth';
+import { signAdminJwt } from '../src/middleware/auth';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp } from './helpers/app';
 
@@ -20,9 +20,9 @@ beforeAll(async () => {
 	token = ctx.token;
 
 	const nonAdmin = await db.query<{ id: string }>(
-		"INSERT INTO users (display_name, is_superuser) VALUES ('Regular Board', false) RETURNING id",
+		"INSERT INTO users (display_name, is_superuser) VALUES ('Regular Admin', false) RETURNING id",
 	);
-	nonSuperuserToken = await signBoardJwt(ctx.masterKeyManager, nonAdmin.rows[0].id);
+	nonSuperuserToken = await signAdminJwt(ctx.masterKeyManager, nonAdmin.rows[0].id);
 });
 
 beforeEach(() => {
@@ -150,7 +150,7 @@ describe('AI providers CRUD', () => {
 });
 
 describe('AI providers authorization', () => {
-	it('allows non-superuser board members to read the status', async () => {
+	it('allows non-superuser the admin to read the status', async () => {
 		const res = await app.request('/api/ai-providers/status', {
 			headers: authHeader(nonSuperuserToken),
 		});

@@ -8,7 +8,7 @@ import { authHeader, createTestApp, createTestProject, mintAgentToken } from './
 
 let app: Hono<Env>;
 let db: PGlite;
-let boardToken: string;
+let adminToken: string;
 let agentToken: string;
 let teamId: string;
 let projectId: string;
@@ -20,14 +20,14 @@ beforeAll(async () => {
 	const ctx = await createTestApp();
 	app = ctx.app;
 	db = ctx.db;
-	boardToken = ctx.token;
+	adminToken = ctx.token;
 
-	const typesRes = await app.request('/api/team-templates', { headers: authHeader(boardToken) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(adminToken) });
 	const teamTemplateId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
 	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
-		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Agent API Co',
 
@@ -43,13 +43,13 @@ beforeAll(async () => {
 	projectId = (await projectRes.json()).data.id;
 
 	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
-		headers: authHeader(boardToken),
+		headers: authHeader(adminToken),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
 	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
-		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			project_id: projectId,
 			title: 'Agent Test Task',
@@ -83,10 +83,10 @@ describe('agent API - heartbeat', () => {
 		expect(body.data.assigned_tasks[0].id).toBe(taskId);
 	});
 
-	it('rejects board token', async () => {
+	it('rejects admin token', async () => {
 		const res = await app.request('/agent-api/heartbeat', {
 			method: 'POST',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({}),
 		});
 		expect(res.status).toBe(401);
@@ -216,7 +216,7 @@ describe('agent API - heartbeat edge cases', () => {
 	it('returns empty tasks when agent is disabled', async () => {
 		await app.request(`/api/teams/${teamId}/agents/${agentId}/disable`, {
 			method: 'POST',
-			headers: authHeader(boardToken),
+			headers: authHeader(adminToken),
 		});
 
 		const res = await app.request('/agent-api/heartbeat', {
@@ -231,7 +231,7 @@ describe('agent API - heartbeat edge cases', () => {
 
 		await app.request(`/api/teams/${teamId}/agents/${agentId}/enable`, {
 			method: 'POST',
-			headers: authHeader(boardToken),
+			headers: authHeader(adminToken),
 		});
 	});
 });
@@ -256,7 +256,7 @@ describe('agent API - budget enforcement', () => {
 	it('returns 402 and pauses agent when tool call exceeds budget', async () => {
 		const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
 			method: 'POST',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Budget Test Agent', monthly_budget_cents: 10 }),
 		});
 		const cheapAgent = (await agentRes.json()).data;
@@ -264,7 +264,7 @@ describe('agent API - budget enforcement', () => {
 
 		await app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
 			method: 'PATCH',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: cheapAgent.id }),
 		});
 
@@ -294,7 +294,7 @@ describe('agent API - budget enforcement', () => {
 
 		await app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
 			method: 'PATCH',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: agentId }),
 		});
 	});

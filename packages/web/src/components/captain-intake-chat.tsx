@@ -128,7 +128,7 @@ export function CaptainIntakeChat({
 						key={comment.id}
 						className="flex flex-col items-end gap-1 min-w-0"
 						data-testid="home-captain-chat-message"
-						data-role="board"
+						data-role="admin"
 					>
 						<span className="text-[11px] font-medium text-text-muted pr-0.5">You</span>
 						<div className="max-w-[min(100%,42rem)] rounded-radius-md rounded-br-sm bg-accent-blue-bg border border-accent-blue-text/20 px-3 py-2.5 text-[13px] md:text-sm text-text leading-relaxed whitespace-pre-wrap">

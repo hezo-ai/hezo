@@ -48,7 +48,7 @@ const log = logger.child('routes');
 const MAX_BATCH_TASKS = 50;
 
 function actorTypeFromAuth(auth: AuthInfo): AuditActorType {
-	return auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Board;
+	return auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Admin;
 }
 
 async function buildCreateTaskCaller(c: Context<Env>, teamId: string): Promise<CreateTaskCaller> {
@@ -93,11 +93,11 @@ tasksRoutes.get('/teams/:teamId/tasks', async (c) => {
 	const db = c.get('db');
 	const { page, perPage, offset } = parsePagination(c);
 
-	// Only board users have an inbox, so the per-task unread-mention notice is
-	// scoped to the authenticated board user; other callers (agents, API keys)
+	// Only admin users have an inbox, so the per-task unread-mention notice is
+	// scoped to the authenticated admin user; other callers (agents, API keys)
 	// get `false` because `bm.user_id = NULL` never matches.
 	const auth = c.get('auth');
-	const boardUserId = auth.type === AuthType.Board ? auth.userId : null;
+	const adminUserId = auth.type === AuthType.Admin ? auth.userId : null;
 
 	const conditions: string[] = ['i.team_id = $1'];
 	const params: unknown[] = [teamId];
@@ -173,7 +173,7 @@ tasksRoutes.get('/teams/:teamId/tasks', async (c) => {
 	);
 	const total = countResult.rows[0].count;
 
-	const dataParams = [...params, boardUserId, perPage, offset];
+	const dataParams = [...params, adminUserId, perPage, offset];
 	const result = await db.query(
 		`SELECT i.id, i.team_id, i.project_id, i.assignee_id, i.parent_task_id,
             i.number, i.identifier, i.title, i.description, i.status, i.priority,
@@ -186,10 +186,10 @@ tasksRoutes.get('/teams/:teamId/tasks', async (c) => {
               WHERE hr.task_id = i.id AND hr.status IN ('running', 'queued')
             ) AS has_active_run,
             EXISTS (
-              SELECT 1 FROM board_mentions bm
+              SELECT 1 FROM admin_mentions bm
               WHERE bm.task_id = i.id AND bm.user_id = $${idx}
                 AND bm.read_at IS NULL AND bm.archived_at IS NULL
-            ) AS has_unread_board_mention,
+            ) AS has_unread_admin_mention,
             CASE WHEN qw.last_skipped_reason IS NOT NULL THEN json_build_object(
               'reason', qw.last_skipped_reason,
               'since', qw.last_skipped_at,
@@ -451,7 +451,7 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 		auth.type === AuthType.Agent &&
 		existing.rows[0].status === TaskStatus.Closed
 	) {
-		return err(c, 'FORBIDDEN', 'Only board members can re-open a closed task', 403);
+		return err(c, 'FORBIDDEN', 'Only the admin can re-open a closed task', 403);
 	}
 
 	if (

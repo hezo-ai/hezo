@@ -26,7 +26,7 @@ export interface Task {
 	assignee_name: string | null;
 	assignee_type: 'agent' | 'user' | null;
 	has_active_run: boolean;
-	has_unread_board_mention: boolean;
+	has_unread_admin_mention: boolean;
 	queued_wakeup: QueuedWakeup | null;
 	parent_task_id: string | null;
 	labels: string[];
@@ -68,6 +68,32 @@ export function useTasks(teamId: string, filters?: TaskFilters, options?: { enab
 			return res;
 		},
 		enabled: options?.enabled ?? true,
+	});
+}
+
+export interface GlobalTask extends Task {
+	team_slug: string;
+	team_name: string;
+}
+
+/** Aggregates tasks across every team the user belongs to (the global "All Tasks"). */
+export function useAllTasks(teams: { slug: string; name: string }[]) {
+	const slugs = teams.map((t) => t.slug).sort();
+	return useQuery({
+		queryKey: ['tasks', 'all', slugs],
+		queryFn: async (): Promise<GlobalTask[]> => {
+			const perTeam = await Promise.all(
+				teams.map(async (t) => {
+					const res = await api.get<TaskListResponse | Task[]>(`/api/teams/${t.slug}/tasks`, {
+						per_page: '200',
+					});
+					const rows = Array.isArray(res) ? res : res.data;
+					return rows.map((task) => ({ ...task, team_slug: t.slug, team_name: t.name }));
+				}),
+			);
+			return perTeam.flat();
+		},
+		enabled: teams.length > 0,
 	});
 }
 

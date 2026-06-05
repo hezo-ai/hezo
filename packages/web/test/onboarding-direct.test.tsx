@@ -1,4 +1,4 @@
-import { fireEvent, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 
@@ -33,10 +33,11 @@ async function createBlankTeam(name: string): Promise<{ id: string; slug: string
 	return body.data;
 }
 
-test('applies a template and creates a project from the wizard direct path', async () => {
+test('direct onboarding creates the first project in its own new team', async () => {
 	const projectName = 'My First App';
-	let teamSlug = '';
-	const { findByText, container, ctx, router } = await renderApp({
+	let seededSlug = '';
+	let newTeamSlug = '';
+	const { findAllByText, container, ctx } = await renderApp({
 		initialPath: '/home',
 		seed: async () => {
 			const { apiBase, token } = getTestContext();
@@ -45,10 +46,10 @@ test('applies a template and creates a project from the wizard direct path', asy
 				'Content-Type': 'application/json',
 			};
 			const team = await createBlankTeam(`Onboard Direct ${Date.now()}`);
-			teamSlug = team.slug;
-			sessionStorage.setItem('hezo:activeTeamSlug', teamSlug);
+			seededSlug = team.slug;
+			sessionStorage.setItem('hezo:activeTeamSlug', seededSlug);
 			const blankId = await fetchBlankTemplateId();
-			const directRes = await apiBase(`/api/teams/${teamSlug}/onboarding/direct`, {
+			const directRes = await apiBase(`/api/teams/${seededSlug}/onboarding/direct`, {
 				method: 'POST',
 				headers,
 				body: JSON.stringify({
@@ -58,26 +59,33 @@ test('applies a template and creates a project from the wizard direct path', asy
 				}),
 			});
 			expect(directRes.status).toBe(201);
+			const body = (await directRes.json()) as { data: { team_slug: string } };
+			newTeamSlug = body.data.team_slug;
+			// The project gets its own team, distinct from the (HQ/seeded) team.
+			expect(newTeamSlug).not.toBe(seededSlug);
 		},
 	});
 
-	await waitFor(
-		() => {
-			const projectsList = container.querySelector('[data-testid="home-projects-list"]');
-			expect(projectsList).toBeTruthy();
-		},
-		{ timeout: 20_000 },
-	);
-	await findByText(projectName, undefined, { timeout: 20_000 });
+	// The cross-team home project list surfaces the new project.
+	const matches = await findAllByText(projectName, undefined, { timeout: 20_000 });
+	expect(matches.length).toBeGreaterThan(0);
+	expect(container.querySelector('[data-testid="home-projects-list"]')).toBeTruthy();
 
-	// Sanity-check the row landed in the API as well.
-	const projectsRes = await ctx.apiBase(`/api/teams/${teamSlug}/projects`, {
-		headers: { Authorization: `Bearer ${ctx.token}` },
-	});
-	const projects = (await projectsRes.json()) as { data: Array<{ name: string }> };
-	expect(projects.data.some((p) => p.name === projectName)).toBe(true);
-	expect(router.state.location.pathname).toBe('/home');
-});
+	// The project landed in the NEW team, not the seeded/HQ team.
+	const newProjects = (await (
+		await ctx.apiBase(`/api/teams/${newTeamSlug}/projects`, {
+			headers: { Authorization: `Bearer ${ctx.token}` },
+		})
+	).json()) as { data: Array<{ name: string }> };
+	expect(newProjects.data.some((p) => p.name === projectName)).toBe(true);
+
+	const seededProjects = (await (
+		await ctx.apiBase(`/api/teams/${seededSlug}/projects`, {
+			headers: { Authorization: `Bearer ${ctx.token}` },
+		})
+	).json()) as { data: Array<{ name: string; is_internal: boolean }> };
+	expect(seededProjects.data.some((p) => p.name === projectName)).toBe(false);
+}, 30_000);
 
 test("the wizard navigates straight to Captain's planning task after creation", async () => {
 	const projectName = `Direct UI ${Date.now()}`;
@@ -106,7 +114,9 @@ test("the wizard navigates straight to Captain's planning task after creation", 
 	const submitBtn = await findByRole('button', { name: /Add these agents and create project/ });
 	await user.click(submitBtn);
 
-	const expected = new RegExp(`^/teams/${teamSlug}/projects/direct-ui-[0-9]+/tasks/[a-z0-9-]+$`);
+	// The first project gets its own team named after it, so both the team slug
+	// and the project slug derive from the project name.
+	const expected = /^\/teams\/direct-ui-[0-9]+\/projects\/direct-ui-[0-9]+\/tasks\/[a-z0-9-]+$/;
 	await waitFor(
 		() => {
 			expect(router.state.location.pathname).toMatch(expected);
@@ -114,6 +124,24 @@ test("the wizard navigates straight to Captain's planning task after creation", 
 		{ timeout: 30_000 },
 	);
 	expect(container).toBeTruthy();
+}, 40_000);
+
+test('onboarding "Chat with the Captain" opens the create-project-with-team dialog', async () => {
+	const { findByTestId, user } = await renderApp({
+		initialPath: '/home',
+		seed: async () => {
+			const team = await createBlankTeam(`Onboard Chat ${Date.now()}`);
+			sessionStorage.setItem('hezo:activeTeamSlug', team.slug);
+		},
+	});
+
+	const choiceChat = await findByTestId('choice-chat', { timeout: 15_000 });
+	await user.click(within(choiceChat).getByRole('button', { name: 'Start chat' }));
+
+	// The Captain-scoped path reuses the project-with-team dialog (its own team +
+	// Captain intake), so HQ stays CEO-only. Dialog renders into a portal.
+	await screen.findByTestId('create-project-submit');
+	expect(screen.getByText('Team type')).toBeTruthy();
 });
 
 test('the first-time choice screen no longer exposes a "general help" escape hatch', async () => {

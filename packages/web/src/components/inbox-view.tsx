@@ -1,8 +1,8 @@
-import { ApprovalStatus, type BoardMentionItem } from '@hezo/shared';
+import { type AdminMentionItem, ApprovalStatus } from '@hezo/shared';
 import { Inbox, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { useAllAdminMentions } from '../hooks/use-admin-mentions';
 import { type Approval, useAllApprovals } from '../hooks/use-approvals';
-import { useAllBoardMentions } from '../hooks/use-board-mentions';
 import { ApprovalCard } from './approval-card';
 import { MentionCard } from './mention-card';
 import { EmptyState } from './ui/empty-state';
@@ -30,7 +30,7 @@ type InboxRow =
 			key: string;
 			read: boolean;
 			search: string;
-			mention: BoardMentionItem;
+			mention: AdminMentionItem;
 	  };
 
 const READ_OPTIONS: { value: ReadFilter; label: string }[] = [
@@ -40,7 +40,7 @@ const READ_OPTIONS: { value: ReadFilter; label: string }[] = [
 	{ value: 'archived', label: 'Archived' },
 ];
 
-function mentionSearch(m: BoardMentionItem): string {
+function mentionSearch(m: AdminMentionItem): string {
 	return [m.task_identifier, m.task_title, m.author_slug, m.author_display_name, m.snippet]
 		.filter(Boolean)
 		.join(' ')
@@ -66,7 +66,7 @@ export function InboxView({ teamIds, scope }: InboxViewProps) {
 	const { data: approvals, isLoading: approvalsLoading } = useAllApprovals(teamIds, {
 		archived: archivedView,
 	});
-	const { data: mentions, isLoading: mentionsLoading } = useAllBoardMentions(teamIds, {
+	const { data: mentions, isLoading: mentionsLoading } = useAllAdminMentions(teamIds, {
 		archived: archivedView,
 	});
 	const [search, setSearch] = useState('');

@@ -1,3 +1,4 @@
+import { CEO_AGENT_SLUG } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
@@ -9,17 +10,19 @@ agentTypesRoutes.get('/agent-types', async (c) => {
 	const db = c.get('db');
 	const source = c.req.query('source');
 
-	let query = 'SELECT * FROM agent_types';
-	const params: string[] = [];
+	// The CEO is an instance-level role, not a selectable/hireable agent type —
+	// exclude it from the catalog so it can't be added to a team template.
+	const conditions: string[] = ['slug != $1'];
+	const params: string[] = [CEO_AGENT_SLUG];
 
 	if (source) {
 		const sources = source.split(',').map((s) => s.trim());
-		const placeholders = sources.map((_, i) => `$${i + 1}::agent_type_source`);
-		query += ` WHERE source IN (${placeholders.join(', ')})`;
+		const placeholders = sources.map((_, i) => `$${i + 2}::agent_type_source`);
+		conditions.push(`source IN (${placeholders.join(', ')})`);
 		params.push(...sources);
 	}
 
-	query += ' ORDER BY is_builtin DESC, name ASC';
+	const query = `SELECT * FROM agent_types WHERE ${conditions.join(' AND ')} ORDER BY is_builtin DESC, name ASC`;
 	const result = await db.query(query, params);
 	return ok(c, result.rows);
 });

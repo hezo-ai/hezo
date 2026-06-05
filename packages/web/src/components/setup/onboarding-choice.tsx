@@ -1,6 +1,6 @@
 import { MessagesSquare, Sparkles } from 'lucide-react';
 import { useState } from 'react';
-import { useStartOnboardingIntake } from '../../hooks/use-onboarding-intake';
+import { CreateProjectWithTeamDialog } from '../create-project-with-team-dialog';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
 import { DirectFlow } from './direct-flow';
@@ -9,18 +9,13 @@ type Mode = 'choose' | 'direct';
 
 interface OnboardingChoiceProps {
 	teamId: string;
-	/** Called after the chat-flow ticket is created so the wizard can refresh state and exit step 3. */
+	/** Called after the direct flow finishes so the wizard can refresh state and exit step 3. */
 	onChosen: () => void;
 }
 
 export function OnboardingChoice({ teamId, onChosen }: OnboardingChoiceProps) {
 	const [mode, setMode] = useState<Mode>('choose');
-	const startIntake = useStartOnboardingIntake(teamId);
-
-	async function handleStartChat() {
-		await startIntake.mutateAsync();
-		onChosen();
-	}
+	const [chatOpen, setChatOpen] = useState(false);
 
 	if (mode === 'direct') {
 		return <DirectFlow teamId={teamId} onCancel={() => setMode('choose')} onDone={onChosen} />;
@@ -31,8 +26,8 @@ export function OnboardingChoice({ teamId, onChosen }: OnboardingChoiceProps) {
 			<div className="text-center">
 				<h2 className="text-lg sm:text-xl font-semibold mb-2">How do you want to get started?</h2>
 				<p className="text-[13px] text-text-muted max-w-md mx-auto">
-					Pick a team template and dive straight in, or chat with the Captain and let them propose a
-					team plus a first project.
+					Every project gets its own team. Pick a team template and dive straight in, or name your
+					project and let the Captain scope it with you before it opens.
 				</p>
 			</div>
 
@@ -43,8 +38,8 @@ export function OnboardingChoice({ teamId, onChosen }: OnboardingChoiceProps) {
 						<h3 className="text-[15px] font-medium">Pick a template</h3>
 					</div>
 					<p className="text-[13px] text-text-muted flex-1">
-						Choose a team template, name your first project, and we'll add the agents to your team
-						and spin it up.
+						Choose a team template, name your first project, and we'll spin up its team and create
+						the project straight away.
 					</p>
 					<Button onClick={() => setMode('direct')}>Browse templates</Button>
 				</Card>
@@ -55,14 +50,16 @@ export function OnboardingChoice({ teamId, onChosen }: OnboardingChoiceProps) {
 						<h3 className="text-[15px] font-medium">Chat with the Captain</h3>
 					</div>
 					<p className="text-[13px] text-text-muted flex-1">
-						Captain asks a few questions, then recommends the right team template and proposes your
-						first project for you to approve.
+						Name your project and pick a starting team; the project's Captain reviews scope and
+						confirms the roster with you before opening it.
 					</p>
-					<Button variant="secondary" onClick={handleStartChat} disabled={startIntake.isPending}>
-						{startIntake.isPending ? 'Starting…' : 'Start chat'}
+					<Button variant="secondary" onClick={() => setChatOpen(true)}>
+						Start chat
 					</Button>
 				</Card>
 			</div>
+
+			<CreateProjectWithTeamDialog open={chatOpen} onOpenChange={setChatOpen} />
 		</div>
 	);
 }

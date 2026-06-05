@@ -100,7 +100,7 @@ async function canAccessTeam(auth: WsData['auth'], teamId: string): Promise<bool
 	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
 		return auth.teamId === teamId;
 	}
-	if (auth.type === AuthType.Board) {
+	if (auth.type === AuthType.Admin) {
 		if (auth.isSuperuser) return true;
 		if (!dbRef) return false;
 		const result = await dbRef.query(

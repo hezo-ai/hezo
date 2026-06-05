@@ -36,7 +36,7 @@ test('banner surfaces pending approvals on the task list and links to the inbox'
 		params: { teamId: seeded.teamSlug },
 	});
 
-	const banner = await findByTestId('board-approvals-banner', undefined, { timeout: 10_000 });
+	const banner = await findByTestId('admin-approvals-banner', undefined, { timeout: 10_000 });
 	expect(banner.textContent).toContain('2 approvals need your review');
 	expect(banner.getAttribute('href')).toContain(`/teams/${seeded.teamSlug}/inbox`);
 
@@ -67,6 +67,6 @@ test('banner is hidden when there are no pending approvals or unread mentions', 
 	// Wait for the list to render, then assert the banner never appears.
 	await findByTestId('task-filter-bar', undefined, { timeout: 10_000 });
 	await waitFor(() => {
-		expect(queryByTestId('board-approvals-banner')).toBeNull();
+		expect(queryByTestId('admin-approvals-banner')).toBeNull();
 	});
 });

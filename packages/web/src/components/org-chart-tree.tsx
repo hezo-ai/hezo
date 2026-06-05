@@ -134,7 +134,7 @@ export function OrgChartTree({ roots, teamId, mode, hint, testId }: OrgChartTree
 					style={{ transform: `scale(${scale})`, transformOrigin: 'top center' }}
 				>
 					<div className="inline-flex items-center gap-2 rounded-radius-md border-2 border-primary bg-accent-blue-bg px-4 py-2 text-[13px] font-medium text-accent-blue-text mb-2">
-						You (Board)
+						You (Admin)
 					</div>
 					<div className="w-px h-4 bg-border" />
 					<div className={`flex ${mode === 'onboarding' ? 'gap-6 sm:gap-8' : 'gap-8'}`}>

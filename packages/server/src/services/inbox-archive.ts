@@ -9,7 +9,7 @@ export async function archiveOldInboxItems(db: PGlite, retentionDays: number): P
 	const days = String(retentionDays);
 
 	const mentions = await db.query<{ id: string }>(
-		`UPDATE board_mentions SET archived_at = now()
+		`UPDATE admin_mentions SET archived_at = now()
 		 WHERE archived_at IS NULL
 		   AND read_at IS NOT NULL
 		   AND read_at < now() - ($1 || ' days')::interval

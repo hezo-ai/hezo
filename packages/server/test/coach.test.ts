@@ -9,7 +9,7 @@ import { authHeader, createTestApp, createTestProject, mintAgentToken } from './
 
 let app: Hono<Env>;
 let db: PGlite;
-let boardToken: string;
+let adminToken: string;
 let teamId: string;
 let projectId: string;
 let taskId: string;
@@ -25,15 +25,15 @@ beforeAll(async () => {
 	const ctx = await createTestApp();
 	app = ctx.app;
 	db = ctx.db;
-	boardToken = ctx.token;
+	adminToken = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const typesRes = await app.request('/api/team-templates', { headers: authHeader(boardToken) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(adminToken) });
 	const teamTemplateId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
 	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
-		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			name: 'Coach Test Co',
 			template_id: teamTemplateId,
@@ -48,7 +48,7 @@ beforeAll(async () => {
 	projectId = (await projectRes.json()).data.id;
 
 	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
-		headers: authHeader(boardToken),
+		headers: authHeader(adminToken),
 	});
 	const agents = (await agentsRes.json()).data;
 
@@ -72,7 +72,7 @@ beforeAll(async () => {
 
 	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
-		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			project_id: projectId,
 			title: 'Test Feature Implementation',
@@ -89,7 +89,7 @@ afterAll(async () => {
 describe('Coach agent provisioning', () => {
 	it('Coach is auto-provisioned when team is created with Startup template', async () => {
 		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
-			headers: authHeader(boardToken),
+			headers: authHeader(adminToken),
 		});
 		const agents = (await agentsRes.json()).data;
 		const coach = agents.find((a: any) => a.slug === 'coach');
@@ -99,7 +99,7 @@ describe('Coach agent provisioning', () => {
 		expect(coach.admin_status).toBe('enabled');
 
 		const promptRes = await app.request(`/api/teams/${teamId}/agents/${coach.id}/system-prompt`, {
-			headers: authHeader(boardToken),
+			headers: authHeader(adminToken),
 		});
 		const promptDoc = (await promptRes.json()).data;
 		expect(promptDoc?.content).toBeTruthy();
@@ -107,7 +107,7 @@ describe('Coach agent provisioning', () => {
 
 	it('Coach agent type exists in agent_types', async () => {
 		const res = await app.request('/api/agent-types', {
-			headers: authHeader(boardToken),
+			headers: authHeader(adminToken),
 		});
 		const types = (await res.json()).data;
 		const coachType = types.find((t: any) => t.slug === 'coach');
@@ -122,7 +122,7 @@ describe('Coach wakeup on task done', () => {
 	it('creates a wakeup for Coach when task is marked done', async () => {
 		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
 			method: 'PATCH',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'done' }),
 		});
 		expect(res.status).toBe(200);
@@ -241,7 +241,7 @@ describe('MCP tools registration', () => {
 	it('registers get_agent_system_prompt and update_agent_system_prompt tools', async () => {
 		const res = await app.request('/mcp', {
 			method: 'POST',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
 		});
 		expect(res.status).toBe(200);
@@ -313,7 +313,7 @@ describe('Agent system-prompt access', () => {
 
 		const promptRes = await app.request(
 			`/api/teams/${teamId}/agents/${architectId}/system-prompt`,
-			{ headers: authHeader(boardToken) },
+			{ headers: authHeader(adminToken) },
 		);
 		const promptDoc = (await promptRes.json()).data;
 		expect(promptDoc.content).toBe('Captain coherence rewrite');
@@ -321,23 +321,23 @@ describe('Agent system-prompt access', () => {
 });
 
 describe('System prompt revision tracking', () => {
-	it('records revision on manual board edit', async () => {
+	it('records revision on manual admin edit', async () => {
 		await app.request(`/api/teams/${teamId}/agents/${architectId}`, {
 			method: 'PATCH',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'Before manual edit' }),
 		});
 
 		const res = await app.request(`/api/teams/${teamId}/agents/${architectId}`, {
 			method: 'PATCH',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ system_prompt: 'After manual edit by board' }),
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ system_prompt: 'After manual edit by admin' }),
 		});
 		expect(res.status).toBe(200);
 
 		const revisionsRes = await app.request(
 			`/api/teams/${teamId}/agents/${architectId}/system-prompt/revisions`,
-			{ headers: authHeader(boardToken) },
+			{ headers: authHeader(adminToken) },
 		);
 		const revisions = (await revisionsRes.json()).data as Array<{
 			content: string;
@@ -347,29 +347,29 @@ describe('System prompt revision tracking', () => {
 		expect(revisions.length).toBeGreaterThanOrEqual(1);
 		const latest = revisions[0];
 		expect(latest.content).toBe('Before manual edit');
-		expect(latest.change_summary).toBe('Manual edit by board member');
+		expect(latest.change_summary).toBe('Manual edit by the admin');
 	});
 
 	it('revision numbers increment correctly', async () => {
 		await app.request(`/api/teams/${teamId}/agents/${engineerId}`, {
 			method: 'PATCH',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'Version A' }),
 		});
 		await app.request(`/api/teams/${teamId}/agents/${engineerId}`, {
 			method: 'PATCH',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'Version B' }),
 		});
 		await app.request(`/api/teams/${teamId}/agents/${engineerId}`, {
 			method: 'PATCH',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'Version C' }),
 		});
 
 		const revisionsRes = await app.request(
 			`/api/teams/${teamId}/agents/${engineerId}/system-prompt/revisions`,
-			{ headers: authHeader(boardToken) },
+			{ headers: authHeader(adminToken) },
 		);
 		const revisions = (await revisionsRes.json()).data as Array<{ revision_number: number }>;
 		expect(revisions.length).toBeGreaterThanOrEqual(2);
@@ -383,7 +383,7 @@ describe('System prompt revision tracking', () => {
 describe('team settings JSONB', () => {
 	it('has correct default values', async () => {
 		const res = await app.request(`/api/teams/${teamId}`, {
-			headers: authHeader(boardToken),
+			headers: authHeader(adminToken),
 		});
 		const team = (await res.json()).data;
 		expect(team.settings).toEqual({ wake_mentioner_on_reply: true });
@@ -392,7 +392,7 @@ describe('team settings JSONB', () => {
 	it('merges settings without clobbering existing keys', async () => {
 		const res = await app.request(`/api/teams/${teamId}`, {
 			method: 'PATCH',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ settings: { custom_key: 'hello' } }),
 		});
 		expect(res.status).toBe(200);

@@ -13,9 +13,14 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as TeamsIndexRouteImport } from './routes/teams/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as HomeIndexRouteImport } from './routes/home/index'
+import { Route as SettingsSkillsRouteImport } from './routes/settings/skills'
+import { Route as SettingsCredentialsRouteImport } from './routes/settings/credentials'
+import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
 import { Route as TeamsTeamIdRouteRouteImport } from './routes/teams/$teamId/route'
 import { Route as TeamsTeamIdIndexRouteImport } from './routes/teams/$teamId/index'
+import { Route as HomeTasksIndexRouteImport } from './routes/home/tasks/index'
+import { Route as HomeInboxIndexRouteImport } from './routes/home/inbox/index'
 import { Route as TeamsTeamIdConnectorsRouteImport } from './routes/teams/$teamId/connectors'
 import { Route as TeamsTeamIdTasksIndexRouteImport } from './routes/teams/$teamId/tasks/index'
 import { Route as TeamsTeamIdSkillsIndexRouteImport } from './routes/teams/$teamId/skills/index'
@@ -62,6 +67,21 @@ const HomeIndexRoute = HomeIndexRouteImport.update({
   path: '/home/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
+  id: '/settings/skills',
+  path: '/settings/skills',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
+  id: '/settings/credentials',
+  path: '/settings/credentials',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsConnectorsRoute = SettingsConnectorsRouteImport.update({
+  id: '/settings/connectors',
+  path: '/settings/connectors',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsAiProvidersRoute = SettingsAiProvidersRouteImport.update({
   id: '/settings/ai-providers',
   path: '/settings/ai-providers',
@@ -76,6 +96,16 @@ const TeamsTeamIdIndexRoute = TeamsTeamIdIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => TeamsTeamIdRouteRoute,
+} as any)
+const HomeTasksIndexRoute = HomeTasksIndexRouteImport.update({
+  id: '/home/tasks/',
+  path: '/home/tasks/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HomeInboxIndexRoute = HomeInboxIndexRouteImport.update({
+  id: '/home/inbox/',
+  path: '/home/inbox/',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const TeamsTeamIdConnectorsRoute = TeamsTeamIdConnectorsRouteImport.update({
   id: '/connectors',
@@ -225,10 +255,15 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/teams/$teamId': typeof TeamsTeamIdRouteRouteWithChildren
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
+  '/settings/connectors': typeof SettingsConnectorsRoute
+  '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/skills': typeof SettingsSkillsRoute
   '/home/': typeof HomeIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/teams/': typeof TeamsIndexRoute
   '/teams/$teamId/connectors': typeof TeamsTeamIdConnectorsRoute
+  '/home/inbox/': typeof HomeInboxIndexRoute
+  '/home/tasks/': typeof HomeTasksIndexRoute
   '/teams/$teamId/': typeof TeamsTeamIdIndexRoute
   '/teams/$teamId/agents/$agentId': typeof TeamsTeamIdAgentsAgentIdRouteRouteWithChildren
   '/teams/$teamId/projects/$projectId': typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
@@ -258,10 +293,15 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
+  '/settings/connectors': typeof SettingsConnectorsRoute
+  '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/skills': typeof SettingsSkillsRoute
   '/home': typeof HomeIndexRoute
   '/settings': typeof SettingsIndexRoute
   '/teams': typeof TeamsIndexRoute
   '/teams/$teamId/connectors': typeof TeamsTeamIdConnectorsRoute
+  '/home/inbox': typeof HomeInboxIndexRoute
+  '/home/tasks': typeof HomeTasksIndexRoute
   '/teams/$teamId': typeof TeamsTeamIdIndexRoute
   '/preview/$teamId/$projectId/$filename': typeof PreviewTeamIdProjectIdFilenameRoute
   '/teams/$teamId/agents/hire': typeof TeamsTeamIdAgentsHireRoute
@@ -291,10 +331,15 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/teams/$teamId': typeof TeamsTeamIdRouteRouteWithChildren
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
+  '/settings/connectors': typeof SettingsConnectorsRoute
+  '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/skills': typeof SettingsSkillsRoute
   '/home/': typeof HomeIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/teams/': typeof TeamsIndexRoute
   '/teams/$teamId/connectors': typeof TeamsTeamIdConnectorsRoute
+  '/home/inbox/': typeof HomeInboxIndexRoute
+  '/home/tasks/': typeof HomeTasksIndexRoute
   '/teams/$teamId/': typeof TeamsTeamIdIndexRoute
   '/teams/$teamId/agents/$agentId': typeof TeamsTeamIdAgentsAgentIdRouteRouteWithChildren
   '/teams/$teamId/projects/$projectId': typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
@@ -327,10 +372,15 @@ export interface FileRouteTypes {
     | '/'
     | '/teams/$teamId'
     | '/settings/ai-providers'
+    | '/settings/connectors'
+    | '/settings/credentials'
+    | '/settings/skills'
     | '/home/'
     | '/settings/'
     | '/teams/'
     | '/teams/$teamId/connectors'
+    | '/home/inbox/'
+    | '/home/tasks/'
     | '/teams/$teamId/'
     | '/teams/$teamId/agents/$agentId'
     | '/teams/$teamId/projects/$projectId'
@@ -360,10 +410,15 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/settings/ai-providers'
+    | '/settings/connectors'
+    | '/settings/credentials'
+    | '/settings/skills'
     | '/home'
     | '/settings'
     | '/teams'
     | '/teams/$teamId/connectors'
+    | '/home/inbox'
+    | '/home/tasks'
     | '/teams/$teamId'
     | '/preview/$teamId/$projectId/$filename'
     | '/teams/$teamId/agents/hire'
@@ -392,10 +447,15 @@ export interface FileRouteTypes {
     | '/'
     | '/teams/$teamId'
     | '/settings/ai-providers'
+    | '/settings/connectors'
+    | '/settings/credentials'
+    | '/settings/skills'
     | '/home/'
     | '/settings/'
     | '/teams/'
     | '/teams/$teamId/connectors'
+    | '/home/inbox/'
+    | '/home/tasks/'
     | '/teams/$teamId/'
     | '/teams/$teamId/agents/$agentId'
     | '/teams/$teamId/projects/$projectId'
@@ -427,9 +487,14 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   TeamsTeamIdRouteRoute: typeof TeamsTeamIdRouteRouteWithChildren
   SettingsAiProvidersRoute: typeof SettingsAiProvidersRoute
+  SettingsConnectorsRoute: typeof SettingsConnectorsRoute
+  SettingsCredentialsRoute: typeof SettingsCredentialsRoute
+  SettingsSkillsRoute: typeof SettingsSkillsRoute
   HomeIndexRoute: typeof HomeIndexRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
   TeamsIndexRoute: typeof TeamsIndexRoute
+  HomeInboxIndexRoute: typeof HomeInboxIndexRoute
+  HomeTasksIndexRoute: typeof HomeTasksIndexRoute
   PreviewTeamIdProjectIdFilenameRoute: typeof PreviewTeamIdProjectIdFilenameRoute
 }
 
@@ -463,6 +528,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HomeIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/skills': {
+      id: '/settings/skills'
+      path: '/settings/skills'
+      fullPath: '/settings/skills'
+      preLoaderRoute: typeof SettingsSkillsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/credentials': {
+      id: '/settings/credentials'
+      path: '/settings/credentials'
+      fullPath: '/settings/credentials'
+      preLoaderRoute: typeof SettingsCredentialsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/connectors': {
+      id: '/settings/connectors'
+      path: '/settings/connectors'
+      fullPath: '/settings/connectors'
+      preLoaderRoute: typeof SettingsConnectorsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings/ai-providers': {
       id: '/settings/ai-providers'
       path: '/settings/ai-providers'
@@ -483,6 +569,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/teams/$teamId/'
       preLoaderRoute: typeof TeamsTeamIdIndexRouteImport
       parentRoute: typeof TeamsTeamIdRouteRoute
+    }
+    '/home/tasks/': {
+      id: '/home/tasks/'
+      path: '/home/tasks'
+      fullPath: '/home/tasks/'
+      preLoaderRoute: typeof HomeTasksIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/home/inbox/': {
+      id: '/home/inbox/'
+      path: '/home/inbox'
+      fullPath: '/home/inbox/'
+      preLoaderRoute: typeof HomeInboxIndexRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/teams/$teamId/connectors': {
       id: '/teams/$teamId/connectors'
@@ -761,9 +861,14 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   TeamsTeamIdRouteRoute: TeamsTeamIdRouteRouteWithChildren,
   SettingsAiProvidersRoute: SettingsAiProvidersRoute,
+  SettingsConnectorsRoute: SettingsConnectorsRoute,
+  SettingsCredentialsRoute: SettingsCredentialsRoute,
+  SettingsSkillsRoute: SettingsSkillsRoute,
   HomeIndexRoute: HomeIndexRoute,
   SettingsIndexRoute: SettingsIndexRoute,
   TeamsIndexRoute: TeamsIndexRoute,
+  HomeInboxIndexRoute: HomeInboxIndexRoute,
+  HomeTasksIndexRoute: HomeTasksIndexRoute,
   PreviewTeamIdProjectIdFilenameRoute: PreviewTeamIdProjectIdFilenameRoute,
 }
 export const routeTree = rootRouteImport

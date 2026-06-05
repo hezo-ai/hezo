@@ -61,7 +61,7 @@ describe('POST /api/auth/token', () => {
 		// Verify the returned token is valid
 		const auth = await verifyToken(body.data.token, db, masterKeyManager);
 		expect(auth).not.toBeNull();
-		expect(auth!.type).toBe('board');
+		expect(auth!.type).toBe('admin');
 	});
 
 	it('reuses existing superuser on subsequent calls', async () => {
@@ -84,7 +84,7 @@ describe('POST /api/auth/token', () => {
 		// Both tokens should reference the same user
 		expect(auth1).not.toBeNull();
 		expect(auth2).not.toBeNull();
-		if (auth1!.type === 'board' && auth2!.type === 'board') {
+		if (auth1!.type === 'admin' && auth2!.type === 'admin') {
 			expect(auth1!.userId).toBe(auth2!.userId);
 		}
 	});

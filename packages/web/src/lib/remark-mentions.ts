@@ -1,4 +1,4 @@
-import { BOARD_MENTION_SLUG } from '@hezo/shared';
+import { ADMIN_MENTION_SLUG } from '@hezo/shared';
 
 interface TextNode {
 	type: 'text';
@@ -161,14 +161,14 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 
 	if (passiveAgentToken) {
 		const slug = passiveAgentToken.toLowerCase();
-		if (slug === BOARD_MENTION_SLUG) {
+		if (slug === ADMIN_MENTION_SLUG) {
 			return {
 				type: 'link',
 				url: `/teams/${teamId}/inbox`,
 				children: [{ type: 'text', value: `@${passiveAgentToken}` }],
 				data: {
 					hProperties: {
-						'data-mention-board': 'true',
+						'data-mention-admin': 'true',
 						'data-mention-passive': 'true',
 					},
 				},
@@ -192,14 +192,14 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 
 	if (agentToken) {
 		const slug = agentToken.toLowerCase();
-		if (slug === BOARD_MENTION_SLUG) {
+		if (slug === ADMIN_MENTION_SLUG) {
 			return {
 				type: 'link',
 				url: `/teams/${teamId}/inbox`,
 				children: [{ type: 'text', value: display }],
 				data: {
 					hProperties: {
-						'data-mention-board': 'true',
+						'data-mention-admin': 'true',
 					},
 				},
 			};

@@ -211,7 +211,7 @@ function AgentSettingsPage() {
 						onChange={(e) => setReportsTo(e.target.value)}
 						className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
 					>
-						<option value="">None (Board)</option>
+						<option value="">None (Admin)</option>
 						{otherAgents.map((a) => (
 							<option key={a.id} value={a.id}>
 								{a.title}

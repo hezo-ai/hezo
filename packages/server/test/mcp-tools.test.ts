@@ -100,7 +100,7 @@ async function insertTaskDirect(assigneeId: string, title: string): Promise<stri
 	return res.rows[0].id;
 }
 
-// Helper: call MCP tool via /mcp endpoint with board token
+// Helper: call MCP tool via /mcp endpoint with admin token
 async function callToolViaMcp(toolName: string, args: Record<string, unknown>): Promise<unknown> {
 	const res = await app.request('/mcp', {
 		method: 'POST',
@@ -207,16 +207,16 @@ describe('MCP tool: verifyTeamAccess (direct DB tests)', () => {
 		expect(agentAuth.teamId).not.toBe(teamId);
 	});
 
-	it('board superuser has access to any team', async () => {
+	it('admin superuser has access to any team', async () => {
 		const superuserAuth: AuthInfo = {
-			type: AuthType.Board,
+			type: AuthType.Admin,
 			userId: 'test-user-id',
 			isSuperuser: true,
 		};
 		expect(superuserAuth.isSuperuser).toBe(true);
 	});
 
-	it('board non-superuser needs membership check', async () => {
+	it('admin non-superuser needs membership check', async () => {
 		// Create a non-superuser who is NOT a member of teamB
 		const userRes = await db.query<{ id: string }>(
 			"INSERT INTO users (display_name, is_superuser) VALUES ('NoAccess User', false) RETURNING id",
@@ -483,7 +483,7 @@ describe('MCP endpoint: tool call integration', () => {
 			assignee_id: agentId,
 		})) as { id: string };
 
-		// Board closes the task first.
+		// Admin closes the task first.
 		await callToolViaMcp('update_task', {
 			team_id: teamId,
 			task_id: created.id,
@@ -495,14 +495,14 @@ describe('MCP endpoint: tool call integration', () => {
 			task_id: created.id,
 			status: 'backlog',
 		})) as { error?: string };
-		expect(result.error).toMatch(/board/i);
+		expect(result.error).toMatch(/admin/i);
 
 		const bypass = (await callUpdateTaskAsAgent({
 			team_id: teamId,
 			task_id: created.id,
 			status: 'in_progress',
 		})) as { error?: string };
-		expect(bypass.error).toMatch(/board/i);
+		expect(bypass.error).toMatch(/admin/i);
 	});
 
 	it('update_task via MCP as agent can still set non-terminal statuses', async () => {
@@ -985,14 +985,14 @@ describe('MCP tool: set_agent_summary and set_team_summary', () => {
 		const targetId = target.rows[0].id;
 
 		await db.query('UPDATE member_agents SET summary = $1 WHERE id = $2', [
-			'Board-written summary.',
+			'Admin-written summary.',
 			targetId,
 		]);
 		const row = await db.query<{ summary: string }>(
 			'SELECT summary FROM member_agents WHERE id = $1',
 			[targetId],
 		);
-		expect(row.rows[0].summary).toBe('Board-written summary.');
+		expect(row.rows[0].summary).toBe('Admin-written summary.');
 
 		// Length cap: 1000 chars
 		const longSummary = 'x'.repeat(1100);

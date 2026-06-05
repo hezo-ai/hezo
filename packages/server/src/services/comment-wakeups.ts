@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { BOARD_MENTION_SLUG, CommentContentType, WakeupSource, wsRoom } from '@hezo/shared';
+import { ADMIN_MENTION_SLUG, CommentContentType, WakeupSource, wsRoom } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
 import { extractMentionSlugs } from '../lib/mentions';
 import { logger } from '../logger';
@@ -47,15 +47,15 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 	const wakeupPromises: Array<Promise<unknown>> = [];
 
 	for (const slug of extractMentionSlugs(content)) {
-		if (slug === BOARD_MENTION_SLUG) {
-			await fireBoardMention({
+		if (slug === ADMIN_MENTION_SLUG) {
+			await fireAdminMention({
 				db,
 				teamId,
 				taskId,
 				commentId,
 				authorUserId: authorUserId ?? null,
 				wsManager,
-			}).catch((e) => log.error('Failed to fan out @board mention:', e));
+			}).catch((e) => log.error('Failed to fan out @admin mention:', e));
 			continue;
 		}
 		const mentioned = await db.query<{ id: string }>(
@@ -68,7 +68,7 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 		const mentionedId = mentioned.rows[0].id;
 		if (mentionedId === authorMemberId) continue;
 		mentionedAgentIds.add(mentionedId);
-		const idempotencyKey = `mention:${taskId}:${mentionedId}:${authorMemberId ?? 'board'}`;
+		const idempotencyKey = `mention:${taskId}:${mentionedId}:${authorMemberId ?? 'admin'}`;
 		wakeupPromises.push(
 			createWakeup(
 				db,
@@ -186,7 +186,7 @@ async function fireExplicitReplyWakeup(ctx: ReplyWakeupCtx): Promise<void> {
 	}
 }
 
-interface FireBoardMentionParams {
+interface FireAdminMentionParams {
 	db: PGlite;
 	teamId: string;
 	taskId: string;
@@ -195,18 +195,18 @@ interface FireBoardMentionParams {
 	wsManager?: WebSocketManager;
 }
 
-async function fireBoardMention(params: FireBoardMentionParams): Promise<void> {
+async function fireAdminMention(params: FireAdminMentionParams): Promise<void> {
 	const { db, teamId, taskId, commentId, authorUserId, wsManager } = params;
 
-	const boardUsers = await db.query<{ user_id: string }>(
+	const adminUsers = await db.query<{ user_id: string }>(
 		`SELECT mu.user_id FROM member_users mu
 		 JOIN members m ON m.id = mu.id
-		 WHERE m.team_id = $1 AND mu.role = 'board'`,
+		 WHERE m.team_id = $1 AND mu.role = 'admin'`,
 		[teamId],
 	);
-	if (boardUsers.rows.length === 0) return;
+	if (adminUsers.rows.length === 0) return;
 
-	const recipients = boardUsers.rows.map((r) => r.user_id).filter((uid) => uid !== authorUserId);
+	const recipients = adminUsers.rows.map((r) => r.user_id).filter((uid) => uid !== authorUserId);
 	if (recipients.length === 0) return;
 
 	const inserted = await db.query<{
@@ -218,7 +218,7 @@ async function fireBoardMention(params: FireBoardMentionParams): Promise<void> {
 		created_at: string;
 		read_at: string | null;
 	}>(
-		`INSERT INTO board_mentions (team_id, task_id, comment_id, user_id)
+		`INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id)
 		 SELECT $1::uuid, $2::uuid, $3::uuid, uid
 		 FROM UNNEST($4::uuid[]) AS uid
 		 ON CONFLICT (comment_id, user_id) DO NOTHING
@@ -231,7 +231,7 @@ async function fireBoardMention(params: FireBoardMentionParams): Promise<void> {
 		broadcastRowChange(
 			wsManager,
 			wsRoom.team(teamId),
-			'board_mentions',
+			'admin_mentions',
 			'INSERT',
 			row as unknown as Record<string, unknown>,
 		);

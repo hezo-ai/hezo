@@ -80,6 +80,32 @@ describe('teams CRUD', () => {
 		expect(slugs).toEqual(['captain', 'coach']);
 	});
 
+	it('exposes the team type (primary template name) on reads', async () => {
+		const createRes = await app.request('/api/teams', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Typed Team Co', template_id: builtinTypeId }),
+		});
+		const created = (await createRes.json()).data;
+
+		const getRes = await app.request(`/api/teams/${created.id}`, { headers: authHeader(token) });
+		expect((await getRes.json()).data.primary_template_name).toBe('Startup');
+
+		const listRes = await app.request('/api/teams', { headers: authHeader(token) });
+		const listed = (await listRes.json()).data.find((t: { id: string }) => t.id === created.id);
+		expect(listed.primary_template_name).toBe('Startup');
+
+		// A team created without a template has no type.
+		const blankRes = await app.request('/api/teams', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Typeless Team Co' }),
+		});
+		const blank = (await blankRes.json()).data;
+		const blankGet = await app.request(`/api/teams/${blank.id}`, { headers: authHeader(token) });
+		expect((await blankGet.json()).data.primary_template_name).toBeNull();
+	});
+
 	it('lists teams with counts', async () => {
 		const res = await app.request('/api/teams', {
 			headers: authHeader(token),
@@ -214,7 +240,7 @@ describe('template-based team creation', () => {
 				name: 'Research Lab',
 				description: 'Research-focused team',
 				agent_types: [
-					{ agent_type_id: captain.id, reports_to_slug: 'board', sort_order: 0 },
+					{ agent_type_id: captain.id, reports_to_slug: 'admin', sort_order: 0 },
 					{ agent_type_id: researcher.id, reports_to_slug: 'captain', sort_order: 1 },
 				],
 			}),

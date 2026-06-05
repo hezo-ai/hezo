@@ -21,30 +21,30 @@ export function extractTaskIdentifiers(text: string | null | undefined): string[
 }
 
 async function resolveActorName(db: PGlite, actorMemberId: string | null): Promise<string> {
-	if (!actorMemberId) return 'Board';
+	if (!actorMemberId) return 'Admin';
 	const r = await db.query<{ name: string | null }>(
-		`SELECT COALESCE(ma.title, NULLIF(m.display_name, ''), 'Board') AS name
+		`SELECT COALESCE(ma.title, NULLIF(m.display_name, ''), 'Admin') AS name
 		   FROM members m LEFT JOIN member_agents ma ON ma.id = m.id
 		  WHERE m.id = $1`,
 		[actorMemberId],
 	);
-	return r.rows[0]?.name ?? 'Board';
+	return r.rows[0]?.name ?? 'Admin';
 }
 
 interface ActorInfo {
 	name: string;
-	kind: 'agent' | 'user' | 'board';
+	kind: 'agent' | 'user' | 'admin';
 	slug: string | null;
 }
 
 async function resolveActor(db: PGlite, actorMemberId: string | null): Promise<ActorInfo> {
-	if (!actorMemberId) return { name: 'Board', kind: 'board', slug: null };
+	if (!actorMemberId) return { name: 'Admin', kind: 'admin', slug: null };
 	const r = await db.query<{
 		name: string | null;
 		member_type: string | null;
 		agent_slug: string | null;
 	}>(
-		`SELECT COALESCE(ma.title, NULLIF(m.display_name, ''), 'Board') AS name,
+		`SELECT COALESCE(ma.title, NULLIF(m.display_name, ''), 'Admin') AS name,
 		        m.member_type,
 		        ma.slug AS agent_slug
 		   FROM members m
@@ -53,9 +53,9 @@ async function resolveActor(db: PGlite, actorMemberId: string | null): Promise<A
 		[actorMemberId],
 	);
 	const row = r.rows[0];
-	if (!row) return { name: 'Board', kind: 'board', slug: null };
+	if (!row) return { name: 'Admin', kind: 'admin', slug: null };
 	if (row.agent_slug) return { name: row.name ?? 'Agent', kind: 'agent', slug: row.agent_slug };
-	return { name: row.name ?? 'Board', kind: 'user', slug: null };
+	return { name: row.name ?? 'Admin', kind: 'user', slug: null };
 }
 
 export interface CascadeContext {

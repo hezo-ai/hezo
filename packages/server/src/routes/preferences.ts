@@ -61,7 +61,7 @@ preferencesRoutes.post('/teams/:teamId/preferences/restore', async (c) => {
 
 	const auth = c.get('auth');
 	if (auth.type === AuthType.Agent) {
-		return err(c, 'FORBIDDEN', 'Only board members can restore revisions', 403);
+		return err(c, 'FORBIDDEN', 'Only the admin can restore revisions', 403);
 	}
 
 	const db = c.get('db');

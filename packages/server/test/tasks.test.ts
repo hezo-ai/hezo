@@ -621,7 +621,7 @@ describe('tasks CRUD', () => {
 		});
 		expect(reopenRes.status).toBe(403);
 		const body = await reopenRes.json();
-		expect(body.error.message).toMatch(/board/i);
+		expect(body.error.message).toMatch(/admin/i);
 
 		const bypassRes = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
 			method: 'PATCH',
@@ -631,13 +631,13 @@ describe('tasks CRUD', () => {
 		expect(bypassRes.status).toBe(403);
 	});
 
-	it('allows a board member to close and re-open an task', async () => {
+	it('allows a the admin to close and re-open an task', async () => {
 		const createRes = await app.request(`/api/teams/${teamId}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Board close/reopen target',
+				title: 'Admin close/reopen target',
 				assignee_id: agentId,
 			}),
 		});

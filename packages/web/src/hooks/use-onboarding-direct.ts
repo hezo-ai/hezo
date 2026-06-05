@@ -10,6 +10,9 @@ export interface OnboardingDirectInput {
 }
 
 export interface OnboardingDirectResult {
+	// The first project gets its own team (projects-primary); navigate using it.
+	team_id: string;
+	team_slug: string;
 	project_id: string;
 	project_slug: string;
 	planning_task_id: string;

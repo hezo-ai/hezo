@@ -36,7 +36,7 @@ const SHARED_INSTRUCTIONS = `
 - **What \`@<slug>\` does.** An \`@<slug>\` in a comment creates a mention-wakeup for that agent **on the ticket where the comment was posted**. Use it only when you want that agent to act on *this* ticket — answering a question you've asked, taking a decision you're blocked on, or otherwise engaging here.
 - **Structural routing already wakes the recipient — don't \`@\` them on top of it.** When work has been routed to a teammate through any of the three structural channels — \`create_task\` with \`assignee_slug\`, \`blocked_by_task_ids\` that will unblock when this ticket goes terminal, or an existing dependent ticket assigned to them that the cascade unblock will release — the server is already wiring the wake on *their* ticket. An \`@<slug>\` in the comment here doesn't help them; it spawns a redundant mention-source wakeup on **this** ticket, which is no longer theirs to act on. Write the reference as \`@@<slug>\` instead.
 - **Handoff comments specifically.** If your comment is "I'm done with this; the next role's tickets are now unblocked / are now assigned to them," reference the next role as \`@@<slug>\`, not \`@<slug>\`. Then mark this ticket terminal — the cascade unblock (or the existing assignment) is what wakes them, on the ticket the work lives on. Naming them with \`@\` here wakes them on the wrong ticket. Most common antipattern: an "Assignee" column in a plan-fan-out table written with \`@<slug>\` — every row wakes that agent on this ticket for no reason.
-- **Use \`@@<slug>\` for passive references.** When you need to *name* a teammate in prose, a plan table, or a wrap-up / handoff summary without pinging them, write \`@@<slug>\`. The double-\`@\` form renders as the same teammate chip as \`@<slug>\` in the board UI but is not extracted as a mention, so no wakeup fires.
+- **Use \`@@<slug>\` for passive references.** When you need to *name* a teammate in prose, a plan table, or a wrap-up / handoff summary without pinging them, write \`@@<slug>\`. The double-\`@\` form renders as the same teammate chip as \`@<slug>\` in the admin UI but is not extracted as a mention, so no wakeup fires.
 - **Rubric.** "Hey @architect, please confirm the spec here" — active, wakes architect on this ticket → \`@\`. "BE-2 is assigned to @@researcher, BE-3 to @@product-lead" — passive, just naming who owns what → \`@@\`. "Approved. @@architect — BE-4 and BE-5 unblock now" — passive handoff, the cascade does the wake → \`@@\`.
 
 ### Knowledge Maintenance
@@ -148,7 +148,7 @@ export async function resolveSystemPrompt(
 	// The agent calls get_skill(slug) to load a skill's content on demand.
 	if (resolved.includes('{{skills_context}}')) {
 		const dbSkills = await db.query<{ name: string; slug: string; description: string }>(
-			'SELECT name, slug, description FROM skills WHERE team_id = $1 AND is_active = true ORDER BY name',
+			'SELECT name, slug, description FROM skills WHERE (team_id = $1 OR team_id IS NULL) AND is_active = true ORDER BY name',
 			[ctx.teamId],
 		);
 		let skillsText = 'No skills in the team skills database yet.';

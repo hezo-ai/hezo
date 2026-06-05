@@ -8,7 +8,7 @@ import { generateMasterKey, MasterKeyManager } from '../src/crypto/master-key';
 import { loadAgentRoles } from '../src/db/agent-roles';
 import { seedBuiltins } from '../src/db/seed';
 import type { Env } from '../src/lib/types';
-import { signBoardJwt } from '../src/middleware/auth';
+import { signAdminJwt } from '../src/middleware/auth';
 import { buildApp } from '../src/startup';
 import { safeClose } from './helpers';
 import { createStubDocker, createTestProject } from './helpers/app';
@@ -34,7 +34,7 @@ beforeAll(async () => {
 	const userResult = await db.query<{ id: string }>(
 		"INSERT INTO users (display_name, is_superuser) VALUES ('Test Admin', true) RETURNING id",
 	);
-	token = await signBoardJwt(masterKeyManager, userResult.rows[0].id);
+	token = await signAdminJwt(masterKeyManager, userResult.rows[0].id);
 
 	const teamRes = await app.request('/api/teams', {
 		method: 'POST',

@@ -184,12 +184,12 @@ describe('REST reactions endpoints', () => {
 		expect(arc.status).toBe(200);
 		expect((arc.result as { error?: string }).error).toBeUndefined();
 
-		// Board user reacts via REST
+		// Admin user reacts via REST
 		const putUrl = `/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/${ReactionKind.Ack}`;
 		await app.request(putUrl, { method: 'PUT', headers: authHeader(token) });
 		expect(await reactionsRowCount(commentId)).toBe(2);
 
-		// Board user removes their own — architect's stays
+		// Admin user removes their own — architect's stays
 		const del = await app.request(putUrl, { method: 'DELETE', headers: authHeader(token) });
 		expect(del.status).toBe(200);
 		expect(await reactionsRowCount(commentId)).toBe(1);

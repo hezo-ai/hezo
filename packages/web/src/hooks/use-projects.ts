@@ -89,6 +89,32 @@ export interface ProjectIntakeResponse {
 	approval_id: string;
 }
 
+export interface ProjectWithTeamResponse extends ProjectIntakeResponse {
+	team_id: string;
+	team_slug: string;
+}
+
+/**
+ * Projects-primary creation: a project owns its own team. Calls the instance
+ * POST /api/projects, which provisions a fresh team (roster from the chosen
+ * type) and opens the project intake on it. See .dev/per-project-teams.md.
+ */
+export function useCreateProjectWithTeam() {
+	return useMutation({
+		mutationFn: (data: {
+			name: string;
+			description: string;
+			template_id?: string;
+			initial_prd?: string;
+			task_prefix?: string;
+		}) => api.post<ProjectWithTeamResponse>('/api/projects', data),
+		onSuccess: () => {
+			// The new team shows up in the rail / team list.
+			queryClient.invalidateQueries({ queryKey: ['teams'] });
+		},
+	});
+}
+
 export function useCreateProject(teamId: string) {
 	return useMutation({
 		mutationFn: (data: {

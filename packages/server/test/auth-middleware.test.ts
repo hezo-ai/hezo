@@ -8,8 +8,8 @@ import type { Env } from '../src/lib/types';
 import {
 	loadAdminAuth,
 	safeCompareHex,
+	signAdminJwt,
 	signAgentJwt,
-	signBoardJwt,
 	verifyToken,
 } from '../src/middleware/auth';
 import { safeClose } from './helpers';
@@ -23,7 +23,7 @@ import {
 
 let app: Hono<Env>;
 let db: PGlite;
-let boardToken: string;
+let adminToken: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let agentId: string;
@@ -32,22 +32,22 @@ beforeAll(async () => {
 	const ctx = await createTestApp();
 	app = ctx.app;
 	db = ctx.db;
-	boardToken = ctx.token;
+	adminToken = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
 	// Create a team to get agents
-	const typesRes = await app.request('/api/team-templates', { headers: authHeader(boardToken) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(adminToken) });
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
 	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
-		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Auth Test Co', template_id: typeId }),
 	});
 	teamId = (await teamRes.json()).data.id;
 
 	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
-		headers: authHeader(boardToken),
+		headers: authHeader(adminToken),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 });
@@ -73,20 +73,20 @@ describe('safeCompareHex', () => {
 	});
 });
 
-describe('signBoardJwt + verifyToken', () => {
-	it('signs and verifies a board JWT', async () => {
+describe('signAdminJwt + verifyToken', () => {
+	it('signs and verifies a admin JWT', async () => {
 		const userId = (
 			await db.query<{ id: string }>(
 				"INSERT INTO users (display_name, is_superuser) VALUES ('JWT User', false) RETURNING id",
 			)
 		).rows[0].id;
 
-		const token = await signBoardJwt(masterKeyManager, userId);
+		const token = await signAdminJwt(masterKeyManager, userId);
 		const auth = await verifyToken(token, db, masterKeyManager);
 
 		expect(auth).not.toBeNull();
-		expect(auth!.type).toBe(AuthType.Board);
-		if (auth!.type === AuthType.Board) {
+		expect(auth!.type).toBe(AuthType.Admin);
+		if (auth!.type === AuthType.Admin) {
 			expect(auth!.userId).toBe(userId);
 			expect(auth!.isSuperuser).toBe(false);
 		}
@@ -99,11 +99,11 @@ describe('signBoardJwt + verifyToken', () => {
 			)
 		).rows[0].id;
 
-		const token = await signBoardJwt(masterKeyManager, userId);
+		const token = await signAdminJwt(masterKeyManager, userId);
 		const auth = await verifyToken(token, db, masterKeyManager);
 
 		expect(auth).not.toBeNull();
-		if (auth!.type === AuthType.Board) {
+		if (auth!.type === AuthType.Admin) {
 			expect(auth!.isSuperuser).toBe(true);
 		}
 	});
@@ -251,7 +251,7 @@ describe('verifyToken with API key', () => {
 	beforeAll(async () => {
 		const res = await app.request(`/api/teams/${teamId}/api-keys`, {
 			method: 'POST',
-			headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'test-key' }),
 		});
 		const body = await res.json();
@@ -318,9 +318,9 @@ describe('authMiddleware (via HTTP)', () => {
 		expect(body.error.code).toBe('UNAUTHORIZED');
 	});
 
-	it('allows API requests with valid board token', async () => {
+	it('allows API requests with valid admin token', async () => {
 		const res = await app.request('/api/teams', {
-			headers: authHeader(boardToken),
+			headers: authHeader(adminToken),
 		});
 		expect(res.status).toBe(200);
 	});
@@ -344,11 +344,11 @@ describe('authMiddleware (via HTTP)', () => {
 });
 
 describe('loadAdminAuth', () => {
-	it('returns Board/superuser auth for the bootstrap admin', async () => {
+	it('returns Admin/superuser auth for the bootstrap admin', async () => {
 		const auth = await loadAdminAuth(db);
 		expect(auth).not.toBeNull();
-		expect(auth!.type).toBe(AuthType.Board);
-		if (auth!.type === AuthType.Board) {
+		expect(auth!.type).toBe(AuthType.Admin);
+		if (auth!.type === AuthType.Admin) {
 			expect(auth!.isSuperuser).toBe(true);
 			expect(typeof auth!.userId).toBe('string');
 		}
@@ -398,7 +398,7 @@ describe('authMiddleware on a locked server', () => {
 describe('requireTeamAccess (via route)', () => {
 	it('rejects access to nonexistent team by slug', async () => {
 		const res = await app.request('/api/teams/nonexistent-slug/agents', {
-			headers: authHeader(boardToken),
+			headers: authHeader(adminToken),
 		});
 		expect(res.status).toBe(404);
 	});
@@ -413,7 +413,7 @@ describe('requireSuperuser (via route)', () => {
 			)
 		).rows[0].id;
 
-		const normalToken = await signBoardJwt(masterKeyManager, userId);
+		const normalToken = await signAdminJwt(masterKeyManager, userId);
 
 		// team-templates POST requires superuser (if such an endpoint exists)
 		// Instead, verify that the token works but user has limited access

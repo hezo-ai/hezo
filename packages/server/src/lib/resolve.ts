@@ -10,7 +10,7 @@ export async function resolveActorMemberId(
 	teamId: string,
 ): Promise<string | null> {
 	if (auth.type === AuthType.Agent) return auth.memberId;
-	if (auth.type === AuthType.Board) {
+	if (auth.type === AuthType.Admin) {
 		const result = await db.query<{ id: string }>(
 			'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.team_id = $2',
 			[auth.userId, teamId],

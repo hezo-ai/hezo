@@ -117,7 +117,7 @@ export async function createProjectWithPlanningTask(
 		);
 
 		const initialPrdNote = initialPrd
-			? `\n\n> **Note:** The board has provided an initial requirements document saved as \`initial-prd.md\` in this project's docs. Direct the Researcher and Product Lead to consult this document as a starting point for research and the formal PRD.`
+			? `\n\n> **Note:** The admin has provided an initial requirements document saved as \`initial-prd.md\` in this project's docs. Direct the Researcher and Product Lead to consult this document as a starting point for research and the formal PRD.`
 			: '';
 
 		const taskBody = `## Draft the execution plan for this new project
@@ -132,7 +132,7 @@ ${projectDescription}${initialPrdNote}
 
 ### Your task
 
-1. Read the description above. If anything is ambiguous, post a clarifying comment on this task for the board.
+1. Read the description above. If anything is ambiguous, post a clarifying comment on this task for the admin.
 2. Use \`list_agents\` / \`get_agent_system_prompt\` to recall who is on the team.
 3. Break the work into 3-8 top-level milestones. Write a short scope note for each.
 4. Post the plan as a comment on this task. Then create the milestone tickets with \`create_task\`, choosing the parent based on what each milestone produces:

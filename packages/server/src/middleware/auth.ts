@@ -77,7 +77,7 @@ export async function verifyToken(
 				[payload.user_id],
 			);
 			const isSuperuser = userResult.rows[0]?.is_superuser ?? false;
-			return { type: AuthType.Board, userId: payload.user_id as string, isSuperuser };
+			return { type: AuthType.Admin, userId: payload.user_id as string, isSuperuser };
 		}
 		return null;
 	} catch {
@@ -133,10 +133,10 @@ export async function loadAdminAuth(db: PGlite): Promise<AuthInfo | null> {
 	);
 	const userId = result.rows[0]?.id;
 	if (!userId) return null;
-	return { type: AuthType.Board, userId, isSuperuser: true };
+	return { type: AuthType.Admin, userId, isSuperuser: true };
 }
 
-export async function signBoardJwt(
+export async function signAdminJwt(
 	masterKeyManager: { getJwtKey: () => Promise<Buffer> },
 	userId: string,
 ): Promise<string> {
@@ -264,7 +264,7 @@ export async function requireTeamAccessForResource(
 
 export function requireSuperuser(c: Context<Env>): Response | null {
 	const auth = c.get('auth');
-	if (auth.type !== AuthType.Board || !auth.isSuperuser) {
+	if (auth.type !== AuthType.Admin || !auth.isSuperuser) {
 		return c.json({ error: { code: 'FORBIDDEN', message: 'Superuser access required' } }, 403);
 	}
 	return null;

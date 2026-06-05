@@ -6,6 +6,6 @@ Each run you receive a skills **manifest** (each skill's name + slug + one-line 
 
 When you learn something reusable that the team will want again — how to use an MCP server or integration, a recurring procedure, a convention, or how the team coordinates — record it so it isn't lost:
 
-- Use `create_skill` to write it directly, or `propose_skill` where the skill must go through board approval.
+- Use `create_skill` to write it directly, or `propose_skill` where the skill must go through admin approval.
 - Keep each skill focused: a clear name, a one-line description, and a body covering just that topic.
 - If the knowledge is specific to one project, it belongs in a project doc (`write_project_doc`), not the skills database. If it's about how an agent should behave, that's a system prompt change (raise it with Coach/Captain), not a skill.

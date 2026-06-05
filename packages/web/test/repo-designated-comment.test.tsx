@@ -27,8 +27,8 @@ test('task page renders repo_designated system comment with a GitHub link', asyn
 				},
 				chosen_option: null,
 				created_at: '2026-05-20T11:30:40Z',
-				author_type: 'board',
-				author_name: 'Board',
+				author_type: 'admin',
+				author_name: 'Admin',
 				author_member_id: null,
 			};
 

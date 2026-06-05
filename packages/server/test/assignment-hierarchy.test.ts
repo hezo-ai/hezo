@@ -210,11 +210,11 @@ describe('MCP create_task: agent assignment hierarchy', () => {
 		expect(result.error).toContain('@engineer');
 	});
 
-	it('board user can create_task assigned to anyone (rule does not apply to humans)', async () => {
+	it('the admin can create_task assigned to anyone (rule does not apply to humans)', async () => {
 		const result = await callTool(token, 'create_task', {
 			team_id: teamId,
 			project_id: projectId,
-			title: 'Board → Engineer (cross-hierarchy, allowed for humans)',
+			title: 'Admin → Engineer (cross-hierarchy, allowed for humans)',
 			assignee_id: engineerId,
 		});
 		expect(result.error).toBeUndefined();
@@ -298,13 +298,13 @@ describe('MCP update_task: agent assignment hierarchy', () => {
 		expect(result.error).toBeUndefined();
 	});
 
-	it('board user can reassign across the hierarchy', async () => {
-		// Board mints the ticket assigned to engineer, then reassigns it to
+	it('the admin can reassign across the hierarchy', async () => {
+		// Admin mints the ticket assigned to engineer, then reassigns it to
 		// product-lead even though engineer→product-lead is not a hierarchy edge.
 		const task = await callTool(token, 'create_task', {
 			team_id: teamId,
 			project_id: projectId,
-			title: 'Board reassign across hierarchy',
+			title: 'Admin reassign across hierarchy',
 			assignee_id: engineerId,
 		});
 		const result = await callTool(token, 'update_task', {

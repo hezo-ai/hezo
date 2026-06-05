@@ -54,7 +54,7 @@ CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'cert
 CREATE TYPE grant_scope AS ENUM ('single', 'project', 'team');
 CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'team_template', 'project_creation', 'strategy', 'plan_review', 'deploy_production', 'designated_repo_request', 'skill_proposal');
 CREATE TYPE approval_status AS ENUM ('pending', 'approved', 'denied');
-CREATE TYPE audit_actor_type AS ENUM ('board', 'agent', 'system');
+CREATE TYPE audit_actor_type AS ENUM ('admin', 'agent', 'system');
 CREATE TYPE repo_host_type AS ENUM ('github');
 CREATE TYPE platform_type AS ENUM ('github', 'gmail', 'gitlab', 'stripe', 'posthog', 'railway', 'vercel', 'digitalocean', 'x', 'anthropic', 'openai', 'google');
 CREATE TYPE connection_status AS ENUM ('active', 'expired', 'disconnected');
@@ -62,7 +62,7 @@ CREATE TYPE wakeup_source AS ENUM ('timer', 'assignment', 'on_demand', 'mention'
 CREATE TYPE wakeup_status AS ENUM ('queued', 'claimed', 'completed', 'failed', 'skipped', 'coalesced', 'deferred', 'cancelled');
 CREATE TYPE heartbeat_run_status AS ENUM ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'timed_out');
 CREATE TYPE plugin_status AS ENUM ('installed', 'enabled', 'disabled', 'error');
-CREATE TYPE membership_role AS ENUM ('board', 'member');
+CREATE TYPE membership_role AS ENUM ('admin', 'member');
 CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
 CREATE TYPE agent_type_source AS ENUM ('builtin', 'custom', 'remote');
 CREATE TYPE team_template_source AS ENUM ('builtin', 'custom', 'marketplace');
@@ -335,7 +335,9 @@ ALTER TABLE projects ADD CONSTRAINT fk_projects_designated_repo
 
 CREATE TABLE secrets (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id          UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    -- team_id NULL = an instance-level credential, available to every team's
+    -- egress (still bounded by allowed_hosts). Managed by the Admin (superuser).
+    team_id          UUID REFERENCES teams(id) ON DELETE CASCADE,
     project_id       UUID REFERENCES projects(id) ON DELETE CASCADE,
     name             TEXT NOT NULL,
     encrypted_value  TEXT NOT NULL,
@@ -349,6 +351,8 @@ CREATE TABLE secrets (
 );
 
 CREATE INDEX idx_secrets_team ON secrets(team_id);
+-- Instance-level credentials (team_id NULL) are unique by name across the instance.
+CREATE UNIQUE INDEX idx_secrets_instance_name ON secrets (name) WHERE team_id IS NULL;
 CREATE INDEX idx_secrets_project ON secrets(project_id);
 
 -------------------------------------------------------------------------------
@@ -412,7 +416,8 @@ CREATE TYPE mcp_install_status AS ENUM ('pending', 'installed', 'failed');
 --                   provision the server under /workspace/.hezo/mcp/<name>/.
 CREATE TABLE mcp_connections (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id              UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    -- team_id NULL = an instance-level connector, available to every team.
+    team_id              UUID REFERENCES teams(id) ON DELETE CASCADE,
     project_id           UUID REFERENCES projects(id) ON DELETE CASCADE,
     name                 TEXT NOT NULL,
     display_name         TEXT,
@@ -439,6 +444,8 @@ CREATE INDEX idx_mcp_connections_pending_auth
 CREATE INDEX idx_mcp_connections_team ON mcp_connections(team_id);
 CREATE INDEX idx_mcp_connections_project ON mcp_connections(project_id);
 CREATE INDEX idx_mcp_connections_oauth ON mcp_connections(oauth_connection_id) WHERE oauth_connection_id IS NOT NULL;
+-- Instance-level connectors (team_id NULL) are unique by name across the instance.
+CREATE UNIQUE INDEX idx_mcp_connections_instance_name ON mcp_connections (name) WHERE team_id IS NULL;
 
 -------------------------------------------------------------------------------
 -- TEAM SSH KEYS
@@ -814,7 +821,8 @@ CREATE INDEX idx_comment_attachments_comment ON comment_attachments(comment_id);
 
 CREATE TABLE skills (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id               UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    -- team_id NULL = an instance-level skill, shared across every team.
+    team_id               UUID REFERENCES teams(id) ON DELETE CASCADE,
     name                  TEXT NOT NULL,
     slug                  TEXT NOT NULL,
     description           TEXT NOT NULL DEFAULT '',
@@ -831,6 +839,8 @@ CREATE TABLE skills (
     UNIQUE(team_id, slug)
 );
 
+-- Instance-level skills (team_id NULL) are unique by slug across the instance.
+CREATE UNIQUE INDEX idx_skills_instance_slug ON skills (slug) WHERE team_id IS NULL;
 CREATE INDEX idx_skills_team ON skills(team_id);
 CREATE INDEX idx_skills_embedding ON skills USING hnsw (embedding vector_cosine_ops);
 
@@ -1022,7 +1032,7 @@ CREATE TABLE notification_preferences (
 -- BOARD MENTIONS
 -------------------------------------------------------------------------------
 
-CREATE TABLE board_mentions (
+CREATE TABLE admin_mentions (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id     UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     task_id     UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -1034,17 +1044,17 @@ CREATE TABLE board_mentions (
     UNIQUE (comment_id, user_id)
 );
 
-CREATE INDEX idx_board_mentions_user_unread
-    ON board_mentions (user_id, team_id, created_at DESC)
+CREATE INDEX idx_admin_mentions_user_unread
+    ON admin_mentions (user_id, team_id, created_at DESC)
     WHERE read_at IS NULL;
-CREATE INDEX idx_board_mentions_team_unread
-    ON board_mentions (team_id, created_at DESC)
+CREATE INDEX idx_admin_mentions_team_unread
+    ON admin_mentions (team_id, created_at DESC)
     WHERE read_at IS NULL;
-CREATE INDEX idx_board_mentions_user_active
-    ON board_mentions (user_id, team_id, created_at DESC)
+CREATE INDEX idx_admin_mentions_user_active
+    ON admin_mentions (user_id, team_id, created_at DESC)
     WHERE archived_at IS NULL;
-CREATE INDEX idx_board_mentions_user_archived
-    ON board_mentions (user_id, team_id, created_at DESC)
+CREATE INDEX idx_admin_mentions_user_archived
+    ON admin_mentions (user_id, team_id, created_at DESC)
     WHERE archived_at IS NOT NULL;
 
 -------------------------------------------------------------------------------

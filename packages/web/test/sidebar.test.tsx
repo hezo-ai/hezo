@@ -4,7 +4,7 @@ import { getTestContext, renderApp } from './helpers/render';
 import { type SeededWorkspace, seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 function getNav(container: HTMLElement): HTMLElement {
-	const nav = container.querySelector('nav');
+	const nav = container.querySelector('nav[aria-label="Sidebar"]');
 	if (!nav) throw new Error('nav not mounted');
 	return nav;
 }
@@ -145,7 +145,7 @@ test('Projects section lists projects with (Internal) pinned last and click navi
 	// trips on duplicates — scope to the nav element).
 	const deadline = Date.now() + 20_000;
 	while (Date.now() < deadline) {
-		const navEl = container.querySelector('nav');
+		const navEl = container.querySelector('nav[aria-label="Sidebar"]');
 		const text = navEl?.textContent ?? '';
 		if (text.includes('(Internal)') && text.includes('Aardvark') && text.includes('Zebra')) break;
 		await new Promise((r) => setTimeout(r, 100));
@@ -300,12 +300,12 @@ test('creating a project from the sidebar surfaces it in the sidebar after intak
 	await router.navigate({ to: '/teams/$teamId/projects', params: { teamId: ws.team.slug } });
 	const deadline = Date.now() + 20_000;
 	while (Date.now() < deadline) {
-		const navTxt = container.querySelector('nav')?.textContent ?? '';
+		const navTxt = container.querySelector('nav[aria-label="Sidebar"]')?.textContent ?? '';
 		if (navTxt.includes(sidebarProjectName)) return;
 		await new Promise((r) => setTimeout(r, 200));
 	}
 	throw new Error(
-		`project ${sidebarProjectName} did not appear in sidebar nav: ${container.querySelector('nav')?.textContent}`,
+		`project ${sidebarProjectName} did not appear in sidebar nav: ${container.querySelector('nav[aria-label="Sidebar"]')?.textContent}`,
 	);
 }, 60_000);
 

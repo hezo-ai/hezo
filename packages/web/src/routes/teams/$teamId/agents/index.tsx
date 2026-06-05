@@ -16,7 +16,7 @@ function TeamPage() {
 	if (isLoading)
 		return <div className="text-text-muted text-[13px] py-8 text-center">Loading...</div>;
 
-	const roots = orgChart?.board.children ?? [];
+	const roots = orgChart?.admin.children ?? [];
 	const hasMembers = roots.length > 0;
 
 	return (

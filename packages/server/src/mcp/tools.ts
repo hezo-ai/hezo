@@ -255,7 +255,7 @@ async function buildMcpCreateTaskCaller(
 ): Promise<CreateTaskCaller> {
 	const actorMemberId = await resolveActorMemberId(db, auth, teamId);
 	const caller: CreateTaskCaller = {
-		actorType: auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Board,
+		actorType: auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Admin,
 		actorMemberId,
 	};
 	if (auth.type === AuthType.Agent) {
@@ -292,7 +292,7 @@ async function verifyTeamAccess(
 		if (auth.teamId !== teamId) return 'Access denied: team mismatch';
 		return null;
 	}
-	if (auth.type === AuthType.Board) {
+	if (auth.type === AuthType.Admin) {
 		if (auth.isSuperuser) return null;
 		const result = await db.query(
 			'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.team_id = $2',
@@ -306,7 +306,7 @@ async function verifyTeamAccess(
 
 /**
  * For Agent auth without cross-project privilege, the run is scoped to a single
- * project. Reject any tool call referencing a different project's data. Board
+ * project. Reject any tool call referencing a different project's data. Admin
  * and ApiKey auth pass through — their team-level checks already cover them.
  */
 function assertProjectAccess(auth: AuthInfo, projectId: string): string | null {
@@ -355,7 +355,7 @@ export function registerTools(
 				const r = await db.query('SELECT * FROM teams WHERE id = $1', [auth.teamId]);
 				return r.rows;
 			}
-			if (auth.type === AuthType.Board) {
+			if (auth.type === AuthType.Admin) {
 				if (auth.isSuperuser) {
 					const r = await db.query('SELECT * FROM teams ORDER BY name');
 					return r.rows;
@@ -400,7 +400,7 @@ export function registerTools(
 			description: z.string().optional().describe('Team description'),
 		},
 		async (args, db, auth) => {
-			if (auth.type !== AuthType.Board || !auth.isSuperuser) {
+			if (auth.type !== AuthType.Admin || !auth.isSuperuser) {
 				return { error: 'Access denied: superuser required' };
 			}
 			const slug = (args.name as string)
@@ -680,7 +680,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_task',
-		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` — that wakes Coach for review, who will set the ticket to `closed` after the review passes. Agents other than Coach cannot set status to `closed` directly. Re-opening a closed task is board-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` — that wakes Coach for review, who will set the ticket to `closed` after the review passes. Agents other than Coach cannot set status to `closed` directly. Re-opening a closed task is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			team_id: z.string().describe('Team ID'),
 			task_id: z.string().describe('Task ID'),
@@ -690,7 +690,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'New status (backlog, in_progress, review, blocked, done, cancelled). To finish a ticket, set `done` — Coach will review and set it to `closed`. Setting `closed` directly is reserved for Coach. Once a task is `closed`, only board members can change its status again.',
+					'New status (backlog, in_progress, review, blocked, done, cancelled). To finish a ticket, set `done` — Coach will review and set it to `closed`. Setting `closed` directly is reserved for Coach. Once a task is `closed`, only the admin can change its status again.',
 				),
 			priority: z.string().optional().describe('New priority'),
 			assignee_id: z.string().optional().describe('New assignee ID'),
@@ -742,7 +742,7 @@ export function registerTools(
 				auth.type === AuthType.Agent &&
 				currentStatus === TaskStatus.Closed
 			) {
-				return { error: 'Only board members can re-open a closed task' };
+				return { error: 'Only the admin can re-open a closed task' };
 			}
 
 			if (
@@ -992,7 +992,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_hire_proposal',
-		'Revise the draft of a pending hire approval. Captain-only. Use this to expand or rewrite the system prompt, adjust role description, budget, heartbeat, or touches_code before board review. All fields are optional — pass only what you want to change.',
+		'Revise the draft of a pending hire approval. Captain-only. Use this to expand or rewrite the system prompt, adjust role description, budget, heartbeat, or touches_code before admin review. All fields are optional — pass only what you want to change.',
 		{
 			approval_id: z.string().describe('Hire approval ID'),
 			title: z.string().optional().describe('Updated role title'),
@@ -1203,7 +1203,7 @@ export function registerTools(
 	tool(
 		server,
 		'request_team_template_approval',
-		'Request board approval to provision agents from a team template onto this team AND (optionally) create the user project in one approval. Captain-only. Call after the board agrees to your recommendation. When `project_name` is set, the server creates the project automatically on approval and closes the onboarding intake ticket.',
+		'Request admin approval to provision agents from a team template onto this team AND (optionally) create the user project in one approval. Captain-only. Call after the admin agrees to your recommendation. When `project_name` is set, the server creates the project automatically on approval and closes the onboarding intake ticket.',
 		{
 			team_id: z.string().describe('Team ID'),
 			template_id: z.string().describe('Team template UUID from list_team_templates'),
@@ -1213,7 +1213,7 @@ export function registerTools(
 				.describe(
 					'Onboarding-intake Internal task id. The server closes this ticket once provisioning + project creation finish.',
 				),
-			rationale: z.string().describe('Why this template fits the work the board described'),
+			rationale: z.string().describe('Why this template fits the work the admin described'),
 			project_name: z
 				.string()
 				.optional()
@@ -1447,7 +1447,7 @@ export function registerTools(
 			const r = await db.query<Record<string, unknown>>(
 				`SELECT ic.id, ic.task_id, ic.author_member_id, ic.parent_comment_id,
 				        ic.content_type, ic.content, ic.chosen_option, ic.created_at,
-				        COALESCE(ma.title, m.display_name, 'Board') AS author_name
+				        COALESCE(ma.title, m.display_name, 'Admin') AS author_name
 				 FROM task_comments ic
 				 LEFT JOIN members m ON m.id = ic.author_member_id
 				 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
@@ -1634,7 +1634,7 @@ export function registerTools(
 				content,
 				contentType: CommentContentType.Text,
 				authorMemberId,
-				authorUserId: auth.type === AuthType.Board ? auth.userId : null,
+				authorUserId: auth.type === AuthType.Admin ? auth.userId : null,
 				authorRunId: auth.type === AuthType.Agent ? auth.runId : null,
 				parentCommentId,
 				wsManager,
@@ -2133,11 +2133,11 @@ export function registerTools(
 		db,
 	);
 
-	// System Prompt Management — read: any agent/board in same team; write: coach only
+	// System Prompt Management — read: any agent/admin in same team; write: coach only
 	tool(
 		server,
 		'get_agent_system_prompt',
-		"Read an agent's system prompt. Accessible by any agent or board user in the same team. Returns the resolved role doc by default — `{{…}}` placeholders substituted with the real team name, mission, manager, KB, project docs, and team context — so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt.",
+		"Read an agent's system prompt. Accessible by any agent or the admin in the same team. Returns the resolved role doc by default — `{{…}}` placeholders substituted with the real team name, mission, manager, KB, project docs, and team context — so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt.",
 		{
 			team_id: z.string().describe('Team ID'),
 			agent_id: z.string().describe('Target agent member ID'),
@@ -2153,7 +2153,7 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
-			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Board) {
+			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Admin) {
 				return { error: 'Access denied' };
 			}
 
@@ -2205,7 +2205,7 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, teamId);
 			if (denied) return { error: denied };
 
-			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Board) {
+			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Admin) {
 				return { error: 'Access denied' };
 			}
 
@@ -2242,7 +2242,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_agent_system_prompt',
-		'Apply a system prompt change for an agent. Callable by the Coach agent (for after-task learned-rules updates) or by the Captain of the same team (during team-coherence reviews). The change is applied immediately and a revision snapshot is stored so the board can restore previous versions.',
+		'Apply a system prompt change for an agent. Callable by the Coach agent (for after-task learned-rules updates) or by the Captain of the same team (during team-coherence reviews). The change is applied immediately and a revision snapshot is stored so the admin can restore previous versions.',
 		{
 			team_id: z.string().describe('Team ID'),
 			agent_id: z.string().describe('Target agent member ID'),
@@ -2297,7 +2297,7 @@ export function registerTools(
 	tool(
 		server,
 		'set_agent_summary',
-		'Save a short human-readable summary for an agent (≤1000 chars, single paragraph, plain prose). Callable by any agent in the same team or any board user; the Captain is the expected caller, but agents may also self-summarise.',
+		'Save a short human-readable summary for an agent (≤1000 chars, single paragraph, plain prose). Callable by any agent in the same team or any the admin; the Captain is the expected caller, but agents may also self-summarise.',
 		{
 			team_id: z.string().describe('Team ID'),
 			agent_id: z.string().describe('Target agent member ID'),
@@ -2307,7 +2307,7 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
-			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Board) {
+			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Admin) {
 				return { error: 'Access denied' };
 			}
 
@@ -2411,7 +2411,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_agent_team_context',
-		"Read an agent's stored team-relationships context. Useful for the Captain when regenerating siblings' contexts. Accessible by any agent or board user in the same team.",
+		"Read an agent's stored team-relationships context. Useful for the Captain when regenerating siblings' contexts. Accessible by any agent or the admin in the same team.",
 		{
 			team_id: z.string().describe('Team ID'),
 			agent_id: z.string().describe('Target agent member ID'),
@@ -2420,7 +2420,7 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
-			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Board) {
+			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Admin) {
 				return { error: 'Access denied' };
 			}
 
@@ -2775,7 +2775,7 @@ export function registerTools(
 			if (denied) return { error: denied };
 
 			let query = `SELECT id, name, slug, description, tags, created_at, updated_at
-			             FROM skills WHERE team_id = $1 AND is_active = true`;
+			             FROM skills WHERE (team_id = $1 OR team_id IS NULL) AND is_active = true`;
 			const params: unknown[] = [args.team_id];
 
 			if (args.tags) {
@@ -2804,7 +2804,7 @@ export function registerTools(
 			if (denied) return { error: denied };
 
 			const result = await db.query(
-				`SELECT ${SKILL_COLUMNS} FROM skills WHERE team_id = $1 AND slug = $2`,
+				`SELECT ${SKILL_COLUMNS} FROM skills WHERE (team_id = $1 OR team_id IS NULL) AND slug = $2 ORDER BY team_id NULLS LAST LIMIT 1`,
 				[args.team_id, args.slug],
 			);
 			if (result.rows.length === 0) return { error: 'Skill not found' };

@@ -2,11 +2,11 @@ import { DEFAULT_TEAM_ID, MemberType } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { signBoardJwt } from '../middleware/auth';
+import { signAdminJwt } from '../middleware/auth';
 
 export const authRoutes = new Hono<Env>();
 
-// Bootstrap endpoint: exchange master key for a board JWT (Phase 2 dev convenience)
+// Bootstrap endpoint: exchange master key for a admin JWT (Phase 2 dev convenience)
 authRoutes.post('/auth/token', async (c) => {
 	const body = await c.req.json<{ master_key?: string }>();
 
@@ -36,7 +36,7 @@ authRoutes.post('/auth/token', async (c) => {
 		await addUserToDefaultTeam(db, userId);
 	}
 
-	const token = await signBoardJwt(masterKeyManager, userId);
+	const token = await signAdminJwt(masterKeyManager, userId);
 	return ok(c, { token }, 200);
 });
 
@@ -58,7 +58,7 @@ async function addUserToDefaultTeam(
 		 RETURNING id`,
 		[DEFAULT_TEAM_ID, MemberType.User, userId],
 	);
-	await db.query(`INSERT INTO member_users (id, user_id, role) VALUES ($1, $2, 'board')`, [
+	await db.query(`INSERT INTO member_users (id, user_id, role) VALUES ($1, $2, 'admin')`, [
 		member.rows[0].id,
 		userId,
 	]);

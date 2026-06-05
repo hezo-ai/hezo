@@ -17,7 +17,7 @@ let projectId: string;
 let architectId: string;
 let captainId: string;
 let testAdminUserId: string;
-let secondBoardUserId: string;
+let secondAdminUserId: string;
 let nonBoardUserId: string;
 
 interface MentionRow {
@@ -30,7 +30,7 @@ interface MentionRow {
 async function mentionsForComment(commentId: string): Promise<MentionRow[]> {
 	const res = await db.query<MentionRow>(
 		`SELECT id, user_id, comment_id, read_at
-		 FROM board_mentions
+		 FROM admin_mentions
 		 WHERE comment_id = $1
 		 ORDER BY created_at ASC`,
 		[commentId],
@@ -76,7 +76,7 @@ async function mcpComment(agentToken: string, taskIdArg: string, content: string
 	return inserted.id;
 }
 
-async function boardComment(userToken: string, taskIdArg: string, text: string): Promise<string> {
+async function adminComment(userToken: string, taskIdArg: string, text: string): Promise<string> {
 	const res = await app.request(`/api/teams/${teamId}/tasks/${taskIdArg}/comments`, {
 		method: 'POST',
 		headers: { ...authHeader(userToken), 'Content-Type': 'application/json' },
@@ -89,7 +89,7 @@ async function boardComment(userToken: string, taskIdArg: string, text: string):
 	return (await res.json()).data.id;
 }
 
-async function addBoardUser(displayName: string): Promise<string> {
+async function addAdminUser(displayName: string): Promise<string> {
 	const userRes = await db.query<{ id: string }>(
 		'INSERT INTO users (display_name) VALUES ($1) RETURNING id',
 		[displayName],
@@ -100,7 +100,7 @@ async function addBoardUser(displayName: string): Promise<string> {
 		 VALUES ($1, 'user', $2) RETURNING id`,
 		[teamId, displayName],
 	);
-	await db.query(`INSERT INTO member_users (id, user_id, role) VALUES ($1, $2, 'board')`, [
+	await db.query(`INSERT INTO member_users (id, user_id, role) VALUES ($1, $2, 'admin')`, [
 		memberRes.rows[0].id,
 		userId,
 	]);
@@ -146,7 +146,7 @@ beforeAll(async () => {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
-			name: 'Board Mentions Co',
+			name: 'Admin Mentions Co',
 			template_id: typeId,
 		}),
 	});
@@ -160,12 +160,12 @@ beforeAll(async () => {
 	captainId = agents.find((a) => a.slug === 'captain')!.id;
 
 	const projectRes = await createTestProject(db, teamId, {
-		name: 'Board Test Project',
+		name: 'Admin Test Project',
 		description: 'x',
 	});
 	projectId = (await projectRes.json()).data.id;
 
-	secondBoardUserId = await addBoardUser('Second Board User');
+	secondAdminUserId = await addAdminUser('Second Admin User');
 	nonBoardUserId = await addNonBoardUser('Plain Member');
 });
 
@@ -174,12 +174,12 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-	await db.query('DELETE FROM board_mentions');
+	await db.query('DELETE FROM admin_mentions');
 });
 
-describe('@board fan-out via MCP create_comment', () => {
-	it('lands one row per team board user when an agent writes @board', async () => {
-		const taskIdLocal = await insertTask(captainId, 'A board-decision ticket');
+describe('@admin fan-out via MCP create_comment', () => {
+	it('lands one row per team the admin when an agent writes @admin', async () => {
+		const taskIdLocal = await insertTask(captainId, 'A admin-decision ticket');
 		const { token: agentToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -190,17 +190,17 @@ describe('@board fan-out via MCP create_comment', () => {
 		const commentId = await mcpComment(
 			agentToken,
 			taskIdLocal,
-			'@board — should we ship the new auth flow before review?',
+			'@admin — should we ship the new auth flow before review?',
 		);
 
 		const rows = await mentionsForComment(commentId);
 		const userIds = rows.map((r) => r.user_id).sort();
-		expect(userIds).toEqual([testAdminUserId, secondBoardUserId].sort());
+		expect(userIds).toEqual([testAdminUserId, secondAdminUserId].sort());
 		expect(rows.every((r) => r.read_at === null)).toBe(true);
 	});
 
-	it('does not notify non-board members on the team', async () => {
-		const taskIdLocal = await insertTask(captainId, 'Another board-decision ticket');
+	it('does not notify non-the admin on the team', async () => {
+		const taskIdLocal = await insertTask(captainId, 'Another admin-decision ticket');
 		const { token: agentToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -208,7 +208,7 @@ describe('@board fan-out via MCP create_comment', () => {
 			teamId,
 			taskIdLocal,
 		);
-		const commentId = await mcpComment(agentToken, taskIdLocal, '@board — please confirm.');
+		const commentId = await mcpComment(agentToken, taskIdLocal, '@admin — please confirm.');
 
 		const rows = await mentionsForComment(commentId);
 		expect(rows.some((r) => r.user_id === nonBoardUserId)).toBe(false);
@@ -223,7 +223,7 @@ describe('@board fan-out via MCP create_comment', () => {
 			teamId,
 			taskIdLocal,
 		);
-		const commentId = await mcpComment(agentToken, taskIdLocal, '@board — confirm scope.');
+		const commentId = await mcpComment(agentToken, taskIdLocal, '@admin — confirm scope.');
 
 		const rowsAfterFirst = await mentionsForComment(commentId);
 
@@ -233,7 +233,7 @@ describe('@board fan-out via MCP create_comment', () => {
 			taskId: taskIdLocal,
 			teamId,
 			commentId,
-			content: { text: '@board — confirm scope.' },
+			content: { text: '@admin — confirm scope.' },
 			contentType: CommentContentType.Text,
 			authorMemberId: architectId,
 			authorUserId: null,
@@ -243,22 +243,22 @@ describe('@board fan-out via MCP create_comment', () => {
 		expect(rowsAfterSecond.length).toBe(rowsAfterFirst.length);
 	});
 
-	it('does not notify a board user who authored the comment', async () => {
-		const taskIdLocal = await insertTask(architectId, 'Board-authored comment');
-		const commentId = await boardComment(
+	it('does not notify a the admin who authored the comment', async () => {
+		const taskIdLocal = await insertTask(architectId, 'Admin-authored comment');
+		const commentId = await adminComment(
 			token,
 			taskIdLocal,
-			'@board — note for our future selves.',
+			'@admin — note for our future selves.',
 		);
 
 		const rows = await mentionsForComment(commentId);
 		expect(rows.some((r) => r.user_id === testAdminUserId)).toBe(false);
-		// The other board user (not the author) should still get notified.
-		expect(rows.some((r) => r.user_id === secondBoardUserId)).toBe(true);
+		// The other the admin (not the author) should still get notified.
+		expect(rows.some((r) => r.user_id === secondAdminUserId)).toBe(true);
 	});
 
-	it('does not fan out on the passive @@board form', async () => {
-		const taskIdLocal = await insertTask(captainId, 'Passive board reference');
+	it('does not fan out on the passive @@admin form', async () => {
+		const taskIdLocal = await insertTask(captainId, 'Passive admin reference');
 		const { token: agentToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -269,7 +269,7 @@ describe('@board fan-out via MCP create_comment', () => {
 		const commentId = await mcpComment(
 			agentToken,
 			taskIdLocal,
-			'Board approved on previous task — @@board.',
+			'Admin approved on previous task — @@admin.',
 		);
 
 		const rows = await mentionsForComment(commentId);
@@ -287,7 +287,7 @@ describe('GET /teams/:teamId/inbox/mentions', () => {
 			teamId,
 			taskIdLocal,
 		);
-		await mcpComment(agentToken, taskIdLocal, '@board please weigh in here.');
+		await mcpComment(agentToken, taskIdLocal, '@admin please weigh in here.');
 
 		const res = await app.request(`/api/teams/${teamId}/inbox/mentions`, {
 			headers: authHeader(token),
@@ -313,15 +313,15 @@ describe('GET /teams/:teamId/inbox/mentions', () => {
 			teamId,
 			taskIdLocal,
 		);
-		const readCommentId = await mcpComment(agentToken, taskIdLocal, '@board read but active.');
-		const archivedCommentId = await mcpComment(agentToken, taskIdLocal, '@board archived already.');
+		const readCommentId = await mcpComment(agentToken, taskIdLocal, '@admin read but active.');
+		const archivedCommentId = await mcpComment(agentToken, taskIdLocal, '@admin archived already.');
 
 		await db.query(
-			`UPDATE board_mentions SET read_at = now() WHERE comment_id = $1 AND user_id = $2`,
+			`UPDATE admin_mentions SET read_at = now() WHERE comment_id = $1 AND user_id = $2`,
 			[readCommentId, testAdminUserId],
 		);
 		await db.query(
-			`UPDATE board_mentions SET read_at = now(), archived_at = now()
+			`UPDATE admin_mentions SET read_at = now(), archived_at = now()
 			 WHERE comment_id = $1 AND user_id = $2`,
 			[archivedCommentId, testAdminUserId],
 		);
@@ -355,10 +355,10 @@ describe('GET /teams/:teamId/inbox/count', () => {
 			teamId,
 			taskIdLocal,
 		);
-		await mcpComment(agentToken, taskIdLocal, '@board first decision.');
-		const readComment = await mcpComment(agentToken, taskIdLocal, '@board second decision.');
+		await mcpComment(agentToken, taskIdLocal, '@admin first decision.');
+		const readComment = await mcpComment(agentToken, taskIdLocal, '@admin second decision.');
 		await db.query(
-			`UPDATE board_mentions SET read_at = now() WHERE comment_id = $1 AND user_id = $2`,
+			`UPDATE admin_mentions SET read_at = now() WHERE comment_id = $1 AND user_id = $2`,
 			[readComment, testAdminUserId],
 		);
 
@@ -378,7 +378,7 @@ describe('GET /teams/:teamId/inbox/count', () => {
 		expect(data.unread).toBe(2);
 	});
 
-	it('rejects non-board auth', async () => {
+	it('rejects non-admin auth', async () => {
 		const taskIdLocal = await insertTask(captainId, 'Count auth test');
 		const { token: agentToken } = await mintAgentToken(
 			db,
@@ -404,10 +404,10 @@ describe('POST /teams/:teamId/inbox/mentions/:mentionId/read', () => {
 			teamId,
 			taskIdLocal,
 		);
-		const commentId = await mcpComment(agentToken, taskIdLocal, '@board please confirm.');
+		const commentId = await mcpComment(agentToken, taskIdLocal, '@admin please confirm.');
 
 		const mineRow = await db.query<{ id: string }>(
-			`SELECT id FROM board_mentions WHERE comment_id = $1 AND user_id = $2`,
+			`SELECT id FROM admin_mentions WHERE comment_id = $1 AND user_id = $2`,
 			[commentId, testAdminUserId],
 		);
 		const mentionId = mineRow.rows[0].id;
@@ -419,7 +419,7 @@ describe('POST /teams/:teamId/inbox/mentions/:mentionId/read', () => {
 		expect(res.status).toBe(200);
 
 		const after = await db.query<{ read_at: string | null }>(
-			`SELECT read_at FROM board_mentions WHERE id = $1`,
+			`SELECT read_at FROM admin_mentions WHERE id = $1`,
 			[mentionId],
 		);
 		expect(after.rows[0].read_at).not.toBeNull();
@@ -434,11 +434,11 @@ describe('POST /teams/:teamId/inbox/mentions/:mentionId/read', () => {
 			teamId,
 			taskIdLocal,
 		);
-		const commentId = await mcpComment(agentToken, taskIdLocal, '@board please confirm.');
+		const commentId = await mcpComment(agentToken, taskIdLocal, '@admin please confirm.');
 
 		const otherRow = await db.query<{ id: string }>(
-			`SELECT id FROM board_mentions WHERE comment_id = $1 AND user_id = $2`,
-			[commentId, secondBoardUserId],
+			`SELECT id FROM admin_mentions WHERE comment_id = $1 AND user_id = $2`,
+			[commentId, secondAdminUserId],
 		);
 		const otherMentionId = otherRow.rows[0].id;
 
@@ -450,12 +450,12 @@ describe('POST /teams/:teamId/inbox/mentions/:mentionId/read', () => {
 	});
 });
 
-describe('reserved agent slug "board"', () => {
-	it('rejects an attempt to create an agent named "Board"', async () => {
+describe('reserved agent slug "admin"', () => {
+	it('rejects an attempt to create an agent named "Admin"', async () => {
 		const res = await app.request(`/api/teams/${teamId}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ title: 'Board' }),
+			body: JSON.stringify({ title: 'Admin' }),
 		});
 		expect(res.status).toBe(400);
 		const body = (await res.json()) as { error?: { code: string; message: string } };
@@ -463,15 +463,15 @@ describe('reserved agent slug "board"', () => {
 		expect(body.error?.message).toMatch(/reserved/i);
 	});
 
-	it('accepts a similar but non-clashing title like "Board Member"', async () => {
+	it('accepts a similar but non-clashing title like "Admin Member"', async () => {
 		const res = await app.request(`/api/teams/${teamId}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ title: 'Board Member' }),
+			body: JSON.stringify({ title: 'Admin Member' }),
 		});
 		expect(res.status).toBe(201);
 		const body = (await res.json()) as { data: { slug: string } };
-		expect(body.data.slug).toBe('board-member');
+		expect(body.data.slug).toBe('admin-member');
 	});
 });
 
@@ -485,7 +485,7 @@ describe('archiveOldInboxItems sweep', () => {
 			[taskIdLocal, architectId],
 		);
 		const mention = await db.query<{ id: string }>(
-			`INSERT INTO board_mentions (team_id, task_id, comment_id, user_id, read_at)
+			`INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id, read_at)
 			 VALUES ($1, $2, $3, $4, ${readAtSql})
 			 RETURNING id`,
 			[teamId, taskIdLocal, comment.rows[0].id, testAdminUserId],
@@ -506,7 +506,7 @@ describe('archiveOldInboxItems sweep', () => {
 	const mentionArchived = async (id: string) =>
 		(
 			await db.query<{ archived_at: string | null }>(
-				'SELECT archived_at FROM board_mentions WHERE id = $1',
+				'SELECT archived_at FROM admin_mentions WHERE id = $1',
 				[id],
 			)
 		).rows[0].archived_at;

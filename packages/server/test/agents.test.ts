@@ -295,9 +295,9 @@ describe('agents CRUD', () => {
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.board).toBeDefined();
-		expect(body.data.board.children.length).toBeGreaterThan(0);
-		const captain = body.data.board.children.find(
+		expect(body.data.admin).toBeDefined();
+		expect(body.data.admin.children.length).toBeGreaterThan(0);
+		const captain = body.data.admin.children.find(
 			(c: Record<string, unknown>) => c.title === 'Captain',
 		);
 		expect(captain).toBeDefined();

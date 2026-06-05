@@ -1,4 +1,4 @@
-import { BOARD_MENTION_SLUG } from '@hezo/shared';
+import { ADMIN_MENTION_SLUG } from '@hezo/shared';
 import { Hono } from 'hono';
 import { signAssetUrl } from '../lib/asset-urls';
 import { err, ok } from '../lib/response';
@@ -10,9 +10,9 @@ type MentionKind = 'agent' | 'task' | 'kb' | 'doc';
 
 const BOARD_SUGGESTION: SearchResult = {
 	kind: 'agent',
-	handle: BOARD_MENTION_SLUG,
-	label: 'the board',
-	sublabel: '@board · notifies all project owners',
+	handle: ADMIN_MENTION_SLUG,
+	label: 'the admin',
+	sublabel: '@admin · notifies all project owners',
 };
 
 interface SearchResult {
@@ -185,7 +185,7 @@ mentionsRoutes.get('/teams/:teamId/mentions/search', async (c) => {
 
 	if (kinds.includes('agent')) {
 		const lq = q.toLowerCase();
-		if (q === '' || BOARD_MENTION_SLUG.startsWith(lq) || BOARD_MENTION_SLUG.includes(lq)) {
+		if (q === '' || ADMIN_MENTION_SLUG.startsWith(lq) || ADMIN_MENTION_SLUG.includes(lq)) {
 			results.push(BOARD_SUGGESTION);
 		}
 		const r = await db.query<{ slug: string; title: string }>(

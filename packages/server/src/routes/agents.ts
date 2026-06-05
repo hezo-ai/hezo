@@ -423,7 +423,7 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 
 	const auth = c.get('auth');
 	let requestedByMemberId: string | null = null;
-	if (auth.type === AuthType.Board && !auth.isSuperuser) {
+	if (auth.type === AuthType.Admin && !auth.isSuperuser) {
 		const me = await db.query<{ id: string }>(
 			`SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id
 			 WHERE mu.user_id = $1 AND m.team_id = $2`,
@@ -459,7 +459,7 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 
 		const description = `## New Agent Hire Request
 
-The board has requested a new agent. Expand the draft prompt if needed, post the revised prompt as a comment, and @-mention the board for review. Iterate until the board approves the linked hire approval. The agent will be created automatically on approval.
+The admin has requested a new agent. Expand the draft prompt if needed, post the revised prompt as a comment, and @-mention the admin for review. Iterate until the admin approves the linked hire approval. The agent will be created automatically on approval.
 
 **Draft title**: ${proposal.title}
 **Draft slug**: \`${proposal.slug}\`
@@ -660,7 +660,7 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/system-prompt/restore', async 
 
 	const auth = c.get('auth');
 	if (auth.type === AuthType.Agent) {
-		return err(c, 'FORBIDDEN', 'Only board members can restore revisions', 403);
+		return err(c, 'FORBIDDEN', 'Only the admin can restore revisions', 403);
 	}
 
 	const db = c.get('db');
@@ -827,7 +827,7 @@ agentsRoutes.patch('/teams/:teamId/agents/:agentId', async (c) => {
 				memberAgentId: agentId,
 			},
 			content: body.system_prompt,
-			changeSummary: body.system_prompt_change_summary ?? 'Manual edit by board member',
+			changeSummary: body.system_prompt_change_summary ?? 'Manual edit by the admin',
 			authorMemberId: null,
 		});
 	}
@@ -959,7 +959,7 @@ agentsRoutes.get('/teams/:teamId/org-chart', async (c) => {
 		}
 	}
 
-	return ok(c, { board: { children: roots } });
+	return ok(c, { admin: { children: roots } });
 });
 
 agentsRoutes.get('/teams/:teamId/agents/:agentId/heartbeat-runs', async (c) => {

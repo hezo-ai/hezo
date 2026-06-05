@@ -128,8 +128,8 @@ describe('extractTaskIdentifiers', () => {
 });
 
 describe('status change system events', () => {
-	it('records a board-authored PATCH status change with from/to and "Board" actor', async () => {
-		const task = await createTask('PATCH by board');
+	it('records a admin-authored PATCH status change with from/to and "Admin" actor', async () => {
+		const task = await createTask('PATCH by admin');
 		const before = (await systemComments(task.id, 'status_change')).length;
 
 		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
@@ -181,7 +181,7 @@ describe('status change system events', () => {
 });
 
 describe('title change system events', () => {
-	it('records a board-authored title rename with from/to and "Test Admin" actor', async () => {
+	it('records a admin-authored title rename with from/to and "Test Admin" actor', async () => {
 		const task = await createTask('Original title');
 		const before = (await systemComments(task.id, 'title_change')).length;
 
@@ -253,7 +253,7 @@ describe('title change system events', () => {
 });
 
 describe('assignee change system events', () => {
-	it('records a board-authored reassignment with from/to ids and names', async () => {
+	it('records a admin-authored reassignment with from/to ids and names', async () => {
 		const secondAgentRes = await app.request(`/api/teams/${teamId}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },

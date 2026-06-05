@@ -181,7 +181,7 @@ assetsRoutes.delete('/teams/:teamId/projects/:projectId/assets/:assetId', async 
 	const teamId = c.get('teamId') as string;
 	const auth = c.get('auth');
 	if (auth.type === AuthType.Agent) {
-		return err(c, 'FORBIDDEN', 'Only board members can delete assets', 403);
+		return err(c, 'FORBIDDEN', 'Only the admin can delete assets', 403);
 	}
 	const db = c.get('db');
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));

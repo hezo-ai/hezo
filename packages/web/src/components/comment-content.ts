@@ -46,7 +46,7 @@ export interface SystemTaskLinkContent {
 	source_identifier?: string;
 	source_project_slug?: string;
 	actor_name?: string;
-	actor_kind?: 'agent' | 'user' | 'board';
+	actor_kind?: 'agent' | 'user' | 'admin';
 	actor_slug?: string | null;
 	text?: string;
 }
@@ -133,7 +133,7 @@ export type CommentContentByType = {
 
 /**
  * Per-content-type shapes for the JSONB `chosen_option` column.
- * Set on `options` when the board picks an option, on `credential_request`
+ * Set on `options` when the admin picks an option, on `credential_request`
  * when fulfilled, on `action` when the action completes. Null on all others.
  */
 export interface OptionsChosen {

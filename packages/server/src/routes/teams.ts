@@ -14,6 +14,8 @@ import {
 	postSkipQuestionsSignal,
 } from '../services/onboarding-intake';
 import { postSkipQuestionsSignalForProjectIntake } from '../services/project-intake';
+import { applyTemplateToTeam } from '../services/team-template-apply';
+import { snapshotTeamAsTemplate } from '../services/team-template-snapshot';
 import { createTeam } from '../services/teams';
 
 export const teamsRoutes = new Hono<Env>();
@@ -22,8 +24,8 @@ teamsRoutes.get('/teams', async (c) => {
 	const db = c.get('db');
 	const auth = c.get('auth');
 
-	const isSuperuser = auth.type === AuthType.Board && auth.isSuperuser;
-	const isBoard = auth.type === AuthType.Board;
+	const isSuperuser = auth.type === AuthType.Admin && auth.isSuperuser;
+	const isAdmin = auth.type === AuthType.Admin;
 
 	let query: string;
 	const params: unknown[] = [MemberType.Agent];
@@ -31,16 +33,18 @@ teamsRoutes.get('/teams', async (c) => {
 	params.push(...ts.values);
 	const nextIdx = 2 + ts.values.length;
 
-	if (!isBoard || isSuperuser) {
+	if (!isAdmin || isSuperuser) {
 		query = `SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $1)::int AS agent_count,
-       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count
+       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count,
+       (SELECT tt.name FROM team_template_assignments tta JOIN team_templates tt ON tt.id = tta.team_template_id WHERE tta.team_id = c.id ORDER BY tt.is_builtin DESC LIMIT 1) AS primary_template_name
      FROM teams c
      ORDER BY c.created_at DESC`;
 	} else {
 		query = `SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $1)::int AS agent_count,
-       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count
+       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count,
+       (SELECT tt.name FROM team_template_assignments tta JOIN team_templates tt ON tt.id = tta.team_template_id WHERE tta.team_id = c.id ORDER BY tt.is_builtin DESC LIMIT 1) AS primary_template_name
      FROM teams c
      JOIN members m2 ON m2.team_id = c.id
      JOIN member_users mu ON mu.id = m2.id
@@ -82,7 +86,7 @@ teamsRoutes.post('/teams', async (c) => {
 			name: body.name.trim(),
 			description: body.description,
 			templateId: body.template_id,
-			creatorUserId: auth.type === AuthType.Board ? auth.userId : undefined,
+			creatorUserId: auth.type === AuthType.Admin ? auth.userId : undefined,
 		},
 	);
 
@@ -140,8 +144,6 @@ teamsRoutes.get('/teams/:teamId/onboarding', async (c) => {
 });
 
 teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
-	const teamId = c.get('teamId') as string;
-
 	const body = await c.req.json<{
 		template_id?: string;
 		project_name?: string;
@@ -155,12 +157,13 @@ teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'project_name is required', 400);
 	}
 
+	const auth = c.get('auth');
 	const result = await runOnboardingDirect(c.get('db'), {
-		teamId: teamId,
 		templateId: body.template_id.trim(),
 		projectName: body.project_name.trim(),
 		projectDescription: body.project_description,
 		initialPrd: body.initial_prd,
+		creatorUserId: auth.type === AuthType.Admin ? auth.userId : undefined,
 		dataDir: c.get('dataDir'),
 		wsManager: c.get('wsManager'),
 		docker: c.get('docker'),
@@ -186,7 +189,8 @@ teamsRoutes.get('/teams/:teamId', async (c) => {
 	const result = await db.query(
 		`SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $2)::int AS agent_count,
-       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_task_count
+       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_task_count,
+       (SELECT tt.name FROM team_template_assignments tta JOIN team_templates tt ON tt.id = tta.team_template_id WHERE tta.team_id = c.id ORDER BY tt.is_builtin DESC LIMIT 1) AS primary_template_name
      FROM teams c WHERE c.id = $1`,
 		[teamId, MemberType.Agent, ...ts2.values],
 	);
@@ -196,6 +200,52 @@ teamsRoutes.get('/teams/:teamId', async (c) => {
 	}
 
 	return ok(c, result.rows[0]);
+});
+
+// Snapshot the live team into a new reusable custom team template ("save this
+// team as a type"). Superuser-only: templates are a global catalog visible to
+// every team's New-team flow.
+teamsRoutes.post('/teams/:teamId/save-as-template', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+
+	const teamId = c.get('teamId') as string;
+	const body = await c.req.json<{ name: string; description?: string }>();
+	if (!body.name?.trim()) {
+		return err(c, 'INVALID_REQUEST', 'name is required', 400);
+	}
+
+	const result = await snapshotTeamAsTemplate(c.get('db'), teamId, {
+		name: body.name,
+		description: body.description,
+	});
+	return ok(c, result, 201);
+});
+
+// Refresh / apply a team type onto an existing team (merge: adds any missing
+// roster roles and refreshes the built-in prompts; never destructive). Powers
+// "Refresh from type" and "Copy from another team" (save-as-template, then
+// apply the saved type here).
+teamsRoutes.post('/teams/:teamId/apply-type', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const body = await c.req.json<{ template_id: string }>();
+	if (!body.template_id) {
+		return err(c, 'INVALID_REQUEST', 'template_id is required', 400);
+	}
+	const tmpl = await db.query('SELECT id FROM team_templates WHERE id = $1', [body.template_id]);
+	if (tmpl.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Team type not found', 404);
+	}
+
+	const result = await applyTemplateToTeam(db, teamId, body.template_id, {
+		dataDir: c.get('dataDir'),
+		wsManager: c.get('wsManager'),
+	});
+	return ok(c, result);
 });
 
 teamsRoutes.patch('/teams/:teamId', async (c) => {

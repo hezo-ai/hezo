@@ -43,7 +43,7 @@ function readPromptFromExec(
 
 let app: Hono<Env>;
 let db: PGlite;
-let boardToken: string;
+let adminToken: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let projectId: string;
@@ -56,15 +56,15 @@ beforeAll(async () => {
 	const ctx = await createTestApp();
 	app = ctx.app;
 	db = ctx.db;
-	boardToken = ctx.token;
+	adminToken = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const typesRes = await app.request('/api/team-templates', { headers: authHeader(boardToken) });
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(adminToken) });
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
 	const teamRes = await app.request('/api/teams', {
 		method: 'POST',
-		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Runner Co', template_id: typeId }),
 	});
 	teamId = (await teamRes.json()).data.id;
@@ -75,7 +75,7 @@ beforeAll(async () => {
 	// Configure an AI provider so the agent runner can resolve credentials
 	await app.request('/api/ai-providers', {
 		method: 'POST',
-		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			provider: 'anthropic',
 			api_key: 'sk-ant-test-runner-key',
@@ -93,13 +93,13 @@ beforeAll(async () => {
 	projectId = (await projectRes.json()).data.id;
 
 	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
-		headers: authHeader(boardToken),
+		headers: authHeader(adminToken),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
 	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
 		method: 'POST',
-		headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			project_id: projectId,
 			title: 'Runner Task',
@@ -652,7 +652,7 @@ describe('runAgent', () => {
 			globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
 			await app.request('/api/ai-providers', {
 				method: 'POST',
-				headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+				headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					provider: 'openai',
 					api_key: 'sk-test-codex',
@@ -890,7 +890,7 @@ describe('runAgent', () => {
 			globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
 			await app.request('/api/ai-providers', {
 				method: 'POST',
-				headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+				headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					provider: 'openai',
 					api_key: 'sk-test-codex-mcp',
@@ -975,7 +975,7 @@ describe('runAgent', () => {
 			await db.query(`DELETE FROM ai_provider_configs WHERE provider = 'openai'`);
 			await app.request('/api/ai-providers', {
 				method: 'POST',
-				headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+				headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					provider: 'openai',
 					api_key: validAuthJson,
@@ -1046,7 +1046,7 @@ describe('runAgent', () => {
 			globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
 			await app.request('/api/ai-providers', {
 				method: 'POST',
-				headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+				headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					provider: 'openai',
 					api_key: 'sk-test-codex-restore',
@@ -1061,7 +1061,7 @@ describe('runAgent', () => {
 			await db.query(`DELETE FROM ai_provider_configs WHERE provider = 'google'`);
 			await app.request('/api/ai-providers', {
 				method: 'POST',
-				headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+				headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					provider: 'google',
 					api_key: 'AIza-test-gemini-mcp',
@@ -1473,7 +1473,7 @@ describe('runAgent', () => {
 			globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
 			await app.request('/api/ai-providers', {
 				method: 'POST',
-				headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+				headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					provider: 'google',
 					api_key: 'AIza-test-gemini-key',
@@ -1746,7 +1746,7 @@ describe('runAgent', () => {
 			globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
 			await app.request('/api/ai-providers', {
 				method: 'POST',
-				headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+				headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					provider: 'openai',
 					api_key: 'sk-cross-provider-test',
@@ -1788,7 +1788,7 @@ describe('runAgent', () => {
 			await db.query(`DELETE FROM ai_provider_configs WHERE provider = 'openai'`);
 			const res = await app.request('/api/ai-providers', {
 				method: 'POST',
-				headers: { ...authHeader(boardToken), 'Content-Type': 'application/json' },
+				headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					provider: 'openai',
 					api_key: validAuthJson,

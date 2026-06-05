@@ -7,7 +7,7 @@ import { generateMasterKey, MasterKeyManager } from '../../src/crypto/master-key
 import { loadAgentRoles } from '../../src/db/agent-roles';
 import { seedBuiltins } from '../../src/db/seed';
 import { toSlug, uniqueSlug } from '../../src/lib/slug';
-import { signAgentJwt, signBoardJwt } from '../../src/middleware/auth';
+import { signAdminJwt, signAgentJwt } from '../../src/middleware/auth';
 import { resolveProjectTaskPrefix } from '../../src/routes/projects';
 import { ContainerLogStreamer } from '../../src/services/container-logs';
 import type { DockerClient } from '../../src/services/docker';
@@ -86,7 +86,7 @@ export async function createTestApp(opts: { webUrl?: string } = {}) {
 	const userResult = await db.query<{ id: string }>(
 		"INSERT INTO users (display_name, is_superuser) VALUES ('Test Admin', true) RETURNING id",
 	);
-	const token = await signBoardJwt(masterKeyManager, userResult.rows[0].id);
+	const token = await signAdminJwt(masterKeyManager, userResult.rows[0].id);
 
 	return { app, db, token, masterKeyHex, masterKeyManager, dataDir };
 }

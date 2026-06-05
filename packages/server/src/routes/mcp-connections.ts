@@ -5,6 +5,7 @@ import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
+import { requireSuperuser } from '../middleware/auth';
 import { createOrFetchConnector } from '../services/connectors/lifecycle';
 import { installLocalMcpById } from '../services/mcp-installer';
 
@@ -18,7 +19,7 @@ mcpConnectionsRoutes.get('/teams/:teamId/mcp-connections', async (c) => {
 	const projectId = c.req.query('project_id') ?? null;
 
 	const params: unknown[] = [teamId];
-	let where = 'team_id = $1';
+	let where = '(team_id = $1 OR team_id IS NULL)';
 	if (projectId) {
 		where += ' AND (project_id IS NULL OR project_id = $2)';
 		params.push(projectId);
@@ -34,6 +35,89 @@ mcpConnectionsRoutes.get('/teams/:teamId/mcp-connections', async (c) => {
 		params,
 	);
 	return ok(c, result.rows);
+});
+
+// Instance-level connectors (team_id NULL) are shared across every team. The
+// Admin (superuser) manages them here; the per-team connector reads include
+// them. Only SaaS (remote URL) connectors are supported at the instance level
+// — local (stdio) MCPs carry per-container install state that can't be shared
+// across teams from a single row, so those stay per-team.
+mcpConnectionsRoutes.get('/mcp-connections', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	const db = c.get('db');
+	const result = await db.query(
+		`SELECT id, team_id, project_id, name, display_name, kind::text AS kind,
+		        config, oauth_connection_id, install_status::text AS install_status, install_error,
+		        skill_doc_id, created_by_task_id, activated_at, revoked_at, auth_error,
+		        created_at, updated_at
+		 FROM mcp_connections
+		 WHERE team_id IS NULL
+		 ORDER BY name ASC`,
+	);
+	return ok(c, result.rows);
+});
+
+mcpConnectionsRoutes.post('/mcp-connections', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	const db = c.get('db');
+
+	const body = await c.req.json<{
+		name: string;
+		display_name?: string;
+		kind: 'saas' | 'local';
+		config: Record<string, unknown>;
+	}>();
+
+	if (!body.name?.trim()) {
+		return err(c, 'INVALID_REQUEST', 'name is required', 400);
+	}
+	if (body.kind !== McpConnectionKind.Saas) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			'instance-level connectors must be "saas"; local MCPs are created per-team',
+			400,
+		);
+	}
+	const url = body.config?.url;
+	if (typeof url !== 'string' || !url) {
+		return err(c, 'INVALID_REQUEST', 'saas connections require config.url (string)', 400);
+	}
+
+	const result = await db.query(
+		`INSERT INTO mcp_connections (team_id, project_id, name, display_name, kind, config, install_status)
+		 VALUES (NULL, NULL, $1, $2, $3::mcp_connection_kind, $4::jsonb, 'installed'::mcp_install_status)
+		 ON CONFLICT (name) WHERE team_id IS NULL DO UPDATE
+		 SET display_name = EXCLUDED.display_name,
+		     kind = EXCLUDED.kind,
+		     config = EXCLUDED.config,
+		     install_status = EXCLUDED.install_status,
+		     install_error = NULL,
+		     updated_at = now()
+		 RETURNING id, team_id, project_id, name, display_name, kind::text AS kind,
+		           config, oauth_connection_id, install_status::text AS install_status, install_error,
+		           created_at, updated_at`,
+		[body.name.trim(), body.display_name?.trim() ?? null, body.kind, JSON.stringify(body.config)],
+	);
+
+	return ok(c, result.rows[0], 201);
+});
+
+mcpConnectionsRoutes.delete('/mcp-connections/:id', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	const db = c.get('db');
+	const id = c.req.param('id');
+	const result = await db.query<{ id: string }>(
+		'DELETE FROM mcp_connections WHERE id = $1 AND team_id IS NULL RETURNING id',
+		[id],
+	);
+	if (result.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'instance connector not found', 404);
+	}
+	return c.json({ data: null }, 200);
 });
 
 mcpConnectionsRoutes.get('/teams/:teamId/mcp-connections/:id', async (c) => {

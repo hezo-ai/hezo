@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AgentEffort } from '@hezo/shared';
+import { AgentEffort, CEO_AGENT_SLUG } from '@hezo/shared';
 import agentSummaries from './agent-summaries.json' with { type: 'json' };
 
 const summaries: {
@@ -104,7 +104,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			monthly_budget_cents: 3000,
 			touches_code: true,
 			role_description:
-				'Reviews implementation plans and code for security vulnerabilities, threat models new features, and escalates uncertainties to the board.',
+				'Reviews implementation plans and code for security vulnerabilities, threat models new features, and escalates uncertainties to the admin.',
 		},
 		{
 			name: 'UI Designer',
@@ -219,6 +219,44 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 			],
 		);
 	}
+
+	// The CEO is an instance-level role (one per Hezo instance), not part of any
+	// team template — it is seeded into the catalog so it can be provisioned into
+	// the default team, but is intentionally kept out of the template rosters so
+	// additional teams never spawn a second CEO.
+	await db.query(
+		`INSERT INTO agent_types (name, slug, description, role_description, default_summary,
+		                          default_team_context, system_prompt_template,
+		                          default_effort, heartbeat_interval_min, run_timeout_min,
+		                          monthly_budget_cents, touches_code, is_builtin, source)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11, $12, true, 'builtin'::agent_type_source)
+		 ON CONFLICT (slug) DO UPDATE SET
+		     name = EXCLUDED.name,
+		     role_description = EXCLUDED.role_description,
+		     default_summary = EXCLUDED.default_summary,
+		     default_team_context = EXCLUDED.default_team_context,
+		     system_prompt_template = EXCLUDED.system_prompt_template,
+		     default_effort = EXCLUDED.default_effort,
+		     heartbeat_interval_min = EXCLUDED.heartbeat_interval_min,
+		     run_timeout_min = EXCLUDED.run_timeout_min,
+		     monthly_budget_cents = EXCLUDED.monthly_budget_cents,
+		     touches_code = EXCLUDED.touches_code,
+		     updated_at = now()`,
+		[
+			'CEO',
+			CEO_AGENT_SLUG,
+			'Instance-level chief executive overseeing every team; the team Captains report to the CEO.',
+			'Oversees all teams in the instance, sets cross-team direction, and is the escalation point above each team Captain.',
+			summaries.agents.ceo ?? '',
+			summaries.team_contexts.builtin?.ceo ?? '',
+			roleDocs['_instance/ceo.md'] ?? '',
+			AgentEffort.Max,
+			240,
+			60,
+			3000,
+			false,
+		],
+	);
 
 	const skillsConfig = [
 		{
