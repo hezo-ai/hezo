@@ -26,6 +26,7 @@ export interface Task {
 	assignee_name: string | null;
 	assignee_type: 'agent' | 'user' | null;
 	has_active_run: boolean;
+	has_unread_admin_mention: boolean;
 	queued_wakeup: QueuedWakeup | null;
 	parent_task_id: string | null;
 	labels: string[];

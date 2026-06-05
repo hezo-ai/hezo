@@ -22,6 +22,28 @@ async function insertActiveRun(memberId: string, teamId: string, taskId: string)
 	);
 }
 
+async function seedAdminMention(ws: SeededWorkspace, taskId: string, text: string) {
+	const { db } = getTestContext();
+	const userRow = await db.query<{ user_id: string }>(
+		`SELECT mu.user_id FROM member_users mu
+		 JOIN members m ON m.id = mu.id
+		 WHERE m.team_id = $1 AND mu.role = 'admin' LIMIT 1`,
+		[ws.team.id],
+	);
+	const userId = userRow.rows[0]?.user_id;
+	if (!userId) throw new Error('seedAdminMention: no admin user on team');
+	const comment = await db.query<{ id: string }>(
+		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+		 VALUES ($1, $2, 'text'::comment_content_type, $3::jsonb) RETURNING id`,
+		[taskId, ws.agents[0].id, JSON.stringify({ text })],
+	);
+	await db.query(
+		`INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id)
+		 VALUES ($1, $2, $3, $4)`,
+		[ws.team.id, taskId, comment.rows[0].id, userId],
+	);
+}
+
 test('default view shows non-terminal tasks with status badges and a collapsed filter bar with New Task button', async () => {
 	let teamSlug = '';
 	let projectSlug = '';
@@ -238,6 +260,42 @@ test('running dot is hidden by default and shown when a heartbeat run is active'
 	await waitFor(() => {
 		const dots = container.querySelectorAll('[data-testid="task-running-dot"]');
 		expect(dots.length).toBe(1);
+	});
+});
+
+test('mention notice shows only on tasks with an unread admin mention for the viewer', async () => {
+	let teamSlug = '';
+	let projectSlug = '';
+
+	const { findByText, container, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Mention Project' });
+			const agentId = ws.agents[0].id;
+			await seedTask(ws, project, { title: 'No mention task', assignee_id: agentId });
+			const mentioned = await seedTask(ws, project, {
+				title: 'Mentioned task',
+				assignee_id: agentId,
+			});
+			await seedAdminMention(ws, mentioned.id, '@admin need your call here.');
+			teamSlug = ws.team.slug;
+			projectSlug = project.slug;
+		},
+	});
+
+	await router.navigate({
+		to: '/teams/$teamId/projects/$projectId/tasks',
+		params: { teamId: teamSlug, projectId: projectSlug },
+	});
+
+	await findByText('Mentioned task', undefined, { timeout: 10_000 });
+	await findByText('No mention task');
+
+	// Exactly one row carries the unread-mention notice — the mentioned task.
+	await waitFor(() => {
+		const notices = container.querySelectorAll('[data-testid="task-mention-notice"]');
+		expect(notices.length).toBe(1);
 	});
 });
 

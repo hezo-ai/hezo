@@ -540,6 +540,79 @@ describe('tasks list — assignee_type and has_active_run', () => {
 	});
 });
 
+describe('tasks list — has_unread_admin_mention', () => {
+	const findTask = (data: any[], id: string) => data.find((i: any) => i.id === id);
+
+	async function adminUserId(): Promise<string> {
+		const row = await db.query<{ user_id: string }>(
+			`SELECT mu.user_id FROM member_users mu
+			 JOIN members m ON m.id = mu.id
+			 WHERE m.team_id = $1 AND mu.role = 'admin' LIMIT 1`,
+			[teamId],
+		);
+		const id = row.rows[0]?.user_id;
+		if (!id) throw new Error('no admin user on team');
+		return id;
+	}
+
+	async function seedMention(taskId: string): Promise<{ commentId: string; mentionId: string }> {
+		const userId = await adminUserId();
+		const comment = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, $2, 'text'::comment_content_type, $3::jsonb) RETURNING id`,
+			[taskId, memberId, JSON.stringify({ text: '@admin your call?' })],
+		);
+		const mention = await db.query<{ id: string }>(
+			`INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id)
+			 VALUES ($1, $2, $3, $4) RETURNING id`,
+			[teamId, taskId, comment.rows[0].id, userId],
+		);
+		return { commentId: comment.rows[0].id, mentionId: mention.rows[0].id };
+	}
+
+	it('flags only the task with an unread admin mention, and clears once read', async () => {
+		const { commentId, mentionId } = await seedMention(taskBacklogHigh);
+		try {
+			let res = await app.request(`/api/teams/${teamId}/tasks?per_page=50`, {
+				headers: authHeader(token),
+			});
+			let body = await res.json();
+			expect(findTask(body.data, taskBacklogHigh).has_unread_admin_mention).toBe(true);
+			// A task without a mention stays false.
+			expect(findTask(body.data, taskInProgressUrgent).has_unread_admin_mention).toBe(false);
+
+			// Reading the mention clears the per-task flag.
+			await db.query(`UPDATE admin_mentions SET read_at = now() WHERE id = $1`, [mentionId]);
+			res = await app.request(`/api/teams/${teamId}/tasks?per_page=50`, {
+				headers: authHeader(token),
+			});
+			body = await res.json();
+			expect(findTask(body.data, taskBacklogHigh).has_unread_admin_mention).toBe(false);
+		} finally {
+			await db.query(`DELETE FROM admin_mentions WHERE id = $1`, [mentionId]);
+			await db.query(`DELETE FROM task_comments WHERE id = $1`, [commentId]);
+		}
+	});
+
+	it('does not flag an archived mention', async () => {
+		const { commentId, mentionId } = await seedMention(taskBacklogHigh);
+		try {
+			await db.query(
+				`UPDATE admin_mentions SET read_at = now(), archived_at = now() WHERE id = $1`,
+				[mentionId],
+			);
+			const res = await app.request(`/api/teams/${teamId}/tasks?per_page=50`, {
+				headers: authHeader(token),
+			});
+			const body = await res.json();
+			expect(findTask(body.data, taskBacklogHigh).has_unread_admin_mention).toBe(false);
+		} finally {
+			await db.query(`DELETE FROM admin_mentions WHERE id = $1`, [mentionId]);
+			await db.query(`DELETE FROM task_comments WHERE id = $1`, [commentId]);
+		}
+	});
+});
+
 describe('tasks PATCH — block assignee change while agent is running', () => {
 	let otherMemberId: string;
 
