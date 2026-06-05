@@ -93,6 +93,12 @@ tasksRoutes.get('/teams/:teamId/tasks', async (c) => {
 	const db = c.get('db');
 	const { page, perPage, offset } = parsePagination(c);
 
+	// Only board users have an inbox, so the per-task unread-mention notice is
+	// scoped to the authenticated board user; other callers (agents, API keys)
+	// get `false` because `bm.user_id = NULL` never matches.
+	const auth = c.get('auth');
+	const boardUserId = auth.type === AuthType.Board ? auth.userId : null;
+
 	const conditions: string[] = ['i.team_id = $1'];
 	const params: unknown[] = [teamId];
 	let idx = 2;
@@ -167,7 +173,7 @@ tasksRoutes.get('/teams/:teamId/tasks', async (c) => {
 	);
 	const total = countResult.rows[0].count;
 
-	const dataParams = [...params, perPage, offset];
+	const dataParams = [...params, boardUserId, perPage, offset];
 	const result = await db.query(
 		`SELECT i.id, i.team_id, i.project_id, i.assignee_id, i.parent_task_id,
             i.number, i.identifier, i.title, i.description, i.status, i.priority,
@@ -179,6 +185,11 @@ tasksRoutes.get('/teams/:teamId/tasks', async (c) => {
               SELECT 1 FROM heartbeat_runs hr
               WHERE hr.task_id = i.id AND hr.status IN ('running', 'queued')
             ) AS has_active_run,
+            EXISTS (
+              SELECT 1 FROM board_mentions bm
+              WHERE bm.task_id = i.id AND bm.user_id = $${idx}
+                AND bm.read_at IS NULL AND bm.archived_at IS NULL
+            ) AS has_unread_board_mention,
             CASE WHEN qw.last_skipped_reason IS NOT NULL THEN json_build_object(
               'reason', qw.last_skipped_reason,
               'since', qw.last_skipped_at,
@@ -210,7 +221,7 @@ tasksRoutes.get('/teams/:teamId/tasks', async (c) => {
                 WHERE hr.task_id = i.id AND hr.status IN ('running', 'queued')
               ) DESC,
               i.${sortColumn} ${sortDirection}
-     LIMIT $${idx} OFFSET $${idx + 1}`,
+     LIMIT $${idx + 1} OFFSET $${idx + 2}`,
 		dataParams,
 	);
 

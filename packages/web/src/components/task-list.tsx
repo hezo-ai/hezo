@@ -1,6 +1,6 @@
 import { formatTaskStatus, TaskStatus, TERMINAL_TASK_STATUSES } from '@hezo/shared';
 import { useNavigate } from '@tanstack/react-router';
-import { ChevronDown, ListPlus, Plus, Search } from 'lucide-react';
+import { AtSign, ChevronDown, ListPlus, Plus, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { type TaskFilters, useTasks } from '../hooks/use-tasks';
@@ -57,6 +57,7 @@ interface TaskRow {
 	assignee_name: string | null;
 	assignee_type: 'agent' | 'user' | null;
 	has_active_run: boolean;
+	has_unread_board_mention: boolean;
 	queued_wakeup: {
 		reason: 'task_busy' | 'project_at_capacity' | 'agent_running';
 		blocker_identifier: string | null;
@@ -200,6 +201,16 @@ export function TaskList({ teamId, projectId }: TaskListProps) {
 								}
 								data-testid="task-queued-dot"
 								className="inline-block w-2 h-2 rounded-full bg-accent-blue shrink-0"
+							/>
+						</Tooltip>
+					)}
+					{row.has_unread_board_mention && (
+						<Tooltip content="Unread mention — needs your review">
+							<AtSign
+								role="img"
+								aria-label="Unread mention"
+								data-testid="task-mention-notice"
+								className="w-3 h-3 text-accent-blue shrink-0"
 							/>
 						</Tooltip>
 					)}
