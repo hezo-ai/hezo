@@ -30,6 +30,9 @@ export type DomainEvent =
 			field: TaskUpdateField;
 			from: string | null;
 			to: string | null;
+			/** Resolved display names for the assignee field, where from/to hold member ids. */
+			fromLabel?: string | null;
+			toLabel?: string | null;
 	  } & Scope &
 			Actor)
 	| ({ type: 'project.created'; projectId: string; name: string; slug: string } & Scope & Actor)

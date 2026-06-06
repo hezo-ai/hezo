@@ -629,7 +629,7 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 
 	if (body.assignee_id !== undefined && body.assignee_id !== existing.rows[0].assignee_id) {
 		try {
-			await recordAssigneeChange(
+			const names = await recordAssigneeChange(
 				db,
 				teamId,
 				taskId,
@@ -648,6 +648,8 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 				field: 'assignee',
 				from: existing.rows[0].assignee_id,
 				to: body.assignee_id,
+				fromLabel: names?.fromName ?? null,
+				toLabel: names?.toName ?? null,
 			});
 		} catch (e) {
 			log.error('Failed to record assignee change:', e);

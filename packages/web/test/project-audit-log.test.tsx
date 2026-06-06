@@ -23,10 +23,19 @@ test('project Activity page lists the project audit trail', async () => {
 	});
 
 	// The page mounts (unique description) and the task-created event renders
-	// as a row carrying the task identifier.
+	// as a readable, linked row naming the task.
 	await helpers.findByText(/Everything that happened on this project/, undefined, {
 		timeout: 20_000,
 	});
-	await helpers.findByText(new RegExp(seeded.identifier), undefined, { timeout: 20_000 });
-	expect(seeded.identifier).toBeTruthy();
+	const row = await helpers.findByText(
+		new RegExp(`Created task ${seeded.identifier}`, 'i'),
+		undefined,
+		{
+			timeout: 20_000,
+		},
+	);
+	const link = row.closest('a');
+	expect(link?.getAttribute('href')).toContain(
+		`/projects/${seeded.projectSlug}/tasks/${seeded.identifier.toLowerCase()}`,
+	);
 }, 30_000);

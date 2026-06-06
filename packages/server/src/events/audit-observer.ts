@@ -24,6 +24,8 @@ export function mapEventToAudit(event: DomainEvent): AuditLogInput | null {
 				field: event.field,
 				from: event.from,
 				to: event.to,
+				...(event.fromLabel != null ? { from_label: event.fromLabel } : {}),
+				...(event.toLabel != null ? { to_label: event.toLabel } : {}),
 			});
 		case 'project.created':
 			return row(event, AuditAction.Created, AuditEntityType.Project, event.projectId, {
