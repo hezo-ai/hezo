@@ -1,9 +1,11 @@
 import { getConnectorCapability, McpConnectionKind, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { validateBody } from '../lib/validate';
 import { logger } from '../logger';
 import { requireSuperuser } from '../middleware/auth';
 import { createOrFetchConnector } from '../services/connectors/lifecycle';
@@ -12,6 +14,61 @@ import { installLocalMcpById } from '../services/mcp-installer';
 const log = logger.child('mcp-connections-route');
 
 export const mcpConnectionsRoutes = new Hono<Env>();
+
+/** Free-form connector config; the url/command requirement is kind-dependent (refined below). */
+const mcpConfigSchema = z.record(z.string(), z.unknown());
+
+function requireConfigForKind(
+	kind: McpConnectionKind,
+	config: Record<string, unknown>,
+	ctx: z.RefinementCtx,
+) {
+	if (kind === McpConnectionKind.Saas) {
+		if (typeof config.url !== 'string' || !config.url) {
+			ctx.addIssue({
+				code: 'custom',
+				path: ['config', 'url'],
+				message: 'saas connections require config.url (string)',
+			});
+		}
+	} else if (typeof config.command !== 'string' || !config.command) {
+		ctx.addIssue({
+			code: 'custom',
+			path: ['config', 'command'],
+			message: 'local connections require config.command (string)',
+		});
+	}
+}
+
+/** Instance-level connectors are always saas (local MCPs are created per-team). */
+const instanceMcpConnectionSchema = z
+	.object({
+		name: z.string().trim().min(1, 'name is required'),
+		display_name: z.string().optional(),
+		kind: z.enum(McpConnectionKind, { message: 'kind must be "saas" or "local"' }),
+		config: mcpConfigSchema,
+	})
+	.superRefine((val, ctx) => {
+		if (val.kind !== McpConnectionKind.Saas) {
+			ctx.addIssue({
+				code: 'custom',
+				path: ['kind'],
+				message: 'instance-level connectors must be "saas"; local MCPs are created per-team',
+			});
+			return;
+		}
+		requireConfigForKind(val.kind, val.config, ctx);
+	});
+
+const teamMcpConnectionSchema = z
+	.object({
+		name: z.string().trim().min(1, 'name is required'),
+		kind: z.enum(McpConnectionKind, { message: 'kind must be "saas" or "local"' }),
+		config: mcpConfigSchema,
+		project_id: z.string().optional(),
+		oauth_connection_id: z.string().nullable().optional(),
+	})
+	.superRefine((val, ctx) => requireConfigForKind(val.kind, val.config, ctx));
 
 mcpConnectionsRoutes.get('/teams/:teamId/mcp-connections', async (c) => {
 	const teamId = c.get('teamId') as string;
@@ -63,28 +120,8 @@ mcpConnectionsRoutes.post('/mcp-connections', async (c) => {
 	if (denied) return denied;
 	const db = c.get('db');
 
-	const body = await c.req.json<{
-		name: string;
-		display_name?: string;
-		kind: 'saas' | 'local';
-		config: Record<string, unknown>;
-	}>();
-
-	if (!body.name?.trim()) {
-		return err(c, 'INVALID_REQUEST', 'name is required', 400);
-	}
-	if (body.kind !== McpConnectionKind.Saas) {
-		return err(
-			c,
-			'INVALID_REQUEST',
-			'instance-level connectors must be "saas"; local MCPs are created per-team',
-			400,
-		);
-	}
-	const url = body.config?.url;
-	if (typeof url !== 'string' || !url) {
-		return err(c, 'INVALID_REQUEST', 'saas connections require config.url (string)', 400);
-	}
+	const body = await validateBody(c, instanceMcpConnectionSchema);
+	if (body instanceof Response) return body;
 
 	const result = await db.query(
 		`INSERT INTO mcp_connections (team_id, project_id, name, display_name, kind, config, install_status)
@@ -170,28 +207,8 @@ mcpConnectionsRoutes.post('/teams/:teamId/mcp-connections', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
-	const body = await c.req.json<{
-		name: string;
-		kind: 'saas' | 'local';
-		config: Record<string, unknown>;
-		project_id?: string;
-		oauth_connection_id?: string | null;
-	}>();
-
-	if (!body.name?.trim()) {
-		return err(c, 'INVALID_REQUEST', 'name is required', 400);
-	}
-	if (body.kind !== McpConnectionKind.Saas && body.kind !== McpConnectionKind.Local) {
-		return err(c, 'INVALID_REQUEST', 'kind must be "saas" or "local"', 400);
-	}
-	if (body.kind === McpConnectionKind.Saas) {
-		const url = body.config?.url;
-		if (typeof url !== 'string' || !url) {
-			return err(c, 'INVALID_REQUEST', 'saas connections require config.url (string)', 400);
-		}
-	} else if (typeof body.config?.command !== 'string' || !body.config.command) {
-		return err(c, 'INVALID_REQUEST', 'local connections require config.command (string)', 400);
-	}
+	const body = await validateBody(c, teamMcpConnectionSchema);
+	if (body instanceof Response) return body;
 
 	if (body.oauth_connection_id) {
 		const ownership = await db.query<{ id: string }>(

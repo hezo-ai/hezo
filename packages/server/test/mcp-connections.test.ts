@@ -55,6 +55,49 @@ describe('mcp_connections REST routes', () => {
 			body: JSON.stringify({ name: 'bad', kind: 'saas', config: {} }),
 		});
 		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.code).toBe('INVALID_REQUEST');
+		expect(body.error.message).toContain('config.url');
+		await safeClose(ctx.db);
+	});
+
+	it('rejects an invalid kind and a local connection missing config.command', async () => {
+		const ctx = await createTestApp();
+		const co = await ctx.app.request('/api/teams', {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Validate Co' }),
+		});
+		const cid = (await co.json()).data.id;
+		const headers = {
+			Authorization: `Bearer ${ctx.token}`,
+			'Content-Type': 'application/json',
+		};
+
+		const badKind = await ctx.app.request(`/api/teams/${cid}/mcp-connections`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({ name: 'x', kind: 'nope', config: {} }),
+		});
+		expect(badKind.status).toBe(400);
+		expect((await badKind.json()).error.message).toContain('kind');
+
+		const missingName = await ctx.app.request(`/api/teams/${cid}/mcp-connections`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({ name: '  ', kind: 'saas', config: { url: 'https://x' } }),
+		});
+		expect(missingName.status).toBe(400);
+		expect((await missingName.json()).error.message).toContain('name');
+
+		const badLocal = await ctx.app.request(`/api/teams/${cid}/mcp-connections`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({ name: 'fs', kind: 'local', config: { args: [] } }),
+		});
+		expect(badLocal.status).toBe(400);
+		expect((await badLocal.json()).error.message).toContain('config.command');
+
 		await safeClose(ctx.db);
 	});
 
