@@ -263,10 +263,9 @@ test('archived mentions are hidden by default and shown under the Archived filte
 	await waitFor(async () => expect((await findAllByTestId('mention-card')).length).toBe(1));
 });
 
-test('sidebar inbox link shows the unread count badge', async () => {
-	let ctx: { teamSlug: string };
-	const { findByTestId, router } = await renderApp({
-		initialPath: '/',
+test('header inbox icon shows the global unread count badge', async () => {
+	const { findByTestId } = await renderApp({
+		initialPath: '/home',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Demo' });
@@ -274,15 +273,9 @@ test('sidebar inbox link shows the unread count badge', async () => {
 			const t2 = await seedTask(ws, project, { title: 'Decision two' });
 			await seedAgentAdminMention(ws, t1, '@admin decision one.');
 			await seedAgentAdminMention(ws, t2, '@admin decision two.');
-			ctx = { teamSlug: ws.team.slug };
 		},
 	});
 
-	await router.navigate({
-		to: '/teams/$teamId/projects',
-		params: { teamId: ctx!.teamSlug },
-	});
-
-	const link = await findByTestId('sidebar-link-inbox', undefined, { timeout: 10_000 });
-	await waitFor(() => expect(link.textContent).toContain('2'));
+	const badge = await findByTestId('app-header-inbox-badge', undefined, { timeout: 10_000 });
+	await waitFor(() => expect(badge.textContent).toContain('2'));
 });

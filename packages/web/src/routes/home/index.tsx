@@ -5,7 +5,7 @@ import { CaptainHomeIntakePanel } from '../../components/captain-home-intake-pan
 import { CreateProjectWithTeamDialog } from '../../components/create-project-with-team-dialog';
 import { OnboardingProgress } from '../../components/onboarding-progress';
 import { OnboardingChoice } from '../../components/setup/onboarding-choice';
-import { Avatar, avatarColorFromString } from '../../components/ui/avatar';
+import { Avatar, avatarColorFromString, getInitials } from '../../components/ui/avatar';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Tooltip } from '../../components/ui/tooltip';
@@ -15,12 +15,6 @@ import { useOnboardingIntake } from '../../hooks/use-onboarding-intake';
 import { useAllVisibleProjects } from '../../hooks/use-projects';
 import { useTeams } from '../../hooks/use-teams';
 import { queryClient } from '../../lib/query-client';
-
-function getInitials(name: string): string {
-	const words = name.split(/\s+/).filter(Boolean);
-	if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
-	return name.slice(0, 2).toUpperCase();
-}
 
 function WelcomeCard({
 	showProgress,

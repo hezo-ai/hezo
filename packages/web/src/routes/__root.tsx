@@ -1,19 +1,17 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, Outlet, useMatches, useNavigate } from '@tanstack/react-router';
-import { ChevronsLeft, ChevronsRight, Menu, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { AppHeader } from '../components/app-header';
 import { MasterKeyGate } from '../components/master-key-gate';
+import { ProjectRail } from '../components/project-rail';
 import { ProjectSidebar } from '../components/project-sidebar';
 import { MasterKeyStep, SetupGate } from '../components/setup/setup-wizard';
-import { TeamRail } from '../components/team-rail';
-import { TeamSidebar } from '../components/team-sidebar';
 import { UpdateBanner } from '../components/update-banner';
 import { SocketProvider } from '../contexts/socket-context';
-import { useRouteProjectId } from '../hooks/use-route-project-id';
-import { useRouteTeamId } from '../hooks/use-route-team-id';
+import { ActiveProjectProvider, useActiveProject } from '../hooks/use-active-project';
 import { useStatus } from '../hooks/use-status';
 import { useTeams } from '../hooks/use-teams';
-import { useUiState, useUpdateUiState } from '../hooks/use-ui-state';
 import { useShellWebSockets } from '../hooks/use-websocket';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -85,37 +83,43 @@ function AppShell() {
 }
 
 function ShellLayout() {
-	const [drawerOpen, setDrawerOpen] = useState(false);
 	const { data: teams } = useTeams();
 	useShellWebSockets(teams);
 	const matches = useMatches();
 	const bare = matches.some((m) => m.staticData?.bare);
 
 	// Bare routes (e.g. the standalone document preview) render full-viewport
-	// without the team rail, sidebar, or mobile drawer.
+	// without the header, project rail, or mobile drawer.
 	if (bare) return <Outlet />;
 
 	return (
-		<div className="h-screen flex flex-row overflow-hidden">
-			<div className="hidden md:block">
-				<TeamRail />
+		<ActiveProjectProvider>
+			<ShellChrome />
+		</ActiveProjectProvider>
+	);
+}
+
+function ShellChrome() {
+	const [drawerOpen, setDrawerOpen] = useState(false);
+	const active = useActiveProject();
+
+	return (
+		<div className="h-screen flex flex-col overflow-hidden">
+			<AppHeader onOpenDrawer={() => setDrawerOpen(true)} />
+			<div className="flex flex-row flex-1 overflow-hidden">
+				<div className="hidden md:flex h-full">
+					<ProjectRail />
+				</div>
+				{active && (
+					<div className="hidden lg:block w-[208px] shrink-0 h-full overflow-y-auto border-r border-border bg-bg py-2">
+						<ProjectSidebar />
+					</div>
+				)}
+				<main className="flex-1 overflow-auto relative">
+					<UpdateBanner />
+					<Outlet />
+				</main>
 			</div>
-			<div className="hidden lg:block">
-				<TeamSidebarShell />
-			</div>
-			<main className="flex-1 overflow-auto relative">
-				<button
-					type="button"
-					onClick={() => setDrawerOpen(true)}
-					aria-label="Open navigation"
-					data-testid="mobile-nav-toggle"
-					className="lg:hidden fixed top-3 left-3 z-40 w-9 h-9 rounded-radius-md bg-bg-elevated border border-border flex items-center justify-center text-text-muted hover:text-text shadow-sm"
-				>
-					<Menu className="w-4 h-4" />
-				</button>
-				<UpdateBanner />
-				<Outlet />
-			</main>
 			{drawerOpen && (
 				<div className="lg:hidden fixed inset-0 z-50 flex" data-testid="mobile-nav-drawer">
 					<button
@@ -125,10 +129,12 @@ function ShellLayout() {
 						className="absolute inset-0 bg-black/50 cursor-default"
 					/>
 					<div className="relative flex h-full bg-bg shadow-xl">
-						<TeamRail />
-						<div className="w-[260px] h-full overflow-y-auto py-2 border-r border-border bg-bg">
-							<SidebarContent />
-						</div>
+						<ProjectRail />
+						{active && (
+							<div className="w-[208px] h-full overflow-y-auto py-2 border-r border-border bg-bg">
+								<ProjectSidebar />
+							</div>
+						)}
 						<button
 							type="button"
 							aria-label="Close navigation"
@@ -141,50 +147,6 @@ function ShellLayout() {
 					</div>
 				</div>
 			)}
-		</div>
-	);
-}
-
-// Pick the sidebar variant by route: project-scoped when inside a project,
-// team-scoped otherwise. Both the desktop shell and the mobile drawer use this.
-function SidebarContent() {
-	const projectId = useRouteProjectId();
-	return projectId ? <ProjectSidebar /> : <TeamSidebar />;
-}
-
-function TeamSidebarShell() {
-	const teamId = useRouteTeamId();
-	const { data: uiState } = useUiState(teamId);
-	const updateUiState = useUpdateUiState(teamId);
-	const collapsed = uiState?.sidebar?.collapsed ?? false;
-
-	return (
-		<div className="relative shrink-0 flex h-full">
-			<div
-				className={`overflow-hidden border-r border-border bg-bg transition-[width] duration-150 ${
-					collapsed ? 'w-0' : 'w-[260px]'
-				}`}
-			>
-				<div
-					className={`w-[260px] h-full overflow-y-auto py-2 ${collapsed ? 'invisible' : ''}`}
-					aria-hidden={collapsed}
-				>
-					<SidebarContent />
-				</div>
-			</div>
-			<button
-				type="button"
-				onClick={() => updateUiState.mutate({ sidebar: { collapsed: !collapsed } })}
-				aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-				data-testid="sidebar-toggle"
-				className={
-					collapsed
-						? 'absolute top-3 -right-3.5 z-50 w-7 h-7 rounded-full border border-border-hover bg-bg-elevated text-text hover:bg-bg-subtle flex items-center justify-center shadow-md transition-colors'
-						: 'absolute top-3 -right-3 z-50 w-6 h-6 rounded-full border border-border bg-bg-elevated text-text-muted hover:text-text hover:bg-bg-subtle flex items-center justify-center shadow-sm transition-colors'
-				}
-			>
-				{collapsed ? <ChevronsRight className="w-4 h-4" /> : <ChevronsLeft className="w-3 h-3" />}
-			</button>
 		</div>
 	);
 }

@@ -117,20 +117,13 @@ test('can deny a pending approval', async () => {
 	await findByText(/Requesting access to secret/);
 });
 
-test('sidebar has Inbox link', async () => {
-	const seeded = { teamSlug: '' };
-	const { findByText, router } = await renderApp({
-		initialPath: '/',
+test('header has the global Inbox link', async () => {
+	const { findByTestId } = await renderApp({
+		initialPath: '/home',
 		seed: async () => {
-			const ws = await seedWorkspace();
-			seeded.teamSlug = ws.team.slug;
+			await seedWorkspace();
 		},
 	});
 
-	await router.navigate({
-		to: '/teams/$teamId/projects',
-		params: { teamId: seeded.teamSlug },
-	});
-
-	await findByText('Inbox', { exact: true }, { timeout: 10_000 });
+	await findByTestId('app-header-inbox', undefined, { timeout: 10_000 });
 });

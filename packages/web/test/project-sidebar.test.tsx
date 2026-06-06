@@ -1,4 +1,4 @@
-import { within } from '@testing-library/react';
+import { waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { type SeededWorkspace, seedProject, seedWorkspace } from './helpers/seed';
@@ -9,10 +9,10 @@ function getNav(container: HTMLElement): HTMLElement {
 	return nav as HTMLElement;
 }
 
-test('inside a project, the sidebar is project-scoped with a secondary Team section', async () => {
+test('the project menu leads with Inbox, lists the project pages, and has a Team section of agents', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
-	const { container, findByTestId, router, user } = await renderApp({
+	const { container, findByTestId, findByText, queryByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			ws = await seedWorkspace();
@@ -26,38 +26,52 @@ test('inside a project, the sidebar is project-scoped with a secondary Team sect
 		params: { teamId: ws.team.slug, projectId: projectSlug },
 	});
 
-	// Project name header renders, and the project's own pages are the primary nav.
 	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
 	const nav = getNav(container);
+
+	// Inbox leads; the project pages follow.
+	expect(within(nav).getByRole('link', { name: 'Inbox' })).toBeTruthy();
 	expect(within(nav).getByRole('link', { name: 'Documents' })).toBeTruthy();
 	expect(within(nav).getByRole('link', { name: 'Assets' })).toBeTruthy();
 	expect(within(nav).getByRole('link', { name: 'Container' })).toBeTruthy();
 
-	// The team it belongs to is a secondary section, not the primary axis.
-	expect(within(nav).getByText('Team', { exact: true })).toBeTruthy();
-	expect(within(nav).getByRole('link', { name: 'All Projects' })).toBeTruthy();
-	// The team-scoped "Projects" section header is absent in project scope.
-	expect(within(nav).queryByText('Projects', { exact: true })).toBeNull();
+	// A Team section lists the team's agents (presented as the project's own).
+	expect(within(nav).getByRole('link', { name: 'Team' })).toBeTruthy();
+	await findByText('Captain', undefined, { timeout: 20_000 });
+	expect(within(getNav(container)).getByText('Captain')).toBeTruthy();
 
-	// The back link returns to the team's project list.
-	await user.click(await findByTestId('project-sidebar-back'));
-	expect(router.state.location.pathname).toBe(`/teams/${ws.team.slug}/projects`);
+	// No cross-project landing affordances.
+	expect(within(nav).queryByRole('link', { name: 'All Projects' })).toBeNull();
+	expect(queryByTestId('project-sidebar-back')).toBeNull();
 });
 
-test('team-level routes keep the team-scoped sidebar', async () => {
+test("the project menu persists across the project's team pages and disappears off-project", async () => {
 	let ws!: SeededWorkspace;
-	const { container, findByText, router } = await renderApp({
+	let projectSlug = '';
+	const { container, findByTestId, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Operations' });
+			projectSlug = project.slug;
 		},
 	});
 
-	await router.navigate({ to: '/teams/$teamId/tasks', params: { teamId: ws.team.slug } });
-	await findByText('Resources', undefined, { timeout: 15_000 });
+	await router.navigate({
+		to: '/teams/$teamId/projects/$projectId',
+		params: { teamId: ws.team.slug, projectId: projectSlug },
+	});
+	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
 
-	const nav = getNav(container);
-	// Team sidebar has the "Projects" section; the project header is absent.
-	expect(within(nav).getByText('Projects', { exact: true })).toBeTruthy();
-	expect(container.querySelector('[data-testid="project-sidebar-name"]')).toBeNull();
+	// The Team header links to the agents page (team-scoped, no projectId in route).
+	await user.click(within(getNav(container)).getByRole('link', { name: 'Team' }));
+	await waitFor(() => expect(router.state.location.pathname).toBe(`/teams/${ws.team.slug}/agents`));
+	// The menu stays — the active project is remembered.
+	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+
+	// Going to the cross-team home drops the menu (full-width content).
+	await router.navigate({ to: '/home' });
+	await waitFor(() =>
+		expect(container.querySelector('[data-testid="project-sidebar-name"]')).toBeNull(),
+	);
 });

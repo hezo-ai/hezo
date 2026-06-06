@@ -507,22 +507,24 @@ test('project badge and metadata label both link to the project page', async () 
 	}
 });
 
-test('sidebar shows agent status badges', async () => {
-	const seeded = { teamSlug: '' };
+test('project menu Team section shows agent status badges', async () => {
+	const seeded = { teamSlug: '', projectSlug: '' };
 	const { router, container } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Demo' });
 			seeded.teamSlug = ws.team.slug;
+			seeded.projectSlug = project.slug;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/agents/$agentId',
-		params: { teamId: seeded.teamSlug, agentId: 'captain' },
+		to: '/teams/$teamId/projects/$projectId/tasks',
+		params: { teamId: seeded.teamSlug, projectId: seeded.projectSlug },
 	});
 
-	// The sidebar's Team section lists each agent with an "Idle" badge once
+	// The project menu's Team section lists each agent with an "Idle" badge once
 	// the agent runtime status finishes loading. Wait for at least one Idle
 	// to appear in the sidebar nav (the main pane also shows Idle after
 	// load, but that arrives later).
