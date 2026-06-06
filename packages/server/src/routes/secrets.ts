@@ -1,6 +1,7 @@
 import { SecretCategory, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
+import { requireResourceInTeam } from '../lib/resource';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireSuperuser } from '../middleware/auth';
@@ -305,13 +306,10 @@ secretsRoutes.patch('/teams/:teamId/secrets/:secretId', async (c) => {
 	const secretId = c.req.param('secretId');
 	const masterKeyManager = c.get('masterKeyManager');
 
-	const existing = await db.query('SELECT id FROM secrets WHERE id = $1 AND team_id = $2', [
-		secretId,
-		teamId,
-	]);
-	if (existing.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Secret not found', 404);
-	}
+	const existing = await requireResourceInTeam<{ id: string }>(c, 'secrets', secretId, teamId, {
+		resourceName: 'Secret',
+	});
+	if (existing instanceof Response) return existing;
 
 	const body = await c.req.json<{
 		value?: string;
@@ -357,7 +355,7 @@ secretsRoutes.patch('/teams/:teamId/secrets/:secretId', async (c) => {
 	}
 
 	if (sets.length === 0) {
-		return ok(c, existing.rows[0]);
+		return ok(c, existing);
 	}
 
 	params.push(secretId);
@@ -375,13 +373,10 @@ secretsRoutes.delete('/teams/:teamId/secrets/:secretId', async (c) => {
 	const db = c.get('db');
 	const secretId = c.req.param('secretId');
 
-	const existing = await db.query('SELECT id FROM secrets WHERE id = $1 AND team_id = $2', [
-		secretId,
-		teamId,
-	]);
-	if (existing.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Secret not found', 404);
-	}
+	const existing = await requireResourceInTeam<{ id: string }>(c, 'secrets', secretId, teamId, {
+		resourceName: 'Secret',
+	});
+	if (existing instanceof Response) return existing;
 
 	await db.query('DELETE FROM secrets WHERE id = $1', [secretId]);
 	broadcastChange(c, wsRoom.team(teamId), 'secrets', 'DELETE', { id: secretId });
@@ -411,13 +406,10 @@ secretsRoutes.post('/teams/:teamId/secrets/:secretId/grants', async (c) => {
 	const db = c.get('db');
 	const secretId = c.req.param('secretId');
 
-	const secretCheck = await db.query('SELECT id FROM secrets WHERE id = $1 AND team_id = $2', [
-		secretId,
-		teamId,
-	]);
-	if (secretCheck.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Secret not found', 404);
-	}
+	const secretCheck = await requireResourceInTeam<{ id: string }>(c, 'secrets', secretId, teamId, {
+		resourceName: 'Secret',
+	});
+	if (secretCheck instanceof Response) return secretCheck;
 
 	const body = await c.req.json<{
 		agent_id: string;

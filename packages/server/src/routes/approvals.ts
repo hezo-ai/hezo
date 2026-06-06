@@ -1,6 +1,7 @@
 import { ApprovalStatus, ApprovalType, AuthType, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
+import { requireResourceInTeam } from '../lib/resource';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireTeamAccessForResource } from '../middleware/auth';
@@ -56,12 +57,15 @@ approvalsRoutes.get('/teams/:teamId/approvals/:approvalId/blocked-tickets', asyn
 	const db = c.get('db');
 	const approvalId = c.req.param('approvalId');
 
-	const approval = await db.query<{ id: string; type: string }>(
-		'SELECT id, type FROM approvals WHERE id = $1 AND team_id = $2',
-		[approvalId, teamId],
+	const approval = await requireResourceInTeam<{ id: string; type: string }>(
+		c,
+		'approvals',
+		approvalId,
+		teamId,
+		{ columns: 'id, type', resourceName: 'Approval' },
 	);
-	if (approval.rows.length === 0) return err(c, 'NOT_FOUND', 'Approval not found', 404);
-	if (approval.rows[0].type !== ApprovalType.DesignatedRepoRequest) {
+	if (approval instanceof Response) return approval;
+	if (approval.type !== ApprovalType.DesignatedRepoRequest) {
 		return err(
 			c,
 			'INVALID_REQUEST',
