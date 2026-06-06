@@ -1,9 +1,11 @@
 import { SecretCategory, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { broadcastChange } from '../lib/broadcast';
 import { requireResourceInTeam } from '../lib/resource';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { validateBody } from '../lib/validate';
 import { requireSuperuser } from '../middleware/auth';
 
 export const secretsRoutes = new Hono<Env>();
@@ -251,18 +253,18 @@ secretsRoutes.post('/teams/:teamId/secrets', async (c) => {
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
 
-	const body = await c.req.json<{
-		name: string;
-		value: string;
-		project_id?: string;
-		category?: string;
-		allowed_hosts?: string[];
-		allow_all_hosts?: boolean;
-	}>();
-
-	if (!body.name?.trim() || !body.value) {
-		return err(c, 'INVALID_REQUEST', 'name and value are required', 400);
-	}
+	const body = await validateBody(
+		c,
+		z.object({
+			name: z.string().trim().min(1, 'name is required'),
+			value: z.string().min(1, 'value is required'),
+			project_id: z.string().optional(),
+			category: z.string().optional(),
+			allowed_hosts: z.array(z.string()).optional(),
+			allow_all_hosts: z.boolean().optional(),
+		}),
+	);
+	if (body instanceof Response) return body;
 
 	const key = masterKeyManager.getKey();
 	if (!key) {
@@ -272,9 +274,6 @@ secretsRoutes.post('/teams/:teamId/secrets', async (c) => {
 	const { encrypt } = await import('../crypto/encryption');
 	const encryptedValue = encrypt(body.value, key);
 
-	const allowedHosts = Array.isArray(body.allowed_hosts) ? body.allowed_hosts : [];
-	const allowAllHosts = !!body.allow_all_hosts;
-
 	const result = await db.query(
 		`INSERT INTO secrets (team_id, project_id, name, encrypted_value, category, allowed_hosts, allow_all_hosts)
      VALUES ($1, $2, $3, $4, $5::secret_category, $6, $7)
@@ -282,11 +281,11 @@ secretsRoutes.post('/teams/:teamId/secrets', async (c) => {
 		[
 			teamId,
 			body.project_id ?? null,
-			body.name.trim(),
+			body.name,
 			encryptedValue,
 			body.category ?? SecretCategory.Other,
-			allowedHosts,
-			allowAllHosts,
+			body.allowed_hosts ?? [],
+			body.allow_all_hosts ?? false,
 		],
 	);
 
