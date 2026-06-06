@@ -22,6 +22,7 @@
 		"cron-async": "^1.2.0",
 		"hono": "^4",
 		"http-mitm-proxy": "^1.1.0",
+		"kysely": "^0.29.2",
 		"mockttp": "^4.3.1",
 		"node-forge": "^1.4.0",
 		"zod": "^4.3.6"

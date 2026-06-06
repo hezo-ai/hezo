@@ -26,7 +26,7 @@
     },
     "packages/server": {
       "name": "@hezo/server",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@electric-sql/pglite": "^0.2",
         "@hezo/shared": "workspace:*",
@@ -37,6 +37,7 @@
         "cron-async": "^1.2.0",
         "hono": "^4",
         "http-mitm-proxy": "^1.1.0",
+        "kysely": "^0.29.2",
         "mockttp": "^4.3.1",
         "node-forge": "^1.4.0",
         "zod": "^4.3.6",
@@ -51,7 +52,7 @@
     },
     "packages/shared": {
       "name": "@hezo/shared",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@noble/hashes": "^1.8.0",
         "@scure/bip39": "^1.6.0",
@@ -62,7 +63,7 @@
     },
     "packages/web": {
       "name": "@hezo/web",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@hezo/shared": "workspace:*",
         "@radix-ui/react-alert-dialog": "^1",
@@ -1108,6 +1109,8 @@
     "json-stringify-safe": ["json-stringify-safe@5.0.1", "", {}, "sha512-ZClg6AaYvamvYEE82d3Iyd3vSSIjQ+odgjaTzRuO3s7toCdFKczob2i0zCh7JE8kWn17yvAWhUVxvqGwUalsRA=="],
 
     "json5": ["json5@2.2.3", "", { "bin": { "json5": "lib/cli.js" } }, "sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg=="],
+
+    "kysely": ["kysely@0.29.2", "", {}, "sha512-s6WVJyEZrbm6jhBpiKHsGHyePMrVQKJ85wZCFCr9W4QHv6WTjWIrdvTmO9hDEA3bNK0xkrE2DqrHsXMLWuZpQg=="],
 
     "lightningcss": ["lightningcss@1.32.0", "", { "dependencies": { "detect-libc": "^2.0.3" }, "optionalDependencies": { "lightningcss-android-arm64": "1.32.0", "lightningcss-darwin-arm64": "1.32.0", "lightningcss-darwin-x64": "1.32.0", "lightningcss-freebsd-x64": "1.32.0", "lightningcss-linux-arm-gnueabihf": "1.32.0", "lightningcss-linux-arm64-gnu": "1.32.0", "lightningcss-linux-arm64-musl": "1.32.0", "lightningcss-linux-x64-gnu": "1.32.0", "lightningcss-linux-x64-musl": "1.32.0", "lightningcss-win32-arm64-msvc": "1.32.0", "lightningcss-win32-x64-msvc": "1.32.0" } }, "sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ=="],
 
