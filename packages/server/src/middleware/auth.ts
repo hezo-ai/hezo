@@ -269,3 +269,44 @@ export function requireSuperuser(c: Context<Env>): Response | null {
 	}
 	return null;
 }
+
+/**
+ * Guard that the authenticated principal is one of the given auth types.
+ * Returns `null` on success or a 403 `Response` to short-circuit the handler —
+ * the same shape as {@link requireSuperuser}. Replaces inline
+ * `if (auth.type !== ...) return err(...)` checks so the gate is uniform.
+ */
+export function requireRole(
+	c: Context<Env>,
+	types: readonly AuthType[],
+	message = 'Access denied',
+): Response | null {
+	const auth = c.get('auth');
+	if (!types.includes(auth.type)) {
+		return c.json({ error: { code: 'FORBIDDEN', message } }, 403);
+	}
+	return null;
+}
+
+/** Guard that the caller is an admin (human) principal, not an agent/API key. */
+export function requireAdmin(c: Context<Env>, message = 'Access denied'): Response | null {
+	return requireRole(c, [AuthType.Admin], message);
+}
+
+type AdminAuthInfo = Extract<AuthInfo, { type: typeof AuthType.Admin }>;
+
+/**
+ * Like {@link requireAdmin}, but returns the narrowed admin `AuthInfo` on
+ * success (so handlers can read `userId`/`isSuperuser` without re-narrowing) or
+ * a 403 `Response`. Use when the handler needs the admin's identity.
+ */
+export function requireAdminAuth(
+	c: Context<Env>,
+	message = 'Access denied',
+): AdminAuthInfo | Response {
+	const auth = c.get('auth');
+	if (auth.type !== AuthType.Admin) {
+		return c.json({ error: { code: 'FORBIDDEN', message } }, 403);
+	}
+	return auth;
+}

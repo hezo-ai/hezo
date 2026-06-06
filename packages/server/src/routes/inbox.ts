@@ -1,8 +1,9 @@
-import { ApprovalStatus, AuthType, wsRoom } from '@hezo/shared';
+import { ApprovalStatus, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { requireAdminAuth } from '../middleware/auth';
 
 export const inboxRoutes = new Hono<Env>();
 
@@ -35,10 +36,8 @@ interface AdminMentionRow {
 
 inboxRoutes.get('/teams/:teamId/inbox/mentions', async (c) => {
 	const teamId = c.get('teamId') as string;
-	const auth = c.get('auth');
-	if (auth.type !== AuthType.Admin) {
-		return err(c, 'FORBIDDEN', 'Only the admin have an inbox', 403);
-	}
+	const auth = requireAdminAuth(c, 'Only the admin have an inbox');
+	if (auth instanceof Response) return auth;
 
 	const archived = c.req.query('archived') === 'true';
 	const db = c.get('db');
@@ -86,10 +85,8 @@ inboxRoutes.get('/teams/:teamId/inbox/mentions', async (c) => {
 
 inboxRoutes.get('/teams/:teamId/inbox/count', async (c) => {
 	const teamId = c.get('teamId') as string;
-	const auth = c.get('auth');
-	if (auth.type !== AuthType.Admin) {
-		return err(c, 'FORBIDDEN', 'Only the admin have an inbox', 403);
-	}
+	const auth = requireAdminAuth(c, 'Only the admin have an inbox');
+	if (auth instanceof Response) return auth;
 
 	const db = c.get('db');
 	const result = await db.query<{ unread: number }>(
@@ -107,10 +104,8 @@ inboxRoutes.get('/teams/:teamId/inbox/count', async (c) => {
 
 inboxRoutes.post('/teams/:teamId/inbox/mentions/:mentionId/read', async (c) => {
 	const teamId = c.get('teamId') as string;
-	const auth = c.get('auth');
-	if (auth.type !== AuthType.Admin) {
-		return err(c, 'FORBIDDEN', 'Only the admin have an inbox', 403);
-	}
+	const auth = requireAdminAuth(c, 'Only the admin have an inbox');
+	if (auth instanceof Response) return auth;
 
 	const mentionId = c.req.param('mentionId');
 	const db = c.get('db');
@@ -139,10 +134,8 @@ inboxRoutes.post('/teams/:teamId/inbox/mentions/:mentionId/read', async (c) => {
 
 inboxRoutes.post('/teams/:teamId/inbox/mentions/read-all', async (c) => {
 	const teamId = c.get('teamId') as string;
-	const auth = c.get('auth');
-	if (auth.type !== AuthType.Admin) {
-		return err(c, 'FORBIDDEN', 'Only the admin have an inbox', 403);
-	}
+	const auth = requireAdminAuth(c, 'Only the admin have an inbox');
+	if (auth instanceof Response) return auth;
 
 	const db = c.get('db');
 	const updated = await db.query<{ id: string }>(
