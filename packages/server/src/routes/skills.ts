@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { SkillRecord } from '@hezo/shared';
-import { Hono } from 'hono';
+import { type Context, Hono } from 'hono';
+import { resolveActor } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { deriveSkillSummary } from '../lib/skill-summary';
 import { toSlug } from '../lib/slug';
@@ -9,6 +10,24 @@ import { requireSuperuser } from '../middleware/auth';
 import { downloadSkillContent, SkillDownloadError } from '../services/skill-downloader';
 
 export const skillsRoutes = new Hono<Env>();
+
+async function emitSkill(
+	c: Context<Env>,
+	teamId: string,
+	type: 'skill.created' | 'skill.updated' | 'skill.deleted',
+	skill: { id: string; slug: string; name: string },
+): Promise<void> {
+	const actor = await resolveActor(c.get('db'), c.get('auth'), teamId);
+	c.get('events').emit({
+		type,
+		teamId,
+		actorType: actor.actorType,
+		actorMemberId: actor.actorMemberId,
+		skillId: skill.id,
+		slug: skill.slug,
+		name: skill.name,
+	});
+}
 
 function downloadErrorStatus(reason: SkillDownloadError['reason']): 400 | 404 | 422 | 503 {
 	switch (reason) {
@@ -74,7 +93,17 @@ skillsRoutes.post('/skills', async (c) => {
 		 RETURNING *`,
 		[body.name.trim(), slug, description, content, hash, JSON.stringify(body.tags ?? [])],
 	);
-	return ok(c, result.rows[0], 201);
+	const skill = result.rows[0];
+	c.get('events').emit({
+		type: 'skill.created',
+		teamId: null,
+		actorType: 'admin',
+		actorMemberId: null,
+		skillId: skill.id,
+		slug: skill.slug,
+		name: skill.name,
+	});
+	return ok(c, skill, 201);
 });
 
 skillsRoutes.get('/skills/:slug', async (c) => {
@@ -161,6 +190,15 @@ skillsRoutes.patch('/skills/:slug', async (c) => {
 			[skill.id, nextRev, body.content, skill.content_hash],
 		);
 	}
+	c.get('events').emit({
+		type: 'skill.updated',
+		teamId: null,
+		actorType: 'admin',
+		actorMemberId: null,
+		skillId: skill.id,
+		slug: skill.slug,
+		name: skill.name,
+	});
 	return ok(c, skill);
 });
 
@@ -169,13 +207,22 @@ skillsRoutes.delete('/skills/:slug', async (c) => {
 	if (denied) return denied;
 	const db = c.get('db');
 	const slug = c.req.param('slug');
-	const result = await db.query(
-		'DELETE FROM skills WHERE team_id IS NULL AND slug = $1 RETURNING id',
+	const result = await db.query<{ id: string; name: string }>(
+		'DELETE FROM skills WHERE team_id IS NULL AND slug = $1 RETURNING id, name',
 		[slug],
 	);
 	if (result.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Skill not found', 404);
 	}
+	c.get('events').emit({
+		type: 'skill.deleted',
+		teamId: null,
+		actorType: 'admin',
+		actorMemberId: null,
+		skillId: result.rows[0].id,
+		slug,
+		name: result.rows[0].name,
+	});
 	return c.json({ data: null }, 200);
 });
 
@@ -270,6 +317,7 @@ skillsRoutes.post('/teams/:teamId/skills', async (c) => {
 			[skill.id, content, hash],
 		);
 
+		await emitSkill(c, teamId, 'skill.created', skill);
 		return ok(c, skill, 201);
 	}
 
@@ -310,6 +358,7 @@ skillsRoutes.post('/teams/:teamId/skills', async (c) => {
 			[skill.id, content, hash],
 		);
 
+		await emitSkill(c, teamId, 'skill.created', skill);
 		return ok(c, skill, 201);
 	} catch (e) {
 		if (e instanceof SkillDownloadError) {
@@ -397,6 +446,7 @@ skillsRoutes.patch('/teams/:teamId/skills/:slug', async (c) => {
 		);
 	}
 
+	await emitSkill(c, teamId, 'skill.updated', skill);
 	return ok(c, skill);
 });
 
@@ -456,8 +506,8 @@ skillsRoutes.delete('/teams/:teamId/skills/:slug', async (c) => {
 	const db = c.get('db');
 	const slug = c.req.param('slug');
 
-	const result = await db.query(
-		'DELETE FROM skills WHERE team_id = $1 AND slug = $2 RETURNING id',
+	const result = await db.query<{ id: string; name: string }>(
+		'DELETE FROM skills WHERE team_id = $1 AND slug = $2 RETURNING id, name',
 		[teamId, slug],
 	);
 
@@ -465,5 +515,10 @@ skillsRoutes.delete('/teams/:teamId/skills/:slug', async (c) => {
 		return err(c, 'NOT_FOUND', 'Skill not found', 404);
 	}
 
+	await emitSkill(c, teamId, 'skill.deleted', {
+		id: result.rows[0].id,
+		slug,
+		name: result.rows[0].name,
+	});
 	return c.json({ data: null }, 200);
 });

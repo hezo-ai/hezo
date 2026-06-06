@@ -10,6 +10,7 @@ const instanceNav = [
 	{ to: '/settings/skills', label: 'Skills' },
 	{ to: '/settings/connectors', label: 'Connectors' },
 	{ to: '/settings/credentials', label: 'Credentials' },
+	{ to: '/settings/audit-log', label: 'Activity' },
 ] as const;
 
 function GlobalSettingsPage() {

@@ -146,6 +146,17 @@ oauthRoutes.get('/oauth/callback', async (c) => {
 		provider_account_label: conn.providerAccountLabel,
 	});
 
+	// The callback is an unauthenticated browser redirect (state is signed), so
+	// the acting member can't be resolved here — attribute to the admin actor.
+	c.get('events').emit({
+		type: 'connection.created',
+		teamId: payload.teamId,
+		actorType: 'admin',
+		actorMemberId: null,
+		connectionId: conn.id,
+		provider: conn.provider,
+	});
+
 	return c.html(buildCallbackPage('success', undefined, payload.returnTo), 200);
 });
 

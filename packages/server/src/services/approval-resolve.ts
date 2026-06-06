@@ -1,5 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { ApprovalStatus, ApprovalType } from '@hezo/shared';
+import type { DomainEventBus } from '../events/bus';
 import {
 	applyApprovalDeniedSideEffect,
 	applyApprovalSideEffect,
@@ -19,6 +20,7 @@ export interface ResolveApprovalInput {
 	actorMemberId: string | null;
 	wsManager?: WebSocketManager;
 	containerDeps?: ContainerDeps;
+	events?: DomainEventBus;
 }
 
 export type ResolveApprovalResult =
@@ -57,6 +59,7 @@ export async function resolveApproval(
 			input.actorMemberId,
 			input.wsManager,
 			input.containerDeps,
+			input.events,
 		);
 	} else if (
 		existing.rows[0].type === ApprovalType.TeamTemplate ||

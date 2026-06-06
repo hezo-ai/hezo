@@ -25,6 +25,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
+import type { DomainEventBus } from '../events/bus';
 import { broadcastRowChange } from '../lib/broadcast';
 import { withTransaction } from '../lib/sql';
 import { signAgentJwt } from '../middleware/auth';
@@ -116,6 +117,7 @@ export interface RunnerDeps {
 	serverPort: number;
 	dataDir: string;
 	wsManager?: WebSocketManager;
+	events?: DomainEventBus;
 	logs: LogStreamBroker;
 	sshAgentServer?: SshAgentServer;
 	egressProxy?: EgressProxy | null;
@@ -482,7 +484,9 @@ export async function runAgent(
 
 	const runBroadcast: HeartbeatRunBroadcast = {
 		wsManager: deps.wsManager,
+		events: deps.events,
 		teamId: agent.team_id,
+		projectId: project.id,
 		taskId: task.id,
 		memberId: agent.id,
 	};
@@ -496,6 +500,7 @@ export async function runAgent(
 		effectiveWakeupId,
 	);
 	onRunRegistered?.(heartbeatRunId);
+	await emitRunStarted(deps, heartbeatRunId, agent, task, project, effectiveWakeupId);
 	const streamId = `run:${heartbeatRunId}`;
 
 	deps.logs.begin({
@@ -1448,7 +1453,9 @@ export async function buildCoachReviewPrompt(
 
 export interface HeartbeatRunBroadcast {
 	wsManager?: WebSocketManager;
+	events?: DomainEventBus;
 	teamId: string;
+	projectId?: string;
 	taskId: string;
 	memberId: string;
 }
@@ -1598,4 +1605,54 @@ async function updateHeartbeatRun(
 		],
 	);
 	broadcastHeartbeatRunChange(broadcast, runId, update.status, 'UPDATE');
+	broadcast.events?.emit({
+		type: 'agent_run.completed',
+		teamId: broadcast.teamId,
+		projectId: broadcast.projectId ?? null,
+		runId,
+		taskId: broadcast.taskId,
+		agentMemberId: broadcast.memberId,
+		status: update.status as HeartbeatRunStatus,
+		exitCode: update.exitCode,
+		error: update.error ?? null,
+	});
+}
+
+/**
+ * Emit `agent_run.started` once the run row exists. Looks up the wakeup's source
+ * and a light triggered-by hint for the audit trail.
+ */
+async function emitRunStarted(
+	deps: RunnerDeps,
+	runId: string,
+	agent: AgentInfo,
+	task: TaskInfo,
+	project: ProjectInfo,
+	wakeupId: string,
+): Promise<void> {
+	if (!deps.events) return;
+	let triggerSource: string | null = null;
+	let triggeredBy: string | null = null;
+	try {
+		const r = await deps.db.query<{ source: string; payload: Record<string, unknown> | null }>(
+			'SELECT source, payload FROM agent_wakeup_requests WHERE id = $1',
+			[wakeupId],
+		);
+		triggerSource = r.rows[0]?.source ?? null;
+		const payload = r.rows[0]?.payload;
+		const by = payload?.author_member_id ?? payload?.reason;
+		triggeredBy = typeof by === 'string' ? by : null;
+	} catch {
+		// Best-effort enrichment; the started event still fires without it.
+	}
+	deps.events.emit({
+		type: 'agent_run.started',
+		teamId: agent.team_id,
+		projectId: project.id,
+		runId,
+		taskId: task.id,
+		agentMemberId: agent.id,
+		triggerSource,
+		triggeredBy,
+	});
 }

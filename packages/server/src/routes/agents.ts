@@ -20,7 +20,12 @@ import {
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
-import { resolveActorMemberId, resolveAgentId } from '../lib/resolve';
+import {
+	actorTypeFromAuth,
+	resolveActor,
+	resolveActorMemberId,
+	resolveAgentId,
+} from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
 import { buildUpdateSet, isFkViolation, terminalStatusParams, withTransaction } from '../lib/sql';
@@ -290,6 +295,15 @@ agentsRoutes.post('/teams/:teamId/agents', async (c) => {
 			log.error('Failed to enqueue team coherence review after agent create:', e),
 		),
 	);
+
+	const createActor = await resolveActor(db, c.get('auth'), teamId);
+	c.get('events').emit({
+		type: 'agent.created',
+		teamId,
+		actorType: createActor.actorType,
+		actorMemberId: createActor.actorMemberId,
+		agentMemberId: memberId,
+	});
 
 	return ok(c, result.rows[0], 201);
 });
@@ -683,6 +697,7 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/system-prompt/restore', async 
 		documentId: doc.id,
 		revisionNumber: body.revision_number,
 		restoredByMemberId: null,
+		audit: { events: c.get('events'), actorType: actorTypeFromAuth(auth) },
 	});
 	if (!restored) return err(c, 'NOT_FOUND', 'Revision not found', 404);
 
@@ -829,6 +844,7 @@ agentsRoutes.patch('/teams/:teamId/agents/:agentId', async (c) => {
 			content: body.system_prompt,
 			changeSummary: body.system_prompt_change_summary ?? 'Manual edit by the admin',
 			authorMemberId: null,
+			audit: { events: c.get('events'), actorType: actorTypeFromAuth(c.get('auth')) },
 		});
 	}
 
@@ -849,6 +865,23 @@ agentsRoutes.patch('/teams/:teamId/agents/:agentId', async (c) => {
 				log.error('Failed to enqueue team coherence review on reports_to change:', e),
 			),
 		);
+	}
+
+	// System-prompt-only edits are audited via the document event from upsertDocument;
+	// emit agent.updated for the other settings/profile changes.
+	if (sets.length > 0 || body.title?.trim()) {
+		const changes = Object.keys(body).filter(
+			(k) => k !== 'system_prompt' && k !== 'system_prompt_change_summary',
+		);
+		const updateActor = await resolveActor(db, c.get('auth'), teamId);
+		c.get('events').emit({
+			type: 'agent.updated',
+			teamId,
+			actorType: updateActor.actorType,
+			actorMemberId: updateActor.actorMemberId,
+			agentMemberId: agentId,
+			changes,
+		});
 	}
 
 	return ok(c, updatedRow);
@@ -890,6 +923,15 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/disable', async (c) => {
 		),
 	);
 
+	const disableActor = await resolveActor(db, c.get('auth'), teamId);
+	c.get('events').emit({
+		type: 'agent.disabled',
+		teamId,
+		actorType: disableActor.actorType,
+		actorMemberId: disableActor.actorMemberId,
+		agentMemberId: agentId,
+	});
+
 	return ok(c, { admin_status: AgentAdminStatus.Disabled });
 });
 
@@ -922,6 +964,15 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/enable', async (c) => {
 			log.error('Failed to enqueue team coherence review on enable:', e),
 		),
 	);
+
+	const enableActor = await resolveActor(db, c.get('auth'), teamId);
+	c.get('events').emit({
+		type: 'agent.enabled',
+		teamId,
+		actorType: enableActor.actorType,
+		actorMemberId: enableActor.actorMemberId,
+		agentMemberId: agentId,
+	});
 
 	return ok(c, { admin_status: AgentAdminStatus.Enabled });
 });

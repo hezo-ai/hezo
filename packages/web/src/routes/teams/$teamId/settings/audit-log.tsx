@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useState } from 'react';
+import { AuditLogTable } from '../../../../components/audit-log-table';
 import { Badge } from '../../../../components/ui/badge';
 import { type Column, DataTable } from '../../../../components/ui/data-table';
 import { type AuditEntry, useAuditLog } from '../../../../hooks/use-audit-log';
@@ -13,33 +14,6 @@ const tabs: Array<{ key: TabKey; label: string; description: string }> = [
 		label: 'Outbound traffic',
 		description:
 			'Every outbound HTTPS request from an agent container that the egress proxy substituted a placeholder for, or denied. Values are never recorded — only the secret name.',
-	},
-];
-
-const baseColumns: Column<AuditEntry>[] = [
-	{
-		key: 'time',
-		header: 'Time',
-		hideOnMobile: true,
-		render: (e) => (
-			<span className="text-xs text-text-subtle">{new Date(e.created_at).toLocaleString()}</span>
-		),
-	},
-	{
-		key: 'actor',
-		header: 'Actor',
-		render: (e) => <span className="text-xs">{e.actor_name || e.actor_type}</span>,
-	},
-	{
-		key: 'action',
-		header: 'Action',
-		render: (e) => <Badge color="neutral">{e.action}</Badge>,
-	},
-	{
-		key: 'entity',
-		header: 'Entity',
-		hideOnMobile: true,
-		render: (e) => <span className="text-xs text-text-muted">{e.entity_type}</span>,
 	},
 ];
 
@@ -118,7 +92,6 @@ function AuditLogPage() {
 	const filter = tab === 'egress' ? { entity_type: 'egress_request' } : undefined;
 	const { data: entries } = useAuditLog(teamId, filter);
 	const activeTab = tabs.find((t) => t.key === tab) ?? tabs[0];
-	const columns = tab === 'egress' ? egressColumns : baseColumns;
 
 	return (
 		<div>
@@ -142,12 +115,14 @@ function AuditLogPage() {
 					</button>
 				))}
 			</div>
-			{!entries?.length ? (
-				<p className="text-[13px] text-text-muted">
-					{tab === 'egress' ? 'No egress events yet.' : 'No audit entries yet.'}
-				</p>
+			{tab === 'egress' ? (
+				!entries?.length ? (
+					<p className="text-[13px] text-text-muted">No egress events yet.</p>
+				) : (
+					<DataTable columns={egressColumns} data={entries} rowKey={(row) => row.id} />
+				)
 			) : (
-				<DataTable columns={columns} data={entries} rowKey={(row) => row.id} />
+				<AuditLogTable entries={entries} emptyText="No audit entries yet." />
 			)}
 		</div>
 	);

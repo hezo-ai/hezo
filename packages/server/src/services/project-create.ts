@@ -1,5 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { TaskPriority, TaskStatus } from '@hezo/shared';
+import { type AuditActorType, TaskPriority, TaskStatus } from '@hezo/shared';
+import type { DomainEventBus } from '../events/bus';
 import { withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 
@@ -50,6 +51,10 @@ export interface CreateProjectWithPlanningInput {
 	description: string;
 	dockerBaseImage?: string;
 	initialPrd?: string | null;
+	/** Optional audit context: who created the project and the bus to emit on. */
+	events?: DomainEventBus;
+	actorType?: AuditActorType;
+	actorMemberId?: string | null;
 }
 
 export interface CreateProjectWithPlanningResult {
@@ -67,7 +72,7 @@ export async function createProjectWithPlanningTask(
 	const projectDescription = input.description.trim();
 	const initialPrd = input.initialPrd?.trim() || null;
 
-	return withTransaction(db, async () => {
+	const result = await withTransaction(db, async () => {
 		await db.query('SELECT id FROM teams WHERE id = $1 FOR UPDATE', [input.teamId]);
 		const countResult = await db.query<{ count: string }>(
 			`SELECT count(*)::text AS count FROM projects
@@ -165,4 +170,16 @@ Container provisioning for this project is in progress. Focus on planning while 
 
 		return { project, planningTask, deferCaptainPlanningWake };
 	});
+
+	input.events?.emit({
+		type: 'project.created',
+		teamId: input.teamId,
+		projectId: result.project.id as string,
+		actorType: input.actorType ?? 'admin',
+		actorMemberId: input.actorMemberId ?? null,
+		name: result.project.name as string,
+		slug: result.project.slug as string,
+	});
+
+	return result;
 }
