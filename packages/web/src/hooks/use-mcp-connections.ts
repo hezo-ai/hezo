@@ -1,6 +1,13 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { useInvalidatingMutation } from './use-invalidating-mutation';
+import { useResponseMutation } from './use-response-mutation';
+
+/** Prefix key — invalidating it re-flows every project-scoped list. */
+const baseKey = (teamId: string) => ['teams', teamId, 'mcp-connections'] as const;
+const scopedKey = (teamId: string, projectId: string | null) =>
+	['teams', teamId, 'mcp-connections', projectId] as const;
 
 export interface McpConnection {
 	id: string;
@@ -50,12 +57,12 @@ export function useMcpConnection(teamId: string, connectorId: string | undefined
 }
 
 export function useRevokeConnector(teamId: string) {
-	return useMutation({
-		mutationFn: (connectorId: string) =>
+	// Security-sensitive: must invalidate + refetch, never optimistically appear
+	// revoked.
+	return useInvalidatingMutation<string, McpConnection>({
+		mutationFn: (connectorId) =>
 			api.post<McpConnection>(`/api/teams/${teamId}/mcp-connections/${connectorId}/revoke`, {}),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'mcp-connections'] });
-		},
+		invalidate: [baseKey(teamId)],
 	});
 }
 
@@ -75,32 +82,27 @@ export function useMcpConnections(teamId: string, projectId?: string) {
 }
 
 export function useCreateMcpConnection(teamId: string) {
-	return useMutation({
-		mutationFn: (data: CreateMcpConnectionPayload) =>
-			api.post<McpConnection>(`/api/teams/${teamId}/mcp-connections`, data),
-		onSuccess: (created) => {
-			queryClient.setQueryData<McpConnection[]>(
-				['teams', teamId, 'mcp-connections', created.project_id ?? null],
-				(prev) => (prev ? [...prev.filter((c) => c.id !== created.id), created] : [created]),
-			);
-			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'mcp-connections'],
-			});
-		},
+	// Response-driven: the server sets install_status (and may upsert), seeding
+	// the project-scoped list from the response keyed by the returned project_id.
+	return useResponseMutation<CreateMcpConnectionPayload, McpConnection, McpConnection[]>({
+		mutationFn: (data) => api.post<McpConnection>(`/api/teams/${teamId}/mcp-connections`, data),
+		queryKey: (_data, created) => scopedKey(teamId, created.project_id ?? null),
+		merge: (prev, created) =>
+			prev ? [...prev.filter((c) => c.id !== created.id), created] : [created],
+		invalidateOnSettled: [baseKey(teamId)],
 	});
 }
 
 export function useDeleteMcpConnection(teamId: string) {
-	return useMutation({
-		mutationFn: (id: string) => api.delete(`/api/teams/${teamId}/mcp-connections/${id}`),
-		onSuccess: (_, id) => {
-			queryClient.setQueriesData<McpConnection[]>(
-				{ queryKey: ['teams', teamId, 'mcp-connections'] },
-				(prev) => (prev ? prev.filter((c) => c.id !== id) : prev),
+	return useInvalidatingMutation<string, unknown>({
+		mutationFn: (id) => api.delete(`/api/teams/${teamId}/mcp-connections/${id}`),
+		invalidate: [baseKey(teamId)],
+		onSuccess: (_data, id) => {
+			// Prune from every project-scoped list immediately (setQueriesData spans
+			// the prefix); the invalidate above refetches them.
+			queryClient.setQueriesData<McpConnection[]>({ queryKey: baseKey(teamId) }, (prev) =>
+				prev ? prev.filter((c) => c.id !== id) : prev,
 			);
-			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'mcp-connections'],
-			});
 		},
 	});
 }

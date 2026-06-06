@@ -98,7 +98,12 @@ export function McpServersSection({ teamId }: { teamId: string }) {
 									{conn.install_status}
 								</Badge>
 							)}
-							<Button variant="danger-text" size="sm" onClick={() => deleteConn.mutate(conn.id)}>
+							<Button
+								variant="danger-text"
+								size="sm"
+								aria-label={`Delete ${conn.name}`}
+								onClick={() => deleteConn.mutate(conn.id)}
+							>
 								<Trash2 className="w-3 h-3" />
 							</Button>
 						</div>
