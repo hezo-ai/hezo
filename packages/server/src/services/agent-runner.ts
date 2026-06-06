@@ -28,7 +28,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import { broadcastRowChange } from '../lib/broadcast';
 import { withTransaction } from '../lib/sql';
 import { signAgentJwt } from '../middleware/auth';
-import { type AgentRunUsage, createAgentStreamParser } from './agent-stream-parser';
+import type { AgentRunUsage } from './agent-stream-parser';
 import {
 	type AiProviderCredential,
 	getProviderCredentialAndModel,
@@ -37,7 +37,7 @@ import {
 import { loadSkillFilesForTeam } from './connectors/lifecycle';
 import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
-import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
+import { type EffortRuntimeApplication, resolveEffort } from './effort';
 import type { EgressProxy } from './egress';
 import { ensureGithubKnownHosts, ensureTaskWorktree, fetchRepo } from './git';
 import { buildGitIdentityEnv } from './git-identity';
@@ -46,6 +46,7 @@ import { loadMcpConnectionDescriptors } from './mcp-connections';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
 import { loadReactionsForTask, type ReactionGroup } from './reactions';
 import { ensureProjectRepos } from './repo-sync';
+import { RUNTIME_STRATEGIES } from './runtime/runtime-strategy';
 import {
 	buildSubscriptionMount as buildSubscriptionMountImpl,
 	ensureRuntimeHomeDir,
@@ -286,7 +287,7 @@ async function buildRunContext(
 		project.is_internal,
 	);
 	const effort = resolveEffort(wakeupPayload?.effort, agent.default_effort, agent.slug);
-	const effortApplication = applyEffortToRuntime(runtimeType, effort);
+	const effortApplication = RUNTIME_STRATEGIES[runtimeType].applyEffort(effort);
 
 	const isCoachReview = wakeupPayload?.trigger === 'task_done';
 	const mentionContext =
@@ -352,6 +353,7 @@ async function buildRunContext(
 		hostHomeDir: homeMount?.hostDir ?? null,
 		containerHomeDir: homeMount?.containerDir ?? null,
 		skillFiles,
+		provider,
 	});
 	validateInjection(adapter, mcpInjection);
 
@@ -717,7 +719,7 @@ export async function runAgent(
 
 	emit('stdout', `${invocationCommand}\n`);
 
-	const parser = createAgentStreamParser(runtimeType);
+	const parser = RUNTIME_STRATEGIES[runtimeType].createStreamParser();
 
 	const persistRotatedAuth = async () => {
 		const mount = context.subscriptionMount;

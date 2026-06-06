@@ -68,7 +68,21 @@ export interface ClaudeCodeSettings {
 	};
 }
 
-export function buildClaudeCodeSettings(): ClaudeCodeSettings {
+/**
+ * Build the Claude Code `settings.json` carrying the completeness Stop hook.
+ *
+ * `judgeModel` is the model the `type: "prompt"` hook asks Claude Code to run
+ * the judge with — it must be reachable through the run's provider upstream.
+ * Passing `null` omits the Stop hook entirely (the gate fails open), for
+ * providers on the Claude Code runtime whose upstream can't serve a judge model
+ * (e.g. DeepSeek, Z.ai). Defaults to the Anthropic judge model.
+ */
+export function buildClaudeCodeSettings(
+	judgeModel: string | null = STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
+): ClaudeCodeSettings {
+	if (judgeModel === null) {
+		return { hooks: { Stop: [] } };
+	}
 	return {
 		hooks: {
 			Stop: [
@@ -78,7 +92,7 @@ export function buildClaudeCodeSettings(): ClaudeCodeSettings {
 							type: 'prompt',
 							prompt: STOP_HOOK_PROMPT,
 							timeout: 30,
-							model: STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
+							model: judgeModel,
 							statusMessage: 'Checking work completeness...',
 						},
 					],

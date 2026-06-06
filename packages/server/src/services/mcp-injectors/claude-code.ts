@@ -1,4 +1,6 @@
 import { join } from 'node:path';
+import { AiProvider } from '@hezo/shared';
+import { PROVIDER_STRATEGIES } from '../runtime/provider-strategy';
 import { buildClaudeCodeSettings } from '../stop-hook-prompt';
 import type {
 	McpDescriptor,
@@ -56,7 +58,10 @@ export const claudeCodeAdapter: RuntimeMcpAdapter = {
 
 		const settingsHostPath = join(ctx.hostHomeDir, 'settings.json');
 		const settingsContainerPath = join(ctx.containerHomeDir, 'settings.json');
-		const settingsContents = `${JSON.stringify(buildClaudeCodeSettings(), null, 2)}\n`;
+		// Anthropic, DeepSeek and Z.ai all run on this runtime; the judge model
+		// has to be one the run's provider upstream can serve (null = fail open).
+		const judgeModel = PROVIDER_STRATEGIES[ctx.provider ?? AiProvider.Anthropic].judgeModel;
+		const settingsContents = `${JSON.stringify(buildClaudeCodeSettings(judgeModel), null, 2)}\n`;
 
 		const cliArgs: string[] = ['--settings', settingsContainerPath];
 		if (descriptors.length > 0) {

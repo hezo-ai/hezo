@@ -1,7 +1,7 @@
-import { AgentRuntime } from '@hezo/shared';
+import { AgentRuntime, AiProvider } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from '../src/services/mcp-injectors';
-import { STOP_HOOK_RULES } from '../src/services/stop-hook-prompt';
+import { STOP_HOOK_JUDGE_MODEL_ANTHROPIC, STOP_HOOK_RULES } from '../src/services/stop-hook-prompt';
 
 const HOME = '/workspace/.hezo/subscription/codex/run-1';
 const URL = 'http://host.docker.internal:3000/mcp';
@@ -111,6 +111,36 @@ describe('claude-code adapter', () => {
 		expect(hookEntry.model.length).toBeGreaterThan(0);
 		expect(hookEntry.prompt).toContain('quality gate');
 		expect(hookEntry.prompt).toContain('$ARGUMENTS');
+	});
+
+	it('selects the Anthropic judge model by default and when the provider is Anthropic', () => {
+		for (const ctx of [
+			{ hostHomeDir: HOME, containerHomeDir: HOME },
+			{ hostHomeDir: HOME, containerHomeDir: HOME, provider: AiProvider.Anthropic },
+		]) {
+			const injection = adapter.build([HEZO_DESCRIPTOR], ctx);
+			const settings = JSON.parse(injection.files[0].contents) as {
+				hooks: { Stop: Array<{ hooks: Array<{ model: string }> }> };
+			};
+			expect(settings.hooks.Stop).toHaveLength(1);
+			expect(settings.hooks.Stop[0].hooks[0].model).toBe(STOP_HOOK_JUDGE_MODEL_ANTHROPIC);
+		}
+	});
+
+	it('omits the Stop hook for Claude Code providers without a reachable judge model', () => {
+		// DeepSeek / Z.ai run on this runtime but their upstream cannot serve the
+		// Anthropic judge model, so the completeness gate fails open (no hook).
+		for (const provider of [AiProvider.DeepSeek, AiProvider.ZAi]) {
+			const injection = adapter.build([HEZO_DESCRIPTOR], {
+				hostHomeDir: HOME,
+				containerHomeDir: HOME,
+				provider,
+			});
+			const settings = JSON.parse(injection.files[0].contents) as {
+				hooks: { Stop: unknown[] };
+			};
+			expect(settings.hooks.Stop).toEqual([]);
+		}
 	});
 
 	it('passes --settings pointing at the container path for the settings file', () => {

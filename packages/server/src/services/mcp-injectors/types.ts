@@ -6,6 +6,8 @@
  * The runner always emits the built-in Hezo server (HTTP) plus zero or
  * more per-team / per-project descriptors loaded from `mcp_connections`.
  */
+import type { AiProvider } from '@hezo/shared';
+
 export type McpDescriptor = McpHttpDescriptor | McpStdioDescriptor;
 
 export interface McpHttpDescriptor {
@@ -82,6 +84,10 @@ export interface McpAdapterContext {
 	 *  write these to their conventional skills directory; Claude Code reads
 	 *  `~/.claude/skills/<slug>.md`, others use whatever convention they have. */
 	skillFiles?: readonly McpSkillFile[];
+	/** Run's resolved AI provider. Adapters whose runtime is shared by multiple
+	 *  providers (Claude Code: Anthropic / DeepSeek / Z.ai) use it to pick the
+	 *  completeness Stop hook's judge model. Defaults to Anthropic when omitted. */
+	provider?: AiProvider;
 }
 
 export interface RuntimeMcpAdapter {
