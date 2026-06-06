@@ -8,6 +8,7 @@
  * columns, same `team_id` scope, same `created_at DESC` order.
  */
 import type { PGlite } from '@electric-sql/pglite';
+import { sql } from 'kysely';
 import { getKysely } from '../db/kysely';
 
 /** Public-safe columns (never the key_hash). */
@@ -41,4 +42,26 @@ export function insertApiKey(
 
 export async function deleteApiKey(db: PGlite, id: string): Promise<void> {
 	await getKysely(db).deleteFrom('api_keys').where('id', '=', id).execute();
+}
+
+/**
+ * Auth-path lookup: resolve a key by its public prefix, returning the stored
+ * hash for the caller's timing-safe comparison (never compared here). Internal
+ * — exposes key_hash, unlike the public read above.
+ */
+export function findApiKeyByPrefix(db: PGlite, prefix: string) {
+	return getKysely(db)
+		.selectFrom('api_keys')
+		.select(['id', 'team_id', 'key_hash'])
+		.where('prefix', '=', prefix)
+		.executeTakeFirst();
+}
+
+/** Stamp last_used_at after a successful auth. */
+export async function touchApiKeyLastUsed(db: PGlite, id: string): Promise<void> {
+	await getKysely(db)
+		.updateTable('api_keys')
+		.set({ last_used_at: sql<string>`now()` })
+		.where('id', '=', id)
+		.execute();
 }

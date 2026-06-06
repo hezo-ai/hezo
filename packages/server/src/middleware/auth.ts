@@ -7,6 +7,7 @@ import { sign, verify } from 'hono/jwt';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { resolveTeamId } from '../lib/resolve';
 import type { AuthInfo, Env } from '../lib/types';
+import { findApiKeyByPrefix, touchApiKeyLastUsed } from '../repositories/api-keys';
 
 const AGENT_JWT_TTL_SECONDS = 60 * 60 * 4;
 
@@ -26,20 +27,15 @@ export async function verifyToken(
 	// API key auth
 	if (token.startsWith('hezo_')) {
 		const prefix = token.slice(5, 13);
-		const result = await db.query<{ id: string; team_id: string; key_hash: string }>(
-			'SELECT id, team_id, key_hash FROM api_keys WHERE prefix = $1',
-			[prefix],
-		);
-
-		if (result.rows.length === 0) return null;
+		const row = await findApiKeyByPrefix(db, prefix);
+		if (!row) return null;
 
 		const tokenHash = createHash('sha256').update(token).digest('hex');
-		if (!safeCompareHex(tokenHash, result.rows[0].key_hash)) return null;
+		if (!safeCompareHex(tokenHash, row.key_hash)) return null;
 
-		// Update last_used_at
-		await db.query('UPDATE api_keys SET last_used_at = now() WHERE id = $1', [result.rows[0].id]);
+		await touchApiKeyLastUsed(db, row.id);
 
-		return { type: AuthType.ApiKey, teamId: result.rows[0].team_id };
+		return { type: AuthType.ApiKey, teamId: row.team_id };
 	}
 
 	// JWT auth

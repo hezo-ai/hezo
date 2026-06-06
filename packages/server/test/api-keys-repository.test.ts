@@ -1,6 +1,12 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { deleteApiKey, insertApiKey, listTeamApiKeys } from '../src/repositories/api-keys';
+import {
+	deleteApiKey,
+	findApiKeyByPrefix,
+	insertApiKey,
+	listTeamApiKeys,
+	touchApiKeyLastUsed,
+} from '../src/repositories/api-keys';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp } from './helpers/app';
 
@@ -71,5 +77,28 @@ describe('api-keys repository', () => {
 		await deleteApiKey(db, row.id);
 		const rows = await listTeamApiKeys(db, teamId);
 		expect(rows.find((r) => r.id === row.id)).toBeUndefined();
+	});
+
+	it('finds a key by prefix (exposing key_hash for the auth path) and stamps last_used_at', async () => {
+		const created = await insertApiKey(db, {
+			teamId,
+			name: 'Auth Path',
+			prefix: 'pauth000',
+			keyHash: 'storedhash',
+		});
+
+		const found = await findApiKeyByPrefix(db, 'pauth000');
+		expect(found).toBeDefined();
+		expect(found?.id).toBe(created.id);
+		expect(found?.team_id).toBe(teamId);
+		expect(found?.key_hash).toBe('storedhash');
+
+		expect(await findApiKeyByPrefix(db, 'nomatch0')).toBeUndefined();
+
+		await touchApiKeyLastUsed(db, created.id);
+		const [row] = await listTeamApiKeys(db, teamId).then((rows) =>
+			rows.filter((r) => r.id === created.id),
+		);
+		expect(row.last_used_at).not.toBeNull();
 	});
 });
