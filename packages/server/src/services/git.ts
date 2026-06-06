@@ -73,7 +73,11 @@ function sshEnv(sshAuthSock: string, knownHostsPath: string): Record<string, str
 	return {
 		GIT_TERMINAL_PROMPT: '0',
 		SSH_AUTH_SOCK: sshAuthSock,
-		GIT_SSH_COMMAND: `ssh -o UserKnownHostsFile=${knownHostsPath} -o StrictHostKeyChecking=yes -o IdentityAgent=${sshAuthSock} -o IdentitiesOnly=no`,
+		// ConnectTimeout bounds the TCP handshake so an unreachable or black-holed
+		// host fails fast instead of stalling the whole clone/fetch on the OS
+		// default (~2 min). Normal github.com connects are instant, so this only
+		// shortens the failure path.
+		GIT_SSH_COMMAND: `ssh -o ConnectTimeout=10 -o UserKnownHostsFile=${knownHostsPath} -o StrictHostKeyChecking=yes -o IdentityAgent=${sshAuthSock} -o IdentitiesOnly=no`,
 	};
 }
 

@@ -52,6 +52,7 @@ import { EgressProxy, loadOrCreateCA } from './services/egress';
 import { pruneStaleBundledImages } from './services/image-registry';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
+import { assertRequiredTools } from './services/preflight';
 import { SshAgentServer } from './services/ssh-agent';
 import { WebSocketManager } from './services/ws';
 import { loadStaticBundle } from './static-assets';
@@ -82,6 +83,8 @@ export interface StartupResult {
 }
 
 export async function startup(config: HezoConfig): Promise<StartupResult> {
+	await assertRequiredTools();
+
 	mkdirSync(config.dataDir, { recursive: true });
 
 	const db = await openPersistentDb(config.dataDir, { reset: config.reset });
