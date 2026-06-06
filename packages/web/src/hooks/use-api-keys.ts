@@ -1,6 +1,8 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { useInvalidatingMutation } from './use-invalidating-mutation';
+import { useResponseMutation } from './use-response-mutation';
 
 export interface ApiKey {
 	id: string;
@@ -12,34 +14,38 @@ export interface ApiKey {
 	created_at: string;
 }
 
+const listKey = (teamId: string) => ['teams', teamId, 'api-keys'] as const;
+
 export function useApiKeys(teamId: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'api-keys'],
+		queryKey: listKey(teamId),
 		queryFn: () => api.get<ApiKey[]>(`/api/teams/${teamId}/api-keys`),
 	});
 }
 
 export function useCreateApiKey(teamId: string) {
-	return useMutation({
-		mutationFn: (data: { name: string }) => api.post<ApiKey>(`/api/teams/${teamId}/api-keys`, data),
-		onSuccess: (created) => {
+	// Response-driven: the server mints the prefix + raw key. The list cache is
+	// seeded from the response (minus the one-time raw `key`); the mutation's
+	// returned data keeps `key` so the caller can show it once.
+	return useResponseMutation<{ name: string }, ApiKey, ApiKey[]>({
+		mutationFn: (data) => api.post<ApiKey>(`/api/teams/${teamId}/api-keys`, data),
+		queryKey: listKey(teamId),
+		merge: (prev, created) => {
 			const { key: _key, ...row } = created;
-			queryClient.setQueryData<ApiKey[]>(['teams', teamId, 'api-keys'], (prev) =>
-				prev ? [...prev.filter((k) => k.id !== row.id), row as ApiKey] : [row as ApiKey],
-			);
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'api-keys'] });
+			return prev ? [...prev.filter((k) => k.id !== row.id), row] : [row];
 		},
+		invalidateOnSettled: [listKey(teamId)],
 	});
 }
 
 export function useDeleteApiKey(teamId: string) {
-	return useMutation({
-		mutationFn: (apiKeyId: string) => api.delete(`/api/teams/${teamId}/api-keys/${apiKeyId}`),
-		onSuccess: (_, apiKeyId) => {
-			queryClient.setQueryData<ApiKey[]>(['teams', teamId, 'api-keys'], (prev) =>
+	return useInvalidatingMutation<string, unknown>({
+		mutationFn: (apiKeyId) => api.delete(`/api/teams/${teamId}/api-keys/${apiKeyId}`),
+		invalidate: [listKey(teamId)],
+		onSuccess: (_data, apiKeyId) => {
+			queryClient.setQueryData<ApiKey[]>(listKey(teamId), (prev) =>
 				prev ? prev.filter((k) => k.id !== apiKeyId) : prev,
 			);
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'api-keys'] });
 		},
 	});
 }

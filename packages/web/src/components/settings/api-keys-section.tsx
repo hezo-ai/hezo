@@ -78,6 +78,7 @@ export function ApiKeysSection({ teamId }: { teamId: string }) {
 							</div>
 							<button
 								type="button"
+								aria-label={`Delete ${k.name}`}
 								onClick={() => deleteKey.mutate(k.id)}
 								className="text-text-subtle hover:text-accent-red"
 							>
