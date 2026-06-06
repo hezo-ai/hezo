@@ -5,6 +5,7 @@ import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { ref } from '../lib/log-ref';
 import { resolveProjectId } from '../lib/resolve';
+import { requireResourceInTeam } from '../lib/resource';
 import { err, ok } from '../lib/response';
 import { toProjectTaskPrefix, toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
@@ -320,13 +321,10 @@ projectsRoutes.patch('/teams/:teamId/projects/:projectId', async (c) => {
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const existing = await db.query('SELECT id FROM projects WHERE id = $1 AND team_id = $2', [
-		projectId,
-		teamId,
-	]);
-	if (existing.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Project not found', 404);
-	}
+	const existing = await requireResourceInTeam<{ id: string }>(c, 'projects', projectId, teamId, {
+		resourceName: 'Project',
+	});
+	if (existing instanceof Response) return existing;
 
 	const body = await c.req.json<{
 		name?: string;
@@ -394,14 +392,15 @@ projectsRoutes.delete('/teams/:teamId/projects/:projectId', async (c) => {
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const existing = await db.query<{ id: string; slug: string; is_internal: boolean }>(
-		'SELECT id, slug, is_internal FROM projects WHERE id = $1 AND team_id = $2',
-		[projectId, teamId],
+	const existing = await requireResourceInTeam<{ id: string; slug: string; is_internal: boolean }>(
+		c,
+		'projects',
+		projectId,
+		teamId,
+		{ columns: 'id, slug, is_internal', resourceName: 'Project' },
 	);
-	if (existing.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Project not found', 404);
-	}
-	if (existing.rows[0].is_internal) {
+	if (existing instanceof Response) return existing;
+	if (existing.is_internal) {
 		return err(c, 'FORBIDDEN', 'Cannot delete an internal project', 403);
 	}
 
@@ -416,7 +415,7 @@ projectsRoutes.delete('/teams/:teamId/projects/:projectId', async (c) => {
 
 	await trackBackground(
 		teardownContainer(buildContainerDeps(c), projectId, teamId).catch((error) => {
-			log.error(`Failed to teardown container for project ${existing.rows[0].slug}:`, error);
+			log.error(`Failed to teardown container for project ${existing.slug}:`, error);
 		}),
 	);
 
@@ -431,15 +430,18 @@ projectsRoutes.post('/teams/:teamId/projects/:projectId/container/start', async 
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const result = await db.query<{ container_id: string | null }>(
-		'SELECT container_id FROM projects WHERE id = $1 AND team_id = $2',
-		[projectId, teamId],
+	const result = await requireResourceInTeam<{ container_id: string | null }>(
+		c,
+		'projects',
+		projectId,
+		teamId,
+		{ columns: 'container_id', resourceName: 'Project' },
 	);
-	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Project not found', 404);
-	if (!result.rows[0].container_id) return err(c, 'NO_CONTAINER', 'No container provisioned', 400);
+	if (result instanceof Response) return result;
+	if (!result.container_id) return err(c, 'NO_CONTAINER', 'No container provisioned', 400);
 
 	const docker = c.get('docker');
-	const containerId = result.rows[0].container_id;
+	const containerId = result.container_id;
 	try {
 		await docker.startContainer(containerId);
 		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
@@ -464,13 +466,14 @@ projectsRoutes.post('/teams/:teamId/projects/:projectId/container/stop', async (
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const result = await db.query<{ container_id: string | null; container_status: string | null }>(
-		'SELECT container_id, container_status FROM projects WHERE id = $1 AND team_id = $2',
-		[projectId, teamId],
-	);
-	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Project not found', 404);
-
-	const row = result.rows[0];
+	const row = await requireResourceInTeam<{
+		container_id: string | null;
+		container_status: string | null;
+	}>(c, 'projects', projectId, teamId, {
+		columns: 'container_id, container_status',
+		resourceName: 'Project',
+	});
+	if (row instanceof Response) return row;
 
 	if (!row.container_id) {
 		// No container yet (e.g. still provisioning) — just set status to stopped
