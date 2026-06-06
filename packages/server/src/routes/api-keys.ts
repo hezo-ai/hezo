@@ -5,6 +5,7 @@ import { broadcastChange } from '../lib/broadcast';
 import { requireResourceInTeam } from '../lib/resource';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { deleteApiKey, insertApiKey, listTeamApiKeys } from '../repositories/api-keys';
 
 export const apiKeysRoutes = new Hono<Env>();
 
@@ -16,14 +17,8 @@ apiKeysRoutes.get('/teams/:teamId/api-keys', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
-	const result = await db.query(
-		`SELECT id, team_id, name, prefix, last_used_at, created_at
-     FROM api_keys
-     WHERE team_id = $1
-     ORDER BY created_at DESC`,
-		[teamId],
-	);
-	return ok(c, result.rows);
+	const rows = await listTeamApiKeys(db, teamId);
+	return ok(c, rows);
 });
 
 apiKeysRoutes.post('/teams/:teamId/api-keys', async (c) => {
@@ -39,20 +34,8 @@ apiKeysRoutes.post('/teams/:teamId/api-keys', async (c) => {
 	const prefix = rawKey.slice(5, 13);
 	const keyHash = hashKey(rawKey);
 
-	const result = await db.query<{
-		id: string;
-		team_id: string;
-		name: string;
-		prefix: string;
-		created_at: string;
-	}>(
-		`INSERT INTO api_keys (team_id, name, prefix, key_hash)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id, team_id, name, prefix, created_at`,
-		[teamId, body.name.trim(), prefix, keyHash],
-	);
+	const row = await insertApiKey(db, { teamId, name: body.name.trim(), prefix, keyHash });
 
-	const row = result.rows[0];
 	broadcastChange(c, wsRoom.team(teamId), 'api_keys', 'INSERT', row as Record<string, unknown>);
 	return ok(c, { ...row, key: rawKey }, 201);
 });
@@ -67,7 +50,7 @@ apiKeysRoutes.delete('/teams/:teamId/api-keys/:apiKeyId', async (c) => {
 	});
 	if (existing instanceof Response) return existing;
 
-	await db.query('DELETE FROM api_keys WHERE id = $1', [apiKeyId]);
+	await deleteApiKey(db, apiKeyId);
 	broadcastChange(c, wsRoom.team(teamId), 'api_keys', 'DELETE', { id: apiKeyId });
 	return c.json({ data: null }, 200);
 });
