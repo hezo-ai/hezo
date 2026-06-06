@@ -1,7 +1,7 @@
 import type { AiProviderModel } from '@hezo/shared';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { type QueryKey, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { queryClient } from '../lib/query-client';
+import { useInvalidatingMutation } from './use-invalidating-mutation';
 
 export interface AiProviderConfig {
 	id: string;
@@ -23,11 +23,10 @@ export interface AiProviderStatus {
 const providersKey = ['ai-providers'] as const;
 const statusKey = ['ai-providers', 'status'] as const;
 
-function invalidateAll() {
-	queryClient.invalidateQueries({ queryKey: providersKey });
-	queryClient.invalidateQueries({ queryKey: statusKey });
-	queryClient.invalidateQueries({ queryKey: ['teams'] });
-}
+// Provider changes ripple into the status pill and every team's runtime config,
+// so all three lists refetch. AI-provider mutations are validation-heavy /
+// security-sensitive (api_key verify), so they invalidate rather than predict.
+const allKeys: QueryKey[] = [providersKey, statusKey, ['teams']];
 
 export function useAiProviders() {
 	return useQuery({
@@ -45,36 +44,34 @@ export function useAiProviderStatus(options: { enabled?: boolean } = {}) {
 }
 
 export function useCreateAiProvider() {
-	return useMutation({
-		mutationFn: (data: {
-			provider: string;
-			api_key: string;
-			label?: string;
-			auth_method?: string;
-		}) => api.post<AiProviderConfig>('/api/ai-providers', data),
-		onSuccess: invalidateAll,
+	return useInvalidatingMutation<
+		{ provider: string; api_key: string; label?: string; auth_method?: string },
+		AiProviderConfig
+	>({
+		mutationFn: (data) => api.post<AiProviderConfig>('/api/ai-providers', data),
+		invalidate: allKeys,
 	});
 }
 
 export function useDeleteAiProvider() {
-	return useMutation({
-		mutationFn: (configId: string) => api.delete(`/api/ai-providers/${configId}`),
-		onSuccess: invalidateAll,
+	return useInvalidatingMutation<string, unknown>({
+		mutationFn: (configId) => api.delete(`/api/ai-providers/${configId}`),
+		invalidate: allKeys,
 	});
 }
 
 export function useSetDefaultAiProvider() {
-	return useMutation({
-		mutationFn: (configId: string) => api.patch(`/api/ai-providers/${configId}/default`, {}),
-		onSuccess: invalidateAll,
+	return useInvalidatingMutation<string, unknown>({
+		mutationFn: (configId) => api.patch(`/api/ai-providers/${configId}/default`, {}),
+		invalidate: allKeys,
 	});
 }
 
 export function useVerifyAiProvider() {
-	return useMutation({
-		mutationFn: (configId: string) =>
+	return useInvalidatingMutation<string, { valid: boolean; error?: string }>({
+		mutationFn: (configId) =>
 			api.post<{ valid: boolean; error?: string }>(`/api/ai-providers/${configId}/verify`),
-		onSuccess: invalidateAll,
+		invalidate: allKeys,
 	});
 }
 
@@ -88,12 +85,15 @@ export function useAiProviderModels(configId: string, options: { enabled?: boole
 }
 
 export function useUpdateAiProviderConfig(configId: string) {
-	return useMutation({
-		mutationFn: (data: { default_model: string | null }) =>
+	return useInvalidatingMutation<
+		{ default_model: string | null },
+		{ updated: boolean; default_model: string | null }
+	>({
+		mutationFn: (data) =>
 			api.patch<{ updated: boolean; default_model: string | null }>(
 				`/api/ai-providers/${configId}`,
 				data,
 			),
-		onSuccess: invalidateAll,
+		invalidate: allKeys,
 	});
 }
