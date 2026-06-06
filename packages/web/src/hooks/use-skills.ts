@@ -1,6 +1,8 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { useInvalidatingMutation } from './use-invalidating-mutation';
+import { useResponseMutation } from './use-response-mutation';
 
 /** Row returned by the list endpoint (no content). */
 export interface SkillListItem {
@@ -40,9 +42,12 @@ export interface UpdateSkillInput {
 	tags?: string[];
 }
 
+const listKey = (teamId: string) => ['teams', teamId, 'skills'] as const;
+const detailKey = (teamId: string, slug: string) => ['teams', teamId, 'skills', slug] as const;
+
 export function useSkills(teamId: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'skills'],
+		queryKey: listKey(teamId),
 		queryFn: () => api.get<SkillListItem[]>(`/api/teams/${teamId}/skills`),
 		enabled: !!teamId,
 	});
@@ -56,43 +61,43 @@ export function useSkill(teamId: string, slug: string | null) {
 	});
 }
 
+// Create/update/sync are response-driven: the server computes the slug and
+// content_hash (and, for sync, re-downloads), so the detail cache is seeded
+// from the response and the list is invalidated to re-flow.
+
 export function useCreateSkill(teamId: string) {
-	return useMutation({
-		mutationFn: (input: CreateSkillInput) => api.post<Skill>(`/api/teams/${teamId}/skills`, input),
-		onSuccess: (created) => {
-			queryClient.setQueryData<Skill>(['teams', teamId, 'skills', created.slug], created);
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] });
-		},
+	return useResponseMutation<CreateSkillInput, Skill, Skill>({
+		mutationFn: (input) => api.post<Skill>(`/api/teams/${teamId}/skills`, input),
+		queryKey: (_input, created) => detailKey(teamId, created.slug),
+		merge: (_current, created) => created,
+		invalidateOnSettled: [listKey(teamId)],
 	});
 }
 
 export function useUpdateSkill(teamId: string) {
-	return useMutation({
-		mutationFn: ({ slug, input }: { slug: string; input: UpdateSkillInput }) =>
-			api.patch<Skill>(`/api/teams/${teamId}/skills/${slug}`, input),
-		onSuccess: (updated, { slug }) => {
-			queryClient.setQueryData<Skill>(['teams', teamId, 'skills', slug], updated);
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] });
-		},
+	return useResponseMutation<{ slug: string; input: UpdateSkillInput }, Skill, Skill>({
+		mutationFn: ({ slug, input }) => api.patch<Skill>(`/api/teams/${teamId}/skills/${slug}`, input),
+		queryKey: ({ slug }) => detailKey(teamId, slug),
+		merge: (_current, updated) => updated,
+		invalidateOnSettled: [listKey(teamId)],
 	});
 }
 
 export function useSyncSkill(teamId: string) {
-	return useMutation({
-		mutationFn: (slug: string) => api.post<Skill>(`/api/teams/${teamId}/skills/${slug}/sync`, {}),
-		onSuccess: (updated, slug) => {
-			queryClient.setQueryData<Skill>(['teams', teamId, 'skills', slug], updated);
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] });
-		},
+	return useResponseMutation<string, Skill, Skill>({
+		mutationFn: (slug) => api.post<Skill>(`/api/teams/${teamId}/skills/${slug}/sync`, {}),
+		queryKey: (slug) => detailKey(teamId, slug),
+		merge: (_current, updated) => updated,
+		invalidateOnSettled: [listKey(teamId)],
 	});
 }
 
 export function useDeleteSkill(teamId: string) {
-	return useMutation({
-		mutationFn: (slug: string) => api.delete(`/api/teams/${teamId}/skills/${slug}`),
-		onSuccess: (_, slug) => {
-			queryClient.removeQueries({ queryKey: ['teams', teamId, 'skills', slug] });
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] });
+	return useInvalidatingMutation<string, unknown>({
+		mutationFn: (slug) => api.delete(`/api/teams/${teamId}/skills/${slug}`),
+		invalidate: [listKey(teamId)],
+		onSuccess: (_data, slug) => {
+			queryClient.removeQueries({ queryKey: detailKey(teamId, slug) });
 		},
 	});
 }
