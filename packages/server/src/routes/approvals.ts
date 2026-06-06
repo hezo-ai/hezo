@@ -1,9 +1,11 @@
 import { ApprovalStatus, ApprovalType, AuthType, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { broadcastChange } from '../lib/broadcast';
 import { requireResourceInTeam } from '../lib/resource';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { validateBody } from '../lib/validate';
 import { requireTeamAccessForResource } from '../middleware/auth';
 import { resolveApproval } from '../services/approval-resolve';
 
@@ -137,21 +139,21 @@ approvalsRoutes.post('/teams/:teamId/approvals', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
-	const body = await c.req.json<{
-		type: string;
-		requested_by_member_id: string;
-		payload: Record<string, unknown>;
-	}>();
-
-	if (!body.type || !body.payload) {
-		return err(c, 'INVALID_REQUEST', 'type and payload are required', 400);
-	}
+	const body = await validateBody(
+		c,
+		z.object({
+			type: z.string().min(1, 'type is required'),
+			requested_by_member_id: z.string().optional(),
+			payload: z.record(z.string(), z.unknown()),
+		}),
+	);
+	if (body instanceof Response) return body;
 
 	const result = await db.query(
 		`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
      VALUES ($1, $2::approval_type, $3, $4::jsonb)
      RETURNING *`,
-		[teamId, body.type, body.requested_by_member_id, JSON.stringify(body.payload)],
+		[teamId, body.type, body.requested_by_member_id ?? null, JSON.stringify(body.payload)],
 	);
 
 	broadcastChange(

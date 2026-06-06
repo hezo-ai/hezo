@@ -1,10 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { broadcastChange } from '../lib/broadcast';
 import { requireResourceInTeam } from '../lib/resource';
-import { err, ok } from '../lib/response';
+import { ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { validateBody } from '../lib/validate';
 import { deleteApiKey, insertApiKey, listTeamApiKeys } from '../repositories/api-keys';
 
 export const apiKeysRoutes = new Hono<Env>();
@@ -25,16 +27,17 @@ apiKeysRoutes.post('/teams/:teamId/api-keys', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
-	const body = await c.req.json<{ name: string }>();
-	if (!body.name?.trim()) {
-		return err(c, 'INVALID_REQUEST', 'name is required', 400);
-	}
+	const body = await validateBody(
+		c,
+		z.object({ name: z.string().trim().min(1, 'name is required') }),
+	);
+	if (body instanceof Response) return body;
 
 	const rawKey = `hezo_${randomBytes(16).toString('hex')}`;
 	const prefix = rawKey.slice(5, 13);
 	const keyHash = hashKey(rawKey);
 
-	const row = await insertApiKey(db, { teamId, name: body.name.trim(), prefix, keyHash });
+	const row = await insertApiKey(db, { teamId, name: body.name, prefix, keyHash });
 
 	broadcastChange(c, wsRoom.team(teamId), 'api_keys', 'INSERT', row as Record<string, unknown>);
 	return ok(c, { ...row, key: rawKey }, 201);
