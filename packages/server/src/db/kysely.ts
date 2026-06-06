@@ -62,11 +62,21 @@ export interface MemberAgentsTable {
 	slug: string;
 }
 
+export interface ExecutionLocksTable {
+	id: Generated<string>;
+	task_id: string;
+	member_id: string;
+	lock_type: string;
+	locked_at: Generated<string>;
+	released_at: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
 export interface DB {
 	api_keys: ApiKeysTable;
 	audit_log: AuditLogTable;
 	members: MembersTable;
 	member_agents: MemberAgentsTable;
+	execution_locks: ExecutionLocksTable;
 }
 
 const cache = new WeakMap<PGlite, Kysely<DB>>();
