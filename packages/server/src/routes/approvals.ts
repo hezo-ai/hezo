@@ -208,6 +208,7 @@ approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {
 		dataDir: c.get('dataDir'),
 		actorMemberId,
 		wsManager: c.get('wsManager'),
+		events: c.get('events'),
 		containerDeps: {
 			db,
 			docker: c.get('docker'),

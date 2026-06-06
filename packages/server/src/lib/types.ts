@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { AuthType } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
+import type { DomainEventBus } from '../events/bus';
 import type { ContainerLogStreamer } from '../services/container-logs';
 import type { DockerClient } from '../services/docker';
 import type { EgressProxy } from '../services/egress';
@@ -28,6 +29,7 @@ export type Env = {
 		masterKeyManager: MasterKeyManager;
 		docker: DockerClient;
 		wsManager: WebSocketManager;
+		events: DomainEventBus;
 		jobManager: JobManager;
 		logs: LogStreamBroker;
 		containerLogStreamer: ContainerLogStreamer;

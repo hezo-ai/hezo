@@ -5,7 +5,7 @@ import { signAssetUrl } from '../lib/asset-urls';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { validateCredentialValue } from '../lib/credential-validator';
-import { resolveActorMemberId, resolveTaskId } from '../lib/resolve';
+import { resolveActor, resolveActorMemberId, resolveTaskId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
@@ -515,6 +515,17 @@ commentsRoutes.post(
 		}
 
 		broadcastChange(c, wsRoom.team(teamId), 'task_comments', 'UPDATE', updatedComment);
+		const actor = await resolveActor(db, c.get('auth'), teamId);
+		c.get('events').emit({
+			type: 'credential.fulfilled',
+			teamId,
+			projectId,
+			actorType: actor.actorType,
+			actorMemberId: actor.actorMemberId,
+			secretId,
+			name,
+			requestingAgentId,
+		});
 		return ok(c, { secret_id: secretId, comment_id: commentId });
 	},
 );

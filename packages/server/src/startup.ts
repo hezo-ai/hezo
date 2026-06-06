@@ -10,6 +10,8 @@ const log = logger.child('startup');
 import { MasterKeyManager } from './crypto/master-key';
 import { openPersistentDb } from './db/client';
 import { BASE_SCHEMA } from './db/schema';
+import { registerAuditObserver } from './events/audit-observer';
+import { DomainEventBus } from './events/bus';
 import type { Env } from './lib/types';
 import { getToolDefs, handleMcpRequest, initMcpServer } from './mcp/server';
 import { generateSkillFile } from './mcp/skill-file';
@@ -118,6 +120,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	await cleanupOrphanRunSockets(db, config.dataDir);
 	const egressCA = await loadOrCreateCA(config.dataDir);
 	const egressProxy = new EgressProxy({ db, masterKeyManager, ca: egressCA });
+	const events = new DomainEventBus();
 	const jobManager = new JobManager({
 		db,
 		docker,
@@ -125,6 +128,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		serverPort: config.port,
 		dataDir: config.dataDir,
 		wsManager,
+		events,
 		logs,
 		containerLogStreamer,
 		sshAgentServer,
@@ -176,6 +180,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		sshAgentServer,
 		egressProxy,
 		containerLogStreamer,
+		events,
 	);
 
 	return {
@@ -205,9 +210,11 @@ export function buildApp(
 	sshAgentServer: SshAgentServer | null = null,
 	egressProxy: EgressProxy | null = null,
 	containerLogStreamer: ContainerLogStreamer = new ContainerLogStreamer(),
+	events: DomainEventBus = new DomainEventBus(),
 ): Hono<Env> {
 	const app = new Hono<Env>();
 	logs.setWsManager(wsManager);
+	registerAuditObserver(events, db);
 
 	app.onError((err, c) => {
 		log.error(`Route error on ${c.req.method} ${c.req.path}:`, err);
@@ -219,6 +226,7 @@ export function buildApp(
 		c.set('masterKeyManager', masterKeyManager);
 		c.set('docker', docker);
 		c.set('wsManager', wsManager);
+		c.set('events', events);
 		if (jobManager) c.set('jobManager', jobManager);
 		c.set('logs', logs);
 		c.set('containerLogStreamer', containerLogStreamer);
@@ -230,7 +238,7 @@ export function buildApp(
 	});
 
 	// Initialize MCP server
-	initMcpServer(db, config.dataDir, masterKeyManager, wsManager);
+	initMcpServer(db, config.dataDir, masterKeyManager, wsManager, events);
 
 	// Public routes
 	app.route('/', healthRoutes);

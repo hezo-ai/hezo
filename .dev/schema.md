@@ -28,7 +28,7 @@
 | `secret_grants` | Which agent has access to which secret. Revocable. | links secret ↔ member_agent |
 | `approvals` | Pending board decisions. Polymorphic payload. | belongs to team, requested by member_agent |
 | `cost_entries` | Immutable spend records per agent per task. | belongs to team + member_agent, optionally task/project |
-| `audit_log` | Append-only. Never updated or deleted. | belongs to team |
+| `audit_log` | Append-only activity trail. `team_id` is nullable (NULL = an instance-level admin action not bound to a team); `project_id` is nullable (set for project-scoped events). Read at three scopes: instance (`GET /api/audit-log`, superuser), team, and per-project. | optionally team, optionally project |
 | `documents` | Unified Markdown document store keyed by `type` (`project_doc` / `team_preferences` / `agent_system_prompt`). Project docs scope by `(project_id, slug)`; preferences by `(team_id)` (one per team); agent system prompts by `(member_agent_id)` (one per agent). Embeddings live on this table for project docs. The team-level reference store is the `skills` table, not this one. | belongs to team, optionally project or member_agent |
 | `document_revisions` | Snapshot of prior content created on every change. `change_summary` captures intent; `Restored to revision N` is set automatically by the rollback path. Shared by all document types — agent system prompt history lives here too. | belongs to document |
 | `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. | belongs to team |
@@ -219,14 +219,14 @@ token is used for API calls (repo validation, PRs, Actions).
 
 ### Audit log immutability
 
-The `audit_log` table has no `updated_at`. The app layer must never task
-UPDATE or DELETE on this table. A future migration can add a Postgres rule to
-hard-block these operations:
-
-```sql
-CREATE RULE no_update_audit AS ON UPDATE TO audit_log DO INSTEAD NOTHING;
-CREATE RULE no_delete_audit AS ON DELETE TO audit_log DO INSTEAD NOTHING;
-```
+The `audit_log` table has no `updated_at`. The app layer never issues UPDATE or
+DELETE on this table — rows are written once by the audit observer and only ever
+read. The two FK-driven exceptions are referential, not content edits: a deleted
+team cascade-deletes its rows (`team_id ... ON DELETE CASCADE`) and a deleted
+project nulls the back-reference (`project_id ... ON DELETE SET NULL`), so a
+blanket `DO INSTEAD NOTHING` rule on UPDATE/DELETE is intentionally **not**
+added (it would break those FK actions). Immutability is enforced at the app
+layer: the observer is the only writer, and nothing else touches the table.
 
 ### Budget resets
 

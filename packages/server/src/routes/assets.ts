@@ -32,7 +32,13 @@ export const assetsRoutes = new Hono<Env>();
  * task-comment upload and the project Assets upload. Returns a `201` response
  * with the stored asset + a freshly-signed read URL, or an error response.
  */
-async function storeUploadedAsset(c: Context<Env>, teamId: string, projectId: string, file: File) {
+async function storeUploadedAsset(
+	c: Context<Env>,
+	teamId: string,
+	projectId: string,
+	file: File,
+	taskId?: string | null,
+) {
 	if (!isAllowedAttachmentExtension(file.name)) {
 		return err(c, 'INVALID_ATTACHMENT', 'Unsupported file extension', 400);
 	}
@@ -60,7 +66,8 @@ async function storeUploadedAsset(c: Context<Env>, teamId: string, projectId: st
 		return err(c, 'INTERNAL_ERROR', 'Failed to store attachment', 500);
 	}
 
-	const uploadedBy = await resolveActorMemberId(db, c.get('auth'), teamId);
+	const auth = c.get('auth');
+	const uploadedBy = await resolveActorMemberId(db, auth, teamId);
 	const asset = await insertAssetWithUniqueName(db, {
 		assetId,
 		teamId,
@@ -70,6 +77,19 @@ async function storeUploadedAsset(c: Context<Env>, teamId: string, projectId: st
 		sha256,
 		desiredName: normalizeAssetFilename(file.name),
 		uploadedByMemberId: uploadedBy,
+	});
+
+	const isAgent = auth.type === AuthType.Agent;
+	c.get('events').emit({
+		type: 'asset.created',
+		teamId,
+		projectId,
+		actorType: isAgent ? 'agent' : 'admin',
+		actorMemberId: uploadedBy,
+		assetId: asset.id,
+		filename: asset.original_filename,
+		taskId: taskId ?? (isAgent ? auth.taskId : null),
+		runId: isAgent ? auth.runId : null,
 	});
 
 	const url = await signAssetUrl(assetId, c.get('masterKeyManager'));
@@ -119,7 +139,7 @@ assetsRoutes.post(
 		const file = await readUploadFile(c);
 		if (!file) return err(c, 'INVALID_REQUEST', 'Missing file field', 400);
 
-		return storeUploadedAsset(c, teamId, projectId, file);
+		return storeUploadedAsset(c, teamId, projectId, file, taskId);
 	},
 );
 

@@ -4,6 +4,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Context } from 'hono';
 import type { MasterKeyManager } from '../crypto/master-key';
+import type { DomainEventBus } from '../events/bus';
 import type { AuthInfo, Env } from '../lib/types';
 import { verifyToken } from '../middleware/auth';
 import type { WebSocketManager } from '../services/ws';
@@ -17,9 +18,10 @@ export function initMcpServer(
 	dataDir: string,
 	masterKeyManager: MasterKeyManager,
 	wsManager?: WebSocketManager,
+	events?: DomainEventBus,
 ): ToolDef[] {
 	mcpServer = new McpServer({ name: 'hezo', version: '0.1.0' });
-	toolDefs = registerTools(mcpServer, db, dataDir, masterKeyManager, wsManager);
+	toolDefs = registerTools(mcpServer, db, dataDir, masterKeyManager, wsManager, events);
 	return toolDefs;
 }
 

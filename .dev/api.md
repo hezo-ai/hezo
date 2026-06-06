@@ -1333,14 +1333,20 @@ Request:
 
 ### Audit Log
 
-#### `GET /teams/:teamId/audit-log`
-Paginated, read-only.
+Three read-only, paginated views over the single `audit_log` table — each is the
+same query with a different scope filter, populated by the domain-event audit
+observer (see "Activity / audit observer" below).
 
-Query params:
-- `?entity_type=agent&entity_id=uuid`
-- `?action=agent.created`
-- `?from=...&to=...`
-- `?page=1&per_page=50`
+- `GET /api/audit-log` — **instance view, superuser only.** Every team's rows
+  plus instance-level admin actions (`team_id` is NULL — managing instance
+  credentials / connectors / skills). Rows carry `team_name` for grouping.
+- `GET /teams/:teamId/audit-log` — **team view.** Accepts an optional
+  `?project_id=` to narrow to one project.
+- `GET /teams/:teamId/projects/:projectId/audit-log` — **per-project view**, a
+  filtered slice (`WHERE project_id = …`) of the instance log.
+
+Shared query params: `?entity_type=task`, `?action=created`, `?from=…&to=…`,
+`?page=1&per_page=50`.
 
 Response:
 ```json
@@ -1348,18 +1354,39 @@ Response:
   "data": [
     {
       "id": "uuid",
-      "actor_type": "board",
-      "actor_agent_id": null,
-      "action": "agent.created",
+      "team_id": "uuid",
+      "team_name": "Marketing Site",
+      "project_id": "uuid",
+      "actor_type": "admin",
+      "actor_member_id": "uuid",
+      "actor_name": "Frontend Engineer",
+      "action": "created",
       "entity_type": "agent",
       "entity_id": "uuid",
-      "details": { "title": "Frontend Engineer" },
+      "details": { "name": "Frontend Engineer" },
       "created_at": "..."
     }
   ],
   "meta": { "page": 1, "per_page": 50, "total": 234 }
 }
 ```
+
+`team_id` and `project_id` are nullable (instance-level rows have both NULL;
+team-level events have a NULL `project_id`). `actor_type` is one of
+`admin` / `agent` / `system`.
+
+#### Activity / audit observer
+
+Domain code never writes audit rows directly. Mutations emit a typed
+`DomainEvent` onto a per-app `DomainEventBus` (`events/bus.ts`); a single audit
+observer (`events/audit-observer.ts`) subscribes and persists each event as an
+`audit_log` row (best-effort, via `trackBackground`). Covered events: task
+create/update, project create, agent run started/completed, asset create,
+document create/update/delete (agent system-prompt edits are attributed to the
+agent entity), agent create/update/disable/enable, secret + MCP-connector +
+skill create/update/delete (at both team and instance scope), OAuth connection
+create/delete, and credential request/fulfill. Connector and credential events
+record `actor_type = agent` when an agent (via an MCP tool) triggered them.
 
 ---
 

@@ -667,7 +667,12 @@ CREATE INDEX idx_costs_created ON cost_entries(created_at);
 
 CREATE TABLE audit_log (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id         UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    -- team_id NULL = an instance-level action (e.g. an Admin managing an
+    -- instance secret / connector / skill that is not bound to any team).
+    team_id         UUID REFERENCES teams(id) ON DELETE CASCADE,
+    -- project_id scopes the event to a single project when applicable. NULL for
+    -- team-level (e.g. agent system prompt, team secrets) and instance-level events.
+    project_id      UUID REFERENCES projects(id) ON DELETE SET NULL,
     actor_type      audit_actor_type NOT NULL,
     actor_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
     action          TEXT NOT NULL,
@@ -679,6 +684,8 @@ CREATE TABLE audit_log (
 
 CREATE INDEX idx_audit_team ON audit_log(team_id);
 CREATE INDEX idx_audit_created ON audit_log(team_id, created_at);
+CREATE INDEX idx_audit_project ON audit_log(project_id, created_at);
+CREATE INDEX idx_audit_created_global ON audit_log(created_at);
 CREATE INDEX idx_audit_entity ON audit_log(entity_type, entity_id);
 
 -------------------------------------------------------------------------------

@@ -18,6 +18,7 @@ import {
 } from '@hezo/shared';
 import { Cron } from 'cron-async';
 import type { MasterKeyManager } from '../crypto/master-key';
+import type { DomainEventBus } from '../events/bus';
 import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
@@ -99,6 +100,7 @@ export interface JobManagerDeps {
 	serverPort: number;
 	dataDir: string;
 	wsManager: WebSocketManager;
+	events?: DomainEventBus;
 	logs: LogStreamBroker;
 	containerLogStreamer: ContainerLogStreamer;
 	sshAgentServer?: SshAgentServer;
@@ -1208,6 +1210,7 @@ export class JobManager {
 			serverPort,
 			dataDir: this.deps.dataDir,
 			wsManager: this.deps.wsManager,
+			events: this.deps.events,
 			logs: this.deps.logs,
 			sshAgentServer: this.deps.sshAgentServer,
 			egressProxy: this.deps.egressProxy ?? null,

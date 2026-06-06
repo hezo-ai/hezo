@@ -1,19 +1,32 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { AuditAction, AuditActorType, AuditEntityType } from '@hezo/shared';
 
-export async function auditLog(
-	db: PGlite,
-	teamId: string,
-	actorType: AuditActorType,
-	actorMemberId: string | null,
-	action: AuditAction,
-	entityType: AuditEntityType,
-	entityId: string | null,
-	details?: Record<string, unknown>,
-): Promise<void> {
+export interface AuditLogInput {
+	/** NULL for instance-level actions not bound to any team. */
+	teamId: string | null;
+	/** NULL for team-level and instance-level events. */
+	projectId?: string | null;
+	actorType: AuditActorType;
+	actorMemberId: string | null;
+	action: AuditAction;
+	entityType: AuditEntityType;
+	entityId: string | null;
+	details?: Record<string, unknown>;
+}
+
+export async function auditLog(db: PGlite, input: AuditLogInput): Promise<void> {
 	await db.query(
-		`INSERT INTO audit_log (team_id, actor_type, actor_member_id, action, entity_type, entity_id, details)
-		 VALUES ($1, $2::audit_actor_type, $3, $4, $5, $6, $7::jsonb)`,
-		[teamId, actorType, actorMemberId, action, entityType, entityId, JSON.stringify(details ?? {})],
+		`INSERT INTO audit_log (team_id, project_id, actor_type, actor_member_id, action, entity_type, entity_id, details)
+		 VALUES ($1, $2, $3::audit_actor_type, $4, $5, $6, $7, $8::jsonb)`,
+		[
+			input.teamId,
+			input.projectId ?? null,
+			input.actorType,
+			input.actorMemberId,
+			input.action,
+			input.entityType,
+			input.entityId,
+			JSON.stringify(input.details ?? {}),
+		],
 	);
 }

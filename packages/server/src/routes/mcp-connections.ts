@@ -2,6 +2,7 @@ import { getConnectorCapability, McpConnectionKind, wsRoom } from '@hezo/shared'
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
+import { resolveActor } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -102,6 +103,15 @@ mcpConnectionsRoutes.post('/mcp-connections', async (c) => {
 		[body.name.trim(), body.display_name?.trim() ?? null, body.kind, JSON.stringify(body.config)],
 	);
 
+	const createdRow = result.rows[0] as { id: string; name: string };
+	c.get('events').emit({
+		type: 'mcp_connection.created',
+		teamId: null,
+		actorType: 'admin',
+		actorMemberId: null,
+		connectionId: createdRow.id,
+		name: createdRow.name,
+	});
 	return ok(c, result.rows[0], 201);
 });
 
@@ -110,13 +120,21 @@ mcpConnectionsRoutes.delete('/mcp-connections/:id', async (c) => {
 	if (denied) return denied;
 	const db = c.get('db');
 	const id = c.req.param('id');
-	const result = await db.query<{ id: string }>(
-		'DELETE FROM mcp_connections WHERE id = $1 AND team_id IS NULL RETURNING id',
+	const result = await db.query<{ id: string; name: string }>(
+		'DELETE FROM mcp_connections WHERE id = $1 AND team_id IS NULL RETURNING id, name',
 		[id],
 	);
 	if (result.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'instance connector not found', 404);
 	}
+	c.get('events').emit({
+		type: 'mcp_connection.deleted',
+		teamId: null,
+		actorType: 'admin',
+		actorMemberId: null,
+		connectionId: result.rows[0].id,
+		name: result.rows[0].name,
+	});
 	return c.json({ data: null }, 200);
 });
 
@@ -142,10 +160,11 @@ mcpConnectionsRoutes.post('/teams/:teamId/mcp-connections/:id/revoke', async (c)
 	const db = c.get('db');
 	const id = c.req.param('id');
 	const { markRevoked } = await import('../services/connectors/lifecycle');
-	const existing = await db.query<{ team_id: string; oauth_connection_id: string | null }>(
-		`SELECT team_id, oauth_connection_id FROM mcp_connections WHERE id = $1`,
-		[id],
-	);
+	const existing = await db.query<{
+		team_id: string;
+		name: string;
+		oauth_connection_id: string | null;
+	}>(`SELECT team_id, name, oauth_connection_id FROM mcp_connections WHERE id = $1`, [id]);
 	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
 	if (existing.rows[0].team_id !== teamId)
 		return err(c, 'FORBIDDEN', 'connector does not belong to this team', 403);
@@ -153,15 +172,39 @@ mcpConnectionsRoutes.post('/teams/:teamId/mcp-connections/:id/revoke', async (c)
 	if (existing.rows[0].oauth_connection_id) {
 		const { deleteConnection } = await import('../services/oauth/connection-store');
 		const masterKeyManager = c.get('masterKeyManager');
-		await deleteConnection({ db, masterKeyManager }, existing.rows[0].oauth_connection_id).catch(
-			(e) =>
+		const oauthConnectionId = existing.rows[0].oauth_connection_id;
+		await deleteConnection({ db, masterKeyManager }, oauthConnectionId)
+			.then(() => {
+				const a = resolveActor(db, c.get('auth'), teamId);
+				return a.then((actor) =>
+					c.get('events').emit({
+						type: 'connection.deleted',
+						teamId,
+						actorType: actor.actorType,
+						actorMemberId: actor.actorMemberId,
+						connectionId: oauthConnectionId,
+						provider: existing.rows[0].name,
+					}),
+				);
+			})
+			.catch((e) =>
 				log.warn('failed to delete oauth_connection on revoke', { error: (e as Error).message }),
-		);
+			);
 	}
 	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', {
 		id,
 		team_id: teamId,
 		status: 'revoked',
+	});
+	const revokeActor = await resolveActor(db, c.get('auth'), teamId);
+	c.get('events').emit({
+		type: 'mcp_connection.updated',
+		teamId,
+		actorType: revokeActor.actorType,
+		actorMemberId: revokeActor.actorMemberId,
+		connectionId: id,
+		name: existing.rows[0].name,
+		changeKind: 'revoked',
 	});
 	return ok(c, row);
 });
@@ -230,6 +273,17 @@ mcpConnectionsRoutes.post('/teams/:teamId/mcp-connections', async (c) => {
 
 	const inserted = result.rows[0] as Record<string, unknown>;
 	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'INSERT', inserted);
+
+	const createActor = await resolveActor(db, c.get('auth'), teamId);
+	c.get('events').emit({
+		type: 'mcp_connection.created',
+		teamId,
+		projectId: body.project_id ?? null,
+		actorType: createActor.actorType,
+		actorMemberId: createActor.actorMemberId,
+		connectionId: inserted.id as string,
+		name: inserted.name as string,
+	});
 
 	// Kick off install for local MCPs against any running project containers.
 	// We don't block the response — the route returns immediately and the
@@ -313,6 +367,15 @@ mcpConnectionsRoutes.post('/teams/:teamId/connectors/ensure', async (c) => {
 	});
 	if (!alreadyExisted) {
 		broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'INSERT', { id: row.id });
+		const ensureActor = await resolveActor(db, c.get('auth'), teamId);
+		c.get('events').emit({
+			type: 'mcp_connection.created',
+			teamId,
+			actorType: ensureActor.actorType,
+			actorMemberId: ensureActor.actorMemberId,
+			connectionId: row.id as string,
+			name: row.name as string,
+		});
 	}
 	return ok(c, row);
 });
@@ -322,13 +385,22 @@ mcpConnectionsRoutes.delete('/teams/:teamId/mcp-connections/:id', async (c) => {
 	const db = c.get('db');
 	const id = c.req.param('id');
 
-	const result = await db.query<{ id: string }>(
-		'DELETE FROM mcp_connections WHERE id = $1 AND team_id = $2 RETURNING id',
+	const result = await db.query<{ id: string; name: string }>(
+		'DELETE FROM mcp_connections WHERE id = $1 AND team_id = $2 RETURNING id, name',
 		[id, teamId],
 	);
 	if (result.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'MCP connection not found', 404);
 	}
 	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'DELETE', { id });
+	const deleteActor = await resolveActor(db, c.get('auth'), teamId);
+	c.get('events').emit({
+		type: 'mcp_connection.deleted',
+		teamId,
+		actorType: deleteActor.actorType,
+		actorMemberId: deleteActor.actorMemberId,
+		connectionId: result.rows[0].id,
+		name: result.rows[0].name,
+	});
 	return c.json({ data: null }, 200);
 });

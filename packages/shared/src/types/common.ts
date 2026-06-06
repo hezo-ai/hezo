@@ -448,9 +448,14 @@ export const AuditEntityType = {
 	Task: 'task',
 	Project: 'project',
 	Agent: 'agent',
+	AgentRun: 'agent_run',
 	Team: 'team',
 	Secret: 'secret',
 	Document: 'document',
+	Asset: 'asset',
+	Connection: 'connection',
+	McpConnection: 'mcp_connection',
+	Skill: 'skill',
 	EgressRequest: 'egress_request',
 } as const;
 export type AuditEntityType = (typeof AuditEntityType)[keyof typeof AuditEntityType];
@@ -505,6 +510,9 @@ export const AuditAction = {
 	Created: 'created',
 	Updated: 'updated',
 	Deleted: 'deleted',
+	RunStarted: 'run_started',
+	RunCompleted: 'run_completed',
+	Requested: 'requested',
 } as const;
 export type AuditAction = (typeof AuditAction)[keyof typeof AuditAction];
 
