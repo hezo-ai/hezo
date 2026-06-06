@@ -33,8 +33,40 @@ export interface ApiKeysTable {
 	created_at: Generated<Timestamp>;
 }
 
+export interface AuditLogTable {
+	id: Generated<string>;
+	team_id: string;
+	actor_type: string;
+	actor_member_id: string | null;
+	action: string;
+	entity_type: string;
+	entity_id: string | null;
+	/** jsonb: read back as an object, written as a JSON string. */
+	details: ColumnType<Record<string, unknown>, string, string>;
+	/** Plain string (not the Timestamp alias) so date-range WHERE comparisons accept ISO strings. */
+	created_at: Generated<string>;
+}
+
+export interface MembersTable {
+	id: Generated<string>;
+	team_id: string;
+	member_type: string;
+	display_name: Generated<string>;
+	created_at: Generated<Timestamp>;
+}
+
+/** Only the columns the audit-log join reads; member_agents is a 1:1 extension of members. */
+export interface MemberAgentsTable {
+	id: string;
+	title: string;
+	slug: string;
+}
+
 export interface DB {
 	api_keys: ApiKeysTable;
+	audit_log: AuditLogTable;
+	members: MembersTable;
+	member_agents: MemberAgentsTable;
 }
 
 const cache = new WeakMap<PGlite, Kysely<DB>>();
