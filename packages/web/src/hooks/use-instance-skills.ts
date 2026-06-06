@@ -1,6 +1,6 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { queryClient } from '../lib/query-client';
+import { useInvalidatingMutation } from './use-invalidating-mutation';
 import type { CreateSkillInput, Skill, SkillListItem } from './use-skills';
 
 // Instance-level skills (team_id NULL) are shared with every team. Only the
@@ -15,11 +15,9 @@ export function useInstanceSkills() {
 }
 
 export function useCreateInstanceSkill() {
-	return useMutation({
-		mutationFn: (data: CreateSkillInput) => api.post<SkillListItem>('/api/skills', data),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: INSTANCE_SKILLS_KEY });
-		},
+	return useInvalidatingMutation<CreateSkillInput, SkillListItem>({
+		mutationFn: (data) => api.post<SkillListItem>('/api/skills', data),
+		invalidate: [INSTANCE_SKILLS_KEY],
 	});
 }
 
@@ -40,20 +38,15 @@ export interface UpdateInstanceSkillPayload {
 }
 
 export function useUpdateInstanceSkill() {
-	return useMutation({
-		mutationFn: ({ slug, ...data }: UpdateInstanceSkillPayload) =>
-			api.patch<SkillListItem>(`/api/skills/${slug}`, data),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: INSTANCE_SKILLS_KEY });
-		},
+	return useInvalidatingMutation<UpdateInstanceSkillPayload, SkillListItem>({
+		mutationFn: ({ slug, ...data }) => api.patch<SkillListItem>(`/api/skills/${slug}`, data),
+		invalidate: [INSTANCE_SKILLS_KEY],
 	});
 }
 
 export function useDeleteInstanceSkill() {
-	return useMutation({
-		mutationFn: (slug: string) => api.delete(`/api/skills/${slug}`),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: INSTANCE_SKILLS_KEY });
-		},
+	return useInvalidatingMutation<string, unknown>({
+		mutationFn: (slug) => api.delete(`/api/skills/${slug}`),
+		invalidate: [INSTANCE_SKILLS_KEY],
 	});
 }
