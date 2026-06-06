@@ -1,8 +1,10 @@
 import { wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { validateBody } from '../lib/validate';
 
 export const costsRoutes = new Hono<Env>();
 
@@ -103,17 +105,17 @@ costsRoutes.post('/teams/:teamId/costs', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
-	const body = await c.req.json<{
-		member_id: string;
-		amount_cents: number;
-		task_id?: string;
-		project_id?: string;
-		description?: string;
-	}>();
-
-	if (!body.member_id || body.amount_cents == null || body.amount_cents <= 0) {
-		return err(c, 'INVALID_REQUEST', 'member_id and positive amount_cents are required', 400);
-	}
+	const body = await validateBody(
+		c,
+		z.object({
+			member_id: z.string().min(1, 'member_id is required'),
+			amount_cents: z.number().positive('amount_cents must be positive'),
+			task_id: z.string().optional(),
+			project_id: z.string().optional(),
+			description: z.string().optional(),
+		}),
+	);
+	if (body instanceof Response) return body;
 
 	const debitResult = await db.query<{ debit_agent_budget: boolean }>(
 		'SELECT debit_agent_budget($1, $2)',
