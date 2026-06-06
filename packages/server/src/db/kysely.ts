@@ -55,6 +55,13 @@ export interface MembersTable {
 	created_at: Generated<Timestamp>;
 }
 
+/** Per-user membership row; `settings` backs the UI-state blob. */
+export interface MemberUsersTable {
+	id: string;
+	user_id: string;
+	settings: ColumnType<Record<string, unknown>, string, string>;
+}
+
 /** Only the columns the audit-log join reads; member_agents is a 1:1 extension of members. */
 export interface MemberAgentsTable {
 	id: string;
@@ -75,6 +82,7 @@ export interface DB {
 	api_keys: ApiKeysTable;
 	audit_log: AuditLogTable;
 	members: MembersTable;
+	member_users: MemberUsersTable;
 	member_agents: MemberAgentsTable;
 	execution_locks: ExecutionLocksTable;
 }
