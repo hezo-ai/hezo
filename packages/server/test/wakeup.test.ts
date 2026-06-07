@@ -11,6 +11,7 @@ let app: Hono<Env>;
 let token: string;
 let teamId: string;
 let agentId: string;
+let projectSlug: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();

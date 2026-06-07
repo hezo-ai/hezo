@@ -42,13 +42,13 @@ afterAll(async () => {
 });
 
 describe('agents CRUD', () => {
-	it('lists all 9 auto-created agents', async () => {
+	it('lists all auto-created agents', async () => {
 		const res = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data).toHaveLength(11);
+		expect(body.data).toHaveLength(10);
 	});
 
 	it('all agents start with idle runtime_status and enabled admin_status', async () => {

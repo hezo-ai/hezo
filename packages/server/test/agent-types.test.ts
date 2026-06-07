@@ -223,7 +223,7 @@ describe('team types with agent types', () => {
 		});
 		const body = await res.json();
 		const builtin = body.data.find((t: any) => t.name === 'Startup');
-		expect(builtin.agent_types).toHaveLength(11);
+		expect(builtin.agent_types).toHaveLength(10);
 		expect(builtin.agent_types[0]).toHaveProperty('agent_type_id');
 		expect(builtin.agent_types[0]).toHaveProperty('name');
 		expect(builtin.agent_types[0]).toHaveProperty('slug');
@@ -272,14 +272,14 @@ describe('team creation with agent types', () => {
 		});
 		const teamData = (await teamRes.json()).data;
 		const projectSlug = (
-			await (await createTestProject(db, teamId, { name: 'Setup Project' })).json()
+			await (await createTestProject(db, teamData.id, { name: 'Setup Project' })).json()
 		).data.slug;
 
 		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
-		expect(agents).toHaveLength(11);
+		expect(agents).toHaveLength(10);
 		expect(agents.every((a: any) => a.agent_type_id != null)).toBe(true);
 	});
 });

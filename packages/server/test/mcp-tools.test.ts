@@ -11,6 +11,7 @@ import {
 	createTestProject,
 	mintAgentToken,
 	projectSlugFor,
+	projectSlugForTeamSlug,
 } from './helpers/app';
 
 let app: Hono<Env>;
