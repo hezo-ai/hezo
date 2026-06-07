@@ -123,6 +123,9 @@ describe('heartbeat-runs API', () => {
 		expect(run.task_id).toBe(taskId);
 		expect(run.task_identifier).toBeTruthy();
 		expect(run.task_title).toBe('Test Task');
+		// The task's project is surfaced on the run so CEO/Coach pages can show it.
+		expect(run.project_slug).toBe(projectSlug);
+		expect(run.project_name).toBe('Main');
 	});
 
 	it('gets a single run by id with task info', async () => {
@@ -134,6 +137,8 @@ describe('heartbeat-runs API', () => {
 		const body = await res.json();
 		expect(body.data.id).toBe(runId);
 		expect(body.data.task_title).toBe('Test Task');
+		expect(body.data.project_slug).toBe(projectSlug);
+		expect(body.data.project_name).toBe('Main');
 		expect(body.data.status).toBe('succeeded');
 		expect(body.data.log_text).toBe('test output');
 		expect(body.data.invocation_command).toContain('$ claude --mcp-config');

@@ -1,9 +1,11 @@
+import { INSTANCE_AGENT_SLUGS } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { LogViewer } from '../../../../../../components/log-viewer';
 import { TerminateRunButton } from '../../../../../../components/terminate-run-button';
 import { Badge } from '../../../../../../components/ui/badge';
+import { useAgent } from '../../../../../../hooks/use-agents';
 import { useElapsedDuration } from '../../../../../../hooks/use-elapsed-duration';
 import { getRunWaitingMessage, useHeartbeatRun } from '../../../../../../hooks/use-heartbeat-runs';
 import { useRunLogs } from '../../../../../../hooks/use-run-logs';
@@ -29,6 +31,13 @@ function statusColor(status: string): string {
 function ExecutionDetailPage() {
 	const { projectId, agentId, runId } = Route.useParams();
 	const { data: run, isLoading } = useHeartbeatRun(projectId, agentId, runId);
+	const { data: agent } = useAgent(projectId, agentId);
+
+	// CEO/Coach run across every project, so their pages surface which project a
+	// task lives in. Gate on the agent slug (not the context-dependent
+	// `is_instance` flag, which is false when they're viewed under HQ's own roster).
+	const isInstanceAgent =
+		!!agent && (INSTANCE_AGENT_SLUGS as readonly string[]).includes(agent.slug);
 
 	const isActive = run?.status === 'running' || run?.status === 'queued';
 	const { lines } = useRunLogs(run?.project_id ?? null, run?.id ?? null, run?.log_text, isActive);
@@ -45,6 +54,20 @@ function ExecutionDetailPage() {
 
 	if (isLoading) return <div className="text-text-muted text-sm">Loading...</div>;
 	if (!run) return <div className="text-text-muted text-sm">Run not found.</div>;
+
+	const projectLabel = run.project_name ?? run.project_slug;
+	const taskLineInner = (
+		<>
+			<span>Task:</span>
+			<span className="font-mono text-text">{run.task_identifier}</span>
+			{run.task_title && <span>{run.task_title}</span>}
+			{isInstanceAgent && projectLabel && (
+				<span data-testid="run-task-project" className="text-text-subtle">
+					· {projectLabel}
+				</span>
+			)}
+		</>
+	);
 
 	return (
 		<div>
@@ -133,36 +156,20 @@ function ExecutionDetailPage() {
 
 			{run.task_identifier &&
 				(run.task_id ? (
-					run.project_slug ? (
-						<Link
-							to="/projects/$projectId/tasks/$taskId"
-							params={{
-								projectId: run.project_slug,
-								taskId: run.task_identifier.toLowerCase(),
-							}}
-							{...(run.run_comment_id ? { hash: `comment-${run.run_comment_id}` } : {})}
-							className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-muted hover:text-text"
-						>
-							<span>Task:</span>
-							<span className="font-mono text-text">{run.task_identifier}</span>
-							{run.task_title && <span>{run.task_title}</span>}
-						</Link>
-					) : (
-						<Link
-							to="/projects/$projectId/tasks/$taskId"
-							params={{ projectId, taskId: run.task_identifier.toLowerCase() }}
-							{...(run.run_comment_id ? { hash: `comment-${run.run_comment_id}` } : {})}
-							className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-muted hover:text-text"
-						>
-							<span>Task:</span>
-							<span className="font-mono text-text">{run.task_identifier}</span>
-							{run.task_title && <span>{run.task_title}</span>}
-						</Link>
-					)
+					<Link
+						to="/projects/$projectId/tasks/$taskId"
+						params={{
+							projectId: run.project_slug ?? projectId,
+							taskId: run.task_identifier.toLowerCase(),
+						}}
+						{...(run.run_comment_id ? { hash: `comment-${run.run_comment_id}` } : {})}
+						className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-muted hover:text-text"
+					>
+						{taskLineInner}
+					</Link>
 				) : (
-					<div className="mb-4 text-xs text-text-muted">
-						Task: <span className="font-mono text-text">{run.task_identifier}</span>
-						{run.task_title && <span className="ml-1">{run.task_title}</span>}
+					<div className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-muted">
+						{taskLineInner}
 					</div>
 				))}
 

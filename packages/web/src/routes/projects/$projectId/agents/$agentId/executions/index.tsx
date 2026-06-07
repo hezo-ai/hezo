@@ -1,6 +1,8 @@
+import { INSTANCE_AGENT_SLUGS } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Badge } from '../../../../../../components/ui/badge';
 import { Tooltip } from '../../../../../../components/ui/tooltip';
+import { useAgent } from '../../../../../../hooks/use-agents';
 import { useElapsedDuration } from '../../../../../../hooks/use-elapsed-duration';
 import { type HeartbeatRun, useHeartbeatRuns } from '../../../../../../hooks/use-heartbeat-runs';
 import { formatTriggerReason } from '../../../../../../lib/run-trigger';
@@ -26,13 +28,16 @@ function ExecutionRow({
 	run,
 	projectId,
 	agentId,
+	isInstanceAgent,
 }: {
 	run: HeartbeatRun;
 	projectId: string;
 	agentId: string;
+	isInstanceAgent: boolean;
 }) {
 	const elapsed = useElapsedDuration(run.started_at ?? '', run.finished_at);
 	const trigger = formatTriggerReason(run, projectId);
+	const projectLabel = run.project_name ?? run.project_slug;
 
 	return (
 		<Link
@@ -51,6 +56,11 @@ function ExecutionRow({
 				<span className="text-text-muted font-mono">
 					{run.task_identifier}
 					{run.task_title && <span className="font-sans ml-1.5 text-text">{run.task_title}</span>}
+					{isInstanceAgent && projectLabel && (
+						<span data-testid="run-row-project" className="font-sans ml-1.5 text-text-subtle">
+							· {projectLabel}
+						</span>
+					)}
 				</span>
 			)}
 
@@ -80,6 +90,12 @@ function ExecutionRow({
 function ExecutionListPage() {
 	const { projectId, agentId } = Route.useParams();
 	const { data: runs, isLoading } = useHeartbeatRuns(projectId, agentId);
+	const { data: agent } = useAgent(projectId, agentId);
+
+	// CEO/Coach runs span many projects (the list is member-scoped), so show each
+	// row's project. Gate on the agent slug — see the run-detail page for why.
+	const isInstanceAgent =
+		!!agent && (INSTANCE_AGENT_SLUGS as readonly string[]).includes(agent.slug);
 
 	if (isLoading) return <div className="text-text-muted text-sm">Loading executions...</div>;
 
@@ -90,7 +106,13 @@ function ExecutionListPage() {
 	return (
 		<div className="flex flex-col gap-1">
 			{runs.map((run) => (
-				<ExecutionRow key={run.id} run={run} projectId={projectId} agentId={agentId} />
+				<ExecutionRow
+					key={run.id}
+					run={run}
+					projectId={projectId}
+					agentId={agentId}
+					isInstanceAgent={isInstanceAgent}
+				/>
 			))}
 		</div>
 	);

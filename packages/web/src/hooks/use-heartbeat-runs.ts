@@ -12,6 +12,7 @@ export interface HeartbeatRun {
 	task_title: string | null;
 	project_id: string | null;
 	project_slug: string | null;
+	project_name: string | null;
 	status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
 	queued_reason: string | null;
 	started_at: string | null;
