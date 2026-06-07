@@ -1,6 +1,6 @@
 import { ApprovalType, TaskStatus } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, createTestProject } from './helpers/app';
+import { authHeader, createTestProject, instanceCoachId } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 let ctx: ServerTestContext;
@@ -48,7 +48,7 @@ beforeAll(async () => {
 	engineerAgentId = agents.find((a: any) => a.slug === 'engineer').id;
 	architectAgentId = agents.find((a: any) => a.slug === 'architect').id;
 	_qaAgentId = agents.find((a: any) => a.slug === 'qa-engineer').id;
-	coachAgentId = agents.find((a: any) => a.slug === 'coach').id;
+	coachAgentId = await instanceCoachId(ctx.db);
 
 	// Create a project
 	const projRes = await createTestProject(ctx.db, teamId, {

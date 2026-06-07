@@ -590,10 +590,7 @@ describe('tasks CRUD', () => {
 		const task = (await createRes.json()).data;
 
 		const coachRow = await db.query<{ id: string }>(
-			`SELECT ma.id FROM member_agents ma
-			 JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1 AND ma.slug = 'coach'`,
-			[teamId],
+			"SELECT id FROM member_agents WHERE slug = 'coach' LIMIT 1",
 		);
 		const coachId = coachRow.rows[0].id;
 		const { token: coachToken } = await mintAgentToken(
