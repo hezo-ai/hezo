@@ -40,8 +40,14 @@ beforeAll(async () => {
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 
-	projectSlug = (await (await createTestProject(db, teamId, { name: 'Setup Project' })).json()).data
-		.slug;
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Batch Project',
+		description: 'For batch tests.',
+	});
+	const projectData = (await projectRes.json()).data;
+	projectId = projectData.id;
+	projectSlug = projectData.slug;
+
 	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
 	});
@@ -51,12 +57,6 @@ beforeAll(async () => {
 	productLeadId = bySlug('product-lead')!.id;
 	engineerId = bySlug('engineer')!.id;
 	captainId = bySlug(CAPTAIN_AGENT_SLUG)!.id;
-
-	const projectRes = await createTestProject(db, teamId, {
-		name: 'Batch Project',
-		description: 'For batch tests.',
-	});
-	projectId = (await projectRes.json()).data.id;
 });
 
 afterAll(async () => {

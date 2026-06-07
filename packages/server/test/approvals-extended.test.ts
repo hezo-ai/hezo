@@ -36,7 +36,10 @@ beforeAll(async () => {
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
-	projectSlug = `${await projectSlugFor(db, team.id)}`;
+	// Name the team's one project to match what the enrichment test asserts on.
+	projectSlug = (
+		await (await createTestProject(db, team.id, { name: 'Enriched Test Project' })).json()
+	).data.slug;
 
 	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),

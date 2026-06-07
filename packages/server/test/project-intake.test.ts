@@ -50,7 +50,7 @@ describe('project intake', () => {
 	it('creates an intake ticket and pending approval instead of a project', async () => {
 		const team = await createBlankTeam('Intake Co');
 
-		const res = await app.request(`/api/projects/${await projectSlugFor(db, team.id)}/projects`, {
+		const res = await app.request(`/api/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -109,7 +109,7 @@ describe('project intake', () => {
 	it('rejects missing name/description with 400 and no side effects', async () => {
 		const team = await createBlankTeam('Validation Co');
 
-		const res = await app.request(`/api/projects/${await projectSlugFor(db, team.id)}/projects`, {
+		const res = await app.request(`/api/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: '', description: 'desc' }),
@@ -127,7 +127,7 @@ describe('project intake', () => {
 		const team = await createBlankTeam('Prefix Conflict Co');
 
 		// Internal already uses 'IN' — submitting that should conflict.
-		const res = await app.request(`/api/projects/${await projectSlugFor(db, team.id)}/projects`, {
+		const res = await app.request(`/api/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -148,7 +148,7 @@ describe('project intake', () => {
 	it('approving the approval creates the project + planning task and closes the intake', async () => {
 		const team = await createBlankTeam('Approve Co');
 
-		const res = await app.request(`/api/projects/${await projectSlugFor(db, team.id)}/projects`, {
+		const res = await app.request(`/api/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -191,7 +191,7 @@ describe('project intake', () => {
 	it('denying the approval posts a denial note and leaves the intake open', async () => {
 		const team = await createBlankTeam('Deny Co');
 
-		const res = await app.request(`/api/projects/${await projectSlugFor(db, team.id)}/projects`, {
+		const res = await app.request(`/api/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Skunkworks', description: 'desc' }),
@@ -236,7 +236,7 @@ describe('project intake', () => {
 	it('skip-questions posts a system comment on the project intake', async () => {
 		const team = await createBlankTeam('Skip Q Co');
 
-		const res = await app.request(`/api/projects/${await projectSlugFor(db, team.id)}/projects`, {
+		const res = await app.request(`/api/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Fast Track', description: 'desc' }),
