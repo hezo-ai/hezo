@@ -2,8 +2,6 @@ import { CommentContentType } from '@hezo/shared';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useMemo, useRef } from 'react';
 import { type Comment, useComments } from '../hooks/use-comments';
-import { useTeam } from '../hooks/use-teams';
-import { useWebSocket } from '../hooks/use-websocket';
 import { CaptainAvatar, captainChatBubbleMinHClass } from './captain-avatar';
 
 /** Indent name/timestamp to align with bubble column (avatar width + gap). */
@@ -36,23 +34,21 @@ function formatMessageTime(iso: string): string {
 }
 
 interface CaptainIntakeChatProps {
-	teamSlug: string;
+	projectSlug: string;
 	taskIdentifier: string;
 	captainTitle: string;
 	awaitingCaptainReply: boolean;
 }
 
 export function CaptainIntakeChat({
-	teamSlug,
+	projectSlug,
 	taskIdentifier,
 	captainTitle,
 	awaitingCaptainReply,
 }: CaptainIntakeChatProps) {
 	const scrollRef = useRef<HTMLDivElement>(null);
-	const { data: team } = useTeam(teamSlug);
-	useWebSocket(team?.id, teamSlug);
 
-	const { data: comments, isLoading } = useComments(teamSlug, taskIdentifier);
+	const { data: comments, isLoading } = useComments(projectSlug, taskIdentifier);
 
 	const chatMessages = useMemo(() => {
 		return (comments ?? []).filter((c) => c.content_type === CommentContentType.Text);

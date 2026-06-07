@@ -26,6 +26,9 @@ let db: PGlite;
 let adminToken: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
+let teamSlug: string;
+let internalSlug: string;
+let internalProjectId: string;
 let agentId: string;
 
 beforeAll(async () => {
@@ -44,12 +47,21 @@ beforeAll(async () => {
 		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Auth Test Co', template_id: typeId }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	teamSlug = teamData.slug;
+	internalSlug = `internal-${teamSlug}`;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 		headers: authHeader(adminToken),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
+
+	const internalProject = await db.query<{ id: string }>(
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+		[teamId],
+	);
+	internalProjectId = internalProject.rows[0].id;
 });
 
 afterAll(async () => {
@@ -111,7 +123,9 @@ describe('signAdminJwt + verifyToken', () => {
 
 describe('signAgentJwt + verifyToken', () => {
 	it('signs and verifies an agent JWT bound to an active run', async () => {
-		const { token, runId } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+		const { token, runId } = await mintAgentToken(db, masterKeyManager, agentId, teamId, null, {
+			projectId: internalProjectId,
+		});
 		const auth = await verifyToken(token, db, masterKeyManager);
 
 		expect(auth).not.toBeNull();
@@ -146,7 +160,9 @@ describe('signAgentJwt + verifyToken', () => {
 	});
 
 	it('sets auth.taskId to null when the run is not bound to a task', async () => {
-		const { token } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+		const { token } = await mintAgentToken(db, masterKeyManager, agentId, teamId, null, {
+			projectId: internalProjectId,
+		});
 		const auth = await verifyToken(token, db, masterKeyManager);
 
 		expect(auth).not.toBeNull();
@@ -159,7 +175,7 @@ describe('signAgentJwt + verifyToken', () => {
 	it('rejects an agent JWT with no run_id claim', async () => {
 		const runId = await createAgentRun(db, agentId, teamId);
 		const internalProject = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
 			[teamId],
 		);
 		const projectId = internalProject.rows[0].id;
@@ -187,7 +203,7 @@ describe('signAgentJwt + verifyToken', () => {
 	it('rejects an agent JWT pointing at a nonexistent run', async () => {
 		const fakeRunId = '00000000-0000-0000-0000-000000000000';
 		const internalProject = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
 			[teamId],
 		);
 		const projectId = internalProject.rows[0].id;
@@ -201,7 +217,9 @@ describe('signAgentJwt + verifyToken', () => {
 		HeartbeatRunStatus.Cancelled,
 		HeartbeatRunStatus.TimedOut,
 	])('rejects agent JWT once its run has status=%s', async (terminalStatus) => {
-		const { token, runId } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+		const { token, runId } = await mintAgentToken(db, masterKeyManager, agentId, teamId, null, {
+			projectId: internalProjectId,
+		});
 		await finalizeAgentRun(db, runId, terminalStatus);
 		expect(await verifyToken(token, db, masterKeyManager)).toBeNull();
 	});
@@ -217,7 +235,7 @@ describe('signAgentJwt + verifyToken', () => {
 		const otherAgentId = otherAgentRes.rows[0]?.id;
 		if (!otherAgentId) return; // only one seeded agent — skip
 		const internalProject = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
 			[teamId],
 		);
 		const projectId = internalProject.rows[0].id;
@@ -249,7 +267,7 @@ describe('verifyToken with API key', () => {
 	let apiKey: string;
 
 	beforeAll(async () => {
-		const res = await app.request(`/api/teams/${teamId}/api-keys`, {
+		const res = await app.request(`/api/projects/${internalSlug}/api-keys`, {
 			method: 'POST',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'test-key' }),
@@ -326,7 +344,14 @@ describe('authMiddleware (via HTTP)', () => {
 	});
 
 	it('allows API requests with valid agent token', async () => {
-		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			null,
+			{ projectId: internalProjectId },
+		);
 		const res = await app.request('/agent-api/secrets/mine', {
 			headers: authHeader(agentToken),
 		});
@@ -397,7 +422,7 @@ describe('authMiddleware on a locked server', () => {
 
 describe('requireTeamAccess (via route)', () => {
 	it('rejects access to nonexistent team by slug', async () => {
-		const res = await app.request('/api/teams/nonexistent-slug/agents', {
+		const res = await app.request('/api/projects/nonexistent-slug/agents', {
 			headers: authHeader(adminToken),
 		});
 		expect(res.status).toBe(404);

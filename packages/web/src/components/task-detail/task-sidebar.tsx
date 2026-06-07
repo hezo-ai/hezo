@@ -30,7 +30,7 @@ const EFFORT_LEVELS: { value: AgentEffort; label: string }[] = [
 
 interface TaskSidebarProps {
 	task: Task;
-	teamId: string;
+	projectId: string;
 	agents: Agent[] | undefined;
 	lock: ExecutionLockState | undefined;
 	comments: Comment[] | undefined;
@@ -43,7 +43,7 @@ interface TaskSidebarProps {
 
 export function TaskSidebar({
 	task,
-	teamId,
+	projectId,
 	agents,
 	lock,
 	comments,
@@ -69,7 +69,7 @@ export function TaskSidebar({
 		return () => document.removeEventListener('pointerdown', onPointerDown);
 	}, [assigneeOpen]);
 
-	const { data: queued } = useQueuedWakeups(teamId, task.id);
+	const { data: queued } = useQueuedWakeups(projectId, task.id);
 
 	const assignedAgent = agents?.find((a) => a.id === task.assignee_id);
 	const effectiveDefaultEffort: AgentEffort =
@@ -88,7 +88,7 @@ export function TaskSidebar({
 				className="flex flex-col gap-4 text-xs lg:sticky lg:top-0 lg:self-start"
 			>
 				<AgentQueueSection
-					teamId={teamId}
+					projectId={projectId}
 					taskId={task.id}
 					locks={lock?.locks ?? []}
 					comments={comments ?? []}
@@ -174,8 +174,8 @@ export function TaskSidebar({
 					</span>
 					{task.project_name && task.project_slug ? (
 						<Link
-							to="/teams/$teamId/projects/$projectId"
-							params={{ teamId, projectId: task.project_slug }}
+							to="/projects/$projectId"
+							params={{ projectId: task.project_slug }}
 							className="text-[13px] text-text hover:text-accent-blue-text transition-colors"
 						>
 							{task.project_name}

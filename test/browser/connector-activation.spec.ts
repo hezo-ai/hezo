@@ -130,13 +130,13 @@ async function postAgentRegisterConnector(
 ) {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-	const projRes = await createProjectAndClearPlanning(page, team.id, token, {
+	const projRes = await createProjectAndClearPlanning(page, team.slug, token, {
 		name: uniqueName('Connector Project'),
 		description: 'E2E.',
 	});
 	const project = ((await projRes.json()) as { data: { id: string; slug: string } }).data;
 
-	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
+	const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 		headers,
 		data: { project_id: project.id, title: 'Add DatoCMS connector', assignee_id: agentId },
 	});
@@ -146,7 +146,7 @@ async function postAgentRegisterConnector(
 	// shape we know the routes produce. (We bypass `register_connector` MCP
 	// because driving the MCP server inline in a Playwright test is fiddly;
 	// the server vitest already covers that path.)
-	const connectorRes = await page.request.post(`/api/teams/${team.id}/mcp-connections`, {
+	const connectorRes = await page.request.post(`/api/projects/${project.slug}/mcp-connections`, {
 		headers,
 		data: {
 			name: 'datocms',
@@ -163,7 +163,7 @@ async function postAgentRegisterConnector(
 	// (Routes don't expose this directly; we use a fetch_skill_file-less synthetic
 	// connector. The connect_required comment renderer just needs connector_id +
 	// display_name.)
-	await page.request.post(`/api/teams/${team.id}/tasks/${task.id}/comments`, {
+	await page.request.post(`/api/projects/${project.slug}/tasks/${task.id}/comments`, {
 		headers,
 		data: {
 			content_type: 'connect_required',
@@ -195,7 +195,7 @@ test.describe('Connector activation', () => {
 	}) => {
 		test.setTimeout(60_000);
 		const agent = sharedWorkspace.agents[0]!;
-		const { task, connectorId, headers } = await postAgentRegisterConnector(
+		const { task, project, connectorId, headers } = await postAgentRegisterConnector(
 			page,
 			sharedWorkspace.team,
 			sharedWorkspace.token,
@@ -207,7 +207,7 @@ test.describe('Connector activation', () => {
 		// register_connector tool created it (so the wakeup fires on completion
 		// and the filter in loadMcpConnectionsForRun applies consistently).
 		await page.request
-			.patch(`/api/teams/${sharedWorkspace.team.id}/mcp-connections/${connectorId}`, {
+			.patch(`/api/projects/${project.slug}/mcp-connections/${connectorId}`, {
 				headers,
 				data: { created_by_task_id: task.id, display_name: 'DatoCMS' },
 			})
@@ -220,10 +220,10 @@ test.describe('Connector activation', () => {
 		// Drive OAuth end-to-end via API. Skips the popup mechanic (CI Chromium
 		// blocks window.open from synthetic clicks). Replays the same HTTP flow
 		// the popup would have taken: auth-start → follow authorize URL → callback.
-		const authStartRes = await page.request.post(
-			`/api/teams/${sharedWorkspace.team.id}/auth-start`,
-			{ headers, data: { connector_id: connectorId } },
-		);
+		const authStartRes = await page.request.post(`/api/projects/${project.slug}/auth-start`, {
+			headers,
+			data: { connector_id: connectorId },
+		});
 		expect(authStartRes.ok()).toBeTruthy();
 		const { data: authStartData } = (await authStartRes.json()) as {
 			data: { flow: string; auth_url: string };
@@ -244,7 +244,7 @@ test.describe('Connector activation', () => {
 			.poll(
 				async () => {
 					const res = await page.request.get(
-						`/api/teams/${sharedWorkspace.team.id}/mcp-connections/${connectorId}`,
+						`/api/projects/${project.slug}/mcp-connections/${connectorId}`,
 						{ headers },
 					);
 					const body = (await res.json()) as {
@@ -261,7 +261,7 @@ test.describe('Connector activation', () => {
 		// active flip is covered by the server vitest suite + the component-test
 		// tier; here we just need to verify the row data flows correctly to the
 		// list view.)
-		await page.goto(`/teams/${sharedWorkspace.team.slug}/connectors?focus=${connectorId}`);
+		await page.goto(`/projects/${project.slug}/connectors?focus=${connectorId}`);
 		await waitForPageLoad(page);
 		const row = page.locator(`[data-testid="connector-row"][data-connector-id="${connectorId}"]`);
 		await expect(row).toBeVisible({ timeout: 15_000 });

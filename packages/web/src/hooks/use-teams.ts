@@ -32,11 +32,12 @@ export function useTeams() {
 	});
 }
 
-export function useTeam(id: string, enabled = true) {
+/** The backing team for a project, addressed via the project slug. */
+export function useTeam(projectId: string, enabled = true) {
 	return useQuery({
-		queryKey: ['teams', id],
-		queryFn: () => api.get<Team>(`/api/teams/${id}`),
-		enabled,
+		queryKey: ['projects', projectId, 'team'],
+		queryFn: () => api.get<Team>(`/api/projects/${projectId}/team`),
+		enabled: enabled && !!projectId,
 	});
 }
 
@@ -47,10 +48,10 @@ interface UpdateTeamVars {
 	settings?: Partial<TeamSettings>;
 }
 
-export function useUpdateTeam(id: string) {
+export function useUpdateTeam(projectId: string) {
 	return useOptimisticMutation<UpdateTeamVars, Team, Team>({
-		mutationFn: (data) => api.patch<Team>(`/api/teams/${id}`, data),
-		queryKey: ['teams', id],
+		mutationFn: (data) => api.patch<Team>(`/api/projects/${projectId}/team`, data),
+		queryKey: ['projects', projectId, 'team'],
 		applyOptimistic: (current, vars) => {
 			if (!current) return current;
 			return {
@@ -60,7 +61,7 @@ export function useUpdateTeam(id: string) {
 			};
 		},
 		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
-		invalidateOnSettled: [['teams']],
+		invalidateOnSettled: [['teams'], ['projects']],
 		errorMessage: 'Failed to update team',
 	});
 }
@@ -81,11 +82,11 @@ export interface SaveTeamAsTemplateResult {
 	skipped_agents: string[];
 }
 
-export function useSaveTeamAsTemplate(teamSlug: string) {
+export function useSaveTeamAsTemplate(projectId: string) {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: (vars: { name: string; description?: string }) =>
-			api.post<SaveTeamAsTemplateResult>(`/api/teams/${teamSlug}/save-as-template`, vars),
+			api.post<SaveTeamAsTemplateResult>(`/api/projects/${projectId}/save-as-template`, vars),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['team-templates'] });
 		},
@@ -99,14 +100,14 @@ export interface ApplyTeamTypeResult {
 	builtin_updated_slugs: string[];
 }
 
-export function useApplyTeamType(teamSlug: string) {
+export function useApplyTeamType(projectId: string) {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: (vars: { template_id: string }) =>
-			api.post<ApplyTeamTypeResult>(`/api/teams/${teamSlug}/apply-type`, vars),
+			api.post<ApplyTeamTypeResult>(`/api/projects/${projectId}/apply-type`, vars),
 		onSuccess: () => {
 			// A merge can add agents — refetch the roster and team views.
-			queryClient.invalidateQueries({ queryKey: ['agents'] });
+			queryClient.invalidateQueries({ queryKey: ['projects'] });
 			queryClient.invalidateQueries({ queryKey: ['teams'] });
 		},
 	});

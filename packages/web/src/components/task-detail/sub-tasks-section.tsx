@@ -7,7 +7,7 @@ import { TaskStatusBadge } from '../task-status-badge';
 import { Button } from '../ui/button';
 
 interface SubTasksSectionProps {
-	teamId: string;
+	projectId: string;
 	taskId: string;
 	parentTaskId: string;
 	taskProjectSlug: string;
@@ -20,22 +20,22 @@ interface SubTasksSectionProps {
  * blow up the layout.
  */
 export function SubTasksSection({
-	teamId,
+	projectId,
 	taskId,
 	parentTaskId,
 	taskProjectSlug,
 }: SubTasksSectionProps) {
-	const { data: team } = useTeam(teamId);
+	const { data: team } = useTeam(projectId);
 	const subTaskPageSize = Math.max(
 		1,
 		team?.settings?.subtask_page_size ?? DEFAULT_SUBTASK_PAGE_SIZE,
 	);
 	const { data: subTasks } = useTasks(
-		teamId,
+		projectId,
 		parentTaskId ? { parent_task_id: parentTaskId, per_page: '200' } : undefined,
 		{ enabled: !!parentTaskId },
 	);
-	const createSubTask = useCreateSubTask(teamId, taskId);
+	const createSubTask = useCreateSubTask(projectId, taskId);
 
 	const [subTaskTitle, setSubTaskTitle] = useState('');
 	const [showSubForm, setShowSubForm] = useState(false);
@@ -129,9 +129,8 @@ export function SubTasksSection({
 					{subTasks?.data.slice(0, subTasksShown).map((s) => (
 						<Link
 							key={s.id}
-							to="/teams/$teamId/projects/$projectId/tasks/$taskId"
+							to="/projects/$projectId/tasks/$taskId"
 							params={{
-								teamId,
 								projectId: s.project_slug ?? taskProjectSlug,
 								taskId: s.identifier.toLowerCase(),
 							}}

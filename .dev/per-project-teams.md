@@ -43,7 +43,7 @@ how they're created and presented, and we add a 1:1 invariant.
 
 ## Creation flow (the heart of the change)
 
-Today: `POST /teams/:teamId/projects` opens an intake ticket in an **existing**
+Today: `POST /projects/:projectId/projects` opens an intake ticket in an **existing**
 team's Internal project; that team's Captain runs intake → planning.
 
 New primary flow — **"Create a project"** = create a team **and** its project in
@@ -58,8 +58,9 @@ one action, reusing the existing pieces in sequence:
 
 So the change is a thin **orchestration endpoint** (`POST /projects`) +
 the UI that drives it — **additive**, not a rewrite. The old
-`POST /teams/:teamId/projects` stays for now (used by tests and as the
-"add another project to an existing team" escape hatch we simply don't surface).
+`POST /projects/:projectId/projects` (sibling-create on any project of the team)
+stays for now (used by tests and as the "add another project to an existing
+team" escape hatch we simply don't surface).
 
 Naming: the project name **is** the team name by default (the team is "the
 Marketing Site team"); the operator can override the team name later in settings.
@@ -72,17 +73,25 @@ Marketing Site team"); the operator can override the team name later in settings
   (the primary axis); the rail (`team-rail.tsx`) dropped its per-team avatars and
   is now a thin global icon rail (Home / Inbox / All Tasks / New project +
   instance shortcuts). Project-teams are reached via Home / All Tasks.
-- **URLs stay team-scoped** (`/teams/$teamId/projects/$projectId/...`) initially —
-  teamId still resolves the project's team; a global `/projects/$id` routing
-  refactor is out of scope for the first slices.
+- **URLs are project-centric** (`/projects/$projectId/...`) — *shipped*. The
+  project slug is the single public handle across the browser URL, the REST API
+  (`/api/projects/:projectId/...`), and the query/realtime layer; the backing
+  team is resolved from the project, never named in the URL. Project slugs are
+  globally unique (incl. internal projects, slug `internal-<teamSlug>`). Team
+  pages (Agents, Inbox, team settings) nest under the project; onboarding —
+  being pre-project — is addressed via the active team's internal project.
+  Breadcrumbs carry only the in-project section + leaf (no team or project-name
+  crumb). See the routing middleware `requireProjectAccessMiddleware`.
 
 ## Schema
 
-Minimal. `projects.team_id` and the `UNIQUE (team_id, slug)` /
-`UNIQUE (team_id, task_prefix)` indexes stay (trivially satisfied with one user
-project per team). No migration beyond what's already in `001_initial_schema.sql`.
-The 1:1 invariant is enforced in the creation flow / service layer, not by a new
-constraint (keeping the multi-project code paths intact and reversible).
+Minimal. `projects.team_id` stays. Project `slug` is **globally unique**
+(`UNIQUE INDEX idx_projects_slug ON projects(slug)`) so a project resolves to its
+team without naming the team in the URL; `task_prefix` stays `UNIQUE (team_id,
+task_prefix)`. Both are trivially satisfied with one user project per team. No
+migration beyond what's already in `001_initial_schema.sql`. The 1:1 invariant is
+enforced in the creation flow / service layer, not by a new constraint (keeping
+the multi-project code paths intact and reversible).
 
 ## Sequencing (reversible slices, each green + tested)
 
@@ -98,7 +107,7 @@ constraint (keeping the multi-project code paths intact and reversible).
    project-with-team.
 4. **[DONE]** Rail reshape: per-team avatars dropped; the rail is now a thin
    global axis. Mobile Playwright coverage in `test/browser/team-rail.mobile.spec.ts`.
-5. **[DONE]** Refresh-from-type: `POST /teams/:teamId/apply-type`
+5. **[DONE]** Refresh-from-type: `POST /projects/:projectId/apply-type`
    (additive `applyTemplateToTeam`) + the `ApplyTypeSection` ("Refresh from
    type") on the team settings page, reachable from the project sidebar's
    Team → Settings. (Built earlier alongside save-as-type.)
@@ -142,5 +151,7 @@ change with startup/seed-test blast radius — left as an optional follow-up.
   ever creates one user project per team; the multi-project service path stays
   for tests/escape-hatch. Revisit hardening (a DB partial unique index on
   `team_id WHERE is_internal = false`) once the UI no longer creates seconds.
-- **D. URL shape.** Keep team-scoped URLs now; global `/projects/$id` is a later,
-  separate refactor.
+- **D. URL shape — RESOLVED: project-centric, shipped.** Browser URLs, the REST
+  API, and the query/realtime layer all key on the globally-unique project slug
+  (`/projects/$projectId/...`); the backing team is resolved from the project and
+  never named in the URL.

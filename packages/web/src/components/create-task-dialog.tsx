@@ -1,10 +1,10 @@
-import { CAPTAIN_AGENT_SLUG, INTERNAL_PROJECT_SLUG } from '@hezo/shared';
+import { CAPTAIN_AGENT_SLUG } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useNavigate } from '@tanstack/react-router';
 import { ChevronDown, Loader2, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
-import { useProjects } from '../hooks/use-projects';
+import { useProjectMeta } from '../hooks/use-projects';
 import { useCreateTask } from '../hooks/use-tasks';
 import { MentionTextarea } from './mention-textarea';
 import { Button } from './ui/button';
@@ -12,31 +12,23 @@ import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
 import { Input } from './ui/input';
 
 interface CreateTaskDialogProps {
-	teamId: string;
+	projectId: string;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	defaultProjectId?: string;
 }
 
-export function CreateTaskDialog({
-	teamId,
-	open,
-	onOpenChange,
-	defaultProjectId,
-}: CreateTaskDialogProps) {
+export function CreateTaskDialog({ projectId, open, onOpenChange }: CreateTaskDialogProps) {
 	const [title, setTitle] = useState('');
 	const [description, setDescription] = useState('');
-	const [projectId, setProjectId] = useState(defaultProjectId ?? '');
 	const [assigneeId, setAssigneeId] = useState('');
 	const [priority, setPriority] = useState('medium');
-	const [moreOpen, setMoreOpen] = useState(!defaultProjectId);
-	const { data: projects } = useProjects(teamId);
-	const { data: agents } = useAgents(teamId);
-	const createTask = useCreateTask(teamId);
+	const [moreOpen, setMoreOpen] = useState(false);
+	const project = useProjectMeta(projectId);
+	const { data: agents } = useAgents(projectId);
+	const createTask = useCreateTask(projectId);
 	const navigate = useNavigate();
 
-	const selectedProject = projects?.find((p) => p.id === projectId);
-	const isInternalProject = selectedProject?.slug === INTERNAL_PROJECT_SLUG;
+	const isInternalProject = project?.is_internal ?? false;
 	const captainAgent = useMemo(() => agents?.find((a) => a.slug === CAPTAIN_AGENT_SLUG), [agents]);
 	const selectableAgents = useMemo(() => {
 		if (!agents) return [];
@@ -47,46 +39,26 @@ export function CreateTaskDialog({
 	}, [agents, captainAgent, isInternalProject]);
 
 	const priorityLabel = priority.charAt(0).toUpperCase() + priority.slice(1);
-	const projectLabel = selectedProject?.name ?? 'No project';
-	const summaryLabel = `${priorityLabel} priority · ${projectLabel}`;
-
-	function handleProjectChange(nextProjectId: string) {
-		setProjectId(nextProjectId);
-		const next = projects?.find((p) => p.id === nextProjectId);
-		if (next?.slug === INTERNAL_PROJECT_SLUG) {
-			setAssigneeId(captainAgent?.id ?? '');
-		}
-	}
+	const summaryLabel = `${priorityLabel} priority · ${project?.name ?? projectId}`;
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
-		if (!projectId) return;
 		const result = await createTask.mutateAsync({
 			title,
 			description: description || undefined,
-			project_id: projectId,
 			assignee_id: assigneeId || undefined,
 			priority,
 		});
 		onOpenChange(false);
 		setTitle('');
 		setDescription('');
-		const targetProjectSlug = selectedProject?.slug ?? result.project_slug;
-		if (targetProjectSlug) {
-			navigate({
-				to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
-				params: {
-					teamId,
-					projectId: targetProjectSlug,
-					taskId: result.identifier.toLowerCase(),
-				},
-			});
-		} else {
-			navigate({
-				to: '/teams/$teamId/tasks/$taskId',
-				params: { teamId, taskId: result.identifier.toLowerCase() },
-			});
-		}
+		navigate({
+			to: '/projects/$projectId/tasks/$taskId',
+			params: {
+				projectId: result.project_slug ?? projectId,
+				taskId: result.identifier.toLowerCase(),
+			},
+		});
 	}
 
 	return (
@@ -115,8 +87,8 @@ export function CreateTaskDialog({
 							required
 						/>
 						<MentionTextarea
-							teamId={teamId}
-							projectSlug={selectedProject?.slug}
+							projectId={projectId}
+							projectSlug={project?.slug}
 							label="Description"
 							value={description}
 							onChange={(e) => setDescription(e.target.value)}
@@ -170,22 +142,6 @@ export function CreateTaskDialog({
 											<option value="urgent">Urgent</option>
 										</select>
 									</label>
-									<label className="flex flex-col gap-1.5">
-										<span className="text-sm text-text-muted">Project *</span>
-										<select
-											value={projectId}
-											onChange={(e) => handleProjectChange(e.target.value)}
-											required
-											className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
-										>
-											<option value="">Select project</option>
-											{projects?.map((p) => (
-												<option key={p.id} value={p.id}>
-													{p.name}
-												</option>
-											))}
-										</select>
-									</label>
 								</div>
 							)}
 						</div>
@@ -200,10 +156,7 @@ export function CreateTaskDialog({
 							<Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
 								Cancel
 							</Button>
-							<Button
-								type="submit"
-								disabled={!title.trim() || !projectId || !assigneeId || createTask.isPending}
-							>
+							<Button type="submit" disabled={!title.trim() || !assigneeId || createTask.isPending}>
 								{createTask.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
 								Create
 							</Button>

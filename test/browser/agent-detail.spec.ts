@@ -44,7 +44,7 @@ test('long agent summary collapses to first line and toggles on click; short sum
 	);
 	await setAgentSummary(page, token, team.id, longAgent.id, longSummary);
 
-	await page.goto(`/teams/${team.slug}/agents/${longAgent.id}`);
+	await page.goto(`/projects/internal-${team.slug}/agents/${longAgent.id}`);
 
 	const summary = page.getByTestId('agent-summary');
 	await expect(summary).toBeVisible({ timeout: 15000 });
@@ -69,7 +69,7 @@ test('long agent summary collapses to first line and toggles on click; short sum
 
 	if (shortAgent !== longAgent) {
 		await setAgentSummary(page, token, team.id, shortAgent.id, 'Short.');
-		await page.goto(`/teams/${team.slug}/agents/${shortAgent.id}`);
+		await page.goto(`/projects/internal-${team.slug}/agents/${shortAgent.id}`);
 		const shortSummary = page.getByTestId('agent-summary');
 		await expect(shortSummary).toBeVisible({ timeout: 15000 });
 		await expect(shortSummary.locator('p')).toContainText('Short.');

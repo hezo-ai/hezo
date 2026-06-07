@@ -12,7 +12,7 @@ function buildFetchMock(opts: {
 		const url = typeof input === 'string' ? input : (input as Request).url;
 		const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
 
-		if (method === 'GET' && /\/api\/teams\/[^/]+\/tasks\/[^/]+\/comments/.test(url)) {
+		if (method === 'GET' && /\/api\/projects\/[^/]+\/tasks\/[^/]+\/comments/.test(url)) {
 			return new Response(JSON.stringify({ data: [opts.runComment] }), {
 				status: 200,
 				headers: { 'Content-Type': 'application/json' },
@@ -20,7 +20,7 @@ function buildFetchMock(opts: {
 		}
 		if (
 			method === 'GET' &&
-			new RegExp(`/api/teams/[^/]+/agents/[^/]+/heartbeat-runs/${opts.runId}$`).test(url)
+			new RegExp(`/api/projects/[^/]+/agents/[^/]+/heartbeat-runs/${opts.runId}$`).test(url)
 		) {
 			return new Response(JSON.stringify({ data: opts.runResponse }), {
 				status: 200,
@@ -33,9 +33,8 @@ function buildFetchMock(opts: {
 
 test('run comment shows created tickets as links to their pages', async () => {
 	const seeded = {
-		teamSlug: '',
-		taskId: '',
 		projectSlug: '',
+		taskId: '',
 	};
 
 	const { findByTestId, router } = await renderApp({
@@ -49,8 +48,8 @@ test('run comment shows created tickets as links to their pages', async () => {
 				assignee_id: captain.id,
 			});
 
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.projectSlug = project.slug;
 
 			const runId = '99999999-9999-9999-9999-999999999999';
@@ -106,8 +105,8 @@ test('run comment shows created tickets as links to their pages', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	await findByTestId('run-comment', undefined, { timeout: 20_000 });
@@ -121,16 +120,12 @@ test('run comment shows created tickets as links to their pages', async () => {
 	const linkB = links.find((a) => a.textContent === 'Created ticket SPAWN-901 — Add tests for X');
 	expect(linkA).toBeTruthy();
 	expect(linkB).toBeTruthy();
-	expect(linkA?.getAttribute('href')).toBe(
-		`/teams/${seeded.teamSlug}/projects/${seeded.projectSlug}/tasks/spawn-900`,
-	);
-	expect(linkB?.getAttribute('href')).toBe(
-		`/teams/${seeded.teamSlug}/projects/${seeded.projectSlug}/tasks/spawn-901`,
-	);
+	expect(linkA?.getAttribute('href')).toBe(`/projects/${seeded.projectSlug}/tasks/spawn-900`);
+	expect(linkB?.getAttribute('href')).toBe(`/projects/${seeded.projectSlug}/tasks/spawn-901`);
 });
 
 test('run comment omits created tickets section when list is empty', async () => {
-	const seeded = { teamSlug: '', taskId: '' };
+	const seeded = { projectSlug: '', taskId: '' };
 
 	const { findByTestId, queryByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -143,8 +138,8 @@ test('run comment omits created tickets section when list is empty', async () =>
 				assignee_id: captain.id,
 			});
 
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 
 			const runId = '99999999-9999-9999-9999-000000000002';
 			const runComment = {
@@ -181,8 +176,8 @@ test('run comment omits created tickets section when list is empty', async () =>
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	await findByTestId('run-comment', undefined, { timeout: 20_000 });
@@ -192,7 +187,7 @@ test('run comment omits created tickets section when list is empty', async () =>
 });
 
 test('run comment links updated docs, skills, and proposed skills', async () => {
-	const seeded = { teamSlug: '', taskId: '', projectSlug: '' };
+	const seeded = { projectSlug: '', taskId: '' };
 
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -205,8 +200,8 @@ test('run comment links updated docs, skills, and proposed skills', async () => 
 				assignee_id: captain.id,
 			});
 
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.projectSlug = project.slug;
 
 			const runId = '99999999-9999-9999-9999-000000000003';
@@ -250,8 +245,8 @@ test('run comment links updated docs, skills, and proposed skills', async () => 
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	await findByTestId('run-comment', undefined, { timeout: 20_000 });
@@ -262,18 +257,20 @@ test('run comment links updated docs, skills, and proposed skills', async () => 
 	const docLink = docsSection.querySelector('a') as HTMLAnchorElement | null;
 	expect(docLink?.textContent).toBe('Updated spec.md');
 	expect(docLink?.getAttribute('href')).toBe(
-		`/teams/${seeded.teamSlug}/projects/${seeded.projectSlug}/documents?file=spec.md`,
+		`/projects/${seeded.projectSlug}/documents?file=spec.md`,
 	);
 
 	const skillsSection = await findByTestId('run-comment-created-skills');
 	const skillLinks = Array.from(skillsSection.querySelectorAll('a')) as HTMLAnchorElement[];
 	const added = skillLinks.find((a) => a.textContent === 'Added skill Deploy Flow');
 	const updated = skillLinks.find((a) => a.textContent === 'Updated skill Triage');
-	expect(added?.getAttribute('href')).toBe(`/teams/${seeded.teamSlug}/skills?slug=deploy-flow`);
-	expect(updated?.getAttribute('href')).toBe(`/teams/${seeded.teamSlug}/skills?slug=triage`);
+	expect(added?.getAttribute('href')).toBe(
+		`/projects/${seeded.projectSlug}/skills?slug=deploy-flow`,
+	);
+	expect(updated?.getAttribute('href')).toBe(`/projects/${seeded.projectSlug}/skills?slug=triage`);
 
 	const proposedSection = await findByTestId('run-comment-proposed-skills');
 	const proposedLink = proposedSection.querySelector('a') as HTMLAnchorElement | null;
 	expect(proposedLink?.textContent).toBe('Proposed skill Linear Triage');
-	expect(proposedLink?.getAttribute('href')).toBe(`/teams/${seeded.teamSlug}/inbox`);
+	expect(proposedLink?.getAttribute('href')).toBe(`/projects/${seeded.projectSlug}/inbox`);
 });

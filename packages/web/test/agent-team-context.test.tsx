@@ -17,8 +17,8 @@ test('renders default team_context for an Engineer', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/agents/$agentId/settings',
-		params: { teamId: ws.team.slug, agentId: engineerId },
+		to: '/projects/$projectId/agents/$agentId/settings',
+		params: { projectId: ws.internalSlug, agentId: engineerId },
 	});
 
 	const section = await findByTestId('agent-team-context', undefined, { timeout: 20_000 });
@@ -43,8 +43,8 @@ test('attribution caption renders beneath the section', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/agents/$agentId/settings',
-		params: { teamId: ws.team.slug, agentId },
+		to: '/projects/$projectId/agents/$agentId/settings',
+		params: { projectId: ws.internalSlug, agentId },
 	});
 
 	const caption = await findByTestId('agent-team-context-attribution', undefined, {
@@ -66,8 +66,8 @@ test('section appears between Reports To and Monthly Budget controls in DOM orde
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/agents/$agentId/settings',
-		params: { teamId: ws.team.slug, agentId },
+		to: '/projects/$projectId/agents/$agentId/settings',
+		params: { projectId: ws.internalSlug, agentId },
 	});
 
 	const section = await findByTestId('agent-team-context', undefined, { timeout: 20_000 });

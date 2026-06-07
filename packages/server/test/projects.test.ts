@@ -9,6 +9,8 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let teamId: string;
+let teamSlug: string;
+let internalSlug: string;
 
 const VALID_DESCRIPTION = 'A backend API that serves authenticated requests for the main app.';
 
@@ -23,8 +25,26 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Project Test Co' }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	teamSlug = teamData.slug;
+	internalSlug = `internal-${teamSlug}`;
 });
+
+async function listTeamProjects(): Promise<
+	Array<{ id: string; slug: string; name: string; team_id: string; team_slug: string }>
+> {
+	const res = await app.request('/api/projects', { headers: authHeader(token) });
+	const all = (await res.json()).data as Array<{
+		id: string;
+		slug: string;
+		name: string;
+		team_id: string;
+		team_slug: string;
+		is_internal: boolean;
+	}>;
+	return all.filter((p) => p.team_id === teamId && !p.is_internal);
+}
 
 afterAll(async () => {
 	await safeClose(db);
@@ -99,7 +119,7 @@ describe('projects CRUD', () => {
 	});
 
 	it('rejects a missing description at the POST /projects route', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects`, {
+		const res = await app.request(`/api/projects/${internalSlug}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Missing description' }),
@@ -108,7 +128,7 @@ describe('projects CRUD', () => {
 	});
 
 	it('rejects a blank description at the POST /projects route', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects`, {
+		const res = await app.request(`/api/projects/${internalSlug}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Blank description', description: '   ' }),
@@ -117,23 +137,16 @@ describe('projects CRUD', () => {
 	});
 
 	it('lists projects with counts', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects`, {
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.data.length).toBeGreaterThanOrEqual(1);
-		expect(body.data[0]).toHaveProperty('repo_count');
-		expect(body.data[0]).toHaveProperty('open_task_count');
+		const projects = await listTeamProjects();
+		expect(projects.length).toBeGreaterThanOrEqual(1);
+		expect(projects[0]).toHaveProperty('repo_count');
+		expect(projects[0]).toHaveProperty('open_task_count');
 	});
 
 	it('gets a project by id with repos', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/projects`, {
-			headers: authHeader(token),
-		});
-		const project = (await listRes.json()).data[0];
+		const project = (await listTeamProjects())[0];
 
-		const res = await app.request(`/api/teams/${teamId}/projects/${project.id}`, {
+		const res = await app.request(`/api/projects/${project.id}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -142,14 +155,9 @@ describe('projects CRUD', () => {
 	});
 
 	it('updates a project', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/projects`, {
-			headers: authHeader(token),
-		});
-		const project = (await listRes.json()).data.find(
-			(p: { slug: string }) => p.slug === 'backend-api',
-		);
+		const project = (await listTeamProjects()).find((p) => p.slug === 'backend-api')!;
 
-		const res = await app.request(`/api/teams/${teamId}/projects/${project.id}`, {
+		const res = await app.request(`/api/projects/${project.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ description: 'Updated description body.' }),
@@ -188,7 +196,7 @@ describe('projects CRUD', () => {
 			project.id,
 		]);
 
-		const res = await app.request(`/api/teams/${teamId}/projects/${project.id}`, {
+		const res = await app.request(`/api/projects/${project.id}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
@@ -300,14 +308,9 @@ describe('default project docs', () => {
 
 describe('slug-based project access', () => {
 	it('gets a project by slug', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/projects`, {
-			headers: authHeader(token),
-		});
-		const project = (await listRes.json()).data.find(
-			(p: { slug: string }) => p.slug === 'backend-api',
-		);
+		const project = (await listTeamProjects()).find((p) => p.slug === 'backend-api')!;
 
-		const res = await app.request(`/api/teams/${teamId}/projects/${project.slug}`, {
+		const res = await app.request(`/api/projects/${project.slug}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -317,21 +320,14 @@ describe('slug-based project access', () => {
 	});
 
 	it('returns 404 for non-existent project slug', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects/nonexistent-slug`, {
+		const res = await app.request(`/api/projects/nonexistent-slug`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(404);
 	});
 
-	it('accesses team by slug and project by slug together', async () => {
-		const teamsRes = await app.request('/api/teams', {
-			headers: authHeader(token),
-		});
-		const team = (await teamsRes.json()).data.find(
-			(c: { slug: string }) => c.slug === 'project-test-co',
-		);
-
-		const res = await app.request(`/api/teams/${team.slug}/projects/backend-api`, {
+	it('accesses a project by slug', async () => {
+		const res = await app.request(`/api/projects/backend-api`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -340,7 +336,7 @@ describe('slug-based project access', () => {
 	});
 
 	it('updates a project by slug', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects/backend-api`, {
+		const res = await app.request(`/api/projects/backend-api`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ description: 'Slug-based update' }),

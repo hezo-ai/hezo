@@ -40,59 +40,61 @@ export interface UpdateSkillInput {
 	tags?: string[];
 }
 
-export function useSkills(teamId: string) {
+export function useSkills(projectId: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'skills'],
-		queryFn: () => api.get<SkillListItem[]>(`/api/teams/${teamId}/skills`),
-		enabled: !!teamId,
+		queryKey: ['projects', projectId, 'skills'],
+		queryFn: () => api.get<SkillListItem[]>(`/api/projects/${projectId}/skills`),
+		enabled: !!projectId,
 	});
 }
 
-export function useSkill(teamId: string, slug: string | null) {
+export function useSkill(projectId: string, slug: string | null) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'skills', slug],
-		queryFn: () => api.get<Skill>(`/api/teams/${teamId}/skills/${slug}`),
-		enabled: !!teamId && slug !== null,
+		queryKey: ['projects', projectId, 'skills', slug],
+		queryFn: () => api.get<Skill>(`/api/projects/${projectId}/skills/${slug}`),
+		enabled: !!projectId && slug !== null,
 	});
 }
 
-export function useCreateSkill(teamId: string) {
+export function useCreateSkill(projectId: string) {
 	return useMutation({
-		mutationFn: (input: CreateSkillInput) => api.post<Skill>(`/api/teams/${teamId}/skills`, input),
+		mutationFn: (input: CreateSkillInput) =>
+			api.post<Skill>(`/api/projects/${projectId}/skills`, input),
 		onSuccess: (created) => {
-			queryClient.setQueryData<Skill>(['teams', teamId, 'skills', created.slug], created);
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] });
+			queryClient.setQueryData<Skill>(['projects', projectId, 'skills', created.slug], created);
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'skills'] });
 		},
 	});
 }
 
-export function useUpdateSkill(teamId: string) {
+export function useUpdateSkill(projectId: string) {
 	return useMutation({
 		mutationFn: ({ slug, input }: { slug: string; input: UpdateSkillInput }) =>
-			api.patch<Skill>(`/api/teams/${teamId}/skills/${slug}`, input),
+			api.patch<Skill>(`/api/projects/${projectId}/skills/${slug}`, input),
 		onSuccess: (updated, { slug }) => {
-			queryClient.setQueryData<Skill>(['teams', teamId, 'skills', slug], updated);
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] });
+			queryClient.setQueryData<Skill>(['projects', projectId, 'skills', slug], updated);
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'skills'] });
 		},
 	});
 }
 
-export function useSyncSkill(teamId: string) {
+export function useSyncSkill(projectId: string) {
 	return useMutation({
-		mutationFn: (slug: string) => api.post<Skill>(`/api/teams/${teamId}/skills/${slug}/sync`, {}),
+		mutationFn: (slug: string) =>
+			api.post<Skill>(`/api/projects/${projectId}/skills/${slug}/sync`, {}),
 		onSuccess: (updated, slug) => {
-			queryClient.setQueryData<Skill>(['teams', teamId, 'skills', slug], updated);
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] });
+			queryClient.setQueryData<Skill>(['projects', projectId, 'skills', slug], updated);
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'skills'] });
 		},
 	});
 }
 
-export function useDeleteSkill(teamId: string) {
+export function useDeleteSkill(projectId: string) {
 	return useMutation({
-		mutationFn: (slug: string) => api.delete(`/api/teams/${teamId}/skills/${slug}`),
+		mutationFn: (slug: string) => api.delete(`/api/projects/${projectId}/skills/${slug}`),
 		onSuccess: (_, slug) => {
-			queryClient.removeQueries({ queryKey: ['teams', teamId, 'skills', slug] });
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'skills'] });
+			queryClient.removeQueries({ queryKey: ['projects', projectId, 'skills', slug] });
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'skills'] });
 		},
 	});
 }

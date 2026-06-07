@@ -5,7 +5,7 @@ import type { CredentialUsage } from './use-credentials';
 
 // Instance-level credentials (secrets with team_id NULL) are shared with every
 // team's egress. Only the Admin (superuser) manages them, via the un-prefixed
-// /api/credentials + /api/secrets routes (no /teams/:teamId). Mutations are
+// /api/credentials + /api/secrets routes (no /teams/:projectId). Mutations are
 // security-sensitive, so they invalidate + refetch — never optimistic.
 export const INSTANCE_CREDENTIALS_KEY = ['instance', 'credentials'] as const;
 

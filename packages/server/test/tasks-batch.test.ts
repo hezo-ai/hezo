@@ -12,6 +12,7 @@ let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
+let internalSlug: string;
 let projectId: string;
 
 let architectId: string;
@@ -36,9 +37,11 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Batch Tasks Co', template_id: typeId }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	internalSlug = `internal-${teamData.slug}`;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -82,7 +85,7 @@ async function callMcpTool(
 
 describe('POST /teams/:teamId/tasks/batch (admin caller)', () => {
 	it('creates all valid items with sequential identifiers in one project', async () => {
-		const r = await app.request(`/api/teams/${teamId}/tasks/batch`, {
+		const r = await app.request(`/api/projects/${internalSlug}/tasks/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -107,7 +110,7 @@ describe('POST /teams/:teamId/tasks/batch (admin caller)', () => {
 	});
 
 	it('returns per-item errors with index for mixed batches', async () => {
-		const r = await app.request(`/api/teams/${teamId}/tasks/batch`, {
+		const r = await app.request(`/api/projects/${internalSlug}/tasks/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -129,7 +132,7 @@ describe('POST /teams/:teamId/tasks/batch (admin caller)', () => {
 	});
 
 	it('records created_by_member_id consistently for admin callers', async () => {
-		const r = await app.request(`/api/teams/${teamId}/tasks/batch`, {
+		const r = await app.request(`/api/projects/${internalSlug}/tasks/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -146,21 +149,21 @@ describe('POST /teams/:teamId/tasks/batch (admin caller)', () => {
 	});
 
 	it('rejects empty, non-array, and oversized item lists', async () => {
-		const emptyRes = await app.request(`/api/teams/${teamId}/tasks/batch`, {
+		const emptyRes = await app.request(`/api/projects/${internalSlug}/tasks/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ items: [] }),
 		});
 		expect(emptyRes.status).toBe(400);
 
-		const nonArrayRes = await app.request(`/api/teams/${teamId}/tasks/batch`, {
+		const nonArrayRes = await app.request(`/api/projects/${internalSlug}/tasks/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ items: 'nope' }),
 		});
 		expect(nonArrayRes.status).toBe(400);
 
-		const oversizedRes = await app.request(`/api/teams/${teamId}/tasks/batch`, {
+		const oversizedRes = await app.request(`/api/projects/${internalSlug}/tasks/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -182,6 +185,8 @@ describe('MCP tool: create_tasks (agent caller)', () => {
 			masterKeyManager,
 			architectId,
 			teamId,
+			null,
+			{ projectId },
 		);
 
 		const result = (await callMcpTool(architectToken, 'create_tasks', {

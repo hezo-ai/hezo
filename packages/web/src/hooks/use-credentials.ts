@@ -17,9 +17,9 @@ export interface CredentialUsage {
 	last_host: string | null;
 }
 
-export function useCredentials(teamId: string) {
+export function useCredentials(projectId: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'credentials'],
-		queryFn: () => api.get<CredentialUsage[]>(`/api/teams/${teamId}/credentials`),
+		queryKey: ['projects', projectId, 'credentials'],
+		queryFn: () => api.get<CredentialUsage[]>(`/api/projects/${projectId}/credentials`),
 	});
 }

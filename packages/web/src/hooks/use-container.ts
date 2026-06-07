@@ -2,28 +2,28 @@ import { useMutation } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 
-function invalidateProject(teamId: string, projectId: string) {
-	queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects'] });
-	queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects', projectId] });
+function invalidateProject(projectId: string) {
+	queryClient.invalidateQueries({ queryKey: ['projects'] });
+	queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
 }
 
-export function useStartContainer(teamId: string, projectId: string) {
+export function useStartContainer(projectId: string) {
 	return useMutation({
-		mutationFn: () => api.post(`/api/teams/${teamId}/projects/${projectId}/container/start`, {}),
-		onSuccess: () => invalidateProject(teamId, projectId),
+		mutationFn: () => api.post(`/api/projects/${projectId}/container/start`, {}),
+		onSuccess: () => invalidateProject(projectId),
 	});
 }
 
-export function useStopContainer(teamId: string, projectId: string) {
+export function useStopContainer(projectId: string) {
 	return useMutation({
-		mutationFn: () => api.post(`/api/teams/${teamId}/projects/${projectId}/container/stop`, {}),
-		onSuccess: () => invalidateProject(teamId, projectId),
+		mutationFn: () => api.post(`/api/projects/${projectId}/container/stop`, {}),
+		onSuccess: () => invalidateProject(projectId),
 	});
 }
 
-export function useRebuildContainer(teamId: string, projectId: string) {
+export function useRebuildContainer(projectId: string) {
 	return useMutation({
-		mutationFn: () => api.post(`/api/teams/${teamId}/projects/${projectId}/container/rebuild`, {}),
-		onSuccess: () => invalidateProject(teamId, projectId),
+		mutationFn: () => api.post(`/api/projects/${projectId}/container/rebuild`, {}),
+		onSuccess: () => invalidateProject(projectId),
 	});
 }

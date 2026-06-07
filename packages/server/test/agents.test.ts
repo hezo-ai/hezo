@@ -9,6 +9,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let teamId: string;
+let projectSlug: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -31,7 +32,9 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const team = (await teamRes.json()).data;
+	teamId = team.id;
+	projectSlug = `internal-${team.slug}`;
 });
 
 afterAll(async () => {
@@ -40,7 +43,7 @@ afterAll(async () => {
 
 describe('agents CRUD', () => {
 	it('lists all 9 auto-created agents', async () => {
-		const res = await app.request(`/api/teams/${teamId}/agents`, {
+		const res = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -49,7 +52,7 @@ describe('agents CRUD', () => {
 	});
 
 	it('all agents start with idle runtime_status and enabled admin_status', async () => {
-		const res = await app.request(`/api/teams/${teamId}/agents`, {
+		const res = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const body = await res.json();
@@ -60,7 +63,7 @@ describe('agents CRUD', () => {
 	});
 
 	it('filters agents by admin_status', async () => {
-		const res = await app.request(`/api/teams/${teamId}/agents?admin_status=enabled`, {
+		const res = await app.request(`/api/projects/${projectSlug}/agents?admin_status=enabled`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -72,13 +75,13 @@ describe('agents CRUD', () => {
 	});
 
 	it('gets an agent by id with full detail', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		const captain = agents.find((a: Record<string, unknown>) => a.slug === 'captain');
 
-		const res = await app.request(`/api/teams/${teamId}/agents/${captain.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/agents/${captain.id}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -90,7 +93,7 @@ describe('agents CRUD', () => {
 	});
 
 	it('gets an agent by slug', async () => {
-		const res = await app.request(`/api/teams/${teamId}/agents/architect`, {
+		const res = await app.request(`/api/projects/${projectSlug}/agents/architect`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -99,14 +102,14 @@ describe('agents CRUD', () => {
 	});
 
 	it('returns 404 for an unknown agent slug', async () => {
-		const res = await app.request(`/api/teams/${teamId}/agents/no-such-agent`, {
+		const res = await app.request(`/api/projects/${projectSlug}/agents/no-such-agent`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(404);
 	});
 
 	it('fetches the system prompt by agent slug', async () => {
-		const res = await app.request(`/api/teams/${teamId}/agents/architect/system-prompt`, {
+		const res = await app.request(`/api/projects/${projectSlug}/agents/architect/system-prompt`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -115,14 +118,20 @@ describe('agents CRUD', () => {
 	});
 
 	it('preview endpoint resolves placeholders and omits Run Context', async () => {
-		const rawRes = await app.request(`/api/teams/${teamId}/agents/architect/system-prompt`, {
-			headers: authHeader(token),
-		});
+		const rawRes = await app.request(
+			`/api/projects/${projectSlug}/agents/architect/system-prompt`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		const raw = ((await rawRes.json()).data?.content ?? '') as string;
 
-		const res = await app.request(`/api/teams/${teamId}/agents/architect/system-prompt/preview`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/${projectSlug}/agents/architect/system-prompt/preview`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		expect(res.status).toBe(200);
 		const resolved = ((await res.json()).data?.content ?? '') as string;
 
@@ -137,21 +146,21 @@ describe('agents CRUD', () => {
 
 	it('preview endpoint 404s for unknown agent', async () => {
 		const res = await app.request(
-			`/api/teams/${teamId}/agents/no-such-agent/system-prompt/preview`,
+			`/api/projects/${projectSlug}/agents/no-such-agent/system-prompt/preview`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
 	});
 
 	it('seeds the architect with a PRD gate instruction', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		const architect = agents.find((a: Record<string, unknown>) => a.slug === 'architect');
 
 		const promptRes = await app.request(
-			`/api/teams/${teamId}/agents/${architect.id}/system-prompt`,
+			`/api/projects/${projectSlug}/agents/${architect.id}/system-prompt`,
 			{ headers: authHeader(token) },
 		);
 		const prompt = (await promptRes.json()).data.content as string;
@@ -163,14 +172,14 @@ describe('agents CRUD', () => {
 	});
 
 	it('no agent system prompt references a .dev/ path for project docs', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		const anyDevFolderRef = /\.dev\//;
 		for (const summary of agents) {
 			const promptRes = await app.request(
-				`/api/teams/${teamId}/agents/${summary.id}/system-prompt`,
+				`/api/projects/${projectSlug}/agents/${summary.id}/system-prompt`,
 				{ headers: authHeader(token) },
 			);
 			const prompt = ((await promptRes.json()).data?.content ?? '') as string;
@@ -179,7 +188,7 @@ describe('agents CRUD', () => {
 	});
 
 	it('creates (hires) a custom agent', async () => {
-		const res = await app.request(`/api/teams/${teamId}/agents`, {
+		const res = await app.request(`/api/projects/${projectSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -197,13 +206,13 @@ describe('agents CRUD', () => {
 	});
 
 	it('updates an agent', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		const engineer = agents.find((a: Record<string, unknown>) => a.slug === 'engineer');
 
-		const res = await app.request(`/api/teams/${teamId}/agents/${engineer.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/agents/${engineer.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ monthly_budget_cents: 8000 }),
@@ -214,13 +223,13 @@ describe('agents CRUD', () => {
 	});
 
 	it('disables an enabled agent', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		const researcher = agents.find((a: Record<string, unknown>) => a.slug === 'researcher');
 
-		const res = await app.request(`/api/teams/${teamId}/agents/${researcher.id}/disable`, {
+		const res = await app.request(`/api/projects/${projectSlug}/agents/${researcher.id}/disable`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
@@ -230,13 +239,13 @@ describe('agents CRUD', () => {
 	});
 
 	it('rejects disabling an already disabled agent', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		const researcher = agents.find((a: Record<string, unknown>) => a.slug === 'researcher');
 
-		const res = await app.request(`/api/teams/${teamId}/agents/${researcher.id}/disable`, {
+		const res = await app.request(`/api/projects/${projectSlug}/agents/${researcher.id}/disable`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
@@ -244,13 +253,13 @@ describe('agents CRUD', () => {
 	});
 
 	it('enables a disabled agent', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		const researcher = agents.find((a: Record<string, unknown>) => a.slug === 'researcher');
 
-		const res = await app.request(`/api/teams/${teamId}/agents/${researcher.id}/enable`, {
+		const res = await app.request(`/api/projects/${projectSlug}/agents/${researcher.id}/enable`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
@@ -260,13 +269,13 @@ describe('agents CRUD', () => {
 	});
 
 	it('rejects enabling an already enabled agent', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		const researcher = agents.find((a: Record<string, unknown>) => a.slug === 'researcher');
 
-		const res = await app.request(`/api/teams/${teamId}/agents/${researcher.id}/enable`, {
+		const res = await app.request(`/api/projects/${projectSlug}/agents/${researcher.id}/enable`, {
 			method: 'POST',
 			headers: authHeader(token),
 		});
@@ -274,23 +283,26 @@ describe('agents CRUD', () => {
 	});
 
 	it('disabling an agent unassigns its open tasks', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		const marketingLead = agents.find((a: Record<string, unknown>) => a.slug === 'marketing-lead');
 
-		const res = await app.request(`/api/teams/${teamId}/agents/${marketingLead.id}/disable`, {
-			method: 'POST',
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/${projectSlug}/agents/${marketingLead.id}/disable`,
+			{
+				method: 'POST',
+				headers: authHeader(token),
+			},
+		);
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.admin_status).toBe('disabled');
 	});
 
 	it('returns org chart with runtime_status and admin_status', async () => {
-		const res = await app.request(`/api/teams/${teamId}/org-chart`, {
+		const res = await app.request(`/api/projects/${projectSlug}/org-chart`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -308,7 +320,7 @@ describe('agents CRUD', () => {
 	});
 
 	it('rejects duplicate agent slug', async () => {
-		const res = await app.request(`/api/teams/${teamId}/agents`, {
+		const res = await app.request(`/api/projects/${projectSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Captain' }),
@@ -319,22 +331,25 @@ describe('agents CRUD', () => {
 
 describe('heartbeat runs', () => {
 	it('returns empty array when no runs exist', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
 		const agent = agents[0];
 
-		const res = await app.request(`/api/teams/${teamId}/agents/${agent.id}/heartbeat-runs`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/${projectSlug}/agents/${agent.id}/heartbeat-runs`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data).toEqual([]);
 	});
 
 	it('returns runs after inserting heartbeat records', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await listRes.json()).data;
@@ -346,9 +361,12 @@ describe('heartbeat runs', () => {
 			[agent.id, teamId],
 		);
 
-		const res = await app.request(`/api/teams/${teamId}/agents/${agent.id}/heartbeat-runs`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/${projectSlug}/agents/${agent.id}/heartbeat-runs`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.length).toBeGreaterThanOrEqual(1);

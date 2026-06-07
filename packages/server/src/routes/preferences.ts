@@ -7,7 +7,7 @@ import { getDocument, listRevisions, restoreRevision, upsertDocument } from '../
 
 export const preferencesRoutes = new Hono<Env>();
 
-preferencesRoutes.get('/teams/:teamId/preferences', async (c) => {
+preferencesRoutes.get('/projects/:projectId/preferences', async (c) => {
 	const teamId = c.get('teamId') as string;
 
 	const doc = await getDocument(c.get('db'), {
@@ -17,7 +17,7 @@ preferencesRoutes.get('/teams/:teamId/preferences', async (c) => {
 	return ok(c, doc);
 });
 
-preferencesRoutes.patch('/teams/:teamId/preferences', async (c) => {
+preferencesRoutes.patch('/projects/:projectId/preferences', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const auth = c.get('auth');
@@ -43,7 +43,7 @@ preferencesRoutes.patch('/teams/:teamId/preferences', async (c) => {
 	return ok(c, doc, existing ? 200 : 201);
 });
 
-preferencesRoutes.get('/teams/:teamId/preferences/revisions', async (c) => {
+preferencesRoutes.get('/projects/:projectId/preferences/revisions', async (c) => {
 	const teamId = c.get('teamId') as string;
 
 	const doc = await getDocument(c.get('db'), {
@@ -56,7 +56,7 @@ preferencesRoutes.get('/teams/:teamId/preferences/revisions', async (c) => {
 	return ok(c, revisions);
 });
 
-preferencesRoutes.post('/teams/:teamId/preferences/restore', async (c) => {
+preferencesRoutes.post('/projects/:projectId/preferences/restore', async (c) => {
 	const teamId = c.get('teamId') as string;
 
 	const auth = c.get('auth');

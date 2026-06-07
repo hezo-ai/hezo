@@ -10,7 +10,10 @@ let db: PGlite;
 let token: string;
 
 let teamId: string;
+let teamSlug: string;
+let internalSlug: string;
 let projectId: string;
+let projectSlug: string;
 let captainId: string;
 let architectId: string;
 let architectSlug: string;
@@ -34,9 +37,12 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	teamSlug = teamData.slug;
+	internalSlug = `internal-${teamSlug}`;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -51,11 +57,13 @@ beforeAll(async () => {
 		name: 'Filter Test Project',
 		description: 'Test project.',
 	});
-	projectId = (await projectRes.json()).data.id;
+	const projectData = (await projectRes.json()).data;
+	projectId = projectData.id;
+	projectSlug = projectData.slug;
 
 	// Create three tasks: two assigned to architect, one to Captain. Mark one of
 	// architect's tasks as 'done' so we can verify the status filter.
-	const arch1 = await app.request(`/api/teams/${teamId}/tasks`, {
+	const arch1 = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -67,7 +75,7 @@ beforeAll(async () => {
 	const arch1Id = (await arch1.json()).data.id;
 	void arch1Id;
 
-	const arch2 = await app.request(`/api/teams/${teamId}/tasks`, {
+	const arch2 = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -78,13 +86,13 @@ beforeAll(async () => {
 	});
 	const arch2Id = (await arch2.json()).data.id;
 
-	await app.request(`/api/teams/${teamId}/tasks/${arch2Id}`, {
+	await app.request(`/api/projects/${projectSlug}/tasks/${arch2Id}`, {
 		method: 'PATCH',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ status: 'done' }),
 	});
 
-	await app.request(`/api/teams/${teamId}/tasks`, {
+	await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({

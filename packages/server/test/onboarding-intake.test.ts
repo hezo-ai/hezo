@@ -45,20 +45,23 @@ describe('onboarding intake', () => {
 		expect(res.status).toBe(201);
 		const team = (await res.json()).data as { slug: string };
 
-		const intakeRes = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
-			headers: authHeader(token),
-		});
+		const intakeRes = await app.request(
+			`/api/projects/internal-${team.slug}/onboarding-intake?ensure=true`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		expect(intakeRes.status).toBe(200);
 		const intake = (await intakeRes.json()).data as {
 			task_identifier: string;
 			project_slug: string;
 			captain_greeting: string;
 		};
-		expect(intake.project_slug).toBe('internal');
+		expect(intake.project_slug).toBe(`internal-${team.slug}`);
 		expect(intake.captain_greeting).toBe(CAPTAIN_GREETING_TEXT);
 		expect(intake.task_identifier).toMatch(/^IN-\d+$/);
 
-		const tasksRes = await app.request(`/api/teams/${team.slug}/tasks`, {
+		const tasksRes = await app.request(`/api/projects/internal-${team.slug}/tasks`, {
 			headers: authHeader(token),
 		});
 		const tasks = (await tasksRes.json()).data as Array<{
@@ -72,7 +75,7 @@ describe('onboarding intake', () => {
 		expect(intakeTask?.assignee_name).toBe('Captain');
 
 		const commentsRes = await app.request(
-			`/api/teams/${team.slug}/tasks/${intake.task_identifier}/comments`,
+			`/api/projects/internal-${team.slug}/tasks/${intake.task_identifier}/comments`,
 			{ headers: authHeader(token) },
 		);
 		const comments = (await commentsRes.json()).data as Array<{
@@ -95,12 +98,18 @@ describe('onboarding intake', () => {
 		});
 		const team = (await createRes.json()).data as { slug: string };
 
-		const first = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
-			headers: authHeader(token),
-		});
-		const second = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
-			headers: authHeader(token),
-		});
+		const first = await app.request(
+			`/api/projects/internal-${team.slug}/onboarding-intake?ensure=true`,
+			{
+				headers: authHeader(token),
+			},
+		);
+		const second = await app.request(
+			`/api/projects/internal-${team.slug}/onboarding-intake?ensure=true`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		const a = (await first.json()).data as { task_id: string };
 		const b = (await second.json()).data as { task_id: string };
 		expect(a.task_id).toBe(b.task_id);
@@ -125,9 +134,12 @@ describe('onboarding intake', () => {
 		});
 		const team = (await createRes.json()).data as { slug: string };
 
-		const openRes = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
-			headers: authHeader(token),
-		});
+		const openRes = await app.request(
+			`/api/projects/internal-${team.slug}/onboarding-intake?ensure=true`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		const open = (await openRes.json()).data as { task_id: string };
 		expect(openRes.status).toBe(200);
 
@@ -136,14 +148,17 @@ describe('onboarding intake', () => {
 			open.task_id,
 		]);
 
-		const closedRes = await app.request(`/api/teams/${team.slug}/onboarding-intake`, {
+		const closedRes = await app.request(`/api/projects/internal-${team.slug}/onboarding-intake`, {
 			headers: authHeader(token),
 		});
 		expect(closedRes.status).toBe(404);
 
-		const ensureRes = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
-			headers: authHeader(token),
-		});
+		const ensureRes = await app.request(
+			`/api/projects/internal-${team.slug}/onboarding-intake?ensure=true`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		expect(ensureRes.status).toBe(200);
 	});
 
@@ -158,19 +173,25 @@ describe('onboarding intake', () => {
 		});
 		const team = (await createRes.json()).data as { slug: string };
 
-		const ensureRes = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
-			headers: authHeader(token),
-		});
+		const ensureRes = await app.request(
+			`/api/projects/internal-${team.slug}/onboarding-intake?ensure=true`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		const intake = (await ensureRes.json()).data as { task_id: string; task_identifier: string };
 
-		const skipRes = await app.request(`/api/teams/${team.slug}/onboarding-intake/skip-questions`, {
-			method: 'POST',
-			headers: authHeader(token),
-		});
+		const skipRes = await app.request(
+			`/api/projects/internal-${team.slug}/onboarding-intake/skip-questions`,
+			{
+				method: 'POST',
+				headers: authHeader(token),
+			},
+		);
 		expect(skipRes.status).toBe(200);
 
 		const commentsRes = await app.request(
-			`/api/teams/${team.slug}/tasks/${intake.task_identifier}/comments`,
+			`/api/projects/internal-${team.slug}/tasks/${intake.task_identifier}/comments`,
 			{ headers: authHeader(token) },
 		);
 		const comments = (await commentsRes.json()).data as Array<{

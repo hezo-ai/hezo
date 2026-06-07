@@ -381,10 +381,7 @@ export async function applyApprovalSideEffect(
 			}
 
 			const projectSlug = await uniqueSlug(toSlug(projectName), async (s) => {
-				const r = await db.query('SELECT 1 FROM projects WHERE team_id = $1 AND slug = $2', [
-					teamId,
-					s,
-				]);
+				const r = await db.query('SELECT 1 FROM projects WHERE slug = $1', [s]);
 				return r.rows.length > 0;
 			});
 

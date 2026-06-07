@@ -4,7 +4,6 @@ import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 test('Blocked By row links to the blocking task', async () => {
 	let ctx: {
-		teamSlug: string;
 		projectSlug: string;
 		blockerIdentifier: string;
 		blockedIdentifier: string;
@@ -23,15 +22,17 @@ test('Blocked By row links to the blocking task', async () => {
 				title: 'Downstream blocked',
 				assignee_id: engineer.id,
 			});
-			const dep = await apiBase(`/api/teams/${ws.team.id}/tasks/${blocked.id}/dependencies`, {
-				method: 'POST',
-				headers: ws.headers,
-				body: JSON.stringify({ blocked_by_task_id: blocker.id }),
-			});
+			const dep = await apiBase(
+				`/api/projects/${ws.internalSlug}/tasks/${blocked.id}/dependencies`,
+				{
+					method: 'POST',
+					headers: ws.headers,
+					body: JSON.stringify({ blocked_by_task_id: blocker.id }),
+				},
+			);
 			if (!dep.ok) throw new Error(`dependency seed failed: ${dep.status}`);
 
 			ctx = {
-				teamSlug: ws.team.slug,
 				projectSlug: project.slug,
 				blockerIdentifier: blocker.identifier,
 				blockedIdentifier: blocked.identifier,
@@ -40,9 +41,8 @@ test('Blocked By row links to the blocking task', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: ctx!.teamSlug,
 			projectId: ctx!.projectSlug,
 			taskId: ctx!.blockedIdentifier.toLowerCase(),
 		},
@@ -57,6 +57,6 @@ test('Blocked By row links to the blocking task', async () => {
 	await user.click(row);
 	await findByRole('heading', { name: 'Upstream blocker' });
 	expect(router.state.location.pathname).toBe(
-		`/teams/${ctx!.teamSlug}/projects/${ctx!.projectSlug}/tasks/${ctx!.blockerIdentifier.toLowerCase()}`,
+		`/projects/${ctx!.projectSlug}/tasks/${ctx!.blockerIdentifier.toLowerCase()}`,
 	);
 });

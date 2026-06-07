@@ -9,13 +9,13 @@ import { Textarea } from '../ui/textarea';
  * Superuser-only: snapshot the current team into a new reusable team type
  * (template) that the New-team flow can start from.
  */
-export function SaveAsTypeSection({ teamId }: { teamId: string }) {
+export function SaveAsTypeSection({ projectId }: { projectId: string }) {
 	const { data: me } = useMe();
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
 	const [savedName, setSavedName] = useState<string | null>(null);
 	const [skipped, setSkipped] = useState<string[]>([]);
-	const save = useSaveTeamAsTemplate(teamId);
+	const save = useSaveTeamAsTemplate(projectId);
 
 	if (!me?.is_superuser) return null;
 

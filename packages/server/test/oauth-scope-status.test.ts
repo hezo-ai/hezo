@@ -9,6 +9,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let teamId: string;
+let projectSlug: string;
 
 async function insertConnection(provider: string, scopes: string[]): Promise<string> {
 	const secret = await db.query<{ id: string }>(
@@ -41,19 +42,24 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Scope Co', template_id: typeId }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const team = (await teamRes.json()).data as { id: string; slug: string };
+	teamId = team.id;
+	projectSlug = `internal-${team.slug}`;
 });
 
 afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('GET /api/teams/:teamId/oauth-connections/:id/scope-status', () => {
+describe('GET /api/projects/:projectId/oauth-connections/:id/scope-status', () => {
 	it('reports sufficient=false with the missing scopes when only repo is granted', async () => {
 		const connId = await insertConnection('github', ['repo']);
-		const res = await app.request(`/api/teams/${teamId}/oauth-connections/${connId}/scope-status`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/${projectSlug}/oauth-connections/${connId}/scope-status`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			data: { sufficient: boolean; missing: string[]; required: string[] };
@@ -65,9 +71,12 @@ describe('GET /api/teams/:teamId/oauth-connections/:id/scope-status', () => {
 
 	it('reports sufficient=true when the minimum set is granted', async () => {
 		const connId = await insertConnection('github', ['repo', 'read:org', 'write:public_key']);
-		const res = await app.request(`/api/teams/${teamId}/oauth-connections/${connId}/scope-status`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/${projectSlug}/oauth-connections/${connId}/scope-status`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { data: { sufficient: boolean; missing: string[] } };
 		expect(body.data.sufficient).toBe(true);
@@ -82,9 +91,12 @@ describe('GET /api/teams/:teamId/oauth-connections/:id/scope-status', () => {
 			'write:ssh_signing_key',
 			'write:public_key',
 		]);
-		const res = await app.request(`/api/teams/${teamId}/oauth-connections/${connId}/scope-status`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/${projectSlug}/oauth-connections/${connId}/scope-status`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { data: { sufficient: boolean } };
 		expect(body.data.sufficient).toBe(true);
@@ -92,15 +104,18 @@ describe('GET /api/teams/:teamId/oauth-connections/:id/scope-status', () => {
 
 	it('rejects scope-status for a non-github connection', async () => {
 		const connId = await insertConnection('linear', ['read', 'write']);
-		const res = await app.request(`/api/teams/${teamId}/oauth-connections/${connId}/scope-status`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/${projectSlug}/oauth-connections/${connId}/scope-status`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		expect(res.status).toBe(400);
 	});
 
 	it('404s when the connection does not exist for this team', async () => {
 		const res = await app.request(
-			`/api/teams/${teamId}/oauth-connections/00000000-0000-0000-0000-000000000000/scope-status`,
+			`/api/projects/${projectSlug}/oauth-connections/00000000-0000-0000-0000-000000000000/scope-status`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
@@ -130,7 +145,7 @@ describe('GET /api/teams/:teamId/oauth-connections/:id/scope-status', () => {
 		);
 
 		const res = await app.request(
-			`/api/teams/${teamId}/oauth-connections/${conn.rows[0].id}/scope-status`,
+			`/api/projects/${projectSlug}/oauth-connections/${conn.rows[0].id}/scope-status`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);

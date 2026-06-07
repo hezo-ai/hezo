@@ -10,7 +10,6 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as TeamsIndexRouteImport } from './routes/teams/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as HomeIndexRouteImport } from './routes/home/index'
 import { Route as SettingsSkillsRouteImport } from './routes/settings/skills'
@@ -18,45 +17,35 @@ import { Route as SettingsCredentialsRouteImport } from './routes/settings/crede
 import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
 import { Route as SettingsAuditLogRouteImport } from './routes/settings/audit-log'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
-import { Route as TeamsTeamIdRouteRouteImport } from './routes/teams/$teamId/route'
-import { Route as TeamsTeamIdIndexRouteImport } from './routes/teams/$teamId/index'
+import { Route as ProjectsProjectIdRouteRouteImport } from './routes/projects/$projectId/route'
+import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
 import { Route as HomeTasksIndexRouteImport } from './routes/home/tasks/index'
 import { Route as HomeInboxIndexRouteImport } from './routes/home/inbox/index'
-import { Route as TeamsTeamIdConnectorsRouteImport } from './routes/teams/$teamId/connectors'
-import { Route as TeamsTeamIdTasksIndexRouteImport } from './routes/teams/$teamId/tasks/index'
-import { Route as TeamsTeamIdSkillsIndexRouteImport } from './routes/teams/$teamId/skills/index'
-import { Route as TeamsTeamIdProjectsIndexRouteImport } from './routes/teams/$teamId/projects/index'
-import { Route as TeamsTeamIdInboxIndexRouteImport } from './routes/teams/$teamId/inbox/index'
-import { Route as TeamsTeamIdAgentsIndexRouteImport } from './routes/teams/$teamId/agents/index'
-import { Route as TeamsTeamIdTasksTaskIdRouteImport } from './routes/teams/$teamId/tasks/$taskId'
-import { Route as TeamsTeamIdSettingsGeneralRouteImport } from './routes/teams/$teamId/settings/general'
-import { Route as TeamsTeamIdSettingsCredentialsRouteImport } from './routes/teams/$teamId/settings/credentials'
-import { Route as TeamsTeamIdSettingsAuditLogRouteImport } from './routes/teams/$teamId/settings/audit-log'
-import { Route as TeamsTeamIdAgentsHireRouteImport } from './routes/teams/$teamId/agents/hire'
-import { Route as PreviewTeamIdProjectIdFilenameRouteImport } from './routes/preview/$teamId/$projectId/$filename'
-import { Route as TeamsTeamIdProjectsProjectIdRouteRouteImport } from './routes/teams/$teamId/projects/$projectId/route'
-import { Route as TeamsTeamIdAgentsAgentIdRouteRouteImport } from './routes/teams/$teamId/agents/$agentId/route'
-import { Route as TeamsTeamIdProjectsProjectIdIndexRouteImport } from './routes/teams/$teamId/projects/$projectId/index'
-import { Route as TeamsTeamIdAgentsAgentIdIndexRouteImport } from './routes/teams/$teamId/agents/$agentId/index'
-import { Route as TeamsTeamIdProjectsProjectIdDocumentsRouteImport } from './routes/teams/$teamId/projects/$projectId/documents'
-import { Route as TeamsTeamIdProjectsProjectIdContainerRouteImport } from './routes/teams/$teamId/projects/$projectId/container'
-import { Route as TeamsTeamIdProjectsProjectIdAuditLogRouteImport } from './routes/teams/$teamId/projects/$projectId/audit-log'
-import { Route as TeamsTeamIdProjectsProjectIdAssetsRouteImport } from './routes/teams/$teamId/projects/$projectId/assets'
-import { Route as TeamsTeamIdAgentsAgentIdSettingsRouteImport } from './routes/teams/$teamId/agents/$agentId/settings'
-import { Route as TeamsTeamIdProjectsProjectIdTasksIndexRouteImport } from './routes/teams/$teamId/projects/$projectId/tasks/index'
-import { Route as TeamsTeamIdProjectsProjectIdSettingsIndexRouteImport } from './routes/teams/$teamId/projects/$projectId/settings/index'
-import { Route as TeamsTeamIdAgentsAgentIdExecutionsIndexRouteImport } from './routes/teams/$teamId/agents/$agentId/executions/index'
-import { Route as TeamsTeamIdProjectsProjectIdTasksTaskIdRouteImport } from './routes/teams/$teamId/projects/$projectId/tasks/$taskId'
-import { Route as TeamsTeamIdAgentsAgentIdExecutionsRunIdRouteImport } from './routes/teams/$teamId/agents/$agentId/executions/$runId'
+import { Route as ProjectsProjectIdDocumentsRouteImport } from './routes/projects/$projectId/documents'
+import { Route as ProjectsProjectIdContainerRouteImport } from './routes/projects/$projectId/container'
+import { Route as ProjectsProjectIdConnectorsRouteImport } from './routes/projects/$projectId/connectors'
+import { Route as ProjectsProjectIdAuditLogRouteImport } from './routes/projects/$projectId/audit-log'
+import { Route as ProjectsProjectIdAssetsRouteImport } from './routes/projects/$projectId/assets'
+import { Route as PreviewProjectIdFilenameRouteImport } from './routes/preview/$projectId/$filename'
+import { Route as ProjectsProjectIdTasksIndexRouteImport } from './routes/projects/$projectId/tasks/index'
+import { Route as ProjectsProjectIdSkillsIndexRouteImport } from './routes/projects/$projectId/skills/index'
+import { Route as ProjectsProjectIdSettingsIndexRouteImport } from './routes/projects/$projectId/settings/index'
+import { Route as ProjectsProjectIdInboxIndexRouteImport } from './routes/projects/$projectId/inbox/index'
+import { Route as ProjectsProjectIdAgentsIndexRouteImport } from './routes/projects/$projectId/agents/index'
+import { Route as ProjectsProjectIdTeamSettingsGeneralRouteImport } from './routes/projects/$projectId/team-settings/general'
+import { Route as ProjectsProjectIdTeamSettingsCredentialsRouteImport } from './routes/projects/$projectId/team-settings/credentials'
+import { Route as ProjectsProjectIdTeamSettingsAuditLogRouteImport } from './routes/projects/$projectId/team-settings/audit-log'
+import { Route as ProjectsProjectIdTasksTaskIdRouteImport } from './routes/projects/$projectId/tasks/$taskId'
+import { Route as ProjectsProjectIdAgentsHireRouteImport } from './routes/projects/$projectId/agents/hire'
+import { Route as ProjectsProjectIdAgentsAgentIdRouteRouteImport } from './routes/projects/$projectId/agents/$agentId/route'
+import { Route as ProjectsProjectIdAgentsAgentIdIndexRouteImport } from './routes/projects/$projectId/agents/$agentId/index'
+import { Route as ProjectsProjectIdAgentsAgentIdSettingsRouteImport } from './routes/projects/$projectId/agents/$agentId/settings'
+import { Route as ProjectsProjectIdAgentsAgentIdExecutionsIndexRouteImport } from './routes/projects/$projectId/agents/$agentId/executions/index'
+import { Route as ProjectsProjectIdAgentsAgentIdExecutionsRunIdRouteImport } from './routes/projects/$projectId/agents/$agentId/executions/$runId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const TeamsIndexRoute = TeamsIndexRouteImport.update({
-  id: '/teams/',
-  path: '/teams/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsIndexRoute = SettingsIndexRouteImport.update({
@@ -94,15 +83,15 @@ const SettingsAiProvidersRoute = SettingsAiProvidersRouteImport.update({
   path: '/settings/ai-providers',
   getParentRoute: () => rootRouteImport,
 } as any)
-const TeamsTeamIdRouteRoute = TeamsTeamIdRouteRouteImport.update({
-  id: '/teams/$teamId',
-  path: '/teams/$teamId',
+const ProjectsProjectIdRouteRoute = ProjectsProjectIdRouteRouteImport.update({
+  id: '/projects/$projectId',
+  path: '/projects/$projectId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const TeamsTeamIdIndexRoute = TeamsTeamIdIndexRouteImport.update({
+const ProjectsProjectIdIndexRoute = ProjectsProjectIdIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => TeamsTeamIdRouteRoute,
+  getParentRoute: () => ProjectsProjectIdRouteRoute,
 } as any)
 const HomeTasksIndexRoute = HomeTasksIndexRouteImport.update({
   id: '/home/tasks/',
@@ -114,159 +103,135 @@ const HomeInboxIndexRoute = HomeInboxIndexRouteImport.update({
   path: '/home/inbox/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const TeamsTeamIdConnectorsRoute = TeamsTeamIdConnectorsRouteImport.update({
-  id: '/connectors',
-  path: '/connectors',
-  getParentRoute: () => TeamsTeamIdRouteRoute,
-} as any)
-const TeamsTeamIdTasksIndexRoute = TeamsTeamIdTasksIndexRouteImport.update({
-  id: '/tasks/',
-  path: '/tasks/',
-  getParentRoute: () => TeamsTeamIdRouteRoute,
-} as any)
-const TeamsTeamIdSkillsIndexRoute = TeamsTeamIdSkillsIndexRouteImport.update({
-  id: '/skills/',
-  path: '/skills/',
-  getParentRoute: () => TeamsTeamIdRouteRoute,
-} as any)
-const TeamsTeamIdProjectsIndexRoute =
-  TeamsTeamIdProjectsIndexRouteImport.update({
-    id: '/projects/',
-    path: '/projects/',
-    getParentRoute: () => TeamsTeamIdRouteRoute,
-  } as any)
-const TeamsTeamIdInboxIndexRoute = TeamsTeamIdInboxIndexRouteImport.update({
-  id: '/inbox/',
-  path: '/inbox/',
-  getParentRoute: () => TeamsTeamIdRouteRoute,
-} as any)
-const TeamsTeamIdAgentsIndexRoute = TeamsTeamIdAgentsIndexRouteImport.update({
-  id: '/agents/',
-  path: '/agents/',
-  getParentRoute: () => TeamsTeamIdRouteRoute,
-} as any)
-const TeamsTeamIdTasksTaskIdRoute = TeamsTeamIdTasksTaskIdRouteImport.update({
-  id: '/tasks/$taskId',
-  path: '/tasks/$taskId',
-  getParentRoute: () => TeamsTeamIdRouteRoute,
-} as any)
-const TeamsTeamIdSettingsGeneralRoute =
-  TeamsTeamIdSettingsGeneralRouteImport.update({
-    id: '/settings/general',
-    path: '/settings/general',
-    getParentRoute: () => TeamsTeamIdRouteRoute,
-  } as any)
-const TeamsTeamIdSettingsCredentialsRoute =
-  TeamsTeamIdSettingsCredentialsRouteImport.update({
-    id: '/settings/credentials',
-    path: '/settings/credentials',
-    getParentRoute: () => TeamsTeamIdRouteRoute,
-  } as any)
-const TeamsTeamIdSettingsAuditLogRoute =
-  TeamsTeamIdSettingsAuditLogRouteImport.update({
-    id: '/settings/audit-log',
-    path: '/settings/audit-log',
-    getParentRoute: () => TeamsTeamIdRouteRoute,
-  } as any)
-const TeamsTeamIdAgentsHireRoute = TeamsTeamIdAgentsHireRouteImport.update({
-  id: '/agents/hire',
-  path: '/agents/hire',
-  getParentRoute: () => TeamsTeamIdRouteRoute,
-} as any)
-const PreviewTeamIdProjectIdFilenameRoute =
-  PreviewTeamIdProjectIdFilenameRouteImport.update({
-    id: '/preview/$teamId/$projectId/$filename',
-    path: '/preview/$teamId/$projectId/$filename',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const TeamsTeamIdProjectsProjectIdRouteRoute =
-  TeamsTeamIdProjectsProjectIdRouteRouteImport.update({
-    id: '/projects/$projectId',
-    path: '/projects/$projectId',
-    getParentRoute: () => TeamsTeamIdRouteRoute,
-  } as any)
-const TeamsTeamIdAgentsAgentIdRouteRoute =
-  TeamsTeamIdAgentsAgentIdRouteRouteImport.update({
-    id: '/agents/$agentId',
-    path: '/agents/$agentId',
-    getParentRoute: () => TeamsTeamIdRouteRoute,
-  } as any)
-const TeamsTeamIdProjectsProjectIdIndexRoute =
-  TeamsTeamIdProjectsProjectIdIndexRouteImport.update({
-    id: '/',
-    path: '/',
-    getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
-  } as any)
-const TeamsTeamIdAgentsAgentIdIndexRoute =
-  TeamsTeamIdAgentsAgentIdIndexRouteImport.update({
-    id: '/',
-    path: '/',
-    getParentRoute: () => TeamsTeamIdAgentsAgentIdRouteRoute,
-  } as any)
-const TeamsTeamIdProjectsProjectIdDocumentsRoute =
-  TeamsTeamIdProjectsProjectIdDocumentsRouteImport.update({
+const ProjectsProjectIdDocumentsRoute =
+  ProjectsProjectIdDocumentsRouteImport.update({
     id: '/documents',
     path: '/documents',
-    getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
-const TeamsTeamIdProjectsProjectIdContainerRoute =
-  TeamsTeamIdProjectsProjectIdContainerRouteImport.update({
+const ProjectsProjectIdContainerRoute =
+  ProjectsProjectIdContainerRouteImport.update({
     id: '/container',
     path: '/container',
-    getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
-const TeamsTeamIdProjectsProjectIdAuditLogRoute =
-  TeamsTeamIdProjectsProjectIdAuditLogRouteImport.update({
+const ProjectsProjectIdConnectorsRoute =
+  ProjectsProjectIdConnectorsRouteImport.update({
+    id: '/connectors',
+    path: '/connectors',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdAuditLogRoute =
+  ProjectsProjectIdAuditLogRouteImport.update({
     id: '/audit-log',
     path: '/audit-log',
-    getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
-const TeamsTeamIdProjectsProjectIdAssetsRoute =
-  TeamsTeamIdProjectsProjectIdAssetsRouteImport.update({
-    id: '/assets',
-    path: '/assets',
-    getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
+const ProjectsProjectIdAssetsRoute = ProjectsProjectIdAssetsRouteImport.update({
+  id: '/assets',
+  path: '/assets',
+  getParentRoute: () => ProjectsProjectIdRouteRoute,
+} as any)
+const PreviewProjectIdFilenameRoute =
+  PreviewProjectIdFilenameRouteImport.update({
+    id: '/preview/$projectId/$filename',
+    path: '/preview/$projectId/$filename',
+    getParentRoute: () => rootRouteImport,
   } as any)
-const TeamsTeamIdAgentsAgentIdSettingsRoute =
-  TeamsTeamIdAgentsAgentIdSettingsRouteImport.update({
-    id: '/settings',
-    path: '/settings',
-    getParentRoute: () => TeamsTeamIdAgentsAgentIdRouteRoute,
-  } as any)
-const TeamsTeamIdProjectsProjectIdTasksIndexRoute =
-  TeamsTeamIdProjectsProjectIdTasksIndexRouteImport.update({
+const ProjectsProjectIdTasksIndexRoute =
+  ProjectsProjectIdTasksIndexRouteImport.update({
     id: '/tasks/',
     path: '/tasks/',
-    getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
-const TeamsTeamIdProjectsProjectIdSettingsIndexRoute =
-  TeamsTeamIdProjectsProjectIdSettingsIndexRouteImport.update({
+const ProjectsProjectIdSkillsIndexRoute =
+  ProjectsProjectIdSkillsIndexRouteImport.update({
+    id: '/skills/',
+    path: '/skills/',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdSettingsIndexRoute =
+  ProjectsProjectIdSettingsIndexRouteImport.update({
     id: '/settings/',
     path: '/settings/',
-    getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
-const TeamsTeamIdAgentsAgentIdExecutionsIndexRoute =
-  TeamsTeamIdAgentsAgentIdExecutionsIndexRouteImport.update({
-    id: '/executions/',
-    path: '/executions/',
-    getParentRoute: () => TeamsTeamIdAgentsAgentIdRouteRoute,
+const ProjectsProjectIdInboxIndexRoute =
+  ProjectsProjectIdInboxIndexRouteImport.update({
+    id: '/inbox/',
+    path: '/inbox/',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
-const TeamsTeamIdProjectsProjectIdTasksTaskIdRoute =
-  TeamsTeamIdProjectsProjectIdTasksTaskIdRouteImport.update({
+const ProjectsProjectIdAgentsIndexRoute =
+  ProjectsProjectIdAgentsIndexRouteImport.update({
+    id: '/agents/',
+    path: '/agents/',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdTeamSettingsGeneralRoute =
+  ProjectsProjectIdTeamSettingsGeneralRouteImport.update({
+    id: '/team-settings/general',
+    path: '/team-settings/general',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdTeamSettingsCredentialsRoute =
+  ProjectsProjectIdTeamSettingsCredentialsRouteImport.update({
+    id: '/team-settings/credentials',
+    path: '/team-settings/credentials',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdTeamSettingsAuditLogRoute =
+  ProjectsProjectIdTeamSettingsAuditLogRouteImport.update({
+    id: '/team-settings/audit-log',
+    path: '/team-settings/audit-log',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdTasksTaskIdRoute =
+  ProjectsProjectIdTasksTaskIdRouteImport.update({
     id: '/tasks/$taskId',
     path: '/tasks/$taskId',
-    getParentRoute: () => TeamsTeamIdProjectsProjectIdRouteRoute,
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
-const TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute =
-  TeamsTeamIdAgentsAgentIdExecutionsRunIdRouteImport.update({
+const ProjectsProjectIdAgentsHireRoute =
+  ProjectsProjectIdAgentsHireRouteImport.update({
+    id: '/agents/hire',
+    path: '/agents/hire',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdAgentsAgentIdRouteRoute =
+  ProjectsProjectIdAgentsAgentIdRouteRouteImport.update({
+    id: '/agents/$agentId',
+    path: '/agents/$agentId',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdAgentsAgentIdIndexRoute =
+  ProjectsProjectIdAgentsAgentIdIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => ProjectsProjectIdAgentsAgentIdRouteRoute,
+  } as any)
+const ProjectsProjectIdAgentsAgentIdSettingsRoute =
+  ProjectsProjectIdAgentsAgentIdSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => ProjectsProjectIdAgentsAgentIdRouteRoute,
+  } as any)
+const ProjectsProjectIdAgentsAgentIdExecutionsIndexRoute =
+  ProjectsProjectIdAgentsAgentIdExecutionsIndexRouteImport.update({
+    id: '/executions/',
+    path: '/executions/',
+    getParentRoute: () => ProjectsProjectIdAgentsAgentIdRouteRoute,
+  } as any)
+const ProjectsProjectIdAgentsAgentIdExecutionsRunIdRoute =
+  ProjectsProjectIdAgentsAgentIdExecutionsRunIdRouteImport.update({
     id: '/executions/$runId',
     path: '/executions/$runId',
-    getParentRoute: () => TeamsTeamIdAgentsAgentIdRouteRoute,
+    getParentRoute: () => ProjectsProjectIdAgentsAgentIdRouteRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/teams/$teamId': typeof TeamsTeamIdRouteRouteWithChildren
+  '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
@@ -274,36 +239,30 @@ export interface FileRoutesByFullPath {
   '/settings/skills': typeof SettingsSkillsRoute
   '/home/': typeof HomeIndexRoute
   '/settings/': typeof SettingsIndexRoute
-  '/teams/': typeof TeamsIndexRoute
-  '/teams/$teamId/connectors': typeof TeamsTeamIdConnectorsRoute
+  '/preview/$projectId/$filename': typeof PreviewProjectIdFilenameRoute
+  '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
+  '/projects/$projectId/audit-log': typeof ProjectsProjectIdAuditLogRoute
+  '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
+  '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
+  '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
   '/home/inbox/': typeof HomeInboxIndexRoute
   '/home/tasks/': typeof HomeTasksIndexRoute
-  '/teams/$teamId/': typeof TeamsTeamIdIndexRoute
-  '/teams/$teamId/agents/$agentId': typeof TeamsTeamIdAgentsAgentIdRouteRouteWithChildren
-  '/teams/$teamId/projects/$projectId': typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
-  '/preview/$teamId/$projectId/$filename': typeof PreviewTeamIdProjectIdFilenameRoute
-  '/teams/$teamId/agents/hire': typeof TeamsTeamIdAgentsHireRoute
-  '/teams/$teamId/settings/audit-log': typeof TeamsTeamIdSettingsAuditLogRoute
-  '/teams/$teamId/settings/credentials': typeof TeamsTeamIdSettingsCredentialsRoute
-  '/teams/$teamId/settings/general': typeof TeamsTeamIdSettingsGeneralRoute
-  '/teams/$teamId/tasks/$taskId': typeof TeamsTeamIdTasksTaskIdRoute
-  '/teams/$teamId/agents/': typeof TeamsTeamIdAgentsIndexRoute
-  '/teams/$teamId/inbox/': typeof TeamsTeamIdInboxIndexRoute
-  '/teams/$teamId/projects/': typeof TeamsTeamIdProjectsIndexRoute
-  '/teams/$teamId/skills/': typeof TeamsTeamIdSkillsIndexRoute
-  '/teams/$teamId/tasks/': typeof TeamsTeamIdTasksIndexRoute
-  '/teams/$teamId/agents/$agentId/settings': typeof TeamsTeamIdAgentsAgentIdSettingsRoute
-  '/teams/$teamId/projects/$projectId/assets': typeof TeamsTeamIdProjectsProjectIdAssetsRoute
-  '/teams/$teamId/projects/$projectId/audit-log': typeof TeamsTeamIdProjectsProjectIdAuditLogRoute
-  '/teams/$teamId/projects/$projectId/container': typeof TeamsTeamIdProjectsProjectIdContainerRoute
-  '/teams/$teamId/projects/$projectId/documents': typeof TeamsTeamIdProjectsProjectIdDocumentsRoute
-  '/teams/$teamId/agents/$agentId/': typeof TeamsTeamIdAgentsAgentIdIndexRoute
-  '/teams/$teamId/projects/$projectId/': typeof TeamsTeamIdProjectsProjectIdIndexRoute
-  '/teams/$teamId/agents/$agentId/executions/$runId': typeof TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute
-  '/teams/$teamId/projects/$projectId/tasks/$taskId': typeof TeamsTeamIdProjectsProjectIdTasksTaskIdRoute
-  '/teams/$teamId/agents/$agentId/executions/': typeof TeamsTeamIdAgentsAgentIdExecutionsIndexRoute
-  '/teams/$teamId/projects/$projectId/settings/': typeof TeamsTeamIdProjectsProjectIdSettingsIndexRoute
-  '/teams/$teamId/projects/$projectId/tasks/': typeof TeamsTeamIdProjectsProjectIdTasksIndexRoute
+  '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
+  '/projects/$projectId/agents/$agentId': typeof ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren
+  '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
+  '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
+  '/projects/$projectId/team-settings/audit-log': typeof ProjectsProjectIdTeamSettingsAuditLogRoute
+  '/projects/$projectId/team-settings/credentials': typeof ProjectsProjectIdTeamSettingsCredentialsRoute
+  '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
+  '/projects/$projectId/agents/': typeof ProjectsProjectIdAgentsIndexRoute
+  '/projects/$projectId/inbox/': typeof ProjectsProjectIdInboxIndexRoute
+  '/projects/$projectId/settings/': typeof ProjectsProjectIdSettingsIndexRoute
+  '/projects/$projectId/skills/': typeof ProjectsProjectIdSkillsIndexRoute
+  '/projects/$projectId/tasks/': typeof ProjectsProjectIdTasksIndexRoute
+  '/projects/$projectId/agents/$agentId/settings': typeof ProjectsProjectIdAgentsAgentIdSettingsRoute
+  '/projects/$projectId/agents/$agentId/': typeof ProjectsProjectIdAgentsAgentIdIndexRoute
+  '/projects/$projectId/agents/$agentId/executions/$runId': typeof ProjectsProjectIdAgentsAgentIdExecutionsRunIdRoute
+  '/projects/$projectId/agents/$agentId/executions/': typeof ProjectsProjectIdAgentsAgentIdExecutionsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -314,39 +273,34 @@ export interface FileRoutesByTo {
   '/settings/skills': typeof SettingsSkillsRoute
   '/home': typeof HomeIndexRoute
   '/settings': typeof SettingsIndexRoute
-  '/teams': typeof TeamsIndexRoute
-  '/teams/$teamId/connectors': typeof TeamsTeamIdConnectorsRoute
+  '/preview/$projectId/$filename': typeof PreviewProjectIdFilenameRoute
+  '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
+  '/projects/$projectId/audit-log': typeof ProjectsProjectIdAuditLogRoute
+  '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
+  '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
+  '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
   '/home/inbox': typeof HomeInboxIndexRoute
   '/home/tasks': typeof HomeTasksIndexRoute
-  '/teams/$teamId': typeof TeamsTeamIdIndexRoute
-  '/preview/$teamId/$projectId/$filename': typeof PreviewTeamIdProjectIdFilenameRoute
-  '/teams/$teamId/agents/hire': typeof TeamsTeamIdAgentsHireRoute
-  '/teams/$teamId/settings/audit-log': typeof TeamsTeamIdSettingsAuditLogRoute
-  '/teams/$teamId/settings/credentials': typeof TeamsTeamIdSettingsCredentialsRoute
-  '/teams/$teamId/settings/general': typeof TeamsTeamIdSettingsGeneralRoute
-  '/teams/$teamId/tasks/$taskId': typeof TeamsTeamIdTasksTaskIdRoute
-  '/teams/$teamId/agents': typeof TeamsTeamIdAgentsIndexRoute
-  '/teams/$teamId/inbox': typeof TeamsTeamIdInboxIndexRoute
-  '/teams/$teamId/projects': typeof TeamsTeamIdProjectsIndexRoute
-  '/teams/$teamId/skills': typeof TeamsTeamIdSkillsIndexRoute
-  '/teams/$teamId/tasks': typeof TeamsTeamIdTasksIndexRoute
-  '/teams/$teamId/agents/$agentId/settings': typeof TeamsTeamIdAgentsAgentIdSettingsRoute
-  '/teams/$teamId/projects/$projectId/assets': typeof TeamsTeamIdProjectsProjectIdAssetsRoute
-  '/teams/$teamId/projects/$projectId/audit-log': typeof TeamsTeamIdProjectsProjectIdAuditLogRoute
-  '/teams/$teamId/projects/$projectId/container': typeof TeamsTeamIdProjectsProjectIdContainerRoute
-  '/teams/$teamId/projects/$projectId/documents': typeof TeamsTeamIdProjectsProjectIdDocumentsRoute
-  '/teams/$teamId/agents/$agentId': typeof TeamsTeamIdAgentsAgentIdIndexRoute
-  '/teams/$teamId/projects/$projectId': typeof TeamsTeamIdProjectsProjectIdIndexRoute
-  '/teams/$teamId/agents/$agentId/executions/$runId': typeof TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute
-  '/teams/$teamId/projects/$projectId/tasks/$taskId': typeof TeamsTeamIdProjectsProjectIdTasksTaskIdRoute
-  '/teams/$teamId/agents/$agentId/executions': typeof TeamsTeamIdAgentsAgentIdExecutionsIndexRoute
-  '/teams/$teamId/projects/$projectId/settings': typeof TeamsTeamIdProjectsProjectIdSettingsIndexRoute
-  '/teams/$teamId/projects/$projectId/tasks': typeof TeamsTeamIdProjectsProjectIdTasksIndexRoute
+  '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
+  '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
+  '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
+  '/projects/$projectId/team-settings/audit-log': typeof ProjectsProjectIdTeamSettingsAuditLogRoute
+  '/projects/$projectId/team-settings/credentials': typeof ProjectsProjectIdTeamSettingsCredentialsRoute
+  '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
+  '/projects/$projectId/agents': typeof ProjectsProjectIdAgentsIndexRoute
+  '/projects/$projectId/inbox': typeof ProjectsProjectIdInboxIndexRoute
+  '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsIndexRoute
+  '/projects/$projectId/skills': typeof ProjectsProjectIdSkillsIndexRoute
+  '/projects/$projectId/tasks': typeof ProjectsProjectIdTasksIndexRoute
+  '/projects/$projectId/agents/$agentId/settings': typeof ProjectsProjectIdAgentsAgentIdSettingsRoute
+  '/projects/$projectId/agents/$agentId': typeof ProjectsProjectIdAgentsAgentIdIndexRoute
+  '/projects/$projectId/agents/$agentId/executions/$runId': typeof ProjectsProjectIdAgentsAgentIdExecutionsRunIdRoute
+  '/projects/$projectId/agents/$agentId/executions': typeof ProjectsProjectIdAgentsAgentIdExecutionsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/teams/$teamId': typeof TeamsTeamIdRouteRouteWithChildren
+  '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
@@ -354,42 +308,36 @@ export interface FileRoutesById {
   '/settings/skills': typeof SettingsSkillsRoute
   '/home/': typeof HomeIndexRoute
   '/settings/': typeof SettingsIndexRoute
-  '/teams/': typeof TeamsIndexRoute
-  '/teams/$teamId/connectors': typeof TeamsTeamIdConnectorsRoute
+  '/preview/$projectId/$filename': typeof PreviewProjectIdFilenameRoute
+  '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
+  '/projects/$projectId/audit-log': typeof ProjectsProjectIdAuditLogRoute
+  '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
+  '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
+  '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
   '/home/inbox/': typeof HomeInboxIndexRoute
   '/home/tasks/': typeof HomeTasksIndexRoute
-  '/teams/$teamId/': typeof TeamsTeamIdIndexRoute
-  '/teams/$teamId/agents/$agentId': typeof TeamsTeamIdAgentsAgentIdRouteRouteWithChildren
-  '/teams/$teamId/projects/$projectId': typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
-  '/preview/$teamId/$projectId/$filename': typeof PreviewTeamIdProjectIdFilenameRoute
-  '/teams/$teamId/agents/hire': typeof TeamsTeamIdAgentsHireRoute
-  '/teams/$teamId/settings/audit-log': typeof TeamsTeamIdSettingsAuditLogRoute
-  '/teams/$teamId/settings/credentials': typeof TeamsTeamIdSettingsCredentialsRoute
-  '/teams/$teamId/settings/general': typeof TeamsTeamIdSettingsGeneralRoute
-  '/teams/$teamId/tasks/$taskId': typeof TeamsTeamIdTasksTaskIdRoute
-  '/teams/$teamId/agents/': typeof TeamsTeamIdAgentsIndexRoute
-  '/teams/$teamId/inbox/': typeof TeamsTeamIdInboxIndexRoute
-  '/teams/$teamId/projects/': typeof TeamsTeamIdProjectsIndexRoute
-  '/teams/$teamId/skills/': typeof TeamsTeamIdSkillsIndexRoute
-  '/teams/$teamId/tasks/': typeof TeamsTeamIdTasksIndexRoute
-  '/teams/$teamId/agents/$agentId/settings': typeof TeamsTeamIdAgentsAgentIdSettingsRoute
-  '/teams/$teamId/projects/$projectId/assets': typeof TeamsTeamIdProjectsProjectIdAssetsRoute
-  '/teams/$teamId/projects/$projectId/audit-log': typeof TeamsTeamIdProjectsProjectIdAuditLogRoute
-  '/teams/$teamId/projects/$projectId/container': typeof TeamsTeamIdProjectsProjectIdContainerRoute
-  '/teams/$teamId/projects/$projectId/documents': typeof TeamsTeamIdProjectsProjectIdDocumentsRoute
-  '/teams/$teamId/agents/$agentId/': typeof TeamsTeamIdAgentsAgentIdIndexRoute
-  '/teams/$teamId/projects/$projectId/': typeof TeamsTeamIdProjectsProjectIdIndexRoute
-  '/teams/$teamId/agents/$agentId/executions/$runId': typeof TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute
-  '/teams/$teamId/projects/$projectId/tasks/$taskId': typeof TeamsTeamIdProjectsProjectIdTasksTaskIdRoute
-  '/teams/$teamId/agents/$agentId/executions/': typeof TeamsTeamIdAgentsAgentIdExecutionsIndexRoute
-  '/teams/$teamId/projects/$projectId/settings/': typeof TeamsTeamIdProjectsProjectIdSettingsIndexRoute
-  '/teams/$teamId/projects/$projectId/tasks/': typeof TeamsTeamIdProjectsProjectIdTasksIndexRoute
+  '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
+  '/projects/$projectId/agents/$agentId': typeof ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren
+  '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
+  '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
+  '/projects/$projectId/team-settings/audit-log': typeof ProjectsProjectIdTeamSettingsAuditLogRoute
+  '/projects/$projectId/team-settings/credentials': typeof ProjectsProjectIdTeamSettingsCredentialsRoute
+  '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
+  '/projects/$projectId/agents/': typeof ProjectsProjectIdAgentsIndexRoute
+  '/projects/$projectId/inbox/': typeof ProjectsProjectIdInboxIndexRoute
+  '/projects/$projectId/settings/': typeof ProjectsProjectIdSettingsIndexRoute
+  '/projects/$projectId/skills/': typeof ProjectsProjectIdSkillsIndexRoute
+  '/projects/$projectId/tasks/': typeof ProjectsProjectIdTasksIndexRoute
+  '/projects/$projectId/agents/$agentId/settings': typeof ProjectsProjectIdAgentsAgentIdSettingsRoute
+  '/projects/$projectId/agents/$agentId/': typeof ProjectsProjectIdAgentsAgentIdIndexRoute
+  '/projects/$projectId/agents/$agentId/executions/$runId': typeof ProjectsProjectIdAgentsAgentIdExecutionsRunIdRoute
+  '/projects/$projectId/agents/$agentId/executions/': typeof ProjectsProjectIdAgentsAgentIdExecutionsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/teams/$teamId'
+    | '/projects/$projectId'
     | '/settings/ai-providers'
     | '/settings/audit-log'
     | '/settings/connectors'
@@ -397,36 +345,30 @@ export interface FileRouteTypes {
     | '/settings/skills'
     | '/home/'
     | '/settings/'
-    | '/teams/'
-    | '/teams/$teamId/connectors'
+    | '/preview/$projectId/$filename'
+    | '/projects/$projectId/assets'
+    | '/projects/$projectId/audit-log'
+    | '/projects/$projectId/connectors'
+    | '/projects/$projectId/container'
+    | '/projects/$projectId/documents'
     | '/home/inbox/'
     | '/home/tasks/'
-    | '/teams/$teamId/'
-    | '/teams/$teamId/agents/$agentId'
-    | '/teams/$teamId/projects/$projectId'
-    | '/preview/$teamId/$projectId/$filename'
-    | '/teams/$teamId/agents/hire'
-    | '/teams/$teamId/settings/audit-log'
-    | '/teams/$teamId/settings/credentials'
-    | '/teams/$teamId/settings/general'
-    | '/teams/$teamId/tasks/$taskId'
-    | '/teams/$teamId/agents/'
-    | '/teams/$teamId/inbox/'
-    | '/teams/$teamId/projects/'
-    | '/teams/$teamId/skills/'
-    | '/teams/$teamId/tasks/'
-    | '/teams/$teamId/agents/$agentId/settings'
-    | '/teams/$teamId/projects/$projectId/assets'
-    | '/teams/$teamId/projects/$projectId/audit-log'
-    | '/teams/$teamId/projects/$projectId/container'
-    | '/teams/$teamId/projects/$projectId/documents'
-    | '/teams/$teamId/agents/$agentId/'
-    | '/teams/$teamId/projects/$projectId/'
-    | '/teams/$teamId/agents/$agentId/executions/$runId'
-    | '/teams/$teamId/projects/$projectId/tasks/$taskId'
-    | '/teams/$teamId/agents/$agentId/executions/'
-    | '/teams/$teamId/projects/$projectId/settings/'
-    | '/teams/$teamId/projects/$projectId/tasks/'
+    | '/projects/$projectId/'
+    | '/projects/$projectId/agents/$agentId'
+    | '/projects/$projectId/agents/hire'
+    | '/projects/$projectId/tasks/$taskId'
+    | '/projects/$projectId/team-settings/audit-log'
+    | '/projects/$projectId/team-settings/credentials'
+    | '/projects/$projectId/team-settings/general'
+    | '/projects/$projectId/agents/'
+    | '/projects/$projectId/inbox/'
+    | '/projects/$projectId/settings/'
+    | '/projects/$projectId/skills/'
+    | '/projects/$projectId/tasks/'
+    | '/projects/$projectId/agents/$agentId/settings'
+    | '/projects/$projectId/agents/$agentId/'
+    | '/projects/$projectId/agents/$agentId/executions/$runId'
+    | '/projects/$projectId/agents/$agentId/executions/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -437,38 +379,33 @@ export interface FileRouteTypes {
     | '/settings/skills'
     | '/home'
     | '/settings'
-    | '/teams'
-    | '/teams/$teamId/connectors'
+    | '/preview/$projectId/$filename'
+    | '/projects/$projectId/assets'
+    | '/projects/$projectId/audit-log'
+    | '/projects/$projectId/connectors'
+    | '/projects/$projectId/container'
+    | '/projects/$projectId/documents'
     | '/home/inbox'
     | '/home/tasks'
-    | '/teams/$teamId'
-    | '/preview/$teamId/$projectId/$filename'
-    | '/teams/$teamId/agents/hire'
-    | '/teams/$teamId/settings/audit-log'
-    | '/teams/$teamId/settings/credentials'
-    | '/teams/$teamId/settings/general'
-    | '/teams/$teamId/tasks/$taskId'
-    | '/teams/$teamId/agents'
-    | '/teams/$teamId/inbox'
-    | '/teams/$teamId/projects'
-    | '/teams/$teamId/skills'
-    | '/teams/$teamId/tasks'
-    | '/teams/$teamId/agents/$agentId/settings'
-    | '/teams/$teamId/projects/$projectId/assets'
-    | '/teams/$teamId/projects/$projectId/audit-log'
-    | '/teams/$teamId/projects/$projectId/container'
-    | '/teams/$teamId/projects/$projectId/documents'
-    | '/teams/$teamId/agents/$agentId'
-    | '/teams/$teamId/projects/$projectId'
-    | '/teams/$teamId/agents/$agentId/executions/$runId'
-    | '/teams/$teamId/projects/$projectId/tasks/$taskId'
-    | '/teams/$teamId/agents/$agentId/executions'
-    | '/teams/$teamId/projects/$projectId/settings'
-    | '/teams/$teamId/projects/$projectId/tasks'
+    | '/projects/$projectId'
+    | '/projects/$projectId/agents/hire'
+    | '/projects/$projectId/tasks/$taskId'
+    | '/projects/$projectId/team-settings/audit-log'
+    | '/projects/$projectId/team-settings/credentials'
+    | '/projects/$projectId/team-settings/general'
+    | '/projects/$projectId/agents'
+    | '/projects/$projectId/inbox'
+    | '/projects/$projectId/settings'
+    | '/projects/$projectId/skills'
+    | '/projects/$projectId/tasks'
+    | '/projects/$projectId/agents/$agentId/settings'
+    | '/projects/$projectId/agents/$agentId'
+    | '/projects/$projectId/agents/$agentId/executions/$runId'
+    | '/projects/$projectId/agents/$agentId/executions'
   id:
     | '__root__'
     | '/'
-    | '/teams/$teamId'
+    | '/projects/$projectId'
     | '/settings/ai-providers'
     | '/settings/audit-log'
     | '/settings/connectors'
@@ -476,41 +413,35 @@ export interface FileRouteTypes {
     | '/settings/skills'
     | '/home/'
     | '/settings/'
-    | '/teams/'
-    | '/teams/$teamId/connectors'
+    | '/preview/$projectId/$filename'
+    | '/projects/$projectId/assets'
+    | '/projects/$projectId/audit-log'
+    | '/projects/$projectId/connectors'
+    | '/projects/$projectId/container'
+    | '/projects/$projectId/documents'
     | '/home/inbox/'
     | '/home/tasks/'
-    | '/teams/$teamId/'
-    | '/teams/$teamId/agents/$agentId'
-    | '/teams/$teamId/projects/$projectId'
-    | '/preview/$teamId/$projectId/$filename'
-    | '/teams/$teamId/agents/hire'
-    | '/teams/$teamId/settings/audit-log'
-    | '/teams/$teamId/settings/credentials'
-    | '/teams/$teamId/settings/general'
-    | '/teams/$teamId/tasks/$taskId'
-    | '/teams/$teamId/agents/'
-    | '/teams/$teamId/inbox/'
-    | '/teams/$teamId/projects/'
-    | '/teams/$teamId/skills/'
-    | '/teams/$teamId/tasks/'
-    | '/teams/$teamId/agents/$agentId/settings'
-    | '/teams/$teamId/projects/$projectId/assets'
-    | '/teams/$teamId/projects/$projectId/audit-log'
-    | '/teams/$teamId/projects/$projectId/container'
-    | '/teams/$teamId/projects/$projectId/documents'
-    | '/teams/$teamId/agents/$agentId/'
-    | '/teams/$teamId/projects/$projectId/'
-    | '/teams/$teamId/agents/$agentId/executions/$runId'
-    | '/teams/$teamId/projects/$projectId/tasks/$taskId'
-    | '/teams/$teamId/agents/$agentId/executions/'
-    | '/teams/$teamId/projects/$projectId/settings/'
-    | '/teams/$teamId/projects/$projectId/tasks/'
+    | '/projects/$projectId/'
+    | '/projects/$projectId/agents/$agentId'
+    | '/projects/$projectId/agents/hire'
+    | '/projects/$projectId/tasks/$taskId'
+    | '/projects/$projectId/team-settings/audit-log'
+    | '/projects/$projectId/team-settings/credentials'
+    | '/projects/$projectId/team-settings/general'
+    | '/projects/$projectId/agents/'
+    | '/projects/$projectId/inbox/'
+    | '/projects/$projectId/settings/'
+    | '/projects/$projectId/skills/'
+    | '/projects/$projectId/tasks/'
+    | '/projects/$projectId/agents/$agentId/settings'
+    | '/projects/$projectId/agents/$agentId/'
+    | '/projects/$projectId/agents/$agentId/executions/$runId'
+    | '/projects/$projectId/agents/$agentId/executions/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  TeamsTeamIdRouteRoute: typeof TeamsTeamIdRouteRouteWithChildren
+  ProjectsProjectIdRouteRoute: typeof ProjectsProjectIdRouteRouteWithChildren
   SettingsAiProvidersRoute: typeof SettingsAiProvidersRoute
   SettingsAuditLogRoute: typeof SettingsAuditLogRoute
   SettingsConnectorsRoute: typeof SettingsConnectorsRoute
@@ -518,10 +449,9 @@ export interface RootRouteChildren {
   SettingsSkillsRoute: typeof SettingsSkillsRoute
   HomeIndexRoute: typeof HomeIndexRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
-  TeamsIndexRoute: typeof TeamsIndexRoute
+  PreviewProjectIdFilenameRoute: typeof PreviewProjectIdFilenameRoute
   HomeInboxIndexRoute: typeof HomeInboxIndexRoute
   HomeTasksIndexRoute: typeof HomeTasksIndexRoute
-  PreviewTeamIdProjectIdFilenameRoute: typeof PreviewTeamIdProjectIdFilenameRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -531,13 +461,6 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/teams/': {
-      id: '/teams/'
-      path: '/teams'
-      fullPath: '/teams/'
-      preLoaderRoute: typeof TeamsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/': {
@@ -589,19 +512,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAiProvidersRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/teams/$teamId': {
-      id: '/teams/$teamId'
-      path: '/teams/$teamId'
-      fullPath: '/teams/$teamId'
-      preLoaderRoute: typeof TeamsTeamIdRouteRouteImport
+    '/projects/$projectId': {
+      id: '/projects/$projectId'
+      path: '/projects/$projectId'
+      fullPath: '/projects/$projectId'
+      preLoaderRoute: typeof ProjectsProjectIdRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/teams/$teamId/': {
-      id: '/teams/$teamId/'
+    '/projects/$projectId/': {
+      id: '/projects/$projectId/'
       path: '/'
-      fullPath: '/teams/$teamId/'
-      preLoaderRoute: typeof TeamsTeamIdIndexRouteImport
-      parentRoute: typeof TeamsTeamIdRouteRoute
+      fullPath: '/projects/$projectId/'
+      preLoaderRoute: typeof ProjectsProjectIdIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
     }
     '/home/tasks/': {
       id: '/home/tasks/'
@@ -617,292 +540,233 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HomeInboxIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/teams/$teamId/connectors': {
-      id: '/teams/$teamId/connectors'
+    '/projects/$projectId/documents': {
+      id: '/projects/$projectId/documents'
+      path: '/documents'
+      fullPath: '/projects/$projectId/documents'
+      preLoaderRoute: typeof ProjectsProjectIdDocumentsRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/container': {
+      id: '/projects/$projectId/container'
+      path: '/container'
+      fullPath: '/projects/$projectId/container'
+      preLoaderRoute: typeof ProjectsProjectIdContainerRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/connectors': {
+      id: '/projects/$projectId/connectors'
       path: '/connectors'
-      fullPath: '/teams/$teamId/connectors'
-      preLoaderRoute: typeof TeamsTeamIdConnectorsRouteImport
-      parentRoute: typeof TeamsTeamIdRouteRoute
+      fullPath: '/projects/$projectId/connectors'
+      preLoaderRoute: typeof ProjectsProjectIdConnectorsRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/teams/$teamId/tasks/': {
-      id: '/teams/$teamId/tasks/'
-      path: '/tasks'
-      fullPath: '/teams/$teamId/tasks/'
-      preLoaderRoute: typeof TeamsTeamIdTasksIndexRouteImport
-      parentRoute: typeof TeamsTeamIdRouteRoute
+    '/projects/$projectId/audit-log': {
+      id: '/projects/$projectId/audit-log'
+      path: '/audit-log'
+      fullPath: '/projects/$projectId/audit-log'
+      preLoaderRoute: typeof ProjectsProjectIdAuditLogRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/teams/$teamId/skills/': {
-      id: '/teams/$teamId/skills/'
-      path: '/skills'
-      fullPath: '/teams/$teamId/skills/'
-      preLoaderRoute: typeof TeamsTeamIdSkillsIndexRouteImport
-      parentRoute: typeof TeamsTeamIdRouteRoute
+    '/projects/$projectId/assets': {
+      id: '/projects/$projectId/assets'
+      path: '/assets'
+      fullPath: '/projects/$projectId/assets'
+      preLoaderRoute: typeof ProjectsProjectIdAssetsRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/teams/$teamId/projects/': {
-      id: '/teams/$teamId/projects/'
-      path: '/projects'
-      fullPath: '/teams/$teamId/projects/'
-      preLoaderRoute: typeof TeamsTeamIdProjectsIndexRouteImport
-      parentRoute: typeof TeamsTeamIdRouteRoute
-    }
-    '/teams/$teamId/inbox/': {
-      id: '/teams/$teamId/inbox/'
-      path: '/inbox'
-      fullPath: '/teams/$teamId/inbox/'
-      preLoaderRoute: typeof TeamsTeamIdInboxIndexRouteImport
-      parentRoute: typeof TeamsTeamIdRouteRoute
-    }
-    '/teams/$teamId/agents/': {
-      id: '/teams/$teamId/agents/'
-      path: '/agents'
-      fullPath: '/teams/$teamId/agents/'
-      preLoaderRoute: typeof TeamsTeamIdAgentsIndexRouteImport
-      parentRoute: typeof TeamsTeamIdRouteRoute
-    }
-    '/teams/$teamId/tasks/$taskId': {
-      id: '/teams/$teamId/tasks/$taskId'
-      path: '/tasks/$taskId'
-      fullPath: '/teams/$teamId/tasks/$taskId'
-      preLoaderRoute: typeof TeamsTeamIdTasksTaskIdRouteImport
-      parentRoute: typeof TeamsTeamIdRouteRoute
-    }
-    '/teams/$teamId/settings/general': {
-      id: '/teams/$teamId/settings/general'
-      path: '/settings/general'
-      fullPath: '/teams/$teamId/settings/general'
-      preLoaderRoute: typeof TeamsTeamIdSettingsGeneralRouteImport
-      parentRoute: typeof TeamsTeamIdRouteRoute
-    }
-    '/teams/$teamId/settings/credentials': {
-      id: '/teams/$teamId/settings/credentials'
-      path: '/settings/credentials'
-      fullPath: '/teams/$teamId/settings/credentials'
-      preLoaderRoute: typeof TeamsTeamIdSettingsCredentialsRouteImport
-      parentRoute: typeof TeamsTeamIdRouteRoute
-    }
-    '/teams/$teamId/settings/audit-log': {
-      id: '/teams/$teamId/settings/audit-log'
-      path: '/settings/audit-log'
-      fullPath: '/teams/$teamId/settings/audit-log'
-      preLoaderRoute: typeof TeamsTeamIdSettingsAuditLogRouteImport
-      parentRoute: typeof TeamsTeamIdRouteRoute
-    }
-    '/teams/$teamId/agents/hire': {
-      id: '/teams/$teamId/agents/hire'
-      path: '/agents/hire'
-      fullPath: '/teams/$teamId/agents/hire'
-      preLoaderRoute: typeof TeamsTeamIdAgentsHireRouteImport
-      parentRoute: typeof TeamsTeamIdRouteRoute
-    }
-    '/preview/$teamId/$projectId/$filename': {
-      id: '/preview/$teamId/$projectId/$filename'
-      path: '/preview/$teamId/$projectId/$filename'
-      fullPath: '/preview/$teamId/$projectId/$filename'
-      preLoaderRoute: typeof PreviewTeamIdProjectIdFilenameRouteImport
+    '/preview/$projectId/$filename': {
+      id: '/preview/$projectId/$filename'
+      path: '/preview/$projectId/$filename'
+      fullPath: '/preview/$projectId/$filename'
+      preLoaderRoute: typeof PreviewProjectIdFilenameRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/teams/$teamId/projects/$projectId': {
-      id: '/teams/$teamId/projects/$projectId'
-      path: '/projects/$projectId'
-      fullPath: '/teams/$teamId/projects/$projectId'
-      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdRouteRouteImport
-      parentRoute: typeof TeamsTeamIdRouteRoute
-    }
-    '/teams/$teamId/agents/$agentId': {
-      id: '/teams/$teamId/agents/$agentId'
-      path: '/agents/$agentId'
-      fullPath: '/teams/$teamId/agents/$agentId'
-      preLoaderRoute: typeof TeamsTeamIdAgentsAgentIdRouteRouteImport
-      parentRoute: typeof TeamsTeamIdRouteRoute
-    }
-    '/teams/$teamId/projects/$projectId/': {
-      id: '/teams/$teamId/projects/$projectId/'
-      path: '/'
-      fullPath: '/teams/$teamId/projects/$projectId/'
-      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdIndexRouteImport
-      parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
-    }
-    '/teams/$teamId/agents/$agentId/': {
-      id: '/teams/$teamId/agents/$agentId/'
-      path: '/'
-      fullPath: '/teams/$teamId/agents/$agentId/'
-      preLoaderRoute: typeof TeamsTeamIdAgentsAgentIdIndexRouteImport
-      parentRoute: typeof TeamsTeamIdAgentsAgentIdRouteRoute
-    }
-    '/teams/$teamId/projects/$projectId/documents': {
-      id: '/teams/$teamId/projects/$projectId/documents'
-      path: '/documents'
-      fullPath: '/teams/$teamId/projects/$projectId/documents'
-      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdDocumentsRouteImport
-      parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
-    }
-    '/teams/$teamId/projects/$projectId/container': {
-      id: '/teams/$teamId/projects/$projectId/container'
-      path: '/container'
-      fullPath: '/teams/$teamId/projects/$projectId/container'
-      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdContainerRouteImport
-      parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
-    }
-    '/teams/$teamId/projects/$projectId/audit-log': {
-      id: '/teams/$teamId/projects/$projectId/audit-log'
-      path: '/audit-log'
-      fullPath: '/teams/$teamId/projects/$projectId/audit-log'
-      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdAuditLogRouteImport
-      parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
-    }
-    '/teams/$teamId/projects/$projectId/assets': {
-      id: '/teams/$teamId/projects/$projectId/assets'
-      path: '/assets'
-      fullPath: '/teams/$teamId/projects/$projectId/assets'
-      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdAssetsRouteImport
-      parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
-    }
-    '/teams/$teamId/agents/$agentId/settings': {
-      id: '/teams/$teamId/agents/$agentId/settings'
-      path: '/settings'
-      fullPath: '/teams/$teamId/agents/$agentId/settings'
-      preLoaderRoute: typeof TeamsTeamIdAgentsAgentIdSettingsRouteImport
-      parentRoute: typeof TeamsTeamIdAgentsAgentIdRouteRoute
-    }
-    '/teams/$teamId/projects/$projectId/tasks/': {
-      id: '/teams/$teamId/projects/$projectId/tasks/'
+    '/projects/$projectId/tasks/': {
+      id: '/projects/$projectId/tasks/'
       path: '/tasks'
-      fullPath: '/teams/$teamId/projects/$projectId/tasks/'
-      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdTasksIndexRouteImport
-      parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
+      fullPath: '/projects/$projectId/tasks/'
+      preLoaderRoute: typeof ProjectsProjectIdTasksIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/teams/$teamId/projects/$projectId/settings/': {
-      id: '/teams/$teamId/projects/$projectId/settings/'
+    '/projects/$projectId/skills/': {
+      id: '/projects/$projectId/skills/'
+      path: '/skills'
+      fullPath: '/projects/$projectId/skills/'
+      preLoaderRoute: typeof ProjectsProjectIdSkillsIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/settings/': {
+      id: '/projects/$projectId/settings/'
       path: '/settings'
-      fullPath: '/teams/$teamId/projects/$projectId/settings/'
-      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdSettingsIndexRouteImport
-      parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
+      fullPath: '/projects/$projectId/settings/'
+      preLoaderRoute: typeof ProjectsProjectIdSettingsIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/teams/$teamId/agents/$agentId/executions/': {
-      id: '/teams/$teamId/agents/$agentId/executions/'
-      path: '/executions'
-      fullPath: '/teams/$teamId/agents/$agentId/executions/'
-      preLoaderRoute: typeof TeamsTeamIdAgentsAgentIdExecutionsIndexRouteImport
-      parentRoute: typeof TeamsTeamIdAgentsAgentIdRouteRoute
+    '/projects/$projectId/inbox/': {
+      id: '/projects/$projectId/inbox/'
+      path: '/inbox'
+      fullPath: '/projects/$projectId/inbox/'
+      preLoaderRoute: typeof ProjectsProjectIdInboxIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/teams/$teamId/projects/$projectId/tasks/$taskId': {
-      id: '/teams/$teamId/projects/$projectId/tasks/$taskId'
+    '/projects/$projectId/agents/': {
+      id: '/projects/$projectId/agents/'
+      path: '/agents'
+      fullPath: '/projects/$projectId/agents/'
+      preLoaderRoute: typeof ProjectsProjectIdAgentsIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/team-settings/general': {
+      id: '/projects/$projectId/team-settings/general'
+      path: '/team-settings/general'
+      fullPath: '/projects/$projectId/team-settings/general'
+      preLoaderRoute: typeof ProjectsProjectIdTeamSettingsGeneralRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/team-settings/credentials': {
+      id: '/projects/$projectId/team-settings/credentials'
+      path: '/team-settings/credentials'
+      fullPath: '/projects/$projectId/team-settings/credentials'
+      preLoaderRoute: typeof ProjectsProjectIdTeamSettingsCredentialsRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/team-settings/audit-log': {
+      id: '/projects/$projectId/team-settings/audit-log'
+      path: '/team-settings/audit-log'
+      fullPath: '/projects/$projectId/team-settings/audit-log'
+      preLoaderRoute: typeof ProjectsProjectIdTeamSettingsAuditLogRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/tasks/$taskId': {
+      id: '/projects/$projectId/tasks/$taskId'
       path: '/tasks/$taskId'
-      fullPath: '/teams/$teamId/projects/$projectId/tasks/$taskId'
-      preLoaderRoute: typeof TeamsTeamIdProjectsProjectIdTasksTaskIdRouteImport
-      parentRoute: typeof TeamsTeamIdProjectsProjectIdRouteRoute
+      fullPath: '/projects/$projectId/tasks/$taskId'
+      preLoaderRoute: typeof ProjectsProjectIdTasksTaskIdRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/teams/$teamId/agents/$agentId/executions/$runId': {
-      id: '/teams/$teamId/agents/$agentId/executions/$runId'
+    '/projects/$projectId/agents/hire': {
+      id: '/projects/$projectId/agents/hire'
+      path: '/agents/hire'
+      fullPath: '/projects/$projectId/agents/hire'
+      preLoaderRoute: typeof ProjectsProjectIdAgentsHireRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/agents/$agentId': {
+      id: '/projects/$projectId/agents/$agentId'
+      path: '/agents/$agentId'
+      fullPath: '/projects/$projectId/agents/$agentId'
+      preLoaderRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/agents/$agentId/': {
+      id: '/projects/$projectId/agents/$agentId/'
+      path: '/'
+      fullPath: '/projects/$projectId/agents/$agentId/'
+      preLoaderRoute: typeof ProjectsProjectIdAgentsAgentIdIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRoute
+    }
+    '/projects/$projectId/agents/$agentId/settings': {
+      id: '/projects/$projectId/agents/$agentId/settings'
+      path: '/settings'
+      fullPath: '/projects/$projectId/agents/$agentId/settings'
+      preLoaderRoute: typeof ProjectsProjectIdAgentsAgentIdSettingsRouteImport
+      parentRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRoute
+    }
+    '/projects/$projectId/agents/$agentId/executions/': {
+      id: '/projects/$projectId/agents/$agentId/executions/'
+      path: '/executions'
+      fullPath: '/projects/$projectId/agents/$agentId/executions/'
+      preLoaderRoute: typeof ProjectsProjectIdAgentsAgentIdExecutionsIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRoute
+    }
+    '/projects/$projectId/agents/$agentId/executions/$runId': {
+      id: '/projects/$projectId/agents/$agentId/executions/$runId'
       path: '/executions/$runId'
-      fullPath: '/teams/$teamId/agents/$agentId/executions/$runId'
-      preLoaderRoute: typeof TeamsTeamIdAgentsAgentIdExecutionsRunIdRouteImport
-      parentRoute: typeof TeamsTeamIdAgentsAgentIdRouteRoute
+      fullPath: '/projects/$projectId/agents/$agentId/executions/$runId'
+      preLoaderRoute: typeof ProjectsProjectIdAgentsAgentIdExecutionsRunIdRouteImport
+      parentRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRoute
     }
   }
 }
 
-interface TeamsTeamIdAgentsAgentIdRouteRouteChildren {
-  TeamsTeamIdAgentsAgentIdSettingsRoute: typeof TeamsTeamIdAgentsAgentIdSettingsRoute
-  TeamsTeamIdAgentsAgentIdIndexRoute: typeof TeamsTeamIdAgentsAgentIdIndexRoute
-  TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute: typeof TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute
-  TeamsTeamIdAgentsAgentIdExecutionsIndexRoute: typeof TeamsTeamIdAgentsAgentIdExecutionsIndexRoute
+interface ProjectsProjectIdAgentsAgentIdRouteRouteChildren {
+  ProjectsProjectIdAgentsAgentIdSettingsRoute: typeof ProjectsProjectIdAgentsAgentIdSettingsRoute
+  ProjectsProjectIdAgentsAgentIdIndexRoute: typeof ProjectsProjectIdAgentsAgentIdIndexRoute
+  ProjectsProjectIdAgentsAgentIdExecutionsRunIdRoute: typeof ProjectsProjectIdAgentsAgentIdExecutionsRunIdRoute
+  ProjectsProjectIdAgentsAgentIdExecutionsIndexRoute: typeof ProjectsProjectIdAgentsAgentIdExecutionsIndexRoute
 }
 
-const TeamsTeamIdAgentsAgentIdRouteRouteChildren: TeamsTeamIdAgentsAgentIdRouteRouteChildren =
+const ProjectsProjectIdAgentsAgentIdRouteRouteChildren: ProjectsProjectIdAgentsAgentIdRouteRouteChildren =
   {
-    TeamsTeamIdAgentsAgentIdSettingsRoute:
-      TeamsTeamIdAgentsAgentIdSettingsRoute,
-    TeamsTeamIdAgentsAgentIdIndexRoute: TeamsTeamIdAgentsAgentIdIndexRoute,
-    TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute:
-      TeamsTeamIdAgentsAgentIdExecutionsRunIdRoute,
-    TeamsTeamIdAgentsAgentIdExecutionsIndexRoute:
-      TeamsTeamIdAgentsAgentIdExecutionsIndexRoute,
+    ProjectsProjectIdAgentsAgentIdSettingsRoute:
+      ProjectsProjectIdAgentsAgentIdSettingsRoute,
+    ProjectsProjectIdAgentsAgentIdIndexRoute:
+      ProjectsProjectIdAgentsAgentIdIndexRoute,
+    ProjectsProjectIdAgentsAgentIdExecutionsRunIdRoute:
+      ProjectsProjectIdAgentsAgentIdExecutionsRunIdRoute,
+    ProjectsProjectIdAgentsAgentIdExecutionsIndexRoute:
+      ProjectsProjectIdAgentsAgentIdExecutionsIndexRoute,
   }
 
-const TeamsTeamIdAgentsAgentIdRouteRouteWithChildren =
-  TeamsTeamIdAgentsAgentIdRouteRoute._addFileChildren(
-    TeamsTeamIdAgentsAgentIdRouteRouteChildren,
+const ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren =
+  ProjectsProjectIdAgentsAgentIdRouteRoute._addFileChildren(
+    ProjectsProjectIdAgentsAgentIdRouteRouteChildren,
   )
 
-interface TeamsTeamIdProjectsProjectIdRouteRouteChildren {
-  TeamsTeamIdProjectsProjectIdAssetsRoute: typeof TeamsTeamIdProjectsProjectIdAssetsRoute
-  TeamsTeamIdProjectsProjectIdAuditLogRoute: typeof TeamsTeamIdProjectsProjectIdAuditLogRoute
-  TeamsTeamIdProjectsProjectIdContainerRoute: typeof TeamsTeamIdProjectsProjectIdContainerRoute
-  TeamsTeamIdProjectsProjectIdDocumentsRoute: typeof TeamsTeamIdProjectsProjectIdDocumentsRoute
-  TeamsTeamIdProjectsProjectIdIndexRoute: typeof TeamsTeamIdProjectsProjectIdIndexRoute
-  TeamsTeamIdProjectsProjectIdTasksTaskIdRoute: typeof TeamsTeamIdProjectsProjectIdTasksTaskIdRoute
-  TeamsTeamIdProjectsProjectIdSettingsIndexRoute: typeof TeamsTeamIdProjectsProjectIdSettingsIndexRoute
-  TeamsTeamIdProjectsProjectIdTasksIndexRoute: typeof TeamsTeamIdProjectsProjectIdTasksIndexRoute
+interface ProjectsProjectIdRouteRouteChildren {
+  ProjectsProjectIdAssetsRoute: typeof ProjectsProjectIdAssetsRoute
+  ProjectsProjectIdAuditLogRoute: typeof ProjectsProjectIdAuditLogRoute
+  ProjectsProjectIdConnectorsRoute: typeof ProjectsProjectIdConnectorsRoute
+  ProjectsProjectIdContainerRoute: typeof ProjectsProjectIdContainerRoute
+  ProjectsProjectIdDocumentsRoute: typeof ProjectsProjectIdDocumentsRoute
+  ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
+  ProjectsProjectIdAgentsAgentIdRouteRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren
+  ProjectsProjectIdAgentsHireRoute: typeof ProjectsProjectIdAgentsHireRoute
+  ProjectsProjectIdTasksTaskIdRoute: typeof ProjectsProjectIdTasksTaskIdRoute
+  ProjectsProjectIdTeamSettingsAuditLogRoute: typeof ProjectsProjectIdTeamSettingsAuditLogRoute
+  ProjectsProjectIdTeamSettingsCredentialsRoute: typeof ProjectsProjectIdTeamSettingsCredentialsRoute
+  ProjectsProjectIdTeamSettingsGeneralRoute: typeof ProjectsProjectIdTeamSettingsGeneralRoute
+  ProjectsProjectIdAgentsIndexRoute: typeof ProjectsProjectIdAgentsIndexRoute
+  ProjectsProjectIdInboxIndexRoute: typeof ProjectsProjectIdInboxIndexRoute
+  ProjectsProjectIdSettingsIndexRoute: typeof ProjectsProjectIdSettingsIndexRoute
+  ProjectsProjectIdSkillsIndexRoute: typeof ProjectsProjectIdSkillsIndexRoute
+  ProjectsProjectIdTasksIndexRoute: typeof ProjectsProjectIdTasksIndexRoute
 }
 
-const TeamsTeamIdProjectsProjectIdRouteRouteChildren: TeamsTeamIdProjectsProjectIdRouteRouteChildren =
+const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
   {
-    TeamsTeamIdProjectsProjectIdAssetsRoute:
-      TeamsTeamIdProjectsProjectIdAssetsRoute,
-    TeamsTeamIdProjectsProjectIdAuditLogRoute:
-      TeamsTeamIdProjectsProjectIdAuditLogRoute,
-    TeamsTeamIdProjectsProjectIdContainerRoute:
-      TeamsTeamIdProjectsProjectIdContainerRoute,
-    TeamsTeamIdProjectsProjectIdDocumentsRoute:
-      TeamsTeamIdProjectsProjectIdDocumentsRoute,
-    TeamsTeamIdProjectsProjectIdIndexRoute:
-      TeamsTeamIdProjectsProjectIdIndexRoute,
-    TeamsTeamIdProjectsProjectIdTasksTaskIdRoute:
-      TeamsTeamIdProjectsProjectIdTasksTaskIdRoute,
-    TeamsTeamIdProjectsProjectIdSettingsIndexRoute:
-      TeamsTeamIdProjectsProjectIdSettingsIndexRoute,
-    TeamsTeamIdProjectsProjectIdTasksIndexRoute:
-      TeamsTeamIdProjectsProjectIdTasksIndexRoute,
+    ProjectsProjectIdAssetsRoute: ProjectsProjectIdAssetsRoute,
+    ProjectsProjectIdAuditLogRoute: ProjectsProjectIdAuditLogRoute,
+    ProjectsProjectIdConnectorsRoute: ProjectsProjectIdConnectorsRoute,
+    ProjectsProjectIdContainerRoute: ProjectsProjectIdContainerRoute,
+    ProjectsProjectIdDocumentsRoute: ProjectsProjectIdDocumentsRoute,
+    ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
+    ProjectsProjectIdAgentsAgentIdRouteRoute:
+      ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren,
+    ProjectsProjectIdAgentsHireRoute: ProjectsProjectIdAgentsHireRoute,
+    ProjectsProjectIdTasksTaskIdRoute: ProjectsProjectIdTasksTaskIdRoute,
+    ProjectsProjectIdTeamSettingsAuditLogRoute:
+      ProjectsProjectIdTeamSettingsAuditLogRoute,
+    ProjectsProjectIdTeamSettingsCredentialsRoute:
+      ProjectsProjectIdTeamSettingsCredentialsRoute,
+    ProjectsProjectIdTeamSettingsGeneralRoute:
+      ProjectsProjectIdTeamSettingsGeneralRoute,
+    ProjectsProjectIdAgentsIndexRoute: ProjectsProjectIdAgentsIndexRoute,
+    ProjectsProjectIdInboxIndexRoute: ProjectsProjectIdInboxIndexRoute,
+    ProjectsProjectIdSettingsIndexRoute: ProjectsProjectIdSettingsIndexRoute,
+    ProjectsProjectIdSkillsIndexRoute: ProjectsProjectIdSkillsIndexRoute,
+    ProjectsProjectIdTasksIndexRoute: ProjectsProjectIdTasksIndexRoute,
   }
 
-const TeamsTeamIdProjectsProjectIdRouteRouteWithChildren =
-  TeamsTeamIdProjectsProjectIdRouteRoute._addFileChildren(
-    TeamsTeamIdProjectsProjectIdRouteRouteChildren,
+const ProjectsProjectIdRouteRouteWithChildren =
+  ProjectsProjectIdRouteRoute._addFileChildren(
+    ProjectsProjectIdRouteRouteChildren,
   )
-
-interface TeamsTeamIdRouteRouteChildren {
-  TeamsTeamIdConnectorsRoute: typeof TeamsTeamIdConnectorsRoute
-  TeamsTeamIdIndexRoute: typeof TeamsTeamIdIndexRoute
-  TeamsTeamIdAgentsAgentIdRouteRoute: typeof TeamsTeamIdAgentsAgentIdRouteRouteWithChildren
-  TeamsTeamIdProjectsProjectIdRouteRoute: typeof TeamsTeamIdProjectsProjectIdRouteRouteWithChildren
-  TeamsTeamIdAgentsHireRoute: typeof TeamsTeamIdAgentsHireRoute
-  TeamsTeamIdSettingsAuditLogRoute: typeof TeamsTeamIdSettingsAuditLogRoute
-  TeamsTeamIdSettingsCredentialsRoute: typeof TeamsTeamIdSettingsCredentialsRoute
-  TeamsTeamIdSettingsGeneralRoute: typeof TeamsTeamIdSettingsGeneralRoute
-  TeamsTeamIdTasksTaskIdRoute: typeof TeamsTeamIdTasksTaskIdRoute
-  TeamsTeamIdAgentsIndexRoute: typeof TeamsTeamIdAgentsIndexRoute
-  TeamsTeamIdInboxIndexRoute: typeof TeamsTeamIdInboxIndexRoute
-  TeamsTeamIdProjectsIndexRoute: typeof TeamsTeamIdProjectsIndexRoute
-  TeamsTeamIdSkillsIndexRoute: typeof TeamsTeamIdSkillsIndexRoute
-  TeamsTeamIdTasksIndexRoute: typeof TeamsTeamIdTasksIndexRoute
-}
-
-const TeamsTeamIdRouteRouteChildren: TeamsTeamIdRouteRouteChildren = {
-  TeamsTeamIdConnectorsRoute: TeamsTeamIdConnectorsRoute,
-  TeamsTeamIdIndexRoute: TeamsTeamIdIndexRoute,
-  TeamsTeamIdAgentsAgentIdRouteRoute:
-    TeamsTeamIdAgentsAgentIdRouteRouteWithChildren,
-  TeamsTeamIdProjectsProjectIdRouteRoute:
-    TeamsTeamIdProjectsProjectIdRouteRouteWithChildren,
-  TeamsTeamIdAgentsHireRoute: TeamsTeamIdAgentsHireRoute,
-  TeamsTeamIdSettingsAuditLogRoute: TeamsTeamIdSettingsAuditLogRoute,
-  TeamsTeamIdSettingsCredentialsRoute: TeamsTeamIdSettingsCredentialsRoute,
-  TeamsTeamIdSettingsGeneralRoute: TeamsTeamIdSettingsGeneralRoute,
-  TeamsTeamIdTasksTaskIdRoute: TeamsTeamIdTasksTaskIdRoute,
-  TeamsTeamIdAgentsIndexRoute: TeamsTeamIdAgentsIndexRoute,
-  TeamsTeamIdInboxIndexRoute: TeamsTeamIdInboxIndexRoute,
-  TeamsTeamIdProjectsIndexRoute: TeamsTeamIdProjectsIndexRoute,
-  TeamsTeamIdSkillsIndexRoute: TeamsTeamIdSkillsIndexRoute,
-  TeamsTeamIdTasksIndexRoute: TeamsTeamIdTasksIndexRoute,
-}
-
-const TeamsTeamIdRouteRouteWithChildren =
-  TeamsTeamIdRouteRoute._addFileChildren(TeamsTeamIdRouteRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  TeamsTeamIdRouteRoute: TeamsTeamIdRouteRouteWithChildren,
+  ProjectsProjectIdRouteRoute: ProjectsProjectIdRouteRouteWithChildren,
   SettingsAiProvidersRoute: SettingsAiProvidersRoute,
   SettingsAuditLogRoute: SettingsAuditLogRoute,
   SettingsConnectorsRoute: SettingsConnectorsRoute,
@@ -910,10 +774,9 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsSkillsRoute: SettingsSkillsRoute,
   HomeIndexRoute: HomeIndexRoute,
   SettingsIndexRoute: SettingsIndexRoute,
-  TeamsIndexRoute: TeamsIndexRoute,
+  PreviewProjectIdFilenameRoute: PreviewProjectIdFilenameRoute,
   HomeInboxIndexRoute: HomeInboxIndexRoute,
   HomeTasksIndexRoute: HomeTasksIndexRoute,
-  PreviewTeamIdProjectIdFilenameRoute: PreviewTeamIdProjectIdFilenameRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

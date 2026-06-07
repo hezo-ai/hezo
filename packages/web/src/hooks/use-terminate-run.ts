@@ -5,29 +5,29 @@ import type { HeartbeatRun } from './use-heartbeat-runs';
 import { toast } from './use-toast';
 
 interface TerminateRunArgs {
-	teamId: string;
+	projectId: string;
 	agentId: string;
 	runId: string;
 	taskId?: string | null;
 }
 
-export function useTerminateRun({ teamId, agentId, runId, taskId }: TerminateRunArgs) {
+export function useTerminateRun({ projectId, agentId, runId, taskId }: TerminateRunArgs) {
 	return useMutation({
 		mutationFn: () =>
 			api.post<HeartbeatRun & { terminated: boolean }>(
-				`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs/${runId}/terminate`,
+				`/api/projects/${projectId}/agents/${agentId}/heartbeat-runs/${runId}/terminate`,
 				{},
 			),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'agents', agentId, 'heartbeat-runs'],
+				queryKey: ['projects', projectId, 'agents', agentId, 'heartbeat-runs'],
 			});
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'agents', agentId, 'heartbeat-runs', runId],
+				queryKey: ['projects', projectId, 'agents', agentId, 'heartbeat-runs', runId],
 			});
 			if (taskId) {
 				queryClient.invalidateQueries({
-					queryKey: ['teams', teamId, 'tasks', taskId, 'comments'],
+					queryKey: ['projects', projectId, 'tasks', taskId, 'comments'],
 				});
 			}
 		},

@@ -264,7 +264,7 @@ export async function getOpenProjectIntakeTasks(
 }
 
 function buildProvisioningCompleteText(projectName: string, projectSlug: string): string {
-	return `Setup complete. The **${projectName}** project has been created and a planning task is ready in [${projectSlug}](/teams/_/projects/${projectSlug}). I'll start drafting the execution plan there.`;
+	return `Setup complete. The **${projectName}** project has been created and a planning task is ready in [${projectSlug}](/projects/${projectSlug}). I'll start drafting the execution plan there.`;
 }
 
 export async function completeProjectIntakeAfterProvisioning(

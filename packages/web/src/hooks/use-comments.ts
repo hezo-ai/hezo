@@ -39,11 +39,11 @@ export interface Comment {
 	attachments?: CommentAttachment[];
 }
 
-export function useComments(teamId: string, taskId: string, options?: { enabled?: boolean }) {
+export function useComments(projectId: string, taskId: string, options?: { enabled?: boolean }) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'tasks', taskId, 'comments'],
+		queryKey: ['projects', projectId, 'tasks', taskId, 'comments'],
 		queryFn: () =>
-			api.get<Comment[]>(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+			api.get<Comment[]>(`/api/projects/${projectId}/tasks/${taskId}/comments`, {
 				include_tool_calls: 'true',
 			}),
 		enabled: options?.enabled ?? true,
@@ -51,7 +51,7 @@ export function useComments(teamId: string, taskId: string, options?: { enabled?
 	});
 }
 
-export function useCreateComment(teamId: string, taskId: string) {
+export function useCreateComment(projectId: string, taskId: string) {
 	return useMutation({
 		mutationFn: (data: {
 			content: string;
@@ -60,27 +60,30 @@ export function useCreateComment(teamId: string, taskId: string) {
 			wake_assignee?: boolean;
 			parent_comment_id?: string;
 			attachment_ids?: string[];
-		}) => api.post<Comment>(`/api/teams/${teamId}/tasks/${taskId}/comments`, data),
+		}) => api.post<Comment>(`/api/projects/${projectId}/tasks/${taskId}/comments`, data),
 		onSuccess: (created) => {
-			queryClient.setQueryData<Comment[]>(['teams', teamId, 'tasks', taskId, 'comments'], (old) => {
-				if (!old) return [created];
-				if (old.some((c) => c.id === created.id)) return old;
-				return [...old, created];
-			});
+			queryClient.setQueryData<Comment[]>(
+				['projects', projectId, 'tasks', taskId, 'comments'],
+				(old) => {
+					if (!old) return [created];
+					if (old.some((c) => c.id === created.id)) return old;
+					return [...old, created];
+				},
+			);
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'tasks', taskId, 'comments'],
+				queryKey: ['projects', projectId, 'tasks', taskId, 'comments'],
 			});
 		},
 	});
 }
 
-export function useChooseOption(teamId: string, taskId: string) {
+export function useChooseOption(projectId: string, taskId: string) {
 	return useOptimisticMutation<{ commentId: string; chosen_id: string }, unknown, Comment[]>({
 		mutationFn: ({ commentId, chosen_id }) =>
-			api.post(`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/choose`, {
+			api.post(`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/choose`, {
 				chosen_id,
 			}),
-		queryKey: ['teams', teamId, 'tasks', taskId, 'comments'],
+		queryKey: ['projects', projectId, 'tasks', taskId, 'comments'],
 		applyOptimistic: (current, { commentId, chosen_id }) => {
 			if (!current) return current;
 			return current.map((c) => (c.id === commentId ? { ...c, chosen_option: chosen_id } : c));
@@ -142,7 +145,7 @@ function applyToComment(
 	return current.map((c) => (c.id === commentId ? update(c) : c));
 }
 
-export function useAddReaction(teamId: string, taskId: string) {
+export function useAddReaction(projectId: string, taskId: string) {
 	return useOptimisticMutation<
 		{ commentId: string; kind: string },
 		ReactionMutationResponse,
@@ -150,10 +153,10 @@ export function useAddReaction(teamId: string, taskId: string) {
 	>({
 		mutationFn: ({ commentId, kind }) =>
 			api.put<ReactionMutationResponse>(
-				`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/${kind}`,
+				`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/reactions/${kind}`,
 				{},
 			),
-		queryKey: ['teams', teamId, 'tasks', taskId, 'comments'],
+		queryKey: ['projects', projectId, 'tasks', taskId, 'comments'],
 		applyOptimistic: (current, { commentId, kind }) =>
 			applyToComment(current, commentId, (c) => ({
 				...c,
@@ -165,7 +168,7 @@ export function useAddReaction(teamId: string, taskId: string) {
 	});
 }
 
-export function useRemoveReaction(teamId: string, taskId: string) {
+export function useRemoveReaction(projectId: string, taskId: string) {
 	return useOptimisticMutation<
 		{ commentId: string; kind: string },
 		ReactionMutationResponse,
@@ -173,9 +176,9 @@ export function useRemoveReaction(teamId: string, taskId: string) {
 	>({
 		mutationFn: ({ commentId, kind }) =>
 			api.delete<ReactionMutationResponse>(
-				`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/${kind}`,
+				`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/reactions/${kind}`,
 			),
-		queryKey: ['teams', teamId, 'tasks', taskId, 'comments'],
+		queryKey: ['projects', projectId, 'tasks', taskId, 'comments'],
 		applyOptimistic: (current, { commentId, kind }) =>
 			applyToComment(current, commentId, (c) => ({
 				...c,
@@ -187,7 +190,7 @@ export function useRemoveReaction(teamId: string, taskId: string) {
 	});
 }
 
-export function useFulfillCredential(teamId: string, taskId: string) {
+export function useFulfillCredential(projectId: string, taskId: string) {
 	return useMutation({
 		mutationFn: ({
 			commentId,
@@ -198,13 +201,16 @@ export function useFulfillCredential(teamId: string, taskId: string) {
 			value?: string;
 			confirmed?: boolean;
 		}) =>
-			api.post(`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/fulfill-credential`, {
-				value,
-				confirmed,
-			}),
+			api.post(
+				`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/fulfill-credential`,
+				{
+					value,
+					confirmed,
+				},
+			),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'tasks', taskId, 'comments'],
+				queryKey: ['projects', projectId, 'tasks', taskId, 'comments'],
 			}),
 	});
 }

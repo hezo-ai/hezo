@@ -16,9 +16,9 @@ export interface OrgChart {
 	admin: { children: OrgNode[] };
 }
 
-export function useOrgChart(teamId: string) {
+export function useOrgChart(projectId: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'org-chart'],
-		queryFn: () => api.get<OrgChart>(`/api/teams/${teamId}/org-chart`),
+		queryKey: ['projects', projectId, 'org-chart'],
+		queryFn: () => api.get<OrgChart>(`/api/projects/${projectId}/org-chart`),
 	});
 }

@@ -100,7 +100,7 @@ describe('template resolver', () => {
 	});
 
 	it('renders {{project_docs_context}} with a not-a-file warning and bare-filename headings when docs exist', async () => {
-		const docRes = await app.request(`/api/teams/${teamId}/projects/${projectId}/docs/spec.md`, {
+		const docRes = await app.request(`/api/projects/${projectId}/docs/spec.md`, {
 			method: 'PUT',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content: 'Detailed spec.' }),
@@ -251,6 +251,7 @@ describe('template resolver', () => {
 
 describe('template resolver with agents', () => {
 	let agentTeamId: string;
+	let agentTeamSlug: string;
 	let engineerAgentId: string;
 	let captainAgentId: string;
 
@@ -274,10 +275,12 @@ describe('template resolver with agents', () => {
 				template_id: softDevType.id,
 			}),
 		});
-		agentTeamId = ((await teamRes.json()) as any).data.id;
+		const agentTeamData = ((await teamRes.json()) as any).data;
+		agentTeamId = agentTeamData.id;
+		agentTeamSlug = agentTeamData.slug;
 
 		// Get agents
-		const agentsRes = await app.request(`/api/teams/${agentTeamId}/agents`, {
+		const agentsRes = await app.request(`/api/projects/internal-${agentTeamSlug}/agents`, {
 			method: 'GET',
 			headers: authHeader(token),
 		});
@@ -340,14 +343,17 @@ Current date: {{current_date}}
 	});
 
 	async function getAgentPrompt(agentId: string): Promise<string> {
-		const res = await app.request(`/api/teams/${agentTeamId}/agents/${agentId}/system-prompt`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/internal-${agentTeamSlug}/agents/${agentId}/system-prompt`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		return (((await res.json()) as any).data?.content ?? '') as string;
 	}
 
 	it('agents created from team type have system prompts', async () => {
-		const agentsRes = await app.request(`/api/teams/${agentTeamId}/agents`, {
+		const agentsRes = await app.request(`/api/projects/internal-${agentTeamSlug}/agents`, {
 			method: 'GET',
 			headers: authHeader(token),
 		});
@@ -366,7 +372,7 @@ Current date: {{current_date}}
 	});
 
 	it('each agent has role-specific system prompt content', async () => {
-		const agentsRes = await app.request(`/api/teams/${agentTeamId}/agents`, {
+		const agentsRes = await app.request(`/api/projects/internal-${agentTeamSlug}/agents`, {
 			method: 'GET',
 			headers: authHeader(token),
 		});
@@ -397,7 +403,7 @@ Current date: {{current_date}}
 	});
 
 	it('Captain system prompt does not use {{reports_to}}', async () => {
-		const agentsRes = await app.request(`/api/teams/${agentTeamId}/agents`, {
+		const agentsRes = await app.request(`/api/projects/internal-${agentTeamSlug}/agents`, {
 			method: 'GET',
 			headers: authHeader(token),
 		});
@@ -407,7 +413,7 @@ Current date: {{current_date}}
 	});
 
 	it('non-Captain agents use {{reports_to}} in their system prompts', async () => {
-		const agentsRes = await app.request(`/api/teams/${agentTeamId}/agents`, {
+		const agentsRes = await app.request(`/api/projects/internal-${agentTeamSlug}/agents`, {
 			method: 'GET',
 			headers: authHeader(token),
 		});
@@ -423,6 +429,7 @@ Current date: {{current_date}}
 
 describe('teammates block', () => {
 	let tbTeamId: string;
+	let tbTeamSlug: string;
 	let tbCaptainMemberId: string;
 	let tbEngineerMemberId: string;
 
@@ -439,9 +446,11 @@ describe('teammates block', () => {
 				template_id: startup.id,
 			}),
 		});
-		tbTeamId = ((await teamRes.json()) as any).data.id;
+		const tbTeamData = ((await teamRes.json()) as any).data;
+		tbTeamId = tbTeamData.id;
+		tbTeamSlug = tbTeamData.slug;
 
-		const agentsRes = await app.request(`/api/teams/${tbTeamId}/agents`, {
+		const agentsRes = await app.request(`/api/projects/internal-${tbTeamSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = ((await agentsRes.json()) as any).data;
@@ -533,6 +542,7 @@ describe('teammates block', () => {
 
 describe('team context block', () => {
 	let tcTeamId: string;
+	let tcTeamSlug: string;
 	let tcCaptainMemberId: string;
 	let tcEngineerMemberId: string;
 
@@ -549,9 +559,11 @@ describe('team context block', () => {
 				template_id: startup.id,
 			}),
 		});
-		tcTeamId = ((await teamRes.json()) as any).data.id;
+		const tcTeamData = ((await teamRes.json()) as any).data;
+		tcTeamId = tcTeamData.id;
+		tcTeamSlug = tcTeamData.slug;
 
-		const agentsRes = await app.request(`/api/teams/${tcTeamId}/agents`, {
+		const agentsRes = await app.request(`/api/projects/internal-${tcTeamSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = ((await agentsRes.json()) as any).data;
@@ -627,7 +639,9 @@ describe('team context block', () => {
 
 describe('project state block', () => {
 	let psTeamId: string;
+	let psTeamSlug: string;
 	let psProjectId: string;
+	let psProjectSlug: string;
 	let psCaptainMemberId: string;
 	let psArchitectMemberId: string;
 
@@ -644,9 +658,11 @@ describe('project state block', () => {
 				template_id: startup.id,
 			}),
 		});
-		psTeamId = ((await teamRes.json()) as any).data.id;
+		const psTeamData = ((await teamRes.json()) as any).data;
+		psTeamId = psTeamData.id;
+		psTeamSlug = psTeamData.slug;
 
-		const agentsRes = await app.request(`/api/teams/${psTeamId}/agents`, {
+		const agentsRes = await app.request(`/api/projects/internal-${psTeamSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = ((await agentsRes.json()) as any).data;
@@ -657,7 +673,9 @@ describe('project state block', () => {
 			name: 'PS Project',
 			description: 'Test',
 		});
-		psProjectId = ((await projectRes.json()).data as { id: string }).id;
+		const psProjectData = (await projectRes.json()).data as { id: string; slug: string };
+		psProjectId = psProjectData.id;
+		psProjectSlug = psProjectData.slug;
 	});
 
 	it('omits Project State block when projectId is absent', async () => {
@@ -700,7 +718,7 @@ describe('project state block', () => {
 	});
 
 	it('lists active tickets and excludes terminal-status ones', async () => {
-		const activeRes = await app.request(`/api/teams/${psTeamId}/tasks`, {
+		const activeRes = await app.request(`/api/projects/${psProjectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -711,7 +729,7 @@ describe('project state block', () => {
 		});
 		const active = ((await activeRes.json()) as any).data;
 
-		const doneRes = await app.request(`/api/teams/${psTeamId}/tasks`, {
+		const doneRes = await app.request(`/api/projects/${psProjectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -721,7 +739,7 @@ describe('project state block', () => {
 			}),
 		});
 		const done = ((await doneRes.json()) as any).data;
-		await app.request(`/api/teams/${psTeamId}/tasks/${done.id}`, {
+		await app.request(`/api/projects/${psProjectSlug}/tasks/${done.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'done' }),
@@ -739,7 +757,7 @@ describe('project state block', () => {
 	});
 
 	it('shows "Tickets you created" subsection scoped to the agent\'s prior runs', async () => {
-		const planningTaskRes = await app.request(`/api/teams/${psTeamId}/tasks`, {
+		const planningTaskRes = await app.request(`/api/projects/${psProjectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

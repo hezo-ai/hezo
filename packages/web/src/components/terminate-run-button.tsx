@@ -6,7 +6,7 @@ import { ConfirmDialog } from './ui/confirm-dialog';
 import { Tooltip } from './ui/tooltip';
 
 interface TerminateRunButtonProps {
-	teamId: string;
+	projectId: string;
 	agentId: string;
 	runId: string;
 	status: RunStatus;
@@ -15,7 +15,7 @@ interface TerminateRunButtonProps {
 }
 
 export function TerminateRunButton({
-	teamId,
+	projectId,
 	agentId,
 	runId,
 	status,
@@ -23,7 +23,7 @@ export function TerminateRunButton({
 	variant = 'compact',
 }: TerminateRunButtonProps) {
 	const [open, setOpen] = useState(false);
-	const mutation = useTerminateRun({ teamId, agentId, runId, taskId });
+	const mutation = useTerminateRun({ projectId, agentId, runId, taskId });
 
 	if (!isActiveRunStatus(status)) return null;
 

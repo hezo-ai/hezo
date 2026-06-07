@@ -18,7 +18,9 @@ let db: PGlite;
 let token: string;
 
 let teamId: string;
+let teamSlug: string;
 let projectId: string;
+let projectSlug: string;
 let captainMemberId: string;
 let architectMemberId: string;
 
@@ -53,9 +55,11 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	teamSlug = teamData.slug;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/internal-${teamSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -66,7 +70,9 @@ beforeAll(async () => {
 		name: 'Handoff project',
 		description: 'Test',
 	});
-	projectId = (await projectRes.json()).data.id;
+	const projectData = (await projectRes.json()).data;
+	projectId = projectData.id;
+	projectSlug = projectData.slug;
 });
 
 afterAll(async () => {
@@ -78,7 +84,7 @@ async function createTriggeringTaskWithComment(commentText: string): Promise<{
 	triggeringIdentifier: string;
 	commentId: string;
 }> {
-	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -107,7 +113,7 @@ async function createArchitectTicket(
 	title: string,
 	status: TaskStatus = TaskStatus.Backlog,
 ): Promise<{ id: string; identifier: string }> {
-	const res = await app.request(`/api/teams/${teamId}/tasks`, {
+	const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -119,7 +125,7 @@ async function createArchitectTicket(
 	const data = (await res.json()).data as { id: string; identifier: string };
 
 	if (status !== TaskStatus.Backlog) {
-		await app.request(`/api/teams/${teamId}/tasks/${data.id}`, {
+		await app.request(`/api/projects/${projectSlug}/tasks/${data.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status }),
@@ -185,8 +191,9 @@ describe('mention handoff prompt (integration)', () => {
 				template_id: typeId,
 			}),
 		});
-		const soloTeamId = (await teamRes.json()).data.id;
-		const agentsRes = await app.request(`/api/teams/${soloTeamId}/agents`, {
+		const soloTeam = (await teamRes.json()).data;
+		const soloTeamId = soloTeam.id;
+		const agentsRes = await app.request(`/api/projects/internal-${soloTeam.slug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -196,8 +203,9 @@ describe('mention handoff prompt (integration)', () => {
 			name: 'No tickets',
 			description: 'x',
 		});
-		const soloProjectId = (await projRes.json()).data.id;
-		const taskRes = await app.request(`/api/teams/${soloTeamId}/tasks`, {
+		const soloProject = (await projRes.json()).data;
+		const soloProjectId = soloProject.id;
+		const taskRes = await app.request(`/api/projects/${soloProject.slug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -310,7 +318,7 @@ describe('reply handoff prompt (integration)', () => {
 		const { triggeringTaskId, triggeringIdentifier, commentId } =
 			await createTriggeringTaskWithComment('@architect please take point on this');
 
-		const newTicketRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const newTicketRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -423,7 +431,7 @@ describe('reply handoff prompt (integration)', () => {
 
 describe('spawned-from prompt line', () => {
 	it('renders "Parent ticket" when parent_task_id matches the spawning run', async () => {
-		const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -486,7 +494,7 @@ describe('spawned-from prompt line', () => {
 	});
 
 	it('renders "Spawned from" when a sibling/top-level ticket has no structural parent', async () => {
-		const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

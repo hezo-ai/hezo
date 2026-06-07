@@ -6,10 +6,10 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { SectionHeader } from './helpers';
 
-export function SecretsSection({ teamId }: { teamId: string }) {
-	const { data: secrets } = useSecrets(teamId);
-	const createSecret = useCreateSecret(teamId);
-	const deleteSecret = useDeleteSecret(teamId);
+export function SecretsSection({ projectId }: { projectId: string }) {
+	const { data: secrets } = useSecrets(projectId);
+	const createSecret = useCreateSecret(projectId);
+	const deleteSecret = useDeleteSecret(projectId);
 	const [showForm, setShowForm] = useState(false);
 	const [name, setName] = useState('');
 	const [value, setValue] = useState('');

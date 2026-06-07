@@ -17,8 +17,8 @@ test('agent settings page shows system prompt textarea, edits persist, revisions
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/agents/$agentId/settings',
-		params: { teamId: ws.team.slug, agentId: engineerId },
+		to: '/projects/$projectId/agents/$agentId/settings',
+		params: { projectId: ws.internalSlug, agentId: engineerId },
 	});
 
 	const promptTextarea = (await findByLabelText('System Prompt', undefined, {
@@ -36,9 +36,12 @@ test('agent settings page shows system prompt textarea, edits persist, revisions
 	const { apiBase, token } = getTestContext();
 	await waitFor(
 		async () => {
-			const res = await apiBase(`/api/teams/${ws.team.id}/agents/${engineerId}/system-prompt`, {
-				headers: { Authorization: `Bearer ${token}` },
-			});
+			const res = await apiBase(
+				`/api/projects/${ws.internalSlug}/agents/${engineerId}/system-prompt`,
+				{
+					headers: { Authorization: `Bearer ${token}` },
+				},
+			);
 			const body = (await res.json()) as { data: { content: string } };
 			expect(body.data.content).toContain('New rule added by e2e test');
 		},
@@ -65,8 +68,8 @@ test('agent settings preview tab resolves placeholders and edit tab keeps the ra
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/agents/$agentId/settings',
-		params: { teamId: ws.team.slug, agentId: engineerId },
+		to: '/projects/$projectId/agents/$agentId/settings',
+		params: { projectId: ws.internalSlug, agentId: engineerId },
 	});
 
 	const editTextarea = (await findByLabelText('System Prompt', undefined, {

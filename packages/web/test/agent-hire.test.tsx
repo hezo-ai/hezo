@@ -17,8 +17,8 @@ test('can hire an agent with minimal fields', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/agents/hire',
-		params: { teamId: ws.team.slug },
+		to: '/projects/$projectId/agents/hire',
+		params: { projectId: ws.internalSlug },
 	});
 
 	const role = uniqueName('Data Scientist');
@@ -40,8 +40,8 @@ test('template variable chips insert into system prompt', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/agents/hire',
-		params: { teamId: ws.team.slug },
+		to: '/projects/$projectId/agents/hire',
+		params: { projectId: ws.internalSlug },
 	});
 
 	await user.click(await findByRole('button', { name: '{{team_name}}' }));
@@ -62,8 +62,8 @@ test('can hire agent with full fields', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/agents/hire',
-		params: { teamId: ws.team.slug },
+		to: '/projects/$projectId/agents/hire',
+		params: { projectId: ws.internalSlug },
 	});
 
 	const role = uniqueName('Security Auditor');

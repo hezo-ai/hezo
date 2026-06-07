@@ -11,7 +11,7 @@ import {
 
 async function patchTask(ws: SeededWorkspace, taskId: string, patch: Record<string, unknown>) {
 	const { apiBase } = getTestContext();
-	const res = await apiBase(`/api/teams/${ws.team.id}/tasks/${taskId}`, {
+	const res = await apiBase(`/api/projects/${ws.internalSlug}/tasks/${taskId}`, {
 		method: 'PATCH',
 		headers: ws.headers,
 		body: JSON.stringify(patch),
@@ -26,7 +26,7 @@ async function createTaskWithBlockers(
 	input: { title: string; assignee_id: string; blocked_by_task_ids: string[] },
 ) {
 	const { apiBase } = getTestContext();
-	const res = await apiBase(`/api/teams/${ws.team.id}/tasks`, {
+	const res = await apiBase(`/api/projects/${ws.internalSlug}/tasks`, {
 		method: 'POST',
 		headers: ws.headers,
 		body: JSON.stringify({ project_id: projectId, ...input }),
@@ -72,9 +72,8 @@ test('status changes and cross-task mentions appear as system entries on the tim
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: teamSlug,
 			projectId: projectSlug,
 			taskId: targetIdentifier.toLowerCase(),
 		},
@@ -107,7 +106,7 @@ test('status changes and cross-task mentions appear as system entries on the tim
 	// Post a second mention from the same source — should NOT add a duplicate
 	// "Linked from" entry.
 	const { apiBase } = getTestContext();
-	await apiBase(`/api/teams/${workspace!.team.id}/tasks/${sourceTaskId}/comments`, {
+	await apiBase(`/api/projects/${workspace!.internalSlug}/tasks/${sourceTaskId}/comments`, {
 		method: 'POST',
 		headers: workspace!.headers,
 		body: JSON.stringify({
@@ -118,13 +117,12 @@ test('status changes and cross-task mentions appear as system entries on the tim
 
 	// Trigger a refetch by navigating away and back.
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks',
-		params: { teamId: teamSlug, projectId: projectSlug },
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
 	});
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: teamSlug,
 			projectId: projectSlug,
 			taskId: targetIdentifier.toLowerCase(),
 		},
@@ -165,9 +163,8 @@ test('title renames appear as system entries on the timeline', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: teamSlug,
 			projectId: projectSlug,
 			taskId: taskIdentifier.toLowerCase(),
 		},
@@ -219,9 +216,8 @@ test('auto-unblock cascade renders as system attribution, not the patcher', asyn
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: teamSlug,
 			projectId: projectSlug,
 			taskId: downstreamIdentifier.toLowerCase(),
 		},
@@ -260,9 +256,8 @@ test('reassignments appear as system entries on the timeline', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: teamSlug,
 			projectId: projectSlug,
 			taskId: taskIdentifier.toLowerCase(),
 		},

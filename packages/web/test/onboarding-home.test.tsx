@@ -35,7 +35,7 @@ async function createBlankTeam(name: string): Promise<{ id: string; slug: string
 
 async function ensureIntake(teamSlug: string): Promise<{ task_identifier: string }> {
 	const { apiBase, token } = getTestContext();
-	const res = await apiBase(`/api/teams/${teamSlug}/onboarding-intake?ensure=true`, {
+	const res = await apiBase(`/api/projects/internal-${teamSlug}/onboarding-intake?ensure=true`, {
 		headers: { Authorization: `Bearer ${token}` },
 	});
 	expect(res.ok).toBe(true);
@@ -52,9 +52,9 @@ test('shows the welcome card with the intake stage pending until the user opts i
 		},
 	});
 
-	await findByTestId('home-welcome-card', { timeout: 15_000 });
-	await findByTestId('onboarding-progress', { timeout: 15_000 });
-	await findByTestId('onboarding-stage-intake', { timeout: 15_000 });
+	await findByTestId('home-welcome-card', undefined, { timeout: 15_000 });
+	await findByTestId('onboarding-progress', undefined, { timeout: 15_000 });
+	await findByTestId('onboarding-stage-intake', undefined, { timeout: 15_000 });
 });
 
 test('renders the Captain chat panel once the onboarding-intake ticket exists', async () => {
@@ -67,8 +67,8 @@ test('renders the Captain chat panel once the onboarding-intake ticket exists', 
 		},
 	});
 
-	await findByTestId('home-captain-intake', { timeout: 20_000 });
-	await findByTestId('home-captain-intake-skip', { timeout: 20_000 });
+	await findByTestId('home-captain-intake', undefined, { timeout: 20_000 });
+	await findByTestId('home-captain-intake-skip', undefined, { timeout: 20_000 });
 });
 
 test('Skip-questions button posts a system comment and hides itself for the session', async () => {
@@ -85,13 +85,13 @@ test('Skip-questions button posts a system comment and hides itself for the sess
 		},
 	});
 
-	const skipButton = await findByTestId('home-captain-intake-skip', { timeout: 20_000 });
+	const skipButton = await findByTestId('home-captain-intake-skip', undefined, { timeout: 20_000 });
 	fireEvent.click(skipButton);
 
 	await waitFor(
 		async () => {
 			const commentsRes = await ctx.apiBase(
-				`/api/teams/${teamSlug}/tasks/${taskIdentifier.toLowerCase()}/comments`,
+				`/api/projects/internal-${teamSlug}/tasks/${taskIdentifier.toLowerCase()}/comments`,
 				{ headers: { Authorization: `Bearer ${ctx.token}` } },
 			);
 			const body = (await commentsRes.json()) as {

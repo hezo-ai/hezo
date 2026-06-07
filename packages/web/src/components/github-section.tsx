@@ -16,22 +16,21 @@ import { Button } from './ui/button';
 import { Tooltip } from './ui/tooltip';
 
 interface GitHubSectionProps {
-	teamId: string;
 	projectId: string;
 }
 
-export function GitHubSection({ teamId, projectId }: GitHubSectionProps) {
-	const { data: connections = [], isLoading: connectionsLoading } = useOAuthConnections(teamId);
-	const { data: connectors = [] } = useMcpConnections(teamId);
-	const { data: repos } = useRepos(teamId, projectId);
-	const deleteRepo = useDeleteRepo(teamId, projectId);
+export function GitHubSection({ projectId }: GitHubSectionProps) {
+	const { data: connections = [], isLoading: connectionsLoading } = useOAuthConnections(projectId);
+	const { data: connectors = [] } = useMcpConnections(projectId);
+	const { data: repos } = useRepos(projectId);
+	const deleteRepo = useDeleteRepo(projectId);
 	const queryClient = useQueryClient();
 
 	const githubConnection = connections.find((c) => c.provider === 'github') ?? null;
 	const githubConnector = connectors.find((c) => c.name === 'github') ?? null;
-	const scopeStatusQuery = useConnectionScopeStatus(teamId, githubConnection?.id);
+	const scopeStatusQuery = useConnectionScopeStatus(projectId, githubConnection?.id);
 
-	const ensure = useEnsureConnector(teamId);
+	const ensure = useEnsureConnector(projectId);
 	const [pickerOpen, setPickerOpen] = useState(false);
 	const [deviceConnectorId, setDeviceConnectorId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
@@ -146,12 +145,12 @@ export function GitHubSection({ teamId, projectId }: GitHubSectionProps) {
 					onOpenChange={(open) => {
 						if (!open) setDeviceConnectorId(null);
 					}}
-					teamId={teamId}
+					projectId={projectId}
 					connectorId={deviceConnectorId}
 					providerLabel="GitHub"
 					onSuccess={() => {
-						queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'oauth-connections'] });
-						queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'mcp-connections'] });
+						queryClient.invalidateQueries({ queryKey: ['teams', projectId, 'oauth-connections'] });
+						queryClient.invalidateQueries({ queryKey: ['teams', projectId, 'mcp-connections'] });
 					}}
 				/>
 			)}
@@ -160,7 +159,6 @@ export function GitHubSection({ teamId, projectId }: GitHubSectionProps) {
 				<RepoPickerModal
 					open={pickerOpen}
 					onOpenChange={setPickerOpen}
-					teamId={teamId}
 					projectId={projectId}
 					oauthConnectionId={githubConnection.id}
 				/>

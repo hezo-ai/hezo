@@ -10,12 +10,12 @@ import { Button } from '../ui/button';
  * agents or customizations you've added. To copy another team's setup, save it
  * as a type first, then apply it here.
  */
-export function ApplyTypeSection({ teamId }: { teamId: string }) {
+export function ApplyTypeSection({ projectId }: { projectId: string }) {
 	const { data: me } = useMe();
 	const { data: templates } = useTeamTemplates();
 	const [templateId, setTemplateId] = useState('');
 	const [result, setResult] = useState<string | null>(null);
-	const apply = useApplyTeamType(teamId);
+	const apply = useApplyTeamType(projectId);
 
 	if (!me?.is_superuser) return null;
 

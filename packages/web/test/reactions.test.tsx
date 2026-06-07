@@ -4,7 +4,7 @@ import { getTestContext, renderApp } from './helpers/render';
 import { seedComment, seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 test('add and remove a reaction toggles the chip', async () => {
-	let ids: { teamSlug: string; projectSlug: string; taskIdentifier: string };
+	let ids: { projectSlug: string; taskIdentifier: string };
 	const { findByTestId, queryAllByTestId, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -13,7 +13,6 @@ test('add and remove a reaction toggles the chip', async () => {
 			const task = await seedTask(ws, project, { title: 'Reactions Task' });
 			await seedComment(ws, task, 'A comment to react to.');
 			ids = {
-				teamSlug: ws.team.slug,
 				projectSlug: project.slug,
 				taskIdentifier: task.identifier.toLowerCase(),
 			};
@@ -21,9 +20,8 @@ test('add and remove a reaction toggles the chip', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: ids!.teamSlug,
 			projectId: ids!.projectSlug,
 			taskId: ids!.taskIdentifier,
 		},
@@ -64,7 +62,7 @@ test('add and remove a reaction toggles the chip', async () => {
 });
 
 test('reactions seeded via API render on page load', async () => {
-	let ids: { teamSlug: string; projectSlug: string; taskIdentifier: string };
+	let ids: { projectSlug: string; taskIdentifier: string };
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -74,11 +72,10 @@ test('reactions seeded via API render on page load', async () => {
 			const comment = await seedComment(ws, task, 'Pre-seeded reaction comment.');
 			const { apiBase } = getTestContext();
 			await apiBase(
-				`/api/teams/${ws.team.id}/tasks/${task.id}/comments/${comment.id}/reactions/ack`,
+				`/api/projects/${ws.internalSlug}/tasks/${task.id}/comments/${comment.id}/reactions/ack`,
 				{ method: 'PUT', headers: ws.headers },
 			);
 			ids = {
-				teamSlug: ws.team.slug,
 				projectSlug: project.slug,
 				taskIdentifier: task.identifier.toLowerCase(),
 			};
@@ -86,9 +83,8 @@ test('reactions seeded via API render on page load', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: ids!.teamSlug,
 			projectId: ids!.projectSlug,
 			taskId: ids!.taskIdentifier,
 		},
@@ -108,7 +104,6 @@ test('reactions seeded via API render on page load', async () => {
 
 test('reacting does not create any new comments', async () => {
 	let ids: {
-		teamSlug: string;
 		projectSlug: string;
 		taskIdentifier: string;
 		taskId: string;
@@ -124,12 +119,11 @@ test('reacting does not create any new comments', async () => {
 			const task = await seedTask(ws, project, { title: 'Reactions Task' });
 			const comment = await seedComment(ws, task, 'A comment to react to.');
 			const { apiBase } = getTestContext();
-			const before = await apiBase(`/api/teams/${ws.team.id}/tasks/${task.id}/comments`, {
+			const before = await apiBase(`/api/projects/${ws.internalSlug}/tasks/${task.id}/comments`, {
 				headers: ws.headers,
 			});
 			beforeRows = ((await before.json()) as { data: Array<{ id: string }> }).data;
 			ids = {
-				teamSlug: ws.team.slug,
 				projectSlug: project.slug,
 				taskIdentifier: task.identifier.toLowerCase(),
 				taskId: task.id,
@@ -140,9 +134,8 @@ test('reacting does not create any new comments', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: ids!.teamSlug,
 			projectId: ids!.projectSlug,
 			taskId: ids!.taskIdentifier,
 		},
@@ -164,7 +157,7 @@ test('reacting does not create any new comments', async () => {
 	);
 
 	const { apiBase } = getTestContext();
-	const after = await apiBase(`/api/teams/${ids!.teamId}/tasks/${ids!.taskId}/comments`, {
+	const after = await apiBase(`/api/projects/${ids!.projectSlug}/tasks/${ids!.taskId}/comments`, {
 		headers: { Authorization: `Bearer ${getTestContext().token}` },
 	});
 	const afterRows = (

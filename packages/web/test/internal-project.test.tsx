@@ -1,39 +1,21 @@
+import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedWorkspace } from './helpers/seed';
 
-test('project list renders (Internal) with italic class', async () => {
-	const seeded = { teamSlug: '' };
-	const { findByRole, router } = await renderApp({
-		initialPath: '/',
-		seed: async () => {
-			const ws = await seedWorkspace();
-			seeded.teamSlug = ws.team.slug;
-		},
-	});
-
-	await router.navigate({
-		to: '/teams/$teamId/projects',
-		params: { teamId: seeded.teamSlug },
-	});
-
-	const heading = await findByRole('heading', { name: '(Internal)' }, { timeout: 10_000 });
-	expect(heading.className).toContain('italic');
-});
-
 test('sidebar exposes only Tasks and Container for the internal project', async () => {
-	const seeded = { teamSlug: '' };
+	const seeded = { projectSlug: '' };
 	const { findAllByRole, queryAllByRole, container, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			seeded.teamSlug = ws.team.slug;
+			seeded.projectSlug = ws.internalSlug;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks',
-		params: { teamId: seeded.teamSlug, projectId: 'internal' },
+		to: '/projects/$projectId/tasks',
+		params: { projectId: seeded.projectSlug },
 	});
 
 	// Wait for the project-scoped nav (incl. Container link, which only
@@ -44,26 +26,25 @@ test('sidebar exposes only Tasks and Container for the internal project', async 
 	const tasksLinks = queryAllByRole('link', { name: 'Tasks' });
 	expect(tasksLinks.length).toBeGreaterThan(0);
 
-	const docsLinks = queryAllByRole('link', { name: 'Documents' });
-	expect(docsLinks.length).toBe(0);
+	// Documents/Assets are dropped once the index resolves the project as internal.
+	await waitFor(() => expect(queryAllByRole('link', { name: 'Documents' }).length).toBe(0));
 
 	// No settings link pointing at the internal project.
 	const settingsLinks = queryAllByRole('link', { name: 'Settings' });
 	for (const link of settingsLinks) {
 		const href = link.getAttribute('href') ?? '';
-		expect(href.includes('/projects/internal/settings')).toBe(false);
+		expect(href.includes(`/projects/${seeded.projectSlug}/settings`)).toBe(false);
 	}
-	// Sanity check we actually have the rendered nav.
 	expect(container.querySelector('nav')).toBeTruthy();
 });
 
 test('banner appears on internal-project landing pages', async () => {
-	const seeded = { teamSlug: '' };
+	const seeded = { projectSlug: '' };
 	const { findByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			seeded.teamSlug = ws.team.slug;
+			seeded.projectSlug = ws.internalSlug;
 		},
 	});
 
@@ -71,44 +52,39 @@ test('banner appears on internal-project landing pages', async () => {
 		'Internal team coordination project, used for onboarding and team-level changes.';
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks',
-		params: { teamId: seeded.teamSlug, projectId: 'internal' },
+		to: '/projects/$projectId/tasks',
+		params: { projectId: seeded.projectSlug },
 	});
 	await findByText(bannerCopy, undefined, { timeout: 10_000 });
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/container',
-		params: { teamId: seeded.teamSlug, projectId: 'internal' },
+		to: '/projects/$projectId/container',
+		params: { projectId: seeded.projectSlug },
 	});
 	await findByText(bannerCopy, undefined, { timeout: 10_000 });
 });
 
 test('direct navigation to /documents and /settings redirects to /tasks', async () => {
-	const seeded = { teamSlug: '' };
+	const seeded = { projectSlug: '' };
 	const { router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			seeded.teamSlug = ws.team.slug;
+			seeded.projectSlug = ws.internalSlug;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/documents',
-		params: { teamId: seeded.teamSlug, projectId: 'internal' },
+		to: '/projects/$projectId/documents',
+		params: { projectId: seeded.projectSlug },
 	});
-	// Allow the redirect to land.
 	await new Promise((r) => setTimeout(r, 200));
-	expect(router.state.location.pathname).toMatch(
-		new RegExp(`/teams/${seeded.teamSlug}/projects/internal/tasks`),
-	);
+	expect(router.state.location.pathname).toBe(`/projects/${seeded.projectSlug}/tasks`);
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/settings',
-		params: { teamId: seeded.teamSlug, projectId: 'internal' },
+		to: '/projects/$projectId/settings',
+		params: { projectId: seeded.projectSlug },
 	});
 	await new Promise((r) => setTimeout(r, 200));
-	expect(router.state.location.pathname).toMatch(
-		new RegExp(`/teams/${seeded.teamSlug}/projects/internal/tasks`),
-	);
+	expect(router.state.location.pathname).toBe(`/projects/${seeded.projectSlug}/tasks`);
 });

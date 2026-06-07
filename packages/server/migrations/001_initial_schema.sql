@@ -301,7 +301,9 @@ CREATE TABLE projects (
 );
 
 CREATE INDEX idx_projects_team ON projects(team_id);
-CREATE UNIQUE INDEX idx_projects_team_slug ON projects(team_id, slug);
+-- Project slug is the single public handle for a project across the URL, API, and
+-- query layers; it must be unique instance-wide so a project resolves without a team.
+CREATE UNIQUE INDEX idx_projects_slug ON projects(slug);
 CREATE UNIQUE INDEX idx_projects_team_task_prefix ON projects(team_id, task_prefix);
 
 -------------------------------------------------------------------------------

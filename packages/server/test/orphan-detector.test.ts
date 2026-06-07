@@ -11,6 +11,7 @@ let db: PGlite;
 let app: Hono<Env>;
 let token: string;
 let teamId: string;
+let teamSlug: string;
 let agentId: string;
 
 beforeAll(async () => {
@@ -31,9 +32,11 @@ beforeAll(async () => {
 			template_id: teamTemplateId,
 		}),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const team = (await teamRes.json()).data as { id: string; slug: string };
+	teamId = team.id;
+	teamSlug = team.slug;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/internal-${teamSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
@@ -79,9 +82,10 @@ async function createTask(coId: string): Promise<string> {
 		name: 'Orphan Project',
 		description: 'Test project.',
 	});
-	const projectId = (await projectRes.json()).data.id;
+	const project = (await projectRes.json()).data;
+	const projectId = project.id;
 
-	const taskRes = await app.request(`/api/teams/${coId}/tasks`, {
+	const taskRes = await app.request(`/api/projects/${project.slug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ project_id: projectId, title: 'Orphan Task', assignee_id: agentId }),

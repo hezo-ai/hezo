@@ -5,7 +5,7 @@ import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
 test('task page renders run_failed system comment with agent link and error', async () => {
 	const seeded = {
 		teamId: '',
-		teamSlug: '',
+		projectSlug: '',
 		taskId: '',
 		agentId: '',
 		agentSlug: '',
@@ -23,8 +23,8 @@ test('task page renders run_failed system comment with agent link and error', as
 			});
 
 			seeded.teamId = ws.team.id;
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.agentId = captain.id;
 			seeded.agentSlug = captain.slug;
 
@@ -51,7 +51,7 @@ test('task page renders run_failed system comment with agent link and error', as
 			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 				const url = typeof input === 'string' ? input : (input as Request).url;
 				const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
-				if (method === 'GET' && /\/api\/teams\/[^/]+\/tasks\/[^/]+\/comments/.test(url)) {
+				if (method === 'GET' && /\/api\/projects\/[^/]+\/tasks\/[^/]+\/comments/.test(url)) {
 					return new Response(JSON.stringify({ data: [failedComment] }), {
 						status: 200,
 						headers: { 'Content-Type': 'application/json' },
@@ -63,8 +63,8 @@ test('task page renders run_failed system comment with agent link and error', as
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const failureComment = await findByTestId('run-failed-comment', undefined, {
@@ -77,6 +77,6 @@ test('task page renders run_failed system comment with agent link and error', as
 	const agentLink = (await findByTestId('run-failed-agent')) as HTMLAnchorElement;
 	expect(agentLink.textContent ?? '').toContain(`@${seeded.agentSlug}`);
 	expect(agentLink.getAttribute('href')).toMatch(
-		new RegExp(`/teams/${seeded.teamSlug}/agents/${seeded.agentSlug}$`),
+		new RegExp(`/projects/${seeded.projectSlug}/agents/${seeded.agentSlug}$`),
 	);
 });

@@ -39,28 +39,28 @@ export interface DeviceFlowPending {
 
 export type DeviceFlowPollResult = DeviceFlowSuccess | DeviceFlowPending;
 
-export function useOAuthConnections(teamId: string) {
+export function useOAuthConnections(projectId: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'oauth-connections'],
-		queryFn: () => api.get<OAuthConnection[]>(`/api/teams/${teamId}/oauth-connections`),
+		queryKey: ['projects', projectId, 'oauth-connections'],
+		queryFn: () => api.get<OAuthConnection[]>(`/api/projects/${projectId}/oauth-connections`),
 	});
 }
 
-export function useDeleteOAuthConnection(teamId: string) {
+export function useDeleteOAuthConnection(projectId: string) {
 	return useMutation({
-		mutationFn: (id: string) => api.delete(`/api/teams/${teamId}/oauth-connections/${id}`),
+		mutationFn: (id: string) => api.delete(`/api/projects/${projectId}/oauth-connections/${id}`),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'oauth-connections'],
+				queryKey: ['projects', projectId, 'oauth-connections'],
 			});
 		},
 	});
 }
 
-export function useAuthStart(teamId: string) {
+export function useAuthStart(projectId: string) {
 	return useMutation({
 		mutationFn: (connectorId: string) =>
-			api.post<AuthStartResult>(`/api/teams/${teamId}/auth-start`, {
+			api.post<AuthStartResult>(`/api/projects/${projectId}/auth-start`, {
 				connector_id: connectorId,
 			}),
 	});
@@ -72,10 +72,13 @@ export function useAuthStart(teamId: string) {
  * supports neither Dynamic Client Registration nor a redirect-friendly public
  * client), so it gets a device code the user enters at github.com/login/device.
  */
-export function useDeviceStart(teamId: string) {
+export function useDeviceStart(projectId: string) {
 	return useMutation({
 		mutationFn: (connectorId: string) =>
-			api.post<DeviceFlowStart>(`/api/teams/${teamId}/connectors/${connectorId}/device/start`, {}),
+			api.post<DeviceFlowStart>(
+				`/api/projects/${projectId}/connectors/${connectorId}/device/start`,
+				{},
+			),
 	});
 }
 
@@ -86,12 +89,12 @@ export function useDeviceStart(teamId: string) {
  * the pending/success discriminant to the caller's polling loop.
  */
 export async function pollDeviceFlow(
-	teamId: string,
+	projectId: string,
 	connectorId: string,
 	flowId: string,
 ): Promise<DeviceFlowPollResult> {
 	const token = api.getToken();
-	const res = await fetch(`/api/teams/${teamId}/connectors/${connectorId}/device/poll`, {
+	const res = await fetch(`/api/projects/${projectId}/connectors/${connectorId}/device/poll`, {
 		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json',
@@ -104,8 +107,8 @@ export async function pollDeviceFlow(
 		throw new Error(json.error?.message ?? `device poll failed (${res.status})`);
 	}
 	if (json.data?.status === 'success') {
-		queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'oauth-connections'] });
-		queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'mcp-connections'] });
+		queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'oauth-connections'] });
+		queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'mcp-connections'] });
 	}
 	return json.data as DeviceFlowPollResult;
 }
@@ -117,14 +120,14 @@ export async function pollDeviceFlow(
  * how to construct the connector — they just say "ensure github" then call
  * useAuthStart with the resulting id.
  */
-export function useEnsureConnector(teamId: string) {
+export function useEnsureConnector(projectId: string) {
 	return useMutation({
 		mutationFn: (providerId: string) =>
-			api.post<McpConnection>(`/api/teams/${teamId}/connectors/ensure`, {
+			api.post<McpConnection>(`/api/projects/${projectId}/connectors/ensure`, {
 				provider_id: providerId,
 			}),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'mcp-connections'] });
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'mcp-connections'] });
 		},
 	});
 }
@@ -135,11 +138,16 @@ export interface ScopeStatus {
 	required: string[];
 }
 
-export function useConnectionScopeStatus(teamId: string, connectionId: string | null | undefined) {
+export function useConnectionScopeStatus(
+	projectId: string,
+	connectionId: string | null | undefined,
+) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'oauth-connections', connectionId, 'scope-status'],
+		queryKey: ['projects', projectId, 'oauth-connections', connectionId, 'scope-status'],
 		queryFn: () =>
-			api.get<ScopeStatus>(`/api/teams/${teamId}/oauth-connections/${connectionId}/scope-status`),
+			api.get<ScopeStatus>(
+				`/api/projects/${projectId}/oauth-connections/${connectionId}/scope-status`,
+			),
 		enabled: !!connectionId,
 	});
 }

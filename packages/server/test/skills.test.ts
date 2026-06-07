@@ -20,6 +20,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let teamId: string;
+let projectSlug: string;
 let tempDataDir: string;
 
 function makeFetchResponse(body: string, status = 200): Response {
@@ -61,6 +62,7 @@ beforeAll(async () => {
 	});
 	const teamBody = await teamRes.json();
 	teamId = teamBody.data.id;
+	projectSlug = `internal-${teamBody.data.slug}`;
 });
 
 afterAll(async () => {
@@ -100,7 +102,7 @@ describe('Skills API', () => {
 	it('creates a skill by downloading from a URL', async () => {
 		stubFetch('# Git Best Practices\n\nDo good things.');
 
-		const res = await app.request(`/api/teams/${teamId}/skills`, {
+		const res = await app.request(`/api/projects/${projectSlug}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -120,18 +122,18 @@ describe('Skills API', () => {
 	it('lists skills', async () => {
 		stubFetch('# Content');
 
-		await app.request(`/api/teams/${teamId}/skills`, {
+		await app.request(`/api/projects/${projectSlug}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Alpha', source_url: 'https://example.com/a.md' }),
 		});
-		await app.request(`/api/teams/${teamId}/skills`, {
+		await app.request(`/api/projects/${projectSlug}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Beta', source_url: 'https://example.com/b.md' }),
 		});
 
-		const res = await app.request(`/api/teams/${teamId}/skills`, {
+		const res = await app.request(`/api/projects/${projectSlug}/skills`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -146,13 +148,13 @@ describe('Skills API', () => {
 	it('gets skill by slug with content', async () => {
 		stubFetch('# Code Review');
 
-		await app.request(`/api/teams/${teamId}/skills`, {
+		await app.request(`/api/projects/${projectSlug}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Code Review', source_url: 'https://example.com/cr.md' }),
 		});
 
-		const res = await app.request(`/api/teams/${teamId}/skills/code-review`, {
+		const res = await app.request(`/api/projects/${projectSlug}/skills/code-review`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -163,13 +165,13 @@ describe('Skills API', () => {
 	it('updates skill metadata', async () => {
 		stubFetch('# X');
 
-		await app.request(`/api/teams/${teamId}/skills`, {
+		await app.request(`/api/projects/${projectSlug}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Original', source_url: 'https://example.com/x.md' }),
 		});
 
-		const res = await app.request(`/api/teams/${teamId}/skills/original`, {
+		const res = await app.request(`/api/projects/${projectSlug}/skills/original`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Updated Name', description: 'New desc' }),
@@ -183,14 +185,14 @@ describe('Skills API', () => {
 	it('syncs a skill by re-downloading', async () => {
 		stubFetch('# Version 1');
 
-		await app.request(`/api/teams/${teamId}/skills`, {
+		await app.request(`/api/projects/${projectSlug}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Sync Test', source_url: 'https://example.com/s.md' }),
 		});
 
 		stubFetch('# Version 2');
-		const res = await app.request(`/api/teams/${teamId}/skills/sync-test/sync`, {
+		const res = await app.request(`/api/projects/${projectSlug}/skills/sync-test/sync`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: '{}',
@@ -203,26 +205,26 @@ describe('Skills API', () => {
 	it('deletes a skill', async () => {
 		stubFetch('# Del');
 
-		await app.request(`/api/teams/${teamId}/skills`, {
+		await app.request(`/api/projects/${projectSlug}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Delete Me', source_url: 'https://example.com/d.md' }),
 		});
 
-		const res = await app.request(`/api/teams/${teamId}/skills/delete-me`, {
+		const res = await app.request(`/api/projects/${projectSlug}/skills/delete-me`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 
-		const getRes = await app.request(`/api/teams/${teamId}/skills/delete-me`, {
+		const getRes = await app.request(`/api/projects/${projectSlug}/skills/delete-me`, {
 			headers: authHeader(token),
 		});
 		expect(getRes.status).toBe(404);
 	});
 
 	it('returns 404 for nonexistent skill', async () => {
-		const res = await app.request(`/api/teams/${teamId}/skills/does-not-exist`, {
+		const res = await app.request(`/api/projects/${projectSlug}/skills/does-not-exist`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(404);
@@ -232,7 +234,7 @@ describe('Skills API', () => {
 		const huge = 'x'.repeat(600 * 1024);
 		stubFetch(huge);
 
-		const res = await app.request(`/api/teams/${teamId}/skills`, {
+		const res = await app.request(`/api/projects/${projectSlug}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Too Big', source_url: 'https://example.com/big.md' }),
@@ -243,7 +245,7 @@ describe('Skills API', () => {
 	it('rejects download when 404', async () => {
 		stubFetch('Not found', 404);
 
-		const res = await app.request(`/api/teams/${teamId}/skills`, {
+		const res = await app.request(`/api/projects/${projectSlug}/skills`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Missing', source_url: 'https://example.com/missing.md' }),
@@ -292,7 +294,7 @@ describe('skills DB operations', () => {
 			new Response('# Test skill content', { status: 200, headers: { 'content-length': '22' } }),
 		);
 
-		const res = await app.request(`/api/teams/${teamId}/skills`, {
+		const res = await app.request(`/api/projects/${projectSlug}/skills`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', ...authHeader(token) },
 			body: JSON.stringify({
@@ -318,7 +320,7 @@ describe('skills DB operations', () => {
 	});
 
 	it('lists skills from DB', async () => {
-		const res = await app.request(`/api/teams/${teamId}/skills`, {
+		const res = await app.request(`/api/projects/${projectSlug}/skills`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);

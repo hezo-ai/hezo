@@ -47,7 +47,7 @@ afterEach(() => {
 
 describe('repos CRUD', () => {
 	it('lists repos (empty initially)', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/repos`, {
+		const res = await app.request(`/api/projects/${projectId}/repos`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -56,7 +56,7 @@ describe('repos CRUD', () => {
 	});
 
 	it('returns INVALID_URL for bad URLs', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/repos`, {
+		const res = await app.request(`/api/projects/${projectId}/repos`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ short_name: 'bad', url: 'not-a-url' }),
@@ -67,7 +67,7 @@ describe('repos CRUD', () => {
 	});
 
 	it('returns INVALID_REQUEST for missing fields', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/repos`, {
+		const res = await app.request(`/api/projects/${projectId}/repos`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ short_name: 'x' }),
@@ -84,7 +84,7 @@ describe('repos CRUD', () => {
 		);
 		const repoId = insertResult.rows[0].id;
 
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/repos/${repoId}`, {
+		const res = await app.request(`/api/projects/${projectId}/repos/${repoId}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
@@ -95,7 +95,7 @@ describe('repos CRUD', () => {
 
 	it('returns 404 when deleting non-existent repo', async () => {
 		const res = await app.request(
-			`/api/teams/${teamId}/projects/${projectId}/repos/00000000-0000-0000-0000-000000000000`,
+			`/api/projects/${projectId}/repos/00000000-0000-0000-0000-000000000000`,
 			{ method: 'DELETE', headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);

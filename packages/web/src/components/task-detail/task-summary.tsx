@@ -9,7 +9,7 @@ type UpdateTaskMutation = ReturnType<typeof useUpdateTask>;
 
 interface TaskSummaryProps {
 	task: Task;
-	teamId: string;
+	projectId: string;
 	taskProjectSlug: string;
 	updateTask: UpdateTaskMutation;
 }
@@ -19,7 +19,7 @@ interface TaskSummaryProps {
  * Both edit inline against `useUpdateTask`. Status changes do not run through
  * here — `progress_summary` and `rules` are plain text fields.
  */
-export function TaskSummary({ task, teamId, taskProjectSlug, updateTask }: TaskSummaryProps) {
+export function TaskSummary({ task, projectId, taskProjectSlug, updateTask }: TaskSummaryProps) {
 	const [editingSummary, setEditingSummary] = useState(false);
 	const [summaryText, setSummaryText] = useState('');
 	const [editingRules, setEditingRules] = useState(false);
@@ -58,7 +58,7 @@ export function TaskSummary({ task, teamId, taskProjectSlug, updateTask }: TaskS
 				{editingSummary ? (
 					<div className="flex flex-col gap-2">
 						<MentionTextarea
-							teamId={teamId}
+							projectId={projectId}
 							projectSlug={taskProjectSlug}
 							value={summaryText}
 							onChange={(e) => setSummaryText(e.target.value)}
@@ -82,7 +82,7 @@ export function TaskSummary({ task, teamId, taskProjectSlug, updateTask }: TaskS
 						</div>
 					</div>
 				) : task.progress_summary ? (
-					<MarkdownProse teamId={teamId} projectSlug={taskProjectSlug}>
+					<MarkdownProse projectId={projectId} projectSlug={taskProjectSlug}>
 						{task.progress_summary}
 					</MarkdownProse>
 				) : (
@@ -121,7 +121,7 @@ export function TaskSummary({ task, teamId, taskProjectSlug, updateTask }: TaskS
 				{editingRules ? (
 					<div className="flex flex-col gap-2">
 						<MentionTextarea
-							teamId={teamId}
+							projectId={projectId}
 							projectSlug={taskProjectSlug}
 							value={rulesText}
 							onChange={(e) => setRulesText(e.target.value)}
@@ -144,7 +144,7 @@ export function TaskSummary({ task, teamId, taskProjectSlug, updateTask }: TaskS
 						</div>
 					</div>
 				) : task.rules ? (
-					<MarkdownProse teamId={teamId} projectSlug={taskProjectSlug}>
+					<MarkdownProse projectId={projectId} projectSlug={taskProjectSlug}>
 						{task.rules}
 					</MarkdownProse>
 				) : (

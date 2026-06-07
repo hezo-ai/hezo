@@ -5,11 +5,11 @@ type Page = import('@playwright/test').Page;
 
 async function createProject(
 	page: Page,
-	teamId: string,
+	teamSlug: string,
 	token: string,
 	name: string,
 ): Promise<{ id: string; slug: string }> {
-	const res = await createProjectAndClearPlanning(page, teamId, token, {
+	const res = await createProjectAndClearPlanning(page, teamSlug, token, {
 		name,
 		description: 'Assignee-status test project.',
 	});
@@ -18,17 +18,17 @@ async function createProject(
 
 async function createTask(
 	page: Page,
-	teamId: string,
+	projectSlug: string,
 	token: string,
 	data: { project_id: string; title: string; assignee_id: string },
 ): Promise<{ id: string; identifier: string }> {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	const res = await page.request.post(`/api/teams/${teamId}/tasks`, { headers, data });
+	const res = await page.request.post(`/api/projects/${projectSlug}/tasks`, { headers, data });
 	return ((await res.json()) as { data: { id: string; identifier: string } }).data;
 }
 
-async function forceAgentsActive(page: Page, teamSlug: string) {
-	await page.route(`**/api/teams/${teamSlug}/agents`, async (route) => {
+async function forceAgentsActive(page: Page, projectSlug: string) {
+	await page.route(`**/api/projects/${projectSlug}/agents`, async (route) => {
 		const response = await route.fetch();
 		const body = (await response.json()) as { data: Array<{ runtime_status: string }> };
 		for (const agent of body.data) agent.runtime_status = 'active';
@@ -40,8 +40,8 @@ async function forceAgentsActive(page: Page, teamSlug: string) {
 	});
 }
 
-async function setHasActiveRun(page: Page, teamSlug: string, taskId: string, value: boolean) {
-	await page.route(`**/api/teams/${teamSlug}/tasks/*`, async (route) => {
+async function setHasActiveRun(page: Page, projectSlug: string, taskId: string, value: boolean) {
+	await page.route(`**/api/projects/${projectSlug}/tasks/*`, async (route) => {
 		const response = await route.fetch();
 		const body = (await response.json()) as { data?: { id?: string; has_active_run?: boolean } };
 		if (body.data && body.data.id === taskId) body.data.has_active_run = value;
@@ -61,19 +61,17 @@ test.describe('Task detail — assignee status is ticket-scoped (mobile viewport
 		await page.setViewportSize({ width: 375, height: 720 });
 
 		const { team, agents, token } = sharedWorkspace;
-		const project = await createProject(page, team.id, token, uniqueName('Mobile Quiet'));
-		const task = await createTask(page, team.id, token, {
+		const project = await createProject(page, team.slug, token, uniqueName('Mobile Quiet'));
+		const task = await createTask(page, project.slug, token, {
 			project_id: project.id,
 			title: 'Mobile Ticket',
 			assignee_id: agents[0].id,
 		});
 
-		await forceAgentsActive(page, team.slug);
-		await setHasActiveRun(page, team.slug, task.id, false);
+		await forceAgentsActive(page, project.slug);
+		await setHasActiveRun(page, project.slug, task.id, false);
 
-		await page.goto(
-			`/teams/${team.slug}/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}`,
-		);
+		await page.goto(`/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}`);
 		await waitForPageLoad(page);
 
 		const assignee = page.getByTestId('task-assignee');

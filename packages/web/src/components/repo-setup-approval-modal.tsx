@@ -17,18 +17,17 @@ export function RepoSetupApprovalModal({
 	onOpenChange,
 }: RepoSetupApprovalModalProps) {
 	const navigate = useNavigate();
-	const { data: tickets = [], isLoading } = useBlockedTickets(approval.team_id, approval.id, open);
-
 	const projectName = approval.payload_project_name ?? 'this project';
 	const projectSlug = approval.payload_project_slug;
-	const teamSlug = approval.team_slug;
+	// blocked-tickets is team-scoped server-side; address it via the project slug
+	// (the public handle) rather than the now-internal team id.
+	const { data: tickets = [], isLoading } = useBlockedTickets(projectSlug, approval.id, open);
 
 	function openTicket(ticket: { project_slug: string; identifier: string; comment_id: string }) {
 		onOpenChange(false);
 		navigate({
-			to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+			to: '/projects/$projectId/tasks/$taskId',
 			params: {
-				teamId: teamSlug,
 				projectId: ticket.project_slug,
 				taskId: ticket.identifier.toLowerCase(),
 			},
@@ -40,8 +39,8 @@ export function RepoSetupApprovalModal({
 		if (!projectSlug) return;
 		onOpenChange(false);
 		navigate({
-			to: '/teams/$teamId/projects/$projectId/settings',
-			params: { teamId: teamSlug, projectId: projectSlug },
+			to: '/projects/$projectId/settings',
+			params: { projectId: projectSlug },
 		});
 	}
 
