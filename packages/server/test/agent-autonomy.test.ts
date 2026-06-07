@@ -5,7 +5,6 @@ import { createTestContext, destroyTestContext, type ServerTestContext } from '.
 
 let ctx: ServerTestContext;
 let teamId: string;
-let internalSlug: string;
 let projectId: string;
 let projectSlug: string;
 let engineerAgentId: string;
@@ -37,10 +36,9 @@ beforeAll(async () => {
 	});
 	const teamData = ((await teamRes.json()) as any).data;
 	teamId = teamData.id;
-	internalSlug = `internal-${teamData.slug}`;
 
 	// Get agents
-	const agentsRes = await ctx.app.request(`/api/projects/${internalSlug}/agents`, {
+	const agentsRes = await ctx.app.request(`/api/projects/${projectSlug}/agents`, {
 		method: 'GET',
 		headers: authHeader(ctx.token),
 	});
@@ -254,7 +252,7 @@ describe('task: sub-tasks with parent_task_id', () => {
 
 describe('approval: skill_proposal type', () => {
 	it('can create a skill_proposal approval', async () => {
-		const res = await ctx.app.request(`/api/projects/${internalSlug}/approvals`, {
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/approvals`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

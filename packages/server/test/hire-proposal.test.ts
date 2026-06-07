@@ -12,7 +12,6 @@ let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
-let internalSlug: string;
 let internalProjectId: string;
 let captainId: string;
 let engineerId: string;
@@ -57,14 +56,13 @@ beforeAll(async () => {
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
-	internalSlug = `internal-${team.slug}`;
 	const internalProject = await db.query<{ id: string }>(
 		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true LIMIT 1`,
 		[teamId],
 	);
 	internalProjectId = internalProject.rows[0].id;
 
-	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data;
@@ -78,7 +76,7 @@ afterAll(async () => {
 
 describe('MCP tool update_hire_proposal', () => {
 	it('lets the Captain revise a pending hire proposal', async () => {
-		const onboardRes = await app.request(`/api/projects/${internalSlug}/agents/onboard`, {
+		const onboardRes = await app.request(`/api/projects/${projectSlug}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -117,7 +115,7 @@ describe('MCP tool update_hire_proposal', () => {
 	});
 
 	it('rejects non-Captain agents', async () => {
-		const onboardRes = await app.request(`/api/projects/${internalSlug}/agents/onboard`, {
+		const onboardRes = await app.request(`/api/projects/${projectSlug}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Sales Lead', role_description: 'x' }),
@@ -141,7 +139,7 @@ describe('MCP tool update_hire_proposal', () => {
 	});
 
 	it('rejects revisions to resolved proposals', async () => {
-		const onboardRes = await app.request(`/api/projects/${internalSlug}/agents/onboard`, {
+		const onboardRes = await app.request(`/api/projects/${projectSlug}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Ops Lead', role_description: 'x' }),

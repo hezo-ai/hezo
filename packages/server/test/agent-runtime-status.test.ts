@@ -29,9 +29,9 @@ beforeAll(async () => {
 	});
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	const internalSlug = `internal-${teamData.slug}`;
+	const projectSlug = `internal-${teamData.slug}`;
 
-	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;

@@ -27,7 +27,6 @@ let adminToken: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let teamSlug: string;
-let internalSlug: string;
 let internalProjectId: string;
 let agentId: string;
 
@@ -50,9 +49,8 @@ beforeAll(async () => {
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
-	internalSlug = `internal-${teamSlug}`;
 
-	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(adminToken),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
@@ -267,7 +265,7 @@ describe('verifyToken with API key', () => {
 	let apiKey: string;
 
 	beforeAll(async () => {
-		const res = await app.request(`/api/projects/${internalSlug}/api-keys`, {
+		const res = await app.request(`/api/projects/${projectSlug}/api-keys`, {
 			method: 'POST',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'test-key' }),

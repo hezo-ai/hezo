@@ -46,8 +46,8 @@ beforeAll(async () => {
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
-	const internalSlug = `internal-${team.slug}`;
-	const agentRes = await ctx.app.request(`/api/projects/${internalSlug}/agents`, {
+	const projectSlug = `internal-${team.slug}`;
+	const agentRes = await ctx.app.request(`/api/projects/${projectSlug}/agents`, {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Egress Agent' }),

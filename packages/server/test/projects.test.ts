@@ -10,7 +10,6 @@ let db: PGlite;
 let token: string;
 let teamId: string;
 let teamSlug: string;
-let internalSlug: string;
 
 const VALID_DESCRIPTION = 'A backend API that serves authenticated requests for the main app.';
 
@@ -28,7 +27,6 @@ beforeAll(async () => {
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
-	internalSlug = `internal-${teamSlug}`;
 });
 
 async function listTeamProjects(): Promise<
@@ -119,7 +117,7 @@ describe('projects CRUD', () => {
 	});
 
 	it('rejects a missing description at the POST /projects route', async () => {
-		const res = await app.request(`/api/projects/${internalSlug}/projects`, {
+		const res = await app.request(`/api/projects/${projectSlug}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Missing description' }),
@@ -128,7 +126,7 @@ describe('projects CRUD', () => {
 	});
 
 	it('rejects a blank description at the POST /projects route', async () => {
-		const res = await app.request(`/api/projects/${internalSlug}/projects`, {
+		const res = await app.request(`/api/projects/${projectSlug}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Blank description', description: '   ' }),

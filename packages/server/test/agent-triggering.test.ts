@@ -10,7 +10,6 @@ let db: PGlite;
 let app: Hono<Env>;
 let token: string;
 let teamId: string;
-let internalSlug: string;
 let projectId: string;
 let projectSlug: string;
 let agentId: string;
@@ -37,7 +36,6 @@ beforeAll(async () => {
 	});
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	internalSlug = `internal-${teamData.slug}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Trigger Project',
@@ -48,7 +46,7 @@ beforeAll(async () => {
 	projectSlug = projectData.slug;
 
 	// Get the Captain agent
-	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data;
@@ -255,7 +253,7 @@ describe('agent triggering', () => {
 		const triggeringTaskId = (await taskRes.json()).data.id;
 
 		// Look up architect agent
-		const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const architect = (await agentsRes.json()).data.find((a: any) => a.slug === 'architect');
@@ -297,7 +295,7 @@ describe('agent triggering', () => {
 		});
 		const taskId = (await taskRes.json()).data.id;
 
-		const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const allAgents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -337,7 +335,7 @@ describe('agent triggering', () => {
 		});
 		const taskId = (await taskRes.json()).data.id;
 
-		const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const architect = (await agentsRes.json()).data.find((a: any) => a.slug === 'architect');
@@ -364,7 +362,7 @@ describe('agent triggering', () => {
 	it('does not create a mention wakeup when an agent mentions itself', async () => {
 		// Assign to architect (not Captain) so there's no Captain-assignment wakeup to coalesce
 		// with the subsequent mention wakeup, which would mask the test.
-		const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const architect = ((await agentsRes.json()).data as Array<{ id: string; slug: string }>).find(

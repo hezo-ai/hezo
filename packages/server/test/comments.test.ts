@@ -12,7 +12,6 @@ let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let teamSlug: string;
-let internalSlug: string;
 let internalProjectId: string;
 let projectId: string;
 let projectSlug: string;
@@ -35,7 +34,6 @@ beforeAll(async () => {
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
-	internalSlug = `internal-${teamSlug}`;
 
 	const internalProject = await db.query<{ id: string }>(
 		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
@@ -51,7 +49,7 @@ beforeAll(async () => {
 	projectId = projectData.id;
 	projectSlug = projectData.slug;
 
-	const agentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	const agentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Comment Bot' }),

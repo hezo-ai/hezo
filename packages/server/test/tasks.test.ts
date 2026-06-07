@@ -12,7 +12,6 @@ let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let teamSlug: string;
-let internalSlug: string;
 let projectId: string;
 let projectSlug: string;
 let agentId: string;
@@ -32,7 +31,6 @@ beforeAll(async () => {
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
-	internalSlug = `internal-${teamSlug}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Main Project',
@@ -42,7 +40,7 @@ beforeAll(async () => {
 	projectId = projectBody.id;
 	projectSlug = projectBody.slug;
 
-	const agentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	const agentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Test Agent' }),
@@ -470,7 +468,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('filters by multiple assignee_ids when comma-separated', async () => {
-		const secondAgentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+		const secondAgentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Second Agent' }),
@@ -741,7 +739,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('creates an assignment wakeup when PATCH actually changes the assignee', async () => {
-		const secondAgentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+		const secondAgentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Reassign Target Agent' }),
@@ -890,7 +888,7 @@ describe('Internal project assignee restriction', () => {
 	beforeAll(async () => {
 		const opsResult = await db.query<{ id: string }>(
 			`SELECT id FROM projects WHERE team_id = $1 AND slug = $2`,
-			[teamId, internalSlug],
+			[teamId, projectSlug],
 		);
 		internalProjectId = opsResult.rows[0].id;
 
@@ -1022,7 +1020,7 @@ describe('Internal project assignee restriction', () => {
 			headers: authHeader(token),
 		});
 		const detail = (await detailRes.json()).data;
-		expect(detail.project_slug).toBe(internalSlug);
+		expect(detail.project_slug).toBe(projectSlug);
 	});
 });
 

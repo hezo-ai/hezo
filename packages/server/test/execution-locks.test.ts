@@ -9,7 +9,6 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let teamId: string;
-let internalSlug: string;
 let projectId: string;
 let projectSlug: string;
 let taskId: string;
@@ -36,7 +35,6 @@ beforeAll(async () => {
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
-	internalSlug = `internal-${team.slug}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Lock Test Project',
@@ -46,7 +44,7 @@ beforeAll(async () => {
 	projectId = projectData.id;
 	projectSlug = projectData.slug;
 
-	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data;

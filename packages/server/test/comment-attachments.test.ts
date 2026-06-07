@@ -17,7 +17,6 @@ let masterKeyManager: MasterKeyManager;
 let dataDir: string;
 let teamId: string;
 let teamSlug: string;
-let internalSlug: string;
 let projectId: string;
 let projectSlug: string;
 let taskId: string;
@@ -69,7 +68,6 @@ beforeAll(async () => {
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
-	internalSlug = `internal-${teamSlug}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Main',
@@ -79,7 +77,7 @@ beforeAll(async () => {
 	projectId = projectData.id;
 	projectSlug = projectData.slug;
 
-	const agentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	const agentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Attach Bot' }),

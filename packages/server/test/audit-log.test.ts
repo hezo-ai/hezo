@@ -14,7 +14,6 @@ let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let teamSlug: string;
-let internalSlug: string;
 let projectId: string;
 let projectSlug: string;
 
@@ -33,7 +32,6 @@ beforeAll(async () => {
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
-	internalSlug = `internal-${teamSlug}`;
 
 	const project = await createTestProject(db, teamId, { name: 'Audit Project' });
 	const projectData = (await project.json()).data;
@@ -57,7 +55,7 @@ describe('audit log', () => {
 			details: { title: 'Test' },
 		});
 
-		const res = await app.request(`/api/projects/${internalSlug}/team-audit-log`, {
+		const res = await app.request(`/api/projects/${projectSlug}/team-audit-log`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -80,12 +78,9 @@ describe('audit log', () => {
 			entityId: null,
 		});
 
-		const res = await app.request(
-			`/api/projects/${internalSlug}/team-audit-log?entity_type=agent`,
-			{
-				headers: authHeader(token),
-			},
-		);
+		const res = await app.request(`/api/projects/${projectSlug}/team-audit-log?entity_type=agent`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.every((e: Record<string, unknown>) => e.entity_type === 'agent')).toBe(true);
@@ -101,7 +96,7 @@ describe('audit log', () => {
 			entityId: null,
 		});
 
-		const res = await app.request(`/api/projects/${internalSlug}/team-audit-log?action=deleted`, {
+		const res = await app.request(`/api/projects/${projectSlug}/team-audit-log?action=deleted`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -112,7 +107,7 @@ describe('audit log', () => {
 
 	it('filters by date range', async () => {
 		const future = new Date(Date.now() + 86400000).toISOString();
-		const res = await app.request(`/api/projects/${internalSlug}/team-audit-log?from=${future}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/team-audit-log?from=${future}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -133,12 +128,9 @@ describe('audit log', () => {
 			});
 		}
 
-		const res = await app.request(
-			`/api/projects/${internalSlug}/team-audit-log?page=1&per_page=2`,
-			{
-				headers: authHeader(token),
-			},
-		);
+		const res = await app.request(`/api/projects/${projectSlug}/team-audit-log?page=1&per_page=2`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.length).toBeLessThanOrEqual(2);
@@ -171,7 +163,7 @@ describe('audit log', () => {
 		);
 
 		const filteredRes = await app.request(
-			`/api/projects/${internalSlug}/team-audit-log?project_id=${projectId}`,
+			`/api/projects/${projectSlug}/team-audit-log?project_id=${projectId}`,
 			{ headers: authHeader(token) },
 		);
 		const filteredBody = await filteredRes.json();

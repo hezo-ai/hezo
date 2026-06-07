@@ -271,9 +271,9 @@ describe('team creation with agent types', () => {
 			}),
 		});
 		const teamData = (await teamRes.json()).data;
-		const internalSlug = `internal-${teamData.slug}`;
+		const projectSlug = `internal-${teamData.slug}`;
 
-		const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;

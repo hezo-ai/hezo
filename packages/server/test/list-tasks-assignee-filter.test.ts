@@ -11,7 +11,6 @@ let token: string;
 
 let teamId: string;
 let teamSlug: string;
-let internalSlug: string;
 let projectId: string;
 let projectSlug: string;
 let captainId: string;
@@ -40,9 +39,8 @@ beforeAll(async () => {
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
-	internalSlug = `internal-${teamSlug}`;
 
-	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;

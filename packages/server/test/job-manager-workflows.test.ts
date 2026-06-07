@@ -17,7 +17,6 @@ let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
-let internalSlug: string;
 let projectId: string;
 let projectSlug: string;
 let taskId: string;
@@ -76,7 +75,6 @@ beforeAll(async () => {
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
-	internalSlug = `internal-${team.slug}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Workflow Test Project',
@@ -86,7 +84,7 @@ beforeAll(async () => {
 	projectId = projectData.id;
 	projectSlug = projectData.slug;
 
-	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
@@ -491,7 +489,7 @@ describe('JobManager workflow methods', () => {
 				[taskId],
 			);
 
-			const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+			const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 				headers: authHeader(token),
 			});
 			const agents = (await agentsRes.json()).data;
@@ -1708,7 +1706,7 @@ describe('JobManager workflow methods', () => {
 			const manager = createJobManager();
 
 			// Simulate an active run on the task (from a different agent).
-			const otherAgentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+			const otherAgentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({ title: 'Other Agent For Serialisation' }),
