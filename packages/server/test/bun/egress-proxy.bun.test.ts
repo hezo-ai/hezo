@@ -40,7 +40,9 @@ beforeAll(async () => {
 	});
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	const projectSlug = `internal-${teamData.slug}`;
+	const projectSlug = (
+		await (await createTestProject(db, teamId, { name: 'Setup Project' })).json()
+	).data.slug;
 	const agentRes = await ctx.app.request(`/api/projects/${projectSlug}/agents`, {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },

@@ -23,7 +23,7 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import { SshAgentServer, sshPublicKeyToBlob } from '../src/services/ssh-agent/server';
 import { generateTeamSSHKey } from '../src/services/ssh-keys';
 import { safeClose } from './helpers';
-import { createTestApp } from './helpers/app';
+import { createTestApp, createTestProject } from './helpers/app';
 
 const dockerAvailable = await checkDocker();
 const skipReason =
@@ -59,7 +59,9 @@ beforeAll(async () => {
 	});
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	const projectSlug = `internal-${teamData.slug}`;
+	const projectSlug = (
+		await (await createTestProject(db, teamId, { name: 'Setup Project' })).json()
+	).data.slug;
 
 	const agentRes = await ctx.app.request(`/api/projects/${projectSlug}/agents`, {
 		method: 'POST',

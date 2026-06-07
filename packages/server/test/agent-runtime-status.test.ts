@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { setAgentIdleIfNoActiveRuns } from '../src/services/agent-runtime-status';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, createTestProject } from './helpers/app';
 
 let db: PGlite;
 let app: Hono<Env>;
@@ -29,7 +29,9 @@ beforeAll(async () => {
 	});
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	const projectSlug = `internal-${teamData.slug}`;
+	const projectSlug = (
+		await (await createTestProject(db, teamId, { name: 'Setup Project' })).json()
+	).data.slug;
 
 	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),

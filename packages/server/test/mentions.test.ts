@@ -35,6 +35,8 @@ beforeAll(async () => {
 	const otherTeam = await makeTeam('Other Mentions Co');
 	otherInternalSlug = `internal-${otherTeam.slug}`;
 
+	projectSlug = (await (await createTestProject(db, teamId, { name: 'Setup Project' })).json()).data
+		.slug;
 	await app.request(`/api/projects/${projectSlug}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },

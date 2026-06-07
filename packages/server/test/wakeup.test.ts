@@ -33,6 +33,8 @@ beforeAll(async () => {
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
 
+	projectSlug = (await (await createTestProject(db, teamId, { name: 'Setup Project' })).json()).data
+		.slug;
 	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
 	});

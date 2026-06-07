@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, createTestProject } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -41,6 +41,8 @@ afterAll(async () => {
 
 describe('POST /teams/:teamId/agents/onboard', () => {
 	it('creates a hire approval and Captain ticket, but no agent yet', async () => {
+		projectSlug = (await (await createTestProject(db, teamId, { name: 'Setup Project' })).json())
+			.data.slug;
 		const res = await app.request(`/api/projects/${projectSlug}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },

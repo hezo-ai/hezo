@@ -11,7 +11,7 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import { type HezoCA, loadOrCreateCA } from '../src/services/egress/ca';
 import { EgressProxy } from '../src/services/egress/proxy';
 import { safeClose } from './helpers';
-import { createTestApp } from './helpers/app';
+import { createTestApp, createTestProject } from './helpers/app';
 
 let db: PGlite;
 let masterKeyManager: MasterKeyManager;
@@ -46,7 +46,9 @@ beforeAll(async () => {
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
-	const projectSlug = `internal-${team.slug}`;
+	const projectSlug = (
+		await (await createTestProject(db, teamId, { name: 'Setup Project' })).json()
+	).data.slug;
 	const agentRes = await ctx.app.request(`/api/projects/${projectSlug}/agents`, {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },

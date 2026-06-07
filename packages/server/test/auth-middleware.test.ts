@@ -19,7 +19,7 @@ import {
 	createTestApp,
 	finalizeAgentRun,
 	mintAgentToken,
-} from './helpers/app';
+, createTestProject } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -50,6 +50,8 @@ beforeAll(async () => {
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
 
+	projectSlug = (await (await createTestProject(db, teamId, { name: 'Setup Project' })).json()).data
+		.slug;
 	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(adminToken),
 	});

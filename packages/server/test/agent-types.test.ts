@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, createTestProject } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -271,7 +271,9 @@ describe('team creation with agent types', () => {
 			}),
 		});
 		const teamData = (await teamRes.json()).data;
-		const projectSlug = `internal-${teamData.slug}`;
+		const projectSlug = (
+			await (await createTestProject(db, teamId, { name: 'Setup Project' })).json()
+		).data.slug;
 
 		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),

@@ -38,6 +38,8 @@ beforeAll(async () => {
 	teamId = teamData.id;
 
 	// Get agents
+	projectSlug = (await (await createTestProject(ctx.db, teamId, { name: 'Setup Project' })).json())
+		.data.slug;
 	const agentsRes = await ctx.app.request(`/api/projects/${projectSlug}/agents`, {
 		method: 'GET',
 		headers: authHeader(ctx.token),
