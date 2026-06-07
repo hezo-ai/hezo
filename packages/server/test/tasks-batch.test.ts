@@ -10,6 +10,7 @@ import { authHeader, createTestApp, createTestProject, mintAgentToken } from './
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
+let projectSlug: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let projectId: string;

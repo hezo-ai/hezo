@@ -8,6 +8,7 @@ import { authHeader, createTestApp } from './helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
+let projectSlug: string;
 let startupTemplateId: string;
 
 beforeAll(async () => {

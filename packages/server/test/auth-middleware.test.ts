@@ -24,6 +24,7 @@ import {
 let app: Hono<Env>;
 let db: PGlite;
 let adminToken: string;
+let projectSlug: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let teamSlug: string;

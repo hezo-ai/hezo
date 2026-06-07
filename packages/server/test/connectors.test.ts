@@ -24,6 +24,7 @@ import { type FakeMcpServer, startFakeMcpServer } from './helpers/fake-mcp-serve
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
+let projectSlug: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let teamSlug: string;
