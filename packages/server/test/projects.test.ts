@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -13,6 +13,27 @@ let teamId: string;
 let teamSlug: string;
 
 const VALID_DESCRIPTION = 'A backend API that serves authenticated requests for the main app.';
+
+// Under 1:1, each project owns its own team, so creation goes through the direct
+// `POST /api/projects` API (which provisions the team + project together).
+async function createProject(opts: {
+	name: string;
+	description?: string;
+	template_id?: string;
+	task_prefix?: string;
+	initial_prd?: string;
+	docker_base_image?: string;
+}): Promise<{ status: number; json: () => Promise<{ data: Record<string, unknown> }> }> {
+	const res = await app.request('/api/projects', {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ description: VALID_DESCRIPTION, ...opts }),
+	});
+	return {
+		status: res.status,
+		json: () => res.json() as Promise<{ data: Record<string, unknown> }>,
+	};
+}
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -42,7 +63,8 @@ async function listTeamProjects(): Promise<
 		team_slug: string;
 		is_internal: boolean;
 	}>;
-	return all.filter((p) => p.team_id === teamId && !p.is_internal);
+	// Each project owns its own team (1:1); list every user-facing project.
+	return all.filter((p) => !p.is_internal);
 }
 
 afterAll(async () => {
@@ -51,7 +73,7 @@ afterAll(async () => {
 
 describe('projects CRUD', () => {
 	it('creates a project with description and opens a planning task for the Captain', async () => {
-		const res = await createTestProject(db, teamId, {
+		const res = await createProject({
 			name: 'Backend API',
 			description: VALID_DESCRIPTION,
 		});
@@ -59,14 +81,14 @@ describe('projects CRUD', () => {
 		const body = await res.json();
 		expect(body.data.name).toBe('Backend API');
 		expect(body.data.slug).toBe('backend-api');
-		expect(body.data.team_id).toBe(teamId);
+		expect(body.data.team_id).toBeDefined();
 		expect(body.data.description).toBe(VALID_DESCRIPTION);
 
 		const captainResult = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
 			 WHERE m.team_id = $1 AND ma.slug = 'captain' LIMIT 1`,
-			[teamId],
+			[body.data.team_id],
 		);
 		const captainId = captainResult.rows[0]?.id;
 		expect(captainId).toBeDefined();
@@ -80,7 +102,8 @@ describe('projects CRUD', () => {
 			priority: string;
 			labels: string[] | string;
 		}>(
-			'SELECT id, title, description, assignee_id, status, priority, labels FROM tasks WHERE project_id = $1',
+			`SELECT id, title, description, assignee_id, status, priority, labels FROM tasks
+			 WHERE project_id = $1 AND labels @> '["planning"]'::jsonb`,
 			[body.data.id],
 		);
 		expect(taskResult.rows.length).toBe(1);
@@ -97,7 +120,7 @@ describe('projects CRUD', () => {
 	});
 
 	it('defaults docker_base_image to the bundled agent-base image when not supplied', async () => {
-		const res = await createTestProject(db, teamId, {
+		const res = await createProject({
 			name: 'Default Image Project',
 			description: VALID_DESCRIPTION,
 		});
@@ -107,7 +130,7 @@ describe('projects CRUD', () => {
 	});
 
 	it('honors an explicit docker_base_image from the request body', async () => {
-		const res = await createTestProject(db, teamId, {
+		const res = await createProject({
 			name: 'Custom Image Project',
 			description: VALID_DESCRIPTION,
 			docker_base_image: 'python:3.12-slim',
@@ -118,7 +141,7 @@ describe('projects CRUD', () => {
 	});
 
 	it('rejects a missing description at the POST /projects route', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/projects`, {
+		const res = await app.request(`/api/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Missing description' }),
@@ -127,7 +150,7 @@ describe('projects CRUD', () => {
 	});
 
 	it('rejects a blank description at the POST /projects route', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/projects`, {
+		const res = await app.request(`/api/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Blank description', description: '   ' }),
@@ -167,11 +190,11 @@ describe('projects CRUD', () => {
 	});
 
 	it('generates unique slugs for same-named projects', async () => {
-		const res1 = await createTestProject(db, teamId, {
+		const res1 = await createProject({
 			name: 'Same Name',
 			description: VALID_DESCRIPTION,
 		});
-		const res2 = await createTestProject(db, teamId, {
+		const res2 = await createProject({
 			name: 'Same Name',
 			description: VALID_DESCRIPTION,
 		});
@@ -184,7 +207,7 @@ describe('projects CRUD', () => {
 	});
 
 	it('deletes a project with no open tasks', async () => {
-		const createRes = await createTestProject(db, teamId, {
+		const createRes = await createProject({
 			name: 'Temp Project',
 			description: VALID_DESCRIPTION,
 		});
@@ -206,7 +229,7 @@ describe('projects CRUD', () => {
 describe('initial PRD upload', () => {
 	it('saves initial_prd as a project doc and references it in the planning task', async () => {
 		const prdContent = '# My Product\n\n## Overview\nA tool for managing widgets.';
-		const res = await createTestProject(db, teamId, {
+		const res = await createProject({
 			name: 'PRD Upload Project',
 			description: VALID_DESCRIPTION,
 			initial_prd: prdContent,
@@ -231,7 +254,7 @@ describe('initial PRD upload', () => {
 	});
 
 	it('does not create initial-prd.md when initial_prd is not provided', async () => {
-		const res = await createTestProject(db, teamId, {
+		const res = await createProject({
 			name: 'No PRD Project',
 			description: VALID_DESCRIPTION,
 		});
@@ -252,7 +275,7 @@ describe('initial PRD upload', () => {
 	});
 
 	it('ignores empty/whitespace-only initial_prd', async () => {
-		const res = await createTestProject(db, teamId, {
+		const res = await createProject({
 			name: 'Empty PRD Project',
 			description: VALID_DESCRIPTION,
 			initial_prd: '   ',
@@ -270,7 +293,7 @@ describe('initial PRD upload', () => {
 
 describe('default project docs', () => {
 	it('seeds architecture-guidelines.md for every new project', async () => {
-		const res = await createTestProject(db, teamId, {
+		const res = await createProject({
 			name: 'Defaults Project',
 			description: VALID_DESCRIPTION,
 		});
@@ -287,7 +310,7 @@ describe('default project docs', () => {
 	});
 
 	it('seeds the architecture-guidelines.md default alongside an initial PRD', async () => {
-		const res = await createTestProject(db, teamId, {
+		const res = await createProject({
 			name: 'Defaults With PRD Project',
 			description: VALID_DESCRIPTION,
 			initial_prd: '# PRD\n\nSome requirements.',

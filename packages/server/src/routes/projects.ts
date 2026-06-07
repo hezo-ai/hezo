@@ -1,5 +1,12 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AuthType, ContainerStatus, WakeupSource, wsRoom } from '@hezo/shared';
+import {
+	AgentAdminStatus,
+	AuthType,
+	CAPTAIN_AGENT_SLUG,
+	ContainerStatus,
+	WakeupSource,
+	wsRoom,
+} from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
@@ -18,8 +25,9 @@ import {
 	stopContainerGracefully,
 	teardownContainer,
 } from '../services/containers';
+import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import type { JobManager } from '../services/job-manager';
-import { createProjectIntake } from '../services/project-intake';
+import { createProjectWithPlanningTask } from '../services/project-create';
 import { createTeam } from '../services/teams';
 import { createWakeup } from '../services/wakeup';
 
@@ -175,10 +183,12 @@ projectsRoutes.get('/projects', async (c) => {
 	return ok(c, result.rows);
 });
 
-// Projects-primary creation: a project owns its own team. "Create a project"
-// provisions a fresh team (roster from the chosen type), named after the
-// project, and opens the project intake in that team's Internal project — the
-// new team's Captain runs intake/planning. See .dev/per-project-teams.md.
+// Projects-primary creation: a project owns its own team (1:1). "Create a
+// project" provisions a fresh team (roster from the chosen team-type template),
+// then directly creates the project, its planning task, and an initial CEO
+// coherence/setup task that the planning task is blocked on. The separate
+// CEO-assisted flow (project intake) is used when the operator wants the CEO to
+// help shape the project first. See .dev/per-project-teams.md.
 // Superuser-gated, like team creation (the Admin owns the instance roster).
 projectsRoutes.post('/projects', async (c) => {
 	const denied = requireSuperuser(c);
@@ -191,10 +201,21 @@ projectsRoutes.post('/projects', async (c) => {
 		template_id?: string;
 		task_prefix?: string;
 		initial_prd?: string;
+		docker_base_image?: string;
 	}>();
 
 	if (!body.name?.trim()) return err(c, 'INVALID_REQUEST', 'name is required', 400);
 	if (!body.description?.trim()) return err(c, 'INVALID_REQUEST', 'description is required', 400);
+
+	// A project is always created from a team-type template — the Blank template
+	// (Captain only) when the caller doesn't choose one.
+	let templateId = body.template_id;
+	if (!templateId) {
+		const blank = await db.query<{ id: string }>('SELECT id FROM team_templates WHERE name = $1', [
+			'Blank',
+		]);
+		templateId = blank.rows[0]?.id;
+	}
 
 	// 1. Create the project's dedicated team (its roster), named after the project.
 	const auth = c.get('auth');
@@ -211,39 +232,89 @@ projectsRoutes.post('/projects', async (c) => {
 		{
 			name: body.name.trim(),
 			description: body.description.trim(),
-			templateId: body.template_id,
+			templateId,
 			creatorUserId: auth.type === AuthType.Admin ? auth.userId : undefined,
 		},
 	);
 
-	// 2. Open the project intake on the new team (its Captain runs intake/planning).
 	const prefixResult = await resolveProjectTaskPrefix(db, team.id, body.task_prefix, body.name);
 	if (!prefixResult.ok) return err(c, prefixResult.code, prefixResult.message, prefixResult.status);
 
-	const intake = await createProjectIntake(
-		db,
-		team.id,
-		{
-			name: body.name.trim(),
-			description: body.description.trim(),
-			taskPrefix: prefixResult.prefix,
-			initialPrd: body.initial_prd?.trim() || null,
-		},
-		c.get('wsManager'),
+	const captain = await db.query<{ id: string }>(
+		`SELECT ma.id FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status`,
+		[team.id, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
 	);
-	if (!intake) {
-		return err(c, 'INTERNAL', 'New team is missing its Captain or Internal project', 500);
+	const captainMemberId = captain.rows[0]?.id;
+	if (!captainMemberId) return err(c, 'INTERNAL', 'New team is missing its Captain', 500);
+
+	const slug = await uniqueSlug(toSlug(body.name), async (s) => {
+		const r = await db.query('SELECT 1 FROM projects WHERE slug = $1', [s]);
+		return r.rows.length > 0;
+	});
+
+	const actorMemberId =
+		auth.type === AuthType.Admin && !auth.isSuperuser
+			? ((
+					await db.query<{ id: string }>(
+						`SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id
+						 WHERE mu.user_id = $1 AND m.team_id = $2`,
+						[auth.userId, team.id],
+					)
+				).rows[0]?.id ?? null)
+			: null;
+
+	const { project, planningTask } = await createProjectWithPlanningTask(db, {
+		teamId: team.id,
+		captainMemberId,
+		name: body.name.trim(),
+		slug,
+		taskPrefix: prefixResult.prefix,
+		description: body.description.trim(),
+		initialPrd: body.initial_prd?.trim() || null,
+		dockerBaseImage: body.docker_base_image,
+		events: c.get('events'),
+		actorType: 'admin',
+		actorMemberId,
+	});
+
+	const wsManager = c.get('wsManager');
+	if (wsManager) {
+		broadcastChange(c, wsRoom.team(team.id), 'projects', 'INSERT', project);
+		broadcastChange(c, wsRoom.team(team.id), 'tasks', 'INSERT', planningTask);
 	}
+
+	// The CEO runs an initial coherence/setup pass; the planning task is blocked
+	// until it completes.
+	const coherenceTaskId = await enqueueTeamCoherenceReviewTask(db, team.id, 'initial');
+	if (coherenceTaskId) {
+		await db.query(
+			`INSERT INTO task_dependencies (task_id, blocked_by_task_id)
+			 VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+			[planningTask.id, coherenceTaskId],
+		);
+	}
+
+	trackBackground(
+		createWakeup(db, captainMemberId, team.id, WakeupSource.Assignment, {
+			task_id: planningTask.id as string,
+		}).catch((e) => log.error('Failed to wake Captain for planning:', e)),
+	);
+
+	trackBackground(
+		provisionContainer(buildContainerDeps(c), project as unknown as ProjectRow, team.slug).catch(
+			(e) => log.error('Failed to provision container for new project:', e),
+		),
+	);
 
 	return ok(
 		c,
 		{
-			team_id: team.id,
+			...project,
 			team_slug: team.slug,
-			intake_task_id: intake.intakeTaskId,
-			intake_task_identifier: intake.intakeTaskIdentifier,
-			project_slug: intake.projectSlug,
-			approval_id: intake.approvalId,
+			planning_task_id: planningTask.id,
+			planning_task_identifier: planningTask.identifier,
 		},
 		201,
 	);
