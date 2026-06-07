@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AgentEffort, CEO_AGENT_SLUG } from '@hezo/shared';
+import { AgentEffort, CEO_AGENT_SLUG, INSTANCE_AGENT_SLUGS } from '@hezo/shared';
 import agentSummaries from './agent-summaries.json' with { type: 'json' };
 
 const summaries: {
@@ -343,7 +343,12 @@ Approval is conveyed via comment, not status. From **Review**, the ticket either
 	);
 	const startupTemplateId = startupResult.rows[0].id;
 
-	for (const def of defs) {
+	// Instance-level agents (CEO, Coach) live in HQ and are never part of a team
+	// template's roster.
+	const templateDefs = defs.filter(
+		(d) => !(INSTANCE_AGENT_SLUGS as readonly string[]).includes(d.slug),
+	);
+	for (const def of templateDefs) {
 		await db.query(
 			`INSERT INTO team_template_agent_types (team_template_id, agent_type_id, reports_to_slug, sort_order)
 			 VALUES ($1, (SELECT id FROM agent_types WHERE slug = $2), $3, $4)
