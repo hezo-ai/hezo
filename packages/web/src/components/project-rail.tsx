@@ -1,9 +1,9 @@
 import { Link } from '@tanstack/react-router';
-import { Plus } from 'lucide-react';
+import { Building2, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useMe } from '../hooks/use-me';
-import { useAllVisibleProjects } from '../hooks/use-projects';
+import { useAllVisibleProjects, useHqProject } from '../hooks/use-projects';
 import { CreateProjectWithTeamDialog } from './create-project-with-team-dialog';
 import { Avatar, avatarColorFromString, getInitials } from './ui/avatar';
 import { Tooltip } from './ui/tooltip';
@@ -18,8 +18,10 @@ import { Tooltip } from './ui/tooltip';
 export function ProjectRail() {
 	const { data: me } = useMe();
 	const { projects } = useAllVisibleProjects();
+	const hq = useHqProject();
 	const active = useActiveProject();
 	const [createOpen, setCreateOpen] = useState(false);
+	const hqActive = !!hq && active?.slug === hq.slug;
 
 	return (
 		<>
@@ -48,6 +50,23 @@ export function ProjectRail() {
 						);
 					})}
 				</div>
+				{hq && (
+					<div className="shrink-0 pt-2 mt-2 w-full flex justify-center border-t border-border">
+						<Tooltip content={hq.name} side="right">
+							<Link
+								to="/projects/$projectId"
+								params={{ projectId: hq.slug }}
+								aria-label={hq.name}
+								data-testid="project-rail-hq"
+								className={`w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-bg-elevated border border-border bg-bg transition-colors ${
+									hqActive ? 'ring-2 ring-primary ring-offset-1 ring-offset-bg-subtle' : ''
+								}`}
+							>
+								<Building2 className="w-4 h-4" />
+							</Link>
+						</Tooltip>
+					</div>
+				)}
 				{me?.is_superuser && (
 					<div className="shrink-0 pt-2 mt-2 w-full flex justify-center border-t border-border">
 						<Tooltip content="New project" side="right">

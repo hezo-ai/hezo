@@ -44,8 +44,11 @@ async function agentSlugs(projectSlug: string): Promise<string[]> {
 	const res = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
 	});
-	const agents = (await res.json()).data as { slug: string }[];
-	return agents.map((a) => a.slug).sort();
+	const agents = (await res.json()).data as { slug: string; is_instance?: boolean }[];
+	return agents
+		.filter((a) => !a.is_instance)
+		.map((a) => a.slug)
+		.sort();
 }
 
 describe('save team as a type (template snapshot)', () => {

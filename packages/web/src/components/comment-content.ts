@@ -89,6 +89,7 @@ export interface RunContent {
 	run_id?: string;
 	agent_id?: string;
 	agent_title?: string;
+	agent_slug?: string;
 }
 
 export interface ActionContent {

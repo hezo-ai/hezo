@@ -57,17 +57,26 @@ export interface CreateProjectWithPlanningInput {
 	actorMemberId?: string | null;
 }
 
-export interface CreateProjectWithPlanningResult {
+export interface CreateProjectResult {
 	project: Record<string, unknown>;
-	planningTask: Record<string, unknown>;
 	/** True when this was the first user-facing project at insert time (defer Captain planning wakeup). */
 	deferCaptainPlanningWake: boolean;
 }
 
-export async function createProjectWithPlanningTask(
+export interface CreateProjectWithPlanningResult extends CreateProjectResult {
+	planningTask: Record<string, unknown>;
+}
+
+/**
+ * Create the project row, its task counter, and seed docs (incl. any initial
+ * PRD). The planning task is created separately by `createPlanningTask` so a
+ * caller can slot other tickets (e.g. the CEO coherence review) ahead of it and
+ * control identifier ordering. Emits the project.created audit event.
+ */
+export async function createProject(
 	db: PGlite,
 	input: CreateProjectWithPlanningInput,
-): Promise<CreateProjectWithPlanningResult> {
+): Promise<CreateProjectResult> {
 	const projectName = input.name.trim();
 	const projectDescription = input.description.trim();
 	const initialPrd = input.initialPrd?.trim() || null;
@@ -116,16 +125,50 @@ export async function createProjectWithPlanningTask(
 			);
 		}
 
-		const { number: taskNumber, identifier } = await allocateTaskIdentifier(
-			db,
-			project.id as string,
-		);
+		return { project, deferCaptainPlanningWake };
+	});
 
-		const initialPrdNote = initialPrd
-			? `\n\n> **Note:** The admin has provided an initial requirements document saved as \`initial-prd.md\` in this project's docs. Direct the Researcher and Product Lead to consult this document as a starting point for research and the formal PRD.`
-			: '';
+	input.events?.emit({
+		type: 'project.created',
+		teamId: input.teamId,
+		projectId: result.project.id as string,
+		actorType: input.actorType ?? 'admin',
+		actorMemberId: input.actorMemberId ?? null,
+		name: result.project.name as string,
+		slug: result.project.slug as string,
+	});
 
-		const taskBody = `## Draft the execution plan for this new project
+	return result;
+}
+
+/**
+ * Create the Captain's execution-plan ticket for a project. Allocates the next
+ * project task identifier — call this after any ticket that should precede it
+ * (e.g. the CEO coherence review, so it lands first).
+ */
+export async function createPlanningTask(
+	db: PGlite,
+	input: {
+		teamId: string;
+		project: Record<string, unknown>;
+		captainMemberId: string;
+		name: string;
+		description: string;
+		initialPrd?: string | null;
+	},
+): Promise<{ planningTask: Record<string, unknown> }> {
+	const projectName = input.name.trim();
+	const projectDescription = input.description.trim();
+	const initialPrd = input.initialPrd?.trim() || null;
+	const projectId = input.project.id as string;
+
+	const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, projectId);
+
+	const initialPrdNote = initialPrd
+		? `\n\n> **Note:** The admin has provided an initial requirements document saved as \`initial-prd.md\` in this project's docs. Direct the Researcher and Product Lead to consult this document as a starting point for research and the formal PRD.`
+		: '';
+
+	const taskBody = `## Draft the execution plan for this new project
 
 A new project has just been created. Please read the description below carefully and produce an execution plan.
 
@@ -148,38 +191,44 @@ ${projectDescription}${initialPrdNote}
 
 Container provisioning for this project is in progress. Focus on planning while the environment comes up — implementation agents can start work as soon as their tickets are ready.`;
 
-		const taskResult = await db.query(
-			`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier,
-			                     title, description, status, priority, labels)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::task_status, $9::task_priority, $10::jsonb)
-			 RETURNING *`,
-			[
-				input.teamId,
-				project.id,
-				input.captainMemberId,
-				taskNumber,
-				identifier,
-				`Draft execution plan for "${projectName}"`,
-				taskBody,
-				TaskStatus.Backlog,
-				TaskPriority.High,
-				JSON.stringify(['planning']),
-			],
-		);
-		const planningTask = taskResult.rows[0] as Record<string, unknown>;
+	const taskResult = await db.query(
+		`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier,
+		                     title, description, status, priority, labels)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::task_status, $9::task_priority, $10::jsonb)
+		 RETURNING *`,
+		[
+			input.teamId,
+			projectId,
+			input.captainMemberId,
+			taskNumber,
+			identifier,
+			`Draft execution plan for "${projectName}"`,
+			taskBody,
+			TaskStatus.Backlog,
+			TaskPriority.High,
+			JSON.stringify(['planning']),
+		],
+	);
+	return { planningTask: taskResult.rows[0] as Record<string, unknown> };
+}
 
-		return { project, planningTask, deferCaptainPlanningWake };
-	});
-
-	input.events?.emit({
-		type: 'project.created',
+/**
+ * Create a project together with its planning task (planning ticket first).
+ * Callers that need another ticket (e.g. the CEO coherence review) to take the
+ * first identifier should compose `createProject` + `createPlanningTask` instead.
+ */
+export async function createProjectWithPlanningTask(
+	db: PGlite,
+	input: CreateProjectWithPlanningInput,
+): Promise<CreateProjectWithPlanningResult> {
+	const { project, deferCaptainPlanningWake } = await createProject(db, input);
+	const { planningTask } = await createPlanningTask(db, {
 		teamId: input.teamId,
-		projectId: result.project.id as string,
-		actorType: input.actorType ?? 'admin',
-		actorMemberId: input.actorMemberId ?? null,
-		name: result.project.name as string,
-		slug: result.project.slug as string,
+		project,
+		captainMemberId: input.captainMemberId,
+		name: input.name,
+		description: input.description,
+		initialPrd: input.initialPrd,
 	});
-
-	return result;
+	return { project, planningTask, deferCaptainPlanningWake };
 }

@@ -9,6 +9,7 @@ import {
 	authHeader,
 	createTestApp,
 	createTestProject,
+	instanceCeoId,
 	instanceCoachId,
 	mintAgentToken,
 	projectSlugForTeamSlug,
@@ -1028,6 +1029,54 @@ describe('MCP tool: set_agent_summary and set_team_summary', () => {
 			teamId,
 		]);
 		expect(row.rows[0].summary).toBe('A team that ships software together.');
+	});
+});
+
+describe('MCP coordination: HQ agents act inside project teams', () => {
+	async function callToolAs(
+		tokenStr: string,
+		toolName: string,
+		args: Record<string, unknown>,
+	): Promise<{ updated?: boolean; error?: string }> {
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(tokenStr), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: { name: toolName, arguments: args },
+				id: 1,
+			}),
+		});
+		const body = (await res.json()) as {
+			result: { content: Array<{ type: string; text: string }> };
+		};
+		return JSON.parse(body.result.content[0].text);
+	}
+
+	it('lets the CEO set the team summary while running cross-team', async () => {
+		const ceoId = await instanceCeoId(db);
+		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, ceoId, teamId);
+		const result = await callToolAs(ceoToken, 'set_team_summary', {
+			team_id: teamId,
+			summary: 'Coherence-written team summary.',
+		});
+		expect(result.error).toBeUndefined();
+		expect(result.updated).toBe(true);
+		const row = await db.query<{ summary: string }>('SELECT summary FROM teams WHERE id = $1', [
+			teamId,
+		]);
+		expect(row.rows[0].summary).toBe('Coherence-written team summary.');
+	});
+
+	it('denies a non-coordinator agent from setting the team summary', async () => {
+		const { token: workerToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+		const result = await callToolAs(workerToken, 'set_team_summary', {
+			team_id: teamId,
+			summary: 'Should be rejected.',
+		});
+		expect(result.error).toContain('Access denied');
+		expect(result.updated).toBeUndefined();
 	});
 });
 

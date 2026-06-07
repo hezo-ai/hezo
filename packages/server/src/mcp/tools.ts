@@ -27,7 +27,7 @@ import { z } from 'zod';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
-import { isCoach } from '../lib/agent-roles';
+import { isCoach, isVirtualHqMemberInTeam } from '../lib/agent-roles';
 import { upsertProjectAsset } from '../lib/asset-name';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { trackBackground } from '../lib/background';
@@ -2185,7 +2185,7 @@ export function registerTools(
 			if (denied) return { error: denied };
 
 			const allowed =
-				(await isCoach(db, auth)) || (await isCaptainOfTeam(db, auth, args.team_id as string));
+				(await isCoach(db, auth)) || (await canCoordinateTeam(db, auth, args.team_id as string));
 			if (!allowed) {
 				return {
 					error: 'Access denied: only the Coach or the Captain can update system prompts',
@@ -2281,7 +2281,7 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
-			if (!(await isCaptainOfTeam(db, auth, args.team_id as string))) {
+			if (!(await canCoordinateTeam(db, auth, args.team_id as string))) {
 				return { error: 'Access denied: only the Captain can update the team summary' };
 			}
 
@@ -2314,7 +2314,7 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
-			if (!(await isCaptainOfTeam(db, auth, args.team_id as string))) {
+			if (!(await canCoordinateTeam(db, auth, args.team_id as string))) {
 				return { error: 'Access denied: only the Captain can update agent team contexts' };
 			}
 
@@ -3084,8 +3084,15 @@ export function registerTools(
 	return [...registeredTools];
 }
 
-async function isCaptainOfTeam(db: PGlite, auth: AuthInfo, teamId: string): Promise<boolean> {
+/**
+ * Whether the caller may perform team-coordination writes (summaries, team
+ * contexts, prompts) for `teamId`. True for the team's own Captain and for any
+ * HQ virtual member running inside the team — the latter covers the CEO/Coach
+ * doing cross-team setup and coherence work.
+ */
+async function canCoordinateTeam(db: PGlite, auth: AuthInfo, teamId: string): Promise<boolean> {
 	if (auth.type !== AuthType.Agent) return false;
+	if (await isVirtualHqMemberInTeam(db, auth, teamId)) return true;
 	const r = await db.query<{ slug: string }>(
 		`SELECT ma.slug FROM member_agents ma
 		 JOIN members m ON m.id = ma.id

@@ -377,7 +377,7 @@ Current date: {{current_date}}
 				headers: authHeader(token),
 			},
 		);
-		const agents = ((await agentsRes.json()) as any).data;
+		const agents = ((await agentsRes.json()) as any).data.filter((a: any) => !a.is_instance);
 
 		for (const agent of agents) {
 			const prompt = await getAgentPrompt(agent.id);
@@ -448,7 +448,7 @@ Current date: {{current_date}}
 		);
 		const agents = ((await agentsRes.json()) as any).data;
 		const nonCeo = agents.filter(
-			(a: any) => a.slug !== 'captain' && a.slug !== 'architect' && a.slug !== 'coach',
+			(a: any) => !a.is_instance && a.slug !== 'captain' && a.slug !== 'architect',
 		);
 		for (const agent of nonCeo) {
 			expect(await getAgentPrompt(agent.id)).toContain('{{reports_to}}');

@@ -22,6 +22,21 @@ test('the project rail lists an avatar for every visible project across teams', 
 	await findByTestId(`project-rail-avatar-${betaSlug}`, undefined, { timeout: 15_000 });
 });
 
+test('the HQ project is pinned at the bottom of the rail and opens on click', async () => {
+	const { findByTestId, user, router } = await renderApp({
+		initialPath: '/home',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			await seedProject(ws, { name: 'Alpha' });
+		},
+	});
+
+	const hq = await findByTestId('project-rail-hq', undefined, { timeout: 15_000 });
+	expect(hq.getAttribute('href')).toBe('/projects/hq');
+	await user.click(hq);
+	await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/projects\/hq(\/|$)/));
+});
+
 test('clicking a project avatar opens that project menu', async () => {
 	let ws!: SeededWorkspace;
 	let slug = '';

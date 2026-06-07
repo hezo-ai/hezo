@@ -29,6 +29,8 @@ export interface Agent {
 	model_override_provider: string | null;
 	model_override_model: string | null;
 	created_at: string;
+	/** True for HQ agents (CEO/Coach) surfaced as virtual members of this project. */
+	is_instance?: boolean;
 }
 
 export interface AgentSystemPromptDoc {

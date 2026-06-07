@@ -45,6 +45,60 @@ test('the project menu leads with Inbox, lists the project pages, and has a Team
 	expect(queryByTestId('project-sidebar-back')).toBeNull();
 });
 
+test('the Team section collapses and expands, hiding the agent list', async () => {
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+	const { container, findByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Operations' });
+			projectSlug = project.slug;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
+	});
+	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	await waitFor(() => expect(within(getNav(container)).queryByText('Captain')).toBeTruthy(), {
+		timeout: 20_000,
+	});
+
+	const collapse = within(getNav(container)).getByRole('button', { name: 'Collapse' });
+	await user.click(collapse);
+	await waitFor(() => expect(within(getNav(container)).queryByText('Captain')).toBeNull());
+
+	const expand = within(getNav(container)).getByRole('button', { name: 'Expand' });
+	await user.click(expand);
+	await waitFor(() => expect(within(getNav(container)).queryByText('Captain')).toBeTruthy());
+});
+
+test('HQ agents appear in the Team section as global members linking to the HQ project', async () => {
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+	const { container, findByTestId, findByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Operations' });
+			projectSlug = project.slug;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
+	});
+	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+
+	// The CEO (an HQ agent) surfaces as a virtual member linking to its HQ page.
+	const ceo = await findByText('CEO', undefined, { timeout: 20_000 });
+	const link = ceo.closest('a');
+	expect(link?.getAttribute('href')).toBe('/projects/hq/agents/ceo');
+});
+
 test("the project menu persists across the project's team pages and disappears off-project", async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';

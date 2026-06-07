@@ -8,6 +8,7 @@ import {
 	useHeartbeatRun,
 } from '../../hooks/use-heartbeat-runs';
 import { useRunLogs } from '../../hooks/use-run-logs';
+import { agentPageParams } from '../agent-link';
 import { LazyMount } from '../lazy-mount';
 import { LogViewer } from '../log-viewer';
 import { TerminateRunButton } from '../terminate-run-button';
@@ -25,6 +26,7 @@ export function RunComment({ comment, projectId, inline }: Props) {
 	const runId = comment.content?.run_id ?? '';
 	const agentId = comment.content?.agent_id ?? '';
 	const agentTitle = comment.content?.agent_title ?? 'Agent';
+	const agentSlug = comment.content?.agent_slug ?? '';
 
 	if (!projectId || !runId || !agentId) {
 		return <p className="text-xs text-text-subtle italic">Run reference missing.</p>;
@@ -38,6 +40,7 @@ export function RunComment({ comment, projectId, inline }: Props) {
 					runId={runId}
 					agentId={agentId}
 					agentTitle={agentTitle}
+					agentSlug={agentSlug}
 					createdAt={comment.created_at}
 					inline={inline}
 				/>
@@ -51,6 +54,7 @@ function RunCommentBody({
 	runId,
 	agentId,
 	agentTitle,
+	agentSlug,
 	createdAt,
 	inline,
 }: {
@@ -58,6 +62,7 @@ function RunCommentBody({
 	runId: string;
 	agentId: string;
 	agentTitle: string;
+	agentSlug: string;
 	createdAt: string;
 	inline?: boolean;
 }) {
@@ -77,6 +82,11 @@ function RunCommentBody({
 			: null;
 	const [expanded, setExpanded] = useState(false);
 	const logRegionId = `run-comment-log-${runId}`;
+	// HQ agents link to their canonical page in the HQ project; others to this
+	// project. Falls back to the run's member id when an older comment lacks a slug.
+	const agentLinkParams = agentSlug
+		? agentPageParams(projectId, agentSlug)
+		: { projectId, agentId };
 
 	// Single non-wrapping row: the agent title and status block keep their width,
 	// the timestamp truncates first under pressure, and the status block clips
@@ -84,7 +94,14 @@ function RunCommentBody({
 	// any width, including once the log opens and a scrollbar narrows the row.
 	const summaryRow = (
 		<span className="flex flex-1 items-center gap-x-2 min-w-0 overflow-hidden">
-			<span className="text-xs text-text-muted shrink-0 whitespace-nowrap">{agentTitle} run</span>
+			<Link
+				to="/projects/$projectId/agents/$agentId"
+				params={agentLinkParams}
+				onClick={(e) => e.stopPropagation()}
+				className="text-xs text-text-muted shrink-0 whitespace-nowrap hover:text-text hover:underline"
+			>
+				{agentTitle} run
+			</Link>
 			{completed && (
 				<span
 					className="inline-flex items-center gap-1.5 text-xs text-text-subtle shrink-0 whitespace-nowrap"
@@ -160,7 +177,7 @@ function RunCommentBody({
 								</span>
 							</span>
 						}
-						emptyState={getRunWaitingMessage(status)}
+						emptyState={getRunWaitingMessage(status, run?.queued_reason)}
 						headerActionLeading={
 							<TerminateRunButton
 								projectId={projectId}
@@ -174,7 +191,7 @@ function RunCommentBody({
 							<Tooltip content="View full run">
 								<Link
 									to="/projects/$projectId/agents/$agentId/executions/$runId"
-									params={{ projectId, agentId, runId }}
+									params={{ ...agentLinkParams, runId }}
 									aria-label="View full run"
 									className="inline-flex items-center justify-center h-6 px-2 text-xs text-text-muted hover:text-text hover:bg-bg-muted rounded-radius-md transition-colors"
 								>

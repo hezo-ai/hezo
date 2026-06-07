@@ -213,7 +213,9 @@ function ExecutionDetailPage() {
 					formattable
 					projectId={projectId}
 					projectSlug={run.project_slug ?? undefined}
-					emptyState={isActive ? getRunWaitingMessage(run.status) : 'No output captured.'}
+					emptyState={
+						isActive ? getRunWaitingMessage(run.status, run.queued_reason) : 'No output captured.'
+					}
 					liveLabel={isActive ? <span className="text-accent-amber">(live)</span> : null}
 					heightClassName="max-h-[60vh]"
 					testId="run-log"

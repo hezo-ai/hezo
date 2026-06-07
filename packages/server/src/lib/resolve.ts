@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { type AuditActorType, AuthType } from '@hezo/shared';
+import { type AuditActorType, AuthType, DEFAULT_TEAM_ID } from '@hezo/shared';
 import type { AuthInfo } from './types';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -106,25 +106,26 @@ export async function resolveTaskId(
 	return result.rows[0]?.id ?? null;
 }
 
+/**
+ * Resolve an agent reference (UUID or slug) within a project team. HQ agents
+ * (CEO/Coach) are virtual members of every project team, so a reference that
+ * misses the project team falls back to the HQ team — the project's own member
+ * is preferred on any collision. This lets instance agents be addressed through
+ * any project's endpoints during cross-team runs.
+ */
 export async function resolveAgentId(
 	db: PGlite,
 	teamId: string,
 	raw: string,
 ): Promise<string | null> {
-	if (UUID_RE.test(raw)) {
-		const result = await db.query<{ id: string }>(
-			`SELECT m.id FROM members m
-			 JOIN member_agents ma ON ma.id = m.id
-			 WHERE m.team_id = $1 AND m.id = $2`,
-			[teamId, raw],
-		);
-		return result.rows[0]?.id ?? null;
-	}
+	const column = UUID_RE.test(raw) ? 'm.id' : 'ma.slug';
 	const result = await db.query<{ id: string }>(
 		`SELECT m.id FROM members m
 		 JOIN member_agents ma ON ma.id = m.id
-		 WHERE m.team_id = $1 AND ma.slug = $2`,
-		[teamId, raw],
+		 WHERE ${column} = $2 AND m.team_id IN ($1, $3)
+		 ORDER BY (m.team_id = $1) DESC
+		 LIMIT 1`,
+		[teamId, raw, DEFAULT_TEAM_ID],
 	);
 	return result.rows[0]?.id ?? null;
 }

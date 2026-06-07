@@ -42,13 +42,17 @@ afterAll(async () => {
 });
 
 describe('agents CRUD', () => {
-	it('lists all auto-created agents', async () => {
+	it('lists all auto-created agents plus HQ virtual members', async () => {
 		const res = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data).toHaveLength(10);
+		const own = body.data.filter((a: Record<string, unknown>) => !a.is_instance);
+		const instance = body.data.filter((a: Record<string, unknown>) => a.is_instance);
+		expect(own).toHaveLength(10);
+		// HQ agents (CEO + Coach) surface as virtual members, ordered last.
+		expect(instance.map((a: Record<string, unknown>) => a.slug).sort()).toEqual(['ceo', 'coach']);
 	});
 
 	it('all agents start with idle runtime_status and enabled admin_status', async () => {
@@ -90,6 +94,16 @@ describe('agents CRUD', () => {
 		expect(body.data).toHaveProperty('mcp_servers');
 		expect(body.data).toHaveProperty('runtime_status');
 		expect(body.data).toHaveProperty('admin_status');
+	});
+
+	it('resolves an HQ virtual member (CEO) by slug under a non-HQ project', async () => {
+		const res = await app.request(`/api/projects/${projectSlug}/agents/ceo`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.slug).toBe('ceo');
+		expect(body.data.is_instance).toBe(true);
 	});
 
 	it('gets an agent by slug', async () => {
