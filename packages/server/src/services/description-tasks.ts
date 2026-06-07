@@ -1,14 +1,8 @@
 import type { PGlite } from '@electric-sql/pglite';
-import {
-	AgentAdminStatus,
-	CAPTAIN_AGENT_SLUG,
-	TaskPriority,
-	TaskStatus,
-	TERMINAL_TASK_STATUSES,
-	WakeupSource,
-} from '@hezo/shared';
+import { TaskPriority, TaskStatus, TERMINAL_TASK_STATUSES, WakeupSource } from '@hezo/shared';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
+import { loadTeamCoordinationContext, type TeamCoordinationContext } from './internal-intake';
 import { createWakeup } from './wakeup';
 
 const log = logger.child('description-tasks');
@@ -26,34 +20,12 @@ export type TeamCoherenceReviewReason =
 	| 'summary_updated'
 	| 'enabled_changed';
 
-interface TeamContext {
-	captainMemberId: string | null;
-	internalProjectId: string | null;
-}
-
-async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext | null> {
-	const captain = await db.query<{ id: string }>(
-		`SELECT ma.id FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
-		 LIMIT 1`,
-		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
-	);
-
-	const internalProject = await db.query<{ id: string }>(
-		`SELECT id FROM projects
-		 WHERE team_id = $1 AND is_internal = true
-		 LIMIT 1`,
-		[teamId],
-	);
-
-	const teamExists = await db.query('SELECT 1 FROM teams WHERE id = $1', [teamId]);
-	if (teamExists.rows.length === 0) return null;
-
-	return {
-		captainMemberId: captain.rows[0]?.id ?? null,
-		internalProjectId: internalProject.rows[0]?.id ?? null,
-	};
+/** Resolves the CEO + the team's own project — coherence/setup live in that project. */
+async function loadTeamContext(
+	db: PGlite,
+	teamId: string,
+): Promise<TeamCoordinationContext | null> {
+	return loadTeamCoordinationContext(db, teamId);
 }
 
 async function findOpenLabeledTask(
@@ -75,19 +47,13 @@ async function findOpenLabeledTask(
 
 async function createLabeledInternalTask(
 	db: PGlite,
-	teamId: string,
-	ctx: TeamContext,
+	ctx: TeamCoordinationContext,
 	title: string,
 	body: string,
 	label: string,
 	priority: TaskPriority,
 ): Promise<string | null> {
-	if (!ctx.captainMemberId || !ctx.internalProjectId) return null;
-
-	const { number: taskNumber, identifier } = await allocateTaskIdentifier(
-		db,
-		ctx.internalProjectId,
-	);
+	const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, ctx.teamProjectId);
 
 	const insertResult = await db.query<{ id: string }>(
 		`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier,
@@ -95,9 +61,9 @@ async function createLabeledInternalTask(
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::task_status, $9::task_priority, $10::jsonb)
 		 RETURNING id`,
 		[
-			teamId,
-			ctx.internalProjectId,
-			ctx.captainMemberId,
+			ctx.teamId,
+			ctx.teamProjectId,
+			ctx.ceoMemberId,
 			taskNumber,
 			identifier,
 			title,
@@ -111,20 +77,20 @@ async function createLabeledInternalTask(
 	const taskId = insertResult.rows[0].id;
 
 	try {
-		await createWakeup(db, ctx.captainMemberId, teamId, WakeupSource.Assignment, {
+		await createWakeup(db, ctx.ceoMemberId, ctx.teamId, WakeupSource.Assignment, {
 			task_id: taskId,
 		});
 	} catch (e) {
-		log.error(`Failed to wake Captain for ${label}:`, e);
+		log.error(`Failed to wake CEO for ${label}:`, e);
 	}
 
 	return taskId;
 }
 
-function buildTeamCoherenceReviewBody(reason: TeamCoherenceReviewReason): string {
+function buildTeamCoherenceReviewBody(reason: TeamCoherenceReviewReason, teamSlug: string): string {
 	return `## Team coherence review
 
-The team changed (reason: ${reason}). Audit the roster, then rewrite the descriptive blobs that other agents read so they stay accurate.
+The **${teamSlug}** project-team changed (reason: ${reason}). Audit its roster, then rewrite the descriptive blobs that other agents read so they stay accurate. Use \`team_id\` = \`${teamSlug}\` for the tool calls below.
 
 **Steps**
 
@@ -155,7 +121,6 @@ export async function enqueueTeamCoherenceReviewTask(
 	if (process.env.HEZO_E2E_SKIP_COHERENCE_REVIEW) return null;
 	const ctx = await loadTeamContext(db, teamId);
 	if (!ctx) return null;
-	if (!ctx.captainMemberId || !ctx.internalProjectId) return null;
 
 	const existing = await findOpenLabeledTask(db, teamId, COHERENCE_LABEL);
 	if (existing) {
@@ -163,10 +128,12 @@ export async function enqueueTeamCoherenceReviewTask(
 		return existing;
 	}
 
-	const body = buildTeamCoherenceReviewBody(reason);
+	const teamSlug = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
+		teamId,
+	]);
+	const body = buildTeamCoherenceReviewBody(reason, teamSlug.rows[0]?.slug ?? teamId);
 	return createLabeledInternalTask(
 		db,
-		teamId,
 		ctx,
 		'Review team coherence after roster change',
 		body,

@@ -4,7 +4,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, projectSlugFor } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -36,7 +36,10 @@ beforeAll(async () => {
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
-	projectSlug = `internal-${team.slug}`;
+	// Name the team's one project to match what the enrichment test asserts on.
+	projectSlug = (
+		await (await createTestProject(db, team.id, { name: 'Enriched Test Project' })).json()
+	).data.slug;
 
 	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),

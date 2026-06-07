@@ -12,7 +12,6 @@ let db: PGlite;
 let adminToken: string;
 let teamId: string;
 let teamSlug: string;
-let internalSlug: string;
 let internalProjectId: string;
 let projectId: string;
 let projectSlug: string;
@@ -46,13 +45,13 @@ beforeAll(async () => {
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
-	internalSlug = `internal-${teamSlug}`;
 
-	const internalProject = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
-		[teamId],
+	// The Coach is a single instance-level agent living in the HQ project.
+	const hq = await db.query<{ id: string; slug: string }>(
+		`SELECT id, slug FROM projects WHERE is_internal = true LIMIT 1`,
 	);
-	internalProjectId = internalProject.rows[0].id;
+	internalProjectId = hq.rows[0].id;
+	const hqSlug = hq.rows[0].slug;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Coach Test Project',
@@ -62,12 +61,15 @@ beforeAll(async () => {
 	projectId = projectData.id;
 	projectSlug = projectData.slug;
 
-	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(adminToken),
 	});
 	const agents = (await agentsRes.json()).data;
 
-	const coach = agents.find((a: any) => a.slug === 'coach');
+	const hqAgentsRes = await app.request(`/api/projects/${hqSlug}/agents`, {
+		headers: authHeader(adminToken),
+	});
+	const coach = (await hqAgentsRes.json()).data.find((a: any) => a.slug === 'coach');
 	const engineer = agents.find((a: any) => a.slug === 'engineer');
 	const architect = agents.find((a: any) => a.slug === 'architect');
 	const captain = agents.find((a: any) => a.slug === 'captain');
@@ -83,10 +85,10 @@ beforeAll(async () => {
 	captainId = captain.id;
 
 	({ token: engineerToken } = await mintAgentToken(db, masterKeyManager, engineerId, teamId, null, {
-		projectId: internalProjectId,
+		projectId,
 	}));
 	({ token: captainToken } = await mintAgentToken(db, masterKeyManager, captainId, teamId, null, {
-		projectId: internalProjectId,
+		projectId,
 	}));
 
 	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
@@ -106,8 +108,12 @@ afterAll(async () => {
 });
 
 describe('Coach agent provisioning', () => {
-	it('Coach is auto-provisioned when team is created with Startup template', async () => {
-		const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	it('Coach is a single instance-level agent in HQ, not per team', async () => {
+		const hq = await db.query<{ slug: string }>(
+			`SELECT slug FROM projects WHERE is_internal = true LIMIT 1`,
+		);
+		const hqSlug = hq.rows[0].slug;
+		const agentsRes = await app.request(`/api/projects/${hqSlug}/agents`, {
 			headers: authHeader(adminToken),
 		});
 		const agents = (await agentsRes.json()).data;
@@ -117,8 +123,14 @@ describe('Coach agent provisioning', () => {
 		expect(coach.title).toBe('Coach');
 		expect(coach.admin_status).toBe('enabled');
 
+		// Exactly one Coach across the whole instance.
+		const coachCount = await db.query<{ n: number }>(
+			"SELECT count(*)::int AS n FROM member_agents WHERE slug = 'coach'",
+		);
+		expect(coachCount.rows[0].n).toBe(1);
+
 		const promptRes = await app.request(
-			`/api/projects/${internalSlug}/agents/${coach.id}/system-prompt`,
+			`/api/projects/${hqSlug}/agents/${coach.id}/system-prompt`,
 			{
 				headers: authHeader(adminToken),
 			},
@@ -334,7 +346,7 @@ describe('Agent system-prompt access', () => {
 		expect(payload.document_id).toBeTruthy();
 
 		const promptRes = await app.request(
-			`/api/projects/${internalSlug}/agents/${architectId}/system-prompt`,
+			`/api/projects/${projectSlug}/agents/${architectId}/system-prompt`,
 			{ headers: authHeader(adminToken) },
 		);
 		const promptDoc = (await promptRes.json()).data;
@@ -344,13 +356,13 @@ describe('Agent system-prompt access', () => {
 
 describe('System prompt revision tracking', () => {
 	it('records revision on manual admin edit', async () => {
-		await app.request(`/api/projects/${internalSlug}/agents/${architectId}`, {
+		await app.request(`/api/projects/${projectSlug}/agents/${architectId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'Before manual edit' }),
 		});
 
-		const res = await app.request(`/api/projects/${internalSlug}/agents/${architectId}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/agents/${architectId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'After manual edit by admin' }),
@@ -358,7 +370,7 @@ describe('System prompt revision tracking', () => {
 		expect(res.status).toBe(200);
 
 		const revisionsRes = await app.request(
-			`/api/projects/${internalSlug}/agents/${architectId}/system-prompt/revisions`,
+			`/api/projects/${projectSlug}/agents/${architectId}/system-prompt/revisions`,
 			{ headers: authHeader(adminToken) },
 		);
 		const revisions = (await revisionsRes.json()).data as Array<{
@@ -373,24 +385,24 @@ describe('System prompt revision tracking', () => {
 	});
 
 	it('revision numbers increment correctly', async () => {
-		await app.request(`/api/projects/${internalSlug}/agents/${engineerId}`, {
+		await app.request(`/api/projects/${projectSlug}/agents/${engineerId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'Version A' }),
 		});
-		await app.request(`/api/projects/${internalSlug}/agents/${engineerId}`, {
+		await app.request(`/api/projects/${projectSlug}/agents/${engineerId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'Version B' }),
 		});
-		await app.request(`/api/projects/${internalSlug}/agents/${engineerId}`, {
+		await app.request(`/api/projects/${projectSlug}/agents/${engineerId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'Version C' }),
 		});
 
 		const revisionsRes = await app.request(
-			`/api/projects/${internalSlug}/agents/${engineerId}/system-prompt/revisions`,
+			`/api/projects/${projectSlug}/agents/${engineerId}/system-prompt/revisions`,
 			{ headers: authHeader(adminToken) },
 		);
 		const revisions = (await revisionsRes.json()).data as Array<{ revision_number: number }>;
@@ -404,7 +416,7 @@ describe('System prompt revision tracking', () => {
 
 describe('team settings JSONB', () => {
 	it('has correct default values', async () => {
-		const res = await app.request(`/api/projects/${internalSlug}/team`, {
+		const res = await app.request(`/api/projects/${projectSlug}/team`, {
 			headers: authHeader(adminToken),
 		});
 		const team = (await res.json()).data;
@@ -412,7 +424,7 @@ describe('team settings JSONB', () => {
 	});
 
 	it('merges settings without clobbering existing keys', async () => {
-		const res = await app.request(`/api/projects/${internalSlug}/team`, {
+		const res = await app.request(`/api/projects/${projectSlug}/team`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ settings: { custom_key: 'hello' } }),

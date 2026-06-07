@@ -4,13 +4,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { enqueueTeamCoherenceReviewTask } from '../src/services/description-tasks';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, instanceCeoId } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let teamId: string;
-let captainMemberId: string;
+let ceoMemberId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -29,14 +29,10 @@ beforeAll(async () => {
 		body: JSON.stringify({ name: 'Description Tasks Co', template_id: typeId }),
 	});
 	teamId = (await teamRes.json()).data.id;
+	// Coordination tasks live in the team's own project, owned by the instance CEO.
+	await createTestProject(db, teamId, { name: 'Description Tasks Project' });
 
-	const captain = await db.query<{ id: string }>(
-		`SELECT ma.id FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
-		[teamId],
-	);
-	captainMemberId = captain.rows[0].id;
+	ceoMemberId = await instanceCeoId(db);
 });
 
 afterAll(async () => {
@@ -48,7 +44,7 @@ beforeEach(async () => {
 });
 
 describe('enqueueTeamCoherenceReviewTask', () => {
-	it('creates an task in the Internal project assigned to the Captain with the correct label and priority', async () => {
+	it("creates a task in the team's own project assigned to the CEO with the correct label and priority", async () => {
 		const taskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired');
 		expect(taskId).toBeTruthy();
 
@@ -66,10 +62,10 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 			[taskId],
 		);
 		const row = task.rows[0];
-		expect(row.assignee_id).toBe(captainMemberId);
+		expect(row.assignee_id).toBe(ceoMemberId);
 
 		const opsProject = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
 			[teamId],
 		);
 		expect(row.project_id).toBe(opsProject.rows[0].id);
@@ -95,12 +91,12 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		expect(body).toContain('set_team_summary');
 	});
 
-	it('creates a wakeup for the Captain when enqueueing', async () => {
+	it('creates a wakeup for the CEO when enqueueing', async () => {
 		const taskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired');
 		const wakeups = await db.query<{ source: string; payload: Record<string, unknown> }>(
 			`SELECT source, payload FROM agent_wakeup_requests
 			 WHERE member_id = $1 AND payload->>'task_id' = $2`,
-			[captainMemberId, taskId],
+			[ceoMemberId, taskId],
 		);
 		expect(wakeups.rows.length).toBe(1);
 		expect(wakeups.rows[0].source).toBe('assignment');
@@ -130,25 +126,13 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		expect(second).toBeTruthy();
 	});
 
-	it('returns null and does not create a task when there is no enabled Captain', async () => {
+	it('returns null and does not create a task when the team has no project yet', async () => {
 		const blankRes = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'No Captain Co' }),
+			body: JSON.stringify({ name: 'No Project Co' }),
 		});
 		const blankTeamId = (await blankRes.json()).data.id;
-
-		const captainRes = await db.query<{ id: string }>(
-			`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
-			[blankTeamId],
-		);
-		await db.query(
-			`UPDATE member_agents SET admin_status = 'disabled'::agent_admin_status WHERE id = $1`,
-			[captainRes.rows[0].id],
-		);
-
-		await db.query(`DELETE FROM tasks WHERE team_id = $1`, [blankTeamId]);
 
 		const result = await enqueueTeamCoherenceReviewTask(db, blankTeamId, 'agent_hired');
 		expect(result).toBeNull();
@@ -160,34 +144,25 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		);
 		expect(tasks.rows[0].n).toBe(0);
 	});
-
-	it('returns null and does not create a task when there is no Internal project', async () => {
-		const blankRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'No Ops Co' }),
-		});
-		const blankTeamId = (await blankRes.json()).data.id;
-		await db.query(`DELETE FROM projects WHERE team_id = $1 AND is_internal = true`, [blankTeamId]);
-
-		const result = await enqueueTeamCoherenceReviewTask(db, blankTeamId, 'agent_hired');
-		expect(result).toBeNull();
-	});
 });
 
-describe('template apply', () => {
-	it('produces exactly one team-coherence task on a fresh templated team (no per-agent duplicates)', async () => {
+describe('project creation', () => {
+	it('produces exactly one team-coherence task on a fresh project (no per-agent duplicates)', async () => {
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const typeId = (await typesRes.json()).data.find(
 			(t: Record<string, unknown>) => t.name === 'Startup',
 		).id;
 
-		const teamRes = await app.request('/api/teams', {
+		const projectRes = await app.request('/api/projects', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Regression Co', template_id: typeId }),
+			body: JSON.stringify({
+				name: 'Regression Co',
+				description: 'A project for coherence regression.',
+				template_id: typeId,
+			}),
 		});
-		const newTeamId = (await teamRes.json()).data.id;
+		const newTeamId = (await projectRes.json()).data.team_id;
 
 		const coherence = await db.query<{ n: number }>(
 			`SELECT count(*)::int AS n FROM tasks

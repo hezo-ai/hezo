@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, projectSlugFor } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -45,7 +45,7 @@ describe('instance-level skills', () => {
 			body: JSON.stringify({ name: 'Skills Team' }),
 		});
 		const team = (await teamRes.json()).data;
-		const projectSlug = `internal-${team.slug}`;
+		const projectSlug = `${await projectSlugFor(db, team.id)}`;
 		const teamSkillsRes = await app.request(`/api/projects/${projectSlug}/skills`, {
 			headers: authHeader(token),
 		});

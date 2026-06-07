@@ -10,9 +10,9 @@ test.describe('team summary collapse', () => {
 			freshWorkspace,
 		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height });
-			const { team } = freshWorkspace;
+			const { projectSlug } = freshWorkspace;
 
-			await page.goto(`/projects/internal-${team.slug}/agents`);
+			await page.goto(`/projects/${projectSlug}/agents`);
 
 			const summaryBox = page.getByTestId('team-summary');
 			await expect(summaryBox).toBeVisible({ timeout: 15000 });

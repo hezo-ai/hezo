@@ -30,7 +30,7 @@ import { loadOrCreateCA } from '../src/services/egress/ca';
 import { EgressProxy } from '../src/services/egress/proxy';
 import { loadMcpConnectionDescriptors } from '../src/services/mcp-connections';
 import { safeClose } from './helpers';
-import { createTestApp } from './helpers/app';
+import { createTestApp, createTestProject } from './helpers/app';
 import { mintCertFromCA } from './helpers/self-signed-cert';
 import { startTestMcpHttpServer, type TestMcpServer } from './helpers/test-mcp-http-server';
 
@@ -73,19 +73,18 @@ beforeAll(async () => {
 	});
 	const teamData = (await co.json()).data;
 	teamId = teamData.id;
-	const ag = await ctx.app.request(`/api/projects/internal-${teamData.slug}/agents`, {
+
+	// 1:1 model: a team backs exactly one project. Create the team's single
+	// project first, then derive the agent endpoint and projectId from it.
+	const project = await (await createTestProject(db, teamId, { name: 'MCP' })).json();
+	projectId = project.data.id;
+
+	const ag = await ctx.app.request(`/api/projects/${project.data.slug}/agents`, {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'MCP Docker Agent' }),
 	});
 	agentId = (await ag.json()).data.id;
-
-	const proj = await db.query<{ id: string }>(
-		`INSERT INTO projects (team_id, name, slug, task_prefix, docker_base_image)
-		 VALUES ($1, 'MCP', 'mcp', 'MD', 'hezo/agent-base:latest') RETURNING id`,
-		[teamId],
-	);
-	projectId = proj.rows[0].id;
 
 	const ca = await loadOrCreateCA(dataDir);
 	const leaf = await mintCertFromCA({ cert: ca.cert, key: ca.key }, 'localhost');

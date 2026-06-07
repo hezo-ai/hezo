@@ -60,7 +60,9 @@ test('superuser creates a new project from the rail-pinned create button', async
 	await user.click(await screen.findByTestId('team-type-card-Blank'));
 	await user.click(screen.getByTestId('create-project-submit'));
 
+	// "Create now" provisions the team + project directly and navigates to the
+	// new project's Captain planning task (project slug derived from the name).
 	await waitFor(() =>
-		expect(router.state.location.pathname).toMatch(/^\/projects\/internal-research-squad\/tasks\//),
+		expect(router.state.location.pathname).toMatch(/^\/projects\/research-squad\/tasks\//),
 	);
 });

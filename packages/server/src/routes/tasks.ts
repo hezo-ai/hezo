@@ -18,7 +18,6 @@ import {
 	wakeIfReady,
 	wouldCreateCycle,
 } from '../lib/dependencies';
-import { assertInternalAssignee } from '../lib/internal-assignee';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import {
 	actorTypeFromAuth,
@@ -518,15 +517,6 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 				return err(c, 'CONFLICT', activeRunCheck.message, 409);
 			}
 		}
-		const internalCheck = await assertInternalAssignee(
-			db,
-			teamId,
-			existing.rows[0].project_id,
-			body.assignee_id,
-		);
-		if (!internalCheck.ok) {
-			return err(c, 'INVALID_REQUEST', internalCheck.message, 400);
-		}
 		sets.push(`assignee_id = $${idx}`);
 		params.push(body.assignee_id);
 		idx++;
@@ -623,7 +613,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 
 	if (body.assignee_id !== undefined && body.assignee_id !== existing.rows[0].assignee_id) {
 		try {
-			await recordAssigneeChange(
+			const names = await recordAssigneeChange(
 				db,
 				teamId,
 				taskId,
@@ -642,6 +632,8 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 				field: 'assignee',
 				from: existing.rows[0].assignee_id,
 				to: body.assignee_id,
+				fromLabel: names?.fromName ?? null,
+				toLabel: names?.toName ?? null,
 			});
 		} catch (e) {
 			log.error('Failed to record assignee change:', e);

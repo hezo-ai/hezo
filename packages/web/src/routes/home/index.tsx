@@ -1,39 +1,36 @@
-import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Building2, Plus } from 'lucide-react';
 import { useState } from 'react';
-import { CaptainHomeIntakePanel } from '../../components/captain-home-intake-panel';
 import { CreateProjectWithTeamDialog } from '../../components/create-project-with-team-dialog';
-import { OnboardingProgress } from '../../components/onboarding-progress';
-import { OnboardingChoice } from '../../components/setup/onboarding-choice';
+import { ProjectIntakeHomePanel } from '../../components/project-intake-home-panel';
 import { Avatar, avatarColorFromString, getInitials } from '../../components/ui/avatar';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Tooltip } from '../../components/ui/tooltip';
-import { useActiveTeamSlug } from '../../hooks/use-active-team-slug';
-import { type OnboardingStatus, useOnboarding } from '../../hooks/use-onboarding';
-import { useOnboardingIntake } from '../../hooks/use-onboarding-intake';
+import { useProjectIntake } from '../../hooks/use-project-intake';
 import { useAllVisibleProjects } from '../../hooks/use-projects';
 import { useTeams } from '../../hooks/use-teams';
-import { queryClient } from '../../lib/query-client';
 
-function WelcomeCard({
-	showProgress,
-	onboardingStages,
-}: {
-	showProgress: boolean;
-	onboardingStages?: OnboardingStatus['stages'];
-}) {
+function WelcomeCard({ onCreate }: { onCreate: () => void }) {
 	return (
-		<Card className="mb-4 p-0 overflow-hidden" data-testid="home-welcome-card">
+		<Card className="mb-6 p-0 overflow-hidden" data-testid="home-welcome-card">
 			<div
-				className="flex items-center justify-center gap-2.5 px-4 py-3"
+				className="flex flex-col items-center gap-3 px-4 py-8 text-center"
 				data-testid="home-welcome"
 			>
-				<Building2 className="w-7 h-7 text-text-muted shrink-0" />
-				<h1 className="text-base font-semibold text-text">Get started with Hezo</h1>
+				<Building2 className="w-8 h-8 text-text-muted shrink-0" />
+				<div>
+					<h1 className="text-base font-semibold text-text">Get started with Hezo</h1>
+					<p className="text-[13px] text-text-muted mt-1 max-w-md">
+						Create your first project. Each one gets its own team — spin it up from a template, or
+						let the CEO scope it with you first.
+					</p>
+				</div>
+				<Button onClick={onCreate} data-testid="home-welcome-create">
+					<Plus className="w-4 h-4" />
+					New project
+				</Button>
 			</div>
-			{showProgress && onboardingStages && <OnboardingProgress stages={onboardingStages} />}
 		</Card>
 	);
 }
@@ -42,12 +39,13 @@ function HomeProjectsSection({
 	teams,
 	projects,
 	isLoading,
+	onCreate,
 }: {
 	teams: NonNullable<ReturnType<typeof useTeams>['data']>;
 	projects: ReturnType<typeof useAllVisibleProjects>['projects'];
 	isLoading: boolean;
+	onCreate: () => void;
 }) {
-	const [createOpen, setCreateOpen] = useState(false);
 	const showTeamName = teams.length > 1;
 
 	if (isLoading) {
@@ -69,7 +67,7 @@ function HomeProjectsSection({
 		<section data-testid="home-projects-list">
 			<div className="flex items-center justify-between mb-4">
 				<h2 className="text-[18px] md:text-[22px] font-medium">Projects</h2>
-				<Button variant="secondary" size="sm" onClick={() => setCreateOpen(true)}>
+				<Button variant="secondary" size="sm" onClick={onCreate}>
 					<Plus className="w-4 h-4" />
 					New project
 				</Button>
@@ -107,25 +105,19 @@ function HomeProjectsSection({
 					</Link>
 				))}
 			</div>
-			<CreateProjectWithTeamDialog open={createOpen} onOpenChange={setCreateOpen} />
 		</section>
 	);
 }
 
 function HomePage() {
 	const { data: teams, isLoading: teamsLoading } = useTeams();
-	const primaryTeamSlug = useActiveTeamSlug();
-	// Onboarding is pre-project, so it is addressed via the active team's
-	// always-present internal project (slug `internal-<teamSlug>`).
-	const onboardingProjectId = `${INTERNAL_PROJECT_SLUG}-${primaryTeamSlug}`;
 	const { projects, isLoading: projectsLoading } = useAllVisibleProjects();
-	// Only ensure/open an onboarding intake during true first-run — i.e. when no
-	// visible team has a project yet. Per-project teams mean the first project may
-	// land in its own team; once any project exists we must not re-open an intake
-	// on the default/HQ team.
+	const [createOpen, setCreateOpen] = useState(false);
+
+	// The CEO-assisted intake lives in HQ and is instance-wide; only surface it
+	// while the welcome view is showing (no user-facing projects yet).
 	const noProjectsYet = !projectsLoading && projects.length === 0;
-	const { data: intake } = useOnboardingIntake(onboardingProjectId, noProjectsYet);
-	const { data: onboarding } = useOnboarding(onboardingProjectId, true);
+	const { data: intake } = useProjectIntake(noProjectsYet);
 
 	if (teamsLoading) {
 		return (
@@ -133,46 +125,30 @@ function HomePage() {
 		);
 	}
 
-	const hasIntake = !!intake;
-	// Onboarding is complete once any visible team has a user-facing project —
-	// per-project teams mean the first project may live in its own new team, not
-	// the default/HQ team (which stays CEO-only).
 	const hasProject = projects.length > 0;
-	const showChoice = !hasIntake && !hasProject;
-	const showProgress = !!onboarding && (showChoice || hasIntake);
+	const hasIntake = !!intake;
+	const showWelcome = !hasProject && !hasIntake;
 
 	return (
 		<div className="max-w-7xl mx-auto w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
-			{showProgress && (
-				<WelcomeCard showProgress={!!onboarding} onboardingStages={onboarding?.stages} />
-			)}
-
-			{showChoice && (
-				<div className="mb-6" data-testid="home-onboarding-choice-section">
-					<OnboardingChoice
-						projectId={onboardingProjectId}
-						onChosen={() => {
-							queryClient.invalidateQueries({
-								queryKey: ['projects', onboardingProjectId, 'onboarding'],
-							});
-							queryClient.invalidateQueries({
-								queryKey: ['projects', onboardingProjectId, 'onboarding-intake'],
-							});
-							queryClient.invalidateQueries({ queryKey: ['projects'] });
-						}}
-					/>
-				</div>
-			)}
+			{showWelcome && <WelcomeCard onCreate={() => setCreateOpen(true)} />}
 
 			{hasIntake && intake && (
-				<div className="mb-6" data-testid="home-captain-intake-section">
-					<CaptainHomeIntakePanel projectId={onboardingProjectId} intake={intake} />
+				<div className="mb-6" data-testid="home-project-intake-section">
+					<ProjectIntakeHomePanel intake={intake} />
 				</div>
 			)}
 
 			{hasProject && (
-				<HomeProjectsSection teams={teams ?? []} projects={projects} isLoading={projectsLoading} />
+				<HomeProjectsSection
+					teams={teams ?? []}
+					projects={projects}
+					isLoading={projectsLoading}
+					onCreate={() => setCreateOpen(true)}
+				/>
 			)}
+
+			<CreateProjectWithTeamDialog open={createOpen} onOpenChange={setCreateOpen} />
 		</div>
 	);
 }

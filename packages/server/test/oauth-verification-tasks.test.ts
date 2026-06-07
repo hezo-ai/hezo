@@ -1,50 +1,32 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { PlatformType, TaskStatus } from '@hezo/shared';
-import type { Hono } from 'hono';
+import { DEFAULT_TEAM_ID, PlatformType, TaskStatus } from '@hezo/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import type { Env } from '../src/lib/types';
 import { enqueueOAuthVerificationTask } from '../src/services/oauth-verification-tasks';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { createTestApp, instanceCeoId } from './helpers/app';
 
-let app: Hono<Env>;
 let db: PGlite;
-let token: string;
+// OAuth verification is instance-level work: the task lands in the HQ team's HQ
+// (the only internal) project and is owned by the CEO. Originating tickets used
+// by these flows therefore also live in HQ.
 let teamId: string;
-let captainMemberId: string;
+let ceoMemberId: string;
+let hqProjectId: string;
 let parentProjectId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
-	app = ctx.app;
 	db = ctx.db;
-	token = ctx.token;
 
-	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
-	const typeId = (await typesRes.json()).data.find(
-		(t: Record<string, unknown>) => t.name === 'Startup',
-	).id;
+	teamId = DEFAULT_TEAM_ID;
+	ceoMemberId = await instanceCeoId(db);
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'OAuth Verif Co', template_id: typeId }),
-	});
-	teamId = (await teamRes.json()).data.id;
-
-	const captain = await db.query<{ id: string }>(
-		`SELECT ma.id FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
-		[teamId],
-	);
-	captainMemberId = captain.rows[0].id;
-
-	const ops = await db.query<{ id: string }>(
+	const hq = await db.query<{ id: string }>(
 		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
 		[teamId],
 	);
-	parentProjectId = ops.rows[0].id;
+	hqProjectId = hq.rows[0].id;
+	parentProjectId = hqProjectId;
 });
 
 afterAll(async () => {
@@ -56,7 +38,7 @@ beforeEach(async () => {
 });
 
 describe('enqueueOAuthVerificationTask', () => {
-	it('creates an Internal task assigned to the Captain with high priority and the label', async () => {
+	it('creates an Internal task assigned to the CEO with high priority and the label', async () => {
 		const result = await enqueueOAuthVerificationTask(db, teamId, PlatformType.GitHub, null, {
 			username: 'octocat',
 		});
@@ -78,14 +60,10 @@ describe('enqueueOAuthVerificationTask', () => {
 			[result!.taskId],
 		);
 		const task = row.rows[0];
-		expect(task.assignee_id).toBe(captainMemberId);
+		expect(task.assignee_id).toBe(ceoMemberId);
 		expect(task.parent_task_id).toBeNull();
 
-		const ops = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
-			[teamId],
-		);
-		expect(task.project_id).toBe(ops.rows[0].id);
+		expect(task.project_id).toBe(hqProjectId);
 
 		expect(task.labels).toEqual(expect.arrayContaining(['internal', 'oauth-verification']));
 		expect(task.priority).toBe('high');
@@ -144,11 +122,11 @@ describe('enqueueOAuthVerificationTask', () => {
 		expect(comments.rows.some((c) => c.content_type === 'system')).toBe(true);
 	});
 
-	it('creates a wakeup for the Captain when enqueueing', async () => {
+	it('creates a wakeup for the CEO when enqueueing', async () => {
 		const result = await enqueueOAuthVerificationTask(db, teamId, PlatformType.GitHub, null, {});
 		const wakeups = await db.query<{ source: string; payload: Record<string, unknown> }>(
 			`SELECT source, payload FROM agent_wakeup_requests WHERE member_id = $1`,
-			[captainMemberId],
+			[ceoMemberId],
 		);
 		expect(
 			wakeups.rows.some((w) => w.source === 'assignment' && w.payload.task_id === result!.taskId),

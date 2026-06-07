@@ -24,10 +24,10 @@ import { type FakeMcpServer, startFakeMcpServer } from './helpers/fake-mcp-serve
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
+let projectSlug: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let teamSlug: string;
-let internalSlug: string;
 let projectId: string;
 let captainId: string;
 let captainAgentToken: string;
@@ -53,9 +53,10 @@ beforeAll(async () => {
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
-	internalSlug = `internal-${teamSlug}`;
 
-	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	projectSlug = (await (await createTestProject(db, teamId, { name: 'Setup Project' })).json()).data
+		.slug;
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -231,7 +232,7 @@ describe('OAuth callback route (end-to-end against fake AS)', () => {
 	});
 
 	it('auth-start performs DCR and returns an authorize URL', async () => {
-		const res = await app.request(`/api/projects/${internalSlug}/auth-start`, {
+		const res = await app.request(`/api/projects/${projectSlug}/auth-start`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ connector_id: connectorId }),
@@ -250,7 +251,7 @@ describe('OAuth callback route (end-to-end against fake AS)', () => {
 
 	it('callback completes the flow: stores token, marks active, fires wakeup', async () => {
 		// Drive auth-start to get a real authorize URL.
-		const startRes = await app.request(`/api/projects/${internalSlug}/auth-start`, {
+		const startRes = await app.request(`/api/projects/${projectSlug}/auth-start`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ connector_id: connectorId }),
@@ -313,7 +314,7 @@ describe('OAuth callback route (end-to-end against fake AS)', () => {
 				mcpTransport: 'http',
 				createdByTaskId: taskId,
 			});
-			const startRes = await app.request(`/api/projects/${internalSlug}/auth-start`, {
+			const startRes = await app.request(`/api/projects/${projectSlug}/auth-start`, {
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({ connector_id: brokenConn.id }),

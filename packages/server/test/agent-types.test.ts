@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, createTestProject } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -223,7 +223,7 @@ describe('team types with agent types', () => {
 		});
 		const body = await res.json();
 		const builtin = body.data.find((t: any) => t.name === 'Startup');
-		expect(builtin.agent_types).toHaveLength(11);
+		expect(builtin.agent_types).toHaveLength(10);
 		expect(builtin.agent_types[0]).toHaveProperty('agent_type_id');
 		expect(builtin.agent_types[0]).toHaveProperty('name');
 		expect(builtin.agent_types[0]).toHaveProperty('slug');
@@ -271,13 +271,15 @@ describe('team creation with agent types', () => {
 			}),
 		});
 		const teamData = (await teamRes.json()).data;
-		const internalSlug = `internal-${teamData.slug}`;
+		const projectSlug = (
+			await (await createTestProject(db, teamData.id, { name: 'Setup Project' })).json()
+		).data.slug;
 
-		const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
-		expect(agents).toHaveLength(11);
+		expect(agents).toHaveLength(10);
 		expect(agents.every((a: any) => a.agent_type_id != null)).toBe(true);
 	});
 });

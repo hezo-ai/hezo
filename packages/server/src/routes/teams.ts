@@ -6,13 +6,6 @@ import { toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { requireSuperuser } from '../middleware/auth';
-import { getOnboardingStatus } from '../services/onboarding';
-import { runOnboardingDirect } from '../services/onboarding-direct';
-import {
-	ensureOnboardingIntakeTask,
-	getOpenOnboardingIntakeTask,
-	postSkipQuestionsSignal,
-} from '../services/onboarding-intake';
 import { postSkipQuestionsSignalForProjectIntake } from '../services/project-intake';
 import { applyTemplateToTeam } from '../services/team-template-apply';
 import { snapshotTeamAsTemplate } from '../services/team-template-snapshot';
@@ -93,34 +86,6 @@ teamsRoutes.post('/teams', async (c) => {
 	return ok(c, team, 201);
 });
 
-teamsRoutes.get('/projects/:projectId/onboarding-intake', async (c) => {
-	const teamId = c.get('teamId') as string;
-
-	const ensure = c.req.query('ensure') === 'true';
-	const intake = ensure
-		? await ensureOnboardingIntakeTask(c.get('db'), teamId, c.get('wsManager'))
-		: await getOpenOnboardingIntakeTask(c.get('db'), teamId);
-	if (!intake) {
-		return err(c, 'NOT_FOUND', 'Onboarding intake is not available for this team', 404);
-	}
-	return ok(c, intake);
-});
-
-teamsRoutes.post('/projects/:projectId/onboarding-intake/skip-questions', async (c) => {
-	const teamId = c.get('teamId') as string;
-
-	const intake = await getOpenOnboardingIntakeTask(c.get('db'), teamId);
-	if (!intake) {
-		return err(c, 'NOT_FOUND', 'No open onboarding intake to skip', 404);
-	}
-
-	const comment = await postSkipQuestionsSignal(c.get('db'), teamId, intake.task_id);
-	if (!comment) {
-		return err(c, 'INTERNAL', 'Failed to post skip signal', 500);
-	}
-	return ok(c, { task_id: intake.task_id, comment_id: comment.id });
-});
-
 teamsRoutes.post('/projects/:projectId/project-intake/:taskId/skip-questions', async (c) => {
 	const teamId = c.get('teamId') as string;
 
@@ -129,56 +94,11 @@ teamsRoutes.post('/projects/:projectId/project-intake/:taskId/skip-questions', a
 	if (!taskId) {
 		return err(c, 'NOT_FOUND', 'Task not found', 404);
 	}
-	const comment = await postSkipQuestionsSignalForProjectIntake(db, teamId, taskId);
+	const comment = await postSkipQuestionsSignalForProjectIntake(db, taskId);
 	if (!comment) {
 		return err(c, 'NOT_FOUND', 'No open project intake found for this task', 404);
 	}
 	return ok(c, { task_id: taskId, comment_id: comment.id });
-});
-
-teamsRoutes.get('/projects/:projectId/onboarding', async (c) => {
-	const teamId = c.get('teamId') as string;
-
-	const status = await getOnboardingStatus(c.get('db'), teamId);
-	return ok(c, status);
-});
-
-teamsRoutes.post('/projects/:projectId/onboarding/direct', async (c) => {
-	const body = await c.req.json<{
-		template_id?: string;
-		project_name?: string;
-		project_description?: string;
-		initial_prd?: string;
-	}>();
-	if (!body.template_id?.trim()) {
-		return err(c, 'INVALID_REQUEST', 'template_id is required', 400);
-	}
-	if (!body.project_name?.trim()) {
-		return err(c, 'INVALID_REQUEST', 'project_name is required', 400);
-	}
-
-	const auth = c.get('auth');
-	const result = await runOnboardingDirect(c.get('db'), {
-		templateId: body.template_id.trim(),
-		projectName: body.project_name.trim(),
-		projectDescription: body.project_description,
-		initialPrd: body.initial_prd,
-		creatorUserId: auth.type === AuthType.Admin ? auth.userId : undefined,
-		dataDir: c.get('dataDir'),
-		wsManager: c.get('wsManager'),
-		docker: c.get('docker'),
-		masterKeyManager: c.get('masterKeyManager'),
-		logs: c.get('logs'),
-		containerLogStreamer: c.get('containerLogStreamer'),
-		sshAgentServer: c.get('sshAgentServer'),
-		egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
-	});
-
-	if (!result.ok) {
-		const status = result.code === 'NOT_FOUND' ? 404 : result.code === 'CONFLICT' ? 409 : 400;
-		return err(c, result.code, result.message, status);
-	}
-	return ok(c, result, 201);
 });
 
 teamsRoutes.get('/projects/:projectId/team', async (c) => {

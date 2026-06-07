@@ -5,7 +5,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, mintAgentToken } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	mintAgentToken,
+	projectSlugFor,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -13,7 +19,6 @@ let token: string;
 let masterKeyManager: MasterKeyManager;
 
 let teamId: string;
-let internalSlug: string;
 let projectId: string;
 let projectSlug: string;
 let architectId: string;
@@ -154,9 +159,9 @@ beforeAll(async () => {
 	});
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	internalSlug = `internal-${teamData.slug}`;
 
-	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	projectSlug = await projectSlugFor(ctx.db, teamId);
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -295,7 +300,7 @@ describe('GET /teams/:teamId/inbox/mentions', () => {
 		);
 		await mcpComment(agentToken, taskIdLocal, '@admin please weigh in here.');
 
-		const res = await app.request(`/api/projects/${internalSlug}/inbox/mentions`, {
+		const res = await app.request(`/api/projects/${projectSlug}/inbox/mentions`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -332,7 +337,7 @@ describe('GET /teams/:teamId/inbox/mentions', () => {
 			[archivedCommentId, testAdminUserId],
 		);
 
-		const active = await app.request(`/api/projects/${internalSlug}/inbox/mentions`, {
+		const active = await app.request(`/api/projects/${projectSlug}/inbox/mentions`, {
 			headers: authHeader(token),
 		});
 		const activeRows = (await active.json()).data as Array<{ comment_id: string }>;
@@ -341,7 +346,7 @@ describe('GET /teams/:teamId/inbox/mentions', () => {
 		expect(activeRows.some((m) => m.comment_id === archivedCommentId)).toBe(false);
 
 		const archivedRes = await app.request(
-			`/api/projects/${internalSlug}/inbox/mentions?archived=true`,
+			`/api/projects/${projectSlug}/inbox/mentions?archived=true`,
 			{
 				headers: authHeader(token),
 			},
@@ -378,7 +383,7 @@ describe('GET /teams/:teamId/inbox/count', () => {
 			[teamId, architectId],
 		);
 
-		const res = await app.request(`/api/projects/${internalSlug}/inbox/count`, {
+		const res = await app.request(`/api/projects/${projectSlug}/inbox/count`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -396,7 +401,7 @@ describe('GET /teams/:teamId/inbox/count', () => {
 			teamId,
 			taskIdLocal,
 		);
-		const res = await app.request(`/api/projects/${internalSlug}/inbox/count`, {
+		const res = await app.request(`/api/projects/${projectSlug}/inbox/count`, {
 			headers: authHeader(agentToken),
 		});
 		expect(res.status).toBe(403);
@@ -421,13 +426,10 @@ describe('POST /teams/:teamId/inbox/mentions/:mentionId/read', () => {
 		);
 		const mentionId = mineRow.rows[0].id;
 
-		const res = await app.request(
-			`/api/projects/${internalSlug}/inbox/mentions/${mentionId}/read`,
-			{
-				method: 'POST',
-				headers: authHeader(token),
-			},
-		);
+		const res = await app.request(`/api/projects/${projectSlug}/inbox/mentions/${mentionId}/read`, {
+			method: 'POST',
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(200);
 
 		const after = await db.query<{ read_at: string | null }>(
@@ -455,7 +457,7 @@ describe('POST /teams/:teamId/inbox/mentions/:mentionId/read', () => {
 		const otherMentionId = otherRow.rows[0].id;
 
 		const res = await app.request(
-			`/api/projects/${internalSlug}/inbox/mentions/${otherMentionId}/read`,
+			`/api/projects/${projectSlug}/inbox/mentions/${otherMentionId}/read`,
 			{
 				method: 'POST',
 				headers: authHeader(token),
@@ -467,7 +469,7 @@ describe('POST /teams/:teamId/inbox/mentions/:mentionId/read', () => {
 
 describe('reserved agent slug "admin"', () => {
 	it('rejects an attempt to create an agent named "Admin"', async () => {
-		const res = await app.request(`/api/projects/${internalSlug}/agents`, {
+		const res = await app.request(`/api/projects/${projectSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Admin' }),
@@ -479,7 +481,7 @@ describe('reserved agent slug "admin"', () => {
 	});
 
 	it('accepts a similar but non-clashing title like "Admin Member"', async () => {
-		const res = await app.request(`/api/projects/${internalSlug}/agents`, {
+		const res = await app.request(`/api/projects/${projectSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Admin Member' }),

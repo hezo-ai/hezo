@@ -3,9 +3,9 @@ import {
 	DEFAULT_TEAM_ID,
 	DEFAULT_TEAM_NAME,
 	DEFAULT_TEAM_SLUG,
-	DEFAULT_TEAM_TEMPLATE_NAME,
-	INTERNAL_PROJECT_SLUG,
-	INTERNAL_PROJECT_TASK_PREFIX,
+	HQ_PROJECT_NAME,
+	HQ_PROJECT_SLUG,
+	HQ_PROJECT_TASK_PREFIX,
 	MemberType,
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
@@ -21,6 +21,7 @@ import {
 	applyTemplateToTeam,
 	ensureBuiltinAgents,
 	ensureInstanceCeo,
+	ensureInstanceCoach,
 	linkTeamCaptainToInstanceCeo,
 } from './team-template-apply';
 import type { WebSocketManager } from './ws';
@@ -65,7 +66,7 @@ export async function createTeam(
 	deps: CreateTeamDeps,
 	input: CreateTeamInput,
 ): Promise<CreatedTeamRow> {
-	const { db, docker, dataDir, wsManager, masterKeyManager, logs } = deps;
+	const { db, dataDir, wsManager } = deps;
 
 	const name = input.name.trim();
 	const slug =
@@ -112,18 +113,8 @@ export async function createTeam(
 			]);
 		}
 
-		// Project slugs are globally unique, so the per-team internal project derives
-		// its slug from the (already unique) team slug rather than a shared literal.
-		const internalProjectResult = await db.query<{ id: string }>(
-			`INSERT INTO projects (team_id, name, slug, task_prefix, description, is_internal)
-			 VALUES ($1, '(Internal)', $2, $3, 'Internal team coordination project, used for onboarding and team-level changes.', true)
-			 RETURNING id`,
-			[teamId, `${INTERNAL_PROJECT_SLUG}-${slug}`, INTERNAL_PROJECT_TASK_PREFIX],
-		);
-		await db.query('INSERT INTO project_task_counters (project_id, next_number) VALUES ($1, 1)', [
-			internalProjectResult.rows[0].id,
-		]);
-
+		// A project-team's single project is created on intake approval, not here —
+		// the team exists with just its Captain until the admin approves the project.
 		if (input.templateId) {
 			await db.query(
 				`INSERT INTO team_template_assignments (team_id, team_template_id)
@@ -143,34 +134,8 @@ export async function createTeam(
 	}
 
 	// A new team's Captain reports to the single instance CEO. No-op while the
-	// default team (which hosts the CEO) is itself being seeded.
+	// HQ team (which hosts the CEO) is itself being seeded.
 	await linkTeamCaptainToInstanceCeo(db, teamId);
-
-	const internalProject = await db.query<ProjectRow>(
-		`SELECT id, team_id, slug, docker_base_image, container_id, container_status, dev_ports
-		 FROM projects WHERE team_id = $1 AND is_internal = true`,
-		[teamId],
-	);
-	if (internalProject.rows[0]) {
-		trackBackground(
-			provisionContainer(
-				{
-					db,
-					docker,
-					dataDir,
-					wsManager,
-					masterKeyManager,
-					logs,
-					containerLogStreamer: deps.containerLogStreamer,
-					egressCAPath: deps.egressCAPath ?? null,
-				},
-				internalProject.rows[0],
-				slug,
-			).catch((error) => {
-				log.error(`Failed to provision container for Internal project:`, error);
-			}),
-		);
-	}
 
 	const enriched = await db.query<CreatedTeamRow>(
 		`SELECT c.*,
@@ -183,32 +148,62 @@ export async function createTeam(
 	return enriched.rows[0];
 }
 
+/**
+ * Seeds the HQ team — the single instance-level team. It owns the one HQ project
+ * (the only `is_internal` project across the instance) and hosts the two
+ * singletons, the CEO and the Coach. It has no Captain and runs no user work;
+ * every project-team's Captain reports up to the CEO that lives here.
+ */
 export async function seedDefaultTeam(deps: CreateTeamDeps): Promise<void> {
-	const existing = await deps.db.query('SELECT 1 FROM teams WHERE id = $1', [DEFAULT_TEAM_ID]);
+	const { db, docker, dataDir, wsManager, masterKeyManager, logs } = deps;
+	const existing = await db.query('SELECT 1 FROM teams WHERE id = $1', [DEFAULT_TEAM_ID]);
 	if (existing.rows.length > 0) return;
 
-	const templateResult = await deps.db.query<{ id: string }>(
-		'SELECT id FROM team_templates WHERE name = $1',
-		[DEFAULT_TEAM_TEMPLATE_NAME],
-	);
-	const templateId = templateResult.rows[0]?.id;
-	if (!templateId) {
-		log.warn(`Team template "${DEFAULT_TEAM_TEMPLATE_NAME}" not found; cannot seed default team`);
-		return;
-	}
-
-	await createTeam(deps, {
-		id: DEFAULT_TEAM_ID,
-		slug: DEFAULT_TEAM_SLUG,
-		name: DEFAULT_TEAM_NAME,
-		templateId,
+	const hqProjectId = await withTransaction(db, async () => {
+		await db.query(
+			`INSERT INTO teams (id, name, slug, description, summary) VALUES ($1, $2, $3, '', '')`,
+			[DEFAULT_TEAM_ID, DEFAULT_TEAM_NAME, DEFAULT_TEAM_SLUG],
+		);
+		const projectResult = await db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix, description, is_internal)
+			 VALUES ($1, $2, $3, $4, 'Instance coordination project — home of the CEO and Coach.', true)
+			 RETURNING id`,
+			[DEFAULT_TEAM_ID, HQ_PROJECT_NAME, HQ_PROJECT_SLUG, HQ_PROJECT_TASK_PREFIX],
+		);
+		await db.query('INSERT INTO project_task_counters (project_id, next_number) VALUES ($1, 1)', [
+			projectResult.rows[0].id,
+		]);
+		return projectResult.rows[0].id;
 	});
 
-	// The single instance CEO lives in the default team; its Captain reports to it.
-	await ensureInstanceCeo(deps.db, DEFAULT_TEAM_ID);
-	await linkTeamCaptainToInstanceCeo(deps.db, DEFAULT_TEAM_ID);
+	await ensureInstanceCeo(db, DEFAULT_TEAM_ID);
+	await ensureInstanceCoach(db, DEFAULT_TEAM_ID);
 
-	log.info(
-		`Seeded default team (${DEFAULT_TEAM_SLUG}) using template "${DEFAULT_TEAM_TEMPLATE_NAME}"`,
+	const hqProject = await db.query<ProjectRow>(
+		`SELECT id, team_id, slug, docker_base_image, container_id, container_status, dev_ports
+		 FROM projects WHERE id = $1`,
+		[hqProjectId],
 	);
+	if (hqProject.rows[0]) {
+		trackBackground(
+			provisionContainer(
+				{
+					db,
+					docker,
+					dataDir,
+					wsManager,
+					masterKeyManager,
+					logs,
+					containerLogStreamer: deps.containerLogStreamer,
+					egressCAPath: deps.egressCAPath ?? null,
+				},
+				hqProject.rows[0],
+				DEFAULT_TEAM_SLUG,
+			).catch((error) => {
+				log.error('Failed to provision container for HQ project:', error);
+			}),
+		);
+	}
+
+	log.info(`Seeded HQ team (${DEFAULT_TEAM_SLUG}) with CEO + Coach`);
 }

@@ -52,7 +52,7 @@ CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace',
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
 CREATE TYPE grant_scope AS ENUM ('single', 'project', 'team');
-CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'team_template', 'project_creation', 'strategy', 'plan_review', 'deploy_production', 'designated_repo_request', 'skill_proposal');
+CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'project_creation', 'strategy', 'plan_review', 'deploy_production', 'designated_repo_request', 'skill_proposal');
 CREATE TYPE approval_status AS ENUM ('pending', 'approved', 'denied');
 CREATE TYPE audit_actor_type AS ENUM ('admin', 'agent', 'system');
 CREATE TYPE repo_host_type AS ENUM ('github');
@@ -300,7 +300,9 @@ CREATE TABLE projects (
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_projects_team ON projects(team_id);
+-- One team backs exactly one project (1:1). UNIQUE permits the transient zero-project
+-- window while a new team's intake is still pending approval.
+CREATE UNIQUE INDEX idx_projects_team ON projects(team_id);
 -- Project slug is the single public handle for a project across the URL, API, and
 -- query layers; it must be unique instance-wide so a project resolves without a team.
 CREATE UNIQUE INDEX idx_projects_slug ON projects(slug);

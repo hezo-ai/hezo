@@ -1,11 +1,10 @@
 import { ApprovalType, TaskStatus } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, createTestProject } from './helpers/app';
+import { authHeader, createTestProject, instanceCoachId } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 let ctx: ServerTestContext;
 let teamId: string;
-let internalSlug: string;
 let projectId: string;
 let projectSlug: string;
 let engineerAgentId: string;
@@ -37,10 +36,11 @@ beforeAll(async () => {
 	});
 	const teamData = ((await teamRes.json()) as any).data;
 	teamId = teamData.id;
-	internalSlug = `internal-${teamData.slug}`;
 
 	// Get agents
-	const agentsRes = await ctx.app.request(`/api/projects/${internalSlug}/agents`, {
+	projectSlug = (await (await createTestProject(ctx.db, teamId, { name: 'Setup Project' })).json())
+		.data.slug;
+	const agentsRes = await ctx.app.request(`/api/projects/${projectSlug}/agents`, {
 		method: 'GET',
 		headers: authHeader(ctx.token),
 	});
@@ -48,7 +48,7 @@ beforeAll(async () => {
 	engineerAgentId = agents.find((a: any) => a.slug === 'engineer').id;
 	architectAgentId = agents.find((a: any) => a.slug === 'architect').id;
 	_qaAgentId = agents.find((a: any) => a.slug === 'qa-engineer').id;
-	coachAgentId = agents.find((a: any) => a.slug === 'coach').id;
+	coachAgentId = await instanceCoachId(ctx.db);
 
 	// Create a project
 	const projRes = await createTestProject(ctx.db, teamId, {
@@ -254,7 +254,7 @@ describe('task: sub-tasks with parent_task_id', () => {
 
 describe('approval: skill_proposal type', () => {
 	it('can create a skill_proposal approval', async () => {
-		const res = await ctx.app.request(`/api/projects/${internalSlug}/approvals`, {
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/approvals`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

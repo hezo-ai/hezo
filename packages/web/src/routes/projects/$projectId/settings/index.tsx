@@ -1,4 +1,4 @@
-import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
+import { HQ_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { useState } from 'react';
@@ -123,10 +123,7 @@ function ProjectSettingsPage() {
 export const Route = createFileRoute('/projects/$projectId/settings/')({
 	beforeLoad: ({ params }) => {
 		// Internal projects (slug `internal-<teamSlug>`) have no settings page.
-		if (
-			params.projectId === INTERNAL_PROJECT_SLUG ||
-			params.projectId.startsWith(`${INTERNAL_PROJECT_SLUG}-`)
-		) {
+		if (params.projectId === HQ_PROJECT_SLUG) {
 			throw redirect({
 				to: '/projects/$projectId/tasks',
 				params,

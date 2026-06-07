@@ -1,10 +1,32 @@
-import { fireEvent } from '@testing-library/react';
+import { fireEvent, waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { renderApp } from './helpers/render';
+import { getTestContext, renderApp } from './helpers/render';
 import { type SeededWorkspace, seedWorkspace } from './helpers/seed';
 
 function uniqueName(base: string): string {
 	return `${base} ${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// The hire flow files the onboard ticket in the team's own project (no per-team
+// internal project under the 1:1 model). Wait for that task to land via the API,
+// then surface it through the team project's task list so the assertion reads it
+// from the rendered DOM.
+async function findOnboardTask(ws: SeededWorkspace, role: string): Promise<void> {
+	const { apiBase, token } = getTestContext();
+	const title = `Onboard new agent: ${role}`;
+	await waitFor(
+		async () => {
+			const res = await apiBase(`/api/projects/${ws.internalSlug}/tasks`, {
+				headers: { Authorization: `Bearer ${token}` },
+			});
+			const body = (await res.json()) as {
+				data: { tasks?: Array<{ title: string }> } | Array<{ title: string }>;
+			};
+			const tasks = Array.isArray(body.data) ? body.data : (body.data.tasks ?? []);
+			expect(tasks.some((t) => t.title === title)).toBe(true);
+		},
+		{ timeout: 20_000 },
+	);
 }
 
 test('can hire an agent with minimal fields', async () => {
@@ -27,6 +49,11 @@ test('can hire an agent with minimal fields', async () => {
 	const form = titleInput.closest('form') as HTMLFormElement;
 	fireEvent.submit(form);
 
+	await findOnboardTask(ws, role);
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: ws.internalSlug },
+	});
 	await findByText(`Onboard new agent: ${role}`, undefined, { timeout: 20_000 });
 }, 60_000);
 
@@ -90,5 +117,10 @@ test('can hire agent with full fields', async () => {
 	const form = titleInput.closest('form') as HTMLFormElement;
 	fireEvent.submit(form);
 
+	await findOnboardTask(ws, role);
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: ws.internalSlug },
+	});
 	await findByText(`Onboard new agent: ${role}`, undefined, { timeout: 20_000 });
 }, 60_000);

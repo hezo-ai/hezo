@@ -229,33 +229,31 @@ test('canonical task URL is project-scoped; UUID and wrong-project forms redirec
 });
 
 test('bare ticket identifier renders as a tooltip-ed link and navigates to the target task', async () => {
-	let teamSlug = '';
-	let projSlugA = '';
-	let projSlugB = '';
+	let projSlug = '';
 	let sourceIdentifier = '';
 	let targetIdentifier = '';
 	const targetTitle = 'Target task title goes here';
 
-	const { findByRole, findByTestId, user, router, container } = await renderApp({
+	const { findByRole, findByTestId, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
+			// Mention resolution is team-scoped. Under 1:1 teams↔projects a team
+			// holds exactly one project, so the source and its referenced target
+			// task live in the same project.
 			const ws = await seedWorkspace();
 			const captain = ws.agents.find((a) => a.slug === 'captain')!;
-			const projA = await seedProject(ws, { name: 'Mention Source' });
-			const projB = await seedProject(ws, { name: 'Mention Target' });
+			const project = await seedProject(ws, { name: 'Mention Project' });
 
-			const target = await seedTask(ws, projB, {
+			const target = await seedTask(ws, project, {
 				title: targetTitle,
 				assignee_id: captain.id,
 			});
-			const source = await seedTask(ws, projA, {
+			const source = await seedTask(ws, project, {
 				title: 'Source task',
 				description: `See also ${target.identifier} for related work.`,
 				assignee_id: captain.id,
 			});
-			teamSlug = ws.team.slug;
-			projSlugA = projA.slug;
-			projSlugB = projB.slug;
+			projSlug = project.slug;
 			targetIdentifier = target.identifier;
 			sourceIdentifier = source.identifier;
 		},
@@ -264,7 +262,7 @@ test('bare ticket identifier renders as a tooltip-ed link and navigates to the t
 	await router.navigate({
 		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			projectId: projSlugA,
+			projectId: projSlug,
 			taskId: sourceIdentifier.toLowerCase(),
 		},
 	});
@@ -277,7 +275,7 @@ test('bare ticket identifier renders as a tooltip-ed link and navigates to the t
 	await user.click(mentionLink);
 
 	await findByRole('heading', { name: targetTitle });
-	const targetPath = `/projects/${projSlugB}/tasks/${targetIdentifier.toLowerCase()}`;
+	const targetPath = `/projects/${projSlug}/tasks/${targetIdentifier.toLowerCase()}`;
 	expect(router.state.location.pathname).toBe(targetPath);
 });
 

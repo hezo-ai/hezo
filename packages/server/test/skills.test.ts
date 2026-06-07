@@ -13,7 +13,7 @@ import { parseGitHubRawUrl, SkillDownloadError } from '../src/services/skill-dow
 import { resolveSystemPrompt } from '../src/services/template-resolver';
 import { buildApp } from '../src/startup';
 import { safeClose } from './helpers';
-import { authHeader, createStubDocker } from './helpers/app';
+import { authHeader, createStubDocker, projectSlugFor } from './helpers/app';
 import { createTestDbWithMigrations } from './helpers/db';
 
 let app: Hono<Env>;
@@ -62,7 +62,7 @@ beforeAll(async () => {
 	});
 	const teamBody = await teamRes.json();
 	teamId = teamBody.data.id;
-	projectSlug = `internal-${teamBody.data.slug}`;
+	projectSlug = `${await projectSlugFor(db, teamBody.data.id)}`;
 });
 
 afterAll(async () => {

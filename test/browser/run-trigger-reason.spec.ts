@@ -2,10 +2,42 @@ import { expect, type Page, test } from '@playwright/test';
 import {
 	authenticate,
 	createProjectReadyForAgents,
-	createTeamWithAgents,
+	getTemplateIdByName,
+	getToken,
 	waitForAgentIdle,
 	waitForCaptainIdle,
 } from './helpers';
+
+type ReadyProject = {
+	id: string;
+	slug: string;
+	team_id: string;
+	team_slug: string;
+};
+
+async function listProjectAgents(
+	page: Page,
+	projectSlug: string,
+	token: string,
+): Promise<Array<{ id: string; slug: string }>> {
+	const res = await page.request.get(`/api/projects/${projectSlug}/agents`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	return ((await res.json()) as { data: Array<{ id: string; slug: string }> }).data;
+}
+
+async function createStartupProject(
+	page: Page,
+	token: string,
+	name: string,
+): Promise<ReadyProject> {
+	const templateId = await getTemplateIdByName(page, token, 'Startup');
+	return (await createProjectReadyForAgents(page, { id: '', slug: '' }, token, {
+		name,
+		description: 'Test project.',
+		template_id: templateId,
+	})) as unknown as ReadyProject;
+}
 
 interface RunListItem {
 	id: string;
@@ -18,7 +50,7 @@ interface RunListItem {
 
 async function waitForRunWithTrigger(
 	page: Page,
-	teamSlug: string,
+	projectSlug: string,
 	agentId: string,
 	token: string,
 	predicate: (run: RunListItem) => boolean,
@@ -28,7 +60,7 @@ async function waitForRunWithTrigger(
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
 		const res = await page.request.get(
-			`/api/projects/internal-${teamSlug}/agents/${agentId}/heartbeat-runs`,
+			`/api/projects/${projectSlug}/agents/${agentId}/heartbeat-runs`,
 			{
 				headers,
 			},
@@ -45,22 +77,14 @@ async function waitForRunWithTrigger(
 
 test('run page shows trigger reason linking back to the source mention', async ({ page }) => {
 	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
+	const token = await getToken(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/projects/internal-${team.slug}/agents`, {
-		headers,
-	});
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const project = await createStartupProject(page, token, 'Trigger Reason Project');
+
+	const agents = await listProjectAgents(page, project.slug, token);
 	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 	const architect = agents.find((a) => a.slug === 'architect') ?? agents[1];
-
-	await waitForCaptainIdle(page, team.slug, token);
-
-	const project = await createProjectReadyForAgents(page, team, token, {
-		name: 'Trigger Reason Project',
-		description: 'Test project.',
-	});
 
 	// Assign to the architect so the task's auto-assignment wakeup goes to a
 	// different agent than the one we plan to wake via mention. That way the
@@ -77,8 +101,8 @@ test('run page shows trigger reason linking back to the source mention', async (
 	const task = ((await taskRes.json()) as { data: { id: string; identifier: string } }).data;
 
 	// Let the assignee's assignment wakeup finish before waking Captain via mention.
-	await waitForAgentIdle(page, team.slug, architect.id, token);
-	await waitForCaptainIdle(page, team.slug, token);
+	await waitForAgentIdle(page, project.team_slug, architect.id, token);
+	await waitForCaptainIdle(page, project.team_slug, token);
 
 	await page.request.post(`/api/projects/${project.slug}/tasks/${task.id}/comments`, {
 		headers,
@@ -88,7 +112,7 @@ test('run page shows trigger reason linking back to the source mention', async (
 	const taskIdLower = task.identifier.toLowerCase();
 	const mentionRun = await waitForRunWithTrigger(
 		page,
-		team.slug,
+		project.slug,
 		captain.id,
 		token,
 		(r) =>
@@ -96,9 +120,7 @@ test('run page shows trigger reason linking back to the source mention', async (
 			r.trigger_comment_task_identifier?.toLowerCase() === taskIdLower,
 	);
 
-	await page.goto(
-		`/projects/internal-${team.slug}/agents/${captain.id}/executions/${mentionRun.id}`,
-	);
+	await page.goto(`/projects/${project.slug}/agents/${captain.id}/executions/${mentionRun.id}`);
 
 	const triggerRow = page.getByTestId('run-trigger-reason');
 	await expect(triggerRow).toBeVisible({ timeout: 15000 });
@@ -117,21 +139,13 @@ test('run page shows trigger reason linking back to the source mention', async (
 
 test('task link on run detail page scrolls to the run comment', async ({ page }) => {
 	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
+	const token = await getToken(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/projects/internal-${team.slug}/agents`, {
-		headers,
-	});
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const project = await createStartupProject(page, token, 'Run Comment Deep Link Project');
+
+	const agents = await listProjectAgents(page, project.slug, token);
 	const architect = agents.find((a) => a.slug === 'architect') ?? agents[1];
-
-	await waitForCaptainIdle(page, team.slug, token);
-
-	const project = await createProjectReadyForAgents(page, team, token, {
-		name: 'Run Comment Deep Link Project',
-		description: 'Test project.',
-	});
 
 	// Pad the description so the comment list sits well below the fold — the
 	// scroll has to actually move for the run comment to be visible.
@@ -154,14 +168,14 @@ test('task link on run detail page scrolls to the run comment', async ({ page })
 	const taskIdLower = task.identifier.toLowerCase();
 	const assignmentRun = await waitForRunWithTrigger(
 		page,
-		team.slug,
+		project.slug,
 		architect.id,
 		token,
 		(r) => r.trigger_source === 'assignment',
 	);
 
 	await page.goto(
-		`/projects/internal-${team.slug}/agents/${architect.id}/executions/${assignmentRun.id}`,
+		`/projects/${project.slug}/agents/${architect.id}/executions/${assignmentRun.id}`,
 	);
 
 	const taskLink = page.locator(`a[href*="/tasks/${taskIdLower}"]`).first();
@@ -190,21 +204,13 @@ test('task link on run detail page scrolls to the run comment', async ({ page })
 
 test('run list row shows the trigger reason summary', async ({ page }) => {
 	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
+	const token = await getToken(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/projects/internal-${team.slug}/agents`, {
-		headers,
-	});
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const project = await createStartupProject(page, token, 'Trigger List Project');
+
+	const agents = await listProjectAgents(page, project.slug, token);
 	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
-
-	await waitForCaptainIdle(page, team.slug, token);
-
-	const project = await createProjectReadyForAgents(page, team, token, {
-		name: 'Trigger List Project',
-		description: 'Test project.',
-	});
 
 	const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 		headers,
@@ -219,9 +225,15 @@ test('run list row shows the trigger reason summary', async ({ page }) => {
 
 	// Wait for at least one terminal run on the assigned agent so the list page
 	// has a row to render.
-	await waitForRunWithTrigger(page, team.slug, captain.id, token, (r) => r.trigger_source !== null);
+	await waitForRunWithTrigger(
+		page,
+		project.slug,
+		captain.id,
+		token,
+		(r) => r.trigger_source !== null,
+	);
 
-	await page.goto(`/projects/internal-${team.slug}/agents/${captain.id}/executions`);
+	await page.goto(`/projects/${project.slug}/agents/${captain.id}/executions`);
 
 	const firstRow = page.locator('a[href*="/executions/"]').first();
 	await expect(firstRow).toBeVisible({ timeout: 15000 });

@@ -10,8 +10,8 @@ let db: PGlite;
 let app: Hono<Env>;
 let token: string;
 let teamId: string;
-let internalSlug: string;
 let agentId: string;
+let projectSlug: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -33,9 +33,10 @@ beforeAll(async () => {
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
-	internalSlug = `internal-${team.slug}`;
 
-	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	projectSlug = (await (await createTestProject(db, teamId, { name: 'Setup Project' })).json()).data
+		.slug;
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
@@ -169,7 +170,7 @@ describe('wakeup service', () => {
 		const projectSlug = project.slug;
 
 		// Create a second agent to reassign to
-		const agent2Res = await app.request(`/api/projects/${internalSlug}/agents`, {
+		const agent2Res = await app.request(`/api/projects/${projectSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Reassign Target' }),
@@ -293,7 +294,7 @@ describe('absorbQueuedTaskWakeups', () => {
 	let otherAgentId: string;
 
 	beforeAll(async () => {
-		const agent2Res = await app.request(`/api/projects/${internalSlug}/agents`, {
+		const agent2Res = await app.request(`/api/projects/${projectSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Absorb Other Agent' }),

@@ -3,7 +3,7 @@ import {
 	AgentRuntimeStatus,
 	CAPTAIN_AGENT_SLUG,
 	DEFAULT_EFFORT,
-	INTERNAL_PROJECT_SLUG,
+	HQ_PROJECT_SLUG,
 	TaskStatus,
 } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
@@ -76,7 +76,7 @@ export function TaskSidebar({
 		assignedAgent?.slug === CAPTAIN_AGENT_SLUG
 			? AgentEffort.Max
 			: (assignedAgent?.default_effort ?? DEFAULT_EFFORT);
-	const isInternalProject = task.project_slug === INTERNAL_PROJECT_SLUG;
+	const isInternalProject = task.project_slug === HQ_PROJECT_SLUG;
 	const assigneeOptions = agents
 		?.filter((a) => a.admin_status !== 'disabled')
 		.filter((a) => !isInternalProject || a.slug === CAPTAIN_AGENT_SLUG);

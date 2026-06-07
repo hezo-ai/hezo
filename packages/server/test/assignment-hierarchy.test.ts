@@ -9,7 +9,13 @@ import {
 } from '../src/lib/assignment-hierarchy';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, mintAgentToken } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	instanceCoachId,
+	mintAgentToken,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -65,7 +71,9 @@ beforeAll(async () => {
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
-	const projectSlug = `internal-${team.slug}`;
+	const projectSlug = (
+		await (await createTestProject(db, teamId, { name: 'Setup Project' })).json()
+	).data.slug;
 
 	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
@@ -77,7 +85,7 @@ beforeAll(async () => {
 	productLeadId = bySlug('product-lead')!.id;
 	engineerId = bySlug('engineer')!.id;
 	qaEngineerId = bySlug('qa-engineer')!.id;
-	coachId = bySlug('coach')!.id;
+	coachId = await instanceCoachId(db);
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Hierarchy Project',

@@ -34,6 +34,19 @@
 - `agents/<template>/*.md` — single source of truth for agent system prompts. Each team template (e.g. `software-development/`, `blank/`) owns its own role docs. The seed in `packages/server/src/db/seed.ts` reads these at startup. Edit them directly. Hezo-specific tooling/file-paths/conventions belong here in AGENTS.md, not in role docs.
 - `.dev/` — specs, schema, API, implementation plans. Keep in sync with code: describe what the system **does**, not what changed. No backwards-compat concerns pre-v1.
 
+## Project / team model (1:1)
+
+Hezo is **project-centric**: a **project** is the primary unit and **owns exactly one team** (its agent roster). The relationship is **1:1** — a team backs exactly one project, enforced by `UNIQUE(projects.team_id)`. In the DB the FK runs `projects.team_id → teams.id`, but conceptually "teams belong to projects." Reach a team *through* its project; all project work is addressed by **project slug** (`/api/projects/:projectId/...`).
+
+There is **no per-team "internal" project.** The only `is_internal` project instance-wide is **HQ** (the default team), the one team with cross-project powers. HQ hosts two instance-level singletons:
+
+- **CEO** — runs all coordination. Project **intake** and first-run **onboarding** (pre-project) live in HQ; per-team **setup/coherence review** and **hiring** live in that team's own project, CEO-actioned. On a new team the CEO's initial coherence pass runs first and **blocks** the Captain's planning task.
+- **Coach** — reviews completed tickets across every project.
+
+Project-teams get a **Captain** + the chosen template's worker roles; templates never include the CEO/Coach. **Creating a project** (`POST /api/projects`, superuser) always provisions from a team-type template (default **Blank** = Captain only) and directly creates the team, project, planning task, and the initial CEO coherence task.
+
+**Cross-team execution (run-team split):** CEO/Coach are HQ members but act inside other teams' projects. A run is scoped to the **task's project team** (JWT, `HEZO_TEAM_ID`, MCP, skills, git, container) while the agent's **system prompt** loads from its **home** team (HQ). Instance agents also select tasks across all teams. Auth validates the `heartbeat_runs` row, not team membership, so this is legitimate. See `.dev/per-project-teams.md`.
+
 ## Database migrations
 
 Pre-v1: modify `packages/server/migrations/001_initial_schema.sql` in place and reset. Do not create new migration files.

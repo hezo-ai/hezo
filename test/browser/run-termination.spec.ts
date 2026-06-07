@@ -11,21 +11,22 @@ interface MockSetup {
 	taskId: string;
 }
 
-async function setupTask(
-	page: Page,
-	team: { id: string; slug: string },
-	token: string,
-	agents: Array<{ id: string; slug: string }>,
-): Promise<MockSetup> {
+async function setupTask(page: Page, token: string): Promise<MockSetup> {
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agent = agents.find((a) => a.slug === 'captain') ?? agents[0];
-
-	const projectRes = await createProjectAndClearPlanning(page, team.slug, token, {
+	const projectRes = await createProjectAndClearPlanning(page, '', token, {
 		name: uniqueName('Terminate Run Project'),
 		description: 'Test project.',
 	});
-	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
+	const project = (
+		(await projectRes.json()) as {
+			data: { id: string; slug: string; team_id: string; team_slug: string };
+		}
+	).data;
+
+	const agentsRes = await page.request.get(`/api/projects/${project.slug}/agents`, { headers });
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const agent = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
 	const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 		headers: { ...headers, 'Content-Type': 'application/json' },
@@ -34,8 +35,8 @@ async function setupTask(
 	const task = ((await taskRes.json()) as { data: { id: string } }).data;
 
 	return {
-		teamId: team.id,
-		teamSlug: team.slug,
+		teamId: project.team_id,
+		teamSlug: project.team_slug,
 		projectSlug: project.slug,
 		agentId: agent.id,
 		agentSlug: agent.slug,
@@ -124,12 +125,7 @@ test('terminate button renders on mobile viewport', async ({
 	sharedWorkspace,
 }) => {
 	await page.setViewportSize({ width: 375, height: 800 });
-	const setup = await setupTask(
-		page,
-		sharedWorkspace.team,
-		sharedWorkspace.token,
-		sharedWorkspace.agents,
-	);
+	const setup = await setupTask(page, sharedWorkspace.token);
 	await mockRunningRun(page, setup);
 
 	await page.goto(`/projects/${setup.projectSlug}/tasks/${setup.taskId}`);

@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, projectSlugFor, projectSlugForTeamSlug } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -32,9 +32,12 @@ beforeAll(async () => {
 	});
 	teamSlug = (await teamRes.json()).data.slug;
 
-	const agentsRes = await app.request(`/api/projects/internal-${teamSlug}/agents`, {
-		headers: authHeader(token),
-	});
+	const agentsRes = await app.request(
+		`/api/projects/${await projectSlugForTeamSlug(db, teamSlug)}/agents`,
+		{
+			headers: authHeader(token),
+		},
+	);
 	// Use the engineer (has 5000 budget)
 	agentId = (await agentsRes.json()).data.find(
 		(a: Record<string, unknown>) => a.slug === 'engineer',
@@ -47,24 +50,30 @@ afterAll(async () => {
 
 describe('costs CRUD', () => {
 	it('creates a cost entry with budget debit', async () => {
-		const res = await app.request(`/api/projects/internal-${teamSlug}/costs`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				member_id: agentId,
-				amount_cents: 100,
-				description: 'Tool call cost',
-			}),
-		});
+		const res = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, teamSlug)}/costs`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					member_id: agentId,
+					amount_cents: 100,
+					description: 'Tool call cost',
+				}),
+			},
+		);
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.data.amount_cents).toBe(100);
 	});
 
 	it('lists cost entries', async () => {
-		const res = await app.request(`/api/projects/internal-${teamSlug}/costs`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, teamSlug)}/costs`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.entries.length).toBeGreaterThanOrEqual(1);
@@ -72,9 +81,12 @@ describe('costs CRUD', () => {
 	});
 
 	it('groups costs by agent', async () => {
-		const res = await app.request(`/api/projects/internal-${teamSlug}/costs?group_by=agent`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, teamSlug)}/costs?group_by=agent`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.summary.length).toBeGreaterThanOrEqual(1);
@@ -83,15 +95,18 @@ describe('costs CRUD', () => {
 
 	it('rejects budget-exceeding cost', async () => {
 		// Engineer budget is 5000 cents
-		const res = await app.request(`/api/projects/internal-${teamSlug}/costs`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				member_id: agentId,
-				amount_cents: 99999,
-				description: 'Way too expensive',
-			}),
-		});
+		const res = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, teamSlug)}/costs`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					member_id: agentId,
+					amount_cents: 99999,
+					description: 'Way too expensive',
+				}),
+			},
+		);
 		expect(res.status).toBe(402);
 		const body = await res.json();
 		expect(body.error.code).toBe('BUDGET_EXCEEDED');

@@ -9,7 +9,7 @@ import type { DockerClient } from '../src/services/docker';
 import { JobManager } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, projectSlugFor } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -90,7 +90,7 @@ beforeAll(async () => {
 	projectId = project.id;
 	projectSlug = project.slug;
 
-	const agentsRes = await app.request(`/api/projects/internal-${teamSlug}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${await projectSlugFor(db, teamId)}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;

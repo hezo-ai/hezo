@@ -15,6 +15,7 @@ import type { DockerClient } from '../../src/services/docker';
 import { JobManager } from '../../src/services/job-manager';
 import { LogStreamBroker } from '../../src/services/log-stream-broker';
 import { createProjectWithPlanningTask } from '../../src/services/project-create';
+import { seedDefaultTeam } from '../../src/services/teams';
 import { WebSocketManager } from '../../src/services/ws';
 import { buildApp } from '../../src/startup';
 import { createTestDbWithMigrations } from './db';
@@ -92,6 +93,18 @@ export async function createTestApp(opts: { webUrl?: string } = {}) {
 	);
 	const token = await signAdminJwt(masterKeyManager, userResult.rows[0].id);
 
+	// Seed the HQ team (CEO + Coach + HQ project). Coordination flows (intake,
+	// hiring, coherence, OAuth verification) resolve the CEO from here.
+	await seedDefaultTeam({
+		db,
+		docker,
+		dataDir,
+		wsManager,
+		masterKeyManager,
+		logs,
+		containerLogStreamer,
+	});
+
 	return { app, db, token, masterKeyHex, masterKeyManager, dataDir };
 }
 
@@ -148,11 +161,11 @@ export async function mintAgentToken(
 		}
 		if (!projectId) {
 			const fallback = await db.query<{ id: string }>(
-				`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true LIMIT 1`,
+				`SELECT id FROM projects WHERE team_id = $1 ORDER BY is_internal LIMIT 1`,
 				[teamId],
 			);
 			projectId = fallback.rows[0]?.id;
-			if (crossProject === undefined) crossProject = true;
+			if (crossProject === undefined) crossProject = false;
 		}
 	}
 	if (!projectId) throw new Error('mintAgentToken: could not resolve a projectId');
@@ -166,6 +179,38 @@ export async function mintAgentToken(
 		crossProject,
 	);
 	return { token, runId, projectId, crossProject };
+}
+
+/**
+ * A team is addressed through its single project. Returns that project's slug,
+ * creating it idempotently. Lets tests that used to hit `internal-<teamSlug>`
+ * resolve the team's real project handle inline.
+ */
+export async function projectSlugFor(db: PGlite, teamId: string): Promise<string> {
+	const res = await createTestProject(db, teamId, { name: 'Work Project' });
+	return (await res.json()).data.slug;
+}
+
+/** Same as {@link projectSlugFor} but keyed by the team's slug. */
+export async function projectSlugForTeamSlug(db: PGlite, teamSlug: string): Promise<string> {
+	const t = await db.query<{ id: string }>('SELECT id FROM teams WHERE slug = $1', [teamSlug]);
+	return projectSlugFor(db, t.rows[0].id);
+}
+
+/** The single instance-level Coach member id (lives in HQ). */
+export async function instanceCoachId(db: PGlite): Promise<string> {
+	const r = await db.query<{ id: string }>(
+		"SELECT id FROM member_agents WHERE slug = 'coach' LIMIT 1",
+	);
+	return r.rows[0].id;
+}
+
+/** The single instance-level CEO member id (lives in HQ). */
+export async function instanceCeoId(db: PGlite): Promise<string> {
+	const r = await db.query<{ id: string }>(
+		"SELECT id FROM member_agents WHERE slug = 'ceo' LIMIT 1",
+	);
+	return r.rows[0].id;
 }
 
 export interface CreatedTestProject {
@@ -207,6 +252,35 @@ export async function createTestProject(
 	status: 201;
 	json: () => Promise<{ data: CreatedTestProject }>;
 }> {
+	// With the 1:1 invariant a team has at most one (non-internal) project. Return
+	// it idempotently so a test can set up its project regardless of call order and
+	// without tripping the UNIQUE(projects.team_id) constraint on a second call.
+	const existing = await db.query<Record<string, unknown>>(
+		`SELECT p.*,
+		        (SELECT i.id FROM tasks i WHERE i.project_id = p.id AND i.labels @> '["planning"]'::jsonb LIMIT 1) AS planning_task_id,
+		        (SELECT i.identifier FROM tasks i WHERE i.project_id = p.id AND i.labels @> '["planning"]'::jsonb LIMIT 1) AS planning_task_identifier
+		 FROM projects p WHERE p.team_id = $1 AND p.is_internal = false LIMIT 1`,
+		[teamId],
+	);
+	if (existing.rows[0]) {
+		const p = existing.rows[0];
+		const data: CreatedTestProject = {
+			id: p.id as string,
+			slug: p.slug as string,
+			task_prefix: p.task_prefix as string,
+			name: p.name as string,
+			description: (p.description as string) ?? '',
+			team_id: p.team_id as string,
+			is_internal: (p.is_internal as boolean) ?? false,
+			docker_base_image: (p.docker_base_image as string) ?? 'hezo/agent-base:latest',
+			container_id: (p.container_id as string | null) ?? null,
+			container_status: (p.container_status as string | null) ?? null,
+			planning_task_id: (p.planning_task_id as string | null) ?? '',
+			planning_task_identifier: (p.planning_task_identifier as string | null) ?? '',
+		};
+		return { status: 201, json: async () => ({ data }) };
+	}
+
 	const captain = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id

@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, projectSlugFor } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -34,7 +34,7 @@ beforeAll(async () => {
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
-	projectSlug = `internal-${team.slug}`;
+	projectSlug = `${await projectSlugFor(db, team.id)}`;
 });
 
 afterAll(async () => {
@@ -42,13 +42,13 @@ afterAll(async () => {
 });
 
 describe('agents CRUD', () => {
-	it('lists all 9 auto-created agents', async () => {
+	it('lists all auto-created agents', async () => {
 		const res = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data).toHaveLength(11);
+		expect(body.data).toHaveLength(10);
 	});
 
 	it('all agents start with idle runtime_status and enabled admin_status', async () => {

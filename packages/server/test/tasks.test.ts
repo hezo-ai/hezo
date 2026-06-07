@@ -12,7 +12,6 @@ let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let teamSlug: string;
-let internalSlug: string;
 let projectId: string;
 let projectSlug: string;
 let agentId: string;
@@ -32,7 +31,6 @@ beforeAll(async () => {
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
-	internalSlug = `internal-${teamSlug}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Main Project',
@@ -42,7 +40,7 @@ beforeAll(async () => {
 	projectId = projectBody.id;
 	projectSlug = projectBody.slug;
 
-	const agentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	const agentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Test Agent' }),
@@ -470,7 +468,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('filters by multiple assignee_ids when comma-separated', async () => {
-		const secondAgentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+		const secondAgentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Second Agent' }),
@@ -592,10 +590,7 @@ describe('tasks CRUD', () => {
 		const task = (await createRes.json()).data;
 
 		const coachRow = await db.query<{ id: string }>(
-			`SELECT ma.id FROM member_agents ma
-			 JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1 AND ma.slug = 'coach'`,
-			[teamId],
+			"SELECT id FROM member_agents WHERE slug = 'coach' LIMIT 1",
 		);
 		const coachId = coachRow.rows[0].id;
 		const { token: coachToken } = await mintAgentToken(
@@ -741,7 +736,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('creates an assignment wakeup when PATCH actually changes the assignee', async () => {
-		const secondAgentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+		const secondAgentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Reassign Target Agent' }),
@@ -880,149 +875,6 @@ describe('sub-task depth + ancestors', () => {
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
-	});
-});
-
-describe('Internal project assignee restriction', () => {
-	let internalProjectId: string;
-	let captainAgentId: string;
-
-	beforeAll(async () => {
-		const opsResult = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND slug = $2`,
-			[teamId, internalSlug],
-		);
-		internalProjectId = opsResult.rows[0].id;
-
-		const captainResult = await db.query<{ id: string }>(
-			`SELECT ma.id FROM member_agents ma
-			 JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
-			[teamId],
-		);
-		captainAgentId = captainResult.rows[0].id;
-	});
-
-	it('rejects creating an Internal task assigned to a non-Captain agent', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				project_id: internalProjectId,
-				title: 'Non-Captain on Internal',
-				assignee_id: agentId,
-			}),
-		});
-		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toContain('Captain');
-	});
-
-	it('accepts creating an Internal task assigned to the Captain', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				project_id: internalProjectId,
-				title: 'Captain on Internal',
-				assignee_id: captainAgentId,
-			}),
-		});
-		expect(res.status).toBe(201);
-		expect((await res.json()).data.assignee_id).toBe(captainAgentId);
-	});
-
-	it('allows non-Captain assignees on non-Internal projects', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				project_id: projectId,
-				title: 'Non-Captain on regular project',
-				assignee_id: agentId,
-			}),
-		});
-		expect(res.status).toBe(201);
-	});
-
-	it('rejects reassigning an Internal task to a non-Captain agent', async () => {
-		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				project_id: internalProjectId,
-				title: 'Reassignable Internal task',
-				assignee_id: captainAgentId,
-			}),
-		});
-		const task = (await createRes.json()).data;
-
-		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ assignee_id: agentId }),
-		});
-		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toContain('Captain');
-	});
-
-	it('allows reassigning an Internal task back to the Captain', async () => {
-		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				project_id: internalProjectId,
-				title: 'Internal keep-Captain task',
-				assignee_id: captainAgentId,
-			}),
-		});
-		const task = (await createRes.json()).data;
-
-		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ assignee_id: captainAgentId }),
-		});
-		expect(res.status).toBe(200);
-	});
-
-	it('rejects sub-task of an Internal parent assigned to a non-Captain agent', async () => {
-		const parentRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				project_id: internalProjectId,
-				title: 'Internal parent',
-				assignee_id: captainAgentId,
-			}),
-		});
-		const parent = (await parentRes.json()).data;
-
-		const res = await app.request(`/api/projects/${projectSlug}/tasks/${parent.id}/sub-tasks`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ title: 'Sub with non-Captain', assignee_id: agentId }),
-		});
-		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toContain('Captain');
-	});
-
-	it('exposes project_slug on the task detail response', async () => {
-		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				project_id: internalProjectId,
-				title: 'Internal detail check',
-				assignee_id: captainAgentId,
-			}),
-		});
-		const task = (await createRes.json()).data;
-
-		const detailRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
-			headers: authHeader(token),
-		});
-		const detail = (await detailRes.json()).data;
-		expect(detail.project_slug).toBe(internalSlug);
 	});
 });
 

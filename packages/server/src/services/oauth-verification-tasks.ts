@@ -1,7 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
-	AgentAdminStatus,
-	CAPTAIN_AGENT_SLUG,
 	CommentContentType,
 	type PlatformType,
 	TaskPriority,
@@ -13,6 +11,7 @@ import {
 import { broadcastRowChange } from '../lib/broadcast';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
+import { loadCoordinationContext } from './internal-intake';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -23,26 +22,18 @@ export const OAUTH_VERIFICATION_LABEL = 'oauth-verification';
 interface TeamContext {
 	captainMemberId: string;
 	internalProjectId: string;
+	hqTeamId: string;
 }
 
-async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext | null> {
-	const captain = await db.query<{ id: string }>(
-		`SELECT ma.id FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
-		 LIMIT 1`,
-		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
-	);
-	const internalProject = await db.query<{ id: string }>(
-		`SELECT id FROM projects
-		 WHERE team_id = $1 AND is_internal = true
-		 LIMIT 1`,
-		[teamId],
-	);
-	if (!captain.rows[0] || !internalProject.rows[0]) return null;
+// Credentials and connectors are instance-level, so OAuth verification runs in HQ
+// and is actioned by the CEO (not the per-team Captain).
+async function loadTeamContext(db: PGlite, _teamId: string): Promise<TeamContext | null> {
+	const ctx = await loadCoordinationContext(db);
+	if (!ctx) return null;
 	return {
-		captainMemberId: captain.rows[0].id,
-		internalProjectId: internalProject.rows[0].id,
+		captainMemberId: ctx.ceoMemberId,
+		internalProjectId: ctx.hqProjectId,
+		hqTeamId: ctx.hqTeamId,
 	};
 }
 
@@ -176,7 +167,7 @@ export async function enqueueOAuthVerificationTask(
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::task_status, $10::task_priority, $11::jsonb)
 		 RETURNING *`,
 		[
-			teamId,
+			ctx.hqTeamId,
 			ctx.internalProjectId,
 			ctx.captainMemberId,
 			parentIdentifier ? originatingTaskId : null,
@@ -193,15 +184,15 @@ export async function enqueueOAuthVerificationTask(
 	const taskId = task.id as string;
 
 	if (wsManager) {
-		broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', task);
+		broadcastRowChange(wsManager, wsRoom.team(ctx.hqTeamId), 'tasks', 'INSERT', task);
 	}
 
 	try {
-		await createWakeup(db, ctx.captainMemberId, teamId, WakeupSource.Assignment, {
+		await createWakeup(db, ctx.captainMemberId, ctx.hqTeamId, WakeupSource.Assignment, {
 			task_id: taskId,
 		});
 	} catch (e) {
-		log.error('Failed to wake Captain for OAuth verification task:', e);
+		log.error('Failed to wake CEO for OAuth verification task:', e);
 	}
 
 	return { taskId, identifier, created: true };

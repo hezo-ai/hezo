@@ -10,7 +10,7 @@ import {
 } from '../src/lib/dependencies';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, projectSlugFor } from './helpers/app';
 
 let db: PGlite;
 let app: Hono<Env>;
@@ -41,7 +41,7 @@ beforeAll(async () => {
 	});
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	internalProjectSlug = `internal-${teamData.slug}`;
+	internalProjectSlug = `${await projectSlugFor(db, teamData.id)}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Gate Project',

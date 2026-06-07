@@ -9,9 +9,17 @@ export interface AuditEntry {
 	actor_member_id: string | null;
 	actor_name: string | null;
 	team_name: string | null;
+	team_slug: string | null;
+	project_slug: string | null;
+	/** Slug of the team's internal project, the anchor for team-level settings pages. */
+	team_internal_slug: string | null;
 	action: string;
 	entity_type: string;
 	entity_id: string | null;
+	/** Identifier of the task when the row's entity is a task. */
+	entity_identifier: string | null;
+	/** Identifier of the task referenced via details.task_id (runs, assets, credentials). */
+	ref_task_identifier: string | null;
 	details: Record<string, unknown>;
 	created_at: string;
 }

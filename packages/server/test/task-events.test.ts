@@ -6,7 +6,13 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
 import { extractTaskIdentifiers } from '../src/services/task-events';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, mintAgentToken } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	mintAgentToken,
+	projectSlugFor,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -14,7 +20,6 @@ let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let teamSlug: string;
-let internalSlug: string;
 let projectId: string;
 let projectSlug: string;
 let agentId: string;
@@ -82,7 +87,6 @@ beforeAll(async () => {
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
-	internalSlug = `internal-${teamSlug}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Widget',
@@ -92,7 +96,7 @@ beforeAll(async () => {
 	projectId = projectData.id;
 	projectSlug = projectData.slug;
 
-	const agentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	const agentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Status Bot' }),
@@ -274,7 +278,7 @@ describe('title change system events', () => {
 
 describe('assignee change system events', () => {
 	it('records a admin-authored reassignment with from/to ids and names', async () => {
-		const secondAgentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+		const secondAgentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Second Bot' }),
@@ -421,7 +425,7 @@ describe('task link system events', () => {
 		});
 		const otherTeamData = (await otherTeamRes.json()).data;
 		const otherTeamId = otherTeamData.id;
-		const otherInternalSlug = `internal-${otherTeamData.slug}`;
+		const otherInternalSlug = `${await projectSlugFor(db, otherTeamData.id)}`;
 		const otherProjectRes = await createTestProject(db, otherTeamId, {
 			name: 'Foreign',
 			description: 'Other.',

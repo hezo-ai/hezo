@@ -5,7 +5,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, mintAgentToken } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	mintAgentToken,
+	projectSlugFor,
+	projectSlugForTeamSlug,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -117,7 +124,7 @@ beforeAll(async () => {
 	teamId = teamData.id;
 	const teamSlug = teamData.slug;
 
-	const agentsRes = await app.request(`/api/projects/internal-${teamSlug}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${await projectSlugFor(db, teamId)}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -291,9 +298,12 @@ describe('REST reactions endpoints', () => {
 		const otherTeamData = (await otherTeam.json()).data;
 		const otherTeamId = otherTeamData.id;
 		const otherTeamSlug = otherTeamData.slug;
-		const otherAgents = await app.request(`/api/projects/internal-${otherTeamSlug}/agents`, {
-			headers: authHeader(token),
-		});
+		const otherAgents = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, otherTeamSlug)}/agents`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		const otherCeo = (await otherAgents.json()).data.find(
 			(a: { slug: string }) => a.slug === 'captain',
 		);

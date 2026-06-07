@@ -11,7 +11,6 @@ let db: PGlite;
 let adminToken: string;
 let agentToken: string;
 let teamId: string;
-let internalSlug: string;
 let projectId: string;
 let projectSlug: string;
 let taskId: string;
@@ -38,7 +37,6 @@ beforeAll(async () => {
 	});
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	internalSlug = `internal-${teamData.slug}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Agent API Project',
@@ -48,7 +46,7 @@ beforeAll(async () => {
 	projectId = projectData.id;
 	projectSlug = projectData.slug;
 
-	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(adminToken),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
@@ -220,7 +218,7 @@ describe('agent API - heartbeat edge cases', () => {
 	});
 
 	it('returns empty tasks when agent is disabled', async () => {
-		await app.request(`/api/projects/${internalSlug}/agents/${agentId}/disable`, {
+		await app.request(`/api/projects/${projectSlug}/agents/${agentId}/disable`, {
 			method: 'POST',
 			headers: authHeader(adminToken),
 		});
@@ -235,7 +233,7 @@ describe('agent API - heartbeat edge cases', () => {
 		expect(body.data.agent.admin_status).toBe('disabled');
 		expect(body.data.assigned_tasks).toEqual([]);
 
-		await app.request(`/api/projects/${internalSlug}/agents/${agentId}/enable`, {
+		await app.request(`/api/projects/${projectSlug}/agents/${agentId}/enable`, {
 			method: 'POST',
 			headers: authHeader(adminToken),
 		});
@@ -260,7 +258,7 @@ describe('agent API - self system prompt (removed)', () => {
 
 describe('agent API - budget enforcement', () => {
 	it('returns 402 and pauses agent when tool call exceeds budget', async () => {
-		const agentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+		const agentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Budget Test Agent', monthly_budget_cents: 10 }),

@@ -20,11 +20,13 @@ type Workspace = {
 	team: Team;
 	token: string;
 	agents: Agent[];
+	projectSlug: string;
 };
 
 type LightWorkspace = {
 	team: Team;
 	token: string;
+	projectSlug: string;
 };
 
 type WorkerFixtures = {
@@ -50,10 +52,10 @@ async function getTokenFromBrowser(browser: Browser): Promise<string> {
 
 async function listAgents(
 	request: APIRequestContext,
-	teamSlug: string,
+	projectSlug: string,
 	token: string,
 ): Promise<Agent[]> {
-	const res = await request.get(`/api/projects/internal-${teamSlug}/agents`, {
+	const res = await request.get(`/api/projects/${projectSlug}/agents`, {
 		headers: { Authorization: `Bearer ${token}` },
 	});
 	return ((await res.json()) as { data: Agent[] }).data;
@@ -76,10 +78,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 		async ({ browser }, use) => {
 			const ctx = await browser.newContext();
 			const page = await ctx.newPage();
-			const { team, token } = await createTeamWithAgents(page);
-			const agents = await listAgents(ctx.request, team.slug, token);
+			const { team, token, projectSlug } = await createTeamWithAgents(page);
+			const agents = await listAgents(ctx.request, projectSlug, token);
 			await ctx.close();
-			await use({ team, token, agents });
+			await use({ team, token, agents, projectSlug });
 		},
 		{ scope: 'worker' },
 	],
@@ -106,9 +108,9 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
 	freshWorkspace: async ({ page }, use) => {
 		await authenticate(page);
-		const { team, token } = await createTeamWithAgents(page);
-		const agents = await listAgents(page.request, team.slug, token);
-		await use({ team, token, agents });
+		const { team, token, projectSlug } = await createTeamWithAgents(page);
+		const agents = await listAgents(page.request, projectSlug, token);
+		await use({ team, token, agents, projectSlug });
 		// Drain any page.route interceptors before Playwright tears down the page,
 		// so in-flight route.fetch()/route.fulfill() calls don't reject with
 		// "Target page has been closed" and turn a clean pass into a flaky retry.
@@ -117,8 +119,8 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
 	lightWorkspace: async ({ page }, use) => {
 		await authenticate(page);
-		const { team, token } = await createTeamLight(page);
-		await use({ team, token });
+		const { team, token, projectSlug } = await createTeamLight(page);
+		await use({ team, token, projectSlug });
 		await page.unrouteAll({ behavior: 'ignoreErrors' }).catch(() => {});
 	},
 });

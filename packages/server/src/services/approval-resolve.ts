@@ -61,10 +61,7 @@ export async function resolveApproval(
 			input.containerDeps,
 			input.events,
 		);
-	} else if (
-		existing.rows[0].type === ApprovalType.TeamTemplate ||
-		existing.rows[0].type === ApprovalType.ProjectCreation
-	) {
+	} else if (existing.rows[0].type === ApprovalType.ProjectCreation) {
 		sideEffects = await applyApprovalDeniedSideEffect(db, row);
 	}
 

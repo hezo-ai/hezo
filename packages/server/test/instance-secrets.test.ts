@@ -6,7 +6,7 @@ import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
 import { loadSecretsForScope } from '../src/services/egress/substitution';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, projectSlugFor } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -64,7 +64,7 @@ describe('instance-level credentials (secrets)', () => {
 		// The egress loader resolves & decrypts it for an arbitrary team.
 		const team = await makeTeam('Secrets Team');
 		const teamId = team.id;
-		const projectSlug = `internal-${team.slug}`;
+		const projectSlug = `${await projectSlugFor(db, team.id)}`;
 		const loaded = await loadSecretsForScope({ db, masterKeyManager, teamId, projectId: null });
 		const resolved = loaded.get('SHARED_API_KEY');
 		expect(resolved?.value).toBe('sk-instance-123');
@@ -89,7 +89,7 @@ describe('instance-level credentials (secrets)', () => {
 
 		const team = await makeTeam('Dedup Secrets Team');
 		const teamId = team.id;
-		await app.request(`/api/projects/internal-${team.slug}/secrets`, {
+		await app.request(`/api/projects/${await projectSlugFor(db, team.id)}/secrets`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'DUP_KEY', value: 'team-value', allow_all_hosts: true }),
@@ -109,17 +109,23 @@ describe('instance-level credentials (secrets)', () => {
 
 		const team = await makeTeam('Boundary Team');
 		const teamId = team.id;
-		const patch = await app.request(`/api/projects/internal-${team.slug}/secrets/${secretId}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ value: 'hijack' }),
-		});
+		const patch = await app.request(
+			`/api/projects/${await projectSlugFor(db, team.id)}/secrets/${secretId}`,
+			{
+				method: 'PATCH',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ value: 'hijack' }),
+			},
+		);
 		expect(patch.status).toBe(404);
 
-		const del = await app.request(`/api/projects/internal-${team.slug}/secrets/${secretId}`, {
-			method: 'DELETE',
-			headers: authHeader(token),
-		});
+		const del = await app.request(
+			`/api/projects/${await projectSlugFor(db, team.id)}/secrets/${secretId}`,
+			{
+				method: 'DELETE',
+				headers: authHeader(token),
+			},
+		);
 		expect(del.status).toBe(404);
 
 		// Still resolves to its original value.

@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, projectSlugFor } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -32,7 +32,7 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	projectSlug = `internal-${(await teamRes.json()).data.slug}`;
+	projectSlug = await projectSlugFor(db, (await teamRes.json()).data.id);
 
 	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),

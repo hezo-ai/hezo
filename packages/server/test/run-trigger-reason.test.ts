@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, projectSlugFor } from './helpers/app';
 
 interface RunRow {
 	id: string;
@@ -51,7 +51,14 @@ beforeAll(async () => {
 	});
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	internalProjectSlug = `internal-${teamData.slug}`;
+
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Test Project',
+		description: 'x',
+	});
+	const projectData = (await projectRes.json()).data;
+	projectId = projectData.id;
+	internalProjectSlug = projectData.slug;
 
 	const agentsRes = await app.request(`/api/projects/${internalProjectSlug}/agents`, {
 		headers: authHeader(token),
@@ -59,12 +66,6 @@ beforeAll(async () => {
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
 	architectId = agents.find((a) => a.slug === 'architect')!.id;
 	productLeadId = agents.find((a) => a.slug === 'product-lead')!.id;
-
-	const projectRes = await createTestProject(db, teamId, {
-		name: 'Test Project',
-		description: 'x',
-	});
-	projectId = (await projectRes.json()).data.id;
 });
 
 afterAll(async () => {

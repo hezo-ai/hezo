@@ -295,7 +295,6 @@ export type GrantScope = (typeof GrantScope)[keyof typeof GrantScope];
 export const ApprovalType = {
 	SecretAccess: 'secret_access',
 	Hire: 'hire',
-	TeamTemplate: 'team_template',
 	ProjectCreation: 'project_creation',
 	Strategy: 'strategy',
 	PlanReview: 'plan_review',
@@ -405,20 +404,6 @@ export const HeartbeatRunStatus = {
 	TimedOut: 'timed_out',
 } as const;
 export type HeartbeatRunStatus = (typeof HeartbeatRunStatus)[keyof typeof HeartbeatRunStatus];
-
-export const OnboardingStageKey = {
-	Intake: 'intake',
-	Done: 'done',
-} as const;
-export type OnboardingStageKey = (typeof OnboardingStageKey)[keyof typeof OnboardingStageKey];
-
-export const OnboardingStageStatus = {
-	Complete: 'complete',
-	Current: 'current',
-	Pending: 'pending',
-} as const;
-export type OnboardingStageStatus =
-	(typeof OnboardingStageStatus)[keyof typeof OnboardingStageStatus];
 
 export const PluginStatus = {
 	Installed: 'installed',

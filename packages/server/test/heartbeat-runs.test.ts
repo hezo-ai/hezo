@@ -16,7 +16,6 @@ let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
-let internalSlug: string;
 let agentId: string;
 let projectId: string;
 let projectSlug: string;
@@ -46,7 +45,6 @@ beforeAll(async () => {
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
-	internalSlug = `internal-${team.slug}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Main',
@@ -56,7 +54,7 @@ beforeAll(async () => {
 	projectId = projectData.id;
 	projectSlug = projectData.slug;
 
-	const agentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	const agentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Test Runner' }),
@@ -113,12 +111,9 @@ describe('heartbeat-runs API', () => {
 			[runId],
 		);
 
-		const res = await app.request(
-			`/api/projects/${internalSlug}/agents/${agentId}/heartbeat-runs`,
-			{
-				headers: authHeader(token),
-			},
-		);
+		const res = await app.request(`/api/projects/${projectSlug}/agents/${agentId}/heartbeat-runs`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
@@ -132,7 +127,7 @@ describe('heartbeat-runs API', () => {
 
 	it('gets a single run by id with task info', async () => {
 		const res = await app.request(
-			`/api/projects/${internalSlug}/agents/${agentId}/heartbeat-runs/${runId}`,
+			`/api/projects/${projectSlug}/agents/${agentId}/heartbeat-runs/${runId}`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(200);
@@ -148,7 +143,7 @@ describe('heartbeat-runs API', () => {
 	it('returns 404 for nonexistent run', async () => {
 		const fakeId = '00000000-0000-0000-0000-000000000000';
 		const res = await app.request(
-			`/api/projects/${internalSlug}/agents/${agentId}/heartbeat-runs/${fakeId}`,
+			`/api/projects/${projectSlug}/agents/${agentId}/heartbeat-runs/${fakeId}`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
@@ -197,6 +192,7 @@ describe('run comments', () => {
 		const runId = await createHeartbeatRun(
 			db,
 			agent,
+			teamId,
 			task,
 			broadcast,
 			await mintTestWakeup(agentId, teamId),
@@ -252,6 +248,7 @@ describe('run comments', () => {
 		const newRunId = await createHeartbeatRun(
 			db,
 			agent,
+			teamId,
 			task,
 			{
 				teamId,
@@ -323,6 +320,7 @@ describe('task status auto-transition on run start', () => {
 		await createHeartbeatRun(
 			db,
 			agent,
+			teamId,
 			task,
 			{
 				teamId,
@@ -341,7 +339,7 @@ describe('task status auto-transition on run start', () => {
 	});
 
 	it('does not flip status when the running agent is not the assignee', async () => {
-		const otherRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+		const otherRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Other Runner' }),
@@ -353,6 +351,7 @@ describe('task status auto-transition on run start', () => {
 		await createHeartbeatRun(
 			db,
 			agent,
+			teamId,
 			task,
 			{
 				teamId,
@@ -376,6 +375,7 @@ describe('task status auto-transition on run start', () => {
 		await createHeartbeatRun(
 			db,
 			agent,
+			teamId,
 			task,
 			{
 				teamId,
@@ -404,6 +404,7 @@ describe('task status auto-transition on run start', () => {
 		const run1 = await createHeartbeatRun(
 			db,
 			agent,
+			teamId,
 			buildTask(localTaskId),
 			broadcast,
 			await mintTestWakeup(agentId, teamId),
@@ -411,6 +412,7 @@ describe('task status auto-transition on run start', () => {
 		const run2 = await createHeartbeatRun(
 			db,
 			agent,
+			teamId,
 			buildTask(localTaskId),
 			broadcast,
 			await mintTestWakeup(agentId, teamId),
@@ -473,7 +475,7 @@ describe('created_tasks tracking', () => {
 		expect(dbRow.rows[0].created_by_run_id).toBe(runId);
 
 		const runRes = await app.request(
-			`/api/projects/${internalSlug}/agents/${agentId}/heartbeat-runs/${runId}`,
+			`/api/projects/${projectSlug}/agents/${agentId}/heartbeat-runs/${runId}`,
 			{ headers: authHeader(token) },
 		);
 		expect(runRes.status).toBe(200);
@@ -509,7 +511,7 @@ describe('created_tasks tracking', () => {
 		const emptyRunId = result.rows[0].id;
 
 		const res = await app.request(
-			`/api/projects/${internalSlug}/agents/${agentId}/heartbeat-runs/${emptyRunId}`,
+			`/api/projects/${projectSlug}/agents/${agentId}/heartbeat-runs/${emptyRunId}`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(200);
@@ -570,7 +572,7 @@ describe('created_tasks tracking', () => {
 		});
 
 		const res = await app.request(
-			`/api/projects/${internalSlug}/agents/${agentId}/heartbeat-runs/${runId}`,
+			`/api/projects/${projectSlug}/agents/${agentId}/heartbeat-runs/${runId}`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(200);

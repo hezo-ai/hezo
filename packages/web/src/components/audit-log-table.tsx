@@ -1,5 +1,6 @@
+import { Link } from '@tanstack/react-router';
 import type { AuditEntry } from '../hooks/use-audit-log';
-import { Badge } from './ui/badge';
+import { auditEntryLink, describeAuditEntry } from '../lib/audit-format';
 import { type Column, DataTable } from './ui/data-table';
 
 /**
@@ -43,21 +44,20 @@ function buildColumns(showTeam: boolean): Column<AuditEntry>[] {
 			),
 		},
 		{
-			key: 'action',
-			header: 'Action',
-			render: (e) => <Badge color="neutral">{e.action}</Badge>,
-		},
-		{
-			key: 'entity',
-			header: 'Entity',
+			key: 'activity',
+			header: 'Activity',
 			render: (e) => {
-				const name = (e.details as { name?: string; slug?: string; identifier?: string }).name;
-				const label = name ?? (e.details as { identifier?: string }).identifier ?? null;
+				const text = describeAuditEntry(e);
+				const link = auditEntryLink(e);
+				if (!link) return <span className="text-[13px] text-text">{text}</span>;
 				return (
-					<span className="text-xs text-text-muted">
-						{e.entity_type}
-						{label ? <span className="text-text"> · {label}</span> : null}
-					</span>
+					<Link
+						to={link.to}
+						params={'params' in link ? link.params : undefined}
+						className="text-[13px] text-text hover:text-accent hover:underline"
+					>
+						{text}
+					</Link>
 				);
 			},
 		},

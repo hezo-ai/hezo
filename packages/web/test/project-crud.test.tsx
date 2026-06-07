@@ -33,16 +33,15 @@ function uniqueName(base: string): string {
 
 // The cross-team project list is Home. A team's New-project button + cards live
 // there; there is no per-team projects page in the project-centric IA.
-test('creates a project from Home and navigates to the Captain intake task', async () => {
-	const { findByText, findByPlaceholderText, findByTestId, findByRole, user, router } =
-		await renderApp({
-			initialPath: '/',
-			seed: async () => {
-				const ws = await seedWorkspace();
-				// Seed one project so Home shows the list + New project button.
-				await seedProject(ws, { name: uniqueName('Existing') });
-			},
-		});
+test('creates a project from Home (Create now) and lands on the Captain planning task', async () => {
+	const { findByRole, findByPlaceholderText, findByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			// Seed one project so Home shows the list + New project button.
+			await seedProject(ws, { name: uniqueName('Existing') });
+		},
+	});
 
 	await router.navigate({ to: '/home' });
 	// The rail also carries a "New project" affordance, so scope to Home's main.
@@ -54,8 +53,8 @@ test('creates a project from Home and navigates to the Captain intake task', asy
 	await user.click(await within(mainEl).findByRole('button', { name: 'New project' }));
 
 	const name = uniqueName('Marketing Campaign');
-	// CreateProjectWithTeamDialog renders into a Radix portal: placeholders +
-	// a team-type pick, then a testid-keyed submit.
+	// CreateProjectWithTeamDialog renders into a Radix portal: name + description
+	// placeholders, a team-type pick, then the "Create now" submit.
 	await user.type(await findByPlaceholderText('e.g. Marketing Site'), name);
 	await user.type(
 		await findByPlaceholderText(/What is this project/),
@@ -64,9 +63,10 @@ test('creates a project from Home and navigates to the Captain intake task', asy
 	await user.click(await findByTestId('team-type-card-Blank'));
 	await user.click(await findByTestId('create-project-submit'));
 
-	// The create flow navigates to the auto-created Captain intake task inside the
-	// new team's Internal project.
-	await findByText(`Open new project: ${name}`, undefined, { timeout: 30_000 });
+	// "Create now" creates the team + project + Captain planning task directly,
+	// then navigates to that planning task inside the new project.
+	await findByRole('heading', { name: `Draft execution plan for "${name}"` }, { timeout: 30_000 });
+	await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/projects\/.+\/tasks\//));
 }, 60_000);
 
 test('Home lists a seeded project with task and repo counts', async () => {
@@ -132,10 +132,12 @@ test('initial PRD passed at creation is persisted as a project doc', async () =>
 		initialPath: '/',
 		seed: async ({ apiBase, token }) => {
 			try {
-				const ws = await seedWorkspace();
 				const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-				const intakeRes = await apiBase(`/api/projects/${ws.internalSlug}/projects`, {
+				// The dialog no longer carries a PRD field; direct creation accepts
+				// `initial_prd` on POST /api/projects, which provisions the team +
+				// project + planning task and saves the PRD as a project doc.
+				const createRes = await apiBase('/api/projects', {
 					method: 'POST',
 					headers,
 					body: JSON.stringify({
@@ -144,34 +146,14 @@ test('initial PRD passed at creation is persisted as a project doc', async () =>
 						initial_prd: prdContent,
 					}),
 				});
-				const intakeJson = (await intakeRes.json()) as {
-					data?: { approval_id: string };
+				const createJson = (await createRes.json()) as {
+					data?: { slug: string };
 					error?: unknown;
 				};
-				if (!intakeJson.data) throw new Error(`intake failed: ${JSON.stringify(intakeJson)}`);
-				const { approval_id } = intakeJson.data;
+				if (!createJson.data) throw new Error(`create failed: ${JSON.stringify(createJson)}`);
+				const { slug } = createJson.data;
 
-				const resolveRes = await apiBase(`/api/approvals/${approval_id}/resolve`, {
-					method: 'POST',
-					headers,
-					body: JSON.stringify({ status: 'approved' }),
-				});
-				if (!resolveRes.ok) {
-					throw new Error(`resolve failed: ${resolveRes.status} ${await resolveRes.text()}`);
-				}
-
-				// The intake project_slug is the Internal project; find the created
-				// user project by name to read its docs.
-				const projectsRes = await apiBase('/api/projects', {
-					headers: { Authorization: `Bearer ${token}` },
-				});
-				const projectsJson = (await projectsRes.json()) as {
-					data: Array<{ slug: string; name: string; team_id: string }>;
-				};
-				const project = projectsJson.data.find((p) => p.name === name && p.team_id === ws.team.id);
-				if (!project) throw new Error(`project '${name}' not found after approval`);
-
-				const docRes = await apiBase(`/api/projects/${project.slug}/docs/initial-prd.md`, {
+				const docRes = await apiBase(`/api/projects/${slug}/docs/initial-prd.md`, {
 					headers: { Authorization: `Bearer ${token}` },
 				});
 				if (!docRes.ok) {

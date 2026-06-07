@@ -1,157 +1,98 @@
-# Per-project teams (1:1)
+# Project-centric model: one team per project (1:1)
 
-Status: **slices 1–5 implemented** (creation flow, projects-primary rail/home,
-refresh-from-type). Remaining follow-up: the first-run **onboarding** migration
-so the bootstrap project gets its own team and the HQ team stays CEO-only (open
-decision A) — a deeper change to the heavily-tested onboarding flow, scoped at
-the bottom of this doc. Pre-v1, no backwards-compat; the DB is reset, not
-migrated.
+Status: **implemented.** Pre-v1, no backwards-compat; the DB is reset, not migrated.
 
-## The shift
+## The model
 
-Today a **team has many projects**. The target is **one team per project (1:1)**:
-each project owns a dedicated team — its roster of agents — and project-type
-("team-type") templates make rosters reusable. Projects become the primary axis
-of the product; the team is "the people working on this project."
+Hezo is **project-centric**: a **project** is the primary unit, and **every project
+owns exactly one team** — its roster of agents. The relationship is **1:1**: a team
+backs exactly one project, a project has exactly one team. Conceptually "teams belong
+to projects"; in the DB the rows are linked the other way (`projects.team_id` →
+`teams.id`), but the invariant is enforced by a `UNIQUE` index on `projects(team_id)`,
+so a team can never back more than one project.
 
-This is a **product + creation-flow + IA** change, not a deep schema rewrite. We
-keep the `teams` and `projects` tables and the `projects.team_id` FK; we change
-how they're created and presented, and we add a 1:1 invariant.
+There is **no per-team "internal" project.** Every team has a single, user-facing
+project. The only `is_internal` project in the entire instance is **HQ** (see below).
 
-## Locked model
+Addressing is by **project slug** everywhere (`/api/projects/:projectId/...`, including
+project-scoped sub-resources like `/agents`, `/tasks`, `/team`, `/skills`, `/costs`).
+A team is reached *through* its project. There is no team-addressed API surface for
+project work.
 
-- **Invariant:** every team has exactly **one user-facing project** (plus its
-  `is_internal` project). Creating a project creates its team; the two are 1:1.
-  The existing per-team multi-project machinery stays in the code (so nothing
-  breaks) but is no longer exposed in the primary UI.
-- **The Internal project stays, per project-team.** It remains the Captain's
-  coordination space for *that* project — intake, planning hand-off, coherence
-  review, hiring. `loadCaptainInternalContext` is unchanged. (So a team still
-  physically has two `projects` rows: `(Internal)` + the one user project. "1:1"
-  refers to user-facing projects.)
-- **Org model unchanged.** One instance **CEO** (seeded once, in the default/HQ
-  team, `reports_to = NULL`). Each project-team's **Captain** reports to the CEO
-  (cross-team FK, already supported). Members report to their Captain. The CEO
-  oversees every project-team's Captain — exactly today's wiring, just with more,
-  smaller teams.
-- **Reuse via team-types.** At project creation you pick a **type** (a
-  `team_templates` row) — `applyTemplateToTeam` seeds the roster additively.
-  Later, **refresh-from-type** re-applies the type (additive merge: adds missing
-  roles, refreshes built-in prompts, never deletes your customizations).
-  **Save-as-type** snapshots a project-team's roster into a new type. All three
-  flows already exist (`team-template-apply.ts`, `team-template-snapshot.ts`).
+## HQ — the one special team
 
-## Creation flow (the heart of the change)
+A single instance-level team, **HQ** (the default team, slug `default`), owns the one
+`is_internal` project named **"HQ"**. HQ is the only team with **cross-project powers**.
+It hosts exactly two agents, both instance-level singletons:
 
-Today: `POST /projects/:projectId/projects` opens an intake ticket in an **existing**
-team's Internal project; that team's Captain runs intake → planning.
+- **CEO** — one per instance. Oversees every project-team's Captain (cross-team
+  `reports_to`). The CEO runs **all coordination**:
+  - **Project intake** and **first-run onboarding** — the CEO-assisted creation
+    conversation lives in the **HQ project** and is CEO-driven. The project's team and
+    Captain are stood up when the intake opens; the project itself is created on approval.
+  - **Per-team setup / coherence review / hiring** — these concern a specific
+    project-team and live in **that team's own project**, actioned by the CEO. On a
+    brand-new team the CEO's initial coherence/setup pass runs first; the Captain's
+    planning ticket is **blocked** until it completes.
+- **Coach** — one per instance. Reviews completed tickets across **every** project to
+  improve agent system prompts; woken on any task completion.
 
-New primary flow — **"Create a project"** = create a team **and** its project in
-one action, reusing the existing pieces in sequence:
+Project-teams created from a **team-type template** (`blank`, `software-development`)
+get their own **Captain** plus the template's worker roles. Templates **never** include
+the CEO or Coach (instance-level), so a `software-development` roster is 10 agents
+(Captain + 9), not 11.
 
-1. `createTeam({ name, templateId })` → new team + its Internal project +
-   Captain/Coach (from the chosen type), Captain linked to the instance CEO.
-   (Existing function, unchanged.)
-2. `createProjectIntake(newTeamId, { name, description, initial_prd })` → the
-   new team's Captain runs intake/planning for the user project in that team's
-   Internal project. (Existing function, unchanged.)
+## Cross-team execution (the run-team split)
 
-So the change is a thin **orchestration endpoint** (`POST /projects`) +
-the UI that drives it — **additive**, not a rewrite. The old
-`POST /projects/:projectId/projects` (sibling-create on any project of the team)
-stays for now (used by tests and as the "add another project to an existing
-team" escape hatch we simply don't surface).
+CEO and Coach are members of HQ but act inside other teams' projects. A run is therefore
+scoped to the **task's project team** (the "run team") — JWT, `HEZO_TEAM_ID`, MCP
+connections, skills, git identity, container — while the agent's **system prompt** is
+loaded from its **home** team (HQ). For an ordinary agent the two coincide. Instance
+agents also select work across **all** teams (not just their home team) on heartbeat and
+explicit wakeups; the dispatcher realigns the working team to the chosen task's project.
 
-Naming: the project name **is** the team name by default (the team is "the
-Marketing Site team"); the operator can override the team name later in settings.
+Auth supports this without a membership check: the agent JWT is validated against the
+`heartbeat_runs` row `(run_id, member_id, team_id)`, so an HQ member legitimately
+operates as a run-team-scoped agent.
 
-## IA (projects-primary)
+## Coordination placement summary
 
-- **Project-scoped sidebar** — *shipped* (`project-sidebar.tsx`): the project's
-  pages are primary; the team drops to a secondary "Team" section.
-- **Home / far-left rail** — *shipped*. `/home` is the cross-team project list
-  (the primary axis); the rail (`team-rail.tsx`) dropped its per-team avatars and
-  is now a thin global icon rail (Home / Inbox / All Tasks / New project +
-  instance shortcuts). Project-teams are reached via Home / All Tasks.
-- **URLs are project-centric** (`/projects/$projectId/...`) — *shipped*. The
-  project slug is the single public handle across the browser URL, the REST API
-  (`/api/projects/:projectId/...`), and the query/realtime layer; the backing
-  team is resolved from the project, never named in the URL. Project slugs are
-  globally unique (incl. internal projects, slug `internal-<teamSlug>`). Team
-  pages (Agents, Inbox, team settings) nest under the project; onboarding —
-  being pre-project — is addressed via the active team's internal project.
-  Breadcrumbs carry only the in-project section + leaf (no team or project-name
-  crumb). See the routing middleware `requireProjectAccessMiddleware`.
+| Work | Lives in | Owned by |
+|---|---|---|
+| Project intake, onboarding (pre-project) | HQ project | CEO |
+| Team setup / coherence review / hiring | the project-team's own project | CEO (cross-team) |
+| OAuth verification (creds/connectors are global) | HQ project | CEO |
+| Coach review of completed work | the completed task's project | Coach (cross-team) |
+| Actual project work (planning, tickets) | the project-team's own project | its Captain + roster |
 
-## Schema
+## Creation flows
 
-Minimal. `projects.team_id` stays. Project `slug` is **globally unique**
-(`UNIQUE INDEX idx_projects_slug ON projects(slug)`) so a project resolves to its
-team without naming the team in the URL; `task_prefix` stays `UNIQUE (team_id,
-task_prefix)`. Both are trivially satisfied with one user project per team. No
-migration beyond what's already in `001_initial_schema.sql`. The 1:1 invariant is
-enforced in the creation flow / service layer, not by a new constraint (keeping
-the multi-project code paths intact and reversible).
+There are exactly two ways to create a project; both stand up the project's own
+team from a team-type template (default **Blank** = Captain only).
 
-## Sequencing (reversible slices, each green + tested)
+1. **Direct** — `POST /api/projects` (superuser). Creates the team, its single
+   project, the Captain, the initial coherence/setup task (CEO), and the planning
+   task (Captain, blocked on the coherence task) in one step. Returns the project
+   plus `planning_task_id` / `planning_task_identifier`. No approval gate.
 
-1. **[DONE]** Combined create-project-with-team endpoint (`POST /api/projects`):
-   orchestrates `createTeam` + `createProjectIntake`; returns the new team slug +
-   project slug + intake/approval ids. Superuser-gated; additive. Test:
-   `server/test/project-with-team.test.ts`.
-2. **[DONE]** Create-project-with-team UI: the `CreateProjectWithTeamDialog`
-   (type picker + name/description), wired to the **rail "+"** and the **Home
-   "New project"** button; navigates into the new team's intake conversation.
-3. **[DONE]** Home as project list — the `/home` landing was already a cross-team
-   project list (`useAllVisibleProjects`); its "New project" now creates a
-   project-with-team.
-4. **[DONE]** Rail reshape: per-team avatars dropped; the rail is now a thin
-   global axis. Mobile Playwright coverage in `test/browser/team-rail.mobile.spec.ts`.
-5. **[DONE]** Refresh-from-type: `POST /projects/:projectId/apply-type`
-   (additive `applyTemplateToTeam`) + the `ApplyTypeSection` ("Refresh from
-   type") on the team settings page, reachable from the project sidebar's
-   Team → Settings. (Built earlier alongside save-as-type.)
+2. **CEO-assisted** — `POST /api/project-intakes` (superuser). Stands up the team
+   and opens a CEO-run **intake conversation in the HQ project** with a pending
+   `project_creation` approval; no project exists yet. The CEO scopes the work with
+   the operator, then asks for approval. On approval the server creates the team's
+   single project, the initial coherence/setup task (CEO), and the planning task
+   (Captain, blocked on coherence), and closes the intake. `GET /api/project-intakes`
+   returns the open intake for the home/welcome view.
 
-### First-run onboarding (HQ-CEO-only)
+Both the first-run welcome and the ongoing "new project with the CEO" use flow 2's
+intake in HQ. The old per-team onboarding/onboarding-intake machinery is gone.
 
-Open decision A is **HQ is CEO-only**. Status:
+## Key source
 
-- **[DONE] Direct flow** (the prominent "Pick a template" path). `runOnboardingDirect`
-  now provisions the project's **own team** (named after the project, Captain →
-  CEO) and creates the project + planning task there; the wizard navigates into
-  the new team. The default/HQ team is left untouched. Home recognises onboarding
-  completion across all visible teams and only opens an intake during true
-  first-run. Tests: `web/test/onboarding-direct.test.tsx` (rewritten).
-- **[DONE] Captain-chat flow** (the "Chat with the Captain" option). Rerouted to
-  the project-with-team dialog: it now creates the project's own team and the
-  Captain scopes it in that team's `project_creation` intake thread — reusing the
-  tested `POST /api/projects` flow rather than reworking the core
-  `approval-side-effects` path. So **neither onboarding path lands a user project
-  in the default team**. The legacy home onboarding-intake panel +
-  `onboarding-intake.ts` machinery stay intact (API-reachable + tested) but are no
-  longer triggered by the first-run UI.
-
-**Optional cleanup (not done):** `seedDefaultTeam` still seeds the default/HQ team
-with a bootstrap Captain + Coach (from the Blank template) alongside the CEO.
-HQ no longer hosts user projects (so this is invisible in the projects-primary
-UI), but stripping HQ to a literal CEO-only roster would be a `seedDefaultTeam`
-change with startup/seed-test blast radius — left as an optional follow-up.
-
-## Open decisions
-
-- **A. Default team's own project — RESOLVED: HQ is CEO-only.** The default/HQ
-  team is the CEO's executive team; its Internal project is where the CEO works,
-  and it does not host user projects. Implemented for all new projects (rail/Home
-  create their own teams); the first-run onboarding migration is the remaining
-  follow-up above.
-- **B. Team name vs project name — RESOLVED: team name = project name** by
-  default (the create-project-with-team flow names the team after the project);
-  editable later in team settings.
-- **C. Enforce the 1:1 invariant hard?** Default: **soft** — the primary UI only
-  ever creates one user project per team; the multi-project service path stays
-  for tests/escape-hatch. Revisit hardening (a DB partial unique index on
-  `team_id WHERE is_internal = false`) once the UI no longer creates seconds.
-- **D. URL shape — RESOLVED: project-centric, shipped.** Browser URLs, the REST
-  API, and the query/realtime layer all key on the globally-unique project slug
-  (`/projects/$projectId/...`); the backing team is resolved from the project and
-  never named in the URL.
+- Schema: `001_initial_schema.sql` (`UNIQUE idx_projects_team`).
+- HQ seed: `services/teams.ts` `seedDefaultTeam`; CEO/Coach via `ensureInstanceCeo` /
+  `ensureInstanceCoach` in `team-template-apply.ts`.
+- Coordination context: `services/internal-intake.ts`
+  (`loadCoordinationContext` = HQ/CEO; `loadTeamCoordinationContext` = CEO + the team's
+  own project).
+- Run-team split: `services/agent-runner.ts` (`runTeamId = project.team_id`, prompt from
+  home team) and the instance-agent task selection in `services/job-manager.ts`.

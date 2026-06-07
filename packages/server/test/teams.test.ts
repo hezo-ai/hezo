@@ -3,12 +3,18 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, createTestProject } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let builtinTypeId: string;
+
+// A team is addressed through its single project. Create it and return its slug.
+async function projectSlugFor(teamId: string): Promise<string> {
+	const res = await createTestProject(db, teamId, { name: 'Work Project' });
+	return (await res.json()).data.slug;
+}
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -43,15 +49,10 @@ describe('teams CRUD', () => {
 		const body = await res.json();
 		expect(body.data.name).toBe('NoteGenius AI');
 		expect(body.data.slug).toBe('notegenius-ai');
-		expect(body.data.agent_count).toBe(11);
+		expect(body.data.agent_count).toBe(10);
 
-		const internalPrefix = await db.query<{ task_prefix: string }>(
-			'SELECT task_prefix FROM projects WHERE team_id = $1 AND is_internal = true',
-			[body.data.id],
-		);
-		expect(internalPrefix.rows[0].task_prefix).toBe('IN');
-
-		const skillsRes = await app.request(`/api/projects/internal-${body.data.slug}/skills`, {
+		const projectSlug = await projectSlugFor(body.data.id);
+		const skillsRes = await app.request(`/api/projects/${projectSlug}/skills`, {
 			headers: authHeader(token),
 		});
 		const skillsBody = await skillsRes.json();
@@ -70,14 +71,15 @@ describe('teams CRUD', () => {
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		expect(body.data.agent_count).toBe(2);
+		expect(body.data.agent_count).toBe(1);
 
-		const agentsRes = await app.request(`/api/projects/internal-${body.data.slug}/agents`, {
+		const projectSlug = await projectSlugFor(body.data.id);
+		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
 		const slugs = agents.map((a: any) => a.slug).sort();
-		expect(slugs).toEqual(['captain', 'coach']);
+		expect(slugs).toEqual(['captain']);
 	});
 
 	it('exposes the team type (primary template name) on reads', async () => {
@@ -88,7 +90,8 @@ describe('teams CRUD', () => {
 		});
 		const created = (await createRes.json()).data;
 
-		const getRes = await app.request(`/api/projects/internal-${created.slug}/team`, {
+		const createdSlug = await projectSlugFor(created.id);
+		const getRes = await app.request(`/api/projects/${createdSlug}/team`, {
 			headers: authHeader(token),
 		});
 		expect((await getRes.json()).data.primary_template_name).toBe('Startup');
@@ -104,7 +107,8 @@ describe('teams CRUD', () => {
 			body: JSON.stringify({ name: 'Typeless Team Co' }),
 		});
 		const blank = (await blankRes.json()).data;
-		const blankGet = await app.request(`/api/projects/internal-${blank.slug}/team`, {
+		const blankSlug = await projectSlugFor(blank.id);
+		const blankGet = await app.request(`/api/projects/${blankSlug}/team`, {
 			headers: authHeader(token),
 		});
 		expect((await blankGet.json()).data.primary_template_name).toBeNull();
@@ -122,13 +126,15 @@ describe('teams CRUD', () => {
 	});
 
 	it('gets a team by id', async () => {
-		const listRes = await app.request('/api/teams', {
-			headers: authHeader(token),
+		const createRes = await app.request('/api/teams', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Get By Id Co' }),
 		});
-		const teams = (await listRes.json()).data;
-		const team = teams[0];
+		const team = (await createRes.json()).data;
+		const projectSlug = await projectSlugFor(team.id);
 
-		const res = await app.request(`/api/projects/internal-${team.slug}/team`, {
+		const res = await app.request(`/api/projects/${projectSlug}/team`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -137,12 +143,15 @@ describe('teams CRUD', () => {
 	});
 
 	it('updates a team', async () => {
-		const listRes = await app.request('/api/teams', {
-			headers: authHeader(token),
+		const createRes = await app.request('/api/teams', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Update Me Co' }),
 		});
-		const team = (await listRes.json()).data[0];
+		const team = (await createRes.json()).data;
+		const projectSlug = await projectSlugFor(team.id);
 
-		const res = await app.request(`/api/projects/internal-${team.slug}/team`, {
+		const res = await app.request(`/api/projects/${projectSlug}/team`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ description: 'Updated description' }),
@@ -160,14 +169,15 @@ describe('teams CRUD', () => {
 			body: JSON.stringify({ name: 'To Delete' }),
 		});
 		const created = (await createRes.json()).data;
+		const projectSlug = await projectSlugFor(created.id);
 
-		const res = await app.request(`/api/projects/internal-${created.slug}/team`, {
+		const res = await app.request(`/api/projects/${projectSlug}/team`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 
-		const getRes = await app.request(`/api/projects/internal-${created.slug}/team`, {
+		const getRes = await app.request(`/api/projects/${projectSlug}/team`, {
 			headers: authHeader(token),
 		});
 		expect(getRes.status).toBe(404);
@@ -190,41 +200,6 @@ describe('teams CRUD', () => {
 		const slug2 = (await res2.json()).data.slug;
 		expect(slug1).toBe('duplicate-name');
 		expect(slug2).toBe('duplicate-name-2');
-	});
-
-	it('auto-provisions a container for the Internal project', async () => {
-		const res = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Provision Test Co' }),
-		});
-		expect(res.status).toBe(201);
-		const teamId = (await res.json()).data.id;
-
-		// Wait for async provisionContainer to attempt
-		await new Promise((r) => setTimeout(r, 200));
-
-		const internalProject = await db.query<{ container_status: string | null }>(
-			'SELECT container_status FROM projects WHERE team_id = $1 AND is_internal = true',
-			[teamId],
-		);
-		expect(internalProject.rows.length).toBe(1);
-		expect(internalProject.rows[0].container_status).not.toBeNull();
-	});
-
-	it('seeds the Internal project with an IN task prefix', async () => {
-		const res = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Acme Corp Industries' }),
-		});
-		expect(res.status).toBe(201);
-		const body = await res.json();
-		const internalPrefix = await db.query<{ task_prefix: string }>(
-			'SELECT task_prefix FROM projects WHERE team_id = $1 AND is_internal = true',
-			[body.data.id],
-		);
-		expect(internalPrefix.rows[0].task_prefix).toBe('IN');
 	});
 });
 
@@ -263,14 +238,15 @@ describe('template-based team creation', () => {
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		expect(body.data.agent_count).toBe(3);
+		expect(body.data.agent_count).toBe(2);
 
-		const agentsRes = await app.request(`/api/projects/internal-${body.data.slug}/agents`, {
+		const projectSlug = await projectSlugFor(body.data.id);
+		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
 		const slugs = agents.map((a: any) => a.slug).sort();
-		expect(slugs).toEqual(['captain', 'coach', 'researcher']);
+		expect(slugs).toEqual(['captain', 'researcher']);
 	});
 
 	it('creates only built-in agents without a template', async () => {
@@ -283,17 +259,18 @@ describe('template-based team creation', () => {
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		expect(body.data.agent_count).toBe(2);
+		expect(body.data.agent_count).toBe(1);
 
-		const agentsRes = await app.request(`/api/projects/internal-${body.data.slug}/agents`, {
+		const projectSlug = await projectSlugFor(body.data.id);
+		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
 		const slugs = agents.map((a: any) => a.slug).sort();
-		expect(slugs).toEqual(['captain', 'coach']);
+		expect(slugs).toEqual(['captain']);
 	});
 
-	it('creates Captain and Coach with Blank template', async () => {
+	it('creates the Captain with the Blank template', async () => {
 		const typesRes = await app.request('/api/team-templates', {
 			headers: authHeader(token),
 		});
@@ -310,17 +287,18 @@ describe('template-based team creation', () => {
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		expect(body.data.agent_count).toBe(2);
+		expect(body.data.agent_count).toBe(1);
 
-		const agentsRes = await app.request(`/api/projects/internal-${body.data.slug}/agents`, {
+		const projectSlug = await projectSlugFor(body.data.id);
+		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
 		const slugs = agents.map((a: any) => a.slug).sort();
-		expect(slugs).toEqual(['captain', 'coach']);
+		expect(slugs).toEqual(['captain']);
 	});
 
-	it('does not duplicate Captain/Coach when Startup template already includes them', async () => {
+	it('does not duplicate the Captain when the Startup template already includes it', async () => {
 		const res = await app.request('/api/teams', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -332,19 +310,21 @@ describe('template-based team creation', () => {
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		expect(body.data.agent_count).toBe(11);
+		expect(body.data.agent_count).toBe(10);
 
-		const agentsRes = await app.request(`/api/projects/internal-${body.data.slug}/agents`, {
+		const projectSlug = await projectSlugFor(body.data.id);
+		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
-		const ceos = agents.filter((a: any) => a.slug === 'captain');
+		const captains = agents.filter((a: any) => a.slug === 'captain');
 		const coaches = agents.filter((a: any) => a.slug === 'coach');
-		expect(ceos).toHaveLength(1);
-		expect(coaches).toHaveLength(1);
+		expect(captains).toHaveLength(1);
+		// The Coach is instance-level (in HQ), never duplicated onto a project-team.
+		expect(coaches).toHaveLength(0);
 	});
 
-	it('creates Captain/Coach for custom template that omits them', async () => {
+	it('creates the Captain for a custom template that omits it', async () => {
 		const agentTypesRes = await app.request('/api/agent-types', {
 			headers: authHeader(token),
 		});
@@ -374,14 +354,15 @@ describe('template-based team creation', () => {
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
-		expect(body.data.agent_count).toBe(3);
+		expect(body.data.agent_count).toBe(2);
 
-		const agentsRes = await app.request(`/api/projects/internal-${body.data.slug}/agents`, {
+		const projectSlug = await projectSlugFor(body.data.id);
+		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
 		const slugs = agents.map((a: any) => a.slug).sort();
-		expect(slugs).toEqual(['captain', 'coach', 'researcher']);
+		expect(slugs).toEqual(['captain', 'researcher']);
 	});
 
 	it('populates team_template_assignments join table', async () => {
@@ -432,9 +413,10 @@ describe('template-based team creation', () => {
 			}),
 		});
 		expect(res.status).toBe(201);
-		const teamSlug = (await res.json()).data.slug;
+		const teamId = (await res.json()).data.id;
 
-		const skillsRes = await app.request(`/api/projects/internal-${teamSlug}/skills`, {
+		const projectSlug = await projectSlugFor(teamId);
+		const skillsRes = await app.request(`/api/projects/${projectSlug}/skills`, {
 			headers: authHeader(token),
 		});
 		const skillsBody = await skillsRes.json();
@@ -453,7 +435,8 @@ describe('slug-based access', () => {
 		const teams = (await listRes.json()).data;
 		const team = teams.find((c: any) => c.slug === 'notegenius-ai');
 
-		const res = await app.request(`/api/projects/internal-${team.slug}/team`, {
+		const projectSlug = await projectSlugFor(team.id);
+		const res = await app.request(`/api/projects/${projectSlug}/team`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -476,11 +459,12 @@ describe('slug-based access', () => {
 		const teams = (await listRes.json()).data;
 		const team = teams.find((c: any) => c.slug === 'notegenius-ai');
 
-		const agentsRes = await app.request(`/api/projects/internal-${team.slug}/agents`, {
+		const projectSlug = await projectSlugFor(team.id);
+		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		expect(agentsRes.status).toBe(200);
 		const agentsBody = await agentsRes.json();
-		expect(agentsBody.data.length).toBe(11);
+		expect(agentsBody.data.length).toBe(10);
 	});
 });

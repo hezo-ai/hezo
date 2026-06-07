@@ -3,14 +3,13 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, projectSlugFor } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let teamId: string;
 let teamSlug: string;
-let internalSlug: string;
 let otherInternalSlug: string;
 let projectSlug: string;
 let otherProjectSlug: string;
@@ -33,24 +32,26 @@ beforeAll(async () => {
 	const team = await makeTeam('Mentions Co');
 	teamId = team.id;
 	teamSlug = team.slug;
-	internalSlug = `internal-${teamSlug}`;
 	const otherTeam = await makeTeam('Other Mentions Co');
-	otherInternalSlug = `internal-${otherTeam.slug}`;
+	otherInternalSlug = `${await projectSlugFor(db, otherTeam.id)}`;
 
-	await app.request(`/api/projects/${internalSlug}/agents`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ title: 'Picker Bot' }),
-	});
-
+	// The primary project (notes.md + the onboarding skill) lives in `teamId`.
 	const projA = await createTestProject(db, teamId, {
 		name: 'Operations Hub',
 		description: 'Ops project.',
 	});
 	const projAData = (await projA.json()).data as { id: string; slug: string };
 	projectSlug = projAData.slug;
+	await app.request(`/api/projects/${projectSlug}/agents`, {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ title: 'Picker Bot' }),
+	});
 
-	const projB = await createTestProject(db, teamId, {
+	// Under the 1:1 teams↔projects model a distinct second project (spec.md, used
+	// to prove bare search stays scoped to the current project) requires its own team.
+	const betaTeam = await makeTeam('Beta Service Co');
+	const projB = await createTestProject(db, betaTeam.id, {
 		name: 'Beta Service',
 		description: 'Beta project.',
 	});
@@ -59,7 +60,7 @@ beforeAll(async () => {
 
 	// kb docs were unified into the skills database; mentions resolve/search read from skills.
 	// Skills are referenced by slug; mentions still address them by a filename-shaped slug.
-	await app.request(`/api/projects/${internalSlug}/skills`, {
+	await app.request(`/api/projects/${projectSlug}/skills`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -75,6 +76,15 @@ beforeAll(async () => {
 		body: JSON.stringify({ content: 'Some ops notes.' }),
 	});
 
+	await app.request(`/api/projects/${projectSlug}/docs/runbook.md`, {
+		method: 'PUT',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ content: 'Ops runbook.' }),
+	});
+
+	// spec.md lives on a project in a *different* team, so bare search scoped to
+	// the primary project must never surface it. Resolve is team-scoped, so it
+	// also stays invisible from the primary team — exercised below.
 	await app.request(`/api/projects/${otherProjectSlug}/docs/spec.md`, {
 		method: 'PUT',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -88,7 +98,7 @@ afterAll(async () => {
 
 describe('POST /teams/:teamId/docs/resolve', () => {
 	it('resolves kb docs with title, size, updated_at', async () => {
-		const r = await app.request(`/api/projects/${internalSlug}/docs/resolve`, {
+		const r = await app.request(`/api/projects/${projectSlug}/docs/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ kb_slugs: ['onboarding-guide.md'] }),
@@ -104,13 +114,13 @@ describe('POST /teams/:teamId/docs/resolve', () => {
 	});
 
 	it('resolves project docs matching project_slug + filename', async () => {
-		const r = await app.request(`/api/projects/${internalSlug}/docs/resolve`, {
+		const r = await app.request(`/api/projects/${projectSlug}/docs/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_docs: [
 					{ project_slug: projectSlug, filename: 'notes.md' },
-					{ project_slug: otherProjectSlug, filename: 'spec.md' },
+					{ project_slug: projectSlug, filename: 'runbook.md' },
 				],
 			}),
 		});
@@ -126,7 +136,7 @@ describe('POST /teams/:teamId/docs/resolve', () => {
 			byKey.set(`${d.project_slug}/${d.filename}`, { size: d.size });
 		}
 		expect(byKey.get(`${projectSlug}/notes.md`)?.size).toBe('Some ops notes.'.length);
-		expect(byKey.get(`${otherProjectSlug}/spec.md`)?.size).toBe('Beta service spec.'.length);
+		expect(byKey.get(`${projectSlug}/runbook.md`)?.size).toBe('Ops runbook.'.length);
 	});
 
 	it('does not cross team boundaries', async () => {
@@ -146,7 +156,7 @@ describe('POST /teams/:teamId/docs/resolve', () => {
 
 	it('rejects oversize payloads', async () => {
 		const big = Array.from({ length: 101 }, (_, i) => `slug-${i}`);
-		const r = await app.request(`/api/projects/${internalSlug}/docs/resolve`, {
+		const r = await app.request(`/api/projects/${projectSlug}/docs/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ kb_slugs: big }),
@@ -158,7 +168,7 @@ describe('POST /teams/:teamId/docs/resolve', () => {
 describe('GET /teams/:teamId/mentions/search', () => {
 	it('returns agents, kb docs, and project docs when project_slug is provided', async () => {
 		const r = await app.request(
-			`/api/projects/${internalSlug}/mentions/search?q=&kind=all&limit=10&project_slug=${encodeURIComponent(projectSlug)}`,
+			`/api/projects/${projectSlug}/mentions/search?q=&kind=all&limit=10&project_slug=${encodeURIComponent(projectSlug)}`,
 			{ headers: authHeader(token) },
 		);
 		expect(r.status).toBe(200);
@@ -170,12 +180,9 @@ describe('GET /teams/:teamId/mentions/search', () => {
 	});
 
 	it('filters by query string', async () => {
-		const r = await app.request(
-			`/api/projects/${internalSlug}/mentions/search?q=onboard&kind=all`,
-			{
-				headers: authHeader(token),
-			},
-		);
+		const r = await app.request(`/api/projects/${projectSlug}/mentions/search?q=onboard&kind=all`, {
+			headers: authHeader(token),
+		});
 		expect(r.status).toBe(200);
 		const body = await r.json();
 		const handles = (body.data as Array<{ handle: string }>).map((row) => row.handle);
@@ -184,7 +191,7 @@ describe('GET /teams/:teamId/mentions/search', () => {
 
 	it('returns bare filenames for docs in the current project', async () => {
 		const r = await app.request(
-			`/api/projects/${internalSlug}/mentions/search?q=notes&kind=doc&project_slug=${encodeURIComponent(projectSlug)}`,
+			`/api/projects/${projectSlug}/mentions/search?q=notes&kind=doc&project_slug=${encodeURIComponent(projectSlug)}`,
 			{ headers: authHeader(token) },
 		);
 		expect(r.status).toBe(200);
@@ -195,7 +202,7 @@ describe('GET /teams/:teamId/mentions/search', () => {
 
 	it('does not surface docs from other projects via bare search', async () => {
 		const r = await app.request(
-			`/api/projects/${internalSlug}/mentions/search?q=spec&kind=doc&project_slug=${encodeURIComponent(projectSlug)}`,
+			`/api/projects/${projectSlug}/mentions/search?q=spec&kind=doc&project_slug=${encodeURIComponent(projectSlug)}`,
 			{ headers: authHeader(token) },
 		);
 		expect(r.status).toBe(200);
@@ -205,7 +212,7 @@ describe('GET /teams/:teamId/mentions/search', () => {
 	});
 
 	it('omits docs entirely when project_slug is absent', async () => {
-		const r = await app.request(`/api/projects/${internalSlug}/mentions/search?q=notes&kind=doc`, {
+		const r = await app.request(`/api/projects/${projectSlug}/mentions/search?q=notes&kind=doc`, {
 			headers: authHeader(token),
 		});
 		expect(r.status).toBe(200);

@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AgentEffort, CEO_AGENT_SLUG } from '@hezo/shared';
+import { AgentEffort, CEO_AGENT_SLUG, INSTANCE_AGENT_SLUGS } from '@hezo/shared';
 import agentSummaries from './agent-summaries.json' with { type: 'json' };
 
 const summaries: {
@@ -177,7 +177,12 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 
 export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>): Promise<void> {
 	const defs = buildAgentTypeDefs();
-	const role = (slug: string) => roleDocs[`software-development/${slug}.md`] ?? '';
+	// The Coach is an instance-level role (like the CEO), so its prompt lives under
+	// _instance/, not in any team template.
+	const role = (slug: string) =>
+		(slug === 'coach'
+			? roleDocs['_instance/coach.md']
+			: roleDocs[`software-development/${slug}.md`]) ?? '';
 
 	const defaultTeamContextFor = (slug: string): string => {
 		if (slug === 'coach') return summaries.team_contexts.builtin?.coach ?? '';
@@ -338,7 +343,12 @@ Approval is conveyed via comment, not status. From **Review**, the ticket either
 	);
 	const startupTemplateId = startupResult.rows[0].id;
 
-	for (const def of defs) {
+	// Instance-level agents (CEO, Coach) live in HQ and are never part of a team
+	// template's roster.
+	const templateDefs = defs.filter(
+		(d) => !(INSTANCE_AGENT_SLUGS as readonly string[]).includes(d.slug),
+	);
+	for (const def of templateDefs) {
 		await db.query(
 			`INSERT INTO team_template_agent_types (team_template_id, agent_type_id, reports_to_slug, sort_order)
 			 VALUES ($1, (SELECT id FROM agent_types WHERE slug = $2), $3, $4)
@@ -349,14 +359,14 @@ Approval is conveyed via comment, not status. From **Review**, the ticket either
 		);
 	}
 
+	// Coach is an instance-level singleton (seeded in HQ), not part of any team
+	// template — templates carry only the per-team Captain override.
 	const blankBuiltinPrompts = {
 		captain: roleDocs['blank/captain.md'] ?? '',
-		coach: roleDocs['blank/coach.md'] ?? '',
 	};
 
 	const blankBuiltinTeamContexts = {
 		captain: summaries.team_contexts.blank?.captain ?? '',
-		coach: summaries.team_contexts.builtin?.coach ?? '',
 	};
 
 	await db.query(
@@ -371,7 +381,7 @@ Approval is conveyed via comment, not status. From **Review**, the ticket either
 		     builtin_agent_team_contexts = EXCLUDED.builtin_agent_team_contexts`,
 		[
 			'Blank',
-			'Start from scratch with only the built-in Captain and Coach agents',
+			'Start from scratch with only the built-in Captain',
 			summaries.teams.Blank ?? '',
 			JSON.stringify(blankBuiltinPrompts),
 			JSON.stringify(blankBuiltinTeamContexts),

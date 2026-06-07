@@ -3,9 +3,26 @@ import {
 	authenticate,
 	createProjectAndClearPlanning,
 	createProjectReadyForAgents,
-	createTeamWithAgents,
-	waitForCaptainIdle,
+	getToken,
 } from './helpers';
+
+type CreatedProject = {
+	id: string;
+	slug: string;
+	team_id: string;
+	team_slug: string;
+};
+
+async function listProjectAgents(
+	page: Page,
+	projectSlug: string,
+	token: string,
+): Promise<Array<{ id: string; slug: string }>> {
+	const res = await page.request.get(`/api/projects/${projectSlug}/agents`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	return ((await res.json()) as { data: Array<{ id: string; slug: string }> }).data;
+}
 
 async function waitForRunStatus(
 	page: Page,
@@ -36,21 +53,16 @@ async function waitForRunStatus(
 test('run detail page streams synthetic agent logs', async ({ page, context }) => {
 	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
+	const token = await getToken(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/projects/internal-${team.slug}/agents`, {
-		headers,
-	});
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
-
-	await waitForCaptainIdle(page, team.slug, token);
-
-	const project = await createProjectReadyForAgents(page, team, token, {
+	const project = (await createProjectReadyForAgents(page, { id: '', slug: '' }, token, {
 		name: 'Log Test Project',
 		description: 'Test project.',
-	});
+	})) as unknown as CreatedProject;
+
+	const agents = await listProjectAgents(page, project.slug, token);
+	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
 	const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 		headers,
@@ -70,7 +82,7 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 
 	const run = await waitForRunStatus(page, project.slug, task.id, token, 'succeeded');
 
-	await page.goto(`/projects/internal-${team.slug}/agents/${captain.id}/executions/${run.id}`);
+	await page.goto(`/projects/${project.slug}/agents/${captain.id}/executions/${run.id}`);
 
 	await expect(page.getByRole('heading', { name: /Run \w{8}/i })).toBeVisible({ timeout: 15000 });
 
@@ -114,20 +126,19 @@ test('task page renders completed run as a collapsed inline comment with summary
 	page,
 }) => {
 	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
+	const token = await getToken(page);
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const agentsRes = await page.request.get(`/api/projects/internal-${team.slug}/agents`, {
-		headers,
-	});
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
-
-	const projectRes = await createProjectAndClearPlanning(page, team.slug, token, {
+	const projectRes = await createProjectAndClearPlanning(page, '', token, {
 		name: 'Collapsed Run Project',
 		description: 'Test project.',
 	});
-	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
+	const project = (
+		(await projectRes.json()) as { data: { id: string; slug: string; team_id: string } }
+	).data;
+
+	const agents = await listProjectAgents(page, project.slug, token);
+	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
 	const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 		headers,
@@ -164,7 +175,7 @@ test('task page renders completed run as a collapsed inline comment with summary
 	const runResponse = {
 		id: runId,
 		member_id: captain.id,
-		team_id: team.id,
+		team_id: project.team_id,
 		task_id: task.id,
 		task_identifier: null,
 		task_title: null,
@@ -215,14 +226,19 @@ test('task page renders completed run as a collapsed inline comment with summary
 	await expect(header).toHaveAttribute('aria-expanded', 'false');
 });
 
-async function mockCompletedRun(page: Page, teamSlug: string, agentId: string, token: string) {
+async function mockCompletedRun(page: Page, token: string) {
 	const headers = { Authorization: `Bearer ${token}` };
 
-	const projectRes = await createProjectAndClearPlanning(page, teamSlug, token, {
+	const projectRes = await createProjectAndClearPlanning(page, '', token, {
 		name: 'Expand Run Project',
 		description: 'Test project.',
 	});
-	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
+	const project = (
+		(await projectRes.json()) as { data: { id: string; slug: string; team_id: string } }
+	).data;
+
+	const agents = await listProjectAgents(page, project.slug, token);
+	const agentId = (agents.find((a) => a.slug === 'captain') ?? agents[0]).id;
 
 	const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 		headers,
@@ -264,7 +280,7 @@ async function mockCompletedRun(page: Page, teamSlug: string, agentId: string, t
 				data: {
 					id: runId,
 					member_id: agentId,
-					team_id: teamSlug,
+					team_id: project.team_id,
 					task_id: task.id,
 					task_identifier: null,
 					task_title: null,
@@ -286,21 +302,14 @@ async function mockCompletedRun(page: Page, teamSlug: string, agentId: string, t
 		});
 	});
 
-	return { task, runId, projectSlug: project.slug };
+	return { task, runId, projectSlug: project.slug, agentId };
 }
 
 test('clicking the summary on a completed run expands the inline log', async ({ page }) => {
 	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
+	const token = await getToken(page);
 
-	const agentsRes = await page.request.get(`/api/projects/internal-${team.slug}/agents`, {
-		headers,
-	});
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
-
-	const { task, runId, projectSlug } = await mockCompletedRun(page, team.slug, captain.id, token);
+	const { task, runId, projectSlug, agentId } = await mockCompletedRun(page, token);
 
 	await page.goto(`/projects/${projectSlug}/tasks/${task.id}`);
 
@@ -323,7 +332,7 @@ test('clicking the summary on a completed run expands the inline log', async ({ 
 	await expect(runLink).toBeVisible();
 	await expect(runLink).toHaveAttribute(
 		'href',
-		new RegExp(`/projects/${projectSlug}/agents/${captain.id}/executions/${runId}$`),
+		new RegExp(`/projects/${projectSlug}/agents/${agentId}/executions/${runId}$`),
 	);
 
 	await header.click();
@@ -334,16 +343,9 @@ test('clicking the summary on a completed run expands the inline log', async ({ 
 test('completed run expansion works on mobile viewport', async ({ page }) => {
 	await page.setViewportSize({ width: 375, height: 800 });
 	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
+	const token = await getToken(page);
 
-	const agentsRes = await page.request.get(`/api/projects/internal-${team.slug}/agents`, {
-		headers,
-	});
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
-
-	const { task, projectSlug } = await mockCompletedRun(page, team.slug, captain.id, token);
+	const { task, projectSlug } = await mockCompletedRun(page, token);
 
 	await page.goto(`/projects/${projectSlug}/tasks/${task.id}`);
 
@@ -367,16 +369,9 @@ test('completed run expansion works on mobile viewport', async ({ page }) => {
 test('completed run header stays on one line when the log expands (mobile)', async ({ page }) => {
 	await page.setViewportSize({ width: 375, height: 800 });
 	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
+	const token = await getToken(page);
 
-	const agentsRes = await page.request.get(`/api/projects/internal-${team.slug}/agents`, {
-		headers,
-	});
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
-
-	const { task, projectSlug } = await mockCompletedRun(page, team.slug, captain.id, token);
+	const { task, projectSlug } = await mockCompletedRun(page, token);
 
 	await page.goto(`/projects/${projectSlug}/tasks/${task.id}`);
 
@@ -415,16 +410,9 @@ test('completed run header stays on one line when the log expands (mobile)', asy
 // (boundingBox returns 0). Guards the regression where the icon sat ~5px low.
 test('completed run inline icon is vertically centred on the summary label', async ({ page }) => {
 	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
+	const token = await getToken(page);
 
-	const agentsRes = await page.request.get(`/api/projects/internal-${team.slug}/agents`, {
-		headers,
-	});
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
-
-	const { task, projectSlug } = await mockCompletedRun(page, team.slug, captain.id, token);
+	const { task, projectSlug } = await mockCompletedRun(page, token);
 
 	await page.goto(`/projects/${projectSlug}/tasks/${task.id}`);
 
@@ -461,16 +449,9 @@ test('task-page run log offers the formatted/raw switcher on a dark surface in l
 	await page.addInitScript(() => localStorage.setItem('theme', 'light'));
 	await page.setViewportSize({ width: 375, height: 800 });
 	await authenticate(page);
-	const { team, token } = await createTeamWithAgents(page);
-	const headers = { Authorization: `Bearer ${token}` };
+	const token = await getToken(page);
 
-	const agentsRes = await page.request.get(`/api/projects/internal-${team.slug}/agents`, {
-		headers,
-	});
-	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
-	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
-
-	const { task, projectSlug } = await mockCompletedRun(page, team.slug, captain.id, token);
+	const { task, projectSlug } = await mockCompletedRun(page, token);
 
 	await page.goto(`/projects/${projectSlug}/tasks/${task.id}`);
 

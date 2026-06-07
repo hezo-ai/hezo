@@ -21,7 +21,7 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import { loadOrCreateCA } from '../src/services/egress/ca';
 import { EgressProxy } from '../src/services/egress/proxy';
 import { safeClose } from './helpers';
-import { createTestApp } from './helpers/app';
+import { createTestApp, projectSlugFor } from './helpers/app';
 
 const dockerAvailable = await checkDocker();
 const skipReason =
@@ -68,11 +68,14 @@ beforeAll(async () => {
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
-	const agentRes = await ctx.app.request(`/api/projects/internal-${team.slug}/agents`, {
-		method: 'POST',
-		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ title: 'Egress Docker Agent' }),
-	});
+	const agentRes = await ctx.app.request(
+		`/api/projects/${await projectSlugFor(db, team.id)}/agents`,
+		{
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Egress Docker Agent' }),
+		},
+	);
 	agentId = (await agentRes.json()).data.id;
 
 	const ca = await loadOrCreateCA(dataDir);

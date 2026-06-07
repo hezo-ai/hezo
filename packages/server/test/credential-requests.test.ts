@@ -5,7 +5,13 @@ import { decrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, mintAgentToken } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	mintAgentToken,
+	projectSlugFor,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -43,7 +49,7 @@ beforeAll(async () => {
 	projectId = project.id;
 	projectSlug = project.slug;
 
-	const agentRes = await app.request(`/api/projects/internal-${teamSlug}/agents`, {
+	const agentRes = await app.request(`/api/projects/${await projectSlugFor(db, teamId)}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Cred Agent' }),

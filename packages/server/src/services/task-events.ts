@@ -241,8 +241,8 @@ export async function recordAssigneeChange(
 	newAssigneeId: string | null,
 	actorMemberId: string | null,
 	wsManager: WebSocketManager | undefined,
-): Promise<void> {
-	if (oldAssigneeId === newAssigneeId) return;
+): Promise<{ fromName: string; toName: string } | null> {
+	if (oldAssigneeId === newAssigneeId) return null;
 	const [fromName, toName, actorName] = await Promise.all([
 		resolveActorName(db, oldAssigneeId),
 		resolveActorName(db, newAssigneeId),
@@ -270,6 +270,7 @@ export async function recordAssigneeChange(
 	if (r.rows[0] && wsManager) {
 		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
 	}
+	return { fromName, toName };
 }
 
 export async function recordTaskLinks(

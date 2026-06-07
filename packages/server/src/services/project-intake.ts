@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import {
 	ApprovalStatus,
 	ApprovalType,
+	CEO_AGENT_SLUG,
 	CommentContentType,
 	PROJECT_INTAKE_LABEL,
 	PROJECT_INTAKE_SKIP_SIGNAL_TEXT,
@@ -15,7 +16,7 @@ import { recomputeDownstreamReadiness } from '../lib/dependencies';
 import { terminalStatusParams, withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
-import { loadCaptainInternalContext } from './internal-intake';
+import { loadCoordinationContext } from './internal-intake';
 import { recordStatusChange } from './task-events';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
@@ -44,14 +45,14 @@ export interface ProjectIntakeResult {
 	intakeTaskIdentifier: string;
 	projectSlug: string;
 	approvalId: string;
-	captainMemberId: string;
+	ceoMemberId: string;
 }
 
 function buildGreetingText(input: CreateProjectIntakeInput): string {
 	const lines: string[] = [
-		`Hi — I'm the Captain. Thanks for kicking off a new project.`,
+		`Hi — I'm the CEO. Thanks for kicking off a new project.`,
 		'',
-		`Before we open it, I want to confirm we have the right people on the team for this work, clarify anything ambiguous in the brief, and lock in the final shape of the project.`,
+		`Before we open it, I want to confirm we're standing up the right team for this work, clarify anything ambiguous in the brief, and lock in the final shape of the project.`,
 		'',
 		`Here's what you submitted:`,
 		'',
@@ -69,7 +70,7 @@ function buildGreetingText(input: CreateProjectIntakeInput): string {
 	}
 	lines.push(
 		'',
-		`Tell me anything you'd like me to know — users, constraints, deadlines, integrations. Once I'm satisfied the team can deliver it, I'll ask the admin to approve creating the project. If you'd rather move fast, click "Skip questions" and I'll finalise with what we have.`,
+		`Tell me anything you'd like me to know — users, constraints, deadlines, integrations. Once I'm satisfied we can deliver it, I'll ask the admin to approve creating the project and its team. If you'd rather move fast, click "Skip questions" and I'll finalise with what we have.`,
 	);
 	return lines.join('\n');
 }
@@ -108,9 +109,9 @@ export async function createProjectIntake(
 	input: CreateProjectIntakeInput,
 	wsManager?: WebSocketManager,
 ): Promise<ProjectIntakeResult | null> {
-	const ctx = await loadCaptainInternalContext(db, teamId);
+	const ctx = await loadCoordinationContext(db);
 	if (!ctx) {
-		log.warn(`Cannot create project intake for ${teamId}; missing Captain or Internal`);
+		log.warn(`Cannot create project intake for ${teamId}; missing CEO or HQ project`);
 		return null;
 	}
 
@@ -124,6 +125,8 @@ export async function createProjectIntake(
 	const { intakeTaskId, intakeTaskIdentifier, approvalId, projectSlug } = await withTransaction(
 		db,
 		async () => {
+			// The approval is scoped to the project's own team; the intake conversation
+			// itself lives in HQ and is run by the CEO.
 			const approvalResult = await db.query<{ id: string }>(
 				`INSERT INTO approvals (team_id, type, status, payload)
 			 VALUES ($1, $2::approval_type, $3::approval_status, $4::jsonb)
@@ -132,10 +135,7 @@ export async function createProjectIntake(
 			);
 			const approvalId = approvalResult.rows[0].id;
 
-			const { number: taskNumber, identifier } = await allocateTaskIdentifier(
-				db,
-				ctx.internalProjectId,
-			);
+			const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, ctx.hqProjectId);
 
 			const taskResult = await db.query<{ id: string; identifier: string; project_slug: string }>(
 				`WITH inserted AS (
@@ -147,9 +147,9 @@ export async function createProjectIntake(
 			 SELECT inserted.id, inserted.identifier, p.slug AS project_slug
 			 FROM inserted JOIN projects p ON p.id = inserted.project_id`,
 				[
-					teamId,
-					ctx.internalProjectId,
-					ctx.captainMemberId,
+					ctx.hqTeamId,
+					ctx.hqProjectId,
+					ctx.ceoMemberId,
 					taskNumber,
 					identifier,
 					`Open new project: ${input.name}`,
@@ -175,7 +175,7 @@ export async function createProjectIntake(
 			 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)`,
 				[
 					intakeTaskId,
-					ctx.captainMemberId,
+					ctx.ceoMemberId,
 					CommentContentType.Text,
 					JSON.stringify({ text: buildGreetingText(input) }),
 				],
@@ -187,7 +187,7 @@ export async function createProjectIntake(
 				 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)`,
 					[
 						intakeTaskId,
-						ctx.captainMemberId,
+						ctx.ceoMemberId,
 						CommentContentType.Text,
 						JSON.stringify({
 							text: `**Requirements document attached to this intake:**\n\n${input.initialPrd}`,
@@ -205,16 +205,16 @@ export async function createProjectIntake(
 			intakeTaskId,
 		]);
 		if (taskRow.rows[0]) {
-			broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', taskRow.rows[0]);
+			broadcastRowChange(wsManager, wsRoom.team(ctx.hqTeamId), 'tasks', 'INSERT', taskRow.rows[0]);
 		}
 	}
 
 	try {
-		await createWakeup(db, ctx.captainMemberId, teamId, WakeupSource.Assignment, {
+		await createWakeup(db, ctx.ceoMemberId, ctx.hqTeamId, WakeupSource.Assignment, {
 			task_id: intakeTaskId,
 		});
 	} catch (e) {
-		log.error('Failed to wake Captain for project intake:', e);
+		log.error('Failed to wake CEO for project intake:', e);
 	}
 
 	return {
@@ -222,7 +222,7 @@ export async function createProjectIntake(
 		intakeTaskIdentifier,
 		projectSlug,
 		approvalId,
-		captainMemberId: ctx.captainMemberId,
+		ceoMemberId: ctx.ceoMemberId,
 	};
 }
 
@@ -233,11 +233,69 @@ export interface OpenProjectIntake {
 	approval_id: string;
 }
 
-export async function getOpenProjectIntakeTasks(
+export interface OpenProjectIntakeForHome {
+	task_id: string;
+	task_identifier: string;
+	/** The HQ project slug — where the intake conversation lives. */
+	project_slug: string;
+	approval_id: string;
+	greeting: string;
+	ceo_member_id: string;
+	ceo_title: string;
+}
+
+function extractCommentText(content: unknown): string {
+	if (typeof content === 'string') {
+		try {
+			const parsed = JSON.parse(content) as { text?: unknown };
+			return typeof parsed?.text === 'string' ? parsed.text : content;
+		} catch {
+			return content;
+		}
+	}
+	if (content && typeof content === 'object' && 'text' in content) {
+		const text = (content as { text?: unknown }).text;
+		return typeof text === 'string' ? text : '';
+	}
+	return '';
+}
+
+/**
+ * The single open project-intake conversation surfaced on the home/welcome view,
+ * enriched with the CEO's opening greeting and identity. All intakes live in HQ.
+ */
+export async function getOpenProjectIntakeForHome(
 	db: PGlite,
-	teamId: string,
-): Promise<OpenProjectIntake[]> {
-	const ts = terminalStatusParams(3);
+): Promise<OpenProjectIntakeForHome | null> {
+	const open = await getOpenProjectIntakeTasks(db);
+	const first = open[0];
+	if (!first) return null;
+
+	const ceo = await db.query<{ id: string; title: string }>(
+		`SELECT id, title FROM member_agents WHERE slug = $1 LIMIT 1`,
+		[CEO_AGENT_SLUG],
+	);
+	const greetingRow = await db.query<{ content: unknown }>(
+		`SELECT content FROM task_comments
+		 WHERE task_id = $1 AND content_type = 'text'::comment_content_type
+		 ORDER BY created_at ASC LIMIT 1`,
+		[first.task_id],
+	);
+
+	return {
+		task_id: first.task_id,
+		task_identifier: first.task_identifier,
+		project_slug: first.project_slug,
+		approval_id: first.approval_id,
+		greeting: extractCommentText(greetingRow.rows[0]?.content),
+		ceo_member_id: ceo.rows[0]?.id ?? '',
+		ceo_title: ceo.rows[0]?.title ?? 'CEO',
+	};
+}
+
+/** All open project-intake conversations, instance-wide (they all live in HQ). */
+export async function getOpenProjectIntakeTasks(db: PGlite): Promise<OpenProjectIntake[]> {
+	const ts = terminalStatusParams(2);
 	const result = await db.query<{
 		task_id: string;
 		task_identifier: string;
@@ -250,15 +308,13 @@ export async function getOpenProjectIntakeTasks(
 		        a.id AS approval_id
 		 FROM tasks i
 		 JOIN projects p ON p.id = i.project_id
-		 JOIN approvals a ON a.team_id = i.team_id
-		                   AND a.type = 'project_creation'
+		 JOIN approvals a ON a.type = 'project_creation'
 		                   AND a.status = 'pending'
 		                   AND a.payload->>'intake_task_id' = i.id::text
-		 WHERE i.team_id = $1
-		   AND i.labels @> $2::jsonb
+		 WHERE i.labels @> $1::jsonb
 		   AND i.status NOT IN (${ts.placeholders})
 		 ORDER BY i.created_at ASC`,
-		[teamId, JSON.stringify([PROJECT_INTAKE_LABEL]), ...ts.values],
+		[JSON.stringify([PROJECT_INTAKE_LABEL]), ...ts.values],
 	);
 	return result.rows;
 }
@@ -269,7 +325,6 @@ function buildProvisioningCompleteText(projectName: string, projectSlug: string)
 
 export async function completeProjectIntakeAfterProvisioning(
 	db: PGlite,
-	teamId: string,
 	intakeTaskId: string,
 	projectName: string,
 	projectSlug: string,
@@ -278,19 +333,19 @@ export async function completeProjectIntakeAfterProvisioning(
 	summaryComment: Record<string, unknown> | null;
 	task: Record<string, unknown> | null;
 }> {
-	const ctx = await loadCaptainInternalContext(db, teamId);
+	const ctx = await loadCoordinationContext(db);
 	if (!ctx) {
-		log.warn(`Cannot complete project intake for ${teamId}; missing Captain`);
+		log.warn('Cannot complete project intake; missing CEO or HQ project');
 		return { summaryComment: null, task: null };
 	}
 
-	const ts = terminalStatusParams(4);
+	const ts = terminalStatusParams(3);
 	const openTask = await db.query<{ id: string; status: string }>(
 		`SELECT id, status::text AS status FROM tasks
-		 WHERE id = $1 AND team_id = $2 AND labels @> $3::jsonb
+		 WHERE id = $1 AND labels @> $2::jsonb
 		   AND status NOT IN (${ts.placeholders})
 		 LIMIT 1`,
-		[intakeTaskId, teamId, JSON.stringify([PROJECT_INTAKE_LABEL]), ...ts.values],
+		[intakeTaskId, JSON.stringify([PROJECT_INTAKE_LABEL]), ...ts.values],
 	);
 	if (!openTask.rows[0]) {
 		return { summaryComment: null, task: null };
@@ -302,7 +357,7 @@ export async function completeProjectIntakeAfterProvisioning(
 		 RETURNING *`,
 		[
 			intakeTaskId,
-			ctx.captainMemberId,
+			ctx.ceoMemberId,
 			CommentContentType.Text,
 			JSON.stringify({ text: buildProvisioningCompleteText(projectName, projectSlug) }),
 		],
@@ -312,24 +367,30 @@ export async function completeProjectIntakeAfterProvisioning(
 	const oldStatus = openTask.rows[0].status;
 	const taskUpdate = await db.query<Record<string, unknown>>(
 		`UPDATE tasks SET status = $1::task_status, updated_at = now()
-		 WHERE id = $2 AND team_id = $3
+		 WHERE id = $2
 		 RETURNING *`,
-		[TaskStatus.Done, intakeTaskId, teamId],
+		[TaskStatus.Done, intakeTaskId],
 	);
 	const task = taskUpdate.rows[0] ?? null;
 
 	if (task) {
 		await recordStatusChange(
 			db,
-			teamId,
+			ctx.hqTeamId,
 			intakeTaskId,
 			oldStatus,
 			TaskStatus.Done,
-			ctx.captainMemberId,
+			ctx.ceoMemberId,
 			wsManager,
 		);
 		try {
-			await recomputeDownstreamReadiness(db, teamId, intakeTaskId, ctx.captainMemberId, wsManager);
+			await recomputeDownstreamReadiness(
+				db,
+				ctx.hqTeamId,
+				intakeTaskId,
+				ctx.ceoMemberId,
+				wsManager,
+			);
 		} catch (e) {
 			log.error('Failed to recompute downstream readiness after project intake close:', e);
 		}
@@ -340,18 +401,15 @@ export async function completeProjectIntakeAfterProvisioning(
 
 export async function postProjectCreationApprovedAck(
 	db: PGlite,
-	teamId: string,
 	intakeTaskId: string,
 	projectName: string,
 ): Promise<Record<string, unknown> | null> {
-	const ctx = await loadCaptainInternalContext(db, teamId);
+	const ctx = await loadCoordinationContext(db);
 	if (!ctx) return null;
 
 	const task = await db.query<{ id: string }>(
-		`SELECT id FROM tasks
-		 WHERE id = $1 AND team_id = $2 AND labels @> $3::jsonb
-		 LIMIT 1`,
-		[intakeTaskId, teamId, JSON.stringify([PROJECT_INTAKE_LABEL])],
+		`SELECT id FROM tasks WHERE id = $1 AND labels @> $2::jsonb LIMIT 1`,
+		[intakeTaskId, JSON.stringify([PROJECT_INTAKE_LABEL])],
 	);
 	if (!task.rows[0]) return null;
 
@@ -361,7 +419,7 @@ export async function postProjectCreationApprovedAck(
 		 RETURNING *`,
 		[
 			intakeTaskId,
-			ctx.captainMemberId,
+			ctx.ceoMemberId,
 			CommentContentType.Text,
 			JSON.stringify({
 				text: `Thanks for approving — the **${projectName}** project is being created and the container is spinning up. I'll post a final note here when it's ready.`,
@@ -373,18 +431,15 @@ export async function postProjectCreationApprovedAck(
 
 export async function postProjectCreationDeniedNote(
 	db: PGlite,
-	teamId: string,
 	intakeTaskId: string,
 	resolutionNote: string | null,
 ): Promise<Record<string, unknown> | null> {
-	const ctx = await loadCaptainInternalContext(db, teamId);
+	const ctx = await loadCoordinationContext(db);
 	if (!ctx) return null;
 
 	const task = await db.query<{ id: string }>(
-		`SELECT id FROM tasks
-		 WHERE id = $1 AND team_id = $2 AND labels @> $3::jsonb
-		 LIMIT 1`,
-		[intakeTaskId, teamId, JSON.stringify([PROJECT_INTAKE_LABEL])],
+		`SELECT id FROM tasks WHERE id = $1 AND labels @> $2::jsonb LIMIT 1`,
+		[intakeTaskId, JSON.stringify([PROJECT_INTAKE_LABEL])],
 	);
 	if (!task.rows[0]) return null;
 
@@ -397,24 +452,21 @@ export async function postProjectCreationDeniedNote(
 		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
 		 RETURNING *`,
-		[intakeTaskId, ctx.captainMemberId, CommentContentType.Text, JSON.stringify({ text })],
+		[intakeTaskId, ctx.ceoMemberId, CommentContentType.Text, JSON.stringify({ text })],
 	);
 	return commentResult.rows[0] ?? null;
 }
 
 export async function postSkipQuestionsSignalForProjectIntake(
 	db: PGlite,
-	teamId: string,
 	intakeTaskId: string,
 ): Promise<Record<string, unknown> | null> {
-	const ctx = await loadCaptainInternalContext(db, teamId);
+	const ctx = await loadCoordinationContext(db);
 	if (!ctx) return null;
 
 	const task = await db.query<{ id: string }>(
-		`SELECT id FROM tasks
-		 WHERE id = $1 AND team_id = $2 AND labels @> $3::jsonb
-		 LIMIT 1`,
-		[intakeTaskId, teamId, JSON.stringify([PROJECT_INTAKE_LABEL])],
+		`SELECT id FROM tasks WHERE id = $1 AND labels @> $2::jsonb LIMIT 1`,
+		[intakeTaskId, JSON.stringify([PROJECT_INTAKE_LABEL])],
 	);
 	if (!task.rows[0]) return null;
 
@@ -431,12 +483,12 @@ export async function postSkipQuestionsSignalForProjectIntake(
 	const comment = commentResult.rows[0] ?? null;
 
 	try {
-		await createWakeup(db, ctx.captainMemberId, teamId, WakeupSource.Reply, {
+		await createWakeup(db, ctx.ceoMemberId, ctx.hqTeamId, WakeupSource.Reply, {
 			task_id: intakeTaskId,
 			comment_id: comment ? (comment.id as string) : undefined,
 		});
 	} catch (e) {
-		log.error('Failed to wake Captain for skip-questions signal:', e);
+		log.error('Failed to wake CEO for skip-questions signal:', e);
 	}
 
 	return comment;

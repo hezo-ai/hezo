@@ -4,7 +4,7 @@ test('log viewer preserves bottom-pinned scroll across expand/collapse cycles', 
 	sharedPage: page,
 	sharedWorkspace,
 }) => {
-	const { team, agents } = sharedWorkspace;
+	const { team, agents, projectSlug } = sharedWorkspace;
 	const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
 	const runId = '99999999-9999-9999-9999-000000000abc';
@@ -49,7 +49,7 @@ test('log viewer preserves bottom-pinned scroll across expand/collapse cycles', 
 		},
 	);
 
-	await page.goto(`/projects/internal-${team.slug}/agents/${captain.id}/executions/${runId}`);
+	await page.goto(`/projects/${projectSlug}/agents/${captain.id}/executions/${runId}`);
 
 	const inlineLog = page.getByTestId('run-log');
 	await expect(inlineLog).toBeVisible({ timeout: 15_000 });

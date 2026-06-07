@@ -17,6 +17,7 @@ import {
 	authHeader,
 	createAgentRun,
 	createTestApp,
+	createTestProject,
 	finalizeAgentRun,
 	mintAgentToken,
 } from './helpers/app';
@@ -24,10 +25,10 @@ import {
 let app: Hono<Env>;
 let db: PGlite;
 let adminToken: string;
+let projectSlug: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let teamSlug: string;
-let internalSlug: string;
 let internalProjectId: string;
 let agentId: string;
 
@@ -50,15 +51,16 @@ beforeAll(async () => {
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
-	internalSlug = `internal-${teamSlug}`;
 
-	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
+	projectSlug = (await (await createTestProject(db, teamId, { name: 'Setup Project' })).json()).data
+		.slug;
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(adminToken),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
 	const internalProject = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
 		[teamId],
 	);
 	internalProjectId = internalProject.rows[0].id;
@@ -175,7 +177,7 @@ describe('signAgentJwt + verifyToken', () => {
 	it('rejects an agent JWT with no run_id claim', async () => {
 		const runId = await createAgentRun(db, agentId, teamId);
 		const internalProject = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
 			[teamId],
 		);
 		const projectId = internalProject.rows[0].id;
@@ -203,7 +205,7 @@ describe('signAgentJwt + verifyToken', () => {
 	it('rejects an agent JWT pointing at a nonexistent run', async () => {
 		const fakeRunId = '00000000-0000-0000-0000-000000000000';
 		const internalProject = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
 			[teamId],
 		);
 		const projectId = internalProject.rows[0].id;
@@ -235,7 +237,7 @@ describe('signAgentJwt + verifyToken', () => {
 		const otherAgentId = otherAgentRes.rows[0]?.id;
 		if (!otherAgentId) return; // only one seeded agent — skip
 		const internalProject = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
 			[teamId],
 		);
 		const projectId = internalProject.rows[0].id;
@@ -267,7 +269,7 @@ describe('verifyToken with API key', () => {
 	let apiKey: string;
 
 	beforeAll(async () => {
-		const res = await app.request(`/api/projects/${internalSlug}/api-keys`, {
+		const res = await app.request(`/api/projects/${projectSlug}/api-keys`, {
 			method: 'POST',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'test-key' }),

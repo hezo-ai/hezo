@@ -99,22 +99,22 @@ export function useProject(projectId: string, options?: { enabled?: boolean }) {
 	});
 }
 
-export interface ProjectIntakeResponse {
-	intake_task_id: string;
-	intake_task_identifier: string;
-	project_slug: string;
-	approval_id: string;
-}
-
-export interface ProjectWithTeamResponse extends ProjectIntakeResponse {
+export interface ProjectWithTeamResponse {
+	id: string;
+	slug: string;
+	name: string;
 	team_id: string;
 	team_slug: string;
+	docker_base_image: string;
+	planning_task_id: string;
+	planning_task_identifier: string;
 }
 
 /**
- * Projects-primary creation: a project owns its own team. Calls the instance
- * POST /api/projects, which provisions a fresh team (roster from the chosen
- * type) and opens the project intake on it. See .dev/per-project-teams.md.
+ * Projects-primary creation: a project owns its own team (1:1). Calls
+ * POST /api/projects, which provisions a fresh team from the chosen team-type
+ * template (default Blank) and directly creates the project + planning task.
+ * See .dev/per-project-teams.md.
  */
 export function useCreateProjectWithTeam() {
 	return useMutation({
