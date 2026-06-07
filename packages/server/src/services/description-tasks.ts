@@ -97,7 +97,7 @@ The **${teamSlug}** project-team changed (reason: ${reason}). Audit its roster, 
 1. Call \`list_agents(team_id)\` to enumerate every enabled agent and their \`reports_to\` relationships.
 2. For each agent, call \`get_agent_system_prompt(team_id, agent_id=...)\` to read its current system prompt.
 3. Audit for problems:
-   - **Orphans** — agents with no manager who should report to someone (only the Captain and the Coach legitimately report to the admin).
+   - **Orphans** — agents with no manager who should report to someone (the Captain legitimately reports to the CEO in HQ, and the Coach to the admin — don't flag either as an orphan).
    - **Cycles** — reports_to chains that loop.
    - **Stale prompts** — system prompts that describe a manager, peer, or report that no longer matches the actual team structure.
    - **Coverage gaps** — responsibilities the team is expected to own but no agent describes itself as covering.
