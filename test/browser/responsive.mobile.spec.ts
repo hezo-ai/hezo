@@ -19,15 +19,18 @@ test.describe('Responsive — mobile (390px)', () => {
 	});
 
 	test('task detail metadata stacks above content', async ({ page, freshWorkspace }) => {
-		const { team, token, agents } = freshWorkspace;
-		const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
+		const { token } = freshWorkspace;
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projectRes = await createProjectAndClearPlanning(page, team.slug, token, {
+		const projectRes = await createProjectAndClearPlanning(page, '', token, {
 			name: 'Mobile P',
 			description: 'mobile',
 		});
 		const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
+
+		const agentsRes = await page.request.get(`/api/projects/${project.slug}/agents`, { headers });
+		const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+		const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
 		const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 			headers,
@@ -56,8 +59,8 @@ test.describe('Responsive — mobile (390px)', () => {
 	});
 
 	test('create-task dialog goes near full-screen', async ({ page, freshWorkspace }) => {
-		const { team } = freshWorkspace;
-		await page.goto(`/projects/internal-${team.slug}/tasks`);
+		const { projectSlug } = freshWorkspace;
+		await page.goto(`/projects/${projectSlug}/tasks`);
 		await waitForPageLoad(page);
 
 		await page.getByTestId('task-list-new-task').click();
@@ -75,8 +78,8 @@ test.describe('Responsive — mobile (390px)', () => {
 		page,
 		lightWorkspace,
 	}) => {
-		const { team } = lightWorkspace;
-		await page.goto(`/projects/internal-${team.slug}/team-settings/audit-log`);
+		const { projectSlug } = lightWorkspace;
+		await page.goto(`/projects/${projectSlug}/team-settings/audit-log`);
 		await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible({
 			timeout: 20000,
 		});

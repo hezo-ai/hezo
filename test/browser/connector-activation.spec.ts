@@ -121,20 +121,18 @@ async function startFakeMcp(): Promise<{ url: string; close: () => Promise<void>
 	};
 }
 
-async function postAgentRegisterConnector(
-	page: Page,
-	team: { id: string; slug: string },
-	token: string,
-	agentId: string,
-	mcpUrl: string,
-) {
+async function postAgentRegisterConnector(page: Page, token: string, mcpUrl: string) {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-	const projRes = await createProjectAndClearPlanning(page, team.slug, token, {
+	const projRes = await createProjectAndClearPlanning(page, '', token, {
 		name: uniqueName('Connector Project'),
 		description: 'E2E.',
 	});
 	const project = ((await projRes.json()) as { data: { id: string; slug: string } }).data;
+
+	const agentsRes = await page.request.get(`/api/projects/${project.slug}/agents`, { headers });
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const agentId = (agents.find((a) => a.slug === 'captain') ?? agents[0]).id;
 
 	const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 		headers,
@@ -194,12 +192,9 @@ test.describe('Connector activation', () => {
 		sharedWorkspace,
 	}) => {
 		test.setTimeout(60_000);
-		const agent = sharedWorkspace.agents[0]!;
 		const { task, project, connectorId, headers } = await postAgentRegisterConnector(
 			page,
-			sharedWorkspace.team,
 			sharedWorkspace.token,
-			agent.id,
 			`${fake.url}/mcp`,
 		);
 

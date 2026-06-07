@@ -1,26 +1,21 @@
 import { expect, test } from '@playwright/test';
-import {
-	authenticate,
-	createProjectAndClearPlanning,
-	createTeamWithAgents,
-	waitForPageLoad,
-} from './helpers';
+import { authenticate, createProjectAndClearPlanning, getToken, waitForPageLoad } from './helpers';
 
 test.describe('Comment reactions (mobile)', () => {
 	test.describe.configure({ retries: 2 });
 
 	test('reaction chip is tappable on a 390px viewport', async ({ page }) => {
 		await authenticate(page);
-		const { team, token } = await createTeamWithAgents(page);
+		const token = await getToken(page);
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projRes = await createProjectAndClearPlanning(page, team.slug, token, {
+		const projRes = await createProjectAndClearPlanning(page, '', token, {
 			name: 'Reactions Mobile',
 			description: 'x',
 		});
 		const project = ((await projRes.json()) as { data: { id: string; slug: string } }).data;
 
-		const agentsRes = await page.request.get(`/api/projects/internal-${team.slug}/agents`, {
+		const agentsRes = await page.request.get(`/api/projects/${project.slug}/agents`, {
 			headers: { Authorization: `Bearer ${token}` },
 		});
 		const agents = ((await agentsRes.json()) as { data: Array<{ id: string }> }).data;

@@ -98,7 +98,16 @@ beforeAll(async () => {
 	}
 	taskId = (await taskRes.json()).data.id;
 
-	const otherProjectRes = await createTestProject(db, teamId, {
+	// A team owns exactly one project, so the cross-project isolation case needs a
+	// second team to host the "other" project.
+	const otherTeamRes = await app.request('/api/teams', {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ name: 'Other Attach Co' }),
+	});
+	const otherTeamId = (await otherTeamRes.json()).data.id;
+
+	const otherProjectRes = await createTestProject(db, otherTeamId, {
 		name: 'Other',
 		description: 'Isolation test.',
 	});
@@ -106,13 +115,20 @@ beforeAll(async () => {
 	otherProjectId = otherProjectData.id;
 	otherProjectSlug = otherProjectData.slug;
 
+	const otherAgentRes = await app.request(`/api/projects/${otherProjectSlug}/agents`, {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ title: 'Other Bot' }),
+	});
+	const otherAgentId = (await otherAgentRes.json()).data.id;
+
 	const otherTaskRes = await app.request(`/api/projects/${otherProjectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			project_id: otherProjectId,
 			title: 'Other Task',
-			assignee_id: agentId,
+			assignee_id: otherAgentId,
 		}),
 	});
 	otherTaskId = (await otherTaskRes.json()).data.id;

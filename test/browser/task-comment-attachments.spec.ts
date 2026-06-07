@@ -15,29 +15,30 @@ const PNG_BYTES = Uint8Array.from([
 ]);
 
 test.describe('Task Comment Attachments', () => {
-	async function createTask(
-		page: import('@playwright/test').Page,
-		team: { id: string; slug: string },
-		token: string,
-		agents: Array<{ id: string }>,
-	) {
+	async function createTask(page: import('@playwright/test').Page, token: string) {
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projRes = await createProjectAndClearPlanning(page, team.slug, token, {
+		const projRes = await createProjectAndClearPlanning(page, '', token, {
 			name: uniqueName('Attachments Project'),
 			description: 'Test project.',
 		});
-		const project = ((await projRes.json()) as { data: { id: string; slug: string } }).data;
+		const project = (
+			(await projRes.json()) as { data: { id: string; slug: string; team_slug: string } }
+		).data;
+
+		const agentsRes = await page.request.get(`/api/projects/${project.slug}/agents`, { headers });
+		const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+		const assigneeId = (agents.find((a) => a.slug === 'captain') ?? agents[0]).id;
 
 		const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 			headers,
-			data: { project_id: project.id, title: 'Attach me', assignee_id: agents[0].id },
+			data: { project_id: project.id, title: 'Attach me', assignee_id: assigneeId },
 		});
 		const task = ((await taskRes.json()) as { data: { id: string } }).data;
 
-		await waitForAgentIdle(page, team.slug, agents[0].id, token);
+		await waitForAgentIdle(page, project.team_slug, assigneeId, token);
 
-		return { team, token, task, project, headers };
+		return { token, task, project, headers };
 	}
 
 	async function dropFile(
@@ -70,12 +71,7 @@ test.describe('Task Comment Attachments', () => {
 		context,
 		sharedWorkspace,
 	}) => {
-		const { task, project } = await createTask(
-			page,
-			sharedWorkspace.team,
-			sharedWorkspace.token,
-			sharedWorkspace.agents,
-		);
+		const { task, project } = await createTask(page, sharedWorkspace.token);
 
 		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
@@ -111,12 +107,7 @@ test.describe('Task Comment Attachments', () => {
 		sharedPage: page,
 		sharedWorkspace,
 	}) => {
-		const { task, project } = await createTask(
-			page,
-			sharedWorkspace.team,
-			sharedWorkspace.token,
-			sharedWorkspace.agents,
-		);
+		const { task, project } = await createTask(page, sharedWorkspace.token);
 
 		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
@@ -165,12 +156,7 @@ test.describe('Task Comment Attachments', () => {
 		sharedPage: page,
 		sharedWorkspace,
 	}) => {
-		const { task, project } = await createTask(
-			page,
-			sharedWorkspace.team,
-			sharedWorkspace.token,
-			sharedWorkspace.agents,
-		);
+		const { task, project } = await createTask(page, sharedWorkspace.token);
 
 		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
@@ -199,12 +185,7 @@ test.describe('Task Comment Attachments', () => {
 		sharedPage: page,
 		sharedWorkspace,
 	}) => {
-		const { task, project } = await createTask(
-			page,
-			sharedWorkspace.team,
-			sharedWorkspace.token,
-			sharedWorkspace.agents,
-		);
+		const { task, project } = await createTask(page, sharedWorkspace.token);
 
 		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
@@ -228,12 +209,7 @@ test.describe('Task Comment Attachments', () => {
 		sharedWorkspace,
 	}) => {
 		await page.setViewportSize({ width: 375, height: 812 });
-		const { task, project } = await createTask(
-			page,
-			sharedWorkspace.team,
-			sharedWorkspace.token,
-			sharedWorkspace.agents,
-		);
+		const { task, project } = await createTask(page, sharedWorkspace.token);
 
 		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);

@@ -35,22 +35,23 @@ beforeAll(async () => {
 	const otherTeam = await makeTeam('Other Mentions Co');
 	otherInternalSlug = `${await projectSlugFor(db, otherTeam.id)}`;
 
-	projectSlug = (await (await createTestProject(db, teamId, { name: 'Setup Project' })).json()).data
-		.slug;
-	await app.request(`/api/projects/${projectSlug}/agents`, {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ title: 'Picker Bot' }),
-	});
-
+	// The primary project (notes.md + the onboarding skill) lives in `teamId`.
 	const projA = await createTestProject(db, teamId, {
 		name: 'Operations Hub',
 		description: 'Ops project.',
 	});
 	const projAData = (await projA.json()).data as { id: string; slug: string };
 	projectSlug = projAData.slug;
+	await app.request(`/api/projects/${projectSlug}/agents`, {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ title: 'Picker Bot' }),
+	});
 
-	const projB = await createTestProject(db, teamId, {
+	// Under the 1:1 teams↔projects model a distinct second project (spec.md, used
+	// to prove bare search stays scoped to the current project) requires its own team.
+	const betaTeam = await makeTeam('Beta Service Co');
+	const projB = await createTestProject(db, betaTeam.id, {
 		name: 'Beta Service',
 		description: 'Beta project.',
 	});
@@ -75,6 +76,15 @@ beforeAll(async () => {
 		body: JSON.stringify({ content: 'Some ops notes.' }),
 	});
 
+	await app.request(`/api/projects/${projectSlug}/docs/runbook.md`, {
+		method: 'PUT',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ content: 'Ops runbook.' }),
+	});
+
+	// spec.md lives on a project in a *different* team, so bare search scoped to
+	// the primary project must never surface it. Resolve is team-scoped, so it
+	// also stays invisible from the primary team — exercised below.
 	await app.request(`/api/projects/${otherProjectSlug}/docs/spec.md`, {
 		method: 'PUT',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -110,7 +120,7 @@ describe('POST /teams/:teamId/docs/resolve', () => {
 			body: JSON.stringify({
 				project_docs: [
 					{ project_slug: projectSlug, filename: 'notes.md' },
-					{ project_slug: otherProjectSlug, filename: 'spec.md' },
+					{ project_slug: projectSlug, filename: 'runbook.md' },
 				],
 			}),
 		});
@@ -126,7 +136,7 @@ describe('POST /teams/:teamId/docs/resolve', () => {
 			byKey.set(`${d.project_slug}/${d.filename}`, { size: d.size });
 		}
 		expect(byKey.get(`${projectSlug}/notes.md`)?.size).toBe('Some ops notes.'.length);
-		expect(byKey.get(`${otherProjectSlug}/spec.md`)?.size).toBe('Beta service spec.'.length);
+		expect(byKey.get(`${projectSlug}/runbook.md`)?.size).toBe('Ops runbook.'.length);
 	});
 
 	it('does not cross team boundaries', async () => {

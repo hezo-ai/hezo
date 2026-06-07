@@ -1,3 +1,4 @@
+import { createTestProject } from '@hezo/server/test/helpers/app';
 import { fireEvent, waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
@@ -6,18 +7,42 @@ interface CreatedTeam {
 	id: string;
 	slug: string;
 	name: string;
+	/**
+	 * The team's single project slug — under the 1:1 teams↔projects model a team
+	 * has no per-team "internal" project, so team-settings/agents pages resolve
+	 * through the team's own project.
+	 */
+	projectSlug: string;
 }
 
 async function createTeam(): Promise<CreatedTeam> {
-	const { apiBase, token } = getTestContext();
+	const { apiBase, token, db } = getTestContext();
 	const name = `Settings Corp ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 	const res = await apiBase('/api/teams', {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name, description: 'Build great things' }),
+		body: JSON.stringify({
+			name,
+			description: 'Build great things',
+			template_id: await startupTemplateId(),
+		}),
 	});
-	const data = (await res.json()) as { data: CreatedTeam };
-	return data.data;
+	const data = (await res.json()) as { data: Omit<CreatedTeam, 'projectSlug'> };
+	const projectRes = await createTestProject(db, data.data.id, { name: 'Work Project' });
+	const projectSlug = (await projectRes.json()).data.slug;
+	return { ...data.data, projectSlug };
+}
+
+async function startupTemplateId(): Promise<string> {
+	const { apiBase, token } = getTestContext();
+	const res = await apiBase('/api/team-templates', {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	const startup = ((await res.json()) as { data: Array<{ id: string; name: string }> }).data.find(
+		(t) => t.name === 'Startup',
+	);
+	if (!startup) throw new Error('createTeam: Startup template missing');
+	return startup.id;
 }
 
 test('general section displays team info', async () => {
@@ -31,7 +56,7 @@ test('general section displays team info', async () => {
 
 	await router.navigate({
 		to: '/projects/$projectId/team-settings/general',
-		params: { projectId: `internal-${team.slug}` },
+		params: { projectId: team.projectSlug },
 	});
 
 	const general = await waitFor(
@@ -58,7 +83,7 @@ test('automations section exposes the wake-mentioner toggle and persists the cha
 
 	await router.navigate({
 		to: '/projects/$projectId/team-settings/general',
-		params: { projectId: `internal-${team.slug}` },
+		params: { projectId: team.projectSlug },
 	});
 
 	const automations = await waitFor(
@@ -86,7 +111,7 @@ test('automations section exposes the wake-mentioner toggle and persists the cha
 	const { apiBase, token } = getTestContext();
 	await waitFor(
 		async () => {
-			const res = await apiBase(`/api/projects/internal-${team.slug}/team`, {
+			const res = await apiBase(`/api/projects/${team.projectSlug}/team`, {
 				headers: { Authorization: `Bearer ${token}` },
 			});
 			const body = (await res.json()) as { data: { settings: Record<string, unknown> } };
@@ -110,7 +135,7 @@ test('can add and delete a secret', async () => {
 
 	await router.navigate({
 		to: '/projects/$projectId/team-settings/general',
-		params: { projectId: `internal-${team.slug}` },
+		params: { projectId: team.projectSlug },
 	});
 
 	const secrets = await waitFor(
@@ -160,7 +185,7 @@ test('can create and delete an api key', async () => {
 
 	await router.navigate({
 		to: '/projects/$projectId/team-settings/general',
-		params: { projectId: `internal-${team.slug}` },
+		params: { projectId: team.projectSlug },
 	});
 
 	const apiKeys = await waitFor(
@@ -212,7 +237,7 @@ test('can edit and save preferences', async () => {
 
 	await router.navigate({
 		to: '/projects/$projectId/team-settings/general',
-		params: { projectId: `internal-${team.slug}` },
+		params: { projectId: team.projectSlug },
 	});
 
 	const prefs = await waitFor(
@@ -240,7 +265,7 @@ test('can edit and save preferences', async () => {
 	await router.navigate({ to: '/' });
 	await router.navigate({
 		to: '/projects/$projectId/team-settings/general',
-		params: { projectId: `internal-${team.slug}` },
+		params: { projectId: team.projectSlug },
 	});
 	await waitFor(
 		() => {
@@ -258,12 +283,12 @@ test('can restore a previous preferences revision', async () => {
 		seed: async ({ apiBase, token }) => {
 			team = await createTeam();
 			const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-			await apiBase(`/api/projects/internal-${team.slug}/preferences`, {
+			await apiBase(`/api/projects/${team.projectSlug}/preferences`, {
 				method: 'PATCH',
 				headers,
 				body: JSON.stringify({ content: 'Original preferences body' }),
 			});
-			await apiBase(`/api/projects/internal-${team.slug}/preferences`, {
+			await apiBase(`/api/projects/${team.projectSlug}/preferences`, {
 				method: 'PATCH',
 				headers,
 				body: JSON.stringify({
@@ -276,7 +301,7 @@ test('can restore a previous preferences revision', async () => {
 
 	await router.navigate({
 		to: '/projects/$projectId/team-settings/general',
-		params: { projectId: `internal-${team.slug}` },
+		params: { projectId: team.projectSlug },
 	});
 
 	const prefs = await waitFor(
@@ -313,7 +338,7 @@ test('can add and delete an mcp server', async () => {
 
 	await router.navigate({
 		to: '/projects/$projectId/team-settings/general',
-		params: { projectId: `internal-${team.slug}` },
+		params: { projectId: team.projectSlug },
 	});
 
 	const mcp = await waitFor(

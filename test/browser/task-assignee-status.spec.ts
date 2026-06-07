@@ -5,15 +5,20 @@ type Page = import('@playwright/test').Page;
 
 async function createProject(
 	page: Page,
-	teamSlug: string,
 	token: string,
 	name: string,
-): Promise<{ id: string; slug: string }> {
-	const res = await createProjectAndClearPlanning(page, teamSlug, token, {
+): Promise<{ id: string; slug: string; assigneeId: string }> {
+	const res = await createProjectAndClearPlanning(page, '', token, {
 		name,
 		description: 'Assignee-status test project.',
 	});
-	return ((await res.json()) as { data: { id: string; slug: string } }).data;
+	const project = ((await res.json()) as { data: { id: string; slug: string } }).data;
+	const agentsRes = await page.request.get(`/api/projects/${project.slug}/agents`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const assigneeId = (agents.find((a) => a.slug === 'captain') ?? agents[0]).id;
+	return { ...project, assigneeId };
 }
 
 async function createTask(
@@ -60,12 +65,12 @@ test.describe('Task detail — assignee status is ticket-scoped (mobile viewport
 	}) => {
 		await page.setViewportSize({ width: 375, height: 720 });
 
-		const { team, agents, token } = sharedWorkspace;
-		const project = await createProject(page, team.slug, token, uniqueName('Mobile Quiet'));
+		const { token } = sharedWorkspace;
+		const project = await createProject(page, token, uniqueName('Mobile Quiet'));
 		const task = await createTask(page, project.slug, token, {
 			project_id: project.id,
 			title: 'Mobile Ticket',
-			assignee_id: agents[0].id,
+			assignee_id: project.assigneeId,
 		});
 
 		await forceAgentsActive(page, project.slug);

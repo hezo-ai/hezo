@@ -32,9 +32,6 @@ export const DEFAULT_TEAM_SLUG = 'default';
 export const DEFAULT_TEAM_NAME = 'Team';
 export const DEFAULT_TEAM_TEMPLATE_NAME = 'Blank';
 
-export const ONBOARDING_INTAKE_SKIP_SIGNAL_TEXT =
-	'Admin chose to skip further questions — propose a template and a project based on what we have so far.';
-
 export const PROJECT_INTAKE_LABEL = 'project-intake';
 export const PROJECT_INTAKE_SKIP_SIGNAL_TEXT =
 	'Admin chose to skip further questions — finalise the project proposal with what we have so far.';

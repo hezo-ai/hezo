@@ -18,7 +18,6 @@ import {
 	wakeIfReady,
 	wouldCreateCycle,
 } from '../lib/dependencies';
-import { assertInternalAssignee } from '../lib/internal-assignee';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import {
 	actorTypeFromAuth,
@@ -517,15 +516,6 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 			if (!activeRunCheck.ok) {
 				return err(c, 'CONFLICT', activeRunCheck.message, 409);
 			}
-		}
-		const internalCheck = await assertInternalAssignee(
-			db,
-			teamId,
-			existing.rows[0].project_id,
-			body.assignee_id,
-		);
-		if (!internalCheck.ok) {
-			return err(c, 'INVALID_REQUEST', internalCheck.message, 400);
 		}
 		sets.push(`assignee_id = $${idx}`);
 		params.push(body.assignee_id);

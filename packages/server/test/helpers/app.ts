@@ -205,6 +205,14 @@ export async function instanceCoachId(db: PGlite): Promise<string> {
 	return r.rows[0].id;
 }
 
+/** The single instance-level CEO member id (lives in HQ). */
+export async function instanceCeoId(db: PGlite): Promise<string> {
+	const r = await db.query<{ id: string }>(
+		"SELECT id FROM member_agents WHERE slug = 'ceo' LIMIT 1",
+	);
+	return r.rows[0].id;
+}
+
 export interface CreatedTestProject {
 	id: string;
 	slug: string;

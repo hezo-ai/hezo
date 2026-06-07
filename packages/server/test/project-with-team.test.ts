@@ -14,11 +14,13 @@ let token: string;
 let masterKeyManager: MasterKeyManager;
 
 interface CreatedProjectTeam {
+	id: string;
 	team_id: string;
 	team_slug: string;
-	project_slug: string;
-	intake_task_id: string;
-	approval_id: string;
+	slug: string;
+	is_internal: boolean;
+	planning_task_id: string;
+	planning_task_identifier: string;
 }
 
 async function createProjectWithTeam(name: string, description = 'A test project.') {
@@ -43,14 +45,15 @@ afterAll(async () => {
 });
 
 describe('POST /projects — create a project with its own team', () => {
-	it('creates a fresh team (Internal project + Captain) and opens the project intake', async () => {
+	it('directly creates the team, its single project, and the Captain planning task', async () => {
 		const res = await createProjectWithTeam('Marketing Site', 'A site for the launch.');
 		expect(res.status).toBe(201);
 		const data = (await res.json()).data as CreatedProjectTeam;
 		expect(data.team_slug).toBeTruthy();
-		expect(data.project_slug).toBeTruthy();
-		expect(data.intake_task_id).toBeTruthy();
-		expect(data.approval_id).toBeTruthy();
+		expect(data.slug).toBeTruthy();
+		expect(data.planning_task_id).toBeTruthy();
+		expect(data.planning_task_identifier).toBeTruthy();
+		expect(data.is_internal).toBe(false);
 
 		// The team is named after the project.
 		const team = await db.query<{ name: string }>('SELECT name FROM teams WHERE id = $1', [
@@ -58,12 +61,14 @@ describe('POST /projects — create a project with its own team', () => {
 		]);
 		expect(team.rows[0]?.name).toBe('Marketing Site');
 
-		// It has an Internal project and an enabled Captain.
-		const internal = await db.query<{ id: string }>(
-			'SELECT id FROM projects WHERE team_id = $1 AND is_internal = false',
+		// The team owns exactly one (user-facing) project — its own.
+		const projects = await db.query<{ id: string; is_internal: boolean }>(
+			'SELECT id, is_internal FROM projects WHERE team_id = $1',
 			[data.team_id],
 		);
-		expect(internal.rows).toHaveLength(1);
+		expect(projects.rows).toHaveLength(1);
+		expect(projects.rows[0].is_internal).toBe(false);
+		expect(projects.rows[0].id).toBe(data.id);
 
 		const captain = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma
@@ -73,21 +78,20 @@ describe('POST /projects — create a project with its own team', () => {
 		);
 		expect(captain.rows).toHaveLength(1);
 
-		// The intake task lives in that team's Internal project, assigned to its Captain.
-		const intake = await db.query<{ project_id: string; assignee_id: string }>(
+		// The planning task lives in the team's own project, assigned to its Captain.
+		const planning = await db.query<{ project_id: string; assignee_id: string }>(
 			'SELECT project_id, assignee_id FROM tasks WHERE id = $1',
-			[data.intake_task_id],
+			[data.planning_task_id],
 		);
-		expect(intake.rows[0]?.project_id).toBe(internal.rows[0].id);
-		expect(intake.rows[0]?.assignee_id).toBe(captain.rows[0].id);
+		expect(planning.rows[0]?.project_id).toBe(data.id);
+		expect(planning.rows[0]?.assignee_id).toBe(captain.rows[0].id);
 
-		// The approval is a pending project_creation.
-		const appr = await db.query<{ type: string; status: string }>(
-			'SELECT type::text, status::text FROM approvals WHERE id = $1',
-			[data.approval_id],
+		// The planning task is blocked by an initial CEO coherence/setup task.
+		const dep = await db.query<{ blocked_by_task_id: string }>(
+			'SELECT blocked_by_task_id FROM task_dependencies WHERE task_id = $1',
+			[data.planning_task_id],
 		);
-		expect(appr.rows[0]?.type).toBe('project_creation');
-		expect(appr.rows[0]?.status).toBe('pending');
+		expect(dep.rows).toHaveLength(1);
 	});
 
 	it('gives each project its own distinct team', async () => {

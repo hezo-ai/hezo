@@ -192,6 +192,7 @@ describe('run comments', () => {
 		const runId = await createHeartbeatRun(
 			db,
 			agent,
+			teamId,
 			task,
 			broadcast,
 			await mintTestWakeup(agentId, teamId),
@@ -247,6 +248,7 @@ describe('run comments', () => {
 		const newRunId = await createHeartbeatRun(
 			db,
 			agent,
+			teamId,
 			task,
 			{
 				teamId,
@@ -318,6 +320,7 @@ describe('task status auto-transition on run start', () => {
 		await createHeartbeatRun(
 			db,
 			agent,
+			teamId,
 			task,
 			{
 				teamId,
@@ -348,6 +351,7 @@ describe('task status auto-transition on run start', () => {
 		await createHeartbeatRun(
 			db,
 			agent,
+			teamId,
 			task,
 			{
 				teamId,
@@ -371,6 +375,7 @@ describe('task status auto-transition on run start', () => {
 		await createHeartbeatRun(
 			db,
 			agent,
+			teamId,
 			task,
 			{
 				teamId,
@@ -399,6 +404,7 @@ describe('task status auto-transition on run start', () => {
 		const run1 = await createHeartbeatRun(
 			db,
 			agent,
+			teamId,
 			buildTask(localTaskId),
 			broadcast,
 			await mintTestWakeup(agentId, teamId),
@@ -406,6 +412,7 @@ describe('task status auto-transition on run start', () => {
 		const run2 = await createHeartbeatRun(
 			db,
 			agent,
+			teamId,
 			buildTask(localTaskId),
 			broadcast,
 			await mintTestWakeup(agentId, teamId),

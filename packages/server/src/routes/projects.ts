@@ -26,8 +26,10 @@ import {
 	teardownContainer,
 } from '../services/containers';
 import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
+import { loadCoordinationContext } from '../services/internal-intake';
 import type { JobManager } from '../services/job-manager';
 import { createProjectWithPlanningTask } from '../services/project-create';
+import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
 import { createTeam } from '../services/teams';
 import { createWakeup } from '../services/wakeup';
 
@@ -150,9 +152,9 @@ export async function resolveProjectTaskPrefix(
 export const projectsRoutes = new Hono<Env>();
 
 // Instance-level project index: every project the caller can see across all
-// their teams, including the per-team internal projects. Carries the backing
-// team's slug/name so the client can resolve a project's team without a teamId
-// in the URL. The single public list behind the project rail.
+// their teams, including the single HQ project. Carries the backing team's
+// slug/name so the client can resolve a project's team without a teamId in the
+// URL. The single public list behind the project rail.
 projectsRoutes.get('/projects', async (c) => {
 	const db = c.get('db');
 	const auth = c.get('auth');
@@ -318,6 +320,98 @@ projectsRoutes.post('/projects', async (c) => {
 		},
 		201,
 	);
+});
+
+async function resolveTemplateId(db: PGlite, requested?: string): Promise<string | undefined> {
+	if (requested) return requested;
+	const blank = await db.query<{ id: string }>('SELECT id FROM team_templates WHERE name = $1', [
+		'Blank',
+	]);
+	return blank.rows[0]?.id;
+}
+
+// CEO-assisted project creation: stand up the project's team up front, then open
+// a conversation in HQ where the CEO scopes the work and asks the admin to
+// approve. The project itself is created on approval. Both the first-run welcome
+// and the ongoing "new project with the CEO" flow post here.
+projectsRoutes.post('/project-intakes', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+
+	const db = c.get('db');
+	const body = await c.req.json<{
+		name: string;
+		description?: string;
+		template_id?: string;
+		task_prefix?: string;
+		initial_prd?: string;
+	}>();
+
+	if (!body.name?.trim()) return err(c, 'INVALID_REQUEST', 'name is required', 400);
+	if (!body.description?.trim()) return err(c, 'INVALID_REQUEST', 'description is required', 400);
+
+	// The intake conversation requires the CEO + HQ project. Verify before standing
+	// up the team so a missing HQ doesn't leave an orphaned, projectless team behind.
+	if (!(await loadCoordinationContext(db))) {
+		return err(c, 'INTERNAL', 'HQ coordination project is not available', 500);
+	}
+
+	const templateId = await resolveTemplateId(db, body.template_id);
+	const auth = c.get('auth');
+	const team = await createTeam(
+		{
+			db,
+			docker: c.get('docker'),
+			dataDir: c.get('dataDir'),
+			wsManager: c.get('wsManager'),
+			masterKeyManager: c.get('masterKeyManager'),
+			logs: c.get('logs'),
+			egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
+		},
+		{
+			name: body.name.trim(),
+			description: body.description.trim(),
+			templateId,
+			creatorUserId: auth.type === AuthType.Admin ? auth.userId : undefined,
+		},
+	);
+
+	const prefixResult = await resolveProjectTaskPrefix(db, team.id, body.task_prefix, body.name);
+	if (!prefixResult.ok) return err(c, prefixResult.code, prefixResult.message, prefixResult.status);
+
+	const intake = await createProjectIntake(
+		db,
+		team.id,
+		{
+			name: body.name.trim(),
+			description: body.description.trim(),
+			taskPrefix: prefixResult.prefix,
+			initialPrd: body.initial_prd?.trim() || null,
+		},
+		c.get('wsManager'),
+	);
+	if (!intake) return err(c, 'INTERNAL', 'Failed to open project intake', 500);
+
+	return ok(
+		c,
+		{
+			intake_task_id: intake.intakeTaskId,
+			intake_task_identifier: intake.intakeTaskIdentifier,
+			approval_id: intake.approvalId,
+			project_slug: intake.projectSlug,
+			team_id: team.id,
+			team_slug: team.slug,
+		},
+		201,
+	);
+});
+
+// The single open project-intake conversation for the welcome/home view.
+projectsRoutes.get('/project-intakes', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	const intake = await getOpenProjectIntakeForHome(c.get('db'));
+	return ok(c, intake);
 });
 
 projectsRoutes.get('/projects/:projectId', async (c) => {

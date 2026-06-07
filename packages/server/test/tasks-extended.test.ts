@@ -28,13 +28,17 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
+	const makeTeam = async (name: string) => {
+		const r = await app.request('/api/teams', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name }),
+		});
+		return (await r.json()).data.id as string;
+	};
+
 	// Create team
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Filter Test Co' }),
-	});
-	teamId = (await teamRes.json()).data.id;
+	teamId = await makeTeam('Filter Test Co');
 
 	// Create primary project
 	const projectRes = await createTestProject(db, teamId, {
@@ -45,8 +49,10 @@ beforeAll(async () => {
 	projectId = projectData.id;
 	projectSlug = projectData.slug;
 
-	// Create a second project for project_id filter tests
-	const otherProjectRes = await createTestProject(db, teamId, {
+	// Under the 1:1 teams↔projects model a distinct second project needs its own
+	// team. The project_id-filter assertions are now cross-team by construction.
+	const otherTeamId = await makeTeam('Filter Test Co (Beta)');
+	const otherProjectRes = await createTestProject(db, otherTeamId, {
 		name: 'Beta Project',
 		description: 'Test project.',
 	});
@@ -71,7 +77,10 @@ beforeAll(async () => {
 		description = '',
 		assigneeId: string | null = memberId,
 	) => {
-		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
+		// Route creation through the slug of the project the task belongs to so the
+		// task's team_id matches that project's team (each project is its own team now).
+		const projSlug = proj === projectId ? projectSlug : otherProjectSlug;
+		const createRes = await app.request(`/api/projects/${projSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -85,7 +94,7 @@ beforeAll(async () => {
 		const created = (await createRes.json()).data;
 		// If status needs to differ from default backlog, patch it
 		if (status !== 'backlog') {
-			await app.request(`/api/projects/${projectSlug}/tasks/${created.id}`, {
+			await app.request(`/api/projects/${projSlug}/tasks/${created.id}`, {
 				method: 'PATCH',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({ status }),

@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { PROJECT_INTAKE_MARKER } from '../src/services/project-intake';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, projectSlugFor } from './helpers/app';
+import { authHeader, createTestApp } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -26,54 +26,62 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-async function createBlankTeam(name: string): Promise<{ slug: string; id: string }> {
-	const blank = await db.query<{ id: string }>(
-		"SELECT id FROM team_templates WHERE name = 'Blank' LIMIT 1",
-	);
-	const res = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name, template_id: blank.rows[0].id }),
-	});
-	expect(res.status).toBe(201);
-	return (await res.json()).data as { slug: string; id: string };
-}
-
 interface IntakeResponse {
 	intake_task_id: string;
 	intake_task_identifier: string;
 	project_slug: string;
 	approval_id: string;
+	team_id: string;
+	team_slug: string;
 }
 
-describe('project intake', () => {
-	it('creates an intake ticket and pending approval instead of a project', async () => {
-		const team = await createBlankTeam('Intake Co');
+async function startIntake(body: Record<string, unknown>) {
+	return app.request('/api/project-intakes', {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify(body),
+	});
+}
 
-		const res = await app.request(`/api/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Mobile App',
-				description: 'A new mobile app for our customers',
-			}),
+async function fetchComments(projectSlug: string, taskIdentifier: string) {
+	const res = await app.request(`/api/projects/${projectSlug}/tasks/${taskIdentifier}/comments`, {
+		headers: authHeader(token),
+	});
+	return (await res.json()).data as Array<{
+		author_name: string;
+		content_type: string;
+		content: { text: string };
+	}>;
+}
+
+describe('project intake (CEO-assisted)', () => {
+	it('stands up the team and opens an HQ intake conversation + pending approval, no project yet', async () => {
+		const res = await startIntake({
+			name: 'Mobile App',
+			description: 'A new mobile app for our customers',
 		});
 		expect(res.status).toBe(201);
 		const intake = (await res.json()).data as IntakeResponse;
 
-		expect(intake.project_slug).toBe(`${await projectSlugFor(db, team.id)}`);
-		expect(intake.intake_task_identifier).toMatch(/^IN-\d+$/);
+		// The conversation lives in the HQ project.
+		expect(intake.project_slug).toBe('hq');
+		expect(intake.intake_task_identifier).toMatch(/^HQ-\d+$/);
 		expect(intake.approval_id).toBeTruthy();
+		expect(intake.team_id).toBeTruthy();
 
+		// The new team exists but has no project until the intake is approved.
+		const team = await db.query<{ name: string }>('SELECT name FROM teams WHERE id = $1', [
+			intake.team_id,
+		]);
+		expect(team.rows[0]?.name).toBe('Mobile App');
 		const projectCount = await db.query<{ count: number }>(
-			`SELECT count(*)::int AS count FROM projects
-			 WHERE team_id = $1 AND is_internal = false`,
-			[team.id],
+			`SELECT count(*)::int AS count FROM projects WHERE team_id = $1`,
+			[intake.team_id],
 		);
 		expect(projectCount.rows[0].count).toBe(0);
 
-		const taskRow = await db.query<{ description: string; labels: unknown }>(
-			'SELECT description, labels FROM tasks WHERE id = $1',
+		const taskRow = await db.query<{ description: string }>(
+			'SELECT description FROM tasks WHERE id = $1',
 			[intake.intake_task_id],
 		);
 		expect(taskRow.rows[0].description).toContain(PROJECT_INTAKE_MARKER);
@@ -91,70 +99,38 @@ describe('project intake', () => {
 		expect(approval.rows[0].payload.name).toBe('Mobile App');
 		expect(approval.rows[0].payload.intake_task_id).toBe(intake.intake_task_id);
 
-		const commentsRes = await app.request(
-			`/api/projects/${await projectSlugFor(db, team.id)}/tasks/${intake.intake_task_identifier}/comments`,
-			{ headers: authHeader(token) },
-		);
-		const comments = (await commentsRes.json()).data as Array<{
-			author_name: string;
-			content: { text: string };
-		}>;
-		expect(
-			comments.some(
-				(c) => c.author_name === 'Captain' && c.content.text.includes("I'm the Captain"),
-			),
-		).toBe(true);
+		const comments = await fetchComments(intake.project_slug, intake.intake_task_identifier);
+		expect(comments.some((c) => c.content.text.includes("I'm the CEO"))).toBe(true);
 	});
 
-	it('rejects missing name/description with 400 and no side effects', async () => {
-		const team = await createBlankTeam('Validation Co');
+	it('rejects missing name/description with 400 and no approval', async () => {
+		const res = await startIntake({ name: '', description: 'desc' });
+		expect(res.status).toBe(400);
 
-		const res = await app.request(`/api/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: '', description: 'desc' }),
+		const approvals = await db.query<{ count: number }>(
+			`SELECT count(*)::int AS count FROM approvals WHERE type = 'project_creation'::approval_type`,
+		);
+		expect(approvals.rows[0].count).toBe(0);
+	});
+
+	it('rejects a malformed task_prefix with 400 and creates no approval', async () => {
+		const res = await startIntake({
+			name: 'Indigo',
+			description: 'desc',
+			task_prefix: 'lowercase-and-long',
 		});
 		expect(res.status).toBe(400);
 
 		const approvals = await db.query<{ count: number }>(
-			`SELECT count(*)::int AS count FROM approvals WHERE team_id = $1`,
-			[team.id],
+			`SELECT count(*)::int AS count FROM approvals WHERE type = 'project_creation'::approval_type`,
 		);
 		expect(approvals.rows[0].count).toBe(0);
 	});
 
-	it('rejects task_prefix conflict with 409 before any rows are inserted', async () => {
-		const team = await createBlankTeam('Prefix Conflict Co');
-
-		// Internal already uses 'IN' — submitting that should conflict.
-		const res = await app.request(`/api/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Indigo',
-				description: 'desc',
-				task_prefix: 'IN',
-			}),
-		});
-		expect(res.status).toBe(409);
-
-		const approvals = await db.query<{ count: number }>(
-			`SELECT count(*)::int AS count FROM approvals WHERE team_id = $1`,
-			[team.id],
-		);
-		expect(approvals.rows[0].count).toBe(0);
-	});
-
-	it('approving the approval creates the project + planning task and closes the intake', async () => {
-		const team = await createBlankTeam('Approve Co');
-
-		const res = await app.request(`/api/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Customer Portal',
-				description: 'Self-service portal for customers',
-			}),
+	it('approving creates the project + planning task on the team and closes the intake', async () => {
+		const res = await startIntake({
+			name: 'Customer Portal',
+			description: 'Self-service portal for customers',
 		});
 		const intake = (await res.json()).data as IntakeResponse;
 
@@ -165,21 +141,18 @@ describe('project intake', () => {
 		});
 		expect(approveRes.status).toBe(200);
 
-		const project = await db.query<{ id: string; slug: string; task_prefix: string }>(
-			`SELECT id, slug, task_prefix FROM projects
-			 WHERE team_id = $1 AND is_internal = false AND name = $2`,
-			[team.id, 'Customer Portal'],
+		const project = await db.query<{ id: string; slug: string }>(
+			`SELECT id, slug FROM projects WHERE team_id = $1 AND is_internal = false`,
+			[intake.team_id],
 		);
 		expect(project.rows[0]).toBeDefined();
 		expect(project.rows[0].slug).toBe('customer-portal');
 
-		const planning = await db.query<{ title: string; labels: unknown; status: string }>(
-			`SELECT title, labels, status::text FROM tasks
-			 WHERE project_id = $1 AND labels @> '["planning"]'::jsonb`,
+		const planning = await db.query<{ title: string }>(
+			`SELECT title FROM tasks WHERE project_id = $1 AND labels @> '["planning"]'::jsonb`,
 			[project.rows[0].id],
 		);
-		expect(planning.rows[0]).toBeDefined();
-		expect(planning.rows[0].title).toContain('Customer Portal');
+		expect(planning.rows[0]?.title).toContain('Customer Portal');
 
 		const intakeAfter = await db.query<{ status: string }>(
 			'SELECT status::text FROM tasks WHERE id = $1',
@@ -188,14 +161,8 @@ describe('project intake', () => {
 		expect(intakeAfter.rows[0].status).toBe(TaskStatus.Done);
 	});
 
-	it('denying the approval posts a denial note and leaves the intake open', async () => {
-		const team = await createBlankTeam('Deny Co');
-
-		const res = await app.request(`/api/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Skunkworks', description: 'desc' }),
-		});
+	it('denying posts a denial note and leaves the intake open with no project', async () => {
+		const res = await startIntake({ name: 'Skunkworks', description: 'desc' });
 		const intake = (await res.json()).data as IntakeResponse;
 
 		const denyRes = await app.request(`/api/approvals/${intake.approval_id}/resolve`, {
@@ -206,9 +173,8 @@ describe('project intake', () => {
 		expect(denyRes.status).toBe(200);
 
 		const projectCount = await db.query<{ count: number }>(
-			`SELECT count(*)::int AS count FROM projects
-			 WHERE team_id = $1 AND is_internal = false`,
-			[team.id],
+			`SELECT count(*)::int AS count FROM projects WHERE team_id = $1`,
+			[intake.team_id],
 		);
 		expect(projectCount.rows[0].count).toBe(0);
 
@@ -218,45 +184,21 @@ describe('project intake', () => {
 		);
 		expect(intakeAfter.rows[0].status).not.toBe(TaskStatus.Done);
 
-		const commentsRes = await app.request(
-			`/api/projects/${await projectSlugFor(db, team.id)}/tasks/${intake.intake_task_identifier}/comments`,
-			{ headers: authHeader(token) },
-		);
-		const comments = (await commentsRes.json()).data as Array<{
-			author_name: string;
-			content: { text: string };
-		}>;
-		expect(
-			comments.some(
-				(c) => c.author_name === 'Captain' && c.content.text.toLowerCase().includes('declined'),
-			),
-		).toBe(true);
+		const comments = await fetchComments(intake.project_slug, intake.intake_task_identifier);
+		expect(comments.some((c) => c.content.text.toLowerCase().includes('declined'))).toBe(true);
 	});
 
 	it('skip-questions posts a system comment on the project intake', async () => {
-		const team = await createBlankTeam('Skip Q Co');
-
-		const res = await app.request(`/api/projects`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Fast Track', description: 'desc' }),
-		});
+		const res = await startIntake({ name: 'Fast Track', description: 'desc' });
 		const intake = (await res.json()).data as IntakeResponse;
 
 		const skipRes = await app.request(
-			`/api/projects/${await projectSlugFor(db, team.id)}/project-intake/${intake.intake_task_id}/skip-questions`,
+			`/api/projects/${intake.project_slug}/project-intake/${intake.intake_task_id}/skip-questions`,
 			{ method: 'POST', headers: authHeader(token) },
 		);
 		expect(skipRes.status).toBe(200);
 
-		const commentsRes = await app.request(
-			`/api/projects/${await projectSlugFor(db, team.id)}/tasks/${intake.intake_task_identifier}/comments`,
-			{ headers: authHeader(token) },
-		);
-		const comments = (await commentsRes.json()).data as Array<{
-			content_type: string;
-			content: { text: string };
-		}>;
+		const comments = await fetchComments(intake.project_slug, intake.intake_task_identifier);
 		const systemComment = comments.find(
 			(c) => c.content_type === 'system' && c.content.text.toLowerCase().includes('skip'),
 		);

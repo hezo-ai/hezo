@@ -1,8 +1,12 @@
 // Server-side seeders driven through the in-process Hono API. Same shape as
 // the helpers in test/e2e/helpers.ts but reusable across component tests so
 // each spec doesn't redefine the team-with-project-and-task ritual.
+//
+// Under the 1:1 teams↔projects model a team backs exactly one project. A
+// workspace is therefore a team plus its single project; `seedProject` just
+// names that project (a team can never hold a second one).
 
-import { HQ_PROJECT_SLUG } from '@hezo/shared';
+import { createTestProject } from '@hezo/server/test/helpers/app';
 import { getTestContext } from './render';
 
 type Auth = {
@@ -16,7 +20,7 @@ function authHeaders(token: string): Auth {
 
 export interface SeededWorkspace {
 	team: { id: string; slug: string };
-	/** The team's internal project slug — the project handle for team-wide ops. */
+	/** The team's single project slug — the project handle for team-wide ops. */
 	internalSlug: string;
 	agents: Array<{ id: string; slug: string; title: string }>;
 	token: string;
@@ -24,12 +28,13 @@ export interface SeededWorkspace {
 }
 
 /**
- * Create a Startup-templated team with the full agent roster. Cheap inside
- * the component tier because HEZO_E2E_SKIP_COHERENCE_REVIEW skips Captain's
- * coherence-review run and the synthetic exec finishes in milliseconds.
+ * Create a Startup-templated team with the full agent roster and its single
+ * project. Cheap inside the component tier because
+ * HEZO_E2E_SKIP_COHERENCE_REVIEW skips Captain's coherence-review run and the
+ * synthetic exec finishes in milliseconds.
  */
 export async function seedWorkspace(): Promise<SeededWorkspace> {
-	const { token, apiBase } = getTestContext();
+	const { token, apiBase, db } = getTestContext();
 	const headers = authHeaders(token);
 
 	const tmplsRes = await apiBase('/api/team-templates', { headers });
@@ -44,7 +49,10 @@ export async function seedWorkspace(): Promise<SeededWorkspace> {
 		body: JSON.stringify({ name: 'Demo Team', template_id: startup.id }),
 	});
 	const team = ((await teamRes.json()) as { data: { id: string; slug: string } }).data;
-	const internalSlug = HQ_PROJECT_SLUG;
+
+	// The team's single project; everything project-scoped resolves through it.
+	const projectRes = await createTestProject(db, team.id, { name: 'Demo Project' });
+	const internalSlug = (await projectRes.json()).data.slug;
 
 	const agentsRes = await apiBase(`/api/projects/${internalSlug}/agents`, { headers });
 	const agents = (
@@ -63,35 +71,25 @@ export interface SeededProject {
 }
 
 /**
- * Drive the project intake flow end-to-end through the API: POST /projects to
- * open the intake, resolve the auto-created approval, return the created
- * project row.
+ * Name the workspace's single project. With 1:1 teams↔projects the team already
+ * owns exactly one project (created by `seedWorkspace`); this renames it to the
+ * requested name and returns it.
  */
 export async function seedProject(
 	workspace: SeededWorkspace,
 	input: { name: string; description?: string },
 ): Promise<SeededProject> {
 	const { apiBase } = getTestContext();
-	const intakeRes = await apiBase(`/api/projects/${workspace.internalSlug}/projects`, {
-		method: 'POST',
+	const res = await apiBase(`/api/projects/${workspace.internalSlug}`, {
+		method: 'PATCH',
 		headers: workspace.headers,
-		body: JSON.stringify({ description: 'Seeded for component test.', ...input }),
+		body: JSON.stringify({ name: input.name, description: input.description }),
 	});
-	const { approval_id } = ((await intakeRes.json()) as { data: { approval_id: string } }).data;
-	await apiBase(`/api/approvals/${approval_id}/resolve`, {
-		method: 'POST',
-		headers: workspace.headers,
-		body: JSON.stringify({ status: 'approved' }),
-	});
-
-	const projectsRes = await apiBase('/api/projects', { headers: workspace.headers });
-	const project = (
-		(await projectsRes.json()) as {
-			data: Array<{ id: string; slug: string; name: string; team_id: string }>;
-		}
-	).data.find((p) => p.name === input.name && p.team_id === workspace.team.id);
-	if (!project) throw new Error(`seedProject: '${input.name}' not found after approval`);
-	return project;
+	const project = ((await res.json()) as { data: { id: string; slug: string; name: string } }).data;
+	// Renaming reslugs the project; keep the workspace handle in sync so helpers
+	// keyed on `internalSlug` (e.g. seedComment) keep resolving the same project.
+	workspace.internalSlug = project.slug;
+	return { id: project.id, slug: project.slug, name: project.name };
 }
 
 export interface SeededTask {

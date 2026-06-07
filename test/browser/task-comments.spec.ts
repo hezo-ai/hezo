@@ -13,19 +13,19 @@ import {
 } from './helpers';
 
 type Page = import('@playwright/test').Page;
-type Team = { id: string; slug: string };
-type Agent = { id: string; slug: string };
 
-async function createProjectAndTask(page: Page, team: Team, token: string, agents: Agent[]) {
+async function createProjectAndTask(page: Page, token: string) {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-	const projRes = await createProjectAndClearPlanning(page, team.slug, token, {
+	const projRes = await createProjectAndClearPlanning(page, '', token, {
 		name: uniqueName('Comment Project'),
 		description: 'Test project.',
 	});
 	const project = ((await projRes.json()) as any).data;
 
-	const agent = agents[0];
+	const agentsRes = await page.request.get(`/api/projects/${project.slug}/agents`, { headers });
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const agent = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
 	const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 		headers,
@@ -33,9 +33,9 @@ async function createProjectAndTask(page: Page, team: Team, token: string, agent
 	});
 	const task = ((await taskRes.json()) as any).data;
 
-	await waitForAgentIdle(page, team.slug, agent.id, token);
+	await waitForAgentIdle(page, project.team_slug, agent.id, token);
 
-	return { team, token, project, task, agent, headers };
+	return { token, project, task, agent, headers };
 }
 
 test.describe('Task Comments', () => {
@@ -44,12 +44,7 @@ test.describe('Task Comments', () => {
 		sharedWorkspace,
 	}) => {
 		test.setTimeout(60_000);
-		const { task, project, headers } = await createProjectAndTask(
-			page,
-			sharedWorkspace.team,
-			sharedWorkspace.token,
-			sharedWorkspace.agents,
-		);
+		const { task, project, headers } = await createProjectAndTask(page, sharedWorkspace.token);
 
 		const TOTAL = 120;
 		const created: { id: string; index: number }[] = [];
@@ -94,12 +89,7 @@ test.describe('Task Comments', () => {
 
 	test('reply flow works on mobile viewport', async ({ sharedPage: page, sharedWorkspace }) => {
 		await page.setViewportSize({ width: 390, height: 844 });
-		const { task, project, headers } = await createProjectAndTask(
-			page,
-			sharedWorkspace.team,
-			sharedWorkspace.token,
-			sharedWorkspace.agents,
-		);
+		const { task, project, headers } = await createProjectAndTask(page, sharedWorkspace.token);
 
 		const parentRes = await page.request.post(
 			`/api/projects/${project.slug}/tasks/${task.id}/comments`,

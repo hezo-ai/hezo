@@ -5,7 +5,6 @@ import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { hasOpenBlockers, wouldCreateCycle } from '../lib/dependencies';
-import { assertInternalAssignee } from '../lib/internal-assignee';
 import { resolveTaskId } from '../lib/resolve';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { assertChildDepthAllowed } from '../lib/task-relationships';
@@ -97,11 +96,6 @@ export async function createTask(
 	}
 	if (!assigneeId) {
 		throw new CreateTaskError('INVALID_REQUEST', 'Either assignee_id or assignee_slug is required');
-	}
-
-	const internalCheck = await assertInternalAssignee(db, teamId, input.project_id, assigneeId);
-	if (!internalCheck.ok) {
-		throw new CreateTaskError('INVALID_REQUEST', internalCheck.message);
 	}
 
 	if (caller.agentMemberId) {

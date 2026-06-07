@@ -256,9 +256,21 @@ describe('Project doc revisions and restore', () => {
 describe('AGENTS.md (filesystem-based)', () => {
 	let repoProjectId: string;
 
+	const makeTeam = async (name: string) => {
+		const r = await app.request('/api/teams', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name }),
+		});
+		return (await r.json()).data.id as string;
+	};
+
 	beforeAll(async () => {
-		// Create a project with a designated repo for AGENTS.md tests
-		const projRes = await createTestProject(db, teamId, {
+		// A project with a designated repo. Under the 1:1 teams↔projects model the
+		// repo-bearing project gets its own team so it doesn't mutate the shared
+		// primary project used by the DB-backed doc tests above.
+		const repoTeamId = await makeTeam('Repo Test Co');
+		const projRes = await createTestProject(db, repoTeamId, {
 			name: 'Repo Project',
 			description: 'Test project.',
 		});
@@ -276,8 +288,10 @@ describe('AGENTS.md (filesystem-based)', () => {
 			repoProjectId,
 		]);
 
-		// Get team slug
-		const team = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [teamId]);
+		// Get the repo project's team slug for the on-disk repo path.
+		const team = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
+			repoTeamId,
+		]);
 		const teamSlug = team.rows[0].slug;
 		const repoDir = join(tempDataDir, 'teams', teamSlug, 'projects', 'repo-project', 'main-app');
 		mkdirSync(repoDir, { recursive: true });
@@ -300,7 +314,11 @@ describe('AGENTS.md (filesystem-based)', () => {
 	});
 
 	it('returns 404 for AGENTS.md on project without repo', async () => {
-		const projRes = await createTestProject(db, teamId, {
+		// A fresh team yields a brand-new project with no designated repo. Reusing an
+		// existing team would return one of the projects already configured above
+		// (the primary or the repo-bearing one) under the 1:1 invariant.
+		const noRepoTeamId = await makeTeam('No Repo Co');
+		const projRes = await createTestProject(db, noRepoTeamId, {
 			name: 'No Repo',
 			description: 'Test project.',
 		});

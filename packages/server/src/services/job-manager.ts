@@ -1001,30 +1001,36 @@ export class JobManager {
 			}
 			task = payloadTask.rows[0];
 		} else {
+			// Instance agents (CEO/Coach) select across every team; everyone else is
+			// scoped to their own team. Build the params positionally so the team
+			// filter is only present when its placeholder is.
+			const params: unknown[] = [memberId];
+			let teamClause = '';
+			if (!isInstanceAgent) {
+				params.push(teamId);
+				teamClause = ` AND i.team_id = $${params.length}`;
+			}
+			const termStart = params.length + 1;
+			params.push(...TERMINAL_TASK_STATUSES);
+			const termList = `$${termStart}, $${termStart + 1}, $${termStart + 2}`;
+			const prStart = params.length + 1;
+			params.push(TaskPriority.Urgent, TaskPriority.High, TaskPriority.Medium, TaskPriority.Low);
 			const tasks = await db.query<TaskRow>(
 				`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
 				 FROM tasks i
-				 WHERE i.assignee_id = $1${isInstanceAgent ? '' : ' AND i.team_id = $2'}
-				   AND i.status NOT IN ($3, $4, $5)
+				 WHERE i.assignee_id = $1${teamClause}
+				   AND i.status NOT IN (${termList})
 				   AND NOT EXISTS (
 				     SELECT 1 FROM task_dependencies d
 				     JOIN tasks b ON b.id = d.blocked_by_task_id
 				     WHERE d.task_id = i.id
-				       AND b.status NOT IN ($3, $4, $5)
+				       AND b.status NOT IN (${termList})
 				   )
 				 ORDER BY
-				   CASE i.priority WHEN $6 THEN 0 WHEN $7 THEN 1 WHEN $8 THEN 2 WHEN $9 THEN 3 END,
+				   CASE i.priority WHEN $${prStart} THEN 0 WHEN $${prStart + 1} THEN 1 WHEN $${prStart + 2} THEN 2 WHEN $${prStart + 3} THEN 3 END,
 				   i.created_at ASC
 				 LIMIT 1`,
-				[
-					memberId,
-					teamId,
-					...TERMINAL_TASK_STATUSES,
-					TaskPriority.Urgent,
-					TaskPriority.High,
-					TaskPriority.Medium,
-					TaskPriority.Low,
-				],
+				params,
 			);
 			if (tasks.rows.length === 0) {
 				log.debug(`No actionable tasks for agent ${ref(agent.rows[0].slug, memberId)}`);
@@ -1524,45 +1530,53 @@ export class JobManager {
 		// multiple concurrent runs creates a redundant chain wakeup for each
 		// sibling — those wakeups then cycle in the busy-skip queue and starve
 		// `Automation` wakeups (Coach) targeting the same project.
+		// Instance agents (CEO/Coach) chain across every team; everyone else stays
+		// scoped to the just-completed task's team. Build params positionally so the
+		// team filter is only present when its placeholder is.
+		const isInstanceAgent = (INSTANCE_AGENT_SLUGS as readonly string[]).includes(agentSlug);
+		const params: unknown[] = [memberId];
+		let teamClause = '';
+		if (!isInstanceAgent) {
+			params.push(teamId);
+			teamClause = ` AND i.team_id = $${params.length}`;
+		}
+		params.push(justCompletedTaskId);
+		const selfIdx = params.length;
+		const ts = params.length + 1;
+		params.push(...TERMINAL_TASK_STATUSES);
+		const term = `$${ts}::task_status, $${ts + 1}::task_status, $${ts + 2}::task_status`;
+		const pr = params.length + 1;
+		params.push(TaskPriority.Urgent, TaskPriority.High, TaskPriority.Medium, TaskPriority.Low);
+		const hr = params.length + 1;
+		params.push(HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running);
+		const wu = params.length + 1;
+		params.push(WakeupStatus.Queued, WakeupStatus.Claimed);
 		const next = await db.query<{ id: string }>(
 			`SELECT i.id FROM tasks i
-			 WHERE i.assignee_id = $1 AND i.team_id = $2 AND i.id != $3
-			   AND i.status NOT IN ($4::task_status, $5::task_status, $6::task_status)
+			 WHERE i.assignee_id = $1${teamClause} AND i.id != $${selfIdx}
+			   AND i.status NOT IN (${term})
 			   AND NOT EXISTS (
 			     SELECT 1 FROM task_dependencies d
 			     JOIN tasks b ON b.id = d.blocked_by_task_id
 			     WHERE d.task_id = i.id
-			       AND b.status NOT IN ($4::task_status, $5::task_status, $6::task_status)
+			       AND b.status NOT IN (${term})
 			   )
 			   AND NOT EXISTS (
 			     SELECT 1 FROM heartbeat_runs hr
 			     WHERE hr.task_id = i.id AND hr.member_id = $1
-			       AND hr.status IN ($11::heartbeat_run_status, $12::heartbeat_run_status)
+			       AND hr.status IN ($${hr}::heartbeat_run_status, $${hr + 1}::heartbeat_run_status)
 			   )
 			   AND NOT EXISTS (
 			     SELECT 1 FROM agent_wakeup_requests w
 			     WHERE w.member_id = $1
-			       AND w.status IN ($13::wakeup_status, $14::wakeup_status)
+			       AND w.status IN ($${wu}::wakeup_status, $${wu + 1}::wakeup_status)
 			       AND w.payload->>'task_id' = i.id::text
 			   )
 			 ORDER BY
-			   CASE i.priority WHEN $7 THEN 0 WHEN $8 THEN 1 WHEN $9 THEN 2 WHEN $10 THEN 3 END,
+			   CASE i.priority WHEN $${pr} THEN 0 WHEN $${pr + 1} THEN 1 WHEN $${pr + 2} THEN 2 WHEN $${pr + 3} THEN 3 END,
 			   i.created_at ASC
 			 LIMIT 1`,
-			[
-				memberId,
-				teamId,
-				justCompletedTaskId,
-				...TERMINAL_TASK_STATUSES,
-				TaskPriority.Urgent,
-				TaskPriority.High,
-				TaskPriority.Medium,
-				TaskPriority.Low,
-				HeartbeatRunStatus.Queued,
-				HeartbeatRunStatus.Running,
-				WakeupStatus.Queued,
-				WakeupStatus.Claimed,
-			],
+			params,
 		);
 		if (next.rows.length === 0) return;
 

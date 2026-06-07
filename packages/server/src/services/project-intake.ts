@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import {
 	ApprovalStatus,
 	ApprovalType,
+	CEO_AGENT_SLUG,
 	CommentContentType,
 	PROJECT_INTAKE_LABEL,
 	PROJECT_INTAKE_SKIP_SIGNAL_TEXT,
@@ -230,6 +231,66 @@ export interface OpenProjectIntake {
 	task_identifier: string;
 	project_slug: string;
 	approval_id: string;
+}
+
+export interface OpenProjectIntakeForHome {
+	task_id: string;
+	task_identifier: string;
+	/** The HQ project slug — where the intake conversation lives. */
+	project_slug: string;
+	approval_id: string;
+	greeting: string;
+	ceo_member_id: string;
+	ceo_title: string;
+}
+
+function extractCommentText(content: unknown): string {
+	if (typeof content === 'string') {
+		try {
+			const parsed = JSON.parse(content) as { text?: unknown };
+			return typeof parsed?.text === 'string' ? parsed.text : content;
+		} catch {
+			return content;
+		}
+	}
+	if (content && typeof content === 'object' && 'text' in content) {
+		const text = (content as { text?: unknown }).text;
+		return typeof text === 'string' ? text : '';
+	}
+	return '';
+}
+
+/**
+ * The single open project-intake conversation surfaced on the home/welcome view,
+ * enriched with the CEO's opening greeting and identity. All intakes live in HQ.
+ */
+export async function getOpenProjectIntakeForHome(
+	db: PGlite,
+): Promise<OpenProjectIntakeForHome | null> {
+	const open = await getOpenProjectIntakeTasks(db);
+	const first = open[0];
+	if (!first) return null;
+
+	const ceo = await db.query<{ id: string; title: string }>(
+		`SELECT id, title FROM member_agents WHERE slug = $1 LIMIT 1`,
+		[CEO_AGENT_SLUG],
+	);
+	const greetingRow = await db.query<{ content: unknown }>(
+		`SELECT content FROM task_comments
+		 WHERE task_id = $1 AND content_type = 'text'::comment_content_type
+		 ORDER BY created_at ASC LIMIT 1`,
+		[first.task_id],
+	);
+
+	return {
+		task_id: first.task_id,
+		task_identifier: first.task_identifier,
+		project_slug: first.project_slug,
+		approval_id: first.approval_id,
+		greeting: extractCommentText(greetingRow.rows[0]?.content),
+		ceo_member_id: ceo.rows[0]?.id ?? '',
+		ceo_title: ceo.rows[0]?.title ?? 'CEO',
+	};
 }
 
 /** All open project-intake conversations, instance-wide (they all live in HQ). */

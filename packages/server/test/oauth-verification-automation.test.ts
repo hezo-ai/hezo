@@ -1,51 +1,29 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { PlatformType, TaskStatus } from '@hezo/shared';
-import type { Hono } from 'hono';
+import { DEFAULT_TEAM_ID, PlatformType, TaskStatus } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { Env } from '../src/lib/types';
 import { enqueueOAuthVerificationTask } from '../src/services/oauth-verification-tasks';
 import { triggerStatusAutomations } from '../src/services/task-automation';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { createTestApp } from './helpers/app';
 
-let app: Hono<Env>;
 let db: PGlite;
-let token: string;
+// OAuth verification is instance-level: tasks live in the HQ team's HQ project
+// and are owned by the CEO. Originating tickets used by these flows therefore
+// also live in HQ so the verification task can link to them.
 let teamId: string;
-let captainMemberId: string;
 let parentProjectId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
-	app = ctx.app;
 	db = ctx.db;
-	token = ctx.token;
 
-	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
-	const typeId = (await typesRes.json()).data.find(
-		(t: Record<string, unknown>) => t.name === 'Startup',
-	).id;
+	teamId = DEFAULT_TEAM_ID;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'OAuth Auto Co', template_id: typeId }),
-	});
-	teamId = (await teamRes.json()).data.id;
-
-	const captain = await db.query<{ id: string }>(
-		`SELECT ma.id FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
+	const hq = await db.query<{ id: string }>(
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
 		[teamId],
 	);
-	captainMemberId = captain.rows[0].id;
-
-	const ops = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
-		[teamId],
-	);
-	parentProjectId = ops.rows[0].id;
+	parentProjectId = hq.rows[0].id;
 });
 
 afterAll(async () => {
@@ -69,7 +47,7 @@ async function createParentTask(title = 'Originating ticket'): Promise<string> {
 }
 
 describe('triggerStatusAutomations: OAuth verification done', () => {
-	it('posts a Captain-authored comment on the parent when the verification task moves to done', async () => {
+	it('posts a confirmation comment on the parent when the verification task moves to done', async () => {
 		const parentId = await createParentTask();
 		const verif = await enqueueOAuthVerificationTask(db, teamId, PlatformType.GitHub, parentId, {});
 		expect(verif?.taskId).toBeTruthy();
@@ -95,20 +73,29 @@ describe('triggerStatusAutomations: OAuth verification done', () => {
 		}>('SELECT content, author_member_id, content_type FROM task_comments WHERE task_id = $1', [
 			parentId,
 		]);
-		const ceoComment = comments.rows.find((c) => c.author_member_id === captainMemberId);
-		expect(ceoComment).toBeTruthy();
-		expect(ceoComment?.content_type).toBe('text');
-		expect(ceoComment?.content.text).toContain('GitHub');
-		expect(ceoComment?.content.text?.toLowerCase()).toContain('verified');
+		const confirmation = comments.rows.find(
+			(c) => c.content_type === 'text' && c.content.text?.toLowerCase().includes('verified'),
+		);
+		expect(confirmation).toBeTruthy();
+		// HQ hosts the CEO and Coach but no Captain, so the verification-confirmation
+		// comment is authored by the system (no member) rather than a per-team agent.
+		expect(confirmation?.author_member_id).toBeNull();
+		expect(confirmation?.content.text).toContain('GitHub');
 	});
 
 	it('does nothing when the done task has no parent_task_id', async () => {
 		const verif = await enqueueOAuthVerificationTask(db, teamId, PlatformType.Stripe, null, {});
-		const commentsBefore = await db.query<{ count: string }>(
-			`SELECT count(*)::text AS count FROM task_comments
-			 WHERE author_member_id = $1`,
-			[captainMemberId],
-		);
+		// With no originating ticket there is nowhere to post a confirmation, so the
+		// count of verification-confirmation comments must not change.
+		const confirmationCount = async () => {
+			const r = await db.query<{ count: string }>(
+				`SELECT count(*)::text AS count FROM task_comments
+				 WHERE content_type = 'text'
+				   AND content->>'text' ILIKE '%verified%'`,
+			);
+			return r.rows[0].count;
+		};
+		const before = await confirmationCount();
 
 		await db.query('UPDATE tasks SET status = $1::task_status WHERE id = $2', [
 			TaskStatus.Done,
@@ -124,12 +111,7 @@ describe('triggerStatusAutomations: OAuth verification done', () => {
 			undefined,
 		);
 
-		const commentsAfter = await db.query<{ count: string }>(
-			`SELECT count(*)::text AS count FROM task_comments
-			 WHERE author_member_id = $1`,
-			[captainMemberId],
-		);
-		expect(commentsAfter.rows[0].count).toBe(commentsBefore.rows[0].count);
+		expect(await confirmationCount()).toBe(before);
 	});
 
 	it('does nothing when a non-verification task moves to done (beyond the Coach wake-up)', async () => {

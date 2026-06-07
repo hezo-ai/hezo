@@ -129,15 +129,9 @@ Request:
 }
 ```
 
-`template_id` is optional. When set, agents are provisioned from the selected template with their configurations (titles, prompts, org chart, runtimes, budgets). Task prefixes are configured per project (see `POST /projects/:projectId/projects`), not at the team level.
+`template_id` is optional. When set, agents are provisioned from the selected template with their configurations (titles, prompts, org chart, runtimes, budgets). Task prefixes are configured per project, not at the team level.
 
-Response: full team object. On creation, the server automatically:
-
-1. Creates `~/.hezo/teams/{slug}/` folder structure with auto-generated AGENTS.md.
-2. Creates agent team from the selected template. The UI defaults to "Software Development" pre-selected.
-3. Creates an **"Internal" project** and auto-provisions its container.
-
-Docker container provisioning for the Internal project happens at team creation. Other project containers are provisioned when those projects are created.
+Response: full team object. On creation the server provisions the agent roster (Captain + template roles); it does **not** create a project. Under the 1:1 model a project is created together with its team via `POST /projects` (direct) or `POST /project-intakes` (CEO-assisted), and the project's container is provisioned at that point. A bare `POST /teams` is primarily an internal/test building block.
 
 The board lands on a team with 11 agents.
 
@@ -178,51 +172,14 @@ services autonomously. MPP costs are debited against the agent's budget.
 #### `DELETE /projects/:projectId/team`
 Delete team and all associated data. Tears down the team container.
 
-### Board onboarding (home)
+### Project creation (home)
 
-Three stages drive the home welcome card and intake panels:
+Projects are created one of two ways (see `.dev/per-project-teams.md`); both stand up the project's own team from a team-type template. Both the first-run welcome and the ongoing "new project" surface use these:
 
-1. **Requirements** — open `requirements-intake` Internal task; Captain gathers goals and creates the first user-facing project via MCP/REST.
-2. **Hire team** — open `hire-team-intake` task; Captain requests a `team_template` approval; board approves in inbox; agents provision and the hire ticket closes.
-3. **Start project** — board confirms on home; sets `execution_started_at` on the first user-facing project and wakes Captain on the planning task.
+- **Direct** — `POST /api/projects` (below). Team + project + planning task created immediately.
+- **CEO-assisted** — `POST /api/project-intakes` (below). A CEO conversation in HQ that creates the project on approval.
 
-`show_welcome` is true until `execution_started_at` is set on the primary (oldest non-internal) project. The project list on home is hidden until stage 3 completes.
-
-#### `GET /projects/:projectId/onboarding`
-Onboarding stage status for the home progress UI.
-
-Response:
-```json
-{
-  "data": {
-    "show_welcome": true,
-    "current_stage": "requirements",
-    "stages": {
-      "requirements": "current",
-      "hire_team": "pending",
-      "start_project": "pending"
-    },
-    "primary_project": null
-  }
-}
-```
-
-Stage values: `complete` | `current` | `pending`. `primary_project` includes `execution_started_at` (null until the board starts execution).
-
-#### `GET /projects/:projectId/onboarding-intake`
-Returns the open onboarding intake task for home chat, or 404 if none.
-
-Query `?ensure=true` creates the intake task when missing (used before any user-facing project exists).
-
-#### `POST /projects/:projectId/onboarding-intake/skip-questions`
-Post a system "skip questions" comment on the open onboarding-intake ticket and wake the Captain so it finalises with what it already has.
-
-#### `POST /projects/:projectId/onboarding/direct`
-Provision a project's own team directly from a chosen team-type template (the "Pick a template" path), creating the project + planning task in that team. Requires `template_id` and `project_name`; `project_description` and `initial_prd` are optional.
-
-Response: `{ "data": { ... } }` describing the new team, project, and planning task.
-
-The first user-facing project created via `POST /projects/:projectId/projects` or MCP `create_project` does **not** wake Captain on the planning task until execution starts (or a later project is created).
+The home/welcome view shows the project list once any user-facing project exists, and surfaces the single open CEO intake via `GET /api/project-intakes`.
 
 ---
 
@@ -376,11 +333,11 @@ Request fields: `title` (required), `role_description`, `system_prompt`, `report
 Response: full agent object.
 
 #### `POST /projects/:projectId/agents/onboard`
-Starts the Captain-mediated hire workflow. The board submits a draft spec; the server creates a pending `hire` approval holding the draft in its payload, opens an onboarding task in the Internal project assigned to the Captain, and wakes the Captain to refine the draft. **No `member_agents` row is created yet.**
+Starts the Captain-mediated hire workflow. The board submits a draft spec; the server creates a pending `hire` approval holding the draft in its payload, opens an onboarding task in the team's own project assigned to the Captain, and wakes the Captain to refine the draft. **No `member_agents` row is created yet.**
 
 The Captain revises the draft via the `update_hire_proposal` MCP tool, @-mentions the board for review, and iterates until the board resolves the pending approval. Approving the approval materialises the agent (see `POST /approvals/:approvalId/resolve`); denying leaves nothing behind.
 
-If the team has no enabled Captain or no Internal project (bootstrap case), the endpoint creates the agent directly as `enabled` and returns it with `bootstrap: true`. No approval or ticket is created in that case.
+If the team has no enabled Captain or no project yet (bootstrap case), the endpoint creates the agent directly as `enabled` and returns it with `bootstrap: true`. No approval or ticket is created in that case.
 
 Request:
 ```json
@@ -572,48 +529,43 @@ Response:
 }
 ```
 
-#### `POST /projects/:projectId/projects`
-Open a captain-led intake for a new sibling project under the same team as `:projectId` (typically the team's internal project, slug `internal-<teamSlug>`). No project is created at this step. The
-endpoint creates a pending `project_creation` approval (holding the draft `name`,
-`description`, `task_prefix`, `initial_prd`) and a `project-intake` ticket in the
-team's Internal project assigned to the Captain. The board is redirected to the
-intake ticket. The Captain Q&As with the board, may propose hires via the standard
-hire flow if the team is missing roles, refines the proposal via the
-`update_project_creation_proposal` MCP tool, and asks the board to approve the
-pending `project_creation` approval in the inbox. The actual project + planning
-task are created by the approval side-effect when the board approves; the intake
-ticket is closed automatically at that point.
+#### `POST /projects` (superuser)
+**Direct creation.** Provisions a fresh team from a team-type template (default **Blank** = Captain only), then creates the project, its planning task (Captain), and an initial CEO coherence/setup task that the planning task is blocked on. 1:1 — the new team backs exactly this one project.
 
-Request: `name` and `description` are required. `task_prefix` and `initial_prd` are
-optional. `task_prefix` is validated at submit time (uniqueness + shape); a conflict
-returns 409 before any rows are inserted.
+Request: `name` and `description` are required. `template_id`, `task_prefix`, `initial_prd`, `docker_base_image` are optional. `task_prefix` is validated at submit time (uniqueness + shape); a conflict returns 409.
 ```json
-{
-  "name": "Backend API",
-  "description": "Authenticated HTTP API for the main app.",
-  "task_prefix": "API",
-  "initial_prd": "# Product Requirements\n\n## Overview\n..."
-}
+{ "name": "Backend API", "description": "Authenticated HTTP API.", "template_id": "uuid", "task_prefix": "API" }
 ```
+Response: the project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`.
 
-Response shape:
+#### `POST /project-intakes` (superuser)
+**CEO-assisted creation.** Stands up the project's team (from `template_id`, default Blank) and opens a CEO-run intake conversation in the HQ project with a pending `project_creation` approval. No project exists yet. The CEO Q&As with the operator, may propose hires if the team is missing roles, refines the proposal via the `update_project_creation_proposal` MCP tool, and asks the operator to approve the pending approval in the inbox. The project + planning task (plus the initial coherence task) are created by the approval side-effect, and the intake ticket is closed automatically.
+
+Request: `name` and `description` required; `template_id`, `task_prefix`, `initial_prd` optional. `task_prefix` conflicts return 400.
+```json
+{ "name": "Backend API", "description": "Authenticated HTTP API.", "initial_prd": "# PRD\n..." }
+```
+Response:
 ```json
 {
   "data": {
     "intake_task_id": "uuid",
-    "intake_task_identifier": "IN-7",
-    "project_slug": "internal-notegenius-ai",
-    "approval_id": "uuid"
+    "intake_task_identifier": "HQ-7",
+    "project_slug": "hq",
+    "approval_id": "uuid",
+    "team_id": "uuid",
+    "team_slug": "backend-api"
   }
 }
 ```
+The intake conversation lives in the HQ project (`project_slug: "hq"`), assigned to the CEO.
 
-Fails with 500 if the team is missing its Captain or Internal project.
+#### `GET /project-intakes` (superuser)
+Returns the single open CEO intake conversation for the home/welcome view (CEO greeting + identity + the HQ task handle), or `null`.
 
 #### `POST /projects/:projectId/project-intake/:taskId/skip-questions`
 Post a system "skip questions" comment on a project-intake ticket and wake the
-Captain so it finalises the proposal with what it already has. Mirrors the
-onboarding-intake skip endpoint.
+CEO so it finalises the proposal with what it already has.
 
 #### `GET /projects/:projectId`
 Get project detail including repos. Accepts project ID or slug.
@@ -866,8 +818,6 @@ Request:
 the agent receives an event trigger. If a board member, they are notified via
 inbox and configured messaging channels.
 
-Tasks in the auto-created Internal project (`slug = 'internal-<teamSlug>'`, `is_internal = true`) must be assigned to the Captain. Any other `assignee_id` returns `400 INVALID_REQUEST` with message `Internal project tasks must be assigned to the Captain`.
-
 `runtime_type` is optional. It pins this task to a specific AI adapter
 (`claude_code | codex | gemini`). When unset, the server picks the
 instance default — the single active AI provider if only one is configured,
@@ -916,13 +866,11 @@ Two server-enforced guards block the `→ done` and `→ closed` transitions whe
 
 The error message names the blocking sub-task or agent so the caller knows what to wait on.
 
-For tasks whose project is Internal (`slug = 'internal-<teamSlug>'`, `is_internal = true`), `assignee_id` must be the Captain; any other value returns `400 INVALID_REQUEST`.
-
 #### `DELETE /projects/:projectId/tasks/:taskId`
 Delete an task. Only allowed if status is `backlog`, and no comments exist.
 
 #### `POST /projects/:projectId/tasks/:taskId/sub-tasks`
-Create a sub-task. `project_id` is inherited from the parent. When the parent belongs to the Internal project, the sub-task's `assignee_id` must be the Captain.
+Create a sub-task. `project_id` is inherited from the parent.
 
 Request:
 ```json

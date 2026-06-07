@@ -21,8 +21,7 @@ const TABLE_TO_QUERY_KEY: Record<
 		['projects'],
 		['teams'],
 		['tasks', 'all'],
-		['projects', cid, 'onboarding-intake'],
-		['projects', cid, 'onboarding'],
+		['project-intakes'],
 	],
 	heartbeat_runs: (cid, row) => {
 		const keys: string[][] = [['projects', cid, 'tasks']];
@@ -57,7 +56,7 @@ const TABLE_TO_QUERY_KEY: Record<
 	comment_reactions: (cid) => [['projects', cid, 'tasks']],
 	comment_attachments: (cid) => [['projects', cid, 'tasks']],
 	member_agents: (cid) => [['projects', cid, 'agents']],
-	projects: (cid) => [['projects'], ['projects', cid, 'onboarding']],
+	projects: (cid) => [['projects'], ['project-intakes']],
 	approvals: (cid) => [
 		['projects', cid, 'approvals'],
 		['projects', cid, 'inbox-count'],

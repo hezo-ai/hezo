@@ -5,13 +5,18 @@ type Page = import('@playwright/test').Page;
 
 async function createProjectViaApi(
 	page: Page,
-	teamSlug: string,
 	token: string,
 	name: string,
 	description: string,
-): Promise<{ id: string; slug: string }> {
-	const res = await createProjectAndClearPlanning(page, teamSlug, token, { name, description });
-	return ((await res.json()) as { data: { id: string; slug: string } }).data;
+): Promise<{ id: string; slug: string; assigneeId: string }> {
+	const res = await createProjectAndClearPlanning(page, '', token, { name, description });
+	const project = ((await res.json()) as { data: { id: string; slug: string } }).data;
+	const agentsRes = await page.request.get(`/api/projects/${project.slug}/agents`, {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+	const assigneeId = (agents.find((a) => a.slug === 'captain') ?? agents[0]).id;
+	return { ...project, assigneeId };
 }
 
 async function createTaskViaApi(
@@ -34,13 +39,12 @@ test.describe('Task detail — right sidebar sticky positioning', () => {
 		page,
 		sharedWorkspace,
 	}) => {
-		const { team, agents, token } = sharedWorkspace;
+		const { token } = sharedWorkspace;
 		await page.setViewportSize({ width: 1280, height: 720 });
 
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 		const project = await createProjectViaApi(
 			page,
-			team.slug,
 			token,
 			uniqueName('Sidebar Project'),
 			'Sidebar test project.',
@@ -48,7 +52,7 @@ test.describe('Task detail — right sidebar sticky positioning', () => {
 		const task = await createTaskViaApi(page, project.slug, token, {
 			project_id: project.id,
 			title: 'Sidebar Test Task',
-			assignee_id: agents[0].id,
+			assignee_id: project.assigneeId,
 		});
 
 		for (let i = 0; i < 25; i++) {
@@ -98,13 +102,12 @@ test.describe('Task detail — initial scroll and scroll-to-bottom button', () =
 		page,
 		sharedWorkspace,
 	}) => {
-		const { team, agents, token } = sharedWorkspace;
+		const { token } = sharedWorkspace;
 		await page.setViewportSize({ width: 1280, height: 720 });
 
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 		const project = await createProjectViaApi(
 			page,
-			team.slug,
 			token,
 			uniqueName('Scroll Project'),
 			'Scroll behavior test.',
@@ -112,7 +115,7 @@ test.describe('Task detail — initial scroll and scroll-to-bottom button', () =
 		const task = await createTaskViaApi(page, project.slug, token, {
 			project_id: project.id,
 			title: 'Scroll Test Task',
-			assignee_id: agents[0].id,
+			assignee_id: project.assigneeId,
 			description: 'A short description so the page header stays compact.',
 		});
 
@@ -146,13 +149,12 @@ test.describe('Task detail — initial scroll and scroll-to-bottom button', () =
 		sharedPage: page,
 		sharedWorkspace,
 	}) => {
-		const { team, agents, token } = sharedWorkspace;
+		const { token } = sharedWorkspace;
 		await page.setViewportSize({ width: 375, height: 720 });
 
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 		const project = await createProjectViaApi(
 			page,
-			team.slug,
 			token,
 			uniqueName('Mobile Scroll Project'),
 			'Mobile scroll behavior test.',
@@ -160,7 +162,7 @@ test.describe('Task detail — initial scroll and scroll-to-bottom button', () =
 		const task = await createTaskViaApi(page, project.slug, token, {
 			project_id: project.id,
 			title: 'Mobile Scroll Task',
-			assignee_id: agents[0].id,
+			assignee_id: project.assigneeId,
 		});
 
 		for (let i = 0; i < 30; i++) {

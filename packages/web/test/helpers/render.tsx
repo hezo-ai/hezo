@@ -32,7 +32,10 @@ interface TestAppContext {
 	app: Hono;
 	token: string;
 	apiBase: (path: string, init?: RequestInit) => Promise<Response>;
-	db: import('@electric-sql/pglite').PGlite;
+	// Source the PGlite type from the server helper so it stays in lockstep with
+	// the version server-side seeders (createTestProject) expect — the web tree
+	// resolves a newer @electric-sql/pglite whose nominal type is incompatible.
+	db: Awaited<ReturnType<typeof createTestApp>>['db'];
 }
 
 let activeContext: TestAppContext | null = null;

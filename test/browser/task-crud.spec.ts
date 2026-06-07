@@ -11,15 +11,23 @@ test('Agent Queue running row links the agent name to its run comment and scroll
 	sharedPage: page,
 	sharedWorkspace,
 }) => {
-	const { team, token, agents } = sharedWorkspace;
+	const { token } = sharedWorkspace;
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-	const projectRes = await createProjectAndClearPlanning(page, team.slug, token, {
+	const projectRes = await createProjectAndClearPlanning(page, '', token, {
 		name: uniqueName('Running Link Project'),
 		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
-	const agent = agents[0] as { id: string; title: string };
+
+	const agentsRes = await page.request.get(`/api/projects/${project.slug}/agents`, { headers });
+	const projectAgents = (
+		(await agentsRes.json()) as { data: Array<{ id: string; slug: string; title: string }> }
+	).data;
+	const agent = (projectAgents.find((a) => a.slug === 'captain') ?? projectAgents[0]) as {
+		id: string;
+		title: string;
+	};
 
 	const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 		headers,

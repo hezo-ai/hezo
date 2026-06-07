@@ -19,11 +19,6 @@ import { resolveProjectTaskPrefix } from '../routes/projects';
 import { type ContainerDeps, type ProjectRow, provisionContainer } from './containers';
 import { enqueueTeamCoherenceReviewTask } from './description-tasks';
 import { upsertDocument } from './documents';
-import {
-	completeOnboardingIntakeAfterProvisioning,
-	postOnboardingTemplateApprovedAck,
-	postOnboardingTemplateDeniedNote,
-} from './onboarding-intake';
 import { createProjectWithPlanningTask } from './project-create';
 import {
 	completeProjectIntakeAfterProvisioning,
@@ -31,7 +26,6 @@ import {
 	postProjectCreationDeniedNote,
 } from './project-intake';
 import { recordStatusChange } from './task-events';
-import { applyTemplateToTeam } from './team-template-apply';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -48,16 +42,7 @@ export async function applyApprovalDeniedSideEffect(
 	approval: Record<string, unknown>,
 ): Promise<SideEffectBroadcast[]> {
 	const payload = approval.payload as Record<string, unknown>;
-	const teamId = approval.team_id as string;
 	const resolutionNote = (approval.resolution_note as string | null) ?? null;
-
-	if (approval.type === ApprovalType.TeamTemplate) {
-		const intakeTaskId = payload.task_id as string | undefined;
-		if (!intakeTaskId) return [];
-		const comment = await postOnboardingTemplateDeniedNote(db, intakeTaskId, resolutionNote);
-		if (!comment) return [];
-		return [{ table: 'task_comments', op: 'INSERT', row: comment }];
-	}
 
 	if (approval.type === ApprovalType.ProjectCreation) {
 		const intakeTaskId = payload.intake_task_id as string | undefined;
@@ -73,7 +58,9 @@ export async function applyApprovalDeniedSideEffect(
 export async function applyApprovalSideEffect(
 	db: PGlite,
 	approval: Record<string, unknown>,
-	dataDir: string,
+	// Provided by the resolve infra for side effects that touch the data dir; the
+	// current set (hire, project creation, skills, …) doesn't need it.
+	_dataDir: string,
 	actorMemberId: string | null,
 	wsManager?: WebSocketManager,
 	containerDeps?: ContainerDeps,
@@ -213,128 +200,6 @@ export async function applyApprovalSideEffect(
 					op: 'UPDATE',
 					row: doc as unknown as Record<string, unknown>,
 				});
-			}
-			break;
-		}
-		case ApprovalType.TeamTemplate: {
-			const teamId = approval.team_id as string;
-			const templateId = payload.template_id as string;
-			if (!templateId) {
-				throw new Error('team_template approval payload missing template_id');
-			}
-
-			const intakeTaskId = payload.task_id as string | undefined;
-			const templateName =
-				(typeof payload.template_name === 'string' && payload.template_name.trim()) ||
-				'team template';
-			const projectName = (payload.project_name as string | null | undefined)?.trim() || null;
-			const projectDescription =
-				(payload.project_description as string | null | undefined)?.trim() ?? '';
-
-			const apply = await applyTemplateToTeam(db, teamId, templateId, { dataDir, wsManager });
-
-			if (intakeTaskId) {
-				const ackComment = await postOnboardingTemplateApprovedAck(db, intakeTaskId, templateName);
-				if (ackComment) {
-					broadcasts.push({ table: 'task_comments', op: 'INSERT', row: ackComment });
-				}
-			}
-
-			for (const slug of apply.created_slugs) {
-				const agentRow = await db.query<{ id: string }>(
-					`SELECT ma.id FROM member_agents ma
-					 JOIN members m ON m.id = ma.id
-					 WHERE m.team_id = $1 AND ma.slug = $2`,
-					[teamId, slug],
-				);
-				const memberId = agentRow.rows[0]?.id;
-				if (memberId) {
-					const newAgent = await db.query<Record<string, unknown>>(
-						`SELECT m.id, m.team_id, m.display_name, m.created_at,
-						        ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary,
-						        ma.default_effort, ma.heartbeat_interval_min,
-						        ma.monthly_budget_cents, ma.budget_used_cents, ma.touches_code,
-						        ma.budget_reset_at, ma.runtime_status, ma.admin_status,
-						        ma.last_heartbeat_at, ma.reports_to, ma.mcp_servers, ma.updated_at
-						 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1`,
-						[memberId],
-					);
-					if (newAgent.rows[0]) {
-						broadcasts.push({
-							table: 'member_agents',
-							op: 'INSERT',
-							row: newAgent.rows[0],
-						});
-					}
-				}
-			}
-
-			if (projectName) {
-				const captain = await db.query<{ id: string }>(
-					`SELECT ma.id FROM member_agents ma
-					 JOIN members m ON m.id = ma.id
-					 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
-					 LIMIT 1`,
-					[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
-				);
-				const captainMemberId = captain.rows[0]?.id;
-				if (!captainMemberId) {
-					throw new Error('Cannot create project on approval: no enabled Captain on team');
-				}
-
-				const projectSlug = projectName
-					.toLowerCase()
-					.replace(/[^a-z0-9]+/g, '-')
-					.replace(/^-|-$/g, '');
-				const prefixResult = await resolveProjectTaskPrefix(db, teamId, undefined, projectName);
-				if (!prefixResult.ok) {
-					throw new Error(`Cannot create project on approval: ${prefixResult.message}`);
-				}
-
-				const { project, planningTask, deferCaptainPlanningWake } =
-					await createProjectWithPlanningTask(db, {
-						teamId,
-						captainMemberId,
-						name: projectName,
-						slug: projectSlug,
-						taskPrefix: prefixResult.prefix,
-						description: projectDescription,
-						events,
-						actorType: 'admin',
-						actorMemberId,
-					});
-
-				broadcastRowChange(wsManager, wsRoom.team(teamId), 'projects', 'INSERT', project);
-				broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', planningTask);
-
-				if (!deferCaptainPlanningWake) {
-					await createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
-						task_id: planningTask.id as string,
-					});
-				}
-			}
-
-			if (intakeTaskId) {
-				const completed = await completeOnboardingIntakeAfterProvisioning(
-					db,
-					teamId,
-					intakeTaskId,
-					templateName,
-					projectName,
-					apply.created_slugs,
-					apply.skipped_slugs,
-					wsManager,
-				);
-				if (completed.summaryComment) {
-					broadcasts.push({
-						table: 'task_comments',
-						op: 'INSERT',
-						row: completed.summaryComment,
-					});
-				}
-				if (completed.task) {
-					broadcasts.push({ table: 'tasks', op: 'UPDATE', row: completed.task });
-				}
 			}
 			break;
 		}

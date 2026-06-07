@@ -39,7 +39,6 @@ import {
 	wakeIfReady,
 	wouldCreateCycle,
 } from '../lib/dependencies';
-import { assertInternalAssignee } from '../lib/internal-assignee';
 import { resolveActorMemberId, resolveTaskId } from '../lib/resolve';
 import { assertRunTaskScope } from '../lib/run-scope';
 import { deriveSkillSummary } from '../lib/skill-summary';
@@ -797,14 +796,6 @@ export function registerTools(
 					const activeRunCheck = await assertNoActiveRun(db, args.task_id as string);
 					if (!activeRunCheck.ok) return { error: activeRunCheck.message };
 				}
-				const internalCheck = await assertInternalAssignee(
-					db,
-					args.team_id as string,
-					currentRow.project_id,
-					args.assignee_id as string,
-				);
-				if (!internalCheck.ok) return { error: internalCheck.message };
-
 				if (auth.type === AuthType.Agent && args.assignee_id !== previousAssigneeId) {
 					const hierarchyCheck = await assertSubordinateAssignee(
 						db,
@@ -1206,105 +1197,6 @@ export function registerTools(
 				 ORDER BY ct.is_builtin DESC, ct.name ASC`,
 			);
 			return r.rows;
-		},
-		db,
-	);
-
-	tool(
-		server,
-		'request_team_template_approval',
-		'Request admin approval to provision agents from a team template onto this team AND (optionally) create the user project in one approval. Captain-only. Call after the admin agrees to your recommendation. When `project_name` is set, the server creates the project automatically on approval and closes the onboarding intake ticket.',
-		{
-			team_id: z.string().describe('Team ID'),
-			template_id: z.string().describe('Team template UUID from list_team_templates'),
-			task_id: z
-				.string()
-				.optional()
-				.describe(
-					'Onboarding-intake Internal task id. The server closes this ticket once provisioning + project creation finish.',
-				),
-			rationale: z.string().describe('Why this template fits the work the admin described'),
-			project_name: z
-				.string()
-				.optional()
-				.describe(
-					'When set, the user project to create on approval. Pair with project_description.',
-				),
-			project_description: z
-				.string()
-				.optional()
-				.describe('Description for the user project being created on approval'),
-		},
-		async (args, db, auth) => {
-			if (auth.type !== AuthType.Agent) {
-				return { error: 'request_team_template_approval is only callable by agents' };
-			}
-			const caller = await db.query<{ slug: string }>(
-				'SELECT slug FROM member_agents WHERE id = $1',
-				[auth.memberId],
-			);
-			if (caller.rows[0]?.slug !== CAPTAIN_AGENT_SLUG) {
-				return { error: 'Only the Captain can request team template approval' };
-			}
-			const teamId = auth.teamId;
-			if (args.team_id !== teamId) {
-				return { error: 'Access denied: team mismatch' };
-			}
-
-			const template = await db.query<{ id: string; name: string; description: string }>(
-				'SELECT id, name, description FROM team_templates WHERE id = $1',
-				[args.template_id],
-			);
-			if (template.rows.length === 0) {
-				return { error: 'Team template not found' };
-			}
-
-			const pending = await db.query(
-				`SELECT id FROM approvals
-				 WHERE team_id = $1 AND type = $2::approval_type AND status = $3::approval_status`,
-				[teamId, ApprovalType.TeamTemplate, ApprovalStatus.Pending],
-			);
-			if (pending.rows.length > 0) {
-				return { error: 'A pending team template approval already exists for this team' };
-			}
-
-			const roles = await db.query<{ slug: string; name: string }>(
-				`SELECT at.slug, at.name
-				 FROM team_template_agent_types ctat
-				 JOIN agent_types at ON at.id = ctat.agent_type_id
-				 WHERE ctat.team_template_id = $1
-				 ORDER BY ctat.sort_order`,
-				[args.template_id],
-			);
-
-			const payload = {
-				template_id: args.template_id,
-				template_name: template.rows[0].name,
-				template_description: template.rows[0].description,
-				rationale: args.rationale,
-				roles: roles.rows,
-				task_id: args.task_id ?? null,
-				project_name: (args.project_name as string | undefined)?.trim() || null,
-				project_description: (args.project_description as string | undefined)?.trim() || null,
-			};
-
-			const inserted = await db.query<Record<string, unknown>>(
-				`INSERT INTO approvals (team_id, type, requested_by_member_id, payload, status)
-				 VALUES ($1, $2::approval_type, $3, $4::jsonb, $5::approval_status)
-				 RETURNING ${APPROVAL_COLUMNS}`,
-				[
-					teamId,
-					ApprovalType.TeamTemplate,
-					auth.memberId,
-					JSON.stringify(payload),
-					ApprovalStatus.Pending,
-				],
-			);
-			const row = inserted.rows[0];
-			if (row) {
-				broadcastApprovalChange(wsManager, teamId, 'INSERT', row);
-			}
-			return row ?? null;
 		},
 		db,
 	);

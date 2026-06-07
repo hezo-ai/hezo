@@ -91,14 +91,23 @@ describe('template resolver', () => {
 	});
 
 	it('resolves {{project_docs_context}} to empty-state when the project has no docs', async () => {
+		// The team already owns its one project (created in beforeAll), and the 1:1
+		// invariant forbids a second on the same team — so the docless project lives
+		// on its own fresh team.
+		const doclessTeamRes = await app.request('/api/teams', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Docless Co', description: 'No docs here' }),
+		});
+		const doclessTeamId = (await doclessTeamRes.json()).data.id as string;
 		const bare = await db.query<{ id: string }>(
 			`INSERT INTO projects (team_id, name, slug, task_prefix, description, docker_base_image)
 			 VALUES ($1, 'Docless', 'docless', 'DL', 'No docs here', 'hezo/agent-base:latest')
 			 RETURNING id`,
-			[teamId],
+			[doclessTeamId],
 		);
 		const result = await resolveSystemPrompt(db, 'Docs: {{project_docs_context}}', {
-			teamId,
+			teamId: doclessTeamId,
 			projectId: bare.rows[0].id,
 		});
 		expect(result).toContain('No project documentation available');
@@ -544,10 +553,10 @@ describe('teammates block', () => {
 
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId: otherId });
 		expect(result).toContain('## Teammates');
-		// Builtin Captain + Coach are seeded for every team, but the startup-template-only
-		// roles from the other test team must not bleed in.
+		// The builtin Captain is seeded for every team (Coach now lives only in HQ),
+		// but the startup-template-only roles from the other test team must not bleed in.
 		expect(result).toContain('- @captain — Captain');
-		expect(result).toContain('- @coach — Coach');
+		expect(result).not.toContain('- @coach — Coach');
 		expect(result).not.toContain('- @architect — Architect');
 		expect(result).not.toContain('- @engineer — Engineer');
 		expect(result).not.toContain('- @product-lead — Product Lead');
@@ -688,16 +697,10 @@ describe('project state block', () => {
 		psTeamId = psTeamData.id;
 		psTeamSlug = psTeamData.slug;
 
-		const agentsRes = await app.request(
-			`/api/projects/${await projectSlugForTeamSlug(db, psTeamSlug)}/agents`,
-			{
-				headers: authHeader(token),
-			},
-		);
-		const agents = ((await agentsRes.json()) as any).data;
-		psCaptainMemberId = agents.find((a: any) => a.slug === 'captain').id;
-		psArchitectMemberId = agents.find((a: any) => a.slug === 'architect').id;
-
+		// Materialize the team's single project up front so its prefix (PP) and
+		// planning ticket are the ones the Project State block reflects. Creating it
+		// before resolving the agents endpoint avoids a generic 'Work Project' being
+		// minted first and returned by the idempotent helper.
 		const projectRes = await createTestProject(db, psTeamId, {
 			name: 'PS Project',
 			description: 'Test',
@@ -705,6 +708,13 @@ describe('project state block', () => {
 		const psProjectData = (await projectRes.json()).data as { id: string; slug: string };
 		psProjectId = psProjectData.id;
 		psProjectSlug = psProjectData.slug;
+
+		const agentsRes = await app.request(`/api/projects/${psProjectSlug}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = ((await agentsRes.json()) as any).data;
+		psCaptainMemberId = agents.find((a: any) => a.slug === 'captain').id;
+		psArchitectMemberId = agents.find((a: any) => a.slug === 'architect').id;
 	});
 
 	it('omits Project State block when projectId is absent', async () => {

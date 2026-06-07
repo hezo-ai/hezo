@@ -50,7 +50,7 @@ describe('mcp_connections REST routes', () => {
 		});
 		const team = (await co.json()).data;
 		const res = await ctx.app.request(
-			`/api/projects/${await projectSlugFor(db, team.id)}/mcp-connections`,
+			`/api/projects/${await projectSlugFor(ctx.db, team.id)}/mcp-connections`,
 			{
 				method: 'POST',
 				headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
@@ -69,32 +69,27 @@ describe('mcp_connections REST routes', () => {
 			body: JSON.stringify({ name: 'Y' }),
 		});
 		const team = (await co.json()).data;
-		const insert = await ctx.app.request(
-			`/api/projects/${await projectSlugFor(db, team.id)}/mcp-connections`,
-			{
-				method: 'POST',
-				headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					name: 'exa',
-					kind: 'saas',
-					config: {
-						url: 'https://mcp.exa.ai/mcp',
-						headers: { 'x-api-key': '__HEZO_SECRET_EXA__' },
-					},
-				}),
-			},
-		);
+		const projectSlug = await projectSlugFor(ctx.db, team.id);
+		const insert = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'exa',
+				kind: 'saas',
+				config: {
+					url: 'https://mcp.exa.ai/mcp',
+					headers: { 'x-api-key': '__HEZO_SECRET_EXA__' },
+				},
+			}),
+		});
 		expect(insert.status).toBe(201);
 		const inserted = await insert.json();
 		expect(inserted.data.install_status).toBe('installed');
 		expect(inserted.data.kind).toBe('saas');
 
-		const list = await ctx.app.request(
-			`/api/projects/${await projectSlugFor(db, team.id)}/mcp-connections`,
-			{
-				headers: { Authorization: `Bearer ${ctx.token}` },
-			},
-		);
+		const list = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections`, {
+			headers: { Authorization: `Bearer ${ctx.token}` },
+		});
 		expect(list.status).toBe(200);
 		const rows = (await list.json()).data;
 		expect(rows.length).toBe(1);
@@ -111,7 +106,7 @@ describe('mcp_connections REST routes', () => {
 		});
 		const team = (await co.json()).data;
 		const res = await ctx.app.request(
-			`/api/projects/${await projectSlugFor(db, team.id)}/mcp-connections`,
+			`/api/projects/${await projectSlugFor(ctx.db, team.id)}/mcp-connections`,
 			{
 				method: 'POST',
 				headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
@@ -142,14 +137,12 @@ describe('POST /teams/:teamId/connectors/ensure', () => {
 		});
 		const team = (await co.json()).data;
 
-		const first = await ctx.app.request(
-			`/api/projects/${await projectSlugFor(db, team.id)}/connectors/ensure`,
-			{
-				method: 'POST',
-				headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
-				body: JSON.stringify({ provider_id: 'github' }),
-			},
-		);
+		const projectSlug = await projectSlugFor(ctx.db, team.id);
+		const first = await ctx.app.request(`/api/projects/${projectSlug}/connectors/ensure`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ provider_id: 'github' }),
+		});
 		expect(first.status).toBe(200);
 		const firstRow = (await first.json()).data as {
 			id: string;
@@ -159,14 +152,11 @@ describe('POST /teams/:teamId/connectors/ensure', () => {
 		expect(firstRow.name).toBe('github');
 		expect(firstRow.config.url).toBe('https://api.githubcopilot.com/mcp/');
 
-		const second = await ctx.app.request(
-			`/api/projects/${await projectSlugFor(db, team.id)}/connectors/ensure`,
-			{
-				method: 'POST',
-				headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
-				body: JSON.stringify({ provider_id: 'github' }),
-			},
-		);
+		const second = await ctx.app.request(`/api/projects/${projectSlug}/connectors/ensure`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ provider_id: 'github' }),
+		});
 		expect(second.status).toBe(200);
 		const secondRow = (await second.json()).data as { id: string };
 		expect(secondRow.id).toBe(firstRow.id);
@@ -184,7 +174,7 @@ describe('POST /teams/:teamId/connectors/ensure', () => {
 		const team = (await co.json()).data;
 
 		const res = await ctx.app.request(
-			`/api/projects/${await projectSlugFor(db, team.id)}/connectors/ensure`,
+			`/api/projects/${await projectSlugFor(ctx.db, team.id)}/connectors/ensure`,
 			{
 				method: 'POST',
 				headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },

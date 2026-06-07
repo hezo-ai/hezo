@@ -1397,9 +1397,19 @@ describe('JobManager workflow methods', () => {
 		it('does not process agents with paused runtime status', async () => {
 			const manager = createJobManager();
 
-			// Pause the agent
+			// Park every other seeded agent (recent heartbeat) so this agent is the
+			// only one processScheduledHeartbeats would otherwise pick up — isolating
+			// the assertion to the paused agent.
 			await db.query(
-				"UPDATE member_agents SET runtime_status = 'paused', last_heartbeat_at = now() - interval '2 hours' WHERE id = $1",
+				'UPDATE member_agents SET last_heartbeat_at = now(), heartbeat_interval_min = 60 WHERE id != $1',
+				[agentId],
+			);
+			await db.query('DELETE FROM agent_wakeup_requests');
+			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
+
+			// Pause the agent (and make it otherwise due) — paused must win over due.
+			await db.query(
+				"UPDATE member_agents SET runtime_status = 'paused', last_heartbeat_at = now() - interval '2 hours', heartbeat_interval_min = 60 WHERE id = $1",
 				[agentId],
 			);
 
@@ -1407,6 +1417,12 @@ describe('JobManager workflow methods', () => {
 
 			// Task should NOT be launched for a paused agent
 			expect(manager.isMemberRunning(agentId)).toBe(false);
+			// And no heartbeat wakeup should have been enqueued for it.
+			const wakeups = await db.query<{ id: string }>(
+				`SELECT id FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'heartbeat'`,
+				[agentId],
+			);
+			expect(wakeups.rows.length).toBe(0);
 
 			// Restore runtime status
 			await db.query("UPDATE member_agents SET runtime_status = 'idle' WHERE id = $1", [agentId]);
@@ -1891,23 +1907,35 @@ describe('JobManager workflow methods', () => {
 			const manager = createJobManager();
 			await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
 
-			// Project B (sibling) with a task assigned to the same agent. We never
-			// dispatch on this one — we just need the row to exist so resolveProjectForTask
-			// returns a real project id that is distinct from project A.
-			const projectBRes = await createTestProject(db, teamId, {
+			// Project B lives in a SECOND team (a team owns exactly one project), so
+			// it is genuinely distinct from project A. We never dispatch on it — we just
+			// need a real, separate project id whose capacity we can check independently.
+			const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
+			const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
+			const teamBRes = await app.request('/api/teams', {
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ name: `Parallel Team ${Date.now()}`, template_id: typeId }),
+			});
+			const teamBId = (await teamBRes.json()).data.id;
+			const projectBRes = await createTestProject(db, teamBId, {
 				name: `Parallel Project ${Date.now()}`,
 				description: 'sibling project',
 			});
 			const projectBData = (await projectBRes.json()).data;
 			const projectBId = projectBData.id;
 			const projectBSlug = projectBData.slug;
+			const agentBRes = await app.request(`/api/projects/${projectBSlug}/agents`, {
+				headers: authHeader(token),
+			});
+			const agentBId = (await agentBRes.json()).data[0].id;
 			const taskBRes = await app.request(`/api/projects/${projectBSlug}/tasks`, {
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					project_id: projectBId,
 					title: 'Task in sibling project',
-					assignee_id: agentId,
+					assignee_id: agentBId,
 				}),
 			});
 			const taskBId = (await taskBRes.json()).data.id;
@@ -1933,8 +1961,10 @@ describe('JobManager workflow methods', () => {
 
 			manager.shutdown();
 			await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
-			await db.query('DELETE FROM tasks WHERE id = $1', [taskBId]);
-			await db.query('DELETE FROM projects WHERE id = $1', [projectBId]);
+			// Project B lives in its own team, so it cannot interfere with project A's
+			// tests; the whole context is torn down in afterAll. Leave its rows in place
+			// rather than untangle the team/agent/planning-task FK chain.
+			void taskBId;
 		});
 	});
 });

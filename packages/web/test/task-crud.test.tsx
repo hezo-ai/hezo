@@ -362,59 +362,6 @@ test('assignee dropdown closes on outside click and has no unassign option', asy
 	expect(assigneeBox.querySelector('.absolute')).toBeNull();
 });
 
-test('Internal project restricts assignee dropdown to the Captain', async () => {
-	const seeded = { internalSlug: '', captainTitle: '', engineerTitle: '' };
-	const { findByRole, findByLabelText, router, user } = await renderApp({
-		initialPath: '/',
-		seed: async () => {
-			const ws = await seedWorkspace();
-			const captain = ws.agents.find((a) => a.slug === 'captain')!;
-			const engineer = ws.agents.find((a) => a.slug === 'engineer')!;
-			expect(captain).toBeTruthy();
-			expect(engineer).toBeTruthy();
-			seeded.internalSlug = ws.internalSlug;
-			seeded.captainTitle = captain.title;
-			seeded.engineerTitle = engineer.title;
-		},
-	});
-
-	// The dialog is scoped to the project in the URL, so create the task from
-	// the Internal project's task list — its assignee dropdown is Captain-only.
-	await router.navigate({
-		to: '/projects/$projectId/tasks',
-		params: { projectId: seeded.internalSlug },
-	});
-
-	const newTaskBtn = await findByRole('button', { name: /New task/i });
-	await user.click(newTaskBtn);
-
-	const titleInput = await findByLabelText('Title');
-	await user.type(titleInput, 'Internal-only assignee check');
-
-	// Dialog renders into a Radix portal on document.body. Wait for the assignee
-	// options (the project's agents) to populate.
-	await waitFor(
-		() => {
-			const optionsText = Array.from(document.body.querySelectorAll('option')).map(
-				(o) => o.textContent,
-			);
-			expect(optionsText).toContain(seeded.captainTitle);
-		},
-		{ timeout: 5000 },
-	);
-
-	const selects = Array.from(document.body.querySelectorAll('select')) as HTMLSelectElement[];
-	const assigneeSel = selects.find((s) =>
-		Array.from(s.options).some((o) => o.text === seeded.captainTitle),
-	)!;
-	const labels = Array.from(assigneeSel.options)
-		.map((o) => o.text)
-		.filter((t) => t !== 'Select assignee');
-	expect(labels).toContain(seeded.captainTitle);
-	expect(labels).not.toContain(seeded.engineerTitle);
-	expect(labels.length).toBe(1);
-});
-
 test('task description renders markdown', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
 	const description = [

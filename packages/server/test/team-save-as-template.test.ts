@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, projectSlugFor } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -25,8 +25,10 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-// Returns the team's internal project slug — the public handle for the team's
-// team-wide endpoints (agents, save-as-template, apply-type).
+// Creates a team and returns the slug of its single project — the public handle
+// for the team-wide endpoints (agents, save-as-template, apply-type). `POST
+// /api/teams` no longer creates a project, so we materialize the team's one
+// project here (idempotently) and address everything through it.
 async function createTeam(name: string, templateId?: string): Promise<string> {
 	const res = await app.request('/api/teams', {
 		method: 'POST',
@@ -34,7 +36,8 @@ async function createTeam(name: string, templateId?: string): Promise<string> {
 		body: JSON.stringify(templateId ? { name, template_id: templateId } : { name }),
 	});
 	expect(res.status).toBe(201);
-	return `internal-${(await res.json()).data.slug as string}`;
+	const teamId = (await res.json()).data.id as string;
+	return projectSlugFor(db, teamId);
 }
 
 async function agentSlugs(projectSlug: string): Promise<string[]> {
@@ -51,7 +54,7 @@ describe('save team as a type (template snapshot)', () => {
 		const sourceSlugs = await agentSlugs(source);
 		expect(sourceSlugs).toContain('captain');
 		expect(sourceSlugs).toContain('engineer');
-		expect(sourceSlugs).toHaveLength(11);
+		expect(sourceSlugs).toHaveLength(10);
 
 		// Snapshot the live team into a new custom type.
 		const saveRes = await app.request(`/api/projects/${source}/save-as-template`, {
@@ -70,7 +73,7 @@ describe('save team as a type (template snapshot)', () => {
 		});
 		const tpl = (await tplRes.json()).data;
 		expect(tpl.name).toBe('My Saved Org');
-		expect(tpl.agent_types).toHaveLength(11);
+		expect(tpl.agent_types).toHaveLength(10);
 
 		// Reporting structure round-trips (architect reports to the captain).
 		const architect = await db.query<{ reports_to_slug: string | null }>(
@@ -99,8 +102,8 @@ describe('save team as a type (template snapshot)', () => {
 
 describe('apply a team type (refresh / merge)', () => {
 	it('merges a type onto an existing team — adds missing roles, keeps built-ins', async () => {
-		const team = await createTeam('Apply Type Co'); // no template → captain + coach
-		expect(await agentSlugs(team)).toEqual(['captain', 'coach']);
+		const team = await createTeam('Apply Type Co'); // no template → captain only
+		expect(await agentSlugs(team)).toEqual(['captain']);
 
 		const res = await app.request(`/api/projects/${team}/apply-type`, {
 			method: 'POST',
@@ -110,12 +113,11 @@ describe('apply a team type (refresh / merge)', () => {
 		expect(res.status).toBe(200);
 
 		const after = await agentSlugs(team);
-		// Merge is additive: built-ins preserved, Startup roles added.
+		// Merge is additive: the built-in Captain is preserved, Startup roles added.
 		expect(after).toContain('captain');
-		expect(after).toContain('coach');
 		expect(after).toContain('architect');
 		expect(after).toContain('engineer');
-		expect(after.length).toBeGreaterThan(2);
+		expect(after.length).toBeGreaterThan(1);
 	});
 
 	it('404s for an unknown type', async () => {

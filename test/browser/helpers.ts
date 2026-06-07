@@ -73,6 +73,27 @@ export async function clearAiProviders(page: Page, token: string) {
 }
 
 /**
+ * Resolve the single project slug backing a team (1:1 teams↔projects). Agent,
+ * task, and heartbeat-run endpoints are project-scoped, and a team's
+ * coordination lives entirely in its single project, so callers that only hold
+ * a team slug use this to reach the project-scoped routes.
+ */
+export async function resolveProjectSlugForTeam(
+	page: Page,
+	teamSlug: string,
+	token: string,
+): Promise<string> {
+	const res = await page.request.get('/api/projects', {
+		headers: { Authorization: `Bearer ${token}` },
+	});
+	const projects = ((await res.json()) as { data: Array<{ slug: string; team_slug: string }> })
+		.data;
+	const project = projects.find((p) => p.team_slug === teamSlug);
+	if (!project) throw new Error(`No project found for team '${teamSlug}'`);
+	return project.slug;
+}
+
+/**
  * Force-close a planning task by terminating any active Captain run, then
  * marking the task done. Retries because the wakeup cron can spin up a new
  * run between the terminate and the close.
@@ -80,11 +101,9 @@ export async function clearAiProviders(page: Page, token: string) {
 async function closePlanningTask(
 	page: Page,
 	projectSlug: string,
-	teamSlug: string,
 	taskId: string,
 	headers: Record<string, string>,
 ): Promise<void> {
-	const internalSlug = `internal-${teamSlug}`;
 	const deadline = Date.now() + 15_000;
 	let lastError = '';
 	while (Date.now() < deadline) {
@@ -99,7 +118,7 @@ async function closePlanningTask(
 
 		if (task.assignee_id) {
 			const runsRes = await page.request.get(
-				`/api/projects/${internalSlug}/agents/${task.assignee_id}/heartbeat-runs`,
+				`/api/projects/${projectSlug}/agents/${task.assignee_id}/heartbeat-runs`,
 				{ headers },
 			);
 			const runs =
@@ -112,7 +131,7 @@ async function closePlanningTask(
 				if (run.task_id !== taskId) continue;
 				if (run.status === 'queued' || run.status === 'running') {
 					await page.request.post(
-						`/api/projects/${internalSlug}/agents/${task.assignee_id}/heartbeat-runs/${run.id}/terminate`,
+						`/api/projects/${projectSlug}/agents/${task.assignee_id}/heartbeat-runs/${run.id}/terminate`,
 						{ headers },
 					);
 				}
@@ -131,60 +150,55 @@ async function closePlanningTask(
 }
 
 /**
- * Drive a project through the captain intake flow end-to-end:
- *   1. POST /projects to open the intake (creates pending approval + intake task).
- *   2. Resolve the approval as approved so the side-effect creates the project + planning task.
- *   3. Mark the auto-created planning task as done so it doesn't race agent runs.
+ * Create a project directly and clear its auto-created planning task.
  *
- * Tests that kick off agent runs on the Captain would otherwise race the
- * Captain's planning wakeup and see runs targeted at the planning task.
+ * Under the 1:1 teams↔projects model `POST /api/projects` stands up a *fresh
+ * team* plus its single project, a Captain planning task, and an initial CEO
+ * coherence task that blocks the planning task. The new project is therefore
+ * its OWN team — not a second project under any passed-in team. The leading
+ * `teamSlug` argument is retained for call-site compatibility but ignored; the
+ * returned project carries its own `team_slug`.
+ *
+ * The auto-created planning task is closed so tests that kick off their own
+ * agent runs don't race the Captain's planning wakeup.
  */
 export async function createProjectAndClearPlanning(
 	page: Page,
-	teamSlug: string,
+	_teamSlug: string,
 	token: string,
-	data: { name: string; description?: string; initial_prd?: string; task_prefix?: string },
+	data: {
+		name: string;
+		description?: string;
+		initial_prd?: string;
+		task_prefix?: string;
+		template_id?: string;
+	},
 ) {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	const internalSlug = `internal-${teamSlug}`;
-	const intakeRes = await page.request.post(`/api/projects/${internalSlug}/projects`, {
+	const projRes = await page.request.post(`/api/projects`, {
 		headers,
 		data: { description: 'Created via e2e helper.', ...data },
 	});
-	const intake = (
-		(await intakeRes.json()) as {
-			data: { approval_id: string };
-		}
-	).data;
-
-	await page.request.post(`/api/approvals/${intake.approval_id}/resolve`, {
-		headers,
-		data: { status: 'approved' },
-	});
-
-	const projectsRes = await page.request.get(`/api/projects`, { headers });
-	const allProjects = (
-		(await projectsRes.json()) as {
-			data: Array<{ id: string; slug: string; name: string; team_slug: string }>;
-		}
-	).data;
-	const project = allProjects.find((p) => p.name === data.name && p.team_slug === teamSlug);
-	if (!project) {
+	if (!projRes.ok()) {
 		throw new Error(
-			`createProjectAndClearPlanning: project '${data.name}' not found after approval`,
+			`createProjectAndClearPlanning: POST /api/projects failed — ${projRes.status()} ${await projRes.text()}`,
 		);
 	}
+	const project = (
+		(await projRes.json()) as {
+			data: {
+				id: string;
+				slug: string;
+				name: string;
+				team_id: string;
+				team_slug: string;
+				planning_task_id: string;
+			};
+		}
+	).data;
 
-	const tasksRes = await page.request.get(`/api/projects/${project.slug}/tasks`, {
-		headers,
-	});
-	const tasks = ((await tasksRes.json()) as { data: Array<{ id: string; labels: string[] }> }).data;
-	const planningTask = tasks.find((t) => (t.labels ?? []).includes('planning'));
-	if (!planningTask) {
-		throw new Error('createProjectAndClearPlanning: planning task not found after approval');
-	}
-	await closePlanningTask(page, project.slug, teamSlug, planningTask.id, headers);
-	const merged = { ...project, planning_task_id: planningTask.id };
+	await closePlanningTask(page, project.slug, project.planning_task_id, headers);
+	const merged = { ...project };
 	// Also expose a Response-like .json() / .ok() / .status so callers that hold
 	// the result as `projRes` can still do `(await projRes.json()).data` without
 	// changing every call site.
@@ -222,43 +236,25 @@ export async function createProjectReadyForAgents(
 	page: Page,
 	team: { id: string; slug: string },
 	token: string,
-	data: { name: string; description?: string },
+	data: { name: string; description?: string; template_id?: string },
 ) {
 	const project = await createProjectAndClearPlanning(page, team.slug, token, data);
 	await waitForProjectContainer(page, project.id, token);
-	await waitForCaptainIdle(page, team.slug, token);
+	await waitForCaptainIdle(page, project.team_slug, token);
 	return project;
 }
 
-/** Pin home/rail onboarding to a specific team (avoids stale sessionStorage from other tests). */
-export async function setActiveTeamSlug(page: Page, teamSlug: string) {
-	await page.evaluate((slug) => {
-		sessionStorage.setItem('hezo:activeTeamSlug', slug);
-	}, teamSlug);
-}
-
-/**
- * Close the single onboarding-intake ticket if one is open. Safe to call when no
- * intake exists (returns silently). In the new flow the ticket is only opened
- * on demand from the wizard chat path, so most tests never need this.
- */
-export async function closeOnboardingIntakeIfOpen(
+/** Resolve a team-type template id by display name (e.g. 'Startup', 'Blank'). */
+export async function getTemplateIdByName(
 	page: Page,
-	teamSlug: string,
 	token: string,
-): Promise<void> {
-	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	const internalSlug = `internal-${teamSlug}`;
-	const res = await page.request.get(`/api/projects/${internalSlug}/onboarding-intake`, {
-		headers,
+	name: string,
+): Promise<string | undefined> {
+	const res = await page.request.get('/api/team-templates', {
+		headers: { Authorization: `Bearer ${token}` },
 	});
-	if (!res.ok()) return;
-	const { task_id } = ((await res.json()) as { data: { task_id: string } }).data;
-	if (!task_id) return;
-	await page.request.patch(`/api/projects/${internalSlug}/tasks/${task_id}`, {
-		headers,
-		data: { status: 'done' },
-	});
+	const data = ((await res.json()) as { data: Array<{ id: string; name: string }> }).data;
+	return data.find((t) => t.name === name)?.id;
 }
 
 /**
@@ -279,10 +275,10 @@ export async function waitForAgentIdle(
 	// POST settle into the queue before we start polling.
 	await new Promise((r) => setTimeout(r, 1200));
 	const headers = { Authorization: `Bearer ${token}` };
-	const internalSlug = `internal-${teamSlug}`;
+	const projectSlug = await resolveProjectSlugForTeam(page, teamSlug, token);
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
-		const res = await page.request.get(`/api/projects/${internalSlug}/agents/${agentId}`, {
+		const res = await page.request.get(`/api/projects/${projectSlug}/agents/${agentId}`, {
 			headers,
 		});
 		const agent = ((await res.json()) as { data: { runtime_status: string } }).data;
@@ -300,58 +296,85 @@ export async function waitForCaptainIdle(
 	timeoutMs = 180_000,
 ): Promise<void> {
 	const headers = { Authorization: `Bearer ${token}` };
-	const res = await page.request.get(`/api/projects/internal-${teamSlug}/agents`, { headers });
+	const projectSlug = await resolveProjectSlugForTeam(page, teamSlug, token);
+	const res = await page.request.get(`/api/projects/${projectSlug}/agents`, { headers });
 	const agents = ((await res.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const captain = agents.find((a) => a.slug === 'captain');
 	if (!captain) throw new Error('Captain agent not found');
 	await waitForAgentIdle(page, teamSlug, captain.id, token, timeoutMs);
 }
 
+type CreatedProject = {
+	id: string;
+	slug: string;
+	name: string;
+	team_id: string;
+	team_slug: string;
+	planning_task_id: string;
+};
+
+/**
+ * Create a workspace: under 1:1 teams↔projects a "workspace" is a team WITH its
+ * single project. We provision both in one shot via `POST /api/projects` (which
+ * stands up a fresh team from the chosen template, plus its project + planning
+ * task), then close the planning task so it doesn't race agent runs. The Startup
+ * template seeds the full agent roster.
+ */
+async function createWorkspaceProject(
+	page: Page,
+	token: string,
+	opts: { templateName: string; namePrefix: string },
+): Promise<CreatedProject> {
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+	const templateId = await getTemplateIdByName(page, token, opts.templateName);
+	const uid = `${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+	const res = await page.request.post('/api/projects', {
+		headers,
+		data: {
+			name: `${opts.namePrefix} ${uid}`,
+			description: 'Created via e2e workspace helper.',
+			template_id: templateId,
+		},
+	});
+	if (!res.ok()) {
+		throw new Error(`createWorkspaceProject failed — ${res.status()} ${await res.text()}`);
+	}
+	const project = ((await res.json()) as { data: CreatedProject }).data;
+	await closePlanningTask(page, project.slug, project.planning_task_id, headers);
+	return project;
+}
+
 export async function createTeamWithAgents(page: Page) {
 	const token = await getToken(page);
-	const headers = { Authorization: `Bearer ${token}` };
 
 	await ensureAiProviderConfigured(page, token);
 
-	const typesRes = await page.request.get('/api/team-templates', { headers });
-	const types = await typesRes.json();
-	const typeId = (types as any).data.find((t: any) => t.name === 'Startup')?.id;
-
-	const uid = `${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
-	const teamRes = await page.request.post('/api/teams', {
-		headers,
-		data: {
-			name: `Test Co ${uid}`,
-			template_id: typeId,
-		},
+	const project = await createWorkspaceProject(page, token, {
+		templateName: 'Startup',
+		namePrefix: 'Test Co',
 	});
-	const team = ((await teamRes.json()) as any).data;
 
-	// The previous waitForCaptainIdle() here was draining Captain's coherence-review run,
-	// which the e2e server now skips via HEZO_E2E_SKIP_COHERENCE_REVIEW. Without that
-	// queue work Captain is already idle as soon as the team row commits, so no wait.
-
-	return { team, token };
+	const team = { id: project.team_id, slug: project.team_slug, name: project.name };
+	return { team, token, projectSlug: project.slug };
 }
 
 /**
- * Bare team without seeded agents or AI provider. Use for UI-only tests
- * that don't exercise agent or AI-provider behaviour — skips ~11-agent seeding.
+ * Lightweight workspace for UI-only tests: a team + project seeded from the
+ * Blank template (Captain only), skipping the full agent roster. Still a real
+ * 1:1 team↔project so project-scoped routes resolve.
  */
 export async function createTeamLight(page: Page) {
 	const token = await getToken(page);
-	const headers = { Authorization: `Bearer ${token}` };
 
 	await ensureAiProviderConfigured(page, token);
 
-	const uid = `${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
-	const teamRes = await page.request.post('/api/teams', {
-		headers,
-		data: { name: `Test Co Light ${uid}` },
+	const project = await createWorkspaceProject(page, token, {
+		templateName: 'Blank',
+		namePrefix: 'Test Co Light',
 	});
-	const team = ((await teamRes.json()) as any).data;
 
-	return { team, token };
+	const team = { id: project.team_id, slug: project.team_slug, name: project.name };
+	return { team, token, projectSlug: project.slug };
 }
 
 /** Drive the wizard's AI-provider step by entering a test API key. */

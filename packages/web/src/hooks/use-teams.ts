@@ -66,17 +66,6 @@ export function useUpdateTeam(projectId: string) {
 	});
 }
 
-export function useCreateTeam() {
-	const queryClient = useQueryClient();
-	return useMutation({
-		mutationFn: (vars: { name: string; description?: string; template_id?: string }) =>
-			api.post<Team>('/api/teams', vars),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['teams'] });
-		},
-	});
-}
-
 export interface SaveTeamAsTemplateResult {
 	template_id: string;
 	skipped_agents: string[];

@@ -1,21 +1,25 @@
+import { HQ_PROJECT_SLUG } from '@hezo/shared';
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedWorkspace } from './helpers/seed';
 
-test('sidebar exposes only Tasks and Container for the internal project', async () => {
-	const seeded = { projectSlug: '' };
+// HQ is the only internal project: the instance-wide coordination project that
+// hosts the CEO and Coach. Its slug is HQ_PROJECT_SLUG and `is_internal` is
+// true, so it gets the restricted sidebar, the coordination banner, and the
+// documents/settings redirects.
+
+test('sidebar exposes only Tasks and Container for the HQ project', async () => {
 	const { findAllByRole, queryAllByRole, container, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
-			const ws = await seedWorkspace();
-			seeded.projectSlug = ws.internalSlug;
+			await seedWorkspace();
 		},
 	});
 
 	await router.navigate({
 		to: '/projects/$projectId/tasks',
-		params: { projectId: seeded.projectSlug },
+		params: { projectId: HQ_PROJECT_SLUG },
 	});
 
 	// Wait for the project-scoped nav (incl. Container link, which only
@@ -29,22 +33,20 @@ test('sidebar exposes only Tasks and Container for the internal project', async 
 	// Documents/Assets are dropped once the index resolves the project as internal.
 	await waitFor(() => expect(queryAllByRole('link', { name: 'Documents' }).length).toBe(0));
 
-	// No settings link pointing at the internal project.
+	// No settings link pointing at the HQ project.
 	const settingsLinks = queryAllByRole('link', { name: 'Settings' });
 	for (const link of settingsLinks) {
 		const href = link.getAttribute('href') ?? '';
-		expect(href.includes(`/projects/${seeded.projectSlug}/settings`)).toBe(false);
+		expect(href.includes(`/projects/${HQ_PROJECT_SLUG}/settings`)).toBe(false);
 	}
 	expect(container.querySelector('nav')).toBeTruthy();
 });
 
-test('banner appears on internal-project landing pages', async () => {
-	const seeded = { projectSlug: '' };
+test('banner appears on HQ landing pages', async () => {
 	const { findByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
-			const ws = await seedWorkspace();
-			seeded.projectSlug = ws.internalSlug;
+			await seedWorkspace();
 		},
 	});
 
@@ -53,38 +55,36 @@ test('banner appears on internal-project landing pages', async () => {
 
 	await router.navigate({
 		to: '/projects/$projectId/tasks',
-		params: { projectId: seeded.projectSlug },
+		params: { projectId: HQ_PROJECT_SLUG },
 	});
 	await findByText(bannerCopy, undefined, { timeout: 10_000 });
 
 	await router.navigate({
 		to: '/projects/$projectId/container',
-		params: { projectId: seeded.projectSlug },
+		params: { projectId: HQ_PROJECT_SLUG },
 	});
 	await findByText(bannerCopy, undefined, { timeout: 10_000 });
 });
 
 test('direct navigation to /documents and /settings redirects to /tasks', async () => {
-	const seeded = { projectSlug: '' };
 	const { router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
-			const ws = await seedWorkspace();
-			seeded.projectSlug = ws.internalSlug;
+			await seedWorkspace();
 		},
 	});
 
 	await router.navigate({
 		to: '/projects/$projectId/documents',
-		params: { projectId: seeded.projectSlug },
+		params: { projectId: HQ_PROJECT_SLUG },
 	});
 	await new Promise((r) => setTimeout(r, 200));
-	expect(router.state.location.pathname).toBe(`/projects/${seeded.projectSlug}/tasks`);
+	expect(router.state.location.pathname).toBe(`/projects/${HQ_PROJECT_SLUG}/tasks`);
 
 	await router.navigate({
 		to: '/projects/$projectId/settings',
-		params: { projectId: seeded.projectSlug },
+		params: { projectId: HQ_PROJECT_SLUG },
 	});
 	await new Promise((r) => setTimeout(r, 200));
-	expect(router.state.location.pathname).toBe(`/projects/${seeded.projectSlug}/tasks`);
+	expect(router.state.location.pathname).toBe(`/projects/${HQ_PROJECT_SLUG}/tasks`);
 });

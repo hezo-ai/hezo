@@ -27,9 +27,9 @@ It hosts exactly two agents, both instance-level singletons:
 
 - **CEO** — one per instance. Oversees every project-team's Captain (cross-team
   `reports_to`). The CEO runs **all coordination**:
-  - **Project intake** and **first-run onboarding** — these happen *before* a project's
-    team exists, so they live in the **HQ project** and are CEO-driven. On approval the
-    project, its team, and its Captain are created.
+  - **Project intake** and **first-run onboarding** — the CEO-assisted creation
+    conversation lives in the **HQ project** and is CEO-driven. The project's team and
+    Captain are stood up when the intake opens; the project itself is created on approval.
   - **Per-team setup / coherence review / hiring** — these concern a specific
     project-team and live in **that team's own project**, actioned by the CEO. On a
     brand-new team the CEO's initial coherence/setup pass runs first; the Captain's
@@ -65,12 +65,26 @@ operates as a run-team-scoped agent.
 | Coach review of completed work | the completed task's project | Coach (cross-team) |
 | Actual project work (planning, tickets) | the project-team's own project | its Captain + roster |
 
-## Creation flow
+## Creation flows
 
-"Create a project" (`POST /api/projects`, superuser) opens a **CEO-run intake** ticket
-in HQ with a pending `project_creation` approval. On approval the server creates the
-team, its single project, the Captain, the initial coherence/setup task (CEO), and the
-planning task (Captain, blocked on coherence), then closes the intake.
+There are exactly two ways to create a project; both stand up the project's own
+team from a team-type template (default **Blank** = Captain only).
+
+1. **Direct** — `POST /api/projects` (superuser). Creates the team, its single
+   project, the Captain, the initial coherence/setup task (CEO), and the planning
+   task (Captain, blocked on the coherence task) in one step. Returns the project
+   plus `planning_task_id` / `planning_task_identifier`. No approval gate.
+
+2. **CEO-assisted** — `POST /api/project-intakes` (superuser). Stands up the team
+   and opens a CEO-run **intake conversation in the HQ project** with a pending
+   `project_creation` approval; no project exists yet. The CEO scopes the work with
+   the operator, then asks for approval. On approval the server creates the team's
+   single project, the initial coherence/setup task (CEO), and the planning task
+   (Captain, blocked on coherence), and closes the intake. `GET /api/project-intakes`
+   returns the open intake for the home/welcome view.
+
+Both the first-run welcome and the ongoing "new project with the CEO" use flow 2's
+intake in HQ. The old per-team onboarding/onboarding-intake machinery is gone.
 
 ## Key source
 

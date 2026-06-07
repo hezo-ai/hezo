@@ -1,9 +1,10 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { HQ_PROJECT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, projectSlugFor } from './helpers/app';
+import { authHeader, createTestApp, createTestProject } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -166,34 +167,12 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 		expect(dup.status).toBe(409);
 	});
 
-	it('bootstrap: with no Captain, creates the agent enabled without an approval', async () => {
-		const typesRes = await app.request('/api/team-templates', {
-			headers: authHeader(token),
-		});
-		const typeId = (await typesRes.json()).data.find(
-			(t: Record<string, unknown>) => t.name === 'Startup',
-		).id;
-
-		const bareRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'No Captain Co', template_id: typeId }),
-		});
-		const bareTeamData = (await bareRes.json()).data;
-		const bareInternalSlug = `${await projectSlugFor(db, bareTeamData.id)}`;
-
-		// Disable the Captain so hasCaptain becomes false
-		const agentsRes = await app.request(`/api/projects/${bareInternalSlug}/agents`, {
-			headers: authHeader(token),
-		});
-		const agents = (await agentsRes.json()).data;
-		const captain = agents.find((a: Record<string, unknown>) => a.slug === 'captain');
-		await app.request(`/api/projects/${bareInternalSlug}/agents/${captain.id}/disable`, {
-			method: 'POST',
-			headers: authHeader(token),
-		});
-
-		const res = await app.request(`/api/projects/${bareInternalSlug}/agents/onboard`, {
+	it('bootstrap: with no team-coordination context, creates the agent enabled without an approval', async () => {
+		// Bootstrap fires when the project's team has no team-coordination context
+		// (no non-internal project to host a hire ticket). HQ is the one such team:
+		// it owns only the internal project and has no Captain, so onboarding there
+		// materializes the agent directly instead of opening a hire approval.
+		const res = await app.request(`/api/projects/${HQ_PROJECT_SLUG}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Solo Agent', role_description: 'Works independently' }),
@@ -248,7 +227,6 @@ describe('seeded agent system prompts', () => {
 			'marketing-lead',
 			'researcher',
 			'security-engineer',
-			'coach',
 		];
 
 		const getPrompt = async (agentId: string): Promise<string> => {

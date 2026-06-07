@@ -9,8 +9,8 @@ import {
 	authHeader,
 	createTestApp,
 	createTestProject,
+	instanceCoachId,
 	mintAgentToken,
-	projectSlugFor,
 	projectSlugForTeamSlug,
 } from './helpers/app';
 
@@ -57,11 +57,8 @@ beforeAll(async () => {
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
 
-	const agentsRes = await app.request(`/api/projects/${await projectSlugFor(db, teamId)}/agents`, {
-		headers: authHeader(token),
-	});
-	agentId = (await agentsRes.json()).data[0].id;
-
+	// 1:1 model — the team's single project is created first, then everything
+	// (agents lookup, tasks) is addressed through it.
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Test Project',
 		description: 'Test project.',
@@ -69,6 +66,11 @@ beforeAll(async () => {
 	const projectData = (await projectRes.json()).data;
 	projectId = projectData.id;
 	projectSlug = projectData.slug;
+
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
+		headers: authHeader(token),
+	});
+	agentId = (await agentsRes.json()).data[0].id;
 
 	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
@@ -336,16 +338,6 @@ describe('MCP tool handlers: data queries via DB', () => {
 		expect(names).toContain('Test Project');
 	});
 
-	it('create_project inserts correctly', async () => {
-		const r = await db.query(
-			"INSERT INTO projects (team_id, name, slug, task_prefix, description) VALUES ($1, 'MCP Project', 'mcp-project', 'MCPP', 'test') RETURNING *",
-			[teamId],
-		);
-		expect(r.rows.length).toBe(1);
-		expect((r.rows[0] as any).name).toBe('MCP Project');
-		expect((r.rows[0] as any).task_prefix).toBe('MCPP');
-	});
-
 	it('list_approvals returns pending approvals', async () => {
 		// Create a pending approval
 		await db.query(
@@ -461,13 +453,7 @@ describe('MCP endpoint: tool call integration', () => {
 			assignee_id: agentId,
 		})) as { id: string };
 
-		const coachRow = await db.query<{ id: string }>(
-			`SELECT ma.id FROM member_agents ma
-			 JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1 AND ma.slug = 'coach'`,
-			[teamId],
-		);
-		const coachId = coachRow.rows[0].id;
+		const coachId = await instanceCoachId(db);
 		const { token: coachToken } = await mintAgentToken(db, masterKeyManager, coachId, teamId);
 
 		const res = await app.request('/mcp', {
@@ -1094,36 +1080,7 @@ describe('MCP tool: set_agent_team_context and get_agent_team_context', () => {
 	});
 });
 
-describe('MCP tool: Internal project assignee restriction', () => {
-	it('create_task on Internal project rejects non-Captain assignee_slug', async () => {
-		const ops = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
-			[teamId],
-		);
-		const result = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: ops.rows[0].id,
-			title: 'Internal via MCP with non-Captain',
-			assignee_slug: 'engineer',
-		})) as { error?: string };
-		expect(result.error).toContain('Captain');
-	});
-
-	it('create_task on Internal project accepts Captain assignee_slug', async () => {
-		const ops = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
-			[teamId],
-		);
-		const result = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: ops.rows[0].id,
-			title: 'Internal via MCP with Captain',
-			assignee_slug: 'captain',
-		})) as { error?: string; id?: string; project_id?: string };
-		expect(result.error).toBeUndefined();
-		expect(result.project_id).toBe(ops.rows[0].id);
-	});
-
+describe('MCP tool: create_task sub-task depth', () => {
 	it('create_task caps sub-task depth at 2', async () => {
 		const root = (await callToolViaMcp('create_task', {
 			team_id: teamId,
@@ -1159,32 +1116,6 @@ describe('MCP tool: Internal project assignee restriction', () => {
 			parent_task_id: subSub.id,
 		})) as { error?: string };
 		expect(tooDeep.error).toMatch(/2 levels deep/);
-	});
-
-	it('update_task rejects reassigning Internal task to non-Captain', async () => {
-		const ops = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
-			[teamId],
-		);
-		const captain = await db.query<{ id: string }>(
-			`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
-			[teamId],
-		);
-
-		const created = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: ops.rows[0].id,
-			title: 'Internal reassign target',
-			assignee_id: captain.rows[0].id,
-		})) as { id: string };
-
-		const result = (await callToolViaMcp('update_task', {
-			team_id: teamId,
-			task_id: created.id,
-			assignee_id: agentId,
-		})) as { error?: string };
-		expect(result.error).toContain('Captain');
 	});
 });
 
