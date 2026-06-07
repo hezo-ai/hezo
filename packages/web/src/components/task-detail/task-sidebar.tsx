@@ -14,6 +14,7 @@ import type { Comment } from '../../hooks/use-comments';
 import type { ExecutionLockState } from '../../hooks/use-execution-locks';
 import { useQueuedWakeups } from '../../hooks/use-queued-wakeups';
 import type { Task, useUpdateTask } from '../../hooks/use-tasks';
+import { AgentLink } from '../agent-link';
 import { AgentStatusLabel } from '../agent-status-label';
 import { Button } from '../ui/button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
@@ -90,6 +91,7 @@ export function TaskSidebar({
 				<AgentQueueSection
 					projectId={projectId}
 					taskId={task.id}
+					agents={agents}
 					locks={lock?.locks ?? []}
 					comments={comments ?? []}
 					wakeups={queued?.wakeups ?? []}
@@ -119,11 +121,26 @@ export function TaskSidebar({
 					</span>
 					{task.has_active_run ? (
 						<div className="flex items-center gap-1 w-full text-[13px] text-text px-1 py-0.5">
-							<AgentStatusLabel
-								name={assignedAgent?.title ?? '—'}
-								runtimeStatus={AgentRuntimeStatus.Active}
-								className="flex-1 min-w-0"
-							/>
+							{assignedAgent ? (
+								<AgentLink
+									projectId={projectId}
+									agentId={assignedAgent.slug}
+									className="flex flex-1 min-w-0 items-center hover:text-accent-blue-text transition-colors"
+									testId="task-assignee-link"
+								>
+									<AgentStatusLabel
+										name={assignedAgent.title}
+										runtimeStatus={AgentRuntimeStatus.Active}
+										className="min-w-0"
+									/>
+								</AgentLink>
+							) : (
+								<AgentStatusLabel
+									name="—"
+									runtimeStatus={AgentRuntimeStatus.Active}
+									className="flex-1 min-w-0"
+								/>
+							)}
 							<InfoTooltip
 								content="Cannot change assignee while an agent is running on this task"
 								label="Assignee locked: agent is running"
@@ -131,20 +148,40 @@ export function TaskSidebar({
 						</div>
 					) : (
 						<>
-							<button
-								type="button"
-								onClick={() => setAssigneeOpen((o) => !o)}
-								className="flex items-center gap-1 w-full text-left text-[13px] text-text rounded-radius-md hover:bg-bg-subtle px-1 py-0.5 transition-colors"
-							>
-								<AgentStatusLabel
-									name={assignedAgent?.title ?? '—'}
-									runtimeStatus={AgentRuntimeStatus.Idle}
-									className="flex-1 min-w-0"
-								/>
-								<ChevronDown
-									className={`w-3.5 h-3.5 text-text-subtle shrink-0 transition-transform ${assigneeOpen ? 'rotate-180' : ''}`}
-								/>
-							</button>
+							<div className="flex items-center gap-1 w-full text-[13px] text-text px-1 py-0.5">
+								{assignedAgent ? (
+									<AgentLink
+										projectId={projectId}
+										agentId={assignedAgent.slug}
+										className="flex flex-1 min-w-0 items-center hover:text-accent-blue-text transition-colors"
+										testId="task-assignee-link"
+									>
+										<AgentStatusLabel
+											name={assignedAgent.title}
+											runtimeStatus={AgentRuntimeStatus.Idle}
+											className="min-w-0"
+										/>
+									</AgentLink>
+								) : (
+									<span className="flex flex-1 min-w-0 items-center">
+										<AgentStatusLabel
+											name="—"
+											runtimeStatus={AgentRuntimeStatus.Idle}
+											className="min-w-0"
+										/>
+									</span>
+								)}
+								<button
+									type="button"
+									onClick={() => setAssigneeOpen((o) => !o)}
+									aria-label="Change assignee"
+									className="shrink-0 rounded-radius-md hover:bg-bg-subtle p-1 transition-colors"
+								>
+									<ChevronDown
+										className={`w-3.5 h-3.5 text-text-subtle transition-transform ${assigneeOpen ? 'rotate-180' : ''}`}
+									/>
+								</button>
+							</div>
 							{assigneeOpen && (
 								<div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-radius-md border border-border bg-bg shadow-md max-h-48 overflow-y-auto">
 									{assigneeOptions?.map((a) => (

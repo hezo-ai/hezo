@@ -7,7 +7,7 @@
 import { expect, test } from './fixtures';
 import { createProjectAndClearPlanning, uniqueName, waitForPageLoad } from './helpers';
 
-test('Agent Queue running row links the agent name to its run comment and scrolls into view', async ({
+test('Agent Queue running row links the name to the agent page and the run indicator scrolls to the run comment', async ({
 	sharedPage: page,
 	sharedWorkspace,
 }) => {
@@ -26,6 +26,7 @@ test('Agent Queue running row links the agent name to its run comment and scroll
 	).data;
 	const agent = (projectAgents.find((a) => a.slug === 'captain') ?? projectAgents[0]) as {
 		id: string;
+		slug: string;
 		title: string;
 	};
 
@@ -98,12 +99,17 @@ test('Agent Queue running row links the agent name to its run comment and scroll
 	const agentQueue = page.getByTestId('agent-queue-section');
 	await expect(agentQueue).toBeVisible({ timeout: 15000 });
 
-	const link = agentQueue.getByRole('link', { name: agent.title });
-	await expect(link).toHaveAttribute('href', `#comment-${commentId}`);
+	// The agent name navigates to the agent's profile page.
+	const nameLink = agentQueue.getByRole('link', { name: agent.title });
+	await expect(nameLink).toHaveAttribute('href', `/projects/${project.slug}/agents/${agent.slug}`);
+
+	// The running indicator jumps to — and scrolls in — the live run comment.
+	const runLink = agentQueue.getByRole('link', { name: 'Jump to run' });
+	await expect(runLink).toHaveAttribute('href', `#comment-${commentId}`);
 
 	const targetComment = page.locator(`#comment-${commentId}`);
 	await expect(targetComment).not.toBeInViewport();
 
-	await link.click();
+	await runLink.click();
 	await expect(targetComment).toBeInViewport({ timeout: 15000 });
 });
