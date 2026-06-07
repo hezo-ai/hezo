@@ -1,10 +1,12 @@
 import { Loader2, Play, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import type { Agent } from '../../hooks/use-agents';
 import { useCancelQueuedWakeup } from '../../hooks/use-cancel-queued-wakeup';
 import type { ExecutionLock } from '../../hooks/use-execution-locks';
 import type { QueuedDispatchState, QueuedWakeup } from '../../hooks/use-queued-wakeups';
 import { useRunQueuedWakeup } from '../../hooks/use-run-queued-wakeup';
 import { useTerminateRun } from '../../hooks/use-terminate-run';
+import { AgentLink } from '../agent-link';
 import { ConfirmDialog } from '../ui/confirm-dialog';
 import { Tooltip } from '../ui/tooltip';
 
@@ -16,6 +18,9 @@ type RunCommentRef = { id: string; content_type: string; content: unknown };
 interface AgentQueueSectionProps {
 	projectId: string;
 	taskId: string;
+	/** Team roster, used to resolve a member id to its slug for the agent-page
+	 * link. Agents not in this list (cross-team CEO / Coach) render unlinked. */
+	agents?: Agent[];
 	locks: ExecutionLock[];
 	comments: RunCommentRef[];
 	wakeups: QueuedWakeup[];
@@ -31,12 +36,16 @@ interface AgentQueueSectionProps {
 export function AgentQueueSection({
 	projectId,
 	taskId,
+	agents,
 	locks,
 	comments,
 	wakeups,
 	dispatch,
 }: AgentQueueSectionProps) {
 	if (locks.length === 0 && wakeups.length === 0) return null;
+
+	const slugByMemberId = new Map<string, string>();
+	for (const a of agents ?? []) slugByMemberId.set(a.id, a.slug);
 
 	// Map each running agent to its current run via the run comment, which is the
 	// only place the heartbeat run id surfaces to the client. Iterate in order so
@@ -67,6 +76,7 @@ export function AgentQueueSection({
 						projectId={projectId}
 						taskId={taskId}
 						lock={lock}
+						agentSlug={slugByMemberId.get(lock.member_id)}
 						run={runByMemberId.get(lock.member_id)}
 					/>
 				))}
@@ -78,6 +88,7 @@ export function AgentQueueSection({
 								projectId={projectId}
 								taskId={taskId}
 								wakeup={w}
+								agentSlug={slugByMemberId.get(w.member_id)}
 								dispatch={dispatch}
 							/>
 						))}
@@ -92,11 +103,13 @@ function RunningAgentRow({
 	projectId,
 	taskId,
 	lock,
+	agentSlug,
 	run,
 }: {
 	projectId: string;
 	taskId: string;
 	lock: ExecutionLock;
+	agentSlug: string | undefined;
 	run: { runId: string; commentId: string } | undefined;
 }) {
 	const [open, setOpen] = useState(false);
@@ -115,34 +128,46 @@ function RunningAgentRow({
 			data-testid={`running-agent-${lock.member_id}`}
 			className="flex items-center justify-between gap-2 text-[13px] text-text"
 		>
-			{run ? (
-				<a
-					href={`#comment-${run.commentId}`}
-					onClick={(e) => {
-						// Drive scroll via the hash so the task page's hashchange handler can
-						// ask Virtuoso to mount and scroll to the row even when it isn't
-						// currently in the DOM (scrollIntoView alone fails for off-screen
-						// virtualized rows).
-						e.preventDefault();
-						const next = `#comment-${run.commentId}`;
-						if (window.location.hash === next) {
-							window.dispatchEvent(new HashChangeEvent('hashchange'));
-						} else {
-							window.history.pushState(null, '', next);
-							window.dispatchEvent(new HashChangeEvent('hashchange'));
-						}
-					}}
+			{agentSlug ? (
+				<AgentLink
+					projectId={projectId}
+					agentId={agentSlug}
 					className="text-accent-blue-text font-medium hover:underline truncate min-w-0"
+					testId={`running-agent-link-${lock.member_id}`}
 				>
 					{lock.member_name}
-				</a>
+				</AgentLink>
 			) : (
 				<span className="text-accent-blue-text font-medium truncate min-w-0">
 					{lock.member_name}
 				</span>
 			)}
 			<div className="flex items-center gap-1 shrink-0">
-				<Loader2 className="w-3.5 h-3.5 animate-spin text-accent-blue" aria-label="Running" />
+				{run ? (
+					<Tooltip content="Jump to run">
+						<a
+							href={`#comment-${run.commentId}`}
+							onClick={(e) => {
+								// Drive scroll via the hash so the task page's hashchange handler
+								// can ask Virtuoso to mount and scroll to the row even when it
+								// isn't currently in the DOM (scrollIntoView alone fails for
+								// off-screen virtualized rows).
+								e.preventDefault();
+								const next = `#comment-${run.commentId}`;
+								if (window.location.hash !== next) {
+									window.history.pushState(null, '', next);
+								}
+								window.dispatchEvent(new HashChangeEvent('hashchange'));
+							}}
+							aria-label="Jump to run"
+							className="inline-flex items-center justify-center h-6 w-6 rounded-radius-md hover:bg-bg-subtle transition-colors"
+						>
+							<Loader2 className="w-3.5 h-3.5 animate-spin text-accent-blue" />
+						</a>
+					</Tooltip>
+				) : (
+					<Loader2 className="w-3.5 h-3.5 animate-spin text-accent-blue" aria-label="Running" />
+				)}
 				{run && (
 					<Tooltip content="Terminate run">
 						<button
@@ -193,11 +218,13 @@ function QueuedAgentRow({
 	projectId,
 	taskId,
 	wakeup,
+	agentSlug,
 	dispatch,
 }: {
 	projectId: string;
 	taskId: string;
 	wakeup: QueuedWakeup;
+	agentSlug: string | undefined;
 	dispatch: QueuedDispatchState;
 }) {
 	const [open, setOpen] = useState(false);
@@ -210,7 +237,18 @@ function QueuedAgentRow({
 			data-testid={`queued-agent-${wakeup.id}`}
 			className="flex items-center justify-between gap-2 text-[13px] text-text"
 		>
-			<span className="truncate min-w-0">{wakeup.member_name}</span>
+			{agentSlug ? (
+				<AgentLink
+					projectId={projectId}
+					agentId={agentSlug}
+					className="truncate min-w-0 hover:text-accent-blue-text transition-colors"
+					testId={`queued-agent-link-${wakeup.id}`}
+				>
+					{wakeup.member_name}
+				</AgentLink>
+			) : (
+				<span className="truncate min-w-0">{wakeup.member_name}</span>
+			)}
 			<div className="flex items-center gap-1 shrink-0">
 				{blockReason ? (
 					// aria-disabled (not the native `disabled` attribute) keeps the button
