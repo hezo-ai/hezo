@@ -12,7 +12,9 @@ let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
+let teamSlug: string;
 let projectId: string;
+let projectSlug: string;
 let taskId: string;
 let agentId: string;
 let agentToken: string;
@@ -29,29 +31,33 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Cred Co' }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const team = (await teamRes.json()).data;
+	teamId = team.id;
+	teamSlug = team.slug;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Main',
 		description: 'Main project.',
 	});
-	projectId = (await projectRes.json()).data.id;
+	const project = (await projectRes.json()).data;
+	projectId = project.id;
+	projectSlug = project.slug;
 
-	const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentRes = await app.request(`/api/projects/internal-${teamSlug}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Cred Agent' }),
 	});
 	agentId = (await agentRes.json()).data.id;
 
-	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ project_id: projectId, title: 'Need creds', assignee_id: agentId }),
 	});
 	taskId = (await taskRes.json()).data.id;
 
-	const minted = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+	const minted = await mintAgentToken(db, masterKeyManager, agentId, teamId, taskId);
 	agentToken = minted.token;
 });
 
@@ -181,7 +187,7 @@ describe('fulfill-credential endpoint', () => {
 	it('stores the value encrypted and grants access to the requesting agent', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
 		const res = await app.request(
-			`/api/teams/${teamId}/tasks/${taskId}/comments/${credentialCommentId}/fulfill-credential`,
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${credentialCommentId}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -231,7 +237,7 @@ describe('fulfill-credential endpoint', () => {
 
 	it('rejects fulfilling the same comment twice', async () => {
 		const res = await app.request(
-			`/api/teams/${teamId}/tasks/${taskId}/comments/${credentialCommentId}/fulfill-credential`,
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${credentialCommentId}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -244,7 +250,7 @@ describe('fulfill-credential endpoint', () => {
 	});
 
 	it('rejects fulfill on a non-credential-request comment', async () => {
-		const textRes = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+		const textRes = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content_type: 'text', content: { text: 'not a creq' } }),
@@ -252,7 +258,7 @@ describe('fulfill-credential endpoint', () => {
 		const textComment = (await textRes.json()).data;
 
 		const res = await app.request(
-			`/api/teams/${teamId}/tasks/${taskId}/comments/${textComment.id}/fulfill-credential`,
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${textComment.id}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -274,7 +280,7 @@ describe('fulfill-credential endpoint', () => {
 		})) as { comment_id: string };
 
 		const res = await app.request(
-			`/api/teams/${teamId}/tasks/${taskId}/comments/${reqResult.comment_id}/fulfill-credential`,
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${reqResult.comment_id}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -296,7 +302,7 @@ describe('fulfill-credential endpoint', () => {
 		})) as { comment_id: string };
 
 		const res = await app.request(
-			`/api/teams/${teamId}/tasks/${taskId}/comments/${reqResult.comment_id}/fulfill-credential`,
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${reqResult.comment_id}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -317,7 +323,7 @@ describe('fulfill-credential endpoint', () => {
 		})) as { comment_id: string };
 
 		const res = await app.request(
-			`/api/teams/${teamId}/tasks/${taskId}/comments/${reqResult.comment_id}/fulfill-credential`,
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${reqResult.comment_id}/fulfill-credential`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },

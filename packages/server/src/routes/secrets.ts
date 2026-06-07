@@ -216,7 +216,7 @@ secretsRoutes.delete('/secrets/:secretId', async (c) => {
  * never been substituted on an outbound request — useful for spotting
  * stale credentials safe to revoke.
  */
-secretsRoutes.get('/teams/:teamId/credentials', async (c) => {
+secretsRoutes.get('/projects/:projectId/credentials', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
@@ -250,7 +250,7 @@ secretsRoutes.get('/teams/:teamId/credentials', async (c) => {
 	return ok(c, result.rows);
 });
 
-secretsRoutes.get('/teams/:teamId/secrets', async (c) => {
+secretsRoutes.get('/projects/:projectId/secrets', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const projectId = c.req.query('project_id');
@@ -275,7 +275,7 @@ secretsRoutes.get('/teams/:teamId/secrets', async (c) => {
 	return ok(c, result.rows);
 });
 
-secretsRoutes.post('/teams/:teamId/secrets', async (c) => {
+secretsRoutes.post('/projects/:projectId/secrets', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
@@ -337,7 +337,7 @@ secretsRoutes.post('/teams/:teamId/secrets', async (c) => {
 	return ok(c, result.rows[0], 201);
 });
 
-secretsRoutes.patch('/teams/:teamId/secrets/:secretId', async (c) => {
+secretsRoutes.patch('/projects/:projectId/secrets/:secretId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const secretId = c.req.param('secretId');
@@ -416,7 +416,7 @@ secretsRoutes.patch('/teams/:teamId/secrets/:secretId', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-secretsRoutes.delete('/teams/:teamId/secrets/:secretId', async (c) => {
+secretsRoutes.delete('/projects/:projectId/secrets/:secretId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const secretId = c.req.param('secretId');
@@ -446,7 +446,7 @@ secretsRoutes.delete('/teams/:teamId/secrets/:secretId', async (c) => {
 	return c.json({ data: null }, 200);
 });
 
-secretsRoutes.get('/teams/:teamId/secrets/:secretId/grants', async (c) => {
+secretsRoutes.get('/projects/:projectId/secrets/:secretId/grants', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const secretId = c.req.param('secretId');
@@ -464,7 +464,7 @@ secretsRoutes.get('/teams/:teamId/secrets/:secretId/grants', async (c) => {
 	return ok(c, result.rows);
 });
 
-secretsRoutes.post('/teams/:teamId/secrets/:secretId/grants', async (c) => {
+secretsRoutes.post('/projects/:projectId/secrets/:secretId/grants', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const secretId = c.req.param('secretId');
@@ -494,7 +494,7 @@ secretsRoutes.post('/teams/:teamId/secrets/:secretId/grants', async (c) => {
 	return ok(c, result.rows[0], 201);
 });
 
-secretsRoutes.delete('/teams/:teamId/secret-grants/:grantId', async (c) => {
+secretsRoutes.delete('/projects/:projectId/secret-grants/:grantId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const grantId = c.req.param('grantId');

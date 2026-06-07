@@ -10,10 +10,10 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { SectionHeader } from './helpers';
 
-export function McpServersSection({ teamId }: { teamId: string }) {
-	const { data: connections = [] } = useMcpConnections(teamId);
-	const createConn = useCreateMcpConnection(teamId);
-	const deleteConn = useDeleteMcpConnection(teamId);
+export function McpServersSection({ projectId }: { projectId: string }) {
+	const { data: connections = [] } = useMcpConnections(projectId);
+	const createConn = useCreateMcpConnection(projectId);
+	const deleteConn = useDeleteMcpConnection(projectId);
 	const [showAdd, setShowAdd] = useState(false);
 	const [kind, setKind] = useState<'saas' | 'local'>('saas');
 	const [name, setName] = useState('');

@@ -5,53 +5,53 @@ import { queryClient } from '../lib/query-client';
 
 export type { AdminMentionItem };
 
-export function useAdminMentions(teamSlug: string, enabled = true) {
+export function useAdminMentions(projectSlug: string, enabled = true) {
 	return useQuery({
-		queryKey: ['teams', teamSlug, 'inbox-mentions'],
-		queryFn: () => api.get<AdminMentionItem[]>(`/api/teams/${teamSlug}/inbox/mentions`),
-		enabled: enabled && !!teamSlug,
+		queryKey: ['projects', projectSlug, 'inbox-mentions'],
+		queryFn: () => api.get<AdminMentionItem[]>(`/api/projects/${projectSlug}/inbox/mentions`),
+		enabled: enabled && !!projectSlug,
 	});
 }
 
-export function useAllAdminMentions(teamSlugs: string[], { archived = false } = {}) {
-	const teamKey = [...teamSlugs].sort().join(',');
+export function useAllAdminMentions(projectSlugs: string[], { archived = false } = {}) {
+	const projectKey = [...projectSlugs].sort().join(',');
 	return useQuery({
-		queryKey: ['inbox-mentions', teamKey, { archived }],
+		queryKey: ['inbox-mentions', projectKey, { archived }],
 		queryFn: async () => {
 			const results = await Promise.all(
-				teamSlugs.map((slug) =>
-					api.get<AdminMentionItem[]>(`/api/teams/${slug}/inbox/mentions`, {
+				projectSlugs.map((slug) =>
+					api.get<AdminMentionItem[]>(`/api/projects/${slug}/inbox/mentions`, {
 						archived: String(archived),
 					}),
 				),
 			);
 			return results.flat();
 		},
-		enabled: teamSlugs.length > 0,
+		enabled: projectSlugs.length > 0,
 		staleTime: 0,
 	});
 }
 
 export function useMarkMentionRead() {
 	return useMutation({
-		mutationFn: ({ teamSlug, mentionId }: { teamSlug: string; mentionId: string }) =>
+		mutationFn: ({ projectSlug, mentionId }: { projectSlug: string; mentionId: string }) =>
 			api.post<{ id: string; read_at: string }>(
-				`/api/teams/${teamSlug}/inbox/mentions/${mentionId}/read`,
+				`/api/projects/${projectSlug}/inbox/mentions/${mentionId}/read`,
 				{},
 			),
-		onMutate: async ({ teamSlug, mentionId }) => {
-			await queryClient.cancelQueries({ queryKey: ['teams', teamSlug, 'inbox-mentions'] });
+		onMutate: async ({ projectSlug, mentionId }) => {
+			await queryClient.cancelQueries({ queryKey: ['projects', projectSlug, 'inbox-mentions'] });
 			await queryClient.cancelQueries({ queryKey: ['inbox-mentions'] });
 
 			const teamSnapshot = queryClient.getQueryData<AdminMentionItem[]>([
 				'teams',
-				teamSlug,
+				projectSlug,
 				'inbox-mentions',
 			]);
 			const now = new Date().toISOString();
 			if (teamSnapshot) {
 				queryClient.setQueryData<AdminMentionItem[]>(
-					['teams', teamSlug, 'inbox-mentions'],
+					['projects', projectSlug, 'inbox-mentions'],
 					teamSnapshot.map((m) => (m.id === mentionId ? { ...m, read_at: now } : m)),
 				);
 			}
@@ -71,30 +71,30 @@ export function useMarkMentionRead() {
 
 			return { teamSnapshot, aggregatedSnapshots };
 		},
-		onError: (_err, { teamSlug }, ctx) => {
+		onError: (_err, { projectSlug }, ctx) => {
 			if (ctx?.teamSnapshot) {
-				queryClient.setQueryData(['teams', teamSlug, 'inbox-mentions'], ctx.teamSnapshot);
+				queryClient.setQueryData(['projects', projectSlug, 'inbox-mentions'], ctx.teamSnapshot);
 			}
 			for (const [key, data] of ctx?.aggregatedSnapshots ?? []) {
 				queryClient.setQueryData(key, data);
 			}
 		},
-		onSettled: (_data, _err, { teamSlug }) => {
-			queryClient.invalidateQueries({ queryKey: ['teams', teamSlug, 'inbox-mentions'] });
+		onSettled: (_data, _err, { projectSlug }) => {
+			queryClient.invalidateQueries({ queryKey: ['projects', projectSlug, 'inbox-mentions'] });
 			queryClient.invalidateQueries({ queryKey: ['inbox-mentions'] });
-			queryClient.invalidateQueries({ queryKey: ['teams', teamSlug, 'inbox-count'] });
+			queryClient.invalidateQueries({ queryKey: ['projects', projectSlug, 'inbox-count'] });
 		},
 	});
 }
 
 export function useMarkAllMentionsRead() {
 	return useMutation({
-		mutationFn: (teamSlug: string) =>
-			api.post<{ marked_read: number }>(`/api/teams/${teamSlug}/inbox/mentions/read-all`, {}),
-		onSuccess: (_data, teamSlug) => {
-			queryClient.invalidateQueries({ queryKey: ['teams', teamSlug, 'inbox-mentions'] });
+		mutationFn: (projectSlug: string) =>
+			api.post<{ marked_read: number }>(`/api/projects/${projectSlug}/inbox/mentions/read-all`, {}),
+		onSuccess: (_data, projectSlug) => {
+			queryClient.invalidateQueries({ queryKey: ['projects', projectSlug, 'inbox-mentions'] });
 			queryClient.invalidateQueries({ queryKey: ['inbox-mentions'] });
-			queryClient.invalidateQueries({ queryKey: ['teams', teamSlug, 'inbox-count'] });
+			queryClient.invalidateQueries({ queryKey: ['projects', projectSlug, 'inbox-count'] });
 		},
 	});
 }

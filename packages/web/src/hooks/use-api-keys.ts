@@ -14,36 +14,36 @@ export interface ApiKey {
 	created_at: string;
 }
 
-const listKey = (teamId: string) => ['teams', teamId, 'api-keys'] as const;
+const listKey = (projectId: string) => ['projects', projectId, 'api-keys'] as const;
 
-export function useApiKeys(teamId: string) {
+export function useApiKeys(projectId: string) {
 	return useQuery({
-		queryKey: listKey(teamId),
-		queryFn: () => api.get<ApiKey[]>(`/api/teams/${teamId}/api-keys`),
+		queryKey: listKey(projectId),
+		queryFn: () => api.get<ApiKey[]>(`/api/projects/${projectId}/api-keys`),
 	});
 }
 
-export function useCreateApiKey(teamId: string) {
+export function useCreateApiKey(projectId: string) {
 	// Response-driven: the server mints the prefix + raw key. The list cache is
 	// seeded from the response (minus the one-time raw `key`); the mutation's
 	// returned data keeps `key` so the caller can show it once.
 	return useResponseMutation<{ name: string }, ApiKey, ApiKey[]>({
-		mutationFn: (data) => api.post<ApiKey>(`/api/teams/${teamId}/api-keys`, data),
-		queryKey: listKey(teamId),
+		mutationFn: (data) => api.post<ApiKey>(`/api/projects/${projectId}/api-keys`, data),
+		queryKey: listKey(projectId),
 		merge: (prev, created) => {
 			const { key: _key, ...row } = created;
 			return prev ? [...prev.filter((k) => k.id !== row.id), row] : [row];
 		},
-		invalidateOnSettled: [listKey(teamId)],
+		invalidateOnSettled: [listKey(projectId)],
 	});
 }
 
-export function useDeleteApiKey(teamId: string) {
+export function useDeleteApiKey(projectId: string) {
 	return useInvalidatingMutation<string, unknown>({
-		mutationFn: (apiKeyId) => api.delete(`/api/teams/${teamId}/api-keys/${apiKeyId}`),
-		invalidate: [listKey(teamId)],
+		mutationFn: (apiKeyId) => api.delete(`/api/projects/${projectId}/api-keys/${apiKeyId}`),
+		invalidate: [listKey(projectId)],
 		onSuccess: (_data, apiKeyId) => {
-			queryClient.setQueryData<ApiKey[]>(listKey(teamId), (prev) =>
+			queryClient.setQueryData<ApiKey[]>(listKey(projectId), (prev) =>
 				prev ? prev.filter((k) => k.id !== apiKeyId) : prev,
 			);
 		},

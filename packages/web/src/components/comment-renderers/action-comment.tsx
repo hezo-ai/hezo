@@ -5,12 +5,11 @@ import type { CommentDataOf } from './comment-data';
 
 interface Props {
 	comment: CommentDataOf<'action'>;
-	teamId?: string;
 	projectId?: string;
 	taskId?: string;
 }
 
-export function ActionComment({ comment, teamId, projectId }: Props) {
+export function ActionComment({ comment, projectId }: Props) {
 	const kind = comment.content?.kind ?? '';
 	const resolved = comment.chosen_option?.status === 'complete';
 
@@ -31,7 +30,7 @@ export function ActionComment({ comment, teamId, projectId }: Props) {
 		);
 	}
 
-	if (!teamId || !projectId) {
+	if (!projectId || !projectId) {
 		return <p className="text-xs text-text-subtle italic">Repo setup unavailable in this view.</p>;
 	}
 
@@ -45,7 +44,7 @@ export function ActionComment({ comment, teamId, projectId }: Props) {
 				</span>
 			</div>
 			<div>
-				<Link to="/teams/$teamId/projects/$projectId/settings" params={{ teamId, projectId }}>
+				<Link to="/projects/$projectId/settings" params={{ projectId }}>
 					<Button size="sm">Open project settings</Button>
 				</Link>
 			</div>

@@ -42,22 +42,23 @@ export interface UpdateSkillInput {
 	tags?: string[];
 }
 
-const listKey = (teamId: string) => ['teams', teamId, 'skills'] as const;
-const detailKey = (teamId: string, slug: string) => ['teams', teamId, 'skills', slug] as const;
+const listKey = (projectId: string) => ['projects', projectId, 'skills'] as const;
+const detailKey = (projectId: string, slug: string) =>
+	['projects', projectId, 'skills', slug] as const;
 
-export function useSkills(teamId: string) {
+export function useSkills(projectId: string) {
 	return useQuery({
-		queryKey: listKey(teamId),
-		queryFn: () => api.get<SkillListItem[]>(`/api/teams/${teamId}/skills`),
-		enabled: !!teamId,
+		queryKey: listKey(projectId),
+		queryFn: () => api.get<SkillListItem[]>(`/api/projects/${projectId}/skills`),
+		enabled: !!projectId,
 	});
 }
 
-export function useSkill(teamId: string, slug: string | null) {
+export function useSkill(projectId: string, slug: string | null) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'skills', slug],
-		queryFn: () => api.get<Skill>(`/api/teams/${teamId}/skills/${slug}`),
-		enabled: !!teamId && slug !== null,
+		queryKey: ['projects', projectId, 'skills', slug],
+		queryFn: () => api.get<Skill>(`/api/projects/${projectId}/skills/${slug}`),
+		enabled: !!projectId && slug !== null,
 	});
 }
 
@@ -65,39 +66,40 @@ export function useSkill(teamId: string, slug: string | null) {
 // content_hash (and, for sync, re-downloads), so the detail cache is seeded
 // from the response and the list is invalidated to re-flow.
 
-export function useCreateSkill(teamId: string) {
+export function useCreateSkill(projectId: string) {
 	return useResponseMutation<CreateSkillInput, Skill, Skill>({
-		mutationFn: (input) => api.post<Skill>(`/api/teams/${teamId}/skills`, input),
-		queryKey: (_input, created) => detailKey(teamId, created.slug),
+		mutationFn: (input) => api.post<Skill>(`/api/projects/${projectId}/skills`, input),
+		queryKey: (_input, created) => detailKey(projectId, created.slug),
 		merge: (_current, created) => created,
-		invalidateOnSettled: [listKey(teamId)],
+		invalidateOnSettled: [listKey(projectId)],
 	});
 }
 
-export function useUpdateSkill(teamId: string) {
+export function useUpdateSkill(projectId: string) {
 	return useResponseMutation<{ slug: string; input: UpdateSkillInput }, Skill, Skill>({
-		mutationFn: ({ slug, input }) => api.patch<Skill>(`/api/teams/${teamId}/skills/${slug}`, input),
-		queryKey: ({ slug }) => detailKey(teamId, slug),
+		mutationFn: ({ slug, input }) =>
+			api.patch<Skill>(`/api/projects/${projectId}/skills/${slug}`, input),
+		queryKey: ({ slug }) => detailKey(projectId, slug),
 		merge: (_current, updated) => updated,
-		invalidateOnSettled: [listKey(teamId)],
+		invalidateOnSettled: [listKey(projectId)],
 	});
 }
 
-export function useSyncSkill(teamId: string) {
+export function useSyncSkill(projectId: string) {
 	return useResponseMutation<string, Skill, Skill>({
-		mutationFn: (slug) => api.post<Skill>(`/api/teams/${teamId}/skills/${slug}/sync`, {}),
-		queryKey: (slug) => detailKey(teamId, slug),
+		mutationFn: (slug) => api.post<Skill>(`/api/projects/${projectId}/skills/${slug}/sync`, {}),
+		queryKey: (slug) => detailKey(projectId, slug),
 		merge: (_current, updated) => updated,
-		invalidateOnSettled: [listKey(teamId)],
+		invalidateOnSettled: [listKey(projectId)],
 	});
 }
 
-export function useDeleteSkill(teamId: string) {
+export function useDeleteSkill(projectId: string) {
 	return useInvalidatingMutation<string, unknown>({
-		mutationFn: (slug) => api.delete(`/api/teams/${teamId}/skills/${slug}`),
-		invalidate: [listKey(teamId)],
+		mutationFn: (slug) => api.delete(`/api/projects/${projectId}/skills/${slug}`),
+		invalidate: [listKey(projectId)],
 		onSuccess: (_data, slug) => {
-			queryClient.removeQueries({ queryKey: detailKey(teamId, slug) });
+			queryClient.removeQueries({ queryKey: detailKey(projectId, slug) });
 		},
 	});
 }

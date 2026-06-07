@@ -16,7 +16,7 @@ import {
 
 export const projectDocsRoutes = new Hono<Env>();
 
-projectDocsRoutes.get('/teams/:teamId/projects/:projectId/docs', async (c) => {
+projectDocsRoutes.get('/projects/:projectId/docs', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
@@ -34,7 +34,7 @@ projectDocsRoutes.get('/teams/:teamId/projects/:projectId/docs', async (c) => {
 	);
 });
 
-projectDocsRoutes.get('/teams/:teamId/projects/:projectId/docs/:filename', async (c) => {
+projectDocsRoutes.get('/projects/:projectId/docs/:filename', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const filename = c.req.param('filename');
@@ -57,7 +57,7 @@ projectDocsRoutes.get('/teams/:teamId/projects/:projectId/docs/:filename', async
 	});
 });
 
-projectDocsRoutes.put('/teams/:teamId/projects/:projectId/docs/:filename', async (c) => {
+projectDocsRoutes.put('/projects/:projectId/docs/:filename', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const filename = c.req.param('filename');
@@ -121,7 +121,7 @@ projectDocsRoutes.put('/teams/:teamId/projects/:projectId/docs/:filename', async
 	});
 });
 
-projectDocsRoutes.delete('/teams/:teamId/projects/:projectId/docs/:filename', async (c) => {
+projectDocsRoutes.delete('/projects/:projectId/docs/:filename', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const filename = c.req.param('filename');
@@ -145,7 +145,7 @@ projectDocsRoutes.delete('/teams/:teamId/projects/:projectId/docs/:filename', as
 	return c.json({ data: null }, 200);
 });
 
-projectDocsRoutes.get('/teams/:teamId/projects/:projectId/docs/:filename/revisions', async (c) => {
+projectDocsRoutes.get('/projects/:projectId/docs/:filename/revisions', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const filename = c.req.param('filename');
@@ -164,7 +164,7 @@ projectDocsRoutes.get('/teams/:teamId/projects/:projectId/docs/:filename/revisio
 	return ok(c, revisions);
 });
 
-projectDocsRoutes.post('/teams/:teamId/projects/:projectId/docs/:filename/restore', async (c) => {
+projectDocsRoutes.post('/projects/:projectId/docs/:filename/restore', async (c) => {
 	const teamId = c.get('teamId') as string;
 
 	const auth = c.get('auth');
@@ -207,7 +207,7 @@ projectDocsRoutes.post('/teams/:teamId/projects/:projectId/docs/:filename/restor
 	});
 });
 
-projectDocsRoutes.get('/teams/:teamId/projects/:projectId/agents-md', async (c) => {
+projectDocsRoutes.get('/projects/:projectId/agents-md', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');
@@ -231,7 +231,7 @@ projectDocsRoutes.get('/teams/:teamId/projects/:projectId/agents-md', async (c) 
 	return ok(c, { filename: 'AGENTS.md', content: readFileSync(agentsMdPath, 'utf-8') });
 });
 
-projectDocsRoutes.put('/teams/:teamId/projects/:projectId/agents-md', async (c) => {
+projectDocsRoutes.put('/projects/:projectId/agents-md', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');

@@ -12,8 +12,8 @@ async function expectNoHorizontalOverflow(page: Page) {
 
 test.describe('Responsive — mobile (390px)', () => {
 	test('page padding scales down (no fixed 32px on mobile)', async ({ page, lightWorkspace }) => {
-		const { team } = lightWorkspace;
-		await page.goto(`/teams/${team.slug}/projects`);
+		void lightWorkspace;
+		await page.goto('/home');
 		await waitForPageLoad(page);
 		await expectNoHorizontalOverflow(page);
 	});
@@ -23,13 +23,13 @@ test.describe('Responsive — mobile (390px)', () => {
 		const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+		const projectRes = await createProjectAndClearPlanning(page, team.slug, token, {
 			name: 'Mobile P',
 			description: 'mobile',
 		});
 		const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
-		const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
+		const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 			headers,
 			data: {
 				project_id: project.id,
@@ -40,9 +40,7 @@ test.describe('Responsive — mobile (390px)', () => {
 		});
 		const task = ((await taskRes.json()) as { data: { identifier: string } }).data;
 
-		await page.goto(
-			`/teams/${team.slug}/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}`,
-		);
+		await page.goto(`/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}`);
 		await waitForPageLoad(page);
 		await expect(page.getByRole('heading', { name: 'Mobile task' })).toBeVisible({
 			timeout: 20000,
@@ -59,7 +57,7 @@ test.describe('Responsive — mobile (390px)', () => {
 
 	test('create-task dialog goes near full-screen', async ({ page, freshWorkspace }) => {
 		const { team } = freshWorkspace;
-		await page.goto(`/teams/${team.slug}/tasks`);
+		await page.goto(`/projects/internal-${team.slug}/tasks`);
 		await waitForPageLoad(page);
 
 		await page.getByTestId('task-list-new-task').click();
@@ -78,7 +76,7 @@ test.describe('Responsive — mobile (390px)', () => {
 		lightWorkspace,
 	}) => {
 		const { team } = lightWorkspace;
-		await page.goto(`/teams/${team.slug}/settings/audit-log`);
+		await page.goto(`/projects/internal-${team.slug}/team-settings/audit-log`);
 		await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible({
 			timeout: 20000,
 		});

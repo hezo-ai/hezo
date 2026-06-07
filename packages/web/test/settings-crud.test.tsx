@@ -30,8 +30,8 @@ test('general section displays team info', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/settings/general',
-		params: { teamId: team.slug },
+		to: '/projects/$projectId/team-settings/general',
+		params: { projectId: `internal-${team.slug}` },
 	});
 
 	const general = await waitFor(
@@ -57,8 +57,8 @@ test('automations section exposes the wake-mentioner toggle and persists the cha
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/settings/general',
-		params: { teamId: team.slug },
+		to: '/projects/$projectId/team-settings/general',
+		params: { projectId: `internal-${team.slug}` },
 	});
 
 	const automations = await waitFor(
@@ -86,7 +86,7 @@ test('automations section exposes the wake-mentioner toggle and persists the cha
 	const { apiBase, token } = getTestContext();
 	await waitFor(
 		async () => {
-			const res = await apiBase(`/api/teams/${team.id}`, {
+			const res = await apiBase(`/api/projects/internal-${team.slug}/team`, {
 				headers: { Authorization: `Bearer ${token}` },
 			});
 			const body = (await res.json()) as { data: { settings: Record<string, unknown> } };
@@ -109,8 +109,8 @@ test('can add and delete a secret', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/settings/general',
-		params: { teamId: team.slug },
+		to: '/projects/$projectId/team-settings/general',
+		params: { projectId: `internal-${team.slug}` },
 	});
 
 	const secrets = await waitFor(
@@ -159,8 +159,8 @@ test('can create and delete an api key', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/settings/general',
-		params: { teamId: team.slug },
+		to: '/projects/$projectId/team-settings/general',
+		params: { projectId: `internal-${team.slug}` },
 	});
 
 	const apiKeys = await waitFor(
@@ -211,8 +211,8 @@ test('can edit and save preferences', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/settings/general',
-		params: { teamId: team.slug },
+		to: '/projects/$projectId/team-settings/general',
+		params: { projectId: `internal-${team.slug}` },
 	});
 
 	const prefs = await waitFor(
@@ -239,8 +239,8 @@ test('can edit and save preferences', async () => {
 	// Reload by re-navigating away and back.
 	await router.navigate({ to: '/' });
 	await router.navigate({
-		to: '/teams/$teamId/settings/general',
-		params: { teamId: team.slug },
+		to: '/projects/$projectId/team-settings/general',
+		params: { projectId: `internal-${team.slug}` },
 	});
 	await waitFor(
 		() => {
@@ -258,12 +258,12 @@ test('can restore a previous preferences revision', async () => {
 		seed: async ({ apiBase, token }) => {
 			team = await createTeam();
 			const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-			await apiBase(`/api/teams/${team.id}/preferences`, {
+			await apiBase(`/api/projects/internal-${team.slug}/preferences`, {
 				method: 'PATCH',
 				headers,
 				body: JSON.stringify({ content: 'Original preferences body' }),
 			});
-			await apiBase(`/api/teams/${team.id}/preferences`, {
+			await apiBase(`/api/projects/internal-${team.slug}/preferences`, {
 				method: 'PATCH',
 				headers,
 				body: JSON.stringify({
@@ -275,8 +275,8 @@ test('can restore a previous preferences revision', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/settings/general',
-		params: { teamId: team.slug },
+		to: '/projects/$projectId/team-settings/general',
+		params: { projectId: `internal-${team.slug}` },
 	});
 
 	const prefs = await waitFor(
@@ -312,8 +312,8 @@ test('can add and delete an mcp server', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/settings/general',
-		params: { teamId: team.slug },
+		to: '/projects/$projectId/team-settings/general',
+		params: { projectId: `internal-${team.slug}` },
 	});
 
 	const mcp = await waitFor(

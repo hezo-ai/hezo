@@ -27,6 +27,7 @@ let masterKeyManager: MasterKeyManager;
 
 let teamId: string;
 let projectId: string;
+let internalProjectSlug: string;
 let architectId: string;
 let productLeadId: string;
 
@@ -48,9 +49,11 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Trigger Reason Co', template_id: typeId }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	internalProjectSlug = `internal-${teamData.slug}`;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${internalProjectSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -127,9 +130,10 @@ async function insertComment(
 }
 
 async function fetchRun(agentId: string, runId: string): Promise<RunRow> {
-	const res = await app.request(`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs/${runId}`, {
-		headers: authHeader(token),
-	});
+	const res = await app.request(
+		`/api/projects/${internalProjectSlug}/agents/${agentId}/heartbeat-runs/${runId}`,
+		{ headers: authHeader(token) },
+	);
 	expect(res.status).toBe(200);
 	return (await res.json()).data;
 }

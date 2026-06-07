@@ -69,7 +69,7 @@ function authHeader() {
 
 describe('preview route', () => {
 	it('serves an HTML file from workspace', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/preview/index.html`, {
+		const res = await app.request(`/api/projects/${projectId}/preview/index.html`, {
 			headers: authHeader(),
 		});
 		expect(res.status).toBe(200);
@@ -79,7 +79,7 @@ describe('preview route', () => {
 	});
 
 	it('serves CSS with correct MIME type', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/preview/style.css`, {
+		const res = await app.request(`/api/projects/${projectId}/preview/style.css`, {
 			headers: authHeader(),
 		});
 		expect(res.status).toBe(200);
@@ -87,7 +87,7 @@ describe('preview route', () => {
 	});
 
 	it('serves JS with correct MIME type', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/preview/app.js`, {
+		const res = await app.request(`/api/projects/${projectId}/preview/app.js`, {
 			headers: authHeader(),
 		});
 		expect(res.status).toBe(200);
@@ -95,26 +95,24 @@ describe('preview route', () => {
 	});
 
 	it('returns 404 for non-existent file', async () => {
-		const res = await app.request(
-			`/api/teams/${teamId}/projects/${projectId}/preview/missing.html`,
-			{ headers: authHeader() },
-		);
+		const res = await app.request(`/api/projects/${projectId}/preview/missing.html`, {
+			headers: authHeader(),
+		});
 		expect(res.status).toBe(404);
 	});
 
 	it('returns 404 for non-existent project', async () => {
 		const fakeId = '00000000-0000-0000-0000-000000000000';
-		const res = await app.request(`/api/teams/${teamId}/projects/${fakeId}/preview/index.html`, {
+		const res = await app.request(`/api/projects/${fakeId}/preview/index.html`, {
 			headers: authHeader(),
 		});
 		expect(res.status).toBe(404);
 	});
 
 	it('blocks directory traversal attempts', async () => {
-		const res = await app.request(
-			`/api/teams/${teamId}/projects/${projectId}/preview/../../../etc/passwd`,
-			{ headers: authHeader() },
-		);
+		const res = await app.request(`/api/projects/${projectId}/preview/../../../etc/passwd`, {
+			headers: authHeader(),
+		});
 		// Should be 403 or 404 — never serve files outside workspace
 		expect([403, 404]).toContain(res.status);
 	});

@@ -24,6 +24,8 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
+// Returns the team's internal project slug — the public handle for the team's
+// team-wide endpoints (agents, save-as-template, apply-type).
 async function createTeam(name: string, templateId?: string): Promise<string> {
 	const res = await app.request('/api/teams', {
 		method: 'POST',
@@ -31,11 +33,13 @@ async function createTeam(name: string, templateId?: string): Promise<string> {
 		body: JSON.stringify(templateId ? { name, template_id: templateId } : { name }),
 	});
 	expect(res.status).toBe(201);
-	return (await res.json()).data.id as string;
+	return `internal-${(await res.json()).data.slug as string}`;
 }
 
-async function agentSlugs(teamId: string): Promise<string[]> {
-	const res = await app.request(`/api/teams/${teamId}/agents`, { headers: authHeader(token) });
+async function agentSlugs(projectSlug: string): Promise<string[]> {
+	const res = await app.request(`/api/projects/${projectSlug}/agents`, {
+		headers: authHeader(token),
+	});
 	const agents = (await res.json()).data as { slug: string }[];
 	return agents.map((a) => a.slug).sort();
 }
@@ -49,7 +53,7 @@ describe('save team as a type (template snapshot)', () => {
 		expect(sourceSlugs).toHaveLength(11);
 
 		// Snapshot the live team into a new custom type.
-		const saveRes = await app.request(`/api/teams/${source}/save-as-template`, {
+		const saveRes = await app.request(`/api/projects/${source}/save-as-template`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'My Saved Org', description: 'snapshot' }),
@@ -83,7 +87,7 @@ describe('save team as a type (template snapshot)', () => {
 
 	it('rejects an empty template name', async () => {
 		const source = await createTeam('Snapshot Reject Co');
-		const res = await app.request(`/api/teams/${source}/save-as-template`, {
+		const res = await app.request(`/api/projects/${source}/save-as-template`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: '  ' }),
@@ -97,7 +101,7 @@ describe('apply a team type (refresh / merge)', () => {
 		const team = await createTeam('Apply Type Co'); // no template → captain + coach
 		expect(await agentSlugs(team)).toEqual(['captain', 'coach']);
 
-		const res = await app.request(`/api/teams/${team}/apply-type`, {
+		const res = await app.request(`/api/projects/${team}/apply-type`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ template_id: startupTemplateId }),
@@ -115,7 +119,7 @@ describe('apply a team type (refresh / merge)', () => {
 
 	it('404s for an unknown type', async () => {
 		const team = await createTeam('Apply Type 404 Co');
-		const res = await app.request(`/api/teams/${team}/apply-type`, {
+		const res = await app.request(`/api/projects/${team}/apply-type`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ template_id: '00000000-0000-0000-0000-000000000000' }),

@@ -18,7 +18,6 @@ export { inlineEventIcon, isInlineEventType } from './helpers';
 interface RenderProps {
 	comment: CommentData;
 	onChooseOption?: (commentId: string, chosenId: string) => void;
-	teamId?: string;
 	projectId?: string;
 	projectSlug?: string;
 	taskId?: string;
@@ -34,7 +33,6 @@ interface RenderProps {
 type RendererComponent<K extends CommentContentType> = ComponentType<{
 	comment: CommentDataOf<K>;
 	onChooseOption?: RenderProps['onChooseOption'];
-	teamId?: string;
 	projectId?: string;
 	projectSlug?: string;
 	taskId?: string;
@@ -44,28 +42,28 @@ type RendererComponent<K extends CommentContentType> = ComponentType<{
 type RendererRegistry = { [K in CommentContentType]: RendererComponent<K> };
 
 const renderers: RendererRegistry = {
-	[CommentContentType.Text]: ({ comment, teamId, projectSlug }) => (
-		<TextComment comment={comment} teamId={teamId} projectSlug={projectSlug} />
+	[CommentContentType.Text]: ({ comment, projectId, projectSlug }) => (
+		<TextComment comment={comment} projectId={projectId} projectSlug={projectSlug} />
 	),
 	[CommentContentType.Options]: ({ comment, onChooseOption }) => (
 		<OptionsComment comment={comment} onChoose={onChooseOption} />
 	),
 	[CommentContentType.Preview]: ({ comment }) => <PreviewComment comment={comment} />,
 	[CommentContentType.Trace]: ({ comment }) => <TraceComment comment={comment} />,
-	[CommentContentType.System]: ({ comment, teamId }) => (
-		<SystemComment comment={comment} teamId={teamId} />
+	[CommentContentType.System]: ({ comment, projectId }) => (
+		<SystemComment comment={comment} projectId={projectId} />
 	),
-	[CommentContentType.Run]: ({ comment, teamId, inline }) => (
-		<RunComment comment={comment} teamId={teamId} inline={inline} />
+	[CommentContentType.Run]: ({ comment, projectId, inline }) => (
+		<RunComment comment={comment} projectId={projectId} inline={inline} />
 	),
-	[CommentContentType.Action]: ({ comment, teamId, projectId, taskId }) => (
-		<ActionComment comment={comment} teamId={teamId} projectId={projectId} taskId={taskId} />
+	[CommentContentType.Action]: ({ comment, projectId, taskId }) => (
+		<ActionComment comment={comment} projectId={projectId} taskId={taskId} />
 	),
-	[CommentContentType.CredentialRequest]: ({ comment, teamId, taskId }) => (
-		<CredentialRequestComment comment={comment} teamId={teamId} taskId={taskId} />
+	[CommentContentType.CredentialRequest]: ({ comment, projectId, taskId }) => (
+		<CredentialRequestComment comment={comment} projectId={projectId} taskId={taskId} />
 	),
-	[CommentContentType.ConnectRequired]: ({ comment, teamId }) => (
-		<ConnectRequiredComment comment={comment} teamId={teamId} />
+	[CommentContentType.ConnectRequired]: ({ comment, projectId }) => (
+		<ConnectRequiredComment comment={comment} projectId={projectId} />
 	),
 };
 

@@ -16,7 +16,7 @@ async function seedDoc(
 	content: string,
 ): Promise<void> {
 	const { apiBase } = getTestContext();
-	await apiBase(`/api/teams/${ws.team.id}/projects/${project.slug}/docs/${filename}`, {
+	await apiBase(`/api/projects/${project.slug}/docs/${filename}`, {
 		method: 'PUT',
 		headers: ws.headers,
 		body: JSON.stringify({ content }),
@@ -24,20 +24,20 @@ async function seedDoc(
 }
 
 test('document viewer pop-out button opens the standalone preview in a new tab', async () => {
-	let ctx!: { teamSlug: string; projectSlug: string };
+	let ctx!: { projectSlug: string };
 	const { findByTestId, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Popout Demo' });
 			await seedDoc(ws, project, 'ui-mockups.md', '# Mockups');
-			ctx = { teamSlug: ws.team.slug, projectSlug: project.slug };
+			ctx = { projectSlug: project.slug };
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/documents',
-		params: { teamId: ctx.teamSlug, projectId: ctx.projectSlug },
+		to: '/projects/$projectId/documents',
+		params: { projectId: ctx.projectSlug },
 		search: { file: 'ui-mockups.md' },
 	});
 
@@ -45,7 +45,7 @@ test('document viewer pop-out button opens the standalone preview in a new tab',
 	const open = vi.spyOn(window, 'open').mockReturnValue(null);
 	await user.click(popout);
 	expect(open).toHaveBeenCalledWith(
-		`/preview/${ctx.teamSlug}/${ctx.projectSlug}/ui-mockups.md`,
+		`/preview/${ctx.projectSlug}/ui-mockups.md`,
 		'_blank',
 		'noopener',
 	);
@@ -53,20 +53,20 @@ test('document viewer pop-out button opens the standalone preview in a new tab',
 });
 
 test('pop-out button shows for markdown docs too, but not for the repo AGENTS.md', async () => {
-	let ctx!: { teamSlug: string; projectSlug: string };
+	let ctx!: { projectSlug: string };
 	const { findByText, queryByTestId, getByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Popout MD Demo' });
 			await seedDoc(ws, project, 'notes.md', '# Hello');
-			ctx = { teamSlug: ws.team.slug, projectSlug: project.slug };
+			ctx = { projectSlug: project.slug };
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/documents',
-		params: { teamId: ctx.teamSlug, projectId: ctx.projectSlug },
+		to: '/projects/$projectId/documents',
+		params: { projectId: ctx.projectSlug },
 		search: { file: 'notes.md' },
 	});
 	await findByText('Hello');
@@ -74,8 +74,8 @@ test('pop-out button shows for markdown docs too, but not for the repo AGENTS.md
 
 	// AGENTS.md is a live repo file with no preview route — no pop-out button.
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/documents',
-		params: { teamId: ctx.teamSlug, projectId: ctx.projectSlug },
+		to: '/projects/$projectId/documents',
+		params: { projectId: ctx.projectSlug },
 		search: { file: '__agents_md__' },
 	});
 	await findByText('AGENTS.md');
@@ -83,20 +83,20 @@ test('pop-out button shows for markdown docs too, but not for the repo AGENTS.md
 });
 
 test('standalone preview route renders a markdown doc without an iframe', async () => {
-	let ctx!: { teamSlug: string; projectSlug: string };
+	let ctx!: { projectSlug: string };
 	const { container, findByText, queryByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Bare MD' });
 			await seedDoc(ws, project, 'notes.md', '# Hello standalone');
-			ctx = { teamSlug: ws.team.slug, projectSlug: project.slug };
+			ctx = { projectSlug: project.slug };
 		},
 	});
 
 	await router.navigate({
-		to: '/preview/$teamId/$projectId/$filename',
-		params: { teamId: ctx.teamSlug, projectId: ctx.projectSlug, filename: 'notes.md' },
+		to: '/preview/$projectId/$filename',
+		params: { projectId: ctx.projectSlug, filename: 'notes.md' },
 	});
 
 	await findByText('Hello standalone');
@@ -105,7 +105,7 @@ test('standalone preview route renders a markdown doc without an iframe', async 
 });
 
 test('a doc mention in a task comment gets a suffix link to the standalone preview', async () => {
-	let ctx!: { teamSlug: string; projectSlug: string; taskId: string };
+	let ctx!: { projectSlug: string; taskId: string };
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -114,20 +114,18 @@ test('a doc mention in a task comment gets a suffix link to the standalone previ
 			await seedDoc(ws, project, 'ui-mockups.md', '# Mockups');
 			const task = await seedTask(ws, project, { title: 'Review the mockup' });
 			await seedComment(ws, task, 'Please review ui-mockups.md before the demo.');
-			ctx = { teamSlug: ws.team.slug, projectSlug: project.slug, taskId: task.id };
+			ctx = { projectSlug: project.slug, taskId: task.id };
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: ctx.teamSlug, taskId: ctx.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: ctx.projectSlug, taskId: ctx.taskId },
 	});
 
 	// The mention resolves (doc-mention-link) and gains the new tab affordance.
 	await findByTestId('text-comment-body', undefined, { timeout: 15_000 });
 	const preview = await findByTestId('doc-mention-preview-link', undefined, { timeout: 15_000 });
-	expect(preview.getAttribute('href')).toBe(
-		`/preview/${ctx.teamSlug}/${ctx.projectSlug}/ui-mockups.md`,
-	);
+	expect(preview.getAttribute('href')).toBe(`/preview/${ctx.projectSlug}/ui-mockups.md`);
 	expect(preview.getAttribute('target')).toBe('_blank');
 });

@@ -49,14 +49,14 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 					{section.title && <SectionHeader section={section} />}
 					{section.items.map((item) => {
 						const isActive = matchRoute({ to: item.to, params: item.params, fuzzy: true });
-						const paddingClass = section.title ? 'pl-5 pr-3 py-1' : 'px-3 py-1.5';
+						const paddingClass = section.title ? 'pl-4 pr-2 py-0.5' : 'px-2.5 py-1';
 						return (
 							<Link
-								key={item.to}
+								key={`${item.to}-${JSON.stringify(item.params)}`}
 								to={item.to}
 								params={item.params ?? {}}
 								data-testid={item.testId}
-								className={`block text-left text-[13px] ${paddingClass} rounded-radius-md transition-colors ${
+								className={`block text-left text-[12px] ${paddingClass} rounded-radius-md transition-colors ${
 									isActive
 										? 'text-text font-medium bg-bg-subtle'
 										: 'text-text-muted hover:text-text hover:bg-bg-subtle'
@@ -76,7 +76,7 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 									<Link
 										to={item.to}
 										params={item.params ?? {}}
-										className={`block text-left text-[13px] pl-5 pr-3 py-1 rounded-radius-md transition-colors ${
+										className={`block text-left text-[12px] pl-4 pr-2 py-0.5 rounded-radius-md transition-colors ${
 											isActive
 												? 'text-text font-medium bg-bg-subtle'
 												: 'text-text-muted hover:text-text hover:bg-bg-subtle'
@@ -96,7 +96,7 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 													to={subItem.to}
 													params={subItem.params ?? {}}
 													data-testid={subItem.testId}
-													className={`block text-left text-[13px] pl-8 pr-3 py-1 rounded-radius-md transition-colors ${
+													className={`block text-left text-[12px] pl-7 pr-2 py-0.5 rounded-radius-md transition-colors ${
 														isSubActive
 															? 'text-text font-medium bg-bg-subtle'
 															: 'text-text-muted hover:text-text hover:bg-bg-subtle'
@@ -118,7 +118,7 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 
 function SectionHeader({ section }: { section: SidebarNavSection }) {
 	if (!section.collapsible && !section.onAdd && !section.titleTo) {
-		return <div className={`${TITLE_TEXT_CLASSES} px-3 pt-3 pb-1`}>{section.title}</div>;
+		return <div className={`${TITLE_TEXT_CLASSES} px-2.5 pt-2.5 pb-0.5`}>{section.title}</div>;
 	}
 
 	const chevron = section.collapsible && (
@@ -178,7 +178,7 @@ function SectionHeader({ section }: { section: SidebarNavSection }) {
 	);
 
 	return (
-		<div className="flex items-center justify-between px-3 pt-3 pb-1 gap-2">
+		<div className="flex items-center justify-between px-2.5 pt-2.5 pb-0.5 gap-2">
 			{titleNode}
 			{(addButton || trailingChevron) && (
 				<div className="flex items-center gap-1.5">

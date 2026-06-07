@@ -59,11 +59,11 @@ export function CreateProjectWithTeamDialog({
 		reset();
 		// The intake task lives in the new team's Internal project (which exists
 		// immediately); the user project isn't created until the intake is approved.
+		// The internal project's slug is derived from the (globally-unique) team slug.
 		navigate({
-			to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+			to: '/projects/$projectId/tasks/$taskId',
 			params: {
-				teamId: res.team_slug,
-				projectId: INTERNAL_PROJECT_SLUG,
+				projectId: `${INTERNAL_PROJECT_SLUG}-${res.team_slug}`,
 				taskId: res.intake_task_identifier.toLowerCase(),
 			},
 		});

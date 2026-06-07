@@ -5,12 +5,12 @@ import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 async function lockTask(
 	headers: { Authorization: string; 'Content-Type': string },
-	teamId: string,
+	projectHandle: string,
 	taskId: string,
 	memberId: string,
 ) {
 	const { apiBase } = getTestContext();
-	const res = await apiBase(`/api/teams/${teamId}/tasks/${taskId}/lock`, {
+	const res = await apiBase(`/api/projects/${projectHandle}/tasks/${taskId}/lock`, {
 		method: 'POST',
 		headers,
 		body: JSON.stringify({ member_id: memberId }),
@@ -19,19 +19,19 @@ async function lockTask(
 }
 
 test('can create a task with required assignee', async () => {
-	const seeded = { teamSlug: '' };
+	const seeded = { projectSlug: '' };
 	const { findByRole, findByLabelText, router, user, container } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			await seedProject(ws, { name: 'Test Project' });
-			seeded.teamSlug = ws.team.slug;
+			const project = await seedProject(ws, { name: 'Test Project' });
+			seeded.projectSlug = project.slug;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks',
-		params: { teamId: seeded.teamSlug },
+		to: '/projects/$projectId/tasks',
+		params: { projectId: seeded.projectSlug },
 	});
 
 	const newTaskBtn = await findByRole('button', { name: /New task/i });
@@ -40,36 +40,31 @@ test('can create a task with required assignee', async () => {
 	const titleInput = await findByLabelText('Title');
 	await user.type(titleInput, 'Test Task');
 
-	// The "More" disclosure (Priority + Project) is open by default when no
-	// defaultProjectId is passed in. Wait for the React Query that fills the
-	// project select to populate. The dialog is rendered into a Radix portal
-	// (document.body), so `container.querySelector` from the test root would
-	// miss it; query document.body directly.
+	// The task is created in the project named in the URL — the dialog no longer
+	// has a project picker. Wait for the assignee select (populated by the
+	// project's agents) to fill. The dialog renders into a Radix portal on
+	// document.body, so query there.
 	await waitFor(
 		() => {
 			const optionsText = Array.from(document.body.querySelectorAll('option')).map(
 				(o) => o.textContent,
 			);
-			expect(optionsText).toContain('Test Project');
+			expect(optionsText).toContain('Select assignee');
 		},
 		{ timeout: 5000 },
 	);
 
-	// Dialog renders into a Radix portal, so all <select>s live on document.body.
 	const selects = Array.from(document.body.querySelectorAll('select')) as HTMLSelectElement[];
-	const projectSel = selects.find((s) =>
-		Array.from(s.options).some((o) => o.text === 'Test Project'),
-	)!;
 	const assigneeSel = selects.find((s) =>
 		Array.from(s.options).some((o) => o.text === 'Select assignee'),
 	)!;
 
-	const projectOption = Array.from(projectSel.options).find((o) => o.text === 'Test Project')!;
-	await user.selectOptions(projectSel, projectOption.value);
-
 	const createBtn = (await findByRole('button', { name: 'Create' })) as HTMLButtonElement;
 	expect(createBtn.disabled).toBe(true);
 
+	await waitFor(() => {
+		expect(Array.from(assigneeSel.options).some((o) => o.value !== '')).toBe(true);
+	});
 	const assigneeOption = Array.from(assigneeSel.options).find((o) => o.value !== '')!;
 	await user.selectOptions(assigneeSel, assigneeOption.value);
 
@@ -81,23 +76,23 @@ test('can create a task with required assignee', async () => {
 });
 
 test('task detail shows the running agent in the Agent Queue section when locked', async () => {
-	const seeded = { teamSlug: '', taskId: '', agentTitle: '' };
+	const seeded = { projectSlug: '', taskId: '', agentTitle: '' };
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async (_ctx) => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Lock Project' });
 			const task = await seedTask(ws, project, { title: 'Locked Task' });
-			await lockTask(ws.headers, ws.team.id, task.id, ws.agents[0].id);
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			await lockTask(ws.headers, project.slug, task.id, ws.agents[0].id);
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.agentTitle = ws.agents[0].title;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const section = await findByTestId('agent-queue-section');
@@ -107,7 +102,7 @@ test('task detail shows the running agent in the Agent Queue section when locked
 
 test('task detail lists every agent running concurrently on a ticket', async () => {
 	const seeded = {
-		teamSlug: '',
+		projectSlug: '',
 		taskId: '',
 		firstTitle: '',
 		secondTitle: '',
@@ -119,18 +114,18 @@ test('task detail lists every agent running concurrently on a ticket', async () 
 			const project = await seedProject(ws, { name: 'Concurrent Project' });
 			const task = await seedTask(ws, project, { title: 'Concurrent Task' });
 			expect(ws.agents.length).toBeGreaterThanOrEqual(2);
-			await lockTask(ws.headers, ws.team.id, task.id, ws.agents[0].id);
-			await lockTask(ws.headers, ws.team.id, task.id, ws.agents[1].id);
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			await lockTask(ws.headers, project.slug, task.id, ws.agents[0].id);
+			await lockTask(ws.headers, project.slug, task.id, ws.agents[1].id);
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.firstTitle = ws.agents[0].title;
 			seeded.secondTitle = ws.agents[1].title;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const section = await findByTestId('agent-queue-section');
@@ -139,21 +134,21 @@ test('task detail lists every agent running concurrently on a ticket', async () 
 });
 
 test('can edit task rules and progress summary', async () => {
-	const seeded = { teamSlug: '', taskId: '' };
+	const seeded = { projectSlug: '', taskId: '' };
 	const { findByTestId, findByText, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Rules Project' });
 			const task = await seedTask(ws, project, { title: 'Rules Test Task' });
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const rulesSection = await findByTestId('pinned-rules');
@@ -186,21 +181,21 @@ test('can edit task rules and progress summary', async () => {
 });
 
 test('task rules and progress summary render markdown formatting', async () => {
-	const seeded = { teamSlug: '', taskId: '' };
+	const seeded = { projectSlug: '', taskId: '' };
 	const { findByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Markdown Project' });
 			const task = await seedTask(ws, project, { title: 'Markdown Task' });
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const rulesBody =
@@ -252,22 +247,22 @@ test('task rules and progress summary render markdown formatting', async () => {
 });
 
 test('task detail shows assignee with status badge', async () => {
-	const seeded = { teamSlug: '', taskId: '', agentTitle: '' };
+	const seeded = { projectSlug: '', taskId: '', agentTitle: '' };
 	const { findByTestId, findByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Assignee Project' });
 			const task = await seedTask(ws, project, { title: 'Assignee Badge Task' });
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.agentTitle = ws.agents[0].title;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const sidebar = await findByTestId('task-sidebar');
@@ -282,7 +277,7 @@ test('task detail shows assignee with status badge', async () => {
 
 test('can change assignee via popover dropdown', async () => {
 	const seeded = {
-		teamSlug: '',
+		projectSlug: '',
 		taskId: '',
 		agent1Title: '',
 		agent2Title: '',
@@ -296,16 +291,16 @@ test('can change assignee via popover dropdown', async () => {
 				title: 'Change Assignee Task',
 				assignee_id: ws.agents[0].id,
 			});
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.agent1Title = ws.agents[0].title;
 			seeded.agent2Title = ws.agents[1].title;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const assigneeBox = await findByTestId('task-assignee');
@@ -333,21 +328,21 @@ test('can change assignee via popover dropdown', async () => {
 });
 
 test('assignee dropdown closes on outside click and has no unassign option', async () => {
-	const seeded = { teamSlug: '', taskId: '', taskTitle: 'Outside Click Task' };
+	const seeded = { projectSlug: '', taskId: '', taskTitle: 'Outside Click Task' };
 	const { findByTestId, findByRole, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Outside Click Project' });
 			const task = await seedTask(ws, project, { title: seeded.taskTitle });
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const assigneeBox = await findByTestId('task-assignee');
@@ -368,8 +363,8 @@ test('assignee dropdown closes on outside click and has no unassign option', asy
 });
 
 test('Internal project restricts assignee dropdown to the Captain', async () => {
-	const seeded = { teamSlug: '', captainTitle: '', engineerTitle: '' };
-	const { findByRole, findByLabelText, router, user, container } = await renderApp({
+	const seeded = { internalSlug: '', captainTitle: '', engineerTitle: '' };
+	const { findByRole, findByLabelText, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -377,15 +372,17 @@ test('Internal project restricts assignee dropdown to the Captain', async () => 
 			const engineer = ws.agents.find((a) => a.slug === 'engineer')!;
 			expect(captain).toBeTruthy();
 			expect(engineer).toBeTruthy();
-			seeded.teamSlug = ws.team.slug;
+			seeded.internalSlug = ws.internalSlug;
 			seeded.captainTitle = captain.title;
 			seeded.engineerTitle = engineer.title;
 		},
 	});
 
+	// The dialog is scoped to the project in the URL, so create the task from
+	// the Internal project's task list — its assignee dropdown is Captain-only.
 	await router.navigate({
-		to: '/teams/$teamId/tasks',
-		params: { teamId: seeded.teamSlug },
+		to: '/projects/$projectId/tasks',
+		params: { projectId: seeded.internalSlug },
 	});
 
 	const newTaskBtn = await findByRole('button', { name: /New task/i });
@@ -394,32 +391,21 @@ test('Internal project restricts assignee dropdown to the Captain', async () => 
 	const titleInput = await findByLabelText('Title');
 	await user.type(titleInput, 'Internal-only assignee check');
 
-	// Dialog renders into a Radix portal on document.body. Wait for the
-	// project list to populate before reading options.
+	// Dialog renders into a Radix portal on document.body. Wait for the assignee
+	// options (the project's agents) to populate.
 	await waitFor(
 		() => {
 			const optionsText = Array.from(document.body.querySelectorAll('option')).map(
 				(o) => o.textContent,
 			);
-			expect(optionsText).toContain('(Internal)');
+			expect(optionsText).toContain(seeded.captainTitle);
 		},
 		{ timeout: 5000 },
 	);
 
 	const selects = Array.from(document.body.querySelectorAll('select')) as HTMLSelectElement[];
-	const projectSel = selects.find((s) =>
-		Array.from(s.options).some((o) => o.text === '(Internal)'),
-	)!;
-	const internalOption = Array.from(projectSel.options).find((o) => o.text === '(Internal)')!;
-	await user.selectOptions(projectSel, internalOption.value);
-
-	const refreshedSelects = Array.from(
-		document.body.querySelectorAll('select'),
-	) as HTMLSelectElement[];
-	const assigneeSel = refreshedSelects.find((s) =>
-		Array.from(s.options).some(
-			(o) => o.text === 'Select assignee' || o.text === seeded.captainTitle,
-		),
+	const assigneeSel = selects.find((s) =>
+		Array.from(s.options).some((o) => o.text === seeded.captainTitle),
 	)!;
 	const labels = Array.from(assigneeSel.options)
 		.map((o) => o.text)
@@ -430,7 +416,7 @@ test('Internal project restricts assignee dropdown to the Captain', async () => 
 });
 
 test('task description renders markdown', async () => {
-	const seeded = { teamSlug: '', taskId: '' };
+	const seeded = { projectSlug: '', taskId: '' };
 	const description = [
 		'# Heading One',
 		'',
@@ -452,14 +438,14 @@ test('task description renders markdown', async () => {
 				title: 'Markdown Description Task',
 				description,
 			});
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const desc = await findByTestId('task-description');
@@ -473,10 +459,9 @@ test('task description renders markdown', async () => {
 
 test('project badge and metadata label both link to the project page', async () => {
 	const seeded = {
-		teamSlug: '',
+		projectSlug: '',
 		taskId: '',
 		projectName: 'Linkable Project',
-		projectSlug: '',
 	};
 	const { findByRole, router, container } = await renderApp({
 		initialPath: '/',
@@ -484,19 +469,18 @@ test('project badge and metadata label both link to the project page', async () 
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: seeded.projectName });
 			const task = await seedTask(ws, project, { title: 'Project Link Task' });
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
 			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	await findByRole('heading', { name: 'Project Link Task' });
-	const expectedHref = `/teams/${seeded.teamSlug}/projects/${seeded.projectSlug}`;
+	const expectedHref = `/projects/${seeded.projectSlug}`;
 	const projectLinks = Array.from(container.querySelectorAll('a')).filter(
 		(a) => a.textContent === seeded.projectName,
 	) as HTMLAnchorElement[];
@@ -507,22 +491,24 @@ test('project badge and metadata label both link to the project page', async () 
 	}
 });
 
-test('sidebar shows agent status badges', async () => {
-	const seeded = { teamSlug: '' };
+test('project menu Team section shows agent status badges', async () => {
+	const seeded = { projectSlug: '' };
 	const { router, container } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			seeded.teamSlug = ws.team.slug;
+			const project = await seedProject(ws, { name: 'Demo' });
+			seeded.projectSlug = project.slug;
+			seeded.projectSlug = project.slug;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/agents/$agentId',
-		params: { teamId: seeded.teamSlug, agentId: 'captain' },
+		to: '/projects/$projectId/tasks',
+		params: { projectId: seeded.projectSlug },
 	});
 
-	// The sidebar's Team section lists each agent with an "Idle" badge once
+	// The project menu's Team section lists each agent with an "Idle" badge once
 	// the agent runtime status finishes loading. Wait for at least one Idle
 	// to appear in the sidebar nav (the main pane also shows Idle after
 	// load, but that arrives later).

@@ -26,11 +26,11 @@ export interface QueuedWakeupsState {
 	dispatch: QueuedDispatchState;
 }
 
-export function useQueuedWakeups(teamId: string, taskId: string) {
+export function useQueuedWakeups(projectId: string, taskId: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'tasks', taskId, 'queued-wakeups'],
+		queryKey: ['projects', projectId, 'tasks', taskId, 'queued-wakeups'],
 		queryFn: () =>
-			api.get<QueuedWakeupsState>(`/api/teams/${teamId}/tasks/${taskId}/queued-wakeups`),
+			api.get<QueuedWakeupsState>(`/api/projects/${projectId}/tasks/${taskId}/queued-wakeups`),
 		refetchInterval: 5_000,
 	});
 }

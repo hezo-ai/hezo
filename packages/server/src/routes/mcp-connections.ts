@@ -71,7 +71,7 @@ const teamMcpConnectionSchema = z
 	})
 	.superRefine((val, ctx) => requireConfigForKind(val.kind, val.config, ctx));
 
-mcpConnectionsRoutes.get('/teams/:teamId/mcp-connections', async (c) => {
+mcpConnectionsRoutes.get('/projects/:projectId/mcp-connections', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const projectId = c.req.query('project_id') ?? null;
@@ -175,7 +175,7 @@ mcpConnectionsRoutes.delete('/mcp-connections/:id', async (c) => {
 	return c.json({ data: null }, 200);
 });
 
-mcpConnectionsRoutes.get('/teams/:teamId/mcp-connections/:id', async (c) => {
+mcpConnectionsRoutes.get('/projects/:projectId/mcp-connections/:id', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const id = c.req.param('id');
@@ -192,7 +192,7 @@ mcpConnectionsRoutes.get('/teams/:teamId/mcp-connections/:id', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-mcpConnectionsRoutes.post('/teams/:teamId/mcp-connections/:id/revoke', async (c) => {
+mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections/:id/revoke', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const id = c.req.param('id');
@@ -246,7 +246,7 @@ mcpConnectionsRoutes.post('/teams/:teamId/mcp-connections/:id/revoke', async (c)
 	return ok(c, row);
 });
 
-mcpConnectionsRoutes.post('/teams/:teamId/mcp-connections', async (c) => {
+mcpConnectionsRoutes.post('/projects/:projectId/mcp-connections', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
@@ -362,7 +362,7 @@ async function kickoffLocalInstall(
  * starting auth. Same shape as the `register_connector` MCP tool, just
  * keyed on the registry id instead of free-form input.
  */
-mcpConnectionsRoutes.post('/teams/:teamId/connectors/ensure', async (c) => {
+mcpConnectionsRoutes.post('/projects/:projectId/connectors/ensure', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const body = (await c.req.json().catch(() => ({}))) as { provider_id?: string };
@@ -397,7 +397,7 @@ mcpConnectionsRoutes.post('/teams/:teamId/connectors/ensure', async (c) => {
 	return ok(c, row);
 });
 
-mcpConnectionsRoutes.delete('/teams/:teamId/mcp-connections/:id', async (c) => {
+mcpConnectionsRoutes.delete('/projects/:projectId/mcp-connections/:id', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const id = c.req.param('id');

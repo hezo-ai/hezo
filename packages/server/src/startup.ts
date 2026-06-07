@@ -15,7 +15,7 @@ import { DomainEventBus } from './events/bus';
 import type { Env } from './lib/types';
 import { getToolDefs, handleMcpRequest, initMcpServer } from './mcp/server';
 import { generateSkillFile } from './mcp/skill-file';
-import { authMiddleware, requireTeamAccessMiddleware } from './middleware/auth';
+import { authMiddleware, requireProjectAccessMiddleware } from './middleware/auth';
 import { agentApiRoutes } from './routes/agent-api';
 import { agentTypesRoutes } from './routes/agent-types';
 import { agentsRoutes } from './routes/agents';
@@ -275,10 +275,12 @@ export function buildApp(
 	app.use('/api/*', authMiddleware);
 	app.use('/agent-api/*', authMiddleware);
 
-	// Team-scoped routes: resolve :teamId slug/UUID + assert access once.
-	// Handlers read c.get('teamId') for the resolved UUID. Agent-api paths
-	// derive teamId from the JWT, not the URL, so they are not covered here.
-	app.use('/api/teams/:teamId/*', requireTeamAccessMiddleware);
+	// Project-scoped routes: resolve :projectId (slug/UUID) → its project and
+	// backing team, assert access once. Handlers read c.get('projectId') and
+	// c.get('teamId'). The project slug is the public handle for every
+	// project-addressed resource (tasks, agents, inbox, team settings, …); the
+	// team is resolved from the project rather than named in the URL.
+	app.use('/api/projects/:projectId/*', requireProjectAccessMiddleware);
 
 	// Agent API routes
 	app.route('/agent-api', agentApiRoutes);

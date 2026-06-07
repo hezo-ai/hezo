@@ -35,7 +35,7 @@ async function seedBlockedProject(): Promise<SeededBlocked> {
 		{ id: taskB.id, identifier: taskB.identifier },
 	];
 
-	const approvalRes = await apiBase(`/api/teams/${ws.team.id}/approvals`, {
+	const approvalRes = await apiBase(`/api/projects/${ws.internalSlug}/approvals`, {
 		method: 'POST',
 		headers: ws.headers,
 		body: JSON.stringify({
@@ -51,7 +51,7 @@ async function seedBlockedProject(): Promise<SeededBlocked> {
 	const approval = ((await approvalRes.json()) as { data: { id: string } }).data;
 
 	for (const task of tasks) {
-		await apiBase(`/api/teams/${ws.team.id}/tasks/${task.id}/comments`, {
+		await apiBase(`/api/projects/${ws.internalSlug}/tasks/${task.id}/comments`, {
 			method: 'POST',
 			headers: ws.headers,
 			body: JSON.stringify({
@@ -81,8 +81,8 @@ test('inbox card opens popup listing every blocked ticket', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/inbox',
-		params: { teamId: seed.ws.team.slug },
+		to: '/projects/$projectId/inbox',
+		params: { projectId: seed.projectSlug },
 	});
 
 	// The inbox also surfaces the resolved project-creation approval from seeding as
@@ -110,8 +110,8 @@ test('clicking a ticket row navigates to the comment with a brief highlight', as
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/inbox',
-		params: { teamId: seed.ws.team.slug },
+		to: '/projects/$projectId/inbox',
+		params: { projectId: seed.projectSlug },
 	});
 
 	await findAllByTestId('approval-card', undefined, { timeout: 15_000 });
@@ -129,7 +129,7 @@ test('clicking a ticket row navigates to the comment with a brief highlight', as
 	);
 	await user.click(firstTicket);
 
-	const expectedPrefix = `/teams/${seed.ws.team.slug}/projects/${seed.projectSlug}/tasks/${seed.tasks[0].identifier.toLowerCase()}`;
+	const expectedPrefix = `/projects/${seed.projectSlug}/tasks/${seed.tasks[0].identifier.toLowerCase()}`;
 	await new Promise((r) => setTimeout(r, 500));
 	expect(router.state.location.pathname).toBe(expectedPrefix);
 });
@@ -145,8 +145,8 @@ test('CTA navigates to the project settings page', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/inbox',
-		params: { teamId: seed.ws.team.slug },
+		to: '/projects/$projectId/inbox',
+		params: { projectId: seed.projectSlug },
 	});
 
 	await findAllByTestId('approval-card', undefined, { timeout: 15_000 });
@@ -159,7 +159,7 @@ test('CTA navigates to the project settings page', async () => {
 	await screen.findByTestId('repo-setup-approval-modal', undefined, { timeout: 10_000 });
 	await user.click(await screen.findByTestId('repo-setup-approval-cta'));
 
-	const expected = `/teams/${seed.ws.team.slug}/projects/${seed.projectSlug}/settings`;
+	const expected = `/projects/${seed.projectSlug}/settings`;
 	await new Promise((r) => setTimeout(r, 500));
 	expect(router.state.location.pathname).toBe(expected);
 	await findByRole('heading', { name: 'GitHub' }, { timeout: 15_000 });

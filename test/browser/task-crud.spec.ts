@@ -14,14 +14,14 @@ test('Agent Queue running row links the agent name to its run comment and scroll
 	const { team, token, agents } = sharedWorkspace;
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+	const projectRes = await createProjectAndClearPlanning(page, team.slug, token, {
 		name: uniqueName('Running Link Project'),
 		description: 'Test project.',
 	});
 	const project = (await projectRes.json()).data;
 	const agent = agents[0] as { id: string; title: string };
 
-	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
+	const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 		headers,
 		data: { project_id: project.id, title: 'Linked Running Task', assignee_id: agent.id },
 	});
@@ -66,7 +66,7 @@ test('Agent Queue running row links the agent name to its run comment and scroll
 		author_member_id: null,
 	}));
 
-	await page.route(`**/api/teams/*/tasks/*/comments**`, async (route) => {
+	await page.route(`**/api/projects/*/tasks/*/comments**`, async (route) => {
 		if (route.request().method() !== 'GET') return route.continue();
 		await route.fulfill({
 			status: 200,
@@ -75,7 +75,7 @@ test('Agent Queue running row links the agent name to its run comment and scroll
 		});
 	});
 
-	await page.route(`**/api/teams/*/tasks/*/lock`, async (route) => {
+	await page.route(`**/api/projects/*/tasks/*/lock`, async (route) => {
 		if (route.request().method() !== 'GET') return route.continue();
 		await route.fulfill({
 			status: 200,
@@ -84,7 +84,7 @@ test('Agent Queue running row links the agent name to its run comment and scroll
 		});
 	});
 
-	await page.goto(`/teams/${team.id}/tasks/${task.id}`);
+	await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
 	await waitForPageLoad(page);
 
 	const agentQueue = page.getByTestId('agent-queue-section');

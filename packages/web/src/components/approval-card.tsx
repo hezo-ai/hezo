@@ -77,10 +77,7 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 							<>
 								{' '}
 								in project{' '}
-								<EntityLink
-									to="/teams/$teamId/projects/$projectId"
-									params={{ teamId: teamSlug, projectId: projectSlug }}
-								>
+								<EntityLink to="/projects/$projectId" params={{ projectId: projectSlug }}>
 									{projectName}
 								</EntityLink>
 							</>
@@ -109,9 +106,8 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 								{' '}
 								(
 								<EntityLink
-									to="/teams/$teamId/projects/$projectId/tasks/$taskId"
+									to="/projects/$projectId/tasks/$taskId"
 									params={{
-										teamId: teamSlug,
 										projectId: hireProjectSlug,
 										taskId: hireTaskIdentifier.toLowerCase(),
 									}}
@@ -149,9 +145,8 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 							(
 							{taskProjectSlug ? (
 								<EntityLink
-									to="/teams/$teamId/projects/$projectId/tasks/$taskId"
+									to="/projects/$projectId/tasks/$taskId"
 									params={{
-										teamId: teamSlug,
 										projectId: taskProjectSlug,
 										taskId: taskId.toLowerCase(),
 									}}
@@ -160,8 +155,8 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 								</EntityLink>
 							) : (
 								<EntityLink
-									to="/teams/$teamId/tasks/$taskId"
-									params={{ teamId: teamSlug, taskId: taskId.toLowerCase() }}
+									to="/projects/$projectId/tasks/$taskId"
+									params={{ projectId: teamSlug, taskId: taskId.toLowerCase() }}
 								>
 									{taskId}
 								</EntityLink>
@@ -279,13 +274,13 @@ function resolveOauthDestination(approval: Approval) {
 
 	if (reason === OAuthRequestReason.RepoAdd && approval.payload_project_slug) {
 		return {
-			to: '/teams/$teamId/projects/$projectId/settings' as const,
-			params: { teamId: teamSlug, projectId: approval.payload_project_slug },
+			to: '/projects/$projectId/settings' as const,
+			params: { projectId: approval.payload_project_slug },
 		};
 	}
 	return {
-		to: '/teams/$teamId/settings/general' as const,
-		params: { teamId: teamSlug },
+		to: '/projects/$projectId/team-settings/general' as const,
+		params: { projectId: teamSlug },
 	};
 }
 
@@ -354,7 +349,7 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 						resolveApproval.mutate({
 							approvalId: approval.id,
 							status: ApprovalStatus.Approved,
-							teamSlug: approval.team_slug,
+							projectSlug: approval.payload_project_slug ?? undefined,
 						})
 					}
 				>
@@ -374,7 +369,7 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 						resolveApproval.mutate({
 							approvalId: approval.id,
 							status: ApprovalStatus.Denied,
-							teamSlug: approval.team_slug,
+							projectSlug: approval.payload_project_slug ?? undefined,
 						})
 					}
 				>

@@ -24,6 +24,13 @@ interface AvatarProps {
 	className?: string;
 }
 
+/** First letters of the first two words, or the first two characters of a single word. */
+export function getInitials(name: string): string {
+	const words = name.split(/\s+/).filter(Boolean);
+	if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+	return name.slice(0, 2).toUpperCase();
+}
+
 export function avatarColorFromString(str: string): AvatarColor {
 	let hash = 0;
 	for (let i = 0; i < str.length; i++) {

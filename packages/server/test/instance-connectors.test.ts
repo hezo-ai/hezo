@@ -70,9 +70,10 @@ describe('instance-level connectors', () => {
 
 		// A team's own connectors list includes the instance connector.
 		const teamId = await makeTeam('Connectors Team');
-		const projectId = await makeProject(teamId, 'connectors-project');
+		const projectSlug = 'connectors-project';
+		const projectId = await makeProject(teamId, projectSlug);
 
-		const teamListRes = await app.request(`/api/teams/${teamId}/mcp-connections`, {
+		const teamListRes = await app.request(`/api/projects/${projectSlug}/mcp-connections`, {
 			headers: authHeader(token),
 		});
 		const teamRows = (await teamListRes.json()).data as { name: string; team_id: string | null }[];
@@ -95,10 +96,11 @@ describe('instance-level connectors', () => {
 		});
 
 		const teamId = await makeTeam('Dedup Team');
-		const projectId = await makeProject(teamId, 'dedup-project');
+		const projectSlug = 'dedup-project';
+		const projectId = await makeProject(teamId, projectSlug);
 
 		// Team-specific connector with the same name, different url.
-		await app.request(`/api/teams/${teamId}/mcp-connections`, {
+		await app.request(`/api/projects/${projectSlug}/mcp-connections`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

@@ -2,8 +2,8 @@ import type { OrgNode } from '../hooks/use-org-chart';
 import { useOrgChart } from '../hooks/use-org-chart';
 import { OrgChartTree } from './org-chart-tree';
 
-export function OnboardingOrgChart({ teamId }: { teamId: string }) {
-	const { data: orgChart, isLoading } = useOrgChart(teamId);
+export function OnboardingOrgChart({ projectId }: { projectId: string }) {
+	const { data: orgChart, isLoading } = useOrgChart(projectId);
 
 	if (isLoading) {
 		return (

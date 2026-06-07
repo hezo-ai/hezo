@@ -34,19 +34,19 @@ export interface CaptainHomeIntake {
 }
 
 interface CaptainHomeIntakePanelProps {
-	teamId: string;
+	projectId: string;
 	intake: CaptainHomeIntake;
 }
 
-export function CaptainHomeIntakePanel({ teamId, intake }: CaptainHomeIntakePanelProps) {
+export function CaptainHomeIntakePanel({ projectId, intake }: CaptainHomeIntakePanelProps) {
 	const taskId = intake.task_identifier.toLowerCase();
-	const createComment = useCreateComment(teamId, taskId);
-	const { data: comments } = useComments(teamId, taskId);
-	const skipQuestions = useSkipOnboardingQuestions(teamId);
+	const createComment = useCreateComment(projectId, taskId);
+	const { data: comments } = useComments(projectId, taskId);
+	const skipQuestions = useSkipOnboardingQuestions(projectId);
 	const [message, setMessage] = useState('');
 	const [awaitingCaptainReply, setAwaitingCaptainReply] = useState(false);
 
-	const taskLinkParams = { teamId, projectId: intake.project_slug, taskId };
+	const taskLinkParams = { projectId: intake.project_slug, taskId };
 
 	const lastChatMessage = useMemo(() => {
 		const textComments = (comments ?? []).filter((c) => c.content_type === CommentContentType.Text);
@@ -100,7 +100,7 @@ export function CaptainHomeIntakePanel({ teamId, intake }: CaptainHomeIntakePane
 				<div className="flex items-center justify-between gap-2 border-b border-border pb-3">
 					<span className="text-[13px] font-medium text-text">{intake.captain_title}</span>
 					<Link
-						to="/teams/$teamId/projects/$projectId/tasks/$taskId"
+						to="/projects/$projectId/tasks/$taskId"
 						params={taskLinkParams}
 						className="text-xs text-accent-blue hover:underline shrink-0"
 					>
@@ -109,7 +109,7 @@ export function CaptainHomeIntakePanel({ teamId, intake }: CaptainHomeIntakePane
 				</div>
 
 				<CaptainIntakeChat
-					teamSlug={teamId}
+					projectSlug={projectId}
 					taskIdentifier={taskId}
 					captainTitle={intake.captain_title}
 					awaitingCaptainReply={awaitingCaptainReply}

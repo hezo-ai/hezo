@@ -8,7 +8,7 @@ import { validateBody } from '../lib/validate';
 
 export const costsRoutes = new Hono<Env>();
 
-costsRoutes.get('/teams/:teamId/costs', async (c) => {
+costsRoutes.get('/projects/:projectId/costs', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const agentId = c.req.query('agent_id');
@@ -101,7 +101,7 @@ costsRoutes.get('/teams/:teamId/costs', async (c) => {
 	return ok(c, { entries: result.rows, total_cents: totalCents });
 });
 
-costsRoutes.post('/teams/:teamId/costs', async (c) => {
+costsRoutes.post('/projects/:projectId/costs', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 

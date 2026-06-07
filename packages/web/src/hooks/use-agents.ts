@@ -49,23 +49,23 @@ export interface AgentSystemPromptRevision {
 	created_at: string;
 }
 
-export function useAgents(teamId: string, adminStatus?: string) {
+export function useAgents(projectId: string, adminStatus?: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'agents', { admin_status: adminStatus }],
+		queryKey: ['projects', projectId, 'agents', { admin_status: adminStatus }],
 		queryFn: () =>
 			api.get<Agent[]>(
-				`/api/teams/${teamId}/agents`,
+				`/api/projects/${projectId}/agents`,
 				adminStatus ? { admin_status: adminStatus } : undefined,
 			),
-		enabled: !!teamId,
+		enabled: !!projectId,
 		staleTime: 0,
 	});
 }
 
-export function useAgent(teamId: string, agentId: string) {
+export function useAgent(projectId: string, agentId: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'agents', agentId],
-		queryFn: () => api.get<Agent>(`/api/teams/${teamId}/agents/${agentId}`),
+		queryKey: ['projects', projectId, 'agents', agentId],
+		queryFn: () => api.get<Agent>(`/api/projects/${projectId}/agents/${agentId}`),
 	});
 }
 
@@ -83,10 +83,10 @@ interface UpdateAgentVars {
 	model_override_model?: string | null;
 }
 
-export function useUpdateAgent(teamId: string, agentId: string) {
+export function useUpdateAgent(projectId: string, agentId: string) {
 	return useOptimisticMutation<UpdateAgentVars, Agent, Agent>({
-		mutationFn: (data) => api.patch<Agent>(`/api/teams/${teamId}/agents/${agentId}`, data),
-		queryKey: ['teams', teamId, 'agents', agentId],
+		mutationFn: (data) => api.patch<Agent>(`/api/projects/${projectId}/agents/${agentId}`, data),
+		queryKey: ['projects', projectId, 'agents', agentId],
 		applyOptimistic: (current, vars) => {
 			if (!current) return current;
 			// system_prompt/_change_summary live in a separate doc cache; don't apply here.
@@ -95,79 +95,83 @@ export function useUpdateAgent(teamId: string, agentId: string) {
 		},
 		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
 		invalidateOnSettled: [
-			['teams', teamId, 'agents'],
-			['teams', teamId, 'agents', agentId, 'system-prompt'],
+			['projects', projectId, 'agents'],
+			['projects', projectId, 'agents', agentId, 'system-prompt'],
 		],
 		errorMessage: 'Failed to update agent',
 	});
 }
 
-export function useAgentSystemPrompt(teamId: string, agentId: string) {
+export function useAgentSystemPrompt(projectId: string, agentId: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'agents', agentId, 'system-prompt'],
+		queryKey: ['projects', projectId, 'agents', agentId, 'system-prompt'],
 		queryFn: () =>
-			api.get<AgentSystemPromptDoc | null>(`/api/teams/${teamId}/agents/${agentId}/system-prompt`),
-		enabled: !!teamId && !!agentId,
+			api.get<AgentSystemPromptDoc | null>(
+				`/api/projects/${projectId}/agents/${agentId}/system-prompt`,
+			),
+		enabled: !!projectId && !!agentId,
 	});
 }
 
-export function useAgentSystemPromptPreview(teamId: string, agentId: string, enabled: boolean) {
+export function useAgentSystemPromptPreview(projectId: string, agentId: string, enabled: boolean) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'agents', agentId, 'system-prompt', 'preview'],
+		queryKey: ['projects', projectId, 'agents', agentId, 'system-prompt', 'preview'],
 		queryFn: () =>
-			api.get<{ content: string }>(`/api/teams/${teamId}/agents/${agentId}/system-prompt/preview`),
-		enabled: enabled && !!teamId && !!agentId,
+			api.get<{ content: string }>(
+				`/api/projects/${projectId}/agents/${agentId}/system-prompt/preview`,
+			),
+		enabled: enabled && !!projectId && !!agentId,
 	});
 }
 
-export function useAgentSystemPromptRevisions(teamId: string, agentId: string) {
+export function useAgentSystemPromptRevisions(projectId: string, agentId: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'agents', agentId, 'system-prompt', 'revisions'],
+		queryKey: ['projects', projectId, 'agents', agentId, 'system-prompt', 'revisions'],
 		queryFn: () =>
 			api.get<AgentSystemPromptRevision[]>(
-				`/api/teams/${teamId}/agents/${agentId}/system-prompt/revisions`,
+				`/api/projects/${projectId}/agents/${agentId}/system-prompt/revisions`,
 			),
-		enabled: !!teamId && !!agentId,
+		enabled: !!projectId && !!agentId,
 	});
 }
 
-export function useRestoreAgentSystemPrompt(teamId: string, agentId: string) {
+export function useRestoreAgentSystemPrompt(projectId: string, agentId: string) {
 	return useMutation({
 		mutationFn: (revisionNumber: number) =>
-			api.post(`/api/teams/${teamId}/agents/${agentId}/system-prompt/restore`, {
+			api.post(`/api/projects/${projectId}/agents/${agentId}/system-prompt/restore`, {
 				revision_number: revisionNumber,
 			}),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'agents', agentId, 'system-prompt'],
+				queryKey: ['projects', projectId, 'agents', agentId, 'system-prompt'],
 			});
 		},
 	});
 }
 
-export function useDisableAgent(teamId: string) {
+export function useDisableAgent(projectId: string) {
 	return useOptimisticMutation<string, unknown, Agent>({
-		mutationFn: (agentId) => api.post(`/api/teams/${teamId}/agents/${agentId}/disable`),
-		queryKey: (agentId) => ['teams', teamId, 'agents', agentId],
+		mutationFn: (agentId) => api.post(`/api/projects/${projectId}/agents/${agentId}/disable`),
+		queryKey: (agentId) => ['projects', projectId, 'agents', agentId],
 		applyOptimistic: (current) =>
 			current ? { ...current, admin_status: AgentAdminStatus.Disabled } : current,
-		invalidateOnSettled: [['teams', teamId, 'agents']],
+		invalidateOnSettled: [['projects', projectId, 'agents']],
 		errorMessage: 'Failed to disable agent',
 	});
 }
 
-export function useEnableAgent(teamId: string) {
+export function useEnableAgent(projectId: string) {
 	return useOptimisticMutation<string, unknown, Agent>({
-		mutationFn: (agentId) => api.post(`/api/teams/${teamId}/agents/${agentId}/enable`),
-		queryKey: (agentId) => ['teams', teamId, 'agents', agentId],
+		mutationFn: (agentId) => api.post(`/api/projects/${projectId}/agents/${agentId}/enable`),
+		queryKey: (agentId) => ['projects', projectId, 'agents', agentId],
 		applyOptimistic: (current) =>
 			current ? { ...current, admin_status: AgentAdminStatus.Enabled } : current,
-		invalidateOnSettled: [['teams', teamId, 'agents']],
+		invalidateOnSettled: [['projects', projectId, 'agents']],
 		errorMessage: 'Failed to enable agent',
 	});
 }
 
-export function useOnboardAgent(teamId: string) {
+export function useOnboardAgent(projectId: string) {
 	return useMutation({
 		mutationFn: (data: {
 			title: string;
@@ -182,11 +186,11 @@ export function useOnboardAgent(teamId: string) {
 				task: { id: string; identifier: string } | null;
 				approval: { id: string } | null;
 				bootstrap: boolean;
-			}>(`/api/teams/${teamId}/agents/onboard`, data),
+			}>(`/api/projects/${projectId}/agents/onboard`, data),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'agents'] });
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'tasks'] });
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'approvals'] });
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'agents'] });
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'tasks'] });
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'approvals'] });
 		},
 	});
 }

@@ -75,7 +75,9 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Terminate Test Co' }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	const teamSlug = teamData.slug;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Main',
@@ -83,14 +85,14 @@ beforeAll(async () => {
 	});
 	projectId = (await projectRes.json()).data.id;
 
-	const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentRes = await app.request(`/api/projects/internal-${teamSlug}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Test Runner' }),
 	});
 	agentId = (await agentRes.json()).data.id;
 
-	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+	const taskRes = await app.request(`/api/projects/${projectId}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -111,7 +113,7 @@ describe('POST /heartbeat-runs/:runId/terminate', () => {
 		const runId = await makeRun('queued');
 
 		const res = await app.request(
-			`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs/${runId}/terminate`,
+			`/api/projects/${projectId}/agents/${agentId}/heartbeat-runs/${runId}/terminate`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -142,7 +144,7 @@ describe('POST /heartbeat-runs/:runId/terminate', () => {
 		);
 
 		const res = await app.request(
-			`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs/${runId}/terminate`,
+			`/api/projects/${projectId}/agents/${agentId}/heartbeat-runs/${runId}/terminate`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -155,7 +157,7 @@ describe('POST /heartbeat-runs/:runId/terminate', () => {
 	it('returns 404 for an unknown run id', async () => {
 		const fakeId = '00000000-0000-0000-0000-000000000000';
 		const res = await app.request(
-			`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs/${fakeId}/terminate`,
+			`/api/projects/${projectId}/agents/${agentId}/heartbeat-runs/${fakeId}/terminate`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -170,7 +172,7 @@ describe('PATCH /tasks status → Closed/Cancelled', () => {
 	it('auto-terminates queued runs when task closes', async () => {
 		const runId = await makeRun('queued');
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
+		const res = await app.request(`/api/projects/${projectId}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'closed' }),
@@ -197,7 +199,7 @@ describe('PATCH /tasks status → Closed/Cancelled', () => {
 		await db.query("UPDATE tasks SET status = 'backlog'::task_status WHERE id = $1", [taskId]);
 		const runId = await makeRun('queued');
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
+		const res = await app.request(`/api/projects/${projectId}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'cancelled' }),

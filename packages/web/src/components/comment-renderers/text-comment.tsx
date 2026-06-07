@@ -4,11 +4,11 @@ import type { CommentDataOf } from './comment-data';
 
 interface Props {
 	comment: CommentDataOf<'text'>;
-	teamId?: string;
+	projectId?: string;
 	projectSlug?: string;
 }
 
-export function TextComment({ comment, teamId, projectSlug }: Props) {
+export function TextComment({ comment, projectId, projectSlug }: Props) {
 	const raw = comment.content;
 	const content =
 		typeof raw === 'string'
@@ -20,7 +20,7 @@ export function TextComment({ comment, teamId, projectSlug }: Props) {
 				: '';
 	return (
 		<>
-			<MarkdownProse testId="text-comment-body" teamId={teamId} projectSlug={projectSlug}>
+			<MarkdownProse testId="text-comment-body" projectId={projectId} projectSlug={projectSlug}>
 				{content}
 			</MarkdownProse>
 			{comment.attachments && comment.attachments.length > 0 ? (

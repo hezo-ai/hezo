@@ -160,7 +160,7 @@ oauthRoutes.get('/oauth/callback', async (c) => {
 	return c.html(buildCallbackPage('success', undefined, payload.returnTo), 200);
 });
 
-oauthRoutes.post('/teams/:teamId/oauth/auth-code/start', async (c) => {
+oauthRoutes.post('/projects/:projectId/oauth/auth-code/start', async (c) => {
 	const teamId = c.get('teamId') as string;
 
 	const masterKeyManager = c.get('masterKeyManager');
@@ -404,7 +404,7 @@ async function startConnectorAuthCode(
 		teamId,
 		provider: `mcp:${connector.id}`,
 		redirectUri,
-		returnTo: `/teams/${teamId}/connectors?focus=${connector.id}`,
+		returnTo: `/projects/${c.req.param('projectId')}/connectors?focus=${connector.id}`,
 		mcpConnectionId: connector.id,
 		mcpConnectionName: connector.display_name ?? connector.name,
 		manualConfig: {
@@ -434,7 +434,7 @@ async function startConnectorAuthCode(
  * in a popup; the flow completes server-side via /oauth/mcp-callback and a
  * window.postMessage back to the opener.
  */
-oauthRoutes.post('/teams/:teamId/auth-start', async (c) => {
+oauthRoutes.post('/projects/:projectId/auth-start', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const body = (await c.req.json().catch(() => ({}))) as { connector_id?: string };
 
@@ -531,7 +531,7 @@ oauthRoutes.get('/oauth/mcp-callback', async (c) => {
 	return c.html(buildCallbackPage('success', undefined, payload.returnTo), 200);
 });
 
-oauthRoutes.get('/teams/:teamId/oauth-connections', async (c) => {
+oauthRoutes.get('/projects/:projectId/oauth-connections', async (c) => {
 	const teamId = c.get('teamId') as string;
 
 	const db = c.get('db');
@@ -554,7 +554,7 @@ oauthRoutes.get('/teams/:teamId/oauth-connections', async (c) => {
 	);
 });
 
-oauthRoutes.get('/teams/:teamId/oauth-connections/:id/scope-status', async (c) => {
+oauthRoutes.get('/projects/:projectId/oauth-connections/:id/scope-status', async (c) => {
 	const teamId = c.get('teamId') as string;
 
 	const db = c.get('db');
@@ -570,7 +570,7 @@ oauthRoutes.get('/teams/:teamId/oauth-connections/:id/scope-status', async (c) =
 	return ok(c, computeScopeStatus(conn.scopes));
 });
 
-oauthRoutes.delete('/teams/:teamId/oauth-connections/:id', async (c) => {
+oauthRoutes.delete('/projects/:projectId/oauth-connections/:id', async (c) => {
 	const teamId = c.get('teamId') as string;
 
 	const db = c.get('db');
@@ -597,7 +597,7 @@ oauthRoutes.delete('/teams/:teamId/oauth-connections/:id', async (c) => {
  * Returns the user code + verification URL for the UI to display; the device
  * code stays server side, referenced by an opaque flow id.
  */
-oauthRoutes.post('/teams/:teamId/connectors/:connectorId/device/start', async (c) => {
+oauthRoutes.post('/projects/:projectId/connectors/:connectorId/device/start', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const connectorId = c.req.param('connectorId');
 	const db = c.get('db');
@@ -649,7 +649,7 @@ oauthRoutes.post('/teams/:teamId/connectors/:connectorId/device/start', async (c
  * activation, provider side effects) via the same helper the OAuth callback
  * uses, so the connector ends up identical regardless of acquisition path.
  */
-oauthRoutes.post('/teams/:teamId/connectors/:connectorId/device/poll', async (c) => {
+oauthRoutes.post('/projects/:projectId/connectors/:connectorId/device/poll', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const connectorId = c.req.param('connectorId');
 

@@ -13,7 +13,7 @@ const priorityColors: Record<string, string> = {
 
 interface TaskHeaderProps {
 	task: Task;
-	teamId: string;
+	projectId: string;
 	taskProjectSlug: string;
 }
 
@@ -22,7 +22,7 @@ interface TaskHeaderProps {
  * badges, queued-wakeup chip, and the description card. Renders nothing
  * status-mutating — assignee / close / reopen live in the sidebar.
  */
-export function TaskHeader({ task, teamId, taskProjectSlug }: TaskHeaderProps) {
+export function TaskHeader({ task, projectId, taskProjectSlug }: TaskHeaderProps) {
 	return (
 		<>
 			<div className="mb-1 text-[13px] font-mono text-text-muted">{task.identifier}</div>
@@ -33,8 +33,8 @@ export function TaskHeader({ task, teamId, taskProjectSlug }: TaskHeaderProps) {
 				<Badge color={priorityColors[task.priority] as 'neutral'}>{task.priority}</Badge>
 				{task.project_name && task.project_slug && (
 					<Link
-						to="/teams/$teamId/projects/$projectId"
-						params={{ teamId, projectId: task.project_slug }}
+						to="/projects/$projectId"
+						params={{ projectId: task.project_slug }}
 						className="hover:opacity-80 transition-opacity"
 					>
 						<Badge color="info">{task.project_name}</Badge>
@@ -59,7 +59,11 @@ export function TaskHeader({ task, teamId, taskProjectSlug }: TaskHeaderProps) {
 						<span className="text-xs font-medium text-text-muted">Description</span>
 					</div>
 					<div className="px-3 py-2.5">
-						<MarkdownProse testId="task-description" teamId={teamId} projectSlug={taskProjectSlug}>
+						<MarkdownProse
+							testId="task-description"
+							projectId={projectId}
+							projectSlug={taskProjectSlug}
+						>
 							{task.description}
 						</MarkdownProse>
 					</div>

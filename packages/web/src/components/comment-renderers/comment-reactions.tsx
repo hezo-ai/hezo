@@ -18,17 +18,17 @@ function reactorsTooltip(group: ReactionGroup): string {
 
 interface Props {
 	comment: CommentData;
-	teamId?: string;
+	projectId?: string;
 	taskId?: string;
 }
 
-export function CommentReactions({ comment, teamId, taskId }: Props) {
+export function CommentReactions({ comment, projectId, taskId }: Props) {
 	const groups = comment.reactions ?? [];
 	const [pickerOpen, setPickerOpen] = useState(false);
-	const addReaction = useAddReaction(teamId ?? '', taskId ?? '');
-	const removeReaction = useRemoveReaction(teamId ?? '', taskId ?? '');
+	const addReaction = useAddReaction(projectId ?? '', taskId ?? '');
+	const removeReaction = useRemoveReaction(projectId ?? '', taskId ?? '');
 
-	if (!teamId || !taskId) return null;
+	if (!projectId || !taskId) return null;
 	const busy = addReaction.isPending || removeReaction.isPending;
 
 	const toggle = (kind: string, youReacted: boolean) => {

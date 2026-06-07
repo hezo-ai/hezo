@@ -57,9 +57,11 @@ beforeAll(async () => {
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'SSH Docker Co' }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	const projectSlug = `internal-${teamData.slug}`;
 
-	const agentRes = await ctx.app.request(`/api/teams/${teamId}/agents`, {
+	const agentRes = await ctx.app.request(`/api/projects/${projectSlug}/agents`, {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'SSH Docker Agent' }),

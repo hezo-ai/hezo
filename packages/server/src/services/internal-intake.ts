@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AgentAdminStatus, CAPTAIN_AGENT_SLUG, INTERNAL_PROJECT_SLUG } from '@hezo/shared';
+import { AgentAdminStatus, CAPTAIN_AGENT_SLUG } from '@hezo/shared';
 import { terminalStatusParams } from '../lib/sql';
 
 export interface CaptainInternalContext {
@@ -20,9 +20,9 @@ export async function loadCaptainInternalContext(
 	);
 	const internalProject = await db.query<{ id: string }>(
 		`SELECT id FROM projects
-		 WHERE team_id = $1 AND is_internal = true AND slug = $2
+		 WHERE team_id = $1 AND is_internal = true
 		 LIMIT 1`,
-		[teamId, INTERNAL_PROJECT_SLUG],
+		[teamId],
 	);
 	if (!captain.rows[0] || !internalProject.rows[0]) return null;
 	return {

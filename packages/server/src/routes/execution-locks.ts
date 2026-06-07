@@ -8,7 +8,7 @@ import { acquireLock, listActiveLocks, releaseLocks } from '../repositories/exec
 
 export const executionLocksRoutes = new Hono<Env>();
 
-executionLocksRoutes.get('/teams/:teamId/tasks/:taskId/lock', async (c) => {
+executionLocksRoutes.get('/projects/:projectId/tasks/:taskId/lock', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
@@ -18,7 +18,7 @@ executionLocksRoutes.get('/teams/:teamId/tasks/:taskId/lock', async (c) => {
 	return ok(c, { locks });
 });
 
-executionLocksRoutes.post('/teams/:teamId/tasks/:taskId/lock', async (c) => {
+executionLocksRoutes.post('/projects/:projectId/tasks/:taskId/lock', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
@@ -44,7 +44,7 @@ executionLocksRoutes.post('/teams/:teamId/tasks/:taskId/lock', async (c) => {
 	return ok(c, lock, 201);
 });
 
-executionLocksRoutes.delete('/teams/:teamId/tasks/:taskId/lock', async (c) => {
+executionLocksRoutes.delete('/projects/:projectId/tasks/:taskId/lock', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));

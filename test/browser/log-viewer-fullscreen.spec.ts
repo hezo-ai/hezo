@@ -38,15 +38,18 @@ test('log viewer preserves bottom-pinned scroll across expand/collapse cycles', 
 		created_tasks: [],
 	};
 
-	await page.route(`**/api/teams/*/agents/${captain.id}/heartbeat-runs/${runId}`, async (route) => {
-		await route.fulfill({
-			status: 200,
-			contentType: 'application/json',
-			body: JSON.stringify({ data: runResponse }),
-		});
-	});
+	await page.route(
+		`**/api/projects/*/agents/${captain.id}/heartbeat-runs/${runId}`,
+		async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ data: runResponse }),
+			});
+		},
+	);
 
-	await page.goto(`/teams/${team.slug}/agents/${captain.id}/executions/${runId}`);
+	await page.goto(`/projects/internal-${team.slug}/agents/${captain.id}/executions/${runId}`);
 
 	const inlineLog = page.getByTestId('run-log');
 	await expect(inlineLog).toBeVisible({ timeout: 15_000 });

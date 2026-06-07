@@ -8,7 +8,7 @@ import { authHeader, createTestApp } from './helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let teamId: string;
+let projectSlug: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -21,7 +21,8 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Pref Test Co' }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const team = (await teamRes.json()).data as { slug: string };
+	projectSlug = `internal-${team.slug}`;
 });
 
 afterAll(async () => {
@@ -30,7 +31,7 @@ afterAll(async () => {
 
 describe('Team preferences', () => {
 	it('returns null when no preferences exist', async () => {
-		const res = await app.request(`/api/teams/${teamId}/preferences`, {
+		const res = await app.request(`/api/projects/${projectSlug}/preferences`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -39,7 +40,7 @@ describe('Team preferences', () => {
 	});
 
 	it('creates preferences on first PATCH', async () => {
-		const res = await app.request(`/api/teams/${teamId}/preferences`, {
+		const res = await app.request(`/api/projects/${projectSlug}/preferences`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -52,7 +53,7 @@ describe('Team preferences', () => {
 	});
 
 	it('reads preferences after creation', async () => {
-		const res = await app.request(`/api/teams/${teamId}/preferences`, {
+		const res = await app.request(`/api/projects/${projectSlug}/preferences`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -61,7 +62,7 @@ describe('Team preferences', () => {
 	});
 
 	it('updates preferences and creates revision', async () => {
-		const res = await app.request(`/api/teams/${teamId}/preferences`, {
+		const res = await app.request(`/api/projects/${projectSlug}/preferences`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -74,7 +75,7 @@ describe('Team preferences', () => {
 		expect(body.data.content).toContain('dark themes');
 
 		// Check revision was created with previous content
-		const revRes = await app.request(`/api/teams/${teamId}/preferences/revisions`, {
+		const revRes = await app.request(`/api/projects/${projectSlug}/preferences/revisions`, {
 			headers: authHeader(token),
 		});
 		expect(revRes.status).toBe(200);
@@ -91,17 +92,20 @@ describe('Team preferences', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Empty Prefs Co' }),
 		});
-		const emptyCoId = (await coRes.json()).data.id;
+		const emptyTeam = (await coRes.json()).data as { slug: string };
 
-		const res = await app.request(`/api/teams/${emptyCoId}/preferences/revisions`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/internal-${emptyTeam.slug}/preferences/revisions`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		expect(res.status).toBe(200);
 		expect((await res.json()).data).toEqual([]);
 	});
 
 	it('restores preferences to a prior revision', async () => {
-		await app.request(`/api/teams/${teamId}/preferences`, {
+		await app.request(`/api/projects/${projectSlug}/preferences`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -110,7 +114,7 @@ describe('Team preferences', () => {
 			}),
 		});
 
-		const restoreRes = await app.request(`/api/teams/${teamId}/preferences/restore`, {
+		const restoreRes = await app.request(`/api/projects/${projectSlug}/preferences/restore`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ revision_number: 1 }),
@@ -120,7 +124,7 @@ describe('Team preferences', () => {
 		expect(restored.data.content).toContain('functional patterns');
 		expect(restored.data.content).not.toContain('Reverted body');
 
-		const revRes = await app.request(`/api/teams/${teamId}/preferences/revisions`, {
+		const revRes = await app.request(`/api/projects/${projectSlug}/preferences/revisions`, {
 			headers: authHeader(token),
 		});
 		const revs = (await revRes.json()).data;
@@ -128,7 +132,7 @@ describe('Team preferences', () => {
 	});
 
 	it('returns 404 when restoring an unknown revision number', async () => {
-		const res = await app.request(`/api/teams/${teamId}/preferences/restore`, {
+		const res = await app.request(`/api/projects/${projectSlug}/preferences/restore`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ revision_number: 9999 }),

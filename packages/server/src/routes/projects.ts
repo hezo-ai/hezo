@@ -4,7 +4,6 @@ import { type Context, Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { ref } from '../lib/log-ref';
-import { resolveProjectId } from '../lib/resolve';
 import { requireResourceInTeam } from '../lib/resource';
 import { err, ok } from '../lib/response';
 import { toProjectTaskPrefix, toSlug, uniqueSlug } from '../lib/slug';
@@ -143,20 +142,37 @@ export async function resolveProjectTaskPrefix(
 
 export const projectsRoutes = new Hono<Env>();
 
-projectsRoutes.get('/teams/:teamId/projects', async (c) => {
-	const teamId = c.get('teamId') as string;
+// Instance-level project index: every project the caller can see across all
+// their teams, including the per-team internal projects. Carries the backing
+// team's slug/name so the client can resolve a project's team without a teamId
+// in the URL. The single public list behind the project rail.
+projectsRoutes.get('/projects', async (c) => {
 	const db = c.get('db');
+	const auth = c.get('auth');
+	const isSuperuser = auth.type === AuthType.Admin && auth.isSuperuser;
+	const isAdmin = auth.type === AuthType.Admin;
 
-	const ts = terminalStatusParams(2);
-	const result = await db.query(
-		`SELECT p.*,
+	const ts = terminalStatusParams(1);
+	const params: unknown[] = [...ts.values];
+	const base = `SELECT p.*, t.slug AS team_slug, t.name AS team_name,
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
        (SELECT count(*) FROM tasks i WHERE i.project_id = p.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count
      FROM projects p
-     WHERE p.team_id = $1
-     ORDER BY p.created_at DESC`,
-		[teamId, ...ts.values],
-	);
+     JOIN teams t ON t.id = p.team_id`;
+
+	let query: string;
+	if (!isAdmin || isSuperuser) {
+		query = `${base} ORDER BY p.created_at DESC`;
+	} else {
+		query = `${base}
+     JOIN members m2 ON m2.team_id = p.team_id
+     JOIN member_users mu ON mu.id = m2.id
+     WHERE mu.user_id = $${params.length + 1}
+     ORDER BY p.created_at DESC`;
+		params.push(auth.userId);
+	}
+
+	const result = await db.query(query, params);
 	return ok(c, result.rows);
 });
 
@@ -234,7 +250,10 @@ projectsRoutes.post('/projects', async (c) => {
 	);
 });
 
-projectsRoutes.post('/teams/:teamId/projects', async (c) => {
+// Add another project to the team backing :projectId (project-addressed escape
+// hatch — the 1:1 model doesn't surface this, but tests and multi-project teams
+// use it). Opens the intake on the resolved team's Internal project.
+projectsRoutes.post('/projects/:projectId/projects', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
@@ -255,7 +274,6 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 	const prefixResult = await resolveProjectTaskPrefix(db, teamId, body.task_prefix, body.name);
 	if (!prefixResult.ok) return err(c, prefixResult.code, prefixResult.message, prefixResult.status);
 
-	const wsManager = c.get('wsManager');
 	const intake = await createProjectIntake(
 		db,
 		teamId,
@@ -265,7 +283,7 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 			taskPrefix: prefixResult.prefix,
 			initialPrd: body.initial_prd?.trim() || null,
 		},
-		wsManager,
+		c.get('wsManager'),
 	);
 	if (!intake) {
 		return err(
@@ -288,10 +306,10 @@ projectsRoutes.post('/teams/:teamId/projects', async (c) => {
 	);
 });
 
-projectsRoutes.get('/teams/:teamId/projects/:projectId', async (c) => {
+projectsRoutes.get('/projects/:projectId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
+	const projectId = c.get('projectId') as string;
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const ts2 = terminalStatusParams(3);
@@ -315,10 +333,10 @@ projectsRoutes.get('/teams/:teamId/projects/:projectId', async (c) => {
 	return ok(c, { ...(result.rows[0] as Record<string, unknown>), repos: repos.rows });
 });
 
-projectsRoutes.patch('/teams/:teamId/projects/:projectId', async (c) => {
+projectsRoutes.patch('/projects/:projectId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
+	const projectId = c.get('projectId') as string;
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const existing = await requireResourceInTeam<{ id: string }>(c, 'projects', projectId, teamId, {
@@ -338,10 +356,10 @@ projectsRoutes.patch('/teams/:teamId/projects/:projectId', async (c) => {
 
 	if (body.name?.trim()) {
 		const newSlug = await uniqueSlug(toSlug(body.name), async (s) => {
-			const r = await db.query(
-				'SELECT 1 FROM projects WHERE team_id = $1 AND slug = $2 AND id != $3',
-				[teamId, s, projectId],
-			);
+			const r = await db.query('SELECT 1 FROM projects WHERE slug = $1 AND id != $2', [
+				s,
+				projectId,
+			]);
 			return r.rows.length > 0;
 		});
 		sets.push(`name = $${idx}`);
@@ -386,10 +404,10 @@ projectsRoutes.patch('/teams/:teamId/projects/:projectId', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-projectsRoutes.delete('/teams/:teamId/projects/:projectId', async (c) => {
+projectsRoutes.delete('/projects/:projectId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
+	const projectId = c.get('projectId') as string;
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const existing = await requireResourceInTeam<{ id: string; slug: string; is_internal: boolean }>(
@@ -424,10 +442,10 @@ projectsRoutes.delete('/teams/:teamId/projects/:projectId', async (c) => {
 	return c.json({ data: null }, 200);
 });
 
-projectsRoutes.post('/teams/:teamId/projects/:projectId/container/start', async (c) => {
+projectsRoutes.post('/projects/:projectId/container/start', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
+	const projectId = c.get('projectId') as string;
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const result = await requireResourceInTeam<{ container_id: string | null }>(
@@ -460,10 +478,10 @@ projectsRoutes.post('/teams/:teamId/projects/:projectId/container/start', async 
 	}
 });
 
-projectsRoutes.post('/teams/:teamId/projects/:projectId/container/stop', async (c) => {
+projectsRoutes.post('/projects/:projectId/container/stop', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
+	const projectId = c.get('projectId') as string;
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const row = await requireResourceInTeam<{
@@ -519,10 +537,10 @@ projectsRoutes.post('/teams/:teamId/projects/:projectId/container/stop', async (
 
 const REBUILD_TIMEOUT_MS = 5 * 60 * 1000;
 
-projectsRoutes.post('/teams/:teamId/projects/:projectId/container/rebuild', async (c) => {
+projectsRoutes.post('/projects/:projectId/container/rebuild', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
-	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
+	const projectId = c.get('projectId') as string;
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const projectResult = await db.query('SELECT * FROM projects WHERE id = $1 AND team_id = $2', [

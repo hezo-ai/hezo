@@ -12,6 +12,8 @@ let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
+let internalSlug: string;
+let internalProjectId: string;
 let captainId: string;
 let engineerId: string;
 
@@ -53,9 +55,16 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Hire Proposal Co', template_id: typeId }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const team = (await teamRes.json()).data;
+	teamId = team.id;
+	internalSlug = `internal-${team.slug}`;
+	const internalProject = await db.query<{ id: string }>(
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true LIMIT 1`,
+		[teamId],
+	);
+	internalProjectId = internalProject.rows[0].id;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data;
@@ -69,7 +78,7 @@ afterAll(async () => {
 
 describe('MCP tool update_hire_proposal', () => {
 	it('lets the Captain revise a pending hire proposal', async () => {
-		const onboardRes = await app.request(`/api/teams/${teamId}/agents/onboard`, {
+		const onboardRes = await app.request(`/api/projects/${internalSlug}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -80,7 +89,14 @@ describe('MCP tool update_hire_proposal', () => {
 		});
 		const { approval } = (await onboardRes.json()).data;
 
-		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, captainId, teamId);
+		const { token: ceoToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			captainId,
+			teamId,
+			null,
+			{ projectId: internalProjectId },
+		);
 		const result = (await callTool(ceoToken, 'update_hire_proposal', {
 			approval_id: approval.id,
 			system_prompt: 'You are the Support Lead. Own all customer support channels.',
@@ -101,14 +117,21 @@ describe('MCP tool update_hire_proposal', () => {
 	});
 
 	it('rejects non-Captain agents', async () => {
-		const onboardRes = await app.request(`/api/teams/${teamId}/agents/onboard`, {
+		const onboardRes = await app.request(`/api/projects/${internalSlug}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Sales Lead', role_description: 'x' }),
 		});
 		const { approval } = (await onboardRes.json()).data;
 
-		const { token: engToken } = await mintAgentToken(db, masterKeyManager, engineerId, teamId);
+		const { token: engToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			engineerId,
+			teamId,
+			null,
+			{ projectId: internalProjectId },
+		);
 		const result = (await callTool(engToken, 'update_hire_proposal', {
 			approval_id: approval.id,
 			system_prompt: 'hostile rewrite',
@@ -118,7 +141,7 @@ describe('MCP tool update_hire_proposal', () => {
 	});
 
 	it('rejects revisions to resolved proposals', async () => {
-		const onboardRes = await app.request(`/api/teams/${teamId}/agents/onboard`, {
+		const onboardRes = await app.request(`/api/projects/${internalSlug}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Ops Lead', role_description: 'x' }),
@@ -131,7 +154,14 @@ describe('MCP tool update_hire_proposal', () => {
 			body: JSON.stringify({ status: 'denied', resolution_note: 'no' }),
 		});
 
-		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, captainId, teamId);
+		const { token: ceoToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			captainId,
+			teamId,
+			null,
+			{ projectId: internalProjectId },
+		);
 		const result = (await callTool(ceoToken, 'update_hire_proposal', {
 			approval_id: approval.id,
 			system_prompt: 'too late',

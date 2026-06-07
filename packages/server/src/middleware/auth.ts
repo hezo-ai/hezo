@@ -5,7 +5,7 @@ import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { sign, verify } from 'hono/jwt';
 import type { MasterKeyManager } from '../crypto/master-key';
-import { resolveTeamId } from '../lib/resolve';
+import { resolveProject, resolveTeamId } from '../lib/resolve';
 import type { AuthInfo, Env } from '../lib/types';
 import { findApiKeyByPrefix, touchApiKeyLastUsed } from '../repositories/api-keys';
 
@@ -245,6 +245,32 @@ export const requireTeamAccessMiddleware = createMiddleware<Env>(async (c, next)
 	if (denied) return denied;
 
 	c.set('teamId', teamId);
+	return next();
+});
+
+/**
+ * Hono middleware for routes mounted under `/api/projects/:projectId/*`. The
+ * project slug is the public handle, so this resolves `:projectId` (slug or
+ * UUID) to its project and backing team, asserts team access, and exposes both
+ * `c.var.projectId` and `c.var.teamId` for downstream handlers.
+ */
+export const requireProjectAccessMiddleware = createMiddleware<Env>(async (c, next) => {
+	const raw = c.req.param('projectId');
+	if (!raw) {
+		return c.json({ error: { code: 'BAD_REQUEST', message: 'Missing projectId' } }, 400);
+	}
+
+	const db = c.get('db');
+	const project = await resolveProject(db, raw);
+	if (!project) {
+		return c.json({ error: { code: 'NOT_FOUND', message: 'Project not found' } }, 404);
+	}
+
+	const denied = await assertTeamAccess(db, c.get('auth'), c, project.teamId);
+	if (denied) return denied;
+
+	c.set('teamId', project.teamId);
+	c.set('projectId', project.projectId);
 	return next();
 });
 

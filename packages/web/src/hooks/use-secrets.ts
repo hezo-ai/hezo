@@ -5,7 +5,7 @@ import { useInvalidatingMutation } from './use-invalidating-mutation';
 import { useOptimisticMutation } from './use-optimistic-mutation';
 import { useResponseMutation } from './use-response-mutation';
 
-const listKey = (teamId: string) => ['teams', teamId, 'secrets'] as const;
+const listKey = (projectId: string) => ['projects', projectId, 'secrets'] as const;
 
 export interface Secret {
 	id: string;
@@ -30,22 +30,22 @@ export interface CreateSecretPayload {
 	allow_all_hosts?: boolean;
 }
 
-export function useSecrets(teamId: string) {
+export function useSecrets(projectId: string) {
 	return useQuery({
-		queryKey: listKey(teamId),
-		queryFn: () => api.get<Secret[]>(`/api/teams/${teamId}/secrets`),
+		queryKey: listKey(projectId),
+		queryFn: () => api.get<Secret[]>(`/api/projects/${projectId}/secrets`),
 	});
 }
 
-export function useCreateSecret(teamId: string) {
+export function useCreateSecret(projectId: string) {
 	// Response-driven: the secret value is write-only, so the row comes from the
 	// server (never an optimistic guess) and seeds the list.
 	return useResponseMutation<CreateSecretPayload, Secret, Secret[]>({
-		mutationFn: (data) => api.post<Secret>(`/api/teams/${teamId}/secrets`, data),
-		queryKey: listKey(teamId),
+		mutationFn: (data) => api.post<Secret>(`/api/projects/${projectId}/secrets`, data),
+		queryKey: listKey(projectId),
 		merge: (prev, created) =>
 			prev ? [...prev.filter((s) => s.id !== created.id), created] : [created],
-		invalidateOnSettled: [listKey(teamId)],
+		invalidateOnSettled: [listKey(projectId)],
 	});
 }
 
@@ -57,11 +57,11 @@ interface UpdateSecretVars {
 	allow_all_hosts?: boolean;
 }
 
-export function useUpdateSecret(teamId: string) {
+export function useUpdateSecret(projectId: string) {
 	return useOptimisticMutation<UpdateSecretVars, Secret, Secret[]>({
 		mutationFn: ({ secretId, ...data }) =>
-			api.patch<Secret>(`/api/teams/${teamId}/secrets/${secretId}`, data),
-		queryKey: listKey(teamId),
+			api.patch<Secret>(`/api/projects/${projectId}/secrets/${secretId}`, data),
+		queryKey: listKey(projectId),
 		applyOptimistic: (current, { secretId, value: _value, ...optimistic }) =>
 			// `value` is write-only; it isn't returned in Secret rows.
 			current?.map((s) => (s.id === secretId ? { ...s, ...optimistic } : s)),
@@ -71,12 +71,12 @@ export function useUpdateSecret(teamId: string) {
 	});
 }
 
-export function useDeleteSecret(teamId: string) {
+export function useDeleteSecret(projectId: string) {
 	return useInvalidatingMutation<string, unknown>({
-		mutationFn: (secretId) => api.delete(`/api/teams/${teamId}/secrets/${secretId}`),
-		invalidate: [listKey(teamId)],
+		mutationFn: (secretId) => api.delete(`/api/projects/${projectId}/secrets/${secretId}`),
+		invalidate: [listKey(projectId)],
 		onSuccess: (_data, secretId) => {
-			queryClient.setQueryData<Secret[]>(listKey(teamId), (prev) =>
+			queryClient.setQueryData<Secret[]>(listKey(projectId), (prev) =>
 				prev ? prev.filter((s) => s.id !== secretId) : prev,
 			);
 		},

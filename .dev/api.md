@@ -129,7 +129,7 @@ Request:
 }
 ```
 
-`template_id` is optional. When set, agents are provisioned from the selected template with their configurations (titles, prompts, org chart, runtimes, budgets). Task prefixes are configured per project (see `POST /teams/:teamId/projects`), not at the team level.
+`template_id` is optional. When set, agents are provisioned from the selected template with their configurations (titles, prompts, org chart, runtimes, budgets). Task prefixes are configured per project (see `POST /projects/:projectId/projects`), not at the team level.
 
 Response: full team object. On creation, the server automatically:
 
@@ -141,12 +141,12 @@ Docker container provisioning for the Internal project happens at team creation.
 
 The board lands on a team with 11 agents.
 
-#### `GET /teams/:teamId`
-Get team detail.
+#### `GET /projects/:projectId/team`
+Get team detail. The team is resolved from the project handle.
 
 Response: full team object with summary stats (same shape as list item).
 
-#### `PATCH /teams/:teamId`
+#### `PATCH /projects/:projectId/team`
 Update team config.
 
 Request:
@@ -175,7 +175,7 @@ the secrets vault (referenced by name). When enabled, the team container has
 `mppx` CLI and wallet credentials are injected into agent subprocesses so they can pay for HTTP 402
 services autonomously. MPP costs are debited against the agent's budget.
 
-#### `DELETE /teams/:teamId`
+#### `DELETE /projects/:projectId/team`
 Delete team and all associated data. Tears down the team container.
 
 ### Board onboarding (home)
@@ -188,7 +188,7 @@ Three stages drive the home welcome card and intake panels:
 
 `show_welcome` is true until `execution_started_at` is set on the primary (oldest non-internal) project. The project list on home is hidden until stage 3 completes.
 
-#### `GET /teams/:teamId/onboarding`
+#### `GET /projects/:projectId/onboarding`
 Onboarding stage status for the home progress UI.
 
 Response:
@@ -209,26 +209,26 @@ Response:
 
 Stage values: `complete` | `current` | `pending`. `primary_project` includes `execution_started_at` (null until the board starts execution).
 
-#### `GET /teams/:teamId/requirements-intake`
-Returns the open requirements intake task for home chat, or 404 if none.
+#### `GET /projects/:projectId/onboarding-intake`
+Returns the open onboarding intake task for home chat, or 404 if none.
 
 Query `?ensure=true` creates the intake task when missing (used before any user-facing project exists).
 
-#### `GET /teams/:teamId/hire-team-intake`
-Returns the open hire-the-team intake task, or 404 when requirements are incomplete or hire intake is closed.
+#### `POST /projects/:projectId/onboarding-intake/skip-questions`
+Post a system "skip questions" comment on the open onboarding-intake ticket and wake the Captain so it finalises with what it already has.
 
-#### `POST /teams/:teamId/onboarding/start-project`
-Board confirms execution start. Sets `projects.execution_started_at` on the team's first user-facing project and creates a Captain assignment wakeup on the planning task (labeled `planning`). Fails with 400 if requirements or hire intake tickets are still open.
+#### `POST /projects/:projectId/onboarding/direct`
+Provision a project's own team directly from a chosen team-type template (the "Pick a template" path), creating the project + planning task in that team. Requires `template_id` and `project_name`; `project_description` and `initial_prd` are optional.
 
-Response: `{ "data": { "project": { ... } } }` with updated `execution_started_at`.
+Response: `{ "data": { ... } }` describing the new team, project, and planning task.
 
-The first user-facing project created via `POST /teams/:teamId/projects` or MCP `create_project` does **not** wake Captain on the planning task until this endpoint runs (or a later project is created).
+The first user-facing project created via `POST /projects/:projectId/projects` or MCP `create_project` does **not** wake Captain on the planning task until execution starts (or a later project is created).
 
 ---
 
 ### API Keys
 
-#### `GET /teams/:teamId/api-keys`
+#### `GET /projects/:projectId/api-keys`
 List API keys for a team (metadata only — key values are never returned).
 
 Response:
@@ -246,7 +246,7 @@ Response:
 }
 ```
 
-#### `POST /teams/:teamId/api-keys`
+#### `POST /projects/:projectId/api-keys`
 Generate a new API key. The raw key is returned **once** in this response and
 never again.
 
@@ -270,7 +270,7 @@ Response:
 }
 ```
 
-#### `DELETE /teams/:teamId/api-keys/:apiKeyId`
+#### `DELETE /projects/:projectId/api-keys/:apiKeyId`
 Revoke an API key. Immediate. Any request using this key will fail.
 
 ---
@@ -338,7 +338,7 @@ Delete a custom agent type. Built-in types cannot be deleted (returns 403).
 
 ### Agents
 
-#### `GET /teams/:teamId/agents`
+#### `GET /projects/:projectId/agents`
 List agents for a team.
 
 Query params: `?admin_status=enabled,disabled,terminated`
@@ -368,14 +368,14 @@ Response:
 }
 ```
 
-#### `POST /teams/:teamId/agents`
-Internal direct-create endpoint used by team provisioning (seeding the template team). Board-initiated hires must go through `POST /teams/:teamId/agents/onboard` instead — this endpoint is not wired to the hire form and skips the Captain/board review cycle. Tests and bootstrap paths are the only expected callers.
+#### `POST /projects/:projectId/agents`
+Internal direct-create endpoint used by team provisioning (seeding the template team). Board-initiated hires must go through `POST /projects/:projectId/agents/onboard` instead — this endpoint is not wired to the hire form and skips the Captain/board review cycle. Tests and bootstrap paths are the only expected callers.
 
 Request fields: `title` (required), `role_description`, `system_prompt`, `reports_to`, `default_effort`, `heartbeat_interval_min`, `monthly_budget_cents`, `touches_code`, `mcp_servers`.
 
 Response: full agent object.
 
-#### `POST /teams/:teamId/agents/onboard`
+#### `POST /projects/:projectId/agents/onboard`
 Starts the Captain-mediated hire workflow. The board submits a draft spec; the server creates a pending `hire` approval holding the draft in its payload, opens an onboarding task in the Internal project assigned to the Captain, and wakes the Captain to refine the draft. **No `member_agents` row is created yet.**
 
 The Captain revises the draft via the `update_hire_proposal` MCP tool, @-mentions the board for review, and iterates until the board resolves the pending approval. Approving the approval materialises the agent (see `POST /approvals/:approvalId/resolve`); denying leaves nothing behind.
@@ -423,12 +423,12 @@ Error responses:
 - `400 INVALID_REQUEST` — `title` is missing, or `default_effort` is not a valid enum value.
 - `409 CONFLICT` — an enabled or disabled agent with the same slug already exists, or another pending `hire` approval already claims the same slug.
 
-#### `GET /teams/:teamId/agents/:agentId`
+#### `GET /projects/:projectId/agents/:agentId`
 Get agent detail including system prompt.
 
 Response: full agent object (same as list item + `system_prompt` + `mcp_servers` fields).
 
-#### `PATCH /teams/:teamId/agents/:agentId`
+#### `PATCH /projects/:projectId/agents/:agentId`
 Update agent config: title, role_description, system_prompt, default_effort,
 heartbeat_interval_min, monthly_budget_cents, reports_to, mcp_servers,
 model_override_provider, model_override_model.
@@ -450,17 +450,17 @@ it's passed to the CLI as `--model`, taking precedence over the provider
 config's `default_model`. Clearing the provider also clears the model. Setting
 the model alone requires that a provider is already stored on the agent.
 
-#### `POST /teams/:teamId/agents/:agentId/disable`
+#### `POST /projects/:projectId/agents/:agentId/disable`
 Disable an agent. Stops heartbeats, kills subprocess if running. Does not affect the project container.
 
-#### `POST /teams/:teamId/agents/:agentId/enable`
+#### `POST /projects/:projectId/agents/:agentId/enable`
 Enable a disabled agent.
 
-#### `POST /teams/:teamId/agents/:agentId/terminate`
+#### `POST /projects/:projectId/agents/:agentId/terminate`
 Terminate an agent. Kills the agent's subprocess. Unassigns all tasks.
 Agent record is kept for audit trail (admin_status = `terminated`).
 
-#### `GET /teams/:teamId/agents/:agentId/heartbeat-runs`
+#### `GET /projects/:projectId/agents/:agentId/heartbeat-runs`
 Get agent execution history (last 50 runs). Each row includes timing
 (`started_at`, `finished_at`, `status`, `exit_code`), usage (`input_tokens`,
 `output_tokens`, `cost_cents`), and the new log fields:
@@ -492,12 +492,12 @@ Each row also includes resolved trigger fields so the UI can render a
   the agent who posted the replying comment. Null when the source has no
   comment context (e.g. `assignment`, `heartbeat`, `timer`).
 
-#### `GET /teams/:teamId/agents/:agentId/heartbeat-runs/:runId`
+#### `GET /projects/:projectId/agents/:agentId/heartbeat-runs/:runId`
 Get a single heartbeat run with task metadata, the full log/usage fields
 listed above, and the same resolved `trigger_*` fields used to render the
 "Triggered by" line on the run-detail page.
 
-#### `GET /teams/:teamId/tasks/:taskId/latest-run`
+#### `GET /projects/:projectId/tasks/:taskId/latest-run`
 Returns the most recent `heartbeat_run` for the task (or `null` if none).
 Powers the minified log strip on the task detail page so it can subscribe to
 the run's live stream and link to the full run page.
@@ -506,7 +506,7 @@ the run's live stream and link to the full run page.
 
 ### Org Chart
 
-#### `GET /teams/:teamId/org-chart`
+#### `GET /projects/:projectId/org-chart`
 Returns the full org tree as a nested structure.
 
 Response:
@@ -553,8 +553,8 @@ Response:
 
 ### Projects
 
-#### `GET /teams/:teamId/projects`
-List projects.
+#### `GET /projects`
+Instance-level index of every project the caller can see, across all their teams. The backing team is resolved from each project; the team is never named in the URL.
 
 Response:
 ```json
@@ -562,21 +562,18 @@ Response:
   "data": [
     {
       "id": "uuid",
-      "team_id": "uuid",
-      "name": "Backend API",
       "slug": "backend-api",
-      "description": "Authenticated HTTP API for the main app.",
-      "repo_count": 2,
-      "open_task_count": 5,
-      "created_at": "...",
-      "updated_at": "..."
+      "name": "Backend API",
+      "team_id": "uuid",
+      "team_slug": "notegenius-ai",
+      "is_internal": false
     }
   ]
 }
 ```
 
-#### `POST /teams/:teamId/projects`
-Open a captain-led intake for a new project. No project is created at this step. The
+#### `POST /projects/:projectId/projects`
+Open a captain-led intake for a new sibling project under the same team as `:projectId` (typically the team's internal project, slug `internal-<teamSlug>`). No project is created at this step. The
 endpoint creates a pending `project_creation` approval (holding the draft `name`,
 `description`, `task_prefix`, `initial_prd`) and a `project-intake` ticket in the
 team's Internal project assigned to the Captain. The board is redirected to the
@@ -605,7 +602,7 @@ Response shape:
   "data": {
     "intake_task_id": "uuid",
     "intake_task_identifier": "IN-7",
-    "project_slug": "internal",
+    "project_slug": "internal-notegenius-ai",
     "approval_id": "uuid"
   }
 }
@@ -613,29 +610,29 @@ Response shape:
 
 Fails with 500 if the team is missing its Captain or Internal project.
 
-#### `POST /teams/:teamId/project-intake/:taskId/skip-questions`
+#### `POST /projects/:projectId/project-intake/:taskId/skip-questions`
 Post a system "skip questions" comment on a project-intake ticket and wake the
 Captain so it finalises the proposal with what it already has. Mirrors the
 onboarding-intake skip endpoint.
 
-#### `GET /teams/:teamId/projects/:projectId`
+#### `GET /projects/:projectId`
 Get project detail including repos. Accepts project ID or slug.
 
 Response: project object + `repos` array.
 
-#### `PATCH /teams/:teamId/projects/:projectId`
+#### `PATCH /projects/:projectId`
 Update name or description.
 
-#### `DELETE /teams/:teamId/projects/:projectId`
+#### `DELETE /projects/:projectId`
 Delete project. Cannot delete internal projects (e.g. Internal). Fails if there are open tasks referencing it. Tears down the container asynchronously.
 
-#### `POST /teams/:teamId/projects/:projectId/container/start`
+#### `POST /projects/:projectId/container/start`
 Start the project container. Container must be provisioned. Wakes agents with pending work. Returns `{ container_status: "running" }`.
 
-#### `POST /teams/:teamId/projects/:projectId/container/stop`
+#### `POST /projects/:projectId/container/stop`
 Gracefully stop the project container. Cancels running agent tasks. Returns `{ container_status: "stopping" }`.
 
-#### `POST /teams/:teamId/projects/:projectId/container/rebuild`
+#### `POST /projects/:projectId/container/rebuild`
 Tear down and rebuild the project's Docker container. Kills all agent subprocesses
 in this project, destroys the container, provisions a new one. Useful when base
 image or dependency config changes. All agents keep their identity and config.
@@ -645,7 +642,7 @@ Returns `{ container_status: "creating" }`.
 
 ### Repos
 
-#### `GET /teams/:teamId/projects/:projectId/repos`
+#### `GET /projects/:projectId/repos`
 List repos for a project.
 
 Response:
@@ -664,7 +661,7 @@ Response:
 }
 ```
 
-#### `POST /teams/:teamId/projects/:projectId/repos`
+#### `POST /projects/:projectId/repos`
 Add a repo — either by linking an existing GitHub repository or creating a new
 one on the user's behalf. Server validates access via the team's connected
 GitHub OAuth token before saving.
@@ -743,7 +740,7 @@ failures do not fail the request — the repo record is still created, and
 `ensureProjectRepos` will retry on the next agent run or the next container
 provision.
 
-#### `DELETE /teams/:teamId/projects/:projectId/repos/:repoId`
+#### `DELETE /projects/:projectId/repos/:repoId`
 Remove a repo from a project. The server also removes the repo's on-disk
 workspace directory and every per-task worktree derived from it
 (`<workspace>/<short_name>/` and `<worktrees>/<task>/<short_name>/`).
@@ -759,8 +756,8 @@ These endpoints proxy GitHub for the connected team token. They exist so
 the repo-setup wizard can populate org selectors and repo pickers without
 leaking tokens to the browser.
 
-#### `GET /teams/:teamId/github/orgs`
-List the authenticated GitHub user's personal namespace plus their orgs.
+#### `GET /projects/:projectId/oauth-connections/:id/orgs`
+List the authenticated GitHub user's personal namespace plus their orgs, for the GitHub OAuth connection `:id`.
 
 Response:
 ```json
@@ -775,10 +772,10 @@ Response:
 Returns 422 `GITHUB_NOT_CONNECTED` if the team has no active GitHub
 connection.
 
-#### `GET /teams/:teamId/github/repos?owner={login}&query={q}`
+#### `GET /projects/:projectId/oauth-connections/:id/repos?owner={login}&query={q}`
 List repos accessible to the authenticated user under `owner` (personal or
-org). `query` is an optional substring filter on repo name. Results capped at
-50.
+org), for the GitHub OAuth connection `:id`. `query` is an optional substring
+filter on repo name. Results capped at 50.
 
 Response:
 ```json
@@ -800,7 +797,7 @@ Response:
 
 ### Tasks
 
-#### `GET /teams/:teamId/tasks`
+#### `GET /projects/:projectId/tasks`
 List tasks. Supports filtering and pagination.
 
 Query params:
@@ -846,7 +843,7 @@ Response:
 
 `assignee_type` is `"agent"` or `"user"` depending on whether the assignee is an agent member or a human board member (matches `members.member_type`). `has_active_run` is `true` when at least one `heartbeat_runs` row exists for the task in `running` or `queued` status — used by the UI to show a live indicator next to the assignee name.
 
-#### `POST /teams/:teamId/tasks`
+#### `POST /projects/:projectId/tasks`
 Create an task.
 
 Request:
@@ -869,14 +866,14 @@ Request:
 the agent receives an event trigger. If a board member, they are notified via
 inbox and configured messaging channels.
 
-Tasks in the auto-created Internal project (`slug = 'internal'`, `is_internal = true`) must be assigned to the Captain. Any other `assignee_id` returns `400 INVALID_REQUEST` with message `Internal project tasks must be assigned to the Captain`.
+Tasks in the auto-created Internal project (`slug = 'internal-<teamSlug>'`, `is_internal = true`) must be assigned to the Captain. Any other `assignee_id` returns `400 INVALID_REQUEST` with message `Internal project tasks must be assigned to the Captain`.
 
 `runtime_type` is optional. It pins this task to a specific AI adapter
 (`claude_code | codex | gemini`). When unset, the server picks the
 instance default — the single active AI provider if only one is configured,
 or the oldest/default active provider otherwise.
 
-#### `GET /teams/:teamId/tasks/:taskId`
+#### `GET /projects/:projectId/tasks/:taskId`
 Full task detail including description, goal chain, cost.
 
 Response: full task object + computed fields:
@@ -906,7 +903,7 @@ Response: full task object + computed fields:
 }
 ```
 
-#### `PATCH /teams/:teamId/tasks/:taskId`
+#### `PATCH /projects/:projectId/tasks/:taskId`
 Update task fields: title, description, status, priority, assignee_id, labels, rules, progress_summary, runtime_type.
 
 `assignee_id` cannot be set to null — every task must have an assignee.
@@ -919,12 +916,12 @@ Two server-enforced guards block the `→ done` and `→ closed` transitions whe
 
 The error message names the blocking sub-task or agent so the caller knows what to wait on.
 
-For tasks whose project is Internal (`slug = 'internal'`, `is_internal = true`), `assignee_id` must be the Captain; any other value returns `400 INVALID_REQUEST`.
+For tasks whose project is Internal (`slug = 'internal-<teamSlug>'`, `is_internal = true`), `assignee_id` must be the Captain; any other value returns `400 INVALID_REQUEST`.
 
-#### `DELETE /teams/:teamId/tasks/:taskId`
+#### `DELETE /projects/:projectId/tasks/:taskId`
 Delete an task. Only allowed if status is `backlog`, and no comments exist.
 
-#### `POST /teams/:teamId/tasks/:taskId/sub-tasks`
+#### `POST /projects/:projectId/tasks/:taskId/sub-tasks`
 Create a sub-task. `project_id` is inherited from the parent. When the parent belongs to the Internal project, the sub-task's `assignee_id` must be the Captain.
 
 Request:
@@ -938,10 +935,10 @@ Request:
 }
 ```
 
-#### `GET /teams/:teamId/tasks/:taskId/dependencies`
+#### `GET /projects/:projectId/tasks/:taskId/dependencies`
 List dependencies (blocking tasks) for an task.
 
-#### `POST /teams/:teamId/tasks/:taskId/dependencies`
+#### `POST /projects/:projectId/tasks/:taskId/dependencies`
 Add a dependency. An task cannot block itself, and both tasks must be in the same team.
 
 Request:
@@ -951,14 +948,14 @@ Request:
 }
 ```
 
-#### `DELETE /teams/:teamId/tasks/:taskId/dependencies/:depId`
+#### `DELETE /projects/:projectId/tasks/:taskId/dependencies/:depId`
 Remove a dependency.
 
 ---
 
 ### Task Comments
 
-#### `GET /teams/:teamId/tasks/:taskId/comments`
+#### `GET /projects/:projectId/tasks/:taskId/comments`
 List all comments for an task, ordered by created_at asc.
 
 Query params: `?include_tool_calls=true` — inline tool_calls under each
@@ -1008,7 +1005,7 @@ Response:
         "label": "Auth flow mockup",
         "description": "Interactive prototype of the login/signup flow"
       },
-      "preview_url": "/api/teams/team-uuid/projects/project-uuid/preview/auth-flow-mockup.html",
+      "preview_url": "/api/projects/project-slug/preview/auth-flow-mockup.html",
       "tool_calls": [],
       "created_at": "..."
     }
@@ -1016,7 +1013,7 @@ Response:
 }
 ```
 
-#### `POST /teams/:teamId/tasks/:taskId/comments`
+#### `POST /projects/:projectId/tasks/:taskId/comments`
 Board posts a comment.
 
 Request:
@@ -1037,7 +1034,7 @@ about a tricky piece of feedback. If the comment contains no `@`-mentions,
 `effort` has no observable effect (no wakeup is fired). Invalid values are
 silently dropped. See [Reasoning effort](#reasoning-effort).
 
-#### `POST /teams/:teamId/tasks/:taskId/comments/:commentId/choose`
+#### `POST /projects/:projectId/tasks/:taskId/comments/:commentId/choose`
 Board picks an option on an options-type comment.
 
 Request:
@@ -1055,7 +1052,7 @@ choice. Triggers the assigned agent.
 The server automatically appends `system`-typed comments for two events:
 
 - **Status change** — fires whenever an task's status changes, regardless of
-  the path that drove it (PATCH `/teams/:teamId/tasks/:taskId`, MCP
+  the path that drove it (PATCH `/projects/:projectId/tasks/:taskId`, MCP
   `update_task`, hire-approval auto-Done, agent-runner auto-flip
   `backlog → in_progress`, Coach auto-close `done → closed`). A no-op PATCH
   (status set to its current value) records nothing.
@@ -1081,7 +1078,7 @@ Both events broadcast over the team WebSocket as `RowChange` /
 
 ### Tool Calls
 
-#### `GET /teams/:teamId/tasks/:taskId/comments/:commentId/tool-calls`
+#### `GET /projects/:projectId/tasks/:taskId/comments/:commentId/tool-calls`
 List tool calls for a specific comment.
 
 Response:
@@ -1107,7 +1104,7 @@ Response:
 
 ### Secrets
 
-#### `GET /teams/:teamId/secrets`
+#### `GET /projects/:projectId/secrets`
 List secrets (values are never returned, only metadata).
 
 Query params: `?project_id=uuid` — filter by project scope.
@@ -1131,7 +1128,7 @@ Response:
 }
 ```
 
-#### `POST /teams/:teamId/secrets`
+#### `POST /projects/:projectId/secrets`
 Create a secret.
 
 Request:
@@ -1147,7 +1144,7 @@ Request:
 `value` is encrypted server-side before storage. Never stored or logged in
 plaintext.
 
-#### `PATCH /teams/:teamId/secrets/:secretId`
+#### `PATCH /projects/:projectId/secrets/:secretId`
 Update a secret's value or category. Rotating a value does not revoke existing
 grants.
 
@@ -1159,7 +1156,7 @@ Request:
 }
 ```
 
-#### `DELETE /teams/:teamId/secrets/:secretId`
+#### `DELETE /projects/:projectId/secrets/:secretId`
 Delete a secret. Revokes all grants. Agents with this secret injected will
 lose access on next subprocess invocation.
 
@@ -1167,7 +1164,7 @@ lose access on next subprocess invocation.
 
 ### Secret Grants
 
-#### `GET /teams/:teamId/secrets/:secretId/grants`
+#### `GET /projects/:projectId/secrets/:secretId/grants`
 List grants for a secret.
 
 Response:
@@ -1187,7 +1184,7 @@ Response:
 }
 ```
 
-#### `POST /teams/:teamId/secrets/:secretId/grants`
+#### `POST /projects/:projectId/secrets/:secretId/grants`
 Directly grant an agent access (board action, no approval needed).
 
 Request:
@@ -1203,7 +1200,7 @@ If `scope` is `team`, grants access to all secrets in the team.
 These expanded grants create individual `secret_grants` rows for each
 matching secret.
 
-#### `DELETE /teams/:teamId/secret-grants/:grantId`
+#### `DELETE /projects/:projectId/secret-grants/:grantId`
 Revoke a grant. Sets `revoked_at`.
 
 #### Instance-level credentials (Admin / superuser)
@@ -1219,7 +1216,7 @@ Secrets with `team_id NULL` are shared with every team's egress (still bounded b
 
 ### Approvals
 
-#### `GET /teams/:teamId/approvals`
+#### `GET /projects/:projectId/approvals`
 List pending approvals for a team.
 
 Query params: `?status=pending` (default)
@@ -1256,7 +1253,7 @@ Response:
 
 The resolved `payload_*` fields are populated by LEFT JOINing payload UUID references (`member_id`, `project_id`, `task_id`) against their respective tables. Fields are null when the payload does not contain the corresponding UUID. `team_slug` is always present.
 
-#### `POST /teams/:teamId/approvals`
+#### `POST /projects/:projectId/approvals`
 Create an approval request directly. Used internally by agents and the board.
 
 Request:
@@ -1291,7 +1288,7 @@ When approved, side effects depend on approval type:
 
 ### Cost & Budget
 
-#### `GET /teams/:teamId/costs`
+#### `GET /projects/:projectId/costs`
 List cost entries with aggregation.
 
 Query params:
@@ -1315,7 +1312,7 @@ Response (when `group_by=agent`):
 }
 ```
 
-#### `POST /teams/:teamId/costs`
+#### `POST /projects/:projectId/costs`
 Create a cost entry. Returns 402 if the agent's budget is exceeded.
 
 Request:
@@ -1340,9 +1337,10 @@ observer (see "Activity / audit observer" below).
 - `GET /api/audit-log` — **instance view, superuser only.** Every team's rows
   plus instance-level admin actions (`team_id` is NULL — managing instance
   credentials / connectors / skills). Rows carry `team_name` for grouping.
-- `GET /teams/:teamId/audit-log` — **team view.** Accepts an optional
-  `?project_id=` to narrow to one project.
-- `GET /teams/:teamId/projects/:projectId/audit-log` — **per-project view**, a
+- `GET /projects/:projectId/team-audit-log` — **team view** (the team is
+  resolved from the project handle). Accepts an optional `?project_id=` to
+  narrow to one project.
+- `GET /projects/:projectId/audit-log` — **per-project view**, a
   filtered slice (`WHERE project_id = …`) of the instance log.
 
 Shared query params: `?entity_type=task`, `?action=created`, `?from=…&to=…`,
@@ -1392,8 +1390,8 @@ record `actor_type = agent` when an agent (via an MCP tool) triggered them.
 
 ### Connected Platforms (Hezo Connect OAuth)
 
-#### `GET /teams/:teamId/connections`
-List all connected platforms for a team.
+#### `GET /projects/:projectId/connections`
+List all connected platforms for a team (resolved from the project handle).
 
 Response:
 ```json
@@ -1421,7 +1419,7 @@ Response:
 }
 ```
 
-#### `POST /teams/:teamId/connections/:platform/start`
+#### `POST /projects/:projectId/connections/:platform/start`
 Initiate an OAuth connection. Returns a redirect URL that the UI opens in a
 new window/tab for the user to authorize.
 
@@ -1437,11 +1435,11 @@ Response:
 }
 ```
 
-#### `DELETE /teams/:teamId/connections/:connectionId`
+#### `DELETE /projects/:projectId/connections/:connectionId`
 Disconnect a platform. Removes SSH keys from GitHub if applicable, cleans up
 associated secrets, and deletes the connection record.
 
-#### `POST /teams/:teamId/connections/:connectionId/refresh`
+#### `POST /projects/:projectId/connections/:connectionId/refresh`
 Force a token refresh. Returns updated status and token expiry.
 
 Response:
@@ -1509,7 +1507,7 @@ Return the models this provider offers for the stored credential. Calls the prov
 
 ### Execution Locks
 
-#### `GET /teams/:teamId/tasks/:taskId/lock`
+#### `GET /projects/:projectId/tasks/:taskId/lock`
 Get the list of agents currently running against an task.
 
 Response:
@@ -1521,7 +1519,7 @@ Response:
 }
 ```
 
-#### `POST /teams/:teamId/tasks/:taskId/lock`
+#### `POST /projects/:projectId/tasks/:taskId/lock`
 Record that a member is running against the task. Multiple members can hold locks concurrently; returns 409 only if this specific member already holds an active lock on this task.
 
 Request:
@@ -1531,14 +1529,14 @@ Request:
 }
 ```
 
-#### `DELETE /teams/:teamId/tasks/:taskId/lock`
+#### `DELETE /projects/:projectId/tasks/:taskId/lock`
 Release all locks for the task.
 
 ---
 
 ### Semantic Search
 
-#### `GET /teams/:teamId/search`
+#### `GET /projects/:projectId/search`
 Natural language search across team content.
 
 Query params:
@@ -1550,17 +1548,17 @@ Query params:
 
 ### UI State
 
-#### `GET /teams/:teamId/ui-state`
+#### `GET /projects/:projectId/ui-state`
 Get the board user's UI state settings (stored as JSON in member_users). Board users only.
 
-#### `PATCH /teams/:teamId/ui-state`
+#### `PATCH /projects/:projectId/ui-state`
 Update UI state settings (merged with existing). Board users only.
 
 ---
 
 ### Previews (proxy)
 
-#### `GET /teams/:teamId/projects/:projectId/preview/*`
+#### `GET /projects/:projectId/preview/*`
 Serves static files from the project container workspace. The wildcard path
 maps to a file within the container's working directory.
 
@@ -1580,13 +1578,13 @@ have board access to the team. Paths are sanitized (no path traversal).
 
 The team-level reference store is the `skills` table (with `skill_revisions` for version history). Each skill has a `name`, `slug`, `description`, `content`, optional `source_url` (set when downloaded), `content_hash`, `tags`, and `is_active`. Saving a skill without a description auto-derives a one-line summary from its content (`lib/skill-summary.ts`). Every content change writes a `skill_revisions` row. Skills carry embeddings and surface in `semantic_search`.
 
-#### `GET /teams/:teamId/skills`
+#### `GET /projects/:projectId/skills`
 List the skills manifest for a team. Returns all installed skills with metadata.
 
-#### `GET /teams/:teamId/skills/:slug`
+#### `GET /projects/:projectId/skills/:slug`
 Get a skill's content by slug.
 
-#### `POST /teams/:teamId/skills`
+#### `POST /projects/:projectId/skills`
 Add or download a skill. Downloads content from `source_url`.
 
 Request:
@@ -1602,13 +1600,13 @@ Request:
 
 `source_url` is required (the remote source to download from). `description`, `slug`, and `tags` are optional.
 
-#### `PATCH /teams/:teamId/skills/:slug`
+#### `PATCH /projects/:projectId/skills/:slug`
 Update skill metadata or content. If `content` changes, creates a new skill revision.
 
-#### `DELETE /teams/:teamId/skills/:slug`
+#### `DELETE /projects/:projectId/skills/:slug`
 Remove a skill.
 
-#### `POST /teams/:teamId/skills/:slug/sync`
+#### `POST /projects/:projectId/skills/:slug/sync`
 Sync a skill from its source URL, pulling the latest version.
 
 #### Instance-level skills (Admin / superuser)
@@ -1625,7 +1623,7 @@ Skills with `team_id NULL` are shared with every team. The per-team reads above 
 
 ### Team Preferences
 
-#### `GET /teams/:teamId/preferences`
+#### `GET /projects/:projectId/preferences`
 Get the team preferences document.
 
 Response:
@@ -1645,7 +1643,7 @@ Response:
 
 Returns an empty document (auto-created) if no preferences have been set yet.
 
-#### `PATCH /teams/:teamId/preferences`
+#### `PATCH /projects/:projectId/preferences`
 Update the team preferences document (board action). Creates a revision automatically.
 
 Request:
@@ -1656,10 +1654,10 @@ Request:
 }
 ```
 
-#### `GET /teams/:teamId/preferences/revisions`
+#### `GET /projects/:projectId/preferences/revisions`
 List revision history for the team preferences document.
 
-#### `POST /teams/:teamId/preferences/restore`
+#### `POST /projects/:projectId/preferences/restore`
 Restore the team preferences document to a previous revision. Board-only.
 
 Request:
@@ -1691,7 +1689,7 @@ Response:
 
 Project documents are stored in the database, identified by filename (e.g. `prd.md`, `spec.md`).
 
-#### `GET /teams/:teamId/projects/:projectId/docs`
+#### `GET /projects/:projectId/docs`
 List all project documents.
 
 Response:
@@ -1704,7 +1702,7 @@ Response:
 }
 ```
 
-#### `GET /teams/:teamId/projects/:projectId/docs/:filename`
+#### `GET /projects/:projectId/docs/:filename`
 Read a project document by filename.
 
 Response:
@@ -1714,7 +1712,7 @@ Response:
 }
 ```
 
-#### `PUT /teams/:teamId/projects/:projectId/docs/:filename`
+#### `PUT /projects/:projectId/docs/:filename`
 Write a project document (upsert). Project docs are **markdown-only** — a `:filename` not ending in `.md` returns `400` (non-markdown files belong in the project assets library). Agent writes to `prd.md` create an approval request (202 response) instead of writing directly. When the content changes, the prior content is captured as a new revision before the update.
 
 Request:
@@ -1725,13 +1723,13 @@ Request:
 }
 ```
 
-#### `DELETE /teams/:teamId/projects/:projectId/docs/:filename`
+#### `DELETE /projects/:projectId/docs/:filename`
 Delete a project document.
 
-#### `GET /teams/:teamId/projects/:projectId/docs/:filename/revisions`
+#### `GET /projects/:projectId/docs/:filename/revisions`
 List revision history for a project document, ordered by `revision_number` descending.
 
-#### `POST /teams/:teamId/projects/:projectId/docs/:filename/restore`
+#### `POST /projects/:projectId/docs/:filename/restore`
 Restore a project document to a previous revision. Board-only (agents cannot restore). Snapshots the current content as a fresh revision before reverting.
 
 Request:
@@ -1745,10 +1743,10 @@ Request:
 
 A per-project, view-only library for uploaded files (UI mockups, wireframes, images, PDFs) — everything that isn't a markdown project doc. Assets are not version-tracked and not injected into agent context. They are referenced in comments and docs as `assets/<filename>`.
 
-#### `POST /teams/:teamId/projects/:projectId/assets`
+#### `POST /projects/:projectId/assets`
 Upload a file (multipart `file` field; 10 MB max; same extension/MIME allowlist as comment attachments, plus `webp` and `svg`). The stored filename is normalized to a link-safe form and **auto-suffixed if it would collide** with an existing asset in the project (e.g. `login.png` → `login-3f9a.png`), so every asset name is unique. Returns the asset plus a signed read URL.
 
-#### `GET /teams/:teamId/projects/:projectId/assets`
+#### `GET /projects/:projectId/assets`
 List every asset in the project (including files attached to task comments), newest first. Each entry carries a freshly-signed read URL and `comment_attachment_count` (how many comments reference it).
 
 Response:
@@ -1768,15 +1766,15 @@ Response:
 }
 ```
 
-#### `DELETE /teams/:teamId/projects/:projectId/assets/:assetId`
+#### `DELETE /projects/:projectId/assets/:assetId`
 Delete an asset (board-only; agents receive `403`). Removes the row, cascades any `comment_attachments`, and deletes the blob from disk.
 
 Assets are fetched and viewed in a new tab via the existing signed-URL endpoint `GET /api/assets/:assetId?exp=…&sig=…`. SVGs are served with `Content-Disposition: attachment` (never inline) to avoid stored XSS; all other types are inline.
 
-#### `GET /teams/:teamId/projects/:projectId/agents-md`
+#### `GET /projects/:projectId/agents-md`
 Read the project's AGENTS.md file.
 
-#### `PUT /teams/:teamId/projects/:projectId/agents-md`
+#### `PUT /projects/:projectId/agents-md`
 Write the project's AGENTS.md file.
 
 Request:
@@ -1792,7 +1790,7 @@ Request:
 
 **Not yet implemented — planned for Phase 7+.**
 
-#### `GET /teams/:teamId/tasks/:taskId/attachments`
+#### `GET /projects/:projectId/tasks/:taskId/attachments`
 List file attachments for an task.
 
 Response:
@@ -1811,7 +1809,7 @@ Response:
 }
 ```
 
-#### `POST /teams/:teamId/tasks/:taskId/attachments`
+#### `POST /projects/:projectId/tasks/:taskId/attachments`
 Upload a file attachment. Multipart form data.
 
 Max file size: 10MB. Allowed types: images, PDFs, text files, archezos, logs.
@@ -1830,7 +1828,7 @@ Response:
 }
 ```
 
-#### `DELETE /teams/:teamId/tasks/:taskId/attachments/:attachmentId`
+#### `DELETE /projects/:projectId/tasks/:taskId/attachments/:attachmentId`
 Remove a file attachment from an task. The underlying asset is deleted.
 
 ---
@@ -1869,7 +1867,7 @@ Response:
 #### `GET /plugins/registry/:pluginKey`
 Get plugin detail including readme, ratings, reviews, and version history.
 
-#### `POST /teams/:teamId/plugins`
+#### `POST /projects/:projectId/plugins`
 Install a plugin from the registry.
 
 Request:
@@ -1883,7 +1881,7 @@ Request:
 
 Response: full plugin object with status `installed`.
 
-#### `PATCH /teams/:teamId/plugins/:pluginId`
+#### `PATCH /projects/:projectId/plugins/:pluginId`
 Enable, disable, or update a plugin's config.
 
 Request:
@@ -1894,10 +1892,10 @@ Request:
 }
 ```
 
-#### `DELETE /teams/:teamId/plugins/:pluginId`
+#### `DELETE /projects/:projectId/plugins/:pluginId`
 Uninstall a plugin. Stops the worker thread, cleans up state and jobs.
 
-#### `GET /teams/:teamId/plugins`
+#### `GET /projects/:projectId/plugins`
 List installed plugins for a team.
 
 ---
@@ -1919,7 +1917,7 @@ OAuth callback endpoint.
 
 **Invite endpoints — not yet implemented — planned for Phase 7+.**
 
-#### `POST /teams/:teamId/invites`
+#### `POST /projects/:projectId/invites`
 Invite a new member to the team. Board-only.
 
 Request:
@@ -1956,7 +1954,7 @@ Accept an invite and join the team. Requires authentication (user JWT). The invi
 
 **Member management endpoints — not yet implemented — planned for Phase 7+.**
 
-#### `GET /teams/:teamId/members`
+#### `GET /projects/:projectId/members`
 List all members of a team.
 
 Response:
@@ -1991,7 +1989,7 @@ Response:
 }
 ```
 
-#### `PATCH /teams/:teamId/members/:userId`
+#### `PATCH /projects/:projectId/members/:userId`
 Update a member's role_title, permissions_text, or project_ids. Board-only.
 
 Request:
@@ -2009,7 +2007,7 @@ Request:
 
 **Not yet implemented — planned for Phase 7+.**
 
-#### `GET /teams/:teamId/inbox`
+#### `GET /projects/:projectId/inbox`
 Aggregated notifications. Board members see all items (approvals, escalations, budget alerts, design reviews, etc.). Members see only items relevant to their assigned tasks and project scope.
 
 Query params:
@@ -2034,7 +2032,7 @@ Response:
 }
 ```
 
-#### `POST /teams/:teamId/inbox/:id/dismiss`
+#### `POST /projects/:projectId/inbox/:id/dismiss`
 Dismiss an inbox item. Sets `dismissed_at`.
 
 ---
@@ -2074,10 +2072,10 @@ Update notification preferences. Accepts an array of channel configs. Upserts by
 
 **Not yet implemented — planned for Phase 7+.**
 
-#### `GET /teams/:teamId/slack-connection`
+#### `GET /projects/:projectId/slack-connection`
 Get Slack connection status for a team.
 
-#### `POST /teams/:teamId/slack-connection`
+#### `POST /projects/:projectId/slack-connection`
 Set up Slack integration for a team. Stores the bot token encrypted in secrets.
 
 Request:
@@ -2089,7 +2087,7 @@ Request:
 }
 ```
 
-#### `DELETE /teams/:teamId/slack-connection`
+#### `DELETE /projects/:projectId/slack-connection`
 Disconnect Slack from a team. Revokes the bot token secret.
 
 ---
@@ -2266,7 +2264,7 @@ live slug list inline at compose time and don't need to call `list_agents` for
 every teammate reference — the MCP tool remains the way to fetch a specific
 peer's description or reporting structure.
 
-On `POST /teams/:teamId/tasks/:taskId/comments`, the server parses
+On `POST /projects/:projectId/tasks/:taskId/comments`, the server parses
 mentions out of the comment content (ignoring fenced code blocks and self-
 mentions) and creates a `mention`-source wakeup for each distinct mentioned
 agent. The wakeup payload carries `{ source: "mention", task_id, comment_id }`,
@@ -2411,7 +2409,7 @@ Agent system prompts live as `agent_system_prompt` documents in the unified
 Coach have no API access to any prompt. The Coach applies updates through the
 `update_agent_system_prompt` MCP tool (see MCP section).
 
-#### `GET /teams/:teamId/agents/:agentId/system-prompt`
+#### `GET /projects/:projectId/agents/:agentId/system-prompt`
 Read an agent's current system prompt document (content + metadata).
 
 Response:
@@ -2429,7 +2427,7 @@ Response:
 ```
 Returns `data: null` if no prompt document exists for the agent.
 
-#### `GET /teams/:teamId/agents/:agentId/system-prompt/revisions`
+#### `GET /projects/:projectId/agents/:agentId/system-prompt/revisions`
 List historical revisions (newest first) for the agent's system prompt.
 
 Response:
@@ -2448,7 +2446,7 @@ Response:
 }
 ```
 
-#### `POST /teams/:teamId/agents/:agentId/system-prompt/restore`
+#### `POST /projects/:projectId/agents/:agentId/system-prompt/restore`
 Roll the agent's prompt back to a prior revision. Board-only. Inserts a new
 revision capturing the pre-restore content.
 
@@ -2457,7 +2455,7 @@ Request:
 { "revision_number": 2 }
 ```
 
-#### `PATCH /teams/:teamId/agents/:agentId`
+#### `PATCH /projects/:projectId/agents/:agentId`
 Board edit path. Accepts a `system_prompt` field (optional) alongside the
 other agent fields. Setting it upserts the agent's prompt document and
 records a revision with `change_summary` defaulting to `"Manual edit by

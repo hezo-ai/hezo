@@ -49,7 +49,7 @@ test('direct onboarding creates the first project in its own new team', async ()
 			seededSlug = team.slug;
 			sessionStorage.setItem('hezo:activeTeamSlug', seededSlug);
 			const blankId = await fetchBlankTemplateId();
-			const directRes = await apiBase(`/api/teams/${seededSlug}/onboarding/direct`, {
+			const directRes = await apiBase(`/api/projects/internal-${seededSlug}/onboarding/direct`, {
 				method: 'POST',
 				headers,
 				body: JSON.stringify({
@@ -71,20 +71,17 @@ test('direct onboarding creates the first project in its own new team', async ()
 	expect(matches.length).toBeGreaterThan(0);
 	expect(container.querySelector('[data-testid="home-projects-list"]')).toBeTruthy();
 
-	// The project landed in the NEW team, not the seeded/HQ team.
-	const newProjects = (await (
-		await ctx.apiBase(`/api/teams/${newTeamSlug}/projects`, {
+	// The project landed in the NEW team, not the seeded/HQ team. The global
+	// projects index carries team_slug, so membership is read from there.
+	const allProjects = (await (
+		await ctx.apiBase('/api/projects', {
 			headers: { Authorization: `Bearer ${ctx.token}` },
 		})
-	).json()) as { data: Array<{ name: string }> };
-	expect(newProjects.data.some((p) => p.name === projectName)).toBe(true);
-
-	const seededProjects = (await (
-		await ctx.apiBase(`/api/teams/${seededSlug}/projects`, {
-			headers: { Authorization: `Bearer ${ctx.token}` },
-		})
-	).json()) as { data: Array<{ name: string; is_internal: boolean }> };
-	expect(seededProjects.data.some((p) => p.name === projectName)).toBe(false);
+	).json()) as { data: Array<{ name: string; team_slug: string }> };
+	const created = allProjects.data.find((p) => p.name === projectName);
+	expect(created).toBeTruthy();
+	expect(created!.team_slug).toBe(newTeamSlug);
+	expect(created!.team_slug).not.toBe(seededSlug);
 }, 30_000);
 
 test("the wizard navigates straight to Captain's planning task after creation", async () => {
@@ -99,14 +96,14 @@ test("the wizard navigates straight to Captain's planning task after creation", 
 		},
 	});
 
-	const choiceDirect = await findByTestId('choice-direct', { timeout: 15_000 });
+	const choiceDirect = await findByTestId('choice-direct', undefined, { timeout: 15_000 });
 	await user.click(within(choiceDirect).getByRole('button', { name: 'Browse templates' }));
 
-	await findByTestId('direct-flow-pick', { timeout: 15_000 });
+	await findByTestId('direct-flow-pick', undefined, { timeout: 15_000 });
 	const blankCard = await findByTestId('template-card-Blank');
 	await user.click(blankCard);
 
-	await findByTestId('direct-flow-confirm', { timeout: 15_000 });
+	await findByTestId('direct-flow-confirm', undefined, { timeout: 15_000 });
 
 	const nameInput = (await findByLabelText('Project name')) as HTMLInputElement;
 	fireEvent.change(nameInput, { target: { value: projectName } });
@@ -116,7 +113,7 @@ test("the wizard navigates straight to Captain's planning task after creation", 
 
 	// The first project gets its own team named after it, so both the team slug
 	// and the project slug derive from the project name.
-	const expected = /^\/teams\/direct-ui-[0-9]+\/projects\/direct-ui-[0-9]+\/tasks\/[a-z0-9-]+$/;
+	const expected = /^\/projects\/direct-ui-[0-9]+\/tasks\/[a-z0-9-]+$/;
 	await waitFor(
 		() => {
 			expect(router.state.location.pathname).toMatch(expected);
@@ -135,7 +132,7 @@ test('onboarding "Chat with the Captain" opens the create-project-with-team dial
 		},
 	});
 
-	const choiceChat = await findByTestId('choice-chat', { timeout: 15_000 });
+	const choiceChat = await findByTestId('choice-chat', undefined, { timeout: 15_000 });
 	await user.click(within(choiceChat).getByRole('button', { name: 'Start chat' }));
 
 	// The Captain-scoped path reuses the project-with-team dialog (its own team +
@@ -153,7 +150,7 @@ test('the first-time choice screen no longer exposes a "general help" escape hat
 		},
 	});
 
-	await findByTestId('onboarding-choice', { timeout: 15_000 });
+	await findByTestId('onboarding-choice', undefined, { timeout: 15_000 });
 
 	expect(container.querySelector('[data-testid="choice-general"]')).toBeNull();
 	expect(container.querySelector('[data-testid="choice-chat"]')).toBeTruthy();

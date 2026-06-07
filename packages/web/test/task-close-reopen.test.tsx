@@ -3,22 +3,22 @@ import { renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 test('the admin can close and re-open a task via themed modal', async () => {
-	const seeded = { teamSlug: '', taskId: '', identifier: '' };
+	const seeded = { projectSlug: '', taskId: '', identifier: '' };
 	const { findByTestId, findByText, queryByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Close Project' });
 			const task = await seedTask(ws, project, { title: 'Closable Task' });
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.identifier = task.identifier;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	// First page render after the shortcut-route redirect can take several
@@ -49,21 +49,21 @@ test('the admin can close and re-open a task via themed modal', async () => {
 });
 
 test('task detail no longer shows a delete button or status pill row', async () => {
-	const seeded = { teamSlug: '', taskId: '' };
+	const seeded = { projectSlug: '', taskId: '' };
 	const { findByTestId, queryByRole, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'No Delete Project' });
 			const task = await seedTask(ws, project, { title: 'Plain Task' });
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	await findByTestId('task-close-button', undefined, { timeout: 10_000 });

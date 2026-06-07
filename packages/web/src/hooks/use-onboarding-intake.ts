@@ -17,16 +17,16 @@ export interface UseOnboardingIntakeOptions {
 }
 
 export function useOnboardingIntake(
-	teamId: string,
+	projectId: string,
 	enabled = true,
 	options: UseOnboardingIntakeOptions = {},
 ) {
 	const ensure = options.ensure ?? false;
 	return useQuery({
-		queryKey: ['teams', teamId, 'onboarding-intake', ensure],
+		queryKey: ['projects', projectId, 'onboarding-intake', ensure],
 		queryFn: async (): Promise<OnboardingIntake | null> => {
 			try {
-				return await api.get<OnboardingIntake>(`/api/teams/${teamId}/onboarding-intake`, {
+				return await api.get<OnboardingIntake>(`/api/projects/${projectId}/onboarding-intake`, {
 					ensure: ensure ? 'true' : undefined,
 				});
 			} catch (e) {
@@ -35,33 +35,33 @@ export function useOnboardingIntake(
 				throw e;
 			}
 		},
-		enabled: enabled && !!teamId,
+		enabled: enabled && !!projectId,
 		staleTime: 30_000,
 		refetchOnMount: 'always',
 	});
 }
 
-export function useStartOnboardingIntake(teamId: string) {
+export function useStartOnboardingIntake(projectId: string) {
 	return useMutation({
 		mutationFn: () =>
-			api.get<OnboardingIntake>(`/api/teams/${teamId}/onboarding-intake`, { ensure: 'true' }),
+			api.get<OnboardingIntake>(`/api/projects/${projectId}/onboarding-intake`, { ensure: 'true' }),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'onboarding-intake'] });
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'onboarding'] });
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'tasks'] });
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'onboarding-intake'] });
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'onboarding'] });
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'tasks'] });
 		},
 	});
 }
 
-export function useSkipOnboardingQuestions(teamId: string) {
+export function useSkipOnboardingQuestions(projectId: string) {
 	return useMutation({
 		mutationFn: () =>
 			api.post<{ task_id: string; comment_id: string }>(
-				`/api/teams/${teamId}/onboarding-intake/skip-questions`,
+				`/api/projects/${projectId}/onboarding-intake/skip-questions`,
 			),
 		onSuccess: (data) => {
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'tasks', data.task_id, 'comments'],
+				queryKey: ['projects', projectId, 'tasks', data.task_id, 'comments'],
 			});
 		},
 	});

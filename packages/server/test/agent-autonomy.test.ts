@@ -5,7 +5,9 @@ import { createTestContext, destroyTestContext, type ServerTestContext } from '.
 
 let ctx: ServerTestContext;
 let teamId: string;
+let internalSlug: string;
 let projectId: string;
+let projectSlug: string;
 let engineerAgentId: string;
 let architectAgentId: string;
 let _qaAgentId: string;
@@ -33,10 +35,12 @@ beforeAll(async () => {
 			template_id: softDevType.id,
 		}),
 	});
-	teamId = ((await teamRes.json()) as any).data.id;
+	const teamData = ((await teamRes.json()) as any).data;
+	teamId = teamData.id;
+	internalSlug = `internal-${teamData.slug}`;
 
 	// Get agents
-	const agentsRes = await ctx.app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await ctx.app.request(`/api/projects/${internalSlug}/agents`, {
 		method: 'GET',
 		headers: authHeader(ctx.token),
 	});
@@ -51,7 +55,9 @@ beforeAll(async () => {
 		name: 'Autonomy Project',
 		description: 'Test project.',
 	});
-	projectId = ((await projRes.json()) as any).data.id;
+	const projData = ((await projRes.json()) as any).data;
+	projectId = projData.id;
+	projectSlug = projData.slug;
 });
 
 afterAll(async () => {
@@ -60,7 +66,7 @@ afterAll(async () => {
 
 describe('task schema', () => {
 	it('creates an task with backlog status by default', async () => {
-		const res = await ctx.app.request(`/api/teams/${teamId}/tasks`, {
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -76,7 +82,7 @@ describe('task schema', () => {
 
 describe('task schema: branch_name', () => {
 	it('can set and retrieve branch_name', async () => {
-		const createRes = await ctx.app.request(`/api/teams/${teamId}/tasks`, {
+		const createRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -87,7 +93,7 @@ describe('task schema: branch_name', () => {
 		});
 		const taskId = ((await createRes.json()) as any).data.id;
 
-		const patchRes = await ctx.app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
+		const patchRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ branch_name: 'feat/AUT-1-test-feature' }),
@@ -100,7 +106,7 @@ describe('task schema: branch_name', () => {
 
 describe('task automation: Coach wakeup on Done', () => {
 	it('creates a wakeup for Coach when status changes to done', async () => {
-		const createRes = await ctx.app.request(`/api/teams/${teamId}/tasks`, {
+		const createRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -115,7 +121,7 @@ describe('task automation: Coach wakeup on Done', () => {
 		await ctx.db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [coachAgentId]);
 
 		// Set status to done
-		await ctx.app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
+		await ctx.app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: TaskStatus.Done }),
@@ -136,7 +142,7 @@ describe('task automation: Coach wakeup on Done', () => {
 	});
 
 	it('does not create wakeup for non-done status changes', async () => {
-		const createRes = await ctx.app.request(`/api/teams/${teamId}/tasks`, {
+		const createRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -150,7 +156,7 @@ describe('task automation: Coach wakeup on Done', () => {
 		await ctx.db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [coachAgentId]);
 
 		// Set status to review — should NOT trigger Coach
-		await ctx.app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
+		await ctx.app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: TaskStatus.Review }),
@@ -168,7 +174,7 @@ describe('task automation: Coach wakeup on Done', () => {
 
 describe('task: progress_summary and rules', () => {
 	it('can update progress_summary with tracking fields', async () => {
-		const createRes = await ctx.app.request(`/api/teams/${teamId}/tasks`, {
+		const createRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -179,7 +185,7 @@ describe('task: progress_summary and rules', () => {
 		});
 		const taskId = ((await createRes.json()) as any).data.id;
 
-		const patchRes = await ctx.app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
+		const patchRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ progress_summary: 'Completed API endpoints, working on tests' }),
@@ -191,7 +197,7 @@ describe('task: progress_summary and rules', () => {
 	});
 
 	it('can update rules', async () => {
-		const createRes = await ctx.app.request(`/api/teams/${teamId}/tasks`, {
+		const createRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -202,7 +208,7 @@ describe('task: progress_summary and rules', () => {
 		});
 		const taskId = ((await createRes.json()) as any).data.id;
 
-		const patchRes = await ctx.app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
+		const patchRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ rules: 'Must use PostgreSQL transactions for all writes' }),
@@ -216,7 +222,7 @@ describe('task: progress_summary and rules', () => {
 
 describe('task: sub-tasks with parent_task_id', () => {
 	it('can create a sub-task', async () => {
-		const parentRes = await ctx.app.request(`/api/teams/${teamId}/tasks`, {
+		const parentRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -228,15 +234,18 @@ describe('task: sub-tasks with parent_task_id', () => {
 		const parentId = ((await parentRes.json()) as any).data.id;
 
 		// Create sub-task via the existing sub-tasks endpoint
-		const subRes = await ctx.app.request(`/api/teams/${teamId}/tasks/${parentId}/sub-tasks`, {
-			method: 'POST',
-			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				project_id: projectId,
-				title: 'Plan this work',
-				assignee_id: architectAgentId,
-			}),
-		});
+		const subRes = await ctx.app.request(
+			`/api/projects/${projectSlug}/tasks/${parentId}/sub-tasks`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					project_id: projectId,
+					title: 'Plan this work',
+					assignee_id: architectAgentId,
+				}),
+			},
+		);
 		expect(subRes.status).toBe(201);
 		const subTask = ((await subRes.json()) as any).data;
 		expect(subTask.parent_task_id).toBe(parentId);
@@ -245,7 +254,7 @@ describe('task: sub-tasks with parent_task_id', () => {
 
 describe('approval: skill_proposal type', () => {
 	it('can create a skill_proposal approval', async () => {
-		const res = await ctx.app.request(`/api/teams/${teamId}/approvals`, {
+		const res = await ctx.app.request(`/api/projects/${internalSlug}/approvals`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

@@ -12,7 +12,7 @@ async function resolveMemberUser(c: import('hono').Context<Env>, teamId: string)
 	return (await findMemberUserForTeam(c.get('db'), auth.userId, teamId)) ?? null;
 }
 
-uiStateRoutes.get('/teams/:teamId/ui-state', async (c) => {
+uiStateRoutes.get('/projects/:projectId/ui-state', async (c) => {
 	const teamId = c.get('teamId') as string;
 
 	const member = await resolveMemberUser(c, teamId);
@@ -23,7 +23,7 @@ uiStateRoutes.get('/teams/:teamId/ui-state', async (c) => {
 	return ok(c, member.settings);
 });
 
-uiStateRoutes.patch('/teams/:teamId/ui-state', async (c) => {
+uiStateRoutes.patch('/projects/:projectId/ui-state', async (c) => {
 	const teamId = c.get('teamId') as string;
 
 	const member = await resolveMemberUser(c, teamId);

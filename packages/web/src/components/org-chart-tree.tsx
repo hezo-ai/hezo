@@ -58,13 +58,13 @@ function AgentRoleTooltipContent({ node }: { node: OrgNode }) {
 
 interface OrgChartTreeProps {
 	roots: OrgNode[];
-	teamId?: string;
+	projectId?: string;
 	mode: 'interactive' | 'onboarding';
 	hint?: string;
 	testId?: string;
 }
 
-export function OrgChartTree({ roots, teamId, mode, hint, testId }: OrgChartTreeProps) {
+export function OrgChartTree({ roots, projectId, mode, hint, testId }: OrgChartTreeProps) {
 	const { containerRef, contentRef, scale, height } = useOrgChartAutoFit();
 
 	const renderNode = (node: OrgNode): ReactNode => {
@@ -77,10 +77,10 @@ export function OrgChartTree({ roots, teamId, mode, hint, testId }: OrgChartTree
 		);
 
 		const nodeBody =
-			mode === 'interactive' && teamId ? (
+			mode === 'interactive' && projectId ? (
 				<Link
-					to="/teams/$teamId/agents/$agentId"
-					params={{ teamId, agentId: node.slug }}
+					to="/projects/$projectId/agents/$agentId"
+					params={{ projectId, agentId: node.slug }}
 					className="relative inline-flex items-center gap-2 rounded-radius-md border border-border bg-bg px-3.5 py-2 text-[13px] font-medium transition-[border-color] duration-150 hover:border-border-hover"
 				>
 					{label}

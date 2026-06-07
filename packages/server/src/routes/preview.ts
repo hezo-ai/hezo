@@ -24,7 +24,7 @@ const MIME_TYPES: Record<string, string> = {
 	'.ttf': 'font/ttf',
 };
 
-previewRoutes.get('/teams/:teamId/projects/:projectId/preview/*', async (c) => {
+previewRoutes.get('/projects/:projectId/preview/*', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const dataDir = c.get('dataDir');

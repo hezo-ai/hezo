@@ -2,7 +2,6 @@ import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
 	CAPTAIN_AGENT_SLUG,
-	INTERNAL_PROJECT_SLUG,
 	TaskPriority,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
@@ -43,9 +42,9 @@ async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext 
 
 	const internalProject = await db.query<{ id: string }>(
 		`SELECT id FROM projects
-		 WHERE team_id = $1 AND is_internal = true AND slug = $2
+		 WHERE team_id = $1 AND is_internal = true
 		 LIMIT 1`,
-		[teamId, INTERNAL_PROJECT_SLUG],
+		[teamId],
 	);
 
 	const teamExists = await db.query('SELECT 1 FROM teams WHERE id = $1', [teamId]);

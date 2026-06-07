@@ -70,7 +70,7 @@ test('useInvalidatingMutation invalidates the given keys on success', async () =
 
 test('factories surface errors via toast only when errorMessage is set', async () => {
 	const { toast } = await import('../src/hooks/use-toast');
-	const errSpy = vi.spyOn(toast, 'error').mockImplementation(() => {});
+	const errSpy = vi.spyOn(toast, 'error').mockImplementation(() => 0);
 
 	const silent = renderHook(
 		() =>

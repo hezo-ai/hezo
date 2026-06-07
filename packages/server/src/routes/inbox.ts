@@ -25,6 +25,7 @@ interface AdminMentionRow {
 	task_id: string;
 	task_identifier: string;
 	task_title: string;
+	project_slug: string;
 	comment_id: string;
 	content: unknown;
 	author_member_id: string | null;
@@ -34,7 +35,7 @@ interface AdminMentionRow {
 	read_at: string | null;
 }
 
-inboxRoutes.get('/teams/:teamId/inbox/mentions', async (c) => {
+inboxRoutes.get('/projects/:projectId/inbox/mentions', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const auth = requireAdminAuth(c, 'Only the admin have an inbox');
 	if (auth instanceof Response) return auth;
@@ -45,6 +46,7 @@ inboxRoutes.get('/teams/:teamId/inbox/mentions', async (c) => {
 	const result = await db.query<AdminMentionRow>(
 		`SELECT bm.id, bm.team_id, t.slug AS team_slug,
 		        bm.task_id, i.identifier AS task_identifier, i.title AS task_title,
+		        p.slug AS project_slug,
 		        bm.comment_id, tc.content,
 		        tc.author_member_id,
 		        COALESCE(ma.title, m.display_name) AS author_display_name,
@@ -53,6 +55,7 @@ inboxRoutes.get('/teams/:teamId/inbox/mentions', async (c) => {
 		 FROM admin_mentions bm
 		 JOIN teams t ON t.id = bm.team_id
 		 JOIN tasks i ON i.id = bm.task_id
+		 JOIN projects p ON p.id = i.project_id
 		 JOIN task_comments tc ON tc.id = bm.comment_id
 		 LEFT JOIN members m ON m.id = tc.author_member_id
 		 LEFT JOIN member_agents ma ON ma.id = tc.author_member_id
@@ -72,6 +75,7 @@ inboxRoutes.get('/teams/:teamId/inbox/mentions', async (c) => {
 			task_id: r.task_id,
 			task_identifier: r.task_identifier,
 			task_title: r.task_title,
+			project_slug: r.project_slug,
 			comment_id: r.comment_id,
 			snippet: buildSnippet(r.content),
 			author_member_id: r.author_member_id,
@@ -83,7 +87,7 @@ inboxRoutes.get('/teams/:teamId/inbox/mentions', async (c) => {
 	);
 });
 
-inboxRoutes.get('/teams/:teamId/inbox/count', async (c) => {
+inboxRoutes.get('/projects/:projectId/inbox/count', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const auth = requireAdminAuth(c, 'Only the admin have an inbox');
 	if (auth instanceof Response) return auth;
@@ -102,7 +106,7 @@ inboxRoutes.get('/teams/:teamId/inbox/count', async (c) => {
 	return ok(c, { unread: result.rows[0]?.unread ?? 0 });
 });
 
-inboxRoutes.post('/teams/:teamId/inbox/mentions/:mentionId/read', async (c) => {
+inboxRoutes.post('/projects/:projectId/inbox/mentions/:mentionId/read', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const auth = requireAdminAuth(c, 'Only the admin have an inbox');
 	if (auth instanceof Response) return auth;
@@ -132,7 +136,7 @@ inboxRoutes.post('/teams/:teamId/inbox/mentions/:mentionId/read', async (c) => {
 	return ok(c, { id: updated.rows[0].id, read_at: updated.rows[0].read_at });
 });
 
-inboxRoutes.post('/teams/:teamId/inbox/mentions/read-all', async (c) => {
+inboxRoutes.post('/projects/:projectId/inbox/mentions/read-all', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const auth = requireAdminAuth(c, 'Only the admin have an inbox');
 	if (auth instanceof Response) return auth;

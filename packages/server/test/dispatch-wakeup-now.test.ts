@@ -17,7 +17,9 @@ let token: string;
 let masterKeyManager: MasterKeyManager;
 let dataDir: string;
 let teamId: string;
+let teamSlug: string;
 let projectId: string;
+let projectSlug: string;
 let taskId: string;
 let agentId: string;
 
@@ -76,20 +78,24 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), ...json },
 		body: JSON.stringify({ name: 'Dispatch Now Co', template_id: typeId }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const team = (await teamRes.json()).data;
+	teamId = team.id;
+	teamSlug = team.slug;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Dispatch Project',
 		description: 'Test project.',
 	});
-	projectId = (await projectRes.json()).data.id;
+	const project = (await projectRes.json()).data;
+	projectId = project.id;
+	projectSlug = project.slug;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/internal-${teamSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
-	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), ...json },
 		body: JSON.stringify({ project_id: projectId, title: 'Dispatch Task', assignee_id: agentId }),

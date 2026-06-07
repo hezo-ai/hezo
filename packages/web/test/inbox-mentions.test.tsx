@@ -62,7 +62,7 @@ async function seedAgentAdminMention(
 }
 
 test('inbox renders a admin mention card with author + snippet', async () => {
-	let ctx: { teamSlug: string; taskIdentifier: string };
+	let ctx: { projectSlug: string; taskIdentifier: string };
 	const { findByTestId, findByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -70,13 +70,13 @@ test('inbox renders a admin mention card with author + snippet', async () => {
 			const project = await seedProject(ws, { name: 'Demo' });
 			const task = await seedTask(ws, project, { title: 'A admin-decision ticket' });
 			await seedAgentAdminMention(ws, task, '@admin — should we ship the new auth flow?');
-			ctx = { teamSlug: ws.team.slug, taskIdentifier: task.identifier };
+			ctx = { projectSlug: project.slug, taskIdentifier: task.identifier };
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/inbox',
-		params: { teamId: ctx!.teamSlug },
+		to: '/projects/$projectId/inbox',
+		params: { projectId: ctx!.projectSlug },
 	});
 
 	await findByTestId('mention-card', undefined, { timeout: 10_000 });
@@ -88,10 +88,9 @@ test('inbox renders a admin mention card with author + snippet', async () => {
 
 test('clicking a mention navigates to the task and marks it read', async () => {
 	let ctx: {
-		teamSlug: string;
+		projectSlug: string;
 		taskId: string;
 		taskIdentifier: string;
-		projectSlug: string;
 		mentionId: string;
 	};
 	const helpers = await renderApp({
@@ -102,7 +101,6 @@ test('clicking a mention navigates to the task and marks it read', async () => {
 			const task = await seedTask(ws, project, { title: 'Click-to-read ticket' });
 			const { mentionId } = await seedAgentAdminMention(ws, task, '@admin please weigh in here.');
 			ctx = {
-				teamSlug: ws.team.slug,
 				taskId: task.id,
 				taskIdentifier: task.identifier,
 				projectSlug: project.slug,
@@ -113,8 +111,8 @@ test('clicking a mention navigates to the task and marks it read', async () => {
 	});
 
 	await helpers.router.navigate({
-		to: '/teams/$teamId/inbox',
-		params: { teamId: ctx!.teamSlug },
+		to: '/projects/$projectId/inbox',
+		params: { projectId: ctx!.projectSlug },
 	});
 
 	const card = await helpers.findByTestId('mention-card', undefined, { timeout: 10_000 });
@@ -126,7 +124,7 @@ test('clicking a mention navigates to the task and marks it read', async () => {
 	// a task page for the right identifier.
 	await new Promise((r) => setTimeout(r, 0));
 	const path = helpers.router.state.location.pathname;
-	expect(path.startsWith(`/teams/${ctx!.teamSlug}/`)).toBe(true);
+	expect(path.startsWith(`/projects/${ctx!.projectSlug}/`)).toBe(true);
 	expect(path).toContain('/tasks/');
 	expect(path.toLowerCase()).toContain(ctx!.taskIdentifier.toLowerCase());
 
@@ -150,7 +148,7 @@ test('clicking a mention navigates to the task and marks it read', async () => {
 });
 
 test('inbox shows read mentions as history and highlights unread ones', async () => {
-	let ctx: { teamSlug: string };
+	let ctx: { projectSlug: string };
 	const { findAllByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -161,13 +159,13 @@ test('inbox shows read mentions as history and highlights unread ones', async ()
 			await seedAgentAdminMention(ws, unreadTask, '@admin fresh decision needed.');
 			const { mentionId } = await seedAgentAdminMention(ws, readTask, '@admin already handled.');
 			await markMentionRead(mentionId);
-			ctx = { teamSlug: ws.team.slug };
+			ctx = { projectSlug: project.slug };
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/inbox',
-		params: { teamId: ctx!.teamSlug },
+		to: '/projects/$projectId/inbox',
+		params: { projectId: ctx!.projectSlug },
 	});
 
 	await waitFor(async () => expect((await findAllByTestId('mention-card')).length).toBe(2), {
@@ -179,7 +177,7 @@ test('inbox shows read mentions as history and highlights unread ones', async ()
 });
 
 test('read/unread filter and keyword search narrow the inbox', async () => {
-	let ctx: { teamSlug: string };
+	let ctx: { projectSlug: string };
 	const { findAllByTestId, findByText, findByLabelText, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -190,13 +188,13 @@ test('read/unread filter and keyword search narrow the inbox', async () => {
 			await seedAgentAdminMention(ws, unreadTask, '@admin apple decision.');
 			const { mentionId } = await seedAgentAdminMention(ws, readTask, '@admin banana decision.');
 			await markMentionRead(mentionId);
-			ctx = { teamSlug: ws.team.slug };
+			ctx = { projectSlug: project.slug };
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/inbox',
-		params: { teamId: ctx!.teamSlug },
+		to: '/projects/$projectId/inbox',
+		params: { projectId: ctx!.projectSlug },
 	});
 
 	await waitFor(async () => expect((await findAllByTestId('mention-card')).length).toBe(2), {
@@ -232,7 +230,7 @@ test('read/unread filter and keyword search narrow the inbox', async () => {
 });
 
 test('archived mentions are hidden by default and shown under the Archived filter', async () => {
-	let ctx: { teamSlug: string };
+	let ctx: { projectSlug: string };
 	const { findAllByTestId, findByText, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -244,13 +242,13 @@ test('archived mentions are hidden by default and shown under the Archived filte
 			await markMentionRead(active.mentionId);
 			const archived = await seedAgentAdminMention(ws, archivedTask, '@admin old decision.');
 			await markMentionArchived(archived.mentionId);
-			ctx = { teamSlug: ws.team.slug };
+			ctx = { projectSlug: project.slug };
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/inbox',
-		params: { teamId: ctx!.teamSlug },
+		to: '/projects/$projectId/inbox',
+		params: { projectId: ctx!.projectSlug },
 	});
 
 	// Default view shows only the active (non-archived) mention.
@@ -263,10 +261,9 @@ test('archived mentions are hidden by default and shown under the Archived filte
 	await waitFor(async () => expect((await findAllByTestId('mention-card')).length).toBe(1));
 });
 
-test('sidebar inbox link shows the unread count badge', async () => {
-	let ctx: { teamSlug: string };
-	const { findByTestId, router } = await renderApp({
-		initialPath: '/',
+test('header inbox icon shows the global unread count badge', async () => {
+	const { findByTestId } = await renderApp({
+		initialPath: '/home',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Demo' });
@@ -274,15 +271,9 @@ test('sidebar inbox link shows the unread count badge', async () => {
 			const t2 = await seedTask(ws, project, { title: 'Decision two' });
 			await seedAgentAdminMention(ws, t1, '@admin decision one.');
 			await seedAgentAdminMention(ws, t2, '@admin decision two.');
-			ctx = { teamSlug: ws.team.slug };
 		},
 	});
 
-	await router.navigate({
-		to: '/teams/$teamId/projects',
-		params: { teamId: ctx!.teamSlug },
-	});
-
-	const link = await findByTestId('sidebar-link-inbox', undefined, { timeout: 10_000 });
-	await waitFor(() => expect(link.textContent).toContain('2'));
+	const badge = await findByTestId('app-header-inbox-badge', undefined, { timeout: 10_000 });
+	await waitFor(() => expect(badge.textContent).toContain('2'));
 });

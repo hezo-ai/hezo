@@ -4,20 +4,20 @@ import { renderApp } from './helpers/render';
 import { seedAsset, seedComment, seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 test('the assets library lists uploads with an open-in-new-tab link to a signed url', async () => {
-	let ctx!: { teamSlug: string; projectSlug: string };
+	let ctx!: { projectSlug: string };
 	const { findByText, findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Asset Lib' });
 			await seedAsset(ws, project, { filename: 'mockup.png' });
-			ctx = { teamSlug: ws.team.slug, projectSlug: project.slug };
+			ctx = { projectSlug: project.slug };
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/assets',
-		params: { teamId: ctx.teamSlug, projectId: ctx.projectSlug },
+		to: '/projects/$projectId/assets',
+		params: { projectId: ctx.projectSlug },
 	});
 
 	await findByText('mockup.png');
@@ -27,20 +27,20 @@ test('the assets library lists uploads with an open-in-new-tab link to a signed 
 });
 
 test('an asset can be deleted from the library', async () => {
-	let ctx!: { teamSlug: string; projectSlug: string };
+	let ctx!: { projectSlug: string };
 	const { findByText, findByTestId, getByRole, queryByText, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Deletable' });
 			await seedAsset(ws, project, { filename: 'remove-me.png' });
-			ctx = { teamSlug: ws.team.slug, projectSlug: project.slug };
+			ctx = { projectSlug: project.slug };
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/assets',
-		params: { teamId: ctx.teamSlug, projectId: ctx.projectSlug },
+		to: '/projects/$projectId/assets',
+		params: { projectId: ctx.projectSlug },
 	});
 
 	await findByText('remove-me.png');
@@ -52,7 +52,7 @@ test('an asset can be deleted from the library', async () => {
 });
 
 test('an assets/<name> reference in a comment links to the asset and opens it in a new tab', async () => {
-	let ctx!: { teamSlug: string; taskId: string };
+	let ctx!: { projectSlug: string; taskId: string };
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -61,13 +61,13 @@ test('an assets/<name> reference in a comment links to the asset and opens it in
 			await seedAsset(ws, project, { filename: 'login.png' });
 			const task = await seedTask(ws, project, { title: 'Build the login screen' });
 			await seedComment(ws, task, 'Match the layout to assets/login.png before you start.');
-			ctx = { teamSlug: ws.team.slug, taskId: task.id };
+			ctx = { projectSlug: project.slug, taskId: task.id };
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: ctx.teamSlug, taskId: ctx.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: ctx.projectSlug, taskId: ctx.taskId },
 	});
 
 	await findByTestId('text-comment-body', undefined, { timeout: 15_000 });
@@ -79,19 +79,19 @@ test('an assets/<name> reference in a comment links to the asset and opens it in
 });
 
 test('uploading a file through the picker adds it to the library', async () => {
-	let ctx!: { teamSlug: string; projectSlug: string };
+	let ctx!: { projectSlug: string };
 	const { findByText, findByTestId, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Upload Lib' });
-			ctx = { teamSlug: ws.team.slug, projectSlug: project.slug };
+			ctx = { projectSlug: project.slug };
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/assets',
-		params: { teamId: ctx.teamSlug, projectId: ctx.projectSlug },
+		to: '/projects/$projectId/assets',
+		params: { projectId: ctx.projectSlug },
 	});
 
 	await findByText('No assets yet');

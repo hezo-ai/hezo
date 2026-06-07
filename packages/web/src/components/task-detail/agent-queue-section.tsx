@@ -14,7 +14,7 @@ import { Tooltip } from '../ui/tooltip';
 type RunCommentRef = { id: string; content_type: string; content: unknown };
 
 interface AgentQueueSectionProps {
-	teamId: string;
+	projectId: string;
 	taskId: string;
 	locks: ExecutionLock[];
 	comments: RunCommentRef[];
@@ -29,7 +29,7 @@ interface AgentQueueSectionProps {
  * queued agents).
  */
 export function AgentQueueSection({
-	teamId,
+	projectId,
 	taskId,
 	locks,
 	comments,
@@ -64,7 +64,7 @@ export function AgentQueueSection({
 				{orderedLocks.map((lock) => (
 					<RunningAgentRow
 						key={lock.id}
-						teamId={teamId}
+						projectId={projectId}
 						taskId={taskId}
 						lock={lock}
 						run={runByMemberId.get(lock.member_id)}
@@ -75,7 +75,7 @@ export function AgentQueueSection({
 						{wakeups.map((w) => (
 							<QueuedAgentRow
 								key={w.id}
-								teamId={teamId}
+								projectId={projectId}
 								taskId={taskId}
 								wakeup={w}
 								dispatch={dispatch}
@@ -89,12 +89,12 @@ export function AgentQueueSection({
 }
 
 function RunningAgentRow({
-	teamId,
+	projectId,
 	taskId,
 	lock,
 	run,
 }: {
-	teamId: string;
+	projectId: string;
 	taskId: string;
 	lock: ExecutionLock;
 	run: { runId: string; commentId: string } | undefined;
@@ -104,7 +104,7 @@ function RunningAgentRow({
 	// comment has landed yet — the terminate control isn't rendered in that case,
 	// so the mutation can never fire with it.
 	const terminateMutation = useTerminateRun({
-		teamId,
+		projectId,
 		agentId: lock.member_id,
 		runId: run?.runId ?? '',
 		taskId,
@@ -190,19 +190,19 @@ function runNowBlockReason(wakeup: QueuedWakeup, dispatch: QueuedDispatchState):
 }
 
 function QueuedAgentRow({
-	teamId,
+	projectId,
 	taskId,
 	wakeup,
 	dispatch,
 }: {
-	teamId: string;
+	projectId: string;
 	taskId: string;
 	wakeup: QueuedWakeup;
 	dispatch: QueuedDispatchState;
 }) {
 	const [open, setOpen] = useState(false);
-	const cancelMutation = useCancelQueuedWakeup({ teamId, taskId });
-	const runMutation = useRunQueuedWakeup({ teamId, taskId });
+	const cancelMutation = useCancelQueuedWakeup({ projectId, taskId });
+	const runMutation = useRunQueuedWakeup({ projectId, taskId });
 	const blockReason = runNowBlockReason(wakeup, dispatch);
 
 	return (

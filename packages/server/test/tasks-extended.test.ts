@@ -10,7 +10,9 @@ let db: PGlite;
 let token: string;
 let teamId: string;
 let projectId: string;
+let projectSlug: string;
 let otherProjectId: string;
+let otherProjectSlug: string;
 let memberId: string;
 
 // Task IDs created in setup so individual tests can reference them
@@ -39,14 +41,18 @@ beforeAll(async () => {
 		name: 'Alpha Project',
 		description: 'Test project.',
 	});
-	projectId = (await projectRes.json()).data.id;
+	const projectData = (await projectRes.json()).data;
+	projectId = projectData.id;
+	projectSlug = projectData.slug;
 
 	// Create a second project for project_id filter tests
 	const otherProjectRes = await createTestProject(db, teamId, {
 		name: 'Beta Project',
 		description: 'Test project.',
 	});
-	otherProjectId = (await otherProjectRes.json()).data.id;
+	const otherProjectData = (await otherProjectRes.json()).data;
+	otherProjectId = otherProjectData.id;
+	otherProjectSlug = otherProjectData.slug;
 
 	// Create a member to use as assignee
 	const memberRes = await db.query<{ id: string }>(
@@ -65,7 +71,7 @@ beforeAll(async () => {
 		description = '',
 		assigneeId: string | null = memberId,
 	) => {
-		const createRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -79,7 +85,7 @@ beforeAll(async () => {
 		const created = (await createRes.json()).data;
 		// If status needs to differ from default backlog, patch it
 		if (status !== 'backlog') {
-			await app.request(`/api/teams/${teamId}/tasks/${created.id}`, {
+			await app.request(`/api/projects/${projectSlug}/tasks/${created.id}`, {
 				method: 'PATCH',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({ status }),
@@ -131,9 +137,29 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
+// Task listing is project-scoped (one project per request). The team-wide view
+// is reconstructed by listing every project of the team and merging the rows
+// and totals — preserving the cross-project assertions the team-level list used
+// to satisfy in a single call.
+async function listTeamTasks(query = ''): Promise<{ data: any[]; meta: { total: number } }> {
+	const slugs = [projectSlug, otherProjectSlug];
+	const merged: any[] = [];
+	let total = 0;
+	for (const slug of slugs) {
+		const sep = query ? `?${query}` : '';
+		const res = await app.request(`/api/projects/${slug}/tasks${sep}`, {
+			headers: authHeader(token),
+		});
+		const body = await res.json();
+		merged.push(...body.data);
+		total += body.meta.total;
+	}
+	return { data: merged, meta: { total } };
+}
+
 describe('tasks list — pagination', () => {
 	it('returns first page with per_page limit', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?per_page=2&page=1`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks?per_page=2&page=1`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -141,14 +167,14 @@ describe('tasks list — pagination', () => {
 		expect(body.data).toHaveLength(2);
 		expect(body.meta.page).toBe(1);
 		expect(body.meta.per_page).toBe(2);
-		expect(body.meta.total).toBeGreaterThanOrEqual(5);
+		expect(body.meta.total).toBeGreaterThanOrEqual(3);
 	});
 
 	it('returns second page correctly', async () => {
-		const page1Res = await app.request(`/api/teams/${teamId}/tasks?per_page=2&page=1`, {
+		const page1Res = await app.request(`/api/projects/${projectSlug}/tasks?per_page=2&page=1`, {
 			headers: authHeader(token),
 		});
-		const page2Res = await app.request(`/api/teams/${teamId}/tasks?per_page=2&page=2`, {
+		const page2Res = await app.request(`/api/projects/${projectSlug}/tasks?per_page=2&page=2`, {
 			headers: authHeader(token),
 		});
 		expect(page1Res.status).toBe(200);
@@ -163,34 +189,30 @@ describe('tasks list — pagination', () => {
 	});
 
 	it('returns empty data on out-of-range page', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?per_page=50&page=999`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks?per_page=50&page=999`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data).toHaveLength(0);
-		expect(body.meta.total).toBeGreaterThanOrEqual(5);
+		expect(body.meta.total).toBeGreaterThanOrEqual(3);
 	});
 
 	it('meta reflects correct total even when page is limited', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?per_page=1`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks?per_page=1`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data).toHaveLength(1);
-		expect(body.meta.total).toBeGreaterThanOrEqual(5);
+		expect(body.meta.total).toBeGreaterThanOrEqual(3);
 		expect(body.meta.per_page).toBe(1);
 	});
 });
 
 describe('tasks list — search filter', () => {
 	it('returns tasks whose title matches the search term', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?search=login`, {
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await listTeamTasks('search=login');
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
 		expect(body.data.some((i: any) => i.id === taskBacklogLow)).toBe(true);
 		// Should not include unrelated tasks
@@ -203,20 +225,12 @@ describe('tasks list — search filter', () => {
 	});
 
 	it('search is case-insensitive', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?search=REFACTOR`, {
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await listTeamTasks('search=REFACTOR');
 		expect(body.data.some((i: any) => i.id === taskBacklogHigh)).toBe(true);
 	});
 
 	it('returns empty when search matches nothing', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?search=zzz_no_match_zzz`, {
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await listTeamTasks('search=zzz_no_match_zzz');
 		expect(body.data).toHaveLength(0);
 		expect(body.meta.total).toBe(0);
 	});
@@ -224,22 +238,14 @@ describe('tasks list — search filter', () => {
 
 describe('tasks list — status filter', () => {
 	it('filters to a single status', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?status=in_progress`, {
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await listTeamTasks('status=in_progress');
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
 		expect(body.data.every((i: any) => i.status === 'in_progress')).toBe(true);
 		expect(body.data.some((i: any) => i.id === taskInProgressUrgent)).toBe(true);
 	});
 
 	it('filters using comma-separated multiple statuses', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?status=review,in_progress`, {
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await listTeamTasks('status=review,in_progress');
 		expect(body.data.length).toBeGreaterThanOrEqual(2);
 		expect(body.data.every((i: any) => ['review', 'in_progress'].includes(i.status))).toBe(true);
 		expect(body.data.some((i: any) => i.id === taskReviewMedium)).toBe(true);
@@ -247,11 +253,7 @@ describe('tasks list — status filter', () => {
 	});
 
 	it('excludes tasks not matching the status filter', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?status=done`, {
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await listTeamTasks('status=done');
 		expect(body.data.some((i: any) => i.status !== 'done')).toBe(false);
 		expect(body.data.some((i: any) => i.id === taskDoneHigh)).toBe(true);
 	});
@@ -259,22 +261,14 @@ describe('tasks list — status filter', () => {
 
 describe('tasks list — priority filter', () => {
 	it('filters to a single priority', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?priority=urgent`, {
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await listTeamTasks('priority=urgent');
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
 		expect(body.data.every((i: any) => i.priority === 'urgent')).toBe(true);
 		expect(body.data.some((i: any) => i.id === taskInProgressUrgent)).toBe(true);
 	});
 
 	it('filters using comma-separated multiple priorities', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?priority=high,urgent`, {
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await listTeamTasks('priority=high,urgent');
 		expect(body.data.length).toBeGreaterThanOrEqual(2);
 		expect(body.data.every((i: any) => ['high', 'urgent'].includes(i.priority))).toBe(true);
 		expect(body.data.some((i: any) => i.id === taskBacklogHigh)).toBe(true);
@@ -282,11 +276,7 @@ describe('tasks list — priority filter', () => {
 	});
 
 	it('excludes tasks not matching the priority filter', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?priority=low`, {
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await listTeamTasks('priority=low');
 		expect(body.data.every((i: any) => i.priority === 'low')).toBe(true);
 		expect(body.data.some((i: any) => i.id === taskBacklogLow)).toBe(true);
 	});
@@ -294,7 +284,7 @@ describe('tasks list — priority filter', () => {
 
 describe('tasks list — project_id filter', () => {
 	it('returns only tasks belonging to the specified project', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?project_id=${projectId}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks?per_page=50`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -307,7 +297,7 @@ describe('tasks list — project_id filter', () => {
 	});
 
 	it('returns only tasks belonging to the other project', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?project_id=${otherProjectId}`, {
+		const res = await app.request(`/api/projects/${otherProjectSlug}/tasks?per_page=50`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -318,24 +308,17 @@ describe('tasks list — project_id filter', () => {
 		expect(body.data.some((i: any) => i.id === taskInProgressUrgent)).toBe(true);
 	});
 
-	it('returns empty list for a non-existent project_id', async () => {
-		const fakeId = '00000000-0000-0000-0000-000000000000';
-		const res = await app.request(`/api/teams/${teamId}/tasks?project_id=${fakeId}`, {
+	it('returns 404 for a non-existent project', async () => {
+		const res = await app.request(`/api/projects/00000000-0000-0000-0000-000000000000/tasks`, {
 			headers: authHeader(token),
 		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.data).toHaveLength(0);
+		expect(res.status).toBe(404);
 	});
 });
 
 describe('tasks list — assignee_id filter', () => {
 	it('returns only tasks assigned to the specified member', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?assignee_id=${memberId}`, {
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await listTeamTasks(`assignee_id=${memberId}`);
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
 		expect(body.data.every((i: any) => i.assignee_id === memberId)).toBe(true);
 		expect(body.data.some((i: any) => i.id === taskInProgressUrgent)).toBe(true);
@@ -347,19 +330,14 @@ describe('tasks list — assignee_id filter', () => {
              VALUES ($1, 'No Tasks Member', 'agent') RETURNING id`,
 			[teamId],
 		);
-		const res = await app.request(
-			`/api/teams/${teamId}/tasks?assignee_id=${otherMember.rows[0].id}`,
-			{ headers: authHeader(token) },
-		);
-		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await listTeamTasks(`assignee_id=${otherMember.rows[0].id}`);
 		expect(body.data).toHaveLength(0);
 	});
 });
 
 describe('tasks list — sort parameter', () => {
 	it('sorts by created_at ascending', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?sort=created_at:asc`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks?sort=created_at:asc`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -371,7 +349,7 @@ describe('tasks list — sort parameter', () => {
 	});
 
 	it('sorts by created_at descending (default)', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?sort=created_at:desc`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks?sort=created_at:desc`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -383,7 +361,7 @@ describe('tasks list — sort parameter', () => {
 	});
 
 	it('sorts by number ascending', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?sort=number:asc`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks?sort=number:asc`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -395,7 +373,7 @@ describe('tasks list — sort parameter', () => {
 	});
 
 	it('falls back to created_at desc for an unknown sort field', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?sort=invalid_field:asc`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks?sort=invalid_field:asc`, {
 			headers: authHeader(token),
 		});
 		// Should not error — falls back to created_at desc
@@ -407,22 +385,17 @@ describe('tasks list — sort parameter', () => {
 
 describe('tasks list — combined filters', () => {
 	it('combines status and priority filters', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?status=backlog&priority=high`, {
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await listTeamTasks('status=backlog&priority=high');
 		expect(body.data.every((i: any) => i.status === 'backlog' && i.priority === 'high')).toBe(true);
 		expect(body.data.some((i: any) => i.id === taskBacklogHigh)).toBe(true);
 		// taskBacklogLow has low priority — must be excluded
 		expect(body.data.some((i: any) => i.id === taskBacklogLow)).toBe(false);
 	});
 
-	it('combines project_id and status filters', async () => {
-		const res = await app.request(
-			`/api/teams/${teamId}/tasks?project_id=${otherProjectId}&status=in_progress`,
-			{ headers: authHeader(token) },
-		);
+	it('combines project scope and status filter', async () => {
+		const res = await app.request(`/api/projects/${otherProjectSlug}/tasks?status=in_progress`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(
@@ -432,22 +405,13 @@ describe('tasks list — combined filters', () => {
 	});
 
 	it('combines search with status filter', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?search=auth&status=backlog`, {
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await listTeamTasks('search=auth&status=backlog');
 		expect(body.data.every((i: any) => i.status === 'backlog')).toBe(true);
 		expect(body.data.some((i: any) => i.id === taskBacklogHigh)).toBe(true);
 	});
 
 	it('combines assignee_id and priority filters', async () => {
-		const res = await app.request(
-			`/api/teams/${teamId}/tasks?assignee_id=${memberId}&priority=urgent`,
-			{ headers: authHeader(token) },
-		);
-		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await listTeamTasks(`assignee_id=${memberId}&priority=urgent`);
 		expect(body.data.every((i: any) => i.assignee_id === memberId && i.priority === 'urgent')).toBe(
 			true,
 		);
@@ -459,19 +423,13 @@ describe('tasks list — assignee_type and has_active_run', () => {
 	const findTask = (data: any[], id: string) => data.find((i: any) => i.id === id);
 
 	it('returns assignee_type="agent" for an agent member assignee', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?per_page=50`, {
-			headers: authHeader(token),
-		});
-		const body = await res.json();
+		const body = await listTeamTasks('per_page=50');
 		const task = findTask(body.data, taskInProgressUrgent);
 		expect(task.assignee_type).toBe('agent');
 	});
 
 	it('returns has_active_run=false when no heartbeat_runs row exists', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?per_page=50`, {
-			headers: authHeader(token),
-		});
-		const body = await res.json();
+		const body = await listTeamTasks('per_page=50');
 		const task = findTask(body.data, taskInProgressUrgent);
 		expect(task.has_active_run).toBe(false);
 	});
@@ -483,10 +441,7 @@ describe('tasks list — assignee_type and has_active_run', () => {
 			[memberId, teamId, taskInProgressUrgent],
 		);
 		try {
-			const res = await app.request(`/api/teams/${teamId}/tasks?per_page=50`, {
-				headers: authHeader(token),
-			});
-			const body = await res.json();
+			const body = await listTeamTasks('per_page=50');
 			const task = findTask(body.data, taskInProgressUrgent);
 			expect(task.has_active_run).toBe(true);
 		} finally {
@@ -501,10 +456,7 @@ describe('tasks list — assignee_type and has_active_run', () => {
 			[memberId, teamId, taskInProgressUrgent],
 		);
 		try {
-			const res = await app.request(`/api/teams/${teamId}/tasks?per_page=50`, {
-				headers: authHeader(token),
-			});
-			const body = await res.json();
+			const body = await listTeamTasks('per_page=50');
 			const task = findTask(body.data, taskInProgressUrgent);
 			expect(task.has_active_run).toBe(true);
 		} finally {
@@ -519,10 +471,7 @@ describe('tasks list — assignee_type and has_active_run', () => {
 			[memberId, teamId, taskInProgressUrgent],
 		);
 		try {
-			const res = await app.request(`/api/teams/${teamId}/tasks?per_page=50`, {
-				headers: authHeader(token),
-			});
-			const body = await res.json();
+			const body = await listTeamTasks('per_page=50');
 			const task = findTask(body.data, taskInProgressUrgent);
 			expect(task.has_active_run).toBe(false);
 		} finally {
@@ -531,9 +480,12 @@ describe('tasks list — assignee_type and has_active_run', () => {
 	});
 
 	it('single-task GET returns assignee_type', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks/${taskInProgressUrgent}`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/${otherProjectSlug}/tasks/${taskInProgressUrgent}`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.assignee_type).toBe('agent');
@@ -573,20 +525,14 @@ describe('tasks list — has_unread_admin_mention', () => {
 	it('flags only the task with an unread admin mention, and clears once read', async () => {
 		const { commentId, mentionId } = await seedMention(taskBacklogHigh);
 		try {
-			let res = await app.request(`/api/teams/${teamId}/tasks?per_page=50`, {
-				headers: authHeader(token),
-			});
-			let body = await res.json();
+			let body = await listTeamTasks('per_page=50');
 			expect(findTask(body.data, taskBacklogHigh).has_unread_admin_mention).toBe(true);
 			// A task without a mention stays false.
 			expect(findTask(body.data, taskInProgressUrgent).has_unread_admin_mention).toBe(false);
 
 			// Reading the mention clears the per-task flag.
 			await db.query(`UPDATE admin_mentions SET read_at = now() WHERE id = $1`, [mentionId]);
-			res = await app.request(`/api/teams/${teamId}/tasks?per_page=50`, {
-				headers: authHeader(token),
-			});
-			body = await res.json();
+			body = await listTeamTasks('per_page=50');
 			expect(findTask(body.data, taskBacklogHigh).has_unread_admin_mention).toBe(false);
 		} finally {
 			await db.query(`DELETE FROM admin_mentions WHERE id = $1`, [mentionId]);
@@ -601,10 +547,7 @@ describe('tasks list — has_unread_admin_mention', () => {
 				`UPDATE admin_mentions SET read_at = now(), archived_at = now() WHERE id = $1`,
 				[mentionId],
 			);
-			const res = await app.request(`/api/teams/${teamId}/tasks?per_page=50`, {
-				headers: authHeader(token),
-			});
-			const body = await res.json();
+			const body = await listTeamTasks('per_page=50');
 			expect(findTask(body.data, taskBacklogHigh).has_unread_admin_mention).toBe(false);
 		} finally {
 			await db.query(`DELETE FROM admin_mentions WHERE id = $1`, [mentionId]);
@@ -652,11 +595,14 @@ describe('tasks PATCH — block assignee change while agent is running', () => {
 		const runId = await insertRun('running');
 		try {
 			const before = await getAssignee();
-			const res = await app.request(`/api/teams/${teamId}/tasks/${taskInProgressUrgent}`, {
-				method: 'PATCH',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ assignee_id: otherMemberId }),
-			});
+			const res = await app.request(
+				`/api/projects/${otherProjectSlug}/tasks/${taskInProgressUrgent}`,
+				{
+					method: 'PATCH',
+					headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+					body: JSON.stringify({ assignee_id: otherMemberId }),
+				},
+			);
 			expect(res.status).toBe(409);
 			const body = await res.json();
 			expect(body.error.code).toBe('CONFLICT');
@@ -669,11 +615,14 @@ describe('tasks PATCH — block assignee change while agent is running', () => {
 	it('returns 409 when changing assignee while a queued run exists', async () => {
 		const runId = await insertRun('queued');
 		try {
-			const res = await app.request(`/api/teams/${teamId}/tasks/${taskInProgressUrgent}`, {
-				method: 'PATCH',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ assignee_id: otherMemberId }),
-			});
+			const res = await app.request(
+				`/api/projects/${otherProjectSlug}/tasks/${taskInProgressUrgent}`,
+				{
+					method: 'PATCH',
+					headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+					body: JSON.stringify({ assignee_id: otherMemberId }),
+				},
+			);
 			expect(res.status).toBe(409);
 		} finally {
 			await deleteRun(runId);
@@ -683,11 +632,14 @@ describe('tasks PATCH — block assignee change while agent is running', () => {
 	it('allows assignee change after the run reaches a terminal status', async () => {
 		const runId = await insertRun('succeeded');
 		try {
-			const res = await app.request(`/api/teams/${teamId}/tasks/${taskInProgressUrgent}`, {
-				method: 'PATCH',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ assignee_id: otherMemberId }),
-			});
+			const res = await app.request(
+				`/api/projects/${otherProjectSlug}/tasks/${taskInProgressUrgent}`,
+				{
+					method: 'PATCH',
+					headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+					body: JSON.stringify({ assignee_id: otherMemberId }),
+				},
+			);
 			expect(res.status).toBe(200);
 			expect(await getAssignee()).toBe(otherMemberId);
 		} finally {
@@ -703,11 +655,14 @@ describe('tasks PATCH — block assignee change while agent is running', () => {
 		const runId = await insertRun('running');
 		try {
 			const current = await getAssignee();
-			const res = await app.request(`/api/teams/${teamId}/tasks/${taskInProgressUrgent}`, {
-				method: 'PATCH',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ assignee_id: current }),
-			});
+			const res = await app.request(
+				`/api/projects/${otherProjectSlug}/tasks/${taskInProgressUrgent}`,
+				{
+					method: 'PATCH',
+					headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+					body: JSON.stringify({ assignee_id: current }),
+				},
+			);
 			expect(res.status).toBe(200);
 			expect(await getAssignee()).toBe(current);
 		} finally {
@@ -718,11 +673,14 @@ describe('tasks PATCH — block assignee change while agent is running', () => {
 	it('allows patching non-assignee fields while a run is active', async () => {
 		const runId = await insertRun('running');
 		try {
-			const res = await app.request(`/api/teams/${teamId}/tasks/${taskInProgressUrgent}`, {
-				method: 'PATCH',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ priority: 'high' }),
-			});
+			const res = await app.request(
+				`/api/projects/${otherProjectSlug}/tasks/${taskInProgressUrgent}`,
+				{
+					method: 'PATCH',
+					headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+					body: JSON.stringify({ priority: 'high' }),
+				},
+			);
 			expect(res.status).toBe(200);
 			const body = await res.json();
 			expect(body.data.priority).toBe('high');

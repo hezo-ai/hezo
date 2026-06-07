@@ -319,6 +319,7 @@ export interface AdminMentionItem {
 	task_id: string;
 	task_identifier: string;
 	task_title: string;
+	project_slug: string;
 	comment_id: string;
 	snippet: string;
 	author_member_id: string | null;

@@ -10,6 +10,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let teamId: string;
+let projectSlug: string;
 let sim: GitHubSim;
 
 let prevApi: string | undefined;
@@ -46,7 +47,9 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'GitHub Co', template_id: typeId }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const team = (await teamRes.json()).data as { id: string; slug: string };
+	teamId = team.id;
+	projectSlug = `internal-${team.slug}`;
 });
 
 afterAll(async () => {
@@ -59,7 +62,7 @@ afterAll(async () => {
 describe('GitHub device-flow connector', () => {
 	it('drives the full device flow: ensure → device/start → poll(pending) → approve → poll(success) → oauth row + SSH keys + active connector', async () => {
 		// Materialize the connector the real way, from the registry capability.
-		const ensureRes = await app.request(`/api/teams/${teamId}/connectors/ensure`, {
+		const ensureRes = await app.request(`/api/projects/${projectSlug}/connectors/ensure`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ provider_id: 'github' }),
@@ -68,7 +71,7 @@ describe('GitHub device-flow connector', () => {
 		const connectorId = ((await ensureRes.json()) as { data: { id: string } }).data.id;
 
 		// GitHub can't do DCR, so auth-start must refuse and point at the device flow.
-		const authStartRes = await app.request(`/api/teams/${teamId}/auth-start`, {
+		const authStartRes = await app.request(`/api/projects/${projectSlug}/auth-start`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ connector_id: connectorId }),
@@ -80,7 +83,7 @@ describe('GitHub device-flow connector', () => {
 
 		// device/start hands back a user code + the registry scope list.
 		const startRes = await app.request(
-			`/api/teams/${teamId}/connectors/${connectorId}/device/start`,
+			`/api/projects/${projectSlug}/connectors/${connectorId}/device/start`,
 			{ method: 'POST', headers: { ...authHeader(token), 'Content-Type': 'application/json' } },
 		);
 		expect(startRes.status).toBe(200);
@@ -92,7 +95,7 @@ describe('GitHub device-flow connector', () => {
 
 		// Before the user authorizes, polling is pending (202).
 		const pendingRes = await app.request(
-			`/api/teams/${teamId}/connectors/${connectorId}/device/poll`,
+			`/api/projects/${projectSlug}/connectors/${connectorId}/device/poll`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -106,7 +109,7 @@ describe('GitHub device-flow connector', () => {
 		sim.approveDeviceFlow(start.user_code, issuedToken);
 
 		const successRes = await app.request(
-			`/api/teams/${teamId}/connectors/${connectorId}/device/poll`,
+			`/api/projects/${projectSlug}/connectors/${connectorId}/device/poll`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -186,14 +189,14 @@ describe('GitHub device-flow connector', () => {
 			[teamId],
 		);
 		const start = await app.request(
-			`/api/teams/${teamId}/connectors/${otherConnector.rows[0].id}/device/start`,
+			`/api/projects/${projectSlug}/connectors/${otherConnector.rows[0].id}/device/start`,
 			{ method: 'POST', headers: { ...authHeader(token), 'Content-Type': 'application/json' } },
 		);
 		const { data } = (await start.json()) as { data: { flow_id: string } };
 
 		// Poll the same flow_id against a different connector path → forbidden.
 		const mismatched = await app.request(
-			`/api/teams/${teamId}/connectors/${crypto.randomUUID()}/device/poll`,
+			`/api/projects/${projectSlug}/connectors/${crypto.randomUUID()}/device/poll`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -204,7 +207,7 @@ describe('GitHub device-flow connector', () => {
 	});
 
 	it('lists connections — does not leak token values', async () => {
-		const res = await app.request(`/api/teams/${teamId}/oauth-connections`, {
+		const res = await app.request(`/api/projects/${projectSlug}/oauth-connections`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -219,12 +222,12 @@ describe('GitHub device-flow connector', () => {
 	});
 
 	it('deletes a connection — also removes its secret rows and 404s on the next list/get', async () => {
-		const list = await app.request(`/api/teams/${teamId}/oauth-connections`, {
+		const list = await app.request(`/api/projects/${projectSlug}/oauth-connections`, {
 			headers: authHeader(token),
 		});
 		const conn = ((await list.json()) as { data: Array<{ id: string }> }).data[0];
 
-		const del = await app.request(`/api/teams/${teamId}/oauth-connections/${conn.id}`, {
+		const del = await app.request(`/api/projects/${projectSlug}/oauth-connections/${conn.id}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
@@ -239,10 +242,13 @@ describe('GitHub device-flow connector', () => {
 		);
 		expect(secrets.rows.length).toBe(0);
 
-		const delAgain = await app.request(`/api/teams/${teamId}/oauth-connections/${conn.id}`, {
-			method: 'DELETE',
-			headers: authHeader(token),
-		});
+		const delAgain = await app.request(
+			`/api/projects/${projectSlug}/oauth-connections/${conn.id}`,
+			{
+				method: 'DELETE',
+				headers: authHeader(token),
+			},
+		);
 		expect(delAgain.status).toBe(404);
 	});
 
@@ -274,10 +280,13 @@ describe('GitHub device-flow connector', () => {
 		);
 		const otherConnectionId = conn.rows[0].id;
 
-		const res = await app.request(`/api/teams/${teamId}/oauth-connections/${otherConnectionId}`, {
-			method: 'DELETE',
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/${projectSlug}/oauth-connections/${otherConnectionId}`,
+			{
+				method: 'DELETE',
+				headers: authHeader(token),
+			},
+		);
 		expect(res.status).toBe(404);
 	});
 });

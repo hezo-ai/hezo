@@ -43,7 +43,7 @@ describe('onboarding status', () => {
 	it('reports intake as pending and no project for a brand-new team', async () => {
 		const team = await createBlankTeam('Fresh Onboard Co');
 
-		const res = await app.request(`/api/teams/${team.slug}/onboarding`, {
+		const res = await app.request(`/api/projects/internal-${team.slug}/onboarding`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -63,11 +63,11 @@ describe('onboarding status', () => {
 	it('moves intake to current when the onboarding ticket is opened', async () => {
 		const team = await createBlankTeam('Open Intake Co');
 
-		await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
+		await app.request(`/api/projects/internal-${team.slug}/onboarding-intake?ensure=true`, {
 			headers: authHeader(token),
 		});
 
-		const res = await app.request(`/api/teams/${team.slug}/onboarding`, {
+		const res = await app.request(`/api/projects/internal-${team.slug}/onboarding`, {
 			headers: authHeader(token),
 		});
 		const status = (await res.json()).data as {
@@ -81,9 +81,12 @@ describe('onboarding status', () => {
 	it('reports done when the onboarding ticket is closed and a user project exists', async () => {
 		const team = await createBlankTeam('Done Onboard Co');
 
-		const intakeRes = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
-			headers: authHeader(token),
-		});
+		const intakeRes = await app.request(
+			`/api/projects/internal-${team.slug}/onboarding-intake?ensure=true`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		const intake = (await intakeRes.json()).data as { task_id: string };
 
 		const projectRes = await createTestProject(db, team.id, {
@@ -92,13 +95,13 @@ describe('onboarding status', () => {
 		});
 		expect(projectRes.status).toBe(201);
 
-		await app.request(`/api/teams/${team.slug}/tasks/${intake.task_id}`, {
+		await app.request(`/api/projects/internal-${team.slug}/tasks/${intake.task_id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: TaskStatus.Done }),
 		});
 
-		const res = await app.request(`/api/teams/${team.slug}/onboarding`, {
+		const res = await app.request(`/api/projects/internal-${team.slug}/onboarding`, {
 			headers: authHeader(token),
 		});
 		const status = (await res.json()).data as {
@@ -117,16 +120,19 @@ describe('onboarding status', () => {
 	it('only ever opens a single onboarding ticket per team', async () => {
 		const team = await createBlankTeam('Single Ticket Co');
 
-		const first = await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
-			headers: authHeader(token),
-		});
+		const first = await app.request(
+			`/api/projects/internal-${team.slug}/onboarding-intake?ensure=true`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		const intake = (await first.json()).data as { task_id: string };
 
-		await app.request(`/api/teams/${team.slug}/onboarding-intake?ensure=true`, {
+		await app.request(`/api/projects/internal-${team.slug}/onboarding-intake?ensure=true`, {
 			headers: authHeader(token),
 		});
 
-		const tasksRes = await app.request(`/api/teams/${team.slug}/tasks`, {
+		const tasksRes = await app.request(`/api/projects/internal-${team.slug}/tasks`, {
 			headers: authHeader(token),
 		});
 		const tasks = (await tasksRes.json()).data as Array<{ id: string; title: string }>;
