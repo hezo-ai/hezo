@@ -56,13 +56,12 @@ export function CreateProjectWithTeamDialog({
 		setActiveTeamSlug(res.team_slug);
 		onOpenChange(false);
 		reset();
-		// The pre-approval intake conversation lives in the HQ project and is run by
-		// the CEO; the user project isn't created until the intake is approved.
+		// The project + team are created directly; land on the Captain's planning task.
 		navigate({
 			to: '/projects/$projectId/tasks/$taskId',
 			params: {
-				projectId: res.project_slug,
-				taskId: res.intake_task_identifier.toLowerCase(),
+				projectId: res.slug,
+				taskId: res.planning_task_identifier.toLowerCase(),
 			},
 		});
 	}
