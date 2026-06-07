@@ -51,7 +51,14 @@ beforeAll(async () => {
 	});
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	internalProjectSlug = `${await projectSlugFor(db, teamData.id)}`;
+
+	const projectRes = await createTestProject(db, teamId, {
+		name: 'Test Project',
+		description: 'x',
+	});
+	const projectData = (await projectRes.json()).data;
+	projectId = projectData.id;
+	internalProjectSlug = projectData.slug;
 
 	const agentsRes = await app.request(`/api/projects/${internalProjectSlug}/agents`, {
 		headers: authHeader(token),
@@ -59,12 +66,6 @@ beforeAll(async () => {
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
 	architectId = agents.find((a) => a.slug === 'architect')!.id;
 	productLeadId = agents.find((a) => a.slug === 'product-lead')!.id;
-
-	const projectRes = await createTestProject(db, teamId, {
-		name: 'Test Project',
-		description: 'x',
-	});
-	projectId = (await projectRes.json()).data.id;
 });
 
 afterAll(async () => {

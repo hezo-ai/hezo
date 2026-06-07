@@ -57,14 +57,10 @@ beforeAll(async () => {
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
-	const internalProject = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false LIMIT 1`,
-		[teamId],
-	);
-	internalProjectId = internalProject.rows[0].id;
-
-	projectSlug = (await (await createTestProject(db, teamId, { name: 'Setup Project' })).json()).data
-		.slug;
+	const projData = (await (await createTestProject(db, teamId, { name: 'Setup Project' })).json())
+		.data;
+	projectSlug = projData.slug;
+	internalProjectId = projData.id;
 	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
 	});
