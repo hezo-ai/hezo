@@ -58,7 +58,16 @@ beforeAll(async () => {
 	projectId = proj1.id;
 	projectSlug = proj1.slug;
 
-	const proj2Res = await createTestProject(db, teamId, {
+	// With 1:1 teams↔projects a second project needs its own team. The cost_entries
+	// below stay scoped to this team (team_id = teamId); project2Id is only a
+	// project reference used by the project_id/group-by filters.
+	const team2Res = await app.request('/api/teams', {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ name: 'Extended Cost Co Beta', template_id: typeId }),
+	});
+	const team2Id = (await team2Res.json()).data.id;
+	const proj2Res = await createTestProject(db, team2Id, {
 		name: 'Project Beta',
 		description: 'Test project.',
 	});
