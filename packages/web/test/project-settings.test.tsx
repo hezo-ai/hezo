@@ -29,15 +29,12 @@ test('displays project name and description', async () => {
 		params: { projectId: projectSlug },
 	});
 
-	const breadcrumb = await findByTestId('breadcrumb', undefined, { timeout: 15_000 });
-	// The sidebar's project-list query resolves earlier than the route layout's
-	// useProject, so polling on findByText(projectName) can match the sidebar
-	// while the breadcrumb still shows the slug fallback. Wait on the
-	// breadcrumb itself.
-	await waitFor(() => expect(breadcrumb.textContent).toContain('Settings'), {
-		timeout: 15_000,
-	});
-	await findByText('Test project settings.', undefined, { timeout: 10_000 });
+	// The settings page renders the project's description only once the route's
+	// useProject query resolves, so waiting on it confirms the page loaded with
+	// the project's data.
+	await findByText('Test project settings.', undefined, { timeout: 15_000 });
+	const sidebarName = await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	await waitFor(() => expect(sidebarName.textContent).toContain(projectName));
 });
 
 test('can edit project description', async () => {
@@ -78,7 +75,7 @@ test('cancel button discards edits', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
 
-	const { findByLabelText, findByRole, findByTestId, queryByText, user, router } = await renderApp({
+	const { findByLabelText, findByRole, queryByText, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			ws = await seedWorkspace();
@@ -103,8 +100,9 @@ test('cancel button discards edits', async () => {
 
 	await user.click(await findByRole('button', { name: 'Cancel' }));
 
-	const breadcrumb = await findByTestId('breadcrumb');
-	expect(breadcrumb.textContent).toContain('Settings');
+	// Cancel returns to the read-only view (the Edit button reappears) and the
+	// typed-but-discarded name is not shown.
+	await findByRole('button', { name: 'Edit' });
 	expect(queryByText('Should Not Save')).toBeNull();
 });
 

@@ -47,7 +47,7 @@ function ConnectorsPage() {
 	const isEmpty = connectors.length === 0 && oauthConnections.length === 0;
 
 	return (
-		<div className="space-y-6 p-4 sm:p-6 max-w-4xl mx-auto">
+		<div className="space-y-6 p-4 sm:p-6 max-w-4xl">
 			<header>
 				<h1 className="text-xl font-semibold flex items-center gap-2">
 					<Plug className="size-5" />
