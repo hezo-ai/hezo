@@ -57,7 +57,7 @@ afterAll(async () => {
 
 describe('Project docs (DB-backed)', () => {
 	it('lists the default doc seeded at creation', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/docs`, {
+		const res = await app.request(`/api/projects/${projectId}/docs`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -66,7 +66,7 @@ describe('Project docs (DB-backed)', () => {
 	});
 
 	it('creates a doc via PUT', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/docs/spec.md`, {
+		const res = await app.request(`/api/projects/${projectId}/docs/spec.md`, {
 			method: 'PUT',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content: '# Tech Spec\n\nThis is the spec.' }),
@@ -79,7 +79,7 @@ describe('Project docs (DB-backed)', () => {
 	});
 
 	it('rejects non-markdown filenames (docs are markdown-only)', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/docs/page.html`, {
+		const res = await app.request(`/api/projects/${projectId}/docs/page.html`, {
 			method: 'PUT',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content: '<h1>nope</h1>' }),
@@ -89,7 +89,7 @@ describe('Project docs (DB-backed)', () => {
 	});
 
 	it('reads the doc back', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/docs/spec.md`, {
+		const res = await app.request(`/api/projects/${projectId}/docs/spec.md`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -98,7 +98,7 @@ describe('Project docs (DB-backed)', () => {
 	});
 
 	it('lists docs after creating one', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/docs`, {
+		const res = await app.request(`/api/projects/${projectId}/docs`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -108,15 +108,14 @@ describe('Project docs (DB-backed)', () => {
 	});
 
 	it('returns 404 for non-existent doc', async () => {
-		const res = await app.request(
-			`/api/teams/${teamId}/projects/${projectId}/docs/non-existent.md`,
-			{ headers: authHeader(token) },
-		);
+		const res = await app.request(`/api/projects/${projectId}/docs/non-existent.md`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(404);
 	});
 
 	it('updates a doc via PUT (upsert)', async () => {
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/docs/spec.md`, {
+		const res = await app.request(`/api/projects/${projectId}/docs/spec.md`, {
 			method: 'PUT',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content: '# Tech Spec v2\n\nUpdated spec.' }),
@@ -127,28 +126,27 @@ describe('Project docs (DB-backed)', () => {
 	});
 
 	it('deletes a doc', async () => {
-		await app.request(`/api/teams/${teamId}/projects/${projectId}/docs/to-delete.md`, {
+		await app.request(`/api/projects/${projectId}/docs/to-delete.md`, {
 			method: 'PUT',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content: 'temp' }),
 		});
 
-		const deleteRes = await app.request(
-			`/api/teams/${teamId}/projects/${projectId}/docs/to-delete.md`,
-			{ method: 'DELETE', headers: authHeader(token) },
-		);
+		const deleteRes = await app.request(`/api/projects/${projectId}/docs/to-delete.md`, {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
 		expect(deleteRes.status).toBe(200);
 
-		const getRes = await app.request(
-			`/api/teams/${teamId}/projects/${projectId}/docs/to-delete.md`,
-			{ headers: authHeader(token) },
-		);
+		const getRes = await app.request(`/api/projects/${projectId}/docs/to-delete.md`, {
+			headers: authHeader(token),
+		});
 		expect(getRes.status).toBe(404);
 	});
 
 	it('works for projects without a designated repo', async () => {
 		// Project docs are DB-backed, so no repo is needed
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/docs`, {
+		const res = await app.request(`/api/projects/${projectId}/docs`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -164,18 +162,18 @@ describe('Project docs (DB-backed)', () => {
 	});
 
 	it('creates multiple docs for same project', async () => {
-		await app.request(`/api/teams/${teamId}/projects/${projectId}/docs/prd.md`, {
+		await app.request(`/api/projects/${projectId}/docs/prd.md`, {
 			method: 'PUT',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content: '# PRD\n\nProduct requirements.' }),
 		});
-		await app.request(`/api/teams/${teamId}/projects/${projectId}/docs/implementation-plan.md`, {
+		await app.request(`/api/projects/${projectId}/docs/implementation-plan.md`, {
 			method: 'PUT',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content: '# Implementation Plan\n\nPhase 1...' }),
 		});
 
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/docs`, {
+		const res = await app.request(`/api/projects/${projectId}/docs`, {
 			headers: authHeader(token),
 		});
 		const body = await res.json();
@@ -190,21 +188,20 @@ describe('Project doc revisions and restore', () => {
 	const filename = 'revisioned.md';
 
 	it('updates create revisions of prior content', async () => {
-		await app.request(`/api/teams/${teamId}/projects/${projectId}/docs/${filename}`, {
+		await app.request(`/api/projects/${projectId}/docs/${filename}`, {
 			method: 'PUT',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content: 'v1' }),
 		});
-		await app.request(`/api/teams/${teamId}/projects/${projectId}/docs/${filename}`, {
+		await app.request(`/api/projects/${projectId}/docs/${filename}`, {
 			method: 'PUT',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content: 'v2', change_summary: 'second pass' }),
 		});
 
-		const revRes = await app.request(
-			`/api/teams/${teamId}/projects/${projectId}/docs/${filename}/revisions`,
-			{ headers: authHeader(token) },
-		);
+		const revRes = await app.request(`/api/projects/${projectId}/docs/${filename}/revisions`, {
+			headers: authHeader(token),
+		});
 		expect(revRes.status).toBe(200);
 		const revBody = await revRes.json();
 		expect(revBody.data.length).toBe(1);
@@ -213,28 +210,24 @@ describe('Project doc revisions and restore', () => {
 	});
 
 	it('restores to a previous revision and snapshots the pre-restore content', async () => {
-		await app.request(`/api/teams/${teamId}/projects/${projectId}/docs/${filename}`, {
+		await app.request(`/api/projects/${projectId}/docs/${filename}`, {
 			method: 'PUT',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content: 'v3', change_summary: 'third' }),
 		});
 
-		const restoreRes = await app.request(
-			`/api/teams/${teamId}/projects/${projectId}/docs/${filename}/restore`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ revision_number: 1 }),
-			},
-		);
+		const restoreRes = await app.request(`/api/projects/${projectId}/docs/${filename}/restore`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ revision_number: 1 }),
+		});
 		expect(restoreRes.status).toBe(200);
 		const restored = await restoreRes.json();
 		expect(restored.data.content).toBe('v1');
 
-		const revRes = await app.request(
-			`/api/teams/${teamId}/projects/${projectId}/docs/${filename}/revisions`,
-			{ headers: authHeader(token) },
-		);
+		const revRes = await app.request(`/api/projects/${projectId}/docs/${filename}/revisions`, {
+			headers: authHeader(token),
+		});
 		const revBody = await revRes.json();
 		expect(revBody.data.length).toBe(3);
 		expect(revBody.data[0].change_summary).toBe('Restored to revision 1');
@@ -242,26 +235,20 @@ describe('Project doc revisions and restore', () => {
 	});
 
 	it('returns 404 when restoring an unknown revision', async () => {
-		const res = await app.request(
-			`/api/teams/${teamId}/projects/${projectId}/docs/${filename}/restore`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ revision_number: 999 }),
-			},
-		);
+		const res = await app.request(`/api/projects/${projectId}/docs/${filename}/restore`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ revision_number: 999 }),
+		});
 		expect(res.status).toBe(404);
 	});
 
 	it('returns 404 when restoring on a doc that does not exist', async () => {
-		const res = await app.request(
-			`/api/teams/${teamId}/projects/${projectId}/docs/missing.md/restore`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ revision_number: 1 }),
-			},
-		);
+		const res = await app.request(`/api/projects/${projectId}/docs/missing.md/restore`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ revision_number: 1 }),
+		});
 		expect(res.status).toBe(404);
 	});
 });
@@ -297,14 +284,14 @@ describe('AGENTS.md (filesystem-based)', () => {
 	});
 
 	it('writes and reads AGENTS.md', async () => {
-		const writeRes = await app.request(`/api/teams/${teamId}/projects/${repoProjectId}/agents-md`, {
+		const writeRes = await app.request(`/api/projects/${repoProjectId}/agents-md`, {
 			method: 'PUT',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content: '# Agent Rules\n\nFollow these rules.' }),
 		});
 		expect(writeRes.status).toBe(200);
 
-		const readRes = await app.request(`/api/teams/${teamId}/projects/${repoProjectId}/agents-md`, {
+		const readRes = await app.request(`/api/projects/${repoProjectId}/agents-md`, {
 			headers: authHeader(token),
 		});
 		expect(readRes.status).toBe(200);
@@ -319,7 +306,7 @@ describe('AGENTS.md (filesystem-based)', () => {
 		});
 		const noRepoProjId = (await projRes.json()).data.id;
 
-		const res = await app.request(`/api/teams/${teamId}/projects/${noRepoProjId}/agents-md`, {
+		const res = await app.request(`/api/projects/${noRepoProjId}/agents-md`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(404);

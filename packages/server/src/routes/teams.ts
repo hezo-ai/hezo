@@ -93,7 +93,7 @@ teamsRoutes.post('/teams', async (c) => {
 	return ok(c, team, 201);
 });
 
-teamsRoutes.get('/teams/:teamId/onboarding-intake', async (c) => {
+teamsRoutes.get('/projects/:projectId/onboarding-intake', async (c) => {
 	const teamId = c.get('teamId') as string;
 
 	const ensure = c.req.query('ensure') === 'true';
@@ -106,7 +106,7 @@ teamsRoutes.get('/teams/:teamId/onboarding-intake', async (c) => {
 	return ok(c, intake);
 });
 
-teamsRoutes.post('/teams/:teamId/onboarding-intake/skip-questions', async (c) => {
+teamsRoutes.post('/projects/:projectId/onboarding-intake/skip-questions', async (c) => {
 	const teamId = c.get('teamId') as string;
 
 	const intake = await getOpenOnboardingIntakeTask(c.get('db'), teamId);
@@ -121,7 +121,7 @@ teamsRoutes.post('/teams/:teamId/onboarding-intake/skip-questions', async (c) =>
 	return ok(c, { task_id: intake.task_id, comment_id: comment.id });
 });
 
-teamsRoutes.post('/teams/:teamId/project-intake/:taskId/skip-questions', async (c) => {
+teamsRoutes.post('/projects/:projectId/project-intake/:taskId/skip-questions', async (c) => {
 	const teamId = c.get('teamId') as string;
 
 	const db = c.get('db');
@@ -136,14 +136,14 @@ teamsRoutes.post('/teams/:teamId/project-intake/:taskId/skip-questions', async (
 	return ok(c, { task_id: taskId, comment_id: comment.id });
 });
 
-teamsRoutes.get('/teams/:teamId/onboarding', async (c) => {
+teamsRoutes.get('/projects/:projectId/onboarding', async (c) => {
 	const teamId = c.get('teamId') as string;
 
 	const status = await getOnboardingStatus(c.get('db'), teamId);
 	return ok(c, status);
 });
 
-teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
+teamsRoutes.post('/projects/:projectId/onboarding/direct', async (c) => {
 	const body = await c.req.json<{
 		template_id?: string;
 		project_name?: string;
@@ -181,7 +181,7 @@ teamsRoutes.post('/teams/:teamId/onboarding/direct', async (c) => {
 	return ok(c, result, 201);
 });
 
-teamsRoutes.get('/teams/:teamId', async (c) => {
+teamsRoutes.get('/projects/:projectId/team', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
@@ -205,7 +205,7 @@ teamsRoutes.get('/teams/:teamId', async (c) => {
 // Snapshot the live team into a new reusable custom team template ("save this
 // team as a type"). Superuser-only: templates are a global catalog visible to
 // every team's New-team flow.
-teamsRoutes.post('/teams/:teamId/save-as-template', async (c) => {
+teamsRoutes.post('/projects/:projectId/save-as-template', async (c) => {
 	const denied = requireSuperuser(c);
 	if (denied) return denied;
 
@@ -226,7 +226,7 @@ teamsRoutes.post('/teams/:teamId/save-as-template', async (c) => {
 // roster roles and refreshes the built-in prompts; never destructive). Powers
 // "Refresh from type" and "Copy from another team" (save-as-template, then
 // apply the saved type here).
-teamsRoutes.post('/teams/:teamId/apply-type', async (c) => {
+teamsRoutes.post('/projects/:projectId/apply-type', async (c) => {
 	const denied = requireSuperuser(c);
 	if (denied) return denied;
 
@@ -248,7 +248,7 @@ teamsRoutes.post('/teams/:teamId/apply-type', async (c) => {
 	return ok(c, result);
 });
 
-teamsRoutes.patch('/teams/:teamId', async (c) => {
+teamsRoutes.patch('/projects/:projectId/team', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
@@ -308,7 +308,7 @@ teamsRoutes.patch('/teams/:teamId', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-teamsRoutes.delete('/teams/:teamId', async (c) => {
+teamsRoutes.delete('/projects/:projectId/team', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 

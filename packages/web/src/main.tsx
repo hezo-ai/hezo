@@ -1,4 +1,4 @@
-import { createRouter, RouterProvider } from '@tanstack/react-router';
+import { createRouter, Navigate, RouterProvider } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Toaster } from './components/ui/toast';
@@ -6,7 +6,12 @@ import { ThemeProvider } from './lib/theme';
 import { routeTree } from './routeTree.gen';
 import './index.css';
 
-const router = createRouter({ routeTree });
+// Unknown URLs — including legacy team-scoped paths (`/teams/...`) from before
+// the project-centric routing change — fall back to Home rather than a dead end.
+const router = createRouter({
+	routeTree,
+	defaultNotFoundComponent: () => <Navigate to="/home" replace />,
+});
 
 declare module '@tanstack/react-router' {
 	interface Register {

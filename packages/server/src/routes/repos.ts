@@ -16,7 +16,7 @@ const log = logger.child('routes');
 
 export const reposRoutes = new Hono<Env>();
 
-reposRoutes.get('/teams/:teamId/projects/:projectId/repos', async (c) => {
+reposRoutes.get('/projects/:projectId/repos', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
@@ -45,7 +45,7 @@ reposRoutes.get('/teams/:teamId/projects/:projectId/repos', async (c) => {
  * recording the repo. Clones run over HTTPS, with the proxy substituting
  * the access-token placeholder at request time.
  */
-reposRoutes.post('/teams/:teamId/projects/:projectId/repos', async (c) => {
+reposRoutes.post('/projects/:projectId/repos', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
@@ -277,7 +277,7 @@ reposRoutes.post('/teams/:teamId/projects/:projectId/repos', async (c) => {
 	);
 });
 
-reposRoutes.delete('/teams/:teamId/projects/:projectId/repos/:repoId', async (c) => {
+reposRoutes.delete('/projects/:projectId/repos/:repoId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
@@ -318,7 +318,7 @@ reposRoutes.delete('/teams/:teamId/projects/:projectId/repos/:repoId', async (c)
 	return ok(c, { deleted: true });
 });
 
-reposRoutes.get('/teams/:teamId/oauth-connections/:id/orgs', async (c) => {
+reposRoutes.get('/projects/:projectId/oauth-connections/:id/orgs', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
@@ -334,7 +334,7 @@ reposRoutes.get('/teams/:teamId/oauth-connections/:id/orgs', async (c) => {
 	return ok(c, orgs);
 });
 
-reposRoutes.get('/teams/:teamId/oauth-connections/:id/repos', async (c) => {
+reposRoutes.get('/projects/:projectId/oauth-connections/:id/repos', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const owner = c.req.query('owner');
 	const query = c.req.query('q') ?? undefined;

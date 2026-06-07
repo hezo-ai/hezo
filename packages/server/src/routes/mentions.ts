@@ -22,7 +22,7 @@ interface SearchResult {
 	sublabel?: string;
 }
 
-mentionsRoutes.post('/teams/:teamId/docs/resolve', async (c) => {
+mentionsRoutes.post('/projects/:projectId/docs/resolve', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
@@ -165,7 +165,7 @@ mentionsRoutes.post('/teams/:teamId/docs/resolve', async (c) => {
 	return ok(c, { kb_docs: kbDocs, project_docs: resolvedProjectDocs, assets: resolvedAssets });
 });
 
-mentionsRoutes.get('/teams/:teamId/mentions/search', async (c) => {
+mentionsRoutes.get('/projects/:projectId/mentions/search', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 

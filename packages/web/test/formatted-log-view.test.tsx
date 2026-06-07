@@ -16,7 +16,7 @@ const LOG_TEXT = [
 ].join('\n');
 
 test('run log defaults to the formatted view and toggles to raw via the icon buttons', async () => {
-	const seeded = { teamSlug: '', agentSlug: '', runId: '' };
+	const seeded = { projectSlug: '', agentSlug: '', runId: '' };
 
 	const { findByText, findByTestId, queryByText, getByLabelText, user, router } = await renderApp({
 		initialPath: '/',
@@ -29,15 +29,15 @@ test('run log defaults to the formatted view and toggles to raw via the icon but
 				 RETURNING id`,
 				[agent.id, ws.team.id, LOG_TEXT],
 			);
-			seeded.teamSlug = ws.team.slug;
+			seeded.projectSlug = ws.internalSlug;
 			seeded.agentSlug = agent.slug;
 			seeded.runId = run.rows[0].id;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/agents/$agentId/executions/$runId',
-		params: { teamId: seeded.teamSlug, agentId: seeded.agentSlug, runId: seeded.runId },
+		to: '/projects/$projectId/agents/$agentId/executions/$runId',
+		params: { projectId: seeded.projectSlug, agentId: seeded.agentSlug, runId: seeded.runId },
 	});
 
 	// Formatted is the default: the tool name renders without its `[tool]` prefix,

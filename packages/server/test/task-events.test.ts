@@ -13,7 +13,10 @@ let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
+let teamSlug: string;
+let internalSlug: string;
 let projectId: string;
+let projectSlug: string;
 let agentId: string;
 
 interface CommentRow {
@@ -41,7 +44,7 @@ async function createTask(
 	title: string,
 	description = '',
 ): Promise<{ id: string; identifier: string }> {
-	const res = await app.request(`/api/teams/${teamId}/tasks`, {
+	const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ project_id: projectId, title, description, assignee_id: agentId }),
@@ -51,7 +54,7 @@ async function createTask(
 }
 
 async function listComments(taskId: string): Promise<CommentRow[]> {
-	const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+	const res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
 		headers: authHeader(token),
 	});
 	return (await res.json()).data;
@@ -76,15 +79,20 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Events Co' }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	teamSlug = teamData.slug;
+	internalSlug = `internal-${teamSlug}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Widget',
 		description: 'Widget project.',
 	});
-	projectId = (await projectRes.json()).data.id;
+	const projectData = (await projectRes.json()).data;
+	projectId = projectData.id;
+	projectSlug = projectData.slug;
 
-	const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Status Bot' }),
@@ -132,7 +140,7 @@ describe('status change system events', () => {
 		const task = await createTask('PATCH by admin');
 		const before = (await systemComments(task.id, 'status_change')).length;
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: TaskStatus.InProgress }),
@@ -149,9 +157,15 @@ describe('status change system events', () => {
 
 	it('records an agent-authored PATCH status change attributed to the agent', async () => {
 		const task = await createTask('PATCH by agent');
-		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			task.id,
+		);
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: TaskStatus.InProgress }),
@@ -168,7 +182,7 @@ describe('status change system events', () => {
 		const task = await createTask('Unchanged status');
 		const before = (await systemComments(task.id, 'status_change')).length;
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: TaskStatus.Backlog }),
@@ -185,7 +199,7 @@ describe('title change system events', () => {
 		const task = await createTask('Original title');
 		const before = (await systemComments(task.id, 'title_change')).length;
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Renamed title' }),
@@ -205,9 +219,15 @@ describe('title change system events', () => {
 
 	it('records an agent-authored title rename attributed to the agent', async () => {
 		const task = await createTask('Pre-rename');
-		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			task.id,
+		);
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Bot rename' }),
@@ -225,7 +245,7 @@ describe('title change system events', () => {
 		const task = await createTask('Same title');
 		const before = (await systemComments(task.id, 'title_change')).length;
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Same title' }),
@@ -240,7 +260,7 @@ describe('title change system events', () => {
 		const task = await createTask('Trim me');
 		const before = (await systemComments(task.id, 'title_change')).length;
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: '  Trim me  ' }),
@@ -254,7 +274,7 @@ describe('title change system events', () => {
 
 describe('assignee change system events', () => {
 	it('records a admin-authored reassignment with from/to ids and names', async () => {
-		const secondAgentRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const secondAgentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Second Bot' }),
@@ -264,7 +284,7 @@ describe('assignee change system events', () => {
 		const task = await createTask('Reassign me');
 		const before = (await systemComments(task.id, 'assignee_change')).length;
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: secondAgentId }),
@@ -287,7 +307,7 @@ describe('assignee change system events', () => {
 		const task = await createTask('Same assignee');
 		const before = (await systemComments(task.id, 'assignee_change')).length;
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: agentId }),
@@ -304,7 +324,7 @@ describe('task link system events', () => {
 		const target = await createTask('Target ticket');
 		const source = await createTask('Source ticket');
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${source.id}/comments`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${source.id}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -326,7 +346,7 @@ describe('task link system events', () => {
 		const source = await createTask('Source repeat');
 
 		for (const text of [`first mention ${target.identifier}`, `another ${target.identifier}`]) {
-			await app.request(`/api/teams/${teamId}/tasks/${source.id}/comments`, {
+			await app.request(`/api/projects/${projectSlug}/tasks/${source.id}/comments`, {
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({ content_type: 'text', content: { text } }),
@@ -348,7 +368,7 @@ describe('task link system events', () => {
 
 	it('ignores self-references', async () => {
 		const task = await createTask('Self ref');
-		await app.request(`/api/teams/${teamId}/tasks/${task.id}/comments`, {
+		await app.request(`/api/projects/${projectSlug}/tasks/${task.id}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -363,7 +383,7 @@ describe('task link system events', () => {
 	it('ignores identifiers inside fenced code blocks', async () => {
 		const target = await createTask('Target codeblock');
 		const source = await createTask('Source codeblock');
-		await app.request(`/api/teams/${teamId}/tasks/${source.id}/comments`, {
+		await app.request(`/api/projects/${projectSlug}/tasks/${source.id}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -380,7 +400,7 @@ describe('task link system events', () => {
 		const before = await db.query<{ count: string }>(
 			"SELECT count(*)::text AS count FROM task_comments WHERE content_type = 'system' AND content->>'kind' = 'task_link'",
 		);
-		await app.request(`/api/teams/${teamId}/tasks/${source.id}/comments`, {
+		await app.request(`/api/projects/${projectSlug}/tasks/${source.id}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content_type: 'text', content: { text: 'see XX-99 for nothing' } }),
@@ -399,20 +419,24 @@ describe('task link system events', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Other Co' }),
 		});
-		const otherTeamId = (await otherTeamRes.json()).data.id;
+		const otherTeamData = (await otherTeamRes.json()).data;
+		const otherTeamId = otherTeamData.id;
+		const otherInternalSlug = `internal-${otherTeamData.slug}`;
 		const otherProjectRes = await createTestProject(db, otherTeamId, {
 			name: 'Foreign',
 			description: 'Other.',
 		});
-		const otherProjectId = (await otherProjectRes.json()).data.id;
-		const otherAgentRes = await app.request(`/api/teams/${otherTeamId}/agents`, {
+		const otherProjectData = (await otherProjectRes.json()).data;
+		const otherProjectId = otherProjectData.id;
+		const otherProjectSlug = otherProjectData.slug;
+		const otherAgentRes = await app.request(`/api/projects/${otherInternalSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Other Bot' }),
 		});
 		const otherAgentId = (await otherAgentRes.json()).data.id;
 
-		const otherTaskRes = await app.request(`/api/teams/${otherTeamId}/tasks`, {
+		const otherTaskRes = await app.request(`/api/projects/${otherProjectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -423,7 +447,7 @@ describe('task link system events', () => {
 		});
 		const otherTask = (await otherTaskRes.json()).data;
 
-		await app.request(`/api/teams/${otherTeamId}/tasks/${otherTask.id}/comments`, {
+		await app.request(`/api/projects/${otherProjectSlug}/tasks/${otherTask.id}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -441,7 +465,7 @@ describe('task link system events', () => {
 		const target2 = await createTask('Multi target 2');
 		const source = await createTask('Multi source');
 
-		await app.request(`/api/teams/${teamId}/tasks/${source.id}/comments`, {
+		await app.request(`/api/projects/${projectSlug}/tasks/${source.id}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

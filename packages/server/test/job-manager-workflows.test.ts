@@ -17,7 +17,9 @@ let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
+let internalSlug: string;
 let projectId: string;
+let projectSlug: string;
 let taskId: string;
 let taskIdentifier: string;
 let agentId: string;
@@ -72,20 +74,24 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Workflow Test Co', template_id: typeId }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const team = (await teamRes.json()).data;
+	teamId = team.id;
+	internalSlug = `internal-${team.slug}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Workflow Test Project',
 		description: 'Test project.',
 	});
-	projectId = (await projectRes.json()).data.id;
+	const projectData = (await projectRes.json()).data;
+	projectId = projectData.id;
+	projectSlug = projectData.slug;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
-	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -190,7 +196,7 @@ describe('JobManager workflow methods', () => {
 			const manager = createJobManager();
 			await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
 
-			const otherTaskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+			const otherTaskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -231,7 +237,7 @@ describe('JobManager workflow methods', () => {
 			expect(wakeup.rows[0].last_skipped_reason).toBe('project_at_capacity');
 			expect(wakeup.rows[0].last_skipped_blocker_task_id).toBeNull();
 
-			const taskRes = await app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
+			const taskRes = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 				headers: authHeader(token),
 			});
 			const task = (await taskRes.json()).data as {
@@ -485,7 +491,7 @@ describe('JobManager workflow methods', () => {
 				[taskId],
 			);
 
-			const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+			const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 				headers: authHeader(token),
 			});
 			const agents = (await agentsRes.json()).data;
@@ -1702,7 +1708,7 @@ describe('JobManager workflow methods', () => {
 			const manager = createJobManager();
 
 			// Simulate an active run on the task (from a different agent).
-			const otherAgentRes = await app.request(`/api/teams/${teamId}/agents`, {
+			const otherAgentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({ title: 'Other Agent For Serialisation' }),
@@ -1777,7 +1783,7 @@ describe('JobManager workflow methods', () => {
 			const manager = createJobManager();
 			await db.query('UPDATE projects SET max_concurrent_runs = 1 WHERE id = $1', [projectId]);
 
-			const otherTaskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+			const otherTaskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -1814,7 +1820,7 @@ describe('JobManager workflow methods', () => {
 			const manager = createJobManager();
 			await db.query('UPDATE projects SET max_concurrent_runs = 3 WHERE id = $1', [projectId]);
 
-			const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+			const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -1843,7 +1849,7 @@ describe('JobManager workflow methods', () => {
 
 			// An active run in project A at the limit blocks a wakeup targeting
 			// another task in project A.
-			const sibTaskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+			const sibTaskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -1894,8 +1900,10 @@ describe('JobManager workflow methods', () => {
 				name: `Parallel Project ${Date.now()}`,
 				description: 'sibling project',
 			});
-			const projectBId = (await projectBRes.json()).data.id;
-			const taskBRes = await app.request(`/api/teams/${teamId}/tasks`, {
+			const projectBData = (await projectBRes.json()).data;
+			const projectBId = projectBData.id;
+			const projectBSlug = projectBData.slug;
+			const taskBRes = await app.request(`/api/projects/${projectBSlug}/tasks`, {
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 				body: JSON.stringify({

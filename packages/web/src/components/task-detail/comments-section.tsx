@@ -26,7 +26,7 @@ export function jumpToComment(commentId: string) {
 
 interface CommentsSectionProps {
 	task: Task;
-	teamId: string;
+	projectId: string;
 	taskId: string;
 	taskProjectSlug: string;
 	scrollParent: HTMLElement | null;
@@ -42,14 +42,14 @@ interface CommentsSectionProps {
  */
 export function CommentsSection({
 	task,
-	teamId,
+	projectId,
 	taskId,
 	taskProjectSlug,
 	scrollParent,
 	onStartReply,
 }: CommentsSectionProps) {
-	const { data: comments } = useComments(teamId, taskId);
-	const chooseOption = useChooseOption(teamId, taskId);
+	const { data: comments } = useComments(projectId, taskId);
+	const chooseOption = useChooseOption(projectId, taskId);
 	const virtuosoRef = useRef<VirtuosoHandle>(null);
 	const listContainerRef = useRef<HTMLDivElement>(null);
 	const didScrollToHashRef = useRef(false);
@@ -197,8 +197,7 @@ export function CommentsSection({
 											onChooseOption={(commentId, chosenId) =>
 												chooseOption.mutate({ commentId, chosen_id: chosenId })
 											}
-											teamId={teamId}
-											projectId={task.project_id ?? undefined}
+											projectId={projectId}
 											projectSlug={taskProjectSlug}
 											taskId={taskId}
 											inline
@@ -255,14 +254,17 @@ export function CommentsSection({
 											onChooseOption={(commentId, chosenId) =>
 												chooseOption.mutate({ commentId, chosen_id: chosenId })
 											}
-											teamId={teamId}
-											projectId={task.project_id ?? undefined}
+											projectId={projectId}
 											projectSlug={taskProjectSlug}
 											taskId={taskId}
 										/>
 										<div className="flex items-end justify-between gap-2">
 											<div className="min-w-0 flex-1">
-												<CommentReactions comment={commentData} teamId={teamId} taskId={taskId} />
+												<CommentReactions
+													comment={commentData}
+													projectId={projectId}
+													taskId={taskId}
+												/>
 											</div>
 											<button
 												type="button"

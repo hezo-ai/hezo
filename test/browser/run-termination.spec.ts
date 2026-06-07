@@ -5,6 +5,7 @@ import { createProjectAndClearPlanning, uniqueName } from './helpers';
 interface MockSetup {
 	teamId: string;
 	teamSlug: string;
+	projectSlug: string;
 	agentId: string;
 	agentSlug: string;
 	taskId: string;
@@ -20,13 +21,13 @@ async function setupTask(
 
 	const agent = agents.find((a) => a.slug === 'captain') ?? agents[0];
 
-	const projectRes = await createProjectAndClearPlanning(page, team.id, token, {
+	const projectRes = await createProjectAndClearPlanning(page, team.slug, token, {
 		name: uniqueName('Terminate Run Project'),
 		description: 'Test project.',
 	});
-	const project = ((await projectRes.json()) as { data: { id: string } }).data;
+	const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
-	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
+	const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 		headers: { ...headers, 'Content-Type': 'application/json' },
 		data: { project_id: project.id, title: 'Terminate Me', assignee_id: agent.id },
 	});
@@ -35,6 +36,7 @@ async function setupTask(
 	return {
 		teamId: team.id,
 		teamSlug: team.slug,
+		projectSlug: project.slug,
 		agentId: agent.id,
 		agentSlug: agent.slug,
 		taskId: task.id,
@@ -98,7 +100,7 @@ function makeRunRow(setup: MockSetup, status: 'running' | 'cancelled' | 'succeed
 }
 
 async function mockRunningRun(page: Page, setup: MockSetup) {
-	await page.route('**/api/teams/*/tasks/*/comments**', async (route) => {
+	await page.route('**/api/projects/*/tasks/*/comments**', async (route) => {
 		if (route.request().method() !== 'GET') return route.continue();
 		await route.fulfill({
 			status: 200,
@@ -107,7 +109,7 @@ async function mockRunningRun(page: Page, setup: MockSetup) {
 		});
 	});
 
-	await page.route(`**/api/teams/*/agents/*/heartbeat-runs/${FAKE_RUN_ID}`, async (route) => {
+	await page.route(`**/api/projects/*/agents/*/heartbeat-runs/${FAKE_RUN_ID}`, async (route) => {
 		if (route.request().method() !== 'GET') return route.continue();
 		await route.fulfill({
 			status: 200,
@@ -130,7 +132,7 @@ test('terminate button renders on mobile viewport', async ({
 	);
 	await mockRunningRun(page, setup);
 
-	await page.goto(`/teams/${setup.teamSlug}/tasks/${setup.taskId}`);
+	await page.goto(`/projects/${setup.projectSlug}/tasks/${setup.taskId}`);
 
 	const terminateButton = page.getByTestId('terminate-run-button').first();
 	await expect(terminateButton).toBeVisible({ timeout: 20_000 });

@@ -112,11 +112,13 @@ export async function createTeam(
 			]);
 		}
 
+		// Project slugs are globally unique, so the per-team internal project derives
+		// its slug from the (already unique) team slug rather than a shared literal.
 		const internalProjectResult = await db.query<{ id: string }>(
 			`INSERT INTO projects (team_id, name, slug, task_prefix, description, is_internal)
 			 VALUES ($1, '(Internal)', $2, $3, 'Internal team coordination project, used for onboarding and team-level changes.', true)
 			 RETURNING id`,
-			[teamId, INTERNAL_PROJECT_SLUG, INTERNAL_PROJECT_TASK_PREFIX],
+			[teamId, `${INTERNAL_PROJECT_SLUG}-${slug}`, INTERNAL_PROJECT_TASK_PREFIX],
 		);
 		await db.query('INSERT INTO project_task_counters (project_id, next_number) VALUES ($1, 1)', [
 			internalProjectResult.rows[0].id,
@@ -146,8 +148,8 @@ export async function createTeam(
 
 	const internalProject = await db.query<ProjectRow>(
 		`SELECT id, team_id, slug, docker_base_image, container_id, container_status, dev_ports
-		 FROM projects WHERE team_id = $1 AND slug = $2`,
-		[teamId, INTERNAL_PROJECT_SLUG],
+		 FROM projects WHERE team_id = $1 AND is_internal = true`,
+		[teamId],
 	);
 	if (internalProject.rows[0]) {
 		trackBackground(

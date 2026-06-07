@@ -24,7 +24,7 @@ const log = logger.child('routes');
 
 export const commentsRoutes = new Hono<Env>();
 
-commentsRoutes.get('/teams/:teamId/tasks/:taskId/comments', async (c) => {
+commentsRoutes.get('/projects/:projectId/tasks/:taskId/comments', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
@@ -79,7 +79,7 @@ commentsRoutes.get('/teams/:teamId/tasks/:taskId/comments', async (c) => {
 });
 
 commentsRoutes.put(
-	'/teams/:teamId/tasks/:taskId/comments/:commentId/reactions/:kind',
+	'/projects/:projectId/tasks/:taskId/comments/:commentId/reactions/:kind',
 	async (c) => {
 		const teamId = c.get('teamId') as string;
 		const db = c.get('db');
@@ -110,7 +110,7 @@ commentsRoutes.put(
 );
 
 commentsRoutes.delete(
-	'/teams/:teamId/tasks/:taskId/comments/:commentId/reactions/:kind',
+	'/projects/:projectId/tasks/:taskId/comments/:commentId/reactions/:kind',
 	async (c) => {
 		const teamId = c.get('teamId') as string;
 		const db = c.get('db');
@@ -147,7 +147,7 @@ commentsRoutes.delete(
 	},
 );
 
-commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments', async (c) => {
+commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
@@ -303,7 +303,7 @@ commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments', async (c) => {
 	return ok(c, created, 201);
 });
 
-commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments/:commentId/choose', async (c) => {
+commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments/:commentId/choose', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
@@ -373,7 +373,7 @@ commentsRoutes.post('/teams/:teamId/tasks/:taskId/comments/:commentId/choose', a
 });
 
 commentsRoutes.post(
-	'/teams/:teamId/tasks/:taskId/comments/:commentId/fulfill-credential',
+	'/projects/:projectId/tasks/:taskId/comments/:commentId/fulfill-credential',
 	async (c) => {
 		const teamId = c.get('teamId') as string;
 		const db = c.get('db');

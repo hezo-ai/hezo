@@ -51,20 +51,21 @@ export function getRunWaitingMessage(status: RunStatus): string {
 	return 'No output.';
 }
 
-export function useHeartbeatRuns(teamId: string, agentId: string) {
+export function useHeartbeatRuns(projectId: string, agentId: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'agents', agentId, 'heartbeat-runs'],
-		queryFn: () => api.get<HeartbeatRun[]>(`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs`),
+		queryKey: ['projects', projectId, 'agents', agentId, 'heartbeat-runs'],
+		queryFn: () =>
+			api.get<HeartbeatRun[]>(`/api/projects/${projectId}/agents/${agentId}/heartbeat-runs`),
 		refetchInterval: 10_000,
 	});
 }
 
-export function useHeartbeatRun(teamId: string, agentId: string, runId: string) {
-	const enabled = Boolean(teamId && agentId && runId);
+export function useHeartbeatRun(projectId: string, agentId: string, runId: string) {
+	const enabled = Boolean(projectId && agentId && runId);
 	return useQuery({
-		queryKey: ['teams', teamId, 'agents', agentId, 'heartbeat-runs', runId],
+		queryKey: ['projects', projectId, 'agents', agentId, 'heartbeat-runs', runId],
 		queryFn: () =>
-			api.get<HeartbeatRun>(`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs/${runId}`),
+			api.get<HeartbeatRun>(`/api/projects/${projectId}/agents/${agentId}/heartbeat-runs/${runId}`),
 		enabled,
 		refetchInterval: (query) => {
 			if (!enabled) return false;

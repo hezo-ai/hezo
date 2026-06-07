@@ -8,7 +8,7 @@ async function createApproval(
 	body: { type: string; payload: Record<string, unknown> },
 ) {
 	const { apiBase } = getTestContext();
-	const res = await apiBase(`/api/teams/${workspace.team.id}/approvals`, {
+	const res = await apiBase(`/api/projects/${workspace.internalSlug}/approvals`, {
 		method: 'POST',
 		headers: workspace.headers,
 		body: JSON.stringify(body),
@@ -18,7 +18,7 @@ async function createApproval(
 }
 
 test('banner surfaces pending approvals on the task list and links to the inbox', async () => {
-	const seeded = { teamSlug: '' };
+	const seeded = { projectSlug: '' };
 	const { findByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -27,41 +27,41 @@ test('banner surfaces pending approvals on the task list and links to the inbox'
 			await seedTask(ws, project, { title: 'Demo Task' });
 			await createApproval(ws, { type: 'strategy', payload: { plan: 'Launch' } });
 			await createApproval(ws, { type: 'secret_access', payload: { secret_name: 'DB_PASSWORD' } });
-			seeded.teamSlug = ws.team.slug;
+			seeded.projectSlug = project.slug;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks',
-		params: { teamId: seeded.teamSlug },
+		to: '/projects/$projectId/tasks',
+		params: { projectId: seeded.projectSlug },
 	});
 
 	const banner = await findByTestId('admin-approvals-banner', undefined, { timeout: 10_000 });
 	expect(banner.textContent).toContain('2 approvals need your review');
-	expect(banner.getAttribute('href')).toContain(`/teams/${seeded.teamSlug}/inbox`);
+	expect(banner.getAttribute('href')).toContain(`/projects/${seeded.projectSlug}/inbox`);
 
 	await user.click(banner);
 
 	await waitFor(() => {
-		expect(router.state.location.pathname).toBe(`/teams/${seeded.teamSlug}/inbox`);
+		expect(router.state.location.pathname).toBe(`/projects/${seeded.projectSlug}/inbox`);
 	});
 });
 
 test('banner is hidden when there are no pending approvals or unread mentions', async () => {
-	const seeded = { teamSlug: '' };
+	const seeded = { projectSlug: '' };
 	const { findByTestId, queryByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Demo' });
 			await seedTask(ws, project, { title: 'Demo Task' });
-			seeded.teamSlug = ws.team.slug;
+			seeded.projectSlug = project.slug;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks',
-		params: { teamId: seeded.teamSlug },
+		to: '/projects/$projectId/tasks',
+		params: { projectId: seeded.projectSlug },
 	});
 
 	// Wait for the list to render, then assert the banner never appears.

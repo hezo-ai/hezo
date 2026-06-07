@@ -33,9 +33,8 @@ test('assignee shows Idle on this ticket when no active heartbeat run is present
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: teamSlug,
 			projectId: projectSlug,
 			taskId: taskIdentifier.toLowerCase(),
 		},
@@ -77,9 +76,8 @@ test('assignee shows Running on this ticket when has_active_run is true', async 
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: teamSlug,
 			projectId: projectSlug,
 			taskId: taskIdentifier.toLowerCase(),
 		},

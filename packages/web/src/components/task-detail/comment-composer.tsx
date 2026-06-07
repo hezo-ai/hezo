@@ -12,7 +12,7 @@ type CreateCommentMutation = ReturnType<typeof useCreateComment>;
 
 interface CommentComposerProps {
 	task: Task;
-	teamId: string;
+	projectId: string;
 	taskId: string;
 	taskProjectSlug: string;
 	comments: Comment[] | undefined;
@@ -50,7 +50,7 @@ function previewCommentText(c: Comment): string {
  */
 export function CommentComposer({
 	task,
-	teamId,
+	projectId,
 	taskId,
 	taskProjectSlug,
 	comments,
@@ -93,14 +93,14 @@ export function CommentComposer({
 			<div className="w-[26px] shrink-0" aria-hidden />
 			<div className="flex-1 min-w-0 flex flex-col gap-2">
 				<CommentAttachmentsDrop
-					teamId={teamId}
+					projectId={projectId}
 					taskId={task.id}
 					value={pendingAttachmentIds}
 					onChange={setPendingAttachmentIds}
 				>
 					<MentionTextarea
 						ref={commentTextareaRef}
-						teamId={teamId}
+						projectId={projectId}
 						projectSlug={taskProjectSlug}
 						value={commentText}
 						onChange={(e) => setCommentText(e.target.value)}
@@ -140,7 +140,12 @@ export function CommentComposer({
 					</div>
 				)}
 				<div className="flex items-center justify-end gap-2">
-					<ProjectIntakeBanner task={task} teamId={teamId} taskId={taskId} comments={comments} />
+					<ProjectIntakeBanner
+						task={task}
+						projectId={projectId}
+						taskId={taskId}
+						comments={comments}
+					/>
 					{task.assignee_id && !replyingToAgent && (
 						<label className="flex items-center gap-2 text-[13px] text-text-muted cursor-pointer select-none">
 							<input

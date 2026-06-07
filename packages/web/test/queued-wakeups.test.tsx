@@ -24,7 +24,7 @@ async function seedQueuedWakeup(
 
 test('shows a queued agent once without a coalesced-count multiplier', async () => {
 	let ctx: {
-		teamSlug: string;
+		projectSlug: string;
 		teamId: string;
 		taskId: string;
 		taskSlug: string;
@@ -42,7 +42,7 @@ test('shows a queued agent once without a coalesced-count multiplier', async () 
 				`SELECT id, title FROM member_agents LIMIT 1`,
 			);
 			ctx = {
-				teamSlug: ws.team.slug,
+				projectSlug: project.slug,
 				teamId: ws.team.id,
 				taskId: task.id,
 				taskSlug: task.identifier,
@@ -56,8 +56,8 @@ test('shows a queued agent once without a coalesced-count multiplier', async () 
 	await seedQueuedWakeup(ctx!.teamId, ctx!.taskId, ctx!.agentId, { coalesced: 3 });
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: ctx!.teamSlug, taskId: ctx!.taskSlug },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: ctx!.projectSlug, taskId: ctx!.taskSlug },
 	});
 
 	const list = await findByTestId('queued-agents-list');

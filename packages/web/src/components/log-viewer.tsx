@@ -35,7 +35,7 @@ interface LogViewerProps {
 	 *  it off and stay raw. */
 	formattable?: boolean;
 	/** Threaded to the formatted view's markdown renderer for @mention links. */
-	teamId?: string;
+	projectId?: string;
 	projectSlug?: string;
 }
 
@@ -50,7 +50,7 @@ export function LogViewer({
 	headerAction,
 	headerActionLeading,
 	formattable = false,
-	teamId,
+	projectId,
 	projectSlug,
 }: LogViewerProps) {
 	const [autoScroll, setAutoScroll] = useState(true);
@@ -212,7 +212,7 @@ export function LogViewer({
 				{lines.length === 0 ? (
 					<span className="text-text-subtle">{emptyState ?? 'No output.'}</span>
 				) : isFormatted ? (
-					<FormattedLogView lines={lines} teamId={teamId} projectSlug={projectSlug} />
+					<FormattedLogView lines={lines} projectId={projectId} projectSlug={projectSlug} />
 				) : (
 					lines.map((line) => (
 						<div

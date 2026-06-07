@@ -8,7 +8,7 @@ import { authHeader, createTestApp } from './helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let teamId: string;
+let teamSlug: string;
 let agentId: string;
 
 beforeAll(async () => {
@@ -30,9 +30,9 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	teamId = (await teamRes.json()).data.id;
+	teamSlug = (await teamRes.json()).data.slug;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/internal-${teamSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	// Use the engineer (has 5000 budget)
@@ -47,7 +47,7 @@ afterAll(async () => {
 
 describe('costs CRUD', () => {
 	it('creates a cost entry with budget debit', async () => {
-		const res = await app.request(`/api/teams/${teamId}/costs`, {
+		const res = await app.request(`/api/projects/internal-${teamSlug}/costs`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -62,7 +62,7 @@ describe('costs CRUD', () => {
 	});
 
 	it('lists cost entries', async () => {
-		const res = await app.request(`/api/teams/${teamId}/costs`, {
+		const res = await app.request(`/api/projects/internal-${teamSlug}/costs`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -72,7 +72,7 @@ describe('costs CRUD', () => {
 	});
 
 	it('groups costs by agent', async () => {
-		const res = await app.request(`/api/teams/${teamId}/costs?group_by=agent`, {
+		const res = await app.request(`/api/projects/internal-${teamSlug}/costs?group_by=agent`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -83,7 +83,7 @@ describe('costs CRUD', () => {
 
 	it('rejects budget-exceeding cost', async () => {
 		// Engineer budget is 5000 cents
-		const res = await app.request(`/api/teams/${teamId}/costs`, {
+		const res = await app.request(`/api/projects/internal-${teamSlug}/costs`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

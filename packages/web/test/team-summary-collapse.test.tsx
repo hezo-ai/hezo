@@ -14,36 +14,36 @@ async function createBareTeam(): Promise<{ slug: string }> {
 }
 
 test('shows placeholder when no team summary is set', async () => {
-	const seeded = { teamSlug: '' };
+	const seeded = { projectSlug: '' };
 	const { findByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const team = await createBareTeam();
-			seeded.teamSlug = team.slug;
+			seeded.projectSlug = team.slug;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/agents',
-		params: { teamId: seeded.teamSlug },
+		to: '/projects/$projectId/agents',
+		params: { projectId: seeded.projectSlug },
 	});
 
 	await findByText('Team description being generated…', undefined, { timeout: 10_000 });
 });
 
 test('renders the team-summary box with attribution caption', async () => {
-	const seeded = { teamSlug: '' };
+	const seeded = { projectSlug: '' };
 	const { findByText, findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			seeded.teamSlug = ws.team.slug;
+			seeded.projectSlug = ws.internalSlug;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/agents',
-		params: { teamId: seeded.teamSlug },
+		to: '/projects/$projectId/agents',
+		params: { projectId: seeded.projectSlug },
 	});
 
 	await findByTestId('team-summary', undefined, { timeout: 10_000 });

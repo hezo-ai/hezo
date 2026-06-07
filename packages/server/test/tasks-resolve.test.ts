@@ -9,7 +9,8 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let teamId: string;
-let otherTeamId: string;
+let internalSlug: string;
+let otherInternalSlug: string;
 let projectAId: string;
 let projectBId: string;
 let projectASlug: string;
@@ -30,13 +31,16 @@ beforeAll(async () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name }),
 		});
-		return (await r.json()).data.id as string;
+		return (await r.json()).data as { id: string; slug: string };
 	};
 
-	teamId = await makeTeam('Resolve Co');
-	otherTeamId = await makeTeam('Other Resolve Co');
+	const team = await makeTeam('Resolve Co');
+	teamId = team.id;
+	internalSlug = `internal-${team.slug}`;
+	const otherTeam = await makeTeam('Other Resolve Co');
+	otherInternalSlug = `internal-${otherTeam.slug}`;
 
-	const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentRes = await app.request(`/api/projects/internal-${team.slug}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Worker Bot' }),
@@ -57,7 +61,7 @@ beforeAll(async () => {
 	projectBSlug = projB.slug;
 
 	const makeTask = async (projectId: string, title: string) => {
-		const r = await app.request(`/api/teams/${teamId}/tasks`, {
+		const r = await app.request(`/api/projects/internal-${team.slug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ project_id: projectId, title, assignee_id: agentId }),
@@ -74,7 +78,7 @@ afterAll(async () => {
 
 describe('POST /teams/:teamId/tasks/resolve', () => {
 	it('resolves known identifiers with title and project_slug', async () => {
-		const r = await app.request(`/api/teams/${teamId}/tasks/resolve`, {
+		const r = await app.request(`/api/projects/${internalSlug}/tasks/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ identifiers: [aIdentifier, bIdentifier] }),
@@ -96,7 +100,7 @@ describe('POST /teams/:teamId/tasks/resolve', () => {
 	});
 
 	it('is case-insensitive', async () => {
-		const r = await app.request(`/api/teams/${teamId}/tasks/resolve`, {
+		const r = await app.request(`/api/projects/${internalSlug}/tasks/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ identifiers: [aIdentifier.toLowerCase()] }),
@@ -108,7 +112,7 @@ describe('POST /teams/:teamId/tasks/resolve', () => {
 	});
 
 	it('silently drops unknown identifiers', async () => {
-		const r = await app.request(`/api/teams/${teamId}/tasks/resolve`, {
+		const r = await app.request(`/api/projects/${internalSlug}/tasks/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ identifiers: [aIdentifier, 'DOES-NOT-EXIST-999'] }),
@@ -119,7 +123,7 @@ describe('POST /teams/:teamId/tasks/resolve', () => {
 	});
 
 	it("enforces team scoping (cannot resolve another team's task)", async () => {
-		const r = await app.request(`/api/teams/${otherTeamId}/tasks/resolve`, {
+		const r = await app.request(`/api/projects/${otherInternalSlug}/tasks/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ identifiers: [aIdentifier] }),
@@ -130,7 +134,7 @@ describe('POST /teams/:teamId/tasks/resolve', () => {
 	});
 
 	it('rejects non-array body', async () => {
-		const r = await app.request(`/api/teams/${teamId}/tasks/resolve`, {
+		const r = await app.request(`/api/projects/${internalSlug}/tasks/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ identifiers: 'nope' }),
@@ -140,7 +144,7 @@ describe('POST /teams/:teamId/tasks/resolve', () => {
 
 	it('rejects arrays longer than 100', async () => {
 		const big = Array.from({ length: 101 }, (_, i) => `DOES-NOT-EXIST-${i}`);
-		const r = await app.request(`/api/teams/${teamId}/tasks/resolve`, {
+		const r = await app.request(`/api/projects/${internalSlug}/tasks/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ identifiers: big }),
@@ -149,7 +153,7 @@ describe('POST /teams/:teamId/tasks/resolve', () => {
 	});
 
 	it('returns empty array for empty input', async () => {
-		const r = await app.request(`/api/teams/${teamId}/tasks/resolve`, {
+		const r = await app.request(`/api/projects/${internalSlug}/tasks/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ identifiers: [] }),

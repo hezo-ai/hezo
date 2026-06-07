@@ -1,3 +1,4 @@
+import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Building2, Plus } from 'lucide-react';
 import { useState } from 'react';
@@ -5,7 +6,7 @@ import { CaptainHomeIntakePanel } from '../../components/captain-home-intake-pan
 import { CreateProjectWithTeamDialog } from '../../components/create-project-with-team-dialog';
 import { OnboardingProgress } from '../../components/onboarding-progress';
 import { OnboardingChoice } from '../../components/setup/onboarding-choice';
-import { Avatar, avatarColorFromString } from '../../components/ui/avatar';
+import { Avatar, avatarColorFromString, getInitials } from '../../components/ui/avatar';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Tooltip } from '../../components/ui/tooltip';
@@ -15,12 +16,6 @@ import { useOnboardingIntake } from '../../hooks/use-onboarding-intake';
 import { useAllVisibleProjects } from '../../hooks/use-projects';
 import { useTeams } from '../../hooks/use-teams';
 import { queryClient } from '../../lib/query-client';
-
-function getInitials(name: string): string {
-	const words = name.split(/\s+/).filter(Boolean);
-	if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
-	return name.slice(0, 2).toUpperCase();
-}
 
 function WelcomeCard({
 	showProgress,
@@ -81,11 +76,7 @@ function HomeProjectsSection({
 			</div>
 			<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
 				{projects.map((p) => (
-					<Link
-						key={p.id}
-						to="/teams/$teamId/projects/$projectId"
-						params={{ teamId: p.teamSlug, projectId: p.slug }}
-					>
+					<Link key={p.id} to="/projects/$projectId" params={{ projectId: p.slug }}>
 						<Card className="cursor-pointer h-full">
 							<div className="flex items-start gap-3">
 								<Avatar initials={getInitials(p.name)} color={avatarColorFromString(p.name)} />
@@ -124,14 +115,17 @@ function HomeProjectsSection({
 function HomePage() {
 	const { data: teams, isLoading: teamsLoading } = useTeams();
 	const primaryTeamSlug = useActiveTeamSlug();
-	const { projects, isLoading: projectsLoading } = useAllVisibleProjects(teams);
+	// Onboarding is pre-project, so it is addressed via the active team's
+	// always-present internal project (slug `internal-<teamSlug>`).
+	const onboardingProjectId = `${INTERNAL_PROJECT_SLUG}-${primaryTeamSlug}`;
+	const { projects, isLoading: projectsLoading } = useAllVisibleProjects();
 	// Only ensure/open an onboarding intake during true first-run — i.e. when no
 	// visible team has a project yet. Per-project teams mean the first project may
 	// land in its own team; once any project exists we must not re-open an intake
 	// on the default/HQ team.
 	const noProjectsYet = !projectsLoading && projects.length === 0;
-	const { data: intake } = useOnboardingIntake(primaryTeamSlug, noProjectsYet);
-	const { data: onboarding } = useOnboarding(primaryTeamSlug, true);
+	const { data: intake } = useOnboardingIntake(onboardingProjectId, noProjectsYet);
+	const { data: onboarding } = useOnboarding(onboardingProjectId, true);
 
 	if (teamsLoading) {
 		return (
@@ -156,13 +150,13 @@ function HomePage() {
 			{showChoice && (
 				<div className="mb-6" data-testid="home-onboarding-choice-section">
 					<OnboardingChoice
-						teamId={primaryTeamSlug}
+						projectId={onboardingProjectId}
 						onChosen={() => {
 							queryClient.invalidateQueries({
-								queryKey: ['teams', primaryTeamSlug, 'onboarding'],
+								queryKey: ['projects', onboardingProjectId, 'onboarding'],
 							});
 							queryClient.invalidateQueries({
-								queryKey: ['teams', primaryTeamSlug, 'onboarding-intake'],
+								queryKey: ['projects', onboardingProjectId, 'onboarding-intake'],
 							});
 							queryClient.invalidateQueries({ queryKey: ['projects'] });
 						}}
@@ -172,7 +166,7 @@ function HomePage() {
 
 			{hasIntake && intake && (
 				<div className="mb-6" data-testid="home-captain-intake-section">
-					<CaptainHomeIntakePanel teamId={primaryTeamSlug} intake={intake} />
+					<CaptainHomeIntakePanel projectId={onboardingProjectId} intake={intake} />
 				</div>
 			)}
 

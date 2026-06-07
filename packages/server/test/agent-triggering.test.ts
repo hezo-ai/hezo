@@ -10,7 +10,9 @@ let db: PGlite;
 let app: Hono<Env>;
 let token: string;
 let teamId: string;
+let internalSlug: string;
 let projectId: string;
+let projectSlug: string;
 let agentId: string;
 let masterKeyManager: MasterKeyManager;
 
@@ -33,16 +35,20 @@ beforeAll(async () => {
 			template_id: teamTemplateId,
 		}),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	internalSlug = `internal-${teamData.slug}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Trigger Project',
 		description: 'Test project.',
 	});
-	projectId = (await projectRes.json()).data.id;
+	const projectData = (await projectRes.json()).data;
+	projectId = projectData.id;
+	projectSlug = projectData.slug;
 
 	// Get the Captain agent
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data;
@@ -69,7 +75,7 @@ describe('agent triggering', () => {
 	it('creates wakeup when task is created with agent assignee', async () => {
 		await clearWakeups();
 
-		const res = await app.request(`/api/teams/${teamId}/tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -90,7 +96,7 @@ describe('agent triggering', () => {
 	});
 
 	it('creates wakeup when task is assigned to agent via PATCH', async () => {
-		const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -103,7 +109,7 @@ describe('agent triggering', () => {
 
 		await clearWakeups();
 
-		const patchRes = await app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
+		const patchRes = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: agentId }),
@@ -118,7 +124,7 @@ describe('agent triggering', () => {
 	});
 
 	it('creates wakeup when sub-task is created with agent assignee', async () => {
-		const parentRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const parentRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ project_id: projectId, title: 'Parent task', assignee_id: agentId }),
@@ -128,7 +134,7 @@ describe('agent triggering', () => {
 		await new Promise((r) => setTimeout(r, 50));
 		await clearWakeups();
 
-		const subRes = await app.request(`/api/teams/${teamId}/tasks/${parentId}/sub-tasks`, {
+		const subRes = await app.request(`/api/projects/${projectSlug}/tasks/${parentId}/sub-tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Sub-task for Captain', assignee_id: agentId }),
@@ -145,7 +151,7 @@ describe('agent triggering', () => {
 	});
 
 	it('rejects clearing assignee via PATCH', async () => {
-		const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -156,7 +162,7 @@ describe('agent triggering', () => {
 		});
 		const taskId = (await taskRes.json()).data.id;
 
-		const patchRes = await app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
+		const patchRes = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: null }),
@@ -165,7 +171,7 @@ describe('agent triggering', () => {
 	});
 
 	it('creates coach wakeup when task is marked done', async () => {
-		const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -178,7 +184,7 @@ describe('agent triggering', () => {
 
 		await clearWakeups();
 
-		const patchRes = await app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
+		const patchRes = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'done' }),
@@ -196,7 +202,7 @@ describe('agent triggering', () => {
 
 	it('creates wakeup for container start with pending agent work', async () => {
 		// Create an task assigned to the agent
-		await app.request(`/api/teams/${teamId}/tasks`, {
+		await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -214,7 +220,7 @@ describe('agent triggering', () => {
 			[projectId],
 		);
 
-		await app.request(`/api/teams/${teamId}/projects/${projectId}/container/start`, {
+		await app.request(`/api/projects/${projectSlug}/container/start`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		});
@@ -237,7 +243,7 @@ describe('agent triggering', () => {
 	});
 
 	it('mention wakeup carries source=mention in payload and references the comment', async () => {
-		const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -249,7 +255,7 @@ describe('agent triggering', () => {
 		const triggeringTaskId = (await taskRes.json()).data.id;
 
 		// Look up architect agent
-		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const architect = (await agentsRes.json()).data.find((a: any) => a.slug === 'architect');
@@ -257,7 +263,7 @@ describe('agent triggering', () => {
 		await clearWakeups();
 
 		const commentRes = await app.request(
-			`/api/teams/${teamId}/tasks/${triggeringTaskId}/comments`,
+			`/api/projects/${projectSlug}/tasks/${triggeringTaskId}/comments`,
 			{
 				method: 'POST',
 				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -280,7 +286,7 @@ describe('agent triggering', () => {
 	});
 
 	it('creates one mention wakeup per distinct agent when a comment mentions several', async () => {
-		const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -291,7 +297,7 @@ describe('agent triggering', () => {
 		});
 		const taskId = (await taskRes.json()).data.id;
 
-		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const allAgents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -302,7 +308,7 @@ describe('agent triggering', () => {
 		await new Promise((r) => setTimeout(r, 50));
 		await clearWakeups();
 
-		await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+		await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -320,7 +326,7 @@ describe('agent triggering', () => {
 	});
 
 	it('ignores @mentions inside fenced code blocks', async () => {
-		const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -331,14 +337,14 @@ describe('agent triggering', () => {
 		});
 		const taskId = (await taskRes.json()).data.id;
 
-		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const architect = (await agentsRes.json()).data.find((a: any) => a.slug === 'architect');
 
 		await clearWakeups();
 
-		await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+		await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -358,7 +364,7 @@ describe('agent triggering', () => {
 	it('does not create a mention wakeup when an agent mentions itself', async () => {
 		// Assign to architect (not Captain) so there's no Captain-assignment wakeup to coalesce
 		// with the subsequent mention wakeup, which would mask the test.
-		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const architect = ((await agentsRes.json()).data as Array<{ id: string; slug: string }>).find(
@@ -366,7 +372,7 @@ describe('agent triggering', () => {
 		);
 		if (!architect) throw new Error('Expected architect agent');
 
-		const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -382,7 +388,7 @@ describe('agent triggering', () => {
 		await clearWakeups();
 
 		// Baseline: admin-posted @captain DOES create a mention wakeup for Captain.
-		await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+		await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content: { text: '@captain baseline mention' } }),
@@ -394,8 +400,15 @@ describe('agent triggering', () => {
 		await clearWakeups();
 
 		// Now have the Captain agent itself post a comment mentioning @captain on the same task.
-		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
-		const selfRes = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+		const { token: ceoToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+			{ projectId },
+		);
+		const selfRes = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(ceoToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content: { text: '@captain self-mention should be skipped' } }),
@@ -409,7 +422,7 @@ describe('agent triggering', () => {
 
 	it('releases execution locks when container stops', async () => {
 		// Create an task and fake an execution lock
-		const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

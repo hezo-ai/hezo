@@ -50,7 +50,7 @@ export interface AssetMentionData {
 }
 
 interface Options {
-	teamId: string;
+	projectId: string;
 	projectSlug?: string;
 	agents: Map<string, AgentMentionData>;
 	tasks: Map<string, TaskMentionData>;
@@ -131,7 +131,7 @@ function splitTextNode(node: TextNode, opts: Options): MdNode[] {
 }
 
 function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
-	const { teamId, projectSlug, agents, tasks, kbDocs, projectDocs, assets } = opts;
+	const { projectId, projectSlug, agents, tasks, kbDocs, projectDocs, assets } = opts;
 	const display = match[0];
 	const passiveAgentToken = match[1];
 	const agentToken = match[2];
@@ -146,7 +146,7 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 		if (!data) return null;
 		return {
 			type: 'link',
-			url: `/teams/${teamId}/projects/${slug}/assets?file=${encodeURIComponent(assetToken)}`,
+			url: `/projects/${slug}/assets?file=${encodeURIComponent(assetToken)}`,
 			children: [{ type: 'text', value: display }],
 			data: {
 				hProperties: {
@@ -164,7 +164,7 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 		if (slug === ADMIN_MENTION_SLUG) {
 			return {
 				type: 'link',
-				url: `/teams/${teamId}/inbox`,
+				url: `/projects/${projectId}/inbox`,
 				children: [{ type: 'text', value: `@${passiveAgentToken}` }],
 				data: {
 					hProperties: {
@@ -178,7 +178,7 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 		if (!data) return null;
 		return {
 			type: 'link',
-			url: `/teams/${teamId}/agents/${slug}`,
+			url: `/projects/${projectId}/agents/${slug}`,
 			children: [{ type: 'text', value: `@${passiveAgentToken}` }],
 			data: {
 				hProperties: {
@@ -195,7 +195,7 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 		if (slug === ADMIN_MENTION_SLUG) {
 			return {
 				type: 'link',
-				url: `/teams/${teamId}/inbox`,
+				url: `/projects/${projectId}/inbox`,
 				children: [{ type: 'text', value: display }],
 				data: {
 					hProperties: {
@@ -208,7 +208,7 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 		if (!data) return null;
 		return {
 			type: 'link',
-			url: `/teams/${teamId}/agents/${slug}`,
+			url: `/projects/${projectId}/agents/${slug}`,
 			children: [{ type: 'text', value: display }],
 			data: {
 				hProperties: {
@@ -225,7 +225,7 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 		if (!data) return null;
 		return {
 			type: 'link',
-			url: `/teams/${teamId}/projects/${data.projectSlug}/tasks/${key}`,
+			url: `/projects/${data.projectSlug}/tasks/${key}`,
 			children: [{ type: 'text', value: display }],
 			data: {
 				hProperties: {
@@ -245,7 +245,7 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 			if (data) {
 				return {
 					type: 'link',
-					url: `/teams/${teamId}/projects/${slug}/documents?file=${encodeURIComponent(filenameToken)}`,
+					url: `/projects/${slug}/documents?file=${encodeURIComponent(filenameToken)}`,
 					children: [{ type: 'text', value: display }],
 					data: {
 						hProperties: {
@@ -264,7 +264,7 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 		if (kbData) {
 			return {
 				type: 'link',
-				url: `/teams/${teamId}/skills?slug=${encodeURIComponent(kbKey)}`,
+				url: `/projects/${projectId}/skills?slug=${encodeURIComponent(kbKey)}`,
 				children: [{ type: 'text', value: display }],
 				data: {
 					hProperties: {

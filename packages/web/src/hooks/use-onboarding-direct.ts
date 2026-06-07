@@ -20,10 +20,10 @@ export interface OnboardingDirectResult {
 	created_agent_slugs: string[];
 }
 
-export function useOnboardingDirect(teamId: string) {
+export function useOnboardingDirect(projectId: string) {
 	return useMutation({
 		mutationFn: (input: OnboardingDirectInput) =>
-			api.post<OnboardingDirectResult>(`/api/teams/${teamId}/onboarding/direct`, input),
+			api.post<OnboardingDirectResult>(`/api/projects/${projectId}/onboarding/direct`, input),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['teams'] });
 			queryClient.invalidateQueries({ queryKey: ['projects'] });

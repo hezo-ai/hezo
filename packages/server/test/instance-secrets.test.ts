@@ -13,13 +13,14 @@ let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 
-async function makeTeam(name: string): Promise<string> {
+async function makeTeam(name: string): Promise<{ id: string; slug: string }> {
 	const res = await app.request('/api/teams', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name }),
 	});
-	return (await res.json()).data.id;
+	const team = (await res.json()).data;
+	return { id: team.id, slug: team.slug };
 }
 
 async function createInstanceSecret(body: Record<string, unknown>): Promise<Response> {
@@ -61,20 +62,22 @@ describe('instance-level credentials (secrets)', () => {
 		).toBe(true);
 
 		// The egress loader resolves & decrypts it for an arbitrary team.
-		const teamId = await makeTeam('Secrets Team');
+		const team = await makeTeam('Secrets Team');
+		const teamId = team.id;
+		const projectSlug = `internal-${team.slug}`;
 		const loaded = await loadSecretsForScope({ db, masterKeyManager, teamId, projectId: null });
 		const resolved = loaded.get('SHARED_API_KEY');
 		expect(resolved?.value).toBe('sk-instance-123');
 		expect(resolved?.allowedHosts).toEqual(['api.shared.example']);
 
 		// And it surfaces (read-only) in the team's credentials + secrets lists.
-		const teamCreds = await app.request(`/api/teams/${teamId}/credentials`, {
+		const teamCreds = await app.request(`/api/projects/${projectSlug}/credentials`, {
 			headers: authHeader(token),
 		});
 		const credRows = (await teamCreds.json()).data as { name: string; team_id: string | null }[];
 		expect(credRows.some((s) => s.name === 'SHARED_API_KEY' && s.team_id === null)).toBe(true);
 
-		const teamSecrets = await app.request(`/api/teams/${teamId}/secrets`, {
+		const teamSecrets = await app.request(`/api/projects/${projectSlug}/secrets`, {
 			headers: authHeader(token),
 		});
 		const secRows = (await teamSecrets.json()).data as { name: string; team_id: string | null }[];
@@ -84,8 +87,9 @@ describe('instance-level credentials (secrets)', () => {
 	it('a team-scoped secret wins the name dedup over an instance one', async () => {
 		await createInstanceSecret({ name: 'DUP_KEY', value: 'instance-value', allow_all_hosts: true });
 
-		const teamId = await makeTeam('Dedup Secrets Team');
-		await app.request(`/api/teams/${teamId}/secrets`, {
+		const team = await makeTeam('Dedup Secrets Team');
+		const teamId = team.id;
+		await app.request(`/api/projects/internal-${team.slug}/secrets`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'DUP_KEY', value: 'team-value', allow_all_hosts: true }),
@@ -103,15 +107,16 @@ describe('instance-level credentials (secrets)', () => {
 		});
 		const secretId = (await createRes.json()).data.id;
 
-		const teamId = await makeTeam('Boundary Team');
-		const patch = await app.request(`/api/teams/${teamId}/secrets/${secretId}`, {
+		const team = await makeTeam('Boundary Team');
+		const teamId = team.id;
+		const patch = await app.request(`/api/projects/internal-${team.slug}/secrets/${secretId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ value: 'hijack' }),
 		});
 		expect(patch.status).toBe(404);
 
-		const del = await app.request(`/api/teams/${teamId}/secrets/${secretId}`, {
+		const del = await app.request(`/api/projects/internal-${team.slug}/secrets/${secretId}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
@@ -132,7 +137,7 @@ describe('instance-level credentials (secrets)', () => {
 		});
 		expect(repost.status).toBe(201);
 
-		const teamId = await makeTeam('Rotate Team');
+		const teamId = (await makeTeam('Rotate Team')).id;
 		let loaded = await loadSecretsForScope({ db, masterKeyManager, teamId, projectId: null });
 		expect(loaded.get('ROTATE')?.value).toBe('v2');
 

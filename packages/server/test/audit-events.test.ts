@@ -12,6 +12,7 @@ let db: PGlite;
 let token: string;
 let teamId: string;
 let projectId: string;
+let projectSlug: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -27,7 +28,9 @@ beforeAll(async () => {
 	teamId = (await teamRes.json()).data.id;
 
 	const project = await createTestProject(db, teamId, { name: 'Events Project' });
-	projectId = (await project.json()).data.id;
+	const projectData = (await project.json()).data;
+	projectId = projectData.id;
+	projectSlug = projectData.slug;
 });
 
 afterAll(async () => {
@@ -49,7 +52,7 @@ async function auditRows(filter: { entityType?: string; action?: string } = {}) 
 
 describe('audit observer (end-to-end)', () => {
 	it('records task creation with project scope', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

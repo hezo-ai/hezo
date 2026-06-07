@@ -66,8 +66,9 @@ beforeAll(async () => {
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Egress Docker Co' }),
 	});
-	teamId = (await teamRes.json()).data.id;
-	const agentRes = await ctx.app.request(`/api/teams/${teamId}/agents`, {
+	const team = (await teamRes.json()).data;
+	teamId = team.id;
+	const agentRes = await ctx.app.request(`/api/projects/internal-${team.slug}/agents`, {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Egress Docker Agent' }),

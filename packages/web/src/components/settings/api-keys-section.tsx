@@ -5,10 +5,10 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { SectionHeader } from './helpers';
 
-export function ApiKeysSection({ teamId }: { teamId: string }) {
-	const { data: apiKeys } = useApiKeys(teamId);
-	const createKey = useCreateApiKey(teamId);
-	const deleteKey = useDeleteApiKey(teamId);
+export function ApiKeysSection({ projectId }: { projectId: string }) {
+	const { data: apiKeys } = useApiKeys(projectId);
+	const createKey = useCreateApiKey(projectId);
+	const deleteKey = useDeleteApiKey(projectId);
 	const [showForm, setShowForm] = useState(false);
 	const [name, setName] = useState('');
 	const [newKey, setNewKey] = useState<string | null>(null);

@@ -32,8 +32,8 @@ test('can create, view, edit, and delete a project document', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/documents',
-		params: { teamId: ws.team.slug, projectId: projectSlug },
+		to: '/projects/$projectId/documents',
+		params: { projectId: projectSlug },
 	});
 
 	const filename = `notes-${Math.random().toString(36).slice(2, 8)}.md`;
@@ -85,7 +85,7 @@ test('shows revision history and restores a previous version', async () => {
 			projectSlug = project.slug;
 
 			const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-			const docPath = `/api/teams/${ws.team.id}/projects/${project.slug}/docs/${filename}`;
+			const docPath = `/api/projects/${projectSlug}/docs/${filename}`;
 			const create = await apiBase(docPath, {
 				method: 'PUT',
 				headers,
@@ -102,8 +102,8 @@ test('shows revision history and restores a previous version', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/documents',
-		params: { teamId: ws.team.slug, projectId: projectSlug },
+		to: '/projects/$projectId/documents',
+		params: { projectId: projectSlug },
 		search: { file: filename } as never,
 	});
 
@@ -138,8 +138,8 @@ test('rejects invalid filename when creating a document', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/documents',
-		params: { teamId: ws.team.slug, projectId: projectSlug },
+		to: '/projects/$projectId/documents',
+		params: { projectId: projectSlug },
 	});
 
 	await user.click(await findByRole('button', { name: 'New document' }));

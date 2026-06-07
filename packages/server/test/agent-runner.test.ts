@@ -46,7 +46,9 @@ let db: PGlite;
 let adminToken: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
+let internalSlug: string;
 let projectId: string;
+let projectSlug: string;
 let taskId: string;
 let agentId: string;
 
@@ -67,7 +69,9 @@ beforeAll(async () => {
 		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Runner Co', template_id: typeId }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	internalSlug = `internal-${teamData.slug}`;
 
 	// Mock fetch for provider key validation during setup
 	globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
@@ -90,14 +94,16 @@ beforeAll(async () => {
 		name: 'Runner Project',
 		description: 'Test project.',
 	});
-	projectId = (await projectRes.json()).data.id;
+	const projectData = (await projectRes.json()).data;
+	projectId = projectData.id;
+	projectSlug = projectData.slug;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 		headers: authHeader(adminToken),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
-	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({

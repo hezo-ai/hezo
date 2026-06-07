@@ -11,9 +11,9 @@ test('sub-tasks panel is expanded by default and collapses on click', async () =
 		initialPath: '/',
 		seed: async ({ apiBase }) => {
 			const ws = await seedWorkspace();
-			teamSlug = ws.team.slug;
 			const engineer = ws.agents.find((a) => a.slug === 'engineer') ?? ws.agents[0];
 			const project = await seedProject(ws, { name: 'Sub-Tasks Project' });
+			teamSlug = project.slug;
 			const parent = await seedTask(ws, project, {
 				title: 'Parent Task',
 				assignee_id: engineer.id,
@@ -21,7 +21,7 @@ test('sub-tasks panel is expanded by default and collapses on click', async () =
 			parentIdentifier = parent.identifier;
 
 			for (const title of ['Child Task Alpha', 'Child Task Beta']) {
-				const res = await apiBase(`/api/teams/${ws.team.id}/tasks/${parent.id}/sub-tasks`, {
+				const res = await apiBase(`/api/projects/${ws.internalSlug}/tasks/${parent.id}/sub-tasks`, {
 					method: 'POST',
 					headers: ws.headers,
 					body: JSON.stringify({ title, assignee_id: engineer.id }),
@@ -32,8 +32,8 @@ test('sub-tasks panel is expanded by default and collapses on click', async () =
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: teamSlug, taskId: parentIdentifier.toLowerCase() },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: teamSlug, taskId: parentIdentifier.toLowerCase() },
 	});
 
 	const toggle = await findByTestId('sub-tasks-toggle');
@@ -65,16 +65,17 @@ test('sub-tasks paginate to team page size with a Show more link', async () => {
 		initialPath: '/',
 		seed: async ({ apiBase }) => {
 			const ws = await seedWorkspace();
-			teamSlug = ws.team.slug;
 			const engineer = ws.agents.find((a) => a.slug === 'engineer') ?? ws.agents[0];
 
-			const patchRes = await apiBase(`/api/teams/${ws.team.id}`, {
+			const patchRes = await apiBase(`/api/projects/${ws.internalSlug}/team`, {
 				method: 'PATCH',
 				headers: ws.headers,
 				body: JSON.stringify({ settings: { subtask_page_size: 3 } }),
 			});
 			if (!patchRes.ok) throw new Error('failed to patch team settings');
-			const verify = await apiBase(`/api/teams/${ws.team.id}`, { headers: ws.headers });
+			const verify = await apiBase(`/api/projects/${ws.internalSlug}/team`, {
+				headers: ws.headers,
+			});
 			const teamRow = (await verify.json()) as {
 				data: { settings: { subtask_page_size?: number } };
 			};
@@ -85,6 +86,7 @@ test('sub-tasks paginate to team page size with a Show more link', async () => {
 			}
 
 			const project = await seedProject(ws, { name: 'Pagination Project' });
+			teamSlug = project.slug;
 			const parent = await seedTask(ws, project, {
 				title: 'Pagination Parent',
 				assignee_id: engineer.id,
@@ -93,7 +95,7 @@ test('sub-tasks paginate to team page size with a Show more link', async () => {
 
 			const titles = ['Sub A', 'Sub B', 'Sub C', 'Sub D', 'Sub E', 'Sub F', 'Sub G'];
 			for (const title of titles) {
-				const res = await apiBase(`/api/teams/${ws.team.id}/tasks/${parent.id}/sub-tasks`, {
+				const res = await apiBase(`/api/projects/${ws.internalSlug}/tasks/${parent.id}/sub-tasks`, {
 					method: 'POST',
 					headers: ws.headers,
 					body: JSON.stringify({ title, assignee_id: engineer.id }),
@@ -104,8 +106,8 @@ test('sub-tasks paginate to team page size with a Show more link', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: teamSlug, taskId: parentIdentifier.toLowerCase() },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: teamSlug, taskId: parentIdentifier.toLowerCase() },
 	});
 
 	const list = await findByTestId('sub-tasks-list');
@@ -144,9 +146,9 @@ test('sub-tasks card sits between the description card and the comments heading'
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			teamSlug = ws.team.slug;
 			const engineer = ws.agents.find((a) => a.slug === 'engineer') ?? ws.agents[0];
 			const project = await seedProject(ws, { name: 'Layout Project' });
+			teamSlug = project.slug;
 			const task = await seedTask(ws, project, {
 				title: 'Layout Parent',
 				description: 'Some description body.',
@@ -157,8 +159,8 @@ test('sub-tasks card sits between the description card and the comments heading'
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: teamSlug, taskId: taskIdentifier.toLowerCase() },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: teamSlug, taskId: taskIdentifier.toLowerCase() },
 	});
 
 	const descriptionCard = await findByTestId('task-description-card');

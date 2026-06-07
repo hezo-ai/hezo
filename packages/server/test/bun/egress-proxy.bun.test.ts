@@ -38,8 +38,10 @@ beforeAll(async () => {
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Egress Bun Co' }),
 	});
-	teamId = (await teamRes.json()).data.id;
-	const agentRes = await ctx.app.request(`/api/teams/${teamId}/agents`, {
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	const internalSlug = `internal-${teamData.slug}`;
+	const agentRes = await ctx.app.request(`/api/projects/${internalSlug}/agents`, {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Egress Bun Agent' }),

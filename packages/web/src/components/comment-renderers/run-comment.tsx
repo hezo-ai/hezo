@@ -17,16 +17,16 @@ import { runStatusDotClass, runStatusLabel } from './helpers';
 
 interface Props {
 	comment: CommentDataOf<'run'>;
-	teamId?: string;
+	projectId?: string;
 	inline?: boolean;
 }
 
-export function RunComment({ comment, teamId, inline }: Props) {
+export function RunComment({ comment, projectId, inline }: Props) {
 	const runId = comment.content?.run_id ?? '';
 	const agentId = comment.content?.agent_id ?? '';
 	const agentTitle = comment.content?.agent_title ?? 'Agent';
 
-	if (!teamId || !runId || !agentId) {
+	if (!projectId || !runId || !agentId) {
 		return <p className="text-xs text-text-subtle italic">Run reference missing.</p>;
 	}
 
@@ -34,7 +34,7 @@ export function RunComment({ comment, teamId, inline }: Props) {
 		<div className="flex flex-col gap-1.5" data-testid="run-comment">
 			<LazyMount minHeight={210} testId="run-comment-lazy">
 				<RunCommentBody
-					teamId={teamId}
+					projectId={projectId}
 					runId={runId}
 					agentId={agentId}
 					agentTitle={agentTitle}
@@ -47,21 +47,21 @@ export function RunComment({ comment, teamId, inline }: Props) {
 }
 
 function RunCommentBody({
-	teamId,
+	projectId,
 	runId,
 	agentId,
 	agentTitle,
 	createdAt,
 	inline,
 }: {
-	teamId: string;
+	projectId: string;
 	runId: string;
 	agentId: string;
 	agentTitle: string;
 	createdAt: string;
 	inline?: boolean;
 }) {
-	const runQuery = useHeartbeatRun(teamId, agentId, runId);
+	const runQuery = useHeartbeatRun(projectId, agentId, runId);
 	const run = runQuery.data;
 	const status = run?.status ?? 'queued';
 	const isActive = isActiveRunStatus(status);
@@ -146,7 +146,7 @@ function RunCommentBody({
 						lines={lines}
 						compact
 						formattable
-						teamId={teamId}
+						projectId={projectId}
 						projectSlug={run?.project_slug ?? undefined}
 						heightClassName="h-[180px]"
 						testId="run-comment-log"
@@ -163,7 +163,7 @@ function RunCommentBody({
 						emptyState={getRunWaitingMessage(status)}
 						headerActionLeading={
 							<TerminateRunButton
-								teamId={teamId}
+								projectId={projectId}
 								agentId={agentId}
 								runId={runId}
 								status={status}
@@ -173,8 +173,8 @@ function RunCommentBody({
 						headerAction={
 							<Tooltip content="View full run">
 								<Link
-									to="/teams/$teamId/agents/$agentId/executions/$runId"
-									params={{ teamId, agentId, runId }}
+									to="/projects/$projectId/agents/$agentId/executions/$runId"
+									params={{ projectId, agentId, runId }}
 									aria-label="View full run"
 									className="inline-flex items-center justify-center h-6 px-2 text-xs text-text-muted hover:text-text hover:bg-bg-muted rounded-radius-md transition-colors"
 								>
@@ -190,9 +190,8 @@ function RunCommentBody({
 					{createdTasks.map((task) => (
 						<Link
 							key={task.id}
-							to="/teams/$teamId/projects/$projectId/tasks/$taskId"
+							to="/projects/$projectId/tasks/$taskId"
 							params={{
-								teamId,
 								projectId: task.project_slug,
 								taskId: task.identifier.toLowerCase(),
 							}}
@@ -208,8 +207,8 @@ function RunCommentBody({
 					{createdDocs.map((doc) => (
 						<Link
 							key={doc.filename}
-							to="/teams/$teamId/projects/$projectId/documents"
-							params={{ teamId, projectId: doc.project_slug }}
+							to="/projects/$projectId/documents"
+							params={{ projectId: doc.project_slug }}
 							search={{ file: doc.filename }}
 							className="text-xs text-accent-blue-text hover:underline self-start"
 						>
@@ -223,8 +222,8 @@ function RunCommentBody({
 					{createdSkills.map((skill) => (
 						<Link
 							key={skill.slug}
-							to="/teams/$teamId/skills"
-							params={{ teamId }}
+							to="/projects/$projectId/skills"
+							params={{ projectId }}
 							search={{ slug: skill.slug }}
 							className="text-xs text-accent-blue-text hover:underline self-start"
 						>
@@ -238,8 +237,8 @@ function RunCommentBody({
 					{proposedSkills.map((skill) => (
 						<Link
 							key={skill.slug}
-							to="/teams/$teamId/inbox"
-							params={{ teamId }}
+							to="/projects/$projectId/inbox"
+							params={{ projectId }}
 							className="text-xs text-accent-blue-text hover:underline self-start"
 						>
 							Proposed skill {skill.name}

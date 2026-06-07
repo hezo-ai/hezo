@@ -10,6 +10,8 @@ let db: PGlite;
 let token: string;
 let teamId: string;
 let otherTeamId: string;
+let projectSlug: string;
+let otherProjectSlug: string;
 let agentAId: string;
 let agentBId: string;
 let agentASlug: string;
@@ -27,11 +29,15 @@ beforeAll(async () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name }),
 		});
-		return (await r.json()).data.id as string;
+		return (await r.json()).data as { id: string; slug: string };
 	};
 
-	teamId = await makeTeam('Batch Prompt Co');
-	otherTeamId = await makeTeam('Other Co');
+	const team = await makeTeam('Batch Prompt Co');
+	teamId = team.id;
+	projectSlug = `internal-${team.slug}`;
+	const otherTeam = await makeTeam('Other Co');
+	otherTeamId = otherTeam.id;
+	otherProjectSlug = `internal-${otherTeam.slug}`;
 
 	const TEMPLATE = [
 		'You are an employee of {{team_name}}.',
@@ -41,8 +47,8 @@ beforeAll(async () => {
 		'{{team_context}}',
 	].join('\n');
 
-	const makeAgent = async (cId: string, title: string) => {
-		const r = await app.request(`/api/teams/${cId}/agents`, {
+	const makeAgent = async (pSlug: string, title: string) => {
+		const r = await app.request(`/api/projects/${pSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title, system_prompt: TEMPLATE }),
@@ -50,14 +56,14 @@ beforeAll(async () => {
 		return (await r.json()).data as { id: string; slug: string };
 	};
 
-	const a = await makeAgent(teamId, 'Worker A');
+	const a = await makeAgent(projectSlug, 'Worker A');
 	agentAId = a.id;
 	agentASlug = a.slug;
 
-	const b = await makeAgent(teamId, 'Worker B');
+	const b = await makeAgent(projectSlug, 'Worker B');
 	agentBId = b.id;
 
-	foreignAgentId = (await makeAgent(otherTeamId, 'Outsider')).id;
+	foreignAgentId = (await makeAgent(otherProjectSlug, 'Outsider')).id;
 });
 
 afterAll(async () => {
@@ -83,7 +89,7 @@ async function callMcpTool(toolName: string, args: Record<string, unknown>): Pro
 
 describe('POST /teams/:teamId/agents/system-prompts/batch', () => {
 	it('returns per-item results with placeholders substituted by default', async () => {
-		const r = await app.request(`/api/teams/${teamId}/agents/system-prompts/batch`, {
+		const r = await app.request(`/api/projects/${projectSlug}/agents/system-prompts/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -104,7 +110,7 @@ describe('POST /teams/:teamId/agents/system-prompts/batch', () => {
 	});
 
 	it('supports per-item mode (raw, placeholders, preview)', async () => {
-		const r = await app.request(`/api/teams/${teamId}/agents/system-prompts/batch`, {
+		const r = await app.request(`/api/projects/${projectSlug}/agents/system-prompts/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -137,7 +143,7 @@ describe('POST /teams/:teamId/agents/system-prompts/batch', () => {
 	});
 
 	it('accepts agent slug as well as UUID', async () => {
-		const r = await app.request(`/api/teams/${teamId}/agents/system-prompts/batch`, {
+		const r = await app.request(`/api/projects/${projectSlug}/agents/system-prompts/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ items: [{ agent_id: agentASlug }] }),
@@ -149,7 +155,7 @@ describe('POST /teams/:teamId/agents/system-prompts/batch', () => {
 	});
 
 	it('returns per-item NOT_FOUND for unknown agent without failing the batch', async () => {
-		const r = await app.request(`/api/teams/${teamId}/agents/system-prompts/batch`, {
+		const r = await app.request(`/api/projects/${projectSlug}/agents/system-prompts/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -171,32 +177,38 @@ describe('POST /teams/:teamId/agents/system-prompts/batch', () => {
 	});
 
 	it('rejects empty, non-array, and oversized item lists', async () => {
-		const emptyRes = await app.request(`/api/teams/${teamId}/agents/system-prompts/batch`, {
+		const emptyRes = await app.request(`/api/projects/${projectSlug}/agents/system-prompts/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ items: [] }),
 		});
 		expect(emptyRes.status).toBe(400);
 
-		const nonArrayRes = await app.request(`/api/teams/${teamId}/agents/system-prompts/batch`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ items: 'nope' }),
-		});
+		const nonArrayRes = await app.request(
+			`/api/projects/${projectSlug}/agents/system-prompts/batch`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ items: 'nope' }),
+			},
+		);
 		expect(nonArrayRes.status).toBe(400);
 
-		const oversizedRes = await app.request(`/api/teams/${teamId}/agents/system-prompts/batch`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				items: Array.from({ length: 51 }, () => ({ agent_id: agentAId })),
-			}),
-		});
+		const oversizedRes = await app.request(
+			`/api/projects/${projectSlug}/agents/system-prompts/batch`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					items: Array.from({ length: 51 }, () => ({ agent_id: agentAId })),
+				}),
+			},
+		);
 		expect(oversizedRes.status).toBe(400);
 	});
 
 	it('enforces team scoping (cannot batch fetch another team)', async () => {
-		const r = await app.request(`/api/teams/${otherTeamId}/agents/system-prompts/batch`, {
+		const r = await app.request(`/api/projects/${otherProjectSlug}/agents/system-prompts/batch`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ items: [{ agent_id: agentAId }] }),

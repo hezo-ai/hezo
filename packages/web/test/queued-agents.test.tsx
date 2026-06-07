@@ -4,7 +4,7 @@ import { renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 test('task sidebar lists a queued agent and cancels it via the confirm dialog', async () => {
-	const seeded = { teamSlug: '', taskId: '', wakeupId: '', queuedAgentTitle: '' };
+	const seeded = { projectSlug: '', taskId: '', wakeupId: '', queuedAgentTitle: '' };
 
 	const { findByTestId, findByText, getByTestId, queryByTestId, user, router } = await renderApp({
 		initialPath: '/',
@@ -25,16 +25,16 @@ test('task sidebar lists a queued agent and cancels it via the confirm dialog', 
 				[queuedAgent.id, ws.team.id, task.id],
 			);
 
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.wakeupId = r.rows[0].id;
 			seeded.queuedAgentTitle = queuedAgent.title;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	// The queued-agents list renders in the sidebar with the queued agent's name.
@@ -62,7 +62,7 @@ test('task sidebar lists a queued agent and cancels it via the confirm dialog', 
 });
 
 test('runs a queued agent immediately via the play button', async () => {
-	const seeded = { teamSlug: '', taskId: '', wakeupId: '' };
+	const seeded = { projectSlug: '', taskId: '', wakeupId: '' };
 
 	const { findByTestId, queryByTestId, user, router } = await renderApp({
 		initialPath: '/',
@@ -81,15 +81,15 @@ test('runs a queued agent immediately via the play button', async () => {
 				[queuedAgent.id, ws.team.id, task.id],
 			);
 
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.wakeupId = r.rows[0].id;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const playBtn = (await findByTestId(`run-queued-wakeup-${seeded.wakeupId}`, undefined, {
@@ -112,7 +112,7 @@ test('runs a queued agent immediately via the play button', async () => {
 });
 
 test('disables run-now with a capacity reason when the project is at its run limit', async () => {
-	const seeded = { teamSlug: '', taskId: '', wakeupId: '' };
+	const seeded = { projectSlug: '', taskId: '', wakeupId: '' };
 
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -141,15 +141,15 @@ test('disables run-now with a capacity reason when the project is at its run lim
 				[queuedAgent.id, ws.team.id, task.id],
 			);
 
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.wakeupId = r.rows[0].id;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const playBtn = (await findByTestId(`run-queued-wakeup-${seeded.wakeupId}`, undefined, {
@@ -162,7 +162,7 @@ test('disables run-now with a capacity reason when the project is at its run lim
 });
 
 test('disables run-now when the queued agent is already running on another task in the project', async () => {
-	const seeded = { teamSlug: '', taskId: '', wakeupId: '' };
+	const seeded = { projectSlug: '', taskId: '', wakeupId: '' };
 
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -191,15 +191,15 @@ test('disables run-now when the queued agent is already running on another task 
 				[queuedAgent.id, ws.team.id, task.id],
 			);
 
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.wakeupId = r.rows[0].id;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const playBtn = (await findByTestId(`run-queued-wakeup-${seeded.wakeupId}`, undefined, {
@@ -212,7 +212,7 @@ test('disables run-now when the queued agent is already running on another task 
 });
 
 test('disables the play button with a reason when the ticket already has a run', async () => {
-	const seeded = { teamSlug: '', taskId: '', wakeupId: '' };
+	const seeded = { projectSlug: '', taskId: '', wakeupId: '' };
 
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -237,15 +237,15 @@ test('disables the play button with a reason when the ticket already has a run',
 				[queuedAgent.id, ws.team.id, task.id],
 			);
 
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.wakeupId = r.rows[0].id;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const playBtn = (await findByTestId(`run-queued-wakeup-${seeded.wakeupId}`, undefined, {

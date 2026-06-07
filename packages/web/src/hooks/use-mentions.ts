@@ -36,7 +36,7 @@ interface DocMentionsResponse {
 	assets: ResolvedAsset[];
 }
 
-export function useDocMentions(teamId: string, candidates: DocMentionsRequest) {
+export function useDocMentions(projectId: string, candidates: DocMentionsRequest) {
 	const key = useMemo(() => {
 		const kbSlugs = [...new Set(candidates.kbSlugs.map((s) => s.toLowerCase()))].sort();
 		const projectDocs = [
@@ -55,9 +55,9 @@ export function useDocMentions(teamId: string, candidates: DocMentionsRequest) {
 	}, [candidates]);
 
 	return useQuery({
-		queryKey: ['teams', teamId, 'docs', 'resolve', key],
+		queryKey: ['projects', projectId, 'docs', 'resolve', key],
 		queryFn: () =>
-			api.post<DocMentionsResponse>(`/api/teams/${teamId}/docs/resolve`, {
+			api.post<DocMentionsResponse>(`/api/projects/${projectId}/docs/resolve`, {
 				kb_slugs: key.kbSlugs,
 				project_docs: candidates.projectDocs.map((d) => ({
 					project_slug: d.project_slug.toLowerCase(),
@@ -69,7 +69,8 @@ export function useDocMentions(teamId: string, candidates: DocMentionsRequest) {
 				})),
 			}),
 		enabled:
-			!!teamId && (key.kbSlugs.length > 0 || key.projectDocs.length > 0 || key.assets.length > 0),
+			!!projectId &&
+			(key.kbSlugs.length > 0 || key.projectDocs.length > 0 || key.assets.length > 0),
 		staleTime: 60_000,
 	});
 }
@@ -84,20 +85,20 @@ export interface MentionSearchResult {
 }
 
 export function useMentionSearch(
-	teamId: string,
+	projectId: string,
 	q: string,
 	options?: { projectSlug?: string; enabled?: boolean },
 ) {
 	const projectSlug = options?.projectSlug;
 	const enabled = options?.enabled ?? true;
 	return useQuery({
-		queryKey: ['teams', teamId, 'mentions', 'search', q, projectSlug ?? null],
+		queryKey: ['projects', projectId, 'mentions', 'search', q, projectSlug ?? null],
 		queryFn: () => {
 			const params: Record<string, string> = { q };
 			if (projectSlug) params.project_slug = projectSlug;
-			return api.get<MentionSearchResult[]>(`/api/teams/${teamId}/mentions/search`, params);
+			return api.get<MentionSearchResult[]>(`/api/projects/${projectId}/mentions/search`, params);
 		},
-		enabled: enabled && !!teamId,
+		enabled: enabled && !!projectId,
 		staleTime: 30_000,
 	});
 }

@@ -5,7 +5,7 @@ import { getTestContext, renderApp } from './helpers/render';
 import { seedProject, seedRunningAgent, seedTask, seedWorkspace } from './helpers/seed';
 
 test('shows the running agent with a loader and a terminate button', async () => {
-	const seeded = { teamSlug: '', taskId: '', agentId: '', agentTitle: '' };
+	const seeded = { projectSlug: '', taskId: '', agentId: '', agentTitle: '' };
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -17,16 +17,16 @@ test('shows the running agent with a loader and a terminate button', async () =>
 			const project = await seedProject(ws, { name: 'Running Demo' });
 			const task = await seedTask(ws, project, { title: 'Running Task', assignee_id: captain.id });
 			await seedRunningAgent(ws, task, agent.id);
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.agentId = agent.id;
 			seeded.agentTitle = agent.title;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const section = await findByTestId('agent-queue-section', undefined, { timeout: 15_000 });
@@ -42,7 +42,7 @@ test('shows the running agent with a loader and a terminate button', async () =>
 });
 
 test('terminates the running run via the confirm dialog', async () => {
-	const seeded = { teamSlug: '', taskId: '', agentId: '', runId: '' };
+	const seeded = { projectSlug: '', taskId: '', agentId: '', runId: '' };
 	const { findByTestId, findByText, getByTestId, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -55,16 +55,16 @@ test('terminates the running run via the confirm dialog', async () => {
 				assignee_id: captain.id,
 			});
 			const { runId } = await seedRunningAgent(ws, task, agent.id);
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.agentId = agent.id;
 			seeded.runId = runId;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const terminate = await findByTestId(`terminate-running-agent-${seeded.agentId}`, undefined, {
@@ -90,7 +90,7 @@ test('terminates the running run via the confirm dialog', async () => {
 });
 
 test('lists running agents above queued agents', async () => {
-	const seeded = { teamSlug: '', taskId: '', runningAgentId: '', wakeupId: '' };
+	const seeded = { projectSlug: '', taskId: '', runningAgentId: '', wakeupId: '' };
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async (ctx) => {
@@ -109,16 +109,16 @@ test('lists running agents above queued agents', async () => {
 				 RETURNING id`,
 				[queuedAgent.id, ws.team.id, task.id],
 			);
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.runningAgentId = runningAgent.id;
 			seeded.wakeupId = r.rows[0].id;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	await findByTestId('agent-queue-section', undefined, { timeout: 15_000 });
@@ -135,7 +135,7 @@ test('renders nothing when the task is fully idle (no running and no queued agen
 	// fire-and-forget assignment wakeup a freshly-created task would post.
 	const { container } = render(
 		<AgentQueueSection
-			teamId="team"
+			projectId="team"
 			taskId="task"
 			locks={[]}
 			comments={[]}

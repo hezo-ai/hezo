@@ -4,27 +4,27 @@ import { queryClient } from '../lib/query-client';
 import { toast } from './use-toast';
 
 interface CancelQueuedWakeupArgs {
-	teamId: string;
+	projectId: string;
 	taskId: string;
 }
 
-export function useCancelQueuedWakeup({ teamId, taskId }: CancelQueuedWakeupArgs) {
+export function useCancelQueuedWakeup({ projectId, taskId }: CancelQueuedWakeupArgs) {
 	return useMutation({
 		mutationFn: (wakeupId: string) =>
 			api.post<{ cancelled: boolean }>(
-				`/api/teams/${teamId}/tasks/${taskId}/queued-wakeups/${wakeupId}/cancel`,
+				`/api/projects/${projectId}/tasks/${taskId}/queued-wakeups/${wakeupId}/cancel`,
 				{},
 			),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'tasks', taskId, 'queued-wakeups'],
+				queryKey: ['projects', projectId, 'tasks', taskId, 'queued-wakeups'],
 			});
 			// Surface the system comment recording the cancellation.
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'tasks', taskId, 'comments'],
+				queryKey: ['projects', projectId, 'tasks', taskId, 'comments'],
 			});
 			// Refresh the single queued_wakeup badge / has_active_run on the task.
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'tasks', taskId] });
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'tasks', taskId] });
 		},
 		onError: (error: { message?: string }) => {
 			toast.error(error?.message ?? 'Failed to cancel queued agent');
