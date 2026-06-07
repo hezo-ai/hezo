@@ -31,7 +31,7 @@ describe('team types CRUD', () => {
 		const builtin = body.data.find((t: Record<string, unknown>) => t.name === 'Startup');
 		expect(builtin).toBeDefined();
 		expect(builtin.is_builtin).toBe(true);
-		expect(builtin.agent_types).toHaveLength(11);
+		expect(builtin.agent_types).toHaveLength(10);
 	});
 
 	it('builtin Startup type seeds every agent with a substantive system prompt', async () => {
@@ -52,7 +52,6 @@ describe('team types CRUD', () => {
 			'marketing-lead',
 			'researcher',
 			'security-engineer',
-			'coach',
 		];
 		for (const slug of expectedSlugs) {
 			const agent = builtin.agent_types.find((a: Record<string, unknown>) => a.slug === slug);

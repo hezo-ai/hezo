@@ -23,7 +23,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-	await db.query('DELETE FROM teams');
+	await db.query("DELETE FROM teams WHERE id != '00000000-0000-0000-0000-000000000001'");
 });
 
 afterAll(async () => {

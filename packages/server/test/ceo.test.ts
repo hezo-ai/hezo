@@ -63,7 +63,8 @@ describe('instance CEO agent type', () => {
 		expect(startup.agent_types.some((a: { slug: string }) => a.slug === CEO_AGENT_SLUG)).toBe(
 			false,
 		);
-		expect(startup.agent_types).toHaveLength(11);
+		// Coach is instance-level too, so the Startup roster is 10 (was 11 with Coach).
+		expect(startup.agent_types).toHaveLength(10);
 	});
 
 	it('forces max effort for the CEO regardless of configured default or wakeup payload', () => {

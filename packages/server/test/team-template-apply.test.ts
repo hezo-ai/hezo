@@ -1,10 +1,10 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { CAPTAIN_AGENT_SLUG, COACH_AGENT_SLUG, DocumentType } from '@hezo/shared';
+import { CAPTAIN_AGENT_SLUG, COACH_AGENT_SLUG, DEFAULT_TEAM_ID, DocumentType } from '@hezo/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { applyTemplateToTeam } from '../src/services/team-template-apply';
 import { createTeam } from '../src/services/teams';
 import { safeClose } from './helpers';
-import { createTestApp } from './helpers/app';
+import { createTestApp, createTestProject } from './helpers/app';
 
 let db: PGlite;
 let docker: { listContainers: () => Promise<unknown[]> };
@@ -18,7 +18,8 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-	await db.query('DELETE FROM teams');
+	// Keep the HQ team (it hosts the CEO that coordination flows depend on).
+	await db.query('DELETE FROM teams WHERE id != $1', [DEFAULT_TEAM_ID]);
 });
 
 afterAll(async () => {
@@ -62,7 +63,7 @@ async function getCaptainMemberId(teamId: string): Promise<string | null> {
 }
 
 describe('applyTemplateToTeam', () => {
-	it('seeds Captain + Coach when applying Blank to a fresh team', async () => {
+	it('seeds the Captain when applying Blank to a fresh team', async () => {
 		const blankId = await getTemplateId('Blank');
 		const team = await createTeam(
 			{ db, docker: docker as never, dataDir },
@@ -70,7 +71,7 @@ describe('applyTemplateToTeam', () => {
 		);
 
 		const slugs = await getAgentSlugs(team.id);
-		expect(slugs).toEqual([CAPTAIN_AGENT_SLUG, COACH_AGENT_SLUG].sort());
+		expect(slugs).toEqual([CAPTAIN_AGENT_SLUG]);
 	});
 
 	it('upgrades the existing Blank Captain prompt when Startup is applied later', async () => {
@@ -98,7 +99,7 @@ describe('applyTemplateToTeam', () => {
 		expect(slugs).toContain('engineer');
 		expect(slugs).toContain('product-lead');
 		expect(slugs).toContain(CAPTAIN_AGENT_SLUG);
-		expect(slugs).toContain(COACH_AGENT_SLUG);
+		expect(slugs).not.toContain(COACH_AGENT_SLUG);
 		expect(new Set(slugs).size).toBe(slugs.length);
 	});
 
@@ -127,6 +128,8 @@ describe('applyTemplateToTeam', () => {
 			{ db, docker: docker as never, dataDir },
 			{ name: 'Apply Coherence Co', templateId: blankId },
 		);
+		// Coherence/setup tasks live in the team's own project (CEO-actioned).
+		await createTestProject(db, team.id, { name: 'Coherence Project' });
 		const before = await db.query<{ count: number }>(
 			`SELECT count(*)::int AS count FROM tasks
 			 WHERE team_id = $1 AND labels @> '["team-coherence-review"]'::jsonb`,
