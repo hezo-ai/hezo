@@ -3,6 +3,7 @@ import {
 	BUILTIN_AGENT_SLUGS,
 	CAPTAIN_AGENT_SLUG,
 	CEO_AGENT_SLUG,
+	COACH_AGENT_SLUG,
 	DocumentType,
 	MemberType,
 } from '@hezo/shared';
@@ -40,10 +41,11 @@ interface BuiltinEffectiveConfig {
 }
 
 /**
- * Ensures every builtin agent (Captain, Coach) exists on the team. Missing
+ * Ensures every builtin agent (the per-team Captain) exists on the team. Missing
  * slugs are inserted from `agent_types` defaults. Existing builtins are left
  * untouched here — template-specific overrides are applied by
- * `applyTemplateToTeam`.
+ * `applyTemplateToTeam`. The CEO and Coach are instance-level singletons (see
+ * `ensureInstanceCeo` / `ensureInstanceCoach`), not seeded per team.
  */
 export async function ensureBuiltinAgents(db: PGlite, teamId: string): Promise<string[]> {
 	const inserted: string[] = [];
@@ -65,19 +67,23 @@ export async function ensureBuiltinAgents(db: PGlite, teamId: string): Promise<s
 }
 
 /**
- * Ensures the single instance-level CEO exists. If no CEO exists anywhere yet,
- * it is provisioned into the given team (the default/HQ team). Idempotent — one
- * CEO per instance. Returns the CEO's member id (or null if the `ceo` agent
- * type isn't seeded).
+ * Ensures a single instance-level singleton agent (by slug) exists. If none
+ * exists anywhere yet, it is provisioned into the given team (the HQ/default
+ * team). Idempotent — one per instance. Returns the member id (or null if the
+ * agent type isn't seeded).
  */
-export async function ensureInstanceCeo(db: PGlite, teamId: string): Promise<string | null> {
+async function ensureInstanceAgent(
+	db: PGlite,
+	teamId: string,
+	slug: string,
+): Promise<string | null> {
 	const existing = await db.query<{ id: string }>(
 		`SELECT id FROM member_agents WHERE slug = $1 LIMIT 1`,
-		[CEO_AGENT_SLUG],
+		[slug],
 	);
 	if (existing.rows[0]) return existing.rows[0].id;
 
-	const config = await loadBuiltinDefaults(db, CEO_AGENT_SLUG);
+	const config = await loadBuiltinDefaults(db, slug);
 	if (!config) return null;
 	await insertBuiltinAgent(db, teamId, config);
 
@@ -85,9 +91,19 @@ export async function ensureInstanceCeo(db: PGlite, teamId: string): Promise<str
 		`SELECT ma.id FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
 		 WHERE m.team_id = $1 AND ma.slug = $2`,
-		[teamId, CEO_AGENT_SLUG],
+		[teamId, slug],
 	);
 	return created.rows[0]?.id ?? null;
+}
+
+/** Ensures the single instance-level CEO exists, in the HQ team. */
+export function ensureInstanceCeo(db: PGlite, teamId: string): Promise<string | null> {
+	return ensureInstanceAgent(db, teamId, CEO_AGENT_SLUG);
+}
+
+/** Ensures the single instance-level Coach exists, in the HQ team. */
+export function ensureInstanceCoach(db: PGlite, teamId: string): Promise<string | null> {
+	return ensureInstanceAgent(db, teamId, COACH_AGENT_SLUG);
 }
 
 /**
@@ -118,8 +134,8 @@ export async function linkTeamCaptainToInstanceCeo(db: PGlite, teamId: string): 
 
 /**
  * Applies a team template to an existing team:
- *   1. Ensures Captain + Coach exist (with agent_types defaults if missing).
- *   2. Upserts Captain + Coach with the template's overrides when provided —
+ *   1. Ensures the Captain exists (with agent_types defaults if missing).
+ *   2. Upserts the Captain with the template's overrides when provided —
  *      existing builtins are refreshed in place so their `member_id` (and any
  *      historical comment authorship) stays stable.
  *   3. Additively inserts any non-builtin agents from the template that the

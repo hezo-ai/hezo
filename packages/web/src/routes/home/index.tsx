@@ -1,4 +1,4 @@
-import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
+import { HQ_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Building2, Plus } from 'lucide-react';
 import { useState } from 'react';
@@ -115,9 +115,8 @@ function HomeProjectsSection({
 function HomePage() {
 	const { data: teams, isLoading: teamsLoading } = useTeams();
 	const primaryTeamSlug = useActiveTeamSlug();
-	// Onboarding is pre-project, so it is addressed via the active team's
-	// always-present internal project (slug `internal-<teamSlug>`).
-	const onboardingProjectId = `${INTERNAL_PROJECT_SLUG}-${primaryTeamSlug}`;
+	// Onboarding is pre-project and is run by the CEO in the single HQ project.
+	const onboardingProjectId = HQ_PROJECT_SLUG;
 	const { projects, isLoading: projectsLoading } = useAllVisibleProjects();
 	// Only ensure/open an onboarding intake during true first-run — i.e. when no
 	// visible team has a project yet. Per-project teams mean the first project may

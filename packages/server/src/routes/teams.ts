@@ -98,8 +98,8 @@ teamsRoutes.get('/projects/:projectId/onboarding-intake', async (c) => {
 
 	const ensure = c.req.query('ensure') === 'true';
 	const intake = ensure
-		? await ensureOnboardingIntakeTask(c.get('db'), teamId, c.get('wsManager'))
-		: await getOpenOnboardingIntakeTask(c.get('db'), teamId);
+		? await ensureOnboardingIntakeTask(c.get('db'), c.get('wsManager'))
+		: await getOpenOnboardingIntakeTask(c.get('db'));
 	if (!intake) {
 		return err(c, 'NOT_FOUND', 'Onboarding intake is not available for this team', 404);
 	}
@@ -109,12 +109,12 @@ teamsRoutes.get('/projects/:projectId/onboarding-intake', async (c) => {
 teamsRoutes.post('/projects/:projectId/onboarding-intake/skip-questions', async (c) => {
 	const teamId = c.get('teamId') as string;
 
-	const intake = await getOpenOnboardingIntakeTask(c.get('db'), teamId);
+	const intake = await getOpenOnboardingIntakeTask(c.get('db'));
 	if (!intake) {
 		return err(c, 'NOT_FOUND', 'No open onboarding intake to skip', 404);
 	}
 
-	const comment = await postSkipQuestionsSignal(c.get('db'), teamId, intake.task_id);
+	const comment = await postSkipQuestionsSignal(c.get('db'), intake.task_id);
 	if (!comment) {
 		return err(c, 'INTERNAL', 'Failed to post skip signal', 500);
 	}
@@ -129,7 +129,7 @@ teamsRoutes.post('/projects/:projectId/project-intake/:taskId/skip-questions', a
 	if (!taskId) {
 		return err(c, 'NOT_FOUND', 'Task not found', 404);
 	}
-	const comment = await postSkipQuestionsSignalForProjectIntake(db, teamId, taskId);
+	const comment = await postSkipQuestionsSignalForProjectIntake(db, taskId);
 	if (!comment) {
 		return err(c, 'NOT_FOUND', 'No open project intake found for this task', 404);
 	}

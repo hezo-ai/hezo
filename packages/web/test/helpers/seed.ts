@@ -2,7 +2,7 @@
 // the helpers in test/e2e/helpers.ts but reusable across component tests so
 // each spec doesn't redefine the team-with-project-and-task ritual.
 
-import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
+import { HQ_PROJECT_SLUG } from '@hezo/shared';
 import { getTestContext } from './render';
 
 type Auth = {
@@ -44,7 +44,7 @@ export async function seedWorkspace(): Promise<SeededWorkspace> {
 		body: JSON.stringify({ name: 'Demo Team', template_id: startup.id }),
 	});
 	const team = ((await teamRes.json()) as { data: { id: string; slug: string } }).data;
-	const internalSlug = `${INTERNAL_PROJECT_SLUG}-${team.slug}`;
+	const internalSlug = HQ_PROJECT_SLUG;
 
 	const agentsRes = await apiBase(`/api/projects/${internalSlug}/agents`, { headers });
 	const agents = (

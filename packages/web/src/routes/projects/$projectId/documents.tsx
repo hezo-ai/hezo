@@ -1,4 +1,4 @@
-import { INTERNAL_PROJECT_SLUG, isMarkdownDocSlug } from '@hezo/shared';
+import { HQ_PROJECT_SLUG, isMarkdownDocSlug } from '@hezo/shared';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -224,10 +224,7 @@ export const Route = createFileRoute('/projects/$projectId/documents')({
 	}),
 	beforeLoad: ({ params }) => {
 		// Internal projects (slug `internal-<teamSlug>`) have no documents page.
-		if (
-			params.projectId === INTERNAL_PROJECT_SLUG ||
-			params.projectId.startsWith(`${INTERNAL_PROJECT_SLUG}-`)
-		) {
+		if (params.projectId === HQ_PROJECT_SLUG) {
 			throw redirect({
 				to: '/projects/$projectId/tasks',
 				params,

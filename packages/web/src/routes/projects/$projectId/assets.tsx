@@ -1,4 +1,4 @@
-import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
+import { HQ_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import {
 	Code,
@@ -329,7 +329,7 @@ export const Route = createFileRoute('/projects/$projectId/assets')({
 		file: typeof search.file === 'string' ? search.file : undefined,
 	}),
 	beforeLoad: ({ params }) => {
-		if (params.projectId === INTERNAL_PROJECT_SLUG) {
+		if (params.projectId === HQ_PROJECT_SLUG) {
 			throw redirect({
 				to: '/projects/$projectId/tasks',
 				params,

@@ -54,12 +54,7 @@ export async function applyApprovalDeniedSideEffect(
 	if (approval.type === ApprovalType.TeamTemplate) {
 		const intakeTaskId = payload.task_id as string | undefined;
 		if (!intakeTaskId) return [];
-		const comment = await postOnboardingTemplateDeniedNote(
-			db,
-			teamId,
-			intakeTaskId,
-			resolutionNote,
-		);
+		const comment = await postOnboardingTemplateDeniedNote(db, intakeTaskId, resolutionNote);
 		if (!comment) return [];
 		return [{ table: 'task_comments', op: 'INSERT', row: comment }];
 	}
@@ -67,7 +62,7 @@ export async function applyApprovalDeniedSideEffect(
 	if (approval.type === ApprovalType.ProjectCreation) {
 		const intakeTaskId = payload.intake_task_id as string | undefined;
 		if (!intakeTaskId) return [];
-		const comment = await postProjectCreationDeniedNote(db, teamId, intakeTaskId, resolutionNote);
+		const comment = await postProjectCreationDeniedNote(db, intakeTaskId, resolutionNote);
 		if (!comment) return [];
 		return [{ table: 'task_comments', op: 'INSERT', row: comment }];
 	}
@@ -239,12 +234,7 @@ export async function applyApprovalSideEffect(
 			const apply = await applyTemplateToTeam(db, teamId, templateId, { dataDir, wsManager });
 
 			if (intakeTaskId) {
-				const ackComment = await postOnboardingTemplateApprovedAck(
-					db,
-					teamId,
-					intakeTaskId,
-					templateName,
-				);
+				const ackComment = await postOnboardingTemplateApprovedAck(db, intakeTaskId, templateName);
 				if (ackComment) {
 					broadcasts.push({ table: 'task_comments', op: 'INSERT', row: ackComment });
 				}
@@ -407,19 +397,13 @@ export async function applyApprovalSideEffect(
 				task_id: planningTask.id as string,
 			});
 
-			const ackComment = await postProjectCreationApprovedAck(
-				db,
-				teamId,
-				intakeTaskId,
-				projectName,
-			);
+			const ackComment = await postProjectCreationApprovedAck(db, intakeTaskId, projectName);
 			if (ackComment) {
 				broadcasts.push({ table: 'task_comments', op: 'INSERT', row: ackComment });
 			}
 
 			const completed = await completeProjectIntakeAfterProvisioning(
 				db,
-				teamId,
 				intakeTaskId,
 				projectName,
 				project.slug as string,

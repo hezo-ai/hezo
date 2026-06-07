@@ -300,7 +300,9 @@ CREATE TABLE projects (
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_projects_team ON projects(team_id);
+-- One team backs exactly one project (1:1). UNIQUE permits the transient zero-project
+-- window while a new team's intake is still pending approval.
+CREATE UNIQUE INDEX idx_projects_team ON projects(team_id);
 -- Project slug is the single public handle for a project across the URL, API, and
 -- query layers; it must be unique instance-wide so a project resolves without a team.
 CREATE UNIQUE INDEX idx_projects_slug ON projects(slug);

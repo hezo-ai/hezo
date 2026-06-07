@@ -256,9 +256,23 @@ async function buildRunContext(
 	bridge: BridgeRunnerArgs | null,
 	egress: EgressEnvDescriptor | null,
 ): Promise<RunContext> {
-	const storedPrompt = await getAgentSystemPrompt(deps.db, agent.team_id, agent.id);
+	// The run is scoped to the project's team (the "run team"). For normal agents
+	// this equals the agent's home team; for instance agents (CEO/Coach) that
+	// execute inside another team's project it is that project's team, so the run's
+	// token, env, skills and tool access all operate on the project being worked.
+	// The agent's own system prompt still belongs to its home team.
+	const runTeamId = project.team_id;
+	// The agent's stored system prompt lives under its home team (HQ for the
+	// instance CEO/Coach), which can differ from the run team when an instance
+	// agent works inside another team's project.
+	const homeTeam = await deps.db.query<{ team_id: string }>(
+		'SELECT team_id FROM members WHERE id = $1',
+		[agent.id],
+	);
+	const homeTeamId = homeTeam.rows[0]?.team_id ?? runTeamId;
+	const storedPrompt = await getAgentSystemPrompt(deps.db, homeTeamId, agent.id);
 	let resolvedPrompt = await resolveSystemPrompt(deps.db, storedPrompt, {
-		teamId: agent.team_id,
+		teamId: runTeamId,
 		projectId: project.id,
 		taskId: task.id,
 		agentId: agent.id,
@@ -282,7 +296,7 @@ async function buildRunContext(
 	const agentJwt = await signAgentJwt(
 		deps.masterKeyManager,
 		agent.id,
-		agent.team_id,
+		runTeamId,
 		heartbeatRunId,
 		project.id,
 		project.is_internal,
@@ -293,7 +307,7 @@ async function buildRunContext(
 	const isCoachReview = wakeupPayload?.trigger === 'task_done';
 	const mentionContext =
 		wakeupPayload?.source === WakeupSource.Mention
-			? await loadMentionContext(deps.db, agent.id, agent.team_id, wakeupPayload)
+			? await loadMentionContext(deps.db, agent.id, runTeamId, wakeupPayload)
 			: null;
 	const replyContext =
 		wakeupPayload?.source === WakeupSource.Reply
@@ -301,7 +315,7 @@ async function buildRunContext(
 			: null;
 	const spawnedFrom = await loadSpawnedFromTask(deps.db, task);
 	const basePrompt = isCoachReview
-		? await buildCoachReviewPrompt(deps.db, resolvedPrompt, task, agent.team_id)
+		? await buildCoachReviewPrompt(deps.db, resolvedPrompt, task, runTeamId)
 		: buildTaskPrompt(resolvedPrompt, task, wakeupPayload, {
 				mentionContext,
 				replyContext,
@@ -341,15 +355,10 @@ async function buildRunContext(
 			url: `http://host.docker.internal:${deps.serverPort}/mcp`,
 			bearerToken: agentJwt,
 		},
-		...(await loadMcpConnectionDescriptors(
-			deps.db,
-			agent.team_id,
-			project.id,
-			deps.masterKeyManager,
-		)),
+		...(await loadMcpConnectionDescriptors(deps.db, runTeamId, project.id, deps.masterKeyManager)),
 	];
 
-	const skillFiles = await loadSkillFilesForTeam(deps.db, agent.team_id);
+	const skillFiles = await loadSkillFilesForTeam(deps.db, runTeamId);
 	const mcpInjection = adapter.build(mcpDescriptors, {
 		hostHomeDir: homeMount?.hostDir ?? null,
 		containerHomeDir: homeMount?.containerDir ?? null,
@@ -366,7 +375,7 @@ async function buildRunContext(
 		`HEZO_API_URL=http://host.docker.internal:${deps.serverPort}/agent-api`,
 		`HEZO_AGENT_TOKEN=${agentJwt}`,
 		`HEZO_AGENT_ID=${agent.id}`,
-		`HEZO_TEAM_ID=${agent.team_id}`,
+		`HEZO_TEAM_ID=${runTeamId}`,
 		`HEZO_TASK_ID=${task.id}`,
 		`HEZO_TASK_IDENTIFIER=${task.identifier}`,
 		`HEZO_AGENT_EFFORT=${effort}`,
@@ -385,7 +394,7 @@ async function buildRunContext(
 	// Configure git author/committer identity and SSH commit signing from the
 	// team's connected GitHub account + Ed25519 key, so in-container commits
 	// don't fail for lack of an author and land Verified via the agent socket.
-	env.push(...(await buildGitIdentityEnv(deps.db, deps.masterKeyManager, agent.team_id)));
+	env.push(...(await buildGitIdentityEnv(deps.db, deps.masterKeyManager, runTeamId)));
 	if (egress) {
 		const proxyUrl = `http://${egress.host}:${egress.port}`;
 		const noProxyHosts = [
@@ -482,19 +491,23 @@ export async function runAgent(
 
 	if (signal?.aborted) return abortedResult(startTime);
 
+	// The run executes in the project's team (see buildRunContext); for instance
+	// agents working another team's project this differs from agent.team_id.
+	const runTeamId = project.team_id;
 	const runBroadcast: HeartbeatRunBroadcast = {
 		wsManager: deps.wsManager,
 		events: deps.events,
-		teamId: agent.team_id,
+		teamId: runTeamId,
 		projectId: project.id,
 		taskId: task.id,
 		memberId: agent.id,
 	};
 	const effectiveWakeupId =
-		wakeupId ?? (await createSyntheticOnDemandWakeup(deps.db, agent.id, agent.team_id));
+		wakeupId ?? (await createSyntheticOnDemandWakeup(deps.db, agent.id, runTeamId));
 	const heartbeatRunId = await createHeartbeatRun(
 		deps.db,
 		agent,
+		runTeamId,
 		task,
 		runBroadcast,
 		effectiveWakeupId,
@@ -1479,6 +1492,7 @@ function broadcastHeartbeatRunChange(
 export async function createHeartbeatRun(
 	db: PGlite,
 	agent: AgentInfo,
+	runTeamId: string,
 	task: TaskInfo,
 	broadcast: HeartbeatRunBroadcast,
 	wakeupId: string,
@@ -1488,7 +1502,7 @@ export async function createHeartbeatRun(
 			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, wakeup_id, status)
 			 VALUES ($1, $2, $3, $4, $5::heartbeat_run_status)
 			 RETURNING id`,
-			[agent.id, agent.team_id, task.id, wakeupId, HeartbeatRunStatus.Queued],
+			[agent.id, runTeamId, task.id, wakeupId, HeartbeatRunStatus.Queued],
 		);
 		const runId = runResult.rows[0].id;
 

@@ -12,7 +12,11 @@ import { recomputeDownstreamReadiness } from '../lib/dependencies';
 import { terminalStatusParams } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
-import { findOpenLabeledTask, loadCaptainInternalContext } from './internal-intake';
+import {
+	type CoordinationContext,
+	findOpenLabeledTask,
+	loadCoordinationContext,
+} from './internal-intake';
 import { recordStatusChange } from './task-events';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
@@ -23,7 +27,16 @@ export const ONBOARDING_INTAKE_LABEL = 'onboarding-intake';
 export const ONBOARDING_INTAKE_MARKER = '<!-- onboarding-intake -->';
 export const ONBOARDING_INTAKE_TITLE = 'Set up your first project';
 
-export const CAPTAIN_GREETING_TEXT = `Hi — I'm the Captain. I'll help you set up your first project from scratch.
+/** Adapter exposing the HQ/CEO coordination context under the field names this module uses. */
+async function loadHost(
+	db: PGlite,
+): Promise<{ hostMemberId: string; hqProjectId: string; hqTeamId: string } | null> {
+	const ctx: CoordinationContext | null = await loadCoordinationContext(db);
+	if (!ctx) return null;
+	return { hostMemberId: ctx.ceoMemberId, hqProjectId: ctx.hqProjectId, hqTeamId: ctx.hqTeamId };
+}
+
+export const CAPTAIN_GREETING_TEXT = `Hi — I'm the CEO. I'll help you set up your first project from scratch.
 
 Tell me what you're hoping to build: the problem you want to solve, who it's for, and anything you already know about scope or constraints. Once I have enough to work with I'll suggest a team template that fits and propose a project name + description for you to approve.`;
 
@@ -62,21 +75,17 @@ export interface OnboardingIntakeTask {
  */
 export async function createOnboardingIntakeTask(
 	db: PGlite,
-	teamId: string,
 ): Promise<{ taskId: string; captainMemberId: string } | null> {
-	const ctx = await loadCaptainInternalContext(db, teamId);
+	const ctx = await loadHost(db);
 	if (!ctx) {
-		log.warn(`Cannot create onboarding intake for ${teamId}; missing Captain or Internal`);
+		log.warn('Cannot create onboarding intake; missing CEO or HQ project');
 		return null;
 	}
 
-	const existing = await findOpenLabeledTask(db, teamId, ONBOARDING_INTAKE_LABEL);
+	const existing = await findOpenLabeledTask(db, ONBOARDING_INTAKE_LABEL);
 	if (existing) return null;
 
-	const { number: taskNumber, identifier } = await allocateTaskIdentifier(
-		db,
-		ctx.internalProjectId,
-	);
+	const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, ctx.hqProjectId);
 
 	const taskResult = await db.query<{ id: string }>(
 		`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier,
@@ -84,9 +93,9 @@ export async function createOnboardingIntakeTask(
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::task_status, $9::task_priority, $10::jsonb)
 		 RETURNING id`,
 		[
-			teamId,
-			ctx.internalProjectId,
-			ctx.captainMemberId,
+			ctx.hqTeamId,
+			ctx.hqProjectId,
+			ctx.hostMemberId,
 			taskNumber,
 			identifier,
 			ONBOARDING_INTAKE_TITLE,
@@ -103,38 +112,39 @@ export async function createOnboardingIntakeTask(
 		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)`,
 		[
 			taskId,
-			ctx.captainMemberId,
+			ctx.hostMemberId,
 			CommentContentType.Text,
 			JSON.stringify({ text: CAPTAIN_GREETING_TEXT }),
 		],
 	);
 
-	return { taskId, captainMemberId: ctx.captainMemberId };
+	return { taskId, captainMemberId: ctx.hostMemberId };
 }
 
 export async function wakeCaptainForOnboardingIntake(
 	db: PGlite,
-	teamId: string,
-	captainMemberId: string,
+	hostMemberId: string,
 	taskId: string,
 ): Promise<void> {
+	const ctx = await loadHost(db);
+	if (!ctx) return;
 	try {
-		await createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
+		await createWakeup(db, hostMemberId, ctx.hqTeamId, WakeupSource.Assignment, {
 			task_id: taskId,
 		});
 	} catch (e) {
-		log.error('Failed to wake Captain for onboarding intake:', e);
+		log.error('Failed to wake CEO for onboarding intake:', e);
 	}
 }
 
 async function buildIntakeResponse(
 	db: PGlite,
-	ctx: { captainMemberId: string },
+	hostMemberId: string,
 	row: { id: string; identifier: string; project_slug: string },
 ): Promise<OnboardingIntakeTask> {
-	const captainTitle = await db.query<{ title: string }>(
+	const hostTitle = await db.query<{ title: string }>(
 		'SELECT title FROM member_agents WHERE id = $1',
-		[ctx.captainMemberId],
+		[hostMemberId],
 	);
 
 	return {
@@ -142,53 +152,57 @@ async function buildIntakeResponse(
 		task_identifier: row.identifier,
 		project_slug: row.project_slug,
 		captain_greeting: CAPTAIN_GREETING_TEXT,
-		captain_member_id: ctx.captainMemberId,
-		captain_title: captainTitle.rows[0]?.title ?? 'Captain',
+		captain_member_id: hostMemberId,
+		captain_title: hostTitle.rows[0]?.title ?? 'CEO',
 	};
 }
 
 /** Read-only — returns null when the onboarding ticket is closed or missing. */
 export async function getOpenOnboardingIntakeTask(
 	db: PGlite,
-	teamId: string,
 ): Promise<OnboardingIntakeTask | null> {
-	const ctx = await loadCaptainInternalContext(db, teamId);
+	const ctx = await loadHost(db);
 	if (!ctx) return null;
-	const row = await findOpenLabeledTask(db, teamId, ONBOARDING_INTAKE_LABEL);
+	const row = await findOpenLabeledTask(db, ONBOARDING_INTAKE_LABEL);
 	if (!row) return null;
-	return buildIntakeResponse(db, ctx, row);
+	return buildIntakeResponse(db, ctx.hostMemberId, row);
 }
 
 /** Returns the open onboarding-intake task, creating it if missing. */
 export async function ensureOnboardingIntakeTask(
 	db: PGlite,
-	teamId: string,
 	wsManager?: WebSocketManager,
 ): Promise<OnboardingIntakeTask | null> {
-	const ctx = await loadCaptainInternalContext(db, teamId);
+	const ctx = await loadHost(db);
 	if (!ctx) return null;
 
-	let row = await findOpenLabeledTask(db, teamId, ONBOARDING_INTAKE_LABEL);
+	let row = await findOpenLabeledTask(db, ONBOARDING_INTAKE_LABEL);
 	let created: { taskId: string; captainMemberId: string } | null = null;
 	if (!row) {
-		created = await createOnboardingIntakeTask(db, teamId);
-		row = await findOpenLabeledTask(db, teamId, ONBOARDING_INTAKE_LABEL);
+		created = await createOnboardingIntakeTask(db);
+		row = await findOpenLabeledTask(db, ONBOARDING_INTAKE_LABEL);
 		if (row && wsManager) {
 			const taskFull = await db.query<Record<string, unknown>>(
 				'SELECT * FROM tasks WHERE id = $1',
 				[row.id],
 			);
 			if (taskFull.rows[0]) {
-				broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', taskFull.rows[0]);
+				broadcastRowChange(
+					wsManager,
+					wsRoom.team(ctx.hqTeamId),
+					'tasks',
+					'INSERT',
+					taskFull.rows[0],
+				);
 			}
 		}
 		if (created) {
-			await wakeCaptainForOnboardingIntake(db, teamId, created.captainMemberId, created.taskId);
+			await wakeCaptainForOnboardingIntake(db, created.captainMemberId, created.taskId);
 		}
 	}
 
 	if (!row) return null;
-	return buildIntakeResponse(db, ctx, row);
+	return buildIntakeResponse(db, ctx.hostMemberId, row);
 }
 
 export function buildOnboardingTemplateApprovedAckText(templateName: string): string {
@@ -268,19 +282,19 @@ export async function completeOnboardingIntakeAfterProvisioning(
 	skippedSlugs: string[],
 	wsManager?: WebSocketManager,
 ): Promise<OnboardingProvisioningCompleteResult> {
-	const ctx = await loadCaptainInternalContext(db, teamId);
+	const ctx = await loadHost(db);
 	if (!ctx) {
-		log.warn(`Cannot complete onboarding intake for ${teamId}; missing Captain`);
+		log.warn('Cannot complete onboarding intake; missing CEO or HQ project');
 		return { summaryComment: null, task: null };
 	}
 
-	const ts = terminalStatusParams(4);
+	const ts = terminalStatusParams(3);
 	const openTask = await db.query<{ id: string; status: string }>(
 		`SELECT id, status::text AS status FROM tasks
-		 WHERE id = $1 AND team_id = $2 AND labels @> $3::jsonb
+		 WHERE id = $1 AND labels @> $2::jsonb
 		   AND status NOT IN (${ts.placeholders})
 		 LIMIT 1`,
-		[intakeTaskId, teamId, JSON.stringify([ONBOARDING_INTAKE_LABEL]), ...ts.values],
+		[intakeTaskId, JSON.stringify([ONBOARDING_INTAKE_LABEL]), ...ts.values],
 	);
 	if (!openTask.rows[0]) {
 		return { summaryComment: null, task: null };
@@ -295,7 +309,7 @@ export async function completeOnboardingIntakeAfterProvisioning(
 		 RETURNING *`,
 		[
 			intakeTaskId,
-			ctx.captainMemberId,
+			ctx.hostMemberId,
 			CommentContentType.Text,
 			JSON.stringify({
 				text: buildOnboardingProvisioningCompleteText(templateName, projectName, created, skipped),
@@ -307,24 +321,30 @@ export async function completeOnboardingIntakeAfterProvisioning(
 	const oldStatus = openTask.rows[0].status;
 	const taskUpdate = await db.query<Record<string, unknown>>(
 		`UPDATE tasks SET status = $1::task_status, updated_at = now()
-		 WHERE id = $2 AND team_id = $3
+		 WHERE id = $2
 		 RETURNING *`,
-		[TaskStatus.Done, intakeTaskId, teamId],
+		[TaskStatus.Done, intakeTaskId],
 	);
 	const task = taskUpdate.rows[0] ?? null;
 
 	if (task) {
 		await recordStatusChange(
 			db,
-			teamId,
+			ctx.hqTeamId,
 			intakeTaskId,
 			oldStatus,
 			TaskStatus.Done,
-			ctx.captainMemberId,
+			ctx.hostMemberId,
 			wsManager,
 		);
 		try {
-			await recomputeDownstreamReadiness(db, teamId, intakeTaskId, ctx.captainMemberId, wsManager);
+			await recomputeDownstreamReadiness(
+				db,
+				ctx.hqTeamId,
+				intakeTaskId,
+				ctx.hostMemberId,
+				wsManager,
+			);
 		} catch (e) {
 			log.error('Failed to recompute downstream readiness after onboarding close:', e);
 		}
@@ -336,18 +356,15 @@ export async function completeOnboardingIntakeAfterProvisioning(
 /** Captain ack comment when the admin approves the template in the inbox. */
 export async function postOnboardingTemplateApprovedAck(
 	db: PGlite,
-	teamId: string,
 	intakeTaskId: string,
 	templateName: string,
 ): Promise<Record<string, unknown> | null> {
-	const ctx = await loadCaptainInternalContext(db, teamId);
+	const ctx = await loadHost(db);
 	if (!ctx) return null;
 
 	const task = await db.query<{ id: string }>(
-		`SELECT id FROM tasks
-		 WHERE id = $1 AND team_id = $2 AND labels @> $3::jsonb
-		 LIMIT 1`,
-		[intakeTaskId, teamId, JSON.stringify([ONBOARDING_INTAKE_LABEL])],
+		`SELECT id FROM tasks WHERE id = $1 AND labels @> $2::jsonb LIMIT 1`,
+		[intakeTaskId, JSON.stringify([ONBOARDING_INTAKE_LABEL])],
 	);
 	if (!task.rows[0]) return null;
 
@@ -357,7 +374,7 @@ export async function postOnboardingTemplateApprovedAck(
 		 RETURNING *`,
 		[
 			intakeTaskId,
-			ctx.captainMemberId,
+			ctx.hostMemberId,
 			CommentContentType.Text,
 			JSON.stringify({ text: buildOnboardingTemplateApprovedAckText(templateName) }),
 		],
@@ -365,21 +382,18 @@ export async function postOnboardingTemplateApprovedAck(
 	return commentResult.rows[0] ?? null;
 }
 
-/** Captain note when the admin denies the template approval. */
+/** CEO note when the admin denies the template approval. */
 export async function postOnboardingTemplateDeniedNote(
 	db: PGlite,
-	teamId: string,
 	intakeTaskId: string,
 	resolutionNote: string | null,
 ): Promise<Record<string, unknown> | null> {
-	const ctx = await loadCaptainInternalContext(db, teamId);
+	const ctx = await loadHost(db);
 	if (!ctx) return null;
 
 	const task = await db.query<{ id: string }>(
-		`SELECT id FROM tasks
-		 WHERE id = $1 AND team_id = $2 AND labels @> $3::jsonb
-		 LIMIT 1`,
-		[intakeTaskId, teamId, JSON.stringify([ONBOARDING_INTAKE_LABEL])],
+		`SELECT id FROM tasks WHERE id = $1 AND labels @> $2::jsonb LIMIT 1`,
+		[intakeTaskId, JSON.stringify([ONBOARDING_INTAKE_LABEL])],
 	);
 	if (!task.rows[0]) return null;
 
@@ -389,7 +403,7 @@ export async function postOnboardingTemplateDeniedNote(
 		 RETURNING *`,
 		[
 			intakeTaskId,
-			ctx.captainMemberId,
+			ctx.hostMemberId,
 			CommentContentType.Text,
 			JSON.stringify({ text: buildOnboardingTemplateDeniedText(resolutionNote) }),
 		],
@@ -398,23 +412,20 @@ export async function postOnboardingTemplateDeniedNote(
 }
 
 /**
- * Posts a system comment + wakes Captain when the admin chooses to skip further
- * questions during the chat flow. Captain should then move directly to the
+ * Posts a system comment + wakes the CEO when the admin chooses to skip further
+ * questions during the chat flow. The CEO should then move directly to the
  * template + project proposal step.
  */
 export async function postSkipQuestionsSignal(
 	db: PGlite,
-	teamId: string,
 	intakeTaskId: string,
 ): Promise<Record<string, unknown> | null> {
-	const ctx = await loadCaptainInternalContext(db, teamId);
+	const ctx = await loadHost(db);
 	if (!ctx) return null;
 
 	const task = await db.query<{ id: string }>(
-		`SELECT id FROM tasks
-		 WHERE id = $1 AND team_id = $2 AND labels @> $3::jsonb
-		 LIMIT 1`,
-		[intakeTaskId, teamId, JSON.stringify([ONBOARDING_INTAKE_LABEL])],
+		`SELECT id FROM tasks WHERE id = $1 AND labels @> $2::jsonb LIMIT 1`,
+		[intakeTaskId, JSON.stringify([ONBOARDING_INTAKE_LABEL])],
 	);
 	if (!task.rows[0]) return null;
 
@@ -431,12 +442,12 @@ export async function postSkipQuestionsSignal(
 	const comment = commentResult.rows[0] ?? null;
 
 	try {
-		await createWakeup(db, ctx.captainMemberId, teamId, WakeupSource.Reply, {
+		await createWakeup(db, ctx.hostMemberId, ctx.hqTeamId, WakeupSource.Reply, {
 			task_id: intakeTaskId,
 			comment_id: comment ? (comment.id as string) : undefined,
 		});
 	} catch (e) {
-		log.error('Failed to wake Captain for skip-questions signal:', e);
+		log.error('Failed to wake CEO for skip-questions signal:', e);
 	}
 
 	return comment;

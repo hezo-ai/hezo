@@ -1,4 +1,4 @@
-import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
+import { HQ_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
@@ -43,7 +43,7 @@ function HireAgentPage() {
 			navigate({
 				to: '/projects/$projectId/tasks/$taskId',
 				params: {
-					projectId: team ? `${INTERNAL_PROJECT_SLUG}-${team.teamSlug}` : projectId,
+					projectId: HQ_PROJECT_SLUG,
 					taskId: result.task.identifier.toLowerCase(),
 				},
 			});

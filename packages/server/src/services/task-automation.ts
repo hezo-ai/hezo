@@ -124,13 +124,14 @@ export async function triggerStatusAutomations(
 	}
 
 	if (newStatus === TaskStatus.Done) {
+		// The Coach is a single instance-level agent. It reviews completed work in
+		// every project; the wakeup carries the completed task's team so the Coach
+		// runs scoped to that project (see the run-team split in agent-runner).
 		const coach = await db.query<{ id: string }>(
-			`SELECT ma.id FROM member_agents ma
-			 JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1 AND ma.slug = $3
-			   AND ma.admin_status = $2::agent_admin_status
+			`SELECT id FROM member_agents
+			 WHERE slug = $2 AND admin_status = $1::agent_admin_status
 			 LIMIT 1`,
-			[teamId, AgentAdminStatus.Enabled, COACH_AGENT_SLUG],
+			[AgentAdminStatus.Enabled, COACH_AGENT_SLUG],
 		);
 		if (coach.rows.length > 0) {
 			trackBackground(
