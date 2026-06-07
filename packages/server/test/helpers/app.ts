@@ -191,6 +191,12 @@ export async function projectSlugFor(db: PGlite, teamId: string): Promise<string
 	return (await res.json()).data.slug;
 }
 
+/** Same as {@link projectSlugFor} but keyed by the team's slug. */
+export async function projectSlugForTeamSlug(db: PGlite, teamSlug: string): Promise<string> {
+	const t = await db.query<{ id: string }>('SELECT id FROM teams WHERE slug = $1', [teamSlug]);
+	return projectSlugFor(db, t.rows[0].id);
+}
+
 export interface CreatedTestProject {
 	id: string;
 	slug: string;
