@@ -11,6 +11,8 @@ export interface AuditEntry {
 	team_name: string | null;
 	team_slug: string | null;
 	project_slug: string | null;
+	/** Slug of the team's internal project, the anchor for team-level settings pages. */
+	team_internal_slug: string | null;
 	action: string;
 	entity_type: string;
 	entity_id: string | null;

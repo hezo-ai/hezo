@@ -13,6 +13,7 @@ function entry(overrides: Partial<AuditEntry>): AuditEntry {
 		team_name: 'Acme',
 		team_slug: 'acme',
 		project_slug: 'ops',
+		team_internal_slug: 'internal-acme',
 		action: 'created',
 		entity_type: 'task',
 		entity_id: 'e1',
@@ -96,7 +97,24 @@ test('links a task row to the task route with a lowercased identifier', () => {
 	});
 });
 
-test('links a project-scoped secret to project credentials, instance to the instance page', () => {
+test('anchors a team-scoped secret on the team internal project, instance on the instance page', () => {
+	// A team secret carries no project of its own; it anchors on the team's
+	// internal project so the team-settings page resolves.
+	const teamScoped = auditEntryLink(
+		entry({
+			entity_type: 'secret',
+			entity_identifier: null,
+			project_id: null,
+			project_slug: null,
+			team_internal_slug: 'internal-acme',
+		}),
+	);
+	expect(teamScoped).toEqual({
+		to: '/projects/$projectId/team-settings/credentials',
+		params: { projectId: 'internal-acme' },
+	});
+
+	// A project-scoped secret prefers its own project as the anchor.
 	const projectScoped = auditEntryLink(
 		entry({ entity_type: 'secret', entity_identifier: null, project_slug: 'ops' }),
 	);
@@ -105,8 +123,17 @@ test('links a project-scoped secret to project credentials, instance to the inst
 		params: { projectId: 'ops' },
 	});
 
+	// An instance secret has neither project nor team anchor.
 	const instanceScoped = auditEntryLink(
-		entry({ entity_type: 'secret', entity_identifier: null, project_id: null, project_slug: null }),
+		entry({
+			entity_type: 'secret',
+			entity_identifier: null,
+			team_id: null,
+			team_slug: null,
+			project_id: null,
+			project_slug: null,
+			team_internal_slug: null,
+		}),
 	);
 	expect(instanceScoped).toEqual({ to: '/settings/credentials' });
 });

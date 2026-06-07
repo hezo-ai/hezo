@@ -100,7 +100,7 @@ describe('audit observer (end-to-end)', () => {
 	});
 
 	it('resolves navigational slugs + the task identifier for task rows', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -121,7 +121,7 @@ describe('audit observer (end-to-end)', () => {
 	});
 
 	it('records a status change with the field and resolves the task identifier', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -132,7 +132,7 @@ describe('audit observer (end-to-end)', () => {
 		});
 		const created = (await res.json()).data as { id: string; identifier: string };
 
-		const patch = await app.request(`/api/teams/${teamId}/tasks/${created.id}`, {
+		const patch = await app.request(`/api/projects/${projectSlug}/tasks/${created.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'in_progress' }),

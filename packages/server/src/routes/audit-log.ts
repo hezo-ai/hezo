@@ -77,6 +77,7 @@ async function queryAuditLog(
 		        t.name AS team_name,
 		        t.slug AS team_slug,
 		        p.slug AS project_slug,
+		        ip.slug AS team_internal_slug,
 		        tk.identifier AS entity_identifier,
 		        tr.identifier AS ref_task_identifier
 		 FROM audit_log al
@@ -84,6 +85,7 @@ async function queryAuditLog(
 		 LEFT JOIN member_agents ma ON ma.id = al.actor_member_id
 		 LEFT JOIN teams t ON t.id = al.team_id
 		 LEFT JOIN projects p ON p.id = al.project_id
+		 LEFT JOIN projects ip ON ip.team_id = al.team_id AND ip.is_internal = true
 		 LEFT JOIN tasks tk ON al.entity_type = 'task' AND tk.id = al.entity_id
 		 LEFT JOIN tasks tr ON tr.id = NULLIF(al.details->>'task_id', '')::uuid
 		 ${where}
