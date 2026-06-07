@@ -8,7 +8,7 @@ import { authHeader, createTestApp } from './helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let teamId: string;
+let projectSlug: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -28,16 +28,17 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Search Test Co', template_id: typeId }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamSlug = (await teamRes.json()).data.slug;
+	projectSlug = `internal-${teamSlug}`;
 });
 
 afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('GET /teams/:teamId/search', () => {
+describe('GET /projects/:projectId/search', () => {
 	it('returns 400 when q parameter is missing', async () => {
-		const res = await app.request(`/api/teams/${teamId}/search`, {
+		const res = await app.request(`/api/projects/${projectSlug}/search`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(400);
@@ -46,21 +47,21 @@ describe('GET /teams/:teamId/search', () => {
 	});
 
 	it('returns 400 when q parameter is empty', async () => {
-		const res = await app.request(`/api/teams/${teamId}/search?q=`, {
+		const res = await app.request(`/api/projects/${projectSlug}/search?q=`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(400);
 	});
 
 	it('returns 400 when q parameter is whitespace', async () => {
-		const res = await app.request(`/api/teams/${teamId}/search?q=%20%20`, {
+		const res = await app.request(`/api/projects/${projectSlug}/search?q=%20%20`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(400);
 	});
 
 	it('returns empty results with loading message when model is not ready', async () => {
-		const res = await app.request(`/api/teams/${teamId}/search?q=test+query`, {
+		const res = await app.request(`/api/projects/${projectSlug}/search?q=test+query`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -70,7 +71,7 @@ describe('GET /teams/:teamId/search', () => {
 	});
 
 	it('passes scope parameter through', async () => {
-		const res = await app.request(`/api/teams/${teamId}/search?q=hello&scope=kb_docs`, {
+		const res = await app.request(`/api/projects/${projectSlug}/search?q=hello&scope=kb_docs`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -79,18 +80,17 @@ describe('GET /teams/:teamId/search', () => {
 	});
 
 	it('passes limit parameter through', async () => {
-		const res = await app.request(`/api/teams/${teamId}/search?q=hello&limit=5`, {
+		const res = await app.request(`/api/projects/${projectSlug}/search?q=hello&limit=5`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 	});
 
-	it('handles non-existent team gracefully', async () => {
-		const res = await app.request('/api/teams/00000000-0000-0000-0000-000000000099/search?q=test', {
-			headers: authHeader(token),
-		});
-		// Superuser has access to any team — the search just returns empty
-		// because the embedding model isn't loaded
-		expect(res.status).toBe(200);
+	it('returns 404 for a non-existent project', async () => {
+		const res = await app.request(
+			'/api/projects/00000000-0000-0000-0000-000000000099/search?q=test',
+			{ headers: authHeader(token) },
+		);
+		expect(res.status).toBe(404);
 	});
 });

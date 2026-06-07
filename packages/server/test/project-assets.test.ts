@@ -59,7 +59,7 @@ async function uploadProjectAsset(
 	const copy = new Uint8Array(bytes.byteLength);
 	copy.set(bytes);
 	fd.set('file', new File([copy.buffer], filename, { type: mime }));
-	return app.request(`/api/teams/${teamId}/projects/${projectId}/assets`, {
+	return app.request(`/api/projects/${projectId}/assets`, {
 		method: 'POST',
 		headers: { ...authHeader(token) },
 		body: fd,
@@ -71,7 +71,7 @@ async function uploadTaskAsset(filename: string, mime: string, bytes: Uint8Array
 	const copy = new Uint8Array(bytes.byteLength);
 	copy.set(bytes);
 	fd.set('file', new File([copy.buffer], filename, { type: mime }));
-	const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/assets`, {
+	const res = await app.request(`/api/projects/${projectId}/tasks/${taskId}/assets`, {
 		method: 'POST',
 		headers: { ...authHeader(token) },
 		body: fd,
@@ -97,14 +97,14 @@ beforeAll(async () => {
 	const projectRes = await createTestProject(db, teamId, { name: 'Main', description: 'Assets.' });
 	projectId = (await projectRes.json()).data.id;
 
-	const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentRes = await app.request(`/api/projects/${projectId}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Asset Bot' }),
 	});
 	agentId = (await agentRes.json()).data.id;
 
-	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+	const taskRes = await app.request(`/api/projects/${projectId}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ project_id: projectId, title: 'Has Assets', assignee_id: agentId }),
@@ -278,7 +278,7 @@ describe('agent-authored assets (write_project_asset)', () => {
 describe('project asset listing', () => {
 	it('lists all project assets including comment attachments with usage counts', async () => {
 		const attachmentId = await uploadTaskAsset('from-comment.png', 'image/png', buildPng(9));
-		await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+		await app.request(`/api/projects/${projectId}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -288,7 +288,7 @@ describe('project asset listing', () => {
 			}),
 		});
 
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/assets`, {
+		const res = await app.request(`/api/projects/${projectId}/assets`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -318,7 +318,7 @@ describe('project asset deletion', () => {
 			teamId,
 			taskId,
 		);
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/assets/${id}`, {
+		const res = await app.request(`/api/projects/${projectId}/assets/${id}`, {
 			method: 'DELETE',
 			headers: authHeader(agentToken),
 		});
@@ -332,7 +332,7 @@ describe('project asset deletion', () => {
 		const onDisk = join(dataDir, 'teams', teamId, 'projects', projectId, 'assets', id);
 		expect(existsSync(onDisk)).toBe(true);
 
-		const res = await app.request(`/api/teams/${teamId}/projects/${projectId}/assets/${id}`, {
+		const res = await app.request(`/api/projects/${projectId}/assets/${id}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
@@ -350,7 +350,7 @@ describe('asset mention resolution', () => {
 			await db.query<{ slug: string }>('SELECT slug FROM projects WHERE id = $1', [projectId])
 		).rows[0].slug;
 
-		const res = await app.request(`/api/teams/${teamId}/docs/resolve`, {
+		const res = await app.request(`/api/projects/${projectId}/docs/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assets: [{ project_slug: projectSlug, filename: 'resolve-me.png' }] }),

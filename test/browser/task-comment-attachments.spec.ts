@@ -23,21 +23,21 @@ test.describe('Task Comment Attachments', () => {
 	) {
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projRes = await createProjectAndClearPlanning(page, team.id, token, {
+		const projRes = await createProjectAndClearPlanning(page, team.slug, token, {
 			name: uniqueName('Attachments Project'),
 			description: 'Test project.',
 		});
-		const project = ((await projRes.json()) as { data: { id: string } }).data;
+		const project = ((await projRes.json()) as { data: { id: string; slug: string } }).data;
 
-		const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
+		const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 			headers,
 			data: { project_id: project.id, title: 'Attach me', assignee_id: agents[0].id },
 		});
 		const task = ((await taskRes.json()) as { data: { id: string } }).data;
 
-		await waitForAgentIdle(page, team.id, agents[0].id, token);
+		await waitForAgentIdle(page, team.slug, agents[0].id, token);
 
-		return { team, token, task, headers };
+		return { team, token, task, project, headers };
 	}
 
 	async function dropFile(
@@ -70,14 +70,14 @@ test.describe('Task Comment Attachments', () => {
 		context,
 		sharedWorkspace,
 	}) => {
-		const { team, task } = await createTask(
+		const { task, project } = await createTask(
 			page,
 			sharedWorkspace.team,
 			sharedWorkspace.token,
 			sharedWorkspace.agents,
 		);
 
-		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
+		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
 		await expect(page.getByPlaceholder('Add a comment...')).toBeVisible({ timeout: 20000 });
 
@@ -111,14 +111,14 @@ test.describe('Task Comment Attachments', () => {
 		sharedPage: page,
 		sharedWorkspace,
 	}) => {
-		const { team, task } = await createTask(
+		const { task, project } = await createTask(
 			page,
 			sharedWorkspace.team,
 			sharedWorkspace.token,
 			sharedWorkspace.agents,
 		);
 
-		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
+		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
 		await expect(page.getByPlaceholder('Add a comment...')).toBeVisible({ timeout: 20000 });
 
@@ -165,14 +165,14 @@ test.describe('Task Comment Attachments', () => {
 		sharedPage: page,
 		sharedWorkspace,
 	}) => {
-		const { team, task } = await createTask(
+		const { task, project } = await createTask(
 			page,
 			sharedWorkspace.team,
 			sharedWorkspace.token,
 			sharedWorkspace.agents,
 		);
 
-		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
+		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
 		await expect(page.getByPlaceholder('Add a comment...')).toBeVisible({ timeout: 20000 });
 
@@ -199,14 +199,14 @@ test.describe('Task Comment Attachments', () => {
 		sharedPage: page,
 		sharedWorkspace,
 	}) => {
-		const { team, task } = await createTask(
+		const { task, project } = await createTask(
 			page,
 			sharedWorkspace.team,
 			sharedWorkspace.token,
 			sharedWorkspace.agents,
 		);
 
-		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
+		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
 		await expect(page.getByPlaceholder('Add a comment...')).toBeVisible({ timeout: 20000 });
 
@@ -228,14 +228,14 @@ test.describe('Task Comment Attachments', () => {
 		sharedWorkspace,
 	}) => {
 		await page.setViewportSize({ width: 375, height: 812 });
-		const { team, task } = await createTask(
+		const { task, project } = await createTask(
 			page,
 			sharedWorkspace.team,
 			sharedWorkspace.token,
 			sharedWorkspace.agents,
 		);
 
-		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
+		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
 		await expect(page.getByPlaceholder('Add a comment...')).toBeVisible({ timeout: 20000 });
 

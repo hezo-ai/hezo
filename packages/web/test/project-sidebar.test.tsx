@@ -22,8 +22,8 @@ test('the project menu leads with Inbox, lists the project pages, and has a Team
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks',
-		params: { teamId: ws.team.slug, projectId: projectSlug },
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
 	});
 
 	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
@@ -58,15 +58,17 @@ test("the project menu persists across the project's team pages and disappears o
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId',
-		params: { teamId: ws.team.slug, projectId: projectSlug },
+		to: '/projects/$projectId',
+		params: { projectId: projectSlug },
 	});
 	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
 
-	// The Team header links to the agents page (team-scoped, no projectId in route).
+	// The Team header links to the agents page, nested under the project.
 	await user.click(within(getNav(container)).getByRole('link', { name: 'Team' }));
-	await waitFor(() => expect(router.state.location.pathname).toBe(`/teams/${ws.team.slug}/agents`));
-	// The menu stays — the active project is remembered.
+	await waitFor(() =>
+		expect(router.state.location.pathname).toBe(`/projects/${projectSlug}/agents`),
+	);
+	// The menu stays — the route still carries the project.
 	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
 
 	// Going to the cross-team home drops the menu (full-width content).

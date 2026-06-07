@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
-import { AgentAdminStatus, CAPTAIN_AGENT_SLUG, INTERNAL_PROJECT_SLUG } from '@hezo/shared';
+import { AgentAdminStatus, CAPTAIN_AGENT_SLUG } from '@hezo/shared';
 import { generateMasterKey, MasterKeyManager } from '../../src/crypto/master-key';
 import { loadAgentRoles } from '../../src/db/agent-roles';
 import { seedBuiltins } from '../../src/db/seed';
@@ -148,8 +148,8 @@ export async function mintAgentToken(
 		}
 		if (!projectId) {
 			const fallback = await db.query<{ id: string }>(
-				`SELECT id FROM projects WHERE team_id = $1 AND slug = $2 LIMIT 1`,
-				[teamId, INTERNAL_PROJECT_SLUG],
+				`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true LIMIT 1`,
+				[teamId],
 			);
 			projectId = fallback.rows[0]?.id;
 			if (crossProject === undefined) crossProject = true;
@@ -225,10 +225,7 @@ export async function createTestProject(
 	}
 
 	const slug = await uniqueSlug(toSlug(input.name), async (s) => {
-		const r = await db.query('SELECT 1 FROM projects WHERE team_id = $1 AND slug = $2', [
-			teamId,
-			s,
-		]);
+		const r = await db.query('SELECT 1 FROM projects WHERE slug = $1', [s]);
 		return r.rows.length > 0;
 	});
 

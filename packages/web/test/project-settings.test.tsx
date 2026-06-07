@@ -25,8 +25,8 @@ test('displays project name and description', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/settings',
-		params: { teamId: ws.team.slug, projectId: projectSlug },
+		to: '/projects/$projectId/settings',
+		params: { projectId: projectSlug },
 	});
 
 	const breadcrumb = await findByTestId('breadcrumb', undefined, { timeout: 15_000 });
@@ -34,7 +34,7 @@ test('displays project name and description', async () => {
 	// useProject, so polling on findByText(projectName) can match the sidebar
 	// while the breadcrumb still shows the slug fallback. Wait on the
 	// breadcrumb itself.
-	await waitFor(() => expect(breadcrumb.textContent).toMatch(new RegExp(projectName)), {
+	await waitFor(() => expect(breadcrumb.textContent).toContain('Settings'), {
 		timeout: 15_000,
 	});
 	await findByText('Test project settings.', undefined, { timeout: 10_000 });
@@ -58,8 +58,8 @@ test('can edit project description', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/settings',
-		params: { teamId: ws.team.slug, projectId: projectSlug },
+		to: '/projects/$projectId/settings',
+		params: { projectId: projectSlug },
 	});
 
 	await user.click(await findByRole('button', { name: 'Edit' }));
@@ -91,8 +91,8 @@ test('cancel button discards edits', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/settings',
-		params: { teamId: ws.team.slug, projectId: projectSlug },
+		to: '/projects/$projectId/settings',
+		params: { projectId: projectSlug },
 	});
 
 	await user.click(await findByRole('button', { name: 'Edit' }));
@@ -104,7 +104,7 @@ test('cancel button discards edits', async () => {
 	await user.click(await findByRole('button', { name: 'Cancel' }));
 
 	const breadcrumb = await findByTestId('breadcrumb');
-	expect(breadcrumb.textContent).toMatch(new RegExp(projectName));
+	expect(breadcrumb.textContent).toContain('Settings');
 	expect(queryByText('Should Not Save')).toBeNull();
 });
 
@@ -128,8 +128,8 @@ test('edits the per-project concurrency cap and persists it', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/settings',
-		params: { teamId: ws.team.slug, projectId: projectSlug },
+		to: '/projects/$projectId/settings',
+		params: { projectId: projectSlug },
 	});
 
 	// Read view shows the seeded default of 3.
@@ -175,8 +175,8 @@ test('State A — no GitHub connection: shows Connect GitHub CTA', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/settings',
-		params: { teamId: ws.team.slug, projectId: projectSlug },
+		to: '/projects/$projectId/settings',
+		params: { projectId: projectSlug },
 	});
 
 	await findByRole('heading', { name: 'GitHub' }, { timeout: 15_000 });

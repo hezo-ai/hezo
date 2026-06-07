@@ -65,13 +65,12 @@ interface TaskRow {
 }
 
 interface TaskListProps {
-	teamId: string;
-	projectId?: string;
+	projectId: string;
 }
 
-export function TaskList({ teamId, projectId }: TaskListProps) {
+export function TaskList({ projectId }: TaskListProps) {
 	const navigate = useNavigate();
-	const { data: agents } = useAgents(teamId);
+	const { data: agents } = useAgents(projectId);
 	const [expanded, setExpanded] = useState(false);
 	const [search, setSearch] = useState('');
 	const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -106,7 +105,7 @@ export function TaskList({ teamId, projectId }: TaskListProps) {
 		sort: `${sortField}:${sortDir}`,
 		page: String(page),
 	};
-	const { data: result, isLoading } = useTasks(teamId, activeFilters);
+	const { data: result, isLoading } = useTasks(projectId, activeFilters);
 	const tasks = result?.data ?? [];
 
 	const ownerLabelById = useMemo(() => {
@@ -265,7 +264,7 @@ export function TaskList({ teamId, projectId }: TaskListProps) {
 
 	return (
 		<div>
-			<AdminApprovalsBanner teamId={teamId} />
+			<AdminApprovalsBanner projectId={projectId} />
 			<div className="mb-4 flex flex-col sm:flex-row items-stretch sm:items-start gap-2">
 				<div
 					data-testid="task-filter-bar"
@@ -404,22 +403,13 @@ export function TaskList({ teamId, projectId }: TaskListProps) {
 					data={tasks}
 					rowKey={(row) => row.id}
 					onRowClick={(row) => {
-						const rowProjectSlug = row.project_slug ?? projectId;
-						if (rowProjectSlug) {
-							navigate({
-								to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
-								params: {
-									teamId,
-									projectId: rowProjectSlug,
-									taskId: row.identifier.toLowerCase(),
-								},
-							});
-						} else {
-							navigate({
-								to: '/teams/$teamId/tasks/$taskId',
-								params: { teamId, taskId: row.identifier.toLowerCase() },
-							});
-						}
+						navigate({
+							to: '/projects/$projectId/tasks/$taskId',
+							params: {
+								projectId: row.project_slug ?? projectId,
+								taskId: row.identifier.toLowerCase(),
+							},
+						});
 					}}
 				/>
 			)}
@@ -450,12 +440,7 @@ export function TaskList({ teamId, projectId }: TaskListProps) {
 				</div>
 			)}
 
-			<CreateTaskDialog
-				teamId={teamId}
-				open={createOpen}
-				onOpenChange={setCreateOpen}
-				defaultProjectId={projectId}
-			/>
+			<CreateTaskDialog projectId={projectId} open={createOpen} onOpenChange={setCreateOpen} />
 		</div>
 	);
 }

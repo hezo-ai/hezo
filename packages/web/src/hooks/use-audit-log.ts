@@ -24,11 +24,12 @@ export interface AuditEntry {
 
 type AuditFilters = { entity_type?: string; action?: string };
 
-export function useAuditLog(teamId: string, filters?: AuditFilters) {
+// Team-scoped view (the project's backing team), addressed via the project.
+export function useAuditLog(projectId: string, filters?: AuditFilters) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'audit-log', filters],
+		queryKey: ['projects', projectId, 'team-audit-log', filters],
 		queryFn: () =>
-			api.get<AuditEntry[]>(`/api/teams/${teamId}/audit-log`, {
+			api.get<AuditEntry[]>(`/api/projects/${projectId}/team-audit-log`, {
 				entity_type: filters?.entity_type,
 				action: filters?.action,
 				per_page: '50',
@@ -37,11 +38,11 @@ export function useAuditLog(teamId: string, filters?: AuditFilters) {
 }
 
 // Per-project view — a filtered slice of the instance log scoped to one project.
-export function useProjectAuditLog(teamId: string, projectId: string, filters?: AuditFilters) {
+export function useProjectAuditLog(projectId: string, filters?: AuditFilters) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'projects', projectId, 'audit-log', filters],
+		queryKey: ['projects', projectId, 'audit-log', filters],
 		queryFn: () =>
-			api.get<AuditEntry[]>(`/api/teams/${teamId}/projects/${projectId}/audit-log`, {
+			api.get<AuditEntry[]>(`/api/projects/${projectId}/audit-log`, {
 				entity_type: filters?.entity_type,
 				action: filters?.action,
 				per_page: '50',

@@ -11,7 +11,9 @@ let db: PGlite;
 let adminToken: string;
 let agentToken: string;
 let teamId: string;
+let internalSlug: string;
 let projectId: string;
+let projectSlug: string;
 let taskId: string;
 let agentId: string;
 let masterKeyManager: MasterKeyManager;
@@ -34,20 +36,24 @@ beforeAll(async () => {
 			template_id: teamTemplateId,
 		}),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	internalSlug = `internal-${teamData.slug}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Agent API Project',
 		description: 'Test project.',
 	});
-	projectId = (await projectRes.json()).data.id;
+	const projectData = (await projectRes.json()).data;
+	projectId = projectData.id;
+	projectSlug = projectData.slug;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 		headers: authHeader(adminToken),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
 
-	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -214,7 +220,7 @@ describe('agent API - heartbeat edge cases', () => {
 	});
 
 	it('returns empty tasks when agent is disabled', async () => {
-		await app.request(`/api/teams/${teamId}/agents/${agentId}/disable`, {
+		await app.request(`/api/projects/${internalSlug}/agents/${agentId}/disable`, {
 			method: 'POST',
 			headers: authHeader(adminToken),
 		});
@@ -229,7 +235,7 @@ describe('agent API - heartbeat edge cases', () => {
 		expect(body.data.agent.admin_status).toBe('disabled');
 		expect(body.data.assigned_tasks).toEqual([]);
 
-		await app.request(`/api/teams/${teamId}/agents/${agentId}/enable`, {
+		await app.request(`/api/projects/${internalSlug}/agents/${agentId}/enable`, {
 			method: 'POST',
 			headers: authHeader(adminToken),
 		});
@@ -254,15 +260,22 @@ describe('agent API - self system prompt (removed)', () => {
 
 describe('agent API - budget enforcement', () => {
 	it('returns 402 and pauses agent when tool call exceeds budget', async () => {
-		const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const agentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Budget Test Agent', monthly_budget_cents: 10 }),
 		});
 		const cheapAgent = (await agentRes.json()).data;
-		const { token: cheapToken } = await mintAgentToken(db, masterKeyManager, cheapAgent.id, teamId);
+		const { token: cheapToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			cheapAgent.id,
+			teamId,
+			taskId,
+			{ projectId },
+		);
 
-		await app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
+		await app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: cheapAgent.id }),
@@ -292,7 +305,7 @@ describe('agent API - budget enforcement', () => {
 		);
 		expect(agentCheck.rows[0].runtime_status).toBe('paused');
 
-		await app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
+		await app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: agentId }),

@@ -8,7 +8,7 @@ import {
 import { TaskStatusBadge } from '../task-status-badge';
 
 interface DependenciesSectionProps {
-	teamId: string;
+	projectId: string;
 	taskId: string;
 }
 
@@ -17,9 +17,9 @@ interface DependenciesSectionProps {
  * button to clear the link. Hidden when the task has no dependencies; the
  * route file unconditionally renders this component and lets it decide.
  */
-export function DependenciesSection({ teamId, taskId }: DependenciesSectionProps) {
-	const { data: deps } = useTaskDependencies(teamId, taskId);
-	const removeDep = useRemoveDependency(teamId, taskId);
+export function DependenciesSection({ projectId, taskId }: DependenciesSectionProps) {
+	const { data: deps } = useTaskDependencies(projectId, taskId);
+	const removeDep = useRemoveDependency(projectId, taskId);
 
 	if (!deps || deps.length === 0) return null;
 
@@ -32,9 +32,8 @@ export function DependenciesSection({ teamId, taskId }: DependenciesSectionProps
 				{deps.map((d: TaskDependency) => (
 					<div key={d.id} className="flex items-center gap-2">
 						<Link
-							to="/teams/$teamId/projects/$projectId/tasks/$taskId"
+							to="/projects/$projectId/tasks/$taskId"
 							params={{
-								teamId,
 								projectId: d.blocked_by_project_slug,
 								taskId: d.blocked_by_identifier.toLowerCase(),
 							}}

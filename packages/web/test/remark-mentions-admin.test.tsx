@@ -4,18 +4,18 @@ import { expect, test } from 'vitest';
 import { remarkMentions } from '../src/lib/remark-mentions';
 
 interface RenderOptions {
-	teamId?: string;
+	projectId?: string;
 }
 
 function renderMarkdown(text: string, opts: RenderOptions = {}) {
-	const teamId = opts.teamId ?? 'demo-team';
+	const projectId = opts.projectId ?? 'demo-project';
 	return render(
 		<Markdown
 			remarkPlugins={[
 				[
 					remarkMentions,
 					{
-						teamId,
+						projectId,
 						agents: new Map(),
 						tasks: new Map(),
 						kbDocs: new Map(),
@@ -33,7 +33,7 @@ test('@admin renders as a link to the team inbox with data-mention-admin="true"'
 	const { container } = renderMarkdown('@admin please confirm.');
 	const link = container.querySelector('a[data-mention-admin="true"]');
 	expect(link).not.toBeNull();
-	expect(link?.getAttribute('href')).toBe('/teams/demo-team/inbox');
+	expect(link?.getAttribute('href')).toBe('/projects/demo-project/inbox');
 	expect(link?.textContent).toBe('@admin');
 	expect(link?.getAttribute('data-mention-passive')).toBeNull();
 });

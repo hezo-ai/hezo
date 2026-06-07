@@ -4,7 +4,7 @@ import { seedComment, seedProject, seedTask, seedWorkspace } from './helpers/see
 
 async function setupTaskRoute() {
 	const seeded = {
-		teamSlug: '',
+		projectSlug: '',
 		taskId: '',
 		identifier: '',
 		agentSlug: '',
@@ -16,8 +16,8 @@ async function setupTaskRoute() {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Comment Project' });
 			const task = await seedTask(ws, project, { title: 'Comment Test Task' });
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.identifier = task.identifier;
 			seeded.agentSlug = ws.agents[0].slug;
 			seeded.agentId = ws.agents[0].id;
@@ -25,8 +25,8 @@ async function setupTaskRoute() {
 		},
 	});
 	await helpers.router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 	return { ...helpers, seeded };
 }
@@ -54,7 +54,7 @@ test('submits comment via Cmd/Ctrl+Enter shortcut', async () => {
 });
 
 test('comments persist after page reload', async () => {
-	const seeded = { teamSlug: '', taskId: '' };
+	const seeded = { projectSlug: '', taskId: '' };
 	const { findByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -62,19 +62,19 @@ test('comments persist after page reload', async () => {
 			const project = await seedProject(ws, { name: 'Persist Project' });
 			const task = await seedTask(ws, project, { title: 'Persist Task' });
 			await seedComment(ws, task, 'API-created comment');
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 		},
 	});
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 	await findByText('API-created comment');
 });
 
 test('comment count updates after multiple comments', async () => {
-	const seeded = { teamSlug: '', taskId: '' };
+	const seeded = { projectSlug: '', taskId: '' };
 	const { findByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -83,20 +83,20 @@ test('comment count updates after multiple comments', async () => {
 			const task = await seedTask(ws, project, { title: 'Count Task' });
 			await seedComment(ws, task, 'First comment');
 			await seedComment(ws, task, 'Second comment');
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 		},
 	});
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 	await findByText('First comment');
 	await findByText('Second comment');
 });
 
 test('renders markdown in comment bodies and shows author label', async () => {
-	const seeded = { teamSlug: '', taskId: '' };
+	const seeded = { projectSlug: '', taskId: '' };
 	const { findAllByTestId, container, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -106,13 +106,13 @@ test('renders markdown in comment bodies and shows author label', async () => {
 			const markdownBody =
 				'## Execution Plan\n\nFirst paragraph of the plan.\n\nSecond paragraph after a blank line.\n\n**Objective:** Ship it.\n\n- one\n- two';
 			await seedComment(ws, task, markdownBody);
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 		},
 	});
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const bodies = await findAllByTestId('text-comment-body');
@@ -129,7 +129,7 @@ test('renders markdown in comment bodies and shows author label', async () => {
 
 test('effort dropdown marks the agent default and omits it from the submit body', async () => {
 	const seeded = {
-		teamSlug: '',
+		projectSlug: '',
 		taskId: '',
 		agentSlug: '',
 		agentId: '',
@@ -142,16 +142,16 @@ test('effort dropdown marks the agent default and omits it from the submit body'
 				const ws = await seedWorkspace();
 				const project = await seedProject(ws, { name: 'Effort Project' });
 				const task = await seedTask(ws, project, { title: 'Effort Task' });
-				seeded.teamSlug = ws.team.slug;
-				seeded.taskId = task.id;
+				seeded.projectSlug = project.slug;
+				seeded.taskId = task.identifier.toLowerCase();
 				seeded.agentSlug = ws.agents[0].slug;
 				seeded.agentId = ws.agents[0].id;
 				seeded.teamId = ws.team.id;
 			},
 		});
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const select = (await findByLabelText(
@@ -198,7 +198,7 @@ test('effort dropdown marks the agent default and omits it from the submit body'
 });
 
 test('agent mentions render as bold anchor-colored links to agent page', async () => {
-	const seeded = { teamSlug: '', taskId: '', agentSlug: '' };
+	const seeded = { projectSlug: '', taskId: '', agentSlug: '' };
 	const { container, findByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -208,14 +208,14 @@ test('agent mentions render as bold anchor-colored links to agent page', async (
 			const agentSlug = ws.agents[0].slug;
 			const body = `Hey @${agentSlug} please check this. Also @not-a-real-agent-xyz stays plain.`;
 			await seedComment(ws, task, body);
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 			seeded.agentSlug = agentSlug;
 		},
 	});
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	await findByText(/please check this/);
@@ -226,7 +226,7 @@ test('agent mentions render as bold anchor-colored links to agent page', async (
 	expect(mentionLink).toBeTruthy();
 	expect(mentionLink!.textContent).toBe(`@${seeded.agentSlug}`);
 	expect(mentionLink!.getAttribute('href')).toBe(
-		`/teams/${seeded.teamSlug}/agents/${seeded.agentSlug}`,
+		`/projects/${seeded.projectSlug}/agents/${seeded.agentSlug}`,
 	);
 	expect(mentionLink!.className).toMatch(/font-semibold/);
 	expect(mentionLink!.className).toMatch(/text-accent-blue-text/);
@@ -237,20 +237,20 @@ test('agent mentions render as bold anchor-colored links to agent page', async (
 });
 
 test('wake-assignee checkbox is default-checked and reflected in submit body', async () => {
-	const seeded = { teamSlug: '', taskId: '' };
+	const seeded = { projectSlug: '', taskId: '' };
 	const { findByPlaceholderText, findByText, getByRole, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Wake Project' });
 			const task = await seedTask(ws, project, { title: 'Wake Task' });
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 		},
 	});
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const composer = (await findByPlaceholderText('Add a comment...')) as HTMLTextAreaElement;
@@ -297,7 +297,7 @@ test('wake-assignee checkbox is default-checked and reflected in submit body', a
 });
 
 test('replying to an agent hides the wake-assignee toggle and omits the flag', async () => {
-	const seeded = { teamSlug: '', taskId: '' };
+	const seeded = { projectSlug: '', taskId: '' };
 	const { findByPlaceholderText, findByTestId, findByText, getByRole, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -306,13 +306,13 @@ test('replying to an agent hides the wake-assignee toggle and omits the flag', a
 			const task = await seedTask(ws, project, { title: 'Agent Reply Task' });
 			// Author the parent as the assignee agent so author_type is 'agent'.
 			await seedComment(ws, task, 'Agent original comment', { authorMemberId: ws.agents[0].id });
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 		},
 	});
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	await findByText('Agent original comment');
@@ -365,7 +365,7 @@ test('replying to an agent hides the wake-assignee toggle and omits the flag', a
 });
 
 test('replying to a human keeps the wake-assignee toggle and sends the flag', async () => {
-	const seeded = { teamSlug: '', taskId: '' };
+	const seeded = { projectSlug: '', taskId: '' };
 	const { findByPlaceholderText, findByTestId, findByText, getByRole, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -374,13 +374,13 @@ test('replying to a human keeps the wake-assignee toggle and sends the flag', as
 			const task = await seedTask(ws, project, { title: 'Human Reply Task' });
 			// seedComment posts via the board token => author_type 'user'.
 			await seedComment(ws, task, 'Human original comment');
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 		},
 	});
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	await findByText('Human original comment');
@@ -428,7 +428,7 @@ test('replying to a human keeps the wake-assignee toggle and sends the flag', as
 });
 
 test('reply icon focuses composer, shows in-response-to, and persists parent link', async () => {
-	const seeded = { teamSlug: '', taskId: '', parentId: '' };
+	const seeded = { projectSlug: '', taskId: '', parentId: '' };
 	const { findByPlaceholderText, findByTestId, queryByTestId, findByText, getByRole, router } =
 		await renderApp({
 			initialPath: '/',
@@ -437,14 +437,14 @@ test('reply icon focuses composer, shows in-response-to, and persists parent lin
 				const project = await seedProject(ws, { name: 'Reply Project' });
 				const task = await seedTask(ws, project, { title: 'Reply Task' });
 				const parent = await seedComment(ws, task, 'Original comment to reply to');
-				seeded.teamSlug = ws.team.slug;
-				seeded.taskId = task.id;
+				seeded.projectSlug = project.slug;
+				seeded.taskId = task.identifier.toLowerCase();
 				seeded.parentId = parent.id;
 			},
 		});
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	await findByText('Original comment to reply to');

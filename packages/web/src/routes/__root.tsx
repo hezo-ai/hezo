@@ -9,7 +9,7 @@ import { ProjectSidebar } from '../components/project-sidebar';
 import { MasterKeyStep, SetupGate } from '../components/setup/setup-wizard';
 import { UpdateBanner } from '../components/update-banner';
 import { SocketProvider } from '../contexts/socket-context';
-import { ActiveProjectProvider, useActiveProject } from '../hooks/use-active-project';
+import { useActiveProject } from '../hooks/use-active-project';
 import { useStatus } from '../hooks/use-status';
 import { useTeams } from '../hooks/use-teams';
 import { useShellWebSockets } from '../hooks/use-websocket';
@@ -92,11 +92,7 @@ function ShellLayout() {
 	// without the header, project rail, or mobile drawer.
 	if (bare) return <Outlet />;
 
-	return (
-		<ActiveProjectProvider>
-			<ShellChrome />
-		</ActiveProjectProvider>
-	);
+	return <ShellChrome />;
 }
 
 function ShellChrome() {

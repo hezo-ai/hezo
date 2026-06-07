@@ -32,7 +32,7 @@ export function CreateTeamDialog({ open, onOpenChange }: CreateTeamDialogProps) 
 		onOpenChange(false);
 		setName('');
 		setTemplateId(null);
-		navigate({ to: '/teams/$teamId/tasks', params: { teamId: team.slug } });
+		navigate({ to: '/projects/$projectId/tasks', params: { projectId: team.slug } });
 	}
 
 	return (

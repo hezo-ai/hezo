@@ -13,8 +13,9 @@
 		"baseUrl": ".",
 		"paths": {
 			"@hezo/shared": ["../shared/src/index.ts"],
-			"@hezo/shared/*": ["../shared/src/*"]
+			"@hezo/shared/*": ["../shared/src/*"],
+			"@hezo/web/*": ["src/*"]
 		}
 	},
-	"include": ["src", "vite-env.d.ts"]
+	"include": ["src", "test", "vite-env.d.ts"]
 }

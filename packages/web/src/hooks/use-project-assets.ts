@@ -11,17 +11,17 @@ import { queryClient } from '../lib/query-client';
 
 export type { ProjectAsset };
 
-export function useProjectAssets(teamId: string, projectId: string) {
+export function useProjectAssets(projectId: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'projects', projectId, 'assets'],
-		queryFn: () => api.get<ProjectAsset[]>(`/api/teams/${teamId}/projects/${projectId}/assets`),
+		queryKey: ['projects', projectId, 'assets'],
+		queryFn: () => api.get<ProjectAsset[]>(`/api/projects/${projectId}/assets`),
 		enabled: !!projectId,
 	});
 }
 
 // Uploads and deletes are invalidate + refetch (not optimistic): the server
 // assigns the final, collision-suffixed filename and the list view re-flows.
-export function useUploadProjectAsset(teamId: string, projectId: string) {
+export function useUploadProjectAsset(projectId: string) {
 	return useMutation<CommentAttachment, ApiError, File>({
 		mutationFn: async (file) => {
 			if (!isAllowedAttachmentExtension(file.name)) {
@@ -43,26 +43,22 @@ export function useUploadProjectAsset(teamId: string, projectId: string) {
 			}
 			const fd = new FormData();
 			fd.set('file', file, file.name);
-			return api.postForm<CommentAttachment>(
-				`/api/teams/${teamId}/projects/${projectId}/assets`,
-				fd,
-			);
+			return api.postForm<CommentAttachment>(`/api/projects/${projectId}/assets`, fd);
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'projects', projectId, 'assets'],
+				queryKey: ['projects', projectId, 'assets'],
 			});
 		},
 	});
 }
 
-export function useDeleteProjectAsset(teamId: string, projectId: string) {
+export function useDeleteProjectAsset(projectId: string) {
 	return useMutation<unknown, ApiError, string>({
-		mutationFn: (assetId) =>
-			api.delete(`/api/teams/${teamId}/projects/${projectId}/assets/${assetId}`),
+		mutationFn: (assetId) => api.delete(`/api/projects/${projectId}/assets/${assetId}`),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'projects', projectId, 'assets'],
+				queryKey: ['projects', projectId, 'assets'],
 			});
 		},
 	});

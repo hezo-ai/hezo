@@ -5,7 +5,7 @@ import { type SeededWorkspace, seedProject, seedTask, seedWorkspace } from './he
 
 async function patchStatus(ws: SeededWorkspace, taskId: string, status: string) {
 	const { apiBase } = getTestContext();
-	const res = await apiBase(`/api/teams/${ws.team.id}/tasks/${taskId}`, {
+	const res = await apiBase(`/api/projects/${ws.internalSlug}/tasks/${taskId}`, {
 		method: 'PATCH',
 		headers: ws.headers,
 		body: JSON.stringify({ status }),
@@ -68,8 +68,8 @@ test('default view shows non-terminal tasks with status badges and a collapsed f
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks',
-		params: { teamId: teamSlug, projectId: projectSlug },
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
 	});
 
 	await findByText('Review Task', undefined, { timeout: 10_000 });
@@ -106,8 +106,8 @@ test('multi-select status filter narrows results and reset restores defaults', a
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks',
-		params: { teamId: teamSlug, projectId: projectSlug },
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
 	});
 
 	await findByText('Review Task', undefined, { timeout: 10_000 });
@@ -182,8 +182,8 @@ test('filter bar collapses/expands and applies search + sort', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks',
-		params: { teamId: teamSlug, projectId: projectSlug },
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
 	});
 
 	await findByText('Payment flow', undefined, { timeout: 10_000 });
@@ -250,8 +250,8 @@ test('running dot is hidden by default and shown when a heartbeat run is active'
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks',
-		params: { teamId: teamSlug, projectId: projectSlug },
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
 	});
 
 	await findByText('Quiet Task', undefined, { timeout: 10_000 });
@@ -285,8 +285,8 @@ test('mention notice shows only on tasks with an unread admin mention for the vi
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks',
-		params: { teamId: teamSlug, projectId: projectSlug },
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
 	});
 
 	await findByText('Mentioned task', undefined, { timeout: 10_000 });
@@ -326,8 +326,8 @@ test('tasks with active runs pin to the top regardless of sort order', async () 
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks',
-		params: { teamId: teamSlug, projectId: projectSlug },
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
 	});
 
 	await findByText('Old running ticket', undefined, { timeout: 10_000 });

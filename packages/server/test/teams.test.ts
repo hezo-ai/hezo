@@ -46,12 +46,12 @@ describe('teams CRUD', () => {
 		expect(body.data.agent_count).toBe(11);
 
 		const internalPrefix = await db.query<{ task_prefix: string }>(
-			"SELECT task_prefix FROM projects WHERE team_id = $1 AND slug = 'internal'",
+			'SELECT task_prefix FROM projects WHERE team_id = $1 AND is_internal = true',
 			[body.data.id],
 		);
 		expect(internalPrefix.rows[0].task_prefix).toBe('IN');
 
-		const skillsRes = await app.request(`/api/teams/${body.data.id}/skills`, {
+		const skillsRes = await app.request(`/api/projects/internal-${body.data.slug}/skills`, {
 			headers: authHeader(token),
 		});
 		const skillsBody = await skillsRes.json();
@@ -72,7 +72,7 @@ describe('teams CRUD', () => {
 		const body = await res.json();
 		expect(body.data.agent_count).toBe(2);
 
-		const agentsRes = await app.request(`/api/teams/${body.data.id}/agents`, {
+		const agentsRes = await app.request(`/api/projects/internal-${body.data.slug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
@@ -88,7 +88,9 @@ describe('teams CRUD', () => {
 		});
 		const created = (await createRes.json()).data;
 
-		const getRes = await app.request(`/api/teams/${created.id}`, { headers: authHeader(token) });
+		const getRes = await app.request(`/api/projects/internal-${created.slug}/team`, {
+			headers: authHeader(token),
+		});
 		expect((await getRes.json()).data.primary_template_name).toBe('Startup');
 
 		const listRes = await app.request('/api/teams', { headers: authHeader(token) });
@@ -102,7 +104,9 @@ describe('teams CRUD', () => {
 			body: JSON.stringify({ name: 'Typeless Team Co' }),
 		});
 		const blank = (await blankRes.json()).data;
-		const blankGet = await app.request(`/api/teams/${blank.id}`, { headers: authHeader(token) });
+		const blankGet = await app.request(`/api/projects/internal-${blank.slug}/team`, {
+			headers: authHeader(token),
+		});
 		expect((await blankGet.json()).data.primary_template_name).toBeNull();
 	});
 
@@ -122,14 +126,14 @@ describe('teams CRUD', () => {
 			headers: authHeader(token),
 		});
 		const teams = (await listRes.json()).data;
-		const id = teams[0].id;
+		const team = teams[0];
 
-		const res = await app.request(`/api/teams/${id}`, {
+		const res = await app.request(`/api/projects/internal-${team.slug}/team`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.id).toBe(id);
+		expect(body.data.id).toBe(team.id);
 	});
 
 	it('updates a team', async () => {
@@ -138,7 +142,7 @@ describe('teams CRUD', () => {
 		});
 		const team = (await listRes.json()).data[0];
 
-		const res = await app.request(`/api/teams/${team.id}`, {
+		const res = await app.request(`/api/projects/internal-${team.slug}/team`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ description: 'Updated description' }),
@@ -157,13 +161,13 @@ describe('teams CRUD', () => {
 		});
 		const created = (await createRes.json()).data;
 
-		const res = await app.request(`/api/teams/${created.id}`, {
+		const res = await app.request(`/api/projects/internal-${created.slug}/team`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 
-		const getRes = await app.request(`/api/teams/${created.id}`, {
+		const getRes = await app.request(`/api/projects/internal-${created.slug}/team`, {
 			headers: authHeader(token),
 		});
 		expect(getRes.status).toBe(404);
@@ -201,7 +205,7 @@ describe('teams CRUD', () => {
 		await new Promise((r) => setTimeout(r, 200));
 
 		const internalProject = await db.query<{ container_status: string | null }>(
-			"SELECT container_status FROM projects WHERE team_id = $1 AND slug = 'internal'",
+			'SELECT container_status FROM projects WHERE team_id = $1 AND is_internal = true',
 			[teamId],
 		);
 		expect(internalProject.rows.length).toBe(1);
@@ -217,7 +221,7 @@ describe('teams CRUD', () => {
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		const internalPrefix = await db.query<{ task_prefix: string }>(
-			"SELECT task_prefix FROM projects WHERE team_id = $1 AND slug = 'internal'",
+			'SELECT task_prefix FROM projects WHERE team_id = $1 AND is_internal = true',
 			[body.data.id],
 		);
 		expect(internalPrefix.rows[0].task_prefix).toBe('IN');
@@ -261,7 +265,7 @@ describe('template-based team creation', () => {
 		const body = await res.json();
 		expect(body.data.agent_count).toBe(3);
 
-		const agentsRes = await app.request(`/api/teams/${body.data.id}/agents`, {
+		const agentsRes = await app.request(`/api/projects/internal-${body.data.slug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
@@ -281,7 +285,7 @@ describe('template-based team creation', () => {
 		const body = await res.json();
 		expect(body.data.agent_count).toBe(2);
 
-		const agentsRes = await app.request(`/api/teams/${body.data.id}/agents`, {
+		const agentsRes = await app.request(`/api/projects/internal-${body.data.slug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
@@ -308,7 +312,7 @@ describe('template-based team creation', () => {
 		const body = await res.json();
 		expect(body.data.agent_count).toBe(2);
 
-		const agentsRes = await app.request(`/api/teams/${body.data.id}/agents`, {
+		const agentsRes = await app.request(`/api/projects/internal-${body.data.slug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
@@ -330,7 +334,7 @@ describe('template-based team creation', () => {
 		const body = await res.json();
 		expect(body.data.agent_count).toBe(11);
 
-		const agentsRes = await app.request(`/api/teams/${body.data.id}/agents`, {
+		const agentsRes = await app.request(`/api/projects/internal-${body.data.slug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
@@ -372,7 +376,7 @@ describe('template-based team creation', () => {
 		const body = await res.json();
 		expect(body.data.agent_count).toBe(3);
 
-		const agentsRes = await app.request(`/api/teams/${body.data.id}/agents`, {
+		const agentsRes = await app.request(`/api/projects/internal-${body.data.slug}/agents`, {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
@@ -428,9 +432,9 @@ describe('template-based team creation', () => {
 			}),
 		});
 		expect(res.status).toBe(201);
-		const teamId = (await res.json()).data.id;
+		const teamSlug = (await res.json()).data.slug;
 
-		const skillsRes = await app.request(`/api/teams/${teamId}/skills`, {
+		const skillsRes = await app.request(`/api/projects/internal-${teamSlug}/skills`, {
 			headers: authHeader(token),
 		});
 		const skillsBody = await skillsRes.json();
@@ -449,7 +453,7 @@ describe('slug-based access', () => {
 		const teams = (await listRes.json()).data;
 		const team = teams.find((c: any) => c.slug === 'notegenius-ai');
 
-		const res = await app.request(`/api/teams/${team.slug}`, {
+		const res = await app.request(`/api/projects/internal-${team.slug}/team`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -459,7 +463,7 @@ describe('slug-based access', () => {
 	});
 
 	it('returns 404 for non-existent slug', async () => {
-		const res = await app.request('/api/teams/nonexistent-slug', {
+		const res = await app.request('/api/projects/nonexistent-slug/team', {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(404);
@@ -472,7 +476,7 @@ describe('slug-based access', () => {
 		const teams = (await listRes.json()).data;
 		const team = teams.find((c: any) => c.slug === 'notegenius-ai');
 
-		const agentsRes = await app.request(`/api/teams/${team.slug}/agents`, {
+		const agentsRes = await app.request(`/api/projects/internal-${team.slug}/agents`, {
 			headers: authHeader(token),
 		});
 		expect(agentsRes.status).toBe(200);

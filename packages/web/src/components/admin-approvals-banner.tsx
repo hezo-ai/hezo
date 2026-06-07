@@ -20,9 +20,9 @@ function buildMessage(approvalCount: number, mentionCount: number): string {
  * Renders nothing when the backlog is empty — which also hides it for non-admin users, whose
  * approval/mention queries 403 and leave the counts at zero.
  */
-export function AdminApprovalsBanner({ teamId }: { teamId: string }) {
-	const { data: approvals } = useApprovals(teamId);
-	const { data: mentions } = useAdminMentions(teamId);
+export function AdminApprovalsBanner({ projectId }: { projectId: string }) {
+	const { data: approvals } = useApprovals(projectId);
+	const { data: mentions } = useAdminMentions(projectId);
 
 	const approvalCount = approvals?.length ?? 0;
 	const mentionCount = mentions?.filter((m) => m.read_at === null).length ?? 0;
@@ -32,8 +32,8 @@ export function AdminApprovalsBanner({ teamId }: { teamId: string }) {
 
 	return (
 		<Link
-			to="/teams/$teamId/inbox"
-			params={{ teamId }}
+			to="/projects/$projectId/inbox"
+			params={{ projectId }}
 			data-testid="admin-approvals-banner"
 			className="mb-4 flex items-center gap-2 rounded-md bg-primary/10 px-4 py-2 text-[13px] font-medium text-primary hover:bg-primary/15 transition-colors"
 		>

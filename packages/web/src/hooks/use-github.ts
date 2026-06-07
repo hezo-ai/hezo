@@ -16,20 +16,20 @@ export interface GithubRepo {
 	default_branch: string;
 }
 
-export function useGithubOrgs(teamId: string, enabled = true) {
+export function useGithubOrgs(projectId: string, enabled = true) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'github', 'orgs'],
-		queryFn: () => api.get<GithubOrg[]>(`/api/teams/${teamId}/github/orgs`),
+		queryKey: ['projects', projectId, 'github', 'orgs'],
+		queryFn: () => api.get<GithubOrg[]>(`/api/projects/${projectId}/github/orgs`),
 		enabled,
 	});
 }
 
-export function useGithubRepos(teamId: string, owner: string | null, query: string) {
+export function useGithubRepos(projectId: string, owner: string | null, query: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'github', 'repos', owner, query],
+		queryKey: ['projects', projectId, 'github', 'repos', owner, query],
 		queryFn: () =>
 			api.get<GithubRepo[]>(
-				`/api/teams/${teamId}/github/repos?owner=${encodeURIComponent(owner ?? '')}&query=${encodeURIComponent(query)}`,
+				`/api/projects/${projectId}/github/repos?owner=${encodeURIComponent(owner ?? '')}&query=${encodeURIComponent(query)}`,
 			),
 		enabled: !!owner,
 	});

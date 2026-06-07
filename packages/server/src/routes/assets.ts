@@ -112,7 +112,7 @@ async function readUploadFile(c: Context<Env>): Promise<File | null> {
 }
 
 assetsRoutes.post(
-	'/teams/:teamId/tasks/:taskId/assets',
+	'/projects/:projectId/tasks/:taskId/assets',
 	bodyLimit({
 		maxSize: ATTACHMENT_MAX_BYTES,
 		onError: (c) => err(c, 'TOO_LARGE', 'Attachment exceeds 10 MB', 400),
@@ -148,7 +148,7 @@ assetsRoutes.post(
 // Anything that isn't a markdown project doc lives here.
 
 assetsRoutes.post(
-	'/teams/:teamId/projects/:projectId/assets',
+	'/projects/:projectId/assets',
 	bodyLimit({
 		maxSize: ATTACHMENT_MAX_BYTES,
 		onError: (c) => err(c, 'TOO_LARGE', 'Attachment exceeds 10 MB', 400),
@@ -166,7 +166,7 @@ assetsRoutes.post(
 	},
 );
 
-assetsRoutes.get('/teams/:teamId/projects/:projectId/assets', async (c) => {
+assetsRoutes.get('/projects/:projectId/assets', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
@@ -197,7 +197,7 @@ assetsRoutes.get('/teams/:teamId/projects/:projectId/assets', async (c) => {
 	return ok(c, assets);
 });
 
-assetsRoutes.delete('/teams/:teamId/projects/:projectId/assets/:assetId', async (c) => {
+assetsRoutes.delete('/projects/:projectId/assets/:assetId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const auth = c.get('auth');
 	if (auth.type === AuthType.Agent) {

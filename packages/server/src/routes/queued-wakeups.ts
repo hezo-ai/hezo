@@ -17,7 +17,7 @@ const log = logger.child('routes');
 
 export const queuedWakeupsRoutes = new Hono<Env>();
 
-queuedWakeupsRoutes.get('/teams/:teamId/tasks/:taskId/queued-wakeups', async (c) => {
+queuedWakeupsRoutes.get('/projects/:projectId/tasks/:taskId/queued-wakeups', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
@@ -90,7 +90,7 @@ queuedWakeupsRoutes.get('/teams/:teamId/tasks/:taskId/queued-wakeups', async (c)
 });
 
 queuedWakeupsRoutes.post(
-	'/teams/:teamId/tasks/:taskId/queued-wakeups/:wakeupId/cancel',
+	'/projects/:projectId/tasks/:taskId/queued-wakeups/:wakeupId/cancel',
 	async (c) => {
 		const teamId = c.get('teamId') as string;
 		const db = c.get('db');
@@ -158,7 +158,7 @@ queuedWakeupsRoutes.post(
 );
 
 queuedWakeupsRoutes.post(
-	'/teams/:teamId/tasks/:taskId/queued-wakeups/:wakeupId/run-now',
+	'/projects/:projectId/tasks/:taskId/queued-wakeups/:wakeupId/run-now',
 	async (c) => {
 		const teamId = c.get('teamId') as string;
 		const db = c.get('db');

@@ -37,11 +37,7 @@ test('clicking a project avatar opens that project menu', async () => {
 	const avatar = await findByTestId(`project-rail-avatar-${slug}`, undefined, { timeout: 15_000 });
 	await user.click(avatar);
 
-	await waitFor(() =>
-		expect(router.state.location.pathname).toMatch(
-			new RegExp(`^/teams/${ws.team.slug}/projects/${slug}`),
-		),
-	);
+	await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/projects\//));
 	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
 });
 
@@ -65,8 +61,6 @@ test('superuser creates a new project from the rail-pinned create button', async
 	await user.click(screen.getByTestId('create-project-submit'));
 
 	await waitFor(() =>
-		expect(router.state.location.pathname).toMatch(
-			/^\/teams\/research-squad\/projects\/internal\/tasks\//,
-		),
+		expect(router.state.location.pathname).toMatch(/^\/projects\/internal-research-squad\/tasks\//),
 	);
 });

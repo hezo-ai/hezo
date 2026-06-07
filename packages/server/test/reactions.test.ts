@@ -113,9 +113,11 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Reactions Co', template_id: typeId }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	const teamSlug = teamData.slug;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/internal-${teamSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -146,7 +148,7 @@ describe('REST reactions endpoints', () => {
 		const taskId = await insertTask(captainId, 'Reaction test');
 		const commentId = await insertComment(taskId, productLeadId);
 
-		const url = `/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/${ReactionKind.Ack}`;
+		const url = `/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/reactions/${ReactionKind.Ack}`;
 		const first = await app.request(url, { method: 'PUT', headers: authHeader(token) });
 		expect(first.status).toBe(200);
 		const firstBody = (await first.json()).data as {
@@ -185,7 +187,7 @@ describe('REST reactions endpoints', () => {
 		expect((arc.result as { error?: string }).error).toBeUndefined();
 
 		// Admin user reacts via REST
-		const putUrl = `/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/${ReactionKind.Ack}`;
+		const putUrl = `/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/reactions/${ReactionKind.Ack}`;
 		await app.request(putUrl, { method: 'PUT', headers: authHeader(token) });
 		expect(await reactionsRowCount(commentId)).toBe(2);
 
@@ -205,7 +207,7 @@ describe('REST reactions endpoints', () => {
 		const commentId = await insertComment(taskId, productLeadId);
 
 		const res = await app.request(
-			`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/nope`,
+			`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/reactions/nope`,
 			{ method: 'PUT', headers: authHeader(token) },
 		);
 		expect(res.status).toBe(400);
@@ -217,7 +219,7 @@ describe('REST reactions endpoints', () => {
 		const commentInA = await insertComment(taskA, productLeadId);
 
 		const res = await app.request(
-			`/api/teams/${teamId}/tasks/${taskB}/comments/${commentInA}/reactions/${ReactionKind.Ack}`,
+			`/api/projects/${projectId}/tasks/${taskB}/comments/${commentInA}/reactions/${ReactionKind.Ack}`,
 			{ method: 'PUT', headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
@@ -229,11 +231,11 @@ describe('REST reactions endpoints', () => {
 
 		const before = await wakeupCount();
 		await app.request(
-			`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/${ReactionKind.Ack}`,
+			`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/reactions/${ReactionKind.Ack}`,
 			{ method: 'PUT', headers: authHeader(token) },
 		);
 		await app.request(
-			`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/${ReactionKind.Ack}`,
+			`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/reactions/${ReactionKind.Ack}`,
 			{ method: 'DELETE', headers: authHeader(token) },
 		);
 		expect(await wakeupCount()).toBe(before);
@@ -257,7 +259,7 @@ describe('REST reactions endpoints', () => {
 			kind: ReactionKind.Ack,
 		});
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+		const res = await app.request(`/api/projects/${projectId}/tasks/${taskId}/comments`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -286,8 +288,10 @@ describe('REST reactions endpoints', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Other Co', template_id: typeId }),
 		});
-		const otherTeamId = (await otherTeam.json()).data.id;
-		const otherAgents = await app.request(`/api/teams/${otherTeamId}/agents`, {
+		const otherTeamData = (await otherTeam.json()).data;
+		const otherTeamId = otherTeamData.id;
+		const otherTeamSlug = otherTeamData.slug;
+		const otherAgents = await app.request(`/api/projects/internal-${otherTeamSlug}/agents`, {
 			headers: authHeader(token),
 		});
 		const otherCeo = (await otherAgents.json()).data.find(
@@ -312,7 +316,7 @@ describe('REST reactions endpoints', () => {
 		);
 
 		const res = await app.request(
-			`/api/teams/${teamId}/tasks/${taskId}/comments/${commentId}/reactions/${ReactionKind.Ack}`,
+			`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/reactions/${ReactionKind.Ack}`,
 			{ method: 'PUT', headers: authHeader(otherToken) },
 		);
 		expect(res.status).toBe(403);

@@ -10,6 +10,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let teamId: string;
+let projectSlug: string;
 let agentId: string;
 
 beforeAll(async () => {
@@ -33,9 +34,11 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const team = (await teamRes.json()).data;
+	teamId = team.id;
+	projectSlug = `internal-${team.slug}`;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
@@ -56,7 +59,7 @@ describe('GET /teams/:teamId/approvals enriched fields', () => {
 		const project = (await projRes.json()).data;
 
 		// Create an approval with member_id and project_id in the payload
-		const createRes = await app.request(`/api/teams/${teamId}/approvals`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -72,7 +75,7 @@ describe('GET /teams/:teamId/approvals enriched fields', () => {
 		});
 		expect(createRes.status).toBe(201);
 
-		const listRes = await app.request(`/api/teams/${teamId}/approvals`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
 			headers: authHeader(token),
 		});
 		expect(listRes.status).toBe(200);
@@ -90,7 +93,7 @@ describe('GET /teams/:teamId/approvals enriched fields', () => {
 	});
 
 	it('returns null for resolved fields when payload UUIDs are absent', async () => {
-		const createRes = await app.request(`/api/teams/${teamId}/approvals`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -106,7 +109,7 @@ describe('GET /teams/:teamId/approvals enriched fields', () => {
 		});
 		expect(createRes.status).toBe(201);
 
-		const listRes = await app.request(`/api/teams/${teamId}/approvals`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
 			headers: authHeader(token),
 		});
 		const rows = (await listRes.json()).data as any[];
@@ -126,7 +129,7 @@ describe('GET /teams/:teamId/approvals enriched fields', () => {
 
 describe('POST /teams/:teamId/approvals validation', () => {
 	it('returns 400 when type is missing', async () => {
-		const res = await app.request(`/api/teams/${teamId}/approvals`, {
+		const res = await app.request(`/api/projects/${projectSlug}/approvals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -138,7 +141,7 @@ describe('POST /teams/:teamId/approvals validation', () => {
 	});
 
 	it('returns 400 when payload is missing', async () => {
-		const res = await app.request(`/api/teams/${teamId}/approvals`, {
+		const res = await app.request(`/api/projects/${projectSlug}/approvals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -156,7 +159,7 @@ describe('GET /teams/:teamId/approvals status filtering', () => {
 
 	beforeAll(async () => {
 		// Create a pending approval (leave it pending)
-		const pendingRes = await app.request(`/api/teams/${teamId}/approvals`, {
+		const pendingRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -168,7 +171,7 @@ describe('GET /teams/:teamId/approvals status filtering', () => {
 		pendingApprovalId = (await pendingRes.json()).data.id;
 
 		// Create another approval and approve it
-		const toApproveRes = await app.request(`/api/teams/${teamId}/approvals`, {
+		const toApproveRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -187,7 +190,7 @@ describe('GET /teams/:teamId/approvals status filtering', () => {
 	});
 
 	it('returns only pending approvals by default (no status query param)', async () => {
-		const res = await app.request(`/api/teams/${teamId}/approvals`, {
+		const res = await app.request(`/api/projects/${projectSlug}/approvals`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -198,7 +201,7 @@ describe('GET /teams/:teamId/approvals status filtering', () => {
 	});
 
 	it('returns only approved approvals when ?status=approved', async () => {
-		const res = await app.request(`/api/teams/${teamId}/approvals?status=approved`, {
+		const res = await app.request(`/api/projects/${projectSlug}/approvals?status=approved`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -209,9 +212,12 @@ describe('GET /teams/:teamId/approvals status filtering', () => {
 	});
 
 	it('returns both pending and approved when ?status=pending,approved', async () => {
-		const res = await app.request(`/api/teams/${teamId}/approvals?status=pending,approved`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/${projectSlug}/approvals?status=pending,approved`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		expect(res.status).toBe(200);
 		const rows = (await res.json()).data as Array<{ id: string; status: string }>;
 		const ids = rows.map((r) => r.id);
@@ -222,7 +228,7 @@ describe('GET /teams/:teamId/approvals status filtering', () => {
 
 describe('Deny flow', () => {
 	it('sets status to denied and does NOT apply side effects', async () => {
-		const createRes = await app.request(`/api/teams/${teamId}/approvals`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -267,7 +273,7 @@ describe('POST /approvals/:approvalId/resolve edge cases', () => {
 	});
 
 	it('returns 400 when status is an invalid value', async () => {
-		const createRes = await app.request(`/api/teams/${teamId}/approvals`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

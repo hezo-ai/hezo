@@ -6,7 +6,7 @@ import { Textarea } from './ui/textarea';
 type TextareaProps = React.ComponentProps<typeof Textarea>;
 
 interface MentionTextareaProps extends TextareaProps {
-	teamId?: string;
+	projectId?: string;
 	projectSlug?: string;
 	value: string;
 	onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
@@ -16,7 +16,7 @@ const TOKEN_RE = /@([a-z0-9][\w-]*)?$/i;
 
 export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaProps>(
 	function MentionTextarea(
-		{ teamId, projectSlug, value, onChange, onKeyDown, onBlur, ...rest },
+		{ projectId, projectSlug, value, onChange, onKeyDown, onBlur, ...rest },
 		forwardedRef,
 	) {
 		const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -40,8 +40,8 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
 			return () => clearTimeout(id);
 		}, [query, open]);
 
-		const searchEnabled = Boolean(teamId) && open;
-		const { data, isFetching } = useMentionSearch(teamId ?? '', debouncedQuery, {
+		const searchEnabled = Boolean(projectId) && open;
+		const { data, isFetching } = useMentionSearch(projectId ?? '', debouncedQuery, {
 			projectSlug,
 			enabled: searchEnabled,
 		});
@@ -190,7 +190,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
 					onKeyDown={handleKeyDown}
 					onBlur={handleBlur}
 				/>
-				{open && teamId && (
+				{open && projectId && (
 					<MentionPicker
 						query={query}
 						results={results}

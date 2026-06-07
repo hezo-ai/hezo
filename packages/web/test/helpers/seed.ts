@@ -2,6 +2,7 @@
 // the helpers in test/e2e/helpers.ts but reusable across component tests so
 // each spec doesn't redefine the team-with-project-and-task ritual.
 
+import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
 import { getTestContext } from './render';
 
 type Auth = {
@@ -15,6 +16,8 @@ function authHeaders(token: string): Auth {
 
 export interface SeededWorkspace {
 	team: { id: string; slug: string };
+	/** The team's internal project slug — the project handle for team-wide ops. */
+	internalSlug: string;
 	agents: Array<{ id: string; slug: string; title: string }>;
 	token: string;
 	headers: Auth;
@@ -41,15 +44,16 @@ export async function seedWorkspace(): Promise<SeededWorkspace> {
 		body: JSON.stringify({ name: 'Demo Team', template_id: startup.id }),
 	});
 	const team = ((await teamRes.json()) as { data: { id: string; slug: string } }).data;
+	const internalSlug = `${INTERNAL_PROJECT_SLUG}-${team.slug}`;
 
-	const agentsRes = await apiBase(`/api/teams/${team.id}/agents`, { headers });
+	const agentsRes = await apiBase(`/api/projects/${internalSlug}/agents`, { headers });
 	const agents = (
 		(await agentsRes.json()) as {
 			data: Array<{ id: string; slug: string; title: string }>;
 		}
 	).data;
 
-	return { team, agents, token, headers };
+	return { team, internalSlug, agents, token, headers };
 }
 
 export interface SeededProject {
@@ -68,7 +72,7 @@ export async function seedProject(
 	input: { name: string; description?: string },
 ): Promise<SeededProject> {
 	const { apiBase } = getTestContext();
-	const intakeRes = await apiBase(`/api/teams/${workspace.team.id}/projects`, {
+	const intakeRes = await apiBase(`/api/projects/${workspace.internalSlug}/projects`, {
 		method: 'POST',
 		headers: workspace.headers,
 		body: JSON.stringify({ description: 'Seeded for component test.', ...input }),
@@ -80,12 +84,12 @@ export async function seedProject(
 		body: JSON.stringify({ status: 'approved' }),
 	});
 
-	const projectsRes = await apiBase(`/api/teams/${workspace.team.id}/projects`, {
-		headers: workspace.headers,
-	});
+	const projectsRes = await apiBase('/api/projects', { headers: workspace.headers });
 	const project = (
-		(await projectsRes.json()) as { data: Array<{ id: string; slug: string; name: string }> }
-	).data.find((p) => p.name === input.name);
+		(await projectsRes.json()) as {
+			data: Array<{ id: string; slug: string; name: string; team_id: string }>;
+		}
+	).data.find((p) => p.name === input.name && p.team_id === workspace.team.id);
 	if (!project) throw new Error(`seedProject: '${input.name}' not found after approval`);
 	return project;
 }
@@ -103,7 +107,7 @@ export async function seedTask(
 ): Promise<SeededTask> {
 	const { apiBase } = getTestContext();
 	const assigneeId = input.assignee_id ?? workspace.agents[0].id;
-	const res = await apiBase(`/api/teams/${workspace.team.id}/tasks`, {
+	const res = await apiBase(`/api/projects/${project.slug}/tasks`, {
 		method: 'POST',
 		headers: workspace.headers,
 		body: JSON.stringify({
@@ -133,8 +137,13 @@ export async function seedAsset(
 	const { apiBase } = getTestContext();
 	const bytes = input.bytes ?? new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]);
 	const fd = new FormData();
-	fd.set('file', new File([bytes], input.filename, { type: input.contentType ?? 'image/png' }));
-	const res = await apiBase(`/api/teams/${workspace.team.id}/projects/${project.id}/assets`, {
+	fd.set(
+		'file',
+		new File([bytes as BlobPart], input.filename, {
+			type: input.contentType ?? 'image/png',
+		}),
+	);
+	const res = await apiBase(`/api/projects/${project.slug}/assets`, {
 		method: 'POST',
 		// No Content-Type header: let fetch set the multipart boundary.
 		headers: { Authorization: workspace.headers.Authorization },
@@ -161,7 +170,7 @@ export async function seedComment(
 		);
 		return { id: inserted.rows[0].id };
 	}
-	const res = await apiBase(`/api/teams/${workspace.team.id}/tasks/${task.id}/comments`, {
+	const res = await apiBase(`/api/projects/${workspace.internalSlug}/tasks/${task.id}/comments`, {
 		method: 'POST',
 		headers: workspace.headers,
 		body: JSON.stringify({ content_type: 'text', content: { text: body } }),

@@ -11,19 +11,19 @@ import { Input } from '../ui/input';
 import { Textarea } from '../ui/textarea';
 
 interface DirectFlowProps {
-	teamId: string;
+	projectId: string;
 	onCancel: () => void;
 	onDone: () => void;
 }
 
-export function DirectFlow({ teamId, onCancel, onDone }: DirectFlowProps) {
+export function DirectFlow({ projectId, onCancel, onDone }: DirectFlowProps) {
 	const { data: templates, isLoading } = useTeamTemplates();
 	const [selected, setSelected] = useState<TeamTemplate | null>(null);
 	const [projectName, setProjectName] = useState('');
 	const [projectDescription, setProjectDescription] = useState('');
 	const [initialPrd, setInitialPrd] = useState('');
 	const [prdFilename, setPrdFilename] = useState<string | null>(null);
-	const directOnboarding = useOnboardingDirect(teamId);
+	const directOnboarding = useOnboardingDirect(projectId);
 	const navigate = useNavigate();
 
 	async function handleConfirm(e: React.FormEvent) {
@@ -39,9 +39,8 @@ export function DirectFlow({ teamId, onCancel, onDone }: DirectFlowProps) {
 		setActiveTeamSlug(result.team_slug);
 		onDone();
 		navigate({
-			to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+			to: '/projects/$projectId/tasks/$taskId',
 			params: {
-				teamId: result.team_slug,
 				projectId: result.project_slug,
 				taskId: result.planning_task_identifier.toLowerCase(),
 			},

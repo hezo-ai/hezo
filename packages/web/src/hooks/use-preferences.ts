@@ -10,10 +10,10 @@ export interface Preferences {
 	updated_at: string;
 }
 
-export function usePreferences(teamId: string) {
+export function usePreferences(projectId: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'preferences'],
-		queryFn: () => api.get<Preferences | null>(`/api/teams/${teamId}/preferences`),
+		queryKey: ['projects', projectId, 'preferences'],
+		queryFn: () => api.get<Preferences | null>(`/api/projects/${projectId}/preferences`),
 	});
 }
 
@@ -27,39 +27,43 @@ export interface PreferenceRevision {
 	created_at: string;
 }
 
-export function usePreferenceRevisions(teamId: string) {
+export function usePreferenceRevisions(projectId: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'preferences', 'revisions'],
-		queryFn: () => api.get<PreferenceRevision[]>(`/api/teams/${teamId}/preferences/revisions`),
+		queryKey: ['projects', projectId, 'preferences', 'revisions'],
+		queryFn: () =>
+			api.get<PreferenceRevision[]>(`/api/projects/${projectId}/preferences/revisions`),
 	});
 }
 
-export function useUpdatePreferences(teamId: string) {
+export function useUpdatePreferences(projectId: string) {
 	return useOptimisticMutation<
 		{ content: string; change_summary?: string },
 		Preferences,
 		Preferences | null
 	>({
-		mutationFn: (data) => api.patch<Preferences>(`/api/teams/${teamId}/preferences`, data),
-		queryKey: ['teams', teamId, 'preferences'],
+		mutationFn: (data) => api.patch<Preferences>(`/api/projects/${projectId}/preferences`, data),
+		queryKey: ['projects', projectId, 'preferences'],
 		applyOptimistic: (current, { content }) => (current ? { ...current, content } : current),
 		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : updated),
-		invalidateOnSettled: [['teams', teamId, 'preferences', 'revisions']],
+		invalidateOnSettled: [['projects', projectId, 'preferences', 'revisions']],
 		errorMessage: 'Failed to update preferences',
 	});
 }
 
-export function useRestorePreferenceRevision(teamId: string) {
+export function useRestorePreferenceRevision(projectId: string) {
 	return useMutation({
 		mutationFn: (revisionNumber: number) =>
-			api.post<Preferences>(`/api/teams/${teamId}/preferences/restore`, {
+			api.post<Preferences>(`/api/projects/${projectId}/preferences/restore`, {
 				revision_number: revisionNumber,
 			}),
 		onSuccess: (restored) => {
-			queryClient.setQueryData<Preferences | null>(['teams', teamId, 'preferences'], restored);
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'preferences'] });
+			queryClient.setQueryData<Preferences | null>(
+				['projects', projectId, 'preferences'],
+				restored,
+			);
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'preferences'] });
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'preferences', 'revisions'],
+				queryKey: ['projects', projectId, 'preferences', 'revisions'],
 			});
 		},
 	});

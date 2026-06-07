@@ -8,7 +8,6 @@ import {
 	CAPTAIN_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	DocumentType,
-	INTERNAL_PROJECT_SLUG,
 	isAgentEffort,
 	isReservedAgentSlug,
 	MemberType,
@@ -161,7 +160,7 @@ const HEARTBEAT_RUN_TRIGGER_JOINS = `LEFT JOIN agent_wakeup_requests aw ON aw.id
 		AND hrc.content_type = 'run'
 		AND hrc.content->>'run_id' = hr.id::text`;
 
-agentsRoutes.get('/teams/:teamId/agents', async (c) => {
+agentsRoutes.get('/projects/:projectId/agents', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const adminFilter = c.req.query('admin_status');
@@ -191,7 +190,7 @@ agentsRoutes.get('/teams/:teamId/agents', async (c) => {
 	return ok(c, result.rows);
 });
 
-agentsRoutes.post('/teams/:teamId/agents', async (c) => {
+agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
@@ -308,7 +307,7 @@ agentsRoutes.post('/teams/:teamId/agents', async (c) => {
 	return ok(c, result.rows[0], 201);
 });
 
-agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
+agentsRoutes.post('/projects/:projectId/agents/onboard', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
@@ -364,8 +363,8 @@ agentsRoutes.post('/teams/:teamId/agents/onboard', async (c) => {
 	);
 
 	const opsProject = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true AND slug = $2`,
-		[teamId, INTERNAL_PROJECT_SLUG],
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+		[teamId],
 	);
 
 	const hasCaptain = captainResult.rows.length > 0;
@@ -535,7 +534,7 @@ ${teamRoster}`;
 	return ok(c, { agent: null, task, approval: finalApproval, bootstrap: false }, 201);
 });
 
-agentsRoutes.get('/teams/:teamId/agents/:agentId', async (c) => {
+agentsRoutes.get('/projects/:projectId/agents/:agentId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
@@ -555,7 +554,7 @@ agentsRoutes.get('/teams/:teamId/agents/:agentId', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-agentsRoutes.get('/teams/:teamId/agents/:agentId/system-prompt', async (c) => {
+agentsRoutes.get('/projects/:projectId/agents/:agentId/system-prompt', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
@@ -569,7 +568,7 @@ agentsRoutes.get('/teams/:teamId/agents/:agentId/system-prompt', async (c) => {
 	return ok(c, doc);
 });
 
-agentsRoutes.get('/teams/:teamId/agents/:agentId/system-prompt/preview', async (c) => {
+agentsRoutes.get('/projects/:projectId/agents/:agentId/system-prompt/preview', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
@@ -590,7 +589,7 @@ agentsRoutes.get('/teams/:teamId/agents/:agentId/system-prompt/preview', async (
 	return ok(c, { content: resolved });
 });
 
-agentsRoutes.post('/teams/:teamId/agents/system-prompts/batch', async (c) => {
+agentsRoutes.post('/projects/:projectId/agents/system-prompts/batch', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
@@ -652,7 +651,7 @@ agentsRoutes.post('/teams/:teamId/agents/system-prompts/batch', async (c) => {
 	return ok(c, results);
 });
 
-agentsRoutes.get('/teams/:teamId/agents/:agentId/system-prompt/revisions', async (c) => {
+agentsRoutes.get('/projects/:projectId/agents/:agentId/system-prompt/revisions', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
@@ -669,7 +668,7 @@ agentsRoutes.get('/teams/:teamId/agents/:agentId/system-prompt/revisions', async
 	return ok(c, revisions);
 });
 
-agentsRoutes.post('/teams/:teamId/agents/:agentId/system-prompt/restore', async (c) => {
+agentsRoutes.post('/projects/:projectId/agents/:agentId/system-prompt/restore', async (c) => {
 	const teamId = c.get('teamId') as string;
 
 	const auth = c.get('auth');
@@ -704,7 +703,7 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/system-prompt/restore', async 
 	return ok(c, restored);
 });
 
-agentsRoutes.patch('/teams/:teamId/agents/:agentId', async (c) => {
+agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
@@ -887,7 +886,7 @@ agentsRoutes.patch('/teams/:teamId/agents/:agentId', async (c) => {
 	return ok(c, updatedRow);
 });
 
-agentsRoutes.post('/teams/:teamId/agents/:agentId/disable', async (c) => {
+agentsRoutes.post('/projects/:projectId/agents/:agentId/disable', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
@@ -935,7 +934,7 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/disable', async (c) => {
 	return ok(c, { admin_status: AgentAdminStatus.Disabled });
 });
 
-agentsRoutes.post('/teams/:teamId/agents/:agentId/enable', async (c) => {
+agentsRoutes.post('/projects/:projectId/agents/:agentId/enable', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
@@ -977,7 +976,7 @@ agentsRoutes.post('/teams/:teamId/agents/:agentId/enable', async (c) => {
 	return ok(c, { admin_status: AgentAdminStatus.Enabled });
 });
 
-agentsRoutes.get('/teams/:teamId/org-chart', async (c) => {
+agentsRoutes.get('/projects/:projectId/org-chart', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
@@ -1013,7 +1012,7 @@ agentsRoutes.get('/teams/:teamId/org-chart', async (c) => {
 	return ok(c, { admin: { children: roots } });
 });
 
-agentsRoutes.get('/teams/:teamId/agents/:agentId/heartbeat-runs', async (c) => {
+agentsRoutes.get('/projects/:projectId/agents/:agentId/heartbeat-runs', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
@@ -1034,7 +1033,7 @@ agentsRoutes.get('/teams/:teamId/agents/:agentId/heartbeat-runs', async (c) => {
 	return ok(c, result.rows);
 });
 
-agentsRoutes.get('/teams/:teamId/agents/:agentId/heartbeat-runs/:runId', async (c) => {
+agentsRoutes.get('/projects/:projectId/agents/:agentId/heartbeat-runs/:runId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
@@ -1055,40 +1054,43 @@ agentsRoutes.get('/teams/:teamId/agents/:agentId/heartbeat-runs/:runId', async (
 	return ok(c, result.rows[0]);
 });
 
-agentsRoutes.post('/teams/:teamId/agents/:agentId/heartbeat-runs/:runId/terminate', async (c) => {
-	const teamId = c.get('teamId') as string;
-	const db = c.get('db');
-	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
-	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
-	const runId = c.req.param('runId');
+agentsRoutes.post(
+	'/projects/:projectId/agents/:agentId/heartbeat-runs/:runId/terminate',
+	async (c) => {
+		const teamId = c.get('teamId') as string;
+		const db = c.get('db');
+		const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
+		if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
+		const runId = c.req.param('runId');
 
-	const existing = await db.query<{ status: string }>(
-		'SELECT status FROM heartbeat_runs WHERE id = $1 AND team_id = $2 AND member_id = $3',
-		[runId, teamId, agentId],
-	);
-	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Run not found', 404);
-	const currentStatus = existing.rows[0].status;
-	if (currentStatus !== 'queued' && currentStatus !== 'running') {
-		return err(c, 'CONFLICT', `Run is already ${currentStatus} and cannot be terminated`, 409);
-	}
+		const existing = await db.query<{ status: string }>(
+			'SELECT status FROM heartbeat_runs WHERE id = $1 AND team_id = $2 AND member_id = $3',
+			[runId, teamId, agentId],
+		);
+		if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Run not found', 404);
+		const currentStatus = existing.rows[0].status;
+		if (currentStatus !== 'queued' && currentStatus !== 'running') {
+			return err(c, 'CONFLICT', `Run is already ${currentStatus} and cannot be terminated`, 409);
+		}
 
-	const actorMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
-	const result = await terminateHeartbeatRun(
-		{ db, wsManager: c.get('wsManager'), jobManager: c.get('jobManager') },
-		runId,
-		'Terminated by user',
-		actorMemberId,
-	);
+		const actorMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
+		const result = await terminateHeartbeatRun(
+			{ db, wsManager: c.get('wsManager'), jobManager: c.get('jobManager') },
+			runId,
+			'Terminated by user',
+			actorMemberId,
+		);
 
-	const refreshed = await db.query<Record<string, unknown>>(
-		`SELECT ${HEARTBEAT_RUN_COLUMNS}
+		const refreshed = await db.query<Record<string, unknown>>(
+			`SELECT ${HEARTBEAT_RUN_COLUMNS}
 		 FROM heartbeat_runs hr
 		 LEFT JOIN tasks i ON i.id = hr.task_id
 		 LEFT JOIN projects p ON p.id = i.project_id
 		 ${HEARTBEAT_RUN_TRIGGER_JOINS}
 		 WHERE hr.id = $1 AND hr.member_id = $2`,
-		[runId, agentId],
-	);
-	const row = refreshed.rows[0] ?? {};
-	return ok(c, { ...row, terminated: result.terminated });
-});
+			[runId, agentId],
+		);
+		const row = refreshed.rows[0] ?? {};
+		return ok(c, { ...row, terminated: result.terminated });
+	},
+);

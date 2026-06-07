@@ -22,11 +22,11 @@ export interface OnboardingStatus {
 	primary_project: OnboardingPrimaryProject | null;
 }
 
-export function useOnboarding(teamId: string, enabled = true) {
+export function useOnboarding(projectId: string, enabled = true) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'onboarding'],
-		queryFn: () => api.get<OnboardingStatus>(`/api/teams/${teamId}/onboarding`),
-		enabled: enabled && !!teamId,
+		queryKey: ['projects', projectId, 'onboarding'],
+		queryFn: () => api.get<OnboardingStatus>(`/api/projects/${projectId}/onboarding`),
+		enabled: enabled && !!projectId,
 		staleTime: 10_000,
 	});
 }

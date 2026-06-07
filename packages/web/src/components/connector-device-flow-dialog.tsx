@@ -13,7 +13,7 @@ import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
 interface ConnectorDeviceFlowDialogProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	teamId: string;
+	projectId: string;
 	connectorId: string;
 	/** Provider display name used in the dialog copy (e.g. "GitHub"). */
 	providerLabel: string;
@@ -29,12 +29,12 @@ interface ConnectorDeviceFlowDialogProps {
 export function ConnectorDeviceFlowDialog({
 	open,
 	onOpenChange,
-	teamId,
+	projectId,
 	connectorId,
 	providerLabel,
 	onSuccess,
 }: ConnectorDeviceFlowDialogProps) {
-	const startDeviceFlow = useDeviceStart(teamId);
+	const startDeviceFlow = useDeviceStart(projectId);
 	const [deviceFlow, setDeviceFlow] = useState<DeviceFlowStart | null>(null);
 	const [statusMessage, setStatusMessage] = useState('');
 	const [errorMessage, setErrorMessage] = useState('');
@@ -89,7 +89,7 @@ export function ConnectorDeviceFlowDialog({
 		(async () => {
 			while (!stopRef.current) {
 				try {
-					const result = await pollDeviceFlow(teamId, connectorId, deviceFlow.flow_id);
+					const result = await pollDeviceFlow(projectId, connectorId, deviceFlow.flow_id);
 					if (result.status === 'success') {
 						setStatusMessage(`Connected ${result.connection.provider_account_label}.`);
 						onSuccessRef.current?.(result.connection);
@@ -112,7 +112,7 @@ export function ConnectorDeviceFlowDialog({
 		return () => {
 			stopRef.current = true;
 		};
-	}, [deviceFlow, teamId, connectorId]);
+	}, [deviceFlow, projectId, connectorId]);
 
 	const handleCopyCode = async () => {
 		if (!deviceFlow) return;

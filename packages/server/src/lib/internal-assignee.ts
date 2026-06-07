@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { CAPTAIN_AGENT_SLUG, INTERNAL_PROJECT_SLUG } from '@hezo/shared';
+import { CAPTAIN_AGENT_SLUG } from '@hezo/shared';
 
 export type InternalAssigneeCheck = { ok: true } | { ok: false; message: string };
 
@@ -12,9 +12,9 @@ export async function assertInternalAssignee(
 	assigneeId: string,
 ): Promise<InternalAssigneeCheck> {
 	const projectResult = await db.query<{ is_internal_project: boolean }>(
-		`SELECT (is_internal = true AND slug = $1) AS is_internal_project
-		 FROM projects WHERE id = $2 AND team_id = $3`,
-		[INTERNAL_PROJECT_SLUG, projectId, teamId],
+		`SELECT is_internal AS is_internal_project
+		 FROM projects WHERE id = $1 AND team_id = $2`,
+		[projectId, teamId],
 	);
 	if (!projectResult.rows[0]?.is_internal_project) return { ok: true };
 

@@ -14,18 +14,18 @@ test.describe('Comment reactions (mobile)', () => {
 		const { team, token } = await createTeamWithAgents(page);
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-		const projRes = await createProjectAndClearPlanning(page, team.id, token, {
+		const projRes = await createProjectAndClearPlanning(page, team.slug, token, {
 			name: 'Reactions Mobile',
 			description: 'x',
 		});
-		const project = ((await projRes.json()) as { data: { id: string } }).data;
+		const project = ((await projRes.json()) as { data: { id: string; slug: string } }).data;
 
-		const agentsRes = await page.request.get(`/api/teams/${team.id}/agents`, {
+		const agentsRes = await page.request.get(`/api/projects/internal-${team.slug}/agents`, {
 			headers: { Authorization: `Bearer ${token}` },
 		});
 		const agents = ((await agentsRes.json()) as { data: Array<{ id: string }> }).data;
 
-		const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
+		const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 			headers,
 			data: {
 				project_id: project.id,
@@ -35,12 +35,12 @@ test.describe('Comment reactions (mobile)', () => {
 		});
 		const task = ((await taskRes.json()) as { data: { id: string } }).data;
 
-		await page.request.post(`/api/teams/${team.id}/tasks/${task.id}/comments`, {
+		await page.request.post(`/api/projects/${project.slug}/tasks/${task.id}/comments`, {
 			headers,
 			data: { content_type: 'text', content: { text: 'react to me on mobile' } },
 		});
 
-		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
+		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
 
 		const addButton = page.getByTestId('add-reaction-button').first();

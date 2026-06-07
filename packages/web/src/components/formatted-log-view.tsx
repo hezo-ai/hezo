@@ -19,7 +19,7 @@ import { Badge } from './ui/badge';
 
 interface FormattedLogViewProps {
 	lines: { id: number; stream: 'stdout' | 'stderr'; text: string }[];
-	teamId?: string;
+	projectId?: string;
 	projectSlug?: string;
 	testId?: string;
 }
@@ -29,13 +29,13 @@ interface FormattedLogViewProps {
  * sections, prose/lists via markdown, and indented tool-use blocks whose result
  * shows on expand. Parses the prefixed lines client-side (see parse-agent-log).
  */
-export function FormattedLogView({ lines, teamId, projectSlug, testId }: FormattedLogViewProps) {
+export function FormattedLogView({ lines, projectId, projectSlug, testId }: FormattedLogViewProps) {
 	const blocks = useMemo(() => parseAgentLog(lines), [lines]);
 
 	return (
 		<div data-testid={testId} className="space-y-3 text-sm leading-relaxed text-text">
 			{blocks.map((block) => (
-				<BlockView key={block.id} block={block} teamId={teamId} projectSlug={projectSlug} />
+				<BlockView key={block.id} block={block} projectId={projectId} projectSlug={projectSlug} />
 			))}
 		</div>
 	);
@@ -43,18 +43,18 @@ export function FormattedLogView({ lines, teamId, projectSlug, testId }: Formatt
 
 function BlockView({
 	block,
-	teamId,
+	projectId,
 	projectSlug,
 }: {
 	block: LogBlock;
-	teamId?: string;
+	projectId?: string;
 	projectSlug?: string;
 }) {
 	switch (block.type) {
 		case 'session':
 			return <SessionView block={block} />;
 		case 'text':
-			return <TextView block={block} teamId={teamId} projectSlug={projectSlug} />;
+			return <TextView block={block} projectId={projectId} projectSlug={projectSlug} />;
 		case 'thinking':
 			return <ThinkingView block={block} />;
 		case 'command':
@@ -80,11 +80,11 @@ function SessionView({ block }: { block: SessionBlock }) {
 
 function TextView({
 	block,
-	teamId,
+	projectId,
 	projectSlug,
 }: {
 	block: TextBlock;
-	teamId?: string;
+	projectId?: string;
 	projectSlug?: string;
 }) {
 	if (block.stream === 'stderr') {
@@ -95,7 +95,7 @@ function TextView({
 		);
 	}
 	return (
-		<MarkdownProse teamId={teamId} projectSlug={projectSlug}>
+		<MarkdownProse projectId={projectId} projectSlug={projectSlug}>
 			{block.text}
 		</MarkdownProse>
 	);

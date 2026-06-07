@@ -41,7 +41,7 @@ beforeAll(async () => {
 	captainMemberId = captain.rows[0].id;
 
 	const ops = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
 		[teamId],
 	);
 	parentProjectId = ops.rows[0].id;
@@ -82,7 +82,7 @@ describe('enqueueOAuthVerificationTask', () => {
 		expect(task.parent_task_id).toBeNull();
 
 		const ops = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
 			[teamId],
 		);
 		expect(task.project_id).toBe(ops.rows[0].id);

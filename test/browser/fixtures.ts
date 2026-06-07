@@ -50,10 +50,10 @@ async function getTokenFromBrowser(browser: Browser): Promise<string> {
 
 async function listAgents(
 	request: APIRequestContext,
-	teamId: string,
+	teamSlug: string,
 	token: string,
 ): Promise<Agent[]> {
-	const res = await request.get(`/api/teams/${teamId}/agents`, {
+	const res = await request.get(`/api/projects/internal-${teamSlug}/agents`, {
 		headers: { Authorization: `Bearer ${token}` },
 	});
 	return ((await res.json()) as { data: Agent[] }).data;
@@ -77,7 +77,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 			const ctx = await browser.newContext();
 			const page = await ctx.newPage();
 			const { team, token } = await createTeamWithAgents(page);
-			const agents = await listAgents(ctx.request, team.id, token);
+			const agents = await listAgents(ctx.request, team.slug, token);
 			await ctx.close();
 			await use({ team, token, agents });
 		},
@@ -94,7 +94,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
 	// Authed page wired to the worker-scoped sharedWorkspace. The token in the
 	// page's localStorage matches sharedWorkspace.token (both come from the
-	// same master-key auth flow), so page.goto(`/teams/${team.slug}/...`) just
+	// same master-key auth flow), so page.goto(`/projects/${projectSlug}/...`) just
 	// works without any per-test seeding.
 	sharedPage: async ({ page, sharedWorkspace }, use) => {
 		await page.addInitScript((t: string) => {
@@ -107,7 +107,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 	freshWorkspace: async ({ page }, use) => {
 		await authenticate(page);
 		const { team, token } = await createTeamWithAgents(page);
-		const agents = await listAgents(page.request, team.id, token);
+		const agents = await listAgents(page.request, team.slug, token);
 		await use({ team, token, agents });
 		// Drain any page.route interceptors before Playwright tears down the page,
 		// so in-flight route.fetch()/route.fulfill() calls don't reject with

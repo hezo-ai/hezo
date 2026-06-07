@@ -3,7 +3,6 @@ import {
 	AgentAdminStatus,
 	CAPTAIN_AGENT_SLUG,
 	CommentContentType,
-	INTERNAL_PROJECT_SLUG,
 	type PlatformType,
 	TaskPriority,
 	TaskStatus,
@@ -36,9 +35,9 @@ async function loadTeamContext(db: PGlite, teamId: string): Promise<TeamContext 
 	);
 	const internalProject = await db.query<{ id: string }>(
 		`SELECT id FROM projects
-		 WHERE team_id = $1 AND is_internal = true AND slug = $2
+		 WHERE team_id = $1 AND is_internal = true
 		 LIMIT 1`,
-		[teamId, INTERNAL_PROJECT_SLUG],
+		[teamId],
 	);
 	if (!captain.rows[0] || !internalProject.rows[0]) return null;
 	return {

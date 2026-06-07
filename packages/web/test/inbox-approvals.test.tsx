@@ -7,7 +7,7 @@ async function createApproval(
 	body: { type: string; payload: Record<string, unknown> },
 ) {
 	const { apiBase } = getTestContext();
-	const res = await apiBase(`/api/teams/${workspace.team.id}/approvals`, {
+	const res = await apiBase(`/api/projects/${workspace.internalSlug}/approvals`, {
 		method: 'POST',
 		headers: workspace.headers,
 		body: JSON.stringify(body),
@@ -16,18 +16,18 @@ async function createApproval(
 }
 
 test('inbox shows empty state when no approvals', async () => {
-	const seeded = { teamSlug: '' };
+	const seeded = { projectSlug: '' };
 	const { findByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			seeded.teamSlug = ws.team.slug;
+			seeded.projectSlug = ws.internalSlug;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/inbox',
-		params: { teamId: seeded.teamSlug },
+		to: '/projects/$projectId/inbox',
+		params: { projectId: seeded.projectSlug },
 	});
 
 	await findByText('All clear', undefined, { timeout: 10_000 });
@@ -35,12 +35,12 @@ test('inbox shows empty state when no approvals', async () => {
 });
 
 test('inbox shows pending approval with type badge', async () => {
-	const seeded = { teamSlug: '' };
+	const seeded = { projectSlug: '' };
 	const { findByText, findByRole, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			seeded.teamSlug = ws.team.slug;
+			seeded.projectSlug = ws.internalSlug;
 			await createApproval(ws, {
 				type: 'strategy',
 				payload: { plan: 'Launch new product line' },
@@ -49,8 +49,8 @@ test('inbox shows pending approval with type badge', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/inbox',
-		params: { teamId: seeded.teamSlug },
+		to: '/projects/$projectId/inbox',
+		params: { projectId: seeded.projectSlug },
 	});
 
 	await findByRole('heading', { name: 'Inbox' }, { timeout: 10_000 });
@@ -62,12 +62,12 @@ test('inbox shows pending approval with type badge', async () => {
 });
 
 test('can approve a pending approval', async () => {
-	const seeded = { teamSlug: '' };
+	const seeded = { projectSlug: '' };
 	const { findByText, findByRole, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			seeded.teamSlug = ws.team.slug;
+			seeded.projectSlug = ws.internalSlug;
 			await createApproval(ws, {
 				type: 'hire',
 				payload: {
@@ -80,8 +80,8 @@ test('can approve a pending approval', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/inbox',
-		params: { teamId: seeded.teamSlug },
+		to: '/projects/$projectId/inbox',
+		params: { projectId: seeded.projectSlug },
 	});
 
 	await findByText('Proposing to hire', undefined, { timeout: 10_000 });
@@ -92,12 +92,12 @@ test('can approve a pending approval', async () => {
 });
 
 test('can deny a pending approval', async () => {
-	const seeded = { teamSlug: '' };
+	const seeded = { projectSlug: '' };
 	const { findByText, findByRole, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			seeded.teamSlug = ws.team.slug;
+			seeded.projectSlug = ws.internalSlug;
 			await createApproval(ws, {
 				type: 'secret_access',
 				payload: { secret_name: 'DB_PASSWORD' },
@@ -106,8 +106,8 @@ test('can deny a pending approval', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/inbox',
-		params: { teamId: seeded.teamSlug },
+		to: '/projects/$projectId/inbox',
+		params: { projectId: seeded.projectSlug },
 	});
 
 	await findByText(/Requesting access to secret/, undefined, { timeout: 10_000 });

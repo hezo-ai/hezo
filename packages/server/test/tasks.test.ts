@@ -11,6 +11,8 @@ let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
+let teamSlug: string;
+let internalSlug: string;
 let projectId: string;
 let projectSlug: string;
 let agentId: string;
@@ -27,7 +29,10 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Task Test Co' }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	teamSlug = teamData.slug;
+	internalSlug = `internal-${teamSlug}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Main Project',
@@ -37,7 +42,7 @@ beforeAll(async () => {
 	projectId = projectBody.id;
 	projectSlug = projectBody.slug;
 
-	const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Test Agent' }),
@@ -77,7 +82,7 @@ function flushAsyncWakeups(): Promise<void> {
 
 describe('tasks CRUD', () => {
 	it('creates an task with auto-generated identifier', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -97,7 +102,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('accepts a runtime_type override on create and honors it on update', async () => {
-		const createRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -111,7 +116,7 @@ describe('tasks CRUD', () => {
 		const created = (await createRes.json()).data;
 		expect(created.runtime_type).toBe('codex');
 
-		const patchRes = await app.request(`/api/teams/${teamId}/tasks/${created.id}`, {
+		const patchRes = await app.request(`/api/projects/${projectSlug}/tasks/${created.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ runtime_type: 'gemini' }),
@@ -132,7 +137,7 @@ describe('tasks CRUD', () => {
 		);
 
 		// Blocked: a DIFFERENT ticket moved to in_progress inside this run.
-		const blocked = await app.request(`/api/teams/${teamId}/tasks/${otherTask.id}`, {
+		const blocked = await app.request(`/api/projects/${projectSlug}/tasks/${otherTask.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'in_progress' }),
@@ -144,7 +149,7 @@ describe('tasks CRUD', () => {
 		expect(otherRow.rows[0].status).toBe('backlog');
 
 		// Allowed: the run's OWN ticket moved to in_progress.
-		const allowed = await app.request(`/api/teams/${teamId}/tasks/${runTask.id}`, {
+		const allowed = await app.request(`/api/projects/${projectSlug}/tasks/${runTask.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'in_progress' }),
@@ -154,7 +159,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('creates sequential task numbers', async () => {
-		const firstRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const firstRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -166,7 +171,7 @@ describe('tasks CRUD', () => {
 		expect(firstRes.status).toBe(201);
 		const firstNum = (await firstRes.json()).data.number;
 
-		const secondRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const secondRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -181,7 +186,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('lists tasks with pagination', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?per_page=1`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks?per_page=1`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -192,7 +197,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('filters tasks by status', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks?status=backlog`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks?status=backlog`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -201,12 +206,12 @@ describe('tasks CRUD', () => {
 	});
 
 	it('gets an task by id with computed fields', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
 		});
 		const task = (await listRes.json()).data[0];
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -217,19 +222,19 @@ describe('tasks CRUD', () => {
 	});
 
 	it('resolves an task by identifier (case-insensitive)', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
 		});
 		const task = (await listRes.json()).data[0];
 
-		const upperRes = await app.request(`/api/teams/${teamId}/tasks/${task.identifier}`, {
+		const upperRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.identifier}`, {
 			headers: authHeader(token),
 		});
 		expect(upperRes.status).toBe(200);
 		expect((await upperRes.json()).data.id).toBe(task.id);
 
 		const lowerRes = await app.request(
-			`/api/teams/${teamId}/tasks/${task.identifier.toLowerCase()}`,
+			`/api/projects/${projectSlug}/tasks/${task.identifier.toLowerCase()}`,
 			{ headers: authHeader(token) },
 		);
 		expect(lowerRes.status).toBe(200);
@@ -237,12 +242,12 @@ describe('tasks CRUD', () => {
 	});
 
 	it('updates an task status', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
 		});
 		const task = (await listRes.json()).data[0];
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'in_progress' }),
@@ -252,12 +257,12 @@ describe('tasks CRUD', () => {
 	});
 
 	it('creates a sub-task', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
 		});
 		const parentTask = (await listRes.json()).data[0];
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${parentTask.id}/sub-tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${parentTask.id}/sub-tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Sub-task', assignee_id: agentId }),
@@ -269,22 +274,25 @@ describe('tasks CRUD', () => {
 	});
 
 	it('manages task dependencies', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
 		});
 		const tasks = (await listRes.json()).data;
 
 		// Add dependency
-		const addRes = await app.request(`/api/teams/${teamId}/tasks/${tasks[0].id}/dependencies`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ blocked_by_task_id: tasks[1].id }),
-		});
+		const addRes = await app.request(
+			`/api/projects/${projectSlug}/tasks/${tasks[0].id}/dependencies`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ blocked_by_task_id: tasks[1].id }),
+			},
+		);
 		expect(addRes.status).toBe(201);
 
 		// List dependencies
 		const listDepsRes = await app.request(
-			`/api/teams/${teamId}/tasks/${tasks[0].id}/dependencies`,
+			`/api/projects/${projectSlug}/tasks/${tasks[0].id}/dependencies`,
 			{ headers: authHeader(token) },
 		);
 		expect(listDepsRes.status).toBe(200);
@@ -295,21 +303,21 @@ describe('tasks CRUD', () => {
 
 		// Remove dependency
 		const removeRes = await app.request(
-			`/api/teams/${teamId}/tasks/${tasks[0].id}/dependencies/${deps[0].id}`,
+			`/api/projects/${projectSlug}/tasks/${tasks[0].id}/dependencies/${deps[0].id}`,
 			{ method: 'DELETE', headers: authHeader(token) },
 		);
 		expect(removeRes.status).toBe(200);
 	});
 
 	it('updates and retrieves progress_summary', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
 		});
 		const task = (await listRes.json()).data[0];
 
 		const summary =
 			'## Requirements\n- Build auth module\n\n## Done\n- Set up project\n\n## Next\n- Implement login';
-		const patchRes = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const patchRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ progress_summary: summary }),
@@ -320,7 +328,7 @@ describe('tasks CRUD', () => {
 		expect(patched.progress_summary_updated_at).toBeTruthy();
 
 		// GET detail includes progress_summary and updater name
-		const detailRes = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const detailRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			headers: authHeader(token),
 		});
 		expect(detailRes.status).toBe(200);
@@ -330,20 +338,20 @@ describe('tasks CRUD', () => {
 	});
 
 	it('clears progress_summary with null', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
 		});
 		const task = (await listRes.json()).data[0];
 
 		// Set it first
-		await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ progress_summary: 'Some summary' }),
 		});
 
 		// Clear it
-		const clearRes = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const clearRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ progress_summary: null }),
@@ -353,7 +361,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('does not include progress_summary in list view', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
 		});
 		expect(listRes.status).toBe(200);
@@ -363,13 +371,13 @@ describe('tasks CRUD', () => {
 	});
 
 	it('updates and retrieves rules', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
 		});
 		const task = (await listRes.json()).data[0];
 
 		const rules = 'Consult the architect before making changes.\nPrioritize performance.';
-		const patchRes = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const patchRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ rules }),
@@ -378,7 +386,7 @@ describe('tasks CRUD', () => {
 		const patched = (await patchRes.json()).data;
 		expect(patched.rules).toBe(rules);
 
-		const detailRes = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const detailRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			headers: authHeader(token),
 		});
 		expect(detailRes.status).toBe(200);
@@ -386,18 +394,18 @@ describe('tasks CRUD', () => {
 	});
 
 	it('clears rules with null', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
 		});
 		const task = (await listRes.json()).data[0];
 
-		await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ rules: 'Some rules' }),
 		});
 
-		const clearRes = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const clearRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ rules: null }),
@@ -407,7 +415,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('does not include rules in list view', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
 		});
 		expect(listRes.status).toBe(200);
@@ -416,7 +424,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('rejects task creation without assignee_id', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -430,12 +438,12 @@ describe('tasks CRUD', () => {
 	});
 
 	it('rejects sub-task creation without assignee_id', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
 		});
 		const parentTask = (await listRes.json()).data[0];
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${parentTask.id}/sub-tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${parentTask.id}/sub-tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Sub without assignee' }),
@@ -446,12 +454,12 @@ describe('tasks CRUD', () => {
 	});
 
 	it('rejects setting assignee_id to null on update', async () => {
-		const listRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
 		});
 		const task = (await listRes.json()).data[0];
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: null }),
@@ -462,14 +470,14 @@ describe('tasks CRUD', () => {
 	});
 
 	it('filters by multiple assignee_ids when comma-separated', async () => {
-		const secondAgentRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const secondAgentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Second Agent' }),
 		});
 		const secondAgentId = (await secondAgentRes.json()).data.id;
 
-		await app.request(`/api/teams/${teamId}/tasks`, {
+		await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -480,7 +488,7 @@ describe('tasks CRUD', () => {
 		});
 
 		const listRes = await app.request(
-			`/api/teams/${teamId}/tasks?assignee_id=${agentId},${secondAgentId}`,
+			`/api/projects/${projectSlug}/tasks?assignee_id=${agentId},${secondAgentId}`,
 			{ headers: authHeader(token) },
 		);
 		expect(listRes.status).toBe(200);
@@ -491,7 +499,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('pins tasks with active runs to the top regardless of sort order', async () => {
-		const oldRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const oldRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -504,7 +512,7 @@ describe('tasks CRUD', () => {
 
 		await new Promise((r) => setTimeout(r, 10));
 
-		const newRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const newRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -522,7 +530,7 @@ describe('tasks CRUD', () => {
 		);
 
 		const listRes = await app.request(
-			`/api/teams/${teamId}/tasks?project_id=${projectId}&sort=created_at:desc`,
+			`/api/projects/${projectSlug}/tasks?project_id=${projectId}&sort=created_at:desc`,
 			{ headers: authHeader(token) },
 		);
 		const data = (await listRes.json()).data;
@@ -537,7 +545,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('rejects a non-Coach agent trying to close an task via PATCH', async () => {
-		const createRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -548,9 +556,16 @@ describe('tasks CRUD', () => {
 		});
 		const task = (await createRes.json()).data;
 
-		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			null,
+			{ projectId },
+		);
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'closed' }),
@@ -565,7 +580,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('allows Coach to close an task via PATCH', async () => {
-		const createRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -583,9 +598,16 @@ describe('tasks CRUD', () => {
 			[teamId],
 		);
 		const coachId = coachRow.rows[0].id;
-		const { token: coachToken } = await mintAgentToken(db, masterKeyManager, coachId, teamId);
+		const { token: coachToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			coachId,
+			teamId,
+			null,
+			{ projectId },
+		);
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(coachToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'closed' }),
@@ -595,7 +617,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('rejects an agent trying to re-open a closed task via PATCH', async () => {
-		const createRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -606,15 +628,22 @@ describe('tasks CRUD', () => {
 		});
 		const task = (await createRes.json()).data;
 
-		await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'closed' }),
 		});
 
-		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			null,
+			{ projectId },
+		);
 
-		const reopenRes = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const reopenRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'backlog' }),
@@ -623,7 +652,7 @@ describe('tasks CRUD', () => {
 		const body = await reopenRes.json();
 		expect(body.error.message).toMatch(/admin/i);
 
-		const bypassRes = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const bypassRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'in_progress' }),
@@ -632,7 +661,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('allows a the admin to close and re-open an task', async () => {
-		const createRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -643,7 +672,7 @@ describe('tasks CRUD', () => {
 		});
 		const task = (await createRes.json()).data;
 
-		const closeRes = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const closeRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'closed' }),
@@ -651,7 +680,7 @@ describe('tasks CRUD', () => {
 		expect(closeRes.status).toBe(200);
 		expect((await closeRes.json()).data.status).toBe('closed');
 
-		const reopenRes = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const reopenRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'backlog' }),
@@ -661,7 +690,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('allows agents to set non-terminal statuses via PATCH', async () => {
-		const createRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -672,9 +701,16 @@ describe('tasks CRUD', () => {
 		});
 		const task = (await createRes.json()).data;
 
-		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			null,
+			{ projectId },
+		);
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'in_progress' }),
@@ -686,7 +722,7 @@ describe('tasks CRUD', () => {
 	it('does not create an assignment wakeup when PATCH leaves assignee unchanged', async () => {
 		const task = await insertTaskDirect(agentId, 'Wakeup guard target');
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'in_progress', assignee_id: agentId }),
@@ -705,7 +741,7 @@ describe('tasks CRUD', () => {
 	});
 
 	it('creates an assignment wakeup when PATCH actually changes the assignee', async () => {
-		const secondAgentRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const secondAgentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Reassign Target Agent' }),
@@ -714,7 +750,7 @@ describe('tasks CRUD', () => {
 
 		const task = await insertTaskDirect(agentId, 'Reassignment fires wakeup');
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: secondAgentId }),
@@ -737,7 +773,7 @@ describe('tasks CRUD', () => {
 
 describe('sub-task depth + ancestors', () => {
 	async function createTask(parent_task_id?: string) {
-		const res = await app.request(`/api/teams/${teamId}/tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -751,7 +787,7 @@ describe('sub-task depth + ancestors', () => {
 	}
 
 	async function createSub(parentId: string) {
-		const res = await app.request(`/api/teams/${teamId}/tasks/${parentId}/sub-tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${parentId}/sub-tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Sub', assignee_id: agentId }),
@@ -797,13 +833,13 @@ describe('sub-task depth + ancestors', () => {
 		const sub = (await createSub(root.id)).body.data;
 		const subSub = (await createSub(sub.id)).body.data;
 
-		const rootRes = await app.request(`/api/teams/${teamId}/tasks/${root.id}/ancestors`, {
+		const rootRes = await app.request(`/api/projects/${projectSlug}/tasks/${root.id}/ancestors`, {
 			headers: authHeader(token),
 		});
 		expect(rootRes.status).toBe(200);
 		expect((await rootRes.json()).data).toEqual([]);
 
-		const subRes = await app.request(`/api/teams/${teamId}/tasks/${sub.id}/ancestors`, {
+		const subRes = await app.request(`/api/projects/${projectSlug}/tasks/${sub.id}/ancestors`, {
 			headers: authHeader(token),
 		});
 		expect(subRes.status).toBe(200);
@@ -811,9 +847,12 @@ describe('sub-task depth + ancestors', () => {
 		expect(subAncestors).toHaveLength(1);
 		expect(subAncestors[0].id).toBe(root.id);
 
-		const subSubRes = await app.request(`/api/teams/${teamId}/tasks/${subSub.id}/ancestors`, {
-			headers: authHeader(token),
-		});
+		const subSubRes = await app.request(
+			`/api/projects/${projectSlug}/tasks/${subSub.id}/ancestors`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		expect(subSubRes.status).toBe(200);
 		const subSubAncestors = (await subSubRes.json()).data;
 		expect(subSubAncestors).toHaveLength(2);
@@ -826,7 +865,7 @@ describe('sub-task depth + ancestors', () => {
 		const sub = (await createSub(root.id)).body.data;
 
 		const res = await app.request(
-			`/api/teams/${teamId}/tasks/${sub.identifier.toLowerCase()}/ancestors`,
+			`/api/projects/${projectSlug}/tasks/${sub.identifier.toLowerCase()}/ancestors`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(200);
@@ -837,7 +876,7 @@ describe('sub-task depth + ancestors', () => {
 
 	it('returns 404 on ancestors for an unknown task', async () => {
 		const res = await app.request(
-			`/api/teams/${teamId}/tasks/00000000-0000-0000-0000-000000000000/ancestors`,
+			`/api/projects/${projectSlug}/tasks/00000000-0000-0000-0000-000000000000/ancestors`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
@@ -850,8 +889,8 @@ describe('Internal project assignee restriction', () => {
 
 	beforeAll(async () => {
 		const opsResult = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
-			[teamId],
+			`SELECT id FROM projects WHERE team_id = $1 AND slug = $2`,
+			[teamId, internalSlug],
 		);
 		internalProjectId = opsResult.rows[0].id;
 
@@ -865,7 +904,7 @@ describe('Internal project assignee restriction', () => {
 	});
 
 	it('rejects creating an Internal task assigned to a non-Captain agent', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -879,7 +918,7 @@ describe('Internal project assignee restriction', () => {
 	});
 
 	it('accepts creating an Internal task assigned to the Captain', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -893,7 +932,7 @@ describe('Internal project assignee restriction', () => {
 	});
 
 	it('allows non-Captain assignees on non-Internal projects', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -906,7 +945,7 @@ describe('Internal project assignee restriction', () => {
 	});
 
 	it('rejects reassigning an Internal task to a non-Captain agent', async () => {
-		const createRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -917,7 +956,7 @@ describe('Internal project assignee restriction', () => {
 		});
 		const task = (await createRes.json()).data;
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: agentId }),
@@ -927,7 +966,7 @@ describe('Internal project assignee restriction', () => {
 	});
 
 	it('allows reassigning an Internal task back to the Captain', async () => {
-		const createRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -938,7 +977,7 @@ describe('Internal project assignee restriction', () => {
 		});
 		const task = (await createRes.json()).data;
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ assignee_id: captainAgentId }),
@@ -947,7 +986,7 @@ describe('Internal project assignee restriction', () => {
 	});
 
 	it('rejects sub-task of an Internal parent assigned to a non-Captain agent', async () => {
-		const parentRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const parentRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -958,7 +997,7 @@ describe('Internal project assignee restriction', () => {
 		});
 		const parent = (await parentRes.json()).data;
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${parent.id}/sub-tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${parent.id}/sub-tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Sub with non-Captain', assignee_id: agentId }),
@@ -968,7 +1007,7 @@ describe('Internal project assignee restriction', () => {
 	});
 
 	it('exposes project_slug on the task detail response', async () => {
-		const createRes = await app.request(`/api/teams/${teamId}/tasks`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -979,17 +1018,17 @@ describe('Internal project assignee restriction', () => {
 		});
 		const task = (await createRes.json()).data;
 
-		const detailRes = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const detailRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			headers: authHeader(token),
 		});
 		const detail = (await detailRes.json()).data;
-		expect(detail.project_slug).toBe('internal');
+		expect(detail.project_slug).toBe(internalSlug);
 	});
 });
 
 describe('closure rules — sub-tasks must be closed before parent', () => {
 	async function createParent(): Promise<{ id: string; identifier: string }> {
-		const res = await app.request(`/api/teams/${teamId}/tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -1003,7 +1042,7 @@ describe('closure rules — sub-tasks must be closed before parent', () => {
 	}
 
 	async function createChild(parentId: string): Promise<{ id: string; identifier: string }> {
-		const res = await app.request(`/api/teams/${teamId}/tasks/${parentId}/sub-tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${parentId}/sub-tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Child ticket', assignee_id: agentId }),
@@ -1013,7 +1052,7 @@ describe('closure rules — sub-tasks must be closed before parent', () => {
 	}
 
 	async function setStatus(taskId: string, status: string): Promise<Response> {
-		return app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
+		return app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status }),
@@ -1074,7 +1113,7 @@ describe('closure rules — sub-tasks must be closed before parent', () => {
 
 describe('closure rules — outstanding pinged-agent activity blocks done', () => {
 	async function createTask(): Promise<{ id: string; identifier: string }> {
-		const res = await app.request(`/api/teams/${teamId}/tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -1094,7 +1133,7 @@ describe('closure rules — outstanding pinged-agent activity blocks done', () =
 			[agentId, teamId, task.id],
 		);
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'done' }),
@@ -1111,7 +1150,7 @@ describe('closure rules — outstanding pinged-agent activity blocks done', () =
 			[agentId, teamId, JSON.stringify({ task_id: task.id })],
 		);
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'done' }),
@@ -1133,7 +1172,7 @@ describe('closure rules — outstanding pinged-agent activity blocks done', () =
 			[agentId, teamId, JSON.stringify({ task_id: task.id })],
 		);
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${task.id}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'done' }),

@@ -24,7 +24,6 @@ import {
 	actorTypeFromAuth,
 	getProjectLocator,
 	resolveActorMemberId as resolveAuthActorMemberId,
-	resolveProjectId,
 	resolveTaskId,
 } from '../lib/resolve';
 import { err, ok } from '../lib/response';
@@ -85,8 +84,8 @@ async function resolveActorMemberId(c: Context<Env>, teamId: string): Promise<st
 
 export const tasksRoutes = new Hono<Env>();
 
-tasksRoutes.get('/teams/:teamId/tasks', async (c) => {
-	const teamId = c.get('teamId') as string;
+tasksRoutes.get('/projects/:projectId/tasks', async (c) => {
+	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
 	const { page, perPage, offset } = parsePagination(c);
 
@@ -96,19 +95,11 @@ tasksRoutes.get('/teams/:teamId/tasks', async (c) => {
 	const auth = c.get('auth');
 	const adminUserId = auth.type === AuthType.Admin ? auth.userId : null;
 
-	const conditions: string[] = ['i.team_id = $1'];
-	const params: unknown[] = [teamId];
+	// The list is scoped to the project named in the URL — the project is the
+	// public handle, so tasks are addressed per project rather than per team.
+	const conditions: string[] = ['i.project_id = $1'];
+	const params: unknown[] = [projectId];
 	let idx = 2;
-
-	const rawProjectId = c.req.query('project_id');
-	if (rawProjectId) {
-		const projectId = await resolveProjectId(db, teamId, rawProjectId);
-		if (projectId) {
-			conditions.push(`i.project_id = $${idx}`);
-			params.push(projectId);
-			idx++;
-		}
-	}
 
 	const assigneeIdFilter = c.req.query('assignee_id');
 	if (assigneeIdFilter) {
@@ -225,11 +216,14 @@ tasksRoutes.get('/teams/:teamId/tasks', async (c) => {
 	return c.json({ data: result.rows, meta: buildMeta(page, perPage, total) });
 });
 
-tasksRoutes.post('/teams/:teamId/tasks', async (c) => {
+tasksRoutes.post('/projects/:projectId/tasks', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
 	const body = await c.req.json<CreateTaskInput>();
+	// Tasks are created within the project named in the URL unless the caller
+	// targets a different project explicitly.
+	if (!body.project_id) body.project_id = c.get('projectId') as string;
 	const caller = await buildCreateTaskCaller(c, teamId);
 
 	try {
@@ -244,7 +238,7 @@ tasksRoutes.post('/teams/:teamId/tasks', async (c) => {
 	}
 });
 
-tasksRoutes.post('/teams/:teamId/tasks/batch', async (c) => {
+tasksRoutes.post('/projects/:projectId/tasks/batch', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
@@ -294,7 +288,7 @@ tasksRoutes.post('/teams/:teamId/tasks/batch', async (c) => {
 	return ok(c, results, 200);
 });
 
-tasksRoutes.get('/teams/:teamId/tasks/:taskId', async (c) => {
+tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
@@ -352,7 +346,7 @@ tasksRoutes.get('/teams/:teamId/tasks/:taskId', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-tasksRoutes.post('/teams/:teamId/tasks/resolve', async (c) => {
+tasksRoutes.post('/projects/:projectId/tasks/resolve', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
@@ -387,7 +381,7 @@ tasksRoutes.post('/teams/:teamId/tasks/resolve', async (c) => {
 	return ok(c, result.rows);
 });
 
-tasksRoutes.get('/teams/:teamId/tasks/:taskId/latest-run', async (c) => {
+tasksRoutes.get('/projects/:projectId/tasks/:taskId/latest-run', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
@@ -413,7 +407,7 @@ tasksRoutes.get('/teams/:teamId/tasks/:taskId/latest-run', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
+tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
@@ -736,7 +730,7 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-tasksRoutes.post('/teams/:teamId/tasks/:taskId/sub-tasks', async (c) => {
+tasksRoutes.post('/projects/:projectId/tasks/:taskId/sub-tasks', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const parentTaskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
@@ -776,7 +770,7 @@ tasksRoutes.post('/teams/:teamId/tasks/:taskId/sub-tasks', async (c) => {
 	}
 });
 
-tasksRoutes.get('/teams/:teamId/tasks/:taskId/ancestors', async (c) => {
+tasksRoutes.get('/projects/:projectId/tasks/:taskId/ancestors', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
@@ -809,7 +803,7 @@ tasksRoutes.get('/teams/:teamId/tasks/:taskId/ancestors', async (c) => {
 	);
 });
 
-tasksRoutes.get('/teams/:teamId/tasks/:taskId/dependencies', async (c) => {
+tasksRoutes.get('/projects/:projectId/tasks/:taskId/dependencies', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
@@ -828,7 +822,7 @@ tasksRoutes.get('/teams/:teamId/tasks/:taskId/dependencies', async (c) => {
 	return ok(c, result.rows);
 });
 
-tasksRoutes.post('/teams/:teamId/tasks/:taskId/dependencies', async (c) => {
+tasksRoutes.post('/projects/:projectId/tasks/:taskId/dependencies', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
@@ -870,7 +864,7 @@ tasksRoutes.post('/teams/:teamId/tasks/:taskId/dependencies', async (c) => {
 	return ok(c, result.rows[0], 201);
 });
 
-tasksRoutes.delete('/teams/:teamId/tasks/:taskId/dependencies/:depId', async (c) => {
+tasksRoutes.delete('/projects/:projectId/tasks/:taskId/dependencies/:depId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));

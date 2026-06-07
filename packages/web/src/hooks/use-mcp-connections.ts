@@ -31,10 +31,11 @@ export function connectorStatus(c: McpConnection): ConnectorStatus {
 	return 'pending';
 }
 
-export function useMcpConnection(teamId: string, connectorId: string | undefined) {
+export function useMcpConnection(projectId: string, connectorId: string | undefined) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'mcp-connections', 'detail', connectorId ?? null],
-		queryFn: () => api.get<McpConnection>(`/api/teams/${teamId}/mcp-connections/${connectorId}`),
+		queryKey: ['projects', projectId, 'mcp-connections', 'detail', connectorId ?? null],
+		queryFn: () =>
+			api.get<McpConnection>(`/api/projects/${projectId}/mcp-connections/${connectorId}`),
 		enabled: !!connectorId,
 		// Fallback poll while pending — WebSocket invalidation and the
 		// hezo-oauth-success postMessage are the primary update channels;
@@ -49,12 +50,15 @@ export function useMcpConnection(teamId: string, connectorId: string | undefined
 	});
 }
 
-export function useRevokeConnector(teamId: string) {
+export function useRevokeConnector(projectId: string) {
 	return useMutation({
 		mutationFn: (connectorId: string) =>
-			api.post<McpConnection>(`/api/teams/${teamId}/mcp-connections/${connectorId}/revoke`, {}),
+			api.post<McpConnection>(
+				`/api/projects/${projectId}/mcp-connections/${connectorId}/revoke`,
+				{},
+			),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'mcp-connections'] });
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'mcp-connections'] });
 		},
 	});
 }
@@ -66,41 +70,37 @@ export interface CreateMcpConnectionPayload {
 	project_id?: string;
 }
 
-export function useMcpConnections(teamId: string, projectId?: string) {
-	const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
+export function useMcpConnections(projectId: string, filterProjectId?: string) {
+	const qs = filterProjectId ? `?project_id=${encodeURIComponent(filterProjectId)}` : '';
 	return useQuery({
-		queryKey: ['teams', teamId, 'mcp-connections', projectId ?? null],
-		queryFn: () => api.get<McpConnection[]>(`/api/teams/${teamId}/mcp-connections${qs}`),
+		queryKey: ['projects', projectId, 'mcp-connections', filterProjectId ?? null],
+		queryFn: () => api.get<McpConnection[]>(`/api/projects/${projectId}/mcp-connections${qs}`),
 	});
 }
 
-export function useCreateMcpConnection(teamId: string) {
+export function useCreateMcpConnection(projectId: string) {
 	return useMutation({
 		mutationFn: (data: CreateMcpConnectionPayload) =>
-			api.post<McpConnection>(`/api/teams/${teamId}/mcp-connections`, data),
+			api.post<McpConnection>(`/api/projects/${projectId}/mcp-connections`, data),
 		onSuccess: (created) => {
 			queryClient.setQueryData<McpConnection[]>(
-				['teams', teamId, 'mcp-connections', created.project_id ?? null],
+				['projects', projectId, 'mcp-connections', created.project_id ?? null],
 				(prev) => (prev ? [...prev.filter((c) => c.id !== created.id), created] : [created]),
 			);
-			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'mcp-connections'],
-			});
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'mcp-connections'] });
 		},
 	});
 }
 
-export function useDeleteMcpConnection(teamId: string) {
+export function useDeleteMcpConnection(projectId: string) {
 	return useMutation({
-		mutationFn: (id: string) => api.delete(`/api/teams/${teamId}/mcp-connections/${id}`),
+		mutationFn: (id: string) => api.delete(`/api/projects/${projectId}/mcp-connections/${id}`),
 		onSuccess: (_, id) => {
 			queryClient.setQueriesData<McpConnection[]>(
-				{ queryKey: ['teams', teamId, 'mcp-connections'] },
+				{ queryKey: ['projects', projectId, 'mcp-connections'] },
 				(prev) => (prev ? prev.filter((c) => c.id !== id) : prev),
 			);
-			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'mcp-connections'],
-			});
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'mcp-connections'] });
 		},
 	});
 }

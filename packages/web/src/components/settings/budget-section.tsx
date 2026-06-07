@@ -1,8 +1,8 @@
 import { useCosts } from '../../hooks/use-costs';
 import { SectionHeader } from './helpers';
 
-export function BudgetSection({ teamId }: { teamId: string }) {
-	const { data: costs } = useCosts(teamId, { group_by: 'agent' });
+export function BudgetSection({ projectId }: { projectId: string }) {
+	const { data: costs } = useCosts(projectId, { group_by: 'agent' });
 	return (
 		<section>
 			<SectionHeader title="Budget" desc="Spending overview across agents." />

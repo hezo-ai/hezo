@@ -11,7 +11,7 @@ function hashKey(key: string): string {
 	return createHash('sha256').update(key).digest('hex');
 }
 
-apiKeysRoutes.get('/teams/:teamId/api-keys', async (c) => {
+apiKeysRoutes.get('/projects/:projectId/api-keys', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
@@ -25,7 +25,7 @@ apiKeysRoutes.get('/teams/:teamId/api-keys', async (c) => {
 	return ok(c, result.rows);
 });
 
-apiKeysRoutes.post('/teams/:teamId/api-keys', async (c) => {
+apiKeysRoutes.post('/projects/:projectId/api-keys', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
@@ -56,7 +56,7 @@ apiKeysRoutes.post('/teams/:teamId/api-keys', async (c) => {
 	return ok(c, { ...row, key: rawKey }, 201);
 });
 
-apiKeysRoutes.delete('/teams/:teamId/api-keys/:apiKeyId', async (c) => {
+apiKeysRoutes.delete('/projects/:projectId/api-keys/:apiKeyId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const apiKeyId = c.req.param('apiKeyId');

@@ -19,7 +19,7 @@ type Agent = { id: string; slug: string };
 async function createProjectAndTask(page: Page, team: Team, token: string, agents: Agent[]) {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-	const projRes = await createProjectAndClearPlanning(page, team.id, token, {
+	const projRes = await createProjectAndClearPlanning(page, team.slug, token, {
 		name: uniqueName('Comment Project'),
 		description: 'Test project.',
 	});
@@ -27,13 +27,13 @@ async function createProjectAndTask(page: Page, team: Team, token: string, agent
 
 	const agent = agents[0];
 
-	const taskRes = await page.request.post(`/api/teams/${team.id}/tasks`, {
+	const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 		headers,
 		data: { project_id: project.id, title: 'Comment Test Task', assignee_id: agent.id },
 	});
 	const task = ((await taskRes.json()) as any).data;
 
-	await waitForAgentIdle(page, team.id, agent.id, token);
+	await waitForAgentIdle(page, team.slug, agent.id, token);
 
 	return { team, token, project, task, agent, headers };
 }
@@ -44,7 +44,7 @@ test.describe('Task Comments', () => {
 		sharedWorkspace,
 	}) => {
 		test.setTimeout(60_000);
-		const { team, task, headers } = await createProjectAndTask(
+		const { task, project, headers } = await createProjectAndTask(
 			page,
 			sharedWorkspace.team,
 			sharedWorkspace.token,
@@ -58,7 +58,7 @@ test.describe('Task Comments', () => {
 			const batch = Array.from({ length: Math.min(BATCH, TOTAL - start) }, (_, i) => start + i);
 			const results = await Promise.all(
 				batch.map((i) =>
-					page.request.post(`/api/teams/${team.id}/tasks/${task.id}/comments`, {
+					page.request.post(`/api/projects/${project.slug}/tasks/${task.id}/comments`, {
 						headers,
 						data: { content_type: 'text', content: { text: `seeded-comment-${i}` } },
 					}),
@@ -70,7 +70,7 @@ test.describe('Task Comments', () => {
 			}
 		}
 
-		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
+		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
 
 		await expect(page.getByTestId('comments-list')).toBeVisible({ timeout: 20_000 });
@@ -83,7 +83,9 @@ test.describe('Task Comments', () => {
 		await expect(page.getByText(`seeded-comment-${TOTAL - 5}`)).toHaveCount(0);
 
 		const target = created[Math.floor(TOTAL / 2)];
-		await page.goto(`/teams/${team.slug}/tasks/${task.id}#comment-${target.id}`);
+		await page.goto(
+			`/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}#comment-${target.id}`,
+		);
 		await waitForPageLoad(page);
 		const anchored = page.locator(`#comment-${target.id}`);
 		await expect(anchored).toBeVisible({ timeout: 20_000 });
@@ -92,20 +94,23 @@ test.describe('Task Comments', () => {
 
 	test('reply flow works on mobile viewport', async ({ sharedPage: page, sharedWorkspace }) => {
 		await page.setViewportSize({ width: 390, height: 844 });
-		const { team, task, headers } = await createProjectAndTask(
+		const { task, project, headers } = await createProjectAndTask(
 			page,
 			sharedWorkspace.team,
 			sharedWorkspace.token,
 			sharedWorkspace.agents,
 		);
 
-		const parentRes = await page.request.post(`/api/teams/${team.id}/tasks/${task.id}/comments`, {
-			headers,
-			data: { content: 'Mobile parent comment' },
-		});
+		const parentRes = await page.request.post(
+			`/api/projects/${project.slug}/tasks/${task.id}/comments`,
+			{
+				headers,
+				data: { content: 'Mobile parent comment' },
+			},
+		);
 		const parent = ((await parentRes.json()) as any).data;
 
-		await page.goto(`/teams/${team.slug}/tasks/${task.id}`);
+		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
 
 		const parentItem = page.locator(`#comment-${parent.id}`);

@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useMe } from '../hooks/use-me';
 import { useAllVisibleProjects } from '../hooks/use-projects';
-import { useTeams } from '../hooks/use-teams';
 import { CreateProjectWithTeamDialog } from './create-project-with-team-dialog';
 import { Avatar, avatarColorFromString, getInitials } from './ui/avatar';
 import { Tooltip } from './ui/tooltip';
@@ -18,8 +17,7 @@ import { Tooltip } from './ui/tooltip';
  */
 export function ProjectRail() {
 	const { data: me } = useMe();
-	const { data: teams } = useTeams();
-	const { projects } = useAllVisibleProjects(teams);
+	const { projects } = useAllVisibleProjects();
 	const active = useActiveProject();
 	const [createOpen, setCreateOpen] = useState(false);
 
@@ -36,8 +34,8 @@ export function ProjectRail() {
 						return (
 							<Tooltip key={p.id} content={p.name} side="right">
 								<Link
-									to="/teams/$teamId/projects/$projectId"
-									params={{ teamId: p.teamSlug, projectId: p.slug }}
+									to="/projects/$projectId"
+									params={{ projectId: p.slug }}
 									aria-label={p.name}
 									data-testid={`project-rail-avatar-${p.slug}`}
 									className={`rounded-full transition-shadow ${

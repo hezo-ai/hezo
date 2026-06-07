@@ -48,8 +48,8 @@ describe('mcp_connections REST routes', () => {
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'X' }),
 		});
-		const cid = (await co.json()).data.id;
-		const res = await ctx.app.request(`/api/teams/${cid}/mcp-connections`, {
+		const team = (await co.json()).data;
+		const res = await ctx.app.request(`/api/projects/internal-${team.slug}/mcp-connections`, {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'bad', kind: 'saas', config: {} }),
@@ -65,8 +65,8 @@ describe('mcp_connections REST routes', () => {
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Y' }),
 		});
-		const cid = (await co.json()).data.id;
-		const insert = await ctx.app.request(`/api/teams/${cid}/mcp-connections`, {
+		const team = (await co.json()).data;
+		const insert = await ctx.app.request(`/api/projects/internal-${team.slug}/mcp-connections`, {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -80,7 +80,7 @@ describe('mcp_connections REST routes', () => {
 		expect(inserted.data.install_status).toBe('installed');
 		expect(inserted.data.kind).toBe('saas');
 
-		const list = await ctx.app.request(`/api/teams/${cid}/mcp-connections`, {
+		const list = await ctx.app.request(`/api/projects/internal-${team.slug}/mcp-connections`, {
 			headers: { Authorization: `Bearer ${ctx.token}` },
 		});
 		expect(list.status).toBe(200);
@@ -97,8 +97,8 @@ describe('mcp_connections REST routes', () => {
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Z' }),
 		});
-		const cid = (await co.json()).data.id;
-		const res = await ctx.app.request(`/api/teams/${cid}/mcp-connections`, {
+		const team = (await co.json()).data;
+		const res = await ctx.app.request(`/api/projects/internal-${team.slug}/mcp-connections`, {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -125,9 +125,9 @@ describe('POST /teams/:teamId/connectors/ensure', () => {
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Ensure Co' }),
 		});
-		const cid = (await co.json()).data.id;
+		const team = (await co.json()).data;
 
-		const first = await ctx.app.request(`/api/teams/${cid}/connectors/ensure`, {
+		const first = await ctx.app.request(`/api/projects/internal-${team.slug}/connectors/ensure`, {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ provider_id: 'github' }),
@@ -141,7 +141,7 @@ describe('POST /teams/:teamId/connectors/ensure', () => {
 		expect(firstRow.name).toBe('github');
 		expect(firstRow.config.url).toBe('https://api.githubcopilot.com/mcp/');
 
-		const second = await ctx.app.request(`/api/teams/${cid}/connectors/ensure`, {
+		const second = await ctx.app.request(`/api/projects/internal-${team.slug}/connectors/ensure`, {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ provider_id: 'github' }),
@@ -160,9 +160,9 @@ describe('POST /teams/:teamId/connectors/ensure', () => {
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Unknown Co' }),
 		});
-		const cid = (await co.json()).data.id;
+		const team = (await co.json()).data;
 
-		const res = await ctx.app.request(`/api/teams/${cid}/connectors/ensure`, {
+		const res = await ctx.app.request(`/api/projects/internal-${team.slug}/connectors/ensure`, {
 			method: 'POST',
 			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ provider_id: 'not-a-real-provider' }),

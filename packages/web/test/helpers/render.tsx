@@ -10,7 +10,12 @@ import { ThemeProvider } from '@hezo/web/lib/theme';
 // the rest.
 import { routeTree } from '@hezo/web/routeTree.gen';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createMemoryHistory, createRouter, RouterProvider } from '@tanstack/react-router';
+import {
+	createMemoryHistory,
+	createRouter,
+	Navigate,
+	RouterProvider,
+} from '@tanstack/react-router';
 import { render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Hono } from 'hono';
@@ -20,7 +25,7 @@ interface RenderOptions {
 	initialPath: string;
 	// Caller can seed the test DB before the app mounts — runs after the test
 	// app boots and gets the auth token, so seeders can hit the API or DB.
-	seed?: (ctx: TestAppContext) => Promise<void> | void;
+	seed?: (ctx: TestAppContext) => Promise<unknown> | unknown;
 }
 
 interface TestAppContext {
@@ -43,7 +48,14 @@ beforeEach(async () => {
 		const url = path.startsWith('http') ? path : `http://localhost${path}`;
 		return test.app.fetch(new Request(url, init));
 	};
-	activeContext = { app: test.app, token: test.token, apiBase, db: test.db };
+	// The server app/db come from the server package's own type instances
+	// (Hono<Env>, its pglite copy); the web test boundary treats them opaquely.
+	activeContext = {
+		app: test.app,
+		token: test.token,
+		apiBase,
+		db: test.db,
+	} as unknown as TestAppContext;
 
 	// Auth: drop the token into localStorage AND push it into the api singleton
 	// (the latter snapshotted localStorage at module-load time, so a later
@@ -143,7 +155,11 @@ export async function renderApp(options: RenderOptions) {
 	});
 
 	const history = createMemoryHistory({ initialEntries: [options.initialPath] });
-	const router = createRouter({ routeTree, history });
+	const router = createRouter({
+		routeTree,
+		history,
+		defaultNotFoundComponent: () => <Navigate to="/home" replace />,
+	});
 
 	const utils = render(
 		<QueryClientProvider client={activeQueryClient}>

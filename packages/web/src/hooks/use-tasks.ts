@@ -57,12 +57,19 @@ interface TaskListResponse {
 	meta: { page: number; per_page: number; total: number };
 }
 
-export function useTasks(teamId: string, filters?: TaskFilters, options?: { enabled?: boolean }) {
+export function useTasks(
+	projectId: string,
+	filters?: TaskFilters,
+	options?: { enabled?: boolean },
+) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'tasks', filters],
+		queryKey: ['projects', projectId, 'tasks', filters],
 		queryFn: async () => {
 			const params: Record<string, string | undefined> = { ...filters };
-			const res = await api.get<TaskListResponse | Task[]>(`/api/teams/${teamId}/tasks`, params);
+			const res = await api.get<TaskListResponse | Task[]>(
+				`/api/projects/${projectId}/tasks`,
+				params,
+			);
 			if (Array.isArray(res))
 				return { data: res, meta: { page: 1, per_page: 50, total: res.length } };
 			return res;
@@ -76,31 +83,31 @@ export interface GlobalTask extends Task {
 	team_name: string;
 }
 
-/** Aggregates tasks across every team the user belongs to (the global "All Tasks"). */
-export function useAllTasks(teams: { slug: string; name: string }[]) {
-	const slugs = teams.map((t) => t.slug).sort();
+/** Aggregates tasks across every visible project the user can see (the global "All Tasks"). */
+export function useAllTasks(projects: { slug: string; teamSlug: string; teamName: string }[]) {
+	const slugs = projects.map((p) => p.slug).sort();
 	return useQuery({
 		queryKey: ['tasks', 'all', slugs],
 		queryFn: async (): Promise<GlobalTask[]> => {
-			const perTeam = await Promise.all(
-				teams.map(async (t) => {
-					const res = await api.get<TaskListResponse | Task[]>(`/api/teams/${t.slug}/tasks`, {
+			const perProject = await Promise.all(
+				projects.map(async (p) => {
+					const res = await api.get<TaskListResponse | Task[]>(`/api/projects/${p.slug}/tasks`, {
 						per_page: '200',
 					});
 					const rows = Array.isArray(res) ? res : res.data;
-					return rows.map((task) => ({ ...task, team_slug: t.slug, team_name: t.name }));
+					return rows.map((task) => ({ ...task, team_slug: p.teamSlug, team_name: p.teamName }));
 				}),
 			);
-			return perTeam.flat();
+			return perProject.flat();
 		},
-		enabled: teams.length > 0,
+		enabled: projects.length > 0,
 	});
 }
 
-export function useTask(teamId: string, taskId: string) {
+export function useTask(projectId: string, taskId: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'tasks', taskId],
-		queryFn: () => api.get<Task>(`/api/teams/${teamId}/tasks/${taskId}`),
+		queryKey: ['projects', projectId, 'tasks', taskId],
+		queryFn: () => api.get<Task>(`/api/projects/${projectId}/tasks/${taskId}`),
 	});
 }
 
@@ -111,33 +118,33 @@ export interface TaskMentionData {
 	status: string;
 }
 
-export function useTaskMentions(teamId: string, candidates: string[]) {
+export function useTaskMentions(projectId: string, candidates: string[]) {
 	const key = useMemo(
 		() => [...new Set(candidates.map((s) => s.toLowerCase()))].sort(),
 		[candidates],
 	);
 	return useQuery({
-		queryKey: ['teams', teamId, 'tasks', 'resolve', key],
+		queryKey: ['projects', projectId, 'tasks', 'resolve', key],
 		queryFn: () =>
-			api.post<TaskMentionData[]>(`/api/teams/${teamId}/tasks/resolve`, {
+			api.post<TaskMentionData[]>(`/api/projects/${projectId}/tasks/resolve`, {
 				identifiers: key,
 			}),
-		enabled: !!teamId && key.length > 0,
+		enabled: !!projectId && key.length > 0,
 		staleTime: 60_000,
 	});
 }
 
-export function useCreateTask(teamId: string) {
+export function useCreateTask(projectId: string) {
 	return useMutation({
 		mutationFn: (data: {
-			project_id: string;
+			project_id?: string;
 			title: string;
 			description?: string;
 			assignee_id?: string;
 			priority?: string;
 			labels?: string[];
-		}) => api.post<Task>(`/api/teams/${teamId}/tasks`, data),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'tasks'] }),
+		}) => api.post<Task>(`/api/projects/${projectId}/tasks`, data),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'tasks'] }),
 	});
 }
 
@@ -152,10 +159,10 @@ interface UpdateTaskVars {
 	rules?: string | null;
 }
 
-export function useUpdateTask(teamId: string, taskId: string) {
+export function useUpdateTask(projectId: string, taskId: string) {
 	return useOptimisticMutation<UpdateTaskVars, Task, Task>({
-		mutationFn: (data) => api.patch<Task>(`/api/teams/${teamId}/tasks/${taskId}`, data),
-		queryKey: ['teams', teamId, 'tasks', taskId],
+		mutationFn: (data) => api.patch<Task>(`/api/projects/${projectId}/tasks/${taskId}`, data),
+		queryKey: ['projects', projectId, 'tasks', taskId],
 		applyOptimistic: (current, vars) => {
 			if (!current) return current;
 			// Status flips only after the server confirms (children-closed and outstanding-activity
@@ -164,7 +171,7 @@ export function useUpdateTask(teamId: string, taskId: string) {
 			return { ...current, ...optimistic };
 		},
 		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
-		invalidateOnSettled: [['teams', teamId, 'tasks']],
+		invalidateOnSettled: [['projects', projectId, 'tasks']],
 		errorMessage: 'Failed to update task',
 	});
 }
@@ -175,23 +182,23 @@ export interface TaskAncestor {
 	title: string;
 }
 
-export function useTaskAncestors(teamId: string, taskId: string | undefined) {
+export function useTaskAncestors(projectId: string, taskId: string | undefined) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'tasks', taskId, 'ancestors'],
-		queryFn: () => api.get<TaskAncestor[]>(`/api/teams/${teamId}/tasks/${taskId}/ancestors`),
-		enabled: !!teamId && !!taskId,
+		queryKey: ['projects', projectId, 'tasks', taskId, 'ancestors'],
+		queryFn: () => api.get<TaskAncestor[]>(`/api/projects/${projectId}/tasks/${taskId}/ancestors`),
+		enabled: !!projectId && !!taskId,
 	});
 }
 
-export function useCreateSubTask(teamId: string, parentTaskId: string) {
+export function useCreateSubTask(projectId: string, parentTaskId: string) {
 	return useMutation({
 		mutationFn: (data: {
 			title: string;
 			description?: string;
 			assignee_id?: string;
 			priority?: string;
-		}) => api.post<Task>(`/api/teams/${teamId}/tasks/${parentTaskId}/sub-tasks`, data),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'tasks'] }),
+		}) => api.post<Task>(`/api/projects/${projectId}/tasks/${parentTaskId}/sub-tasks`, data),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'tasks'] }),
 	});
 }
 
@@ -205,33 +212,34 @@ export interface TaskDependency {
 	blocked_by_project_slug: string;
 }
 
-export function useTaskDependencies(teamId: string, taskId: string) {
+export function useTaskDependencies(projectId: string, taskId: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'tasks', taskId, 'dependencies'],
-		queryFn: () => api.get<TaskDependency[]>(`/api/teams/${teamId}/tasks/${taskId}/dependencies`),
+		queryKey: ['projects', projectId, 'tasks', taskId, 'dependencies'],
+		queryFn: () =>
+			api.get<TaskDependency[]>(`/api/projects/${projectId}/tasks/${taskId}/dependencies`),
 	});
 }
 
-export function useAddDependency(teamId: string, taskId: string) {
+export function useAddDependency(projectId: string, taskId: string) {
 	return useMutation({
 		mutationFn: (blockedByTaskId: string) =>
-			api.post(`/api/teams/${teamId}/tasks/${taskId}/dependencies`, {
+			api.post(`/api/projects/${projectId}/tasks/${taskId}/dependencies`, {
 				blocked_by_task_id: blockedByTaskId,
 			}),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'tasks', taskId, 'dependencies'],
+				queryKey: ['projects', projectId, 'tasks', taskId, 'dependencies'],
 			}),
 	});
 }
 
-export function useRemoveDependency(teamId: string, taskId: string) {
+export function useRemoveDependency(projectId: string, taskId: string) {
 	return useMutation({
 		mutationFn: (depId: string) =>
-			api.delete(`/api/teams/${teamId}/tasks/${taskId}/dependencies/${depId}`),
+			api.delete(`/api/projects/${projectId}/tasks/${taskId}/dependencies/${depId}`),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'tasks', taskId, 'dependencies'],
+				queryKey: ['projects', projectId, 'tasks', taskId, 'dependencies'],
 			}),
 	});
 }
