@@ -632,225 +632,238 @@ export async function runAgent(
 	if (signal?.aborted) return finalizeAbort();
 
 	const layout = SUBSCRIPTION_LAYOUTS[provider];
-	const releaseCredentialLock =
-		credential.authMethod === AiAuthMethod.Subscription && layout?.rotates
-			? await acquireCredentialLock(credential.configId)
-			: null;
-
-	await markHeartbeatRunRunning(deps.db, heartbeatRunId, runBroadcast);
-
-	// Human-friendly label for run-scoped logs (egress proxy, ssh-agent),
-	// since a run has no friendly identifier of its own.
-	const runLabel = `${agent.slug}/${task.identifier}`;
-
-	let sshSocketContainerPath: string | null = null;
-	let sshSocketHostPath: string | null = null;
-	let bridge: BridgeRunnerArgs | null = null;
-	if (deps.sshAgentServer) {
-		sshSocketHostPath = getRunSocketPath(deps.dataDir, heartbeatRunId);
-		const allocated = await deps.sshAgentServer.allocateRunSocket(
-			heartbeatRunId,
-			{ teamId: agent.team_id, agentId: agent.id, label: runLabel },
-			sshSocketHostPath,
+	let releaseCredentialLock: (() => void) | null = null;
+	if (credential.authMethod === AiAuthMethod.Subscription && layout?.rotates) {
+		// Records the true wait so the run comment reads honestly while blocked.
+		await deps.db.query(
+			`UPDATE heartbeat_runs SET queued_reason = $1
+			 WHERE id = $2 AND status = $3::heartbeat_run_status`,
+			['waiting for prior run on this credential', heartbeatRunId, HeartbeatRunStatus.Queued],
 		);
-		sshSocketContainerPath = `/run/hezo/${heartbeatRunId}.sock`;
-		bridge = {
-			socketPath: sshSocketContainerPath,
-			socketUser: 'node',
-			tokenHex: allocated.tokenHex,
-			hostName: 'host.docker.internal',
-			hostPort: allocated.tcpHostPort,
-		};
+		releaseCredentialLock = await acquireCredentialLock(credential.configId);
 	}
 
-	let egressEnv: EgressEnvDescriptor | null = null;
-	let egressAllocated = false;
-	if (deps.egressProxy && deps.egressCAPath) {
-		// Egress proxy is mandatory: agents may have placeholder secrets in
-		// their env. Failing fast prevents real secrets from leaking through
-		// a fall-through path. If allocation fails, the run aborts.
-		const allocated = await deps.egressProxy.allocateRunProxy(heartbeatRunId, {
-			teamId: agent.team_id,
-			agentId: agent.id,
-			projectId: project.id,
-			label: runLabel,
-		});
-		egressAllocated = true;
-		egressEnv = {
-			host: allocated.proxyHost,
-			port: allocated.proxyPort,
-			containerCAPath: '/usr/local/share/ca-certificates/hezo-egress.crt',
-		};
-	}
-
-	const context = await buildRunContext(
-		deps,
-		agent,
-		task,
-		project,
-		wakeupPayload,
-		credential,
-		provider,
-		runtimeType,
-		heartbeatRunId,
-		modelOverride,
-		sshSocketContainerPath,
-		bridge,
-		egressEnv,
-	);
-
-	if (signal?.aborted) {
-		releaseCredentialLock?.();
-		const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
-		if (dirToRemove) {
-			rmSync(dirToRemove, { recursive: true, force: true });
-		}
-		if (deps.sshAgentServer) {
-			await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
-		}
-		if (deps.egressProxy && egressAllocated) {
-			await deps.egressProxy.releaseRunProxy(heartbeatRunId);
-		}
-		return finalizeAbort();
-	}
-
-	const prep = await prepareWorktrees(deps, project, task, emit, signal);
-
-	const hostPromptPath = getHostPromptPath(
-		deps.dataDir,
-		project.team_id,
-		project.id,
-		heartbeatRunId,
-	);
-	mkdirSync(dirname(hostPromptPath), { recursive: true });
-	writeFileSync(hostPromptPath, context.taskPrompt);
-
-	const redactedCmd = context.cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
-	const invocationCommand = `$ ${redactedCmd.map(shellQuoteArg).join(' ')} < ${context.promptFilePath}`;
-
-	await deps.db.query(
-		`UPDATE heartbeat_runs SET invocation_command = $1, working_dir = $2 WHERE id = $3`,
-		[invocationCommand, prep.workingDir, heartbeatRunId],
-	);
-
-	emit('stdout', `${invocationCommand}\n`);
-
-	const parser = createAgentStreamParser(runtimeType);
-
-	const persistRotatedAuth = async () => {
-		const mount = context.subscriptionMount;
-		if (!mount?.rotates) return;
-		try {
-			if (existsSync(mount.hostAuthFile)) {
-				const rotated = readFileSync(mount.hostAuthFile, 'utf8');
-				if (rotated && rotated !== credential.value) {
-					await updateAiProviderCredential(
-						deps.db,
-						deps.masterKeyManager,
-						credential.configId,
-						rotated,
-					);
-				}
-			}
-		} catch (e) {
-			emit(
-				'stderr',
-				`[runner] failed to persist rotated subscription auth: ${(e as Error).message}\n`,
-			);
-		}
-	};
-
-	const cleanupRunArtifacts = async () => {
-		await persistRotatedAuth();
-		rmSync(hostPromptPath, { force: true });
-		const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
-		if (dirToRemove) {
-			rmSync(dirToRemove, { recursive: true, force: true });
-		}
-		if (deps.sshAgentServer) {
-			await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
-		}
-		if (deps.egressProxy && egressAllocated) {
-			await deps.egressProxy.releaseRunProxy(heartbeatRunId);
-		}
-		releaseCredentialLock?.();
-	};
-
+	// Everything past the lock runs inside a try/finally so the credential lock is
+	// always released — including when setup (sockets, proxy, context, worktrees,
+	// file writes) throws before the exec block. Leaking it would queue every later
+	// run on this credential forever. Release is idempotent, so the explicit cleanup
+	// paths below don't double-free.
 	try {
-		if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+		await markHeartbeatRunRunning(deps.db, heartbeatRunId, runBroadcast);
 
-		const execId = await deps.docker.execCreate(project.container_id, {
-			Cmd: context.execCmd,
-			Env: context.env,
-			WorkingDir: prep.workingDir,
-			User: 'node',
-			AttachStdout: true,
-			AttachStderr: true,
-		});
+		// Human-friendly label for run-scoped logs (egress proxy, ssh-agent),
+		// since a run has no friendly identifier of its own.
+		const runLabel = `${agent.slug}/${task.identifier}`;
 
-		const onChunk = async (chunk: ExecLogChunk) => {
-			const rendered =
-				chunk.stream === 'stdout' ? parser.onStdout(chunk.text) : parser.onStderr(chunk.text);
-			if (rendered) emit(chunk.stream, rendered);
-		};
+		let sshSocketContainerPath: string | null = null;
+		let sshSocketHostPath: string | null = null;
+		let bridge: BridgeRunnerArgs | null = null;
+		if (deps.sshAgentServer) {
+			sshSocketHostPath = getRunSocketPath(deps.dataDir, heartbeatRunId);
+			const allocated = await deps.sshAgentServer.allocateRunSocket(
+				heartbeatRunId,
+				{ teamId: agent.team_id, agentId: agent.id, label: runLabel },
+				sshSocketHostPath,
+			);
+			sshSocketContainerPath = `/run/hezo/${heartbeatRunId}.sock`;
+			bridge = {
+				socketPath: sshSocketContainerPath,
+				socketUser: 'node',
+				tokenHex: allocated.tokenHex,
+				hostName: 'host.docker.internal',
+				hostPort: allocated.tcpHostPort,
+			};
+		}
 
-		const { stdout, stderr } = await deps.docker.execStart(execId, { signal, onChunk });
-		const tail = parser.flush();
-		if (tail) emit('stdout', tail);
-		const execInfo = await deps.docker.execInspect(execId);
-		const durationMs = Date.now() - startTime;
-		const success = execInfo.ExitCode === 0;
+		let egressEnv: EgressEnvDescriptor | null = null;
+		let egressAllocated = false;
+		if (deps.egressProxy && deps.egressCAPath) {
+			// Egress proxy is mandatory: agents may have placeholder secrets in
+			// their env. Failing fast prevents real secrets from leaking through
+			// a fall-through path. If allocation fails, the run aborts.
+			const allocated = await deps.egressProxy.allocateRunProxy(heartbeatRunId, {
+				teamId: agent.team_id,
+				agentId: agent.id,
+				projectId: project.id,
+				label: runLabel,
+			});
+			egressAllocated = true;
+			egressEnv = {
+				host: allocated.proxyHost,
+				port: allocated.proxyPort,
+				containerCAPath: '/usr/local/share/ca-certificates/hezo-egress.crt',
+			};
+		}
 
-		await deps.logs.end(streamId);
-		await updateHeartbeatRun(
-			deps.db,
+		const context = await buildRunContext(
+			deps,
+			agent,
+			task,
+			project,
+			wakeupPayload,
+			credential,
+			provider,
+			runtimeType,
 			heartbeatRunId,
-			{
-				status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
-				exitCode: execInfo.ExitCode,
-				durationMs,
-				usage: parser.getUsage(),
-			},
-			runBroadcast,
+			modelOverride,
+			sshSocketContainerPath,
+			bridge,
+			egressEnv,
 		);
 
-		await cleanupRunArtifacts();
-		return { success, exitCode: execInfo.ExitCode, stdout, stderr, durationMs, heartbeatRunId };
-	} catch (error) {
-		const durationMs = Date.now() - startTime;
-		const isAbort = (error as Error).name === 'AbortError';
-		const exitReason = exitReasonFromSignal(signal);
-		const errorMessage = exitReason ?? (error as Error).message;
-		const status = isAbort
-			? exitReason
-				? HeartbeatRunStatus.Failed
-				: HeartbeatRunStatus.Cancelled
-			: HeartbeatRunStatus.Failed;
+		if (signal?.aborted) {
+			const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
+			if (dirToRemove) {
+				rmSync(dirToRemove, { recursive: true, force: true });
+			}
+			if (deps.sshAgentServer) {
+				await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
+			}
+			if (deps.egressProxy && egressAllocated) {
+				await deps.egressProxy.releaseRunProxy(heartbeatRunId);
+			}
+			return finalizeAbort();
+		}
 
-		emit('stderr', `\n[runner] ${errorMessage}\n`);
+		const prep = await prepareWorktrees(deps, project, task, emit, signal);
 
-		await deps.logs.end(streamId);
-		await updateHeartbeatRun(
-			deps.db,
+		const hostPromptPath = getHostPromptPath(
+			deps.dataDir,
+			project.team_id,
+			project.id,
 			heartbeatRunId,
-			{
-				status,
+		);
+		mkdirSync(dirname(hostPromptPath), { recursive: true });
+		writeFileSync(hostPromptPath, context.taskPrompt);
+
+		const redactedCmd = context.cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
+		const invocationCommand = `$ ${redactedCmd.map(shellQuoteArg).join(' ')} < ${context.promptFilePath}`;
+
+		await deps.db.query(
+			`UPDATE heartbeat_runs SET invocation_command = $1, working_dir = $2 WHERE id = $3`,
+			[invocationCommand, prep.workingDir, heartbeatRunId],
+		);
+
+		emit('stdout', `${invocationCommand}\n`);
+
+		const parser = createAgentStreamParser(runtimeType);
+
+		const persistRotatedAuth = async () => {
+			const mount = context.subscriptionMount;
+			if (!mount?.rotates) return;
+			try {
+				if (existsSync(mount.hostAuthFile)) {
+					const rotated = readFileSync(mount.hostAuthFile, 'utf8');
+					if (rotated && rotated !== credential.value) {
+						await updateAiProviderCredential(
+							deps.db,
+							deps.masterKeyManager,
+							credential.configId,
+							rotated,
+						);
+					}
+				}
+			} catch (e) {
+				emit(
+					'stderr',
+					`[runner] failed to persist rotated subscription auth: ${(e as Error).message}\n`,
+				);
+			}
+		};
+
+		const cleanupRunArtifacts = async () => {
+			await persistRotatedAuth();
+			rmSync(hostPromptPath, { force: true });
+			const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
+			if (dirToRemove) {
+				rmSync(dirToRemove, { recursive: true, force: true });
+			}
+			if (deps.sshAgentServer) {
+				await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
+			}
+			if (deps.egressProxy && egressAllocated) {
+				await deps.egressProxy.releaseRunProxy(heartbeatRunId);
+			}
+		};
+
+		try {
+			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
+			const execId = await deps.docker.execCreate(project.container_id, {
+				Cmd: context.execCmd,
+				Env: context.env,
+				WorkingDir: prep.workingDir,
+				User: 'node',
+				AttachStdout: true,
+				AttachStderr: true,
+			});
+
+			const onChunk = async (chunk: ExecLogChunk) => {
+				const rendered =
+					chunk.stream === 'stdout' ? parser.onStdout(chunk.text) : parser.onStderr(chunk.text);
+				if (rendered) emit(chunk.stream, rendered);
+			};
+
+			const { stdout, stderr } = await deps.docker.execStart(execId, { signal, onChunk });
+			const tail = parser.flush();
+			if (tail) emit('stdout', tail);
+			const execInfo = await deps.docker.execInspect(execId);
+			const durationMs = Date.now() - startTime;
+			const success = execInfo.ExitCode === 0;
+
+			await deps.logs.end(streamId);
+			await updateHeartbeatRun(
+				deps.db,
+				heartbeatRunId,
+				{
+					status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
+					exitCode: execInfo.ExitCode,
+					durationMs,
+					usage: parser.getUsage(),
+				},
+				runBroadcast,
+			);
+
+			await cleanupRunArtifacts();
+			return { success, exitCode: execInfo.ExitCode, stdout, stderr, durationMs, heartbeatRunId };
+		} catch (error) {
+			const durationMs = Date.now() - startTime;
+			const isAbort = (error as Error).name === 'AbortError';
+			const exitReason = exitReasonFromSignal(signal);
+			const errorMessage = exitReason ?? (error as Error).message;
+			const status = isAbort
+				? exitReason
+					? HeartbeatRunStatus.Failed
+					: HeartbeatRunStatus.Cancelled
+				: HeartbeatRunStatus.Failed;
+
+			emit('stderr', `\n[runner] ${errorMessage}\n`);
+
+			await deps.logs.end(streamId);
+			await updateHeartbeatRun(
+				deps.db,
+				heartbeatRunId,
+				{
+					status,
+					exitCode: -1,
+					durationMs,
+					error: errorMessage,
+				},
+				runBroadcast,
+			);
+
+			await cleanupRunArtifacts();
+			return {
+				success: false,
 				exitCode: -1,
+				stdout: '',
+				stderr: errorMessage,
 				durationMs,
-				error: errorMessage,
-			},
-			runBroadcast,
-		);
-
-		await cleanupRunArtifacts();
-		return {
-			success: false,
-			exitCode: -1,
-			stdout: '',
-			stderr: errorMessage,
-			durationMs,
-			heartbeatRunId,
-		};
+				heartbeatRunId,
+			};
+		}
+	} finally {
+		releaseCredentialLock?.();
 	}
 }
 
@@ -1513,7 +1526,12 @@ export async function createHeartbeatRun(
 				task.id,
 				agent.id,
 				CommentContentType.Run,
-				JSON.stringify({ run_id: runId, agent_id: agent.id, agent_title: agent.title }),
+				JSON.stringify({
+					run_id: runId,
+					agent_id: agent.id,
+					agent_title: agent.title,
+					agent_slug: agent.slug,
+				}),
 			],
 		);
 

@@ -78,7 +78,10 @@ describe('teams CRUD', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
-		const slugs = agents.map((a: any) => a.slug).sort();
+		const slugs = agents
+			.filter((a: any) => !a.is_instance)
+			.map((a: any) => a.slug)
+			.sort();
 		expect(slugs).toEqual(['captain']);
 	});
 
@@ -245,7 +248,10 @@ describe('template-based team creation', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
-		const slugs = agents.map((a: any) => a.slug).sort();
+		const slugs = agents
+			.filter((a: any) => !a.is_instance)
+			.map((a: any) => a.slug)
+			.sort();
 		expect(slugs).toEqual(['captain', 'researcher']);
 	});
 
@@ -266,7 +272,10 @@ describe('template-based team creation', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
-		const slugs = agents.map((a: any) => a.slug).sort();
+		const slugs = agents
+			.filter((a: any) => !a.is_instance)
+			.map((a: any) => a.slug)
+			.sort();
 		expect(slugs).toEqual(['captain']);
 	});
 
@@ -294,7 +303,10 @@ describe('template-based team creation', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
-		const slugs = agents.map((a: any) => a.slug).sort();
+		const slugs = agents
+			.filter((a: any) => !a.is_instance)
+			.map((a: any) => a.slug)
+			.sort();
 		expect(slugs).toEqual(['captain']);
 	});
 
@@ -317,11 +329,14 @@ describe('template-based team creation', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
-		const captains = agents.filter((a: any) => a.slug === 'captain');
-		const coaches = agents.filter((a: any) => a.slug === 'coach');
+		const captains = agents.filter((a: any) => a.slug === 'captain' && !a.is_instance);
+		// The Coach is instance-level (in HQ): it surfaces only as a virtual member,
+		// never as a duplicated project-team member of its own.
+		const ownCoaches = agents.filter((a: any) => a.slug === 'coach' && !a.is_instance);
+		const virtualCoaches = agents.filter((a: any) => a.slug === 'coach' && a.is_instance);
 		expect(captains).toHaveLength(1);
-		// The Coach is instance-level (in HQ), never duplicated onto a project-team.
-		expect(coaches).toHaveLength(0);
+		expect(ownCoaches).toHaveLength(0);
+		expect(virtualCoaches).toHaveLength(1);
 	});
 
 	it('creates the Captain for a custom template that omits it', async () => {
@@ -361,7 +376,10 @@ describe('template-based team creation', () => {
 			headers: authHeader(token),
 		});
 		const agents = (await agentsRes.json()).data;
-		const slugs = agents.map((a: any) => a.slug).sort();
+		const slugs = agents
+			.filter((a: any) => !a.is_instance)
+			.map((a: any) => a.slug)
+			.sort();
 		expect(slugs).toEqual(['captain', 'researcher']);
 	});
 
@@ -465,6 +483,7 @@ describe('slug-based access', () => {
 		});
 		expect(agentsRes.status).toBe(200);
 		const agentsBody = await agentsRes.json();
-		expect(agentsBody.data.length).toBe(10);
+		const own = agentsBody.data.filter((a: any) => !a.is_instance);
+		expect(own.length).toBe(10);
 	});
 });

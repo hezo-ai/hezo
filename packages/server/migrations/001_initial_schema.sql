@@ -910,6 +910,7 @@ CREATE TABLE heartbeat_runs (
     wakeup_id                UUID REFERENCES agent_wakeup_requests(id) ON DELETE SET NULL,
     task_id                 UUID REFERENCES tasks(id) ON DELETE SET NULL,
     status                   heartbeat_run_status NOT NULL DEFAULT 'queued',
+    queued_reason            TEXT,
     started_at               TIMESTAMPTZ,
     finished_at              TIMESTAMPTZ,
     exit_code                INTEGER,

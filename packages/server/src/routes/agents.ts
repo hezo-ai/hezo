@@ -6,7 +6,9 @@ import {
 	ApprovalType,
 	AuthType,
 	DEFAULT_EFFORT,
+	DEFAULT_TEAM_ID,
 	DocumentType,
+	HQ_PROJECT_SLUG,
 	isAgentEffort,
 	isReservedAgentSlug,
 	MemberType,
@@ -68,7 +70,7 @@ const AGENT_BASE_COLUMNS = `m.id, m.team_id, m.display_name, m.created_at,
 	ma.mcp_servers, ma.model_override_provider, ma.model_override_model, ma.updated_at`;
 
 const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr.task_id,
-	hr.status, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
+	hr.status, hr.queued_reason, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
 	hr.input_tokens, hr.output_tokens, hr.cost_cents,
 	hr.invocation_command, hr.log_text, hr.working_dir,
 	hr.process_pid, hr.retry_of_run_id, hr.process_loss_retry_count,
@@ -166,14 +168,19 @@ agentsRoutes.get('/projects/:projectId/agents', async (c) => {
 	const adminFilter = c.req.query('admin_status');
 
 	const ts = terminalStatusParams(2);
+	const params: unknown[] = [teamId, ...ts.values];
+	const hqIdx = params.length + 1;
+	params.push(DEFAULT_TEAM_ID);
+	// HQ agents are virtual members of every project team: include them alongside
+	// the team's own roster (flagged is_instance), except when this project IS HQ.
 	let query = `
 		SELECT ${AGENT_BASE_COLUMNS},
+			(m.team_id <> $1) AS is_instance,
 			(SELECT ma2.title FROM member_agents ma2 WHERE ma2.id = ma.reports_to) AS reports_to_title,
 			(SELECT count(*) FROM tasks i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts.placeholders}))::int AS assigned_task_count
 		FROM members m
 		JOIN member_agents ma ON ma.id = m.id
-		WHERE m.team_id = $1`;
-	const params: unknown[] = [teamId, ...ts.values];
+		WHERE (m.team_id = $1 OR (m.team_id = $${hqIdx} AND $1 <> $${hqIdx}))`;
 
 	if (adminFilter) {
 		const statuses = adminFilter.split(',').map((s) => s.trim());
@@ -184,7 +191,7 @@ agentsRoutes.get('/projects/:projectId/agents', async (c) => {
 		params.push(...statuses);
 	}
 
-	query += ' ORDER BY ma.title ASC';
+	query += ' ORDER BY is_instance ASC, ma.title ASC';
 
 	const result = await db.query(query, params);
 	return ok(c, result.rows);
@@ -531,11 +538,12 @@ agentsRoutes.get('/projects/:projectId/agents/:agentId', async (c) => {
 	const ts2 = terminalStatusParams(3);
 	const result = await db.query(
 		`SELECT ${AGENT_BASE_COLUMNS},
+			(m.team_id <> $2) AS is_instance,
 			(SELECT ma2.title FROM member_agents ma2 WHERE ma2.id = ma.reports_to) AS reports_to_title,
 			(SELECT count(*) FROM tasks i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts2.placeholders}))::int AS assigned_task_count
 		 FROM members m
 		 JOIN member_agents ma ON ma.id = m.id
-		 WHERE m.id = $1 AND m.team_id = $2`,
+		 WHERE m.id = $1`,
 		[agentId, teamId, ...ts2.values],
 	);
 

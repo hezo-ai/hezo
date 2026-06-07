@@ -120,9 +120,7 @@ function HomePage() {
 	const { data: intake } = useProjectIntake(noProjectsYet);
 
 	if (teamsLoading) {
-		return (
-			<div className="px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6 text-text-muted">Loading...</div>
-		);
+		return <div className="text-text-muted">Loading...</div>;
 	}
 
 	const hasProject = projects.length > 0;
@@ -130,7 +128,7 @@ function HomePage() {
 	const showWelcome = !hasProject && !hasIntake;
 
 	return (
-		<div className="max-w-7xl mx-auto w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
+		<div className="max-w-7xl mx-auto w-full">
 			{showWelcome && <WelcomeCard onCreate={() => setCreateOpen(true)} />}
 
 			{hasIntake && intake && (

@@ -1,8 +1,10 @@
+import { Link } from '@tanstack/react-router';
 import { CornerDownRight, Reply } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { type Comment, useChooseOption, useComments } from '../../hooks/use-comments';
 import type { Task } from '../../hooks/use-tasks';
+import { agentPageParams } from '../../lib/agent-link';
 import {
 	type CommentData,
 	CommentReactions,
@@ -222,12 +224,23 @@ export function CommentsSection({
 								/>
 								<div className="flex-1 min-w-0 rounded-md border border-border bg-bg-elevated overflow-hidden">
 									<div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-bg-muted">
-										<span
-											className={`text-xs font-medium ${isAgent ? 'text-text' : 'text-text-muted'}`}
-											data-testid="comment-author"
-										>
-											{authorName}
-										</span>
+										{isAgent && c.author_slug ? (
+											<Link
+												to="/projects/$projectId/agents/$agentId"
+												params={agentPageParams(projectId, c.author_slug, c.author_is_instance)}
+												className="text-xs font-medium text-text hover:underline"
+												data-testid="comment-author"
+											>
+												{authorName}
+											</Link>
+										) : (
+											<span
+												className={`text-xs font-medium ${isAgent ? 'text-text' : 'text-text-muted'}`}
+												data-testid="comment-author"
+											>
+												{authorName}
+											</span>
+										)}
 										<span className="text-[11px] text-text-subtle">
 											{new Date(c.created_at).toLocaleString()}
 										</span>

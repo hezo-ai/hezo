@@ -28,7 +28,7 @@ import {
 import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import { loadCoordinationContext } from '../services/internal-intake';
 import type { JobManager } from '../services/job-manager';
-import { createProjectWithPlanningTask } from '../services/project-create';
+import { createPlanningTask, createProject } from '../services/project-create';
 import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
 import { createTeam } from '../services/teams';
 import { createWakeup } from '../services/wakeup';
@@ -267,7 +267,7 @@ projectsRoutes.post('/projects', async (c) => {
 				).rows[0]?.id ?? null)
 			: null;
 
-	const { project, planningTask } = await createProjectWithPlanningTask(db, {
+	const { project } = await createProject(db, {
 		teamId: team.id,
 		captainMemberId,
 		name: body.name.trim(),
@@ -281,15 +281,25 @@ projectsRoutes.post('/projects', async (c) => {
 		actorMemberId,
 	});
 
+	// The CEO's initial coherence/setup pass is the project's first ticket and
+	// blocks planning, so it's created before the planning task to take TO-1.
+	const coherenceTaskId = await enqueueTeamCoherenceReviewTask(db, team.id, 'initial');
+
+	const { planningTask } = await createPlanningTask(db, {
+		teamId: team.id,
+		project,
+		captainMemberId,
+		name: body.name.trim(),
+		description: body.description.trim(),
+		initialPrd: body.initial_prd?.trim() || null,
+	});
+
 	const wsManager = c.get('wsManager');
 	if (wsManager) {
 		broadcastChange(c, wsRoom.team(team.id), 'projects', 'INSERT', project);
 		broadcastChange(c, wsRoom.team(team.id), 'tasks', 'INSERT', planningTask);
 	}
 
-	// The CEO runs an initial coherence/setup pass; the planning task is blocked
-	// until it completes.
-	const coherenceTaskId = await enqueueTeamCoherenceReviewTask(db, team.id, 'initial');
 	if (coherenceTaskId) {
 		await db.query(
 			`INSERT INTO task_dependencies (task_id, blocked_by_task_id)

@@ -32,6 +32,8 @@ export interface Comment {
 	created_at: string;
 	author_type: string;
 	author_name: string;
+	author_slug: string | null;
+	author_is_instance: boolean;
 	author_member_id: string | null;
 	parent_comment_id: string | null;
 	tool_calls?: unknown[];

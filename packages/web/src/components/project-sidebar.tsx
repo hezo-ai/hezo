@@ -1,11 +1,24 @@
 import { AgentAdminStatus } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
+import { Globe } from 'lucide-react';
+import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useAgents } from '../hooks/use-agents';
 import { useInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useProjectMeta } from '../hooks/use-projects';
+import { agentPageParams } from '../lib/agent-link';
 import { AgentStatusLabel } from './agent-status-label';
 import { SidebarNav, type SidebarNavSection } from './sidebar-nav';
+
+const TEAM_COLLAPSED_KEY = 'hezo:sidebar:team-collapsed';
+
+function readTeamCollapsed(): boolean {
+	try {
+		return localStorage.getItem(TEAM_COLLAPSED_KEY) === '1';
+	} catch {
+		return false;
+	}
+}
 
 /**
  * The project menu: the persistent panel shown beside the project rail whenever
@@ -20,15 +33,29 @@ export function ProjectSidebar() {
 	const project = useProjectMeta(projectId);
 	const { data: inboxCount } = useInboxUnreadCount(projectId);
 	const { data: agents } = useAgents(projectId);
+	const [teamCollapsed, setTeamCollapsed] = useState(readTeamCollapsed);
 
 	if (!active) return null;
+
+	const toggleTeam = () =>
+		setTeamCollapsed((v) => {
+			const next = !v;
+			try {
+				localStorage.setItem(TEAM_COLLAPSED_KEY, next ? '1' : '0');
+			} catch {}
+			return next;
+		});
 
 	const isInternal = project?.is_internal ?? false;
 	const projectParams = { projectId };
 
-	const activeAgents = (agents ?? [])
-		.filter((a) => a.admin_status !== AgentAdminStatus.Disabled)
-		.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+	const enabledAgents = (agents ?? []).filter((a) => a.admin_status !== AgentAdminStatus.Disabled);
+	const byCreatedAt = (a: { created_at: string }, b: { created_at: string }) =>
+		new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+	// Own roster leads; HQ agents (virtual members) trail with a global marker and
+	// link to their canonical page in the HQ project.
+	const ownAgents = enabledAgents.filter((a) => !a.is_instance).sort(byCreatedAt);
+	const instanceAgents = enabledAgents.filter((a) => a.is_instance).sort(byCreatedAt);
 
 	const projectPages = [
 		{
@@ -91,13 +118,31 @@ export function ProjectSidebar() {
 			title: 'Team',
 			titleTo: '/projects/$projectId/agents',
 			titleParams: projectParams,
+			collapsible: true,
+			collapsed: teamCollapsed,
+			onToggle: toggleTeam,
 			onAdd: () => navigate({ to: '/projects/$projectId/agents/hire', params: projectParams }),
 			addLabel: 'Hire a new agent',
-			items: activeAgents.map((agent) => ({
-				to: '/projects/$projectId/agents/$agentId',
-				params: { projectId, agentId: agent.slug },
-				label: <AgentStatusLabel name={agent.title} runtimeStatus={agent.runtime_status} />,
-			})),
+			items: [
+				...ownAgents.map((agent) => ({
+					to: '/projects/$projectId/agents/$agentId',
+					params: { projectId, agentId: agent.slug },
+					label: <AgentStatusLabel name={agent.title} runtimeStatus={agent.runtime_status} />,
+				})),
+				...instanceAgents.map((agent) => ({
+					to: '/projects/$projectId/agents/$agentId',
+					params: agentPageParams(projectId, agent.slug, agent.is_instance),
+					label: (
+						<span className="flex items-center gap-1.5 min-w-0">
+							<Globe
+								className="w-3 h-3 shrink-0 text-text-subtle"
+								aria-label="Global agent — works across all projects"
+							/>
+							<AgentStatusLabel name={agent.title} runtimeStatus={agent.runtime_status} />
+						</span>
+					),
+				})),
+			],
 		},
 	];
 

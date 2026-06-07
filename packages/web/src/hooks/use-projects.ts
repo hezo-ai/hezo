@@ -65,6 +65,12 @@ export function useAllVisibleProjects() {
 	return { projects, isLoading };
 }
 
+/** The single instance-wide internal project (HQ), resolved from the index. */
+export function useHqProject(): Project | undefined {
+	const { data } = useProjectsIndex();
+	return (data ?? []).find((p) => p.is_internal);
+}
+
 /** The project (incl. internal) matching a slug, resolved from the index. */
 export function useProjectMeta(projectSlug: string | null | undefined): Project | undefined {
 	const { data } = useProjectsIndex();

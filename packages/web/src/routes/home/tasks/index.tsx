@@ -31,10 +31,7 @@ function AllTasksPage() {
 	const { data: tasks, isLoading } = useAllTasks(projects);
 
 	return (
-		<div
-			className="max-w-7xl mx-auto w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6"
-			data-testid="all-tasks-page"
-		>
+		<div className="max-w-7xl mx-auto w-full" data-testid="all-tasks-page">
 			<h1 className="text-[22px] font-medium mb-5">All Tasks</h1>
 			{isLoading ? (
 				<div className="text-text-muted text-[13px]">Loading tasks…</div>

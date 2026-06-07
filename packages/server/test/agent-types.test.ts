@@ -278,7 +278,7 @@ describe('team creation with agent types', () => {
 		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});
-		const agents = (await agentsRes.json()).data;
+		const agents = (await agentsRes.json()).data.filter((a: any) => !a.is_instance);
 		expect(agents).toHaveLength(10);
 		expect(agents.every((a: any) => a.agent_type_id != null)).toBe(true);
 	});

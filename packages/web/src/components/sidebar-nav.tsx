@@ -47,26 +47,27 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 			{sections.map((section) => (
 				<div key={section.title ?? `section-${sections.indexOf(section)}`}>
 					{section.title && <SectionHeader section={section} />}
-					{section.items.map((item) => {
-						const isActive = matchRoute({ to: item.to, params: item.params, fuzzy: true });
-						const paddingClass = section.title ? 'pl-4 pr-2 py-0.5' : 'px-2.5 py-1';
-						return (
-							<Link
-								key={`${item.to}-${JSON.stringify(item.params)}`}
-								to={item.to}
-								params={item.params ?? {}}
-								data-testid={item.testId}
-								className={`block text-left text-[12px] ${paddingClass} rounded-radius-md transition-colors ${
-									isActive
-										? 'text-text font-medium bg-bg-subtle'
-										: 'text-text-muted hover:text-text hover:bg-bg-subtle'
-								}`}
-							>
-								{item.label}
-								<CountBadge value={item.count} />
-							</Link>
-						);
-					})}
+					{(!section.collapsible || !section.collapsed) &&
+						section.items.map((item) => {
+							const isActive = matchRoute({ to: item.to, params: item.params, fuzzy: true });
+							const paddingClass = section.title ? 'pl-4 pr-2 py-0.5' : 'px-2.5 py-1';
+							return (
+								<Link
+									key={`${item.to}-${JSON.stringify(item.params)}`}
+									to={item.to}
+									params={item.params ?? {}}
+									data-testid={item.testId}
+									className={`block text-left text-[12px] ${paddingClass} rounded-radius-md transition-colors ${
+										isActive
+											? 'text-text font-medium bg-bg-subtle'
+											: 'text-text-muted hover:text-text hover:bg-bg-subtle'
+									}`}
+								>
+									{item.label}
+									<CountBadge value={item.count} />
+								</Link>
+							);
+						})}
 					{section.collapsible &&
 						!section.collapsed &&
 						section.children?.map((item) => {

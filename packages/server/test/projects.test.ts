@@ -245,12 +245,38 @@ describe('initial PRD upload', () => {
 		expect(docResult.rows[0].content).toBe(prdContent);
 
 		const taskResult = await db.query<{ description: string }>(
-			'SELECT description FROM tasks WHERE project_id = $1',
+			`SELECT description FROM tasks WHERE project_id = $1 AND labels @> '["planning"]'::jsonb`,
 			[project.id],
 		);
 		expect(taskResult.rows[0].description).toContain('initial-prd.md');
 		expect(taskResult.rows[0].description).toContain('Researcher');
 		expect(taskResult.rows[0].description).toContain('Product Lead');
+	});
+
+	it('creates the coherence review as the first ticket, blocking the planning task', async () => {
+		const res = await createProject({ name: 'Coherence Order Project' });
+		expect(res.status).toBe(201);
+		const project = (await res.json()).data;
+
+		const tasks = await db.query<{
+			id: string;
+			number: number;
+			identifier: string;
+			labels: string[];
+		}>('SELECT id, number, identifier, labels FROM tasks WHERE project_id = $1 ORDER BY number', [
+			project.id,
+		]);
+
+		const coherence = tasks.rows.find((t) => t.labels.includes('team-coherence-review'));
+		const planning = tasks.rows.find((t) => t.labels.includes('planning'));
+		expect(coherence?.number).toBe(1);
+		expect(planning?.number).toBe(2);
+
+		const dep = await db.query(
+			'SELECT 1 FROM task_dependencies WHERE task_id = $1 AND blocked_by_task_id = $2',
+			[planning?.id, coherence?.id],
+		);
+		expect(dep.rows.length).toBe(1);
 	});
 
 	it('does not create initial-prd.md when initial_prd is not provided', async () => {
