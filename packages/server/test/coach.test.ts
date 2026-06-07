@@ -46,11 +46,12 @@ beforeAll(async () => {
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
 
-	const internalProject = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
-		[teamId],
+	// The Coach is a single instance-level agent living in the HQ project.
+	const hq = await db.query<{ id: string; slug: string }>(
+		`SELECT id, slug FROM projects WHERE is_internal = true LIMIT 1`,
 	);
-	internalProjectId = internalProject.rows[0].id;
+	internalProjectId = hq.rows[0].id;
+	const hqSlug = hq.rows[0].slug;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Coach Test Project',
@@ -65,7 +66,10 @@ beforeAll(async () => {
 	});
 	const agents = (await agentsRes.json()).data;
 
-	const coach = agents.find((a: any) => a.slug === 'coach');
+	const hqAgentsRes = await app.request(`/api/projects/${hqSlug}/agents`, {
+		headers: authHeader(adminToken),
+	});
+	const coach = (await hqAgentsRes.json()).data.find((a: any) => a.slug === 'coach');
 	const engineer = agents.find((a: any) => a.slug === 'engineer');
 	const architect = agents.find((a: any) => a.slug === 'architect');
 	const captain = agents.find((a: any) => a.slug === 'captain');
@@ -81,10 +85,10 @@ beforeAll(async () => {
 	captainId = captain.id;
 
 	({ token: engineerToken } = await mintAgentToken(db, masterKeyManager, engineerId, teamId, null, {
-		projectId: internalProjectId,
+		projectId,
 	}));
 	({ token: captainToken } = await mintAgentToken(db, masterKeyManager, captainId, teamId, null, {
-		projectId: internalProjectId,
+		projectId,
 	}));
 
 	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
@@ -104,8 +108,12 @@ afterAll(async () => {
 });
 
 describe('Coach agent provisioning', () => {
-	it('Coach is auto-provisioned when team is created with Startup template', async () => {
-		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
+	it('Coach is a single instance-level agent in HQ, not per team', async () => {
+		const hq = await db.query<{ slug: string }>(
+			`SELECT slug FROM projects WHERE is_internal = true LIMIT 1`,
+		);
+		const hqSlug = hq.rows[0].slug;
+		const agentsRes = await app.request(`/api/projects/${hqSlug}/agents`, {
 			headers: authHeader(adminToken),
 		});
 		const agents = (await agentsRes.json()).data;
@@ -115,8 +123,14 @@ describe('Coach agent provisioning', () => {
 		expect(coach.title).toBe('Coach');
 		expect(coach.admin_status).toBe('enabled');
 
+		// Exactly one Coach across the whole instance.
+		const coachCount = await db.query<{ n: number }>(
+			"SELECT count(*)::int AS n FROM member_agents WHERE slug = 'coach'",
+		);
+		expect(coachCount.rows[0].n).toBe(1);
+
 		const promptRes = await app.request(
-			`/api/projects/${projectSlug}/agents/${coach.id}/system-prompt`,
+			`/api/projects/${hqSlug}/agents/${coach.id}/system-prompt`,
 			{
 				headers: authHeader(adminToken),
 			},
