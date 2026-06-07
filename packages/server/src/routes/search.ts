@@ -5,7 +5,7 @@ import { isModelReady, semanticSearch } from '../services/embeddings';
 
 export const searchRoutes = new Hono<Env>();
 
-searchRoutes.get('/teams/:teamId/search', async (c) => {
+searchRoutes.get('/projects/:projectId/search', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const query = c.req.query('q');

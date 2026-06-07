@@ -8,11 +8,11 @@ import type { CommentDataOf } from './comment-data';
 
 interface Props {
 	comment: CommentDataOf<'credential_request'>;
-	teamId?: string;
+	projectId?: string;
 	taskId?: string;
 }
 
-export function CredentialRequestComment({ comment, teamId, taskId }: Props) {
+export function CredentialRequestComment({ comment, projectId, taskId }: Props) {
 	const content = comment.content ?? {};
 	const name = content.name ?? '';
 	const kind = content.kind ?? 'other';
@@ -25,9 +25,9 @@ export function CredentialRequestComment({ comment, teamId, taskId }: Props) {
 
 	const [value, setValue] = useState('');
 	const [error, setError] = useState<string | null>(null);
-	const fulfill = useFulfillCredential(teamId ?? '', taskId ?? '');
+	const fulfill = useFulfillCredential(projectId ?? '', taskId ?? '');
 
-	if (!teamId || !taskId) {
+	if (!projectId || !taskId) {
 		return (
 			<p className="text-xs text-text-subtle italic">
 				Credential request unavailable in this view.

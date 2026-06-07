@@ -10,10 +10,10 @@ test('team org chart renders with status legend', async () => {
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			teamSlug = ws.team.slug;
+			teamSlug = ws.internalSlug;
 		},
 	});
-	await router.navigate({ to: '/teams/$teamId/agents', params: { teamId: teamSlug } });
+	await router.navigate({ to: '/projects/$projectId/agents', params: { projectId: teamSlug } });
 	await findByText('You (Admin)', undefined, { timeout: 15_000 });
 	await findByText('Active', undefined, { timeout: 15_000 });
 });
@@ -25,13 +25,13 @@ test('agent detail page defaults to Executions tab and exposes Settings tab', as
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			teamSlug = ws.team.slug;
+			teamSlug = ws.internalSlug;
 			agentId = ws.agents[0].id;
 		},
 	});
 	await router.navigate({
-		to: '/teams/$teamId/agents/$agentId',
-		params: { teamId: teamSlug, agentId },
+		to: '/projects/$projectId/agents/$agentId',
+		params: { projectId: teamSlug, agentId },
 	});
 
 	const main = await findByRole('main');
@@ -50,13 +50,13 @@ test('agent settings tab shows budget, heartbeat, title, and save controls', asy
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			teamSlug = ws.team.slug;
+			teamSlug = ws.internalSlug;
 			agentId = ws.agents[0].id;
 		},
 	});
 	await router.navigate({
-		to: '/teams/$teamId/agents/$agentId/settings',
-		params: { teamId: teamSlug, agentId },
+		to: '/projects/$projectId/agents/$agentId/settings',
+		params: { projectId: teamSlug, agentId },
 	});
 
 	await findByText('Budget Usage');
@@ -76,10 +76,10 @@ test('agent settings persists run_timeout_min independently of heartbeat', async
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			teamSlug = ws.team.slug;
+			teamSlug = ws.internalSlug;
 			teamId = ws.team.id;
 			const { apiBase, token } = getTestContext();
-			const agentsRes = await apiBase(`/api/teams/${teamId}/agents`, {
+			const agentsRes = await apiBase(`/api/projects/${teamSlug}/agents`, {
 				headers: { Authorization: `Bearer ${token}` },
 			});
 			const agents = (
@@ -97,8 +97,8 @@ test('agent settings persists run_timeout_min independently of heartbeat', async
 		},
 	});
 	await router.navigate({
-		to: '/teams/$teamId/agents/$agentId/settings',
-		params: { teamId: teamSlug, agentId },
+		to: '/projects/$projectId/agents/$agentId/settings',
+		params: { projectId: teamSlug, agentId },
 	});
 
 	const runTimeoutInput = (await findByLabelText('Run timeout (min)')) as HTMLInputElement;
@@ -113,7 +113,7 @@ test('agent settings persists run_timeout_min independently of heartbeat', async
 	const { apiBase, token } = getTestContext();
 	await waitFor(
 		async () => {
-			const verifyRes = await apiBase(`/api/teams/${teamId}/agents/${agentId}`, {
+			const verifyRes = await apiBase(`/api/projects/${teamSlug}/agents/${agentId}`, {
 				headers: { Authorization: `Bearer ${token}` },
 			});
 			const verifyData = (
@@ -138,10 +138,10 @@ test('agent settings tab edits the title and persists across reload', async () =
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			teamSlug = ws.team.slug;
+			teamSlug = ws.internalSlug;
 			teamId = ws.team.id;
 			const { apiBase, token } = getTestContext();
-			const agentsRes = await apiBase(`/api/teams/${teamId}/agents`, {
+			const agentsRes = await apiBase(`/api/projects/${teamSlug}/agents`, {
 				headers: { Authorization: `Bearer ${token}` },
 			});
 			const agents = (
@@ -155,8 +155,8 @@ test('agent settings tab edits the title and persists across reload', async () =
 		},
 	});
 	await router.navigate({
-		to: '/teams/$teamId/agents/$agentId',
-		params: { teamId: teamSlug, agentId },
+		to: '/projects/$projectId/agents/$agentId',
+		params: { projectId: teamSlug, agentId },
 	});
 
 	const main = await findByRole('main');
@@ -172,7 +172,7 @@ test('agent settings tab edits the title and persists across reload', async () =
 	const { apiBase, token } = getTestContext();
 	await waitFor(
 		async () => {
-			const verifyRes = await apiBase(`/api/teams/${teamId}/agents/${agentId}`, {
+			const verifyRes = await apiBase(`/api/projects/${teamSlug}/agents/${agentId}`, {
 				headers: { Authorization: `Bearer ${token}` },
 			});
 			const verifyData = ((await verifyRes.json()) as { data: { title: string } }).data;
@@ -191,7 +191,7 @@ test('agent disable and enable lifecycle reflects in detail view', async () => {
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			teamSlug = ws.team.slug;
+			teamSlug = ws.internalSlug;
 			teamId = ws.team.id;
 			const enabled =
 				ws.agents.find((a) => (a as { admin_status?: string }).admin_status === 'enabled') ??
@@ -200,8 +200,8 @@ test('agent disable and enable lifecycle reflects in detail view', async () => {
 		},
 	});
 	await router.navigate({
-		to: '/teams/$teamId/agents/$agentId',
-		params: { teamId: teamSlug, agentId },
+		to: '/projects/$projectId/agents/$agentId',
+		params: { projectId: teamSlug, agentId },
 	});
 
 	const main = await findByRole('main');
@@ -231,7 +231,7 @@ test('agent disable and enable lifecycle reflects in detail view', async () => {
 		{ timeout: 8_000 },
 	);
 	const { apiBase, token } = getTestContext();
-	const apiDisable = await apiBase(`/api/teams/${teamId}/agents/${agentId}/disable`, {
+	const apiDisable = await apiBase(`/api/projects/${teamSlug}/agents/${agentId}/disable`, {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${token}` },
 	});
@@ -239,11 +239,11 @@ test('agent disable and enable lifecycle reflects in detail view', async () => {
 
 	// Force a refetch so the cached agent reflects the just-issued API disable
 	// (no realtime socket subscription in the component test harness).
-	queryClient.invalidateQueries({ queryKey: ['teams', teamSlug, 'agents', agentId] });
+	queryClient.invalidateQueries({ queryKey: ['projects', teamSlug, 'agents', agentId] });
 
 	await router.navigate({
-		to: '/teams/$teamId/agents/$agentId',
-		params: { teamId: teamSlug, agentId },
+		to: '/projects/$projectId/agents/$agentId',
+		params: { projectId: teamSlug, agentId },
 	});
 	await waitFor(
 		() => {

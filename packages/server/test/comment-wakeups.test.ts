@@ -13,7 +13,10 @@ let token: string;
 let masterKeyManager: MasterKeyManager;
 
 let teamId: string;
+let teamSlug: string;
+let internalSlug: string;
 let projectId: string;
+let projectSlug: string;
 let productLeadId: string;
 let architectId: string;
 let captainId: string;
@@ -135,9 +138,12 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	teamSlug = teamData.slug;
+	internalSlug = `internal-${teamSlug}`;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -150,7 +156,9 @@ beforeAll(async () => {
 		name: 'Test Project',
 		description: 'x',
 	});
-	projectId = (await projectRes.json()).data.id;
+	const projectData = (await projectRes.json()).data;
+	projectId = projectData.id;
+	projectSlug = projectData.slug;
 });
 
 afterAll(async () => {
@@ -312,7 +320,7 @@ describe('agent-api POST comments fires mention-only wakeups', () => {
 
 describe('admin POST comments honors wake_assignee opt-in', () => {
 	async function postAdminComment(taskId: string, body: Record<string, unknown>): Promise<string> {
-		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify(body),
@@ -509,7 +517,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 		const taskId = await insertTask(architectId, 'Admin reply');
 		const parentId = await insertCommentBy(taskId, architectId, 'Update from architect.');
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -755,7 +763,7 @@ describe('mention wakeup idempotency by (task, mentioned, author)', () => {
 	it('collapses repeated @-mentions across admin and agent authors', async () => {
 		const taskId = await insertTask(captainId, 'Admin scoping');
 
-		const firstAdmin = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+		const firstAdmin = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -768,7 +776,7 @@ describe('mention wakeup idempotency by (task, mentioned, author)', () => {
 		expect(afterFirstAdmin).toHaveLength(1);
 		await backdateWakeup(afterFirstAdmin[0].id);
 
-		const secondAdmin = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+		const secondAdmin = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

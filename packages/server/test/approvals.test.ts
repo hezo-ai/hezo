@@ -8,7 +8,7 @@ import { authHeader, createTestApp } from './helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let teamId: string;
+let projectSlug: string;
 let agentId: string;
 
 beforeAll(async () => {
@@ -32,9 +32,9 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	teamId = (await teamRes.json()).data.id;
+	projectSlug = `internal-${(await teamRes.json()).data.slug}`;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
@@ -47,7 +47,7 @@ afterAll(async () => {
 describe('approvals CRUD', () => {
 	it('creates and resolves an approval', async () => {
 		// Create
-		const createRes = await app.request(`/api/teams/${teamId}/approvals`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -61,7 +61,7 @@ describe('approvals CRUD', () => {
 		expect(approval.status).toBe('pending');
 
 		// List pending
-		const listRes = await app.request(`/api/teams/${teamId}/approvals`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
 			headers: authHeader(token),
 		});
 		expect(listRes.status).toBe(200);
@@ -84,7 +84,7 @@ describe('approvals CRUD', () => {
 
 	it('rejects resolving an already-resolved approval', async () => {
 		// Create and resolve
-		const createRes = await app.request(`/api/teams/${teamId}/approvals`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

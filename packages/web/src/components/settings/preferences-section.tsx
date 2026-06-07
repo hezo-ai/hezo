@@ -10,11 +10,11 @@ import { RevisionsPanel } from '../revisions-panel';
 import { Button } from '../ui/button';
 import { SectionHeader } from './helpers';
 
-export function PreferencesSection({ teamId }: { teamId: string }) {
-	const { data: prefs } = usePreferences(teamId);
-	const { data: revisions } = usePreferenceRevisions(teamId);
-	const updatePrefs = useUpdatePreferences(teamId);
-	const restorePrefs = useRestorePreferenceRevision(teamId);
+export function PreferencesSection({ projectId }: { projectId: string }) {
+	const { data: prefs } = usePreferences(projectId);
+	const { data: revisions } = usePreferenceRevisions(projectId);
+	const updatePrefs = useUpdatePreferences(projectId);
+	const restorePrefs = useRestorePreferenceRevision(projectId);
 	const [content, setContent] = useState('');
 	const [editing, setEditing] = useState(false);
 

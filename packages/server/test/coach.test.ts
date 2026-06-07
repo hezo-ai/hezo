@@ -11,7 +11,11 @@ let app: Hono<Env>;
 let db: PGlite;
 let adminToken: string;
 let teamId: string;
+let teamSlug: string;
+let internalSlug: string;
+let internalProjectId: string;
 let projectId: string;
+let projectSlug: string;
 let taskId: string;
 let coachId: string;
 let engineerId: string;
@@ -39,15 +43,26 @@ beforeAll(async () => {
 			template_id: teamTemplateId,
 		}),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	teamSlug = teamData.slug;
+	internalSlug = `internal-${teamSlug}`;
+
+	const internalProject = await db.query<{ id: string }>(
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+		[teamId],
+	);
+	internalProjectId = internalProject.rows[0].id;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Coach Test Project',
 		description: 'Test project.',
 	});
-	projectId = (await projectRes.json()).data.id;
+	const projectData = (await projectRes.json()).data;
+	projectId = projectData.id;
+	projectSlug = projectData.slug;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 		headers: authHeader(adminToken),
 	});
 	const agents = (await agentsRes.json()).data;
@@ -67,10 +82,14 @@ beforeAll(async () => {
 	architectId = architect.id;
 	captainId = captain.id;
 
-	({ token: engineerToken } = await mintAgentToken(db, masterKeyManager, engineerId, teamId));
-	({ token: captainToken } = await mintAgentToken(db, masterKeyManager, captainId, teamId));
+	({ token: engineerToken } = await mintAgentToken(db, masterKeyManager, engineerId, teamId, null, {
+		projectId: internalProjectId,
+	}));
+	({ token: captainToken } = await mintAgentToken(db, masterKeyManager, captainId, teamId, null, {
+		projectId: internalProjectId,
+	}));
 
-	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -88,7 +107,7 @@ afterAll(async () => {
 
 describe('Coach agent provisioning', () => {
 	it('Coach is auto-provisioned when team is created with Startup template', async () => {
-		const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 			headers: authHeader(adminToken),
 		});
 		const agents = (await agentsRes.json()).data;
@@ -98,9 +117,12 @@ describe('Coach agent provisioning', () => {
 		expect(coach.title).toBe('Coach');
 		expect(coach.admin_status).toBe('enabled');
 
-		const promptRes = await app.request(`/api/teams/${teamId}/agents/${coach.id}/system-prompt`, {
-			headers: authHeader(adminToken),
-		});
+		const promptRes = await app.request(
+			`/api/projects/${internalSlug}/agents/${coach.id}/system-prompt`,
+			{
+				headers: authHeader(adminToken),
+			},
+		);
 		const promptDoc = (await promptRes.json()).data;
 		expect(promptDoc?.content).toBeTruthy();
 	});
@@ -120,7 +142,7 @@ describe('Coach agent provisioning', () => {
 
 describe('Coach wakeup on task done', () => {
 	it('creates a wakeup for Coach when task is marked done', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status: 'done' }),
@@ -312,7 +334,7 @@ describe('Agent system-prompt access', () => {
 		expect(payload.document_id).toBeTruthy();
 
 		const promptRes = await app.request(
-			`/api/teams/${teamId}/agents/${architectId}/system-prompt`,
+			`/api/projects/${internalSlug}/agents/${architectId}/system-prompt`,
 			{ headers: authHeader(adminToken) },
 		);
 		const promptDoc = (await promptRes.json()).data;
@@ -322,13 +344,13 @@ describe('Agent system-prompt access', () => {
 
 describe('System prompt revision tracking', () => {
 	it('records revision on manual admin edit', async () => {
-		await app.request(`/api/teams/${teamId}/agents/${architectId}`, {
+		await app.request(`/api/projects/${internalSlug}/agents/${architectId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'Before manual edit' }),
 		});
 
-		const res = await app.request(`/api/teams/${teamId}/agents/${architectId}`, {
+		const res = await app.request(`/api/projects/${internalSlug}/agents/${architectId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'After manual edit by admin' }),
@@ -336,7 +358,7 @@ describe('System prompt revision tracking', () => {
 		expect(res.status).toBe(200);
 
 		const revisionsRes = await app.request(
-			`/api/teams/${teamId}/agents/${architectId}/system-prompt/revisions`,
+			`/api/projects/${internalSlug}/agents/${architectId}/system-prompt/revisions`,
 			{ headers: authHeader(adminToken) },
 		);
 		const revisions = (await revisionsRes.json()).data as Array<{
@@ -351,24 +373,24 @@ describe('System prompt revision tracking', () => {
 	});
 
 	it('revision numbers increment correctly', async () => {
-		await app.request(`/api/teams/${teamId}/agents/${engineerId}`, {
+		await app.request(`/api/projects/${internalSlug}/agents/${engineerId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'Version A' }),
 		});
-		await app.request(`/api/teams/${teamId}/agents/${engineerId}`, {
+		await app.request(`/api/projects/${internalSlug}/agents/${engineerId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'Version B' }),
 		});
-		await app.request(`/api/teams/${teamId}/agents/${engineerId}`, {
+		await app.request(`/api/projects/${internalSlug}/agents/${engineerId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ system_prompt: 'Version C' }),
 		});
 
 		const revisionsRes = await app.request(
-			`/api/teams/${teamId}/agents/${engineerId}/system-prompt/revisions`,
+			`/api/projects/${internalSlug}/agents/${engineerId}/system-prompt/revisions`,
 			{ headers: authHeader(adminToken) },
 		);
 		const revisions = (await revisionsRes.json()).data as Array<{ revision_number: number }>;
@@ -382,7 +404,7 @@ describe('System prompt revision tracking', () => {
 
 describe('team settings JSONB', () => {
 	it('has correct default values', async () => {
-		const res = await app.request(`/api/teams/${teamId}`, {
+		const res = await app.request(`/api/projects/${internalSlug}/team`, {
 			headers: authHeader(adminToken),
 		});
 		const team = (await res.json()).data;
@@ -390,7 +412,7 @@ describe('team settings JSONB', () => {
 	});
 
 	it('merges settings without clobbering existing keys', async () => {
-		const res = await app.request(`/api/teams/${teamId}`, {
+		const res = await app.request(`/api/projects/${internalSlug}/team`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ settings: { custom_key: 'hello' } }),

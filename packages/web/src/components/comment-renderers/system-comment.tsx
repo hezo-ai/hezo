@@ -12,7 +12,7 @@ import type { CommentDataOf } from './comment-data';
 
 interface Props {
 	comment: CommentDataOf<'system'>;
-	teamId?: string;
+	projectId?: string;
 }
 
 function isTaskLink(c: SystemContent): c is SystemTaskLinkContent {
@@ -28,7 +28,7 @@ function isRepoDesignated(c: SystemContent): c is SystemRepoDesignatedContent {
 	return c.kind === 'repo_designated';
 }
 
-export function SystemComment({ comment, teamId }: Props) {
+export function SystemComment({ comment, projectId }: Props) {
 	const content: SystemContent | null =
 		comment.content && typeof comment.content === 'object' ? comment.content : null;
 	const timestamp = (
@@ -37,10 +37,10 @@ export function SystemComment({ comment, teamId }: Props) {
 		</span>
 	);
 
-	if (content && isTaskLink(content) && teamId) {
+	if (content && isTaskLink(content) && projectId) {
 		return (
 			<div className="flex items-baseline gap-2 leading-[26px]">
-				<TaskLinkSystemBody comment={comment} content={content} teamId={teamId} />
+				<TaskLinkSystemBody comment={comment} content={content} projectId={projectId} />
 				{timestamp}
 			</div>
 		);
@@ -48,12 +48,17 @@ export function SystemComment({ comment, teamId }: Props) {
 
 	if (content && isStatusChange(content)) {
 		return (
-			<StatusChangeBody comment={comment} content={content} teamId={teamId} timestamp={timestamp} />
+			<StatusChangeBody
+				comment={comment}
+				content={content}
+				projectId={projectId}
+				timestamp={timestamp}
+			/>
 		);
 	}
 
 	if (content && isRunFailed(content)) {
-		return <RunFailedBody content={content} teamId={teamId} timestamp={timestamp} />;
+		return <RunFailedBody content={content} projectId={projectId} timestamp={timestamp} />;
 	}
 
 	if (content && isRepoDesignated(content)) {
@@ -76,18 +81,18 @@ export function SystemComment({ comment, teamId }: Props) {
 function StatusChangeBody({
 	comment,
 	content,
-	teamId,
+	projectId,
 	timestamp,
 }: {
 	comment: CommentDataOf<'system'>;
 	content: SystemStatusChangeContent;
-	teamId?: string;
+	projectId?: string;
 	timestamp: React.ReactNode;
 }) {
 	const from = typeof content.from === 'string' ? content.from : '';
 	const to = typeof content.to === 'string' ? content.to : '';
 	const cascade = typeof content.cascade === 'string' ? content.cascade : null;
-	if (cascade === 'auto_unblock' && teamId) {
+	if (cascade === 'auto_unblock' && projectId) {
 		const triggeredIdentifier =
 			typeof content.triggered_by_identifier === 'string' ? content.triggered_by_identifier : '';
 		const triggeredProjectSlug =
@@ -97,9 +102,8 @@ function StatusChangeBody({
 		const triggerNode =
 			triggeredIdentifier && triggeredProjectSlug ? (
 				<Link
-					to="/teams/$teamId/projects/$projectId/tasks/$taskId"
+					to="/projects/$projectId/tasks/$taskId"
 					params={{
-						teamId,
 						projectId: triggeredProjectSlug,
 						taskId: triggeredIdentifier.toLowerCase(),
 					}}
@@ -132,11 +136,11 @@ function StatusChangeBody({
 
 function RunFailedBody({
 	content,
-	teamId,
+	projectId,
 	timestamp,
 }: {
 	content: SystemRunFailedContent;
-	teamId?: string;
+	projectId?: string;
 	timestamp: React.ReactNode;
 }) {
 	const agentSlug = typeof content.agent_slug === 'string' ? content.agent_slug : '';
@@ -145,10 +149,10 @@ function RunFailedBody({
 		typeof content.error === 'string' && content.error.length > 0 ? content.error : null;
 	const statusLabel = status === 'timed_out' ? 'timed out' : 'failed';
 	const agentNode =
-		agentSlug && teamId ? (
+		agentSlug && projectId ? (
 			<Link
-				to="/teams/$teamId/agents/$agentId"
-				params={{ teamId, agentId: agentSlug }}
+				to="/projects/$projectId/agents/$agentId"
+				params={{ projectId, agentId: agentSlug }}
 				className="text-xs text-accent-blue-text hover:underline"
 				data-testid="run-failed-agent"
 			>
@@ -207,11 +211,11 @@ function RepoDesignatedBody({
 function TaskLinkSystemBody({
 	comment,
 	content,
-	teamId,
+	projectId,
 }: {
 	comment: CommentDataOf<'system'>;
 	content: SystemTaskLinkContent;
-	teamId: string;
+	projectId: string;
 }) {
 	const sourceIdentifier = content.source_identifier ?? '';
 	const sourceProjectSlug = content.source_project_slug ?? '';
@@ -225,9 +229,8 @@ function TaskLinkSystemBody({
 	const sourceNode =
 		sourceIdentifier && sourceProjectSlug ? (
 			<Link
-				to="/teams/$teamId/projects/$projectId/tasks/$taskId"
+				to="/projects/$projectId/tasks/$taskId"
 				params={{
-					teamId,
 					projectId: sourceProjectSlug,
 					taskId: sourceIdentifier.toLowerCase(),
 				}}
@@ -243,8 +246,8 @@ function TaskLinkSystemBody({
 	const actorNode =
 		actorKind === 'agent' && actorSlug ? (
 			<Link
-				to="/teams/$teamId/agents/$agentId"
-				params={{ teamId, agentId: actorSlug }}
+				to="/projects/$projectId/agents/$agentId"
+				params={{ projectId, agentId: actorSlug }}
 				className={linkClass}
 				data-testid="task-link-actor"
 			>

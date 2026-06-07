@@ -13,11 +13,14 @@ let token: string;
 let masterKeyManager: MasterKeyManager;
 
 let teamId: string;
+let teamSlug: string;
 let agentId: string;
 let projectId: string;
+let projectSlug: string;
 let taskId: string;
 
 let teamBId: string;
+let teamBSlug: string;
 let agentBId: string;
 
 beforeAll(async () => {
@@ -43,9 +46,11 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	teamSlug = teamData.slug;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/internal-${teamSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;
@@ -54,9 +59,11 @@ beforeAll(async () => {
 		name: 'Test Project',
 		description: 'Test project.',
 	});
-	projectId = (await projectRes.json()).data.id;
+	const projectData = (await projectRes.json()).data;
+	projectId = projectData.id;
+	projectSlug = projectData.slug;
 
-	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ project_id: projectId, title: 'Seed Task', assignee_id: agentId }),
@@ -72,9 +79,11 @@ beforeAll(async () => {
 			template_id: typeId,
 		}),
 	});
-	teamBId = (await teamBRes.json()).data.id;
+	const teamBData = (await teamBRes.json()).data;
+	teamBId = teamBData.id;
+	teamBSlug = teamBData.slug;
 
-	const agentsBRes = await app.request(`/api/teams/${teamBId}/agents`, {
+	const agentsBRes = await app.request(`/api/projects/internal-${teamBSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	agentBId = (await agentsBRes.json()).data[0].id;
@@ -1078,7 +1087,7 @@ describe('MCP tool: set_agent_team_context and get_agent_team_context', () => {
 describe('MCP tool: Internal project assignee restriction', () => {
 	it('create_task on Internal project rejects non-Captain assignee_slug', async () => {
 		const ops = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
 			[teamId],
 		);
 		const result = (await callToolViaMcp('create_task', {
@@ -1092,7 +1101,7 @@ describe('MCP tool: Internal project assignee restriction', () => {
 
 	it('create_task on Internal project accepts Captain assignee_slug', async () => {
 		const ops = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
 			[teamId],
 		);
 		const result = (await callToolViaMcp('create_task', {
@@ -1144,7 +1153,7 @@ describe('MCP tool: Internal project assignee restriction', () => {
 
 	it('update_task rejects reassigning Internal task to non-Captain', async () => {
 		const ops = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND slug = 'internal'`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
 			[teamId],
 		);
 		const captain = await db.query<{ id: string }>(

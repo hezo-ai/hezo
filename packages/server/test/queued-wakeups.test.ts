@@ -9,6 +9,7 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let teamId: string;
+let teamSlug: string;
 let projectId: string;
 let taskId: string;
 let agentA: string;
@@ -33,7 +34,7 @@ async function insertQueuedWakeup(
 }
 
 async function createAgent(title: string): Promise<string> {
-	const res = await app.request(`/api/teams/${teamId}/agents`, {
+	const res = await app.request(`/api/projects/internal-${teamSlug}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), ...json },
 		body: JSON.stringify({ title }),
@@ -42,7 +43,7 @@ async function createAgent(title: string): Promise<string> {
 }
 
 async function createTask(title: string): Promise<string> {
-	const res = await app.request(`/api/teams/${teamId}/tasks`, {
+	const res = await app.request(`/api/projects/${projectId}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), ...json },
 		// assignee is required; agentA owns the task. The auto 'assignment' wakeup
@@ -89,15 +90,18 @@ async function clearBlockers(forTaskId: string): Promise<void> {
 }
 
 function runNow(forTaskId: string, wakeupId: string) {
-	return app.request(`/api/teams/${teamId}/tasks/${forTaskId}/queued-wakeups/${wakeupId}/run-now`, {
-		method: 'POST',
-		headers: { ...authHeader(token), ...json },
-		body: '{}',
-	});
+	return app.request(
+		`/api/projects/${projectId}/tasks/${forTaskId}/queued-wakeups/${wakeupId}/run-now`,
+		{
+			method: 'POST',
+			headers: { ...authHeader(token), ...json },
+			body: '{}',
+		},
+	);
 }
 
 async function listQueued(forTaskId: string) {
-	const res = await app.request(`/api/teams/${teamId}/tasks/${forTaskId}/queued-wakeups`, {
+	const res = await app.request(`/api/projects/${projectId}/tasks/${forTaskId}/queued-wakeups`, {
 		headers: authHeader(token),
 	});
 	return {
@@ -134,7 +138,9 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), ...json },
 		body: JSON.stringify({ name: 'Queued Wakeups Co' }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	teamSlug = teamData.slug;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Main',
@@ -419,7 +425,7 @@ describe('POST /teams/:teamId/tasks/:taskId/queued-wakeups/:wakeupId/cancel', ()
 		const wakeupId = await insertQueuedWakeup(agentB, taskId);
 
 		const res = await app.request(
-			`/api/teams/${teamId}/tasks/${taskId}/queued-wakeups/${wakeupId}/cancel`,
+			`/api/projects/${projectId}/tasks/${taskId}/queued-wakeups/${wakeupId}/cancel`,
 			{ method: 'POST', headers: { ...authHeader(token), ...json }, body: '{}' },
 		);
 		expect(res.status).toBe(200);
@@ -449,7 +455,7 @@ describe('POST /teams/:teamId/tasks/:taskId/queued-wakeups/:wakeupId/cancel', ()
 	it('returns 409 when the wakeup is not queued', async () => {
 		const wakeupId = await insertQueuedWakeup(agentB, taskId, { status: 'claimed' });
 		const res = await app.request(
-			`/api/teams/${teamId}/tasks/${taskId}/queued-wakeups/${wakeupId}/cancel`,
+			`/api/projects/${projectId}/tasks/${taskId}/queued-wakeups/${wakeupId}/cancel`,
 			{ method: 'POST', headers: { ...authHeader(token), ...json }, body: '{}' },
 		);
 		expect(res.status).toBe(409);
@@ -457,7 +463,7 @@ describe('POST /teams/:teamId/tasks/:taskId/queued-wakeups/:wakeupId/cancel', ()
 
 	it('returns 404 for an unknown wakeup id', async () => {
 		const res = await app.request(
-			`/api/teams/${teamId}/tasks/${taskId}/queued-wakeups/00000000-0000-0000-0000-000000000000/cancel`,
+			`/api/projects/${projectId}/tasks/${taskId}/queued-wakeups/00000000-0000-0000-0000-000000000000/cancel`,
 			{ method: 'POST', headers: { ...authHeader(token), ...json }, body: '{}' },
 		);
 		expect(res.status).toBe(404);
@@ -468,7 +474,7 @@ describe('POST /teams/:teamId/tasks/:taskId/queued-wakeups/:wakeupId/cancel', ()
 		const wakeupId = await insertQueuedWakeup(agentB, otherTask);
 		// Cancel via the original task's route — wrong task, must 404.
 		const res = await app.request(
-			`/api/teams/${teamId}/tasks/${taskId}/queued-wakeups/${wakeupId}/cancel`,
+			`/api/projects/${projectId}/tasks/${taskId}/queued-wakeups/${wakeupId}/cancel`,
 			{ method: 'POST', headers: { ...authHeader(token), ...json }, body: '{}' },
 		);
 		expect(res.status).toBe(404);

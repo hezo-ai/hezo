@@ -1,12 +1,14 @@
-import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { useOptimisticMutation } from './use-optimistic-mutation';
-import type { Team } from './use-teams';
+import { useRouteProjectId } from './use-route-project-id';
 
 export interface Project {
 	id: string;
 	team_id: string;
+	team_slug: string;
+	team_name: string;
 	name: string;
 	slug: string;
 	task_prefix: string;
@@ -37,47 +39,62 @@ export interface Repo {
 	is_designated?: boolean;
 }
 
-export function useProjects(teamId: string) {
+export type ProjectWithTeam = Project & { teamSlug: string; teamName: string };
+
+/**
+ * The instance-wide project index: every project the caller can see across all
+ * their teams, including the per-team internal projects. The single source the
+ * rail, the project→team resolution, and realtime invalidation all read from.
+ */
+export function useProjectsIndex() {
 	return useQuery({
-		queryKey: ['teams', teamId, 'projects'],
-		queryFn: () => api.get<Project[]>(`/api/teams/${teamId}/projects`),
+		queryKey: ['projects'],
+		queryFn: () => api.get<Project[]>('/api/projects'),
 		staleTime: 0,
 		refetchOnMount: 'always',
 	});
 }
 
-export type ProjectWithTeam = Project & { teamSlug: string; teamName: string };
-
 /** User-facing projects across all teams (excludes internal projects). */
-export function useAllVisibleProjects(teams: Team[] | undefined) {
-	const queries = useQueries({
-		queries: (teams ?? []).map((team) => ({
-			queryKey: ['teams', team.slug, 'projects'],
-			queryFn: () => api.get<Project[]>(`/api/teams/${team.slug}/projects`),
-		})),
-	});
-
-	const isLoading = queries.some((q) => q.isLoading);
-	const projects: ProjectWithTeam[] = [];
-
-	for (let i = 0; i < queries.length; i++) {
-		const team = teams?.[i];
-		if (!team) continue;
-		for (const p of queries[i].data ?? []) {
-			if (p.is_internal) continue;
-			projects.push({ ...p, teamSlug: team.slug, teamName: team.name });
-		}
-	}
-
-	projects.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
+export function useAllVisibleProjects() {
+	const { data, isLoading } = useProjectsIndex();
+	const projects: ProjectWithTeam[] = (data ?? [])
+		.filter((p) => !p.is_internal)
+		.map((p) => ({ ...p, teamSlug: p.team_slug, teamName: p.team_name }))
+		.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 	return { projects, isLoading };
 }
 
-export function useProject(teamId: string, projectId: string, options?: { enabled?: boolean }) {
+/** The project (incl. internal) matching a slug, resolved from the index. */
+export function useProjectMeta(projectSlug: string | null | undefined): Project | undefined {
+	const { data } = useProjectsIndex();
+	if (!projectSlug) return undefined;
+	return (data ?? []).find((p) => p.slug === projectSlug || p.id === projectSlug);
+}
+
+export interface ResolvedTeam {
+	teamSlug: string;
+	teamId: string;
+	teamName: string;
+}
+
+/**
+ * The backing team for a project slug. Defaults to the current route's project.
+ * Returns null until the index has loaded or when off any project. Team is an
+ * implementation detail resolved from the project — never named in the URL.
+ */
+export function useResolvedTeam(projectSlug?: string): ResolvedTeam | null {
+	const routeProjectId = useRouteProjectId();
+	const slug = projectSlug ?? routeProjectId;
+	const project = useProjectMeta(slug);
+	if (!project) return null;
+	return { teamSlug: project.team_slug, teamId: project.team_id, teamName: project.team_name };
+}
+
+export function useProject(projectId: string, options?: { enabled?: boolean }) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'projects', projectId],
-		queryFn: () => api.get<Project>(`/api/teams/${teamId}/projects/${projectId}`),
+		queryKey: ['projects', projectId],
+		queryFn: () => api.get<Project>(`/api/projects/${projectId}`),
 		enabled: options?.enabled,
 	});
 }
@@ -109,47 +126,30 @@ export function useCreateProjectWithTeam() {
 			task_prefix?: string;
 		}) => api.post<ProjectWithTeamResponse>('/api/projects', data),
 		onSuccess: () => {
-			// The new team shows up in the rail / team list.
+			queryClient.invalidateQueries({ queryKey: ['projects'] });
 			queryClient.invalidateQueries({ queryKey: ['teams'] });
 		},
 	});
 }
 
-export function useCreateProject(teamId: string) {
-	return useMutation({
-		mutationFn: (data: {
-			name: string;
-			description: string;
-			initial_prd?: string;
-			task_prefix?: string;
-		}) => api.post<ProjectIntakeResponse>(`/api/teams/${teamId}/projects`, data),
-		onSuccess: (data) => {
-			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'projects', data.project_slug, 'tasks'],
-			});
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'approvals'] });
-		},
-	});
-}
-
-export function useUpdateProject(teamId: string, projectId: string) {
+export function useUpdateProject(projectId: string) {
 	return useOptimisticMutation<
 		{ name?: string; description?: string; max_concurrent_runs?: number },
 		Project,
 		Project
 	>({
-		mutationFn: (data) => api.patch<Project>(`/api/teams/${teamId}/projects/${projectId}`, data),
-		queryKey: ['teams', teamId, 'projects', projectId],
+		mutationFn: (data) => api.patch<Project>(`/api/projects/${projectId}`, data),
+		queryKey: ['projects', projectId],
 		applyOptimistic: (current, vars) => (current ? { ...current, ...vars } : current),
 		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
-		invalidateOnSettled: [['teams', teamId, 'projects']],
+		invalidateOnSettled: [['projects']],
 		errorMessage: 'Failed to update project',
 	});
 }
 
-export function useDeleteProject(teamId: string) {
+export function useDeleteProject() {
 	return useMutation({
-		mutationFn: (projectId: string) => api.delete(`/api/teams/${teamId}/projects/${projectId}`),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects'] }),
+		mutationFn: (projectId: string) => api.delete(`/api/projects/${projectId}`),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['projects'] }),
 	});
 }

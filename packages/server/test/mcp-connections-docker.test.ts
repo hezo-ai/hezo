@@ -71,8 +71,9 @@ beforeAll(async () => {
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'MCP Docker Co' }),
 	});
-	teamId = (await co.json()).data.id;
-	const ag = await ctx.app.request(`/api/teams/${teamId}/agents`, {
+	const teamData = (await co.json()).data;
+	teamId = teamData.id;
+	const ag = await ctx.app.request(`/api/projects/internal-${teamData.slug}/agents`, {
 		method: 'POST',
 		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'MCP Docker Agent' }),

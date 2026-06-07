@@ -9,7 +9,9 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let teamId: string;
+let internalSlug: string;
 let projectId: string;
+let projectSlug: string;
 let taskId: string;
 let agentId: string;
 let secondAgentId: string;
@@ -32,22 +34,26 @@ beforeAll(async () => {
 			template_id: teamTemplateId,
 		}),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const team = (await teamRes.json()).data;
+	teamId = team.id;
+	internalSlug = `internal-${team.slug}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Lock Test Project',
 		description: 'Test project.',
 	});
-	projectId = (await projectRes.json()).data.id;
+	const projectData = (await projectRes.json()).data;
+	projectId = projectData.id;
+	projectSlug = projectData.slug;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data;
 	agentId = agents[0].id;
 	secondAgentId = agents[1].id;
 
-	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ project_id: projectId, title: 'Lock Test Task', assignee_id: agentId }),
@@ -61,7 +67,7 @@ afterAll(async () => {
 
 describe('execution locks', () => {
 	it('returns empty locks when no lock exists', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/lock`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/lock`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -70,7 +76,7 @@ describe('execution locks', () => {
 	});
 
 	it('creates a lock', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/lock`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/lock`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ member_id: agentId }),
@@ -82,7 +88,7 @@ describe('execution locks', () => {
 	});
 
 	it('prevents the same member re-acquiring while its lock is active', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/lock`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/lock`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ member_id: agentId }),
@@ -91,7 +97,7 @@ describe('execution locks', () => {
 	});
 
 	it('allows a different member to acquire concurrently', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/lock`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/lock`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ member_id: secondAgentId }),
@@ -100,7 +106,7 @@ describe('execution locks', () => {
 	});
 
 	it('returns all active locks for the task', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/lock`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/lock`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -112,13 +118,13 @@ describe('execution locks', () => {
 	});
 
 	it('releases all locks on the task', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/lock`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/lock`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 
-		const checkRes = await app.request(`/api/teams/${teamId}/tasks/${taskId}/lock`, {
+		const checkRes = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/lock`, {
 			headers: authHeader(token),
 		});
 		const body = await checkRes.json();
@@ -126,14 +132,14 @@ describe('execution locks', () => {
 	});
 
 	it('allows re-acquiring after release', async () => {
-		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/lock`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/lock`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ member_id: agentId }),
 		});
 		expect(res.status).toBe(201);
 
-		await app.request(`/api/teams/${teamId}/tasks/${taskId}/lock`, {
+		await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/lock`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});

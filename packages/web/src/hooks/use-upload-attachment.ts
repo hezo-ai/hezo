@@ -7,7 +7,7 @@ import { useMutation } from '@tanstack/react-query';
 import { type ApiError, api } from '../lib/api';
 import type { CommentAttachment } from './use-comments';
 
-export function useUploadAttachment(teamId: string, taskId: string) {
+export function useUploadAttachment(projectId: string, taskId: string) {
 	return useMutation<CommentAttachment, ApiError, File>({
 		mutationFn: async (file) => {
 			if (!isAllowedAttachmentExtension(file.name)) {
@@ -34,7 +34,10 @@ export function useUploadAttachment(teamId: string, taskId: string) {
 
 			const fd = new FormData();
 			fd.set('file', file, file.name);
-			return api.postForm<CommentAttachment>(`/api/teams/${teamId}/tasks/${taskId}/assets`, fd);
+			return api.postForm<CommentAttachment>(
+				`/api/projects/${projectId}/tasks/${taskId}/assets`,
+				fd,
+			);
 		},
 	});
 }

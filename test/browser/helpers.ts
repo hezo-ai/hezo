@@ -79,14 +79,18 @@ export async function clearAiProviders(page: Page, token: string) {
  */
 async function closePlanningTask(
 	page: Page,
-	teamId: string,
+	projectSlug: string,
+	teamSlug: string,
 	taskId: string,
 	headers: Record<string, string>,
 ): Promise<void> {
+	const internalSlug = `internal-${teamSlug}`;
 	const deadline = Date.now() + 15_000;
 	let lastError = '';
 	while (Date.now() < deadline) {
-		const taskRes = await page.request.get(`/api/teams/${teamId}/tasks/${taskId}`, { headers });
+		const taskRes = await page.request.get(`/api/projects/${projectSlug}/tasks/${taskId}`, {
+			headers,
+		});
 		const task = (
 			(await taskRes.json()) as { data?: { status: string; assignee_id: string | null } }
 		).data;
@@ -95,7 +99,7 @@ async function closePlanningTask(
 
 		if (task.assignee_id) {
 			const runsRes = await page.request.get(
-				`/api/teams/${teamId}/agents/${task.assignee_id}/heartbeat-runs`,
+				`/api/projects/${internalSlug}/agents/${task.assignee_id}/heartbeat-runs`,
 				{ headers },
 			);
 			const runs =
@@ -108,14 +112,14 @@ async function closePlanningTask(
 				if (run.task_id !== taskId) continue;
 				if (run.status === 'queued' || run.status === 'running') {
 					await page.request.post(
-						`/api/teams/${teamId}/agents/${task.assignee_id}/heartbeat-runs/${run.id}/terminate`,
+						`/api/projects/${internalSlug}/agents/${task.assignee_id}/heartbeat-runs/${run.id}/terminate`,
 						{ headers },
 					);
 				}
 			}
 		}
 
-		const patchRes = await page.request.patch(`/api/teams/${teamId}/tasks/${taskId}`, {
+		const patchRes = await page.request.patch(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 			headers,
 			data: { status: 'done' },
 		});
@@ -137,12 +141,13 @@ async function closePlanningTask(
  */
 export async function createProjectAndClearPlanning(
 	page: Page,
-	teamId: string,
+	teamSlug: string,
 	token: string,
 	data: { name: string; description?: string; initial_prd?: string; task_prefix?: string },
 ) {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	const intakeRes = await page.request.post(`/api/teams/${teamId}/projects`, {
+	const internalSlug = `internal-${teamSlug}`;
+	const intakeRes = await page.request.post(`/api/projects/${internalSlug}/projects`, {
 		headers,
 		data: { description: 'Created via e2e helper.', ...data },
 	});
@@ -157,20 +162,20 @@ export async function createProjectAndClearPlanning(
 		data: { status: 'approved' },
 	});
 
-	const projectsRes = await page.request.get(`/api/teams/${teamId}/projects`, { headers });
+	const projectsRes = await page.request.get(`/api/projects`, { headers });
 	const allProjects = (
 		(await projectsRes.json()) as {
-			data: Array<{ id: string; slug: string; name: string }>;
+			data: Array<{ id: string; slug: string; name: string; team_slug: string }>;
 		}
 	).data;
-	const project = allProjects.find((p) => p.name === data.name);
+	const project = allProjects.find((p) => p.name === data.name && p.team_slug === teamSlug);
 	if (!project) {
 		throw new Error(
 			`createProjectAndClearPlanning: project '${data.name}' not found after approval`,
 		);
 	}
 
-	const tasksRes = await page.request.get(`/api/teams/${teamId}/tasks?project_id=${project.id}`, {
+	const tasksRes = await page.request.get(`/api/projects/${project.slug}/tasks`, {
 		headers,
 	});
 	const tasks = ((await tasksRes.json()) as { data: Array<{ id: string; labels: string[] }> }).data;
@@ -178,7 +183,7 @@ export async function createProjectAndClearPlanning(
 	if (!planningTask) {
 		throw new Error('createProjectAndClearPlanning: planning task not found after approval');
 	}
-	await closePlanningTask(page, teamId, planningTask.id, headers);
+	await closePlanningTask(page, project.slug, teamSlug, planningTask.id, headers);
 	const merged = { ...project, planning_task_id: planningTask.id };
 	// Also expose a Response-like .json() / .ok() / .status so callers that hold
 	// the result as `projRes` can still do `(await projRes.json()).data` without
@@ -193,7 +198,6 @@ export async function createProjectAndClearPlanning(
 /** Poll until the project container is provisioned (required before agent wakeups run). */
 export async function waitForProjectContainer(
 	page: Page,
-	teamId: string,
 	projectId: string,
 	token: string,
 	timeoutMs = 90_000,
@@ -201,7 +205,7 @@ export async function waitForProjectContainer(
 	const headers = { Authorization: `Bearer ${token}` };
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
-		const res = await page.request.get(`/api/teams/${teamId}/projects/${projectId}`, { headers });
+		const res = await page.request.get(`/api/projects/${projectId}`, { headers });
 		const body = (await res.json()) as {
 			data: { container_status?: string; container_id?: string | null };
 		};
@@ -220,9 +224,9 @@ export async function createProjectReadyForAgents(
 	token: string,
 	data: { name: string; description?: string },
 ) {
-	const project = await createProjectAndClearPlanning(page, team.id, token, data);
-	await waitForProjectContainer(page, team.id, project.id, token);
-	await waitForCaptainIdle(page, team.id, token);
+	const project = await createProjectAndClearPlanning(page, team.slug, token, data);
+	await waitForProjectContainer(page, project.id, token);
+	await waitForCaptainIdle(page, team.slug, token);
 	return project;
 }
 
@@ -244,11 +248,14 @@ export async function closeOnboardingIntakeIfOpen(
 	token: string,
 ): Promise<void> {
 	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-	const res = await page.request.get(`/api/teams/${teamSlug}/onboarding-intake`, { headers });
+	const internalSlug = `internal-${teamSlug}`;
+	const res = await page.request.get(`/api/projects/${internalSlug}/onboarding-intake`, {
+		headers,
+	});
 	if (!res.ok()) return;
 	const { task_id } = ((await res.json()) as { data: { task_id: string } }).data;
 	if (!task_id) return;
-	await page.request.patch(`/api/teams/${teamSlug}/tasks/${task_id}`, {
+	await page.request.patch(`/api/projects/${internalSlug}/tasks/${task_id}`, {
 		headers,
 		data: { status: 'done' },
 	});
@@ -263,7 +270,7 @@ export async function closeOnboardingIntakeIfOpen(
  */
 export async function waitForAgentIdle(
 	page: Page,
-	teamId: string,
+	teamSlug: string,
 	agentId: string,
 	token: string,
 	timeoutMs = 180_000,
@@ -272,9 +279,12 @@ export async function waitForAgentIdle(
 	// POST settle into the queue before we start polling.
 	await new Promise((r) => setTimeout(r, 1200));
 	const headers = { Authorization: `Bearer ${token}` };
+	const internalSlug = `internal-${teamSlug}`;
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
-		const res = await page.request.get(`/api/teams/${teamId}/agents/${agentId}`, { headers });
+		const res = await page.request.get(`/api/projects/${internalSlug}/agents/${agentId}`, {
+			headers,
+		});
 		const agent = ((await res.json()) as { data: { runtime_status: string } }).data;
 		if (agent?.runtime_status === 'idle') return;
 		await new Promise((r) => setTimeout(r, 500));
@@ -285,16 +295,16 @@ export async function waitForAgentIdle(
 /** Wait until Captain is idle (e.g. after onboarding intake wakeups finish). */
 export async function waitForCaptainIdle(
 	page: Page,
-	teamId: string,
+	teamSlug: string,
 	token: string,
 	timeoutMs = 180_000,
 ): Promise<void> {
 	const headers = { Authorization: `Bearer ${token}` };
-	const res = await page.request.get(`/api/teams/${teamId}/agents`, { headers });
+	const res = await page.request.get(`/api/projects/internal-${teamSlug}/agents`, { headers });
 	const agents = ((await res.json()) as { data: Array<{ id: string; slug: string }> }).data;
 	const captain = agents.find((a) => a.slug === 'captain');
 	if (!captain) throw new Error('Captain agent not found');
-	await waitForAgentIdle(page, teamId, captain.id, token, timeoutMs);
+	await waitForAgentIdle(page, teamSlug, captain.id, token, timeoutMs);
 }
 
 export async function createTeamWithAgents(page: Page) {
@@ -383,61 +393,61 @@ function escapeRegex(s: string): string {
 }
 
 /**
- * Matcher for `/api/teams/<teamId>/tasks[/<taskId>[/<subResource>...]]`.
- * `teamId` is the team slug, `taskId` is the lowercase task identifier
+ * Matcher for `/api/projects/<projectSlug>/tasks[/<taskId>[/<subResource>...]]`.
+ * `projectSlug` is the project slug, `taskId` is the lowercase task identifier
  * (e.g. `rp-1`) — the value the route param holds, not the UUID. Captain's
  * background planning-task PATCHes hit the same URL shape, so always pass
  * `taskId` to keep the matcher to *this* test's task.
  */
 export function taskMatcher(opts: {
-	teamId: string;
+	projectSlug: string;
 	taskId?: string;
 	subResource?: string;
 	method?: HttpMethod;
 }): ResponseMatcher {
-	const teamSeg = escapeRegex(opts.teamId);
+	const projectSeg = escapeRegex(opts.projectSlug);
 	const taskSeg = opts.taskId ? escapeRegex(opts.taskId) : '[^/]+';
 	let pattern: RegExp;
 	if (opts.subResource) {
 		const sub = escapeRegex(opts.subResource);
-		pattern = new RegExp(`^/api/teams/${teamSeg}/tasks/${taskSeg}/${sub}(?:/[^/]+)*$`);
+		pattern = new RegExp(`^/api/projects/${projectSeg}/tasks/${taskSeg}/${sub}(?:/[^/]+)*$`);
 	} else if (opts.taskId) {
-		pattern = new RegExp(`^/api/teams/${teamSeg}/tasks/${taskSeg}$`);
+		pattern = new RegExp(`^/api/projects/${projectSeg}/tasks/${taskSeg}$`);
 	} else {
-		pattern = new RegExp(`^/api/teams/${teamSeg}/tasks(?:\\?.*)?$`);
+		pattern = new RegExp(`^/api/projects/${projectSeg}/tasks(?:\\?.*)?$`);
 	}
 	return (url, m) => (!opts.method || m === opts.method) && pattern.test(url.pathname);
 }
 
 /**
- * Matcher for `/api/teams/<teamId>[/<resource>[/...]]`. Use for non-task
- * team-scoped resources (projects, comments, etc.).
+ * Matcher for `/api/projects/<projectSlug>[/<resource>[/...]]`. Use for non-task
+ * project-scoped resources (comments, etc.).
  */
 export function teamMatcher(opts: {
-	teamId: string;
+	projectSlug: string;
 	resource?: string;
 	method?: HttpMethod;
 }): ResponseMatcher {
-	const teamSeg = escapeRegex(opts.teamId);
+	const projectSeg = escapeRegex(opts.projectSlug);
 	const pattern = opts.resource
-		? new RegExp(`^/api/teams/${teamSeg}/${escapeRegex(opts.resource)}(?:/.*)?$`)
-		: new RegExp(`^/api/teams/${teamSeg}(?:/.*)?$`);
+		? new RegExp(`^/api/projects/${projectSeg}/${escapeRegex(opts.resource)}(?:/.*)?$`)
+		: new RegExp(`^/api/projects/${projectSeg}(?:/.*)?$`);
 	return (url, m) => (!opts.method || m === opts.method) && pattern.test(url.pathname);
 }
 
 /**
- * Matcher for `/api/teams/<teamId>/agents[/<agentId>]`. `agentId` is the
+ * Matcher for `/api/projects/<projectSlug>/agents[/<agentId>]`. `agentId` is the
  * agent UUID (the agent route doesn't slugify).
  */
 export function agentMatcher(opts: {
-	teamId: string;
+	projectSlug: string;
 	agentId?: string;
 	method?: HttpMethod;
 }): ResponseMatcher {
-	const teamSeg = escapeRegex(opts.teamId);
+	const projectSeg = escapeRegex(opts.projectSlug);
 	const pattern = opts.agentId
-		? new RegExp(`^/api/teams/${teamSeg}/agents/${escapeRegex(opts.agentId)}$`)
-		: new RegExp(`^/api/teams/${teamSeg}/agents(?:\\?.*)?$`);
+		? new RegExp(`^/api/projects/${projectSeg}/agents/${escapeRegex(opts.agentId)}$`)
+		: new RegExp(`^/api/projects/${projectSeg}/agents(?:\\?.*)?$`);
 	return (url, m) => (!opts.method || m === opts.method) && pattern.test(url.pathname);
 }
 

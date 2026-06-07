@@ -26,22 +26,22 @@ export interface CreateSecretPayload {
 	allow_all_hosts?: boolean;
 }
 
-export function useSecrets(teamId: string) {
+export function useSecrets(projectId: string) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'secrets'],
-		queryFn: () => api.get<Secret[]>(`/api/teams/${teamId}/secrets`),
+		queryKey: ['projects', projectId, 'secrets'],
+		queryFn: () => api.get<Secret[]>(`/api/projects/${projectId}/secrets`),
 	});
 }
 
-export function useCreateSecret(teamId: string) {
+export function useCreateSecret(projectId: string) {
 	return useMutation({
 		mutationFn: (data: CreateSecretPayload) =>
-			api.post<Secret>(`/api/teams/${teamId}/secrets`, data),
+			api.post<Secret>(`/api/projects/${projectId}/secrets`, data),
 		onSuccess: (created) => {
-			queryClient.setQueryData<Secret[]>(['teams', teamId, 'secrets'], (prev) =>
+			queryClient.setQueryData<Secret[]>(['projects', projectId, 'secrets'], (prev) =>
 				prev ? [...prev.filter((s) => s.id !== created.id), created] : [created],
 			);
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'secrets'] });
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'secrets'] });
 		},
 	});
 }
@@ -54,11 +54,11 @@ interface UpdateSecretVars {
 	allow_all_hosts?: boolean;
 }
 
-export function useUpdateSecret(teamId: string) {
+export function useUpdateSecret(projectId: string) {
 	return useOptimisticMutation<UpdateSecretVars, Secret, Secret[]>({
 		mutationFn: ({ secretId, ...data }) =>
-			api.patch<Secret>(`/api/teams/${teamId}/secrets/${secretId}`, data),
-		queryKey: ['teams', teamId, 'secrets'],
+			api.patch<Secret>(`/api/projects/${projectId}/secrets/${secretId}`, data),
+		queryKey: ['projects', projectId, 'secrets'],
 		applyOptimistic: (current, { secretId, value: _value, ...optimistic }) =>
 			// `value` is write-only; it isn't returned in Secret rows.
 			current?.map((s) => (s.id === secretId ? { ...s, ...optimistic } : s)),
@@ -68,14 +68,14 @@ export function useUpdateSecret(teamId: string) {
 	});
 }
 
-export function useDeleteSecret(teamId: string) {
+export function useDeleteSecret(projectId: string) {
 	return useMutation({
-		mutationFn: (secretId: string) => api.delete(`/api/teams/${teamId}/secrets/${secretId}`),
+		mutationFn: (secretId: string) => api.delete(`/api/projects/${projectId}/secrets/${secretId}`),
 		onSuccess: (_, secretId) => {
-			queryClient.setQueryData<Secret[]>(['teams', teamId, 'secrets'], (prev) =>
+			queryClient.setQueryData<Secret[]>(['projects', projectId, 'secrets'], (prev) =>
 				prev ? prev.filter((s) => s.id !== secretId) : prev,
 			);
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'secrets'] });
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'secrets'] });
 		},
 	});
 }

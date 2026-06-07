@@ -44,15 +44,16 @@ describe('instance-level skills', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Skills Team' }),
 		});
-		const teamId = (await teamRes.json()).data.id;
-		const teamSkillsRes = await app.request(`/api/teams/${teamId}/skills`, {
+		const team = (await teamRes.json()).data;
+		const projectSlug = `internal-${team.slug}`;
+		const teamSkillsRes = await app.request(`/api/projects/${projectSlug}/skills`, {
 			headers: authHeader(token),
 		});
 		const teamSkills = (await teamSkillsRes.json()).data as { slug: string }[];
 		expect(teamSkills.some((s) => s.slug === skill.slug)).toBe(true);
 
 		// And it is readable by slug under the team (instance fallback).
-		const oneRes = await app.request(`/api/teams/${teamId}/skills/${skill.slug}`, {
+		const oneRes = await app.request(`/api/projects/${projectSlug}/skills/${skill.slug}`, {
 			headers: authHeader(token),
 		});
 		expect(oneRes.status).toBe(200);

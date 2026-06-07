@@ -3,8 +3,14 @@ import { DEFAULT_SUBTASK_PAGE_SIZE, type Team, useUpdateTeam } from '../../hooks
 import { Input } from '../ui/input';
 import { SectionHeader } from './helpers';
 
-export function AutomationsSection({ teamId, team }: { teamId: string; team: Team | undefined }) {
-	const updateTeam = useUpdateTeam(teamId);
+export function AutomationsSection({
+	projectId,
+	team,
+}: {
+	projectId: string;
+	team: Team | undefined;
+}) {
+	const updateTeam = useUpdateTeam(projectId);
 	const wakeOnReply = team?.settings?.wake_mentioner_on_reply ?? true;
 	const savedPageSize = team?.settings?.subtask_page_size ?? DEFAULT_SUBTASK_PAGE_SIZE;
 	const [pageSizeInput, setPageSizeInput] = useState<string>(String(savedPageSize));

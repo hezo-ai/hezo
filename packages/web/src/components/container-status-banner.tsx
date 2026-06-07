@@ -1,52 +1,31 @@
 import { ContainerStatus } from '@hezo/shared';
 import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
-import { type Project, useProjects } from '../hooks/use-projects';
+import { useProjectMeta } from '../hooks/use-projects';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { Button } from './ui/button';
 
-const MAX_NAMES_SHOWN = 2;
-
-function formatUnhealthyMessage(names: string[]): string {
-	const count = names.length;
-	if (count === 0) return '';
-	const noun = count === 1 ? 'container' : 'containers';
-	if (count <= MAX_NAMES_SHOWN) {
-		return `${names.join(', ')} ${noun} failed`;
-	}
-	const shown = names.slice(0, MAX_NAMES_SHOWN).join(', ');
-	const extra = count - MAX_NAMES_SHOWN;
-	const extraNoun = extra === 1 ? 'other' : 'others';
-	return `${shown} + ${extra} ${extraNoun} ${noun} failed`;
-}
-
-export function ContainerStatusBanner({ teamId }: { teamId: string }) {
-	const { data: projects } = useProjects(teamId);
+export function ContainerStatusBanner({ projectId }: { projectId: string }) {
+	const project = useProjectMeta(projectId);
 	const [isRebuilding, setIsRebuilding] = useState(false);
 
-	const unhealthy: Project[] =
-		projects?.filter(
-			(p) =>
-				p.container_status === ContainerStatus.Stopped ||
-				p.container_status === ContainerStatus.Error,
-		) ?? [];
+	const unhealthy =
+		project &&
+		(project.container_status === ContainerStatus.Stopped ||
+			project.container_status === ContainerStatus.Error);
 
-	if (unhealthy.length === 0) return null;
+	if (!unhealthy || !project) return null;
 
-	const hasError = unhealthy.some((p) => p.container_status === ContainerStatus.Error);
-	const message = formatUnhealthyMessage(unhealthy.map((p) => p.name));
+	const hasError = project.container_status === ContainerStatus.Error;
+	const message = `${project.name} container failed`;
 
-	const rebuildAll = async () => {
+	const rebuild = async () => {
 		if (isRebuilding) return;
 		setIsRebuilding(true);
 		try {
-			await Promise.allSettled(
-				unhealthy.map((p) =>
-					api.post(`/api/teams/${teamId}/projects/${p.id}/container/rebuild`, {}),
-				),
-			);
-			queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'projects'] });
+			await api.post(`/api/projects/${projectId}/container/rebuild`, {});
+			queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
 		} finally {
 			setIsRebuilding(false);
 		}
@@ -66,17 +45,17 @@ export function ContainerStatusBanner({ teamId }: { teamId: string }) {
 			<Button
 				variant="ghost"
 				size="sm"
-				onClick={rebuildAll}
+				onClick={rebuild}
 				disabled={isRebuilding}
 				className="ml-auto shrink-0"
-				aria-label="Rebuild all failed containers"
+				aria-label="Rebuild failed container"
 			>
 				{isRebuilding ? (
 					<Loader2 className="w-3 h-3 animate-spin" />
 				) : (
 					<RefreshCw className="w-3 h-3" />
 				)}
-				<span className="hidden sm:inline">Rebuild all</span>
+				<span className="hidden sm:inline">Rebuild</span>
 				<span className="sm:hidden">Rebuild</span>
 			</Button>
 		</div>

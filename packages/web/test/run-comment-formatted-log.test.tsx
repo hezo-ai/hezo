@@ -12,7 +12,7 @@ const LOG_TEXT = [
 ].join('\n');
 
 test('task-page run comment exposes the formatted/raw log switcher and defaults to formatted', async () => {
-	const seeded = { teamSlug: '', taskId: '' };
+	const seeded = { projectSlug: '', taskId: '' };
 
 	const { findByTestId, findByText, getByLabelText, user, router } = await renderApp({
 		initialPath: '/',
@@ -25,8 +25,8 @@ test('task-page run comment exposes the formatted/raw log switcher and defaults 
 				assignee_id: captain.id,
 			});
 
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 
 			const runId = '99999999-9999-9999-9999-00000000abcd';
 			const runComment = {
@@ -65,7 +65,7 @@ test('task-page run comment exposes the formatted/raw log switcher and defaults 
 			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 				const url = typeof input === 'string' ? input : (input as Request).url;
 				const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
-				if (method === 'GET' && /\/api\/teams\/[^/]+\/tasks\/[^/]+\/comments/.test(url)) {
+				if (method === 'GET' && /\/api\/projects\/[^/]+\/tasks\/[^/]+\/comments/.test(url)) {
 					return new Response(JSON.stringify({ data: [runComment] }), {
 						status: 200,
 						headers: { 'Content-Type': 'application/json' },
@@ -73,7 +73,7 @@ test('task-page run comment exposes the formatted/raw log switcher and defaults 
 				}
 				if (
 					method === 'GET' &&
-					new RegExp(`/api/teams/[^/]+/agents/[^/]+/heartbeat-runs/${runId}$`).test(url)
+					new RegExp(`/api/projects/[^/]+/agents/[^/]+/heartbeat-runs/${runId}$`).test(url)
 				) {
 					return new Response(JSON.stringify({ data: runResponse }), {
 						status: 200,
@@ -86,8 +86,8 @@ test('task-page run comment exposes the formatted/raw log switcher and defaults 
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	// Wait for the run to load as completed (the summary only renders then) so the

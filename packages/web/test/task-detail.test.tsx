@@ -16,7 +16,7 @@ async function createSubTask(
 ): Promise<SeededSubTask> {
 	const { apiBase } = getTestContext();
 	const assigneeId = input.assignee_id ?? ws.agents[0].id;
-	const res = await apiBase(`/api/teams/${ws.team.id}/tasks/${parentId}/sub-tasks`, {
+	const res = await apiBase(`/api/projects/${ws.internalSlug}/tasks/${parentId}/sub-tasks`, {
 		method: 'POST',
 		headers: ws.headers,
 		body: JSON.stringify({ title: input.title, assignee_id: assigneeId }),
@@ -59,9 +59,8 @@ test('breadcrumb walks the parent chain on a sub-sub-task', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: teamSlug,
 			projectId: projectSlug,
 			taskId: subSubIdentifier.toLowerCase(),
 		},
@@ -104,9 +103,8 @@ test('breadcrumb on a top-level task shows no ancestors', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: teamSlug,
 			projectId: projectSlug,
 			taskId: taskIdentifier.toLowerCase(),
 		},
@@ -116,8 +114,9 @@ test('breadcrumb on a top-level task shows no ancestors', async () => {
 	const breadcrumb = await findByTestId('breadcrumb');
 	expect(breadcrumb.textContent).toContain('Tasks');
 	expect(breadcrumb.textContent).toContain(taskIdentifier);
-	// Team chip + Project + Tasks = 3 anchors before the final, non-linked identifier
-	expect(breadcrumb.querySelectorAll('a').length).toBe(3);
+	// Project-centric breadcrumb: just the `Tasks` link before the non-linked
+	// task identifier — no team or project-name crumb.
+	expect(breadcrumb.querySelectorAll('a').length).toBe(1);
 });
 
 test('UI surfaces the depth-cap error when creating a sub-task under a depth-2 ticket', async () => {
@@ -150,9 +149,8 @@ test('UI surfaces the depth-cap error when creating a sub-task under a depth-2 t
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: teamSlug,
 			projectId: projectSlug,
 			taskId: subSubIdentifier.toLowerCase(),
 		},
@@ -173,8 +171,8 @@ test('UI surfaces the depth-cap error when creating a sub-task under a depth-2 t
 	expect(errorEl.textContent).toMatch(/2 levels deep/);
 });
 
-test('canonical task URL is project-scoped; short and UUID forms redirect', async () => {
-	let teamSlug = '';
+test('canonical task URL is project-scoped; UUID and wrong-project forms redirect', async () => {
+	let internalSlug = '';
 	let projectSlug = '';
 	let taskIdentifier = '';
 	let taskId = '';
@@ -190,7 +188,7 @@ test('canonical task URL is project-scoped; short and UUID forms redirect', asyn
 				title: taskTitle,
 				assignee_id: captain.id,
 			});
-			teamSlug = ws.team.slug;
+			internalSlug = ws.internalSlug;
 			projectSlug = project.slug;
 			taskIdentifier = task.identifier;
 			taskId = task.id;
@@ -198,38 +196,34 @@ test('canonical task URL is project-scoped; short and UUID forms redirect', asyn
 	});
 
 	const friendly = taskIdentifier.toLowerCase();
-	const canonicalPath = `/teams/${teamSlug}/projects/${projectSlug}/tasks/${friendly}`;
+	const canonicalPath = `/projects/${projectSlug}/tasks/${friendly}`;
 
+	// Canonical (project slug + friendly id) stays put.
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
-		params: { teamId: teamSlug, projectId: projectSlug, taskId: friendly },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: projectSlug, taskId: friendly },
 	});
 	await findByRole('heading', { name: taskTitle });
 	expect(router.state.location.pathname).toBe(canonicalPath);
 
-	// Short URL with lowercased identifier — should redirect.
+	// UUID id under the canonical project — redirects to the friendly id.
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: teamSlug, taskId: friendly },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: projectSlug, taskId: taskId },
 	});
 	await waitFor(() => {
 		expect(router.state.location.pathname).toBe(canonicalPath);
 	});
 	await findByRole('heading', { name: taskTitle });
 
-	// Short URL with UUID — should redirect.
+	// Wrong project handle (same team's internal project) — redirects to the
+	// task's canonical project + friendly id.
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: teamSlug, taskId: taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: internalSlug, taskId: friendly },
 	});
 	await waitFor(() => {
 		expect(router.state.location.pathname).toBe(canonicalPath);
-	});
-
-	// Project-scoped URL with UUID — should still resolve.
-	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
-		params: { teamId: teamSlug, projectId: projectSlug, taskId: taskId },
 	});
 	await findByRole('heading', { name: taskTitle });
 });
@@ -268,9 +262,8 @@ test('bare ticket identifier renders as a tooltip-ed link and navigates to the t
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: teamSlug,
 			projectId: projSlugA,
 			taskId: sourceIdentifier.toLowerCase(),
 		},
@@ -284,7 +277,7 @@ test('bare ticket identifier renders as a tooltip-ed link and navigates to the t
 	await user.click(mentionLink);
 
 	await findByRole('heading', { name: targetTitle });
-	const targetPath = `/teams/${teamSlug}/projects/${projSlugB}/tasks/${targetIdentifier.toLowerCase()}`;
+	const targetPath = `/projects/${projSlugB}/tasks/${targetIdentifier.toLowerCase()}`;
 	expect(router.state.location.pathname).toBe(targetPath);
 });
 
@@ -308,9 +301,8 @@ test('right sidebar houses the Effort control while wake-assignee lives in the c
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: teamSlug,
 			projectId: projectSlug,
 			taskId: taskIdentifier.toLowerCase(),
 		},
@@ -348,9 +340,8 @@ test('Progress Summary and Rules cards expose info icons with help text', async 
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: teamSlug,
 			projectId: projectSlug,
 			taskId: taskIdentifier.toLowerCase(),
 		},

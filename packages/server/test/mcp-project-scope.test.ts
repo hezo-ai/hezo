@@ -1,5 +1,4 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -13,10 +12,14 @@ let adminToken: string;
 let masterKeyManager: MasterKeyManager;
 
 let teamId: string;
+let teamSlug: string;
 let captainId: string;
 let projectAId: string;
+let projectASlug: string;
 let projectBId: string;
+let projectBSlug: string;
 let internalProjectId: string;
+let internalProjectSlug: string;
 let taskInAId: string;
 let taskInBId: string;
 let taskInInternalId: string;
@@ -50,17 +53,20 @@ beforeAll(async () => {
 		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Project Scope Test Co' }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const teamData = (await teamRes.json()).data;
+	teamId = teamData.id;
+	teamSlug = teamData.slug;
+	internalProjectSlug = `internal-${teamSlug}`;
 
-	const agentsRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${internalProjectSlug}/agents`, {
 		headers: authHeader(adminToken),
 	});
 	const captain = (await agentsRes.json()).data.find((a: { slug: string }) => a.slug === 'captain');
 	captainId = captain.id;
 
 	const internalProject = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE team_id = $1 AND slug = $2`,
-		[teamId, INTERNAL_PROJECT_SLUG],
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+		[teamId],
 	);
 	internalProjectId = internalProject.rows[0].id;
 
@@ -68,15 +74,19 @@ beforeAll(async () => {
 		name: 'Project A',
 		description: 'first user project',
 	});
-	projectAId = (await projectARes.json()).data.id;
+	const projectAData = (await projectARes.json()).data;
+	projectAId = projectAData.id;
+	projectASlug = projectAData.slug;
 
 	const projectBRes = await createTestProject(db, teamId, {
 		name: 'Project B',
 		description: 'second user project',
 	});
-	projectBId = (await projectBRes.json()).data.id;
+	const projectBData = (await projectBRes.json()).data;
+	projectBId = projectBData.id;
+	projectBSlug = projectBData.slug;
 
-	const taskARes = await app.request(`/api/teams/${teamId}/tasks`, {
+	const taskARes = await app.request(`/api/projects/${projectASlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -87,7 +97,7 @@ beforeAll(async () => {
 	});
 	taskInAId = (await taskARes.json()).data.id;
 
-	const taskBRes = await app.request(`/api/teams/${teamId}/tasks`, {
+	const taskBRes = await app.request(`/api/projects/${projectBSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -98,7 +108,7 @@ beforeAll(async () => {
 	});
 	taskInBId = (await taskBRes.json()).data.id;
 
-	const taskInternalRes = await app.request(`/api/teams/${teamId}/tasks`, {
+	const taskInternalRes = await app.request(`/api/projects/${internalProjectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({

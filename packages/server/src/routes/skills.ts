@@ -226,7 +226,7 @@ skillsRoutes.delete('/skills/:slug', async (c) => {
 	return c.json({ data: null }, 200);
 });
 
-skillsRoutes.get('/teams/:teamId/skills', async (c) => {
+skillsRoutes.get('/projects/:projectId/skills', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
@@ -242,7 +242,7 @@ skillsRoutes.get('/teams/:teamId/skills', async (c) => {
 	return ok(c, result.rows);
 });
 
-skillsRoutes.get('/teams/:teamId/skills/:slug', async (c) => {
+skillsRoutes.get('/projects/:projectId/skills/:slug', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const slug = c.req.param('slug');
@@ -259,7 +259,7 @@ skillsRoutes.get('/teams/:teamId/skills/:slug', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
-skillsRoutes.post('/teams/:teamId/skills', async (c) => {
+skillsRoutes.post('/projects/:projectId/skills', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
@@ -368,7 +368,7 @@ skillsRoutes.post('/teams/:teamId/skills', async (c) => {
 	}
 });
 
-skillsRoutes.patch('/teams/:teamId/skills/:slug', async (c) => {
+skillsRoutes.patch('/projects/:projectId/skills/:slug', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const slug = c.req.param('slug');
@@ -450,7 +450,7 @@ skillsRoutes.patch('/teams/:teamId/skills/:slug', async (c) => {
 	return ok(c, skill);
 });
 
-skillsRoutes.post('/teams/:teamId/skills/:slug/sync', async (c) => {
+skillsRoutes.post('/projects/:projectId/skills/:slug/sync', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const slug = c.req.param('slug');
@@ -501,7 +501,7 @@ skillsRoutes.post('/teams/:teamId/skills/:slug/sync', async (c) => {
 	}
 });
 
-skillsRoutes.delete('/teams/:teamId/skills/:slug', async (c) => {
+skillsRoutes.delete('/projects/:projectId/skills/:slug', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const slug = c.req.param('slug');

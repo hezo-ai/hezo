@@ -8,7 +8,7 @@ import { resolveApproval } from '../services/approval-resolve';
 
 export const approvalsRoutes = new Hono<Env>();
 
-approvalsRoutes.get('/teams/:teamId/approvals', async (c) => {
+approvalsRoutes.get('/projects/:projectId/approvals', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const statusFilter = c.req.query('status') || ApprovalStatus.Pending;
@@ -51,7 +51,7 @@ approvalsRoutes.get('/teams/:teamId/approvals', async (c) => {
 	return ok(c, result.rows);
 });
 
-approvalsRoutes.get('/teams/:teamId/approvals/:approvalId/blocked-tickets', async (c) => {
+approvalsRoutes.get('/projects/:projectId/approvals/:approvalId/blocked-tickets', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 	const approvalId = c.req.param('approvalId');
@@ -129,7 +129,7 @@ approvalsRoutes.get('/teams/:teamId/approvals/:approvalId/blocked-tickets', asyn
 	return ok(c, tickets);
 });
 
-approvalsRoutes.post('/teams/:teamId/approvals', async (c) => {
+approvalsRoutes.post('/projects/:projectId/approvals', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 

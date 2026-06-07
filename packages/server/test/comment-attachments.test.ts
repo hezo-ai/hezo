@@ -16,9 +16,13 @@ let token: string;
 let masterKeyManager: MasterKeyManager;
 let dataDir: string;
 let teamId: string;
+let teamSlug: string;
+let internalSlug: string;
 let projectId: string;
+let projectSlug: string;
 let taskId: string;
 let otherProjectId: string;
+let otherProjectSlug: string;
 let otherTaskId: string;
 
 function buildPng(): Uint8Array {
@@ -36,12 +40,13 @@ async function uploadAsset(
 	mime: string,
 	bytes: Uint8Array,
 	targetTaskId: string = taskId,
+	targetProjectSlug: string = projectSlug,
 ): Promise<Response> {
 	const fd = new FormData();
 	const copy = new Uint8Array(bytes.byteLength);
 	copy.set(bytes);
 	fd.set('file', new File([copy.buffer], filename, { type: mime }));
-	return app.request(`/api/teams/${teamId}/tasks/${targetTaskId}/assets`, {
+	return app.request(`/api/projects/${targetProjectSlug}/tasks/${targetTaskId}/assets`, {
 		method: 'POST',
 		headers: { ...authHeader(token) },
 		body: fd,
@@ -63,6 +68,8 @@ beforeAll(async () => {
 	});
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
+	teamSlug = teamData.slug;
+	internalSlug = `internal-${teamSlug}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Main',
@@ -70,15 +77,16 @@ beforeAll(async () => {
 	});
 	const projectData = (await projectRes.json()).data;
 	projectId = projectData.id;
+	projectSlug = projectData.slug;
 
-	const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Attach Bot' }),
 	});
 	const agentId = (await agentRes.json()).data.id;
 
-	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -96,9 +104,11 @@ beforeAll(async () => {
 		name: 'Other',
 		description: 'Isolation test.',
 	});
-	otherProjectId = (await otherProjectRes.json()).data.id;
+	const otherProjectData = (await otherProjectRes.json()).data;
+	otherProjectId = otherProjectData.id;
+	otherProjectSlug = otherProjectData.slug;
 
-	const otherTaskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+	const otherTaskRes = await app.request(`/api/projects/${otherProjectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -204,7 +214,7 @@ describe('comment + attachments', () => {
 		const upload = await uploadAsset('doc.pdf', 'application/pdf', new Uint8Array([1, 2, 3, 4]));
 		const assetId = (await upload.json()).data.id;
 
-		const createRes = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -221,7 +231,7 @@ describe('comment + attachments', () => {
 		expect(created.attachments[0].original_filename).toBe('doc.pdf');
 		expect(created.attachments[0].url).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
 
-		const listRes = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+		const listRes = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
 			headers: authHeader(token),
 		});
 		const list = (await listRes.json()).data;
@@ -231,10 +241,16 @@ describe('comment + attachments', () => {
 	});
 
 	it('rejects attaching an asset from another project', async () => {
-		const upload = await uploadAsset('other.png', 'image/png', buildPng(), otherTaskId);
+		const upload = await uploadAsset(
+			'other.png',
+			'image/png',
+			buildPng(),
+			otherTaskId,
+			otherProjectSlug,
+		);
 		const otherAssetId = (await upload.json()).data.id;
 
-		const res = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -252,7 +268,7 @@ describe('comment + attachments', () => {
 		const upload = await uploadAsset('todelete.txt', 'text/plain', new Uint8Array([42]));
 		const assetId = (await upload.json()).data.id;
 
-		const createRes = await app.request(`/api/teams/${teamId}/tasks/${taskId}/comments`, {
+		const createRes = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({

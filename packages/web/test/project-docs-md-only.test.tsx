@@ -14,7 +14,7 @@ async function seedDoc(
 	content: string,
 ): Promise<void> {
 	const { apiBase } = getTestContext();
-	await apiBase(`/api/teams/${ws.team.id}/projects/${project.slug}/docs/${filename}`, {
+	await apiBase(`/api/projects/${project.slug}/docs/${filename}`, {
 		method: 'PUT',
 		headers: ws.headers,
 		body: JSON.stringify({ content }),
@@ -22,19 +22,19 @@ async function seedDoc(
 }
 
 test('the New Document form rejects non-markdown filenames', async () => {
-	let ctx!: { teamSlug: string; projectSlug: string };
+	let ctx!: { projectSlug: string };
 	const { findByText, findByPlaceholderText, getByRole, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'MD Only' });
-			ctx = { teamSlug: ws.team.slug, projectSlug: project.slug };
+			ctx = { projectSlug: project.slug };
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/documents',
-		params: { teamId: ctx.teamSlug, projectId: ctx.projectSlug },
+		to: '/projects/$projectId/documents',
+		params: { projectId: ctx.projectSlug },
 	});
 
 	await user.click(await findByText('New document'));
@@ -45,20 +45,20 @@ test('the New Document form rejects non-markdown filenames', async () => {
 });
 
 test('a markdown project doc renders as markdown, not an iframe', async () => {
-	let ctx!: { teamSlug: string; projectSlug: string };
+	let ctx!: { projectSlug: string };
 	const { container, findByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'MD Render' });
 			await seedDoc(ws, project, 'notes.md', '# Hello markdown');
-			ctx = { teamSlug: ws.team.slug, projectSlug: project.slug };
+			ctx = { projectSlug: project.slug };
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/documents',
-		params: { teamId: ctx.teamSlug, projectId: ctx.projectSlug },
+		to: '/projects/$projectId/documents',
+		params: { projectId: ctx.projectSlug },
 		search: { file: 'notes.md' },
 	});
 

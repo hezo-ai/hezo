@@ -11,6 +11,8 @@ let token: string;
 let teamId: string;
 let otherTeamId: string;
 let projectId: string;
+let projectSlug: string;
+let otherProjectSlug: string;
 let approvalId: string;
 let taskAId: string;
 let taskBId: string;
@@ -20,7 +22,7 @@ let commentAId: string;
 let commentBId: string;
 
 async function createAgent(name: string, slug: string): Promise<string> {
-	const r = await app.request(`/api/teams/${teamId}/agents`, {
+	const r = await app.request(`/api/projects/${projectSlug}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: name, slug }),
@@ -29,7 +31,7 @@ async function createAgent(name: string, slug: string): Promise<string> {
 }
 
 async function createTask(title: string, assigneeId: string): Promise<string> {
-	const r = await app.request(`/api/teams/${teamId}/tasks`, {
+	const r = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ project_id: projectId, title, assignee_id: assigneeId }),
@@ -78,10 +80,14 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Other Co', template_id: typeId }),
 	});
-	otherTeamId = (await otherRes.json()).data.id;
+	const otherTeam = (await otherRes.json()).data;
+	otherTeamId = otherTeam.id;
+	otherProjectSlug = `internal-${otherTeam.slug}`;
 
 	const projectRes = await createTestProject(db, teamId, { name: 'Repo Ops', description: 'ops' });
-	projectId = (await projectRes.json()).data.id;
+	const project = (await projectRes.json()).data;
+	projectId = project.id;
+	projectSlug = project.slug;
 
 	agentAId = await createAgent('Alice Agent', 'alice');
 	agentBId = await createAgent('Bob Agent', 'bob');
@@ -116,9 +122,12 @@ afterAll(async () => {
 
 describe('GET /api/teams/:teamId/approvals/:approvalId/blocked-tickets', () => {
 	it('returns one row per pending setup_repo action comment, with agent and project info', async () => {
-		const res = await app.request(`/api/teams/${teamId}/approvals/${approvalId}/blocked-tickets`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/${projectSlug}/approvals/${approvalId}/blocked-tickets`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			data: Array<{
@@ -157,9 +166,12 @@ describe('GET /api/teams/:teamId/approvals/:approvalId/blocked-tickets', () => {
 			commentBId,
 		]);
 
-		const res = await app.request(`/api/teams/${teamId}/approvals/${approvalId}/blocked-tickets`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/${projectSlug}/approvals/${approvalId}/blocked-tickets`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		const body = (await res.json()) as { data: Array<{ task_id: string }> };
 		expect(body.data).toHaveLength(1);
 		expect(body.data[0].task_id).toBe(taskAId);
@@ -169,7 +181,7 @@ describe('GET /api/teams/:teamId/approvals/:approvalId/blocked-tickets', () => {
 
 	it('returns 404 if the approval does not belong to the team', async () => {
 		const res = await app.request(
-			`/api/teams/${otherTeamId}/approvals/${approvalId}/blocked-tickets`,
+			`/api/projects/${otherProjectSlug}/approvals/${approvalId}/blocked-tickets`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
@@ -183,7 +195,7 @@ describe('GET /api/teams/:teamId/approvals/:approvalId/blocked-tickets', () => {
 			[teamId, JSON.stringify({ title: 'New Agent', slug: 'new-agent' })],
 		);
 		const res = await app.request(
-			`/api/teams/${teamId}/approvals/${other.rows[0].id}/blocked-tickets`,
+			`/api/projects/${projectSlug}/approvals/${other.rows[0].id}/blocked-tickets`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(400);

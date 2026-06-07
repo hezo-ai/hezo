@@ -29,13 +29,13 @@ export interface Approval {
 }
 
 export function useApprovals(
-	teamId: string,
+	projectId: string,
 	status: string = ApprovalStatus.Pending,
 	enabled = true,
 ) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'approvals', { status }],
-		queryFn: () => api.get<Approval[]>(`/api/teams/${teamId}/approvals`, { status }),
+		queryKey: ['projects', projectId, 'approvals', { status }],
+		queryFn: () => api.get<Approval[]>(`/api/projects/${projectId}/approvals`, { status }),
 		enabled,
 	});
 }
@@ -46,14 +46,14 @@ const ALL_APPROVAL_STATUSES = [
 	ApprovalStatus.Denied,
 ].join(',');
 
-export function useAllApprovals(teamSlugs: string[], { archived = false } = {}) {
-	const teamKey = [...teamSlugs].sort().join(',');
+export function useAllApprovals(projectSlugs: string[], { archived = false } = {}) {
+	const projectKey = [...projectSlugs].sort().join(',');
 	return useQuery({
-		queryKey: ['approvals', 'all', teamKey, { archived }],
+		queryKey: ['approvals', 'all', projectKey, { archived }],
 		queryFn: async () => {
 			const results = await Promise.all(
-				teamSlugs.map((slug) =>
-					api.get<Approval[]>(`/api/teams/${slug}/approvals`, {
+				projectSlugs.map((slug) =>
+					api.get<Approval[]>(`/api/projects/${slug}/approvals`, {
 						status: ALL_APPROVAL_STATUSES,
 						archived: String(archived),
 					}),
@@ -61,21 +61,23 @@ export function useAllApprovals(teamSlugs: string[], { archived = false } = {}) 
 			);
 			return results.flat();
 		},
-		enabled: teamSlugs.length > 0,
+		enabled: projectSlugs.length > 0,
 		staleTime: 0,
 	});
 }
 
 export function useBlockedTickets(
-	teamId: string,
+	projectId: string | null | undefined,
 	approvalId: string | null | undefined,
 	enabled = true,
 ) {
 	return useQuery({
-		queryKey: ['teams', teamId, 'approvals', approvalId, 'blocked-tickets'],
+		queryKey: ['projects', projectId, 'approvals', approvalId, 'blocked-tickets'],
 		queryFn: () =>
-			api.get<BlockedTicket[]>(`/api/teams/${teamId}/approvals/${approvalId}/blocked-tickets`),
-		enabled: enabled && !!approvalId,
+			api.get<BlockedTicket[]>(
+				`/api/projects/${projectId}/approvals/${approvalId}/blocked-tickets`,
+			),
+		enabled: enabled && !!approvalId && !!projectId,
 	});
 }
 
@@ -89,26 +91,26 @@ export function useResolveApproval() {
 			approvalId: string;
 			status: typeof ApprovalStatus.Approved | typeof ApprovalStatus.Denied;
 			resolution_note?: string;
-			teamSlug?: string;
+			projectSlug?: string;
 		}) => api.post(`/api/approvals/${approvalId}/resolve`, { status, resolution_note }),
 		onSuccess: (_data, variables) => {
-			// Always invalidate the cross-team aggregated lists — they have no team scope.
+			// Always invalidate the cross-project aggregated lists — they have no project scope.
 			queryClient.invalidateQueries({ queryKey: ['approvals'] });
-			if (variables.teamSlug) {
+			if (variables.projectSlug) {
 				queryClient.invalidateQueries({
-					queryKey: ['teams', variables.teamSlug, 'approvals'],
+					queryKey: ['projects', variables.projectSlug, 'approvals'],
 				});
 				queryClient.invalidateQueries({
-					queryKey: ['teams', variables.teamSlug, 'inbox-count'],
+					queryKey: ['projects', variables.projectSlug, 'inbox-count'],
 				});
-				invalidateTeamAgentCaches(queryClient, variables.teamSlug);
+				invalidateTeamAgentCaches(queryClient, variables.projectSlug);
 			} else {
-				// No team scope provided — fall back to a predicate that matches any team's
-				// approvals list and inbox count, keyed `['teams', <slug>, 'approvals' | 'inbox-count']`.
+				// No project scope provided — fall back to a predicate that matches any project's
+				// approvals list and inbox count, keyed `['projects', <slug>, 'approvals' | 'inbox-count']`.
 				queryClient.invalidateQueries({
 					predicate: (query) =>
 						Array.isArray(query.queryKey) &&
-						query.queryKey[0] === 'teams' &&
+						query.queryKey[0] === 'projects' &&
 						typeof query.queryKey[1] === 'string' &&
 						(query.queryKey[2] === 'approvals' || query.queryKey[2] === 'inbox-count'),
 				});

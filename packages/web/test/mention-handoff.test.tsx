@@ -4,9 +4,8 @@ import { getTestContext, renderApp } from './helpers/render';
 import { type SeededWorkspace, seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 interface HandoffFixture {
-	teamSlug: string;
-	teamId: string;
 	projectSlug: string;
+	teamId: string;
 	captain: { id: string; slug: string; title: string };
 	architect: { id: string; slug: string; title: string };
 	ceoTaskIdentifier: string;
@@ -22,7 +21,6 @@ async function setupHandoff(ws: SeededWorkspace): Promise<HandoffFixture> {
 		assignee_id: captain.id,
 	});
 	return {
-		teamSlug: ws.team.slug,
 		teamId: ws.team.id,
 		projectSlug: project.slug,
 		captain,
@@ -42,9 +40,8 @@ test('posting an @architect mention in a comment renders as a link to the archit
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: fix!.teamSlug,
 			projectId: fix!.projectSlug,
 			taskId: fix!.ceoTaskIdentifier,
 		},
@@ -52,7 +49,7 @@ test('posting an @architect mention in a comment renders as a link to the archit
 
 	const composer = (await findByPlaceholderText('Add a comment...')) as HTMLTextAreaElement;
 	await user.click(composer);
-	await user.type(composer, `@${fix!.architect.slug} please update the spec.`, { delay: null });
+	await user.type(composer, `@${fix!.architect.slug} please update the spec.`);
 	const submit = await findByRole('button', { name: 'Comment' });
 	await user.click(submit);
 
@@ -65,7 +62,7 @@ test('posting an @architect mention in a comment renders as a link to the archit
 			expect(link).not.toBeNull();
 			expect(link!.textContent).toBe(`@${fix!.architect.slug}`);
 			expect(link!.getAttribute('href')).toBe(
-				`/teams/${fix!.teamSlug}/agents/${fix!.architect.slug}`,
+				`/projects/${fix!.projectSlug}/agents/${fix!.architect.slug}`,
 			);
 		},
 		{ timeout: 10_000 },
@@ -80,7 +77,7 @@ test('comment with @mention inside a fenced code block does not render a mention
 			const ws = await seedWorkspace();
 			fix = await setupHandoff(ws);
 			const body = `Here is the template we discussed:\n\`\`\`\n@${fix.architect.slug}\n\`\`\`\nThat's it.`;
-			await apiBase(`/api/teams/${fix.teamId}/tasks/${fix.ceoTaskIdentifier}/comments`, {
+			await apiBase(`/api/projects/${fix.projectSlug}/tasks/${fix.ceoTaskIdentifier}/comments`, {
 				method: 'POST',
 				headers: ws.headers,
 				body: JSON.stringify({ content_type: 'text', content: { text: body } }),
@@ -89,9 +86,8 @@ test('comment with @mention inside a fenced code block does not render a mention
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: fix!.teamSlug,
 			projectId: fix!.projectSlug,
 			taskId: fix!.ceoTaskIdentifier,
 		},
@@ -115,7 +111,7 @@ test('architect agent page is reachable via the mention link from a comment', as
 		seed: async ({ apiBase }) => {
 			const ws = await seedWorkspace();
 			fix = await setupHandoff(ws);
-			await apiBase(`/api/teams/${fix.teamId}/tasks/${fix.ceoTaskIdentifier}/comments`, {
+			await apiBase(`/api/projects/${fix.projectSlug}/tasks/${fix.ceoTaskIdentifier}/comments`, {
 				method: 'POST',
 				headers: ws.headers,
 				body: JSON.stringify({
@@ -127,9 +123,8 @@ test('architect agent page is reachable via the mention link from a comment', as
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: fix!.teamSlug,
 			projectId: fix!.projectSlug,
 			taskId: fix!.ceoTaskIdentifier,
 		},
@@ -149,7 +144,7 @@ test('mentioning multiple agents in one comment renders all mentions', async () 
 		seed: async ({ apiBase }) => {
 			const ws = await seedWorkspace();
 			fix = await setupHandoff(ws);
-			await apiBase(`/api/teams/${fix.teamId}/tasks/${fix.ceoTaskIdentifier}/comments`, {
+			await apiBase(`/api/projects/${fix.projectSlug}/tasks/${fix.ceoTaskIdentifier}/comments`, {
 				method: 'POST',
 				headers: ws.headers,
 				body: JSON.stringify({
@@ -163,9 +158,8 @@ test('mentioning multiple agents in one comment renders all mentions', async () 
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: fix!.teamSlug,
 			projectId: fix!.projectSlug,
 			taskId: fix!.ceoTaskIdentifier,
 		},
@@ -190,7 +184,7 @@ test('passive @@<slug> renders a clickable chip but stays marked passive', async
 		seed: async ({ apiBase }) => {
 			const ws = await seedWorkspace();
 			fix = await setupHandoff(ws);
-			await apiBase(`/api/teams/${fix.teamId}/tasks/${fix.ceoTaskIdentifier}/comments`, {
+			await apiBase(`/api/projects/${fix.projectSlug}/tasks/${fix.ceoTaskIdentifier}/comments`, {
 				method: 'POST',
 				headers: ws.headers,
 				body: JSON.stringify({
@@ -204,9 +198,8 @@ test('passive @@<slug> renders a clickable chip but stays marked passive', async
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
+		to: '/projects/$projectId/tasks/$taskId',
 		params: {
-			teamId: fix!.teamSlug,
 			projectId: fix!.projectSlug,
 			taskId: fix!.ceoTaskIdentifier,
 		},

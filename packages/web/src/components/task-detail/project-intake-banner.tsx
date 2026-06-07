@@ -12,7 +12,7 @@ import { Button } from '../ui/button';
 
 interface ProjectIntakeBannerProps {
 	task: Task;
-	teamId: string;
+	projectId: string;
 	taskId: string;
 	comments: Comment[] | undefined;
 }
@@ -23,8 +23,13 @@ interface ProjectIntakeBannerProps {
  * yet. Lives in the comment composer toolbar so the operator can bail from
  * intake at any point without leaving the task.
  */
-export function ProjectIntakeBanner({ task, teamId, taskId, comments }: ProjectIntakeBannerProps) {
-	const skipProjectIntake = useSkipProjectIntakeQuestions(teamId, taskId);
+export function ProjectIntakeBanner({
+	task,
+	projectId,
+	taskId,
+	comments,
+}: ProjectIntakeBannerProps) {
+	const skipProjectIntake = useSkipProjectIntakeQuestions(projectId, taskId);
 	const isProjectIntake = useMemo(
 		() => (task.labels ?? []).includes(PROJECT_INTAKE_LABEL),
 		[task.labels],

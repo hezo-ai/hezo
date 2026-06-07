@@ -16,8 +16,8 @@ test('container page renders rebuild button and Container nav crumb', async () =
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/container',
-		params: { teamId: ws.team.slug, projectId: projectSlug },
+		to: '/projects/$projectId/container',
+		params: { projectId: projectSlug },
 	});
 
 	await findByRole('button', { name: /rebuild/i }, { timeout: 20_000 });
@@ -54,10 +54,7 @@ test('container page shows "Waiting for container output…" when status is runn
 			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 				const url = typeof input === 'string' ? input : (input as Request).url;
 				const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
-				if (
-					method === 'GET' &&
-					new RegExp(`/api/teams/[^/]+/projects/${fakeProject.slug}$`).test(url)
-				) {
+				if (method === 'GET' && new RegExp(`/api/projects/${fakeProject.slug}$`).test(url)) {
 					return new Response(JSON.stringify({ data: fakeProject }), {
 						status: 200,
 						headers: { 'Content-Type': 'application/json' },
@@ -69,8 +66,8 @@ test('container page shows "Waiting for container output…" when status is runn
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/projects/$projectId/container',
-		params: { teamId: ws.team.slug, projectId: fakeProject.slug },
+		to: '/projects/$projectId/container',
+		params: { projectId: fakeProject.slug },
 	});
 
 	await findByText(/^Running$/, undefined, { timeout: 15_000 });
@@ -78,8 +75,9 @@ test('container page shows "Waiting for container output…" when status is runn
 	expect(container.textContent ?? '').not.toContain('Container is not running');
 });
 
-test('banner consolidates multiple unhealthy projects with + N others format and rebuild all button', async () => {
+test('banner flags the active project as failed and rebuilds it', async () => {
 	let ws!: SeededWorkspace;
+	const projectSlug = 'failed-banner';
 	const rebuildPosts: string[] = [];
 
 	const { findByTestId, router } = await renderApp({
@@ -87,14 +85,14 @@ test('banner consolidates multiple unhealthy projects with + N others format and
 		seed: async () => {
 			ws = await seedWorkspace();
 
-			const fakeProjects = [
-				{ id: '11111111-1111-1111-1111-000000000001', slug: 'alpha-banner', name: 'Alpha Banner' },
-				{ id: '11111111-1111-1111-1111-000000000002', slug: 'beta-banner', name: 'Beta Banner' },
-				{ id: '11111111-1111-1111-1111-000000000003', slug: 'gamma-banner', name: 'Gamma Banner' },
-			].map((p) => ({
-				...p,
+			const failedProject = {
+				id: '11111111-1111-1111-1111-000000000001',
+				slug: projectSlug,
+				name: 'Failed Banner',
 				team_id: ws.team.id,
-				task_prefix: 'AB',
+				team_slug: ws.team.slug,
+				team_name: 'Demo Team',
+				task_prefix: 'FB',
 				description: '',
 				docker_base_image: null,
 				container_id: null,
@@ -106,15 +104,16 @@ test('banner consolidates multiple unhealthy projects with + N others format and
 				open_task_count: 0,
 				is_internal: false,
 				created_at: new Date().toISOString(),
-			}));
+			};
 
 			const originalFetch = globalThis.fetch;
 			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 				const url = typeof input === 'string' ? input : (input as Request).url;
 				const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
 
-				if (method === 'GET' && /\/api\/teams\/[^/]+\/projects$/.test(url)) {
-					return new Response(JSON.stringify({ data: fakeProjects }), {
+				// The project index backs the per-project container banner.
+				if (method === 'GET' && /\/api\/projects$/.test(url)) {
+					return new Response(JSON.stringify({ data: [failedProject] }), {
 						status: 200,
 						headers: { 'Content-Type': 'application/json' },
 					});
@@ -132,26 +131,20 @@ test('banner consolidates multiple unhealthy projects with + N others format and
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/inbox',
-		params: { teamId: ws.team.slug },
+		to: '/projects/$projectId/inbox',
+		params: { projectId: projectSlug },
 	});
 
 	const banner = await findByTestId('container-status-banner', undefined, { timeout: 20_000 });
 	const message = await findByTestId('container-status-banner-message');
-	expect(message.textContent ?? '').toMatch(/^.+, .+ \+ 1 other containers failed$/);
+	expect(message.textContent ?? '').toContain('Failed Banner');
 
 	const rebuildBtn = banner.querySelector(
-		'button[aria-label="Rebuild all failed containers"]',
+		'button[aria-label="Rebuild failed container"]',
 	) as HTMLButtonElement;
 	expect(rebuildBtn).toBeTruthy();
 	fireEvent.click(rebuildBtn);
 
-	await waitFor(() => expect(rebuildPosts.length).toBe(3), { timeout: 15_000 });
-	for (const id of [
-		'11111111-1111-1111-1111-000000000001',
-		'11111111-1111-1111-1111-000000000002',
-		'11111111-1111-1111-1111-000000000003',
-	]) {
-		expect(rebuildPosts.some((u) => u.includes(`/projects/${id}/container/rebuild`))).toBe(true);
-	}
+	await waitFor(() => expect(rebuildPosts.length).toBe(1), { timeout: 15_000 });
+	expect(rebuildPosts[0]).toContain(`/projects/${projectSlug}/container/rebuild`);
 });

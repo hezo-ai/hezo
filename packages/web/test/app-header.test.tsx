@@ -4,12 +4,12 @@ import { renderApp } from './helpers/render';
 import { seedWorkspace } from './helpers/seed';
 
 test('header keeps Home top-left and the rest in the top-right group', async () => {
-	let ws: { teamSlug: string } | undefined;
+	let ws: { projectSlug: string } | undefined;
 	const { findByTestId, getByTestId } = await renderApp({
 		initialPath: '/home',
 		seed: async () => {
 			const w = await seedWorkspace();
-			ws = { teamSlug: w.team.slug };
+			ws = { projectSlug: w.team.slug };
 		},
 	});
 	void ws;

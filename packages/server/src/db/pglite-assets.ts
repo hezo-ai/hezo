@@ -63,7 +63,7 @@ export async function loadPgliteAssets(dataDir: string): Promise<PgliteAssetInje
 
 	log.info('Using embedded PGlite runtime assets');
 	return {
-		wasmModule: await WebAssembly.compile(postgresWasm),
+		wasmModule: await WebAssembly.compile(postgresWasm as BufferSource),
 		fsBundle: new Blob([postgresData as BlobPart]),
 		vectorExtension,
 	};

@@ -8,17 +8,19 @@ import { DirectFlow } from './direct-flow';
 type Mode = 'choose' | 'direct';
 
 interface OnboardingChoiceProps {
-	teamId: string;
+	projectId: string;
 	/** Called after the direct flow finishes so the wizard can refresh state and exit step 3. */
 	onChosen: () => void;
 }
 
-export function OnboardingChoice({ teamId, onChosen }: OnboardingChoiceProps) {
+export function OnboardingChoice({ projectId, onChosen }: OnboardingChoiceProps) {
 	const [mode, setMode] = useState<Mode>('choose');
 	const [chatOpen, setChatOpen] = useState(false);
 
 	if (mode === 'direct') {
-		return <DirectFlow teamId={teamId} onCancel={() => setMode('choose')} onDone={onChosen} />;
+		return (
+			<DirectFlow projectId={projectId} onCancel={() => setMode('choose')} onDone={onChosen} />
+		);
 	}
 
 	return (

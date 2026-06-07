@@ -8,13 +8,13 @@ test('superuser saves the team as a new type from settings', async () => {
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			teamSlug = ws.team.slug;
+			teamSlug = ws.internalSlug;
 		},
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/settings/general',
-		params: { teamId: teamSlug },
+		to: '/projects/$projectId/team-settings/general',
+		params: { projectId: teamSlug },
 	});
 
 	await user.type(await findByPlaceholderText('e.g. Web Squad'), 'My Saved Squad');

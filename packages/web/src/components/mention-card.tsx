@@ -29,12 +29,12 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 	const handleClick = (e: React.MouseEvent) => {
 		e.preventDefault();
 		if (!mention.read_at) {
-			markRead.mutate({ teamSlug: mention.team_slug, mentionId: mention.id });
+			markRead.mutate({ projectSlug: mention.project_slug, mentionId: mention.id });
 		}
 		navigate({
-			to: '/teams/$teamId/tasks/$taskId' as never,
+			to: '/projects/$projectId/tasks/$taskId' as never,
 			params: {
-				teamId: mention.team_slug,
+				projectId: mention.project_slug,
 				taskId: mention.task_identifier.toLowerCase(),
 			} as never,
 			hash: `comment-${mention.comment_id}`,
@@ -70,10 +70,10 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 			<p className="text-xs text-text-muted mb-1">
 				<span className="font-medium">{author}</span> asked you on{' '}
 				<Link
-					to={'/teams/$teamId/tasks/$taskId' as never}
+					to={'/projects/$projectId/tasks/$taskId' as never}
 					params={
 						{
-							teamId: mention.team_slug,
+							projectId: mention.project_slug,
 							taskId: mention.task_identifier.toLowerCase(),
 						} as never
 					}

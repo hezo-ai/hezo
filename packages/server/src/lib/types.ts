@@ -39,5 +39,6 @@ export type Env = {
 		sshAgentServer: SshAgentServer | null;
 		egressProxy: EgressProxy | null;
 		teamId?: string;
+		projectId?: string;
 	};
 };

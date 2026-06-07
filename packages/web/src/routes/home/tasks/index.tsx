@@ -1,14 +1,14 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { TaskStatusBadge } from '../../../components/task-status-badge';
+import { useAllVisibleProjects } from '../../../hooks/use-projects';
 import { type GlobalTask, useAllTasks } from '../../../hooks/use-tasks';
-import { useTeams } from '../../../hooks/use-teams';
 
 function row(t: GlobalTask) {
 	return (
 		<li key={t.id}>
 			<Link
-				to="/teams/$teamId/tasks/$taskId"
-				params={{ teamId: t.team_slug, taskId: t.identifier.toLowerCase() }}
+				to="/projects/$projectId/tasks/$taskId"
+				params={{ projectId: t.project_slug ?? '', taskId: t.identifier.toLowerCase() }}
 				className="block border border-border rounded-radius-md p-3 hover:border-border-hover transition-colors"
 			>
 				<div className="flex items-center justify-between gap-3">
@@ -27,8 +27,8 @@ function row(t: GlobalTask) {
 }
 
 function AllTasksPage() {
-	const { data: teams } = useTeams();
-	const { data: tasks, isLoading } = useAllTasks(teams ?? []);
+	const { projects } = useAllVisibleProjects();
+	const { data: tasks, isLoading } = useAllTasks(projects);
 
 	return (
 		<div

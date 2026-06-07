@@ -77,7 +77,7 @@ function installMocks(opts: {
 		const url = typeof input === 'string' ? input : (input as Request).url;
 		const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
 
-		if (method === 'GET' && /\/api\/teams\/[^/]+\/tasks\/[^/]+\/comments/.test(url)) {
+		if (method === 'GET' && /\/api\/projects\/[^/]+\/tasks\/[^/]+\/comments/.test(url)) {
 			return new Response(JSON.stringify({ data: [runComment] }), {
 				status: 200,
 				headers: { 'Content-Type': 'application/json' },
@@ -85,7 +85,7 @@ function installMocks(opts: {
 		}
 		if (
 			method === 'GET' &&
-			new RegExp(`/api/teams/[^/]+/agents/[^/]+/heartbeat-runs/${FAKE_RUN_ID}$`).test(url)
+			new RegExp(`/api/projects/[^/]+/agents/[^/]+/heartbeat-runs/${FAKE_RUN_ID}$`).test(url)
 		) {
 			return new Response(JSON.stringify({ data: currentRow }), {
 				status: 200,
@@ -94,7 +94,9 @@ function installMocks(opts: {
 		}
 		if (
 			method === 'POST' &&
-			new RegExp(`/api/teams/[^/]+/agents/[^/]+/heartbeat-runs/${FAKE_RUN_ID}/terminate$`).test(url)
+			new RegExp(`/api/projects/[^/]+/agents/[^/]+/heartbeat-runs/${FAKE_RUN_ID}/terminate$`).test(
+				url,
+			)
 		) {
 			opts.onTerminate?.();
 			currentRow = makeRunRow(opts, 'cancelled');
@@ -108,7 +110,7 @@ function installMocks(opts: {
 }
 
 test('inline run comment shows terminate button and confirms before posting', async () => {
-	const seeded = { teamSlug: '', taskId: '' };
+	const seeded = { projectSlug: '', taskId: '' };
 	let terminateCalled = false;
 
 	const { findAllByTestId, findByTestId, router } = await renderApp({
@@ -122,8 +124,8 @@ test('inline run comment shows terminate button and confirms before posting', as
 				assignee_id: captain.id,
 			});
 
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 
 			installMocks({
 				taskId: task.id,
@@ -138,8 +140,8 @@ test('inline run comment shows terminate button and confirms before posting', as
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	const buttons = await findAllByTestId('terminate-run-button', undefined, { timeout: 20_000 });
@@ -164,7 +166,7 @@ test('inline run comment shows terminate button and confirms before posting', as
 });
 
 test('terminate button is hidden for finished runs', async () => {
-	const seeded = { teamSlug: '', taskId: '' };
+	const seeded = { projectSlug: '', taskId: '' };
 
 	const { findByTestId, queryAllByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -177,8 +179,8 @@ test('terminate button is hidden for finished runs', async () => {
 				assignee_id: captain.id,
 			});
 
-			seeded.teamSlug = ws.team.slug;
-			seeded.taskId = task.id;
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
 
 			installMocks({
 				taskId: task.id,
@@ -190,8 +192,8 @@ test('terminate button is hidden for finished runs', async () => {
 	});
 
 	await router.navigate({
-		to: '/teams/$teamId/tasks/$taskId',
-		params: { teamId: seeded.teamSlug, taskId: seeded.taskId },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
 	await findByTestId('run-comment', undefined, { timeout: 20_000 });

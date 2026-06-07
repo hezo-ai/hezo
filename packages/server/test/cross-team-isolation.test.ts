@@ -14,14 +14,17 @@ let masterKeyManager: MasterKeyManager;
 
 // Team A
 let teamAId: string;
+let teamASlug: string;
 let agentAId: string;
 let agentAToken: string;
 let projectAId: string;
+let projectASlug: string;
 let taskAId: string;
 let secretAId: string;
 
 // Team B
 let teamBId: string;
+let teamBSlug: string;
 let agentBId: string;
 let agentBToken: string;
 
@@ -46,7 +49,9 @@ beforeAll(async () => {
 		headers: { ...authHeader(superuserToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Team Alpha', template_id: typeId }),
 	});
-	teamAId = (await teamARes.json()).data.id;
+	const teamA = (await teamARes.json()).data;
+	teamAId = teamA.id;
+	teamASlug = teamA.slug;
 
 	// Create Team B
 	const teamBRes = await app.request('/api/teams', {
@@ -54,30 +59,50 @@ beforeAll(async () => {
 		headers: { ...authHeader(superuserToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Team Beta', template_id: typeId }),
 	});
-	teamBId = (await teamBRes.json()).data.id;
+	const teamB = (await teamBRes.json()).data;
+	teamBId = teamB.id;
+	teamBSlug = teamB.slug;
 
 	// Get agents
-	const agentsARes = await app.request(`/api/teams/${teamAId}/agents`, {
+	const agentsARes = await app.request(`/api/projects/internal-${teamASlug}/agents`, {
 		headers: authHeader(superuserToken),
 	});
 	agentAId = (await agentsARes.json()).data[0].id;
-	({ token: agentAToken } = await mintAgentToken(db, masterKeyManager, agentAId, teamAId));
+	const internalAId = (
+		await db.query<{ id: string }>(
+			'SELECT id FROM projects WHERE team_id = $1 AND is_internal = true',
+			[teamAId],
+		)
+	).rows[0].id;
+	({ token: agentAToken } = await mintAgentToken(db, masterKeyManager, agentAId, teamAId, null, {
+		projectId: internalAId,
+	}));
 
-	const agentsBRes = await app.request(`/api/teams/${teamBId}/agents`, {
+	const agentsBRes = await app.request(`/api/projects/internal-${teamBSlug}/agents`, {
 		headers: authHeader(superuserToken),
 	});
 	agentBId = (await agentsBRes.json()).data[0].id;
-	({ token: agentBToken } = await mintAgentToken(db, masterKeyManager, agentBId, teamBId));
+	const internalBId = (
+		await db.query<{ id: string }>(
+			'SELECT id FROM projects WHERE team_id = $1 AND is_internal = true',
+			[teamBId],
+		)
+	).rows[0].id;
+	({ token: agentBToken } = await mintAgentToken(db, masterKeyManager, agentBId, teamBId, null, {
+		projectId: internalBId,
+	}));
 
 	// Create project in Team A
 	const projectRes = await createTestProject(db, teamAId, {
 		name: 'Alpha Project',
 		description: 'Test project.',
 	});
-	projectAId = (await projectRes.json()).data.id;
+	const projectA = (await projectRes.json()).data;
+	projectAId = projectA.id;
+	projectASlug = projectA.slug;
 
 	// Create task in Team A
-	const taskRes = await app.request(`/api/teams/${teamAId}/tasks`, {
+	const taskRes = await app.request(`/api/projects/${projectASlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(superuserToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ project_id: projectAId, title: 'Alpha Task', assignee_id: agentAId }),
@@ -85,7 +110,7 @@ beforeAll(async () => {
 	taskAId = (await taskRes.json()).data.id;
 
 	// Create secret in Team A
-	const secretRes = await app.request(`/api/teams/${teamAId}/secrets`, {
+	const secretRes = await app.request(`/api/projects/internal-${teamASlug}/secrets`, {
 		method: 'POST',
 		headers: { ...authHeader(superuserToken), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'ALPHA_SECRET', value: 'secret123', category: 'api_token' }),
@@ -117,49 +142,49 @@ afterAll(async () => {
 
 describe('Agent token cross-team isolation', () => {
 	it('agent A cannot access Team B agents', async () => {
-		const res = await app.request(`/api/teams/${teamBId}/agents`, {
+		const res = await app.request(`/api/projects/internal-${teamBSlug}/agents`, {
 			headers: authHeader(agentAToken),
 		});
 		expect(res.status).toBe(403);
 	});
 
 	it('agent A cannot access Team B tasks', async () => {
-		const res = await app.request(`/api/teams/${teamBId}/tasks`, {
+		const res = await app.request(`/api/projects/internal-${teamBSlug}/tasks`, {
 			headers: authHeader(agentAToken),
 		});
 		expect(res.status).toBe(403);
 	});
 
 	it('agent A cannot access Team B secrets', async () => {
-		const res = await app.request(`/api/teams/${teamBId}/secrets`, {
+		const res = await app.request(`/api/projects/internal-${teamBSlug}/secrets`, {
 			headers: authHeader(agentAToken),
 		});
 		expect(res.status).toBe(403);
 	});
 
 	it('agent A cannot access Team B projects', async () => {
-		const res = await app.request(`/api/teams/${teamBId}/projects`, {
+		const res = await app.request(`/api/projects/internal-${teamBSlug}`, {
 			headers: authHeader(agentAToken),
 		});
 		expect(res.status).toBe(403);
 	});
 
 	it('agent B cannot access Team A agents', async () => {
-		const res = await app.request(`/api/teams/${teamAId}/agents`, {
+		const res = await app.request(`/api/projects/internal-${teamASlug}/agents`, {
 			headers: authHeader(agentBToken),
 		});
 		expect(res.status).toBe(403);
 	});
 
 	it('agent B cannot access Team A secrets', async () => {
-		const res = await app.request(`/api/teams/${teamAId}/secrets`, {
+		const res = await app.request(`/api/projects/internal-${teamASlug}/secrets`, {
 			headers: authHeader(agentBToken),
 		});
 		expect(res.status).toBe(403);
 	});
 
 	it('agent B cannot create tasks in Team A', async () => {
-		const res = await app.request(`/api/teams/${teamAId}/tasks`, {
+		const res = await app.request(`/api/projects/${projectASlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(agentBToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ project_id: projectAId, title: 'Unauthorized Task' }),
@@ -170,35 +195,35 @@ describe('Agent token cross-team isolation', () => {
 
 describe('Admin user cross-team isolation', () => {
 	it('user A (member of A only) cannot access Team B agents', async () => {
-		const res = await app.request(`/api/teams/${teamBId}/agents`, {
+		const res = await app.request(`/api/projects/internal-${teamBSlug}/agents`, {
 			headers: authHeader(userAToken),
 		});
 		expect(res.status).toBe(403);
 	});
 
 	it('user A cannot access Team B tasks', async () => {
-		const res = await app.request(`/api/teams/${teamBId}/tasks`, {
+		const res = await app.request(`/api/projects/internal-${teamBSlug}/tasks`, {
 			headers: authHeader(userAToken),
 		});
 		expect(res.status).toBe(403);
 	});
 
 	it('user A cannot access Team B secrets', async () => {
-		const res = await app.request(`/api/teams/${teamBId}/secrets`, {
+		const res = await app.request(`/api/projects/internal-${teamBSlug}/secrets`, {
 			headers: authHeader(userAToken),
 		});
 		expect(res.status).toBe(403);
 	});
 
 	it('user A cannot access Team B projects', async () => {
-		const res = await app.request(`/api/teams/${teamBId}/projects`, {
+		const res = await app.request(`/api/projects/internal-${teamBSlug}`, {
 			headers: authHeader(userAToken),
 		});
 		expect(res.status).toBe(403);
 	});
 
 	it('user A cannot create tasks in Team B', async () => {
-		const res = await app.request(`/api/teams/${teamBId}/tasks`, {
+		const res = await app.request(`/api/projects/internal-${teamBSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(userAToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Unauthorized Task' }),
@@ -207,14 +232,14 @@ describe('Admin user cross-team isolation', () => {
 	});
 
 	it('user A can access Team A resources', async () => {
-		const res = await app.request(`/api/teams/${teamAId}/agents`, {
+		const res = await app.request(`/api/projects/internal-${teamASlug}/agents`, {
 			headers: authHeader(userAToken),
 		});
 		expect(res.status).toBe(200);
 	});
 
 	it('user A can access Team A tasks', async () => {
-		const res = await app.request(`/api/teams/${teamAId}/tasks`, {
+		const res = await app.request(`/api/projects/internal-${teamASlug}/tasks`, {
 			headers: authHeader(userAToken),
 		});
 		expect(res.status).toBe(200);
@@ -238,14 +263,14 @@ describe('Admin user cross-team isolation', () => {
 
 describe('Superuser cross-team access', () => {
 	it('superuser can access Team A', async () => {
-		const res = await app.request(`/api/teams/${teamAId}/agents`, {
+		const res = await app.request(`/api/projects/internal-${teamASlug}/agents`, {
 			headers: authHeader(superuserToken),
 		});
 		expect(res.status).toBe(200);
 	});
 
 	it('superuser can access Team B', async () => {
-		const res = await app.request(`/api/teams/${teamBId}/agents`, {
+		const res = await app.request(`/api/projects/internal-${teamBSlug}/agents`, {
 			headers: authHeader(superuserToken),
 		});
 		expect(res.status).toBe(200);
@@ -257,14 +282,14 @@ describe('API key cross-team isolation', () => {
 	let apiKeyB: string;
 
 	beforeAll(async () => {
-		const resA = await app.request(`/api/teams/${teamAId}/api-keys`, {
+		const resA = await app.request(`/api/projects/internal-${teamASlug}/api-keys`, {
 			method: 'POST',
 			headers: { ...authHeader(superuserToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'key-a' }),
 		});
 		apiKeyA = (await resA.json()).data.key;
 
-		const resB = await app.request(`/api/teams/${teamBId}/api-keys`, {
+		const resB = await app.request(`/api/projects/internal-${teamBSlug}/api-keys`, {
 			method: 'POST',
 			headers: { ...authHeader(superuserToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'key-b' }),
@@ -273,28 +298,28 @@ describe('API key cross-team isolation', () => {
 	});
 
 	it('API key A cannot access Team B', async () => {
-		const res = await app.request(`/api/teams/${teamBId}/agents`, {
+		const res = await app.request(`/api/projects/internal-${teamBSlug}/agents`, {
 			headers: authHeader(apiKeyA),
 		});
 		expect(res.status).toBe(403);
 	});
 
 	it('API key B cannot access Team A', async () => {
-		const res = await app.request(`/api/teams/${teamAId}/agents`, {
+		const res = await app.request(`/api/projects/internal-${teamASlug}/agents`, {
 			headers: authHeader(apiKeyB),
 		});
 		expect(res.status).toBe(403);
 	});
 
 	it('API key A can access Team A', async () => {
-		const res = await app.request(`/api/teams/${teamAId}/agents`, {
+		const res = await app.request(`/api/projects/internal-${teamASlug}/agents`, {
 			headers: authHeader(apiKeyA),
 		});
 		expect(res.status).toBe(200);
 	});
 
 	it('API key B can access Team B', async () => {
-		const res = await app.request(`/api/teams/${teamBId}/agents`, {
+		const res = await app.request(`/api/projects/internal-${teamBSlug}/agents`, {
 			headers: authHeader(apiKeyB),
 		});
 		expect(res.status).toBe(200);
@@ -304,7 +329,7 @@ describe('API key cross-team isolation', () => {
 describe('Resource ownership isolation', () => {
 	it('Team B agent cannot access Team A task via Team A routes', async () => {
 		// Agent B is scoped to Team B, so accessing Team A returns 403
-		const res = await app.request(`/api/teams/${teamAId}/tasks/${taskAId}`, {
+		const res = await app.request(`/api/projects/${projectASlug}/tasks/${taskAId}`, {
 			headers: authHeader(agentBToken),
 		});
 		expect(res.status).toBe(403);
@@ -312,7 +337,7 @@ describe('Resource ownership isolation', () => {
 
 	it('Team A task not found under Team B routes', async () => {
 		// Even with superuser, task A doesn't belong to Team B
-		const res = await app.request(`/api/teams/${teamBId}/tasks/${taskAId}`, {
+		const res = await app.request(`/api/projects/internal-${teamBSlug}/tasks/${taskAId}`, {
 			headers: authHeader(superuserToken),
 		});
 		// Returns 404 because WHERE clause filters by team_id
@@ -320,7 +345,7 @@ describe('Resource ownership isolation', () => {
 	});
 
 	it('Team A secret not found under Team B routes', async () => {
-		const res = await app.request(`/api/teams/${teamBId}/secrets/${secretAId}`, {
+		const res = await app.request(`/api/projects/internal-${teamBSlug}/secrets/${secretAId}`, {
 			method: 'DELETE',
 			headers: authHeader(superuserToken),
 		});
@@ -328,7 +353,7 @@ describe('Resource ownership isolation', () => {
 	});
 
 	it('Agent A accessing own team task succeeds', async () => {
-		const res = await app.request(`/api/teams/${teamAId}/tasks/${taskAId}`, {
+		const res = await app.request(`/api/projects/${projectASlug}/tasks/${taskAId}`, {
 			headers: authHeader(agentAToken),
 		});
 		expect(res.status).toBe(200);

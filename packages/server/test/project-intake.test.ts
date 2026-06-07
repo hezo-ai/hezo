@@ -50,7 +50,7 @@ describe('project intake', () => {
 	it('creates an intake ticket and pending approval instead of a project', async () => {
 		const team = await createBlankTeam('Intake Co');
 
-		const res = await app.request(`/api/teams/${team.slug}/projects`, {
+		const res = await app.request(`/api/projects/internal-${team.slug}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -61,7 +61,7 @@ describe('project intake', () => {
 		expect(res.status).toBe(201);
 		const intake = (await res.json()).data as IntakeResponse;
 
-		expect(intake.project_slug).toBe('internal');
+		expect(intake.project_slug).toBe(`internal-${team.slug}`);
 		expect(intake.intake_task_identifier).toMatch(/^IN-\d+$/);
 		expect(intake.approval_id).toBeTruthy();
 
@@ -92,7 +92,7 @@ describe('project intake', () => {
 		expect(approval.rows[0].payload.intake_task_id).toBe(intake.intake_task_id);
 
 		const commentsRes = await app.request(
-			`/api/teams/${team.slug}/tasks/${intake.intake_task_identifier}/comments`,
+			`/api/projects/internal-${team.slug}/tasks/${intake.intake_task_identifier}/comments`,
 			{ headers: authHeader(token) },
 		);
 		const comments = (await commentsRes.json()).data as Array<{
@@ -109,7 +109,7 @@ describe('project intake', () => {
 	it('rejects missing name/description with 400 and no side effects', async () => {
 		const team = await createBlankTeam('Validation Co');
 
-		const res = await app.request(`/api/teams/${team.slug}/projects`, {
+		const res = await app.request(`/api/projects/internal-${team.slug}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: '', description: 'desc' }),
@@ -127,7 +127,7 @@ describe('project intake', () => {
 		const team = await createBlankTeam('Prefix Conflict Co');
 
 		// Internal already uses 'IN' — submitting that should conflict.
-		const res = await app.request(`/api/teams/${team.slug}/projects`, {
+		const res = await app.request(`/api/projects/internal-${team.slug}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -148,7 +148,7 @@ describe('project intake', () => {
 	it('approving the approval creates the project + planning task and closes the intake', async () => {
 		const team = await createBlankTeam('Approve Co');
 
-		const res = await app.request(`/api/teams/${team.slug}/projects`, {
+		const res = await app.request(`/api/projects/internal-${team.slug}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -191,7 +191,7 @@ describe('project intake', () => {
 	it('denying the approval posts a denial note and leaves the intake open', async () => {
 		const team = await createBlankTeam('Deny Co');
 
-		const res = await app.request(`/api/teams/${team.slug}/projects`, {
+		const res = await app.request(`/api/projects/internal-${team.slug}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Skunkworks', description: 'desc' }),
@@ -219,7 +219,7 @@ describe('project intake', () => {
 		expect(intakeAfter.rows[0].status).not.toBe(TaskStatus.Done);
 
 		const commentsRes = await app.request(
-			`/api/teams/${team.slug}/tasks/${intake.intake_task_identifier}/comments`,
+			`/api/projects/internal-${team.slug}/tasks/${intake.intake_task_identifier}/comments`,
 			{ headers: authHeader(token) },
 		);
 		const comments = (await commentsRes.json()).data as Array<{
@@ -236,7 +236,7 @@ describe('project intake', () => {
 	it('skip-questions posts a system comment on the project intake', async () => {
 		const team = await createBlankTeam('Skip Q Co');
 
-		const res = await app.request(`/api/teams/${team.slug}/projects`, {
+		const res = await app.request(`/api/projects/internal-${team.slug}/projects`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Fast Track', description: 'desc' }),
@@ -244,13 +244,13 @@ describe('project intake', () => {
 		const intake = (await res.json()).data as IntakeResponse;
 
 		const skipRes = await app.request(
-			`/api/teams/${team.slug}/project-intake/${intake.intake_task_id}/skip-questions`,
+			`/api/projects/internal-${team.slug}/project-intake/${intake.intake_task_id}/skip-questions`,
 			{ method: 'POST', headers: authHeader(token) },
 		);
 		expect(skipRes.status).toBe(200);
 
 		const commentsRes = await app.request(
-			`/api/teams/${team.slug}/tasks/${intake.intake_task_identifier}/comments`,
+			`/api/projects/internal-${team.slug}/tasks/${intake.intake_task_identifier}/comments`,
 			{ headers: authHeader(token) },
 		);
 		const comments = (await commentsRes.json()).data as Array<{

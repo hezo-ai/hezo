@@ -83,13 +83,16 @@ export class DockerClient {
 		signal?: AbortSignal,
 	): Promise<Response> {
 		const url = `http://localhost/${API_VERSION}${path}`;
+		// `unix` is a Bun-runtime fetch option; cast so type-checkers without
+		// Bun's lib (e.g. the web package, which imports this for in-process tests)
+		// accept it. Bun reads it at runtime regardless of the static type.
 		const res = await fetch(url, {
 			method,
 			headers: body ? { 'Content-Type': 'application/json' } : undefined,
 			body: body ? JSON.stringify(body) : undefined,
 			unix: this.socketPath,
 			signal,
-		});
+		} as RequestInit & { unix: string });
 		return res;
 	}
 
@@ -218,7 +221,7 @@ export class DockerClient {
 		const res = await fetch(url, {
 			unix: this.socketPath,
 			signal,
-		});
+		} as RequestInit & { unix: string });
 		if (!res.ok) {
 			const text = await res.text();
 			throw new Error(`Docker containerLogs failed (${res.status}): ${text}`);

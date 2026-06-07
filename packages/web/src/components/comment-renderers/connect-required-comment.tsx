@@ -10,13 +10,13 @@ import type { CommentDataOf } from './comment-data';
 
 interface Props {
 	comment: CommentDataOf<'connect_required'>;
-	teamId?: string;
+	projectId?: string;
 }
 
-export function ConnectRequiredComment({ comment, teamId }: Props) {
+export function ConnectRequiredComment({ comment, projectId }: Props) {
 	const { connector_id, display_name, provider_id } = comment.content;
-	const connectorQuery = useMcpConnection(teamId ?? '', connector_id);
-	const authStart = useAuthStart(teamId ?? '');
+	const connectorQuery = useMcpConnection(projectId ?? '', connector_id);
+	const authStart = useAuthStart(projectId ?? '');
 	const queryClient = useQueryClient();
 	const [error, setError] = useState<string | null>(null);
 	const [deviceOpen, setDeviceOpen] = useState(false);
@@ -26,7 +26,7 @@ export function ConnectRequiredComment({ comment, teamId }: Props) {
 	// posts {type: 'hezo-oauth-success'} via window.opener.postMessage from
 	// the callback success page (see routes/oauth.ts:buildCallbackPage).
 	useEffect(() => {
-		if (!teamId) return;
+		if (!projectId) return;
 		// The callback page lives on the server origin (e.g. localhost:3101)
 		// while we're on the web origin (e.g. localhost:5174), so we can't
 		// require e.origin === window.location.origin. We gate on message type
@@ -35,14 +35,14 @@ export function ConnectRequiredComment({ comment, teamId }: Props) {
 			if (!e.data || typeof e.data !== 'object') return;
 			if ((e.data as { type?: string }).type !== 'hezo-oauth-success') return;
 			queryClient.invalidateQueries({
-				queryKey: ['teams', teamId, 'mcp-connections'],
+				queryKey: ['teams', projectId, 'mcp-connections'],
 			});
 		};
 		window.addEventListener('message', onMessage);
 		return () => window.removeEventListener('message', onMessage);
-	}, [teamId, queryClient]);
+	}, [projectId, queryClient]);
 
-	if (!teamId) {
+	if (!projectId) {
 		return (
 			<p className="text-xs text-text-subtle italic">Connector setup unavailable in this view.</p>
 		);
@@ -50,7 +50,7 @@ export function ConnectRequiredComment({ comment, teamId }: Props) {
 
 	const connector = connectorQuery.data;
 	const status = connector ? connectorStatus(connector) : 'pending';
-	const connectorsUrl = `/teams/${teamId}/connectors`;
+	const connectorsUrl = `/teams/${projectId}/connectors`;
 	const focusedConnectorUrl = `${connectorsUrl}?focus=${connector_id}#${connector_id}`;
 
 	// Providers whose AS can't do DCR (declared via `deviceAuth`) authorize
@@ -134,11 +134,11 @@ export function ConnectRequiredComment({ comment, teamId }: Props) {
 				<ConnectorDeviceFlowDialog
 					open={deviceOpen}
 					onOpenChange={setDeviceOpen}
-					teamId={teamId}
+					projectId={projectId}
 					connectorId={connector_id}
 					providerLabel={display_name ?? capability?.displayName ?? provider_id ?? 'provider'}
 					onSuccess={() =>
-						queryClient.invalidateQueries({ queryKey: ['teams', teamId, 'mcp-connections'] })
+						queryClient.invalidateQueries({ queryKey: ['teams', projectId, 'mcp-connections'] })
 					}
 				/>
 			)}

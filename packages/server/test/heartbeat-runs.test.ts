@@ -16,6 +16,7 @@ let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
+let internalSlug: string;
 let agentId: string;
 let projectId: string;
 let projectSlug: string;
@@ -43,7 +44,9 @@ beforeAll(async () => {
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name: 'Run Test Co' }),
 	});
-	teamId = (await teamRes.json()).data.id;
+	const team = (await teamRes.json()).data;
+	teamId = team.id;
+	internalSlug = `internal-${team.slug}`;
 
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Main',
@@ -53,14 +56,14 @@ beforeAll(async () => {
 	projectId = projectData.id;
 	projectSlug = projectData.slug;
 
-	const agentRes = await app.request(`/api/teams/${teamId}/agents`, {
+	const agentRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Test Runner' }),
 	});
 	agentId = (await agentRes.json()).data.id;
 
-	const taskRes = await app.request(`/api/teams/${teamId}/tasks`, {
+	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -110,9 +113,12 @@ describe('heartbeat-runs API', () => {
 			[runId],
 		);
 
-		const res = await app.request(`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/${internalSlug}/agents/${agentId}/heartbeat-runs`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
@@ -126,7 +132,7 @@ describe('heartbeat-runs API', () => {
 
 	it('gets a single run by id with task info', async () => {
 		const res = await app.request(
-			`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs/${runId}`,
+			`/api/projects/${internalSlug}/agents/${agentId}/heartbeat-runs/${runId}`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(200);
@@ -142,7 +148,7 @@ describe('heartbeat-runs API', () => {
 	it('returns 404 for nonexistent run', async () => {
 		const fakeId = '00000000-0000-0000-0000-000000000000';
 		const res = await app.request(
-			`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs/${fakeId}`,
+			`/api/projects/${internalSlug}/agents/${agentId}/heartbeat-runs/${fakeId}`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
@@ -272,7 +278,7 @@ describe('run comments', () => {
 
 describe('task status auto-transition on run start', () => {
 	async function createTask(opts?: { assigneeId?: string; status?: string }): Promise<string> {
-		const res = await app.request(`/api/teams/${teamId}/tasks`, {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -335,7 +341,7 @@ describe('task status auto-transition on run start', () => {
 	});
 
 	it('does not flip status when the running agent is not the assignee', async () => {
-		const otherRes = await app.request(`/api/teams/${teamId}/agents`, {
+		const otherRes = await app.request(`/api/projects/${internalSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title: 'Other Runner' }),
@@ -467,7 +473,7 @@ describe('created_tasks tracking', () => {
 		expect(dbRow.rows[0].created_by_run_id).toBe(runId);
 
 		const runRes = await app.request(
-			`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs/${runId}`,
+			`/api/projects/${internalSlug}/agents/${agentId}/heartbeat-runs/${runId}`,
 			{ headers: authHeader(token) },
 		);
 		expect(runRes.status).toBe(200);
@@ -503,7 +509,7 @@ describe('created_tasks tracking', () => {
 		const emptyRunId = result.rows[0].id;
 
 		const res = await app.request(
-			`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs/${emptyRunId}`,
+			`/api/projects/${internalSlug}/agents/${agentId}/heartbeat-runs/${emptyRunId}`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(200);
@@ -564,7 +570,7 @@ describe('created_tasks tracking', () => {
 		});
 
 		const res = await app.request(
-			`/api/teams/${teamId}/agents/${agentId}/heartbeat-runs/${runId}`,
+			`/api/projects/${internalSlug}/agents/${agentId}/heartbeat-runs/${runId}`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(200);

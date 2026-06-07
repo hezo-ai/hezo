@@ -1,0 +1,341 @@
+import { INTERNAL_PROJECT_SLUG } from '@hezo/shared';
+import { createFileRoute, redirect } from '@tanstack/react-router';
+import {
+	Code,
+	ExternalLink,
+	FileAudio,
+	File as FileIcon,
+	FileText,
+	FileVideo,
+	Image as ImageIcon,
+	Loader2,
+	Trash2,
+	Upload,
+} from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Button } from '../../../components/ui/button';
+import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
+import { EmptyState } from '../../../components/ui/empty-state';
+import {
+	type ProjectAsset,
+	useDeleteProjectAsset,
+	useProjectAssets,
+	useUploadProjectAsset,
+} from '../../../hooks/use-project-assets';
+import type { ApiError } from '../../../lib/api';
+
+interface AssetsSearch {
+	file?: string;
+}
+
+interface ErrorChip {
+	id: string;
+	filename: string;
+	message: string;
+}
+
+function AssetIcon({ contentType }: { contentType: string }) {
+	const cls = 'h-8 w-8 text-text-subtle';
+	if (contentType.startsWith('audio/')) return <FileAudio className={cls} />;
+	if (contentType.startsWith('video/')) return <FileVideo className={cls} />;
+	if (contentType === 'text/html') return <Code className={cls} />;
+	if (contentType === 'application/pdf' || contentType === 'text/plain') {
+		return <FileText className={cls} />;
+	}
+	if (contentType.startsWith('image/')) return <ImageIcon className={cls} />;
+	return <FileIcon className={cls} />;
+}
+
+function formatBytes(bytes: number): string {
+	if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function ProjectAssetsPage() {
+	const { projectId } = Route.useParams();
+	const { file: focusFile } = Route.useSearch();
+	const { data: assets, isLoading } = useProjectAssets(projectId);
+	const upload = useUploadProjectAsset(projectId);
+	const del = useDeleteProjectAsset(projectId);
+
+	const inputRef = useRef<HTMLInputElement>(null);
+	const [isDragActive, setIsDragActive] = useState(false);
+	const dragDepth = useRef(0);
+	const [errors, setErrors] = useState<ErrorChip[]>([]);
+	const [pendingDelete, setPendingDelete] = useState<ProjectAsset | null>(null);
+
+	const pushError = useCallback((filename: string, message: string) => {
+		const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		setErrors((prev) => [...prev, { id, filename, message }]);
+		setTimeout(() => setErrors((prev) => prev.filter((e) => e.id !== id)), 5000);
+	}, []);
+
+	const handleFiles = useCallback(
+		async (files: File[]) => {
+			for (const file of files) {
+				try {
+					await upload.mutateAsync(file);
+				} catch (e) {
+					pushError(file.name, (e as ApiError)?.message ?? 'Upload failed');
+				}
+			}
+		},
+		[upload, pushError],
+	);
+
+	const onDragEnter = useCallback((e: React.DragEvent) => {
+		if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+		e.preventDefault();
+		dragDepth.current += 1;
+		setIsDragActive(true);
+	}, []);
+	const onDragLeave = useCallback((e: React.DragEvent) => {
+		if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+		e.preventDefault();
+		dragDepth.current = Math.max(0, dragDepth.current - 1);
+		if (dragDepth.current === 0) setIsDragActive(false);
+	}, []);
+	const onDragOver = useCallback((e: React.DragEvent) => {
+		if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+		e.preventDefault();
+	}, []);
+	const onDrop = useCallback(
+		(e: React.DragEvent) => {
+			if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+			e.preventDefault();
+			dragDepth.current = 0;
+			setIsDragActive(false);
+			const files = Array.from(e.dataTransfer.files);
+			if (files.length > 0) handleFiles(files);
+		},
+		[handleFiles],
+	);
+
+	const deleteCount = pendingDelete?.comment_attachment_count ?? 0;
+
+	return (
+		<div>
+			<div className="flex flex-wrap items-start justify-between gap-2 mb-4">
+				<div className="min-w-0">
+					<h1 className="text-base font-semibold text-text">Assets</h1>
+					<p className="text-[13px] text-text-muted">
+						Mockups, wireframes, and other uploads. Reference one in a comment or doc as{' '}
+						<code className="text-accent-blue-text">assets/&lt;filename&gt;</code>.
+					</p>
+				</div>
+				<Button
+					size="sm"
+					onClick={() => inputRef.current?.click()}
+					disabled={upload.isPending}
+					data-testid="asset-upload-button"
+				>
+					{upload.isPending ? (
+						<Loader2 className="w-3.5 h-3.5 animate-spin" />
+					) : (
+						<Upload className="w-3.5 h-3.5" />
+					)}
+					Upload
+				</Button>
+				<input
+					ref={inputRef}
+					type="file"
+					multiple
+					className="hidden"
+					data-testid="asset-file-input"
+					onChange={(e) => {
+						const files = Array.from(e.target.files ?? []);
+						if (files.length > 0) handleFiles(files);
+						e.target.value = '';
+					}}
+				/>
+			</div>
+
+			{errors.length > 0 && (
+				<div className="mb-3 flex flex-wrap gap-1.5">
+					{errors.map((e) => (
+						<span
+							key={e.id}
+							className="rounded-radius-sm border border-danger/40 bg-danger/10 px-2 py-1 text-[12px] text-danger"
+							data-testid="asset-upload-error"
+						>
+							{e.filename}: {e.message}
+						</span>
+					))}
+				</div>
+			)}
+
+			{/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop upload zone; uploads also work via the Upload button */}
+			<div
+				className="relative min-h-[300px]"
+				data-testid="asset-drop-zone"
+				onDragEnter={onDragEnter}
+				onDragLeave={onDragLeave}
+				onDragOver={onDragOver}
+				onDrop={onDrop}
+			>
+				{isLoading ? (
+					<div className="text-text-muted text-[13px] py-4">Loading...</div>
+				) : !assets || assets.length === 0 ? (
+					<EmptyState
+						icon={<ImageIcon className="w-10 h-10" />}
+						title="No assets yet"
+						description="Drag files here or use Upload to add mockups, wireframes, and other files."
+					/>
+				) : (
+					<ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+						{assets.map((asset) => (
+							<AssetCard
+								key={asset.id}
+								asset={asset}
+								highlighted={focusFile === asset.original_filename}
+								onDelete={() => setPendingDelete(asset)}
+							/>
+						))}
+					</ul>
+				)}
+
+				{isDragActive && (
+					<div
+						className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-radius-md border border-dashed border-border-hover bg-bg-elevated/95"
+						data-testid="asset-drop-overlay"
+					>
+						<Upload className="h-5 w-5 text-text-subtle" />
+						<p className="text-[13px] text-text-subtle">Drop to upload</p>
+					</div>
+				)}
+			</div>
+
+			<ConfirmDialog
+				open={pendingDelete !== null}
+				onOpenChange={(open) => {
+					if (!open) setPendingDelete(null);
+				}}
+				title="Delete this asset?"
+				description={
+					deleteCount > 0
+						? `This file is attached to ${deleteCount} comment${
+								deleteCount === 1 ? '' : 's'
+							} and will be removed from ${
+								deleteCount === 1 ? 'it' : 'them'
+							}. This cannot be undone.`
+						: 'The file will be permanently removed. This cannot be undone.'
+				}
+				confirmLabel="Delete"
+				variant="danger"
+				onConfirm={async () => {
+					if (!pendingDelete) return;
+					try {
+						await del.mutateAsync(pendingDelete.id);
+					} catch (e) {
+						pushError(pendingDelete.original_filename, (e as ApiError)?.message ?? 'Delete failed');
+					}
+					setPendingDelete(null);
+				}}
+			/>
+		</div>
+	);
+}
+
+function AssetCard({
+	asset,
+	highlighted,
+	onDelete,
+}: {
+	asset: ProjectAsset;
+	highlighted: boolean;
+	onDelete: () => void;
+}) {
+	const ref = useRef<HTMLLIElement>(null);
+	useEffect(() => {
+		if (highlighted) ref.current?.scrollIntoView({ block: 'center' });
+	}, [highlighted]);
+
+	const isImage = asset.content_type.startsWith('image/');
+	const isHtml = asset.content_type === 'text/html';
+	return (
+		<li
+			ref={ref}
+			data-testid="asset-card"
+			data-filename={asset.original_filename}
+			className={`flex flex-col overflow-hidden rounded-radius-md border bg-bg-subtle ${
+				highlighted ? 'border-accent-blue' : 'border-border'
+			}`}
+		>
+			<a
+				href={asset.url}
+				target="_blank"
+				rel="noopener noreferrer"
+				className="flex h-28 items-center justify-center bg-bg-muted"
+				data-testid="asset-open-link"
+				aria-label={`Open ${asset.original_filename} in a new tab`}
+			>
+				{isImage ? (
+					<img
+						src={asset.url}
+						alt={asset.original_filename}
+						className="h-full w-full object-cover"
+					/>
+				) : isHtml ? (
+					<iframe
+						src={asset.url}
+						title={asset.original_filename}
+						sandbox=""
+						className="pointer-events-none h-full w-full bg-white"
+					/>
+				) : (
+					<AssetIcon contentType={asset.content_type} />
+				)}
+			</a>
+			<div className="flex items-start justify-between gap-1 p-2">
+				<div className="min-w-0">
+					<div
+						className="truncate text-[12px] font-medium text-text"
+						title={asset.original_filename}
+					>
+						{asset.original_filename}
+					</div>
+					<div className="text-[11px] text-text-subtle">{formatBytes(asset.byte_size)}</div>
+				</div>
+				<div className="flex shrink-0 items-center gap-0.5">
+					<a
+						href={asset.url}
+						target="_blank"
+						rel="noopener noreferrer"
+						className="p-1 text-text-subtle hover:text-text"
+						aria-label="Open in new tab"
+						data-testid="asset-popout"
+					>
+						<ExternalLink className="h-3.5 w-3.5" />
+					</a>
+					<button
+						type="button"
+						className="p-1 text-text-subtle hover:text-accent-red"
+						onClick={onDelete}
+						aria-label="Delete asset"
+						data-testid="asset-delete"
+					>
+						<Trash2 className="h-3.5 w-3.5" />
+					</button>
+				</div>
+			</div>
+		</li>
+	);
+}
+
+export const Route = createFileRoute('/projects/$projectId/assets')({
+	validateSearch: (search: Record<string, unknown>): AssetsSearch => ({
+		file: typeof search.file === 'string' ? search.file : undefined,
+	}),
+	beforeLoad: ({ params }) => {
+		if (params.projectId === INTERNAL_PROJECT_SLUG) {
+			throw redirect({
+				to: '/projects/$projectId/tasks',
+				params,
+				replace: true,
+			});
+		}
+	},
+	component: ProjectAssetsPage,
+});

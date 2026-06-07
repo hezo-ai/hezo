@@ -59,6 +59,40 @@ export async function resolveProjectId(
 	return result.rows[0]?.id ?? null;
 }
 
+export interface ResolvedProject {
+	projectId: string;
+	teamId: string;
+	teamSlug: string;
+	isInternal: boolean;
+}
+
+/**
+ * Resolve a project from its globally-unique slug (or UUID) to the project and
+ * its backing team. Project slug is the single public handle, so this resolves
+ * without a team in hand.
+ */
+export async function resolveProject(db: PGlite, raw: string): Promise<ResolvedProject | null> {
+	const result = await db.query<{
+		id: string;
+		team_id: string;
+		team_slug: string;
+		is_internal: boolean;
+	}>(
+		`SELECT p.id, p.team_id, t.slug AS team_slug, p.is_internal
+		 FROM projects p JOIN teams t ON t.id = p.team_id
+		 WHERE ${UUID_RE.test(raw) ? 'p.id = $1' : 'p.slug = $1'}`,
+		[raw],
+	);
+	const row = result.rows[0];
+	if (!row) return null;
+	return {
+		projectId: row.id,
+		teamId: row.team_id,
+		teamSlug: row.team_slug,
+		isInternal: row.is_internal,
+	};
+}
+
 export async function resolveTaskId(
 	db: PGlite,
 	teamId: string,
