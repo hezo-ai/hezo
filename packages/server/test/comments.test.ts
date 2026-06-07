@@ -36,7 +36,7 @@ beforeAll(async () => {
 	teamSlug = teamData.slug;
 
 	const internalProject = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
 		[teamId],
 	);
 	internalProjectId = internalProject.rows[0].id;

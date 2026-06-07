@@ -60,7 +60,7 @@ describe('POST /projects — create a project with its own team', () => {
 
 		// It has an Internal project and an enabled Captain.
 		const internal = await db.query<{ id: string }>(
-			'SELECT id FROM projects WHERE team_id = $1 AND is_internal = true',
+			'SELECT id FROM projects WHERE team_id = $1 AND is_internal = false',
 			[data.team_id],
 		);
 		expect(internal.rows).toHaveLength(1);

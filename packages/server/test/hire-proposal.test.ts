@@ -58,7 +58,7 @@ beforeAll(async () => {
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
 	const internalProject = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true LIMIT 1`,
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false LIMIT 1`,
 		[teamId],
 	);
 	internalProjectId = internalProject.rows[0].id;

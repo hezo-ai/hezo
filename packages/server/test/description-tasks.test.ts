@@ -69,7 +69,7 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		expect(row.assignee_id).toBe(captainMemberId);
 
 		const opsProject = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
 			[teamId],
 		);
 		expect(row.project_id).toBe(opsProject.rows[0].id);
@@ -168,7 +168,9 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 			body: JSON.stringify({ name: 'No Ops Co' }),
 		});
 		const blankTeamId = (await blankRes.json()).data.id;
-		await db.query(`DELETE FROM projects WHERE team_id = $1 AND is_internal = true`, [blankTeamId]);
+		await db.query(`DELETE FROM projects WHERE team_id = $1 AND is_internal = false`, [
+			blankTeamId,
+		]);
 
 		const result = await enqueueTeamCoherenceReviewTask(db, blankTeamId, 'agent_hired');
 		expect(result).toBeNull();

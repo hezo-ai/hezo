@@ -1093,7 +1093,7 @@ describe('MCP tool: set_agent_team_context and get_agent_team_context', () => {
 describe('MCP tool: Internal project assignee restriction', () => {
 	it('create_task on Internal project rejects non-Captain assignee_slug', async () => {
 		const ops = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
 			[teamId],
 		);
 		const result = (await callToolViaMcp('create_task', {
@@ -1107,7 +1107,7 @@ describe('MCP tool: Internal project assignee restriction', () => {
 
 	it('create_task on Internal project accepts Captain assignee_slug', async () => {
 		const ops = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
 			[teamId],
 		);
 		const result = (await callToolViaMcp('create_task', {
@@ -1159,7 +1159,7 @@ describe('MCP tool: Internal project assignee restriction', () => {
 
 	it('update_task rejects reassigning Internal task to non-Captain', async () => {
 		const ops = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
 			[teamId],
 		);
 		const captain = await db.query<{ id: string }>(

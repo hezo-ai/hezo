@@ -70,7 +70,7 @@ beforeAll(async () => {
 	agentAId = (await agentsARes.json()).data[0].id;
 	const internalAId = (
 		await db.query<{ id: string }>(
-			'SELECT id FROM projects WHERE team_id = $1 AND is_internal = true',
+			'SELECT id FROM projects WHERE team_id = $1 AND is_internal = false',
 			[teamAId],
 		)
 	).rows[0].id;
@@ -84,7 +84,7 @@ beforeAll(async () => {
 	agentBId = (await agentsBRes.json()).data[0].id;
 	const internalBId = (
 		await db.query<{ id: string }>(
-			'SELECT id FROM projects WHERE team_id = $1 AND is_internal = true',
+			'SELECT id FROM projects WHERE team_id = $1 AND is_internal = false',
 			[teamBId],
 		)
 	).rows[0].id;

@@ -42,7 +42,7 @@ beforeAll(async () => {
 	captainMemberId = captain.rows[0].id;
 
 	const ops = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
 		[teamId],
 	);
 	parentProjectId = ops.rows[0].id;

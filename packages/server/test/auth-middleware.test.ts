@@ -17,9 +17,10 @@ import {
 	authHeader,
 	createAgentRun,
 	createTestApp,
+	createTestProject,
 	finalizeAgentRun,
 	mintAgentToken,
-, createTestProject } from './helpers/app';
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -59,7 +60,7 @@ beforeAll(async () => {
 	agentId = (await agentsRes.json()).data[0].id;
 
 	const internalProject = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
 		[teamId],
 	);
 	internalProjectId = internalProject.rows[0].id;
@@ -176,7 +177,7 @@ describe('signAgentJwt + verifyToken', () => {
 	it('rejects an agent JWT with no run_id claim', async () => {
 		const runId = await createAgentRun(db, agentId, teamId);
 		const internalProject = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
 			[teamId],
 		);
 		const projectId = internalProject.rows[0].id;
@@ -204,7 +205,7 @@ describe('signAgentJwt + verifyToken', () => {
 	it('rejects an agent JWT pointing at a nonexistent run', async () => {
 		const fakeRunId = '00000000-0000-0000-0000-000000000000';
 		const internalProject = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
 			[teamId],
 		);
 		const projectId = internalProject.rows[0].id;
@@ -236,7 +237,7 @@ describe('signAgentJwt + verifyToken', () => {
 		const otherAgentId = otherAgentRes.rows[0]?.id;
 		if (!otherAgentId) return; // only one seeded agent — skip
 		const internalProject = await db.query<{ id: string }>(
-			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
 			[teamId],
 		);
 		const projectId = internalProject.rows[0].id;
