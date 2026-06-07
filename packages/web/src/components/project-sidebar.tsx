@@ -6,7 +6,7 @@ import { useActiveProject } from '../hooks/use-active-project';
 import { useAgents } from '../hooks/use-agents';
 import { useInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useProjectMeta } from '../hooks/use-projects';
-import { agentPageParams } from '../lib/agent-link';
+import { agentPageParams } from './agent-link';
 import { AgentStatusLabel } from './agent-status-label';
 import { SidebarNav, type SidebarNavSection } from './sidebar-nav';
 

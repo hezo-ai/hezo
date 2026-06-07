@@ -103,20 +103,26 @@ function ShellChrome() {
 		<div className="h-screen flex flex-col overflow-hidden">
 			<AppHeader onOpenDrawer={() => setDrawerOpen(true)} />
 			<div className="flex flex-row flex-1 overflow-hidden">
-				<div className="hidden md:flex h-full">
-					<ProjectRail />
-				</div>
-				{active && (
-					<div className="hidden lg:block w-[208px] shrink-0 h-full overflow-y-auto border-r border-border bg-bg py-2">
-						<ProjectSidebar />
+				{/* Cap the whole left-nav + content block (rail + project sidebar +
+				    content) at 1280px, left-aligned; wide viewports get empty space
+				    on the right rather than the app sprawling edge to edge. */}
+				<div
+					className="flex flex-row flex-1 min-w-0 max-w-[1280px] overflow-hidden"
+					data-testid="content-well"
+				>
+					<div className="hidden md:flex h-full">
+						<ProjectRail />
 					</div>
-				)}
-				<main className="flex-1 overflow-auto relative">
-					<UpdateBanner />
-					<div className="px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
+					{active && (
+						<div className="hidden lg:block w-[208px] shrink-0 h-full overflow-y-auto border-r border-border bg-bg py-2">
+							<ProjectSidebar />
+						</div>
+					)}
+					<main className="flex-1 min-w-0 overflow-auto relative">
+						<UpdateBanner />
 						<Outlet />
-					</div>
-				</main>
+					</main>
+				</div>
 			</div>
 			{drawerOpen && (
 				<div className="lg:hidden fixed inset-0 z-50 flex" data-testid="mobile-nav-drawer">

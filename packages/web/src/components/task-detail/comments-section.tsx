@@ -1,10 +1,10 @@
-import { Link } from '@tanstack/react-router';
 import { CornerDownRight, Reply } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
+import { useAgents } from '../../hooks/use-agents';
 import { type Comment, useChooseOption, useComments } from '../../hooks/use-comments';
 import type { Task } from '../../hooks/use-tasks';
-import { agentPageParams } from '../../lib/agent-link';
+import { AgentLink } from '../agent-link';
 import {
 	type CommentData,
 	CommentReactions,
@@ -51,6 +51,15 @@ export function CommentsSection({
 	onStartReply,
 }: CommentsSectionProps) {
 	const { data: comments } = useComments(projectId, taskId);
+	// Resolve agent comment authors to their slug so the avatar + name link to
+	// the agent's page. Reads the already-cached team roster; cross-team authors
+	// (CEO / Coach) aren't in it and stay unlinked.
+	const { data: agents } = useAgents(projectId);
+	const agentSlugById = useMemo(() => {
+		const m = new Map<string, string>();
+		for (const a of agents ?? []) m.set(a.id, a.slug);
+		return m;
+	}, [agents]);
 	const chooseOption = useChooseOption(projectId, taskId);
 	const virtuosoRef = useRef<VirtuosoHandle>(null);
 	const listContainerRef = useRef<HTMLDivElement>(null);
@@ -173,6 +182,8 @@ export function CommentsSection({
 						const commentData = c as unknown as CommentData;
 						const authorName = c.author_name ?? 'Admin';
 						const isAgent = c.author_type === 'agent';
+						const authorAgentSlug =
+							isAgent && c.author_member_id ? agentSlugById.get(c.author_member_id) : undefined;
 						const content = typeof c.content === 'object' ? (c.content as { kind?: string }) : null;
 						const isPendingSetupRepo =
 							c.content_type === 'action' && content?.kind === 'setup_repo' && !c.chosen_option;
@@ -217,22 +228,38 @@ export function CommentsSection({
 								data-comment-highlighted={isHighlighted ? 'true' : undefined}
 								{...(isPendingSetupRepo ? { 'data-setup-repo-anchor': '' } : {})}
 							>
-								<Avatar
-									initials={authorName.slice(0, 2)}
-									size="sm"
-									color={avatarColorFromString(authorName)}
-								/>
+								{authorAgentSlug ? (
+									<AgentLink
+										projectId={projectId}
+										agentId={authorAgentSlug}
+										title={`View ${authorName}`}
+										testId="comment-author-avatar-link"
+										className="shrink-0 rounded-full"
+									>
+										<Avatar
+											initials={authorName.slice(0, 2)}
+											size="sm"
+											color={avatarColorFromString(authorName)}
+										/>
+									</AgentLink>
+								) : (
+									<Avatar
+										initials={authorName.slice(0, 2)}
+										size="sm"
+										color={avatarColorFromString(authorName)}
+									/>
+								)}
 								<div className="flex-1 min-w-0 rounded-md border border-border bg-bg-elevated overflow-hidden">
 									<div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-bg-muted">
-										{isAgent && c.author_slug ? (
-											<Link
-												to="/projects/$projectId/agents/$agentId"
-												params={agentPageParams(projectId, c.author_slug, c.author_is_instance)}
-												className="text-xs font-medium text-text hover:underline"
-												data-testid="comment-author"
+										{authorAgentSlug ? (
+											<AgentLink
+												projectId={projectId}
+												agentId={authorAgentSlug}
+												className="text-xs font-medium text-text hover:text-accent-blue-text transition-colors"
+												testId="comment-author"
 											>
 												{authorName}
-											</Link>
+											</AgentLink>
 										) : (
 											<span
 												className={`text-xs font-medium ${isAgent ? 'text-text' : 'text-text-muted'}`}

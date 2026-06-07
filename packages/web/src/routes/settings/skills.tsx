@@ -1,5 +1,5 @@
-import { createFileRoute, Link } from '@tanstack/react-router';
-import { ArrowLeft, Pencil, Plus, Trash2 } from 'lucide-react';
+import { createFileRoute } from '@tanstack/react-router';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -218,17 +218,7 @@ function InstanceSkillsPage() {
 		);
 
 	return (
-		<div className="max-w-[900px] mx-auto w-full">
-			<div className="flex items-center gap-3 mb-6">
-				<Link
-					to="/settings"
-					className="text-text-muted hover:text-text inline-flex items-center gap-1 text-[13px]"
-				>
-					<ArrowLeft className="w-3.5 h-3.5" /> Settings
-				</Link>
-			</div>
-			{content_}
-		</div>
+		<div className="max-w-[900px] w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">{content_}</div>
 	);
 }
 

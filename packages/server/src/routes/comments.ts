@@ -1,11 +1,4 @@
-import {
-	AuthType,
-	CommentContentType,
-	DEFAULT_TEAM_ID,
-	GrantScope,
-	WakeupSource,
-	wsRoom,
-} from '@hezo/shared';
+import { AuthType, CommentContentType, GrantScope, WakeupSource, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { encrypt } from '../crypto/encryption';
 import { signAssetUrl } from '../lib/asset-urls';
@@ -42,8 +35,6 @@ commentsRoutes.get('/projects/:projectId/tasks/:taskId/comments', async (c) => {
 		`SELECT ic.id, ic.task_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
             m.member_type AS author_type,
             COALESCE(ma.title, m.display_name, 'Admin') AS author_name,
-            ma.slug AS author_slug,
-            (m.team_id = $2) AS author_is_instance,
             ic.author_member_id,
             ic.parent_comment_id
      FROM task_comments ic
@@ -51,7 +42,7 @@ commentsRoutes.get('/projects/:projectId/tasks/:taskId/comments', async (c) => {
      LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
      WHERE ic.task_id = $1
      ORDER BY ic.created_at ASC`,
-		[taskId, DEFAULT_TEAM_ID],
+		[taskId],
 	);
 
 	const viewerMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);

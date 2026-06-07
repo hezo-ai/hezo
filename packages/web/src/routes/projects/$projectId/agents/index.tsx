@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Globe, Plus, UserPlus } from 'lucide-react';
+import { agentPageParams } from '../../../../components/agent-link';
 import { AgentStatusLabel } from '../../../../components/agent-status-label';
 import { OrgChartTree } from '../../../../components/org-chart-tree';
 import { Button } from '../../../../components/ui/button';
@@ -9,7 +10,6 @@ import { StatusDot } from '../../../../components/ui/status-dot';
 import { useAgents } from '../../../../hooks/use-agents';
 import { useOrgChart } from '../../../../hooks/use-org-chart';
 import { useTeam } from '../../../../hooks/use-teams';
-import { agentPageParams } from '../../../../lib/agent-link';
 
 /** HQ agents (CEO/Coach) shown as virtual members, linking to their HQ pages. */
 function GlobalAgentsBox({ projectId }: { projectId: string }) {

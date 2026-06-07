@@ -8,7 +8,7 @@ import {
 	useHeartbeatRun,
 } from '../../hooks/use-heartbeat-runs';
 import { useRunLogs } from '../../hooks/use-run-logs';
-import { agentPageParams } from '../../lib/agent-link';
+import { agentPageParams } from '../agent-link';
 import { LazyMount } from '../lazy-mount';
 import { LogViewer } from '../log-viewer';
 import { TerminateRunButton } from '../terminate-run-button';

@@ -1,3 +1,4 @@
+import { waitFor } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import {
@@ -78,8 +79,9 @@ test('pop-out button shows for markdown docs too, but not for the repo AGENTS.md
 		params: { projectId: ctx.projectSlug },
 		search: { file: '__agents_md__' },
 	});
-	await findByText('AGENTS.md');
-	expect(queryByTestId('doc-popout')).toBeNull();
+	// AGENTS.md is a live repo file with no standalone preview route, so its
+	// pop-out affordance is suppressed — switching to it removes the button.
+	await waitFor(() => expect(queryByTestId('doc-popout')).toBeNull());
 });
 
 test('standalone preview route renders a markdown doc without an iframe', async () => {
