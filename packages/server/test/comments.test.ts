@@ -35,12 +35,6 @@ beforeAll(async () => {
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
 
-	const internalProject = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = false`,
-		[teamId],
-	);
-	internalProjectId = internalProject.rows[0].id;
-
 	const projectRes = await createTestProject(db, teamId, {
 		name: 'Main',
 		description: 'Test project.',
@@ -48,6 +42,7 @@ beforeAll(async () => {
 	const projectData = (await projectRes.json()).data;
 	projectId = projectData.id;
 	projectSlug = projectData.slug;
+	internalProjectId = projectId;
 
 	const agentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		method: 'POST',

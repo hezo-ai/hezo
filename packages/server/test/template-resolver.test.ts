@@ -4,7 +4,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { resolveSystemPrompt } from '../src/services/template-resolver';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	projectSlugForTeamSlug,
+} from './helpers/app';
 
 let db: PGlite;
 let app: Hono<Env>;
@@ -280,10 +285,13 @@ describe('template resolver with agents', () => {
 		agentTeamSlug = agentTeamData.slug;
 
 		// Get agents
-		const agentsRes = await app.request(`/api/projects/internal-${agentTeamSlug}/agents`, {
-			method: 'GET',
-			headers: authHeader(token),
-		});
+		const agentsRes = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, agentTeamSlug)}/agents`,
+			{
+				method: 'GET',
+				headers: authHeader(token),
+			},
+		);
 		const agents = ((await agentsRes.json()) as any).data;
 		const engineer = agents.find((a: any) => a.slug === 'engineer');
 		const captain = agents.find((a: any) => a.slug === 'captain');
@@ -344,7 +352,7 @@ Current date: {{current_date}}
 
 	async function getAgentPrompt(agentId: string): Promise<string> {
 		const res = await app.request(
-			`/api/projects/internal-${agentTeamSlug}/agents/${agentId}/system-prompt`,
+			`/api/projects/${await projectSlugForTeamSlug(db, agentTeamSlug)}/agents/${agentId}/system-prompt`,
 			{
 				headers: authHeader(token),
 			},
@@ -353,10 +361,13 @@ Current date: {{current_date}}
 	}
 
 	it('agents created from team type have system prompts', async () => {
-		const agentsRes = await app.request(`/api/projects/internal-${agentTeamSlug}/agents`, {
-			method: 'GET',
-			headers: authHeader(token),
-		});
+		const agentsRes = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, agentTeamSlug)}/agents`,
+			{
+				method: 'GET',
+				headers: authHeader(token),
+			},
+		);
 		const agents = ((await agentsRes.json()) as any).data;
 
 		for (const agent of agents) {
@@ -372,10 +383,13 @@ Current date: {{current_date}}
 	});
 
 	it('each agent has role-specific system prompt content', async () => {
-		const agentsRes = await app.request(`/api/projects/internal-${agentTeamSlug}/agents`, {
-			method: 'GET',
-			headers: authHeader(token),
-		});
+		const agentsRes = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, agentTeamSlug)}/agents`,
+			{
+				method: 'GET',
+				headers: authHeader(token),
+			},
+		);
 		const agents = ((await agentsRes.json()) as any).data;
 		const bySlug = new Map<string, any>(agents.map((a: any) => [a.slug, a]));
 
@@ -403,20 +417,26 @@ Current date: {{current_date}}
 	});
 
 	it('Captain system prompt does not use {{reports_to}}', async () => {
-		const agentsRes = await app.request(`/api/projects/internal-${agentTeamSlug}/agents`, {
-			method: 'GET',
-			headers: authHeader(token),
-		});
+		const agentsRes = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, agentTeamSlug)}/agents`,
+			{
+				method: 'GET',
+				headers: authHeader(token),
+			},
+		);
 		const agents = ((await agentsRes.json()) as any).data;
 		const captain = agents.find((a: any) => a.slug === 'captain');
 		expect(await getAgentPrompt(captain.id)).not.toContain('{{reports_to}}');
 	});
 
 	it('non-Captain agents use {{reports_to}} in their system prompts', async () => {
-		const agentsRes = await app.request(`/api/projects/internal-${agentTeamSlug}/agents`, {
-			method: 'GET',
-			headers: authHeader(token),
-		});
+		const agentsRes = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, agentTeamSlug)}/agents`,
+			{
+				method: 'GET',
+				headers: authHeader(token),
+			},
+		);
 		const agents = ((await agentsRes.json()) as any).data;
 		const nonCeo = agents.filter(
 			(a: any) => a.slug !== 'captain' && a.slug !== 'architect' && a.slug !== 'coach',
@@ -450,9 +470,12 @@ describe('teammates block', () => {
 		tbTeamId = tbTeamData.id;
 		tbTeamSlug = tbTeamData.slug;
 
-		const agentsRes = await app.request(`/api/projects/internal-${tbTeamSlug}/agents`, {
-			headers: authHeader(token),
-		});
+		const agentsRes = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, tbTeamSlug)}/agents`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		const agents = ((await agentsRes.json()) as any).data;
 		tbCaptainMemberId = agents.find((a: any) => a.slug === 'captain').id;
 		tbEngineerMemberId = agents.find((a: any) => a.slug === 'engineer').id;
@@ -563,9 +586,12 @@ describe('team context block', () => {
 		tcTeamId = tcTeamData.id;
 		tcTeamSlug = tcTeamData.slug;
 
-		const agentsRes = await app.request(`/api/projects/internal-${tcTeamSlug}/agents`, {
-			headers: authHeader(token),
-		});
+		const agentsRes = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, tcTeamSlug)}/agents`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		const agents = ((await agentsRes.json()) as any).data;
 		tcCaptainMemberId = agents.find((a: any) => a.slug === 'captain').id;
 		tcEngineerMemberId = agents.find((a: any) => a.slug === 'engineer').id;
@@ -662,9 +688,12 @@ describe('project state block', () => {
 		psTeamId = psTeamData.id;
 		psTeamSlug = psTeamData.slug;
 
-		const agentsRes = await app.request(`/api/projects/internal-${psTeamSlug}/agents`, {
-			headers: authHeader(token),
-		});
+		const agentsRes = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, psTeamSlug)}/agents`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		const agents = ((await agentsRes.json()) as any).data;
 		psCaptainMemberId = agents.find((a: any) => a.slug === 'captain').id;
 		psArchitectMemberId = agents.find((a: any) => a.slug === 'architect').id;

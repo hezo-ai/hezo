@@ -297,9 +297,12 @@ describe('REST reactions endpoints', () => {
 		const otherTeamData = (await otherTeam.json()).data;
 		const otherTeamId = otherTeamData.id;
 		const otherTeamSlug = otherTeamData.slug;
-		const otherAgents = await app.request(`/api/projects/internal-${otherTeamSlug}/agents`, {
-			headers: authHeader(token),
-		});
+		const otherAgents = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, otherTeamSlug)}/agents`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		const otherCeo = (await otherAgents.json()).data.find(
 			(a: { slug: string }) => a.slug === 'captain',
 		);

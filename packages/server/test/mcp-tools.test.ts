@@ -89,9 +89,12 @@ beforeAll(async () => {
 	teamBId = teamBData.id;
 	teamBSlug = teamBData.slug;
 
-	const agentsBRes = await app.request(`/api/projects/internal-${teamBSlug}/agents`, {
-		headers: authHeader(token),
-	});
+	const agentsBRes = await app.request(
+		`/api/projects/${await projectSlugForTeamSlug(db, teamBSlug)}/agents`,
+		{
+			headers: authHeader(token),
+		},
+	);
 	agentBId = (await agentsBRes.json()).data[0].id;
 });
 
