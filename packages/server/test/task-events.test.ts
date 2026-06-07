@@ -6,7 +6,13 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
 import { extractTaskIdentifiers } from '../src/services/task-events';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, mintAgentToken } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	mintAgentToken,
+	projectSlugFor,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -419,7 +425,7 @@ describe('task link system events', () => {
 		});
 		const otherTeamData = (await otherTeamRes.json()).data;
 		const otherTeamId = otherTeamData.id;
-		const otherInternalSlug = `internal-${otherTeamData.slug}`;
+		const otherInternalSlug = `${await projectSlugFor(db, otherTeamData.id)}`;
 		const otherProjectRes = await createTestProject(db, otherTeamId, {
 			name: 'Foreign',
 			description: 'Other.',

@@ -5,7 +5,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { AuthInfo, Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, mintAgentToken } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	mintAgentToken,
+	projectSlugFor,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -50,7 +56,7 @@ beforeAll(async () => {
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
 
-	const agentsRes = await app.request(`/api/projects/internal-${teamSlug}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${await projectSlugFor(db, teamId)}/agents`, {
 		headers: authHeader(token),
 	});
 	agentId = (await agentsRes.json()).data[0].id;

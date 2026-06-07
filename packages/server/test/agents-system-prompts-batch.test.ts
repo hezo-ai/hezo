@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, projectSlugFor } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -34,10 +34,10 @@ beforeAll(async () => {
 
 	const team = await makeTeam('Batch Prompt Co');
 	teamId = team.id;
-	projectSlug = `internal-${team.slug}`;
+	projectSlug = `${await projectSlugFor(db, team.id)}`;
 	const otherTeam = await makeTeam('Other Co');
 	otherTeamId = otherTeam.id;
-	otherProjectSlug = `internal-${otherTeam.slug}`;
+	otherProjectSlug = `${await projectSlugFor(db, otherTeam.id)}`;
 
 	const TEMPLATE = [
 		'You are an employee of {{team_name}}.',

@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, mintAgentToken } from './helpers/app';
+import { authHeader, createTestApp, mintAgentToken, projectSlugFor } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -29,7 +29,7 @@ beforeAll(async () => {
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
-	projectSlug = `internal-${team.slug}`;
+	projectSlug = `${await projectSlugFor(db, team.id)}`;
 
 	const team2Res = await app.request('/api/teams', {
 		method: 'POST',
@@ -38,7 +38,7 @@ beforeAll(async () => {
 	});
 	const team2 = (await team2Res.json()).data;
 	team2Id = team2.id;
-	project2Slug = `internal-${team2.slug}`;
+	project2Slug = `${await projectSlugFor(db, team2.id)}`;
 });
 
 afterAll(async () => {
@@ -169,9 +169,12 @@ describe('UI state', () => {
 			[otherTeam.id],
 		);
 
-		const res = await app.request(`/api/projects/internal-${otherTeam.slug}/ui-state`, {
-			headers: authHeader(token),
-		});
+		const res = await app.request(
+			`/api/projects/${await projectSlugFor(db, otherTeam.id)}/ui-state`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		// Superuser bypasses team access check but has no member_users row
 		expect(res.status).toBe(403);
 	});

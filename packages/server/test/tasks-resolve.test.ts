@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, projectSlugFor } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -37,9 +37,9 @@ beforeAll(async () => {
 	const team = await makeTeam('Resolve Co');
 	teamId = team.id;
 	const otherTeam = await makeTeam('Other Resolve Co');
-	otherInternalSlug = `internal-${otherTeam.slug}`;
+	otherInternalSlug = `${await projectSlugFor(db, otherTeam.id)}`;
 
-	const agentRes = await app.request(`/api/projects/internal-${team.slug}/agents`, {
+	const agentRes = await app.request(`/api/projects/${await projectSlugFor(db, team.id)}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title: 'Worker Bot' }),
@@ -60,7 +60,7 @@ beforeAll(async () => {
 	projectBSlug = projB.slug;
 
 	const makeTask = async (projectId: string, title: string) => {
-		const r = await app.request(`/api/projects/internal-${team.slug}/tasks`, {
+		const r = await app.request(`/api/projects/${await projectSlugFor(db, team.id)}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ project_id: projectId, title, assignee_id: agentId }),

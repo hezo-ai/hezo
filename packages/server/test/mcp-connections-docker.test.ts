@@ -30,7 +30,7 @@ import { loadOrCreateCA } from '../src/services/egress/ca';
 import { EgressProxy } from '../src/services/egress/proxy';
 import { loadMcpConnectionDescriptors } from '../src/services/mcp-connections';
 import { safeClose } from './helpers';
-import { createTestApp } from './helpers/app';
+import { createTestApp, projectSlugFor } from './helpers/app';
 import { mintCertFromCA } from './helpers/self-signed-cert';
 import { startTestMcpHttpServer, type TestMcpServer } from './helpers/test-mcp-http-server';
 
@@ -73,11 +73,14 @@ beforeAll(async () => {
 	});
 	const teamData = (await co.json()).data;
 	teamId = teamData.id;
-	const ag = await ctx.app.request(`/api/projects/internal-${teamData.slug}/agents`, {
-		method: 'POST',
-		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ title: 'MCP Docker Agent' }),
-	});
+	const ag = await ctx.app.request(
+		`/api/projects/${await projectSlugFor(db, teamData.id)}/agents`,
+		{
+			method: 'POST',
+			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'MCP Docker Agent' }),
+		},
+	);
 	agentId = (await ag.json()).data.id;
 
 	const proj = await db.query<{ id: string }>(

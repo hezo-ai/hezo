@@ -11,7 +11,7 @@ import {
 } from '../src/services/agent-runner';
 import { getAgentSystemPrompt } from '../src/services/documents';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, projectSlugFor } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -59,7 +59,7 @@ beforeAll(async () => {
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
 
-	const agentsRes = await app.request(`/api/projects/internal-${teamSlug}/agents`, {
+	const agentsRes = await app.request(`/api/projects/${await projectSlugFor(db, teamId)}/agents`, {
 		headers: authHeader(token),
 	});
 	const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
@@ -193,9 +193,12 @@ describe('mention handoff prompt (integration)', () => {
 		});
 		const soloTeam = (await teamRes.json()).data;
 		const soloTeamId = soloTeam.id;
-		const agentsRes = await app.request(`/api/projects/internal-${soloTeam.slug}/agents`, {
-			headers: authHeader(token),
-		});
+		const agentsRes = await app.request(
+			`/api/projects/${await projectSlugFor(db, soloTeam.id)}/agents`,
+			{
+				headers: authHeader(token),
+			},
+		);
 		const agents = (await agentsRes.json()).data as Array<{ id: string; slug: string }>;
 		const captain = agents.find((a) => a.slug === 'captain')!;
 		const architect = agents.find((a) => a.slug === 'architect')!;

@@ -181,6 +181,16 @@ export async function mintAgentToken(
 	return { token, runId, projectId, crossProject };
 }
 
+/**
+ * A team is addressed through its single project. Returns that project's slug,
+ * creating it idempotently. Lets tests that used to hit `internal-<teamSlug>`
+ * resolve the team's real project handle inline.
+ */
+export async function projectSlugFor(db: PGlite, teamId: string): Promise<string> {
+	const res = await createTestProject(db, teamId, { name: 'Work Project' });
+	return (await res.json()).data.slug;
+}
+
 export interface CreatedTestProject {
 	id: string;
 	slug: string;

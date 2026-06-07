@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, projectSlugFor } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -180,7 +180,7 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 			body: JSON.stringify({ name: 'No Captain Co', template_id: typeId }),
 		});
 		const bareTeamData = (await bareRes.json()).data;
-		const bareInternalSlug = `internal-${bareTeamData.slug}`;
+		const bareInternalSlug = `${await projectSlugFor(db, bareTeamData.id)}`;
 
 		// Disable the Captain so hasCaptain becomes false
 		const agentsRes = await app.request(`/api/projects/${bareInternalSlug}/agents`, {
