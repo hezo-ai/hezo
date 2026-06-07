@@ -5,7 +5,6 @@ import {
 	ApprovalStatus,
 	ApprovalType,
 	AuthType,
-	CAPTAIN_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	DocumentType,
 	isAgentEffort,
@@ -44,6 +43,7 @@ import {
 	restoreRevision,
 	upsertDocument,
 } from '../services/documents';
+import { loadTeamCoordinationContext } from '../services/internal-intake';
 import { terminateHeartbeatRun } from '../services/run-termination';
 import { resolveSystemPrompt } from '../services/template-resolver';
 import { createWakeup } from '../services/wakeup';
@@ -355,20 +355,9 @@ agentsRoutes.post('/projects/:projectId/agents/onboard', async (c) => {
 		return err(c, 'CONFLICT', `A pending hire proposal for slug '${slug}' already exists`, 409);
 	}
 
-	const captainResult = await db.query<{ id: string }>(
-		`SELECT ma.id FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status`,
-		[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
-	);
-
-	const opsProject = await db.query<{ id: string }>(
-		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
-		[teamId],
-	);
-
-	const hasCaptain = captainResult.rows.length > 0;
-	const hasOpsProject = opsProject.rows.length > 0;
+	// Hiring is per-team coordination: the hire ticket lives in the team's own
+	// project and is actioned by the instance CEO (which runs cross-team there).
+	const coord = await loadTeamCoordinationContext(db, teamId);
 
 	const proposal = {
 		title: body.title.trim(),
@@ -381,7 +370,7 @@ agentsRoutes.post('/projects/:projectId/agents/onboard', async (c) => {
 		touches_code: body.touches_code ?? false,
 	};
 
-	if (!hasCaptain || !hasOpsProject) {
+	if (!coord) {
 		await withTransaction(db, async () => {
 			const memberResult = await db.query<{ id: string }>(
 				`INSERT INTO members (team_id, member_type, display_name)
@@ -431,8 +420,7 @@ agentsRoutes.post('/projects/:projectId/agents/onboard', async (c) => {
 		return ok(c, { agent: agentRow, task: null, approval: null, bootstrap: true }, 201);
 	}
 
-	const captainId = captainResult.rows[0].id;
-	const projectId = opsProject.rows[0].id;
+	const { ceoMemberId, teamProjectId } = coord;
 
 	const auth = c.get('auth');
 	let requestedByMemberId: string | null = null;
@@ -488,7 +476,7 @@ ${proposal.system_prompt ? `\n\`\`\`\n${proposal.system_prompt}\n\`\`\`\n` : '_(
 ### Existing team
 ${teamRoster}`;
 
-		const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, projectId);
+		const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, teamProjectId);
 
 		const taskResult = await db.query<Record<string, unknown>>(
 			`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier,
@@ -497,8 +485,8 @@ ${teamRoster}`;
 			 RETURNING *`,
 			[
 				teamId,
-				projectId,
-				captainId,
+				teamProjectId,
+				ceoMemberId,
 				taskNumber,
 				identifier,
 				`Onboard new agent: ${proposal.title}`,
@@ -526,9 +514,9 @@ ${teamRoster}`;
 	broadcastChange(c, wsRoom.team(teamId), 'tasks', 'INSERT', task);
 
 	trackBackground(
-		createWakeup(db, captainId, teamId, WakeupSource.Assignment, {
+		createWakeup(db, ceoMemberId, teamId, WakeupSource.Assignment, {
 			task_id: task.id as string,
-		}).catch((e) => log.error('Failed to wake Captain for hire request:', e)),
+		}).catch((e) => log.error('Failed to wake CEO for hire request:', e)),
 	);
 
 	return ok(c, { agent: null, task, approval: finalApproval, bootstrap: false }, 201);

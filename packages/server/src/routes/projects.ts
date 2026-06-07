@@ -249,62 +249,6 @@ projectsRoutes.post('/projects', async (c) => {
 	);
 });
 
-// Add another project to the team backing :projectId (project-addressed escape
-// hatch — the 1:1 model doesn't surface this, but tests and multi-project teams
-// use it). Opens the intake on the resolved team's Internal project.
-projectsRoutes.post('/projects/:projectId/projects', async (c) => {
-	const teamId = c.get('teamId') as string;
-	const db = c.get('db');
-
-	const body = await c.req.json<{
-		name: string;
-		description?: string;
-		initial_prd?: string;
-		task_prefix?: string;
-	}>();
-
-	if (!body.name?.trim()) {
-		return err(c, 'INVALID_REQUEST', 'name is required', 400);
-	}
-	if (!body.description?.trim()) {
-		return err(c, 'INVALID_REQUEST', 'description is required', 400);
-	}
-
-	const prefixResult = await resolveProjectTaskPrefix(db, teamId, body.task_prefix, body.name);
-	if (!prefixResult.ok) return err(c, prefixResult.code, prefixResult.message, prefixResult.status);
-
-	const intake = await createProjectIntake(
-		db,
-		teamId,
-		{
-			name: body.name.trim(),
-			description: body.description.trim(),
-			taskPrefix: prefixResult.prefix,
-			initialPrd: body.initial_prd?.trim() || null,
-		},
-		c.get('wsManager'),
-	);
-	if (!intake) {
-		return err(
-			c,
-			'INTERNAL',
-			'Cannot open project intake — the team is missing its Captain or Internal project.',
-			500,
-		);
-	}
-
-	return ok(
-		c,
-		{
-			intake_task_id: intake.intakeTaskId,
-			intake_task_identifier: intake.intakeTaskIdentifier,
-			project_slug: intake.projectSlug,
-			approval_id: intake.approvalId,
-		},
-		201,
-	);
-});
-
 projectsRoutes.get('/projects/:projectId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');

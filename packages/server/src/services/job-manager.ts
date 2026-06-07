@@ -8,6 +8,7 @@ import {
 	CommentContentType,
 	ContainerStatus,
 	HeartbeatRunStatus,
+	INSTANCE_AGENT_SLUGS,
 	TaskPriority,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
@@ -951,6 +952,13 @@ export class JobManager {
 			return;
 		}
 
+		// Instance-level agents (CEO, Coach) own tasks across every project-team, so
+		// their task selection spans all teams; the run itself is scoped to the
+		// chosen task's project (see the run-team split in agent-runner).
+		const isInstanceAgent = (INSTANCE_AGENT_SLUGS as readonly string[]).includes(
+			agent.rows[0].slug,
+		);
+
 		type TaskRow = {
 			id: string;
 			identifier: string;
@@ -975,8 +983,9 @@ export class JobManager {
 			typeof wakeupPayload?.task_id === 'string' ? wakeupPayload.task_id : undefined;
 		if (payloadTaskId) {
 			const payloadTask = await db.query<TaskRow>(
-				'SELECT id, identifier, title, description, status, priority, project_id, rules, progress_summary, assignee_id, runtime_type, parent_task_id, created_by_run_id FROM tasks WHERE id = $1 AND team_id = $2',
-				[payloadTaskId, teamId],
+				`SELECT id, identifier, title, description, status, priority, project_id, rules, progress_summary, assignee_id, runtime_type, parent_task_id, created_by_run_id
+				 FROM tasks WHERE id = $1${isInstanceAgent ? '' : ' AND team_id = $2'}`,
+				isInstanceAgent ? [payloadTaskId] : [payloadTaskId, teamId],
 			);
 			if (payloadTask.rows.length === 0) {
 				log.debug(
@@ -995,7 +1004,7 @@ export class JobManager {
 			const tasks = await db.query<TaskRow>(
 				`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
 				 FROM tasks i
-				 WHERE i.assignee_id = $1 AND i.team_id = $2
+				 WHERE i.assignee_id = $1${isInstanceAgent ? '' : ' AND i.team_id = $2'}
 				   AND i.status NOT IN ($3, $4, $5)
 				   AND NOT EXISTS (
 				     SELECT 1 FROM task_dependencies d
@@ -1093,6 +1102,9 @@ export class JobManager {
 		}
 
 		const projectRow = project.rows[0];
+		// Realign the working team to the chosen task's project. For an instance
+		// agent this is the project-team it is acting on, not its HQ home team.
+		teamId = projectRow.team_id;
 		const agentSlug = agent.rows[0].slug;
 		const isConversationalWakeup =
 			wakeupSource === WakeupSource.Mention ||

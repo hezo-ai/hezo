@@ -393,6 +393,17 @@ export async function applyApprovalSideEffect(
 				broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', planningTask);
 			}
 
+			// The CEO first runs an initial coherence/setup pass on the new team's
+			// roster; the Captain's planning task is blocked until that completes.
+			const coherenceTaskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'initial');
+			if (coherenceTaskId) {
+				await db.query(
+					`INSERT INTO task_dependencies (task_id, blocked_by_task_id)
+					 VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+					[planningTask.id, coherenceTaskId],
+				);
+			}
+
 			await createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
 				task_id: planningTask.id as string,
 			});
