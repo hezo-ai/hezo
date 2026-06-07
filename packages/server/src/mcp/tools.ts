@@ -25,6 +25,7 @@ import {
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { MasterKeyManager } from '../crypto/master-key';
+import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
 import { isCoach } from '../lib/agent-roles';
 import { upsertProjectAsset } from '../lib/asset-name';
@@ -341,6 +342,7 @@ export function registerTools(
 	dataDir: string,
 	masterKeyManager: MasterKeyManager,
 	wsManager?: WebSocketManager,
+	events?: DomainEventBus,
 ): ToolDef[] {
 	registeredTools.length = 0;
 
@@ -584,7 +586,14 @@ export function registerTools(
 			const teamId = args.team_id as string;
 			const caller = await buildMcpCreateTaskCaller(db, auth, teamId);
 			try {
-				return await createTask(db, teamId, mcpArgsToCreateTaskInput(args), caller, wsManager);
+				return await createTask(
+					db,
+					teamId,
+					mcpArgsToCreateTaskInput(args),
+					caller,
+					wsManager,
+					events,
+				);
 			} catch (e) {
 				if (e instanceof CreateTaskError) return { error: e.message };
 				throw e;
@@ -656,6 +665,7 @@ export function registerTools(
 							mcpArgsToCreateTaskInput(item),
 							caller,
 							wsManager,
+							events,
 						);
 						return { index, ok: true as const, task };
 					} catch (e) {
@@ -1385,6 +1395,9 @@ export function registerTools(
 					slug,
 					taskPrefix: prefixResult.prefix,
 					description: (args.description as string | undefined) ?? '',
+					events,
+					actorType: auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Admin,
+					actorMemberId: auth.type === AuthType.Agent ? auth.memberId : null,
 				});
 
 			broadcastRowChange(wsManager, wsRoom.team(teamId), 'projects', 'INSERT', project);
@@ -1774,6 +1787,16 @@ export function registerTools(
 				[taskId, authorMemberId, JSON.stringify(content)],
 			);
 
+			events?.emit({
+				type: 'credential.requested',
+				teamId,
+				projectId,
+				actorType: AuditActorType.Agent,
+				actorMemberId: authorMemberId,
+				taskId,
+				name,
+			});
+
 			return {
 				placeholder,
 				comment_id: inserted.rows[0].id,
@@ -1864,6 +1887,17 @@ export function registerTools(
 				createdByTaskId: taskId,
 				providerId,
 			});
+
+			if (!alreadyExisted) {
+				events?.emit({
+					type: 'mcp_connection.created',
+					teamId,
+					actorType: auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Admin,
+					actorMemberId: auth.type === AuthType.Agent ? auth.memberId : null,
+					connectionId: row.id as string,
+					name: name as string,
+				});
+			}
 
 			const status = statusOf(row);
 
@@ -1995,6 +2029,10 @@ export function registerTools(
 				content: body,
 				authorMemberId,
 				changeSummary: `Fetched from ${url}`,
+				audit: {
+					events,
+					actorType: auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Admin,
+				},
 			});
 
 			// Track source_url in a separate small table? For v1 we encode it in
@@ -2084,6 +2122,7 @@ export function registerTools(
 				dataDir,
 				actorMemberId,
 				wsManager,
+				events,
 			});
 			if (!resolved.ok) {
 				return { error: resolved.message };
@@ -2677,6 +2716,10 @@ export function registerTools(
 				},
 				content: args.content as string,
 				authorMemberId: callerMemberId,
+				audit: {
+					events,
+					actorType: auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Admin,
+				},
 			});
 			return { written: true, id: doc.id, filename: doc.slug };
 		},

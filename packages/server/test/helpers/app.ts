@@ -6,6 +6,7 @@ import { AgentAdminStatus, CAPTAIN_AGENT_SLUG, INTERNAL_PROJECT_SLUG } from '@he
 import { generateMasterKey, MasterKeyManager } from '../../src/crypto/master-key';
 import { loadAgentRoles } from '../../src/db/agent-roles';
 import { seedBuiltins } from '../../src/db/seed';
+import { DomainEventBus } from '../../src/events/bus';
 import { toSlug, uniqueSlug } from '../../src/lib/slug';
 import { signAdminJwt, signAgentJwt } from '../../src/middleware/auth';
 import { resolveProjectTaskPrefix } from '../../src/routes/projects';
@@ -58,6 +59,7 @@ export async function createTestApp(opts: { webUrl?: string } = {}) {
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
 	const containerLogStreamer = new ContainerLogStreamer();
+	const events = new DomainEventBus();
 	const jobManager = new JobManager({
 		db,
 		docker,
@@ -65,6 +67,7 @@ export async function createTestApp(opts: { webUrl?: string } = {}) {
 		serverPort: 0,
 		dataDir,
 		wsManager,
+		events,
 		logs,
 		containerLogStreamer,
 	});
@@ -82,6 +85,7 @@ export async function createTestApp(opts: { webUrl?: string } = {}) {
 		null,
 		null,
 		containerLogStreamer,
+		events,
 	);
 	const userResult = await db.query<{ id: string }>(
 		"INSERT INTO users (display_name, is_superuser) VALUES ('Test Admin', true) RETURNING id",

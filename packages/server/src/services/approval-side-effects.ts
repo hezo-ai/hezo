@@ -10,6 +10,7 @@ import {
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
+import type { DomainEventBus } from '../events/bus';
 import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { toSlug, uniqueSlug } from '../lib/slug';
@@ -81,6 +82,7 @@ export async function applyApprovalSideEffect(
 	actorMemberId: string | null,
 	wsManager?: WebSocketManager,
 	containerDeps?: ContainerDeps,
+	events?: DomainEventBus,
 ): Promise<SideEffectBroadcast[]> {
 	const payload = approval.payload as Record<string, unknown>;
 	const broadcasts: SideEffectBroadcast[] = [];
@@ -307,6 +309,9 @@ export async function applyApprovalSideEffect(
 						slug: projectSlug,
 						taskPrefix: prefixResult.prefix,
 						description: projectDescription,
+						events,
+						actorType: 'admin',
+						actorMemberId,
 					});
 
 				broadcastRowChange(wsManager, wsRoom.team(teamId), 'projects', 'INSERT', project);
@@ -391,6 +396,9 @@ export async function applyApprovalSideEffect(
 				taskPrefix: prefixResult.prefix,
 				description: projectDescription,
 				initialPrd,
+				events,
+				actorType: 'admin',
+				actorMemberId,
 			});
 
 			if (wsManager) {

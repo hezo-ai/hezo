@@ -35,7 +35,9 @@ export interface ApiKeysTable {
 
 export interface AuditLogTable {
 	id: Generated<string>;
-	team_id: string;
+	/** Nullable: instance-level admin actions have no team. */
+	team_id: string | null;
+	project_id: string | null;
 	actor_type: string;
 	actor_member_id: string | null;
 	action: string;
@@ -45,6 +47,13 @@ export interface AuditLogTable {
 	details: ColumnType<Record<string, unknown>, string, string>;
 	/** Plain string (not the Timestamp alias) so date-range WHERE comparisons accept ISO strings. */
 	created_at: Generated<string>;
+}
+
+/** Only the columns the audit-log team-name join reads. */
+export interface TeamsTable {
+	id: Generated<string>;
+	name: string;
+	slug: string;
 }
 
 export interface MembersTable {
@@ -81,6 +90,7 @@ export interface ExecutionLocksTable {
 export interface DB {
 	api_keys: ApiKeysTable;
 	audit_log: AuditLogTable;
+	teams: TeamsTable;
 	members: MembersTable;
 	member_users: MemberUsersTable;
 	member_agents: MemberAgentsTable;

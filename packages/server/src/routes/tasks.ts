@@ -21,6 +21,7 @@ import {
 import { assertInternalAssignee } from '../lib/internal-assignee';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import {
+	actorTypeFromAuth,
 	getProjectLocator,
 	resolveActorMemberId as resolveAuthActorMemberId,
 	resolveProjectId,
@@ -46,10 +47,6 @@ import { createWakeup } from '../services/wakeup';
 const log = logger.child('routes');
 
 const MAX_BATCH_TASKS = 50;
-
-function actorTypeFromAuth(auth: AuthInfo): AuditActorType {
-	return auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Admin;
-}
 
 async function buildCreateTaskCaller(c: Context<Env>, teamId: string): Promise<CreateTaskCaller> {
 	const auth = c.get('auth');
@@ -236,7 +233,7 @@ tasksRoutes.post('/teams/:teamId/tasks', async (c) => {
 	const caller = await buildCreateTaskCaller(c, teamId);
 
 	try {
-		const task = await createTask(db, teamId, body, caller, c.get('wsManager'));
+		const task = await createTask(db, teamId, body, caller, c.get('wsManager'), c.get('events'));
 		return ok(c, task, 201);
 	} catch (e) {
 		if (e instanceof CreateTaskError) {
@@ -265,11 +262,19 @@ tasksRoutes.post('/teams/:teamId/tasks/batch', async (c) => {
 
 	const caller = await buildCreateTaskCaller(c, teamId);
 	const wsManager = c.get('wsManager');
+	const events = c.get('events');
 
 	const results = await Promise.all(
 		raw.map(async (item, index) => {
 			try {
-				const task = await createTask(db, teamId, item as CreateTaskInput, caller, wsManager);
+				const task = await createTask(
+					db,
+					teamId,
+					item as CreateTaskInput,
+					caller,
+					wsManager,
+					events,
+				);
 				return { index, ok: true as const, task };
 			} catch (e) {
 				if (e instanceof CreateTaskError) {
@@ -578,6 +583,9 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 	}
 
 	const actorMemberId = await resolveActorMemberId(c, teamId);
+	const events = c.get('events');
+	const actorType = actorTypeFromAuth(c.get('auth'));
+	const projectId = existing.rows[0].project_id;
 
 	if (body.description !== undefined) {
 		trackBackground(
@@ -603,6 +611,17 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 				actorMemberId,
 				c.get('wsManager'),
 			);
+			events?.emit({
+				type: 'task.updated',
+				teamId,
+				projectId,
+				actorType,
+				actorMemberId,
+				taskId,
+				field: 'title',
+				from: existing.rows[0].title,
+				to: body.title.trim(),
+			});
 		} catch (e) {
 			log.error('Failed to record title change:', e);
 		}
@@ -619,6 +638,17 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 				actorMemberId,
 				c.get('wsManager'),
 			);
+			events?.emit({
+				type: 'task.updated',
+				teamId,
+				projectId,
+				actorType,
+				actorMemberId,
+				taskId,
+				field: 'assignee',
+				from: existing.rows[0].assignee_id,
+				to: body.assignee_id,
+			});
 		} catch (e) {
 			log.error('Failed to record assignee change:', e);
 		}
@@ -637,6 +667,23 @@ tasksRoutes.patch('/teams/:teamId/tasks/:taskId', async (c) => {
 			);
 		} catch (e) {
 			log.error('Failed to trigger status automations:', e);
+		}
+
+		{
+			const newStatus = (result.rows[0] as Record<string, unknown>).status as string;
+			if (newStatus !== existing.rows[0].status) {
+				events?.emit({
+					type: 'task.updated',
+					teamId,
+					projectId,
+					actorType,
+					actorMemberId,
+					taskId,
+					field: 'status',
+					from: existing.rows[0].status,
+					to: newStatus,
+				});
+			}
 		}
 
 		if (body.status === TaskStatus.Closed || body.status === TaskStatus.Cancelled) {
@@ -715,6 +762,7 @@ tasksRoutes.post('/teams/:teamId/tasks/:taskId/sub-tasks', async (c) => {
 			},
 			caller,
 			c.get('wsManager'),
+			c.get('events'),
 		);
 		return ok(c, subTask, 201);
 	} catch (e) {

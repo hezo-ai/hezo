@@ -1,19 +1,27 @@
 /**
- * Data access for the team audit log.
+ * Data access for the audit log, which is read at three scopes that are all
+ * views over one table (see the audit-log routes):
+ *   - team:     team_id = :id  (optional ?project_id= narrows it)
+ *   - project:  project_id = :id
+ *   - instance: no scope filter (every team + instance-level rows)
  *
- * The raw version threaded a hand-built `$1/$idx` parameter list through two
- * queries (count + page) that had to share an identical, string-concatenated
- * WHERE — the index bookkeeping is exactly what drifts. The query builder
- * applies each optional filter with `$if`, so adding/removing a filter is a
- * single declarative line with no positional-parameter accounting, and the
- * actor-name join (COALESCE over the agent title / member display name) reads
- * directly instead of as an interpolated string.
+ * The raw version threaded a hand-built `$1/$idx` list through a count + a page
+ * query that had to share an identical, string-concatenated WHERE. Here the
+ * scope + optional entity/action/date filters are built once as a predicate
+ * (via a standalone expression builder) and applied to both queries, so the
+ * count and the page can't drift; the actor-name COALESCE and team-name joins
+ * read directly.
  */
 import type { PGlite } from '@electric-sql/pglite';
-import { getKysely } from '../db/kysely';
+import { type Expression, expressionBuilder, type SqlBool } from 'kysely';
+import { type DB, getKysely } from '../db/kysely';
+
+export type AuditLogScope =
+	| { kind: 'team'; teamId: string; projectId?: string }
+	| { kind: 'project'; projectId: string }
+	| { kind: 'instance' };
 
 export interface AuditLogFilters {
-	teamId: string;
 	entityType?: string;
 	action?: string;
 	/** ISO timestamps (inclusive). */
@@ -23,7 +31,8 @@ export interface AuditLogFilters {
 
 export interface AuditLogRow {
 	id: string;
-	team_id: string;
+	team_id: string | null;
+	project_id: string | null;
 	actor_type: string;
 	actor_member_id: string | null;
 	action: string;
@@ -32,6 +41,7 @@ export interface AuditLogRow {
 	details: Record<string, unknown>;
 	created_at: string;
 	actor_name: string | null;
+	team_name: string | null;
 }
 
 export interface AuditLogPage {
@@ -39,45 +49,62 @@ export interface AuditLogPage {
 	total: number;
 }
 
-export async function listTeamAuditLog(
+/** Scope + optional filters as a single predicate, reused by the count and the page. */
+function auditConditions(scope: AuditLogScope, filters: AuditLogFilters): Expression<SqlBool>[] {
+	const eb = expressionBuilder<DB, 'audit_log'>();
+	const conds: Expression<SqlBool>[] = [];
+
+	if (scope.kind === 'team') {
+		conds.push(eb('audit_log.team_id', '=', scope.teamId));
+		if (scope.projectId) conds.push(eb('audit_log.project_id', '=', scope.projectId));
+	} else if (scope.kind === 'project') {
+		conds.push(eb('audit_log.project_id', '=', scope.projectId));
+	}
+
+	if (filters.entityType) conds.push(eb('audit_log.entity_type', '=', filters.entityType));
+	if (filters.action) conds.push(eb('audit_log.action', '=', filters.action));
+	if (filters.from) conds.push(eb('audit_log.created_at', '>=', filters.from));
+	if (filters.to) conds.push(eb('audit_log.created_at', '<=', filters.to));
+
+	return conds;
+}
+
+export async function listAuditLog(
 	db: PGlite,
+	scope: AuditLogScope,
 	filters: AuditLogFilters,
 	pagination: { perPage: number; offset: number },
 ): Promise<AuditLogPage> {
 	const k = getKysely(db);
+	const conds = auditConditions(scope, filters);
 
 	const total = await k
-		.selectFrom('audit_log as al')
+		.selectFrom('audit_log')
 		.select((eb) => eb.fn.countAll<number>().as('count'))
-		.where('al.team_id', '=', filters.teamId)
-		.$if(!!filters.entityType, (qb) => qb.where('al.entity_type', '=', filters.entityType ?? ''))
-		.$if(!!filters.action, (qb) => qb.where('al.action', '=', filters.action ?? ''))
-		.$if(!!filters.from, (qb) => qb.where('al.created_at', '>=', filters.from ?? ''))
-		.$if(!!filters.to, (qb) => qb.where('al.created_at', '<=', filters.to ?? ''))
+		.$if(conds.length > 0, (qb) => qb.where((eb) => eb.and(conds)))
 		.executeTakeFirstOrThrow();
 
 	const rows = await k
-		.selectFrom('audit_log as al')
-		.leftJoin('members as m', 'm.id', 'al.actor_member_id')
-		.leftJoin('member_agents as ma', 'ma.id', 'al.actor_member_id')
+		.selectFrom('audit_log')
+		.leftJoin('members as m', 'm.id', 'audit_log.actor_member_id')
+		.leftJoin('member_agents as ma', 'ma.id', 'audit_log.actor_member_id')
+		.leftJoin('teams as t', 't.id', 'audit_log.team_id')
 		.select((eb) => [
-			'al.id',
-			'al.team_id',
-			'al.actor_type',
-			'al.actor_member_id',
-			'al.action',
-			'al.entity_type',
-			'al.entity_id',
-			'al.details',
-			'al.created_at',
+			'audit_log.id',
+			'audit_log.team_id',
+			'audit_log.project_id',
+			'audit_log.actor_type',
+			'audit_log.actor_member_id',
+			'audit_log.action',
+			'audit_log.entity_type',
+			'audit_log.entity_id',
+			'audit_log.details',
+			'audit_log.created_at',
 			eb.fn.coalesce('ma.title', 'm.display_name').as('actor_name'),
+			't.name as team_name',
 		])
-		.where('al.team_id', '=', filters.teamId)
-		.$if(!!filters.entityType, (qb) => qb.where('al.entity_type', '=', filters.entityType ?? ''))
-		.$if(!!filters.action, (qb) => qb.where('al.action', '=', filters.action ?? ''))
-		.$if(!!filters.from, (qb) => qb.where('al.created_at', '>=', filters.from ?? ''))
-		.$if(!!filters.to, (qb) => qb.where('al.created_at', '<=', filters.to ?? ''))
-		.orderBy('al.created_at', 'desc')
+		.$if(conds.length > 0, (qb) => qb.where((eb) => eb.and(conds)))
+		.orderBy('audit_log.created_at', 'desc')
 		.limit(pagination.perPage)
 		.offset(pagination.offset)
 		.execute();

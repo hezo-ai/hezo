@@ -1,7 +1,7 @@
 import { ApprovalType, AuthType, DocumentType, isMarkdownDocSlug } from '@hezo/shared';
 import { Hono } from 'hono';
 import { resolveAgentsMdPath } from '../lib/docs';
-import { resolveActorMemberId, resolveProjectId } from '../lib/resolve';
+import { actorTypeFromAuth, resolveActorMemberId, resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { broadcastApprovalChange } from '../services/approval-broadcast';
@@ -110,6 +110,7 @@ projectDocsRoutes.put('/teams/:teamId/projects/:projectId/docs/:filename', async
 		content: body.content,
 		changeSummary: body.change_summary,
 		authorMemberId: memberId,
+		audit: { events: c.get('events'), actorType: actorTypeFromAuth(auth) },
 	});
 
 	return ok(c, {
@@ -127,12 +128,18 @@ projectDocsRoutes.delete('/teams/:teamId/projects/:projectId/docs/:filename', as
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const removed = await deleteDocument(db, c.get('wsManager'), {
-		type: DocumentType.ProjectDoc,
-		teamId: teamId,
-		projectId,
-		slug: filename,
-	});
+	const actorMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
+	const removed = await deleteDocument(
+		db,
+		c.get('wsManager'),
+		{
+			type: DocumentType.ProjectDoc,
+			teamId: teamId,
+			projectId,
+			slug: filename,
+		},
+		{ events: c.get('events'), actorType: actorTypeFromAuth(c.get('auth')), actorMemberId },
+	);
 	if (!removed) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
 
 	return c.json({ data: null }, 200);
@@ -188,6 +195,7 @@ projectDocsRoutes.post('/teams/:teamId/projects/:projectId/docs/:filename/restor
 		documentId: doc.id,
 		revisionNumber: body.revision_number,
 		restoredByMemberId,
+		audit: { events: c.get('events'), actorType: actorTypeFromAuth(auth) },
 	});
 	if (!restored) return err(c, 'NOT_FOUND', 'Revision not found', 404);
 

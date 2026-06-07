@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AuthType } from '@hezo/shared';
+import { type AuditActorType, AuthType } from '@hezo/shared';
 import type { AuthInfo } from './types';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -18,6 +18,26 @@ export async function resolveActorMemberId(
 		return result.rows[0]?.id ?? null;
 	}
 	return null;
+}
+
+/** Map an auth context to its audit actor type. Anything non-agent is an admin (board) actor. */
+export function actorTypeFromAuth(auth: AuthInfo): AuditActorType {
+	return auth.type === AuthType.Agent ? 'agent' : 'admin';
+}
+
+/**
+ * Resolve both the audit actor type and the acting member id for a request.
+ * `teamId` may be null for instance-level actions; the member id only resolves
+ * within a team, so it is null at instance scope (the actor is still `admin`).
+ */
+export async function resolveActor(
+	db: PGlite,
+	auth: AuthInfo,
+	teamId: string | null,
+): Promise<{ actorType: AuditActorType; actorMemberId: string | null }> {
+	const actorType = actorTypeFromAuth(auth);
+	const actorMemberId = teamId ? await resolveActorMemberId(db, auth, teamId) : null;
+	return { actorType, actorMemberId };
 }
 
 export async function resolveTeamId(db: PGlite, raw: string): Promise<string | null> {

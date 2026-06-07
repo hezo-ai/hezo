@@ -1,8 +1,36 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { DocumentType, wsRoom } from '@hezo/shared';
+import { type AuditActorType, DocumentType, wsRoom } from '@hezo/shared';
+import type { DomainEventBus } from '../events/bus';
 import { broadcastRowChange } from '../lib/broadcast';
 import { withTransaction } from '../lib/sql';
 import type { WebSocketManager } from './ws';
+
+/** Audit context shared by document mutations. */
+export interface DocumentAuditContext {
+	events?: DomainEventBus;
+	actorType?: AuditActorType;
+}
+
+function emitDocumentEvent(
+	ctx: DocumentAuditContext | undefined,
+	type: 'document.created' | 'document.updated' | 'document.deleted',
+	row: DocumentRow,
+	actorMemberId: string | null,
+): void {
+	if (!ctx?.events) return;
+	ctx.events.emit({
+		type,
+		teamId: row.team_id,
+		projectId: row.project_id,
+		actorType: ctx.actorType ?? 'admin',
+		actorMemberId,
+		documentId: row.id,
+		documentType: row.type,
+		slug: row.slug,
+		title: row.title,
+		agentMemberId: row.type === DocumentType.AgentSystemPrompt ? row.member_agent_id : null,
+	});
+}
 
 export interface DocumentRow {
 	id: string;
@@ -146,6 +174,8 @@ export interface UpsertDocumentInput {
 	content: string;
 	changeSummary?: string;
 	authorMemberId: string | null;
+	/** Optional audit context — when present, a document event is emitted. */
+	audit?: DocumentAuditContext;
 }
 
 export async function upsertDocument(
@@ -193,6 +223,12 @@ export async function upsertDocument(
 		'documents',
 		action,
 		row as unknown as Record<string, unknown>,
+	);
+	emitDocumentEvent(
+		input.audit,
+		action === 'INSERT' ? 'document.created' : 'document.updated',
+		row,
+		input.authorMemberId,
 	);
 	return row;
 }
@@ -250,6 +286,7 @@ export async function deleteDocument(
 	db: PGlite,
 	wsManager: WebSocketManager | undefined,
 	scope: DocumentScope,
+	audit?: DocumentAuditContext & { actorMemberId?: string | null },
 ): Promise<{ id: string; type: DocumentType } | null> {
 	const where = scopeWhere(scope, '');
 	const result = await db.query<DocumentRow>(
@@ -265,6 +302,7 @@ export async function deleteDocument(
 		'DELETE',
 		row as unknown as Record<string, unknown>,
 	);
+	emitDocumentEvent(audit, 'document.deleted', row, audit?.actorMemberId ?? null);
 	return { id: row.id, type: row.type };
 }
 
@@ -288,6 +326,7 @@ export interface RestoreRevisionInput {
 	documentId: string;
 	revisionNumber: number;
 	restoredByMemberId: string | null;
+	audit?: DocumentAuditContext;
 }
 
 export async function restoreRevision(
@@ -332,6 +371,7 @@ export async function restoreRevision(
 		'UPDATE',
 		row as unknown as Record<string, unknown>,
 	);
+	emitDocumentEvent(input.audit, 'document.updated', row, input.restoredByMemberId);
 	return row;
 }
 

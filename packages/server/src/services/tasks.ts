@@ -1,15 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
-import {
-	AuditAction,
-	type AuditActorType,
-	AuditEntityType,
-	TaskPriority,
-	TaskStatus,
-	WakeupSource,
-	wsRoom,
-} from '@hezo/shared';
+import { type AuditActorType, TaskPriority, TaskStatus, WakeupSource, wsRoom } from '@hezo/shared';
+import type { DomainEventBus } from '../events/bus';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
-import { auditLog } from '../lib/audit';
 import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { hasOpenBlockers, wouldCreateCycle } from '../lib/dependencies';
@@ -76,6 +68,7 @@ export async function createTask(
 	input: CreateTaskInput,
 	caller: CreateTaskCaller,
 	wsManager: WebSocketManager | undefined,
+	events?: DomainEventBus,
 ): Promise<TaskRow> {
 	const title = input.title?.trim();
 	if (!input.project_id || !title) {
@@ -169,18 +162,15 @@ export async function createTask(
 
 	broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', task);
 
-	trackBackground(
-		auditLog(
-			db,
-			teamId,
-			caller.actorType,
-			caller.actorMemberId,
-			AuditAction.Created,
-			AuditEntityType.Task,
-			task.id,
-			{ identifier },
-		).catch((e) => log.error('Failed to write audit log for task creation:', e)),
-	);
+	events?.emit({
+		type: 'task.created',
+		teamId,
+		projectId: input.project_id,
+		actorType: caller.actorType,
+		actorMemberId: caller.actorMemberId,
+		taskId: task.id,
+		identifier,
+	});
 
 	if (input.description) {
 		trackBackground(

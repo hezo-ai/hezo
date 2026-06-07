@@ -64,6 +64,11 @@ export function ProjectSidebar() {
 						testId: 'project-sidebar-settings',
 					},
 				]),
+		{
+			to: '/teams/$teamId/projects/$projectId/audit-log',
+			params: projectParams,
+			label: 'Activity',
+		},
 	];
 
 	const sections: SidebarNavSection[] = [

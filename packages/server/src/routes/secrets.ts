@@ -2,6 +2,7 @@ import { SecretCategory, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { broadcastChange } from '../lib/broadcast';
+import { resolveActor } from '../lib/resolve';
 import { requireResourceInTeam } from '../lib/resource';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
@@ -97,6 +98,15 @@ secretsRoutes.post('/secrets', async (c) => {
 			allowAllHosts,
 		],
 	);
+	const created = result.rows[0] as { id: string; name: string };
+	c.get('events').emit({
+		type: 'secret.created',
+		teamId: null,
+		actorType: 'admin',
+		actorMemberId: null,
+		secretId: created.id,
+		name: created.name,
+	});
 	return ok(c, result.rows[0], 201);
 });
 
@@ -164,6 +174,15 @@ secretsRoutes.patch('/secrets/:secretId', async (c) => {
 		 RETURNING id, team_id, project_id, name, category, allowed_hosts, allow_all_hosts, created_at, updated_at`,
 		params,
 	);
+	const updated = result.rows[0] as { id: string; name: string };
+	c.get('events').emit({
+		type: 'secret.updated',
+		teamId: null,
+		actorType: 'admin',
+		actorMemberId: null,
+		secretId: updated.id,
+		name: updated.name,
+	});
 	return ok(c, result.rows[0]);
 });
 
@@ -173,13 +192,21 @@ secretsRoutes.delete('/secrets/:secretId', async (c) => {
 	const db = c.get('db');
 	const secretId = c.req.param('secretId');
 
-	const result = await db.query(
-		'DELETE FROM secrets WHERE id = $1 AND team_id IS NULL RETURNING id',
+	const result = await db.query<{ id: string; name: string }>(
+		'DELETE FROM secrets WHERE id = $1 AND team_id IS NULL RETURNING id, name',
 		[secretId],
 	);
 	if (result.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Secret not found', 404);
 	}
+	c.get('events').emit({
+		type: 'secret.deleted',
+		teamId: null,
+		actorType: 'admin',
+		actorMemberId: null,
+		secretId: result.rows[0].id,
+		name: result.rows[0].name,
+	});
 	return c.json({ data: null }, 200);
 });
 
@@ -296,6 +323,17 @@ secretsRoutes.post('/teams/:teamId/secrets', async (c) => {
 		'INSERT',
 		result.rows[0] as Record<string, unknown>,
 	);
+	const createdRow = result.rows[0] as { id: string; name: string };
+	const actor = await resolveActor(db, c.get('auth'), teamId);
+	c.get('events').emit({
+		type: 'secret.created',
+		teamId,
+		projectId: body.project_id ?? null,
+		actorType: actor.actorType,
+		actorMemberId: actor.actorMemberId,
+		secretId: createdRow.id,
+		name: createdRow.name,
+	});
 	return ok(c, result.rows[0], 201);
 });
 
@@ -364,6 +402,17 @@ secretsRoutes.patch('/teams/:teamId/secrets/:secretId', async (c) => {
 		params,
 	);
 
+	const updatedRow = result.rows[0] as { id: string; name: string; project_id: string | null };
+	const actor = await resolveActor(db, c.get('auth'), teamId);
+	c.get('events').emit({
+		type: 'secret.updated',
+		teamId,
+		projectId: updatedRow.project_id,
+		actorType: actor.actorType,
+		actorMemberId: actor.actorMemberId,
+		secretId: updatedRow.id,
+		name: updatedRow.name,
+	});
 	return ok(c, result.rows[0]);
 });
 
@@ -372,13 +421,28 @@ secretsRoutes.delete('/teams/:teamId/secrets/:secretId', async (c) => {
 	const db = c.get('db');
 	const secretId = c.req.param('secretId');
 
-	const existing = await requireResourceInTeam<{ id: string }>(c, 'secrets', secretId, teamId, {
+	const existing = await requireResourceInTeam<{
+		id: string;
+		name: string;
+		project_id: string | null;
+	}>(c, 'secrets', secretId, teamId, {
+		columns: 'id, name, project_id',
 		resourceName: 'Secret',
 	});
 	if (existing instanceof Response) return existing;
 
 	await db.query('DELETE FROM secrets WHERE id = $1', [secretId]);
 	broadcastChange(c, wsRoom.team(teamId), 'secrets', 'DELETE', { id: secretId });
+	const actor = await resolveActor(db, c.get('auth'), teamId);
+	c.get('events').emit({
+		type: 'secret.deleted',
+		teamId,
+		projectId: existing.project_id,
+		actorType: actor.actorType,
+		actorMemberId: actor.actorMemberId,
+		secretId: existing.id,
+		name: existing.name,
+	});
 	return c.json({ data: null }, 200);
 });
 
