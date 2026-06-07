@@ -105,23 +105,23 @@ export function describeAuditEntry(entry: AuditEntry): string {
 }
 
 export type AuditLink =
-	| { to: '/teams/$teamId/projects/$projectId/tasks/$taskId'; params: Record<string, string> }
-	| { to: '/teams/$teamId/projects/$projectId'; params: Record<string, string> }
-	| { to: '/teams/$teamId/settings/credentials'; params: Record<string, string> }
-	| { to: '/teams/$teamId/connectors'; params: Record<string, string> }
-	| { to: '/teams/$teamId/skills'; params: Record<string, string> }
-	| { to: '/teams/$teamId/agents'; params: Record<string, string> }
+	| { to: '/projects/$projectId/tasks/$taskId'; params: Record<string, string> }
+	| { to: '/projects/$projectId'; params: Record<string, string> }
+	| { to: '/projects/$projectId/team-settings/credentials'; params: Record<string, string> }
+	| { to: '/projects/$projectId/connectors'; params: Record<string, string> }
+	| { to: '/projects/$projectId/skills'; params: Record<string, string> }
+	| { to: '/projects/$projectId/agents'; params: Record<string, string> }
 	| { to: '/settings/credentials' }
 	| { to: '/settings/connectors' }
 	| { to: '/settings/skills' };
 
 /**
  * The navigation target for an audit row, or null when the row has no resource
- * page (or lacks the slugs needed to build one). Team-scoped rows link to the
- * team page; instance-scoped rows (no team) link to the instance equivalent.
+ * page (or lacks the slugs needed to build one). Project-scoped rows deep-link
+ * into the owning project; rows without a project fall back to the instance
+ * equivalent where one exists.
  */
 export function auditEntryLink(entry: AuditEntry): AuditLink | null {
-	const team = entry.team_slug;
 	const project = entry.project_slug;
 	const task = entry.entity_identifier ?? entry.ref_task_identifier;
 
@@ -129,32 +129,30 @@ export function auditEntryLink(entry: AuditEntry): AuditLink | null {
 		case 'task':
 		case 'agent_run':
 		case 'asset':
-			if (team && project && task) {
+			if (project && task) {
 				return {
-					to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
-					params: { teamId: team, projectId: project, taskId: task.toLowerCase() },
+					to: '/projects/$projectId/tasks/$taskId',
+					params: { projectId: project, taskId: task.toLowerCase() },
 				};
 			}
 			return null;
 		case 'project':
-			return team && project
-				? { to: '/teams/$teamId/projects/$projectId', params: { teamId: team, projectId: project } }
-				: null;
+			return project ? { to: '/projects/$projectId', params: { projectId: project } } : null;
 		case 'secret':
-			return team
-				? { to: '/teams/$teamId/settings/credentials', params: { teamId: team } }
+			return project
+				? { to: '/projects/$projectId/team-settings/credentials', params: { projectId: project } }
 				: { to: '/settings/credentials' };
 		case 'connection':
 		case 'mcp_connection':
-			return team
-				? { to: '/teams/$teamId/connectors', params: { teamId: team } }
+			return project
+				? { to: '/projects/$projectId/connectors', params: { projectId: project } }
 				: { to: '/settings/connectors' };
 		case 'skill':
-			return team
-				? { to: '/teams/$teamId/skills', params: { teamId: team } }
+			return project
+				? { to: '/projects/$projectId/skills', params: { projectId: project } }
 				: { to: '/settings/skills' };
 		case 'agent':
-			return team ? { to: '/teams/$teamId/agents', params: { teamId: team } } : null;
+			return project ? { to: '/projects/$projectId/agents', params: { projectId: project } } : null;
 		default:
 			return null;
 	}

@@ -91,22 +91,22 @@ test('falls back to a generic sentence for unmapped entities', () => {
 test('links a task row to the task route with a lowercased identifier', () => {
 	const link = auditEntryLink(entry({ entity_type: 'task', entity_identifier: 'OP-1' }));
 	expect(link).toEqual({
-		to: '/teams/$teamId/projects/$projectId/tasks/$taskId',
-		params: { teamId: 'acme', projectId: 'ops', taskId: 'op-1' },
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: 'ops', taskId: 'op-1' },
 	});
 });
 
-test('links a team-scoped secret to team credentials, instance to the instance page', () => {
-	const teamScoped = auditEntryLink(
-		entry({ entity_type: 'secret', entity_identifier: null, team_slug: 'acme' }),
+test('links a project-scoped secret to project credentials, instance to the instance page', () => {
+	const projectScoped = auditEntryLink(
+		entry({ entity_type: 'secret', entity_identifier: null, project_slug: 'ops' }),
 	);
-	expect(teamScoped).toEqual({
-		to: '/teams/$teamId/settings/credentials',
-		params: { teamId: 'acme' },
+	expect(projectScoped).toEqual({
+		to: '/projects/$projectId/team-settings/credentials',
+		params: { projectId: 'ops' },
 	});
 
 	const instanceScoped = auditEntryLink(
-		entry({ entity_type: 'secret', entity_identifier: null, team_id: null, team_slug: null }),
+		entry({ entity_type: 'secret', entity_identifier: null, project_id: null, project_slug: null }),
 	);
 	expect(instanceScoped).toEqual({ to: '/settings/credentials' });
 });
