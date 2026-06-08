@@ -45,7 +45,7 @@ import { detectOrphans } from './orphan-detector';
 import { ensureRepoSetupAction } from './repo-setup';
 import { getProjectConcurrency, isTaskBusyInDb } from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
-import { recordStatusChange } from './task-events';
+import { triggerStatusAutomations } from './task-automation';
 import { absorbQueuedTaskWakeups, assignmentWakeupAlreadyServed, createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -1465,7 +1465,7 @@ export class JobManager {
 						'UPDATE',
 						closed.rows[0],
 					);
-					await recordStatusChange(
+					await triggerStatusAutomations(
 						db,
 						teamId,
 						taskId,

@@ -5,12 +5,14 @@ import {
 	COACH_AGENT_SLUG,
 	CommentContentType,
 	TaskStatus,
+	TERMINAL_TASK_STATUSES,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
 import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { recomputeDownstreamReadiness } from '../lib/dependencies';
+import { assertChildrenAllClosed } from '../lib/task-relationships';
 import { logger } from '../logger';
 import { OAUTH_VERIFICATION_LABEL } from './oauth-verification-tasks';
 import { recordStatusChange } from './task-events';
@@ -103,6 +105,51 @@ async function notifyParentOfOAuthVerification(
 }
 
 /**
+ * Wake the parent task's assigned agent when the transitioning sub-task
+ * pushes the parent past its child-closure gate. Mirrors the blocked-by
+ * cascade in `recomputeDownstreamReadiness` but walks the parent edge.
+ * The idempotency key collapses sibling closes that land near-simultaneously
+ * into a single queued wakeup; the dispatch-time `assignmentWakeupAlreadyServed`
+ * guard suppresses runs that already covered this state.
+ */
+async function wakeParentIfChildrenClosed(
+	db: PGlite,
+	teamId: string,
+	taskId: string,
+): Promise<void> {
+	const parentRow = await db.query<{ parent_task_id: string | null }>(
+		'SELECT parent_task_id FROM tasks WHERE id = $1 AND team_id = $2',
+		[taskId, teamId],
+	);
+	const parentTaskId = parentRow.rows[0]?.parent_task_id;
+	if (!parentTaskId) return;
+
+	const childrenCheck = await assertChildrenAllClosed(db, teamId, parentTaskId);
+	if (!childrenCheck.ok) return;
+
+	const parent = await db.query<{ assignee_id: string | null; team_id: string }>(
+		'SELECT assignee_id, team_id FROM tasks WHERE id = $1',
+		[parentTaskId],
+	);
+	const parentInfo = parent.rows[0];
+	if (!parentInfo?.assignee_id) return;
+
+	const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
+		parentInfo.assignee_id,
+	]);
+	if (isAgent.rows.length === 0) return;
+
+	await createWakeup(
+		db,
+		parentInfo.assignee_id,
+		parentInfo.team_id,
+		WakeupSource.Assignment,
+		{ task_id: parentTaskId, reason: 'children_closed' },
+		`children-closed:${parentTaskId}`,
+	);
+}
+
+/**
  * Trigger automations when an task's status changes.
  * Called from both the REST handler and MCP tool to ensure consistent behavior.
  */
@@ -121,6 +168,14 @@ export async function triggerStatusAutomations(
 		await recomputeDownstreamReadiness(db, teamId, taskId, actorMemberId, wsManager);
 	} catch (e) {
 		log.error('Failed to recompute downstream readiness:', e);
+	}
+
+	if ((TERMINAL_TASK_STATUSES as readonly string[]).includes(newStatus)) {
+		try {
+			await wakeParentIfChildrenClosed(db, teamId, taskId);
+		} catch (e) {
+			log.error('Failed to wake parent on child closure:', e);
+		}
 	}
 
 	if (newStatus === TaskStatus.Done) {
