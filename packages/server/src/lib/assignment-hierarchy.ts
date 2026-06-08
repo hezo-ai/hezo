@@ -3,7 +3,7 @@ import type { PGlite } from '@electric-sql/pglite';
 export type AssignmentHierarchyCheck = { ok: true } | { ok: false; message: string };
 
 export function assignmentHierarchyError(assigneeSlug: string): string {
-	return `Cannot assign to @${assigneeSlug}: agents can only assign work to their direct subordinates. To request work from someone outside your direct reports, use create_comment with @${assigneeSlug} on an existing ticket they own (or one they would naturally pick up).`;
+	return `Cannot assign to @${assigneeSlug}: agents can only assign work to a direct subordinate (or themselves). Do not route around this by assigning the ticket to @${assigneeSlug}'s manager as a stand-in with a "please reassign" note — that lands work on the wrong owner and distorts the board. Instead: post a create_comment with @${assigneeSlug} (on this ticket or the most relevant open one) describing the work, and let them open their own ticket. If you are planning a multi-step chain that runs below your direct reports, hand the responsible direct report a single breakdown ticket; when it lands, they create and fan out their subtree's tickets.`;
 }
 
 /**

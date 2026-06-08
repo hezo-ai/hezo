@@ -71,6 +71,9 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 		expect(sdCeo).toContain('Every run you take is at **max effort**');
 		expect(sdCeo).toContain('## Hire workflow');
 		expect(sdCeo).toContain('Ask before you write.');
+		// the assignment-hierarchy fix (captain.md body + shared partial) must reach the prompt
+		expect(sdCeo).toContain('Fan out only to your direct reports');
+		expect(sdCeo).toContain('## Planning a multi-step chain across levels');
 		expect(sdCeo).not.toContain('{{> partials/');
 
 		const blankCeo = docs['blank/captain.md'];
@@ -78,6 +81,8 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 		expect(blankCeo).toContain('Every run you take is at **max effort**');
 		expect(blankCeo).toContain('## Hire workflow');
 		expect(blankCeo).toContain('Ask before you write.');
+		// blank captain includes the shared partial (but not the captain.md fan-out body edit)
+		expect(blankCeo).toContain('## Planning a multi-step chain across levels');
 		expect(blankCeo).not.toContain('{{> partials/');
 
 		for (const slug of [

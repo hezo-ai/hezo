@@ -154,10 +154,14 @@ describe('assertSubordinateAssignee (unit)', () => {
 		expect(result.ok).toBe(true);
 	});
 
-	it('error message includes both target slug and create_comment guidance', () => {
-		expect(assignmentHierarchyError('engineer')).toContain('@engineer');
-		expect(assignmentHierarchyError('engineer')).toContain('create_comment');
-		expect(assignmentHierarchyError('engineer')).toContain('direct subordinate');
+	it('error message includes target slug, create_comment guidance, the stand-in warning, and the breakdown path', () => {
+		const msg = assignmentHierarchyError('engineer');
+		expect(msg).toContain('@engineer');
+		expect(msg).toContain('create_comment');
+		expect(msg).toContain('direct subordinate');
+		// new guidance: discourage manager-as-stand-in, point to the breakdown path
+		expect(msg).toContain('stand-in');
+		expect(msg).toContain('breakdown ticket');
 	});
 });
 
