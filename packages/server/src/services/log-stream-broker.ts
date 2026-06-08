@@ -1,4 +1,5 @@
 import { CappedLogBuffer } from './log-buffer';
+import { splitLogLines } from './log-format';
 import type { WebSocketManager, WsEvent } from './ws';
 
 export type LogStream = 'stdout' | 'stderr';
@@ -66,17 +67,19 @@ export class LogStreamBroker {
 		const entry = this.streams.get(streamId);
 		if (!entry || entry.ended) return;
 
-		const newLines = text
-			.split('\n')
-			.filter((l) => l.length > 0)
-			.map((l) => ({ stream, text: l }));
-		if (newLines.length === 0) return;
+		// Collapse carriage-return progress redraws and split into discrete lines
+		// once, so the live broadcast and the persisted snapshot stay identical.
+		const lines = splitLogLines(text);
+		if (lines.length === 0) return;
 
-		const wasTruncated = entry.buffer.isTruncated;
-		entry.buffer.append(stream, text);
-		if (!wasTruncated && this.wsManager) {
-			for (const line of newLines) {
-				this.wsManager.broadcast(entry.config.room, entry.config.buildMessage(line));
+		for (const lineText of lines) {
+			const wasTruncated = entry.buffer.isTruncated;
+			entry.buffer.append(stream, lineText);
+			if (!wasTruncated && this.wsManager) {
+				this.wsManager.broadcast(
+					entry.config.room,
+					entry.config.buildMessage({ stream, text: lineText }),
+				);
 			}
 		}
 

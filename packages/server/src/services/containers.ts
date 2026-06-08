@@ -8,7 +8,9 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
+import { trackBackground } from '../lib/background';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
+import { terminalStatusParams } from '../lib/sql';
 import { logger } from '../logger';
 import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
 import type { ContainerLogStreamer } from './container-logs';
@@ -196,8 +198,11 @@ export async function provisionContainer(
 		const env = ['HEZO_API_URL=http://host.docker.internal:3100/agent-api'];
 
 		emit('stdout', `→ Resolving image ${project.docker_base_image}`);
+		// Docker writes its build trace to stderr even on success; surface it as
+		// informational stdout so a clean build isn't a wall of red. A real build
+		// failure still throws (non-zero exit) and is reported by the catch below.
 		await ensureImage(docker, project.docker_base_image, {
-			onLine: (stream, text) => emit(stream, text),
+			onLine: (_stream, text) => emit('stdout', text),
 		});
 
 		emit('stdout', `→ Creating container ${containerName}`);
@@ -296,6 +301,14 @@ export async function provisionContainer(
 
 		await requeueContainerKilledRuns(deps, project.id, teamId).catch((e) =>
 			log.error('Failed to requeue container-killed runs after provision:', e),
+		);
+		// A wakeup that fired while the container was still provisioning could not
+		// run (container_status !== running). Now that it's up, nudge every agent
+		// holding pending work so freshly-created tasks (e.g. the CEO's coherence
+		// pass) start without waiting for the next scheduled heartbeat. Mirrors the
+		// container start/rebuild routes.
+		await wakeAgentsWithPendingWork(db, project.id, teamId).catch((e) =>
+			log.error('Failed to wake agents with pending work after provision:', e),
 		);
 
 		return Id;
@@ -657,6 +670,37 @@ export async function requeueContainerKilledRuns(
 	}
 
 	return killed.rows.length;
+}
+
+/**
+ * Queue a wakeup for every enabled agent that has a non-terminal task assigned
+ * in this project. Used after a container transitions to running (initial
+ * provision, start, rebuild) so pending work is picked up promptly instead of
+ * waiting for the next scheduled heartbeat.
+ */
+export async function wakeAgentsWithPendingWork(
+	db: PGlite,
+	projectId: string,
+	teamId: string,
+): Promise<void> {
+	const { placeholders, values } = terminalStatusParams(3);
+	const pending = await db.query<{ agent_id: string }>(
+		`SELECT DISTINCT i.assignee_id AS agent_id
+		 FROM tasks i
+		 JOIN member_agents ma ON ma.id = i.assignee_id
+		 WHERE i.project_id = $1 AND i.team_id = $2
+		   AND i.status NOT IN (${placeholders})
+		   AND ma.admin_status = 'enabled'`,
+		[projectId, teamId, ...values],
+	);
+	for (const row of pending.rows) {
+		trackBackground(
+			createWakeup(db, row.agent_id, teamId, WakeupSource.Automation, {
+				trigger: 'container_start',
+				project_id: projectId,
+			}).catch((e) => log.error('Failed to create wakeup on container start:', e)),
+		);
+	}
 }
 
 async function allocateHostPorts(

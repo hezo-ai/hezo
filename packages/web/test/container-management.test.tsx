@@ -148,3 +148,61 @@ test('banner flags the active project as failed and rebuilds it', async () => {
 	await waitFor(() => expect(rebuildPosts.length).toBe(1), { timeout: 15_000 });
 	expect(rebuildPosts[0]).toContain(`/projects/${projectSlug}/container/rebuild`);
 });
+
+test('banner shows a provisioning state that links to the container page', async () => {
+	let ws!: SeededWorkspace;
+	const projectSlug = 'provisioning-banner';
+
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+
+			const provisioningProject = {
+				id: '33333333-3333-3333-3333-000000000001',
+				slug: projectSlug,
+				name: 'Provisioning Project',
+				team_id: ws.team.id,
+				team_slug: ws.team.slug,
+				team_name: 'Demo Team',
+				task_prefix: 'PB',
+				description: '',
+				docker_base_image: 'hezo/agent-base:latest',
+				container_id: null,
+				container_status: 'creating',
+				container_error: null,
+				container_last_logs: null,
+				dev_ports: [],
+				repo_count: 0,
+				open_task_count: 0,
+				is_internal: false,
+				created_at: new Date().toISOString(),
+			};
+
+			const originalFetch = globalThis.fetch;
+			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = typeof input === 'string' ? input : (input as Request).url;
+				const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
+				if (method === 'GET' && /\/api\/projects$/.test(url)) {
+					return new Response(JSON.stringify({ data: [provisioningProject] }), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					});
+				}
+				return originalFetch(input as RequestInfo, init);
+			}) as typeof globalThis.fetch;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/inbox',
+		params: { projectId: projectSlug },
+	});
+
+	const banner = await findByTestId('container-status-banner-provisioning', undefined, {
+		timeout: 20_000,
+	});
+	expect(banner.textContent ?? '').toContain('Provisioning Project');
+	// The whole banner is a link to the container/logs page.
+	expect(banner.getAttribute('href') ?? '').toContain(`/projects/${projectSlug}/container`);
+});

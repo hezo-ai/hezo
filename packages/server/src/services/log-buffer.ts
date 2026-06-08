@@ -1,7 +1,9 @@
 /**
- * Append-only line buffer with a hard byte cap. Lines tagged as `stderr` are
- * stored with a `[stderr] ` prefix so the persisted log preserves stream
- * provenance when later replayed as plain text.
+ * Append-only line buffer with a hard byte cap. Each appended line is stored on
+ * its own line (newline-terminated). Lines tagged as `stderr` are stored with a
+ * `[stderr] ` prefix so the persisted log preserves stream provenance when later
+ * replayed as plain text — the prefix sits at the start of its own line so the
+ * reader can strip it back off cleanly.
  */
 export class CappedLogBuffer {
 	private bytes = 0;
@@ -12,7 +14,7 @@ export class CappedLogBuffer {
 
 	append(stream: 'stdout' | 'stderr', text: string): void {
 		if (this.truncatedAt !== null) return;
-		const marker = stream === 'stderr' ? `[stderr] ${text}` : text;
+		const marker = `${stream === 'stderr' ? `[stderr] ${text}` : text}\n`;
 		const remaining = this.capBytes - this.bytes;
 		if (remaining <= 0) {
 			this.truncatedAt = this.capBytes;
