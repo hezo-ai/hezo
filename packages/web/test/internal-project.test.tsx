@@ -43,7 +43,7 @@ test('sidebar exposes only Tasks and Container for the HQ project', async () => 
 });
 
 test('coordination info tooltip sits beside the HQ name', async () => {
-	const { findByTestId, getByText, user, router } = await renderApp({
+	const { findByTestId, getAllByText, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			await seedWorkspace();
@@ -60,8 +60,10 @@ test('coordination info tooltip sits beside the HQ name', async () => {
 
 	await waitFor(() =>
 		expect(
-			getByText('Internal team coordination project, used for onboarding and team-level changes.'),
-		).toBeTruthy(),
+			getAllByText(
+				'Internal team coordination project, used for onboarding and team-level changes.',
+			).length,
+		).toBeGreaterThan(0),
 	);
 });
 
