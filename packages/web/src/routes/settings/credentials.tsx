@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { type Column, DataTable } from '../../components/ui/data-table';
+import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { Input } from '../../components/ui/input';
 import { Tooltip } from '../../components/ui/tooltip';
 import type { CredentialUsage } from '../../hooks/use-credentials';
@@ -198,7 +199,14 @@ function InstanceCredentialsPage() {
 			<>
 				<div className="flex items-start justify-between gap-3 mb-4">
 					<div>
-						<h1 className="text-[22px] font-medium">Instance credentials</h1>
+						<div className="flex items-center gap-1.5">
+							<h1 className="text-[22px] font-medium">Credentials</h1>
+							<InfoTooltip
+								label="About credentials"
+								content="Secrets shared with every team's egress. Agents reference them by placeholder; a team-scoped secret with the same name overrides this."
+								data-testid="credentials-info"
+							/>
+						</div>
 						<p className="text-[13px] text-text-muted mt-1 max-w-[680px]">
 							Secrets shared with every team's egress. Agents reference them by placeholder (
 							<span className="font-mono">__HEZO_SECRET_NAME__</span>); the egress proxy substitutes

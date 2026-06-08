@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import { BookOpen, FolderKanban, House, Inbox, KeyRound, Menu, Plug, Settings } from 'lucide-react';
+import { BookOpen, FolderKanban, House, Inbox, Menu, Settings } from 'lucide-react';
 import { useGlobalInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useMe } from '../hooks/use-me';
 import { ThemeSwitcher } from './ui/theme-switcher';
@@ -9,10 +9,10 @@ const iconLinkClass =
 
 /**
  * The global top header: instance-wide navigation. Only Home sits at the
- * top-left; everything else (Inbox, All Tasks, the Admin-only instance
- * resources — Skills / Connectors / Credentials — Settings, and the theme
- * switcher) lives in the top-right group. On mobile a hamburger opens the
- * project drawer. Project creation lives on the project rail, not here.
+ * top-left; everything else (Inbox, All Tasks, the Admin-only Skills
+ * shortcut, Settings, and the theme switcher) lives in the top-right group.
+ * Connectors and Credentials are reached through the Settings sidebar.
+ * On mobile a hamburger opens the project drawer.
  */
 export function AppHeader({ onOpenDrawer }: { onOpenDrawer: () => void }) {
 	const { data: me } = useMe();
@@ -74,35 +74,15 @@ export function AppHeader({ onOpenDrawer }: { onOpenDrawer: () => void }) {
 					<FolderKanban className="w-4 h-4" />
 				</Link>
 				{me?.is_superuser && (
-					<>
-						<Link
-							to="/settings/skills"
-							aria-label="Skills"
-							title="Skills"
-							data-testid="app-header-skills"
-							className={iconLinkClass}
-						>
-							<BookOpen className="w-4 h-4" />
-						</Link>
-						<Link
-							to="/settings/connectors"
-							aria-label="Connectors"
-							title="Connectors"
-							data-testid="app-header-connectors"
-							className={iconLinkClass}
-						>
-							<Plug className="w-4 h-4" />
-						</Link>
-						<Link
-							to="/settings/credentials"
-							aria-label="Credentials"
-							title="Credentials"
-							data-testid="app-header-credentials"
-							className={iconLinkClass}
-						>
-							<KeyRound className="w-4 h-4" />
-						</Link>
-					</>
+					<Link
+						to="/settings/skills"
+						aria-label="Skills"
+						title="Skills"
+						data-testid="app-header-skills"
+						className={iconLinkClass}
+					>
+						<BookOpen className="w-4 h-4" />
+					</Link>
 				)}
 				<Link
 					to="/settings"

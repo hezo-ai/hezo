@@ -3,6 +3,7 @@ import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { Input } from '../../components/ui/input';
 import {
 	useCreateInstanceSkill,
@@ -105,7 +106,14 @@ function InstanceSkillsPage() {
 			<>
 				<div className="flex items-start justify-between gap-3 mb-4">
 					<div>
-						<h1 className="text-[22px] font-medium">Instance skills</h1>
+						<div className="flex items-center gap-1.5">
+							<h1 className="text-[22px] font-medium">Skills</h1>
+							<InfoTooltip
+								label="About skills"
+								content="Reusable skill docs shared with every team's agents. A team-scoped skill with the same slug overrides this."
+								data-testid="skills-info"
+							/>
+						</div>
 						<p className="text-[13px] text-text-muted mt-1 max-w-[680px]">
 							Reusable skill docs shared with every team's agents. A team-scoped skill with the same
 							slug overrides the instance one for that team.

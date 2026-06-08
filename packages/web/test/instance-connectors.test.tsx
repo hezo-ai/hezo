@@ -1,3 +1,4 @@
+import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 
@@ -26,7 +27,7 @@ test('lists seeded instance connectors and creates a new one via the form', asyn
 		},
 	});
 
-	await findByText('Instance connectors');
+	await findByText('Connectors');
 	await findByText('Seeded Docs');
 
 	await user.click(getByRole('button', { name: 'Add' }));
@@ -37,15 +38,19 @@ test('lists seeded instance connectors and creates a new one via the form', asyn
 	await findByText('new-conn');
 });
 
-test('settings page Instance group links to connectors', async () => {
-	const { findByText, getAllByRole, user, router } = await renderApp({ initialPath: '/settings' });
+test('settings page sidebar links to connectors', async () => {
+	const { findByRole, getAllByRole, user, router } = await renderApp({ initialPath: '/settings' });
 
-	await findByText('Instance');
-	const links = getAllByRole('link', { name: 'Connectors' });
-	const instanceLink = links.find((l) => l.getAttribute('href') === '/settings/connectors');
-	expect(instanceLink).toBeTruthy();
-	await user.click(instanceLink as HTMLElement);
+	await findByRole('heading', { name: 'Settings' });
+	const sidebarLink = await waitFor(() => {
+		const link = getAllByRole('link', { name: 'Connectors' }).find(
+			(l) => l.getAttribute('href') === '/settings/connectors',
+		);
+		expect(link).toBeTruthy();
+		return link as HTMLElement;
+	});
+	await user.click(sidebarLink);
 
 	expect(router.state.location.pathname).toBe('/settings/connectors');
-	await findByText('Instance connectors');
+	await findByRole('heading', { name: 'Connectors' });
 });

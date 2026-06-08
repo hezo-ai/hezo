@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { AuditLogTable } from '../../components/audit-log-table';
+import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { useInstanceAuditLog } from '../../hooks/use-audit-log';
 import { useMe } from '../../hooks/use-me';
 
@@ -15,7 +16,14 @@ function InstanceAuditLogPage() {
 		) : (
 			<>
 				<div className="mb-4">
-					<h1 className="text-[22px] font-medium">Instance activity</h1>
+					<div className="flex items-center gap-1.5">
+						<h1 className="text-[22px] font-medium">Activity</h1>
+						<InfoTooltip
+							label="About activity"
+							content="Audit log of every state-changing action across all teams, plus instance-level admin actions."
+							data-testid="activity-info"
+						/>
+					</div>
 					<p className="text-[13px] text-text-muted mt-1 max-w-[680px]">
 						Every state-changing action across all teams, plus instance-level admin actions
 						(credentials, connectors, skills) that aren't tied to a team. The combined view for

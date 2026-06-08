@@ -1,3 +1,4 @@
+import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 
@@ -21,7 +22,7 @@ test('lists seeded instance skills and creates a new one via the form', async ()
 		},
 	});
 
-	await findByText('Instance skills');
+	await findByText('Skills');
 	await findByText('Seeded Skill');
 
 	await user.click(getByRole('button', { name: 'Add' }));
@@ -56,15 +57,19 @@ test('edits an instance skill via the row edit affordance', async () => {
 	await findByText('new desc');
 });
 
-test('settings page Instance group links to skills', async () => {
-	const { findByText, getAllByRole, user, router } = await renderApp({ initialPath: '/settings' });
+test('settings page sidebar links to skills', async () => {
+	const { findByRole, getAllByRole, user, router } = await renderApp({ initialPath: '/settings' });
 
-	await findByText('Instance');
-	const links = getAllByRole('link', { name: 'Skills' });
-	const instanceLink = links.find((l) => l.getAttribute('href') === '/settings/skills');
-	expect(instanceLink).toBeTruthy();
-	await user.click(instanceLink as HTMLElement);
+	await findByRole('heading', { name: 'Settings' });
+	const sidebarLink = await waitFor(() => {
+		const link = getAllByRole('link', { name: 'Skills' }).find(
+			(l) => l.getAttribute('href') === '/settings/skills',
+		);
+		expect(link).toBeTruthy();
+		return link as HTMLElement;
+	});
+	await user.click(sidebarLink);
 
 	expect(router.state.location.pathname).toBe('/settings/skills');
-	await findByText('Instance skills');
+	await findByRole('heading', { name: 'Skills' });
 });

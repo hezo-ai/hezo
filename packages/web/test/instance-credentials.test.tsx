@@ -1,3 +1,4 @@
+import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 
@@ -26,7 +27,7 @@ test('lists seeded instance credentials and creates a new one via the form', asy
 	});
 
 	// Heading + the seeded credential render.
-	await findByText('Instance credentials');
+	await findByText('Credentials');
 	await findByText('SEEDED_KEY');
 
 	// Open the create form and add a new credential.
@@ -66,16 +67,20 @@ test('edits an instance credential host policy via the row edit affordance', asy
 	await findByText('api.new.example');
 });
 
-test('settings page shows the superuser Instance > Credentials link and navigates to it', async () => {
-	const { findByText, getAllByRole, user, router } = await renderApp({ initialPath: '/settings' });
+test('settings page shows the superuser Credentials link and navigates to it', async () => {
+	const { findByRole, getAllByRole, user, router } = await renderApp({ initialPath: '/settings' });
 
-	await findByText('Instance');
-	// The team sidebar also renders a "Credentials" link; pick the instance one by href.
-	const links = getAllByRole('link', { name: 'Credentials' });
-	const instanceLink = links.find((l) => l.getAttribute('href') === '/settings/credentials');
-	expect(instanceLink).toBeTruthy();
-	await user.click(instanceLink as HTMLElement);
+	await findByRole('heading', { name: 'Settings' });
+	// The team sidebar also renders a "Credentials" link; pick the instance-scoped one by href.
+	const sidebarLink = await waitFor(() => {
+		const link = getAllByRole('link', { name: 'Credentials' }).find(
+			(l) => l.getAttribute('href') === '/settings/credentials',
+		);
+		expect(link).toBeTruthy();
+		return link as HTMLElement;
+	});
+	await user.click(sidebarLink);
 
 	expect(router.state.location.pathname).toBe('/settings/credentials');
-	await findByText('Instance credentials');
+	await findByRole('heading', { name: 'Credentials' });
 });

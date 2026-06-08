@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { AiProvidersSection } from '../../components/ai-providers-section';
+import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { useMe } from '../../hooks/use-me';
 
 const settingsNav = [{ id: 'ai-providers', label: 'AI providers' }];
@@ -24,7 +25,14 @@ function GlobalSettingsPage() {
 
 	return (
 		<div className="max-w-[1000px] w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
-			<h1 className="text-[22px] font-medium mb-5">Settings</h1>
+			<div className="flex items-center gap-1.5 mb-5">
+				<h1 className="text-[22px] font-medium">Settings</h1>
+				<InfoTooltip
+					label="About settings"
+					content="AI providers, plus instance-wide resources shared across teams (admin only)."
+					data-testid="settings-info"
+				/>
+			</div>
 			<div className="flex flex-col gap-4 md:grid md:grid-cols-[160px_1fr] md:gap-6">
 				<nav className="flex flex-col gap-0.5 sticky top-0">
 					{settingsNav.map((item) => (
@@ -41,22 +49,18 @@ function GlobalSettingsPage() {
 							{item.label}
 						</button>
 					))}
-					{me?.is_superuser && (
-						<>
-							<div className="mt-3 mb-0.5 px-3 text-[11px] font-medium uppercase tracking-wide text-text-subtle">
-								Instance
-							</div>
-							{instanceNav.map((item) => (
-								<Link
-									key={item.to}
-									to={item.to}
-									className="text-left text-[13px] px-3 py-1.5 rounded-radius-md transition-colors text-text-muted hover:text-text hover:bg-bg-subtle"
-								>
-									{item.label}
-								</Link>
-							))}
-						</>
-					)}
+					{me?.is_superuser &&
+						instanceNav.map((item, idx) => (
+							<Link
+								key={item.to}
+								to={item.to}
+								className={`text-left text-[13px] px-3 py-1.5 rounded-radius-md transition-colors text-text-muted hover:text-text hover:bg-bg-subtle ${
+									idx === 0 ? 'mt-3' : ''
+								}`}
+							>
+								{item.label}
+							</Link>
+						))}
 				</nav>
 				<div className="space-y-8">
 					<div id="settings-ai-providers">
