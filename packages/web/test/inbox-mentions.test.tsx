@@ -5,6 +5,7 @@ import {
 	type SeededProject,
 	type SeededTask,
 	type SeededWorkspace,
+	seedComment,
 	seedProject,
 	seedTask,
 	seedWorkspace,
@@ -145,6 +146,56 @@ test('clicking a mention navigates to the task and marks it read', async () => {
 		updated = again.rows[0]?.read_at;
 	}
 	expect(updated).not.toBeNull();
+});
+
+test('clicking a mention deep-links to and highlights the source comment', async () => {
+	let ctx: { projectSlug: string; commentId: string };
+	const { findByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		// Run under StrictMode so the mount→cleanup→mount double-invoke that used
+		// to wipe the one-shot scroll is exercised — the highlight must survive it.
+		strictMode: true,
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Deep Link' });
+			const task = await seedTask(ws, project, { title: 'Deep-link target ticket' });
+			// Seed the mention's comment first (comments sort created_at ASC) so it
+			// sits at the top and Virtuoso mounts it under happy-dom; the trailing
+			// comments make it a real multi-row thread rather than a single row.
+			const { commentId } = await seedAgentAdminMention(
+				ws,
+				task,
+				'@admin please review the source comment.',
+			);
+			for (let i = 0; i < 4; i++) await seedComment(ws, task, `follow-up comment ${i}`);
+			ctx = { projectSlug: project.slug, commentId };
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/inbox',
+		params: { projectId: ctx!.projectSlug },
+	});
+
+	const card = await findByTestId('mention-card', undefined, { timeout: 10_000 });
+	await user.click(card);
+
+	// The click runs navigate({ hash: 'comment-<id>' }). The redesigned
+	// CommentsSection reads that hash off the router (reactive under the memory
+	// history the harness uses) and flags the resolved row via
+	// data-comment-highlighted — the signal the deep-link landed on the right
+	// comment instead of dumping the user at the top of the page.
+	const highlighted = await waitFor(
+		() => {
+			const el = document.querySelector(
+				`#comment-${ctx!.commentId}[data-comment-highlighted="true"]`,
+			);
+			if (!el) throw new Error('source comment not highlighted yet');
+			return el as HTMLElement;
+		},
+		{ timeout: 10_000 },
+	);
+	expect(highlighted.textContent).toContain('please review the source comment');
 });
 
 test('inbox shows read mentions as history and highlights unread ones', async () => {

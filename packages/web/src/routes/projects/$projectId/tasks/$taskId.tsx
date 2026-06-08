@@ -38,6 +38,9 @@ function TaskDetailPage() {
 			navigate({
 				to: '/projects/$projectId/tasks/$taskId',
 				params: { projectId: canonicalProject, taskId: friendlyId },
+				// Preserve a deep-link hash (`#comment-<id>`) across the canonical
+				// redirect so it can't be stripped before the scroll fires.
+				hash: window.location.hash ? window.location.hash.replace(/^#/, '') : undefined,
 				replace: true,
 			});
 		}
