@@ -24,6 +24,7 @@ import {
 	rebuildContainer,
 	stopContainerGracefully,
 	teardownContainer,
+	wakeAgentsWithPendingWork,
 } from '../services/containers';
 import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import { loadCoordinationContext } from '../services/internal-intake';
@@ -64,31 +65,6 @@ async function cancelRunningAgentTasks(
 	);
 	for (const row of running.rows) {
 		jobManager.cancelTask(wsRoom.agent(row.assignee_id));
-	}
-}
-
-async function wakeAgentsWithPendingWork(
-	db: PGlite,
-	projectId: string,
-	teamId: string,
-): Promise<void> {
-	const { placeholders, values } = terminalStatusParams(3);
-	const pending = await db.query<{ agent_id: string }>(
-		`SELECT DISTINCT i.assignee_id AS agent_id
-		 FROM tasks i
-		 JOIN member_agents ma ON ma.id = i.assignee_id
-		 WHERE i.project_id = $1 AND i.team_id = $2
-		   AND i.status NOT IN (${placeholders})
-		   AND ma.admin_status = 'enabled'`,
-		[projectId, teamId, ...values],
-	);
-	for (const row of pending.rows) {
-		trackBackground(
-			createWakeup(db, row.agent_id, teamId, WakeupSource.Automation, {
-				trigger: 'container_start',
-				project_id: projectId,
-			}).catch((e) => log.error('Failed to create wakeup on container start:', e)),
-		);
 	}
 }
 

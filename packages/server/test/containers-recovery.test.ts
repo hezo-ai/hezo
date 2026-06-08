@@ -1,12 +1,14 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AgentRuntimeStatus, HeartbeatRunStatus, WakeupStatus } from '@hezo/shared';
+import { AgentRuntimeStatus, HeartbeatRunStatus, TaskStatus, WakeupStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import {
 	type ContainerDeps,
 	failProjectRuns,
 	requeueContainerKilledRuns,
+	wakeAgentsWithPendingWork,
 } from '../src/services/containers';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { safeClose } from './helpers';
@@ -239,5 +241,50 @@ describe('requeueContainerKilledRuns', () => {
 
 		const count = await requeueContainerKilledRuns(buildDeps(), projectId, teamId);
 		expect(count).toBe(0);
+	});
+});
+
+describe('wakeAgentsWithPendingWork', () => {
+	it('queues a container_start wakeup for an enabled agent with a non-terminal assigned task', async () => {
+		await clearState();
+		await db.query(`UPDATE member_agents SET admin_status = 'enabled' WHERE id = $1`, [agentId]);
+
+		await wakeAgentsWithPendingWork(db, projectId, teamId);
+		await waitForBackground();
+
+		const wakeups = await db.query<{ payload: Record<string, unknown>; source: string }>(
+			`SELECT payload, source FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND status = $2::wakeup_status
+			 ORDER BY created_at DESC LIMIT 1`,
+			[agentId, WakeupStatus.Queued],
+		);
+		expect(wakeups.rows.length).toBe(1);
+		expect(wakeups.rows[0].source).toBe('automation');
+		expect((wakeups.rows[0].payload as Record<string, unknown>).trigger).toBe('container_start');
+	});
+
+	it('does not wake an agent whose only task is in a terminal status', async () => {
+		await clearState();
+		const orig = await db.query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [
+			taskId,
+		]);
+		await db.query('UPDATE tasks SET status = $1::task_status WHERE id = $2', [
+			TaskStatus.Done,
+			taskId,
+		]);
+
+		await wakeAgentsWithPendingWork(db, projectId, teamId);
+		await waitForBackground();
+
+		const wakeups = await db.query<{ id: string }>(
+			`SELECT id FROM agent_wakeup_requests WHERE member_id = $1 AND status = $2::wakeup_status`,
+			[agentId, WakeupStatus.Queued],
+		);
+		expect(wakeups.rows.length).toBe(0);
+
+		await db.query('UPDATE tasks SET status = $1::task_status WHERE id = $2', [
+			orig.rows[0].status,
+			taskId,
+		]);
 	});
 });

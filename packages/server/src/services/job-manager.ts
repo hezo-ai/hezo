@@ -1169,6 +1169,18 @@ export class JobManager {
 		}
 
 		if (!projectRow.container_id) {
+			// container_id stays NULL until the container reaches running, so a
+			// 'creating' status here means provisioning is in flight (often minutes
+			// on a first image build). Re-queue and retry once it's up rather than
+			// burning the wakeup — otherwise a task assigned at project-creation time
+			// (e.g. the CEO's coherence pass) would never start.
+			if (projectRow.container_status === ContainerStatus.Creating) {
+				log.debug(
+					`Container for project ${ref(projectRow.slug, task.project_id)} still provisioning — re-queuing wakeup`,
+				);
+				await this.requeueWakeup(wakeupId);
+				return;
+			}
 			log.debug(
 				`No container for project ${ref(projectRow.slug, task.project_id)} — wakeup failed`,
 			);

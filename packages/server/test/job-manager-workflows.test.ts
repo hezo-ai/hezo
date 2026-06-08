@@ -280,6 +280,49 @@ describe('JobManager workflow methods', () => {
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
 		});
 
+		it('re-queues a task wakeup while the project container is still provisioning', async () => {
+			const manager = createJobManager();
+			// Provisioning in flight: container_id stays NULL until the container
+			// reaches running, and status is 'creating'.
+			await db.query(
+				`UPDATE projects SET container_status = 'creating'::container_status, container_id = NULL WHERE id = $1`,
+				[projectId],
+			);
+
+			const wakeupRes = await db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests
+				   (member_id, team_id, source, status, payload, created_at)
+				 VALUES ($1, $2, 'assignment', 'queued', $3::jsonb, now() - interval '30 seconds')
+				 RETURNING id`,
+				[agentId, teamId, JSON.stringify({ task_id: taskId })],
+			);
+			const wakeupId = wakeupRes.rows[0].id;
+
+			await (manager as any).processWakeups();
+
+			// The wakeup is returned to the queue (not failed) so it retries once the
+			// container is running, and no run was started in the meantime.
+			const wakeup = await db.query<{ status: string; claimed_at: string | null }>(
+				'SELECT status, claimed_at FROM agent_wakeup_requests WHERE id = $1',
+				[wakeupId],
+			);
+			expect(wakeup.rows[0].status).toBe(WakeupStatus.Queued);
+			expect(wakeup.rows[0].claimed_at).toBeNull();
+
+			const runs = await db.query<{ count: string }>(
+				'SELECT count(*)::text AS count FROM heartbeat_runs WHERE task_id = $1',
+				[taskId],
+			);
+			expect(runs.rows[0].count).toBe('0');
+
+			manager.shutdown();
+			await db.query(
+				`UPDATE projects SET container_status = NULL, container_id = NULL WHERE id = $1`,
+				[projectId],
+			);
+			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
+		});
+
 		it('skips agents that already have a running task', async () => {
 			const manager = createJobManager();
 

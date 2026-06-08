@@ -103,6 +103,24 @@ describe('LogStreamBroker', () => {
 		expect(texts).toEqual(expect.arrayContaining(['live line\n', '[stderr] prov line\n']));
 	});
 
+	it('persists each emit on its own line and collapses carriage-return redraws', () => {
+		broker.begin(makeContainerConfig('p1'));
+		// Provisioning emits discrete lines without trailing newlines...
+		broker.emit('container:p1', 'stdout', '→ Preparing workspace');
+		broker.emit('container:p1', 'stdout', '→ Resolving image');
+		// ...and image-build output arrives with carriage-return progress spam.
+		broker.emit('container:p1', 'stderr', '(Reading database 5%\r(Reading database 100%');
+
+		const replayed: Array<{ text?: string }> = [];
+		broker.replay('container-logs:p1', (p) => replayed.push(p as { text?: string }));
+		expect(replayed).toHaveLength(1);
+		// Each line is separated (no glued "→ …→ …"), the [stderr] tag sits at the
+		// start of its own line so it can be stripped, and the redraw collapsed.
+		expect(replayed[0].text).toBe(
+			'→ Preparing workspace\n→ Resolving image\n[stderr] (Reading database 100%\n',
+		);
+	});
+
 	it('does not bleed snapshots across streams in different rooms', () => {
 		broker.begin(makeRunConfig('r1', 'p1'));
 		broker.begin(makeRunConfig('r2', 'p2'));
