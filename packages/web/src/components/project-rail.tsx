@@ -13,7 +13,8 @@ import { Tooltip } from './ui/tooltip';
  * axis: every visible project across every team appears here. Selecting one
  * opens its menu in the panel to the right. There is no team-level grouping —
  * each project is presented as a standalone entity. The create-project action
- * is pinned to the bottom so it stays in place as the avatar list scrolls.
+ * and the HQ entry are pinned below the scrolling avatar list (create-project
+ * above HQ) so they stay in place as the avatar list scrolls.
  */
 export function ProjectRail() {
 	const { data: me } = useMe();
@@ -50,6 +51,21 @@ export function ProjectRail() {
 						);
 					})}
 				</div>
+				{me?.is_superuser && (
+					<div className="shrink-0 pt-2 mt-2 w-full flex justify-center border-t border-border">
+						<Tooltip content="New project" side="right">
+							<button
+								type="button"
+								onClick={() => setCreateOpen(true)}
+								aria-label="New project"
+								data-testid="project-rail-new"
+								className="w-9 h-9 rounded-radius-md flex items-center justify-center text-text-muted hover:text-text hover:bg-bg-elevated border border-dashed border-border transition-colors"
+							>
+								<Plus className="w-4 h-4" />
+							</button>
+						</Tooltip>
+					</div>
+				)}
 				{hq && (
 					<div className="shrink-0 pt-2 mt-2 w-full flex justify-center border-t border-border">
 						<Tooltip content={hq.name} side="right">
@@ -64,21 +80,6 @@ export function ProjectRail() {
 							>
 								<Building2 className="w-4 h-4" />
 							</Link>
-						</Tooltip>
-					</div>
-				)}
-				{me?.is_superuser && (
-					<div className="shrink-0 pt-2 mt-2 w-full flex justify-center border-t border-border">
-						<Tooltip content="New project" side="right">
-							<button
-								type="button"
-								onClick={() => setCreateOpen(true)}
-								aria-label="New project"
-								data-testid="project-rail-new"
-								className="w-9 h-9 rounded-radius-md flex items-center justify-center text-text-muted hover:text-text hover:bg-bg-elevated border border-dashed border-border transition-colors"
-							>
-								<Plus className="w-4 h-4" />
-							</button>
 						</Tooltip>
 					</div>
 				)}

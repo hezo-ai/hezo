@@ -37,6 +37,27 @@ test('the HQ project is pinned at the bottom of the rail and opens on click', as
 	await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/projects\/hq(\/|$)/));
 });
 
+test('the create-project button is pinned above the HQ button', async () => {
+	const { findByTestId } = await renderApp({
+		initialPath: '/home',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			await seedProject(ws, { name: 'Alpha' });
+		},
+	});
+
+	// Wait for both pinned controls to render before asserting their order.
+	await findByTestId('project-rail-new', undefined, { timeout: 15_000 });
+	await findByTestId('project-rail-hq', undefined, { timeout: 15_000 });
+
+	const rail = await findByTestId('project-rail');
+	// querySelectorAll yields document order, so create-project must come first.
+	const pinned = Array.from(
+		rail.querySelectorAll('[data-testid="project-rail-new"], [data-testid="project-rail-hq"]'),
+	).map((el) => el.getAttribute('data-testid'));
+	expect(pinned).toEqual(['project-rail-new', 'project-rail-hq']);
+});
+
 test('clicking a project avatar opens that project menu', async () => {
 	let ws!: SeededWorkspace;
 	let slug = '';
