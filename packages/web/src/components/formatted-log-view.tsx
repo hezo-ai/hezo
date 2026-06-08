@@ -9,6 +9,7 @@ import {
 	parseAgentLog,
 	type ResultBlock,
 	type SessionBlock,
+	type SystemBlock,
 	type TextBlock,
 	type ThinkingBlock,
 	type ToolBlock,
@@ -65,7 +66,18 @@ function BlockView({
 			return <ResultView block={block} />;
 		case 'done':
 			return <DoneView block={block} />;
+		case 'system':
+			return <SystemView block={block} />;
 	}
+}
+
+function SystemView({ block }: { block: SystemBlock }) {
+	const color = block.stream === 'stderr' ? 'text-accent-red-text' : 'text-text-subtle';
+	return (
+		<pre className={`whitespace-pre-wrap break-words font-mono text-xs ${color}`}>
+			{block.lines.join('\n')}
+		</pre>
+	);
 }
 
 function SessionView({ block }: { block: SessionBlock }) {

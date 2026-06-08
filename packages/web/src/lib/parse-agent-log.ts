@@ -74,6 +74,14 @@ export interface DoneBlock {
 	costUsd: number | null;
 }
 
+/** Operational/lifecycle status lines from the run host (repo sync, worktree setup, …). */
+export interface SystemBlock {
+	type: 'system';
+	id: number;
+	lines: string[];
+	stream: 'stdout' | 'stderr';
+}
+
 export type LogBlock =
 	| SessionBlock
 	| TextBlock
@@ -81,7 +89,8 @@ export type LogBlock =
 	| CommandBlock
 	| ToolBlock
 	| ResultBlock
-	| DoneBlock;
+	| DoneBlock
+	| SystemBlock;
 
 /** Strip a `[prefix]` token and the single following space, if present. */
 function stripPrefix(text: string, prefix: string): string {
@@ -185,6 +194,17 @@ export function parseAgentLog(lines: AgentLogLine[]): LogBlock[] {
 		if (text.startsWith('[done]')) {
 			flushText();
 			blocks.push(parseDone(line.id, text));
+			continue;
+		}
+		if (text.startsWith('[system]')) {
+			flushText();
+			const body = stripPrefix(text, '[system]');
+			const tail = blocks[blocks.length - 1];
+			if (tail && tail.type === 'system' && tail.stream === line.stream) {
+				tail.lines.push(body);
+			} else {
+				blocks.push({ type: 'system', id: line.id, lines: [body], stream: line.stream });
+			}
 			continue;
 		}
 		if (text.startsWith('$ ')) {
