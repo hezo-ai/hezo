@@ -131,6 +131,12 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 			expect(docs[key], `${key} should reference the injected Teammates block`).toContain(
 				'Teammates block injected at the end of your prompt',
 			);
+			expect(docs[key], `${key} should make @@ the default for non-asks`).toContain(
+				'Passive is the default',
+			);
+			expect(docs[key], `${key} should include the review-recap antipattern example`).toContain(
+				'review recap',
+			);
 		}
 
 		// Every role doc picks up the subtask-preference guidance.
