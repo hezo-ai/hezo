@@ -139,14 +139,16 @@ function ExecutionDetailPage() {
 					</div>
 				</div>
 
-				<div className="rounded-lg border border-border-subtle bg-bg p-3">
-					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Tokens</div>
-					<div className="text-sm">
-						{run.input_tokens.toLocaleString()} in / {run.output_tokens.toLocaleString()} out
+				{!isActive && (
+					<div className="rounded-lg border border-border-subtle bg-bg p-3">
+						<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Tokens</div>
+						<div className="text-sm">
+							{run.input_tokens.toLocaleString()} in / {run.output_tokens.toLocaleString()} out
+						</div>
 					</div>
-				</div>
+				)}
 
-				{run.cost_cents != null && run.cost_cents > 0 && (
+				{!isActive && run.cost_cents != null && run.cost_cents > 0 && (
 					<div className="rounded-lg border border-border-subtle bg-bg p-3">
 						<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Cost</div>
 						<div className="text-sm font-medium">${(run.cost_cents / 100).toFixed(2)}</div>
