@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { type WakeupSource, WakeupStatus } from '@hezo/shared';
+import { HeartbeatRunStatus, type WakeupSource, WakeupStatus } from '@hezo/shared';
 
 export async function createWakeup(
 	db: PGlite,
@@ -92,6 +92,35 @@ export async function absorbQueuedTaskWakeups(
 		[WakeupStatus.Coalesced, memberId, WakeupStatus.Queued, taskId, exceptWakeupId],
 	);
 	return absorbed.rows.map((r) => r.id);
+}
+
+/**
+ * True when a successful run for this agent+task already started at or after the
+ * wakeup was created — the run read the task at boot and served the assignment,
+ * so starting another would be a no-op repeat. Closes the gap that
+ * `absorbQueuedTaskWakeups` leaves at run *start*: a blocker-deferred or
+ * busy-skipped `assignment` wakeup that only becomes claimable after the run has
+ * already worked the task. Scoped to `succeeded` runs so a failed/timed-out run
+ * still allows a legitimate retry, and an assignment created *after* the last run
+ * (`created_at > started_at`) is never suppressed.
+ */
+export async function assignmentWakeupAlreadyServed(
+	db: PGlite,
+	memberId: string,
+	taskId: string,
+	wakeupCreatedAt: string,
+): Promise<boolean> {
+	const served = await db.query<{ id: string }>(
+		`SELECT id FROM heartbeat_runs
+		 WHERE member_id = $1
+		   AND task_id = $2
+		   AND status = $3::heartbeat_run_status
+		   AND started_at IS NOT NULL
+		   AND started_at >= $4
+		 LIMIT 1`,
+		[memberId, taskId, HeartbeatRunStatus.Succeeded, wakeupCreatedAt],
+	);
+	return served.rows.length > 0;
 }
 
 function mergePayloads(

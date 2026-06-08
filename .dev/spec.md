@@ -1558,6 +1558,7 @@ When multiple events fire for the same agent in quick succession (e.g. several @
 - Delivers all pending events in a single heartbeat response
 - Prevents redundant subprocess spawns and duplicate work
 - Maintains event ordering within the batch
+- Retires a stale `assignment` wakeup instead of running it when a completed (succeeded) run for that agent+task already started after the wakeup was created — the run already served the assignment. This complements the run-start absorb, covering wakeups that only become claimable after a run begins (blocker-deferred releases, busy-skip survivors). Genuine re-assignments (created after the last run) and other sources still fire.
 
 ### Reasoning effort
 

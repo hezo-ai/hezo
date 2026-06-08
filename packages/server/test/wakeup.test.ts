@@ -1,8 +1,13 @@
+import { randomUUID } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
-import { absorbQueuedTaskWakeups, createWakeup } from '../src/services/wakeup';
+import {
+	absorbQueuedTaskWakeups,
+	assignmentWakeupAlreadyServed,
+	createWakeup,
+} from '../src/services/wakeup';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject } from './helpers/app';
 
@@ -373,5 +378,66 @@ describe('absorbQueuedTaskWakeups', () => {
 		expect(absorbed).toEqual([]);
 		expect(await status(otherAgent)).toBe('queued');
 		expect(await status(otherTask)).toBe('queued');
+	});
+});
+
+describe('assignmentWakeupAlreadyServed', () => {
+	let servedTaskId: string;
+
+	beforeAll(async () => {
+		const project = (await (await createTestProject(db, teamId, { name: 'Served Project' })).json())
+			.data;
+		const taskRes = await app.request(`/api/projects/${project.slug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ project_id: project.id, title: 'Served task', assignee_id: agentId }),
+		});
+		servedTaskId = (await taskRes.json()).data.id;
+	});
+
+	const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+	async function insertRun(opts: { status?: string; startedAt: string }): Promise<void> {
+		await db.query(
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at, finished_at)
+			 VALUES ($1, $2, $3, $4::heartbeat_run_status, $5, $5)`,
+			[teamId, agentId, servedTaskId, opts.status ?? 'succeeded', opts.startedAt],
+		);
+	}
+
+	it('returns true when a succeeded run started at/after the wakeup was created', async () => {
+		await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [servedTaskId]);
+		await insertRun({ startedAt: ago(30_000) });
+		expect(await assignmentWakeupAlreadyServed(db, agentId, servedTaskId, ago(60_000))).toBe(true);
+	});
+
+	it('returns false when the only run started before the wakeup (genuine re-assignment)', async () => {
+		await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [servedTaskId]);
+		await insertRun({ startedAt: ago(60_000) });
+		expect(await assignmentWakeupAlreadyServed(db, agentId, servedTaskId, ago(30_000))).toBe(false);
+	});
+
+	it('returns false when no run exists for the task (first assignment)', async () => {
+		await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [servedTaskId]);
+		expect(await assignmentWakeupAlreadyServed(db, agentId, servedTaskId, ago(1_000))).toBe(false);
+	});
+
+	it('ignores non-succeeded runs so failed/cancelled/timed-out runs still allow a retry', async () => {
+		await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [servedTaskId]);
+		await insertRun({ status: 'failed', startedAt: ago(30_000) });
+		await insertRun({ status: 'cancelled', startedAt: ago(20_000) });
+		await insertRun({ status: 'timed_out', startedAt: ago(10_000) });
+		expect(await assignmentWakeupAlreadyServed(db, agentId, servedTaskId, ago(60_000))).toBe(false);
+	});
+
+	it('is scoped to the same agent and task', async () => {
+		await db.query('DELETE FROM heartbeat_runs WHERE task_id = $1', [servedTaskId]);
+		await insertRun({ startedAt: ago(30_000) });
+		// A succeeded run for a different agent must not satisfy this agent's wakeup.
+		expect(await assignmentWakeupAlreadyServed(db, randomUUID(), servedTaskId, ago(60_000))).toBe(
+			false,
+		);
+		// ...nor a different task.
+		expect(await assignmentWakeupAlreadyServed(db, agentId, randomUUID(), ago(60_000))).toBe(false);
 	});
 });
