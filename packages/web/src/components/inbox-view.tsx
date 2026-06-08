@@ -109,13 +109,11 @@ export function InboxView({ teamIds, scope }: InboxViewProps) {
 	}, [rows, readFilter, debouncedSearch]);
 
 	if (isLoading) {
-		return (
-			<div className="px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6 text-text-muted">Loading...</div>
-		);
+		return <div className="text-text-muted">Loading...</div>;
 	}
 
 	return (
-		<div className="px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
+		<div>
 			<h1 className="text-[22px] font-medium mb-5">Inbox</h1>
 
 			<div className="flex flex-col gap-2 mb-4 sm:flex-row sm:items-center sm:justify-between">
