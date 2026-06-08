@@ -1424,7 +1424,7 @@ describe('runAgent', () => {
 			expect(capturedCmd).not.toContain('exec');
 		});
 
-		it('does not pass --output-format for non-claude runtimes', async () => {
+		it('passes exec --json (not claude stream flags) for the codex runtime', async () => {
 			let capturedCmd: string[] = [];
 			const docker = createMockDocker({
 				execCreate: async (_id: string, opts: any) => {
@@ -1443,6 +1443,21 @@ describe('runAgent', () => {
 				logs: new LogStreamBroker(),
 			};
 
+			// Configure an OpenAI provider so the Codex runtime resolves a credential
+			// and actually reaches execCreate. Mock fetch so verifyProviderKey doesn't
+			// make a real network call.
+			globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+			await app.request('/api/ai-providers', {
+				method: 'POST',
+				headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					provider: 'openai',
+					api_key: 'sk-test-codex-stream',
+					label: 'openai-codex-stream',
+				}),
+			});
+			globalThis.fetch = originalFetch;
+
 			await runAgent(
 				deps,
 				makeAgent(),
@@ -1450,6 +1465,12 @@ describe('runAgent', () => {
 				makeProject(),
 			);
 
+			// Codex streams newline-delimited JSON via `--json`, so token usage is
+			// parsed from its turn.completed events — but it must not pick up
+			// Claude's stream flags.
+			expect(capturedCmd).toContain('exec');
+			expect(capturedCmd).toContain('--json');
+			expect(capturedCmd[capturedCmd.length - 1]).toBe('-');
 			expect(capturedCmd).not.toContain('--output-format');
 			expect(capturedCmd).not.toContain('stream-json');
 			expect(capturedCmd).not.toContain('-p');
@@ -1495,6 +1516,11 @@ describe('runAgent', () => {
 
 			expect(capturedCmd).toContain('gemini');
 			expect(capturedCmd).toContain('--yolo');
+			// Gemini streams newline-delimited JSON via stream-json (live logs
+			// preserved) and reports per-model token usage in its result event.
+			expect(capturedCmd).toContain('--output-format');
+			const fmtIdx = capturedCmd.indexOf('--output-format');
+			expect(capturedCmd[fmtIdx + 1]).toBe('stream-json');
 			expect(capturedCmd).not.toContain('-p');
 			expect(capturedCmd).not.toContain('exec');
 			const geminiIdx = capturedCmd.indexOf('gemini');

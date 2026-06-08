@@ -707,13 +707,15 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
  * Flags that make each CLI emit structured per-turn events to stdout while
  * the run is in flight, so the run log shows tool calls, thinking, and
  * partial assistant text live instead of silence until the final result.
- * Runtimes without a documented stream mode default to [] and stream their
- * native text output.
+ * Every supported runtime exposes a newline-delimited JSON (JSONL) stream
+ * whose terminal event carries token usage; `agent-stream-parser.ts` renders
+ * those events and captures the usage. Codex accepts `--experimental-json` as
+ * an alias for `--json`; Gemini's `stream-json` shipped in CLI v0.11.0.
  */
 export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
 	[AgentRuntime.ClaudeCode]: ['--output-format', 'stream-json', '--verbose'],
-	[AgentRuntime.Codex]: [],
-	[AgentRuntime.Gemini]: [],
+	[AgentRuntime.Codex]: ['--json'],
+	[AgentRuntime.Gemini]: ['--output-format', 'stream-json'],
 };
 
 /**
