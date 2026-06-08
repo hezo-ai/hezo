@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { TaskStatus, WakeupSource, WakeupStatus } from '@hezo/shared';
+import { HeartbeatRunStatus, TaskStatus, WakeupSource, WakeupStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -360,6 +360,68 @@ describe('dependency gate — wakeup deferral and reverse trigger', () => {
 		await new Promise((res) => setTimeout(res, 100));
 
 		await wakeIfReady(db, p.id);
+		const after = await getWakeupForTask(productLeadId, p.id);
+		expect(after).toBeNull();
+	});
+
+	it("blocker's done → closed transition does not requeue the downstream's assignee while it is mid-run", async () => {
+		const r = await createTask('term-r', researcherId);
+		const p = await createTask('term-p', productLeadId, [r.identifier]);
+
+		await setStatus(r.id, TaskStatus.Done);
+		await new Promise((res) => setTimeout(res, 100));
+
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [productLeadId]);
+
+		// Stand in for an in-flight run on p — wakeIfReady should treat the running agent as already serving the unblock.
+		await db.query(
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+			 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
+			[productLeadId, teamId, p.id, HeartbeatRunStatus.Running],
+		);
+
+		await setStatus(r.id, TaskStatus.Closed);
+		await new Promise((res) => setTimeout(res, 100));
+
+		const after = await getWakeupForTask(productLeadId, p.id);
+		expect(after).toBeNull();
+	});
+
+	it("blocker's done → closed creates no downstream wakeup even when downstream has no in-flight run", async () => {
+		const r = await createTask('term2-r', researcherId);
+		const p = await createTask('term2-p', productLeadId, [r.identifier]);
+
+		await setStatus(r.id, TaskStatus.Done);
+		await new Promise((res) => setTimeout(res, 100));
+
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [productLeadId]);
+
+		await setStatus(r.id, TaskStatus.Closed);
+		await new Promise((res) => setTimeout(res, 100));
+
+		const after = await getWakeupForTask(productLeadId, p.id);
+		expect(after).toBeNull();
+	});
+
+	it('wakeIfReady skips creating a wakeup when the assignee already has an in-flight run on the task', async () => {
+		const r = await createTask('inflight-r', researcherId);
+		const p = await createTask('inflight-p', productLeadId, [r.identifier]);
+
+		await new Promise((res) => setTimeout(res, 50));
+		await db.query('UPDATE tasks SET status = $1::task_status WHERE id = $2', [
+			TaskStatus.Done,
+			r.id,
+		]);
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [productLeadId]);
+
+		await db.query(
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+			 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())`,
+			[productLeadId, teamId, p.id, HeartbeatRunStatus.Running],
+		);
+
+		await wakeIfReady(db, p.id);
+
 		const after = await getWakeupForTask(productLeadId, p.id);
 		expect(after).toBeNull();
 	});

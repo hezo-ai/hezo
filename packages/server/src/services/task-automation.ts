@@ -164,10 +164,20 @@ export async function triggerStatusAutomations(
 ): Promise<void> {
 	await recordStatusChange(db, teamId, taskId, oldStatus, newStatus, actorMemberId, wsManager);
 
-	try {
-		await recomputeDownstreamReadiness(db, teamId, taskId, actorMemberId, wsManager);
-	} catch (e) {
-		log.error('Failed to recompute downstream readiness:', e);
+	// Downstream blocker state only flips when this task crosses the
+	// terminal boundary. Same-bucket transitions (e.g. done → closed
+	// during Coach's review, or backlog → in_progress at run start)
+	// leave every downstream's blocker count unchanged, so skip the
+	// recompute — otherwise it fires a redundant `wakeIfReady` that
+	// queues a duplicate assignment wakeup behind the current run.
+	const oldTerminal = (TERMINAL_TASK_STATUSES as readonly string[]).includes(oldStatus);
+	const newTerminal = (TERMINAL_TASK_STATUSES as readonly string[]).includes(newStatus);
+	if (oldTerminal !== newTerminal) {
+		try {
+			await recomputeDownstreamReadiness(db, teamId, taskId, actorMemberId, wsManager);
+		} catch (e) {
+			log.error('Failed to recompute downstream readiness:', e);
+		}
 	}
 
 	if ((TERMINAL_TASK_STATUSES as readonly string[]).includes(newStatus)) {

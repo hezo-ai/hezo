@@ -1,5 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
+	HeartbeatRunStatus,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 	WakeupSource,
@@ -252,6 +253,18 @@ export async function wakeIfReady(db: PGlite, taskId: string): Promise<void> {
 	);
 
 	if (flipped.rows.length > 0) return;
+
+	// If the assignee is already mid-run on this task, the running agent reads
+	// the latest task state and serves the unblock — a fresh wakeup would just
+	// queue a redundant follow-up behind the in-flight run.
+	const activeRun = await db.query(
+		`SELECT 1 FROM heartbeat_runs
+		 WHERE member_id = $1 AND task_id = $2
+		   AND status IN ($3::heartbeat_run_status, $4::heartbeat_run_status)
+		 LIMIT 1`,
+		[row.assignee_id, taskId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
+	);
+	if (activeRun.rows.length > 0) return;
 
 	try {
 		await createWakeup(
