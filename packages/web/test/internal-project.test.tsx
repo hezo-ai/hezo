@@ -6,8 +6,8 @@ import { seedWorkspace } from './helpers/seed';
 
 // HQ is the only internal project: the instance-wide coordination project that
 // hosts the CEO and Coach. Its slug is HQ_PROJECT_SLUG and `is_internal` is
-// true, so it gets the restricted sidebar, the coordination banner, and the
-// documents/settings redirects.
+// true, so it gets the restricted sidebar, the coordination info tooltip beside
+// its name, and the documents/settings redirects.
 
 test('sidebar exposes only Tasks and Container for the HQ project', async () => {
 	const { findAllByRole, queryAllByRole, container, router } = await renderApp({
@@ -42,28 +42,29 @@ test('sidebar exposes only Tasks and Container for the HQ project', async () => 
 	expect(container.querySelector('nav')).toBeTruthy();
 });
 
-test('banner appears on HQ landing pages', async () => {
-	const { findByText, router } = await renderApp({
+test('coordination info tooltip sits beside the HQ name', async () => {
+	const { findByTestId, getAllByText, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			await seedWorkspace();
 		},
 	});
 
-	const bannerCopy =
-		'Internal team coordination project, used for onboarding and team-level changes.';
-
 	await router.navigate({
 		to: '/projects/$projectId/tasks',
 		params: { projectId: HQ_PROJECT_SLUG },
 	});
-	await findByText(bannerCopy, undefined, { timeout: 10_000 });
 
-	await router.navigate({
-		to: '/projects/$projectId/container',
-		params: { projectId: HQ_PROJECT_SLUG },
-	});
-	await findByText(bannerCopy, undefined, { timeout: 10_000 });
+	const info = await findByTestId('project-sidebar-info', undefined, { timeout: 10_000 });
+	await user.hover(info);
+
+	await waitFor(() =>
+		expect(
+			getAllByText(
+				'Internal team coordination project, used for onboarding and team-level changes.',
+			).length,
+		).toBeGreaterThan(0),
+	);
 });
 
 test('direct navigation to /documents and /settings redirects to /tasks', async () => {

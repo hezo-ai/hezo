@@ -1,6 +1,6 @@
 import { AgentAdminStatus } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Globe } from 'lucide-react';
+import { Globe, Info } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useAgents } from '../hooks/use-agents';
@@ -9,6 +9,7 @@ import { useProjectMeta } from '../hooks/use-projects';
 import { agentPageParams } from './agent-link';
 import { AgentStatusLabel } from './agent-status-label';
 import { SidebarNav, type SidebarNavSection } from './sidebar-nav';
+import { Tooltip } from './ui/tooltip';
 
 const TEAM_COLLAPSED_KEY = 'hezo:sidebar:team-collapsed';
 
@@ -148,7 +149,7 @@ export function ProjectSidebar() {
 
 	return (
 		<div className="flex flex-col h-full">
-			<div className="px-2.5 pt-1.5 pb-1">
+			<div className="px-2.5 pt-1.5 pb-1 flex items-center gap-1 min-w-0">
 				<Link
 					to="/projects/$projectId"
 					params={projectParams}
@@ -165,6 +166,21 @@ export function ProjectSidebar() {
 						projectId
 					)}
 				</Link>
+				{isInternal && (
+					<Tooltip
+						content="Internal team coordination project, used for onboarding and team-level changes."
+						side="right"
+					>
+						<button
+							type="button"
+							aria-label="About this project"
+							data-testid="project-sidebar-info"
+							className="shrink-0 text-text-subtle hover:text-text transition-colors"
+						>
+							<Info className="w-3.5 h-3.5" aria-hidden="true" />
+						</button>
+					</Tooltip>
+				)}
 			</div>
 			<div className="flex-1">
 				<SidebarNav sections={sections} />
