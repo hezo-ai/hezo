@@ -46,7 +46,7 @@ import { ensureRepoSetupAction } from './repo-setup';
 import { getProjectConcurrency, isTaskBusyInDb } from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
 import { recordStatusChange } from './task-events';
-import { absorbQueuedTaskWakeups, createWakeup } from './wakeup';
+import { absorbQueuedTaskWakeups, assignmentWakeupAlreadyServed, createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('job-manager');
@@ -731,8 +731,9 @@ export class JobManager {
 			team_id: string;
 			source: string;
 			payload: Record<string, unknown>;
+			created_at: string;
 		}>(
-			`SELECT id, member_id, team_id, source, payload
+			`SELECT id, member_id, team_id, source, payload, created_at
 			 FROM agent_wakeup_requests
 			 WHERE status = $2::wakeup_status
 			   AND created_at < $1
@@ -797,6 +798,41 @@ export class JobManager {
 					wakeup.team_id,
 					null,
 				);
+				continue;
+			}
+
+			// A still-queued `assignment` wakeup whose task was already worked by a
+			// completed run is stale: that run read the task at boot and served the
+			// assignment. `absorbQueuedTaskWakeups` only retires such siblings that
+			// were queued at run *start*; this catches the ones that become claimable
+			// later (blocker-deferred flips, busy-skip survivors) so they don't fire a
+			// redundant back-to-back run. Genuine re-assignments and triggers created
+			// after the run keep firing — their created_at is newer than its started_at.
+			if (
+				wakeupTaskId &&
+				wakeup.source === WakeupSource.Assignment &&
+				(await assignmentWakeupAlreadyServed(db, wakeup.member_id, wakeupTaskId, wakeup.created_at))
+			) {
+				await db.query(
+					'UPDATE agent_wakeup_requests SET status = $1::wakeup_status WHERE id = $2',
+					[WakeupStatus.Coalesced, wakeup.id],
+				);
+				log.debug(
+					`Retiring stale assignment wakeup ${wakeup.id} — task ${wakeupTaskId} already served by a completed run`,
+				);
+				const refreshed = await db.query<Record<string, unknown>>(
+					'SELECT * FROM tasks WHERE id = $1',
+					[wakeupTaskId],
+				);
+				if (refreshed.rows[0]) {
+					broadcastRowChange(
+						this.deps.wsManager,
+						wsRoom.team(wakeup.team_id),
+						'tasks',
+						'UPDATE',
+						refreshed.rows[0],
+					);
+				}
 				continue;
 			}
 
