@@ -44,7 +44,7 @@ test('status changes and cross-task mentions appear as system entries on the tim
 	let sourceTaskId = '';
 	let workspace: SeededWorkspace;
 
-	const { findByText, findAllByTestId, container, router } = await renderApp({
+	const { findByText, findAllByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			workspace = await seedWorkspace();
