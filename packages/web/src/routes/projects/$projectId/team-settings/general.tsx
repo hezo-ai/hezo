@@ -42,7 +42,7 @@ function SettingsPage() {
 
 	return (
 		<div className="flex flex-col gap-4 md:grid md:grid-cols-[160px_1fr] md:gap-6">
-			<nav className="flex flex-col gap-0.5 sticky top-0">
+			<nav className="flex flex-col gap-0.5 sticky top-0 md:self-start">
 				{nav.map((item) => (
 					<button
 						key={item.id}

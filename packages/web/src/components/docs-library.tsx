@@ -107,48 +107,53 @@ export function DocsLibrary({
 					showRightPane ? 'hidden md:block' : 'block'
 				}`}
 			>
-				{onNewDoc && (
-					<Button
-						variant="outline"
-						size="sm"
-						className="w-full mb-3 justify-start"
-						onClick={onNewDoc}
-					>
-						<Plus className="w-3.5 h-3.5" /> New document
-					</Button>
-				)}
+				{/* Sticky on desktop so the doc list stays visible while a long
+				    document scrolls. 2.5rem = the h-10 app header; the list scrolls
+				    internally if it outgrows the viewport. */}
+				<div className="md:sticky md:top-0 md:max-h-[calc(100vh-2.5rem)] md:overflow-y-auto">
+					{onNewDoc && (
+						<Button
+							variant="outline"
+							size="sm"
+							className="w-full mb-3 justify-start"
+							onClick={onNewDoc}
+						>
+							<Plus className="w-3.5 h-3.5" /> New document
+						</Button>
+					)}
 
-				{isLoadingList ? (
-					<div className="text-text-muted text-[13px] py-4">Loading...</div>
-				) : items.length === 0 ? (
-					<div className="text-text-muted text-[13px] py-4">No documents</div>
-				) : (
-					<ul className="flex flex-col gap-0.5">
-						{items.map((item) => {
-							const isActive = item.key === selectedKey;
-							return (
-								<li key={item.key}>
-									<button
-										type="button"
-										onClick={() => onSelect(item.key)}
-										className={`w-full text-left px-2 py-1.5 rounded-radius-md transition-colors ${
-											isActive
-												? 'bg-bg-subtle text-text'
-												: 'text-text-muted hover:bg-bg-subtle hover:text-text'
-										}`}
-									>
-										<div className="text-[13px] font-medium truncate">{item.label}</div>
-										{item.meta && (
-											<div className="text-[11px] text-text-subtle mt-0.5 truncate">
-												{item.meta}
-											</div>
-										)}
-									</button>
-								</li>
-							);
-						})}
-					</ul>
-				)}
+					{isLoadingList ? (
+						<div className="text-text-muted text-[13px] py-4">Loading...</div>
+					) : items.length === 0 ? (
+						<div className="text-text-muted text-[13px] py-4">No documents</div>
+					) : (
+						<ul className="flex flex-col gap-0.5">
+							{items.map((item) => {
+								const isActive = item.key === selectedKey;
+								return (
+									<li key={item.key}>
+										<button
+											type="button"
+											onClick={() => onSelect(item.key)}
+											className={`w-full text-left px-2 py-1.5 rounded-radius-md transition-colors ${
+												isActive
+													? 'bg-bg-subtle text-text'
+													: 'text-text-muted hover:bg-bg-subtle hover:text-text'
+											}`}
+										>
+											<div className="text-[13px] font-medium truncate">{item.label}</div>
+											{item.meta && (
+												<div className="text-[11px] text-text-subtle mt-0.5 truncate">
+													{item.meta}
+												</div>
+											)}
+										</button>
+									</li>
+								);
+							})}
+						</ul>
+					)}
+				</div>
 			</aside>
 
 			<section className={showRightPane ? 'block' : 'hidden md:block'}>
