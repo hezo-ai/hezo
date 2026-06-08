@@ -906,6 +906,9 @@ async function prepareWorktrees(
 	emit: (stream: 'stdout' | 'stderr', text: string) => void,
 	signal?: AbortSignal,
 ): Promise<{ workingDir: string; designatedRepo: RepoRow | null }> {
+	const emitSystem = (stream: 'stdout' | 'stderr', text: string) =>
+		emit(stream, `[system] ${text}\n`);
+
 	const repos = await deps.db.query<RepoRow>(
 		`SELECT id, short_name, repo_identifier FROM repos
 		 WHERE project_id = $1 ORDER BY created_at ASC`,
@@ -913,12 +916,12 @@ async function prepareWorktrees(
 	);
 
 	if (repos.rows.length === 0) {
-		emit('stdout', '(no repos linked to project — running in /workspace)\n');
+		emitSystem('stdout', '(no repos linked to project — running in /workspace)');
 		return { workingDir: '/workspace', designatedRepo: null };
 	}
 
 	return withProjectGitLock(project.id, async () => {
-		emit('stdout', '(syncing repos...)\n');
+		emitSystem('stdout', '(syncing repos...)');
 		const syncRes = await ensureProjectRepos(
 			deps.db,
 			deps.masterKeyManager,
@@ -928,10 +931,10 @@ async function prepareWorktrees(
 			},
 			deps.dataDir,
 			deps.sshAgentServer,
-			(stream, text) => emit(stream, `${text}\n`),
+			emitSystem,
 		);
 		if (syncRes.cloned.length > 0) {
-			emit('stdout', `(cloned ${syncRes.cloned.length} repo(s) on demand)\n`);
+			emitSystem('stdout', `(cloned ${syncRes.cloned.length} repo(s) on demand)`);
 		}
 
 		if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null };
@@ -957,12 +960,12 @@ async function prepareWorktrees(
 						if (signal?.aborted) break;
 						const repoDir = join(workspaceRoot, repo.short_name);
 
-						emit('stdout', `git fetch ${repo.short_name}...\n`);
+						emitSystem('stdout', `git fetch ${repo.short_name}...`);
 						const fetchRes = await fetchRepo(repoDir, sshAuthSock, knownHostsPath);
 						if (fetchRes.success) {
-							emit('stdout', `git fetch ${repo.short_name} done\n`);
+							emitSystem('stdout', `git fetch ${repo.short_name} done`);
 						} else {
-							emit('stderr', `git fetch ${repo.short_name} failed: ${fetchRes.error ?? '?'}\n`);
+							emitSystem('stderr', `git fetch ${repo.short_name} failed: ${fetchRes.error ?? '?'}`);
 						}
 					}
 				},
@@ -975,16 +978,19 @@ async function prepareWorktrees(
 			const worktreePath = join(taskWorktreeRoot, repo.short_name);
 
 			if (!existsSync(join(repoDir, '.git'))) {
-				emit('stderr', `(skipping worktree for ${repo.short_name} — not cloned)\n`);
+				emitSystem('stderr', `(skipping worktree for ${repo.short_name} — not cloned)`);
 				continue;
 			}
 
-			emit('stdout', `git worktree ${repo.short_name}...\n`);
+			emitSystem('stdout', `git worktree ${repo.short_name}...`);
 			const wt = await ensureTaskWorktree(repoDir, worktreePath, branchName);
 			if (!wt.success) {
-				emit('stderr', `git worktree for ${repo.short_name} failed: ${wt.error ?? 'unknown'}\n`);
+				emitSystem(
+					'stderr',
+					`git worktree for ${repo.short_name} failed: ${wt.error ?? 'unknown'}`,
+				);
 			} else if (wt.created) {
-				emit('stdout', `git worktree add ${repo.short_name} @ ${branchName}\n`);
+				emitSystem('stdout', `git worktree add ${repo.short_name} @ ${branchName}`);
 			}
 		}
 

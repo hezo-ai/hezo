@@ -3,6 +3,7 @@ import {
 	type DoneBlock,
 	parseAgentLog,
 	type ResultBlock,
+	type SystemBlock,
 	type TextBlock,
 	type ToolBlock,
 } from '@hezo/web/lib/parse-agent-log';
@@ -138,4 +139,43 @@ test('leaves a tool pending when its result has not arrived', () => {
 	const tool = blocks[0] as ToolBlock;
 	expect(tool.status).toBe('pending');
 	expect(tool.result).toBeNull();
+});
+
+test('coalesces consecutive system status lines into one block', () => {
+	const blocks = parseAgentLog(
+		makeLines([
+			'[system] (syncing repos...)',
+			'[system] git fetch todo3...',
+			'[system] git fetch todo3 done',
+			'[system] git worktree todo3...',
+		]),
+	);
+	expect(blocks).toHaveLength(1);
+	const sys = blocks[0] as SystemBlock;
+	expect(sys.type).toBe('system');
+	expect(sys.stream).toBe('stdout');
+	expect(sys.lines).toEqual([
+		'(syncing repos...)',
+		'git fetch todo3...',
+		'git fetch todo3 done',
+		'git worktree todo3...',
+	]);
+});
+
+test('separates system stdout from system stderr into different blocks', () => {
+	const blocks = parseAgentLog(
+		makeLines([
+			['[system] git fetch foo...', 'stdout'],
+			['[system] git fetch foo failed: timeout', 'stderr'],
+			['[system] git worktree foo...', 'stdout'],
+		]),
+	);
+	const sys = blocks.filter((b): b is SystemBlock => b.type === 'system');
+	expect(sys).toHaveLength(3);
+	expect(sys.map((b) => b.stream)).toEqual(['stdout', 'stderr', 'stdout']);
+});
+
+test('flushes pending prose before opening a system block', () => {
+	const blocks = parseAgentLog(makeLines(['Setting up.', '[system] (syncing repos...)', 'Done.']));
+	expect(blocks.map((b) => b.type)).toEqual(['text', 'system', 'text']);
 });
