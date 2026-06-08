@@ -7,7 +7,7 @@ function ProjectAuditLogPage() {
 	const { data: entries } = useProjectAuditLog(projectId);
 
 	return (
-		<div className="px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
+		<div>
 			<div className="mb-4">
 				<h2 className="text-base font-medium">Activity</h2>
 				<p className="text-[13px] text-text-muted mt-1">
