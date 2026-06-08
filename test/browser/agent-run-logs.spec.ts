@@ -101,9 +101,7 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 	await expect(logPane).toContainText('[synthetic] starting agent run', { timeout: 20_000 });
 	await expect(logPane).toContainText('[synthetic] task complete', { timeout: 15000 });
 
-	const durationValue = page
-		.getByText('Duration', { exact: true })
-		.locator('xpath=following-sibling::*[1]');
+	const durationValue = page.getByTestId('run-duration');
 	await expect(durationValue).toHaveText(/^\d+(d\d+h\d+m|h\d+m|m)?\d*s$/);
 
 	const copyBtn = page.getByRole('button', { name: /copy logs to clipboard/i });
