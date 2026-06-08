@@ -19,6 +19,7 @@ import {
 import { render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Hono } from 'hono';
+import { StrictMode } from 'react';
 import { afterEach, beforeEach } from 'vitest';
 
 interface RenderOptions {
@@ -26,6 +27,11 @@ interface RenderOptions {
 	// Caller can seed the test DB before the app mounts — runs after the test
 	// app boots and gets the auth token, so seeders can hit the API or DB.
 	seed?: (ctx: TestAppContext) => Promise<unknown> | unknown;
+	// Wrap the tree in <StrictMode> to exercise React's mount→cleanup→mount
+	// double-invoke (the real app runs under StrictMode via main.tsx). Off by
+	// default to keep existing specs unchanged; opt in where effect resilience
+	// across remount matters (e.g. the deep-link scroll).
+	strictMode?: boolean;
 }
 
 interface TestAppContext {
@@ -164,13 +170,14 @@ export async function renderApp(options: RenderOptions) {
 		defaultNotFoundComponent: () => <Navigate to="/home" replace />,
 	});
 
-	const utils = render(
+	const tree = (
 		<QueryClientProvider client={activeQueryClient}>
 			<ThemeProvider>
 				<RouterProvider router={router} />
 			</ThemeProvider>
-		</QueryClientProvider>,
+		</QueryClientProvider>
 	);
+	const utils = render(options.strictMode ? <StrictMode>{tree}</StrictMode> : tree);
 
 	return {
 		...utils,

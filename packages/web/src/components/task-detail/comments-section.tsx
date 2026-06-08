@@ -1,3 +1,4 @@
+import { useLocation } from '@tanstack/react-router';
 import { CornerDownRight, Reply } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
@@ -24,6 +25,31 @@ export function jumpToComment(commentId: string) {
 		window.history.pushState(null, '', target);
 		window.dispatchEvent(new HashChangeEvent('hashchange'));
 	};
+}
+
+type HashScrollTarget = { idx: number; highlightId: string | null };
+
+/**
+ * Resolve a '#'-prefixed hash to a row in the loaded comments list.
+ * `#comment-<id>` targets that comment (and highlights it); `#setup-repo`
+ * targets the unresolved setup-repo action card. `idx` is -1 when the hash
+ * points at nothing here — no jump hash, or the row hasn't loaded yet.
+ */
+function resolveHashTarget(hash: string, comments: Comment[]): HashScrollTarget {
+	if (hash.startsWith('#comment-')) {
+		const targetId = hash.slice('#comment-'.length);
+		const idx = comments.findIndex((c) => c.id === targetId);
+		return { idx, highlightId: idx >= 0 ? targetId : null };
+	}
+	if (hash === '#setup-repo') {
+		const idx = comments.findIndex((c) => {
+			if (c.content_type !== 'action') return false;
+			const content = typeof c.content === 'object' ? (c.content as { kind?: string }) : null;
+			return content?.kind === 'setup_repo' && !c.chosen_option;
+		});
+		return { idx, highlightId: null };
+	}
+	return { idx: -1, highlightId: null };
 }
 
 interface CommentsSectionProps {
@@ -63,9 +89,18 @@ export function CommentsSection({
 	const chooseOption = useChooseOption(projectId, taskId);
 	const virtuosoRef = useRef<VirtuosoHandle>(null);
 	const listContainerRef = useRef<HTMLDivElement>(null);
-	const didScrollToHashRef = useRef(false);
 	const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
 	const lastResetTaskIdRef = useRef<string | null>(null);
+	// Deep-link scroll. `hashTarget` is the '#'-prefixed hash we want to scroll
+	// to, written from two sources (router navigations + raw window hash changes)
+	// so it stays correct under both browser and memory history. It drives the
+	// executor effect; `lastScrolledHashRef` records what we last scrolled to so a
+	// WebSocket comments refetch can't yank the viewport back.
+	const routerHash = useLocation({ select: (l) => l.hash });
+	const [hashTarget, setHashTarget] = useState<string>(() =>
+		typeof window !== 'undefined' ? window.location.hash : '',
+	);
+	const lastScrolledHashRef = useRef<string | null>(null);
 
 	useLayoutEffect(() => {
 		if (!scrollParent) return;
@@ -76,97 +111,118 @@ export function CommentsSection({
 		lastResetTaskIdRef.current = taskId;
 	}, [taskId, scrollParent]);
 
+	// Router navigations carry the deep-link hash here — `navigate({ hash })` from
+	// the mention card, approval modal, and run-detail link. Reading it off the
+	// router (rather than `window.location`) makes it reactive in both browser and
+	// memory history, so it fires on a fresh cross-page mount and on same-task
+	// re-navigation alike. `location.hash` has no leading '#'.
 	useEffect(() => {
-		if (!comments || comments.length === 0) return;
+		if (routerHash) setHashTarget(`#${routerHash}`);
+	}, [routerHash]);
+
+	// The in-page `jumpToComment` helper changes the hash with a raw `pushState`
+	// plus a dispatched `hashchange` (bypassing the router); browser back/forward
+	// fires `popstate`. Catch both so those jumps still drive the executor.
+	useEffect(() => {
 		if (typeof window === 'undefined') return;
-
-		// Resolve the current hash (a specific comment via `#comment-<id>`, or
-		// the unresolved setup-repo action card via `#setup-repo`) to its
-		// index in the loaded comments list and tell Virtuoso to scroll there.
-		// `scrollToIndex` is computed off estimated row heights, so iterate a
-		// few times: each pass mounts more rows, grows the measured document,
-		// and the next call lands closer to the target.
-		const scrollToHash = () => {
-			const hash = window.location.hash;
-			let idx = -1;
-			let highlightId: string | null = null;
-			if (hash.startsWith('#comment-')) {
-				const targetId = hash.slice('#comment-'.length);
-				idx = comments.findIndex((c) => c.id === targetId);
-				if (idx >= 0) highlightId = targetId;
-			} else if (hash === '#setup-repo') {
-				idx = comments.findIndex((c) => {
-					if (c.content_type !== 'action') return false;
-					const content = typeof c.content === 'object' ? (c.content as { kind?: string }) : null;
-					return content?.kind === 'setup_repo' && !c.chosen_option;
-				});
-			}
-			if (idx < 0) return [] as ReturnType<typeof setTimeout>[];
-			const out: ReturnType<typeof setTimeout>[] = [];
-			// Virtuoso with `customScrollParent` only mounts items once its
-			// container intersects the parent's viewport. On a fresh task page
-			// load, the comments list starts far below the fold (header,
-			// description, sidebar, etc.) and Virtuoso's IntersectionObserver
-			// never fires — so itemContent is never called, no row exists in
-			// the DOM, and `scrollToIndex` has no measured rows to land on.
-			// Force the parent to scroll the list container into view first;
-			// that wakes the IntersectionObserver and Virtuoso starts mounting.
-			if (listContainerRef.current && scrollParent) {
-				const listTop = listContainerRef.current.getBoundingClientRect().top;
-				const parentTop = scrollParent.getBoundingClientRect().top;
-				const offset = scrollParent.scrollTop + listTop - parentTop;
-				scrollParent.scrollTo({ top: Math.max(0, offset - 80), behavior: 'auto' });
-			}
-			// Each tick: first ask Virtuoso to mount the target row, then read
-			// the rendered element's real position and scroll precisely to it.
-			// Virtuoso's scrollToIndex alone underscrolls when the row's height
-			// grows after mount (LazyMount in run comments, async log body),
-			// because the offset is computed from stale estimates. The extra
-			// 3000ms tick absorbs the post-fetch height jump.
-			const scrollDelays = [16, 200, 600, 1500, 3000];
-			for (const delay of scrollDelays) {
-				out.push(
-					setTimeout(() => {
-						virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center' });
-						if (highlightId) {
-							const el = document.getElementById(`comment-${highlightId}`);
-							el?.scrollIntoView({ block: 'center', behavior: 'auto' });
-						}
-					}, delay),
-				);
-			}
-			if (highlightId) {
-				setHighlightedCommentId(highlightId);
-				// Clear the highlight 2s AFTER the last scroll attempt — under load,
-				// Virtuoso may not mount the target row until that final attempt, so
-				// the highlight must outlive row mount or it flashes invisibly.
-				const lastScrollDelay = scrollDelays[scrollDelays.length - 1];
-				out.push(
-					setTimeout(() => {
-						setHighlightedCommentId(null);
-					}, lastScrollDelay + 2000),
-				);
-				window.history.replaceState(null, '', window.location.pathname + window.location.search);
-			}
-			if (hash === '#setup-repo') {
-				window.history.replaceState(null, '', window.location.pathname + window.location.search);
-			}
-			return out;
-		};
-
-		const initialTimers = didScrollToHashRef.current ? [] : scrollToHash();
-		didScrollToHashRef.current = true;
-
-		const allTimers: ReturnType<typeof setTimeout>[] = [...initialTimers];
-		const onHashChange = () => {
-			allTimers.push(...scrollToHash());
-		};
+		const onHashChange = () => setHashTarget(window.location.hash);
 		window.addEventListener('hashchange', onHashChange);
+		window.addEventListener('popstate', onHashChange);
 		return () => {
 			window.removeEventListener('hashchange', onHashChange);
-			for (const t of allTimers) clearTimeout(t);
+			window.removeEventListener('popstate', onHashChange);
 		};
-	}, [comments, scrollParent]);
+	}, []);
+
+	// Execute the deep-link scroll once we have a hash target AND comments are
+	// loaded AND Virtuoso has its scroll parent. Re-runs as rows stream in
+	// (`comments`) and when the hash changes (`hashTarget`). Decoupling the
+	// intent (hashTarget) from execution is what makes this survive a fresh
+	// cross-page mount, StrictMode's double-invoke, comment caching, and refetch.
+	useEffect(() => {
+		if (!comments || comments.length === 0) return;
+		if (!scrollParent) return;
+		if (typeof window === 'undefined') return;
+
+		const { idx, highlightId } = resolveHashTarget(hashTarget, comments);
+		// Nothing to jump to, or we already handled this exact hash. The dedupe
+		// guard stops a WebSocket comments refetch (fresh array reference, same
+		// consumed hash) from re-yanking the viewport while the user reads.
+		if (idx < 0 || lastScrolledHashRef.current === hashTarget) return;
+
+		const consumedHash = hashTarget;
+		const timers: ReturnType<typeof setTimeout>[] = [];
+
+		// Virtuoso with `customScrollParent` only mounts items once its container
+		// intersects the parent's viewport. On a fresh task page the comments list
+		// starts far below the fold, so its IntersectionObserver never fires, no
+		// row exists in the DOM, and `scrollToIndex` has nothing to land on. Scroll
+		// the list container into view first to wake it and start mounting rows.
+		if (listContainerRef.current) {
+			const listTop = listContainerRef.current.getBoundingClientRect().top;
+			const parentTop = scrollParent.getBoundingClientRect().top;
+			const offset = scrollParent.scrollTop + listTop - parentTop;
+			scrollParent.scrollTo({ top: Math.max(0, offset - 80), behavior: 'auto' });
+		}
+
+		// Retry ladder: each tick asks Virtuoso to mount the target row, then reads
+		// the rendered element's real position and scrolls precisely to it. The
+		// later ticks absorb post-mount height growth (LazyMount run comments,
+		// async log bodies) that would otherwise leave scrollToIndex short.
+		//
+		// Mark the hash consumed inside the FIRST tick, not now: React StrictMode
+		// runs setup -> cleanup -> setup synchronously and the cleanup clears these
+		// timers before the 16ms tick fires. Setting the ref now would make the
+		// second setup's `=== hashTarget` guard skip the re-arm and nothing would
+		// scroll; deferring it lets the surviving setup re-arm and land the scroll.
+		const scrollDelays = [16, 200, 600, 1500, 3000];
+		scrollDelays.forEach((delay, i) => {
+			timers.push(
+				setTimeout(() => {
+					if (i === 0) lastScrolledHashRef.current = consumedHash;
+					virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center' });
+					if (highlightId) {
+						document
+							.getElementById(`comment-${highlightId}`)
+							?.scrollIntoView({ block: 'center', behavior: 'auto' });
+					}
+				}, delay),
+			);
+		});
+
+		if (highlightId) setHighlightedCommentId(highlightId);
+
+		// Strip the hash once the scroll settles so a reload doesn't re-jump — but
+		// only if it still points at what we consumed, so a fresh click during the
+		// scroll isn't swallowed.
+		timers.push(
+			setTimeout(
+				() => {
+					if (window.location.hash === consumedHash) {
+						window.history.replaceState(
+							null,
+							'',
+							window.location.pathname + window.location.search,
+						);
+					}
+				},
+				scrollDelays[scrollDelays.length - 1] + 50,
+			),
+		);
+
+		return () => {
+			for (const t of timers) clearTimeout(t);
+		};
+	}, [comments, scrollParent, hashTarget]);
+
+	// Fade the deep-link highlight a couple seconds after it lands. Keyed on the
+	// highlighted id (not the scroll timers) so a comments refetch mid-scroll
+	// can't cancel the fade and strand the ring on screen.
+	useEffect(() => {
+		if (!highlightedCommentId) return;
+		const t = setTimeout(() => setHighlightedCommentId(null), 5000);
+		return () => clearTimeout(t);
+	}, [highlightedCommentId]);
 
 	return (
 		<div ref={listContainerRef} className="mb-4" data-testid="comments-list">
