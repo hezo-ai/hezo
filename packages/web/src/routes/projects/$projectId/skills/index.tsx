@@ -55,64 +55,69 @@ function SkillsPage() {
 	const showDetail = selectedSlug !== null || isCreating;
 
 	return (
-		<div className="flex h-full flex-col md:flex-row">
+		<div className="flex flex-col md:flex-row">
 			{/* List pane */}
 			<aside
 				className={`${
 					showDetail ? 'hidden md:flex' : 'flex'
 				} w-full shrink-0 flex-col border-b border-gray-200 md:flex md:w-80 md:border-b-0 md:border-r`}
 			>
-				<div className="flex items-center justify-between gap-2 border-b border-gray-200 p-4">
-					<h1 className="text-base font-semibold">Skills database</h1>
-					<Button
-						size="sm"
-						onClick={() => {
-							setIsCreating(true);
-							setSelectedSlug(null);
-						}}
-					>
-						New
-					</Button>
-				</div>
-				<div className="flex-1 overflow-y-auto">
-					{(skills ?? []).length === 0 ? (
-						<p className="p-4 text-sm text-gray-500">No skills yet.</p>
-					) : (
-						<ul className="divide-y divide-gray-100">
-							{(skills ?? []).map((skill) => {
-								const badge = sourceBadge(skill);
-								const active = skill.slug === selectedSlug;
-								return (
-									<li key={skill.id}>
-										<button
-											type="button"
-											onClick={() => {
-												setSelectedSlug(skill.slug);
-												setIsCreating(false);
-											}}
-											className={`flex w-full flex-col gap-1 px-4 py-3 text-left hover:bg-gray-50 ${
-												active ? 'bg-gray-50' : ''
-											}`}
-										>
-											<span className="flex items-center gap-2">
-												<span className="truncate text-sm font-medium">{skill.name}</span>
-												<span
-													className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${badge.className}`}
-												>
-													{badge.label}
+				{/* Sticky on desktop so the skills list stays visible while a long
+				    skill scrolls. 2.5rem = the h-10 app header; the list scrolls
+				    internally if it outgrows the viewport. */}
+				<div className="md:sticky md:top-0 md:flex md:flex-col md:max-h-[calc(100vh-2.5rem)]">
+					<div className="flex items-center justify-between gap-2 border-b border-gray-200 p-4">
+						<h1 className="text-base font-semibold">Skills database</h1>
+						<Button
+							size="sm"
+							onClick={() => {
+								setIsCreating(true);
+								setSelectedSlug(null);
+							}}
+						>
+							New
+						</Button>
+					</div>
+					<div className="min-h-0 flex-1 overflow-y-auto">
+						{(skills ?? []).length === 0 ? (
+							<p className="p-4 text-sm text-gray-500">No skills yet.</p>
+						) : (
+							<ul className="divide-y divide-gray-100">
+								{(skills ?? []).map((skill) => {
+									const badge = sourceBadge(skill);
+									const active = skill.slug === selectedSlug;
+									return (
+										<li key={skill.id}>
+											<button
+												type="button"
+												onClick={() => {
+													setSelectedSlug(skill.slug);
+													setIsCreating(false);
+												}}
+												className={`flex w-full flex-col gap-1 px-4 py-3 text-left hover:bg-gray-50 ${
+													active ? 'bg-gray-50' : ''
+												}`}
+											>
+												<span className="flex items-center gap-2">
+													<span className="truncate text-sm font-medium">{skill.name}</span>
+													<span
+														className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${badge.className}`}
+													>
+														{badge.label}
+													</span>
 												</span>
-											</span>
-											{skill.description ? (
-												<span className="line-clamp-2 text-xs text-gray-500">
-													{skill.description}
-												</span>
-											) : null}
-										</button>
-									</li>
-								);
-							})}
-						</ul>
-					)}
+												{skill.description ? (
+													<span className="line-clamp-2 text-xs text-gray-500">
+														{skill.description}
+													</span>
+												) : null}
+											</button>
+										</li>
+									);
+								})}
+							</ul>
+						)}
+					</div>
 				</div>
 			</aside>
 
