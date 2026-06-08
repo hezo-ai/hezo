@@ -1,15 +1,37 @@
 import { INSTANCE_AGENT_SLUGS } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
+import { format } from 'date-fns';
 import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { LogViewer } from '../../../../../../components/log-viewer';
 import { TerminateRunButton } from '../../../../../../components/terminate-run-button';
 import { Badge } from '../../../../../../components/ui/badge';
+import { Tooltip } from '../../../../../../components/ui/tooltip';
 import { useAgent } from '../../../../../../hooks/use-agents';
 import { useElapsedDuration } from '../../../../../../hooks/use-elapsed-duration';
 import { getRunWaitingMessage, useHeartbeatRun } from '../../../../../../hooks/use-heartbeat-runs';
 import { useRunLogs } from '../../../../../../hooks/use-run-logs';
 import { formatTriggerReason } from '../../../../../../lib/run-trigger';
+
+function formatTimeRange(
+	startedAt: string | null,
+	finishedAt: string | null,
+): { compact: string; full: string } | null {
+	if (!startedAt) return null;
+	const start = new Date(startedAt);
+	const end = finishedAt ? new Date(finishedAt) : null;
+	const sameDay = end && start.toDateString() === end.toDateString();
+	const compactStart = format(start, 'MMM d, HH:mm:ss');
+	const compact = !end
+		? `Started ${compactStart}`
+		: sameDay
+			? `${compactStart} → ${format(end, 'HH:mm:ss')}`
+			: `${compactStart} → ${format(end, 'MMM d, HH:mm:ss')}`;
+	const full = !end
+		? `Started ${start.toLocaleString()}`
+		: `${start.toLocaleString()} → ${end.toLocaleString()}`;
+	return { compact, full };
+}
 
 function statusColor(status: string): string {
 	switch (status) {
@@ -114,47 +136,51 @@ function ExecutionDetailPage() {
 				);
 			})()}
 
-			<div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
-				<div className="rounded-lg border border-border-subtle bg-bg p-3">
-					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Duration</div>
-					<div className="text-sm font-medium">{elapsedDisplay}</div>
-				</div>
-
-				<div className="rounded-lg border border-border-subtle bg-bg p-3">
-					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">When</div>
-					<div className="text-sm">
-						{run.started_at ? (
-							<>
-								{new Date(run.started_at).toLocaleString()}
-								{run.finished_at && (
-									<>
-										<span className="text-text-subtle"> → </span>
-										{new Date(run.finished_at).toLocaleString()}
-									</>
+			{(() => {
+				const range = formatTimeRange(run.started_at, run.finished_at);
+				return (
+					<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+						<div className="rounded-lg border border-border-subtle bg-bg p-3">
+							<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">
+								Timing
+							</div>
+							<div className="flex items-baseline gap-2 flex-wrap">
+								<span data-testid="run-duration" className="text-sm font-medium tabular-nums">
+									{elapsedDisplay}
+								</span>
+								{range ? (
+									<Tooltip content={range.full}>
+										<span className="text-xs text-text-subtle whitespace-nowrap tabular-nums">
+											{range.compact}
+										</span>
+									</Tooltip>
+								) : (
+									<span className="text-xs text-text-subtle">Waiting to start…</span>
 								)}
-							</>
-						) : (
-							<span className="text-text-subtle">Waiting to start…</span>
+							</div>
+						</div>
+
+						{!isActive && (
+							<div className="rounded-lg border border-border-subtle bg-bg p-3">
+								<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">
+									Usage
+								</div>
+								<div className="flex items-baseline gap-2 flex-wrap">
+									{run.cost_cents != null && run.cost_cents > 0 && (
+										<span className="text-sm font-medium tabular-nums">
+											${(run.cost_cents / 100).toFixed(2)}
+										</span>
+									)}
+									<span className="text-xs text-text-subtle whitespace-nowrap tabular-nums">
+										{run.input_tokens.toLocaleString()} in · {run.output_tokens.toLocaleString()}{' '}
+										out tokens
+									</span>
+								</div>
+							</div>
 						)}
 					</div>
-				</div>
-
-				{!isActive && (
-					<div className="rounded-lg border border-border-subtle bg-bg p-3">
-						<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Tokens</div>
-						<div className="text-sm">
-							{run.input_tokens.toLocaleString()} in / {run.output_tokens.toLocaleString()} out
-						</div>
-					</div>
-				)}
-
-				{!isActive && run.cost_cents != null && run.cost_cents > 0 && (
-					<div className="rounded-lg border border-border-subtle bg-bg p-3">
-						<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Cost</div>
-						<div className="text-sm font-medium">${(run.cost_cents / 100).toFixed(2)}</div>
-					</div>
-				)}
-			</div>
+				);
+			})()}
 
 			{run.task_identifier &&
 				(run.task_id ? (
