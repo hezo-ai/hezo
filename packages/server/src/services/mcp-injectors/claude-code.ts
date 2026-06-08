@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { AiProvider } from '@hezo/shared';
 import { buildClaudeCodeSettings } from '../stop-hook-prompt';
 import type {
 	McpDescriptor,
@@ -56,7 +57,7 @@ export const claudeCodeAdapter: RuntimeMcpAdapter = {
 
 		const settingsHostPath = join(ctx.hostHomeDir, 'settings.json');
 		const settingsContainerPath = join(ctx.containerHomeDir, 'settings.json');
-		const settingsContents = `${JSON.stringify(buildClaudeCodeSettings(), null, 2)}\n`;
+		const settingsContents = `${JSON.stringify(buildClaudeCodeSettings(ctx.provider ?? AiProvider.Anthropic), null, 2)}\n`;
 
 		const cliArgs: string[] = ['--settings', settingsContainerPath];
 		if (descriptors.length > 0) {

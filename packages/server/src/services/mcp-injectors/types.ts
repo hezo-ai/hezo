@@ -1,3 +1,5 @@
+import type { AiProvider } from '@hezo/shared';
+
 /**
  * Normalized MCP server descriptor passed by the agent runner. Per-runtime
  * adapters translate a list of these into the spawn artifacts (CLI args,
@@ -78,6 +80,14 @@ export interface McpAdapterContext {
 	hostHomeDir: string | null;
 	/** Same path as it appears inside the container. */
 	containerHomeDir: string | null;
+	/**
+	 * AI provider for this run. The Claude Code adapter uses it to pick the
+	 * Stop-hook judge model — the judge runs against the team's own upstream, so
+	 * the model must be one that provider serves (the Anthropic id on DeepSeek /
+	 * Z.ai would 404 and the hook would fail open). Optional for adapters/tests
+	 * that don't need it; the Claude Code adapter falls back to the Anthropic judge.
+	 */
+	provider?: AiProvider;
 	/** Team-scoped agent skill files (e.g. from `fetch_skill_file`). Adapters
 	 *  write these to their conventional skills directory; Claude Code reads
 	 *  `~/.claude/skills/<slug>.md`, others use whatever convention they have. */

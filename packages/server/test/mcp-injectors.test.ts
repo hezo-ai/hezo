@@ -1,7 +1,12 @@
-import { AgentRuntime } from '@hezo/shared';
+import { AgentRuntime, AiProvider } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from '../src/services/mcp-injectors';
-import { STOP_HOOK_RULES } from '../src/services/stop-hook-prompt';
+import {
+	STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
+	STOP_HOOK_JUDGE_MODEL_DEEPSEEK,
+	STOP_HOOK_JUDGE_MODEL_ZAI,
+	STOP_HOOK_RULES,
+} from '../src/services/stop-hook-prompt';
 
 const HOME = '/workspace/.hezo/subscription/codex/run-1';
 const URL = 'http://host.docker.internal:3000/mcp';
@@ -122,6 +127,31 @@ describe('claude-code adapter', () => {
 		const settingsIndex = injection.cliArgs.indexOf('--settings');
 		expect(settingsIndex).toBeGreaterThanOrEqual(0);
 		expect(injection.cliArgs[settingsIndex + 1]).toBe(`${HOME}/settings.json`);
+	});
+
+	const judgeModelFor = (provider?: AiProvider): string => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+			provider,
+		});
+		const settings = JSON.parse(injection.files[0].contents) as {
+			hooks: { Stop: Array<{ hooks: Array<{ model: string }> }> };
+		};
+		return settings.hooks.Stop[0].hooks[0].model;
+	};
+
+	it('picks a Stop-hook judge model the provider upstream actually serves', () => {
+		// The judge call runs against the team's own upstream, so a non-Anthropic
+		// Claude Code provider must get its own model id — otherwise the call 404s
+		// and the hook fails open (the bug being fixed).
+		expect(judgeModelFor(AiProvider.Anthropic)).toBe(STOP_HOOK_JUDGE_MODEL_ANTHROPIC);
+		expect(judgeModelFor(AiProvider.DeepSeek)).toBe(STOP_HOOK_JUDGE_MODEL_DEEPSEEK);
+		expect(judgeModelFor(AiProvider.ZAi)).toBe(STOP_HOOK_JUDGE_MODEL_ZAI);
+	});
+
+	it('falls back to the Anthropic judge model when no provider is supplied', () => {
+		expect(judgeModelFor(undefined)).toBe(STOP_HOOK_JUDGE_MODEL_ANTHROPIC);
 	});
 });
 

@@ -14,16 +14,37 @@
  *
  * The judge runs inside the container against the team's existing
  * provider credential. No server-side LLM client. The hook is always on;
- * teams do not opt in or out. If the configured judge model isn't
- * reachable through the team's upstream (e.g. DeepSeek for Claude Code,
- * an unreachable OpenAI/Google API) the script fails open — exits 0 with
- * no output, which Codex/Gemini treat as "allow" — and the agent stops
- * normally.
+ * teams do not opt in or out. The judge model is chosen per provider so the
+ * call resolves against the team's own upstream — see
+ * CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER for the Claude Code runtimes and the
+ * OpenAI/Google constants below. If a judge is genuinely unreachable
+ * (subscription auth with no API key, or an upstream outage) the script
+ * fails open — exits 0 with no output, which the runtimes treat as "allow"
+ * — and the agent stops normally.
  */
 
+import { AiProvider } from '@hezo/shared';
+
 export const STOP_HOOK_JUDGE_MODEL_ANTHROPIC = 'claude-sonnet-4-6';
+export const STOP_HOOK_JUDGE_MODEL_DEEPSEEK = 'deepseek-v4-pro';
+export const STOP_HOOK_JUDGE_MODEL_ZAI = 'GLM-4.7';
 export const STOP_HOOK_JUDGE_MODEL_OPENAI = 'gpt-4o-mini';
 export const STOP_HOOK_JUDGE_MODEL_GOOGLE = 'gemini-1.5-flash';
+
+/**
+ * Judge model for the Claude Code `type:"prompt"` Stop hook, keyed by provider.
+ * Claude Code makes the judge call itself against the session's own upstream,
+ * so the model MUST be one that provider's endpoint actually serves. Using the
+ * Anthropic id on DeepSeek/Z.ai 404s, so the hook fails open and never blocks —
+ * the bug this map fixes. Values mirror each provider's
+ * ANTHROPIC_DEFAULT_SONNET_MODEL in PROVIDER_RUNTIME_ADAPTERS; only Claude
+ * Code-runtime providers ever reach here.
+ */
+export const CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER: Partial<Record<AiProvider, string>> = {
+	[AiProvider.Anthropic]: STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
+	[AiProvider.DeepSeek]: STOP_HOOK_JUDGE_MODEL_DEEPSEEK,
+	[AiProvider.ZAi]: STOP_HOOK_JUDGE_MODEL_ZAI,
+};
 
 /**
  * The rule body the judge LLM evaluates against. Claude Code's hook
@@ -68,7 +89,8 @@ export interface ClaudeCodeSettings {
 	};
 }
 
-export function buildClaudeCodeSettings(): ClaudeCodeSettings {
+export function buildClaudeCodeSettings(provider: AiProvider): ClaudeCodeSettings {
+	const model = CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER[provider] ?? STOP_HOOK_JUDGE_MODEL_ANTHROPIC;
 	return {
 		hooks: {
 			Stop: [
@@ -78,7 +100,7 @@ export function buildClaudeCodeSettings(): ClaudeCodeSettings {
 							type: 'prompt',
 							prompt: STOP_HOOK_PROMPT,
 							timeout: 30,
-							model: STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
+							model,
 							statusMessage: 'Checking work completeness...',
 						},
 					],

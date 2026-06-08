@@ -2,8 +2,30 @@ FROM node:24-slim
 
 # Install common development tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl jq openssh-client ca-certificates python3 socat sudo \
+    curl jq openssh-client ca-certificates python3 socat sudo \
     && rm -rf /var/lib/apt/lists/*
+
+# Build git from source. The host creates per-task worktrees with
+# `git worktree add --relative-paths`, which records `extensions.relativeworktrees`
+# in the repo config. Debian's packaged git (<2.48) refuses to read that
+# extension — "fatal: unknown repository extension found: relativeworktrees" —
+# which breaks every in-container git operation (status/commit/push), so agents
+# can never persist their work. Build a git new enough to understand it, then
+# drop the heavy build toolchain in the same layer (the small -dev packages stay
+# so git keeps its runtime shared libs). The final `git --version` fails the
+# build if anything is wrong.
+ENV GIT_VERSION=2.51.0
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential gettext libcurl4-openssl-dev libexpat1-dev zlib1g-dev libssl-dev \
+    && curl -fsSL "https://www.kernel.org/pub/software/scm/git/git-${GIT_VERSION}.tar.gz" -o /tmp/git.tar.gz \
+    && tar -xzf /tmp/git.tar.gz -C /tmp \
+    && make -C "/tmp/git-${GIT_VERSION}" prefix=/usr/local NO_TCLTK=1 NO_GITWEB=1 NO_PERL=1 NO_PYTHON=1 -j"$(nproc)" all \
+    && make -C "/tmp/git-${GIT_VERSION}" prefix=/usr/local NO_TCLTK=1 NO_GITWEB=1 NO_PERL=1 NO_PYTHON=1 install \
+    && rm -rf /tmp/git.tar.gz "/tmp/git-${GIT_VERSION}" \
+    && apt-get purge -y build-essential \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && git --version
 
 # The container runs as the unprivileged `node` user (so bind-mounted worktree
 # files stay node-owned), but agents need to install system packages at runtime
