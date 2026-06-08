@@ -13,5 +13,5 @@ test('global inbox route mounts across all of the user teams', async () => {
 	// The /home/inbox route mounts InboxView in global scope (aggregating every
 	// team the user belongs to). The page heading distinguishes it from the
 	// sidebar's per-team "Inbox" link.
-	await findByRole('heading', { name: 'Inbox' });
+	await findByRole('heading', { name: 'Global inbox' });
 });

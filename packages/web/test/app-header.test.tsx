@@ -32,8 +32,8 @@ test('header keeps Home top-left and the rest in the top-right group', async () 
 	expect(header.querySelector('[data-testid="app-header-new"]') ?? null).toBeNull();
 });
 
-test('header exposes instance-resource shortcuts that navigate to the settings pages', async () => {
-	const { findByTestId, getByTestId, user, router } = await renderApp({
+test('header exposes the Skills shortcut and routes connectors/credentials through Settings', async () => {
+	const { findByTestId, getByTestId, queryByTestId, user, router } = await renderApp({
 		initialPath: '/home',
 		seed: async () => {
 			await seedWorkspace();
@@ -41,9 +41,10 @@ test('header exposes instance-resource shortcuts that navigate to the settings p
 	});
 
 	await findByTestId('app-header-skills');
-	getByTestId('app-header-connectors');
-	getByTestId('app-header-credentials');
 	getByTestId('app-header-settings');
+
+	expect(queryByTestId('app-header-connectors')).toBeNull();
+	expect(queryByTestId('app-header-credentials')).toBeNull();
 
 	await user.click(getByTestId('app-header-skills'));
 	await waitFor(() => expect(router.state.location.pathname).toBe('/settings/skills'));

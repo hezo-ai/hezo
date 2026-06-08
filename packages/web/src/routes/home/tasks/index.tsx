@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { TaskStatusBadge } from '../../../components/task-status-badge';
+import { InfoTooltip } from '../../../components/ui/info-tooltip';
 import { useAllVisibleProjects } from '../../../hooks/use-projects';
 import { type GlobalTask, useAllTasks } from '../../../hooks/use-tasks';
 
@@ -35,7 +36,14 @@ function AllTasksPage() {
 			className="max-w-7xl mx-auto w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6"
 			data-testid="all-tasks-page"
 		>
-			<h1 className="text-[22px] font-medium mb-5">All Tasks</h1>
+			<div className="flex items-center gap-1.5 mb-5">
+				<h1 className="text-[22px] font-medium">All Tasks</h1>
+				<InfoTooltip
+					label="About the All Tasks page"
+					content="Every task across every project and team you can see, in one list."
+					data-testid="all-tasks-info"
+				/>
+			</div>
 			{isLoading ? (
 				<div className="text-text-muted text-[13px]">Loading tasks…</div>
 			) : (tasks ?? []).length === 0 ? (

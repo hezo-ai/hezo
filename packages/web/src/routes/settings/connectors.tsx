@@ -3,6 +3,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { Input } from '../../components/ui/input';
 import {
 	useCreateInstanceConnector,
@@ -55,7 +56,14 @@ function InstanceConnectorsPage() {
 			<>
 				<div className="flex items-start justify-between gap-3 mb-4">
 					<div>
-						<h1 className="text-[22px] font-medium">Instance connectors</h1>
+						<div className="flex items-center gap-1.5">
+							<h1 className="text-[22px] font-medium">Connectors</h1>
+							<InfoTooltip
+								label="About connectors"
+								content="Remote MCP servers shared with every team's agent runs. A team-scoped connector with the same name overrides this."
+								data-testid="connectors-info"
+							/>
+						</div>
 						<p className="text-[13px] text-text-muted mt-1 max-w-[680px]">
 							Remote (SaaS) MCP servers shared with every team's agent runs. A team-scoped connector
 							with the same name overrides the instance one for that team. Authenticate per-team

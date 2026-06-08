@@ -7,6 +7,7 @@ import { ApprovalCard } from './approval-card';
 import { MentionCard } from './mention-card';
 import { EmptyState } from './ui/empty-state';
 import { FilterPills } from './ui/filter-pills';
+import { InfoTooltip } from './ui/info-tooltip';
 
 interface InboxViewProps {
 	teamIds: string[];
@@ -114,7 +115,18 @@ export function InboxView({ teamIds, scope }: InboxViewProps) {
 
 	return (
 		<div>
-			<h1 className="text-[22px] font-medium mb-5">Inbox</h1>
+			<div className="flex items-center gap-1.5 mb-5">
+				<h1 className="text-[22px] font-medium">{scope === 'global' ? 'Global inbox' : 'Inbox'}</h1>
+				<InfoTooltip
+					label="About the inbox"
+					content={
+						scope === 'global'
+							? 'Approvals and mentions waiting on you from every team you belong to.'
+							: 'Approvals and mentions waiting on you in this team.'
+					}
+					data-testid="inbox-info"
+				/>
+			</div>
 
 			<div className="flex flex-col gap-2 mb-4 sm:flex-row sm:items-center sm:justify-between">
 				<FilterPills options={READ_OPTIONS} value={readFilter} onChange={setReadFilter} />
