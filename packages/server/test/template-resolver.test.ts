@@ -217,6 +217,16 @@ describe('template resolver', () => {
 		expect(result).toContain('@@architect — BE-4 and BE-5 unblock now');
 	});
 
+	it('mention discipline makes @@ the explicit default and flags the status-recap antipattern', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// passive is the explicit presumption; single-@ is the deliberate exception
+		expect(result).toContain('Default to `@@` (passive)');
+		expect(result).toContain('do I need this agent to act on this ticket right now');
+		// the exact pattern that over-pinged the roster: crediting reviewers in a recap stays passive
+		expect(result).toContain('Status updates and review recaps credit people');
+		expect(result).toContain('at most one');
+	});
+
 	it('injects Run Context with only team id when no project/task', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('## Run Context');
