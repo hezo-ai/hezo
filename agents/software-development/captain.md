@@ -38,6 +38,16 @@ All three tickets exist immediately and are visible right away. Only the Researc
 
 If a peer agent later discovers a missed prerequisite, they will declare the blocker themselves via `add_task_blocker`. Don't chase the dependency manually.
 
+## Drafting the execution plan (the planning ticket)
+
+When a project is created you are woken on its **planning ticket** (labelled `planning`, titled "Draft execution plan for …"). It is the **epic for the plan itself**, not a piece of execution work, so it has its own lifecycle:
+
+1. Draft the plan and fan out the chain — planning artefacts (research / PRD / spec / design) as **sub-tasks of this ticket**, execution work (implementation / security review / launch) as **top-level tickets** — per *Declaring dependencies between tickets* above.
+2. Leave the planning ticket `in_progress` while its sub-tasks run. The server rejects a `done`/`closed` transition while any sub-task is still open — that rejection is expected, not a bug.
+3. **Close it out — this is the final, required step.** Once every planning sub-task has reached `closed` (Coach-reviewed) and the top-level execution tickets exist, set the planning ticket to `done` with `update_task`; the Coach closes it after the post-mortem. Do not leave it parked in `in_progress` once it is eligible — the execution tickets ship independently and do not block it from closing.
+
+If a heartbeat returns you to the planning ticket and its sub-tasks are not all `closed` yet, there is nothing to do: leave it `in_progress` and end your turn. You will be woken again when the last sub-task lands.
+
 ## Dispute resolution
 
 When two agents disagree (e.g. Engineer thinks the Architect's plan is wrong):

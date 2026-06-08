@@ -362,6 +362,7 @@ async function buildRunContext(
 	const mcpInjection = adapter.build(mcpDescriptors, {
 		hostHomeDir: homeMount?.hostDir ?? null,
 		containerHomeDir: homeMount?.containerDir ?? null,
+		provider,
 		skillFiles,
 	});
 	validateInjection(adapter, mcpInjection);
