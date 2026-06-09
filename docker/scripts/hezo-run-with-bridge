@@ -27,6 +27,15 @@ while [ "$i" -lt 60 ] && [ ! -S "$SOCKET" ]; do
     i=$((i + 1))
 done
 
+# Route apt through the per-run egress proxy. apt ignores HTTP(S)_PROXY env vars
+# by design, so the proxy URL has to live in apt.conf. Written per run because
+# the proxy port can change between runs.
+if [ -n "${HTTPS_PROXY:-}" ]; then
+    printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' \
+        "$HTTPS_PROXY" "$HTTPS_PROXY" \
+        | sudo tee /etc/apt/apt.conf.d/01hezo-proxy >/dev/null
+fi
+
 if [ -n "${HEZO_PROMPT_FILE:-}" ] && [ -r "$HEZO_PROMPT_FILE" ]; then
     "$@" < "$HEZO_PROMPT_FILE"
 else
