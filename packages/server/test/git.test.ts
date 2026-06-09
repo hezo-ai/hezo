@@ -126,3 +126,65 @@ describe('worktree gitdir links are container-portable (relative)', () => {
 		expect(dotGit).not.toMatch(/gitdir: \//);
 	});
 });
+
+// A worktree's tree can outlive its admin metadata: the entry under the clone's
+// .git/worktrees/<name> gets pruned/gc'd (e.g. an old absolute link no longer
+// resolved inside the container) or the clone is recreated, while the worktree
+// dir survives on its separate mount. The leftover .git file then points nowhere
+// and every git command in the worktree fails with "not a git repository".
+// ensureTaskWorktree must detect this and rebuild the worktree from the branch.
+describe('rebuilds a worktree orphaned from its clone', () => {
+	const projectDir = join(testDir, 'orphan');
+	const repoDir = join(projectDir, 'workspace', 'todos');
+	const worktreePath = join(projectDir, 'worktrees', 'TO-2', 'todos');
+
+	function adminDir(): string {
+		const rel = readFileSync(join(worktreePath, '.git'), 'utf-8').trim().replace('gitdir: ', '');
+		return join(worktreePath, rel);
+	}
+
+	beforeAll(() => {
+		mkdirSync(join(projectDir, 'workspace'), { recursive: true });
+		run(`git clone ${bareRepoDir} ${repoDir}`);
+		run('git config user.name Test', repoDir);
+		run('git config user.email test@test.com', repoDir);
+		run('git config commit.gpgsign false', repoDir);
+	});
+
+	it('detects the broken link and recreates the worktree, preserving branch commits', async () => {
+		const created = await ensureTaskWorktree(repoDir, worktreePath, 'hezo/TO-2');
+		expect(created.success).toBe(true);
+		expect(created.created).toBe(true);
+
+		// A local-only commit on the branch — must survive the rebuild.
+		run('git config user.name Test', worktreePath);
+		run('git config user.email test@test.com', worktreePath);
+		run('git config commit.gpgsign false', worktreePath);
+		writeFileSync(join(worktreePath, 'feature.txt'), 'work in progress\n');
+		run('git add .', worktreePath);
+		run('git commit -m wip', worktreePath);
+
+		// Orphan the worktree: drop its admin metadata, keep the tree.
+		rmSync(adminDir(), { recursive: true, force: true });
+		expect(existsSync(join(worktreePath, '.git'))).toBe(true);
+		expect(() =>
+			execSync('git rev-parse --git-dir', { cwd: worktreePath, stdio: 'pipe' }),
+		).toThrow();
+
+		const healed = await ensureTaskWorktree(repoDir, worktreePath, 'hezo/TO-2');
+		expect(healed.success).toBe(true);
+
+		// Worktree resolves again and the local-only commit is intact.
+		expect(() =>
+			execSync('git rev-parse --git-dir', { cwd: worktreePath, stdio: 'pipe' }),
+		).not.toThrow();
+		expect(existsSync(join(worktreePath, 'feature.txt'))).toBe(true);
+		const log = execSync('git log --oneline', { cwd: worktreePath }).toString();
+		expect(log).toContain('wip');
+
+		// And the rebuilt link is still container-portable (relative).
+		const dotGit = readFileSync(join(worktreePath, '.git'), 'utf-8').trim();
+		expect(dotGit.startsWith('gitdir: ../')).toBe(true);
+		expect(dotGit).not.toMatch(/gitdir: \//);
+	});
+});

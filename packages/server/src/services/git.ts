@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { RepoHostType } from '@hezo/shared';
 
 function spawn(
@@ -122,62 +122,104 @@ export async function createWorktree(
 	return { success: true };
 }
 
+/**
+ * A linked worktree resolves only when its admin metadata still lives under the
+ * clone's `.git/worktrees/<name>`. That entry can be lost — pruned/gc'd when an
+ * older absolute-path link no longer resolved inside the container, or the clone
+ * recreated — while the worktree tree itself survives on its separate mount,
+ * leaving a `.git` file that points nowhere. Confirm the link still resolves to a
+ * git dir that exists on disk.
+ */
+async function isWorktreeHealthy(worktreePath: string): Promise<boolean> {
+	const res = await spawn('git', ['-C', worktreePath, 'rev-parse', '--git-dir'], {
+		timeout: 30_000,
+	});
+	if (res.exitCode !== 0) return false;
+	const gitDir = res.stdout.trim();
+	if (!gitDir) return false;
+	const resolved = isAbsolute(gitDir) ? gitDir : join(worktreePath, gitDir);
+	return existsSync(resolved);
+}
+
+/**
+ * Adds a worktree for the task branch, choosing the checkout source by what
+ * already exists: an existing local branch is checked out as-is (preserving its
+ * commits — the case when rebuilding a worktree whose metadata was lost), an
+ * existing remote branch is tracked, otherwise a new branch is created.
+ */
+async function addTaskWorktree(
+	repoDir: string,
+	worktreePath: string,
+	branchName: string,
+): Promise<{ success: boolean; created: boolean; error?: string }> {
+	const localBranch = await spawn(
+		'git',
+		['show-ref', '--verify', '--quiet', `refs/heads/${branchName}`],
+		{ cwd: repoDir, timeout: 30_000 },
+	);
+	const remoteBranch = await spawn('git', ['rev-parse', '--verify', `origin/${branchName}`], {
+		cwd: repoDir,
+		timeout: 30_000,
+	});
+
+	let args: string[];
+	if (localBranch.exitCode === 0) {
+		args = ['worktree', 'add', '--relative-paths', worktreePath, branchName];
+	} else if (remoteBranch.exitCode === 0) {
+		args = [
+			'worktree',
+			'add',
+			'--relative-paths',
+			'--track',
+			'-b',
+			branchName,
+			worktreePath,
+			`origin/${branchName}`,
+		];
+	} else {
+		args = ['worktree', 'add', '--relative-paths', '-b', branchName, worktreePath];
+	}
+
+	const result = await spawn('git', args, { cwd: repoDir, timeout: 30_000 });
+	if (result.exitCode !== 0) {
+		return { success: false, created: false, error: formatGitError(result.stderr) };
+	}
+	return { success: true, created: true };
+}
+
 export async function ensureTaskWorktree(
 	repoDir: string,
 	worktreePath: string,
 	branchName: string,
 ): Promise<{ success: boolean; created: boolean; error?: string }> {
 	if (existsSync(join(worktreePath, '.git'))) {
-		// Rewrite the worktree's gitdir links to relative form. Worktrees created
-		// before this used absolute host paths, which resolve on the host but not
-		// inside the container's bind mounts; relativizing makes them portable.
+		// Relativize the worktree's gitdir links. Worktrees created before this used
+		// absolute host paths that resolve on the host but not inside the container's
+		// bind mounts; repair rewrites them to portable relative form.
 		await spawn('git', ['worktree', 'repair', '--relative-paths', worktreePath], {
 			cwd: repoDir,
 			timeout: 30_000,
 		});
-		const ff = await spawn('git', ['merge', '--ff-only', `origin/${branchName}`], {
-			cwd: worktreePath,
-			timeout: 30_000,
-		});
-		if (ff.exitCode !== 0 && !ff.stderr.toLowerCase().includes("couldn't find remote ref")) {
-			return { success: true, created: false, error: formatGitError(ff.stderr) };
+
+		if (await isWorktreeHealthy(worktreePath)) {
+			const ff = await spawn('git', ['merge', '--ff-only', `origin/${branchName}`], {
+				cwd: worktreePath,
+				timeout: 30_000,
+			});
+			if (ff.exitCode !== 0 && !ff.stderr.toLowerCase().includes("couldn't find remote ref")) {
+				return { success: true, created: false, error: formatGitError(ff.stderr) };
+			}
+			return { success: true, created: false };
 		}
-		return { success: true, created: false };
+
+		// The tree exists but its git dir no longer resolves and repair can't rebuild
+		// a fully-lost admin entry. Discard the stale tree and recreate the worktree
+		// from the branch, which still lives in the clone.
+		rmSync(worktreePath, { recursive: true, force: true });
+		await pruneWorktrees(repoDir);
 	}
 
-	const remoteCheck = await spawn('git', ['rev-parse', '--verify', `origin/${branchName}`], {
-		cwd: repoDir,
-		timeout: 30_000,
-	});
-
-	let result: Awaited<ReturnType<typeof spawn>>;
-	if (remoteCheck.exitCode === 0) {
-		result = await spawn(
-			'git',
-			[
-				'worktree',
-				'add',
-				'--relative-paths',
-				'--track',
-				'-b',
-				branchName,
-				worktreePath,
-				`origin/${branchName}`,
-			],
-			{ cwd: repoDir, timeout: 30_000 },
-		);
-	} else {
-		result = await spawn(
-			'git',
-			['worktree', 'add', '--relative-paths', '-b', branchName, worktreePath],
-			{ cwd: repoDir, timeout: 30_000 },
-		);
-	}
-
-	if (result.exitCode !== 0) {
-		return { success: false, created: false, error: formatGitError(result.stderr) };
-	}
-	return { success: true, created: true };
+	return addTaskWorktree(repoDir, worktreePath, branchName);
 }
 
 export async function removeWorktree(
