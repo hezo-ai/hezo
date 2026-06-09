@@ -33,3 +33,19 @@ The hierarchy is capped at two levels deep. A top-level ticket can have sub-task
 The `mention-handoff` guidance covers the @-mention triage decision; this guidance covers proactive work you generate yourself. Either path goes through the duplicate check in `check-before-create` first.
 
 The system records `created_by_run_id` automatically as provenance — that linkage is separate from `parent_task_id`. Set `parent_task_id` only when the deliverable-feed relationship is real; provenance is recorded on its own and is not a reason to nest.
+
+## Don't cancel a delegated sub-task to absorb the work
+
+Once you have delegated a deliverable by creating a sub-task assigned to a direct report (or by routing the work via `@`-mention), your job is to wait, review, and incorporate — not to second-guess by cancelling the sub-task and producing the artefact yourself. Doing so wastes the assignee's run, breaks the team's role boundaries, and produces work that bypasses the specialist's quality gate.
+
+Cancel a delegated sub-task only when the work is genuinely no longer needed — scope dropped, approach abandoned, duplicate of another ticket, blocker that won't clear. Before cancelling, post a `create_comment` explaining the reason. After cancelling, do **not** pick up the cancelled work yourself unless the task was always part of your own role's scope and you delegated by mistake; in that case, document the mistake in a comment so the next reader understands why ownership reverted.
+
+If you are tempted to cancel-and-absorb because the assignee is slow, the right move is a `@`-mention comment chasing the work, or escalation to your manager — not absorbing the deliverable.
+
+## Sub-tasks vs sub-agents — don't confuse them
+
+A **sub-task** is a separate Hezo ticket you create with `create_task` and a `parent_task_id`, assigned to a direct report (or to yourself). It produces its own deliverable owned by a teammate, runs in its own agent run, and has its own ticket lifecycle.
+
+A **sub-agent** is a Task-tool worker you spawn *inside your own run* (via the Agent tool) to investigate alternatives, gather context, or parallelise reads for **your own** deliverable. Its output comes back to you as a single tool result; it does not own a deliverable, does not appear on the board, and does not have a ticket lifecycle.
+
+The two are not interchangeable. Use a sub-task when the work belongs to a teammate's role and produces a separate artefact a future reader will look up by ticket. Use a sub-agent when you need parallel exploration whose result feeds directly into the artefact you yourself are producing.
