@@ -36,8 +36,12 @@ export default defineConfig({
 		environment: 'happy-dom',
 		include: ['test/**/*.test.tsx', 'test/**/*.test.ts'],
 		setupFiles: ['test/helpers/setup.ts'],
-		testTimeout: 15000,
-		hookTimeout: 30000,
+		// Matcher ceilings of 20_000 / 30_000ms appear throughout the suite;
+		// the per-test cap has to exceed them or the test-level timeout fires
+		// first on a contended CI runner (4 forks × PGlite + Hono boot) and
+		// the matcher's grace window never actually applies.
+		testTimeout: 45000,
+		hookTimeout: 45000,
 		pool: 'forks',
 		poolOptions: {
 			forks: {
