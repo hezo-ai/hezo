@@ -34,9 +34,11 @@ import {
 	type ContainerExitReason,
 	type ContainerTransition,
 	failProjectRuns,
+	provisionContainer,
 	rebuildContainer,
 	syncAllContainerStatuses,
 	verifyContainerWorkspace,
+	wakeAgentsWithPendingWork,
 } from './containers';
 import type { DockerClient } from './docker';
 import type { EgressProxy } from './egress';
@@ -507,7 +509,95 @@ export class JobManager {
 		}
 
 		await this.selfHealErroredContainers(docker);
+		await this.restartStoppedRunningContainers(docker);
 		await this.repairStaleContainerMounts(docker);
+	}
+
+	/**
+	 * Bring projects whose DB says container_status = running back to actually-
+	 * running. Covers the host-reboot / Docker-restart case where the server
+	 * never got to mark the container as stopped. Missing containers are
+	 * re-provisioned from scratch; stopped ones are started in place. Projects
+	 * the user explicitly stopped (container_status = stopped) are left alone.
+	 */
+	private async restartStoppedRunningContainers(docker: DockerClient): Promise<void> {
+		const { db, wsManager, containerLogStreamer, logs } = this.deps;
+
+		const reachable = await docker.ping();
+		if (!reachable) {
+			log.warn('Docker not reachable at startup; skipping container restart pass');
+			return;
+		}
+
+		const candidates = await db.query<{
+			id: string;
+			team_id: string;
+			slug: string;
+			team_slug: string;
+			container_id: string;
+			container_status: string | null;
+			docker_base_image: string;
+			dev_ports: Array<{ container: number; host: number }>;
+		}>(
+			`SELECT p.id, p.team_id, p.slug, c.slug AS team_slug,
+			        p.container_id, p.container_status, p.docker_base_image, p.dev_ports
+			 FROM projects p
+			 JOIN teams c ON c.id = p.team_id
+			 WHERE p.container_status = $1::container_status AND p.container_id IS NOT NULL`,
+			[ContainerStatus.Running],
+		);
+
+		let restarted = 0;
+		let reprovisioned = 0;
+
+		for (const row of candidates.rows) {
+			try {
+				const info = await docker.inspectContainer(row.container_id);
+
+				if (info === null) {
+					await provisionContainer(
+						this.buildContainerDeps(),
+						{
+							id: row.id,
+							team_id: row.team_id,
+							slug: row.slug,
+							docker_base_image: row.docker_base_image,
+							container_id: row.container_id,
+							container_status: row.container_status,
+							dev_ports: row.dev_ports ?? [],
+						},
+						row.team_slug,
+					);
+					reprovisioned++;
+					log.info(`Re-provisioned project ${row.id} — container was missing from Docker`);
+					continue;
+				}
+
+				if (info.State.Running) continue;
+
+				await docker.startContainer(row.container_id);
+				await db.query('UPDATE projects SET container_error = NULL WHERE id = $1', [row.id]);
+				containerLogStreamer.subscribe(row.id, row.container_id, logs, docker);
+				broadcastRowChange(wsManager, wsRoom.team(row.team_id), 'projects', 'UPDATE', {
+					id: row.id,
+					container_status: ContainerStatus.Running,
+					container_error: null,
+				});
+				await wakeAgentsWithPendingWork(db, row.id, row.team_id).catch((e) =>
+					log.error(`Failed to wake agents after startup restart for project ${row.id}:`, e),
+				);
+				restarted++;
+				log.info(`Restarted container ${row.container_id.slice(0, 12)} for project ${row.id}`);
+			} catch (err) {
+				log.error(`Failed to restart container for project ${row.id} on startup:`, err);
+			}
+		}
+
+		if (restarted > 0 || reprovisioned > 0) {
+			log.info(
+				`Startup container restart: restarted ${restarted}, re-provisioned ${reprovisioned}`,
+			);
+		}
 	}
 
 	/**
