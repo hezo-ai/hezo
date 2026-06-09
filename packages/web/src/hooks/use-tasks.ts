@@ -2,7 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
-import { useOptimisticMutation } from './use-optimistic-mutation';
+import { useSimpleOptimisticUpdate } from './use-optimistic-mutation';
 
 export interface QueuedWakeup {
 	reason: 'task_busy' | 'project_at_capacity' | 'agent_running';
@@ -162,20 +162,18 @@ interface UpdateTaskVars {
 }
 
 export function useUpdateTask(projectId: string, taskId: string) {
-	return useOptimisticMutation<UpdateTaskVars, Task, Task>({
-		mutationFn: (data) => api.patch<Task>(`/api/projects/${projectId}/tasks/${taskId}`, data),
-		queryKey: ['projects', projectId, 'tasks', taskId],
-		applyOptimistic: (current, vars) => {
-			if (!current) return current;
-			// Status flips only after the server confirms (children-closed and outstanding-activity
-			// assertions run server-side, plus status changes trigger automations we can't predict).
-			const { status: _status, ...optimistic } = vars;
-			return { ...current, ...optimistic };
+	// Status flips only after the server confirms (children-closed and outstanding-activity
+	// assertions run server-side, plus status changes trigger automations we can't predict),
+	// so it's omitted from the optimistic apply and picked up by the response merge.
+	return useSimpleOptimisticUpdate<Task, UpdateTaskVars>(
+		`/api/projects/${projectId}/tasks/${taskId}`,
+		['projects', projectId, 'tasks', taskId],
+		{
+			omitOptimistic: ['status'],
+			invalidateOnSettled: [['projects', projectId, 'tasks']],
+			errorMessage: 'Failed to update task',
 		},
-		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
-		invalidateOnSettled: [['projects', projectId, 'tasks']],
-		errorMessage: 'Failed to update task',
-	});
+	);
 }
 
 export interface TaskAncestor {

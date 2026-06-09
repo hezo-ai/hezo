@@ -1,5 +1,5 @@
 import { type QueryKey, useMutation } from '@tanstack/react-query';
-import type { ApiError } from '../lib/api';
+import { type ApiError, api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { toast } from './use-toast';
 
@@ -76,5 +76,47 @@ export function useOptimisticMutation<TVars, TData, TCache>(
 				queryClient.invalidateQueries({ queryKey: key });
 			}
 		},
+	});
+}
+
+interface SimpleOptimisticUpdateOptions<TVars> {
+	/** Sibling queries (list views) to re-fetch once the mutation settles. */
+	invalidateOnSettled?: QueryKey[];
+	/** Message shown via toast.error on rollback. */
+	errorMessage?: string;
+	/**
+	 * Fields applied only after the server confirms — server-authority values
+	 * (status set by automations) or fields that live in a separate cache
+	 * (system_prompt). Excluded from the optimistic apply, picked up by the
+	 * response merge.
+	 */
+	omitOptimistic?: (keyof TVars)[];
+}
+
+/**
+ * Thin wrapper over `useOptimisticMutation` for the common shape: PATCH a single
+ * entity's editable fields, shallow-merge them into one detail cache entry, and
+ * reconcile from the response. Use it for field-edit hooks whose optimistic and
+ * merge logic is the shallow spread (optionally omitting a few server-authority
+ * fields). Hooks with list-cache mapping or deep-merges stay on the raw
+ * `useOptimisticMutation`.
+ */
+export function useSimpleOptimisticUpdate<
+	TEntity extends object,
+	TVars extends Partial<TEntity> = Partial<TEntity>,
+>(endpoint: string, queryKey: QueryKey, options: SimpleOptimisticUpdateOptions<TVars> = {}) {
+	const { invalidateOnSettled, errorMessage = 'Update failed', omitOptimistic } = options;
+	return useOptimisticMutation<TVars, TEntity, TEntity>({
+		mutationFn: (vars) => api.patch<TEntity>(endpoint, vars),
+		queryKey,
+		applyOptimistic: (current, vars) => {
+			if (!current) return current;
+			const optimistic = { ...vars };
+			for (const key of omitOptimistic ?? []) delete optimistic[key];
+			return { ...current, ...optimistic };
+		},
+		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
+		invalidateOnSettled,
+		errorMessage,
 	});
 }

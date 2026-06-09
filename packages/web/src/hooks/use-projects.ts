@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
-import { useOptimisticMutation } from './use-optimistic-mutation';
+import { useSimpleOptimisticUpdate } from './use-optimistic-mutation';
 import { useRouteProjectId } from './use-route-project-id';
 
 export interface Project {
@@ -139,24 +139,19 @@ export function useCreateProjectWithTeam() {
 	});
 }
 
+interface UpdateProjectVars {
+	name?: string;
+	description?: string;
+	max_concurrent_runs?: number;
+	memory_limit_gib?: number;
+}
+
 export function useUpdateProject(projectId: string) {
-	return useOptimisticMutation<
-		{
-			name?: string;
-			description?: string;
-			max_concurrent_runs?: number;
-			memory_limit_gib?: number;
-		},
-		Project,
-		Project
-	>({
-		mutationFn: (data) => api.patch<Project>(`/api/projects/${projectId}`, data),
-		queryKey: ['projects', projectId],
-		applyOptimistic: (current, vars) => (current ? { ...current, ...vars } : current),
-		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
-		invalidateOnSettled: [['projects']],
-		errorMessage: 'Failed to update project',
-	});
+	return useSimpleOptimisticUpdate<Project, UpdateProjectVars>(
+		`/api/projects/${projectId}`,
+		['projects', projectId],
+		{ invalidateOnSettled: [['projects']], errorMessage: 'Failed to update project' },
+	);
 }
 
 export function useDeleteProject() {

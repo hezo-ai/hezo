@@ -2,7 +2,7 @@ import { AgentAdminStatus, type AgentEffort } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
-import { useOptimisticMutation } from './use-optimistic-mutation';
+import { useOptimisticMutation, useSimpleOptimisticUpdate } from './use-optimistic-mutation';
 
 export interface Agent {
 	id: string;
@@ -86,22 +86,20 @@ interface UpdateAgentVars {
 }
 
 export function useUpdateAgent(projectId: string, agentId: string) {
-	return useOptimisticMutation<UpdateAgentVars, Agent, Agent>({
-		mutationFn: (data) => api.patch<Agent>(`/api/projects/${projectId}/agents/${agentId}`, data),
-		queryKey: ['projects', projectId, 'agents', agentId],
-		applyOptimistic: (current, vars) => {
-			if (!current) return current;
-			// system_prompt/_change_summary live in a separate doc cache; don't apply here.
-			const { system_prompt: _sp, system_prompt_change_summary: _sps, ...optimistic } = vars;
-			return { ...current, ...optimistic };
+	// system_prompt/_change_summary live in a separate doc cache, so they're
+	// omitted from the optimistic apply on the agent entity.
+	return useSimpleOptimisticUpdate<Agent, UpdateAgentVars>(
+		`/api/projects/${projectId}/agents/${agentId}`,
+		['projects', projectId, 'agents', agentId],
+		{
+			omitOptimistic: ['system_prompt', 'system_prompt_change_summary'],
+			invalidateOnSettled: [
+				['projects', projectId, 'agents'],
+				['projects', projectId, 'agents', agentId, 'system-prompt'],
+			],
+			errorMessage: 'Failed to update agent',
 		},
-		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
-		invalidateOnSettled: [
-			['projects', projectId, 'agents'],
-			['projects', projectId, 'agents', agentId, 'system-prompt'],
-		],
-		errorMessage: 'Failed to update agent',
-	});
+	);
 }
 
 export function useAgentSystemPrompt(projectId: string, agentId: string) {
