@@ -574,9 +574,12 @@ projectsRoutes.post('/projects/:projectId/container/start', async (c) => {
 			container_status: ContainerStatus.Running,
 		});
 		wakeAgentsWithPendingWork(db, projectId, teamId);
+		log.info(`project ${projectId} container ${containerId.slice(0, 12)} started`);
 		return ok(c, { container_status: ContainerStatus.Running });
 	} catch (error) {
-		return err(c, 'DOCKER_ERROR', `Failed to start container: ${(error as Error).message}`, 500);
+		const message = (error as Error).message;
+		log.warn(`project ${projectId} container ${containerId.slice(0, 12)} start failed: ${message}`);
+		return err(c, 'DOCKER_ERROR', `Failed to start container: ${message}`, 500);
 	}
 });
 

@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/lib/types';
 import {
 	type ContainerDeps,
+	consumeFinalMemoryLine,
 	type ProjectRow,
 	provisionContainer,
 	stopContainerGracefully,
@@ -464,6 +465,7 @@ describe('syncAllContainerStatuses', () => {
 			"UPDATE projects SET container_id = 'race-1', container_status = 'running'::container_status, container_last_logs = NULL WHERE id = $1",
 			[projectId],
 		);
+		consumeFinalMemoryLine(projectId);
 
 		const mockDocker = createStubDocker({
 			inspectContainer: vi.fn().mockResolvedValue({
@@ -517,6 +519,182 @@ describe('syncAllContainerStatuses', () => {
 		await syncAllContainerStatuses(deps(mockDocker));
 
 		expect(containerStats).not.toHaveBeenCalled();
+	});
+
+	it('records the last memory reading and appends it to container_last_logs on exit', async () => {
+		await db.query(
+			'UPDATE projects SET container_id = NULL, container_status = NULL, container_error = NULL WHERE team_id = $1',
+			[teamId],
+		);
+
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Memory Trail Project',
+			description: 'Test project.',
+		});
+		const projectId = (await projectRes.json()).data.id;
+		await new Promise((r) => setTimeout(r, 100));
+
+		await db.query(
+			`UPDATE projects
+			 SET container_id = 'memory-trail',
+			     container_status = 'running'::container_status,
+			     container_last_logs = NULL,
+			     memory_limit_gib = 16
+			 WHERE id = $1`,
+			[projectId],
+		);
+		consumeFinalMemoryLine(projectId);
+
+		const inspectContainer = vi
+			.fn()
+			.mockResolvedValueOnce({ State: { Running: true, Status: 'running' } })
+			.mockResolvedValueOnce({
+				Id: 'memory-trail',
+				State: { Running: false, Status: 'exited', ExitCode: 137 },
+			});
+		const usedBytes = 4 * 1024 ** 3;
+		const mockDocker = createStubDocker({
+			inspectContainer,
+			containerStats: vi.fn().mockResolvedValue({ usedBytes, rawUsageBytes: usedBytes }),
+			containerLogs: vi.fn().mockResolvedValue(null),
+		});
+
+		await syncAllContainerStatuses(deps(mockDocker));
+		await syncAllContainerStatuses(deps(mockDocker));
+
+		const result = await db.query<{
+			container_status: string;
+			container_error: string | null;
+			container_last_logs: string | null;
+		}>(
+			'SELECT container_status, container_error, container_last_logs FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(result.rows[0].container_status).toBe('stopped');
+		expect(result.rows[0].container_error).toContain('exited with code 137');
+		expect(result.rows[0].container_last_logs).toContain('→ Final container memory: 4.00 / 16 GiB');
+		expect(consumeFinalMemoryLine(projectId)).toBeNull();
+	});
+
+	it('honors the per-project memory limit when formatting the final-memory line', async () => {
+		await db.query(
+			'UPDATE projects SET container_id = NULL, container_status = NULL, container_error = NULL WHERE team_id = $1',
+			[teamId],
+		);
+
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Tighter Trail Project',
+			description: 'Test project.',
+		});
+		const projectId = (await projectRes.json()).data.id;
+		await new Promise((r) => setTimeout(r, 100));
+
+		await db.query(
+			`UPDATE projects
+			 SET container_id = 'tight-trail',
+			     container_status = 'running'::container_status,
+			     memory_limit_gib = 8,
+			     container_last_logs = NULL
+			 WHERE id = $1`,
+			[projectId],
+		);
+		consumeFinalMemoryLine(projectId);
+
+		const inspectContainer = vi
+			.fn()
+			.mockResolvedValueOnce({ State: { Running: true, Status: 'running' } })
+			.mockResolvedValueOnce({
+				Id: 'tight-trail',
+				State: { Running: false, Status: 'exited', ExitCode: 0 },
+			});
+		const usedBytes = 2.5 * 1024 ** 3;
+		const mockDocker = createStubDocker({
+			inspectContainer,
+			containerStats: vi.fn().mockResolvedValue({ usedBytes, rawUsageBytes: usedBytes }),
+			containerLogs: vi.fn().mockResolvedValue(null),
+		});
+
+		await syncAllContainerStatuses(deps(mockDocker));
+		await syncAllContainerStatuses(deps(mockDocker));
+
+		const result = await db.query<{ container_last_logs: string | null }>(
+			'SELECT container_last_logs FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(result.rows[0].container_last_logs).toContain('→ Final container memory: 2.50 / 8 GiB');
+	});
+
+	it('skips the final-memory line on exit when stats were never observed', async () => {
+		await db.query(
+			'UPDATE projects SET container_id = NULL, container_status = NULL, container_error = NULL WHERE team_id = $1',
+			[teamId],
+		);
+
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'No Stats Project',
+			description: 'Test project.',
+		});
+		const projectId = (await projectRes.json()).data.id;
+		await new Promise((r) => setTimeout(r, 100));
+
+		await db.query(
+			"UPDATE projects SET container_id = 'no-stats', container_status = 'running'::container_status, container_last_logs = NULL WHERE id = $1",
+			[projectId],
+		);
+		consumeFinalMemoryLine(projectId);
+
+		const mockDocker = createStubDocker({
+			inspectContainer: vi.fn().mockResolvedValue({
+				Id: 'no-stats',
+				State: { Running: false, Status: 'exited', ExitCode: 1 },
+			}),
+			containerLogs: vi.fn().mockResolvedValue(null),
+		});
+
+		await syncAllContainerStatuses(deps(mockDocker));
+
+		const result = await db.query<{ container_last_logs: string | null }>(
+			'SELECT container_last_logs FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(result.rows[0].container_last_logs).toBeNull();
+	});
+
+	it('clears the memory readout after a memory-limit auto-stop so the next exit does not double-emit', async () => {
+		await db.query(
+			'UPDATE projects SET container_id = NULL, container_status = NULL, container_error = NULL WHERE team_id = $1',
+			[teamId],
+		);
+
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Auto Stop Trail Project',
+			description: 'Test project.',
+		});
+		const projectId = (await projectRes.json()).data.id;
+		await new Promise((r) => setTimeout(r, 100));
+
+		await db.query(
+			"UPDATE projects SET container_id = 'auto-stop-trail', container_status = 'running'::container_status WHERE id = $1",
+			[projectId],
+		);
+		consumeFinalMemoryLine(projectId);
+
+		const overLimitBytes = 17 * 1024 ** 3;
+		const mockDocker = createStubDocker({
+			inspectContainer: vi.fn().mockResolvedValue({
+				State: { Running: true, Status: 'running' },
+			}),
+			containerStats: vi.fn().mockResolvedValue({
+				usedBytes: overLimitBytes,
+				rawUsageBytes: overLimitBytes,
+			}),
+			stopContainer: vi.fn().mockResolvedValue(undefined),
+			containerLogs: vi.fn().mockResolvedValue(null),
+		});
+
+		await syncAllContainerStatuses(deps(mockDocker));
+
+		expect(consumeFinalMemoryLine(projectId)).toBeNull();
 	});
 
 	it('survives a stats transport error without stopping the container', async () => {
@@ -953,6 +1131,51 @@ describe('stopContainerGracefully', () => {
 			[projectId],
 		);
 		expect(result.rows[0].container_status).toBe('stopped');
+	});
+
+	it('appends the final-memory line when the sync loop has observed stats', async () => {
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Graceful Stop Trail Project',
+			description: 'Test project.',
+		});
+		const stopProjectId = (await projectRes.json()).data.id;
+		await new Promise((r) => setTimeout(r, 100));
+
+		await db.query(
+			`UPDATE projects
+			 SET container_id = 'graceful-trail',
+			     container_status = 'running'::container_status,
+			     container_last_logs = NULL,
+			     memory_limit_gib = 16
+			 WHERE id = $1`,
+			[stopProjectId],
+		);
+		consumeFinalMemoryLine(stopProjectId);
+
+		const usedBytes = 6 * 1024 ** 3;
+		const mockDocker = createStubDocker({
+			inspectContainer: vi.fn().mockResolvedValue({
+				State: { Running: true, Status: 'running' },
+			}),
+			containerStats: vi.fn().mockResolvedValue({ usedBytes, rawUsageBytes: usedBytes }),
+			stopContainer: vi.fn().mockResolvedValue(undefined),
+			containerLogs: vi.fn().mockResolvedValue(null),
+		});
+
+		await syncAllContainerStatuses(deps(mockDocker));
+
+		await stopContainerGracefully(
+			{ db, docker: mockDocker, dataDir: '' },
+			stopProjectId,
+			teamId,
+			'graceful-trail',
+		);
+
+		const result = await db.query<{ container_last_logs: string | null }>(
+			'SELECT container_last_logs FROM projects WHERE id = $1',
+			[stopProjectId],
+		);
+		expect(result.rows[0].container_last_logs).toContain('→ Final container memory: 6.00 / 16 GiB');
 	});
 });
 
