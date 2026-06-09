@@ -1,14 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import {
-	AlignLeft,
-	Check,
-	Code,
-	Copy,
-	Maximize2,
-	Minimize2,
-	MoveVertical,
-	Trash2,
-} from 'lucide-react';
+import { AlignLeft, Check, Code, Copy, Maximize2, Minimize2, MoveVertical } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { FormattedLogView } from './formatted-log-view';
 import { Button } from './ui/button';
@@ -22,7 +13,6 @@ export interface LogViewerLine {
 
 interface LogViewerProps {
 	lines: LogViewerLine[];
-	onClear?: () => void;
 	emptyState?: ReactNode;
 	liveLabel?: ReactNode;
 	heightClassName?: string;
@@ -41,7 +31,6 @@ interface LogViewerProps {
 
 export function LogViewer({
 	lines,
-	onClear,
 	emptyState,
 	liveLabel,
 	heightClassName = 'h-[400px]',
@@ -181,19 +170,6 @@ export function LogViewer({
 							<MoveVertical className="w-3 h-3" />
 						</Button>
 					</Tooltip>
-					{!compact && onClear && (
-						<Tooltip content="Clear logs">
-							<Button
-								variant="ghost"
-								size="sm"
-								onClick={onClear}
-								className="text-xs h-6 px-2"
-								aria-label="Clear logs"
-							>
-								<Trash2 className="w-3 h-3" /> Clear
-							</Button>
-						</Tooltip>
-					)}
 					{headerAction}
 					<Tooltip content={isExpanded ? 'Collapse' : 'Expand'}>
 						<Button
