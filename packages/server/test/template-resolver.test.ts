@@ -113,7 +113,7 @@ describe('template resolver', () => {
 		expect(result).toContain('No project documentation available');
 	});
 
-	it('renders {{project_docs_context}} with a not-a-file warning and bare-filename headings when docs exist', async () => {
+	it('renders {{project_docs_context}} as a metadata manifest pointing at read_project_doc', async () => {
 		const docRes = await app.request(`/api/projects/${projectId}/docs/spec.md`, {
 			method: 'PUT',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -125,21 +125,56 @@ describe('template resolver', () => {
 			teamId,
 			projectId,
 		});
-		expect(result).toContain(
-			'The following project docs are stored in the project-doc database, not the filesystem.',
-		);
-		expect(result).toContain('use `write_project_doc`');
-		expect(result).toContain('`Edit`/`Write` tools will NOT work');
-		expect(result).toContain('### spec.md');
-		expect(result).not.toContain('## spec.md (link: spec.md)');
-		expect(result).toContain('Detailed spec.');
 
-		const warningIdx = result.indexOf(
-			'The following project docs are stored in the project-doc database',
+		expect(result).toContain('The project docs database holds high-level project context');
+		expect(result).toContain('read_project_doc(filename)');
+
+		// Titled doc (architecture-guidelines.md is seeded by createTestProject with a non-empty title).
+		expect(result).toMatch(
+			/- architecture-guidelines\.md — Architecture Guidelines \(updated \d{4}-\d{2}-\d{2}\)/,
 		);
-		const headingIdx = result.indexOf('### spec.md');
-		expect(warningIdx).toBeGreaterThanOrEqual(0);
-		expect(headingIdx).toBeGreaterThan(warningIdx);
+
+		// Title-less doc (created via PUT, which leaves title empty) — no em-dash, no "undefined".
+		expect(result).toMatch(/- spec\.md \(updated \d{4}-\d{2}-\d{2}\)/);
+		expect(result).not.toContain('spec.md —');
+		expect(result).not.toContain('undefined');
+
+		// Doc bodies and the old warning copy are gone — the whole point of the manifest.
+		expect(result).not.toContain('Detailed spec.');
+		expect(result).not.toContain('### spec.md');
+		expect(result).not.toContain('Edit`/`Write` tools will NOT work');
+		expect(result).not.toContain('use `write_project_doc`');
+	});
+
+	it('sorts the {{project_docs_context}} manifest by filename', async () => {
+		const teamRes = await app.request('/api/teams', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Sort Co', description: '' }),
+		});
+		const sortTeamId = (await teamRes.json()).data.id as string;
+		const proj = await db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix, description, docker_base_image)
+			 VALUES ($1, 'Sort', 'sort', 'SO', '', 'hezo/agent-base:latest')
+			 RETURNING id`,
+			[sortTeamId],
+		);
+		const sortProjectId = proj.rows[0].id;
+		await db.query(
+			`INSERT INTO documents (team_id, project_id, type, slug, content)
+			 VALUES ($1, $2, 'project_doc', 'z-last.md', 'z'),
+			        ($1, $2, 'project_doc', 'a-first.md', 'a')`,
+			[sortTeamId, sortProjectId],
+		);
+
+		const result = await resolveSystemPrompt(db, '{{project_docs_context}}', {
+			teamId: sortTeamId,
+			projectId: sortProjectId,
+		});
+		const aIdx = result.indexOf('a-first.md');
+		const zIdx = result.indexOf('z-last.md');
+		expect(aIdx).toBeGreaterThan(-1);
+		expect(zIdx).toBeGreaterThan(aIdx);
 	});
 
 	it('passes through text without template variables', async () => {

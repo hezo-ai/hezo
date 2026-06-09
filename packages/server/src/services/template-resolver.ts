@@ -180,21 +180,30 @@ export async function resolveSystemPrompt(
 		resolved = resolved.replace(/\{\{team_preferences_context\}\}/g, prefsText);
 	}
 
+	// Project docs are injected as a manifest (filename + optional title + updated date),
+	// not full bodies. The agent calls read_project_doc(filename) to load a doc on demand.
+	// Hand-rolled SQL (vs listDocuments) avoids pulling the content column, which is
+	// the whole point of switching away from full-body injection.
 	if (resolved.includes('{{project_docs_context}}')) {
 		let docsText = 'No project documentation available.';
 		if (ctx.projectId) {
-			const docs = await db.query<{ filename: string; content: string }>(
-				"SELECT slug AS filename, content FROM documents WHERE type = 'project_doc' AND project_id = $1 ORDER BY slug",
+			const docs = await db.query<{ filename: string; title: string; updated_at: string }>(
+				"SELECT slug AS filename, title, updated_at FROM documents WHERE type = 'project_doc' AND project_id = $1 ORDER BY slug",
 				[ctx.projectId],
 			);
 			if (docs.rows.length > 0) {
-				const body = docs.rows.map((d) => `### ${d.filename}\n${d.content}`).join('\n\n---\n\n');
+				const lines = docs.rows
+					.map((d) => {
+						const date = new Date(d.updated_at).toISOString().slice(0, 10);
+						const titlePart = d.title ? ` — ${d.title}` : '';
+						return `- ${d.filename}${titlePart} (updated ${date})`;
+					})
+					.join('\n');
 				docsText = [
-					'The following project docs are stored in the project-doc database, not the filesystem.',
-					'To modify any of them, use `write_project_doc` (with the bare filename, e.g. `prd.md`).',
-					'The filesystem `Edit`/`Write` tools will NOT work on these — they are not files in your worktree.',
+					'The project docs database holds high-level project context (PRDs, specs, architecture decisions, research). Entries are listed below by filename.',
+					"Call read_project_doc(filename) to load a doc's full contents when relevant to your task.",
 					'',
-					body,
+					lines,
 				].join('\n');
 			}
 		}
