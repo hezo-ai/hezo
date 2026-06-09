@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { api } from '../lib/api';
+import { queryKeys } from '../lib/query-keys';
 
 export interface DocMentionsRequest {
 	kbSlugs: string[];
@@ -55,7 +56,7 @@ export function useDocMentions(projectId: string, candidates: DocMentionsRequest
 	}, [candidates]);
 
 	return useQuery({
-		queryKey: ['projects', projectId, 'docs', 'resolve', key],
+		queryKey: queryKeys.projects.docsResolve(projectId, key),
 		queryFn: () =>
 			api.post<DocMentionsResponse>(`/api/projects/${projectId}/docs/resolve`, {
 				kb_slugs: key.kbSlugs,
@@ -92,7 +93,7 @@ export function useMentionSearch(
 	const projectSlug = options?.projectSlug;
 	const enabled = options?.enabled ?? true;
 	return useQuery({
-		queryKey: ['projects', projectId, 'mentions', 'search', q, projectSlug ?? null],
+		queryKey: queryKeys.projects.mentionsSearch(projectId, q, projectSlug ?? null),
 		queryFn: () => {
 			const params: Record<string, string> = { q };
 			if (projectSlug) params.project_slug = projectSlug;

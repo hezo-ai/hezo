@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 import { toast } from './use-toast';
 
 interface RetryFailedRunArgs {
@@ -17,12 +18,12 @@ export function useRetryFailedRun({ projectId, taskId }: RetryFailedRunArgs) {
 			),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'tasks', taskId, 'queued-wakeups'],
+				queryKey: queryKeys.projects.taskQueuedWakeups(projectId, taskId),
 			});
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'tasks', taskId, 'comments'],
+				queryKey: queryKeys.projects.taskComments(projectId, taskId),
 			});
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'tasks', taskId] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.task(projectId, taskId) });
 		},
 		onError: (error: { message?: string }) => {
 			toast.error(error?.message ?? 'Failed to retry run');

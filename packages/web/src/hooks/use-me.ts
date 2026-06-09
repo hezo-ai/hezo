@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { queryKeys } from '../lib/query-keys';
 
 export interface Me {
 	type: string;
@@ -8,7 +9,7 @@ export interface Me {
 
 export function useMe() {
 	return useQuery({
-		queryKey: ['me'],
+		queryKey: queryKeys.me(),
 		queryFn: () => api.get<Me>('/api/me'),
 	});
 }

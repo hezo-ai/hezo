@@ -1,349 +1,68 @@
-import { createHash } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
-import {
-	AgentAdminStatus,
-	ApprovalType,
-	CAPTAIN_AGENT_SLUG,
-	DocumentType,
-	MemberType,
-	TaskStatus,
-	WakeupSource,
-	wsRoom,
-} from '@hezo/shared';
+import type { ApprovalType } from '@hezo/shared';
 import type { DomainEventBus } from '../events/bus';
-import { trackBackground } from '../lib/background';
-import { broadcastRowChange } from '../lib/broadcast';
-import { toSlug, uniqueSlug } from '../lib/slug';
-import { logger } from '../logger';
-import { resolveProjectTaskPrefix } from '../routes/projects';
-import { type ContainerDeps, type ProjectRow, provisionContainer } from './containers';
-import { enqueueTeamCoherenceReviewTask } from './description-tasks';
-import { upsertDocument } from './documents';
-import { createProjectWithPlanningTask } from './project-create';
-import {
-	completeProjectIntakeAfterProvisioning,
-	postProjectCreationApprovedAck,
-	postProjectCreationDeniedNote,
-} from './project-intake';
-import { recordStatusChange } from './task-events';
-import { createWakeup } from './wakeup';
+import { APPROVAL_HANDLERS } from './approval-handlers';
+import type { ApprovalSideEffectCtx, SideEffectBroadcast } from './approval-handlers/types';
+import type { ContainerDeps } from './containers';
 import type { WebSocketManager } from './ws';
 
-const log = logger.child('approval-side-effects');
+export type { SideEffectBroadcast } from './approval-handlers/types';
 
-export interface SideEffectBroadcast {
-	table: string;
-	op: 'INSERT' | 'UPDATE';
-	row: Record<string, unknown>;
+function buildCtx(
+	db: PGlite,
+	approval: Record<string, unknown>,
+	dataDir: string,
+	actorMemberId: string | null,
+	wsManager?: WebSocketManager,
+	containerDeps?: ContainerDeps,
+	events?: DomainEventBus,
+): ApprovalSideEffectCtx {
+	return {
+		db,
+		approval,
+		payload: approval.payload as Record<string, unknown>,
+		resolutionNote: (approval.resolution_note as string | null) ?? null,
+		dataDir,
+		actorMemberId,
+		wsManager,
+		containerDeps,
+		events,
+	};
 }
 
+/**
+ * Run the side effect for a *denied* approval. Dispatches to the handler's
+ * optional `applyDenied`; types with no denied side effect return nothing.
+ */
 export async function applyApprovalDeniedSideEffect(
 	db: PGlite,
 	approval: Record<string, unknown>,
 ): Promise<SideEffectBroadcast[]> {
-	const payload = approval.payload as Record<string, unknown>;
-	const resolutionNote = (approval.resolution_note as string | null) ?? null;
-
-	if (approval.type === ApprovalType.ProjectCreation) {
-		const intakeTaskId = payload.intake_task_id as string | undefined;
-		if (!intakeTaskId) return [];
-		const comment = await postProjectCreationDeniedNote(db, intakeTaskId, resolutionNote);
-		if (!comment) return [];
-		return [{ table: 'task_comments', op: 'INSERT', row: comment }];
-	}
-
-	return [];
+	const handler = APPROVAL_HANDLERS[approval.type as ApprovalType];
+	if (!handler?.applyDenied) return [];
+	return handler.applyDenied(buildCtx(db, approval, '', null));
 }
 
+/**
+ * Run the side effect for an *approved* approval. Dispatches to the matching
+ * handler in `APPROVAL_HANDLERS`; approval types with no materialised side
+ * effect (secret access, plan review, deploy, designated-repo) have no handler
+ * and resolve to an empty broadcast set.
+ */
 export async function applyApprovalSideEffect(
 	db: PGlite,
 	approval: Record<string, unknown>,
 	// Provided by the resolve infra for side effects that touch the data dir; the
 	// current set (hire, project creation, skills, …) doesn't need it.
-	_dataDir: string,
+	dataDir: string,
 	actorMemberId: string | null,
 	wsManager?: WebSocketManager,
 	containerDeps?: ContainerDeps,
 	events?: DomainEventBus,
 ): Promise<SideEffectBroadcast[]> {
-	const payload = approval.payload as Record<string, unknown>;
-	const broadcasts: SideEffectBroadcast[] = [];
-	switch (approval.type) {
-		case ApprovalType.Hire: {
-			const teamId = approval.team_id as string;
-			const title = (payload.title as string)?.trim();
-			const slug = payload.slug as string;
-			if (!title || !slug) {
-				throw new Error('hire approval payload missing title/slug');
-			}
-
-			const slugCheck = await db.query(
-				`SELECT ma.id FROM member_agents ma
-				 JOIN members m ON m.id = ma.id
-				 WHERE m.team_id = $1 AND ma.slug = $2`,
-				[teamId, slug],
-			);
-			if (slugCheck.rows.length > 0) {
-				throw new Error(`cannot materialise hire: slug '${slug}' already exists in this team`);
-			}
-
-			const memberResult = await db.query<{ id: string }>(
-				`INSERT INTO members (team_id, member_type, display_name)
-				 VALUES ($1, $2, $3) RETURNING id`,
-				[teamId, MemberType.Agent, title],
-			);
-			const memberId = memberResult.rows[0].id;
-
-			await db.query(
-				`INSERT INTO member_agents (id, title, slug, role_description,
-				                            default_effort, heartbeat_interval_min,
-				                            monthly_budget_cents, touches_code, admin_status)
-				 VALUES ($1, $2, $3, $4, $5::agent_effort, $6, $7, $8, $9::agent_admin_status)`,
-				[
-					memberId,
-					title,
-					slug,
-					(payload.role_description as string) ?? '',
-					(payload.default_effort as string) ?? 'medium',
-					(payload.heartbeat_interval_min as number) ?? 60,
-					(payload.monthly_budget_cents as number) ?? 3000,
-					(payload.touches_code as boolean) ?? false,
-					AgentAdminStatus.Enabled,
-				],
-			);
-
-			const promptDoc = await upsertDocument(db, undefined, {
-				scope: {
-					type: DocumentType.AgentSystemPrompt,
-					teamId,
-					memberAgentId: memberId,
-				},
-				content: (payload.system_prompt as string) ?? '',
-				changeSummary: 'Initial system prompt',
-				authorMemberId: (approval.requested_by_member_id as string) ?? null,
-			});
-			broadcasts.push({
-				table: 'documents',
-				op: 'INSERT',
-				row: promptDoc as unknown as Record<string, unknown>,
-			});
-
-			if (payload.task_id) {
-				const taskId = payload.task_id as string;
-				const prior = await db.query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [
-					taskId,
-				]);
-				const oldStatus = prior.rows[0]?.status;
-				const taskUpdate = await db.query<Record<string, unknown>>(
-					`UPDATE tasks SET status = $1::task_status, updated_at = now()
-					 WHERE id = $2 RETURNING *`,
-					[TaskStatus.Done, taskId],
-				);
-				if (taskUpdate.rows[0]) {
-					broadcasts.push({ table: 'tasks', op: 'UPDATE', row: taskUpdate.rows[0] });
-					if (oldStatus) {
-						await recordStatusChange(
-							db,
-							teamId,
-							taskId,
-							oldStatus,
-							TaskStatus.Done,
-							actorMemberId,
-							wsManager,
-						);
-					}
-				}
-			}
-
-			const newAgent = await db.query<Record<string, unknown>>(
-				`SELECT m.id, m.team_id, m.display_name, m.created_at,
-				        ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary,
-				        ma.default_effort, ma.heartbeat_interval_min,
-				        ma.monthly_budget_cents, ma.budget_used_cents, ma.touches_code,
-				        ma.budget_reset_at, ma.runtime_status, ma.admin_status,
-				        ma.last_heartbeat_at, ma.reports_to, ma.mcp_servers, ma.updated_at
-				 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1`,
-				[memberId],
-			);
-			if (newAgent.rows[0]) {
-				broadcasts.push({ table: 'member_agents', op: 'INSERT', row: newAgent.rows[0] });
-			}
-
-			trackBackground(
-				enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired').catch((e) =>
-					log.error('Failed to enqueue team coherence review after hire:', e),
-				),
-			);
-			break;
-		}
-		case ApprovalType.Strategy: {
-			if (
-				typeof payload.action === 'string' &&
-				payload.action === 'update_prd' &&
-				typeof payload.filename === 'string' &&
-				typeof payload.content === 'string' &&
-				typeof payload.project_id === 'string'
-			) {
-				const requestedBy = (approval.requested_by_member_id as string) ?? null;
-				const doc = await upsertDocument(db, undefined, {
-					scope: {
-						type: DocumentType.ProjectDoc,
-						teamId: approval.team_id as string,
-						projectId: payload.project_id,
-						slug: payload.filename,
-					},
-					content: payload.content,
-					authorMemberId: requestedBy,
-				});
-				broadcasts.push({
-					table: 'documents',
-					op: 'UPDATE',
-					row: doc as unknown as Record<string, unknown>,
-				});
-			}
-			break;
-		}
-		case ApprovalType.ProjectCreation: {
-			const teamId = approval.team_id as string;
-			const projectName = (payload.name as string | undefined)?.trim();
-			const projectDescription = (payload.description as string | undefined)?.trim() ?? '';
-			const proposedPrefix = (payload.task_prefix as string | undefined)?.trim();
-			const initialPrd = (payload.initial_prd as string | null | undefined) ?? null;
-			const intakeTaskId = payload.intake_task_id as string | undefined;
-
-			if (!projectName) {
-				throw new Error('project_creation approval payload missing name');
-			}
-			if (!intakeTaskId) {
-				throw new Error('project_creation approval payload missing intake_task_id');
-			}
-
-			const captain = await db.query<{ id: string }>(
-				`SELECT ma.id FROM member_agents ma
-				 JOIN members m ON m.id = ma.id
-				 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
-				 LIMIT 1`,
-				[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
-			);
-			const captainMemberId = captain.rows[0]?.id;
-			if (!captainMemberId) {
-				throw new Error('Cannot create project on approval: no enabled Captain on team');
-			}
-
-			const prefixResult = await resolveProjectTaskPrefix(db, teamId, proposedPrefix, projectName);
-			if (!prefixResult.ok) {
-				throw new Error(`Cannot create project on approval: ${prefixResult.message}`);
-			}
-
-			const projectSlug = await uniqueSlug(toSlug(projectName), async (s) => {
-				const r = await db.query('SELECT 1 FROM projects WHERE slug = $1', [s]);
-				return r.rows.length > 0;
-			});
-
-			const { project, planningTask } = await createProjectWithPlanningTask(db, {
-				teamId,
-				captainMemberId,
-				name: projectName,
-				slug: projectSlug,
-				taskPrefix: prefixResult.prefix,
-				description: projectDescription,
-				initialPrd,
-				events,
-				actorType: 'admin',
-				actorMemberId,
-			});
-
-			if (wsManager) {
-				broadcastRowChange(wsManager, wsRoom.team(teamId), 'projects', 'INSERT', project);
-				broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', planningTask);
-			}
-
-			// The CEO first runs an initial coherence/setup pass on the new team's
-			// roster; the Captain's planning task is blocked until that completes.
-			const coherenceTaskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'initial');
-			if (coherenceTaskId) {
-				await db.query(
-					`INSERT INTO task_dependencies (task_id, blocked_by_task_id)
-					 VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-					[planningTask.id, coherenceTaskId],
-				);
-			}
-
-			await createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
-				task_id: planningTask.id as string,
-			});
-
-			const ackComment = await postProjectCreationApprovedAck(db, intakeTaskId, projectName);
-			if (ackComment) {
-				broadcasts.push({ table: 'task_comments', op: 'INSERT', row: ackComment });
-			}
-
-			const completed = await completeProjectIntakeAfterProvisioning(
-				db,
-				intakeTaskId,
-				projectName,
-				project.slug as string,
-				wsManager,
-			);
-			if (completed.summaryComment) {
-				broadcasts.push({
-					table: 'task_comments',
-					op: 'INSERT',
-					row: completed.summaryComment,
-				});
-			}
-			if (completed.task) {
-				broadcasts.push({ table: 'tasks', op: 'UPDATE', row: completed.task });
-			}
-
-			if (containerDeps) {
-				const teamMeta = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
-					teamId,
-				]);
-				const teamSlug = teamMeta.rows[0]?.slug;
-				if (teamSlug) {
-					trackBackground(
-						provisionContainer(containerDeps, project as unknown as ProjectRow, teamSlug).catch(
-							(error) => {
-								log.error(`Failed to provision container for project ${project.slug}:`, error);
-							},
-						),
-					);
-				}
-			}
-
-			break;
-		}
-		case ApprovalType.SkillProposal: {
-			const teamId = approval.team_id as string;
-			const slug = payload.skill_slug as string;
-			const name = payload.skill_name as string;
-			const content = payload.content as string;
-			const contentHash = createHash('sha256').update(content).digest('hex');
-			const requestedBy =
-				(payload.requested_by as string) ?? (approval.requested_by_member_id as string) ?? null;
-
-			// Write to DB (source of truth)
-			const skillResult = await db.query<{ id: string }>(
-				`INSERT INTO skills (team_id, name, slug, description, content, content_hash, created_by_member_id)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7)
-				 ON CONFLICT (team_id, slug) DO UPDATE SET
-				   content = EXCLUDED.content,
-				   content_hash = EXCLUDED.content_hash,
-				   updated_at = now()
-				 RETURNING id`,
-				[teamId, name, slug, (payload.reason as string) ?? '', content, contentHash, requestedBy],
-			);
-
-			if (skillResult.rows[0]) {
-				await db.query(
-					`INSERT INTO skill_revisions (skill_id, revision_number, content, content_hash, change_summary, author_member_id)
-					 VALUES ($1, (SELECT COALESCE(MAX(revision_number), 0) + 1 FROM skill_revisions WHERE skill_id = $1), $2, $3, 'Created via approval', $4)`,
-					[skillResult.rows[0].id, content, contentHash, requestedBy],
-				);
-			}
-			break;
-		}
-	}
-	return broadcasts;
+	const handler = APPROVAL_HANDLERS[approval.type as ApprovalType];
+	if (!handler) return [];
+	return handler.applyApproved(
+		buildCtx(db, approval, dataDir, actorMemberId, wsManager, containerDeps, events),
+	);
 }

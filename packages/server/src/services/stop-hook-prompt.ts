@@ -23,7 +23,7 @@
  * — and the agent stops normally.
  */
 
-import { AiProvider } from '@hezo/shared';
+import { AgentRuntime, AiProvider } from '@hezo/shared';
 
 export const STOP_HOOK_JUDGE_MODEL_ANTHROPIC = 'claude-sonnet-4-6';
 export const STOP_HOOK_JUDGE_MODEL_DEEPSEEK = 'deepseek-v4-pro';
@@ -177,12 +177,14 @@ main().catch(() => {});
 }
 
 /**
- * Node script that runs inside the Codex container as the `Stop` hook
- * command. Reads Codex's StopCommandInput JSON from stdin and asks the
- * OpenAI Chat Completions API to judge completeness.
+ * Judge specs for the runtimes that need a Node command script (their hook
+ * runner can't make the sub-LLM call itself). Claude Code is absent — it uses
+ * the native `type:"prompt"` Stop hook via `buildClaudeCodeSettings`. Adding a
+ * fourth command-hook provider is one entry here, not a new build function.
  */
-export function buildCodexJudgeScript(): string {
-	return buildJudgeScript({
+const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
+	// Codex `Stop` hook → OpenAI Chat Completions, judging `last_assistant_message`.
+	[AgentRuntime.Codex]: {
 		apiKeyEnvVars: ['OPENAI_API_KEY'],
 		inputField: 'last_assistant_message',
 		model: STOP_HOOK_JUDGE_MODEL_OPENAI,
@@ -201,16 +203,9 @@ export function buildCodexJudgeScript(): string {
 			signal: AbortSignal.timeout(25_000),
 		})`,
 		extractTextExpr: `data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content`,
-	});
-}
-
-/**
- * Node script that runs inside the Gemini container as the `AfterAgent`
- * hook command. Reads the AfterAgent input JSON from stdin and asks the
- * Google Generative AI API to judge completeness on `prompt_response`.
- */
-export function buildGeminiJudgeScript(): string {
-	return buildJudgeScript({
+	},
+	// Gemini `AfterAgent` hook → Google Generative AI, judging `prompt_response`.
+	[AgentRuntime.Gemini]: {
 		apiKeyEnvVars: ['GOOGLE_API_KEY', 'GEMINI_API_KEY'],
 		inputField: 'prompt_response',
 		model: STOP_HOOK_JUDGE_MODEL_GOOGLE,
@@ -225,5 +220,32 @@ export function buildGeminiJudgeScript(): string {
 			signal: AbortSignal.timeout(25_000),
 		})`,
 		extractTextExpr: `data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text`,
-	});
+	},
+};
+
+/**
+ * Build the judge command script for a runtime, or `null` when that runtime has
+ * no command-script judge (Claude Code, which uses the native prompt hook).
+ */
+export function buildJudgeScriptForRuntime(runtime: AgentRuntime): string | null {
+	const spec = JUDGE_SPECS[runtime];
+	return spec ? buildJudgeScript(spec) : null;
+}
+
+/**
+ * Node script that runs inside the Codex container as the `Stop` hook
+ * command. Reads Codex's StopCommandInput JSON from stdin and asks the
+ * OpenAI Chat Completions API to judge completeness.
+ */
+export function buildCodexJudgeScript(): string {
+	return buildJudgeScript(JUDGE_SPECS[AgentRuntime.Codex] as JudgeRuntimeSpec);
+}
+
+/**
+ * Node script that runs inside the Gemini container as the `AfterAgent`
+ * hook command. Reads the AfterAgent input JSON from stdin and asks the
+ * Google Generative AI API to judge completeness on `prompt_response`.
+ */
+export function buildGeminiJudgeScript(): string {
+	return buildJudgeScript(JUDGE_SPECS[AgentRuntime.Gemini] as JudgeRuntimeSpec);
 }

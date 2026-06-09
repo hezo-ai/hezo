@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { queryKeys } from '../lib/query-keys';
 
 export interface AuditEntry {
 	id: string;
@@ -29,7 +30,7 @@ type AuditFilters = { entity_type?: string; action?: string };
 // Team-scoped view (the project's backing team), addressed via the project.
 export function useAuditLog(projectId: string, filters?: AuditFilters) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'team-audit-log', filters],
+		queryKey: queryKeys.projects.teamAuditLog(projectId, filters),
 		queryFn: () =>
 			api.get<AuditEntry[]>(`/api/projects/${projectId}/team-audit-log`, {
 				entity_type: filters?.entity_type,
@@ -42,7 +43,7 @@ export function useAuditLog(projectId: string, filters?: AuditFilters) {
 // Per-project view — a filtered slice of the instance log scoped to one project.
 export function useProjectAuditLog(projectId: string, filters?: AuditFilters) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'audit-log', filters],
+		queryKey: queryKeys.projects.auditLog(projectId, filters),
 		queryFn: () =>
 			api.get<AuditEntry[]>(`/api/projects/${projectId}/audit-log`, {
 				entity_type: filters?.entity_type,
@@ -56,7 +57,7 @@ export function useProjectAuditLog(projectId: string, filters?: AuditFilters) {
 // Superuser only; the un-prefixed /api/audit-log route enforces it.
 export function useInstanceAuditLog(filters?: AuditFilters) {
 	return useQuery({
-		queryKey: ['instance', 'audit-log', filters],
+		queryKey: queryKeys.instanceAuditLog(filters),
 		queryFn: () =>
 			api.get<AuditEntry[]>('/api/audit-log', {
 				entity_type: filters?.entity_type,

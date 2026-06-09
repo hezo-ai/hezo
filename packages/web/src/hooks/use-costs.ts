@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { queryKeys } from '../lib/query-keys';
 
 export interface CostSummary {
 	summary?: Array<{ label: string; total_cents: number }>;
@@ -18,7 +19,7 @@ export function useCosts(
 	params?: { group_by?: string; agent_id?: string; project_id?: string },
 ) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'costs', params],
+		queryKey: queryKeys.projects.costs(projectId, params),
 		queryFn: () =>
 			api.get<CostSummary>(`/api/projects/${projectId}/costs`, params as Record<string, string>),
 	});

@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { queryKeys } from '../lib/query-keys';
 
 export interface OrgNode {
 	id: string;
@@ -18,7 +19,7 @@ export interface OrgChart {
 
 export function useOrgChart(projectId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'org-chart'],
+		queryKey: queryKeys.projects.orgChart(projectId),
 		queryFn: () => api.get<OrgChart>(`/api/projects/${projectId}/org-chart`),
 	});
 }

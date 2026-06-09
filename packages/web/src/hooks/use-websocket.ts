@@ -1,9 +1,10 @@
 import { WsMessageType, type WsRowChangeMessage, wsRoom } from '@hezo/shared';
-import type { QueryClient } from '@tanstack/react-query';
+import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { useSocket } from '../contexts/socket-context';
 import { invalidateTeamAgentCaches } from '../lib/invalidate-team-caches';
+import { queryKeys } from '../lib/query-keys';
 import type { Project } from './use-projects';
 
 /**
@@ -14,84 +15,80 @@ import type { Project } from './use-projects';
  */
 const TABLE_TO_QUERY_KEY: Record<
 	string,
-	(cid: string, row: Record<string, unknown>) => string[][]
+	(cid: string, row: Record<string, unknown>) => QueryKey[]
 > = {
 	tasks: (cid) => [
-		['projects', cid, 'tasks'],
-		['projects'],
-		['teams'],
+		queryKeys.projects.tasks(cid),
+		queryKeys.projects.all(),
+		queryKeys.teams.all(),
+		// Prefix of `tasksAll(slugs)` — invalidates every cross-project task index.
 		['tasks', 'all'],
-		['project-intakes'],
+		queryKeys.projectIntakes(),
 	],
 	heartbeat_runs: (cid, row) => {
-		const keys: string[][] = [['projects', cid, 'tasks']];
+		const keys: QueryKey[] = [queryKeys.projects.tasks(cid)];
 		// A run starting/finishing flips the task's run-now availability (task_busy),
 		// so refresh that task's queued-wakeups (and their dispatch state).
 		if (row.task_id) {
-			keys.push(['projects', cid, 'tasks', row.task_id as string, 'queued-wakeups']);
+			keys.push(queryKeys.projects.taskQueuedWakeups(cid, row.task_id as string));
 		}
 		if (row.member_id) {
-			keys.push(['projects', cid, 'agents', row.member_id as string, 'heartbeat-runs']);
+			keys.push(queryKeys.projects.agentHeartbeatRuns(cid, row.member_id as string));
 			if (row.id) {
-				keys.push([
-					'projects',
-					cid,
-					'agents',
-					row.member_id as string,
-					'heartbeat-runs',
-					row.id as string,
-				]);
+				keys.push(
+					queryKeys.projects.agentHeartbeatRun(cid, row.member_id as string, row.id as string),
+				);
 			}
 		}
 		return keys;
 	},
 	agent_wakeup_requests: (cid, row) => {
-		const keys: string[][] = [['projects', cid, 'tasks']];
+		const keys: QueryKey[] = [queryKeys.projects.tasks(cid)];
 		if (row.task_id) {
-			keys.push(['projects', cid, 'tasks', row.task_id as string, 'queued-wakeups']);
+			keys.push(queryKeys.projects.taskQueuedWakeups(cid, row.task_id as string));
 		}
 		return keys;
 	},
-	task_comments: (cid) => [['projects', cid, 'tasks']],
-	comment_reactions: (cid) => [['projects', cid, 'tasks']],
-	comment_attachments: (cid) => [['projects', cid, 'tasks']],
-	member_agents: (cid) => [['projects', cid, 'agents']],
-	projects: (cid) => [['projects'], ['project-intakes']],
+	task_comments: (cid) => [queryKeys.projects.tasks(cid)],
+	comment_reactions: (cid) => [queryKeys.projects.tasks(cid)],
+	comment_attachments: (cid) => [queryKeys.projects.tasks(cid)],
+	member_agents: (cid) => [queryKeys.projects.agents(cid)],
+	projects: () => [queryKeys.projects.all(), queryKeys.projectIntakes()],
 	approvals: (cid) => [
-		['projects', cid, 'approvals'],
-		['projects', cid, 'inbox-count'],
-		['approvals'],
+		queryKeys.projects.approvals(cid),
+		queryKeys.projects.inboxCount(cid),
+		queryKeys.approvals.root(),
 	],
 	admin_mentions: (cid) => [
-		['projects', cid, 'tasks'],
-		['projects', cid, 'inbox-mentions'],
-		['projects', cid, 'inbox-count'],
-		['inbox-mentions'],
+		queryKeys.projects.tasks(cid),
+		queryKeys.projects.inboxMentions(cid),
+		queryKeys.projects.inboxCount(cid),
+		queryKeys.inboxMentions.root(),
 	],
 	documents: (cid, row) => {
 		switch (row.type) {
 			case 'project_doc':
-				return [['projects', cid, 'docs'], ['projects']];
+				return [queryKeys.projects.docs(cid), queryKeys.projects.all()];
 			case 'skill':
-				return [['projects', cid, 'skills']];
+				return [queryKeys.projects.skills(cid)];
 			case 'team_preferences':
-				return [['projects', cid, 'preferences']];
+				return [queryKeys.projects.preferences(cid)];
 			default:
 				return [];
 		}
 	},
-	secrets: (cid) => [['projects', cid, 'secrets']],
+	secrets: (cid) => [queryKeys.projects.secrets(cid)],
 	mcp_connections: (cid, row) => {
-		const keys: string[][] = [['projects', cid, 'mcp-connections']];
+		const keys: QueryKey[] = [queryKeys.projects.mcpConnections(cid)];
 		if (row.id) {
-			keys.push(['projects', cid, 'mcp-connections', 'detail', row.id as string]);
+			keys.push(queryKeys.projects.mcpConnectionDetail(cid, row.id as string));
 		}
 		return keys;
 	},
-	api_keys: (cid) => [['projects', cid, 'api-keys']],
+	api_keys: (cid) => [queryKeys.projects.apiKeys(cid)],
 	cost_entries: (cid) => [['projects', cid, 'costs']],
 	execution_locks: (cid) => [['projects', cid, 'execution-locks']],
-	repos: (cid) => [['projects', cid, 'repos'], ['projects']],
+	repos: (cid) => [queryKeys.projects.repos(cid), queryKeys.projects.all()],
 };
 
 /** Invalidate TanStack Query caches for a realtime row_change event. */
@@ -145,7 +142,7 @@ export function useShellWebSockets(teams: TeamRoom[] | undefined): void {
 			const projectUuid = row.project_id as string | undefined;
 
 			// Resolve the project slug the change maps to from the cached index.
-			const index = queryClient.getQueryData<Project[]>(['projects']) ?? [];
+			const index = queryClient.getQueryData<Project[]>(queryKeys.projects.all()) ?? [];
 			const byProjectId = projectUuid ? index.find((p) => p.id === projectUuid) : undefined;
 			const teamUserProject = teamUuid
 				? index.find((p) => p.team_id === teamUuid && !p.is_internal)
@@ -159,7 +156,7 @@ export function useShellWebSockets(teams: TeamRoom[] | undefined): void {
 				}
 			}
 			if (table === 'approvals') {
-				queryClient.invalidateQueries({ queryKey: ['approvals'] });
+				queryClient.invalidateQueries({ queryKey: queryKeys.approvals.root() });
 			}
 		});
 

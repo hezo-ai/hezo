@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import type { DocumentRevision } from '../components/revisions-panel';
 import { type ApiError, api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 
 export interface ProjectDoc {
 	id: string;
@@ -19,7 +20,7 @@ export interface ProjectAgentsMd {
 
 export function useProjectDocs(projectId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'docs'],
+		queryKey: queryKeys.projects.docs(projectId),
 		queryFn: () => api.get<ProjectDoc[]>(`/api/projects/${projectId}/docs`),
 		enabled: !!projectId,
 	});
@@ -27,7 +28,7 @@ export function useProjectDocs(projectId: string) {
 
 export function useProjectDoc(projectId: string, filename: string | null) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'docs', filename],
+		queryKey: queryKeys.projects.doc(projectId, filename),
 		queryFn: () => api.get<ProjectDoc>(`/api/projects/${projectId}/docs/${filename}`),
 		enabled: !!filename,
 	});
@@ -40,8 +41,8 @@ export function useUpdateProjectDoc(projectId: string) {
 				content,
 			}),
 		onSuccess: (saved, { filename }) => {
-			queryClient.setQueryData<ProjectDoc>(['projects', projectId, 'docs', filename], saved);
-			queryClient.setQueryData<ProjectDoc[]>(['projects', projectId, 'docs'], (prev) => {
+			queryClient.setQueryData<ProjectDoc>(queryKeys.projects.doc(projectId, filename), saved);
+			queryClient.setQueryData<ProjectDoc[]>(queryKeys.projects.docs(projectId), (prev) => {
 				if (!prev) return [saved];
 				const idx = prev.findIndex((d) => d.filename === filename);
 				if (idx === -1) return [...prev, saved];
@@ -50,10 +51,10 @@ export function useUpdateProjectDoc(projectId: string) {
 				return next;
 			});
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'docs'],
+				queryKey: queryKeys.projects.docs(projectId),
 			});
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'docs', filename, 'revisions'],
+				queryKey: queryKeys.projects.docRevisions(projectId, filename),
 			});
 		},
 	});
@@ -63,11 +64,11 @@ export function useDeleteProjectDoc(projectId: string) {
 	return useMutation({
 		mutationFn: (filename: string) => api.delete(`/api/projects/${projectId}/docs/${filename}`),
 		onSuccess: (_data, filename) => {
-			queryClient.setQueryData<ProjectDoc[]>(['projects', projectId, 'docs'], (prev) =>
+			queryClient.setQueryData<ProjectDoc[]>(queryKeys.projects.docs(projectId), (prev) =>
 				prev ? prev.filter((d) => d.filename !== filename) : prev,
 			);
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'docs'],
+				queryKey: queryKeys.projects.docs(projectId),
 			});
 		},
 	});
@@ -75,7 +76,7 @@ export function useDeleteProjectDoc(projectId: string) {
 
 export function useProjectAgentsMd(projectId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'agents-md'],
+		queryKey: queryKeys.projects.agentsMd(projectId),
 		queryFn: async () => {
 			try {
 				return await api.get<ProjectAgentsMd>(`/api/projects/${projectId}/agents-md`);
@@ -90,7 +91,7 @@ export function useProjectAgentsMd(projectId: string) {
 
 export function useProjectDocRevisions(projectId: string, filename: string | null) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'docs', filename, 'revisions'],
+		queryKey: queryKeys.projects.docRevisions(projectId, filename),
 		queryFn: () =>
 			api.get<ProjectDocRevision[]>(`/api/projects/${projectId}/docs/${filename}/revisions`),
 		enabled: !!filename,
@@ -104,15 +105,15 @@ export function useRestoreProjectDocRevision(projectId: string, filename: string
 				revision_number: revisionNumber,
 			}),
 		onSuccess: (restored) => {
-			queryClient.setQueryData<ProjectDoc>(['projects', projectId, 'docs', filename], restored);
+			queryClient.setQueryData<ProjectDoc>(queryKeys.projects.doc(projectId, filename), restored);
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'docs'],
+				queryKey: queryKeys.projects.docs(projectId),
 			});
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'docs', filename],
+				queryKey: queryKeys.projects.doc(projectId, filename),
 			});
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'docs', filename, 'revisions'],
+				queryKey: queryKeys.projects.docRevisions(projectId, filename),
 			});
 		},
 	});
@@ -126,7 +127,7 @@ export function useUpdateProjectAgentsMd(projectId: string) {
 			}),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'agents-md'],
+				queryKey: queryKeys.projects.agentsMd(projectId),
 			}),
 	});
 }

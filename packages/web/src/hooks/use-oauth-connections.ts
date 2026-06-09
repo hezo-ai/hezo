@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 import type { McpConnection } from './use-mcp-connections';
 
 export interface OAuthConnection {
@@ -41,7 +42,7 @@ export type DeviceFlowPollResult = DeviceFlowSuccess | DeviceFlowPending;
 
 export function useOAuthConnections(projectId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'oauth-connections'],
+		queryKey: queryKeys.projects.oauthConnections(projectId),
 		queryFn: () => api.get<OAuthConnection[]>(`/api/projects/${projectId}/oauth-connections`),
 	});
 }
@@ -51,7 +52,7 @@ export function useDeleteOAuthConnection(projectId: string) {
 		mutationFn: (id: string) => api.delete(`/api/projects/${projectId}/oauth-connections/${id}`),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'oauth-connections'],
+				queryKey: queryKeys.projects.oauthConnections(projectId),
 			});
 		},
 	});
@@ -107,8 +108,8 @@ export async function pollDeviceFlow(
 		throw new Error(json.error?.message ?? `device poll failed (${res.status})`);
 	}
 	if (json.data?.status === 'success') {
-		queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'oauth-connections'] });
-		queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'mcp-connections'] });
+		queryClient.invalidateQueries({ queryKey: queryKeys.projects.oauthConnections(projectId) });
+		queryClient.invalidateQueries({ queryKey: queryKeys.projects.mcpConnections(projectId) });
 	}
 	return json.data as DeviceFlowPollResult;
 }
@@ -127,7 +128,7 @@ export function useEnsureConnector(projectId: string) {
 				provider_id: providerId,
 			}),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'mcp-connections'] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.mcpConnections(projectId) });
 		},
 	});
 }
@@ -143,7 +144,7 @@ export function useConnectionScopeStatus(
 	connectionId: string | null | undefined,
 ) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'oauth-connections', connectionId, 'scope-status'],
+		queryKey: queryKeys.projects.oauthConnectionScopeStatus(projectId, connectionId),
 		queryFn: () =>
 			api.get<ScopeStatus>(
 				`/api/projects/${projectId}/oauth-connections/${connectionId}/scope-status`,

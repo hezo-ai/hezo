@@ -1,6 +1,7 @@
 import type { WakeupSource } from '@hezo/shared';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { queryKeys } from '../lib/query-keys';
 
 export interface HeartbeatRun {
 	id: string;
@@ -55,7 +56,7 @@ export function getRunWaitingMessage(status: RunStatus, queuedReason?: string | 
 
 export function useHeartbeatRuns(projectId: string, agentId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'agents', agentId, 'heartbeat-runs'],
+		queryKey: queryKeys.projects.agentHeartbeatRuns(projectId, agentId),
 		queryFn: () =>
 			api.get<HeartbeatRun[]>(`/api/projects/${projectId}/agents/${agentId}/heartbeat-runs`),
 		refetchInterval: 10_000,
@@ -65,7 +66,7 @@ export function useHeartbeatRuns(projectId: string, agentId: string) {
 export function useHeartbeatRun(projectId: string, agentId: string, runId: string) {
 	const enabled = Boolean(projectId && agentId && runId);
 	return useQuery({
-		queryKey: ['projects', projectId, 'agents', agentId, 'heartbeat-runs', runId],
+		queryKey: queryKeys.projects.agentHeartbeatRun(projectId, agentId, runId),
 		queryFn: () =>
 			api.get<HeartbeatRun>(`/api/projects/${projectId}/agents/${agentId}/heartbeat-runs/${runId}`),
 		enabled,

@@ -4,6 +4,7 @@ import { Check, Plug } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { connectorStatus, useMcpConnection } from '../../hooks/use-mcp-connections';
 import { useAuthStart } from '../../hooks/use-oauth-connections';
+import { queryKeys } from '../../lib/query-keys';
 import { ConnectorDeviceFlowDialog } from '../connector-device-flow-dialog';
 import { Button } from '../ui/button';
 import type { CommentDataOf } from './comment-data';
@@ -35,7 +36,7 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 			if (!e.data || typeof e.data !== 'object') return;
 			if ((e.data as { type?: string }).type !== 'hezo-oauth-success') return;
 			queryClient.invalidateQueries({
-				queryKey: ['teams', projectId, 'mcp-connections'],
+				queryKey: queryKeys.teams.mcpConnections(projectId),
 			});
 		};
 		window.addEventListener('message', onMessage);
@@ -138,7 +139,7 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 					connectorId={connector_id}
 					providerLabel={display_name ?? capability?.displayName ?? provider_id ?? 'provider'}
 					onSuccess={() =>
-						queryClient.invalidateQueries({ queryKey: ['teams', projectId, 'mcp-connections'] })
+						queryClient.invalidateQueries({ queryKey: queryKeys.teams.mcpConnections(projectId) })
 					}
 				/>
 			)}

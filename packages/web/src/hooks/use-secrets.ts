@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 import { useOptimisticMutation } from './use-optimistic-mutation';
 
 export interface Secret {
@@ -28,7 +29,7 @@ export interface CreateSecretPayload {
 
 export function useSecrets(projectId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'secrets'],
+		queryKey: queryKeys.projects.secrets(projectId),
 		queryFn: () => api.get<Secret[]>(`/api/projects/${projectId}/secrets`),
 	});
 }
@@ -38,10 +39,10 @@ export function useCreateSecret(projectId: string) {
 		mutationFn: (data: CreateSecretPayload) =>
 			api.post<Secret>(`/api/projects/${projectId}/secrets`, data),
 		onSuccess: (created) => {
-			queryClient.setQueryData<Secret[]>(['projects', projectId, 'secrets'], (prev) =>
+			queryClient.setQueryData<Secret[]>(queryKeys.projects.secrets(projectId), (prev) =>
 				prev ? [...prev.filter((s) => s.id !== created.id), created] : [created],
 			);
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'secrets'] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.secrets(projectId) });
 		},
 	});
 }
@@ -58,7 +59,7 @@ export function useUpdateSecret(projectId: string) {
 	return useOptimisticMutation<UpdateSecretVars, Secret, Secret[]>({
 		mutationFn: ({ secretId, ...data }) =>
 			api.patch<Secret>(`/api/projects/${projectId}/secrets/${secretId}`, data),
-		queryKey: ['projects', projectId, 'secrets'],
+		queryKey: queryKeys.projects.secrets(projectId),
 		applyOptimistic: (current, { secretId, value: _value, ...optimistic }) =>
 			// `value` is write-only; it isn't returned in Secret rows.
 			current?.map((s) => (s.id === secretId ? { ...s, ...optimistic } : s)),
@@ -72,10 +73,10 @@ export function useDeleteSecret(projectId: string) {
 	return useMutation({
 		mutationFn: (secretId: string) => api.delete(`/api/projects/${projectId}/secrets/${secretId}`),
 		onSuccess: (_, secretId) => {
-			queryClient.setQueryData<Secret[]>(['projects', projectId, 'secrets'], (prev) =>
+			queryClient.setQueryData<Secret[]>(queryKeys.projects.secrets(projectId), (prev) =>
 				prev ? prev.filter((s) => s.id !== secretId) : prev,
 			);
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'secrets'] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.secrets(projectId) });
 		},
 	});
 }

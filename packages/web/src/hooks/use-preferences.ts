@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 import { useOptimisticMutation } from './use-optimistic-mutation';
 
 export interface Preferences {
@@ -12,7 +13,7 @@ export interface Preferences {
 
 export function usePreferences(projectId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'preferences'],
+		queryKey: queryKeys.projects.preferences(projectId),
 		queryFn: () => api.get<Preferences | null>(`/api/projects/${projectId}/preferences`),
 	});
 }
@@ -29,7 +30,7 @@ export interface PreferenceRevision {
 
 export function usePreferenceRevisions(projectId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'preferences', 'revisions'],
+		queryKey: queryKeys.projects.preferencesRevisions(projectId),
 		queryFn: () =>
 			api.get<PreferenceRevision[]>(`/api/projects/${projectId}/preferences/revisions`),
 	});
@@ -42,10 +43,10 @@ export function useUpdatePreferences(projectId: string) {
 		Preferences | null
 	>({
 		mutationFn: (data) => api.patch<Preferences>(`/api/projects/${projectId}/preferences`, data),
-		queryKey: ['projects', projectId, 'preferences'],
+		queryKey: queryKeys.projects.preferences(projectId),
 		applyOptimistic: (current, { content }) => (current ? { ...current, content } : current),
 		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : updated),
-		invalidateOnSettled: [['projects', projectId, 'preferences', 'revisions']],
+		invalidateOnSettled: [queryKeys.projects.preferencesRevisions(projectId)],
 		errorMessage: 'Failed to update preferences',
 	});
 }
@@ -58,12 +59,12 @@ export function useRestorePreferenceRevision(projectId: string) {
 			}),
 		onSuccess: (restored) => {
 			queryClient.setQueryData<Preferences | null>(
-				['projects', projectId, 'preferences'],
+				queryKeys.projects.preferences(projectId),
 				restored,
 			);
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'preferences'] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.preferences(projectId) });
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'preferences', 'revisions'],
+				queryKey: queryKeys.projects.preferencesRevisions(projectId),
 			});
 		},
 	});

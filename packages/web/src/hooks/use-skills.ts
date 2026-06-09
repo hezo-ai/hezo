@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 
 /** Row returned by the list endpoint (no content). */
 export interface SkillListItem {
@@ -42,7 +43,7 @@ export interface UpdateSkillInput {
 
 export function useSkills(projectId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'skills'],
+		queryKey: queryKeys.projects.skills(projectId),
 		queryFn: () => api.get<SkillListItem[]>(`/api/projects/${projectId}/skills`),
 		enabled: !!projectId,
 	});
@@ -50,7 +51,7 @@ export function useSkills(projectId: string) {
 
 export function useSkill(projectId: string, slug: string | null) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'skills', slug],
+		queryKey: queryKeys.projects.skill(projectId, slug),
 		queryFn: () => api.get<Skill>(`/api/projects/${projectId}/skills/${slug}`),
 		enabled: !!projectId && slug !== null,
 	});
@@ -61,8 +62,8 @@ export function useCreateSkill(projectId: string) {
 		mutationFn: (input: CreateSkillInput) =>
 			api.post<Skill>(`/api/projects/${projectId}/skills`, input),
 		onSuccess: (created) => {
-			queryClient.setQueryData<Skill>(['projects', projectId, 'skills', created.slug], created);
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'skills'] });
+			queryClient.setQueryData<Skill>(queryKeys.projects.skill(projectId, created.slug), created);
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.skills(projectId) });
 		},
 	});
 }
@@ -72,8 +73,8 @@ export function useUpdateSkill(projectId: string) {
 		mutationFn: ({ slug, input }: { slug: string; input: UpdateSkillInput }) =>
 			api.patch<Skill>(`/api/projects/${projectId}/skills/${slug}`, input),
 		onSuccess: (updated, { slug }) => {
-			queryClient.setQueryData<Skill>(['projects', projectId, 'skills', slug], updated);
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'skills'] });
+			queryClient.setQueryData<Skill>(queryKeys.projects.skill(projectId, slug), updated);
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.skills(projectId) });
 		},
 	});
 }
@@ -83,8 +84,8 @@ export function useSyncSkill(projectId: string) {
 		mutationFn: (slug: string) =>
 			api.post<Skill>(`/api/projects/${projectId}/skills/${slug}/sync`, {}),
 		onSuccess: (updated, slug) => {
-			queryClient.setQueryData<Skill>(['projects', projectId, 'skills', slug], updated);
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'skills'] });
+			queryClient.setQueryData<Skill>(queryKeys.projects.skill(projectId, slug), updated);
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.skills(projectId) });
 		},
 	});
 }
@@ -93,8 +94,8 @@ export function useDeleteSkill(projectId: string) {
 	return useMutation({
 		mutationFn: (slug: string) => api.delete(`/api/projects/${projectId}/skills/${slug}`),
 		onSuccess: (_, slug) => {
-			queryClient.removeQueries({ queryKey: ['projects', projectId, 'skills', slug] });
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'skills'] });
+			queryClient.removeQueries({ queryKey: queryKeys.projects.skill(projectId, slug) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.skills(projectId) });
 		},
 	});
 }

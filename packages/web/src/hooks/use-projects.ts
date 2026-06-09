@@ -1,7 +1,8 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
-import { useOptimisticMutation } from './use-optimistic-mutation';
+import { queryKeys } from '../lib/query-keys';
+import { useSimpleOptimisticUpdate } from './use-optimistic-mutation';
 import { useRouteProjectId } from './use-route-project-id';
 
 export interface Project {
@@ -49,7 +50,7 @@ export type ProjectWithTeam = Project & { teamSlug: string; teamName: string };
  */
 export function useProjectsIndex() {
 	return useQuery({
-		queryKey: ['projects'],
+		queryKey: queryKeys.projects.all(),
 		queryFn: () => api.get<Project[]>('/api/projects'),
 		staleTime: 0,
 		refetchOnMount: 'always',
@@ -100,7 +101,7 @@ export function useResolvedTeam(projectSlug?: string): ResolvedTeam | null {
 
 export function useProject(projectId: string, options?: { enabled?: boolean }) {
 	return useQuery({
-		queryKey: ['projects', projectId],
+		queryKey: queryKeys.projects.detail(projectId),
 		queryFn: () => api.get<Project>(`/api/projects/${projectId}`),
 		enabled: options?.enabled,
 	});
@@ -133,35 +134,30 @@ export function useCreateProjectWithTeam() {
 			task_prefix?: string;
 		}) => api.post<ProjectWithTeamResponse>('/api/projects', data),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['projects'] });
-			queryClient.invalidateQueries({ queryKey: ['teams'] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
+			queryClient.invalidateQueries({ queryKey: queryKeys.teams.all() });
 		},
 	});
 }
 
+interface UpdateProjectVars {
+	name?: string;
+	description?: string;
+	max_concurrent_runs?: number;
+	memory_limit_gib?: number;
+}
+
 export function useUpdateProject(projectId: string) {
-	return useOptimisticMutation<
-		{
-			name?: string;
-			description?: string;
-			max_concurrent_runs?: number;
-			memory_limit_gib?: number;
-		},
-		Project,
-		Project
-	>({
-		mutationFn: (data) => api.patch<Project>(`/api/projects/${projectId}`, data),
-		queryKey: ['projects', projectId],
-		applyOptimistic: (current, vars) => (current ? { ...current, ...vars } : current),
-		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
-		invalidateOnSettled: [['projects']],
-		errorMessage: 'Failed to update project',
-	});
+	return useSimpleOptimisticUpdate<Project, UpdateProjectVars>(
+		`/api/projects/${projectId}`,
+		queryKeys.projects.detail(projectId),
+		{ invalidateOnSettled: [queryKeys.projects.all()], errorMessage: 'Failed to update project' },
+	);
 }
 
 export function useDeleteProject() {
 	return useMutation({
 		mutationFn: (projectId: string) => api.delete(`/api/projects/${projectId}`),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['projects'] }),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() }),
 	});
 }

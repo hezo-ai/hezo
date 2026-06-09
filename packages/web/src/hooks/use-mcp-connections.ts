@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 
 export interface McpConnection {
 	id: string;
@@ -33,7 +34,7 @@ export function connectorStatus(c: McpConnection): ConnectorStatus {
 
 export function useMcpConnection(projectId: string, connectorId: string | undefined) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'mcp-connections', 'detail', connectorId ?? null],
+		queryKey: queryKeys.projects.mcpConnectionDetail(projectId, connectorId ?? null),
 		queryFn: () =>
 			api.get<McpConnection>(`/api/projects/${projectId}/mcp-connections/${connectorId}`),
 		enabled: !!connectorId,
@@ -58,7 +59,7 @@ export function useRevokeConnector(projectId: string) {
 				{},
 			),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'mcp-connections'] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.mcpConnections(projectId) });
 		},
 	});
 }
@@ -73,7 +74,7 @@ export interface CreateMcpConnectionPayload {
 export function useMcpConnections(projectId: string, filterProjectId?: string) {
 	const qs = filterProjectId ? `?project_id=${encodeURIComponent(filterProjectId)}` : '';
 	return useQuery({
-		queryKey: ['projects', projectId, 'mcp-connections', filterProjectId ?? null],
+		queryKey: queryKeys.projects.mcpConnectionsFiltered(projectId, filterProjectId ?? null),
 		queryFn: () => api.get<McpConnection[]>(`/api/projects/${projectId}/mcp-connections${qs}`),
 	});
 }
@@ -84,10 +85,10 @@ export function useCreateMcpConnection(projectId: string) {
 			api.post<McpConnection>(`/api/projects/${projectId}/mcp-connections`, data),
 		onSuccess: (created) => {
 			queryClient.setQueryData<McpConnection[]>(
-				['projects', projectId, 'mcp-connections', created.project_id ?? null],
+				queryKeys.projects.mcpConnectionsFiltered(projectId, created.project_id ?? null),
 				(prev) => (prev ? [...prev.filter((c) => c.id !== created.id), created] : [created]),
 			);
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'mcp-connections'] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.mcpConnections(projectId) });
 		},
 	});
 }
@@ -97,10 +98,10 @@ export function useDeleteMcpConnection(projectId: string) {
 		mutationFn: (id: string) => api.delete(`/api/projects/${projectId}/mcp-connections/${id}`),
 		onSuccess: (_, id) => {
 			queryClient.setQueriesData<McpConnection[]>(
-				{ queryKey: ['projects', projectId, 'mcp-connections'] },
+				{ queryKey: queryKeys.projects.mcpConnections(projectId) },
 				(prev) => (prev ? prev.filter((c) => c.id !== id) : prev),
 			);
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'mcp-connections'] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.mcpConnections(projectId) });
 		},
 	});
 }

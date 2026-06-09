@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 import { useOptimisticMutation } from './use-optimistic-mutation';
 
 export interface ReactionMember {
@@ -41,7 +42,7 @@ export interface Comment {
 
 export function useComments(projectId: string, taskId: string, options?: { enabled?: boolean }) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'tasks', taskId, 'comments'],
+		queryKey: queryKeys.projects.taskComments(projectId, taskId),
 		queryFn: () =>
 			api.get<Comment[]>(`/api/projects/${projectId}/tasks/${taskId}/comments`, {
 				include_tool_calls: 'true',
@@ -63,7 +64,7 @@ export function useCreateComment(projectId: string, taskId: string) {
 		}) => api.post<Comment>(`/api/projects/${projectId}/tasks/${taskId}/comments`, data),
 		onSuccess: (created) => {
 			queryClient.setQueryData<Comment[]>(
-				['projects', projectId, 'tasks', taskId, 'comments'],
+				queryKeys.projects.taskComments(projectId, taskId),
 				(old) => {
 					if (!old) return [created];
 					if (old.some((c) => c.id === created.id)) return old;
@@ -71,7 +72,7 @@ export function useCreateComment(projectId: string, taskId: string) {
 				},
 			);
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'tasks', taskId, 'comments'],
+				queryKey: queryKeys.projects.taskComments(projectId, taskId),
 			});
 		},
 	});
@@ -83,7 +84,7 @@ export function useChooseOption(projectId: string, taskId: string) {
 			api.post(`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/choose`, {
 				chosen_id,
 			}),
-		queryKey: ['projects', projectId, 'tasks', taskId, 'comments'],
+		queryKey: queryKeys.projects.taskComments(projectId, taskId),
 		applyOptimistic: (current, { commentId, chosen_id }) => {
 			if (!current) return current;
 			return current.map((c) => (c.id === commentId ? { ...c, chosen_option: chosen_id } : c));
@@ -156,7 +157,7 @@ export function useAddReaction(projectId: string, taskId: string) {
 				`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/reactions/${kind}`,
 				{},
 			),
-		queryKey: ['projects', projectId, 'tasks', taskId, 'comments'],
+		queryKey: queryKeys.projects.taskComments(projectId, taskId),
 		applyOptimistic: (current, { commentId, kind }) =>
 			applyToComment(current, commentId, (c) => ({
 				...c,
@@ -178,7 +179,7 @@ export function useRemoveReaction(projectId: string, taskId: string) {
 			api.delete<ReactionMutationResponse>(
 				`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/reactions/${kind}`,
 			),
-		queryKey: ['projects', projectId, 'tasks', taskId, 'comments'],
+		queryKey: queryKeys.projects.taskComments(projectId, taskId),
 		applyOptimistic: (current, { commentId, kind }) =>
 			applyToComment(current, commentId, (c) => ({
 				...c,
@@ -210,7 +211,7 @@ export function useFulfillCredential(projectId: string, taskId: string) {
 			),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'tasks', taskId, 'comments'],
+				queryKey: queryKeys.projects.taskComments(projectId, taskId),
 			}),
 	});
 }

@@ -2,6 +2,7 @@ import type { AiProviderModel } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 
 export interface AiProviderConfig {
 	id: string;
@@ -26,7 +27,7 @@ const statusKey = ['ai-providers', 'status'] as const;
 function invalidateAll() {
 	queryClient.invalidateQueries({ queryKey: providersKey });
 	queryClient.invalidateQueries({ queryKey: statusKey });
-	queryClient.invalidateQueries({ queryKey: ['teams'] });
+	queryClient.invalidateQueries({ queryKey: queryKeys.teams.all() });
 }
 
 export function useAiProviders() {
@@ -80,7 +81,7 @@ export function useVerifyAiProvider() {
 
 export function useAiProviderModels(configId: string, options: { enabled?: boolean } = {}) {
 	return useQuery({
-		queryKey: ['ai-providers', configId, 'models'] as const,
+		queryKey: queryKeys.aiProviderModels(configId),
 		queryFn: () => api.get<AiProviderModel[]>(`/api/ai-providers/${configId}/models`),
 		enabled: options.enabled ?? true,
 		staleTime: 5 * 60 * 1000,

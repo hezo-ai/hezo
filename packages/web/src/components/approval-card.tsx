@@ -4,20 +4,10 @@ import { Check, Loader2, X } from 'lucide-react';
 import { useState } from 'react';
 import type { Approval } from '../hooks/use-approvals';
 import { useResolveApproval } from '../hooks/use-approvals';
+import { approvalTypeColor } from '../lib/status-meta';
 import { RepoSetupApprovalModal } from './repo-setup-approval-modal';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-
-const typeColors: Record<string, string> = {
-	strategy: 'purple',
-	designated_repo_request: 'yellow',
-	secret_access: 'red',
-	hire: 'green',
-	team_template: 'green',
-	plan_review: 'blue',
-	deploy_production: 'red',
-	skill_proposal: 'blue',
-};
 
 const linkClass = 'font-medium text-accent-blue-text hover:underline';
 
@@ -202,7 +192,7 @@ function CardBody({
 						className="w-2 h-2 rounded-full bg-primary shrink-0"
 					/>
 				)}
-				<Badge color={typeColors[approval.type] as 'gray'}>{approval.type.replace('_', ' ')}</Badge>
+				<Badge color={approvalTypeColor(approval.type)}>{approval.type.replace('_', ' ')}</Badge>
 				{resolved && (
 					<Badge color={approval.status === ApprovalStatus.Approved ? 'green' : 'red'}>
 						{approval.status}

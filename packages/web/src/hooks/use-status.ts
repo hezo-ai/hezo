@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { checkStatus } from '../lib/auth';
+import { queryKeys } from '../lib/query-keys';
 
 function isRetryableStatusError(error: unknown): boolean {
 	const msg = error instanceof Error ? error.message : String(error);
@@ -13,7 +14,7 @@ function isRetryableStatusError(error: unknown): boolean {
 
 export function useStatus() {
 	return useQuery({
-		queryKey: ['status'],
+		queryKey: queryKeys.status(),
 		queryFn: checkStatus,
 		staleTime: 0,
 		gcTime: 0,

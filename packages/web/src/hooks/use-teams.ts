@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { queryKeys } from '../lib/query-keys';
 import { useOptimisticMutation } from './use-optimistic-mutation';
 
 export interface TeamSettings {
@@ -27,7 +28,7 @@ export interface Team {
 
 export function useTeams() {
 	return useQuery({
-		queryKey: ['teams'],
+		queryKey: queryKeys.teams.all(),
 		queryFn: () => api.get<Team[]>('/api/teams'),
 	});
 }
@@ -35,7 +36,7 @@ export function useTeams() {
 /** The backing team for a project, addressed via the project slug. */
 export function useTeam(projectId: string, enabled = true) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'team'],
+		queryKey: queryKeys.projects.team(projectId),
 		queryFn: () => api.get<Team>(`/api/projects/${projectId}/team`),
 		enabled: enabled && !!projectId,
 	});
@@ -51,7 +52,7 @@ interface UpdateTeamVars {
 export function useUpdateTeam(projectId: string) {
 	return useOptimisticMutation<UpdateTeamVars, Team, Team>({
 		mutationFn: (data) => api.patch<Team>(`/api/projects/${projectId}/team`, data),
-		queryKey: ['projects', projectId, 'team'],
+		queryKey: queryKeys.projects.team(projectId),
 		applyOptimistic: (current, vars) => {
 			if (!current) return current;
 			return {
@@ -61,7 +62,7 @@ export function useUpdateTeam(projectId: string) {
 			};
 		},
 		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
-		invalidateOnSettled: [['teams'], ['projects']],
+		invalidateOnSettled: [queryKeys.teams.all(), queryKeys.projects.all()],
 		errorMessage: 'Failed to update team',
 	});
 }
@@ -77,7 +78,7 @@ export function useSaveTeamAsTemplate(projectId: string) {
 		mutationFn: (vars: { name: string; description?: string }) =>
 			api.post<SaveTeamAsTemplateResult>(`/api/projects/${projectId}/save-as-template`, vars),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['team-templates'] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.teamTemplates() });
 		},
 	});
 }
@@ -96,8 +97,8 @@ export function useApplyTeamType(projectId: string) {
 			api.post<ApplyTeamTypeResult>(`/api/projects/${projectId}/apply-type`, vars),
 		onSuccess: () => {
 			// A merge can add agents — refetch the roster and team views.
-			queryClient.invalidateQueries({ queryKey: ['projects'] });
-			queryClient.invalidateQueries({ queryKey: ['teams'] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
+			queryClient.invalidateQueries({ queryKey: queryKeys.teams.all() });
 		},
 	});
 }
