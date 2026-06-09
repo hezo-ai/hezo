@@ -92,6 +92,12 @@ const PORT_POOL_END = 19999;
 
 const LAST_LOGS_CAP_BYTES = 32 * 1024;
 
+// Cap each project container's memory so a runaway workload hits the cgroup OOM
+// killer (surfaces as a `docker events` oom event and a deterministic exit 137
+// on the offending container) rather than silently pressuring the whole Docker
+// Desktop VM and taking sibling containers down with it.
+const CONTAINER_MEMORY_LIMIT_BYTES = 6 * 1024 * 1024 * 1024;
+
 /**
  * Pull a one-shot tail of the container's stdout+stderr log buffer. Used to
  * snapshot the last-known console output when a container exits or errors so
@@ -222,6 +228,8 @@ export async function provisionContainer(
 				Binds: binds,
 				PortBindings: portBindings,
 				ExtraHosts: extraHosts,
+				Memory: CONTAINER_MEMORY_LIMIT_BYTES,
+				MemorySwap: CONTAINER_MEMORY_LIMIT_BYTES,
 			},
 			ExposedPorts: exposedPorts,
 		});
