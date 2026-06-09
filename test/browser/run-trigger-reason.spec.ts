@@ -42,6 +42,7 @@ async function createStartupProject(
 interface RunListItem {
 	id: string;
 	status: string;
+	task_id: string | null;
 	trigger_source: string | null;
 	trigger_actor_slug: string | null;
 	trigger_comment_id: string | null;
@@ -166,17 +167,21 @@ test('task link on run detail page scrolls to the run comment', async ({ page })
 	const task = ((await taskRes.json()) as { data: { id: string; identifier: string } }).data;
 
 	const taskIdLower = task.identifier.toLowerCase();
-	const assignmentRun = await waitForRunWithTrigger(
+	// Match by task_id instead of trigger_source: a frequent test-mode heartbeat
+	// cron (every 1s) can race the assignment wakeup — the first heartbeat fires
+	// before the assignment wakeup is claimed, picks up the only actionable task
+	// (this one), succeeds, and `assignmentWakeupAlreadyServed` then retires the
+	// assignment wakeup as redundant. The deep-link being tested works for any
+	// run on this task since every run posts a run_comment_id back to it.
+	const taskRun = await waitForRunWithTrigger(
 		page,
 		project.slug,
 		architect.id,
 		token,
-		(r) => r.trigger_source === 'assignment',
+		(r) => r.task_id === task.id,
 	);
 
-	await page.goto(
-		`/projects/${project.slug}/agents/${architect.id}/executions/${assignmentRun.id}`,
-	);
+	await page.goto(`/projects/${project.slug}/agents/${architect.id}/executions/${taskRun.id}`);
 
 	const taskLink = page.locator(`a[href*="/tasks/${taskIdLower}"]`).first();
 	await expect(taskLink).toBeVisible({ timeout: 15000 });
