@@ -25,6 +25,7 @@ import { approvalsRoutes } from './routes/approvals';
 import { assetsRoutes, publicAssetsRoutes } from './routes/assets';
 import { auditLogRoutes } from './routes/audit-log';
 import { authRoutes } from './routes/auth';
+import { ceoChatRoutes } from './routes/ceo-chat';
 import { commentsRoutes } from './routes/comments';
 import { costsRoutes } from './routes/costs';
 import { executionLocksRoutes } from './routes/execution-locks';
@@ -48,6 +49,7 @@ import { teamTemplatesRoutes } from './routes/team-templates';
 import { teamsRoutes } from './routes/teams';
 import { uiStateRoutes } from './routes/ui-state';
 import { updatesRoutes } from './routes/updates';
+import { CeoSessionManager } from './services/ceo-session-manager';
 import { ContainerLogStreamer } from './services/container-logs';
 import { DockerClient } from './services/docker';
 import { EgressProxy, loadOrCreateCA } from './services/egress';
@@ -73,6 +75,7 @@ export interface StartupResult {
 	port: number;
 	masterKeyState: MasterKeyState;
 	jobManager: JobManager;
+	ceoSessionManager: CeoSessionManager;
 	wsManager: WebSocketManager;
 	db: PGlite;
 	docker: DockerClient;
@@ -135,6 +138,19 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		egressProxy,
 		egressCAPath: egressCA.certPath,
 	});
+	const ceoSessionManager = new CeoSessionManager({
+		db,
+		docker,
+		masterKeyManager,
+		serverPort: config.port,
+		dataDir: config.dataDir,
+		wsManager,
+		events,
+		logs,
+		sshAgentServer,
+		egressProxy,
+		egressCAPath: egressCA.certPath,
+	});
 
 	const { seedDefaultTeam } = await import('./services/teams.js');
 	try {
@@ -157,6 +173,10 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			.reconcileOnStartup()
 			.catch((err) => log.error('Startup reconciliation failed:', err))
 			.finally(() => jobManager.start());
+		ceoSessionManager
+			.reconcileOnStartup()
+			.catch((err) => log.error('CEO session reconciliation failed:', err))
+			.finally(() => ceoSessionManager.start());
 		// Initialize embedding model in background (downloads on first use)
 		import('./services/embeddings').then(({ initializeEmbeddingModel }) => {
 			const { join } = require('node:path') as typeof import('node:path');
@@ -181,6 +201,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		egressProxy,
 		containerLogStreamer,
 		events,
+		ceoSessionManager,
 	);
 
 	return {
@@ -188,6 +209,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		port: config.port,
 		masterKeyState,
 		jobManager,
+		ceoSessionManager,
 		wsManager,
 		db,
 		docker,
@@ -211,6 +233,7 @@ export function buildApp(
 	egressProxy: EgressProxy | null = null,
 	containerLogStreamer: ContainerLogStreamer = new ContainerLogStreamer(),
 	events: DomainEventBus = new DomainEventBus(),
+	ceoSessionManager?: CeoSessionManager,
 ): Hono<Env> {
 	const app = new Hono<Env>();
 	logs.setWsManager(wsManager);
@@ -228,6 +251,7 @@ export function buildApp(
 		c.set('wsManager', wsManager);
 		c.set('events', events);
 		if (jobManager) c.set('jobManager', jobManager);
+		if (ceoSessionManager) c.set('ceoSessionManager', ceoSessionManager);
 		c.set('logs', logs);
 		c.set('containerLogStreamer', containerLogStreamer);
 		c.set('dataDir', config.dataDir);
@@ -312,6 +336,7 @@ export function buildApp(
 	app.route('/api', previewRoutes);
 	app.route('/api', searchRoutes);
 	app.route('/api', updatesRoutes);
+	app.route('/api', ceoChatRoutes);
 
 	// Frontend (SPA) serving. The compiled binary serves from the in-memory
 	// bundle embedded at build time (`loadStaticBundle`); in dev that bundle is

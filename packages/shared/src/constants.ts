@@ -39,6 +39,8 @@ export const PROJECT_INTAKE_SKIP_SIGNAL_TEXT =
 export const wsRoom = {
 	team: (id: string) => `team:${id}`,
 	agent: (id: string) => `agent:${id}`,
+	/** The single global CEO chat room. Every mirrored surface subscribes here. */
+	ceo: () => 'ceo:global',
 } as const;
 
 /**

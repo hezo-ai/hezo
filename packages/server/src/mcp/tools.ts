@@ -260,7 +260,7 @@ async function buildMcpCreateTaskCaller(
 	};
 	if (auth.type === AuthType.Agent) {
 		caller.agentMemberId = auth.memberId;
-		caller.runId = auth.runId;
+		caller.runId = auth.runId ?? undefined;
 	}
 	return caller;
 }
@@ -289,6 +289,8 @@ async function verifyTeamAccess(
 	teamId: string,
 ): Promise<string | null> {
 	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
+		// The instance CEO chat session acts across every team (gated at mint time).
+		if (auth.type === AuthType.Agent && auth.crossTeam) return null;
 		if (auth.teamId !== teamId) return 'Access denied: team mismatch';
 		return null;
 	}

@@ -235,10 +235,190 @@ function wrapExecCmd(cmd: string[], bridge: BridgeRunnerArgs | null): string[] {
 	return ['sh', '-c', 'exec "$@" < "$HEZO_PROMPT_FILE"', 'sh', ...cmd];
 }
 
-interface EgressEnvDescriptor {
+export interface EgressEnvDescriptor {
 	host: string;
 	port: number;
 	containerCAPath: string;
+}
+
+export interface RuntimeInvocation {
+	env: string[];
+	cmd: string[];
+	execCmd: string[];
+	subscriptionMount: SubscriptionMount | null;
+	homeMount: RuntimeHomeMount | null;
+}
+
+export interface RuntimeInvocationInput {
+	deps: RunnerDeps;
+	/** The team the run/session executes against (project's team). */
+	runTeamId: string;
+	projectId: string;
+	provider: AiProvider;
+	credential: AiProviderCredential;
+	runtimeType: AgentRuntime;
+	/** Pre-minted MCP bearer token (run token for a task run; session token for chat). */
+	agentJwt: string;
+	agentId: string;
+	/** Keys the per-resource home/subscription/config dirs — heartbeatRunId or sessionId. */
+	resourceId: string;
+	/** Container path the prompt is read from on stdin. */
+	promptContainerPath: string;
+	effort: string;
+	effortApplication: EffortRuntimeApplication;
+	modelOverride: string | null;
+	sshSocketContainerPath: string | null;
+	bridge: BridgeRunnerArgs | null;
+	egress: EgressEnvDescriptor | null;
+	/** Caller-specific env entries (e.g. HEZO_TASK_ID for a run). */
+	extraEnv?: string[];
+}
+
+/**
+ * Assemble the container env vars and CLI invocation shared by every runtime
+ * launch — provider credentials, MCP injection (with the caller's bearer token),
+ * the per-resource runtime config dir, ssh/git identity, egress proxy, and the
+ * headless command. Used by both the one-shot task run path ({@link buildRunContext})
+ * and the persistent CEO chat session, so a change to how a runtime is launched
+ * applies to both. Writes the MCP/settings files to disk as a side effect.
+ */
+export async function buildRuntimeInvocation(
+	input: RuntimeInvocationInput,
+): Promise<RuntimeInvocation> {
+	const {
+		deps,
+		runTeamId,
+		projectId,
+		provider,
+		credential,
+		runtimeType,
+		agentJwt,
+		agentId,
+		resourceId,
+		promptContainerPath,
+		effort,
+		effortApplication,
+		modelOverride,
+		sshSocketContainerPath,
+		bridge,
+		egress,
+		extraEnv = [],
+	} = input;
+
+	const subscriptionMount = buildSubscriptionMount(
+		deps.dataDir,
+		runTeamId,
+		projectId,
+		resourceId,
+		provider,
+		credential,
+	);
+
+	const adapter = MCP_ADAPTERS[runtimeType];
+	const homeMount: RuntimeHomeMount | null = adapter.capabilities.requiresHomeDir
+		? ensureRuntimeHomeDir(
+				provider,
+				deps.dataDir,
+				runTeamId,
+				projectId,
+				resourceId,
+				subscriptionMount,
+			)
+		: null;
+
+	const mcpDescriptors: McpDescriptor[] = [
+		{
+			kind: 'http',
+			name: 'hezo',
+			url: `http://host.docker.internal:${deps.serverPort}/mcp`,
+			bearerToken: agentJwt,
+		},
+		...(await loadMcpConnectionDescriptors(deps.db, runTeamId, projectId, deps.masterKeyManager)),
+	];
+
+	const skillFiles = await loadSkillFilesForTeam(deps.db, runTeamId);
+	const mcpInjection = adapter.build(mcpDescriptors, {
+		hostHomeDir: homeMount?.hostDir ?? null,
+		containerHomeDir: homeMount?.containerDir ?? null,
+		provider,
+		skillFiles,
+	});
+	validateInjection(adapter, mcpInjection);
+
+	for (const file of mcpInjection.files) {
+		mkdirSync(dirname(file.hostPath), { recursive: true, mode: 0o700 });
+		writeFileSync(file.hostPath, file.contents, { mode: file.mode });
+	}
+
+	const env: string[] = [
+		`HEZO_API_URL=http://host.docker.internal:${deps.serverPort}/agent-api`,
+		`HEZO_AGENT_TOKEN=${agentJwt}`,
+		`HEZO_AGENT_ID=${agentId}`,
+		`HEZO_TEAM_ID=${runTeamId}`,
+		`HEZO_AGENT_EFFORT=${effort}`,
+		`HEZO_PROMPT_FILE=${promptContainerPath}`,
+		...extraEnv,
+		...effortApplication.extraEnv,
+		...buildProviderEnv(provider, credential),
+		// Subscription mount sets the runtime HOME env var when present; otherwise
+		// fall through to the home-mount entry so the runtime CLI finds its
+		// per-run config dir even without a subscription credential.
+		...(subscriptionMount?.envEntries ?? (homeMount ? [homeMount.envEntry] : [])),
+		...mcpInjection.envEntries,
+	];
+	if (sshSocketContainerPath) {
+		env.push(`SSH_AUTH_SOCK=${sshSocketContainerPath}`);
+	}
+	// Configure git author/committer identity and SSH commit signing from the
+	// team's connected GitHub account + Ed25519 key, so in-container commits
+	// don't fail for lack of an author and land Verified via the agent socket.
+	env.push(...(await buildGitIdentityEnv(deps.db, deps.masterKeyManager, runTeamId)));
+	if (egress) {
+		const proxyUrl = `http://${egress.host}:${egress.port}`;
+		const noProxyHosts = [
+			egress.host,
+			'localhost',
+			'127.0.0.1',
+			...providerDirectUpstreamHosts(provider),
+		];
+		const noProxy = [...new Set(noProxyHosts)].join(',');
+		env.push(
+			`HTTP_PROXY=${proxyUrl}`,
+			`http_proxy=${proxyUrl}`,
+			`HTTPS_PROXY=${proxyUrl}`,
+			`https_proxy=${proxyUrl}`,
+			`NO_PROXY=${noProxy}`,
+			`no_proxy=${noProxy}`,
+			// Rely on update-ca-certificates for curl/git; do not set SSL_CERT_FILE to
+			// the egress CA alone — that replaces the system trust store and breaks TLS.
+			`NODE_EXTRA_CA_CERTS=${egress.containerCAPath}`,
+			`CURL_CA_BUNDLE=${egress.containerCAPath}`,
+			`GIT_SSL_CAINFO=${egress.containerCAPath}`,
+		);
+	}
+
+	const cliCommand = RUNTIME_COMMANDS[runtimeType];
+	const cliModel =
+		modelOverride && runtimeType === AgentRuntime.ClaudeCode
+			? claudeCodeModelArg(provider, modelOverride)
+			: modelOverride;
+	const modelArgs = cliModel ? ['--model', cliModel] : [];
+
+	const cmd = [
+		cliCommand,
+		...RUNTIME_HEADLESS_PREFIX_ARGS[runtimeType],
+		...mcpInjection.cliArgs,
+		...RUNTIME_STREAM_ARGS[runtimeType],
+		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
+		...RUNTIME_DISALLOWED_TOOLS_ARGS[runtimeType],
+		...effortApplication.extraArgs,
+		...modelArgs,
+		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtimeType],
+	];
+
+	const execCmd = wrapExecCmd(cmd, bridge);
+
+	return { env, cmd, execCmd, subscriptionMount, homeMount };
 }
 
 async function buildRunContext(
@@ -327,119 +507,25 @@ async function buildRunContext(
 
 	const promptFilePath = getContainerPromptPath(heartbeatRunId);
 
-	const subscriptionMount = buildSubscriptionMount(
-		deps.dataDir,
-		project.team_id,
-		project.id,
-		heartbeatRunId,
+	const { env, cmd, execCmd, subscriptionMount, homeMount } = await buildRuntimeInvocation({
+		deps,
+		runTeamId,
+		projectId: project.id,
 		provider,
 		credential,
-	);
-
-	const adapter = MCP_ADAPTERS[runtimeType];
-	const homeMount: RuntimeHomeMount | null = adapter.capabilities.requiresHomeDir
-		? ensureRuntimeHomeDir(
-				provider,
-				deps.dataDir,
-				project.team_id,
-				project.id,
-				heartbeatRunId,
-				subscriptionMount,
-			)
-		: null;
-
-	const mcpDescriptors: McpDescriptor[] = [
-		{
-			kind: 'http',
-			name: 'hezo',
-			url: `http://host.docker.internal:${deps.serverPort}/mcp`,
-			bearerToken: agentJwt,
-		},
-		...(await loadMcpConnectionDescriptors(deps.db, runTeamId, project.id, deps.masterKeyManager)),
-	];
-
-	const skillFiles = await loadSkillFilesForTeam(deps.db, runTeamId);
-	const mcpInjection = adapter.build(mcpDescriptors, {
-		hostHomeDir: homeMount?.hostDir ?? null,
-		containerHomeDir: homeMount?.containerDir ?? null,
-		provider,
-		skillFiles,
+		runtimeType,
+		agentJwt,
+		agentId: agent.id,
+		resourceId: heartbeatRunId,
+		promptContainerPath: promptFilePath,
+		effort,
+		effortApplication,
+		modelOverride,
+		sshSocketContainerPath,
+		bridge,
+		egress,
+		extraEnv: [`HEZO_TASK_ID=${task.id}`, `HEZO_TASK_IDENTIFIER=${task.identifier}`],
 	});
-	validateInjection(adapter, mcpInjection);
-
-	for (const file of mcpInjection.files) {
-		mkdirSync(dirname(file.hostPath), { recursive: true, mode: 0o700 });
-		writeFileSync(file.hostPath, file.contents, { mode: file.mode });
-	}
-
-	const env: string[] = [
-		`HEZO_API_URL=http://host.docker.internal:${deps.serverPort}/agent-api`,
-		`HEZO_AGENT_TOKEN=${agentJwt}`,
-		`HEZO_AGENT_ID=${agent.id}`,
-		`HEZO_TEAM_ID=${runTeamId}`,
-		`HEZO_TASK_ID=${task.id}`,
-		`HEZO_TASK_IDENTIFIER=${task.identifier}`,
-		`HEZO_AGENT_EFFORT=${effort}`,
-		`HEZO_PROMPT_FILE=${promptFilePath}`,
-		...effortApplication.extraEnv,
-		...buildProviderEnv(provider, credential),
-		// Subscription mount sets the runtime HOME env var when present; otherwise
-		// fall through to the home-mount entry so the runtime CLI finds its
-		// per-run config dir even without a subscription credential.
-		...(subscriptionMount?.envEntries ?? (homeMount ? [homeMount.envEntry] : [])),
-		...mcpInjection.envEntries,
-	];
-	if (sshSocketContainerPath) {
-		env.push(`SSH_AUTH_SOCK=${sshSocketContainerPath}`);
-	}
-	// Configure git author/committer identity and SSH commit signing from the
-	// team's connected GitHub account + Ed25519 key, so in-container commits
-	// don't fail for lack of an author and land Verified via the agent socket.
-	env.push(...(await buildGitIdentityEnv(deps.db, deps.masterKeyManager, runTeamId)));
-	if (egress) {
-		const proxyUrl = `http://${egress.host}:${egress.port}`;
-		const noProxyHosts = [
-			egress.host,
-			'localhost',
-			'127.0.0.1',
-			...providerDirectUpstreamHosts(provider),
-		];
-		const noProxy = [...new Set(noProxyHosts)].join(',');
-		env.push(
-			`HTTP_PROXY=${proxyUrl}`,
-			`http_proxy=${proxyUrl}`,
-			`HTTPS_PROXY=${proxyUrl}`,
-			`https_proxy=${proxyUrl}`,
-			`NO_PROXY=${noProxy}`,
-			`no_proxy=${noProxy}`,
-			// Rely on update-ca-certificates for curl/git; do not set SSL_CERT_FILE to
-			// the egress CA alone — that replaces the system trust store and breaks TLS.
-			`NODE_EXTRA_CA_CERTS=${egress.containerCAPath}`,
-			`CURL_CA_BUNDLE=${egress.containerCAPath}`,
-			`GIT_SSL_CAINFO=${egress.containerCAPath}`,
-		);
-	}
-
-	const cliCommand = RUNTIME_COMMANDS[runtimeType];
-	const cliModel =
-		modelOverride && runtimeType === AgentRuntime.ClaudeCode
-			? claudeCodeModelArg(provider, modelOverride)
-			: modelOverride;
-	const modelArgs = cliModel ? ['--model', cliModel] : [];
-
-	const cmd = [
-		cliCommand,
-		...RUNTIME_HEADLESS_PREFIX_ARGS[runtimeType],
-		...mcpInjection.cliArgs,
-		...RUNTIME_STREAM_ARGS[runtimeType],
-		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
-		...RUNTIME_DISALLOWED_TOOLS_ARGS[runtimeType],
-		...effortApplication.extraArgs,
-		...modelArgs,
-		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtimeType],
-	];
-
-	const execCmd = wrapExecCmd(cmd, bridge);
 
 	return {
 		cmd,
