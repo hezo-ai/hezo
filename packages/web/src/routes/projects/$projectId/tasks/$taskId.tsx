@@ -1,5 +1,6 @@
 import type { AgentEffort } from '@hezo/shared';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
+import { ArrowDown } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CommentComposer } from '../../../../components/task-detail/comment-composer';
 import {
@@ -138,6 +139,22 @@ function TaskDetailPage() {
 						commentTextareaRef={commentTextareaRef}
 					/>
 				</div>
+
+				<div
+					className="sticky bottom-4 z-30 flex justify-end pointer-events-none"
+					aria-hidden={atBottom}
+				>
+					<button
+						type="button"
+						onClick={scrollToBottom}
+						data-testid="task-scroll-to-bottom"
+						aria-label="Scroll to bottom"
+						tabIndex={atBottom ? -1 : 0}
+						className={`w-9 h-9 rounded-full border border-border bg-bg-elevated text-text-muted hover:text-text shadow-md flex items-center justify-center transition-opacity ${atBottom ? 'opacity-0 pointer-events-none' : 'opacity-100 pointer-events-auto'}`}
+					>
+						<ArrowDown className="w-4 h-4" />
+					</button>
+				</div>
 			</div>
 
 			<TaskSidebar
@@ -149,7 +166,6 @@ function TaskDetailPage() {
 				updateTask={updateTask}
 				commentEffort={commentEffort}
 				setCommentEffort={setCommentEffort}
-				atBottom={atBottom}
 				scrollToBottom={scrollToBottom}
 			/>
 		</div>

@@ -7,7 +7,7 @@ import {
 	TaskStatus,
 } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
-import { ArrowDown, ChevronDown } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { Agent } from '../../hooks/use-agents';
 import type { Comment } from '../../hooks/use-comments';
@@ -38,7 +38,6 @@ interface TaskSidebarProps {
 	updateTask: ReturnType<typeof useUpdateTask>;
 	commentEffort: AgentEffort | null;
 	setCommentEffort: (v: AgentEffort | null) => void;
-	atBottom: boolean;
 	scrollToBottom: () => void;
 }
 
@@ -51,7 +50,6 @@ export function TaskSidebar({
 	updateTask,
 	commentEffort,
 	setCommentEffort,
-	atBottom,
 	scrollToBottom,
 }: TaskSidebarProps) {
 	const [assigneeOpen, setAssigneeOpen] = useState(false);
@@ -273,18 +271,6 @@ export function TaskSidebar({
 						</Button>
 					)}
 				</div>
-
-				{!atBottom && (
-					<button
-						type="button"
-						onClick={scrollToBottom}
-						data-testid="task-scroll-to-bottom"
-						aria-label="Scroll to bottom"
-						className="fixed bottom-4 right-4 z-30 w-9 h-9 rounded-full border border-border bg-bg-elevated text-text-muted hover:text-text shadow-md flex items-center justify-center"
-					>
-						<ArrowDown className="w-4 h-4" />
-					</button>
-				)}
 			</div>
 
 			<ConfirmDialog
