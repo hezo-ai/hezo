@@ -225,8 +225,8 @@ export class JobManager {
 				);
 				return { dispatched: false, reason: 'task_busy' };
 			}
-			const projectId = await this.resolveProjectForTask(wakeupTaskId);
-			if (projectId && (await this.isProjectAtCapacity(projectId))) {
+			const project = await this.resolveProjectForTask(wakeupTaskId);
+			if (project && (await this.isProjectAtCapacity(project.id))) {
 				await this.markWakeupSkipped(
 					wakeup.id,
 					WakeupSkipReason.ProjectAtCapacity,
@@ -236,7 +236,7 @@ export class JobManager {
 				);
 				return { dispatched: false, reason: 'project_at_capacity' };
 			}
-			if (projectId && (await this.isAgentBusyInProject(wakeup.member_id, projectId))) {
+			if (project && (await this.isAgentBusyInProject(wakeup.member_id, project.id))) {
 				await this.markWakeupSkipped(
 					wakeup.id,
 					WakeupSkipReason.AgentRunning,
@@ -569,7 +569,9 @@ export class JobManager {
 						row.team_slug,
 					);
 					reprovisioned++;
-					log.info(`Re-provisioned project ${row.id} — container was missing from Docker`);
+					log.info(
+						`Re-provisioned project ${ref(row.slug, row.id)} — container was missing from Docker`,
+					);
 					continue;
 				}
 
@@ -584,12 +586,20 @@ export class JobManager {
 					container_error: null,
 				});
 				await wakeAgentsWithPendingWork(db, row.id, row.team_id).catch((e) =>
-					log.error(`Failed to wake agents after startup restart for project ${row.id}:`, e),
+					log.error(
+						`Failed to wake agents after startup restart for project ${ref(row.slug, row.id)}:`,
+						e,
+					),
 				);
 				restarted++;
-				log.info(`Restarted container ${row.container_id.slice(0, 12)} for project ${row.id}`);
+				log.info(
+					`Restarted container ${ref(row.slug, row.container_id.slice(0, 12))} for project ${ref(row.slug, row.id)}`,
+				);
 			} catch (err) {
-				log.error(`Failed to restart container for project ${row.id} on startup:`, err);
+				log.error(
+					`Failed to restart container for project ${ref(row.slug, row.id)} on startup:`,
+					err,
+				);
 			}
 		}
 
@@ -634,7 +644,7 @@ export class JobManager {
 			if (ok) continue;
 
 			log.warn(
-				`Container ${row.container_id.slice(0, 12)} for project ${row.id} has unreachable /workspace mount — rebuilding`,
+				`Container ${ref(row.slug, row.container_id.slice(0, 12))} for project ${ref(row.slug, row.id)} has unreachable /workspace mount — rebuilding`,
 			);
 			try {
 				await rebuildContainer(
@@ -650,9 +660,11 @@ export class JobManager {
 					},
 					row.team_slug,
 				);
-				log.info(`Rebuilt container for project ${row.id} after stale-mount detection`);
+				log.info(
+					`Rebuilt container for project ${ref(row.slug, row.id)} after stale-mount detection`,
+				);
 			} catch (err) {
-				log.error(`Failed to rebuild stale container for project ${row.id}:`, err);
+				log.error(`Failed to rebuild stale container for project ${ref(row.slug, row.id)}:`, err);
 			}
 		}
 	}
@@ -681,7 +693,7 @@ export class JobManager {
 		);
 
 		for (const project of candidates.rows) {
-			const name = `hezo-${project.team_slug}-${project.slug}`;
+			const name = `hezo-${project.slug}-${project.id.slice(0, 8)}`;
 			let info: Awaited<ReturnType<DockerClient['inspectContainerByName']>>;
 			try {
 				info = await docker.inspectContainerByName(name);
@@ -701,7 +713,9 @@ export class JobManager {
 				container_id: info.Id,
 				container_status: ContainerStatus.Running,
 			});
-			log.info(`Self-healed project ${project.id} — re-attached to live container ${name}`);
+			log.info(
+				`Self-healed project ${ref(project.slug, project.id)} — re-attached to live container ${name}`,
+			);
 		}
 	}
 
@@ -773,12 +787,19 @@ export class JobManager {
 		}
 	}
 
-	private async resolveProjectForTask(taskId: string): Promise<string | null> {
+	private async resolveProjectForTask(
+		taskId: string,
+	): Promise<{ id: string; slug: string } | null> {
 		const { db } = this.deps;
-		const r = await db.query<{ project_id: string }>('SELECT project_id FROM tasks WHERE id = $1', [
-			taskId,
-		]);
-		return r.rows[0]?.project_id ?? null;
+		const r = await db.query<{ project_id: string; slug: string }>(
+			`SELECT t.project_id, p.slug
+			 FROM tasks t
+			 JOIN projects p ON p.id = t.project_id
+			 WHERE t.id = $1`,
+			[taskId],
+		);
+		const row = r.rows[0];
+		return row ? { id: row.project_id, slug: row.slug } : null;
 	}
 
 	/** Return a claimed wakeup to the queue so a later dispatch can retry it. */
@@ -851,9 +872,11 @@ export class JobManager {
 					);
 					continue;
 				}
-				const projectId = await this.resolveProjectForTask(wakeupTaskId);
-				if (projectId && (await this.isProjectAtCapacity(projectId))) {
-					log.debug(`Skipping wakeup ${wakeup.id} — project ${projectId} is at run capacity`);
+				const project = await this.resolveProjectForTask(wakeupTaskId);
+				if (project && (await this.isProjectAtCapacity(project.id))) {
+					log.debug(
+						`Skipping wakeup ${wakeup.id} — project ${ref(project.slug, project.id)} is at run capacity`,
+					);
 					await this.markWakeupSkipped(
 						wakeup.id,
 						WakeupSkipReason.ProjectAtCapacity,
@@ -863,9 +886,9 @@ export class JobManager {
 					);
 					continue;
 				}
-				if (projectId && (await this.isAgentBusyInProject(wakeup.member_id, projectId))) {
+				if (project && (await this.isAgentBusyInProject(wakeup.member_id, project.id))) {
 					log.debug(
-						`Skipping wakeup ${wakeup.id} — agent ${wakeup.member_id} already running in project ${projectId}`,
+						`Skipping wakeup ${wakeup.id} — agent ${wakeup.member_id} already running in project ${ref(project.slug, project.id)}`,
 					);
 					await this.markWakeupSkipped(
 						wakeup.id,
@@ -1761,7 +1784,7 @@ export class JobManager {
 	}
 
 	private async handleContainerTransition(transition: ContainerTransition): Promise<void> {
-		const { projectId, teamId, oldStatus, newStatus } = transition;
+		const { projectId, projectSlug, teamId, oldStatus, newStatus } = transition;
 
 		if (
 			oldStatus === ContainerStatus.Running &&
@@ -1770,7 +1793,7 @@ export class JobManager {
 			const reason: ContainerExitReason =
 				newStatus === ContainerStatus.Error ? 'container_error' : 'container_stopped';
 			this.cancelLiveRunsForProject(projectId, reason);
-			await failProjectRuns(this.buildContainerDeps(), projectId, teamId, reason);
+			await failProjectRuns(this.buildContainerDeps(), projectId, projectSlug, teamId, reason);
 		}
 	}
 

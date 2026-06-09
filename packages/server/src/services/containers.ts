@@ -10,6 +10,7 @@ import {
 import type { MasterKeyManager } from '../crypto/master-key';
 import { trackBackground } from '../lib/background';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
+import { ref } from '../lib/log-ref';
 import { terminalStatusParams } from '../lib/sql';
 import { logger } from '../logger';
 import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
@@ -27,6 +28,7 @@ export type ContainerExitReason = 'container_error' | 'container_stopped';
 
 export interface ContainerTransition {
 	projectId: string;
+	projectSlug: string;
 	teamId: string;
 	oldStatus: string | null;
 	newStatus: string | null;
@@ -92,6 +94,21 @@ const PORT_POOL_END = 19999;
 
 const LAST_LOGS_CAP_BYTES = 32 * 1024;
 
+// When true, every old-container removal is skipped (rebuild, teardown, and
+// the defensive same-name cleanup before create). Provisioning a fresh
+// container then fails with a name conflict until the operator removes the
+// old one by hand — the trade-off is keeping crashed containers around for
+// `docker logs` / `docker inspect`. Set centrally from parseConfig at startup.
+let keepOldContainersFlag = false;
+
+export function setKeepOldContainers(value: boolean): void {
+	keepOldContainersFlag = value;
+}
+
+export function shouldKeepOldContainers(): boolean {
+	return keepOldContainersFlag;
+}
+
 /**
  * Default per-container working-set ceiling, used when a project has not set
  * its own `projects.memory_limit_gib`. The sync loop stops the container when
@@ -145,6 +162,7 @@ function appendMemoryLine(existing: string | null, line: string | null): string 
 export async function captureContainerLogs(
 	docker: DockerClient,
 	containerId: string,
+	projectSlug?: string | null,
 ): Promise<string | null> {
 	try {
 		const res = await docker.containerLogs(containerId, {
@@ -175,7 +193,10 @@ export async function captureContainerLogs(
 		}
 		return combined || null;
 	} catch (err) {
-		log.warn(`Failed to capture logs for container ${containerId}:`, err);
+		log.warn(
+			`Failed to capture logs for container ${ref(projectSlug, containerId.slice(0, 12))}:`,
+			err,
+		);
 		return null;
 	}
 }
@@ -234,10 +255,12 @@ export async function provisionContainer(
 			]);
 		}
 
-		// Container identity is keyed on the immutable project id so a team/project
-		// rename never orphans the container or shifts its bind mounts. The slugs ride
-		// along as labels purely for `docker ps` readability.
-		const containerName = `hezo-${project.id}`;
+		// Bind mounts key on the immutable project id, so a rename never shifts
+		// paths or orphans data. The container name embeds the project slug for
+		// `docker ps` readability and an 8-char id prefix for uniqueness; on
+		// rename the next rebuild adopts the new slug, while the old container
+		// is torn down by stored `container_id` hash rather than by name.
+		const containerName = `hezo-${project.slug}-${project.id.slice(0, 8)}`;
 		const containerLabels = { 'hezo.team': teamSlug, 'hezo.project': project.slug };
 		const extraHosts = ['host.docker.internal:host-gateway'];
 
@@ -252,10 +275,12 @@ export async function provisionContainer(
 		});
 
 		emit('stdout', `→ Creating container ${containerName}`);
-		try {
-			await docker.removeContainer(containerName, true);
-		} catch {
-			// Container doesn't exist — expected
+		if (!keepOldContainersFlag) {
+			try {
+				await docker.removeContainer(containerName, true);
+			} catch {
+				// Container doesn't exist — expected
+			}
 		}
 
 		const { Id } = await docker.createContainer(containerName, {
@@ -274,7 +299,9 @@ export async function provisionContainer(
 
 		emit('stdout', '→ Starting container');
 		await docker.startContainer(Id);
-		log.info(`project ${project.id} container ${Id.slice(0, 12)} provisioned and started`);
+		log.info(
+			`project ${ref(project.slug, project.id)} container ${ref(project.slug, Id.slice(0, 12))} provisioned and started`,
+		);
 
 		await db.query(
 			'UPDATE projects SET container_id = $1, container_status = $2::container_status, container_error = NULL WHERE id = $3',
@@ -346,7 +373,7 @@ export async function provisionContainer(
 		emit('stdout', '✓ Container ready');
 		await broadcastProjectUpdate(db, wsManager, teamId, project.id);
 
-		await requeueContainerKilledRuns(deps, project.id, teamId).catch((e) =>
+		await requeueContainerKilledRuns(deps, project.id, project.slug, teamId).catch((e) =>
 			log.error('Failed to requeue container-killed runs after provision:', e),
 		);
 		// A wakeup that fired while the container was still provisioning could not
@@ -374,6 +401,7 @@ export async function provisionContainer(
 export async function teardownContainer(
 	deps: ContainerDeps,
 	projectId: string,
+	projectSlug: string,
 	teamId: string,
 ): Promise<void> {
 	const { db, docker, dataDir } = deps;
@@ -384,7 +412,7 @@ export async function teardownContainer(
 	);
 
 	const teardownContainerId = result.rows[0]?.container_id;
-	if (teardownContainerId) {
+	if (teardownContainerId && !keepOldContainersFlag) {
 		try {
 			await docker.stopContainer(teardownContainerId);
 		} catch {
@@ -405,21 +433,24 @@ export async function teardownContainer(
 	memoryUsageState.delete(projectId);
 
 	if (teardownContainerId) {
-		log.info(`project ${projectId} container ${teardownContainerId.slice(0, 12)} torn down`);
+		log.info(
+			`project ${ref(projectSlug, projectId)} container ${ref(projectSlug, teardownContainerId.slice(0, 12))} torn down`,
+		);
 	} else {
-		log.info(`project ${projectId} torn down (no container was provisioned)`);
+		log.info(`project ${ref(projectSlug, projectId)} torn down (no container was provisioned)`);
 	}
 }
 
 export async function stopContainerGracefully(
 	deps: ContainerDeps,
 	projectId: string,
+	projectSlug: string,
 	teamId: string,
 	containerId: string,
 ): Promise<void> {
 	const { db, docker, wsManager } = deps;
 
-	const lastLogs = await captureContainerLogs(docker, containerId);
+	const lastLogs = await captureContainerLogs(docker, containerId, projectSlug);
 	const annotatedLogs = appendMemoryLine(lastLogs, consumeFinalMemoryLine(projectId));
 
 	let exitReason: ContainerExitReason = 'container_stopped';
@@ -433,7 +464,9 @@ export async function stopContainerGracefully(
 			 WHERE id = $3`,
 			[ContainerStatus.Stopped, annotatedLogs, projectId],
 		);
-		log.info(`project ${projectId} container ${containerId.slice(0, 12)} stopped`);
+		log.info(
+			`project ${ref(projectSlug, projectId)} container ${ref(projectSlug, containerId.slice(0, 12))} stopped`,
+		);
 	} catch (err) {
 		const errorMessage = err instanceof Error ? err.message : String(err);
 		await db.query(
@@ -446,11 +479,11 @@ export async function stopContainerGracefully(
 		);
 		exitReason = 'container_error';
 		log.warn(
-			`project ${projectId} container ${containerId.slice(0, 12)} stop failed: ${errorMessage}`,
+			`project ${ref(projectSlug, projectId)} container ${ref(projectSlug, containerId.slice(0, 12))} stop failed: ${errorMessage}`,
 		);
 	}
 
-	await failProjectRuns(deps, projectId, teamId, exitReason).catch((e) =>
+	await failProjectRuns(deps, projectId, projectSlug, teamId, exitReason).catch((e) =>
 		log.error('Failed to fail project runs on stop:', e),
 	);
 
@@ -493,14 +526,14 @@ export async function rebuildContainer(
 
 	if (project.container_id) {
 		log.info(
-			`project ${project.id} container ${project.container_id.slice(0, 12)} rebuild started`,
+			`project ${ref(project.slug, project.id)} container ${ref(project.slug, project.container_id.slice(0, 12))} rebuild started`,
 		);
 		logs?.emit(
 			streamId,
 			'stdout',
 			`→ Removing previous container ${project.container_id.slice(0, 12)}`,
 		);
-		const lastLogs = await captureContainerLogs(docker, project.container_id);
+		const lastLogs = await captureContainerLogs(docker, project.container_id, project.slug);
 		const annotatedLogs = appendMemoryLine(lastLogs, consumeFinalMemoryLine(project.id));
 		if (annotatedLogs) {
 			await db.query('UPDATE projects SET container_last_logs = $1 WHERE id = $2', [
@@ -508,18 +541,20 @@ export async function rebuildContainer(
 				project.id,
 			]);
 		}
-		try {
-			await docker.stopContainer(project.container_id);
-		} catch {
-			// Already stopped
-		}
-		try {
-			await docker.removeContainer(project.container_id, true);
-		} catch {
-			// Already removed
+		if (!keepOldContainersFlag) {
+			try {
+				await docker.stopContainer(project.container_id);
+			} catch {
+				// Already stopped
+			}
+			try {
+				await docker.removeContainer(project.container_id, true);
+			} catch {
+				// Already removed
+			}
 		}
 	} else {
-		log.info(`project ${project.id} rebuild started (no previous container)`);
+		log.info(`project ${ref(project.slug, project.id)} rebuild started (no previous container)`);
 	}
 
 	return provisionContainer(deps, project, teamSlug);
@@ -529,6 +564,7 @@ export async function syncContainerStatus(
 	db: PGlite,
 	docker: DockerClient,
 	projectId: string,
+	projectSlug: string,
 	containerId: string,
 	previousStatus?: string | null,
 ): Promise<string | null> {
@@ -536,7 +572,10 @@ export async function syncContainerStatus(
 	try {
 		info = await docker.inspectContainer(containerId);
 	} catch (err) {
-		log.warn(`Container sync transport error for project ${projectId}; will retry`, err);
+		log.warn(
+			`Container sync transport error for project ${ref(projectSlug, projectId)}; will retry`,
+			err,
+		);
 		return null;
 	}
 
@@ -557,7 +596,7 @@ export async function syncContainerStatus(
 	const status = info.State.Running ? ContainerStatus.Running : ContainerStatus.Stopped;
 
 	if (previousStatus === ContainerStatus.Running && status !== ContainerStatus.Running) {
-		const lastLogs = await captureContainerLogs(docker, containerId);
+		const lastLogs = await captureContainerLogs(docker, containerId, projectSlug);
 		const finalMemoryLine = consumeFinalMemoryLine(projectId);
 		const annotatedLogs = appendMemoryLine(lastLogs, finalMemoryLine);
 		const exitCode = info.State.ExitCode;
@@ -568,7 +607,7 @@ export async function syncContainerStatus(
 				: `Container stopped (${exitStatus}).`;
 		if (finalMemoryLine) {
 			log.info(
-				`project ${projectId} container ${containerId.slice(0, 12)} exited; ${finalMemoryLine.replace(/^→ /, '')}`,
+				`project ${ref(projectSlug, projectId)} container ${ref(projectSlug, containerId.slice(0, 12))} exited; ${finalMemoryLine.replace(/^→ /, '')}`,
 			);
 		}
 		await db.query(
@@ -602,6 +641,7 @@ export async function syncContainerStatus(
 async function enforceContainerMemoryLimit(
 	deps: ContainerDeps,
 	projectId: string,
+	projectSlug: string,
 	teamId: string,
 	containerId: string,
 	memoryLimitGib: number,
@@ -612,7 +652,10 @@ async function enforceContainerMemoryLimit(
 	try {
 		stats = await docker.containerStats(containerId);
 	} catch (err) {
-		log.warn(`Container stats transport error for project ${projectId}; will retry`, err);
+		log.warn(
+			`Container stats transport error for project ${ref(projectSlug, projectId)}; will retry`,
+			err,
+		);
 		return null;
 	}
 	if (!stats) return null;
@@ -627,7 +670,7 @@ async function enforceContainerMemoryLimit(
 	if (now - entry.lastLogMs >= MEMORY_USAGE_LOG_INTERVAL_MS) {
 		entry.lastLogMs = now;
 		log.debug(
-			`project ${projectId} container ${containerId.slice(0, 12)} memory: ${formatMemoryLine(entry)}`,
+			`project ${ref(projectSlug, projectId)} container ${ref(projectSlug, containerId.slice(0, 12))} memory: ${formatMemoryLine(entry)}`,
 		);
 	}
 	memoryUsageState.set(projectId, entry);
@@ -641,13 +684,13 @@ async function enforceContainerMemoryLimit(
 		`and was stopped automatically to keep your machine responsive. Restart the container ` +
 		`to try again, or raise the limit on the project settings page.`;
 
-	const lastLogs = await captureContainerLogs(docker, containerId);
+	const lastLogs = await captureContainerLogs(docker, containerId, projectSlug);
 
 	try {
 		await docker.stopContainer(containerId);
 	} catch (err) {
 		log.warn(
-			`docker.stopContainer failed during memory-limit enforcement for project ${projectId}; recording error anyway`,
+			`docker.stopContainer failed during memory-limit enforcement for project ${ref(projectSlug, projectId)}; recording error anyway`,
 			err,
 		);
 	}
@@ -662,12 +705,12 @@ async function enforceContainerMemoryLimit(
 	);
 
 	log.warn(
-		`Auto-stopped container ${containerId.slice(0, 12)} for project ${projectId}: used ${usedGiB} GiB (> ${memoryLimitGib} GiB)`,
+		`Auto-stopped container ${ref(projectSlug, containerId.slice(0, 12))} for project ${ref(projectSlug, projectId)}: used ${usedGiB} GiB (> ${memoryLimitGib} GiB)`,
 	);
 
 	memoryUsageState.delete(projectId);
 
-	await failProjectRuns(deps, projectId, teamId, 'container_error').catch((e) =>
+	await failProjectRuns(deps, projectId, projectSlug, teamId, 'container_error').catch((e) =>
 		log.error('Failed to fail project runs after memory-limit stop:', e),
 	);
 
@@ -681,12 +724,13 @@ export async function syncAllContainerStatuses(
 
 	const projects = await db.query<{
 		id: string;
+		slug: string;
 		team_id: string;
 		container_id: string;
 		container_status: string | null;
 		memory_limit_gib: number;
 	}>(
-		'SELECT id, team_id, container_id, container_status, memory_limit_gib FROM projects WHERE container_id IS NOT NULL',
+		'SELECT id, slug, team_id, container_id, container_status, memory_limit_gib FROM projects WHERE container_id IS NOT NULL',
 	);
 
 	const transitions: ContainerTransition[] = [];
@@ -696,6 +740,7 @@ export async function syncAllContainerStatuses(
 			db,
 			docker,
 			project.id,
+			project.slug,
 			project.container_id,
 			oldStatus,
 		);
@@ -704,6 +749,7 @@ export async function syncAllContainerStatuses(
 			const overrideStatus = await enforceContainerMemoryLimit(
 				deps,
 				project.id,
+				project.slug,
 				project.team_id,
 				project.container_id,
 				project.memory_limit_gib,
@@ -716,6 +762,7 @@ export async function syncAllContainerStatuses(
 		if (newStatus !== null && newStatus !== oldStatus) {
 			transitions.push({
 				projectId: project.id,
+				projectSlug: project.slug,
 				teamId: project.team_id,
 				oldStatus,
 				newStatus,
@@ -736,6 +783,7 @@ export async function syncAllContainerStatuses(
 export async function failProjectRuns(
 	deps: ContainerDeps,
 	projectId: string,
+	projectSlug: string,
 	teamId: string,
 	reason: ContainerExitReason,
 ): Promise<void> {
@@ -787,7 +835,7 @@ export async function failProjectRuns(
 	}
 
 	log.info(
-		`Failed ${failedRuns.rows.length} run(s) in project ${projectId} due to ${reason}; ${idleCount}/${memberIds.length} agent(s) marked idle`,
+		`Failed ${failedRuns.rows.length} run(s) in project ${ref(projectSlug, projectId)} due to ${reason}; ${idleCount}/${memberIds.length} agent(s) marked idle`,
 	);
 }
 
@@ -802,6 +850,7 @@ const REQUEUE_LOOKBACK_HOURS = 24;
 export async function requeueContainerKilledRuns(
 	deps: ContainerDeps,
 	projectId: string,
+	projectSlug: string,
 	teamId: string,
 ): Promise<number> {
 	const { db } = deps;
@@ -837,7 +886,7 @@ export async function requeueContainerKilledRuns(
 
 	if (killed.rows.length > 0) {
 		log.info(
-			`Re-queued ${killed.rows.length} container-killed run(s) in project ${projectId} after container recovery`,
+			`Re-queued ${killed.rows.length} container-killed run(s) in project ${ref(projectSlug, projectId)} after container recovery`,
 		);
 	}
 

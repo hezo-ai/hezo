@@ -797,7 +797,7 @@ describe('provisionContainer broadcasting', () => {
 		expect(hostConfig.MemorySwap).toBeUndefined();
 	});
 
-	it('keeps container name and bind mounts stable when the project is renamed', async () => {
+	it('keeps bind mounts stable on rename; container name adopts the new slug', async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
 		const makeMockDocker = () =>
 			createStubDocker({
@@ -843,9 +843,12 @@ describe('provisionContainer broadcasting', () => {
 		const nameAfter = dockerAfter.createContainer.mock.calls[0][0];
 		const bindsAfter = dockerAfter.createContainer.mock.calls[0][1].HostConfig.Binds as string[];
 
-		// Identity and mounts are keyed on the immutable id, so the rename changes nothing.
-		expect(nameAfter).toBe(nameBefore);
-		expect(nameAfter).toBe(`hezo-${renameProjectId}`);
+		// Name embeds the slug for `docker ps` readability — rename changes it.
+		expect(nameBefore).toBe(`hezo-${before.slug}-${renameProjectId.slice(0, 8)}`);
+		expect(nameAfter).toBe(`hezo-renamed-project-slug-${renameProjectId.slice(0, 8)}`);
+		expect(nameAfter).not.toBe(nameBefore);
+
+		// Bind mounts key on the immutable id, so paths stay stable across rename.
 		expect(bindsAfter).toEqual(bindsBefore);
 		expect(bindsAfter.join('\n')).toContain(`/projects/${renameProjectId}/`);
 		expect(bindsAfter.join('\n')).not.toContain(before.slug);
@@ -1061,6 +1064,7 @@ describe('stopContainerGracefully', () => {
 		await stopContainerGracefully(
 			{ db, docker: mockDocker, dataDir: '', wsManager: mockWsManager },
 			projectId,
+			'stop-test-project',
 			teamId,
 			'stop-test-container',
 		);
@@ -1094,6 +1098,7 @@ describe('stopContainerGracefully', () => {
 		await stopContainerGracefully(
 			{ db, docker: mockDocker, dataDir: '', wsManager: mockWsManager },
 			projectId,
+			'stop-test-project',
 			teamId,
 			'fail-stop-container',
 		);
@@ -1122,6 +1127,7 @@ describe('stopContainerGracefully', () => {
 		await stopContainerGracefully(
 			{ db, docker: mockDocker, dataDir: '' },
 			projectId,
+			'stop-test-project',
 			teamId,
 			'no-ws-stop',
 		);
@@ -1167,6 +1173,7 @@ describe('stopContainerGracefully', () => {
 		await stopContainerGracefully(
 			{ db, docker: mockDocker, dataDir: '' },
 			stopProjectId,
+			'graceful-trail-project',
 			teamId,
 			'graceful-trail',
 		);
