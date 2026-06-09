@@ -49,6 +49,22 @@ interface ContainerInfo {
 	};
 }
 
+interface RawContainerStats {
+	memory_stats?: {
+		usage?: number;
+		stats?: {
+			inactive_file?: number;
+			total_inactive_file?: number;
+			cache?: number;
+		};
+	};
+}
+
+export interface ContainerMemoryStats {
+	usedBytes: number;
+	rawUsageBytes: number;
+}
+
 export interface ImageInfo {
 	Id: string;
 	Config: {
@@ -206,6 +222,38 @@ export class DockerClient {
 
 	async inspectContainerByName(name: string): Promise<ContainerInfo | null> {
 		return this.inspectContainer(name);
+	}
+
+	/**
+	 * Single-shot memory snapshot via /containers/:id/stats?stream=false.
+	 * Returns null when the container is gone or the stats payload is empty
+	 * (Docker can return empty bodies for containers that just exited).
+	 * `usedBytes` mirrors the `docker stats` CLI computation: raw usage minus
+	 * inactive file-backed pages (page cache the kernel can drop on demand),
+	 * which avoids flagging containers that are merely reading/writing files.
+	 */
+	async containerStats(containerId: string): Promise<ContainerMemoryStats | null> {
+		const res = await this.request('GET', `/containers/${containerId}/stats?stream=false`);
+		if (res.status === 404) {
+			await res.text();
+			return null;
+		}
+		if (!res.ok) {
+			const text = await res.text();
+			throw new Error(`Docker containerStats failed (${res.status}): ${text}`);
+		}
+		const text = await res.text();
+		if (text.trim() === '') return null;
+		const raw = JSON.parse(text) as RawContainerStats;
+		const usage = raw.memory_stats?.usage;
+		if (typeof usage !== 'number') return null;
+		const inactive =
+			raw.memory_stats?.stats?.inactive_file ??
+			raw.memory_stats?.stats?.total_inactive_file ??
+			raw.memory_stats?.stats?.cache ??
+			0;
+		const usedBytes = Math.max(0, usage - inactive);
+		return { usedBytes, rawUsageBytes: usage };
 	}
 
 	async containerLogs(

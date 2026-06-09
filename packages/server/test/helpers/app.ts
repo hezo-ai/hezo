@@ -33,6 +33,7 @@ const STUB_DOCKER_METHODS = {
 		State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
 		Config: { Image: 'stub' },
 	}),
+	containerStats: async () => null,
 	containerLogs: async () => ({ arrayBuffer: async () => new ArrayBuffer(0) }),
 	execCreate: async () => {
 		throw new Error('execCreate not mocked — pass a mock docker via RunnerDeps');
