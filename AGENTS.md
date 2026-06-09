@@ -273,6 +273,20 @@ Per-runtime wiring lives in three places:
 
 The judge prompt body (`STOP_HOOK_RULES` in `stop-hook-prompt.ts`) is identical across all three runtimes, so changes to the rules apply everywhere. The judge models are hardcoded per provider (Sonnet for Anthropic, gpt-4o-mini for OpenAI, gemini-1.5-flash for Google) and intended to be revisited after dogfooding. For providers using subscription auth (Codex / Gemini OAuth flows) the helper script has no API key in env and fails open — exits silently, the agent stops normally.
 
+## Browser automation inside the container
+
+Playwright (and any other browser-driver) installs cleanly at runtime — nothing is pre-baked. Both `apt` and the binary download route through the per-run egress proxy; the Hezo CA is already trusted via `NODE_EXTRA_CA_CERTS` and the system bundle. Do not special-case TLS.
+
+```sh
+mkdir -p /tmp/pw && cd /tmp/pw
+npm init -y && npm install playwright
+sudo npx playwright install --with-deps chromium
+# Run from the same dir so require('playwright') resolves:
+node test.mjs
+```
+
+Stay in `/tmp/pw` (or wherever you ran `npm install`) for any follow-up `npx playwright …` calls — running from a sibling directory will warn about missing deps and may fail. Prefer `--with-deps` over a hand-curated apt list; Playwright tracks its own version-pinned requirements.
+
 ## Implementation phases
 
 When you complete a phase, mark it done with a completion date at the top of the phase section in `.dev/implementation-phases.md`. Keep the phase content intact. Every phase that adds backend functionality ships with UI for manual browser testing.
