@@ -86,89 +86,91 @@ function TaskDetailPage() {
 	const taskProjectSlug = task.project_slug ?? projectId;
 
 	return (
-		<div className="grid grid-cols-1 lg:grid-cols-[1fr_190px] gap-5">
-			<div className="min-w-0">
-				<TaskHeader task={task} projectId={projectId} taskProjectSlug={taskProjectSlug} />
+		<>
+			<div className="grid grid-cols-1 lg:grid-cols-[1fr_190px] gap-5">
+				<div className="min-w-0">
+					<TaskHeader task={task} projectId={projectId} taskProjectSlug={taskProjectSlug} />
 
-				<TaskSummary
+					<TaskSummary
+						task={task}
+						projectId={projectId}
+						taskProjectSlug={taskProjectSlug}
+						updateTask={updateTask}
+					/>
+
+					<SubTasksSection
+						projectId={projectId}
+						taskId={taskId}
+						parentTaskId={task.id}
+						taskProjectSlug={taskProjectSlug}
+					/>
+
+					<DependenciesSection projectId={projectId} taskId={taskId} />
+
+					<div className="border-t border-border pt-4">
+						<div className="flex items-center gap-1.5 mb-4">
+							<h3 className="text-[13px] text-text font-medium">Comments</h3>
+							<span className="bg-bg-subtle px-[7px] py-px rounded-full text-[11px] text-text-muted">
+								{comments?.length ?? 0}
+							</span>
+						</div>
+
+						<CommentsSection
+							task={task}
+							projectId={projectId}
+							taskId={taskId}
+							taskProjectSlug={taskProjectSlug}
+							scrollParent={scrollParent}
+							onStartReply={startReply}
+						/>
+
+						<CommentComposer
+							task={task}
+							projectId={projectId}
+							taskId={taskId}
+							taskProjectSlug={taskProjectSlug}
+							comments={comments}
+							createComment={createComment}
+							commentEffort={commentEffort}
+							setCommentEffort={setCommentEffort}
+							replyTarget={replyTarget}
+							setReplyTarget={setReplyTarget}
+							jumpToComment={jumpToComment}
+							commentFormRef={commentFormRef}
+							commentTextareaRef={commentTextareaRef}
+						/>
+					</div>
+				</div>
+
+				<TaskSidebar
 					task={task}
 					projectId={projectId}
-					taskProjectSlug={taskProjectSlug}
+					agents={agents}
+					lock={lock}
+					comments={comments}
 					updateTask={updateTask}
+					commentEffort={commentEffort}
+					setCommentEffort={setCommentEffort}
+					scrollToBottom={scrollToBottom}
 				/>
-
-				<SubTasksSection
-					projectId={projectId}
-					taskId={taskId}
-					parentTaskId={task.id}
-					taskProjectSlug={taskProjectSlug}
-				/>
-
-				<DependenciesSection projectId={projectId} taskId={taskId} />
-
-				<div className="border-t border-border pt-4">
-					<div className="flex items-center gap-1.5 mb-4">
-						<h3 className="text-[13px] text-text font-medium">Comments</h3>
-						<span className="bg-bg-subtle px-[7px] py-px rounded-full text-[11px] text-text-muted">
-							{comments?.length ?? 0}
-						</span>
-					</div>
-
-					<CommentsSection
-						task={task}
-						projectId={projectId}
-						taskId={taskId}
-						taskProjectSlug={taskProjectSlug}
-						scrollParent={scrollParent}
-						onStartReply={startReply}
-					/>
-
-					<CommentComposer
-						task={task}
-						projectId={projectId}
-						taskId={taskId}
-						taskProjectSlug={taskProjectSlug}
-						comments={comments}
-						createComment={createComment}
-						commentEffort={commentEffort}
-						setCommentEffort={setCommentEffort}
-						replyTarget={replyTarget}
-						setReplyTarget={setReplyTarget}
-						jumpToComment={jumpToComment}
-						commentFormRef={commentFormRef}
-						commentTextareaRef={commentTextareaRef}
-					/>
-				</div>
-
-				<div
-					className="sticky bottom-4 z-30 flex justify-end pointer-events-none"
-					aria-hidden={atBottom}
-				>
-					<button
-						type="button"
-						onClick={scrollToBottom}
-						data-testid="task-scroll-to-bottom"
-						aria-label="Scroll to bottom"
-						tabIndex={atBottom ? -1 : 0}
-						className={`w-9 h-9 rounded-full border border-border bg-bg-elevated text-text-muted hover:text-text shadow-md flex items-center justify-center ${atBottom ? 'invisible' : 'pointer-events-auto'}`}
-					>
-						<ArrowDown className="w-4 h-4" />
-					</button>
-				</div>
 			</div>
 
-			<TaskSidebar
-				task={task}
-				projectId={projectId}
-				agents={agents}
-				lock={lock}
-				comments={comments}
-				updateTask={updateTask}
-				commentEffort={commentEffort}
-				setCommentEffort={setCommentEffort}
-				scrollToBottom={scrollToBottom}
-			/>
-		</div>
+			<div
+				className="sticky bottom-4 z-30 flex justify-end pointer-events-none"
+				aria-hidden={atBottom}
+			>
+				<button
+					type="button"
+					onClick={scrollToBottom}
+					data-testid="task-scroll-to-bottom"
+					aria-label="Scroll to bottom"
+					tabIndex={atBottom ? -1 : 0}
+					className={`w-9 h-9 rounded-full border border-border bg-bg-elevated text-text-muted hover:text-text shadow-md flex items-center justify-center ${atBottom ? 'invisible' : 'pointer-events-auto'}`}
+				>
+					<ArrowDown className="w-4 h-4" />
+				</button>
+			</div>
+		</>
 	);
 }
 
