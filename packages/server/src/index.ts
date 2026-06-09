@@ -4,6 +4,7 @@ import { AuthType, DEFAULT_WEB_PORT } from '@hezo/shared';
 import { app } from './app';
 import { parseArgs, runRestore } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
+import { PgDataCorruptError } from './db/client';
 import { logger } from './logger';
 import { loadAdminAuth, verifyToken } from './middleware/auth';
 import type { ContainerLogStreamer } from './services/container-logs';
@@ -145,7 +146,11 @@ void (async () => {
 		}
 	} catch (err) {
 		if (thisStartupGeneration !== startupGeneration) return;
-		log.error('Startup failed, serving minimal app:', err);
+		if (err instanceof PgDataCorruptError) {
+			log.error(`\n${err.message}\n`);
+		} else {
+			log.error('Startup failed, serving minimal app:', err);
+		}
 		log.info(`Hezo server (minimal) starting on port ${config.port}...`);
 	}
 })();

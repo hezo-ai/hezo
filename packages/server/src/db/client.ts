@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
@@ -8,14 +8,29 @@ const log = logger.child('db');
 
 /** WASM init failures that usually mean pgdata was left half-written or locked. */
 export function isRecoverablePgInitError(err: unknown): boolean {
+	if (err instanceof WebAssembly.RuntimeError) return true;
 	const msg = err instanceof Error ? err.message : String(err);
 	return (
 		msg.includes('Unreachable code should not be executed') ||
 		msg.includes('_pg_initdb') ||
 		msg.includes('initdb') ||
 		msg.includes('could not open file') ||
-		msg.includes('invalid record length')
+		msg.includes('invalid record length') ||
+		msg.includes('Aborted()') ||
+		msg.includes('Build with -sASSERTIONS')
 	);
+}
+
+export class PgDataCorruptError extends Error {
+	constructor(
+		message: string,
+		readonly pgDataPath: string,
+		readonly backupPathHint: string,
+		readonly cause: unknown,
+	) {
+		super(message);
+		this.name = 'PgDataCorruptError';
+	}
 }
 
 export interface OpenPersistentDbOptions {
@@ -24,9 +39,17 @@ export interface OpenPersistentDbOptions {
 
 /**
  * Open (or create) the on-disk PGlite database under `<dataDir>/pgdata`.
- * Retries once after wiping pgdata when init fails due to a corrupt/partial
- * data directory — common when `bun --watch` reloads before the prior
- * instance calls `db.close()`.
+ *
+ * Behaviour:
+ * - Normal open: returns a working PGlite handle.
+ * - `options.reset === true`: renames any existing pgdata aside as
+ *   `pgdata.corrupt.<timestamp>` (never silently deletes), then creates a
+ *   fresh DB. The renamed copy can be inspected later with a standalone
+ *   PGlite process.
+ * - Init fails with a recoverable WASM/initdb signature: throws
+ *   `PgDataCorruptError` with the path where a backup would be saved if
+ *   the user re-runs with `--reset`. Callers should surface this to the
+ *   user verbatim — recovery is opt-in, never automatic.
  */
 export async function openPersistentDb(
 	dataDir: string,
@@ -34,11 +57,16 @@ export async function openPersistentDb(
 ): Promise<PGlite> {
 	const pgDataPath = join(dataDir, 'pgdata');
 
-	if (options.reset) {
-		rmSync(pgDataPath, { recursive: true, force: true });
-	}
-
 	mkdirSync(dataDir, { recursive: true });
+
+	if (options.reset && existsSync(pgDataPath)) {
+		const corruptPath = `${pgDataPath}.corrupt.${Date.now()}`;
+		log.warn('Reset requested; renaming existing pgdata aside before creating fresh DB', {
+			pgDataPath,
+			corruptPath,
+		});
+		renameSync(pgDataPath, corruptPath);
+	}
 
 	const { NodeFS } = await import('@electric-sql/pglite/nodefs');
 	const { loadPgliteAssets } = await import('./pglite-assets');
@@ -47,32 +75,30 @@ export async function openPersistentDb(
 	// from memory; in dev this is null and PGlite resolves them from node_modules.
 	const assets = await loadPgliteAssets(dataDir);
 
-	for (let attempt = 0; attempt < 2; attempt++) {
-		try {
-			const db = assets
-				? new PGlite({
-						fs: new NodeFS(pgDataPath),
-						extensions: { vector: assets.vectorExtension },
-						wasmModule: assets.wasmModule,
-						fsBundle: assets.fsBundle,
-					})
-				: new PGlite({ fs: new NodeFS(pgDataPath), extensions: { vector } });
-			await db.query('SELECT 1');
-			return db;
-		} catch (err) {
-			if (attempt === 0 && isRecoverablePgInitError(err)) {
-				log.warn('PGlite init failed; wiping pgdata and retrying', {
-					pgDataPath,
-					error: err instanceof Error ? err.message : String(err),
-				});
-				rmSync(pgDataPath, { recursive: true, force: true });
-				continue;
-			}
-			throw err;
+	try {
+		const db = assets
+			? new PGlite({
+					fs: new NodeFS(pgDataPath),
+					extensions: { vector: assets.vectorExtension },
+					wasmModule: assets.wasmModule,
+					fsBundle: assets.fsBundle,
+				})
+			: new PGlite({ fs: new NodeFS(pgDataPath), extensions: { vector } });
+		await db.query('SELECT 1');
+		return db;
+	} catch (err) {
+		if (isRecoverablePgInitError(err)) {
+			const backupPathHint = `${pgDataPath}.corrupt.<timestamp>`;
+			const causeMsg = err instanceof Error ? err.message : String(err);
+			const message =
+				`Database at ${pgDataPath} appears corrupt (PGlite init failed: ${causeMsg}).\n` +
+				`To preserve a backup and start with a fresh database, restart the server ` +
+				`with --reset. The existing pgdata will be renamed to ${backupPathHint} before ` +
+				`a fresh database is created. No data is deleted.`;
+			throw new PgDataCorruptError(message, pgDataPath, backupPathHint, err);
 		}
+		throw err;
 	}
-
-	throw new Error('openPersistentDb: retry loop exhausted');
 }
 
 /** @deprecated Use {@link openPersistentDb} — kept for callers that only need a bare instance. */

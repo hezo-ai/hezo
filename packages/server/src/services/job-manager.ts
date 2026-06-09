@@ -1663,11 +1663,7 @@ export class JobManager {
 			return;
 		}
 
-		const transitions = await syncAllContainerStatuses(
-			this.deps.db,
-			this.deps.docker,
-			this.deps.wsManager,
-		);
+		const transitions = await syncAllContainerStatuses(this.buildContainerDeps());
 
 		for (const transition of transitions) {
 			await this.handleContainerTransition(transition);

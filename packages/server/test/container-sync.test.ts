@@ -7,14 +7,21 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/lib/types';
 import {
+	type ContainerDeps,
 	type ProjectRow,
 	provisionContainer,
 	stopContainerGracefully,
 	syncAllContainerStatuses,
 } from '../src/services/containers';
+import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import type { WebSocketManager } from '../src/services/ws';
 import { safeClose } from './helpers';
 import { authHeader, createStubDocker, createTestApp, createTestProject } from './helpers/app';
+
+function deps(docker: DockerClient, wsManager?: WebSocketManager): ContainerDeps {
+	return { db, docker, dataDir: '/tmp/hezo-test-unused', wsManager };
+}
 
 let db: PGlite;
 let app: Hono<Env>;
@@ -50,7 +57,7 @@ describe('syncAllContainerStatuses', () => {
 	it('does nothing when no projects have containers', async () => {
 		await db.query('UPDATE projects SET container_id = NULL');
 		const mockDocker = createStubDocker({ inspectContainer: vi.fn() });
-		await syncAllContainerStatuses(db, mockDocker);
+		await syncAllContainerStatuses(deps(mockDocker));
 		expect(mockDocker.inspectContainer).not.toHaveBeenCalled();
 	});
 
@@ -70,7 +77,7 @@ describe('syncAllContainerStatuses', () => {
 			inspectContainer: vi.fn().mockResolvedValue(null),
 		});
 
-		await syncAllContainerStatuses(db, mockDocker);
+		await syncAllContainerStatuses(deps(mockDocker));
 
 		const result = await db.query<{ container_status: string; container_id: string | null }>(
 			'SELECT container_status, container_id FROM projects WHERE id = $1',
@@ -97,7 +104,7 @@ describe('syncAllContainerStatuses', () => {
 			inspectContainer: vi.fn().mockResolvedValue(null),
 		});
 
-		await syncAllContainerStatuses(db, mockDocker);
+		await syncAllContainerStatuses(deps(mockDocker));
 
 		const result = await db.query<{ container_error: string | null }>(
 			'SELECT container_error FROM projects WHERE id = $1',
@@ -140,7 +147,7 @@ describe('syncAllContainerStatuses', () => {
 			}),
 		});
 
-		await syncAllContainerStatuses(db, mockDocker);
+		await syncAllContainerStatuses(deps(mockDocker));
 
 		const result = await db.query<{
 			container_status: string;
@@ -174,7 +181,7 @@ describe('syncAllContainerStatuses', () => {
 			inspectContainer: vi.fn().mockRejectedValue(new Error('EPIPE')),
 		});
 
-		await syncAllContainerStatuses(db, mockDocker);
+		await syncAllContainerStatuses(deps(mockDocker));
 
 		const result = await db.query<{ container_status: string; container_id: string | null }>(
 			'SELECT container_status, container_id FROM projects WHERE id = $1',
@@ -202,7 +209,7 @@ describe('syncAllContainerStatuses', () => {
 			}),
 		});
 
-		await syncAllContainerStatuses(db, mockDocker);
+		await syncAllContainerStatuses(deps(mockDocker));
 
 		const result = await db.query<{ container_status: string }>(
 			'SELECT container_status FROM projects WHERE id = $1',
@@ -229,7 +236,7 @@ describe('syncAllContainerStatuses', () => {
 			}),
 		});
 
-		await syncAllContainerStatuses(db, mockDocker);
+		await syncAllContainerStatuses(deps(mockDocker));
 
 		const result = await db.query<{ container_status: string }>(
 			'SELECT container_status FROM projects WHERE id = $1',
@@ -255,7 +262,7 @@ describe('syncAllContainerStatuses', () => {
 		});
 		const mockWsManager = { broadcast: vi.fn() } as any;
 
-		await syncAllContainerStatuses(db, mockDocker, mockWsManager);
+		await syncAllContainerStatuses(deps(mockDocker, mockWsManager));
 
 		expect(mockWsManager.broadcast).toHaveBeenCalled();
 		const [room, event] = mockWsManager.broadcast.mock.calls.find(
@@ -295,9 +302,168 @@ describe('syncAllContainerStatuses', () => {
 		});
 		const mockWsManager = { broadcast: vi.fn() } as any;
 
-		await syncAllContainerStatuses(db, mockDocker, mockWsManager);
+		await syncAllContainerStatuses(deps(mockDocker, mockWsManager));
 
 		expect(mockWsManager.broadcast).not.toHaveBeenCalled();
+	});
+
+	it('auto-stops a running container that exceeds the memory limit', async () => {
+		await db.query(
+			'UPDATE projects SET container_id = NULL, container_status = NULL, container_error = NULL WHERE team_id = $1',
+			[teamId],
+		);
+
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Memory Hog Project',
+			description: 'Test project.',
+		});
+		const projectId = (await projectRes.json()).data.id;
+		await new Promise((r) => setTimeout(r, 100));
+
+		await db.query(
+			"UPDATE projects SET container_id = 'memory-hog-container', container_status = 'running'::container_status WHERE id = $1",
+			[projectId],
+		);
+
+		const overLimitBytes = 13 * 1024 ** 3;
+		const stopContainer = vi.fn().mockResolvedValue(undefined);
+		const mockDocker = createStubDocker({
+			inspectContainer: vi.fn().mockResolvedValue({
+				State: { Running: true, Status: 'running' },
+			}),
+			containerStats: vi.fn().mockResolvedValue({
+				usedBytes: overLimitBytes,
+				rawUsageBytes: overLimitBytes,
+			}),
+			stopContainer,
+			containerLogs: vi.fn().mockResolvedValue({ arrayBuffer: async () => new ArrayBuffer(0) }),
+		});
+		const mockWsManager = { broadcast: vi.fn() } as any;
+
+		await syncAllContainerStatuses(deps(mockDocker, mockWsManager));
+
+		expect(stopContainer).toHaveBeenCalledWith('memory-hog-container');
+
+		const result = await db.query<{ container_status: string; container_error: string | null }>(
+			'SELECT container_status, container_error FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(result.rows[0].container_status).toBe('error');
+		expect(result.rows[0].container_error).toContain('13.00 GiB');
+		expect(result.rows[0].container_error).toContain('12 GiB');
+		expect(result.rows[0].container_error).toMatch(/restart/i);
+
+		expect(mockWsManager.broadcast).toHaveBeenCalled();
+	});
+
+	it('leaves a running container untouched when memory is within budget', async () => {
+		await db.query(
+			'UPDATE projects SET container_id = NULL, container_status = NULL, container_error = NULL WHERE team_id = $1',
+			[teamId],
+		);
+
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Memory Frugal Project',
+			description: 'Test project.',
+		});
+		const projectId = (await projectRes.json()).data.id;
+		await new Promise((r) => setTimeout(r, 100));
+
+		await db.query(
+			"UPDATE projects SET container_id = 'frugal-container', container_status = 'running'::container_status WHERE id = $1",
+			[projectId],
+		);
+
+		const stopContainer = vi.fn().mockResolvedValue(undefined);
+		const mockDocker = createStubDocker({
+			inspectContainer: vi.fn().mockResolvedValue({
+				State: { Running: true, Status: 'running' },
+			}),
+			containerStats: vi.fn().mockResolvedValue({
+				usedBytes: 4 * 1024 ** 3,
+				rawUsageBytes: 4 * 1024 ** 3,
+			}),
+			stopContainer,
+		});
+
+		await syncAllContainerStatuses(deps(mockDocker));
+
+		expect(stopContainer).not.toHaveBeenCalled();
+
+		const result = await db.query<{ container_status: string; container_error: string | null }>(
+			'SELECT container_status, container_error FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(result.rows[0].container_status).toBe('running');
+		expect(result.rows[0].container_error).toBeNull();
+	});
+
+	it('does not poll stats for stopped containers', async () => {
+		await db.query(
+			'UPDATE projects SET container_id = NULL, container_status = NULL, container_error = NULL WHERE team_id = $1',
+			[teamId],
+		);
+
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Already Stopped Project',
+			description: 'Test project.',
+		});
+		const projectId = (await projectRes.json()).data.id;
+		await new Promise((r) => setTimeout(r, 100));
+
+		await db.query(
+			"UPDATE projects SET container_id = 'already-stopped', container_status = 'stopped'::container_status WHERE id = $1",
+			[projectId],
+		);
+
+		const containerStats = vi.fn();
+		const mockDocker = createStubDocker({
+			inspectContainer: vi.fn().mockResolvedValue({
+				State: { Running: false, Status: 'exited', ExitCode: 0 },
+			}),
+			containerStats,
+		});
+
+		await syncAllContainerStatuses(deps(mockDocker));
+
+		expect(containerStats).not.toHaveBeenCalled();
+	});
+
+	it('survives a stats transport error without stopping the container', async () => {
+		await db.query(
+			'UPDATE projects SET container_id = NULL, container_status = NULL, container_error = NULL WHERE team_id = $1',
+			[teamId],
+		);
+
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Stats Flake Project',
+			description: 'Test project.',
+		});
+		const projectId = (await projectRes.json()).data.id;
+		await new Promise((r) => setTimeout(r, 100));
+
+		await db.query(
+			"UPDATE projects SET container_id = 'flake-container', container_status = 'running'::container_status WHERE id = $1",
+			[projectId],
+		);
+
+		const stopContainer = vi.fn().mockResolvedValue(undefined);
+		const mockDocker = createStubDocker({
+			inspectContainer: vi.fn().mockResolvedValue({
+				State: { Running: true, Status: 'running' },
+			}),
+			containerStats: vi.fn().mockRejectedValue(new Error('EPIPE')),
+			stopContainer,
+		});
+
+		await syncAllContainerStatuses(deps(mockDocker));
+
+		expect(stopContainer).not.toHaveBeenCalled();
+		const result = await db.query<{ container_status: string }>(
+			'SELECT container_status FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(result.rows[0].container_status).toBe('running');
 	});
 });
 
@@ -359,8 +525,8 @@ describe('provisionContainer broadcasting', () => {
 			`${dataDir}/teams/${project.team_id}/projects/${project.id}/assets`,
 		);
 
-		expect(hostConfig.Memory).toBeGreaterThan(0);
-		expect(hostConfig.MemorySwap).toBe(hostConfig.Memory);
+		expect(hostConfig.Memory).toBeUndefined();
+		expect(hostConfig.MemorySwap).toBeUndefined();
 	});
 
 	it('keeps container name and bind mounts stable when the project is renamed', async () => {
@@ -726,7 +892,7 @@ describe('syncAllContainerStatuses with stopping status', () => {
 		});
 		const mockWsManager = { broadcast: vi.fn() } as any;
 
-		await syncAllContainerStatuses(db, mockDocker, mockWsManager);
+		await syncAllContainerStatuses(deps(mockDocker, mockWsManager));
 
 		const result = await db.query<{ container_status: string }>(
 			'SELECT container_status FROM projects WHERE id = $1',

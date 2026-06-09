@@ -92,11 +92,12 @@ const PORT_POOL_END = 19999;
 
 const LAST_LOGS_CAP_BYTES = 32 * 1024;
 
-// Cap each project container's memory so a runaway workload hits the cgroup OOM
-// killer (surfaces as a `docker events` oom event and a deterministic exit 137
-// on the offending container) rather than silently pressuring the whole Docker
-// Desktop VM and taking sibling containers down with it.
-const CONTAINER_MEMORY_LIMIT_BYTES = 6 * 1024 * 1024 * 1024;
+/**
+ * Threshold above which the sync loop stops a running container automatically.
+ * Picked to leave headroom on a 16 GB laptop after Docker Desktop's own VM
+ * overhead, the dev server (PGlite + embeddings model), and the host OS.
+ */
+export const CONTAINER_MEMORY_KILL_BYTES = 12 * 1024 * 1024 * 1024;
 
 /**
  * Pull a one-shot tail of the container's stdout+stderr log buffer. Used to
@@ -228,8 +229,6 @@ export async function provisionContainer(
 				Binds: binds,
 				PortBindings: portBindings,
 				ExtraHosts: extraHosts,
-				Memory: CONTAINER_MEMORY_LIMIT_BYTES,
-				MemorySwap: CONTAINER_MEMORY_LIMIT_BYTES,
 			},
 			ExposedPorts: exposedPorts,
 		});
@@ -524,11 +523,76 @@ export async function syncContainerStatus(
 	return status;
 }
 
+/**
+ * If the container's working-set memory crosses {@link CONTAINER_MEMORY_KILL_BYTES},
+ * stop it and record an explanatory message in `container_error`. The banner and
+ * container page both surface that field. Returns the synthesised status when the
+ * container was stopped, or null when it was within budget or stats were unavailable.
+ *
+ * Failure modes are non-fatal — a transport error on stats or stop must not stop
+ * the surrounding sync loop from servicing other projects.
+ */
+async function enforceContainerMemoryLimit(
+	deps: ContainerDeps,
+	projectId: string,
+	teamId: string,
+	containerId: string,
+): Promise<string | null> {
+	const { db, docker } = deps;
+
+	let stats: Awaited<ReturnType<DockerClient['containerStats']>>;
+	try {
+		stats = await docker.containerStats(containerId);
+	} catch (err) {
+		log.warn(`Container stats transport error for project ${projectId}; will retry`, err);
+		return null;
+	}
+	if (!stats) return null;
+	if (stats.usedBytes <= CONTAINER_MEMORY_KILL_BYTES) return null;
+
+	const usedGiB = (stats.usedBytes / 1024 ** 3).toFixed(2);
+	const limitGiB = (CONTAINER_MEMORY_KILL_BYTES / 1024 ** 3).toFixed(0);
+	const errorMessage =
+		`Container was using ${usedGiB} GiB of RAM, above the ${limitGiB} GiB safety limit, ` +
+		`and was stopped automatically to keep your machine responsive. Restart the container ` +
+		`to try again, or investigate what was using the memory before restarting.`;
+
+	const lastLogs = await captureContainerLogs(docker, containerId);
+
+	try {
+		await docker.stopContainer(containerId);
+	} catch (err) {
+		log.warn(
+			`docker.stopContainer failed during memory-limit enforcement for project ${projectId}; recording error anyway`,
+			err,
+		);
+	}
+
+	await db.query(
+		`UPDATE projects
+		 SET container_status = $1::container_status,
+		     container_last_logs = COALESCE($2, container_last_logs),
+		     container_error = $3
+		 WHERE id = $4`,
+		[ContainerStatus.Error, lastLogs, errorMessage, projectId],
+	);
+
+	log.warn(
+		`Auto-stopped container ${containerId.slice(0, 12)} for project ${projectId}: used ${usedGiB} GiB (> ${limitGiB} GiB)`,
+	);
+
+	await failProjectRuns(deps, projectId, teamId, 'container_error').catch((e) =>
+		log.error('Failed to fail project runs after memory-limit stop:', e),
+	);
+
+	return ContainerStatus.Error;
+}
+
 export async function syncAllContainerStatuses(
-	db: PGlite,
-	docker: DockerClient,
-	wsManager?: WebSocketManager,
+	deps: ContainerDeps,
 ): Promise<ContainerTransition[]> {
+	const { db, docker, wsManager } = deps;
+
 	const projects = await db.query<{
 		id: string;
 		team_id: string;
@@ -541,13 +605,25 @@ export async function syncAllContainerStatuses(
 	const transitions: ContainerTransition[] = [];
 	for (const project of projects.rows) {
 		const oldStatus = project.container_status;
-		const newStatus = await syncContainerStatus(
+		let newStatus = await syncContainerStatus(
 			db,
 			docker,
 			project.id,
 			project.container_id,
 			oldStatus,
 		);
+
+		if (newStatus === ContainerStatus.Running) {
+			const overrideStatus = await enforceContainerMemoryLimit(
+				deps,
+				project.id,
+				project.team_id,
+				project.container_id,
+			);
+			if (overrideStatus !== null) {
+				newStatus = overrideStatus;
+			}
+		}
 
 		if (newStatus !== null && newStatus !== oldStatus) {
 			transitions.push({
