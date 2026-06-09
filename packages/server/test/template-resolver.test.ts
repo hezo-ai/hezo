@@ -238,6 +238,16 @@ describe('template resolver', () => {
 		expect(result).toContain('deliverable-feed test');
 	});
 
+	it('tells reviewers/consolidators to gate the originating ticket blocked_by spawned remediation', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		expect(result).toContain(
+			"When a ticket can't close until remediation you're routing out is done, GATE it",
+		);
+		// a passive task-link does not re-wake; only a blocked_by edge does
+		expect(result).toContain('add_task_blocker');
+		expect(result).toContain('many-to-many');
+	});
+
 	it('mention discipline names the three structural-routing channels and the handoff carve-out', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('### @-Mention Discipline');
@@ -250,6 +260,14 @@ describe('template resolver', () => {
 		expect(result).toContain('reference the next role as `@@<slug>`, not `@<slug>`');
 		// rubric example shows the passive-handoff pattern
 		expect(result).toContain('@@architect — BE-4 and BE-5 unblock now');
+	});
+
+	it('mention discipline requires an active @ when no structural wake backs the handoff', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		expect(result).toContain('A handoff with nothing structural behind it uses active');
+		// the approval-to-merge / hand-back case that stalls on a passive @@
+		expect(result).toContain('the mention is the **only** wake there is');
+		expect(result).toContain('A passive `@@` there pings no one and the ticket stalls');
 	});
 
 	it('mention discipline makes @@ the explicit default and flags the status-recap antipattern', async () => {

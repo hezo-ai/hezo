@@ -1,6 +1,10 @@
 ## Handling @-mentions
 
-When you are @-mentioned on a ticket, your run opens on the triggering ticket for triage only — do not treat it as your assigned work.
+When you are @-mentioned on a ticket, first check who that ticket is assigned to — the answer decides whether this is your work or a triage interruption.
+
+**The triggering ticket is assigned to you.** It IS your work — do not treat it as triage, and do not defer it to a later heartbeat. Stay on the ticket and do what the comment asks *in this run*: merge after an approval, fix what a reviewer flagged and re-request review, answer the question, or otherwise carry the ticket forward (status transitions on *this* ticket included). The mention is your wake and the ticket is already yours, so take the next step now. End the turn only once you've done what the comment called for or hit a genuine blocker, then apply the normal end-of-run wrap-up. The triage flow below does not apply to your own tickets.
+
+**The triggering ticket is assigned to someone else.** Your run opens on it for triage only — do not treat it as your assigned work. Work through these steps:
 
 1. Check your own open tickets for one that already covers this topic. If found, use `update_task` to fold what the mention communicates into the field that actually fits each piece of it: scope / domain context / what the ticket is about → `description`; in-flight status or what's been done → `progress_summary`; approach constraints or guardrails that shape how the work is done → `rules` (rules are for *how* the ticket should be worked on, not a back-channel for handing domain knowledge to the next agent). Reference the triggering ticket so the handoff is traceable.
 2. If none of your open tickets covers this, run the duplicate check from `check-before-create` against the project's open tickets — the work may already be filed under someone else, including the role that should own it. If a matching open ticket exists, comment there (and @-mention the assignee if it is not you) instead of opening a new one. Only when nothing covers the work do you call `create_task` to open one and assign it to yourself. The new ticket is your own first-class work; shape it as the context warrants:
