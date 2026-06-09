@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { AgentRuntimeStatus, HeartbeatRunStatus, TaskStatus, WakeupStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
@@ -10,7 +10,7 @@ import type { DockerClient } from '../src/services/docker';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createStubDocker, createTestApp, createTestProject } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -1863,6 +1863,195 @@ describe('JobManager workflow methods', () => {
 			expect(locks.rows.length).toBe(0);
 
 			manager.shutdown();
+		});
+
+		describe('container restart', () => {
+			// Other projects (notably HQ) get provisioned in the background during
+			// file-level setup and end up with container_status='running'. Clear all
+			// projects before each test so the restart pass only sees the row the
+			// test under test seeded.
+			beforeEach(async () => {
+				await db.query(
+					`UPDATE projects
+					 SET container_status = NULL, container_id = NULL, container_error = NULL`,
+				);
+			});
+
+			afterEach(async () => {
+				await db.query(
+					`UPDATE projects
+					 SET container_status = NULL, container_id = NULL, container_error = NULL`,
+				);
+			});
+
+			// Default stub overrides that satisfy the post-restart repairStaleContainerMounts
+			// pass — verifyContainerWorkspace runs an exec; without a non-throwing exec
+			// stub it would trigger a rebuild and pollute every assertion.
+			const happyExec = {
+				execCreate: async () => 'exec-1',
+				execStart: async () => ({ stdout: 'ok', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			};
+
+			async function seedRunningContainer(containerId: string): Promise<void> {
+				await db.query(
+					`UPDATE projects
+					 SET container_status = 'running'::container_status, container_id = $2, container_error = 'old error'
+					 WHERE id = $1`,
+					[projectId, containerId],
+				);
+			}
+
+			it('starts an exited container whose DB status is running', async () => {
+				await seedRunningContainer('abc');
+
+				const startCalls: string[] = [];
+				const manager = createJobManager({
+					docker: createStubDocker({
+						...happyExec,
+						inspectContainer: async (id: string) => ({
+							Id: id,
+							State: { Status: 'exited', Running: false, Pid: 0, ExitCode: 0 },
+							Config: { Image: 'stub' },
+						}),
+						startContainer: async (id: string) => {
+							startCalls.push(id);
+						},
+					}),
+				});
+
+				await manager.reconcileOnStartup();
+
+				expect(startCalls).toEqual(['abc']);
+				const row = await db.query<{ container_error: string | null }>(
+					'SELECT container_error FROM projects WHERE id = $1',
+					[projectId],
+				);
+				expect(row.rows[0].container_error).toBe(null);
+
+				manager.shutdown();
+			});
+
+			it('leaves an already-running container alone', async () => {
+				await seedRunningContainer('abc');
+
+				const startCalls: string[] = [];
+				const manager = createJobManager({
+					docker: createStubDocker({
+						...happyExec,
+						inspectContainer: async (id: string) => ({
+							Id: id,
+							State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
+							Config: { Image: 'stub' },
+						}),
+						startContainer: async (id: string) => {
+							startCalls.push(id);
+						},
+					}),
+				});
+
+				await manager.reconcileOnStartup();
+
+				expect(startCalls).toEqual([]);
+
+				manager.shutdown();
+			});
+
+			it('does not touch a project the user has explicitly stopped', async () => {
+				await db.query(
+					`UPDATE projects
+					 SET container_status = 'stopped'::container_status, container_id = 'abc'
+					 WHERE id = $1`,
+					[projectId],
+				);
+
+				const startCalls: string[] = [];
+				const inspectCalls: string[] = [];
+				const manager = createJobManager({
+					docker: createStubDocker({
+						...happyExec,
+						inspectContainer: async (id: string) => {
+							inspectCalls.push(id);
+							return {
+								Id: id,
+								State: { Status: 'exited', Running: false, Pid: 0, ExitCode: 0 },
+								Config: { Image: 'stub' },
+							};
+						},
+						startContainer: async (id: string) => {
+							startCalls.push(id);
+						},
+					}),
+				});
+
+				await manager.reconcileOnStartup();
+
+				expect(inspectCalls).not.toContain('abc');
+				expect(startCalls).toEqual([]);
+
+				manager.shutdown();
+			});
+
+			it('re-provisions a project whose container has vanished from Docker', async () => {
+				await seedRunningContainer('gone');
+
+				const createCalls: string[] = [];
+				const manager = createJobManager({
+					docker: createStubDocker({
+						...happyExec,
+						inspectContainer: async () => null,
+						createContainer: async (name: string) => {
+							createCalls.push(name);
+							return { Id: 'fresh-container', Warnings: [] };
+						},
+					}),
+				});
+
+				await manager.reconcileOnStartup();
+
+				expect(createCalls).toContain(`hezo-${projectId}`);
+				const row = await db.query<{ container_id: string | null; container_status: string }>(
+					'SELECT container_id, container_status FROM projects WHERE id = $1',
+					[projectId],
+				);
+				expect(row.rows[0].container_id).toBe('fresh-container');
+				expect(row.rows[0].container_status).toBe('running');
+
+				manager.shutdown();
+			});
+
+			it('skips the restart pass when Docker is unreachable', async () => {
+				await seedRunningContainer('abc');
+
+				const inspectCalls: string[] = [];
+				const startCalls: string[] = [];
+				const manager = createJobManager({
+					docker: createStubDocker({
+						...happyExec,
+						ping: async () => false,
+						inspectContainer: async (id: string) => {
+							inspectCalls.push(id);
+							return null;
+						},
+						startContainer: async (id: string) => {
+							startCalls.push(id);
+						},
+					}),
+				});
+
+				await manager.reconcileOnStartup();
+
+				expect(inspectCalls).toEqual([]);
+				expect(startCalls).toEqual([]);
+				const row = await db.query<{ container_id: string | null; container_status: string }>(
+					'SELECT container_id, container_status FROM projects WHERE id = $1',
+					[projectId],
+				);
+				expect(row.rows[0].container_id).toBe('abc');
+				expect(row.rows[0].container_status).toBe('running');
+
+				manager.shutdown();
+			});
 		});
 	});
 
