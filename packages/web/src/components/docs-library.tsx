@@ -108,9 +108,12 @@ export function DocsLibrary({
 				}`}
 			>
 				{/* Sticky on desktop so the doc list stays visible while a long
-				    document scrolls. 2.5rem = the h-10 app header; the list scrolls
-				    internally if it outgrows the viewport. */}
-				<div className="md:sticky md:top-0 md:max-h-[calc(100vh-2.5rem)] md:overflow-y-auto">
+				    document scrolls. The top offset mirrors the project layout's
+				    vertical padding (md:py-5 lg:py-6) so the pinned position
+				    preserves the breathing room visible when unscrolled. max-h
+				    subtracts the h-10 app header (2.5rem) plus the top offset so
+				    the list never overflows the bottom of <main>. */}
+				<div className="md:sticky md:top-5 lg:top-6 md:max-h-[calc(100vh-3.75rem)] lg:max-h-[calc(100vh-4rem)] md:overflow-y-auto">
 					{onNewDoc && (
 						<Button
 							variant="outline"

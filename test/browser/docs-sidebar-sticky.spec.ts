@@ -52,6 +52,11 @@ test('documents sidebar stays pinned while the page scrolls on desktop', async (
 		expect(after.y).toBeGreaterThanOrEqual(0);
 		// Pinned: it did not drift down from its starting position.
 		expect(after.y).toBeLessThanOrEqual(before.y + 1);
+		// And it did not drift up either. The sticky offset mirrors the project
+		// layout's vertical padding so the breathing room above the button when
+		// unscrolled is preserved when the sidebar sticks; without it the button
+		// would slide flush against the app header.
+		expect(after.y).toBeGreaterThanOrEqual(before.y - 1);
 		// And it sits within the app header + a small offset of the top.
 		expect(after.y).toBeLessThan(120);
 	}
