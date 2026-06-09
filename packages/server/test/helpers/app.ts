@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import { AgentAdminStatus, CAPTAIN_AGENT_SLUG } from '@hezo/shared';
+import { encrypt } from '../../src/crypto/encryption';
 import { generateMasterKey, MasterKeyManager } from '../../src/crypto/master-key';
 import { loadAgentRoles } from '../../src/db/agent-roles';
 import { seedBuiltins } from '../../src/db/seed';
@@ -47,6 +48,15 @@ export function createStubDocker<T extends Record<string, unknown>>(
 ): DockerClient & T {
 	return { ...STUB_DOCKER_METHODS, ...overrides } as unknown as DockerClient & T;
 }
+
+/**
+ * Re-exported from the server's crypto module so tests across packages can
+ * import it via the `@hezo/server/test/helpers/app` path the workspace
+ * symlink + vitest alias both resolve. Importing from `@hezo/server/crypto/*`
+ * directly would only work under the vitest alias, not under TS module
+ * resolution.
+ */
+export { encrypt };
 
 export async function createTestApp(opts: { webUrl?: string } = {}) {
 	const db = await createTestDbWithMigrations();

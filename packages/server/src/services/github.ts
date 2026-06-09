@@ -32,13 +32,16 @@ export interface GitHubRepoSummary {
 	ssh_url: string;
 }
 
-export interface CreateRepoResult {
-	owner: string;
-	name: string;
-	full_name: string;
-	private: boolean;
-	default_branch: string;
-}
+export type CreateRepoResult =
+	| {
+			status: 'created';
+			owner: string;
+			name: string;
+			full_name: string;
+			private: boolean;
+			default_branch: string;
+	  }
+	| { status: 'already_exists'; owner: string; name: string };
 
 const authHeaders = (accessToken: string) => ({
 	Authorization: `Bearer ${accessToken}`,
@@ -147,6 +150,13 @@ export async function createGitHubRepo(
 
 	if (!res.ok) {
 		const body = await res.text();
+		if (res.status === 422 && isRepoNameAlreadyExists(body)) {
+			log.info('GitHub repo name already exists, surfacing as already_exists', {
+				owner,
+				name,
+			});
+			return { status: 'already_exists', owner, name };
+		}
 		throw new Error(`Failed to create GitHub repo (${res.status}): ${body}`);
 	}
 
@@ -158,6 +168,7 @@ export async function createGitHubRepo(
 		owner: { login: string };
 	};
 	return {
+		status: 'created',
 		owner: data.owner.login,
 		name: data.name,
 		full_name: data.full_name,
@@ -275,11 +286,35 @@ export async function registerAuthKey(
 	return { status: 'created', id: data.id, title: data.title };
 }
 
-function isKeyAlreadyInUse(body: string): boolean {
+interface GitHubFieldError {
+	resource?: string;
+	code?: string;
+	field?: string;
+	message?: string;
+}
+
+function matchesGitHubFieldError(
+	body: string,
+	predicate: (e: GitHubFieldError) => boolean,
+): boolean {
 	try {
-		const parsed = JSON.parse(body) as { errors?: Array<{ message?: string }> };
-		return (parsed.errors ?? []).some((e) => /key is already in use/i.test(e.message ?? ''));
+		const parsed = JSON.parse(body) as { errors?: GitHubFieldError[] };
+		return (parsed.errors ?? []).some(predicate);
 	} catch {
-		return /key is already in use/i.test(body);
+		return false;
 	}
+}
+
+function isKeyAlreadyInUse(body: string): boolean {
+	if (matchesGitHubFieldError(body, (e) => /key is already in use/i.test(e.message ?? ''))) {
+		return true;
+	}
+	return /key is already in use/i.test(body);
+}
+
+function isRepoNameAlreadyExists(body: string): boolean {
+	return matchesGitHubFieldError(
+		body,
+		(e) => e.field === 'name' && /already exists/i.test(e.message ?? ''),
+	);
 }

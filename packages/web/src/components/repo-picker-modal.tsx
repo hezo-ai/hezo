@@ -7,6 +7,7 @@ import {
 	useGitHubOrgs,
 	useGitHubReposForOwner,
 } from '../hooks/use-repos';
+import type { ApiError } from '../lib/api';
 import { Button } from './ui/button';
 import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
 import { Input } from './ui/input';
@@ -19,6 +20,14 @@ interface RepoPickerModalProps {
 }
 
 type PickerMode = 'link' | 'create';
+
+type CreateError =
+	| { kind: 'generic'; message: string }
+	| { kind: 'repo_exists'; owner: string; name: string };
+
+function isApiError(e: unknown): e is ApiError {
+	return typeof e === 'object' && e !== null && 'code' in e && 'message' in e && 'status' in e;
+}
 
 function slugify(value: string): string {
 	return value
@@ -44,7 +53,7 @@ export function RepoPickerModal({
 	const [shortNameTouched, setShortNameTouched] = useState(false);
 	const [newRepoName, setNewRepoName] = useState('');
 	const [newRepoPrivate, setNewRepoPrivate] = useState(true);
-	const [error, setError] = useState<string | null>(null);
+	const [createError, setCreateError] = useState<CreateError | null>(null);
 
 	const createRepo = useCreateRepo(projectId);
 	const orgsQuery = useGitHubOrgs(projectId, open ? oauthConnectionId : null);
@@ -61,7 +70,7 @@ export function RepoPickerModal({
 			setShortNameTouched(false);
 			setNewRepoName('');
 			setNewRepoPrivate(true);
-			setError(null);
+			setCreateError(null);
 		}
 	}, [open]);
 
@@ -94,7 +103,7 @@ export function RepoPickerModal({
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		if (!owner) return;
-		setError(null);
+		setCreateError(null);
 		try {
 			if (mode === 'link') {
 				const sel = reposQuery.data?.find((r) => r.full_name === selectedRepoFullName);
@@ -117,8 +126,23 @@ export function RepoPickerModal({
 			}
 			onOpenChange(false);
 		} catch (e) {
-			setError((e as Error).message);
+			if (isApiError(e) && e.code === 'GITHUB_REPO_EXISTS' && mode === 'create') {
+				setCreateError({ kind: 'repo_exists', owner, name: newRepoName.trim() });
+			} else {
+				const message = isApiError(e) ? e.message : (e as Error).message;
+				setCreateError({ kind: 'generic', message });
+			}
 		}
+	}
+
+	function switchToLinkExisting(targetOwner: string, targetName: string) {
+		setMode('link');
+		setOwner(targetOwner);
+		setSearch(targetName);
+		setDebouncedSearch(targetName);
+		setSelectedRepoFullName(`${targetOwner}/${targetName}`);
+		setShortNameTouched(false);
+		setCreateError(null);
 	}
 
 	return (
@@ -264,9 +288,31 @@ export function RepoPickerModal({
 							required
 						/>
 
-						{error && (
+						{createError?.kind === 'generic' && (
 							<div className="rounded-radius-md border border-accent-red/40 bg-accent-red/10 px-3 py-2 text-sm text-accent-red">
-								{error}
+								{createError.message}
+							</div>
+						)}
+						{createError?.kind === 'repo_exists' && (
+							<div
+								className="flex flex-col gap-2 rounded-radius-md border border-accent-red/40 bg-accent-red/10 px-3 py-2 text-sm text-accent-red sm:flex-row sm:items-center sm:justify-between"
+								data-testid="repo-picker-exists-banner"
+							>
+								<span>
+									A repository named{' '}
+									<span className="font-mono">
+										{createError.owner}/{createError.name}
+									</span>{' '}
+									already exists on GitHub.
+								</span>
+								<Button
+									type="button"
+									variant="secondary"
+									onClick={() => switchToLinkExisting(createError.owner, createError.name)}
+									data-testid="repo-picker-link-existing"
+								>
+									Link existing instead
+								</Button>
 							</div>
 						)}
 

@@ -160,9 +160,27 @@ export async function createGitHubSim(): Promise<GitHubSim> {
 		return c.json(found);
 	});
 
+	const repoNameAlreadyExistsResponse = () => ({
+		message: 'Repository creation failed.',
+		errors: [
+			{
+				resource: 'Repository',
+				code: 'custom',
+				field: 'name',
+				message: 'name already exists on this account',
+			},
+		],
+		documentation_url:
+			'https://docs.github.com/rest/repos/repos#create-a-repository-for-the-authenticated-user',
+		status: '422',
+	});
+
 	app.post('/user/repos', async (c) => {
 		if (!isAuthed(c.req.header('Authorization'))) return c.json({ message: 'Unauthorized' }, 401);
 		const body = await c.req.json<{ name: string; private?: boolean }>();
+		if (state.repos.some((r) => r.owner.login === state.user.login && r.name === body.name)) {
+			return c.json(repoNameAlreadyExistsResponse(), 422);
+		}
 		const repo = makeRepo(state.user.login, body.name, body.private ?? true);
 		state.repos.push(repo);
 		return c.json(repo, 201);
@@ -172,6 +190,9 @@ export async function createGitHubSim(): Promise<GitHubSim> {
 		if (!isAuthed(c.req.header('Authorization'))) return c.json({ message: 'Unauthorized' }, 401);
 		const owner = c.req.param('owner');
 		const body = await c.req.json<{ name: string; private?: boolean }>();
+		if (state.repos.some((r) => r.owner.login === owner && r.name === body.name)) {
+			return c.json(repoNameAlreadyExistsResponse(), 422);
+		}
 		const repo = makeRepo(owner, body.name, body.private ?? true);
 		state.repos.push(repo);
 		return c.json(repo, 201);
