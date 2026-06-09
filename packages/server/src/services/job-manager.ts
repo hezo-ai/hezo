@@ -1564,14 +1564,27 @@ export class JobManager {
 		const { db } = this.deps;
 		// Pick the next non-terminal task for this agent that we aren't already
 		// covering: skip the just-completed task, anything the agent has an active
-		// run on (concurrent parallel runs), and anything that already has a
-		// queued/claimed wakeup for this agent. Without this dedupe, an agent with
-		// multiple concurrent runs creates a redundant chain wakeup for each
-		// sibling — those wakeups then cycle in the busy-skip queue and starve
-		// `Automation` wakeups (Coach) targeting the same project.
+		// run on (concurrent parallel runs), anything that already has a
+		// queued/claimed wakeup for this agent, and anything this agent already
+		// successfully ran within its effective heartbeat interval. The
+		// recent-success clause matches the cadence the heartbeat scheduler
+		// considers "due"; without it, an agent with multiple parked-on-input
+		// tasks (e.g. an Architect waiting on @admin approval on two specs)
+		// ping-pongs between them every few seconds since each completion
+		// re-selects the other parked task. Conversational triggers (mentions,
+		// replies, comments, dependency unblocks) ride their own wakeup sources,
+		// not this chain, so cooling the chain doesn't delay legitimate work.
 		// Instance agents (CEO/Coach) chain across every team; everyone else stays
 		// scoped to the just-completed task's team. Build params positionally so the
 		// team filter is only present when its placeholder is.
+		const agentRow = await db.query<{ heartbeat_interval_min: number }>(
+			'SELECT heartbeat_interval_min FROM member_agents WHERE id = $1',
+			[memberId],
+		);
+		const chainCooldownMin = Math.max(
+			agentRow.rows[0]?.heartbeat_interval_min ?? HEARTBEAT_INTERVAL_FLOOR_MIN,
+			HEARTBEAT_INTERVAL_FLOOR_MIN,
+		);
 		const isInstanceAgent = (INSTANCE_AGENT_SLUGS as readonly string[]).includes(agentSlug);
 		const params: unknown[] = [memberId];
 		let teamClause = '';
@@ -1590,6 +1603,10 @@ export class JobManager {
 		params.push(HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running);
 		const wu = params.length + 1;
 		params.push(WakeupStatus.Queued, WakeupStatus.Claimed);
+		const succ = params.length + 1;
+		params.push(HeartbeatRunStatus.Succeeded);
+		const cd = params.length + 1;
+		params.push(chainCooldownMin);
 		const next = await db.query<{ id: string }>(
 			`SELECT i.id FROM tasks i
 			 WHERE i.assignee_id = $1${teamClause} AND i.id != $${selfIdx}
@@ -1610,6 +1627,13 @@ export class JobManager {
 			     WHERE w.member_id = $1
 			       AND w.status IN ($${wu}::wakeup_status, $${wu + 1}::wakeup_status)
 			       AND w.payload->>'task_id' = i.id::text
+			   )
+			   AND NOT EXISTS (
+			     SELECT 1 FROM heartbeat_runs hr
+			     WHERE hr.task_id = i.id AND hr.member_id = $1
+			       AND hr.status = $${succ}::heartbeat_run_status
+			       AND hr.finished_at IS NOT NULL
+			       AND hr.finished_at > now() - ($${cd}::int || ' minutes')::interval
 			   )
 			 ORDER BY
 			   CASE i.priority WHEN $${pr} THEN 0 WHEN $${pr + 1} THEN 1 WHEN $${pr + 2} THEN 2 WHEN $${pr + 3} THEN 3 END,

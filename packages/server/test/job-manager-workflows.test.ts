@@ -1290,6 +1290,154 @@ describe('JobManager workflow methods', () => {
 			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
 			await db.query('DELETE FROM tasks WHERE id = $1', [siblingTaskId]);
 		});
+
+		it('does not chain back to a task the agent succeeded on within its heartbeat interval', async () => {
+			const manager = createJobManager();
+
+			await db.query('UPDATE tasks SET assignee_id = $1 WHERE id = $2', [agentId, taskId]);
+			await db.query(`UPDATE tasks SET status = $1::task_status WHERE id = $2`, [
+				TaskStatus.Backlog,
+				taskId,
+			]);
+
+			const meta = await db.query<{ task_prefix: string; number: number }>(
+				`SELECT p.task_prefix, next_project_task_number(p.id) AS number
+				 FROM projects p WHERE p.id = $1`,
+				[projectId],
+			);
+			const siblingInsert = await db.query<{ id: string }>(
+				`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title, description, status, priority, labels)
+				 VALUES ($1, $2, $3, $4, $5, $6, '', $7::task_status, 'medium'::task_priority, '[]'::jsonb)
+				 RETURNING id`,
+				[
+					teamId,
+					projectId,
+					agentId,
+					meta.rows[0].number,
+					`${meta.rows[0].task_prefix}-${meta.rows[0].number}`,
+					'Sibling already worked recently',
+					TaskStatus.Backlog,
+				],
+			);
+			const siblingTaskId = siblingInsert.rows[0].id;
+
+			// Use a generous heartbeat interval so the "recent success" window
+			// is unambiguous in test time.
+			await db.query('UPDATE member_agents SET heartbeat_interval_min = 60 WHERE id = $1', [
+				agentId,
+			]);
+
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM heartbeat_runs WHERE member_id = $1', [agentId]);
+
+			// A succeeded run by this agent on the sibling that finished a minute
+			// ago — well inside the 60-min heartbeat interval, so the sibling is
+			// not yet due to be re-picked.
+			await db.query(
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - interval '90 seconds', now() - interval '60 seconds')`,
+				[agentId, teamId, siblingTaskId, HeartbeatRunStatus.Succeeded],
+			);
+
+			await (manager as any).onAgentComplete(
+				agentId,
+				'test-agent',
+				taskId,
+				taskIdentifier,
+				teamId,
+				undefined,
+				undefined,
+				{ success: true, exitCode: 0, stdout: '', stderr: '' },
+			);
+
+			const chain = await db.query<{ id: string }>(
+				`SELECT id FROM agent_wakeup_requests
+				 WHERE member_id = $1 AND source = 'timer'`,
+				[agentId],
+			);
+			expect(chain.rows.length).toBe(0);
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM heartbeat_runs WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM tasks WHERE id = $1', [siblingTaskId]);
+		});
+
+		it('does chain to a task whose last succeeded run is older than the heartbeat interval', async () => {
+			const manager = createJobManager();
+
+			await db.query('UPDATE tasks SET assignee_id = $1 WHERE id = $2', [agentId, taskId]);
+			await db.query(`UPDATE tasks SET status = $1::task_status WHERE id = $2`, [
+				TaskStatus.Backlog,
+				taskId,
+			]);
+
+			const meta = await db.query<{ task_prefix: string; number: number }>(
+				`SELECT p.task_prefix, next_project_task_number(p.id) AS number
+				 FROM projects p WHERE p.id = $1`,
+				[projectId],
+			);
+			const siblingInsert = await db.query<{ id: string }>(
+				`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title, description, status, priority, labels)
+				 VALUES ($1, $2, $3, $4, $5, $6, '', $7::task_status, 'medium'::task_priority, '[]'::jsonb)
+				 RETURNING id`,
+				[
+					teamId,
+					projectId,
+					agentId,
+					meta.rows[0].number,
+					`${meta.rows[0].task_prefix}-${meta.rows[0].number}`,
+					'Sibling last worked long ago',
+					TaskStatus.Backlog,
+				],
+			);
+			const siblingTaskId = siblingInsert.rows[0].id;
+
+			// Heartbeat interval of 5 min (matches the floor). A run that finished
+			// a year ago is unambiguously outside the cooldown regardless of CI
+			// clock precision or test ordering.
+			await db.query('UPDATE member_agents SET heartbeat_interval_min = 5 WHERE id = $1', [
+				agentId,
+			]);
+
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM heartbeat_runs WHERE member_id = $1', [agentId]);
+
+			await db.query(
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - interval '1 year' - interval '1 hour', now() - interval '1 year')`,
+				[agentId, teamId, siblingTaskId, HeartbeatRunStatus.Succeeded],
+			);
+
+			await (manager as any).onAgentComplete(
+				agentId,
+				'test-agent',
+				taskId,
+				taskIdentifier,
+				teamId,
+				undefined,
+				undefined,
+				{ success: true, exitCode: 0, stdout: '', stderr: '' },
+			);
+
+			// Specifically query for the chain wakeup targeting the sibling, so
+			// the assertion is unaffected by any other wakeup that might exist for
+			// the agent (e.g. from prior tests or side effects of onAgentComplete).
+			const chain = await db.query<{ payload: Record<string, unknown> }>(
+				`SELECT payload FROM agent_wakeup_requests
+				 WHERE member_id = $1
+				   AND source = 'timer'::wakeup_source
+				   AND payload->>'task_id' = $2
+				   AND payload->>'reason' = 'chain_after_completion'`,
+				[agentId, siblingTaskId],
+			);
+			expect(chain.rows.length).toBe(1);
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM heartbeat_runs WHERE member_id = $1', [agentId]);
+			await db.query('DELETE FROM tasks WHERE id = $1', [siblingTaskId]);
+		});
 	});
 
 	describe('coach auto-close', () => {
