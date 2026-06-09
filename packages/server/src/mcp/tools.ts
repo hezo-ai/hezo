@@ -2391,6 +2391,7 @@ export function registerTools(
 				files: docs.map((d) => ({
 					id: d.id,
 					filename: d.slug,
+					title: d.title,
 					updated_at: d.updated_at,
 				})),
 			};
