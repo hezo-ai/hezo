@@ -99,9 +99,11 @@ inboxRoutes.get('/projects/:projectId/inbox/count', async (c) => {
 	const result = await db.query<{ unread: number }>(
 		`SELECT (
 		          (SELECT count(*) FROM admin_mentions
-		           WHERE team_id = $1 AND user_id = $2 AND read_at IS NULL)
+		           WHERE team_id = $1 AND user_id = $2
+		             AND read_at IS NULL AND archived_at IS NULL)
 		        + (SELECT count(*) FROM approvals
-		           WHERE team_id = $1 AND status = $3::approval_status)
+		           WHERE team_id = $1 AND status = $3::approval_status
+		             AND archived_at IS NULL)
 		        )::int AS unread`,
 		[teamId, auth.userId, ApprovalStatus.Pending],
 	);

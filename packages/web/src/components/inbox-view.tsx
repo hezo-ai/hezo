@@ -10,7 +10,7 @@ import { FilterPills } from './ui/filter-pills';
 import { InfoTooltip } from './ui/info-tooltip';
 
 interface InboxViewProps {
-	teamIds: string[];
+	projectSlugs: string[];
 	scope: 'team' | 'global';
 }
 
@@ -61,13 +61,13 @@ function approvalSearch(a: Approval): string {
 		.toLowerCase();
 }
 
-export function InboxView({ teamIds, scope }: InboxViewProps) {
+export function InboxView({ projectSlugs, scope }: InboxViewProps) {
 	const [readFilter, setReadFilter] = useState<ReadFilter>('all');
 	const archivedView = readFilter === 'archived';
-	const { data: approvals, isLoading: approvalsLoading } = useAllApprovals(teamIds, {
+	const { data: approvals, isLoading: approvalsLoading } = useAllApprovals(projectSlugs, {
 		archived: archivedView,
 	});
-	const { data: mentions, isLoading: mentionsLoading } = useAllAdminMentions(teamIds, {
+	const { data: mentions, isLoading: mentionsLoading } = useAllAdminMentions(projectSlugs, {
 		archived: archivedView,
 	});
 	const [search, setSearch] = useState('');
