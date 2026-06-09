@@ -17,6 +17,7 @@ interface Props {
 	comment: CommentDataOf<'system'>;
 	projectId?: string;
 	taskId?: string;
+	retryableRunId?: string | null;
 }
 
 function isTaskLink(c: SystemContent): c is SystemTaskLinkContent {
@@ -32,7 +33,7 @@ function isRepoDesignated(c: SystemContent): c is SystemRepoDesignatedContent {
 	return c.kind === 'repo_designated';
 }
 
-export function SystemComment({ comment, projectId, taskId }: Props) {
+export function SystemComment({ comment, projectId, taskId, retryableRunId }: Props) {
 	const content: SystemContent | null =
 		comment.content && typeof comment.content === 'object' ? comment.content : null;
 	const timestamp = (
@@ -67,6 +68,7 @@ export function SystemComment({ comment, projectId, taskId }: Props) {
 				content={content}
 				projectId={projectId}
 				taskId={taskId}
+				retryableRunId={retryableRunId}
 				timestamp={timestamp}
 			/>
 		);
@@ -149,11 +151,13 @@ function RunFailedBody({
 	content,
 	projectId,
 	taskId,
+	retryableRunId,
 	timestamp,
 }: {
 	content: SystemRunFailedContent;
 	projectId?: string;
 	taskId?: string;
+	retryableRunId?: string | null;
 	timestamp: React.ReactNode;
 }) {
 	const agentSlug = typeof content.agent_slug === 'string' ? content.agent_slug : '';
@@ -185,7 +189,7 @@ function RunFailedBody({
 					Run for {agentNode} {statusLabel}
 					{error ? <span className="text-text-subtle">: {error}</span> : null}.
 				</span>
-				{projectId && taskId && runId ? (
+				{projectId && taskId && runId && runId === retryableRunId ? (
 					<RetryRunButton projectId={projectId} taskId={taskId} runId={runId} />
 				) : null}
 			</span>

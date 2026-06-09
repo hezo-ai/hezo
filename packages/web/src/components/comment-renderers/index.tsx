@@ -21,6 +21,7 @@ interface RenderProps {
 	projectId?: string;
 	projectSlug?: string;
 	taskId?: string;
+	retryableRunId?: string | null;
 	inline?: boolean;
 }
 
@@ -36,6 +37,7 @@ type RendererComponent<K extends CommentContentType> = ComponentType<{
 	projectId?: string;
 	projectSlug?: string;
 	taskId?: string;
+	retryableRunId?: string | null;
 	inline?: boolean;
 }>;
 
@@ -50,8 +52,13 @@ const renderers: RendererRegistry = {
 	),
 	[CommentContentType.Preview]: ({ comment }) => <PreviewComment comment={comment} />,
 	[CommentContentType.Trace]: ({ comment }) => <TraceComment comment={comment} />,
-	[CommentContentType.System]: ({ comment, projectId, taskId }) => (
-		<SystemComment comment={comment} projectId={projectId} taskId={taskId} />
+	[CommentContentType.System]: ({ comment, projectId, taskId, retryableRunId }) => (
+		<SystemComment
+			comment={comment}
+			projectId={projectId}
+			taskId={taskId}
+			retryableRunId={retryableRunId}
+		/>
 	),
 	[CommentContentType.Run]: ({ comment, projectId, inline }) => (
 		<RunComment comment={comment} projectId={projectId} inline={inline} />
