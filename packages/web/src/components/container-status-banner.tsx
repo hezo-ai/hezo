@@ -29,6 +29,8 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 
 	if (!project) return null;
 
+	const status = project.container_status;
+
 	// Provisioning / shutting down: a transient state that resolves on its own.
 	// Show a loading banner that links to the container page for live logs.
 	const provisioning = status === ContainerStatus.Creating || status === ContainerStatus.Stopping;
