@@ -115,7 +115,7 @@ describe('failProjectRuns', () => {
 			[AgentRuntimeStatus.Active, agentId],
 		);
 
-		await failProjectRuns(buildDeps(), projectId, teamId, 'container_error');
+		await failProjectRuns(buildDeps(), projectId, projectSlug, teamId, 'container_error');
 
 		const run = await db.query<{ status: string; error: string; exit_code: number }>(
 			'SELECT status, error, exit_code FROM heartbeat_runs WHERE id = $1',
@@ -139,6 +139,7 @@ describe('failProjectRuns', () => {
 		await failProjectRuns(
 			buildDeps(),
 			'00000000-0000-0000-0000-000000000000',
+			'unknown-project',
 			teamId,
 			'container_error',
 		);
@@ -158,7 +159,7 @@ describe('failProjectRuns', () => {
 			agentId,
 		]);
 
-		await failProjectRuns(buildDeps(), projectId, teamId, 'container_stopped');
+		await failProjectRuns(buildDeps(), projectId, projectSlug, teamId, 'container_stopped');
 
 		const lock = await db.query<{ released_at: string | null }>(
 			'SELECT released_at FROM execution_locks WHERE task_id = $1 AND member_id = $2',
@@ -184,7 +185,7 @@ describe('failProjectRuns', () => {
 			} as any,
 		};
 
-		await failProjectRuns(deps, projectId, teamId, 'container_error');
+		await failProjectRuns(deps, projectId, projectSlug, teamId, 'container_error');
 
 		expect(broadcasts.some((b) => b.table === 'heartbeat_runs')).toBe(true);
 		expect(broadcasts.some((b) => b.table === 'member_agents')).toBe(true);
@@ -200,7 +201,7 @@ describe('requeueContainerKilledRuns', () => {
 			[teamId, agentId, taskId, HeartbeatRunStatus.Failed],
 		);
 
-		const count = await requeueContainerKilledRuns(buildDeps(), projectId, teamId);
+		const count = await requeueContainerKilledRuns(buildDeps(), projectId, projectSlug, teamId);
 		expect(count).toBe(1);
 
 		const wakeups = await db.query<{ payload: Record<string, unknown> }>(
@@ -222,7 +223,7 @@ describe('requeueContainerKilledRuns', () => {
 			[teamId, agentId, taskId, HeartbeatRunStatus.Failed],
 		);
 
-		const count = await requeueContainerKilledRuns(buildDeps(), projectId, teamId);
+		const count = await requeueContainerKilledRuns(buildDeps(), projectId, projectSlug, teamId);
 		expect(count).toBe(0);
 	});
 
@@ -239,7 +240,7 @@ describe('requeueContainerKilledRuns', () => {
 			[teamId, agentId, taskId, HeartbeatRunStatus.Succeeded],
 		);
 
-		const count = await requeueContainerKilledRuns(buildDeps(), projectId, teamId);
+		const count = await requeueContainerKilledRuns(buildDeps(), projectId, projectSlug, teamId);
 		expect(count).toBe(0);
 	});
 });

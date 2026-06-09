@@ -537,9 +537,14 @@ projectsRoutes.delete('/projects/:projectId', async (c) => {
 	}
 
 	await trackBackground(
-		teardownContainer(buildContainerDeps(c), projectId, teamId).catch((error) => {
-			log.error(`Failed to teardown container for project ${existing.rows[0].slug}:`, error);
-		}),
+		teardownContainer(buildContainerDeps(c), projectId, existing.rows[0].slug, teamId).catch(
+			(error) => {
+				log.error(
+					`Failed to teardown container for project ${ref(existing.rows[0].slug, projectId)}:`,
+					error,
+				);
+			},
+		),
 	);
 
 	await db.query('DELETE FROM projects WHERE id = $1', [projectId]);
@@ -553,14 +558,15 @@ projectsRoutes.post('/projects/:projectId/container/start', async (c) => {
 	const projectId = c.get('projectId') as string;
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const result = await db.query<{ container_id: string | null }>(
-		'SELECT container_id FROM projects WHERE id = $1 AND team_id = $2',
+	const result = await db.query<{ slug: string; container_id: string | null }>(
+		'SELECT slug, container_id FROM projects WHERE id = $1 AND team_id = $2',
 		[projectId, teamId],
 	);
 	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Project not found', 404);
 	if (!result.rows[0].container_id) return err(c, 'NO_CONTAINER', 'No container provisioned', 400);
 
 	const docker = c.get('docker');
+	const projectSlug = result.rows[0].slug;
 	const containerId = result.rows[0].container_id;
 	try {
 		await docker.startContainer(containerId);
@@ -571,11 +577,15 @@ projectsRoutes.post('/projects/:projectId/container/start', async (c) => {
 		c.get('containerLogStreamer').subscribe(projectId, containerId, c.get('logs'), docker);
 		await broadcastProjectUpdate(db, c.get('wsManager'), teamId, projectId);
 		await wakeAgentsWithPendingWork(db, projectId, teamId);
-		log.info(`project ${projectId} container ${containerId.slice(0, 12)} started`);
+		log.info(
+			`project ${ref(projectSlug, projectId)} container ${ref(projectSlug, containerId.slice(0, 12))} started`,
+		);
 		return ok(c, { container_status: ContainerStatus.Running });
 	} catch (error) {
 		const message = (error as Error).message;
-		log.warn(`project ${projectId} container ${containerId.slice(0, 12)} start failed: ${message}`);
+		log.warn(
+			`project ${ref(projectSlug, projectId)} container ${ref(projectSlug, containerId.slice(0, 12))} start failed: ${message}`,
+		);
 		return err(c, 'DOCKER_ERROR', `Failed to start container: ${message}`, 500);
 	}
 });
@@ -586,10 +596,14 @@ projectsRoutes.post('/projects/:projectId/container/stop', async (c) => {
 	const projectId = c.get('projectId') as string;
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const result = await db.query<{ container_id: string | null; container_status: string | null }>(
-		'SELECT container_id, container_status FROM projects WHERE id = $1 AND team_id = $2',
-		[projectId, teamId],
-	);
+	const result = await db.query<{
+		slug: string;
+		container_id: string | null;
+		container_status: string | null;
+	}>('SELECT slug, container_id, container_status FROM projects WHERE id = $1 AND team_id = $2', [
+		projectId,
+		teamId,
+	]);
 	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const row = result.rows[0];
@@ -618,11 +632,12 @@ projectsRoutes.post('/projects/:projectId/container/stop', async (c) => {
 	const containerId = row.container_id;
 	if (!containerId) return ok(c, { container_status: ContainerStatus.Stopping });
 
+	const projectSlug = row.slug;
 	const taskKey = `stop:${projectId}`;
 	jobManager.launchTask(
 		taskKey,
 		async () => {
-			await stopContainerGracefully(containerDeps, projectId, teamId, containerId);
+			await stopContainerGracefully(containerDeps, projectId, projectSlug, teamId, containerId);
 		},
 		60_000,
 	);

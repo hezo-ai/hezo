@@ -8,6 +8,8 @@ import {
 } from '@hezo/shared';
 import { Command } from 'commander';
 
+export type LogLevelName = 'debug' | 'info' | 'warn' | 'error';
+
 export interface HezoConfig {
 	port: number;
 	dataDir: string;
@@ -15,10 +17,38 @@ export interface HezoConfig {
 	webUrl: string;
 	reset: boolean;
 	open: boolean;
+	logLevel: LogLevelName;
+	keepOldContainers: boolean;
 }
 
 function resolveDataDir(raw: string): string {
 	return raw.startsWith('~') ? resolve(homedir(), raw.slice(2)) : resolve(raw);
+}
+
+function parsePort(raw: string): number {
+	const n = Number.parseInt(raw, 10);
+	if (Number.isNaN(n) || n < 1 || n > 65535) {
+		throw new Error(`Invalid port: ${raw}. Must be 1-65535.`);
+	}
+	return n;
+}
+
+function parseLogLevel(raw: string): LogLevelName {
+	const lower = raw.toLowerCase();
+	if (lower === 'debug' || lower === 'info' || lower === 'warn' || lower === 'error') {
+		return lower;
+	}
+	throw new Error(`Invalid log level: ${raw}. Must be debug | info | warn | error.`);
+}
+
+function parseBool(raw: string): boolean {
+	if (raw === '') return true;
+	const lower = raw.toLowerCase();
+	return lower !== '0' && lower !== 'false' && lower !== 'no' && lower !== 'off';
+}
+
+function parseMasterKey(raw: string): string {
+	return validateMnemonic(raw) ? mnemonicToMasterKey(raw) : raw;
 }
 
 /**
@@ -46,41 +76,64 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 	return true;
 }
 
-export function parseArgs(argv: string[] = process.argv): HezoConfig {
+/**
+ * Central configuration resolution. Each option can be set via either a CLI
+ * flag or an env var; the env var takes precedence when both are present. The
+ * defaults defined here are the final fallback. This is the only place where
+ * config values are resolved — subsystems (logger level, container removal
+ * gate, etc.) receive their slice and apply it locally at startup.
+ */
+export function parseConfig(
+	argv: string[] = process.argv,
+	env: NodeJS.ProcessEnv = process.env,
+): HezoConfig {
 	const program = new Command()
 		.name('hezo')
 		.description('Hezo server — self-hosted AI agent management platform')
-		.option('--port <port>', 'Server port', String(DEFAULT_PORT))
-		.option('--data-dir <path>', 'Data directory', DEFAULT_DATA_DIR)
-		.option('--master-key <key>', 'Master key for unlocking')
-		.option('--web-url <url>', 'Web UI base URL for redirects (leave empty to use same origin)', '')
-		.option('--reset', 'Reset database and start fresh')
-		.option('--open', 'Auto-open the browser')
+		.option('--port <port>', 'Server port (env: HEZO_PORT)', String(DEFAULT_PORT))
+		.option('--data-dir <path>', 'Data directory (env: HEZO_DATA_DIR)', DEFAULT_DATA_DIR)
+		.option('--master-key <key>', 'Master key for unlocking (env: HEZO_MASTER_KEY)')
+		.option('--web-url <url>', 'Web UI base URL for redirects (env: HEZO_WEB_URL)', '')
+		.option('--reset', 'Reset database and start fresh (env: HEZO_RESET)')
+		.option('--open', 'Auto-open the browser (env: HEZO_OPEN)')
+		.option(
+			'--log-level <level>',
+			'Log level: debug | info | warn | error (env: HEZO_LOG_LEVEL)',
+			'info',
+		)
+		.option(
+			'--keep-old-containers',
+			'Skip removal of old containers on rebuild/teardown/provision — useful for inspecting crashed containers via `docker logs` / `docker inspect`. Subsequent rebuilds will fail with a name conflict until the operator removes them manually. (env: HEZO_KEEP_OLD_CONTAINERS)',
+		)
 		.parse(argv);
 
-	const opts = program.opts();
+	const cli = program.opts();
 
-	const port = Number.parseInt(opts.port, 10);
-	if (Number.isNaN(port) || port < 1 || port > 65535) {
-		throw new Error(`Invalid port: ${opts.port}. Must be 1-65535.`);
-	}
+	// Env var > CLI value > default. For value-bearing options the CLI value
+	// is a string; for flags it's a boolean (commander sets `true` when the
+	// flag is present, `undefined` otherwise).
+	const pick = (envName: string, cliValue: unknown): string | undefined => {
+		const e = env[envName];
+		if (e !== undefined && e !== '') return e;
+		if (typeof cliValue === 'string' && cliValue.length > 0) return cliValue;
+		return undefined;
+	};
+	const pickBool = (envName: string, cliValue: unknown): boolean => {
+		const e = env[envName];
+		if (e !== undefined) return parseBool(e);
+		return cliValue === true;
+	};
 
-	const dataDir = resolveDataDir(opts.dataDir as string);
-
-	// The user-facing master key is a 12-word BIP39 phrase; convert it to the
-	// internal hex. Anything that isn't a valid phrase (raw hex, opaque e2e key)
-	// passes through unchanged.
-	let masterKey: string | undefined = opts.masterKey;
-	if (masterKey && validateMnemonic(masterKey)) {
-		masterKey = mnemonicToMasterKey(masterKey);
-	}
+	const masterKeyRaw = pick('HEZO_MASTER_KEY', cli.masterKey);
 
 	return {
-		port,
-		dataDir,
-		masterKey,
-		webUrl: opts.webUrl ?? '',
-		reset: opts.reset ?? false,
-		open: opts.open ?? false,
+		port: parsePort(pick('HEZO_PORT', cli.port) ?? String(DEFAULT_PORT)),
+		dataDir: resolveDataDir(pick('HEZO_DATA_DIR', cli.dataDir) ?? DEFAULT_DATA_DIR),
+		masterKey: masterKeyRaw ? parseMasterKey(masterKeyRaw) : undefined,
+		webUrl: pick('HEZO_WEB_URL', cli.webUrl) ?? '',
+		reset: pickBool('HEZO_RESET', cli.reset),
+		open: pickBool('HEZO_OPEN', cli.open),
+		logLevel: parseLogLevel(pick('HEZO_LOG_LEVEL', cli.logLevel) ?? 'info'),
+		keepOldContainers: pickBool('HEZO_KEEP_OLD_CONTAINERS', cli.keepOldContainers),
 	};
 }

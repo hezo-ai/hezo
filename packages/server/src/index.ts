@@ -2,12 +2,13 @@ import './console-shim';
 import type { PGlite } from '@electric-sql/pglite';
 import { AuthType, DEFAULT_WEB_PORT } from '@hezo/shared';
 import { app } from './app';
-import { parseArgs, runRestore } from './cli';
+import { parseConfig, runRestore } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
 import { PgDataCorruptError } from './db/client';
-import { logger } from './logger';
+import { logger, setLogLevel } from './logger';
 import { loadAdminAuth, verifyToken } from './middleware/auth';
 import type { ContainerLogStreamer } from './services/container-logs';
+import { setKeepOldContainers } from './services/containers';
 import type { LogStreamBroker } from './services/log-stream-broker';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import { handleWsSubscribe, handleWsUnsubscribe } from './services/ws-subscribe-handler';
@@ -68,7 +69,9 @@ if (await runRestore()) {
 	process.exit(0);
 }
 
-const config = parseArgs();
+const config = parseConfig();
+setLogLevel(config.logLevel);
+setKeepOldContainers(config.keepOldContainers);
 
 /** Bumped on each module load so stale async startup completions are ignored after HMR. */
 let startupGeneration = 0;
