@@ -11,8 +11,6 @@ interface ContainerConfig {
 		Binds?: string[];
 		PortBindings?: Record<string, Array<{ HostPort: string }>>;
 		ExtraHosts?: string[];
-		Memory?: number;
-		MemorySwap?: number;
 	};
 	ExposedPorts?: Record<string, object>;
 }
@@ -260,7 +258,7 @@ export class DockerClient {
 		containerId: string,
 		opts: { follow?: boolean; tail?: number; stdout?: boolean; stderr?: boolean } = {},
 		signal?: AbortSignal,
-	): Promise<Response> {
+	): Promise<Response | null> {
 		const params = new URLSearchParams({
 			follow: String(opts.follow ?? true),
 			stdout: String(opts.stdout ?? true),
@@ -272,6 +270,10 @@ export class DockerClient {
 			unix: this.socketPath,
 			signal,
 		} as RequestInit & { unix: string });
+		if (res.status === 404) {
+			await res.text();
+			return null;
+		}
 		if (!res.ok) {
 			const text = await res.text();
 			throw new Error(`Docker containerLogs failed (${res.status}): ${text}`);

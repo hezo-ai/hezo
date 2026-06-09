@@ -445,6 +445,7 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		name?: string;
 		description?: string;
 		max_concurrent_runs?: number;
+		memory_limit_gib?: number;
 	}>();
 
 	const sets: string[] = [];
@@ -477,6 +478,14 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		}
 		sets.push(`max_concurrent_runs = $${idx}`);
 		params.push(body.max_concurrent_runs);
+		idx++;
+	}
+	if (body.memory_limit_gib !== undefined) {
+		if (!Number.isInteger(body.memory_limit_gib) || body.memory_limit_gib < 1) {
+			return err(c, 'INVALID_REQUEST', 'memory_limit_gib must be an integer ≥ 1', 400);
+		}
+		sets.push(`memory_limit_gib = $${idx}`);
+		params.push(body.memory_limit_gib);
 		idx++;
 	}
 

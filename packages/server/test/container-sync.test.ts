@@ -307,7 +307,7 @@ describe('syncAllContainerStatuses', () => {
 		expect(mockWsManager.broadcast).not.toHaveBeenCalled();
 	});
 
-	it('auto-stops a running container that exceeds the memory limit', async () => {
+	it('auto-stops a running container that exceeds the default memory limit', async () => {
 		await db.query(
 			'UPDATE projects SET container_id = NULL, container_status = NULL, container_error = NULL WHERE team_id = $1',
 			[teamId],
@@ -325,7 +325,7 @@ describe('syncAllContainerStatuses', () => {
 			[projectId],
 		);
 
-		const overLimitBytes = 13 * 1024 ** 3;
+		const overLimitBytes = 17 * 1024 ** 3;
 		const stopContainer = vi.fn().mockResolvedValue(undefined);
 		const mockDocker = createStubDocker({
 			inspectContainer: vi.fn().mockResolvedValue({
@@ -349,11 +349,60 @@ describe('syncAllContainerStatuses', () => {
 			[projectId],
 		);
 		expect(result.rows[0].container_status).toBe('error');
-		expect(result.rows[0].container_error).toContain('13.00 GiB');
-		expect(result.rows[0].container_error).toContain('12 GiB');
+		expect(result.rows[0].container_error).toContain('17.00 GiB');
+		expect(result.rows[0].container_error).toContain('16 GiB');
 		expect(result.rows[0].container_error).toMatch(/restart/i);
 
 		expect(mockWsManager.broadcast).toHaveBeenCalled();
+	});
+
+	it('honors a per-project memory_limit_gib override and interpolates it into the error', async () => {
+		await db.query(
+			'UPDATE projects SET container_id = NULL, container_status = NULL, container_error = NULL WHERE team_id = $1',
+			[teamId],
+		);
+
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Tighter Limit Project',
+			description: 'Test project.',
+		});
+		const projectId = (await projectRes.json()).data.id;
+		await new Promise((r) => setTimeout(r, 100));
+
+		await db.query(
+			`UPDATE projects
+			 SET container_id = 'tight-container',
+			     container_status = 'running'::container_status,
+			     memory_limit_gib = 8
+			 WHERE id = $1`,
+			[projectId],
+		);
+
+		const usageBytes = 9 * 1024 ** 3;
+		const stopContainer = vi.fn().mockResolvedValue(undefined);
+		const mockDocker = createStubDocker({
+			inspectContainer: vi.fn().mockResolvedValue({
+				State: { Running: true, Status: 'running' },
+			}),
+			containerStats: vi.fn().mockResolvedValue({
+				usedBytes: usageBytes,
+				rawUsageBytes: usageBytes,
+			}),
+			stopContainer,
+			containerLogs: vi.fn().mockResolvedValue({ arrayBuffer: async () => new ArrayBuffer(0) }),
+		});
+
+		await syncAllContainerStatuses(deps(mockDocker));
+
+		expect(stopContainer).toHaveBeenCalledWith('tight-container');
+
+		const result = await db.query<{ container_status: string; container_error: string | null }>(
+			'SELECT container_status, container_error FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(result.rows[0].container_status).toBe('error');
+		expect(result.rows[0].container_error).toContain('9.00 GiB');
+		expect(result.rows[0].container_error).toContain('8 GiB');
 	});
 
 	it('leaves a running container untouched when memory is within budget', async () => {
@@ -396,6 +445,47 @@ describe('syncAllContainerStatuses', () => {
 		);
 		expect(result.rows[0].container_status).toBe('running');
 		expect(result.rows[0].container_error).toBeNull();
+	});
+
+	it('records the running→stopped transition cleanly when the container is removed before log capture', async () => {
+		await db.query(
+			'UPDATE projects SET container_id = NULL, container_status = NULL, container_error = NULL WHERE team_id = $1',
+			[teamId],
+		);
+
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Log Race Project',
+			description: 'Test project.',
+		});
+		const projectId = (await projectRes.json()).data.id;
+		await new Promise((r) => setTimeout(r, 100));
+
+		await db.query(
+			"UPDATE projects SET container_id = 'race-1', container_status = 'running'::container_status, container_last_logs = NULL WHERE id = $1",
+			[projectId],
+		);
+
+		const mockDocker = createStubDocker({
+			inspectContainer: vi.fn().mockResolvedValue({
+				Id: 'race-1',
+				State: { Running: false, Status: 'exited', ExitCode: 137 },
+			}),
+			containerLogs: vi.fn().mockResolvedValue(null),
+		});
+
+		await expect(syncAllContainerStatuses(deps(mockDocker))).resolves.not.toThrow();
+
+		const result = await db.query<{
+			container_status: string;
+			container_error: string | null;
+			container_last_logs: string | null;
+		}>(
+			'SELECT container_status, container_error, container_last_logs FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(result.rows[0].container_status).toBe('stopped');
+		expect(result.rows[0].container_error).toContain('exited with code 137');
+		expect(result.rows[0].container_last_logs).toBeNull();
 	});
 
 	it('does not poll stats for stopped containers', async () => {

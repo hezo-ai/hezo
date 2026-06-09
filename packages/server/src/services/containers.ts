@@ -93,11 +93,14 @@ const PORT_POOL_END = 19999;
 const LAST_LOGS_CAP_BYTES = 32 * 1024;
 
 /**
- * Threshold above which the sync loop stops a running container automatically.
- * Picked to leave headroom on a 16 GB laptop after Docker Desktop's own VM
- * overhead, the dev server (PGlite + embeddings model), and the host OS.
+ * Default per-container working-set ceiling, used when a project has not set
+ * its own `projects.memory_limit_gib`. The sync loop stops the container when
+ * working-set memory crosses this threshold and records an explanation in
+ * `container_error`. Override per project from the Settings page.
  */
-export const CONTAINER_MEMORY_KILL_BYTES = 12 * 1024 * 1024 * 1024;
+export const DEFAULT_MEMORY_LIMIT_GIB = 16;
+
+const memoryLimitBytes = (gib: number) => gib * 1024 ** 3;
 
 /**
  * Pull a one-shot tail of the container's stdout+stderr log buffer. Used to
@@ -115,6 +118,7 @@ export async function captureContainerLogs(
 			stdout: true,
 			stderr: true,
 		});
+		if (res === null) return null;
 		const raw = new Uint8Array(await res.arrayBuffer());
 		const decoder = new TextDecoder();
 		const chunks: string[] = [];
@@ -524,8 +528,9 @@ export async function syncContainerStatus(
 }
 
 /**
- * If the container's working-set memory crosses {@link CONTAINER_MEMORY_KILL_BYTES},
- * stop it and record an explanatory message in `container_error`. The banner and
+ * If the container's working-set memory crosses the per-project memory ceiling
+ * (`projects.memory_limit_gib`, default {@link DEFAULT_MEMORY_LIMIT_GIB}), stop
+ * it and record an explanatory message in `container_error`. The banner and
  * container page both surface that field. Returns the synthesised status when the
  * container was stopped, or null when it was within budget or stats were unavailable.
  *
@@ -537,6 +542,7 @@ async function enforceContainerMemoryLimit(
 	projectId: string,
 	teamId: string,
 	containerId: string,
+	memoryLimitGib: number,
 ): Promise<string | null> {
 	const { db, docker } = deps;
 
@@ -548,14 +554,14 @@ async function enforceContainerMemoryLimit(
 		return null;
 	}
 	if (!stats) return null;
-	if (stats.usedBytes <= CONTAINER_MEMORY_KILL_BYTES) return null;
+	const limitBytes = memoryLimitBytes(memoryLimitGib);
+	if (stats.usedBytes <= limitBytes) return null;
 
 	const usedGiB = (stats.usedBytes / 1024 ** 3).toFixed(2);
-	const limitGiB = (CONTAINER_MEMORY_KILL_BYTES / 1024 ** 3).toFixed(0);
 	const errorMessage =
-		`Container was using ${usedGiB} GiB of RAM, above the ${limitGiB} GiB safety limit, ` +
+		`Container was using ${usedGiB} GiB of RAM, above the ${memoryLimitGib} GiB safety limit, ` +
 		`and was stopped automatically to keep your machine responsive. Restart the container ` +
-		`to try again, or investigate what was using the memory before restarting.`;
+		`to try again, or raise the limit on the project settings page.`;
 
 	const lastLogs = await captureContainerLogs(docker, containerId);
 
@@ -578,7 +584,7 @@ async function enforceContainerMemoryLimit(
 	);
 
 	log.warn(
-		`Auto-stopped container ${containerId.slice(0, 12)} for project ${projectId}: used ${usedGiB} GiB (> ${limitGiB} GiB)`,
+		`Auto-stopped container ${containerId.slice(0, 12)} for project ${projectId}: used ${usedGiB} GiB (> ${memoryLimitGib} GiB)`,
 	);
 
 	await failProjectRuns(deps, projectId, teamId, 'container_error').catch((e) =>
@@ -598,8 +604,9 @@ export async function syncAllContainerStatuses(
 		team_id: string;
 		container_id: string;
 		container_status: string | null;
+		memory_limit_gib: number;
 	}>(
-		'SELECT id, team_id, container_id, container_status FROM projects WHERE container_id IS NOT NULL',
+		'SELECT id, team_id, container_id, container_status, memory_limit_gib FROM projects WHERE container_id IS NOT NULL',
 	);
 
 	const transitions: ContainerTransition[] = [];
@@ -619,6 +626,7 @@ export async function syncAllContainerStatuses(
 				project.id,
 				project.team_id,
 				project.container_id,
+				project.memory_limit_gib,
 			);
 			if (overrideStatus !== null) {
 				newStatus = overrideStatus;

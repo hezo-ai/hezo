@@ -294,6 +294,7 @@ CREATE TABLE projects (
     container_last_logs TEXT,
     designated_repo_id  UUID,
     max_concurrent_runs INTEGER NOT NULL DEFAULT 3 CHECK (max_concurrent_runs >= 1),
+    memory_limit_gib    INTEGER NOT NULL DEFAULT 16 CHECK (memory_limit_gib >= 1),
     dev_ports               JSONB NOT NULL DEFAULT '[]'::jsonb,
     execution_started_at    TIMESTAMPTZ,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),

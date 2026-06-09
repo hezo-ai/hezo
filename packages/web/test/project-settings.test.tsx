@@ -155,6 +155,54 @@ test('edits the per-project concurrency cap and persists it', async () => {
 	);
 });
 
+test('edits the per-project memory limit and persists it', async () => {
+	const projectName = uniqueName('Memory Limit Project');
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+	let projectId = '';
+
+	const { findByRole, findByTestId, getByRole, ctx, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, {
+				name: projectName,
+				description: 'Memory limit settings.',
+			});
+			projectSlug = project.slug;
+			projectId = project.id;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/settings',
+		params: { projectId: projectSlug },
+	});
+
+	// Read view shows the seeded default of 16 GiB.
+	const readValue = await findByTestId('memory-limit-gib-value', undefined, { timeout: 8_000 });
+	expect(readValue.textContent).toContain('16');
+
+	await user.click(await findByRole('button', { name: 'Edit' }));
+	const input = (await findByTestId('memory-limit-gib-input', undefined, {
+		timeout: 8_000,
+	})) as HTMLInputElement;
+	await user.clear(input);
+	await user.type(input, '24');
+	await user.click(getByRole('button', { name: 'Save' }));
+
+	await waitFor(
+		async () => {
+			const row = await ctx.db.query<{ memory_limit_gib: number }>(
+				'SELECT memory_limit_gib FROM projects WHERE id = $1',
+				[projectId],
+			);
+			expect(row.rows[0]?.memory_limit_gib).toBe(24);
+		},
+		{ timeout: 8_000 },
+	);
+});
+
 test('State A — no GitHub connection: shows Connect GitHub CTA', async () => {
 	const projectName = uniqueName('Settings Project');
 	let ws!: SeededWorkspace;
