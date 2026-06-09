@@ -32,7 +32,7 @@ function ContainerPage() {
 	const isActive = isRunning || isCreating || isStopping;
 
 	const logPhase = isCreating ? 'creating' : isRunning ? 'running' : isError ? 'error' : null;
-	const { lines: liveLogs, clear } = useContainerLogs(
+	const { lines: liveLogs } = useContainerLogs(
 		project?.id ?? '',
 		project?.id ? logPhase : null,
 	);
@@ -179,7 +179,6 @@ function ContainerPage() {
 
 			<LogViewer
 				lines={logs}
-				onClear={showSnapshot ? undefined : clear}
 				liveLabel={
 					showSnapshot ? (
 						<Badge color="neutral">Last known logs</Badge>
