@@ -173,7 +173,7 @@ export async function loadMcpConnectionDescriptors(
 				if (entry && entry.accessToken) {
 					headers = stripExistingAuth(headers);
 					headers.Authorization = `Bearer ${entry.accessToken}`;
-					log.info('mcp descriptor built with materialized oauth token', {
+					log.debug('mcp descriptor built with materialized oauth token', {
 						name: row.name,
 						url: config.url,
 						host,
@@ -190,7 +190,7 @@ export async function loadMcpConnectionDescriptors(
 					continue;
 				}
 			} else {
-				log.info('mcp descriptor built without oauth (no oauth_connection_id)', {
+				log.debug('mcp descriptor built without oauth (no oauth_connection_id)', {
 					name: row.name,
 					url: config.url,
 					host,
