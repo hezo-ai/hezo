@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { queryKeys } from '../lib/query-keys';
 
 export interface QueuedWakeup {
 	id: string;
@@ -28,7 +29,7 @@ export interface QueuedWakeupsState {
 
 export function useQueuedWakeups(projectId: string, taskId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'tasks', taskId, 'queued-wakeups'],
+		queryKey: queryKeys.projects.taskQueuedWakeups(projectId, taskId),
 		queryFn: () =>
 			api.get<QueuedWakeupsState>(`/api/projects/${projectId}/tasks/${taskId}/queued-wakeups`),
 		refetchInterval: 5_000,

@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 import type { HeartbeatRun } from './use-heartbeat-runs';
 import { toast } from './use-toast';
 
@@ -20,14 +21,14 @@ export function useTerminateRun({ projectId, agentId, runId, taskId }: Terminate
 			),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'agents', agentId, 'heartbeat-runs'],
+				queryKey: queryKeys.projects.agentHeartbeatRuns(projectId, agentId),
 			});
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'agents', agentId, 'heartbeat-runs', runId],
+				queryKey: queryKeys.projects.agentHeartbeatRun(projectId, agentId, runId),
 			});
 			if (taskId) {
 				queryClient.invalidateQueries({
-					queryKey: ['projects', projectId, 'tasks', taskId, 'comments'],
+					queryKey: queryKeys.projects.taskComments(projectId, taskId),
 				});
 			}
 		},

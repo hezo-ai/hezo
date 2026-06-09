@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { queryKeys } from '../lib/query-keys';
 
 export interface ExecutionLock {
 	id: string;
@@ -15,7 +16,7 @@ export interface ExecutionLockState {
 
 export function useExecutionLock(projectId: string, taskId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'tasks', taskId, 'lock'],
+		queryKey: queryKeys.projects.taskLock(projectId, taskId),
 		queryFn: () => api.get<ExecutionLockState>(`/api/projects/${projectId}/tasks/${taskId}/lock`),
 		refetchInterval: 5_000,
 	});

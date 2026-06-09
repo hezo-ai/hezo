@@ -1,10 +1,11 @@
 import { useMutation } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 
 function invalidateProject(projectId: string) {
-	queryClient.invalidateQueries({ queryKey: ['projects'] });
-	queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
+	queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
+	queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
 }
 
 export function useStartContainer(projectId: string) {

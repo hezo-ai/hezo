@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 import type { Repo } from './use-projects';
 
 export interface CreateRepoPayload {
@@ -15,7 +16,7 @@ export interface CreateRepoPayload {
 
 export function useRepos(projectId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'repos'],
+		queryKey: queryKeys.projects.repos(projectId),
 		queryFn: () => api.get<Repo[]>(`/api/projects/${projectId}/repos`),
 	});
 }
@@ -25,8 +26,8 @@ export function useCreateRepo(projectId: string) {
 		mutationFn: (data: CreateRepoPayload) =>
 			api.post<Repo>(`/api/projects/${projectId}/repos`, data),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'repos'] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.repos(projectId) });
 		},
 	});
 }
@@ -35,8 +36,8 @@ export function useDeleteRepo(projectId: string) {
 	return useMutation({
 		mutationFn: (repoId: string) => api.delete(`/api/projects/${projectId}/repos/${repoId}`),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'repos'] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.repos(projectId) });
 		},
 	});
 }
@@ -60,7 +61,7 @@ export interface GitHubRepoSummary {
 
 export function useGitHubOrgs(projectId: string, oauthConnectionId: string | null | undefined) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'oauth-connections', oauthConnectionId, 'orgs'],
+		queryKey: queryKeys.projects.oauthConnectionOrgs(projectId, oauthConnectionId),
 		queryFn: () =>
 			api.get<GitHubOrgSummary[]>(
 				`/api/projects/${projectId}/oauth-connections/${oauthConnectionId}/orgs`,

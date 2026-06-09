@@ -6,6 +6,7 @@ import {
 	invalidateTeamAgentCaches,
 } from '../lib/invalidate-team-caches';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 
 export interface Approval {
 	id: string;
@@ -34,7 +35,7 @@ export function useApprovals(
 	enabled = true,
 ) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'approvals', { status }],
+		queryKey: queryKeys.projects.approvalsFiltered(projectId, { status }),
 		queryFn: () => api.get<Approval[]>(`/api/projects/${projectId}/approvals`, { status }),
 		enabled,
 	});
@@ -49,7 +50,7 @@ const ALL_APPROVAL_STATUSES = [
 export function useAllApprovals(projectSlugs: string[], { archived = false } = {}) {
 	const projectKey = [...projectSlugs].sort().join(',');
 	return useQuery({
-		queryKey: ['approvals', 'all', projectKey, { archived }],
+		queryKey: queryKeys.approvals.all(projectKey, { archived }),
 		queryFn: async () => {
 			const results = await Promise.all(
 				projectSlugs.map((slug) =>
@@ -72,7 +73,7 @@ export function useBlockedTickets(
 	enabled = true,
 ) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'approvals', approvalId, 'blocked-tickets'],
+		queryKey: queryKeys.projects.approvalBlockedTickets(projectId, approvalId),
 		queryFn: () =>
 			api.get<BlockedTicket[]>(
 				`/api/projects/${projectId}/approvals/${approvalId}/blocked-tickets`,
@@ -95,13 +96,13 @@ export function useResolveApproval() {
 		}) => api.post(`/api/approvals/${approvalId}/resolve`, { status, resolution_note }),
 		onSuccess: (_data, variables) => {
 			// Always invalidate the cross-project aggregated lists — they have no project scope.
-			queryClient.invalidateQueries({ queryKey: ['approvals'] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.approvals.root() });
 			if (variables.projectSlug) {
 				queryClient.invalidateQueries({
-					queryKey: ['projects', variables.projectSlug, 'approvals'],
+					queryKey: queryKeys.projects.approvals(variables.projectSlug),
 				});
 				queryClient.invalidateQueries({
-					queryKey: ['projects', variables.projectSlug, 'inbox-count'],
+					queryKey: queryKeys.projects.inboxCount(variables.projectSlug),
 				});
 				invalidateTeamAgentCaches(queryClient, variables.projectSlug);
 			} else {

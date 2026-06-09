@@ -8,12 +8,13 @@ import {
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { type ApiError, api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 
 export type { ProjectAsset };
 
 export function useProjectAssets(projectId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'assets'],
+		queryKey: queryKeys.projects.assets(projectId),
 		queryFn: () => api.get<ProjectAsset[]>(`/api/projects/${projectId}/assets`),
 		enabled: !!projectId,
 	});
@@ -47,7 +48,7 @@ export function useUploadProjectAsset(projectId: string) {
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'assets'],
+				queryKey: queryKeys.projects.assets(projectId),
 			});
 		},
 	});
@@ -58,7 +59,7 @@ export function useDeleteProjectAsset(projectId: string) {
 		mutationFn: (assetId) => api.delete(`/api/projects/${projectId}/assets/${assetId}`),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'assets'],
+				queryKey: queryKeys.projects.assets(projectId),
 			});
 		},
 	});

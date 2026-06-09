@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 
 export interface ProjectIntake {
 	task_id: string;
@@ -33,7 +34,7 @@ export interface StartProjectIntakeResult {
 /** The single open CEO-assisted project intake, or null. Surfaced on the home view. */
 export function useProjectIntake(enabled = true) {
 	return useQuery({
-		queryKey: ['project-intakes'],
+		queryKey: queryKeys.projectIntakes(),
 		queryFn: () => api.get<ProjectIntake | null>('/api/project-intakes'),
 		enabled,
 		staleTime: 30_000,
@@ -47,8 +48,8 @@ export function useStartProjectIntake() {
 		mutationFn: (input: StartProjectIntakeInput) =>
 			api.post<StartProjectIntakeResult>('/api/project-intakes', input),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['project-intakes'] });
-			queryClient.invalidateQueries({ queryKey: ['teams'] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projectIntakes() });
+			queryClient.invalidateQueries({ queryKey: queryKeys.teams.all() });
 		},
 	});
 }
@@ -64,7 +65,7 @@ export function useSkipProjectIntakeQuestions(projectId: string, intakeTaskId: s
 			),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'tasks', intakeTaskId, 'comments'],
+				queryKey: queryKeys.projects.taskComments(projectId, intakeTaskId),
 			});
 		},
 	});

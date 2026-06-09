@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { queryKeys } from '../lib/query-keys';
 
 export interface CredentialUsage {
 	id: string;
@@ -19,7 +20,7 @@ export interface CredentialUsage {
 
 export function useCredentials(projectId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'credentials'],
+		queryKey: queryKeys.projects.credentials(projectId),
 		queryFn: () => api.get<CredentialUsage[]>(`/api/projects/${projectId}/credentials`),
 	});
 }

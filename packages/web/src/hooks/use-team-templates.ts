@@ -1,6 +1,7 @@
 import type { TeamTemplateSource } from '@hezo/shared';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { queryKeys } from '../lib/query-keys';
 
 export interface TeamTemplateAgentType {
 	agent_type_id: string;
@@ -25,7 +26,7 @@ export interface TeamTemplate {
 
 export function useTeamTemplates() {
 	return useQuery({
-		queryKey: ['team-templates'],
+		queryKey: queryKeys.teamTemplates(),
 		queryFn: () => api.get<TeamTemplate[]>('/api/team-templates'),
 	});
 }

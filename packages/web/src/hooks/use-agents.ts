@@ -2,6 +2,7 @@ import { AgentAdminStatus, type AgentEffort } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 import { useOptimisticMutation, useSimpleOptimisticUpdate } from './use-optimistic-mutation';
 
 export interface Agent {
@@ -53,7 +54,7 @@ export interface AgentSystemPromptRevision {
 
 export function useAgents(projectId: string, adminStatus?: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'agents', { admin_status: adminStatus }],
+		queryKey: queryKeys.projects.agentsFiltered(projectId, { admin_status: adminStatus }),
 		queryFn: () =>
 			api.get<Agent[]>(
 				`/api/projects/${projectId}/agents`,
@@ -66,7 +67,7 @@ export function useAgents(projectId: string, adminStatus?: string) {
 
 export function useAgent(projectId: string, agentId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'agents', agentId],
+		queryKey: queryKeys.projects.agent(projectId, agentId),
 		queryFn: () => api.get<Agent>(`/api/projects/${projectId}/agents/${agentId}`),
 	});
 }
@@ -90,12 +91,12 @@ export function useUpdateAgent(projectId: string, agentId: string) {
 	// omitted from the optimistic apply on the agent entity.
 	return useSimpleOptimisticUpdate<Agent, UpdateAgentVars>(
 		`/api/projects/${projectId}/agents/${agentId}`,
-		['projects', projectId, 'agents', agentId],
+		queryKeys.projects.agent(projectId, agentId),
 		{
 			omitOptimistic: ['system_prompt', 'system_prompt_change_summary'],
 			invalidateOnSettled: [
-				['projects', projectId, 'agents'],
-				['projects', projectId, 'agents', agentId, 'system-prompt'],
+				queryKeys.projects.agents(projectId),
+				queryKeys.projects.agentSystemPrompt(projectId, agentId),
 			],
 			errorMessage: 'Failed to update agent',
 		},
@@ -104,7 +105,7 @@ export function useUpdateAgent(projectId: string, agentId: string) {
 
 export function useAgentSystemPrompt(projectId: string, agentId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'agents', agentId, 'system-prompt'],
+		queryKey: queryKeys.projects.agentSystemPrompt(projectId, agentId),
 		queryFn: () =>
 			api.get<AgentSystemPromptDoc | null>(
 				`/api/projects/${projectId}/agents/${agentId}/system-prompt`,
@@ -115,7 +116,7 @@ export function useAgentSystemPrompt(projectId: string, agentId: string) {
 
 export function useAgentSystemPromptPreview(projectId: string, agentId: string, enabled: boolean) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'agents', agentId, 'system-prompt', 'preview'],
+		queryKey: queryKeys.projects.agentSystemPromptPreview(projectId, agentId),
 		queryFn: () =>
 			api.get<{ content: string }>(
 				`/api/projects/${projectId}/agents/${agentId}/system-prompt/preview`,
@@ -126,7 +127,7 @@ export function useAgentSystemPromptPreview(projectId: string, agentId: string, 
 
 export function useAgentSystemPromptRevisions(projectId: string, agentId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'agents', agentId, 'system-prompt', 'revisions'],
+		queryKey: queryKeys.projects.agentSystemPromptRevisions(projectId, agentId),
 		queryFn: () =>
 			api.get<AgentSystemPromptRevision[]>(
 				`/api/projects/${projectId}/agents/${agentId}/system-prompt/revisions`,
@@ -143,7 +144,7 @@ export function useRestoreAgentSystemPrompt(projectId: string, agentId: string) 
 			}),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'agents', agentId, 'system-prompt'],
+				queryKey: queryKeys.projects.agentSystemPrompt(projectId, agentId),
 			});
 		},
 	});
@@ -152,10 +153,10 @@ export function useRestoreAgentSystemPrompt(projectId: string, agentId: string) 
 export function useDisableAgent(projectId: string) {
 	return useOptimisticMutation<string, unknown, Agent>({
 		mutationFn: (agentId) => api.post(`/api/projects/${projectId}/agents/${agentId}/disable`),
-		queryKey: (agentId) => ['projects', projectId, 'agents', agentId],
+		queryKey: (agentId) => queryKeys.projects.agent(projectId, agentId),
 		applyOptimistic: (current) =>
 			current ? { ...current, admin_status: AgentAdminStatus.Disabled } : current,
-		invalidateOnSettled: [['projects', projectId, 'agents']],
+		invalidateOnSettled: [queryKeys.projects.agents(projectId)],
 		errorMessage: 'Failed to disable agent',
 	});
 }
@@ -163,10 +164,10 @@ export function useDisableAgent(projectId: string) {
 export function useEnableAgent(projectId: string) {
 	return useOptimisticMutation<string, unknown, Agent>({
 		mutationFn: (agentId) => api.post(`/api/projects/${projectId}/agents/${agentId}/enable`),
-		queryKey: (agentId) => ['projects', projectId, 'agents', agentId],
+		queryKey: (agentId) => queryKeys.projects.agent(projectId, agentId),
 		applyOptimistic: (current) =>
 			current ? { ...current, admin_status: AgentAdminStatus.Enabled } : current,
-		invalidateOnSettled: [['projects', projectId, 'agents']],
+		invalidateOnSettled: [queryKeys.projects.agents(projectId)],
 		errorMessage: 'Failed to enable agent',
 	});
 }
@@ -188,9 +189,9 @@ export function useOnboardAgent(projectId: string) {
 				bootstrap: boolean;
 			}>(`/api/projects/${projectId}/agents/onboard`, data),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'agents'] });
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'tasks'] });
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'approvals'] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.agents(projectId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.tasks(projectId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.approvals(projectId) });
 		},
 	});
 }

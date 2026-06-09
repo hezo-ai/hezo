@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { queryKeys } from '../lib/query-keys';
 
 export interface GithubOrg {
 	login: string;
@@ -18,7 +19,7 @@ export interface GithubRepo {
 
 export function useGithubOrgs(projectId: string, enabled = true) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'github', 'orgs'],
+		queryKey: queryKeys.projects.githubOrgs(projectId),
 		queryFn: () => api.get<GithubOrg[]>(`/api/projects/${projectId}/github/orgs`),
 		enabled,
 	});
@@ -26,7 +27,7 @@ export function useGithubOrgs(projectId: string, enabled = true) {
 
 export function useGithubRepos(projectId: string, owner: string | null, query: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'github', 'repos', owner, query],
+		queryKey: queryKeys.projects.githubRepos(projectId, owner, query),
 		queryFn: () =>
 			api.get<GithubRepo[]>(
 				`/api/projects/${projectId}/github/repos?owner=${encodeURIComponent(owner ?? '')}&query=${encodeURIComponent(query)}`,

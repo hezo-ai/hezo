@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 import { toast } from './use-toast';
 
 interface RunQueuedWakeupArgs {
@@ -17,14 +18,14 @@ export function useRunQueuedWakeup({ projectId, taskId }: RunQueuedWakeupArgs) {
 			),
 		onSuccess: () => {
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'tasks', taskId, 'queued-wakeups'],
+				queryKey: queryKeys.projects.taskQueuedWakeups(projectId, taskId),
 			});
 			// Surface the system comment recording the manual start.
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'tasks', taskId, 'comments'],
+				queryKey: queryKeys.projects.taskComments(projectId, taskId),
 			});
 			// Refresh the single queued_wakeup badge / has_active_run on the task.
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'tasks', taskId] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.task(projectId, taskId) });
 		},
 		onError: (error: { message?: string }) => {
 			toast.error(error?.message ?? 'Failed to start queued agent');

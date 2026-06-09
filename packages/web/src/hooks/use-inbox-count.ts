@@ -1,10 +1,11 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { queryKeys } from '../lib/query-keys';
 import { useAllVisibleProjects } from './use-projects';
 
 export function useInboxUnreadCount(projectId: string, enabled = true) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'inbox-count'],
+		queryKey: queryKeys.projects.inboxCount(projectId),
 		queryFn: () => api.get<{ unread: number }>(`/api/projects/${projectId}/inbox/count`),
 		enabled: enabled && !!projectId,
 	});
@@ -19,7 +20,7 @@ export function useGlobalInboxUnreadCount(): number {
 	const { projects } = useAllVisibleProjects();
 	const queries = useQueries({
 		queries: projects.map((p) => ({
-			queryKey: ['projects', p.slug, 'inbox-count'],
+			queryKey: queryKeys.projects.inboxCount(p.slug),
 			queryFn: () => api.get<{ unread: number }>(`/api/projects/${p.slug}/inbox/count`),
 			enabled: !!p.slug,
 		})),

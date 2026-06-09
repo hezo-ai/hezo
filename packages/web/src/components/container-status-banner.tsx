@@ -5,6 +5,7 @@ import { useCallback, useState } from 'react';
 import { useProjectMeta } from '../hooks/use-projects';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 import { Button } from './ui/button';
 
 const BANNER_OUTER = 'sticky top-0 z-40 bg-bg';
@@ -69,7 +70,7 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 		setIsRebuilding(true);
 		try {
 			await api.post(`/api/projects/${projectId}/container/rebuild`, {});
-			queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
 		} finally {
 			setIsRebuilding(false);
 		}

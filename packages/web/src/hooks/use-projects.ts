@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 import { useSimpleOptimisticUpdate } from './use-optimistic-mutation';
 import { useRouteProjectId } from './use-route-project-id';
 
@@ -49,7 +50,7 @@ export type ProjectWithTeam = Project & { teamSlug: string; teamName: string };
  */
 export function useProjectsIndex() {
 	return useQuery({
-		queryKey: ['projects'],
+		queryKey: queryKeys.projects.all(),
 		queryFn: () => api.get<Project[]>('/api/projects'),
 		staleTime: 0,
 		refetchOnMount: 'always',
@@ -100,7 +101,7 @@ export function useResolvedTeam(projectSlug?: string): ResolvedTeam | null {
 
 export function useProject(projectId: string, options?: { enabled?: boolean }) {
 	return useQuery({
-		queryKey: ['projects', projectId],
+		queryKey: queryKeys.projects.detail(projectId),
 		queryFn: () => api.get<Project>(`/api/projects/${projectId}`),
 		enabled: options?.enabled,
 	});
@@ -133,8 +134,8 @@ export function useCreateProjectWithTeam() {
 			task_prefix?: string;
 		}) => api.post<ProjectWithTeamResponse>('/api/projects', data),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['projects'] });
-			queryClient.invalidateQueries({ queryKey: ['teams'] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
+			queryClient.invalidateQueries({ queryKey: queryKeys.teams.all() });
 		},
 	});
 }
@@ -149,14 +150,14 @@ interface UpdateProjectVars {
 export function useUpdateProject(projectId: string) {
 	return useSimpleOptimisticUpdate<Project, UpdateProjectVars>(
 		`/api/projects/${projectId}`,
-		['projects', projectId],
-		{ invalidateOnSettled: [['projects']], errorMessage: 'Failed to update project' },
+		queryKeys.projects.detail(projectId),
+		{ invalidateOnSettled: [queryKeys.projects.all()], errorMessage: 'Failed to update project' },
 	);
 }
 
 export function useDeleteProject() {
 	return useMutation({
 		mutationFn: (projectId: string) => api.delete(`/api/projects/${projectId}`),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['projects'] }),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() }),
 	});
 }

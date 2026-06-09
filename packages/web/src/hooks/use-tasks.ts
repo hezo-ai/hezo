@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
 import { useSimpleOptimisticUpdate } from './use-optimistic-mutation';
 
 export interface QueuedWakeup {
@@ -65,7 +66,7 @@ export function useTasks(
 	options?: { enabled?: boolean },
 ) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'tasks', filters],
+		queryKey: queryKeys.projects.tasksFiltered(projectId, filters),
 		queryFn: async () => {
 			const params: Record<string, string | undefined> = { ...filters };
 			const res = await api.get<TaskListResponse | Task[]>(
@@ -89,7 +90,7 @@ export interface GlobalTask extends Task {
 export function useAllTasks(projects: { slug: string; teamSlug: string; teamName: string }[]) {
 	const slugs = projects.map((p) => p.slug).sort();
 	return useQuery({
-		queryKey: ['tasks', 'all', slugs],
+		queryKey: queryKeys.tasksAll(slugs),
 		queryFn: async (): Promise<GlobalTask[]> => {
 			const perProject = await Promise.all(
 				projects.map(async (p) => {
@@ -108,7 +109,7 @@ export function useAllTasks(projects: { slug: string; teamSlug: string; teamName
 
 export function useTask(projectId: string, taskId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'tasks', taskId],
+		queryKey: queryKeys.projects.task(projectId, taskId),
 		queryFn: () => api.get<Task>(`/api/projects/${projectId}/tasks/${taskId}`),
 	});
 }
@@ -126,7 +127,7 @@ export function useTaskMentions(projectId: string, candidates: string[]) {
 		[candidates],
 	);
 	return useQuery({
-		queryKey: ['projects', projectId, 'tasks', 'resolve', key],
+		queryKey: queryKeys.projects.tasksResolve(projectId, key),
 		queryFn: () =>
 			api.post<TaskMentionData[]>(`/api/projects/${projectId}/tasks/resolve`, {
 				identifiers: key,
@@ -146,7 +147,8 @@ export function useCreateTask(projectId: string) {
 			priority?: string;
 			labels?: string[];
 		}) => api.post<Task>(`/api/projects/${projectId}/tasks`, data),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'tasks'] }),
+		onSuccess: () =>
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.tasks(projectId) }),
 	});
 }
 
@@ -167,10 +169,10 @@ export function useUpdateTask(projectId: string, taskId: string) {
 	// so it's omitted from the optimistic apply and picked up by the response merge.
 	return useSimpleOptimisticUpdate<Task, UpdateTaskVars>(
 		`/api/projects/${projectId}/tasks/${taskId}`,
-		['projects', projectId, 'tasks', taskId],
+		queryKeys.projects.task(projectId, taskId),
 		{
 			omitOptimistic: ['status'],
-			invalidateOnSettled: [['projects', projectId, 'tasks']],
+			invalidateOnSettled: [queryKeys.projects.tasks(projectId)],
 			errorMessage: 'Failed to update task',
 		},
 	);
@@ -184,7 +186,7 @@ export interface TaskAncestor {
 
 export function useTaskAncestors(projectId: string, taskId: string | undefined) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'tasks', taskId, 'ancestors'],
+		queryKey: queryKeys.projects.taskAncestors(projectId, taskId),
 		queryFn: () => api.get<TaskAncestor[]>(`/api/projects/${projectId}/tasks/${taskId}/ancestors`),
 		enabled: !!projectId && !!taskId,
 	});
@@ -198,7 +200,8 @@ export function useCreateSubTask(projectId: string, parentTaskId: string) {
 			assignee_id?: string;
 			priority?: string;
 		}) => api.post<Task>(`/api/projects/${projectId}/tasks/${parentTaskId}/sub-tasks`, data),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'tasks'] }),
+		onSuccess: () =>
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.tasks(projectId) }),
 	});
 }
 
@@ -214,7 +217,7 @@ export interface TaskDependency {
 
 export function useTaskDependencies(projectId: string, taskId: string) {
 	return useQuery({
-		queryKey: ['projects', projectId, 'tasks', taskId, 'dependencies'],
+		queryKey: queryKeys.projects.taskDependencies(projectId, taskId),
 		queryFn: () =>
 			api.get<TaskDependency[]>(`/api/projects/${projectId}/tasks/${taskId}/dependencies`),
 	});
@@ -228,7 +231,7 @@ export function useAddDependency(projectId: string, taskId: string) {
 			}),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'tasks', taskId, 'dependencies'],
+				queryKey: queryKeys.projects.taskDependencies(projectId, taskId),
 			}),
 	});
 }
@@ -239,7 +242,7 @@ export function useRemoveDependency(projectId: string, taskId: string) {
 			api.delete(`/api/projects/${projectId}/tasks/${taskId}/dependencies/${depId}`),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
-				queryKey: ['projects', projectId, 'tasks', taskId, 'dependencies'],
+				queryKey: queryKeys.projects.taskDependencies(projectId, taskId),
 			}),
 	});
 }

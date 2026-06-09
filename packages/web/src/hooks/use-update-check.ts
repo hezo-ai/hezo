@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { queryKeys } from '../lib/query-keys';
 
 export interface UpdateInfo {
 	current: string;
@@ -14,7 +15,7 @@ export interface UpdateInfo {
  */
 export function useUpdateCheck() {
 	return useQuery({
-		queryKey: ['update-check'],
+		queryKey: queryKeys.updateCheck(),
 		queryFn: () => api.get<UpdateInfo>('/api/updates/latest'),
 		staleTime: 60 * 60 * 1000,
 		gcTime: 60 * 60 * 1000,

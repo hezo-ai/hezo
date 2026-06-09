@@ -9,6 +9,7 @@ import {
 } from '../hooks/use-oauth-connections';
 import { useDeleteRepo, useRepos } from '../hooks/use-repos';
 import { repoWebUrl } from '../lib/github';
+import { queryKeys } from '../lib/query-keys';
 import { ConnectorDeviceFlowDialog } from './connector-device-flow-dialog';
 import { RepoPickerModal } from './repo-picker-modal';
 import { Badge } from './ui/badge';
@@ -149,8 +150,10 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 					connectorId={deviceConnectorId}
 					providerLabel="GitHub"
 					onSuccess={() => {
-						queryClient.invalidateQueries({ queryKey: ['teams', projectId, 'oauth-connections'] });
-						queryClient.invalidateQueries({ queryKey: ['teams', projectId, 'mcp-connections'] });
+						queryClient.invalidateQueries({
+							queryKey: queryKeys.teams.oauthConnections(projectId),
+						});
+						queryClient.invalidateQueries({ queryKey: queryKeys.teams.mcpConnections(projectId) });
 					}}
 				/>
 			)}
