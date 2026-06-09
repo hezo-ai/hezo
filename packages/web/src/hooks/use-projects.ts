@@ -15,6 +15,7 @@ export interface Project {
 	description: string;
 	is_internal?: boolean;
 	max_concurrent_runs: number;
+	memory_limit_gib: number;
 	docker_base_image: string | null;
 	container_id: string | null;
 	container_status: 'creating' | 'running' | 'stopping' | 'stopped' | 'error' | null;
@@ -140,7 +141,12 @@ export function useCreateProjectWithTeam() {
 
 export function useUpdateProject(projectId: string) {
 	return useOptimisticMutation<
-		{ name?: string; description?: string; max_concurrent_runs?: number },
+		{
+			name?: string;
+			description?: string;
+			max_concurrent_runs?: number;
+			memory_limit_gib?: number;
+		},
 		Project,
 		Project
 	>({

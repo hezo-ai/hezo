@@ -90,6 +90,7 @@ export class ContainerLogStreamer {
 			{ follow: true, tail: 200, stdout: true, stderr: true },
 			abortController.signal,
 		);
+		if (res === null) return;
 
 		const reader = res.body?.getReader();
 		if (!reader) return;

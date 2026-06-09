@@ -16,6 +16,7 @@ function ProjectSettingsPage() {
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
 	const [maxRuns, setMaxRuns] = useState('1');
+	const [memoryLimit, setMemoryLimit] = useState('16');
 	const [editing, setEditing] = useState(false);
 
 	if (!project) return null;
@@ -25,17 +26,23 @@ function ProjectSettingsPage() {
 		setName(project.name);
 		setDescription(project.description ?? '');
 		setMaxRuns(String(project.max_concurrent_runs));
+		setMemoryLimit(String(project.memory_limit_gib));
 		setEditing(true);
 	}
 
 	async function handleSave(e: React.FormEvent) {
 		e.preventDefault();
 		const parsedMaxRuns = Number(maxRuns);
+		const parsedMemoryLimit = Number(memoryLimit);
 		await updateProject.mutateAsync({
 			name: name.trim() || undefined,
 			description: description.trim(),
 			max_concurrent_runs:
 				Number.isInteger(parsedMaxRuns) && parsedMaxRuns >= 1 ? parsedMaxRuns : undefined,
+			memory_limit_gib:
+				Number.isInteger(parsedMemoryLimit) && parsedMemoryLimit >= 1
+					? parsedMemoryLimit
+					: undefined,
 		});
 		setEditing(false);
 	}
@@ -66,6 +73,19 @@ function ProjectSettingsPage() {
 							Agents that may run at once in this project. Different agents work different tickets
 							in parallel; one ticket still runs a single agent at a time.
 						</p>
+						<Input
+							label="Container memory limit (GiB)"
+							type="number"
+							min={1}
+							className="w-28"
+							value={memoryLimit}
+							onChange={(e) => setMemoryLimit(e.target.value)}
+							data-testid="memory-limit-gib-input"
+						/>
+						<p className="text-xs text-text-subtle -mt-1">
+							The container is auto-stopped when it exceeds this RSS budget. Raise it on
+							memory-heavy projects; lower it to fail fast on runaway workloads.
+						</p>
 						<div className="flex gap-2">
 							<Button type="submit" size="sm" disabled={updateProject.isPending}>
 								{updateProject.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Save'}
@@ -88,6 +108,10 @@ function ProjectSettingsPage() {
 						<div data-testid="max-concurrent-runs-value">
 							<span className="text-text-muted">Max concurrent runs:</span>{' '}
 							{project.max_concurrent_runs}
+						</div>
+						<div data-testid="memory-limit-gib-value">
+							<span className="text-text-muted">Container memory limit:</span>{' '}
+							{project.memory_limit_gib} GiB
 						</div>
 						<Button variant="ghost" size="sm" onClick={startEditing} className="mt-2">
 							Edit
