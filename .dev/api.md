@@ -249,7 +249,7 @@ Response:
       "role_description": "...",
       "system_prompt_template": "You are the Captain of {{team_name}}...",
       "default_effort": "max",
-      "heartbeat_interval_min": 120,
+      "heartbeat_interval_min": 60,
       "monthly_budget_cents": 2000,
       "is_builtin": true,
       "source": "builtin",
