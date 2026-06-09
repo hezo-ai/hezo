@@ -104,16 +104,6 @@ function ExecutionDetailPage() {
 			<div className="flex items-center gap-2 mb-4">
 				<h2 className="text-sm font-medium">Run {run.id.slice(0, 8)}</h2>
 				<Badge color={statusColor(run.status) as 'green'}>{run.status}</Badge>
-				<div className="ml-auto">
-					<TerminateRunButton
-						projectId={projectId}
-						agentId={agentId}
-						runId={runId}
-						status={run.status}
-						taskId={run.task_id}
-						variant="standalone"
-					/>
-				</div>
 			</div>
 
 			{(() => {
