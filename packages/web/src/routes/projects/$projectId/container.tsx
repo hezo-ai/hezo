@@ -32,10 +32,7 @@ function ContainerPage() {
 	const isActive = isRunning || isCreating || isStopping;
 
 	const logPhase = isCreating ? 'creating' : isRunning ? 'running' : isError ? 'error' : null;
-	const { lines: liveLogs } = useContainerLogs(
-		project?.id ?? '',
-		project?.id ? logPhase : null,
-	);
+	const { lines: liveLogs } = useContainerLogs(project?.id ?? '', project?.id ? logPhase : null);
 
 	const snapshotLines = useMemo<LogViewerLine[]>(() => {
 		const raw = project?.container_last_logs;

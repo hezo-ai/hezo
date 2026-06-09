@@ -1,13 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import {
-	AlignLeft,
-	Check,
-	Code,
-	Copy,
-	Maximize2,
-	Minimize2,
-	MoveVertical,
-} from 'lucide-react';
+import { AlignLeft, Check, Code, Copy, Maximize2, Minimize2, MoveVertical } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { FormattedLogView } from './formatted-log-view';
 import { Button } from './ui/button';
