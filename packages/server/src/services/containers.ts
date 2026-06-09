@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import {
@@ -94,11 +95,11 @@ const PORT_POOL_END = 19999;
 
 const LAST_LOGS_CAP_BYTES = 32 * 1024;
 
-// When true, every old-container removal is skipped (rebuild, teardown, and
-// the defensive same-name cleanup before create). Provisioning a fresh
-// container then fails with a name conflict until the operator removes the
-// old one by hand — the trade-off is keeping crashed containers around for
-// `docker logs` / `docker inspect`. Set centrally from parseConfig at startup.
+// When true, old containers are kept rather than removed on rebuild and
+// teardown, so crashed containers stay around for `docker logs` /
+// `docker inspect`. A fresh provision still succeeds because each container
+// name carries a random suffix, so a retained container never blocks the new
+// one. Set centrally from parseConfig at startup.
 let keepOldContainersFlag = false;
 
 export function setKeepOldContainers(value: boolean): void {
@@ -257,10 +258,11 @@ export async function provisionContainer(
 
 		// Bind mounts key on the immutable project id, so a rename never shifts
 		// paths or orphans data. The container name embeds the project slug for
-		// `docker ps` readability and an 8-char id prefix for uniqueness; on
-		// rename the next rebuild adopts the new slug, while the old container
-		// is torn down by stored `container_id` hash rather than by name.
-		const containerName = `hezo-${project.slug}-${project.id.slice(0, 8)}`;
+		// `docker ps` readability, an 8-char id prefix, and a random suffix so
+		// every provision yields a unique name. The old container is always torn
+		// down by stored `container_id`, never by name, so when it is retained
+		// (keep-old) the fresh name still avoids a create-time conflict.
+		const containerName = `hezo-${project.slug}-${project.id.slice(0, 8)}-${randomBytes(4).toString('hex')}`;
 		const containerLabels = { 'hezo.team': teamSlug, 'hezo.project': project.slug };
 		const extraHosts = ['host.docker.internal:host-gateway'];
 
@@ -275,13 +277,6 @@ export async function provisionContainer(
 		});
 
 		emit('stdout', `→ Creating container ${containerName}`);
-		if (!keepOldContainersFlag) {
-			try {
-				await docker.removeContainer(containerName, true);
-			} catch {
-				// Container doesn't exist — expected
-			}
-		}
 
 		const { Id } = await docker.createContainer(containerName, {
 			Image: project.docker_base_image,

@@ -241,8 +241,29 @@ export class DockerClient {
 		return parseJsonOrThrow(res, 'inspectContainer');
 	}
 
-	async inspectContainerByName(name: string): Promise<ContainerInfo | null> {
-		return this.inspectContainer(name);
+	/**
+	 * Resolve a container by the deterministic name prefix a project provisions
+	 * under. The full name carries a random suffix that is not reconstructable
+	 * from project fields, so self-heal matches on the stable
+	 * `hezo-<slug>-<id8>` prefix and inspects the live match. Only a container
+	 * whose name segment after the prefix is the random suffix counts, so an
+	 * unrelated longer-slug project can't be matched by accident.
+	 */
+	async findContainerByNamePrefix(prefix: string): Promise<ContainerInfo | null> {
+		const filters = encodeURIComponent(JSON.stringify({ name: [prefix] }));
+		const res = await this.request('GET', `/containers/json?all=true&filters=${filters}`);
+		if (!res.ok) {
+			const text = await res.text();
+			throw new Error(`Docker listContainers failed (${res.status}): ${text}`);
+		}
+		const list = await parseJsonOrThrow<Array<{ Id: string; Names: string[] }>>(
+			res,
+			'listContainers',
+		);
+		const match = list.find((c) =>
+			c.Names.some((n) => n.replace(/^\//, '').startsWith(`${prefix}-`)),
+		);
+		return match ? this.inspectContainer(match.Id) : null;
 	}
 
 	/**
