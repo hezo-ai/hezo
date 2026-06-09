@@ -27,6 +27,9 @@ let ca: HezoCA;
 let dataDir: string;
 let proxy: EgressProxy;
 
+// CA generation alone takes ~2s; on slow CI runners the full setup (PGlite +
+// Hono boot + three API calls + CA + proxy) can push past Bun's 5s default
+// hook timeout. Give the same headroom as the tests themselves.
 beforeAll(async () => {
 	const ctx = await createTestApp();
 	db = ctx.db;
@@ -52,7 +55,7 @@ beforeAll(async () => {
 
 	ca = await loadOrCreateCA(dataDir);
 	proxy = new EgressProxy({ db, masterKeyManager, ca, extraUpstreamTrustedCAs: ca.cert });
-});
+}, 60_000);
 
 afterAll(async () => {
 	await proxy.releaseAll();
