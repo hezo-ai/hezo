@@ -27,6 +27,8 @@ export interface Task {
 	assignee_type: 'agent' | 'user' | null;
 	has_active_run: boolean;
 	has_unread_admin_mention: boolean;
+	last_run_status: 'succeeded' | 'failed' | 'cancelled' | 'timed_out' | null;
+	last_run_comment_id: string | null;
 	queued_wakeup: QueuedWakeup | null;
 	parent_task_id: string | null;
 	labels: string[];

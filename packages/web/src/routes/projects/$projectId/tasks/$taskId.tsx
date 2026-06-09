@@ -8,6 +8,7 @@ import {
 	jumpToComment,
 } from '../../../../components/task-detail/comments-section';
 import { DependenciesSection } from '../../../../components/task-detail/dependencies-section';
+import { LastRunFailedBanner } from '../../../../components/task-detail/last-run-failed-banner';
 import { SubTasksSection } from '../../../../components/task-detail/sub-tasks-section';
 import { TaskHeader } from '../../../../components/task-detail/task-header';
 import { TaskSidebar } from '../../../../components/task-detail/task-sidebar';
@@ -89,6 +90,7 @@ function TaskDetailPage() {
 		<>
 			<div className="grid grid-cols-1 lg:grid-cols-[1fr_190px] gap-5">
 				<div className="min-w-0">
+					<LastRunFailedBanner task={task} />
 					<TaskHeader task={task} projectId={projectId} taskProjectSlug={taskProjectSlug} />
 
 					<TaskSummary

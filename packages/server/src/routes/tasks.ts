@@ -177,6 +177,7 @@ tasksRoutes.get('/projects/:projectId/tasks', async (c) => {
               WHERE bm.task_id = i.id AND bm.user_id = $${idx}
                 AND bm.read_at IS NULL AND bm.archived_at IS NULL
             ) AS has_unread_admin_mention,
+            lr.status AS last_run_status,
             CASE WHEN qw.last_skipped_reason IS NOT NULL THEN json_build_object(
               'reason', qw.last_skipped_reason,
               'since', qw.last_skipped_at,
@@ -202,6 +203,14 @@ tasksRoutes.get('/projects/:projectId/tasks', async (c) => {
        ORDER BY w.last_skipped_at DESC
        LIMIT 1
      ) qw ON true
+     LEFT JOIN LATERAL (
+       SELECT hr.status
+       FROM heartbeat_runs hr
+       WHERE hr.task_id = i.id
+         AND hr.status NOT IN ('queued', 'running')
+       ORDER BY hr.finished_at DESC NULLS LAST, hr.started_at DESC
+       LIMIT 1
+     ) lr ON true
      WHERE ${where}
      ORDER BY EXISTS (
                 SELECT 1 FROM heartbeat_runs hr
@@ -306,6 +315,8 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
               SELECT 1 FROM heartbeat_runs hr
               WHERE hr.task_id = i.id AND hr.status IN ('running', 'queued')
             ) AS has_active_run,
+            lr.status AS last_run_status,
+            lr.comment_id AS last_run_comment_id,
             CASE WHEN qw.last_skipped_reason IS NOT NULL THEN json_build_object(
               'reason', qw.last_skipped_reason,
               'since', qw.last_skipped_at,
@@ -334,6 +345,18 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
        ORDER BY w.last_skipped_at DESC
        LIMIT 1
      ) qw ON true
+     LEFT JOIN LATERAL (
+       SELECT hr.status, hrc.id AS comment_id
+       FROM heartbeat_runs hr
+       LEFT JOIN task_comments hrc
+         ON hrc.task_id = hr.task_id
+         AND hrc.content_type = 'run'
+         AND hrc.content->>'run_id' = hr.id::text
+       WHERE hr.task_id = i.id
+         AND hr.status NOT IN ('queued', 'running')
+       ORDER BY hr.finished_at DESC NULLS LAST, hr.started_at DESC
+       LIMIT 1
+     ) lr ON true
      WHERE i.id = $1 AND i.team_id = $2`,
 		[taskId, teamId],
 	);
