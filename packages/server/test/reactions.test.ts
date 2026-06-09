@@ -431,6 +431,42 @@ describe('MCP add_reaction / remove_reaction tools', () => {
 		expect(c.reactions[0].kind).toBe(ReactionKind.Ack);
 	});
 
+	it('add_reaction rejects a non-UUID comment_id at the schema layer', async () => {
+		const taskId = await insertTask(captainId, 'MCP reject non-uuid');
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			captainId,
+			teamId,
+			taskId,
+		);
+
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: {
+					name: 'add_reaction',
+					arguments: {
+						team_id: teamId,
+						task_id: taskId,
+						comment_id: 'last',
+						kind: ReactionKind.Ack,
+					},
+				},
+				id: 1,
+			}),
+		});
+		const body = await res.text();
+		expect(body).not.toContain('invalid input syntax for type uuid');
+		const reactionCount = await db.query<{ c: number }>(
+			'SELECT COUNT(*)::int AS c FROM comment_reactions',
+		);
+		expect(reactionCount.rows[0].c).toBe(0);
+	});
+
 	it('add_reaction does not fire any wakeups', async () => {
 		const taskId = await insertTask(architectId, 'MCP no wakeups');
 		const commentId = await insertComment(taskId, captainId);

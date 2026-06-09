@@ -1401,7 +1401,12 @@ export function registerTools(
 		{
 			team_id: z.string().describe('Team ID'),
 			task_id: z.string().describe('Task ID the comment belongs to'),
-			comment_id: z.string().describe('Comment ID to react to'),
+			comment_id: z
+				.string()
+				.uuid()
+				.describe(
+					'UUID of the comment to react to, as returned by list_comments. Sentinels like "last" / "latest" are not supported — you must pass an explicit UUID.',
+				),
 			kind: reactionKindSchema.describe(
 				`Reaction kind. v1 supports: ${Object.values(ReactionKind).join(', ')}`,
 			),
@@ -1445,7 +1450,12 @@ export function registerTools(
 		{
 			team_id: z.string().describe('Team ID'),
 			task_id: z.string().describe('Task ID the comment belongs to'),
-			comment_id: z.string().describe('Comment ID to remove the reaction from'),
+			comment_id: z
+				.string()
+				.uuid()
+				.describe(
+					'UUID of the comment to remove the reaction from, as returned by list_comments. Sentinels like "last" / "latest" are not supported — you must pass an explicit UUID.',
+				),
 			kind: reactionKindSchema.describe(
 				`Reaction kind. v1 supports: ${Object.values(ReactionKind).join(', ')}`,
 			),
