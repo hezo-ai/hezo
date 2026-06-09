@@ -1392,8 +1392,9 @@ describe('JobManager workflow methods', () => {
 			);
 			const siblingTaskId = siblingInsert.rows[0].id;
 
-			// Heartbeat interval of 5 min (matches the floor) — a run finished
-			// 10 min ago is comfortably outside the cooldown.
+			// Heartbeat interval of 5 min (matches the floor). A run that finished
+			// a year ago is unambiguously outside the cooldown regardless of CI
+			// clock precision or test ordering.
 			await db.query('UPDATE member_agents SET heartbeat_interval_min = 5 WHERE id = $1', [
 				agentId,
 			]);
@@ -1403,7 +1404,7 @@ describe('JobManager workflow methods', () => {
 
 			await db.query(
 				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at)
-				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - interval '11 minutes', now() - interval '10 minutes')`,
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - interval '1 year' - interval '1 hour', now() - interval '1 year')`,
 				[agentId, teamId, siblingTaskId, HeartbeatRunStatus.Succeeded],
 			);
 
@@ -1418,15 +1419,18 @@ describe('JobManager workflow methods', () => {
 				{ success: true, exitCode: 0, stdout: '', stderr: '' },
 			);
 
-			const chain = await db.query<{ source: string; payload: Record<string, unknown> }>(
-				`SELECT source, payload FROM agent_wakeup_requests
-				 WHERE member_id = $1 AND status = $2::wakeup_status
-				 ORDER BY created_at DESC LIMIT 1`,
-				[agentId, WakeupStatus.Queued],
+			// Specifically query for the chain wakeup targeting the sibling, so
+			// the assertion is unaffected by any other wakeup that might exist for
+			// the agent (e.g. from prior tests or side effects of onAgentComplete).
+			const chain = await db.query<{ payload: Record<string, unknown> }>(
+				`SELECT payload FROM agent_wakeup_requests
+				 WHERE member_id = $1
+				   AND source = 'timer'::wakeup_source
+				   AND payload->>'task_id' = $2
+				   AND payload->>'reason' = 'chain_after_completion'`,
+				[agentId, siblingTaskId],
 			);
 			expect(chain.rows.length).toBe(1);
-			expect(chain.rows[0].payload.task_id).toBe(siblingTaskId);
-			expect(chain.rows[0].payload.reason).toBe('chain_after_completion');
 
 			manager.shutdown();
 			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
