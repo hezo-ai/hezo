@@ -1545,7 +1545,6 @@ export class JobManager {
 		);
 		const commentRow = inserted.rows[0];
 		if (!commentRow) return;
-		const commentId = commentRow.id as string;
 
 		broadcastRowChange(
 			this.deps.wsManager,
@@ -1554,14 +1553,6 @@ export class JobManager {
 			'INSERT',
 			commentRow,
 		);
-
-		await createWakeup(db, memberId, teamId, WakeupSource.Automation, {
-			source: WakeupSource.Automation,
-			task_id: taskId,
-			comment_id: commentId,
-			run_id: runId,
-			reason: 'run_failed',
-		});
 	}
 
 	private async chainNextTaskWakeup(

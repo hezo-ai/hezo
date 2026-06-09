@@ -846,7 +846,7 @@ describe('JobManager workflow methods', () => {
 				return r.rows;
 			}
 
-			it('posts a system comment and automation wakeup on failed status', async () => {
+			it('posts a system comment on failed status without queuing a retry wakeup', async () => {
 				await clearRunsAndComments();
 				const runId = await seedRun(HeartbeatRunStatus.Failed, 'The operation timed out.');
 
@@ -880,22 +880,16 @@ describe('JobManager workflow methods', () => {
 
 				const wakeups = await db.query<{ source: string; payload: Record<string, unknown> }>(
 					`SELECT source::text AS source, payload FROM agent_wakeup_requests
-					 WHERE member_id = $1 AND source = 'automation'
-					 ORDER BY created_at DESC LIMIT 1`,
+					 WHERE member_id = $1 AND source = 'automation' AND payload->>'reason' = 'run_failed'`,
 					[agentId],
 				);
-				expect(wakeups.rows.length).toBe(1);
-				expect(wakeups.rows[0].payload).toMatchObject({
-					task_id: taskId,
-					run_id: runId,
-					reason: 'run_failed',
-				});
+				expect(wakeups.rows.length).toBe(0);
 
 				manager.shutdown();
 				await clearRunsAndComments();
 			});
 
-			it('posts the ping on timed_out status', async () => {
+			it('posts the ping on timed_out status without queuing a retry wakeup', async () => {
 				await clearRunsAndComments();
 				const runId = await seedRun(HeartbeatRunStatus.TimedOut, 'Heartbeat lapsed');
 
@@ -921,6 +915,13 @@ describe('JobManager workflow methods', () => {
 				const failurePings = comments.filter((c) => c.content.kind === 'run_failed');
 				expect(failurePings.length).toBe(1);
 				expect(failurePings[0].content.status).toBe(HeartbeatRunStatus.TimedOut);
+
+				const wakeups = await db.query<{ id: string }>(
+					`SELECT id FROM agent_wakeup_requests
+					 WHERE member_id = $1 AND source = 'automation' AND payload->>'reason' = 'run_failed'`,
+					[agentId],
+				);
+				expect(wakeups.rows.length).toBe(0);
 
 				manager.shutdown();
 				await clearRunsAndComments();
