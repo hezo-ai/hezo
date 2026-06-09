@@ -86,7 +86,7 @@ export function TaskSidebar({
 		<>
 			<div
 				data-testid="task-sidebar"
-				className="flex flex-col gap-4 text-xs lg:sticky lg:top-0 lg:self-start"
+				className="flex flex-col gap-4 text-xs lg:sticky lg:top-[var(--container-banner-h,0px)] lg:self-start"
 			>
 				<AgentQueueSection
 					projectId={projectId}

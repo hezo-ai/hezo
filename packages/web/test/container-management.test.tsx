@@ -3,7 +3,7 @@ import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { type SeededWorkspace, seedProject, seedWorkspace } from './helpers/seed';
 
-test('container page renders rebuild button and Container nav crumb', async () => {
+test('container page renders restart button and Container nav crumb', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
 	const { findByRole, router } = await renderApp({
@@ -20,7 +20,7 @@ test('container page renders rebuild button and Container nav crumb', async () =
 		params: { projectId: projectSlug },
 	});
 
-	await findByRole('button', { name: /rebuild/i }, { timeout: 20_000 });
+	await findByRole('button', { name: /restart/i }, { timeout: 20_000 });
 });
 
 test('container page shows "Waiting for container output…" when status is running but no logs yet', async () => {
@@ -140,7 +140,7 @@ test('banner flags the active project as failed and rebuilds it', async () => {
 	expect(message.textContent ?? '').toContain('Failed Banner');
 
 	const rebuildBtn = banner.querySelector(
-		'button[aria-label="Rebuild failed container"]',
+		'button[aria-label="Restart failed container"]',
 	) as HTMLButtonElement;
 	expect(rebuildBtn).toBeTruthy();
 	fireEvent.click(rebuildBtn);

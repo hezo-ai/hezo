@@ -93,7 +93,7 @@ function ContainerPage() {
 							Stop
 						</Button>
 					</Tooltip>
-					<Tooltip content="Rebuild container from scratch">
+					<Tooltip content="Restart container">
 						<Button
 							variant="ghost"
 							size="sm"
@@ -105,7 +105,7 @@ function ContainerPage() {
 							) : (
 								<RefreshCw className="w-3 h-3" />
 							)}
-							Rebuild
+							Restart
 						</Button>
 					</Tooltip>
 				</div>
@@ -167,9 +167,9 @@ function ContainerPage() {
 			<ConfirmDialog
 				open={rebuildOpen}
 				onOpenChange={setRebuildOpen}
-				title="Rebuild container from scratch?"
+				title="Restart container?"
 				description="All unpushed work will be lost and running agent tasks will be cancelled."
-				confirmLabel="Rebuild"
+				confirmLabel="Restart"
 				variant="danger"
 				loading={rebuildContainer.isPending}
 				onConfirm={async () => {

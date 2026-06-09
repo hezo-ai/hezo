@@ -1,6 +1,6 @@
-import { AgentAdminStatus } from '@hezo/shared';
+import { AgentAdminStatus, ContainerStatus } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Globe, Info } from 'lucide-react';
+import { AlertTriangle, Globe, Info } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useAgents } from '../hooks/use-agents';
@@ -49,6 +49,9 @@ export function ProjectSidebar() {
 
 	const isInternal = project?.is_internal ?? false;
 	const projectParams = { projectId };
+	const containerFailed =
+		project?.container_status === ContainerStatus.Stopped ||
+		project?.container_status === ContainerStatus.Error;
 
 	const enabledAgents = (agents ?? []).filter((a) => a.admin_status !== AgentAdminStatus.Disabled);
 	const byCreatedAt = (a: { created_at: string }, b: { created_at: string }) =>
@@ -83,7 +86,23 @@ export function ProjectSidebar() {
 		{
 			to: '/projects/$projectId/container',
 			params: projectParams,
-			label: 'Container',
+			label: (
+				<span className="inline-flex items-center gap-1.5">
+					<span>Container</span>
+					{containerFailed && (
+						<Tooltip content="Container failed — click for details" side="right">
+							<span
+								role="img"
+								data-testid="project-sidebar-container-error"
+								aria-label="Container failed"
+								className="inline-flex shrink-0 text-red-400"
+							>
+								<AlertTriangle className="w-3 h-3" aria-hidden="true" />
+							</span>
+						</Tooltip>
+					)}
+				</span>
+			),
 		},
 		{
 			to: '/projects/$projectId/audit-log',
