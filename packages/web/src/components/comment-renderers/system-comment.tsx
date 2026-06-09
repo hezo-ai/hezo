@@ -1,5 +1,7 @@
 import { formatTaskStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
+import { Loader2, RotateCw } from 'lucide-react';
+import { useRetryFailedRun } from '../../hooks/use-retry-failed-run';
 import { repoWebUrl } from '../../lib/github';
 import type {
 	SystemContent,
@@ -8,11 +10,13 @@ import type {
 	SystemStatusChangeContent,
 	SystemTaskLinkContent,
 } from '../comment-content';
+import { Tooltip } from '../ui/tooltip';
 import type { CommentDataOf } from './comment-data';
 
 interface Props {
 	comment: CommentDataOf<'system'>;
 	projectId?: string;
+	taskId?: string;
 }
 
 function isTaskLink(c: SystemContent): c is SystemTaskLinkContent {
@@ -28,7 +32,7 @@ function isRepoDesignated(c: SystemContent): c is SystemRepoDesignatedContent {
 	return c.kind === 'repo_designated';
 }
 
-export function SystemComment({ comment, projectId }: Props) {
+export function SystemComment({ comment, projectId, taskId }: Props) {
 	const content: SystemContent | null =
 		comment.content && typeof comment.content === 'object' ? comment.content : null;
 	const timestamp = (
@@ -58,7 +62,14 @@ export function SystemComment({ comment, projectId }: Props) {
 	}
 
 	if (content && isRunFailed(content)) {
-		return <RunFailedBody content={content} projectId={projectId} timestamp={timestamp} />;
+		return (
+			<RunFailedBody
+				content={content}
+				projectId={projectId}
+				taskId={taskId}
+				timestamp={timestamp}
+			/>
+		);
 	}
 
 	if (content && isRepoDesignated(content)) {
@@ -137,16 +148,19 @@ function StatusChangeBody({
 function RunFailedBody({
 	content,
 	projectId,
+	taskId,
 	timestamp,
 }: {
 	content: SystemRunFailedContent;
 	projectId?: string;
+	taskId?: string;
 	timestamp: React.ReactNode;
 }) {
 	const agentSlug = typeof content.agent_slug === 'string' ? content.agent_slug : '';
 	const status = typeof content.status === 'string' ? content.status : 'failed';
 	const error =
 		typeof content.error === 'string' && content.error.length > 0 ? content.error : null;
+	const runId = typeof content.run_id === 'string' ? content.run_id : null;
 	const statusLabel = status === 'timed_out' ? 'timed out' : 'failed';
 	const agentNode =
 		agentSlug && projectId ? (
@@ -166,12 +180,48 @@ function RunFailedBody({
 			className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]"
 			data-testid="run-failed-comment"
 		>
-			<span className="text-xs text-text-muted">
-				Run for {agentNode} {statusLabel}
-				{error ? <span className="text-text-subtle">: {error}</span> : null}. Waking agent to retry.
+			<span className="text-xs text-text-muted inline-flex items-baseline gap-1.5 flex-wrap">
+				<span>
+					Run for {agentNode} {statusLabel}
+					{error ? <span className="text-text-subtle">: {error}</span> : null}.
+				</span>
+				{projectId && taskId && runId ? (
+					<RetryRunButton projectId={projectId} taskId={taskId} runId={runId} />
+				) : null}
 			</span>
 			{timestamp}
 		</div>
+	);
+}
+
+function RetryRunButton({
+	projectId,
+	taskId,
+	runId,
+}: {
+	projectId: string;
+	taskId: string;
+	runId: string;
+}) {
+	const retry = useRetryFailedRun({ projectId, taskId });
+	return (
+		<Tooltip content="Retry this run">
+			<button
+				type="button"
+				onClick={() => retry.mutate(runId)}
+				disabled={retry.isPending}
+				aria-label="Retry failed run"
+				data-testid="retry-failed-run"
+				className="inline-flex items-center gap-1 self-baseline rounded-radius-md border border-border-default px-1.5 py-0.5 text-[11px] font-medium text-text-muted hover:bg-bg-subtle hover:text-text disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+			>
+				{retry.isPending ? (
+					<Loader2 className="w-3 h-3 animate-spin" />
+				) : (
+					<RotateCw className="w-3 h-3" />
+				)}
+				Retry
+			</button>
+		</Tooltip>
 	);
 }
 

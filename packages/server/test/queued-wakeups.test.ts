@@ -486,3 +486,82 @@ describe('POST /teams/:teamId/tasks/:taskId/queued-wakeups/:wakeupId/cancel', ()
 		expect(row.rows[0].status).toBe('queued');
 	});
 });
+
+describe('POST /teams/:teamId/tasks/:taskId/runs/:runId/retry', () => {
+	async function insertFailedRun(memberId: string, forTaskId: string): Promise<string> {
+		const r = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at, error)
+			 VALUES ($1, $2, $3, 'failed'::heartbeat_run_status, now(), now(), 'API Error: socket closed')
+			 RETURNING id`,
+			[memberId, teamId, forTaskId],
+		);
+		return r.rows[0].id;
+	}
+
+	function retry(forTaskId: string, runId: string) {
+		return app.request(`/api/projects/${projectId}/tasks/${forTaskId}/runs/${runId}/retry`, {
+			method: 'POST',
+			headers: { ...authHeader(token), ...json },
+			body: '{}',
+		});
+	}
+
+	it("creates an on_demand wakeup for the failed run's agent and dispatches it", async () => {
+		await clearWakeups(taskId);
+		await clearRuns();
+		await clearBlockers(taskId);
+		const runId = await insertFailedRun(agentB, taskId);
+
+		const res = await retry(taskId, runId);
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.dispatched).toBe(true);
+
+		// A wakeup was created for the failed run's agent and was claimed by dispatch.
+		const wakeup = await db.query<{
+			id: string;
+			member_id: string;
+			source: string;
+			status: string;
+			payload: { task_id?: string; source_run_id?: string };
+		}>(
+			"SELECT id, member_id, source, status, payload FROM agent_wakeup_requests WHERE payload->>'task_id' = $1",
+			[taskId],
+		);
+		expect(wakeup.rows.length).toBe(1);
+		expect(wakeup.rows[0].member_id).toBe(agentB);
+		expect(wakeup.rows[0].source).toBe('on_demand');
+		expect(wakeup.rows[0].status).not.toBe('queued');
+		expect(wakeup.rows[0].payload?.source_run_id).toBe(runId);
+
+		const sys = await db.query<{ content: { kind?: string } }>(
+			"SELECT content FROM task_comments WHERE task_id = $1 AND content_type = 'system' ORDER BY created_at DESC",
+			[taskId],
+		);
+		expect(sys.rows.some((s) => s.content?.kind === 'wakeup_started')).toBe(true);
+	});
+
+	it('returns 404 when the run id is unknown', async () => {
+		const res = await retry(taskId, '00000000-0000-0000-0000-000000000000');
+		expect(res.status).toBe(404);
+	});
+
+	it('returns 404 when the run belongs to a different task', async () => {
+		const otherTask = await createTask('Retry Other Task');
+		const runId = await insertFailedRun(agentB, otherTask);
+
+		const res = await retry(taskId, runId);
+		expect(res.status).toBe(404);
+		await clearRuns();
+	});
+
+	it('returns 409 when the task already has a run in progress', async () => {
+		await clearWakeups(taskId);
+		await clearRuns();
+		await insertRunningRun(agentA, taskId);
+		const failedRunId = await insertFailedRun(agentB, taskId);
+
+		const res = await retry(taskId, failedRunId);
+		expect(res.status).toBe(409);
+		await clearRuns();
+	});
+});

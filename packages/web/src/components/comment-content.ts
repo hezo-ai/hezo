@@ -56,6 +56,7 @@ export interface SystemRunFailedContent {
 	agent_slug?: string;
 	status?: string;
 	error?: string;
+	run_id?: string;
 	text?: string;
 }
 

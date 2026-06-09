@@ -50,8 +50,8 @@ const renderers: RendererRegistry = {
 	),
 	[CommentContentType.Preview]: ({ comment }) => <PreviewComment comment={comment} />,
 	[CommentContentType.Trace]: ({ comment }) => <TraceComment comment={comment} />,
-	[CommentContentType.System]: ({ comment, projectId }) => (
-		<SystemComment comment={comment} projectId={projectId} />
+	[CommentContentType.System]: ({ comment, projectId, taskId }) => (
+		<SystemComment comment={comment} projectId={projectId} taskId={taskId} />
 	),
 	[CommentContentType.Run]: ({ comment, projectId, inline }) => (
 		<RunComment comment={comment} projectId={projectId} inline={inline} />
