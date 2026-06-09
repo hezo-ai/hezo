@@ -2,7 +2,9 @@ import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
-test('task page renders run_failed system comment with agent link and error', async () => {
+const FAILED_RUN_ID = 'bbbb0000-0000-0000-0000-000000000777';
+
+test('task page renders run_failed system comment with agent link, error, and retry button', async () => {
 	const seeded = {
 		teamId: '',
 		projectSlug: '',
@@ -10,8 +12,9 @@ test('task page renders run_failed system comment with agent link and error', as
 		agentId: '',
 		agentSlug: '',
 	};
+	const retryCalls: string[] = [];
 
-	const { findByTestId, router } = await renderApp({
+	const { findByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -34,7 +37,7 @@ test('task page renders run_failed system comment with agent link and error', as
 				content_type: 'system',
 				content: {
 					kind: 'run_failed',
-					run_id: 'bbbb0000-0000-0000-0000-000000000777',
+					run_id: FAILED_RUN_ID,
 					status: 'timed_out',
 					error: 'The operation timed out.',
 					member_id: captain.id,
@@ -57,6 +60,16 @@ test('task page renders run_failed system comment with agent link and error', as
 						headers: { 'Content-Type': 'application/json' },
 					});
 				}
+				const retryMatch = url.match(
+					/\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/runs\/([^/]+)\/retry/,
+				);
+				if (method === 'POST' && retryMatch) {
+					retryCalls.push(retryMatch[3]);
+					return new Response(JSON.stringify({ data: { dispatched: true } }), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					});
+				}
 				return originalFetch(input as RequestInfo, init);
 			}) as typeof globalThis.fetch;
 		},
@@ -72,11 +85,16 @@ test('task page renders run_failed system comment with agent link and error', as
 	});
 	expect(failureComment.textContent ?? '').toContain('timed out');
 	expect(failureComment.textContent ?? '').toContain('The operation timed out.');
-	expect(failureComment.textContent ?? '').toContain('Waking agent to retry.');
+	expect(failureComment.textContent ?? '').not.toContain('Waking agent to retry');
 
 	const agentLink = (await findByTestId('run-failed-agent')) as HTMLAnchorElement;
 	expect(agentLink.textContent ?? '').toContain(`@${seeded.agentSlug}`);
 	expect(agentLink.getAttribute('href')).toMatch(
 		new RegExp(`/projects/${seeded.projectSlug}/agents/${seeded.agentSlug}$`),
 	);
+
+	const retryButton = (await findByTestId('retry-failed-run')) as HTMLButtonElement;
+	expect(retryButton.textContent ?? '').toContain('Retry');
+	await user.click(retryButton);
+	expect(retryCalls).toEqual([FAILED_RUN_ID]);
 });

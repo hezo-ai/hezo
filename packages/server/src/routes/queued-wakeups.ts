@@ -1,4 +1,4 @@
-import { WakeupStatus, wsRoom } from '@hezo/shared';
+import { WakeupSource, WakeupStatus, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
@@ -12,6 +12,7 @@ import {
 	isTaskBusyInDb,
 } from '../services/run-concurrency';
 import { recordWakeupCancelled, recordWakeupStarted } from '../services/task-events';
+import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('routes');
 
@@ -221,3 +222,72 @@ queuedWakeupsRoutes.post(
 		return ok(c, { dispatched: true });
 	},
 );
+
+// Retry the agent that owned a previously-failed run on this task. Used by the
+// Retry button on the `run_failed` system comment, where the user wants
+// explicit control over re-running *this* task with *this* agent — the
+// chained wakeup from the failure path doesn't guarantee either. Creates a
+// fresh queued wakeup (or coalesces onto a pending one for the same
+// agent+task) and dispatches it immediately through the same JobManager path
+// as /run-now, so the run rules and dependency policy re-check race-safely.
+queuedWakeupsRoutes.post('/projects/:projectId/tasks/:taskId/runs/:runId/retry', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
+	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
+	const runId = c.req.param('runId');
+
+	const runLookup = await db.query<{ member_id: string }>(
+		`SELECT member_id FROM heartbeat_runs
+			 WHERE id = $1 AND team_id = $2 AND task_id = $3`,
+		[runId, teamId, taskId],
+	);
+	const runRow = runLookup.rows[0];
+	// 404 (not 403) for unknown / wrong-team / wrong-task to avoid leaking existence.
+	if (!runRow) return err(c, 'NOT_FOUND', 'Run not found', 404);
+
+	const wakeupId = await createWakeup(db, runRow.member_id, teamId, WakeupSource.OnDemand, {
+		task_id: taskId,
+		trigger: 'retry_failed_run',
+		source_run_id: runId,
+	});
+
+	const result = await c.get('jobManager').dispatchWakeupNow(wakeupId);
+	if (!result.dispatched) {
+		if (result.reason === 'not_found') {
+			return err(c, 'NOT_FOUND', 'Queued wakeup not found', 404);
+		}
+		const messages: Record<string, string> = {
+			task_busy: 'This ticket already has a run in progress',
+			project_at_capacity: 'This project is at its concurrent-run limit',
+			agent_busy: 'This agent is currently running on another task in this project',
+			blocked: 'This ticket is blocked by an open dependency',
+			not_queued: 'Wakeup is no longer queued and cannot be run',
+		};
+		return err(c, 'CONFLICT', messages[result.reason] ?? 'Unable to start retry run', 409);
+	}
+
+	const nameRes = await db.query<{ member_name: string }>(
+		`SELECT COALESCE(ma.title, m.display_name) AS member_name
+			 FROM members m LEFT JOIN member_agents ma ON ma.id = m.id
+			 WHERE m.id = $1`,
+		[runRow.member_id],
+	);
+	const agentName = nameRes.rows[0]?.member_name ?? 'an agent';
+	const actorMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
+	try {
+		await recordWakeupStarted(
+			db,
+			teamId,
+			taskId,
+			wakeupId,
+			agentName,
+			actorMemberId,
+			c.get('wsManager'),
+		);
+	} catch (e) {
+		log.error('Failed to record wakeup-started comment:', e);
+	}
+
+	return ok(c, { dispatched: true });
+});
