@@ -1,15 +1,10 @@
-import { AgentAdminStatus, AgentRuntimeStatus } from '@hezo/shared';
+import { AgentAdminStatus } from '@hezo/shared';
 import { createFileRoute, Link, Outlet, useMatchRoute } from '@tanstack/react-router';
 import { ArrowLeft } from 'lucide-react';
 import { Badge } from '../../../../../components/ui/badge';
 import { ExpandableText } from '../../../../../components/ui/expandable-text';
 import { useAgent } from '../../../../../hooks/use-agents';
-
-const RUNTIME_BADGE: Record<string, { color: string; label: string }> = {
-	[AgentRuntimeStatus.Active]: { color: 'green', label: 'Running' },
-	[AgentRuntimeStatus.Paused]: { color: 'yellow', label: 'Paused' },
-	[AgentRuntimeStatus.Idle]: { color: 'neutral', label: 'Idle' },
-};
+import { agentRuntimeStatusMeta } from '../../../../../lib/status-meta';
 
 const tabs = [
 	{
@@ -47,13 +42,8 @@ function AgentLayout() {
 					{agent.title}
 					{agent.admin_status === AgentAdminStatus.Disabled ? ' (disabled)' : ''}
 				</h1>
-				<Badge
-					color={
-						(RUNTIME_BADGE[agent.runtime_status] ?? RUNTIME_BADGE[AgentRuntimeStatus.Idle])
-							.color as 'gray'
-					}
-				>
-					{(RUNTIME_BADGE[agent.runtime_status] ?? RUNTIME_BADGE[AgentRuntimeStatus.Idle]).label}
+				<Badge color={agentRuntimeStatusMeta(agent.runtime_status).color}>
+					{agentRuntimeStatusMeta(agent.runtime_status).label}
 				</Badge>
 			</div>
 

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-const colorMap: Record<string, string> = {
+const colorMap = {
 	neutral: 'bg-bg-subtle text-text-muted',
 	gray: 'bg-bg-subtle text-text-muted',
 	blue: 'bg-accent-blue-bg text-accent-blue-text',
@@ -13,10 +13,13 @@ const colorMap: Record<string, string> = {
 	danger: 'bg-accent-red-bg text-accent-red-text',
 	purple: 'bg-accent-purple-bg text-accent-purple-text',
 	pink: 'bg-accent-pink-bg text-accent-pink-text',
-};
+} as const;
+
+/** The semantic color tokens the Badge (and status registry) understand. */
+export type BadgeColor = keyof typeof colorMap;
 
 interface BadgeProps {
-	color?: keyof typeof colorMap;
+	color?: BadgeColor;
 	children: ReactNode;
 	className?: string;
 }
