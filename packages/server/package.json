@@ -19,7 +19,7 @@
 		"@huggingface/transformers": "^4.0.1",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"commander": "^14.0.3",
-		"cron-async": "^1.2.0",
+		"cron-async": "^1.2.1",
 		"hono": "^4",
 		"http-mitm-proxy": "^1.1.0",
 		"mockttp": "^4.3.1",

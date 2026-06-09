@@ -1,6 +1,19 @@
 const SOCKET_PATH = '/var/run/docker.sock';
 const API_VERSION = 'v1.44';
 
+/**
+ * Hard ceiling for docker daemon calls made by the cron-driven sync loop.
+ * A wedged Unix-socket fetch would otherwise stall the container-sync iteration
+ * indefinitely. Override via DOCKER_REQUEST_TIMEOUT_MS to widen for slow hosts.
+ */
+const DEFAULT_DOCKER_REQUEST_TIMEOUT_MS = 10_000;
+const DOCKER_REQUEST_TIMEOUT_MS = (() => {
+	const raw = process.env.DOCKER_REQUEST_TIMEOUT_MS;
+	if (!raw) return DEFAULT_DOCKER_REQUEST_TIMEOUT_MS;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_DOCKER_REQUEST_TIMEOUT_MS;
+})();
+
 interface ContainerConfig {
 	Image: string;
 	Cmd?: string[];
@@ -114,7 +127,12 @@ export class DockerClient {
 
 	async ping(): Promise<boolean> {
 		try {
-			const res = await this.request('GET', '/_ping');
+			const res = await this.request(
+				'GET',
+				'/_ping',
+				undefined,
+				AbortSignal.timeout(DOCKER_REQUEST_TIMEOUT_MS),
+			);
 			return res.ok;
 		} catch {
 			return false;
@@ -206,7 +224,12 @@ export class DockerClient {
 	}
 
 	async inspectContainer(containerId: string): Promise<ContainerInfo | null> {
-		const res = await this.request('GET', `/containers/${containerId}/json`);
+		const res = await this.request(
+			'GET',
+			`/containers/${containerId}/json`,
+			undefined,
+			AbortSignal.timeout(DOCKER_REQUEST_TIMEOUT_MS),
+		);
 		if (res.status === 404) {
 			await res.text();
 			return null;
@@ -231,7 +254,12 @@ export class DockerClient {
 	 * which avoids flagging containers that are merely reading/writing files.
 	 */
 	async containerStats(containerId: string): Promise<ContainerMemoryStats | null> {
-		const res = await this.request('GET', `/containers/${containerId}/stats?stream=false`);
+		const res = await this.request(
+			'GET',
+			`/containers/${containerId}/stats?stream=false`,
+			undefined,
+			AbortSignal.timeout(DOCKER_REQUEST_TIMEOUT_MS),
+		);
 		if (res.status === 404) {
 			await res.text();
 			return null;
