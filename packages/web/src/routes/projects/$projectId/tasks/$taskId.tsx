@@ -150,7 +150,7 @@ function TaskDetailPage() {
 						data-testid="task-scroll-to-bottom"
 						aria-label="Scroll to bottom"
 						tabIndex={atBottom ? -1 : 0}
-						className={`w-9 h-9 rounded-full border border-border bg-bg-elevated text-text-muted hover:text-text shadow-md flex items-center justify-center transition-opacity ${atBottom ? 'opacity-0 pointer-events-none' : 'opacity-100 pointer-events-auto'}`}
+						className={`w-9 h-9 rounded-full border border-border bg-bg-elevated text-text-muted hover:text-text shadow-md flex items-center justify-center ${atBottom ? 'invisible' : 'pointer-events-auto'}`}
 					>
 						<ArrowDown className="w-4 h-4" />
 					</button>
