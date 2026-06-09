@@ -406,6 +406,50 @@ describe('GET /teams/:teamId/inbox/count', () => {
 		});
 		expect(res.status).toBe(403);
 	});
+
+	it('excludes archived rows so the badge cannot exceed the default-tab list', async () => {
+		await db.query('DELETE FROM approvals WHERE team_id = $1', [teamId]);
+
+		const taskIdLocal = await insertTask(captainId, 'Archived-row count test');
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			architectId,
+			teamId,
+			taskIdLocal,
+		);
+		const liveCommentId = await mcpComment(agentToken, taskIdLocal, '@admin live ask.');
+		const archivedUnreadCommentId = await mcpComment(
+			agentToken,
+			taskIdLocal,
+			'@admin pre-archived ask.',
+		);
+
+		await db.query(
+			`UPDATE admin_mentions SET archived_at = now()
+			 WHERE comment_id = $1 AND user_id = $2`,
+			[archivedUnreadCommentId, testAdminUserId],
+		);
+
+		await db.query(
+			`INSERT INTO approvals (team_id, type, requested_by_member_id, payload, status, archived_at)
+			 VALUES ($1, 'strategy'::approval_type, $2, '{}'::jsonb, 'pending'::approval_status, NULL),
+			        ($1, 'strategy'::approval_type, $2, '{}'::jsonb, 'pending'::approval_status, now())`,
+			[teamId, architectId],
+		);
+
+		const res = await app.request(`/api/projects/${projectSlug}/inbox/count`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const { unread } = (await res.json()).data as { unread: number };
+		// One live unread mention + one live pending approval. The archived unread
+		// mention and the archived pending approval don't appear in the default-tab
+		// list, so they must not inflate the badge either.
+		expect(unread).toBe(2);
+		// Confirm: the live items truly exist for the caller (sanity check).
+		expect(liveCommentId).toBeTruthy();
+	});
 });
 
 describe('POST /teams/:teamId/inbox/mentions/:mentionId/read', () => {
