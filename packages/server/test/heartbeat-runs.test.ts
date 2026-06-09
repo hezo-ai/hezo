@@ -227,6 +227,44 @@ describe('run comments', () => {
 		expect(comments.rows[0].content.run_id).toBe(runId);
 		expect(comments.rows[0].content.agent_id).toBe(agentId);
 		expect(comments.rows[0].content.agent_title).toBe('Test Runner');
+		expect(comments.rows[0].content.actor_name).toBeUndefined();
+	});
+
+	it('embeds triggeredBy actor into the run comment content', async () => {
+		const agent: AgentInfo = {
+			id: agentId,
+			title: 'Test Runner',
+			team_id: teamId,
+		};
+		const task = {
+			id: taskId,
+			identifier: 'RT-1',
+			title: 'Test Task',
+			description: '',
+			status: 'backlog',
+			priority: 'medium',
+			project_id: projectId,
+			rules: null,
+		};
+
+		const runId = await createHeartbeatRun(
+			db,
+			agent,
+			teamId,
+			task,
+			{ teamId, taskId, memberId: agentId },
+			await mintTestWakeup(agentId, teamId),
+			{ member_id: null, name: 'Admin' },
+		);
+
+		const comments = await db.query<{ content: Record<string, unknown> }>(
+			`SELECT content FROM task_comments
+			 WHERE task_id = $1 AND content_type = 'run'::comment_content_type
+			   AND content->>'run_id' = $2`,
+			[taskId, runId],
+		);
+		expect(comments.rows[0].content.actor_name).toBe('Admin');
+		expect(comments.rows[0].content.actor_id).toBeNull();
 	});
 
 	it('does not insert a second comment when the run finishes', async () => {

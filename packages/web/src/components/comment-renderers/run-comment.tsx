@@ -27,6 +27,7 @@ export function RunComment({ comment, projectId, inline }: Props) {
 	const agentId = comment.content?.agent_id ?? '';
 	const agentTitle = comment.content?.agent_title ?? 'Agent';
 	const agentSlug = comment.content?.agent_slug ?? '';
+	const actorName = comment.content?.actor_name ?? null;
 
 	if (!projectId || !runId || !agentId) {
 		return <p className="text-xs text-text-subtle italic">Run reference missing.</p>;
@@ -41,6 +42,7 @@ export function RunComment({ comment, projectId, inline }: Props) {
 					agentId={agentId}
 					agentTitle={agentTitle}
 					agentSlug={agentSlug}
+					actorName={actorName}
 					createdAt={comment.created_at}
 					inline={inline}
 				/>
@@ -55,6 +57,7 @@ function RunCommentBody({
 	agentId,
 	agentTitle,
 	agentSlug,
+	actorName,
 	createdAt,
 	inline,
 }: {
@@ -63,6 +66,7 @@ function RunCommentBody({
 	agentId: string;
 	agentTitle: string;
 	agentSlug: string;
+	actorName: string | null;
 	createdAt: string;
 	inline?: boolean;
 }) {
@@ -102,6 +106,15 @@ function RunCommentBody({
 			>
 				{agentTitle} run
 			</Link>
+			{actorName && (
+				<span
+					className="inline-flex items-center text-xs text-text-subtle shrink-0 whitespace-nowrap"
+					data-testid="run-comment-actor"
+				>
+					<span aria-hidden="true">·</span>
+					<span className="ml-1.5">started by {actorName}</span>
+				</span>
+			)}
 			{completed && (
 				<span
 					className="inline-flex items-center gap-1.5 text-xs text-text-subtle shrink-0 whitespace-nowrap"

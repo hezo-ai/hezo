@@ -464,6 +464,16 @@ function exitReasonFromSignal(signal?: AbortSignal): ContainerExitAbortReason | 
 	return null;
 }
 
+function extractTriggeredBy(payload: Record<string, unknown> | undefined): TriggeredBy | null {
+	const raw = payload?.triggered_by;
+	if (!raw || typeof raw !== 'object') return null;
+	const obj = raw as Record<string, unknown>;
+	const name = typeof obj.name === 'string' ? obj.name : null;
+	if (!name) return null;
+	const memberId = typeof obj.member_id === 'string' ? obj.member_id : null;
+	return { member_id: memberId, name };
+}
+
 async function createSyntheticOnDemandWakeup(
 	db: PGlite,
 	memberId: string,
@@ -512,6 +522,7 @@ export async function runAgent(
 		task,
 		runBroadcast,
 		effectiveWakeupId,
+		extractTriggeredBy(wakeupPayload),
 	);
 	onRunRegistered?.(heartbeatRunId);
 	await emitRunStarted(deps, heartbeatRunId, agent, task, project, effectiveWakeupId);
@@ -1509,6 +1520,11 @@ function broadcastHeartbeatRunChange(
 	});
 }
 
+export interface TriggeredBy {
+	member_id: string | null;
+	name: string;
+}
+
 export async function createHeartbeatRun(
 	db: PGlite,
 	agent: AgentInfo,
@@ -1516,6 +1532,7 @@ export async function createHeartbeatRun(
 	task: TaskInfo,
 	broadcast: HeartbeatRunBroadcast,
 	wakeupId: string,
+	triggeredBy: TriggeredBy | null = null,
 ): Promise<string> {
 	const { runId, statusFlippedToInProgress } = await withTransaction(db, async () => {
 		const runResult = await db.query<{ id: string }>(
@@ -1538,6 +1555,7 @@ export async function createHeartbeatRun(
 					agent_id: agent.id,
 					agent_title: agent.title,
 					agent_slug: agent.slug,
+					...(triggeredBy ? { actor_id: triggeredBy.member_id, actor_name: triggeredBy.name } : {}),
 				}),
 			],
 		);
