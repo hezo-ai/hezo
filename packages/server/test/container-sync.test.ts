@@ -351,12 +351,16 @@ describe('provisionContainer broadcasting', () => {
 		expect(event.row.container_status).toBe('running');
 		expect(event.row.container_id).toBe('test-container-123');
 
-		const binds = mockDocker.createContainer.mock.calls[0][1].HostConfig.Binds as string[];
+		const hostConfig = mockDocker.createContainer.mock.calls[0][1].HostConfig;
+		const binds = hostConfig.Binds as string[];
 		const assetsBind = binds.find((b) => b.endsWith(':/workspace/.hezo/assets:ro'));
 		expect(assetsBind).toBeDefined();
 		expect(assetsBind).toContain(
 			`${dataDir}/teams/${project.team_id}/projects/${project.id}/assets`,
 		);
+
+		expect(hostConfig.Memory).toBeGreaterThan(0);
+		expect(hostConfig.MemorySwap).toBe(hostConfig.Memory);
 	});
 
 	it('keeps container name and bind mounts stable when the project is renamed', async () => {

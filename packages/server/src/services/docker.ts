@@ -11,6 +11,8 @@ interface ContainerConfig {
 		Binds?: string[];
 		PortBindings?: Record<string, Array<{ HostPort: string }>>;
 		ExtraHosts?: string[];
+		Memory?: number;
+		MemorySwap?: number;
 	};
 	ExposedPorts?: Record<string, object>;
 }
