@@ -102,6 +102,41 @@ export const DEFAULT_MEMORY_LIMIT_GIB = 16;
 
 const memoryLimitBytes = (gib: number) => gib * 1024 ** 3;
 
+const MEMORY_USAGE_LOG_INTERVAL_MS = 30_000;
+
+interface MemoryUsageEntry {
+	lastLogMs: number;
+	lastUsedBytes: number;
+	limitGib: number;
+}
+
+const memoryUsageState = new Map<string, MemoryUsageEntry>();
+
+function formatMemoryLine(entry: MemoryUsageEntry): string {
+	const usedGiB = (entry.lastUsedBytes / 1024 ** 3).toFixed(2);
+	return `${usedGiB} / ${entry.limitGib} GiB`;
+}
+
+/**
+ * Pull-and-clear the most recent stats reading for a project, formatted as a
+ * single line suitable for appending to `container_last_logs`. Returns null
+ * when no reading was ever recorded for this project (e.g. the container died
+ * before the first sync tick observed it). Clears the entry as a side effect
+ * so subsequent transition handlers do not double-emit.
+ */
+export function consumeFinalMemoryLine(projectId: string): string | null {
+	const entry = memoryUsageState.get(projectId);
+	if (!entry) return null;
+	memoryUsageState.delete(projectId);
+	return `→ Final container memory: ${formatMemoryLine(entry)}`;
+}
+
+function appendMemoryLine(existing: string | null, line: string | null): string | null {
+	if (!line) return existing;
+	if (!existing) return `${line}\n`;
+	return existing.endsWith('\n') ? `${existing}${line}\n` : `${existing}\n${line}\n`;
+}
+
 /**
  * Pull a one-shot tail of the container's stdout+stderr log buffer. Used to
  * snapshot the last-known console output when a container exits or errors so
@@ -239,6 +274,7 @@ export async function provisionContainer(
 
 		emit('stdout', '→ Starting container');
 		await docker.startContainer(Id);
+		log.info(`project ${project.id} container ${Id.slice(0, 12)} provisioned and started`);
 
 		await db.query(
 			'UPDATE projects SET container_id = $1, container_status = $2::container_status, container_error = NULL WHERE id = $3',
@@ -347,14 +383,15 @@ export async function teardownContainer(
 		[projectId],
 	);
 
-	if (result.rows[0]?.container_id) {
+	const teardownContainerId = result.rows[0]?.container_id;
+	if (teardownContainerId) {
 		try {
-			await docker.stopContainer(result.rows[0].container_id);
+			await docker.stopContainer(teardownContainerId);
 		} catch {
 			// Container may already be stopped
 		}
 		try {
-			await docker.removeContainer(result.rows[0].container_id, true);
+			await docker.removeContainer(teardownContainerId, true);
 		} catch {
 			// Container may already be removed
 		}
@@ -365,6 +402,13 @@ export async function teardownContainer(
 	]);
 
 	removeProjectWorkspace(dataDir, teamId, projectId);
+	memoryUsageState.delete(projectId);
+
+	if (teardownContainerId) {
+		log.info(`project ${projectId} container ${teardownContainerId.slice(0, 12)} torn down`);
+	} else {
+		log.info(`project ${projectId} torn down (no container was provisioned)`);
+	}
 }
 
 export async function stopContainerGracefully(
@@ -376,6 +420,7 @@ export async function stopContainerGracefully(
 	const { db, docker, wsManager } = deps;
 
 	const lastLogs = await captureContainerLogs(docker, containerId);
+	const annotatedLogs = appendMemoryLine(lastLogs, consumeFinalMemoryLine(projectId));
 
 	let exitReason: ContainerExitReason = 'container_stopped';
 	try {
@@ -386,8 +431,9 @@ export async function stopContainerGracefully(
 			     container_last_logs = COALESCE($2, container_last_logs),
 			     container_error = NULL
 			 WHERE id = $3`,
-			[ContainerStatus.Stopped, lastLogs, projectId],
+			[ContainerStatus.Stopped, annotatedLogs, projectId],
 		);
+		log.info(`project ${projectId} container ${containerId.slice(0, 12)} stopped`);
 	} catch (err) {
 		const errorMessage = err instanceof Error ? err.message : String(err);
 		await db.query(
@@ -396,9 +442,12 @@ export async function stopContainerGracefully(
 			     container_last_logs = COALESCE($2, container_last_logs),
 			     container_error = $3
 			 WHERE id = $4`,
-			[ContainerStatus.Error, lastLogs, errorMessage, projectId],
+			[ContainerStatus.Error, annotatedLogs, errorMessage, projectId],
 		);
 		exitReason = 'container_error';
+		log.warn(
+			`project ${projectId} container ${containerId.slice(0, 12)} stop failed: ${errorMessage}`,
+		);
 	}
 
 	await failProjectRuns(deps, projectId, teamId, exitReason).catch((e) =>
@@ -443,15 +492,19 @@ export async function rebuildContainer(
 	const streamId = provisionStreamId(project.id);
 
 	if (project.container_id) {
+		log.info(
+			`project ${project.id} container ${project.container_id.slice(0, 12)} rebuild started`,
+		);
 		logs?.emit(
 			streamId,
 			'stdout',
 			`→ Removing previous container ${project.container_id.slice(0, 12)}`,
 		);
 		const lastLogs = await captureContainerLogs(docker, project.container_id);
-		if (lastLogs) {
+		const annotatedLogs = appendMemoryLine(lastLogs, consumeFinalMemoryLine(project.id));
+		if (annotatedLogs) {
 			await db.query('UPDATE projects SET container_last_logs = $1 WHERE id = $2', [
-				lastLogs,
+				annotatedLogs,
 				project.id,
 			]);
 		}
@@ -465,6 +518,8 @@ export async function rebuildContainer(
 		} catch {
 			// Already removed
 		}
+	} else {
+		log.info(`project ${project.id} rebuild started (no previous container)`);
 	}
 
 	return provisionContainer(deps, project, teamSlug);
@@ -503,19 +558,26 @@ export async function syncContainerStatus(
 
 	if (previousStatus === ContainerStatus.Running && status !== ContainerStatus.Running) {
 		const lastLogs = await captureContainerLogs(docker, containerId);
+		const finalMemoryLine = consumeFinalMemoryLine(projectId);
+		const annotatedLogs = appendMemoryLine(lastLogs, finalMemoryLine);
 		const exitCode = info.State.ExitCode;
 		const exitStatus = info.State.Status;
 		const errorMessage =
 			exitCode && exitCode !== 0
 				? `Container exited with code ${exitCode} (${exitStatus}).`
 				: `Container stopped (${exitStatus}).`;
+		if (finalMemoryLine) {
+			log.info(
+				`project ${projectId} container ${containerId.slice(0, 12)} exited; ${finalMemoryLine.replace(/^→ /, '')}`,
+			);
+		}
 		await db.query(
 			`UPDATE projects
 			 SET container_status = $1::container_status,
 			     container_last_logs = COALESCE($2, container_last_logs),
 			     container_error = $3
 			 WHERE id = $4`,
-			[status, lastLogs, errorMessage, projectId],
+			[status, annotatedLogs, errorMessage, projectId],
 		);
 	} else {
 		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
@@ -554,6 +616,22 @@ async function enforceContainerMemoryLimit(
 		return null;
 	}
 	if (!stats) return null;
+
+	const now = Date.now();
+	const prevEntry = memoryUsageState.get(projectId);
+	const entry: MemoryUsageEntry = {
+		lastLogMs: prevEntry?.lastLogMs ?? 0,
+		lastUsedBytes: stats.usedBytes,
+		limitGib: memoryLimitGib,
+	};
+	if (now - entry.lastLogMs >= MEMORY_USAGE_LOG_INTERVAL_MS) {
+		entry.lastLogMs = now;
+		log.debug(
+			`project ${projectId} container ${containerId.slice(0, 12)} memory: ${formatMemoryLine(entry)}`,
+		);
+	}
+	memoryUsageState.set(projectId, entry);
+
 	const limitBytes = memoryLimitBytes(memoryLimitGib);
 	if (stats.usedBytes <= limitBytes) return null;
 
@@ -586,6 +664,8 @@ async function enforceContainerMemoryLimit(
 	log.warn(
 		`Auto-stopped container ${containerId.slice(0, 12)} for project ${projectId}: used ${usedGiB} GiB (> ${memoryLimitGib} GiB)`,
 	);
+
+	memoryUsageState.delete(projectId);
 
 	await failProjectRuns(deps, projectId, teamId, 'container_error').catch((e) =>
 		log.error('Failed to fail project runs after memory-limit stop:', e),
