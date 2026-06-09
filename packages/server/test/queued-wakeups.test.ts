@@ -273,7 +273,7 @@ describe('GET /teams/:teamId/tasks/:taskId/queued-wakeups', () => {
 });
 
 describe('POST /teams/:teamId/tasks/:taskId/queued-wakeups/:wakeupId/run-now', () => {
-	it('dispatches a runnable queued wakeup and records a wakeup_started comment', async () => {
+	it('stamps the actor on the wakeup payload and dispatches without a wakeup_started comment', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
 		await clearBlockers(taskId);
@@ -283,25 +283,21 @@ describe('POST /teams/:teamId/tasks/:taskId/queued-wakeups/:wakeupId/run-now', (
 		expect(res.status).toBe(200);
 		expect((await res.json()).data.dispatched).toBe(true);
 
-		// The wakeup is claimed out of the queue. The seeded project has no
-		// designated repo / container, so activateAgent no-ops before launching a
-		// container (keeping the stub-docker run from firing) — but the route's
-		// claim + dispatch + system-comment path is fully exercised.
-		const row = await db.query<{ status: string }>(
-			'SELECT status FROM agent_wakeup_requests WHERE id = $1',
-			[wakeupId],
-		);
+		// The wakeup is claimed out of the queue and carries the triggering actor
+		// in its payload — createHeartbeatRun reads it from there and folds it
+		// into the run comment's content (no separate system comment is written).
+		const row = await db.query<{
+			status: string;
+			payload: { triggered_by?: { member_id: string | null; name: string } };
+		}>('SELECT status, payload FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
 		expect(row.rows[0].status).not.toBe('queued');
+		expect(row.rows[0].payload.triggered_by?.name).toBe('Test Admin');
 
-		const sys = await db.query<{ content: { kind?: string; wakeup_id?: string } }>(
-			"SELECT content FROM task_comments WHERE task_id = $1 AND content_type = 'system' ORDER BY created_at DESC",
+		const sys = await db.query<{ content: { kind?: string } }>(
+			"SELECT content FROM task_comments WHERE task_id = $1 AND content_type = 'system'",
 			[taskId],
 		);
-		expect(
-			sys.rows.some(
-				(s) => s.content?.kind === 'wakeup_started' && s.content?.wakeup_id === wakeupId,
-			),
-		).toBe(true);
+		expect(sys.rows.some((s) => s.content?.kind === 'wakeup_started')).toBe(false);
 
 		const { body } = await listQueued(taskId);
 		expect(body.data.wakeups.map((w) => w.id)).not.toContain(wakeupId);
@@ -516,13 +512,19 @@ describe('POST /teams/:teamId/tasks/:taskId/runs/:runId/retry', () => {
 		expect(res.status).toBe(200);
 		expect((await res.json()).data.dispatched).toBe(true);
 
-		// A wakeup was created for the failed run's agent and was claimed by dispatch.
+		// A wakeup was created for the failed run's agent, carries the actor on
+		// its payload (so the run comment surfaces "started by …"), and was
+		// claimed by dispatch — no separate wakeup_started system comment.
 		const wakeup = await db.query<{
 			id: string;
 			member_id: string;
 			source: string;
 			status: string;
-			payload: { task_id?: string; source_run_id?: string };
+			payload: {
+				task_id?: string;
+				source_run_id?: string;
+				triggered_by?: { member_id: string | null; name: string };
+			};
 		}>(
 			"SELECT id, member_id, source, status, payload FROM agent_wakeup_requests WHERE payload->>'task_id' = $1",
 			[taskId],
@@ -532,12 +534,13 @@ describe('POST /teams/:teamId/tasks/:taskId/runs/:runId/retry', () => {
 		expect(wakeup.rows[0].source).toBe('on_demand');
 		expect(wakeup.rows[0].status).not.toBe('queued');
 		expect(wakeup.rows[0].payload?.source_run_id).toBe(runId);
+		expect(wakeup.rows[0].payload.triggered_by?.name).toBe('Test Admin');
 
 		const sys = await db.query<{ content: { kind?: string } }>(
-			"SELECT content FROM task_comments WHERE task_id = $1 AND content_type = 'system' ORDER BY created_at DESC",
+			"SELECT content FROM task_comments WHERE task_id = $1 AND content_type = 'system'",
 			[taskId],
 		);
-		expect(sys.rows.some((s) => s.content?.kind === 'wakeup_started')).toBe(true);
+		expect(sys.rows.some((s) => s.content?.kind === 'wakeup_started')).toBe(false);
 	});
 
 	it('returns 404 when the run id is unknown', async () => {

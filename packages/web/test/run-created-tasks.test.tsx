@@ -186,6 +186,75 @@ test('run comment omits created tickets section when list is empty', async () =>
 	expect(queryByTestId('run-comment-created-tasks')).toBeNull();
 });
 
+test('run comment header shows "started by …" chip when actor_name is set', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const captain = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
+			const project = await seedProject(ws, { name: 'Actor Chip Project' });
+			const task = await seedTask(ws, project, {
+				title: 'Triggered Task',
+				assignee_id: captain.id,
+			});
+
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+
+			const runId = '99999999-9999-9999-9999-0000000000aa';
+			const runComment = {
+				id: 'aaaa0000-0000-0000-0000-0000000000aa',
+				task_id: task.id,
+				content_type: 'run',
+				content: {
+					run_id: runId,
+					agent_id: captain.id,
+					agent_title: 'Architect',
+					actor_id: null,
+					actor_name: 'Admin',
+				},
+				chosen_option: null,
+				created_at: new Date().toISOString(),
+				author_type: 'agent',
+				author_name: 'Architect',
+				author_member_id: captain.id,
+			};
+			const runResponse = {
+				id: runId,
+				member_id: captain.id,
+				team_id: ws.team.id,
+				task_id: task.id,
+				project_id: project.id,
+				project_slug: project.slug,
+				status: 'succeeded',
+				started_at: new Date().toISOString(),
+				finished_at: new Date().toISOString(),
+				exit_code: 0,
+				error: null,
+				input_tokens: 0,
+				output_tokens: 0,
+				cost_cents: 0,
+				log_text: 'done',
+				created_tasks: [],
+			};
+
+			buildFetchMock({ runId, runComment, runResponse });
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	await findByTestId('run-comment', undefined, { timeout: 20_000 });
+
+	const actorChip = await findByTestId('run-comment-actor', undefined, { timeout: 20_000 });
+	expect(actorChip.textContent).toContain('started by Admin');
+});
+
 test('run comment links updated docs, skills, and proposed skills', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
 

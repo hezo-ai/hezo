@@ -11,7 +11,7 @@ import {
 	isProjectAtCapacityInDb,
 	isTaskBusyInDb,
 } from '../services/run-concurrency';
-import { recordWakeupCancelled, recordWakeupStarted } from '../services/task-events';
+import { recordWakeupCancelled, resolveActorName } from '../services/task-events';
 import { createWakeup } from '../services/wakeup';
 
 const log = logger.child('routes');
@@ -179,6 +179,22 @@ queuedWakeupsRoutes.post(
 			return err(c, 'CONFLICT', `Wakeup is already ${row.status} and cannot be run`, 409);
 		}
 
+		// Stamp the triggering actor onto the wakeup payload so createHeartbeatRun
+		// can fold it into the run comment's content — the run card itself shows
+		// "started by Admin" instead of a separate system comment.
+		const actorMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
+		const actorName = await resolveActorName(db, actorMemberId);
+		await db.query(
+			`UPDATE agent_wakeup_requests
+			 SET payload = payload || $1::jsonb
+			 WHERE id = $2 AND status = $3::wakeup_status`,
+			[
+				JSON.stringify({ triggered_by: { member_id: actorMemberId, name: actorName } }),
+				wakeupId,
+				WakeupStatus.Queued,
+			],
+		);
+
 		// Dispatch through the JobManager so the in-memory run guards and the
 		// activateAgent launch path are reused (and the two run rules + blocker
 		// policy re-checked race-safely at dispatch time).
@@ -195,28 +211,6 @@ queuedWakeupsRoutes.post(
 				not_queued: 'Wakeup is no longer queued and cannot be run',
 			};
 			return err(c, 'CONFLICT', messages[result.reason] ?? 'Unable to start queued run', 409);
-		}
-
-		const nameRes = await db.query<{ member_name: string }>(
-			`SELECT COALESCE(ma.title, m.display_name) AS member_name
-			 FROM members m LEFT JOIN member_agents ma ON ma.id = m.id
-			 WHERE m.id = $1`,
-			[row.member_id],
-		);
-		const agentName = nameRes.rows[0]?.member_name ?? 'an agent';
-		const actorMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
-		try {
-			await recordWakeupStarted(
-				db,
-				teamId,
-				taskId,
-				wakeupId,
-				agentName,
-				actorMemberId,
-				c.get('wsManager'),
-			);
-		} catch (e) {
-			log.error('Failed to record wakeup-started comment:', e);
 		}
 
 		return ok(c, { dispatched: true });
@@ -246,10 +240,14 @@ queuedWakeupsRoutes.post('/projects/:projectId/tasks/:taskId/runs/:runId/retry',
 	// 404 (not 403) for unknown / wrong-team / wrong-task to avoid leaking existence.
 	if (!runRow) return err(c, 'NOT_FOUND', 'Run not found', 404);
 
+	const actorMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
+	const actorName = await resolveActorName(db, actorMemberId);
+
 	const wakeupId = await createWakeup(db, runRow.member_id, teamId, WakeupSource.OnDemand, {
 		task_id: taskId,
 		trigger: 'retry_failed_run',
 		source_run_id: runId,
+		triggered_by: { member_id: actorMemberId, name: actorName },
 	});
 
 	const result = await c.get('jobManager').dispatchWakeupNow(wakeupId);
@@ -265,28 +263,6 @@ queuedWakeupsRoutes.post('/projects/:projectId/tasks/:taskId/runs/:runId/retry',
 			not_queued: 'Wakeup is no longer queued and cannot be run',
 		};
 		return err(c, 'CONFLICT', messages[result.reason] ?? 'Unable to start retry run', 409);
-	}
-
-	const nameRes = await db.query<{ member_name: string }>(
-		`SELECT COALESCE(ma.title, m.display_name) AS member_name
-			 FROM members m LEFT JOIN member_agents ma ON ma.id = m.id
-			 WHERE m.id = $1`,
-		[runRow.member_id],
-	);
-	const agentName = nameRes.rows[0]?.member_name ?? 'an agent';
-	const actorMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
-	try {
-		await recordWakeupStarted(
-			db,
-			teamId,
-			taskId,
-			wakeupId,
-			agentName,
-			actorMemberId,
-			c.get('wsManager'),
-		);
-	} catch (e) {
-		log.error('Failed to record wakeup-started comment:', e);
 	}
 
 	return ok(c, { dispatched: true });

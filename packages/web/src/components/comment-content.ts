@@ -91,6 +91,8 @@ export interface RunContent {
 	agent_id?: string;
 	agent_title?: string;
 	agent_slug?: string;
+	actor_id?: string | null;
+	actor_name?: string;
 }
 
 export interface ActionContent {
