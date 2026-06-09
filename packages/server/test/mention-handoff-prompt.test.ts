@@ -152,6 +152,7 @@ describe('mention handoff prompt (integration)', () => {
 		expect(ctx).not.toBeNull();
 		expect(ctx?.authorName).toBeTruthy();
 		expect(ctx?.excerpt).toContain('bring the spec up to date');
+		expect(ctx?.triggeringCommentId).toBe(commentId);
 		expect(ctx?.openTickets.map((t) => t.identifier).sort()).toEqual(
 			[specTicket.identifier, prdTicket.identifier].sort(),
 		);
@@ -175,6 +176,8 @@ describe('mention handoff prompt (integration)', () => {
 		expect(prompt).toContain('> @architect please bring the spec up to date');
 		expect(prompt).toContain('## Handling @-mentions');
 		expect(prompt).toContain('parent_task_id');
+		expect(prompt).toContain(commentId);
+		expect(prompt).toContain(`add_reaction(comment_id='${commentId}', kind='ack')`);
 	});
 
 	it('renders "none" when the mentioned agent has no open tickets', async () => {
