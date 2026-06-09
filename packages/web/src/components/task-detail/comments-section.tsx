@@ -87,6 +87,30 @@ export function CommentsSection({
 		return m;
 	}, [agents]);
 	const chooseOption = useChooseOption(projectId, taskId);
+	// The run_id whose run_failed comment may show a Retry button: the most
+	// recent run referenced in the thread, and only when no run is currently
+	// active. Run comments (any outcome) and run_failed comments both carry a
+	// run_id; comments arrive oldest-first, so the last match is the newest run.
+	// Older failed runs — superseded by a later run, or any run while one is
+	// active — resolve to a different id (or null) and hide their Retry button.
+	const retryableRunId = useMemo<string | null>(() => {
+		if (task.has_active_run) return null;
+		let latest: string | null = null;
+		for (const c of comments ?? []) {
+			const content =
+				c.content && typeof c.content === 'object'
+					? (c.content as { run_id?: string; kind?: string })
+					: null;
+			const runId = content?.run_id;
+			if (!runId) continue;
+			if (
+				c.content_type === 'run' ||
+				(c.content_type === 'system' && content?.kind === 'run_failed')
+			)
+				latest = runId;
+		}
+		return latest;
+	}, [comments, task.has_active_run]);
 	const virtuosoRef = useRef<VirtuosoHandle>(null);
 	const listContainerRef = useRef<HTMLDivElement>(null);
 	const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
@@ -269,6 +293,7 @@ export function CommentsSection({
 											projectId={projectId}
 											projectSlug={taskProjectSlug}
 											taskId={taskId}
+											retryableRunId={retryableRunId}
 											inline
 										/>
 									</div>
@@ -353,6 +378,7 @@ export function CommentsSection({
 											projectId={projectId}
 											projectSlug={taskProjectSlug}
 											taskId={taskId}
+											retryableRunId={retryableRunId}
 										/>
 										<div className="flex items-end justify-between gap-2">
 											<div className="min-w-0 flex-1">
