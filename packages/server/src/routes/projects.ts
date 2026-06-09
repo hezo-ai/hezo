@@ -9,7 +9,7 @@ import {
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { trackBackground } from '../lib/background';
-import { broadcastChange } from '../lib/broadcast';
+import { broadcastChange, broadcastProjectUpdate } from '../lib/broadcast';
 import { ref } from '../lib/log-ref';
 import { err, ok } from '../lib/response';
 import { toProjectTaskPrefix, toSlug, uniqueSlug } from '../lib/slug';
@@ -569,11 +569,8 @@ projectsRoutes.post('/projects/:projectId/container/start', async (c) => {
 			projectId,
 		]);
 		c.get('containerLogStreamer').subscribe(projectId, containerId, c.get('logs'), docker);
-		broadcastChange(c, wsRoom.team(teamId), 'projects', 'UPDATE', {
-			id: projectId,
-			container_status: ContainerStatus.Running,
-		});
-		wakeAgentsWithPendingWork(db, projectId, teamId);
+		await broadcastProjectUpdate(db, c.get('wsManager'), teamId, projectId);
+		await wakeAgentsWithPendingWork(db, projectId, teamId);
 		log.info(`project ${projectId} container ${containerId.slice(0, 12)} started`);
 		return ok(c, { container_status: ContainerStatus.Running });
 	} catch (error) {
@@ -603,10 +600,7 @@ projectsRoutes.post('/projects/:projectId/container/stop', async (c) => {
 			ContainerStatus.Stopped,
 			projectId,
 		]);
-		broadcastChange(c, wsRoom.team(teamId), 'projects', 'UPDATE', {
-			id: projectId,
-			container_status: ContainerStatus.Stopped,
-		});
+		await broadcastProjectUpdate(db, c.get('wsManager'), teamId, projectId);
 		return ok(c, { container_status: ContainerStatus.Stopped });
 	}
 
@@ -614,10 +608,7 @@ projectsRoutes.post('/projects/:projectId/container/stop', async (c) => {
 		ContainerStatus.Stopping,
 		projectId,
 	]);
-	broadcastChange(c, wsRoom.team(teamId), 'projects', 'UPDATE', {
-		id: projectId,
-		container_status: ContainerStatus.Stopping,
-	});
+	await broadcastProjectUpdate(db, c.get('wsManager'), teamId, projectId);
 
 	const jobManager = c.get('jobManager');
 	const containerDeps = buildContainerDeps(c);
@@ -678,17 +669,14 @@ projectsRoutes.post('/projects/:projectId/container/rebuild', async (c) => {
 		projectId,
 	]);
 
-	broadcastChange(c, wsRoom.team(teamId), 'projects', 'UPDATE', {
-		id: projectId,
-		container_status: ContainerStatus.Creating,
-	});
+	await broadcastProjectUpdate(db, c.get('wsManager'), teamId, projectId);
 
 	jobManager.launchTask(
 		taskKey,
 		async () => {
 			try {
 				await rebuildContainer(containerDeps, projectResult.rows[0] as ProjectRow, teamSlug);
-				wakeAgentsWithPendingWork(db, projectId, teamId);
+				await wakeAgentsWithPendingWork(db, projectId, teamId);
 			} catch (error) {
 				log.error(
 					`Container rebuild failed for project ${ref((projectResult.rows[0] as ProjectRow).slug, projectId)}:`,
