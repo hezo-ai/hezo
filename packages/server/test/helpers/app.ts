@@ -34,6 +34,7 @@ const STUB_DOCKER_METHODS = {
 		State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
 		Config: { Image: 'stub' },
 	}),
+	findContainerByNamePrefix: async () => null,
 	containerStats: async () => null,
 	containerLogs: async () => ({ arrayBuffer: async () => new ArrayBuffer(0) }),
 	execCreate: async () => {

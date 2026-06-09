@@ -694,9 +694,9 @@ export class JobManager {
 
 		for (const project of candidates.rows) {
 			const name = `hezo-${project.slug}-${project.id.slice(0, 8)}`;
-			let info: Awaited<ReturnType<DockerClient['inspectContainerByName']>>;
+			let info: Awaited<ReturnType<DockerClient['findContainerByNamePrefix']>>;
 			try {
-				info = await docker.inspectContainerByName(name);
+				info = await docker.findContainerByNamePrefix(name);
 			} catch (err) {
 				log.warn(`Self-heal inspect failed for ${name}:`, err);
 				continue;

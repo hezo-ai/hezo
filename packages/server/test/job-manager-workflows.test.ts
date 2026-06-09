@@ -2009,7 +2009,11 @@ describe('JobManager workflow methods', () => {
 
 				await manager.reconcileOnStartup();
 
-				expect(createCalls).toContain(`hezo-${projectSlug}-${projectId.slice(0, 8)}`);
+				expect(
+					createCalls.some((name) =>
+						name.startsWith(`hezo-${projectSlug}-${projectId.slice(0, 8)}-`),
+					),
+				).toBe(true);
 				const row = await db.query<{ container_id: string | null; container_status: string }>(
 					'SELECT container_id, container_status FROM projects WHERE id = $1',
 					[projectId],

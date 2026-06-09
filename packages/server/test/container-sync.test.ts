@@ -843,9 +843,14 @@ describe('provisionContainer broadcasting', () => {
 		const nameAfter = dockerAfter.createContainer.mock.calls[0][0];
 		const bindsAfter = dockerAfter.createContainer.mock.calls[0][1].HostConfig.Binds as string[];
 
-		// Name embeds the slug for `docker ps` readability — rename changes it.
-		expect(nameBefore).toBe(`hezo-${before.slug}-${renameProjectId.slice(0, 8)}`);
-		expect(nameAfter).toBe(`hezo-renamed-project-slug-${renameProjectId.slice(0, 8)}`);
+		// Name embeds the slug for `docker ps` readability (rename changes it) plus
+		// a random suffix so a retained old container never blocks the new name.
+		expect(nameBefore).toMatch(
+			new RegExp(`^hezo-${before.slug}-${renameProjectId.slice(0, 8)}-[0-9a-f]+$`),
+		);
+		expect(nameAfter).toMatch(
+			new RegExp(`^hezo-renamed-project-slug-${renameProjectId.slice(0, 8)}-[0-9a-f]+$`),
+		);
 		expect(nameAfter).not.toBe(nameBefore);
 
 		// Bind mounts key on the immutable id, so paths stay stable across rename.
