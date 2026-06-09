@@ -45,7 +45,6 @@ async function seedAdminMention(ws: SeededWorkspace, taskId: string, text: strin
 }
 
 test('default view shows non-terminal tasks with status badges and a collapsed filter bar with New Task button', async () => {
-	let teamSlug = '';
 	let projectSlug = '';
 
 	const { findByText, findByTestId, queryByTestId, queryByText, router } = await renderApp({
@@ -62,7 +61,6 @@ test('default view shows non-terminal tasks with status badges and a collapsed f
 			await patchStatus(ws, tasks[0].id, 'review');
 			await patchStatus(ws, tasks[1].id, 'in_progress');
 			await patchStatus(ws, tasks[2].id, 'done');
-			teamSlug = ws.team.slug;
 			projectSlug = project.slug;
 		},
 	});
@@ -83,7 +81,6 @@ test('default view shows non-terminal tasks with status badges and a collapsed f
 });
 
 test('multi-select status filter narrows results and reset restores defaults', async () => {
-	let teamSlug = '';
 	let projectSlug = '';
 
 	const { findByText, findByTestId, findByRole, queryByText, router, user } = await renderApp({
@@ -100,7 +97,6 @@ test('multi-select status filter narrows results and reset restores defaults', a
 			await patchStatus(ws, tasks[0].id, 'review');
 			await patchStatus(ws, tasks[1].id, 'in_progress');
 			await patchStatus(ws, tasks[2].id, 'done');
-			teamSlug = ws.team.slug;
 			projectSlug = project.slug;
 		},
 	});
@@ -164,7 +160,6 @@ test('multi-select status filter narrows results and reset restores defaults', a
 });
 
 test('filter bar collapses/expands and applies search + sort', async () => {
-	let teamSlug = '';
 	let projectSlug = '';
 
 	const { findByText, findByTestId, queryByTestId, queryByText, router, user } = await renderApp({
@@ -176,7 +171,6 @@ test('filter bar collapses/expands and applies search + sort', async () => {
 			for (const title of ['Authentication bug', 'Payment flow', 'Sign-up form']) {
 				await seedTask(ws, project, { title, assignee_id: agentId });
 			}
-			teamSlug = ws.team.slug;
 			projectSlug = project.slug;
 		},
 	});
@@ -229,7 +223,6 @@ test('filter bar collapses/expands and applies search + sort', async () => {
 });
 
 test('running dot is hidden by default and shown when a heartbeat run is active', async () => {
-	let teamSlug = '';
 	let projectSlug = '';
 
 	const { findByText, container, router } = await renderApp({
@@ -244,7 +237,6 @@ test('running dot is hidden by default and shown when a heartbeat run is active'
 				assignee_id: agentId,
 			});
 			await insertActiveRun(agentId, ws.team.id, busy.id);
-			teamSlug = ws.team.slug;
 			projectSlug = project.slug;
 		},
 	});
@@ -264,7 +256,6 @@ test('running dot is hidden by default and shown when a heartbeat run is active'
 });
 
 test('mention notice shows only on tasks with an unread admin mention for the viewer', async () => {
-	let teamSlug = '';
 	let projectSlug = '';
 
 	const { findByText, container, router } = await renderApp({
@@ -279,7 +270,6 @@ test('mention notice shows only on tasks with an unread admin mention for the vi
 				assignee_id: agentId,
 			});
 			await seedAdminMention(ws, mentioned.id, '@admin need your call here.');
-			teamSlug = ws.team.slug;
 			projectSlug = project.slug;
 		},
 	});
@@ -300,7 +290,6 @@ test('mention notice shows only on tasks with an unread admin mention for the vi
 });
 
 test('tasks with active runs pin to the top regardless of sort order', async () => {
-	let teamSlug = '';
 	let projectSlug = '';
 
 	const { findByText, container, router } = await renderApp({
@@ -320,7 +309,6 @@ test('tasks with active runs pin to the top regardless of sort order', async () 
 				assignee_id: agentId,
 			});
 			await insertActiveRun(agentId, ws.team.id, old.id);
-			teamSlug = ws.team.slug;
 			projectSlug = project.slug;
 		},
 	});
