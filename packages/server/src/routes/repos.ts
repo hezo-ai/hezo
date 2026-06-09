@@ -119,18 +119,22 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 			);
 		}
 	} else {
+		let created: Awaited<ReturnType<typeof createGitHubRepo>>;
 		try {
-			const created = await createGitHubRepo(
-				body.owner!,
-				body.name!,
-				body.private ?? true,
-				accessToken,
-			);
-			owner = created.owner;
-			repoName = created.name;
+			created = await createGitHubRepo(body.owner!, body.name!, body.private ?? true, accessToken);
 		} catch (e) {
 			return err(c, 'REPO_CREATE_FAILED', (e as Error).message, 500);
 		}
+		if (created.status === 'already_exists') {
+			return err(
+				c,
+				'GITHUB_REPO_EXISTS',
+				`A repository named "${created.owner}/${created.name}" already exists on GitHub.`,
+				409,
+			);
+		}
+		owner = created.owner;
+		repoName = created.name;
 	}
 	const repoIdentifier = `${owner}/${repoName}`;
 

@@ -42,6 +42,7 @@ interface TestAppContext {
 	// the version server-side seeders (createTestProject) expect — the web tree
 	// resolves a newer @electric-sql/pglite whose nominal type is incompatible.
 	db: Awaited<ReturnType<typeof createTestApp>>['db'];
+	masterKeyManager: Awaited<ReturnType<typeof createTestApp>>['masterKeyManager'];
 }
 
 let activeContext: TestAppContext | null = null;
@@ -64,6 +65,7 @@ beforeEach(async () => {
 		token: test.token,
 		apiBase,
 		db: test.db,
+		masterKeyManager: test.masterKeyManager,
 	} as unknown as TestAppContext;
 
 	// Auth: drop the token into localStorage AND push it into the api singleton
