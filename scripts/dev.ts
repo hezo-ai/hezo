@@ -31,6 +31,7 @@ const program = new Command()
 	.name('dev')
 	.description('Start all Hezo services in development mode (forwards all flags to the server)')
 	.allowUnknownOption()
+	.allowExcessArguments()
 	.option('--reset', 'Reset the server database')
 	.option('--data-dir <path>', 'Data directory')
 	.parse();
