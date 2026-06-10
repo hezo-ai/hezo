@@ -104,12 +104,12 @@ export class EgressProxy {
 		});
 
 		// The library terminates TLS with a per-host internal server, each
-		// presenting that host's leaf cert. A production report showed one host's
-		// cert served on another host's connection (a wrong-SAN TLS failure that
-		// the in-process MITM path never reproduces). This detector runs after the
-		// per-host server is (re)selected and fails loud if two unrelated upstream
-		// hosts resolved to the same internal port — the exact cross-host route —
-		// so the next occurrence is captured with the port and hosts involved.
+		// presenting that host's leaf cert, but caches the host→port mapping and
+		// never invalidates it — so a recycled ephemeral port can leave a hostname
+		// pointing at another host's server (a wrong-SAN TLS failure). This runs
+		// after the per-host server is (re)selected: it purges stale mappings so
+		// the next tunnel rebuilds a correct server, then logs loud if any live
+		// cross-host route survives.
 		const loggedCollisions = new Set<string>();
 		proxy.onConnect(((_req: unknown, _socket: unknown, _head: unknown, callback: () => void) => {
 			setImmediate(() => detectCrossHostCertRoute(proxy, scope, runId, loggedCollisions));
@@ -349,13 +349,26 @@ function wildcardForm(host: string): string {
 	return host.replace(/^[^.]+\./, '*.');
 }
 
+interface SslServerEntry {
+	port?: number;
+	server?: { listening?: boolean };
+}
+
 /**
- * Inspect the library's per-host server map for the egress invariant that no
- * two unrelated upstream hosts share one internal MITM server port. A shared
- * port means a tunnel for one host would be served the other host's leaf cert.
- * Subdomains of the same wildcard legitimately share a server, so only ports
- * spanning more than one wildcard group are flagged. Read-only; logs once per
- * offending port.
+ * Reconcile the library's per-host server map, then assert the egress
+ * invariant that no two unrelated upstream hosts share one internal MITM
+ * server port.
+ *
+ * The library caches a bare port per hostname and never invalidates it: when a
+ * per-host server is gone its ephemeral port can be recycled by the OS to a
+ * different host's new server, leaving the original hostname pointing at a port
+ * that now serves the wrong leaf cert (a wrong-SAN TLS failure). So first drop
+ * any entry whose own backing server has stopped listening, plus wildcard-alias
+ * entries no longer covered by a live server — the next tunnel for those hosts
+ * then rebuilds a correct server.
+ *
+ * After reconciliation a live cross-wildcard collision should be impossible;
+ * the remaining check is a tripwire that logs once per offending port.
  */
 export function detectCrossHostCertRoute(
 	proxy: IProxy,
@@ -363,9 +376,30 @@ export function detectCrossHostCertRoute(
 	runId: string,
 	logged: Set<string>,
 ): void {
-	const sslServers = (proxy as unknown as { sslServers?: Record<string, { port?: number }> })
+	const sslServers = (proxy as unknown as { sslServers?: Record<string, SslServerEntry> })
 		.sslServers;
 	if (!sslServers) return;
+
+	const portHasLiveServer = new Map<number, boolean>();
+	for (const entry of Object.values(sslServers)) {
+		const port = entry?.port;
+		if (typeof port !== 'number') continue;
+		if (entry.server?.listening) portHasLiveServer.set(port, true);
+	}
+	for (const [host, entry] of Object.entries(sslServers)) {
+		const port = entry?.port;
+		if (typeof port !== 'number') continue;
+		if (entry.server) {
+			// A created per-host server: once its port stops listening it must
+			// not keep serving this hostname — the port may be recycled.
+			if (entry.server.listening === false) delete sslServers[host];
+		} else if (!portHasLiveServer.get(port)) {
+			// A wildcard-alias entry ({ port } only) with no live server on its
+			// port is stale.
+			delete sslServers[host];
+		}
+	}
+
 	const hostsByPort = new Map<number, string[]>();
 	for (const [host, entry] of Object.entries(sslServers)) {
 		const port = entry?.port;
