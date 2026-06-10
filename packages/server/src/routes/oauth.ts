@@ -130,10 +130,10 @@ oauthRoutes.get('/oauth/callback', async (c) => {
 	);
 
 	if (payload.mcpConnectionId) {
-		await db.query(
-			`UPDATE mcp_connections SET oauth_connection_id = $1 WHERE id = $2 AND team_id = $3`,
-			[conn.id, payload.mcpConnectionId, payload.teamId],
-		);
+		await db.query(`UPDATE mcp_connections SET oauth_connection_id = $1 WHERE id = $2`, [
+			conn.id,
+			payload.mcpConnectionId,
+		]);
 		broadcastChange(c, wsRoom.team(payload.teamId), 'mcp_connections', 'UPDATE', {
 			id: payload.mcpConnectionId,
 			oauth_connection_id: conn.id,
@@ -275,13 +275,6 @@ async function startConnectorAuthCode(
 	const connector = await getConnector(db, connectorId);
 	if (!connector)
 		return { kind: 'error', code: 'NOT_FOUND', message: 'connector not found', status: 404 };
-	if (connector.team_id !== teamId)
-		return {
-			kind: 'error',
-			code: 'FORBIDDEN',
-			message: 'connector does not belong to this team',
-			status: 403,
-		};
 	if (connector.revoked_at)
 		return {
 			kind: 'error',
@@ -479,8 +472,6 @@ oauthRoutes.get('/oauth/mcp-callback', async (c) => {
 
 	const connector = await getConnector(db, payload.mcpConnectionId);
 	if (!connector) return c.html(buildCallbackPage('error', 'connector_not_found'), 200);
-	if (connector.team_id !== payload.teamId)
-		return c.html(buildCallbackPage('error', 'team_mismatch'), 200);
 
 	let token: Awaited<ReturnType<typeof exchangeCode>>;
 	try {
@@ -507,6 +498,7 @@ oauthRoutes.get('/oauth/mcp-callback', async (c) => {
 
 	try {
 		await finalizeConnectorConnection(c, {
+			teamId: payload.teamId,
 			connector,
 			capability: getConnectorCapability(connector.name),
 			provider: payload.provider,
@@ -603,8 +595,7 @@ oauthRoutes.post('/projects/:projectId/connectors/:connectorId/device/start', as
 	const db = c.get('db');
 
 	const connector = await getConnector(db, connectorId);
-	if (!connector || connector.team_id !== teamId)
-		return err(c, 'NOT_FOUND', 'connector not found', 404);
+	if (!connector) return err(c, 'NOT_FOUND', 'connector not found', 404);
 	const capability = getConnectorCapability(connector.name);
 	if (!capability?.deviceAuth)
 		return err(c, 'INVALID_REQUEST', 'connector does not support the device flow', 400);
@@ -664,8 +655,7 @@ oauthRoutes.post('/projects/:projectId/connectors/:connectorId/device/poll', asy
 
 	const db = c.get('db');
 	const connector = await getConnector(db, connectorId);
-	if (!connector || connector.team_id !== teamId)
-		return err(c, 'NOT_FOUND', 'connector not found', 404);
+	if (!connector) return err(c, 'NOT_FOUND', 'connector not found', 404);
 	const capability = getConnectorCapability(connector.name);
 	if (!capability?.deviceAuth)
 		return err(c, 'INVALID_REQUEST', 'connector does not support the device flow', 400);
@@ -690,6 +680,7 @@ oauthRoutes.post('/projects/:projectId/connectors/:connectorId/device/poll', asy
 	let finalized: Awaited<ReturnType<typeof finalizeConnectorConnection>>;
 	try {
 		finalized = await finalizeConnectorConnection(c, {
+			teamId,
 			connector,
 			capability,
 			provider: capability.id,
@@ -848,6 +839,10 @@ const PROVIDER_CONNECT_HOOKS: Record<string, ProviderConnectHooks> = {
 async function finalizeConnectorConnection(
 	c: import('hono').Context<Env>,
 	opts: {
+		// teamId is the team that initiated the connect (from the OAuth state /
+		// request context). Connectors are global, but the GitHub key
+		// registration, container push, and wakeup are still per-team.
+		teamId: string;
 		connector: ConnectorRow;
 		capability: ConnectorCapability | undefined;
 		provider: string;
@@ -863,8 +858,7 @@ async function finalizeConnectorConnection(
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
 	const docker = c.get('docker');
-	const { connector, capability, provider, accessToken } = opts;
-	const teamId = connector.team_id;
+	const { connector, capability, provider, accessToken, teamId } = opts;
 	const hooks = PROVIDER_CONNECT_HOOKS[capability?.id ?? ''] ?? {};
 
 	const identity: ConnectIdentity = hooks.fetchIdentity
@@ -916,11 +910,10 @@ async function finalizeConnectorConnection(
 		log.warn('live-push failed (non-fatal)', { error: (e as Error).message });
 	}
 
-	await fireCredentialProvidedWakeup(db, connector);
+	await fireCredentialProvidedWakeup(db, connector, teamId);
 
 	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', {
 		id: connector.id,
-		team_id: teamId,
 		oauth_connection_id: conn.id,
 		status: 'active',
 	});
@@ -940,6 +933,7 @@ async function finalizeConnectorConnection(
 async function fireCredentialProvidedWakeup(
 	db: import('@electric-sql/pglite').PGlite,
 	connector: ConnectorRow,
+	teamId: string,
 ): Promise<void> {
 	if (!connector.created_by_task_id) return;
 	const row = await db.query<{ assignee_id: string | null }>(
@@ -952,7 +946,7 @@ async function fireCredentialProvidedWakeup(
 		createWakeup(
 			db,
 			assigneeId,
-			connector.team_id,
+			teamId,
 			WakeupSource.CredentialProvided,
 			{ connector_id: connector.id, task_id: connector.created_by_task_id },
 			`connector:${connector.id}`,

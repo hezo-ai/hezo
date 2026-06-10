@@ -50,11 +50,11 @@ GitHub access (clone/fetch/push) and SaaS-MCP authentication go through OAuth, n
 
 When an agent needs a third-party MCP server (DatoCMS, Linear, Vercel, …), it calls `register_connector` with the MCP URL and optionally a `skill_doc_id` from `fetch_skill_file`. The tool:
 
-1. Creates a row in `mcp_connections` (kind=`saas`, `created_by_task_id` set, `oauth_connection_id` NULL — i.e. **pending**).
+1. Creates a row in `mcp_connections` (kind=`saas`, `created_by_task_id` set, `oauth_connection_id` NULL — i.e. **pending**). Connectors are **instance-global** — `mcp_connections.name` is unique instance-wide and the same catalog is loaded for every team's runs; there is no team or project scope.
 2. Posts a `connect_required` comment on the agent's task with a **Connect** button.
 3. Returns the placeholder + status; the agent ends its turn waiting on a `credential_provided` wakeup.
 
-The human clicks Connect (in the task chat, or on the team Connectors page at `/teams/:teamId/connectors`). Hezo's backend runs the full OAuth dance in the user's actual browser:
+The human clicks Connect (in the task chat, or the in-project Connectors page, or the Admin Connectors page at `/settings/connectors`). Hezo's backend runs the full OAuth dance in the user's actual browser:
 
 - **PRM discovery** (RFC 9728) — probe the MCP URL, parse `WWW-Authenticate: Bearer resource_metadata="…"`, fetch the resource metadata document.
 - **AS metadata** (RFC 8414) — fetch `/.well-known/oauth-authorization-server` for `authorization_endpoint`, `token_endpoint`, `registration_endpoint`.

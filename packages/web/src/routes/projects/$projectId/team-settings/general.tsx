@@ -5,7 +5,6 @@ import { ApplyTypeSection } from '../../../../components/settings/apply-type-sec
 import { AutomationsSection } from '../../../../components/settings/automations-section';
 import { BudgetSection } from '../../../../components/settings/budget-section';
 import { GeneralSection } from '../../../../components/settings/general-section';
-import { McpServersSection } from '../../../../components/settings/mcp-section';
 import { PreferencesSection } from '../../../../components/settings/preferences-section';
 import { SaveAsTypeSection } from '../../../../components/settings/save-as-type-section';
 import { SkillFileSection } from '../../../../components/settings/skill-file-section';
@@ -16,7 +15,6 @@ const settingsNav = [
 	{ id: 'general', label: 'General' },
 	{ id: 'automations', label: 'Automations' },
 	{ id: 'api-keys', label: 'API keys' },
-	{ id: 'mcp', label: 'MCP servers' },
 	{ id: 'budget', label: 'Budget' },
 	{ id: 'preferences', label: 'Preferences' },
 	{ id: 'skill-file', label: 'Skill file' },
@@ -66,9 +64,6 @@ function SettingsPage() {
 				</div>
 				<div id="settings-api-keys">
 					<ApiKeysSection projectId={projectId} />
-				</div>
-				<div id="settings-mcp">
-					<McpServersSection projectId={projectId} />
 				</div>
 				<div id="settings-budget">
 					<BudgetSection projectId={projectId} />

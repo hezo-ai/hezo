@@ -409,12 +409,10 @@ CREATE TYPE mcp_install_status AS ENUM ('pending', 'installed', 'failed');
 --                     env?: Record<string,string>, package?: string }
 --                   `package` is the npm/pypi spec the installer uses to
 --                   provision the server under /workspace/.hezo/mcp/<name>/.
+-- Connectors are instance-global: one catalog shared with every team's runs.
 CREATE TABLE mcp_connections (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    -- team_id NULL = an instance-level connector, available to every team.
-    team_id              UUID REFERENCES teams(id) ON DELETE CASCADE,
-    project_id           UUID REFERENCES projects(id) ON DELETE CASCADE,
-    name                 TEXT NOT NULL,
+    name                 TEXT NOT NULL UNIQUE,
     display_name         TEXT,
     kind                 mcp_connection_kind NOT NULL,
     config               JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -428,19 +426,13 @@ CREATE TABLE mcp_connections (
     revoked_at           TIMESTAMPTZ,
     auth_error           TEXT,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE (team_id, project_id, name)
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_mcp_connections_pending_auth
-    ON mcp_connections (team_id)
+    ON mcp_connections (name)
     WHERE oauth_connection_id IS NULL AND revoked_at IS NULL AND kind = 'saas';
 
-CREATE INDEX idx_mcp_connections_team ON mcp_connections(team_id);
-CREATE INDEX idx_mcp_connections_project ON mcp_connections(project_id);
 CREATE INDEX idx_mcp_connections_oauth ON mcp_connections(oauth_connection_id) WHERE oauth_connection_id IS NOT NULL;
--- Instance-level connectors (team_id NULL) are unique by name across the instance.
-CREATE UNIQUE INDEX idx_mcp_connections_instance_name ON mcp_connections (name) WHERE team_id IS NULL;
 
 -------------------------------------------------------------------------------
 -- TEAM SSH KEYS

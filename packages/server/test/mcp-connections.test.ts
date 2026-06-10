@@ -1,16 +1,12 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
-import {
-	loadMcpConnectionDescriptors,
-	loadMcpConnectionsForRun,
-} from '../src/services/mcp-connections';
+import { loadMcpConnectionDescriptors } from '../src/services/mcp-connections';
 import { safeClose } from './helpers';
 import { createTestApp, projectSlugFor } from './helpers/app';
 
 let db: PGlite;
 let teamId: string;
-let projectId: string;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 
@@ -27,13 +23,11 @@ beforeAll(async () => {
 	});
 	teamId = (await teamRes.json()).data.id;
 
-	const projectRow = await db.query<{ id: string }>(
+	await db.query(
 		`INSERT INTO projects (team_id, name, slug, task_prefix, docker_base_image, container_status)
-		 VALUES ($1, 'MCP Project', 'mcp-project', 'MP', 'hezo/agent-base:latest', NULL)
-		 RETURNING id`,
+		 VALUES ($1, 'MCP Project', 'mcp-project', 'MP', 'hezo/agent-base:latest', NULL)`,
 		[teamId],
 	);
-	projectId = projectRow.rows[0].id;
 });
 
 afterAll(async () => {
@@ -189,11 +183,11 @@ describe('POST /teams/:teamId/connectors/ensure', () => {
 describe('loadMcpConnectionDescriptors', () => {
 	it('returns saas connections as http descriptors', async () => {
 		await db.query(
-			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
-			 VALUES ($1, NULL, 'service-a', 'saas', $2::jsonb, 'installed')`,
-			[teamId, JSON.stringify({ url: 'https://service-a.example/mcp', headers: { 'x-key': 'v' } })],
+			`INSERT INTO mcp_connections (name, kind, config, install_status)
+			 VALUES ('service-a', 'saas', $1::jsonb, 'installed')`,
+			[JSON.stringify({ url: 'https://service-a.example/mcp', headers: { 'x-key': 'v' } })],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId, masterKeyManager);
+		const descriptors = await loadMcpConnectionDescriptors(db, masterKeyManager);
 		const a = descriptors.find((d) => d.name === 'service-a');
 		expect(a).toBeDefined();
 		expect(a?.kind).toBe('http');
@@ -205,21 +199,21 @@ describe('loadMcpConnectionDescriptors', () => {
 
 	it('skips local connections that are not yet installed', async () => {
 		await db.query(
-			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
-			 VALUES ($1, NULL, 'pending-local', 'local', $2::jsonb, 'pending')`,
-			[teamId, JSON.stringify({ command: 'npx', args: ['-y', 'pkg'] })],
+			`INSERT INTO mcp_connections (name, kind, config, install_status)
+			 VALUES ('pending-local', 'local', $1::jsonb, 'pending')`,
+			[JSON.stringify({ command: 'npx', args: ['-y', 'pkg'] })],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId, masterKeyManager);
+		const descriptors = await loadMcpConnectionDescriptors(db, masterKeyManager);
 		expect(descriptors.find((d) => d.name === 'pending-local')).toBeUndefined();
 	});
 
 	it('returns installed local connections as stdio descriptors', async () => {
 		await db.query(
-			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
-			 VALUES ($1, NULL, 'installed-local', 'local', $2::jsonb, 'installed')`,
-			[teamId, JSON.stringify({ command: '/usr/bin/foo', args: ['x'], env: { K: 'v' } })],
+			`INSERT INTO mcp_connections (name, kind, config, install_status)
+			 VALUES ('installed-local', 'local', $1::jsonb, 'installed')`,
+			[JSON.stringify({ command: '/usr/bin/foo', args: ['x'], env: { K: 'v' } })],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId, masterKeyManager);
+		const descriptors = await loadMcpConnectionDescriptors(db, masterKeyManager);
 		const local = descriptors.find((d) => d.name === 'installed-local');
 		expect(local?.kind).toBe('stdio');
 		if (local?.kind === 'stdio') {
@@ -227,21 +221,5 @@ describe('loadMcpConnectionDescriptors', () => {
 			expect(local.args).toEqual(['x']);
 			expect(local.env).toEqual({ K: 'v' });
 		}
-	});
-
-	it('project-scoped connections override team-wide entries with the same name', async () => {
-		await db.query(
-			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
-			 VALUES ($1, NULL, 'shared', 'saas', $2::jsonb, 'installed')`,
-			[teamId, JSON.stringify({ url: 'https://team-wide.example/mcp' })],
-		);
-		await db.query(
-			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
-			 VALUES ($1, $2, 'shared', 'saas', $3::jsonb, 'installed')`,
-			[teamId, projectId, JSON.stringify({ url: 'https://project-only.example/mcp' })],
-		);
-		const rows = await loadMcpConnectionsForRun(db, teamId, projectId);
-		const shared = rows.find((r) => r.name === 'shared');
-		expect((shared?.config as { url: string }).url).toBe('https://project-only.example/mcp');
 	});
 });

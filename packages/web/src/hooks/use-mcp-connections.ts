@@ -5,8 +5,6 @@ import { queryKeys } from '../lib/query-keys';
 
 export interface McpConnection {
 	id: string;
-	team_id: string;
-	project_id: string | null;
 	name: string;
 	display_name: string | null;
 	kind: 'saas' | 'local';
@@ -68,7 +66,6 @@ export interface CreateMcpConnectionPayload {
 	name: string;
 	kind: 'saas' | 'local';
 	config: Record<string, unknown>;
-	project_id?: string;
 }
 
 export function useMcpConnections(projectId: string, filterProjectId?: string) {
@@ -85,7 +82,7 @@ export function useCreateMcpConnection(projectId: string) {
 			api.post<McpConnection>(`/api/projects/${projectId}/mcp-connections`, data),
 		onSuccess: (created) => {
 			queryClient.setQueryData<McpConnection[]>(
-				queryKeys.projects.mcpConnectionsFiltered(projectId, created.project_id ?? null),
+				queryKeys.projects.mcpConnectionsFiltered(projectId, null),
 				(prev) => (prev ? [...prev.filter((c) => c.id !== created.id), created] : [created]),
 			);
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.mcpConnections(projectId) });

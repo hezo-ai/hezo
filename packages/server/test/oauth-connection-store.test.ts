@@ -163,9 +163,9 @@ describe('oauth connection store', () => {
 		const repoId = repo.rows[0].id;
 
 		await db.query(
-			`INSERT INTO mcp_connections (team_id, name, kind, config, oauth_connection_id)
-			 VALUES ($1, 'datocms', 'saas', '{}'::jsonb, $2)`,
-			[teamId, connectionId],
+			`INSERT INTO mcp_connections (name, kind, config, oauth_connection_id)
+			 VALUES ('datocms', 'saas', '{}'::jsonb, $1)`,
+			[connectionId],
 		);
 
 		const conn = await getConnection({ db, masterKeyManager }, connectionId);

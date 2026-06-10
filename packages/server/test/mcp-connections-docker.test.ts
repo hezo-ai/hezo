@@ -112,11 +112,10 @@ describe.skipIf(skipReason !== null)('MCP connections — Docker integration', (
 		await insertSecret('TEST_MCP_KEY', 'real-mcp-key-value', ['localhost']);
 
 		const insert = await db.query<{ id: string; install_status: string }>(
-			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
-			 VALUES ($1, NULL, 'echo', 'saas', $2::jsonb, 'installed')
+			`INSERT INTO mcp_connections (name, kind, config, install_status)
+			 VALUES ('echo', 'saas', $1::jsonb, 'installed')
 			 RETURNING id, install_status::text AS install_status`,
 			[
-				teamId,
 				JSON.stringify({
 					url: `https://localhost:${mcp.port}/mcp`,
 					headers: { 'x-api-key': '__HEZO_SECRET_TEST_MCP_KEY__' },
@@ -125,7 +124,7 @@ describe.skipIf(skipReason !== null)('MCP connections — Docker integration', (
 		);
 		expect(insert.rows[0].install_status).toBe('installed');
 
-		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId, masterKeyManager);
+		const descriptors = await loadMcpConnectionDescriptors(db, masterKeyManager);
 		const echo = descriptors.find((d) => d.name === 'echo');
 		expect(echo?.kind).toBe('http');
 		if (echo?.kind !== 'http') throw new Error('expected http descriptor');
@@ -184,11 +183,10 @@ describe.skipIf(skipReason !== null)('MCP connections — Docker integration', (
 		mcp.reset();
 
 		const insert = await db.query<{ id: string }>(
-			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
-			 VALUES ($1, NULL, 'echo-plain', 'saas', $2::jsonb, 'installed')
+			`INSERT INTO mcp_connections (name, kind, config, install_status)
+			 VALUES ('echo-plain', 'saas', $1::jsonb, 'installed')
 			 RETURNING id`,
 			[
-				teamId,
 				JSON.stringify({
 					url: `https://localhost:${mcp.port}/mcp`,
 					headers: { 'x-environment': 'test' },

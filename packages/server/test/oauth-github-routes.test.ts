@@ -183,10 +183,10 @@ describe('GitHub device-flow connector', () => {
 
 	it('rejects a poll for a flow that belongs to another connector', async () => {
 		const otherConnector = await db.query<{ id: string }>(
-			`INSERT INTO mcp_connections (team_id, name, display_name, kind, config, install_status)
-			 VALUES ($1, 'github', 'GitHub', 'saas'::mcp_connection_kind, '{}'::jsonb, 'installed')
+			`INSERT INTO mcp_connections (name, display_name, kind, config, install_status)
+			 VALUES ('github', 'GitHub', 'saas'::mcp_connection_kind, '{}'::jsonb, 'installed')
+			 ON CONFLICT (name) DO UPDATE SET display_name = EXCLUDED.display_name
 			 RETURNING id`,
-			[teamId],
 		);
 		const start = await app.request(
 			`/api/projects/${projectSlug}/connectors/${otherConnector.rows[0].id}/device/start`,

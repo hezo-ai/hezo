@@ -4,9 +4,14 @@ import { logger } from '../../logger';
 
 const log = logger.child('connector-lifecycle');
 
+// Connectors are instance-global; rows carry no team/project scope.
+const CONNECTOR_COLS = `id, name, display_name, kind::text AS kind,
+        config, oauth_connection_id, install_status::text AS install_status,
+        install_error, skill_doc_id, created_by_task_id,
+        activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
+        created_at::text AS created_at, updated_at::text AS updated_at`;
+
 export interface CreateConnectorInput {
-	teamId: string;
-	projectId?: string | null;
 	name: string;
 	displayName: string;
 	mcpUrl?: string;
@@ -21,8 +26,6 @@ export interface CreateConnectorInput {
 
 export interface ConnectorRow {
 	id: string;
-	team_id: string;
-	project_id: string | null;
 	name: string;
 	display_name: string | null;
 	kind: string;
@@ -51,24 +54,17 @@ export function statusOf(
 }
 
 /**
- * Idempotently create or fetch a connector. If a connector with the same
- * (team_id, project_id, name) tuple already exists, returns the existing row
- * without modification. The caller decides whether to treat an existing
- * active connector as "already done".
+ * Idempotently create or fetch a connector. Connectors are global, so the
+ * idempotency key is `name`. If one already exists, returns it without
+ * modification (restoring a previously-revoked row for re-authorization).
  */
 export async function createOrFetchConnector(
 	db: PGlite,
 	input: CreateConnectorInput,
 ): Promise<{ row: ConnectorRow; alreadyExisted: boolean }> {
 	const existing = await db.query<ConnectorRow>(
-		`SELECT id, team_id, project_id, name, display_name, kind::text AS kind,
-		        config, oauth_connection_id, install_status::text AS install_status,
-		        install_error, skill_doc_id, created_by_task_id,
-		        activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
-		        created_at::text AS created_at, updated_at::text AS updated_at
-		 FROM mcp_connections
-		 WHERE team_id = $1 AND project_id IS NOT DISTINCT FROM $2 AND name = $3`,
-		[input.teamId, input.projectId ?? null, input.name],
+		`SELECT ${CONNECTOR_COLS} FROM mcp_connections WHERE name = $1`,
+		[input.name],
 	);
 	const existingRow = existing.rows[0];
 	if (existingRow) {
@@ -102,21 +98,15 @@ export async function createOrFetchConnector(
 
 	const inserted = await db.query<ConnectorRow>(
 		`INSERT INTO mcp_connections (
-		    team_id, project_id, name, display_name, kind, config,
+		    name, display_name, kind, config,
 		    install_status, skill_doc_id, created_by_task_id
 		 )
 		 VALUES (
-		    $1, $2, $3, $4, $5::mcp_connection_kind, $6::jsonb,
-		    'pending'::mcp_install_status, $7, $8
+		    $1, $2, $3::mcp_connection_kind, $4::jsonb,
+		    'pending'::mcp_install_status, $5, $6
 		 )
-		 RETURNING id, team_id, project_id, name, display_name, kind::text AS kind,
-		           config, oauth_connection_id, install_status::text AS install_status,
-		           install_error, skill_doc_id, created_by_task_id,
-		           activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
-		           created_at::text AS created_at, updated_at::text AS updated_at`,
+		 RETURNING ${CONNECTOR_COLS}`,
 		[
-			input.teamId,
-			input.projectId ?? null,
 			input.name,
 			input.displayName,
 			kind,
@@ -127,7 +117,6 @@ export async function createOrFetchConnector(
 	);
 	log.info('connector created', {
 		connectorId: inserted.rows[0]!.id,
-		teamId: input.teamId,
 		name: input.name,
 	});
 	return { row: inserted.rows[0]!, alreadyExisted: false };
@@ -147,11 +136,7 @@ export async function markActive(
 		     install_status = 'installed'::mcp_install_status,
 		     updated_at = now()
 		 WHERE id = $2
-		 RETURNING id, team_id, project_id, name, display_name, kind::text AS kind,
-		           config, oauth_connection_id, install_status::text AS install_status,
-		           install_error, skill_doc_id, created_by_task_id,
-		           activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
-		           created_at::text AS created_at, updated_at::text AS updated_at`,
+		 RETURNING ${CONNECTOR_COLS}`,
 		[oauthConnectionId, connectorId],
 	);
 	return result.rows[0] ?? null;
@@ -166,11 +151,7 @@ export async function markFailed(
 		`UPDATE mcp_connections
 		 SET auth_error = $1, updated_at = now()
 		 WHERE id = $2
-		 RETURNING id, team_id, project_id, name, display_name, kind::text AS kind,
-		           config, oauth_connection_id, install_status::text AS install_status,
-		           install_error, skill_doc_id, created_by_task_id,
-		           activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
-		           created_at::text AS created_at, updated_at::text AS updated_at`,
+		 RETURNING ${CONNECTOR_COLS}`,
 		[reason, connectorId],
 	);
 	return result.rows[0] ?? null;
@@ -181,11 +162,7 @@ export async function markRevoked(db: PGlite, connectorId: string): Promise<Conn
 		`UPDATE mcp_connections
 		 SET revoked_at = now(), oauth_connection_id = NULL, updated_at = now()
 		 WHERE id = $1
-		 RETURNING id, team_id, project_id, name, display_name, kind::text AS kind,
-		           config, oauth_connection_id, install_status::text AS install_status,
-		           install_error, skill_doc_id, created_by_task_id,
-		           activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
-		           created_at::text AS created_at, updated_at::text AS updated_at`,
+		 RETURNING ${CONNECTOR_COLS}`,
 		[connectorId],
 	);
 	return result.rows[0] ?? null;
@@ -193,21 +170,15 @@ export async function markRevoked(db: PGlite, connectorId: string): Promise<Conn
 
 export async function getConnector(db: PGlite, connectorId: string): Promise<ConnectorRow | null> {
 	const result = await db.query<ConnectorRow>(
-		`SELECT id, team_id, project_id, name, display_name, kind::text AS kind,
-		        config, oauth_connection_id, install_status::text AS install_status,
-		        install_error, skill_doc_id, created_by_task_id,
-		        activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
-		        created_at::text AS created_at, updated_at::text AS updated_at
-		 FROM mcp_connections
-		 WHERE id = $1`,
+		`SELECT ${CONNECTOR_COLS} FROM mcp_connections WHERE id = $1`,
 		[connectorId],
 	);
 	return result.rows[0] ?? null;
 }
 
 /**
- * Load all team-scoped MCP skill files (documents with type='mcp_skill') so
- * the agent runner can pass them into the per-adapter MCP injection. Returns
+ * Load all MCP skill files (documents with type='mcp_skill') so the agent
+ * runner can pass them into the per-adapter MCP injection. Returns
  * `{slug, content}` pairs suitable for `McpAdapterContext.skillFiles`.
  */
 export async function loadSkillFilesForTeam(
@@ -223,17 +194,9 @@ export async function loadSkillFilesForTeam(
 	return result.rows;
 }
 
-export async function listConnectorsForTeam(db: PGlite, teamId: string): Promise<ConnectorRow[]> {
+export async function listConnectors(db: PGlite): Promise<ConnectorRow[]> {
 	const result = await db.query<ConnectorRow>(
-		`SELECT id, team_id, project_id, name, display_name, kind::text AS kind,
-		        config, oauth_connection_id, install_status::text AS install_status,
-		        install_error, skill_doc_id, created_by_task_id,
-		        activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
-		        created_at::text AS created_at, updated_at::text AS updated_at
-		 FROM mcp_connections
-		 WHERE team_id = $1
-		 ORDER BY created_at ASC`,
-		[teamId],
+		`SELECT ${CONNECTOR_COLS} FROM mcp_connections ORDER BY created_at ASC`,
 	);
 	return result.rows;
 }

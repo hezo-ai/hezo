@@ -78,7 +78,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
 	await db.query('DELETE FROM agent_wakeup_requests');
-	await db.query('DELETE FROM mcp_connections WHERE team_id = $1', [teamId]);
+	await db.query('DELETE FROM mcp_connections');
 	await db.query(`DELETE FROM documents WHERE team_id = $1 AND type = 'mcp_skill'::document_type`, [
 		teamId,
 	]);
@@ -141,7 +141,6 @@ describe('DCR (RFC 7591)', () => {
 describe('Connector lifecycle helpers', () => {
 	it('creates pending, transitions to active, then revoked', async () => {
 		const { row: created, alreadyExisted } = await createOrFetchConnector(db, {
-			teamId,
 			name: 'datocms',
 			displayName: 'DatoCMS',
 			mcpUrl: `${fake.url}/mcp`,
@@ -170,16 +169,14 @@ describe('Connector lifecycle helpers', () => {
 		expect(statusOf(revoked!)).toBe('revoked');
 	});
 
-	it('createOrFetchConnector is idempotent on (team, name)', async () => {
+	it('createOrFetchConnector is idempotent on name', async () => {
 		const first = await createOrFetchConnector(db, {
-			teamId,
 			name: 'linear',
 			displayName: 'Linear',
 			mcpUrl: `${fake.url}/mcp`,
 			mcpTransport: 'http',
 		});
 		const second = await createOrFetchConnector(db, {
-			teamId,
 			name: 'linear',
 			displayName: 'Linear',
 			mcpUrl: `${fake.url}/mcp`,
@@ -191,7 +188,6 @@ describe('Connector lifecycle helpers', () => {
 
 	it('markFailed records the reason without flipping to active', async () => {
 		const { row } = await createOrFetchConnector(db, {
-			teamId,
 			name: 'sentry',
 			displayName: 'Sentry',
 			mcpUrl: `${fake.url}/mcp`,
@@ -220,7 +216,6 @@ describe('OAuth callback route (end-to-end against fake AS)', () => {
 		captainAgentToken = minted.token;
 
 		const { row } = await createOrFetchConnector(db, {
-			teamId,
 			name: 'datocms',
 			displayName: 'DatoCMS',
 			mcpUrl: `${fake.url}/mcp`,
@@ -306,7 +301,6 @@ describe('OAuth callback route (end-to-end against fake AS)', () => {
 		const broken = await startFakeMcpServer({ rejectExchange: true });
 		try {
 			const { row: brokenConn } = await createOrFetchConnector(db, {
-				teamId,
 				name: 'broken',
 				displayName: 'Broken',
 				mcpUrl: `${broken.url}/mcp`,
@@ -572,7 +566,6 @@ describe('loadMcpConnectionsForRun excludes pending/revoked', () => {
 			[teamId, projectId, captainId],
 		);
 		await createOrFetchConnector(db, {
-			teamId,
 			name: 'pending',
 			displayName: 'Pending',
 			mcpUrl: `${fake.url}/mcp`,
@@ -582,12 +575,12 @@ describe('loadMcpConnectionsForRun excludes pending/revoked', () => {
 		// A row similar to operator-created MCP (no created_by_task_id, no oauth) —
 		// included in the result so existing behavior for public MCPs is preserved.
 		await db.query(
-			`INSERT INTO mcp_connections (team_id, name, kind, config, install_status)
-			 VALUES ($1, 'operator', $2::mcp_connection_kind, '{"url": "https://public.example/mcp"}'::jsonb, 'installed')`,
-			[teamId, McpConnectionKind.Saas],
+			`INSERT INTO mcp_connections (name, kind, config, install_status)
+			 VALUES ('operator', $1::mcp_connection_kind, '{"url": "https://public.example/mcp"}'::jsonb, 'installed')`,
+			[McpConnectionKind.Saas],
 		);
 		const { loadMcpConnectionsForRun } = await import('../src/services/mcp-connections');
-		const rows = await loadMcpConnectionsForRun(db, teamId, projectId);
+		const rows = await loadMcpConnectionsForRun(db);
 		expect(rows.find((r) => r.name === 'operator')).toBeTruthy();
 		expect(rows.find((r) => r.name === 'pending')).toBeUndefined();
 	});

@@ -1779,9 +1779,8 @@ export function registerTools(
 			const mcpTransport = (args.mcp_transport as 'http' | 'sse' | undefined) ?? 'http';
 			const skillDocId = (args.skill_doc_id as string | undefined) ?? null;
 
-			// Slug from providerId if available, else from display_name. The
-			// (team_id, project_id, name) UNIQUE constraint makes this the
-			// idempotency key.
+			// Slug from providerId if available, else from display_name. Connectors
+			// are global, so `name` (UNIQUE) is the idempotency key.
 			const slugSource = providerId ?? displayName;
 			const name = slugSource
 				.toLowerCase()
@@ -1792,8 +1791,6 @@ export function registerTools(
 
 			const { createOrFetchConnector, statusOf } = await import('../services/connectors/lifecycle');
 			const { row, alreadyExisted } = await createOrFetchConnector(db, {
-				teamId,
-				projectId: null, // connectors are team-scoped today
 				name,
 				displayName,
 				mcpUrl,
@@ -2836,33 +2833,15 @@ export function registerTools(
 	tool(
 		server,
 		'list_mcp_connections',
-		'List MCP server connections registered for the team (and optionally a project). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`.',
+		'List the MCP server connections available to agent runs (instance-global — the same catalog for every team). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`.',
 		{
 			team_id: z.string().describe('Team ID'),
-			project_id: z
-				.string()
-				.optional()
-				.describe(
-					'Optional project ID. When set, returns project-scoped + team-wide connections; when absent, only team-wide.',
-				),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			const teamId = args.team_id as string;
-			const projectId = (args.project_id as string | undefined) ?? null;
-			const params: unknown[] = [teamId];
-			let where = 'team_id = $1';
-			if (projectId) {
-				where += ' AND (project_id IS NULL OR project_id = $2)';
-				params.push(projectId);
-			} else {
-				where += ' AND project_id IS NULL';
-			}
 			const r = await db.query<{
 				id: string;
-				team_id: string;
-				project_id: string | null;
 				name: string;
 				display_name: string | null;
 				kind: string;
@@ -2878,15 +2857,13 @@ export function registerTools(
 				created_at: string;
 				updated_at: string;
 			}>(
-				`SELECT id, team_id, project_id, name, display_name, kind::text AS kind,
+				`SELECT id, name, display_name, kind::text AS kind,
 				        config, oauth_connection_id, install_status::text AS install_status, install_error,
 				        skill_doc_id, created_by_task_id,
 				        activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
 				        created_at::text, updated_at::text
 				 FROM mcp_connections
-				 WHERE ${where}
 				 ORDER BY name ASC`,
-				params,
 			);
 			// Derive a single oauth_status field that's the load-bearing signal
 			// for whether the connector is usable by agents on subsequent runs.
@@ -2919,22 +2896,20 @@ export function registerTools(
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			const teamId = args.team_id as string;
 			const connectorId = args.connector_id as string;
 
 			const row = await db.query<{
 				id: string;
-				team_id: string;
 				name: string;
 				kind: string;
 				config: Record<string, unknown>;
 				oauth_connection_id: string | null;
 			}>(
-				`SELECT id, team_id, name, kind::text AS kind, config, oauth_connection_id
-				 FROM mcp_connections WHERE id = $1 AND team_id = $2`,
-				[connectorId, teamId],
+				`SELECT id, name, kind::text AS kind, config, oauth_connection_id
+				 FROM mcp_connections WHERE id = $1`,
+				[connectorId],
 			);
-			if (row.rows.length === 0) return { error: 'connector not found in this team' };
+			if (row.rows.length === 0) return { error: 'connector not found' };
 			const connector = row.rows[0];
 			if (connector.kind !== 'saas') {
 				return { error: `connector kind=${connector.kind}; test only meaningful for kind=saas` };
@@ -3017,18 +2992,12 @@ export function registerTools(
 	tool(
 		server,
 		'add_mcp_connection',
-		"Register an MCP server (SaaS HTTP or local stdio) for this team/project. SaaS servers go into the agent's descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect.",
+		"Register an MCP server (SaaS HTTP or local stdio). Connections are instance-global — available to every team's agent runs. SaaS servers go into the agent's descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect.",
 		{
 			team_id: z.string().describe('Team ID'),
-			project_id: z
-				.string()
-				.optional()
-				.describe('Optional project ID. Omit for a team-wide connection.'),
 			name: z
 				.string()
-				.describe(
-					'Server identifier — used as the MCP descriptor name and for de-duplication within (team, project).',
-				),
+				.describe('Server identifier — used as the MCP descriptor name and as the unique key.'),
 			kind: z.enum(['saas', 'local']).describe('saas = HTTP MCP, local = stdio MCP'),
 			config: z
 				.record(z.string(), z.unknown())
@@ -3037,8 +3006,6 @@ export function registerTools(
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			const teamId = args.team_id as string;
-			const projectId = (args.project_id as string | undefined) ?? null;
 			const name = String(args.name ?? '').trim();
 			const kind = args.kind as 'saas' | 'local';
 			const config = args.config as Record<string, unknown>;
@@ -3059,16 +3026,16 @@ export function registerTools(
 				id: string;
 				install_status: string;
 			}>(
-				`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
-				 VALUES ($1, $2, $3, $4::mcp_connection_kind, $5::jsonb, $6::mcp_install_status)
-				 ON CONFLICT (team_id, project_id, name) DO UPDATE
+				`INSERT INTO mcp_connections (name, kind, config, install_status)
+				 VALUES ($1, $2::mcp_connection_kind, $3::jsonb, $4::mcp_install_status)
+				 ON CONFLICT (name) DO UPDATE
 				 SET kind = EXCLUDED.kind,
 				     config = EXCLUDED.config,
 				     install_status = EXCLUDED.install_status,
 				     install_error = NULL,
 				     updated_at = now()
 				 RETURNING id, install_status::text AS install_status`,
-				[teamId, projectId, name, kind, JSON.stringify(config), initialStatus],
+				[name, kind, JSON.stringify(config), initialStatus],
 			);
 			return {
 				id: r.rows[0].id,
@@ -3085,7 +3052,7 @@ export function registerTools(
 	tool(
 		server,
 		'remove_mcp_connection',
-		'Remove a previously registered MCP connection. The next agent run in this scope will not see it.',
+		'Remove a registered MCP connection (instance-global — removing it affects every team). The next agent run will not see it.',
 		{
 			team_id: z.string().describe('Team ID'),
 			id: z
@@ -3096,8 +3063,8 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const r = await db.query<{ id: string }>(
-				'DELETE FROM mcp_connections WHERE id = $1 AND team_id = $2 RETURNING id',
-				[args.id as string, args.team_id as string],
+				'DELETE FROM mcp_connections WHERE id = $1 RETURNING id',
+				[args.id as string],
 			);
 			if (r.rows.length === 0) return { error: 'MCP connection not found' };
 			return { removed: true, id: r.rows[0].id };
