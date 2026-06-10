@@ -263,12 +263,12 @@ async function insertSecret(name: string, value: string, allowedHosts: string[])
 	if (!key) throw new Error('master key unavailable');
 	const enc = encrypt(value, key);
 	await db.query(
-		`INSERT INTO secrets (team_id, project_id, name, encrypted_value, category, allowed_hosts)
-		 VALUES ($1, NULL, $2, $3, 'api_token'::secret_category, $4)
-		 ON CONFLICT (team_id, project_id, name) DO UPDATE
+		`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
+		 VALUES ($1, $2, 'api_token'::secret_category, $3)
+		 ON CONFLICT (name) DO UPDATE
 		 SET encrypted_value = EXCLUDED.encrypted_value,
 		     allowed_hosts = EXCLUDED.allowed_hosts`,
-		[teamId, name, enc, allowedHosts],
+		[name, enc, allowedHosts],
 	);
 }
 

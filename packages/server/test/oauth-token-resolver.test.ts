@@ -10,7 +10,7 @@ import {
 import {
 	clearRefreshFns,
 	type RefreshFn,
-	refreshExpiringTokensForTeam,
+	refreshExpiringTokens,
 	registerRefreshFn,
 } from '../src/services/oauth/token-resolver';
 import { safeClose } from './helpers';
@@ -48,7 +48,6 @@ async function makeConnection(opts: {
 	return createConnection(
 		{ db, masterKeyManager },
 		{
-			teamId,
 			provider: opts.provider,
 			providerAccountId: opts.providerAccountId,
 			providerAccountLabel: `${opts.provider}-${opts.providerAccountId}`,
@@ -61,7 +60,7 @@ async function makeConnection(opts: {
 	);
 }
 
-describe('refreshExpiringTokensForTeam', () => {
+describe('refreshExpiringTokens', () => {
 	it('refreshes tokens that expire inside the refresh window', async () => {
 		const conn = await makeConnection({
 			provider: 'p1',
@@ -77,7 +76,7 @@ describe('refreshExpiringTokensForTeam', () => {
 		});
 		registerRefreshFn('p1', refreshFn);
 
-		await refreshExpiringTokensForTeam({ db, masterKeyManager }, teamId);
+		await refreshExpiringTokens({ db, masterKeyManager });
 
 		const refreshed = await getConnection({ db, masterKeyManager }, conn.id);
 		expect(refreshed?.expiresAt?.getTime()).toBeGreaterThan(Date.now());
@@ -104,7 +103,7 @@ describe('refreshExpiringTokensForTeam', () => {
 			return { accessToken: 'never' };
 		});
 
-		await refreshExpiringTokensForTeam({ db, masterKeyManager }, teamId);
+		await refreshExpiringTokens({ db, masterKeyManager });
 		expect(called).toBe(false);
 
 		const after = await getConnection({ db, masterKeyManager }, conn.id);
@@ -130,7 +129,7 @@ describe('refreshExpiringTokensForTeam', () => {
 			return { accessToken: 'wrong' };
 		});
 
-		await refreshExpiringTokensForTeam({ db, masterKeyManager }, teamId);
+		await refreshExpiringTokens({ db, masterKeyManager });
 		expect(called).toBe(false);
 
 		const after = await getConnection({ db, masterKeyManager }, conn.id);
@@ -163,9 +162,9 @@ describe('refreshExpiringTokensForTeam', () => {
 		});
 
 		await Promise.all([
-			refreshExpiringTokensForTeam({ db, masterKeyManager }, teamId),
-			refreshExpiringTokensForTeam({ db, masterKeyManager }, teamId),
-			refreshExpiringTokensForTeam({ db, masterKeyManager }, teamId),
+			refreshExpiringTokens({ db, masterKeyManager }),
+			refreshExpiringTokens({ db, masterKeyManager }),
+			refreshExpiringTokens({ db, masterKeyManager }),
 		]);
 
 		expect(calls).toBe(1);
@@ -191,8 +190,6 @@ describe('refreshExpiringTokensForTeam', () => {
 			throw new Error('upstream 5xx');
 		});
 
-		await expect(
-			refreshExpiringTokensForTeam({ db, masterKeyManager }, teamId),
-		).resolves.toBeUndefined();
+		await expect(refreshExpiringTokens({ db, masterKeyManager })).resolves.toBeUndefined();
 	});
 });

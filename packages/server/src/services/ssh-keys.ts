@@ -6,7 +6,6 @@ import type { MasterKeyManager } from '../crypto/master-key';
 export interface SSHKeyResult {
 	publicKey: string;
 	fingerprint: string;
-	secretId: string;
 }
 
 export async function generateTeamSSHKey(
@@ -27,27 +26,17 @@ export async function generateTeamSSHKey(
 	const fingerprint = createHash('sha256').update(Buffer.from(publicKey)).digest('hex');
 	const encryptedPrivateKey = encrypt(privateKey, encryptionKey);
 
-	// Store private key in secrets
-	const secretResult = await db.query<{ id: string }>(
-		`INSERT INTO secrets (team_id, name, encrypted_value, category)
-		 VALUES ($1, 'ssh_private_key', $2, 'ssh_key')
-		 ON CONFLICT (team_id, project_id, name) WHERE project_id IS NULL
-		 DO UPDATE SET encrypted_value = $2, updated_at = now()
-		 RETURNING id`,
-		[teamId, encryptedPrivateKey],
-	);
-	const secretId = secretResult.rows[0].id;
-
-	// Store public key in team_ssh_keys
+	// The per-team signing key's PEM is encrypted directly on team_ssh_keys, not
+	// in the global `secrets` table.
 	await db.query(
-		`INSERT INTO team_ssh_keys (team_id, public_key, fingerprint, private_key_secret_id)
+		`INSERT INTO team_ssh_keys (team_id, public_key, fingerprint, private_key_encrypted)
 		 VALUES ($1, $2, $3, $4)
 		 ON CONFLICT (team_id) DO UPDATE SET
-		   public_key = $2, fingerprint = $3, private_key_secret_id = $4`,
-		[teamId, sshPublicKey, fingerprint, secretId],
+		   public_key = $2, fingerprint = $3, private_key_encrypted = $4`,
+		[teamId, sshPublicKey, fingerprint, encryptedPrivateKey],
 	);
 
-	return { publicKey: sshPublicKey, fingerprint, secretId };
+	return { publicKey: sshPublicKey, fingerprint };
 }
 
 export async function getTeamSSHKey(
@@ -60,12 +49,11 @@ export async function getTeamSSHKey(
 
 	const result = await db.query<{
 		public_key: string;
-		encrypted_value: string;
+		private_key_encrypted: string;
 	}>(
-		`SELECT k.public_key, s.encrypted_value
-		 FROM team_ssh_keys k
-		 JOIN secrets s ON s.id = k.private_key_secret_id
-		 WHERE k.team_id = $1`,
+		`SELECT public_key, private_key_encrypted
+		 FROM team_ssh_keys
+		 WHERE team_id = $1`,
 		[teamId],
 	);
 
@@ -74,7 +62,7 @@ export async function getTeamSSHKey(
 	const row = result.rows[0];
 	return {
 		publicKey: row.public_key,
-		privateKey: decrypt(row.encrypted_value, encryptionKey),
+		privateKey: decrypt(row.private_key_encrypted, encryptionKey),
 	};
 }
 

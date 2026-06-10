@@ -26,7 +26,6 @@ let agentAToken: string;
 let projectAId: string;
 let projectASlug: string;
 let taskAId: string;
-let secretAId: string;
 
 // Team B
 let teamBId: string;
@@ -121,17 +120,6 @@ beforeAll(async () => {
 	});
 	taskAId = (await taskRes.json()).data.id;
 
-	// Create secret in Team A
-	const secretRes = await app.request(
-		`/api/projects/${await projectSlugForTeamSlug(db, teamASlug)}/secrets`,
-		{
-			method: 'POST',
-			headers: { ...authHeader(superuserToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'ALPHA_SECRET', value: 'secret123', category: 'api_token' }),
-		},
-	);
-	secretAId = (await secretRes.json()).data.id;
-
 	// Create a non-superuser who is a member of Team A only
 	const userRes = await db.query<{ id: string }>(
 		"INSERT INTO users (display_name, is_superuser) VALUES ('User A', false) RETURNING id",
@@ -176,16 +164,6 @@ describe('Agent token cross-team isolation', () => {
 		expect(res.status).toBe(403);
 	});
 
-	it('agent A cannot access Team B secrets', async () => {
-		const res = await app.request(
-			`/api/projects/${await projectSlugForTeamSlug(db, teamBSlug)}/secrets`,
-			{
-				headers: authHeader(agentAToken),
-			},
-		);
-		expect(res.status).toBe(403);
-	});
-
 	it('agent A cannot access Team B projects', async () => {
 		const res = await app.request(`/api/projects/${await projectSlugForTeamSlug(db, teamBSlug)}`, {
 			headers: authHeader(agentAToken),
@@ -196,16 +174,6 @@ describe('Agent token cross-team isolation', () => {
 	it('agent B cannot access Team A agents', async () => {
 		const res = await app.request(
 			`/api/projects/${await projectSlugForTeamSlug(db, teamASlug)}/agents`,
-			{
-				headers: authHeader(agentBToken),
-			},
-		);
-		expect(res.status).toBe(403);
-	});
-
-	it('agent B cannot access Team A secrets', async () => {
-		const res = await app.request(
-			`/api/projects/${await projectSlugForTeamSlug(db, teamASlug)}/secrets`,
 			{
 				headers: authHeader(agentBToken),
 			},
@@ -237,16 +205,6 @@ describe('Admin user cross-team isolation', () => {
 	it('user A cannot access Team B tasks', async () => {
 		const res = await app.request(
 			`/api/projects/${await projectSlugForTeamSlug(db, teamBSlug)}/tasks`,
-			{
-				headers: authHeader(userAToken),
-			},
-		);
-		expect(res.status).toBe(403);
-	});
-
-	it('user A cannot access Team B secrets', async () => {
-		const res = await app.request(
-			`/api/projects/${await projectSlugForTeamSlug(db, teamBSlug)}/secrets`,
 			{
 				headers: authHeader(userAToken),
 			},
@@ -416,17 +374,6 @@ describe('Resource ownership isolation', () => {
 			},
 		);
 		// Returns 404 because WHERE clause filters by team_id
-		expect(res.status).toBe(404);
-	});
-
-	it('Team A secret not found under Team B routes', async () => {
-		const res = await app.request(
-			`/api/projects/${await projectSlugForTeamSlug(db, teamBSlug)}/secrets/${secretAId}`,
-			{
-				method: 'DELETE',
-				headers: authHeader(superuserToken),
-			},
-		);
 		expect(res.status).toBe(404);
 	});
 

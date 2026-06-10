@@ -165,13 +165,7 @@ export function MarkdownProse({
 								/>
 							}
 						>
-							<Link
-								to="/projects/$projectId/skills"
-								params={{ projectId }}
-								search={{ slug: kbSlug }}
-								className={MENTION_CLASSES}
-								data-testid="kb-mention-link"
-							>
+							<Link to="/settings/skills" className={MENTION_CLASSES} data-testid="kb-mention-link">
 								{props.children}
 							</Link>
 						</Tooltip>

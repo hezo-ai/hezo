@@ -51,7 +51,6 @@ CREATE TYPE task_priority AS ENUM ('urgent', 'high', 'medium', 'low');
 CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system', 'run', 'action', 'credential_request', 'connect_required');
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
-CREATE TYPE grant_scope AS ENUM ('single', 'project', 'team');
 CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'project_creation', 'strategy', 'plan_review', 'deploy_production', 'designated_repo_request', 'skill_proposal');
 CREATE TYPE approval_status AS ENUM ('pending', 'approved', 'denied');
 CREATE TYPE audit_actor_type AS ENUM ('admin', 'agent', 'system');
@@ -340,25 +339,16 @@ ALTER TABLE projects ADD CONSTRAINT fk_projects_designated_repo
 
 CREATE TABLE secrets (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    -- team_id NULL = an instance-level credential, available to every team's
-    -- egress (still bounded by allowed_hosts). Managed by the Admin (superuser).
-    team_id          UUID REFERENCES teams(id) ON DELETE CASCADE,
-    project_id       UUID REFERENCES projects(id) ON DELETE CASCADE,
-    name             TEXT NOT NULL,
+    -- All credentials are instance-level: shared with every team's egress,
+    -- bounded by allowed_hosts. Managed by the Admin (superuser).
+    name             TEXT NOT NULL UNIQUE,
     encrypted_value  TEXT NOT NULL,
     category         secret_category NOT NULL DEFAULT 'other',
     allowed_hosts    TEXT[] NOT NULL DEFAULT '{}',
     allow_all_hosts  BOOLEAN NOT NULL DEFAULT false,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE (team_id, project_id, name)
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-CREATE INDEX idx_secrets_team ON secrets(team_id);
--- Instance-level credentials (team_id NULL) are unique by name across the instance.
-CREATE UNIQUE INDEX idx_secrets_instance_name ON secrets (name) WHERE team_id IS NULL;
-CREATE INDEX idx_secrets_project ON secrets(project_id);
 
 -------------------------------------------------------------------------------
 -- OAUTH CONNECTIONS
@@ -376,9 +366,11 @@ CREATE INDEX idx_secrets_project ON secrets(project_id);
 --                  key.
 -- `metadata`     — provider-specific bag (avatar_url, account_email,
 --                  discovered_authorize_url, discovered_token_endpoint, …).
+-- OAuth account connections (GitHub login, SaaS MCP providers) are
+-- instance-global: connect an upstream account once, usable by every team's
+-- runs. The per-team commit-signing key lives in team_ssh_keys, not here.
 CREATE TABLE oauth_connections (
     id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id                  UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     provider                 TEXT NOT NULL,
     provider_account_id      TEXT NOT NULL,
     provider_account_label   TEXT NOT NULL,
@@ -390,11 +382,10 @@ CREATE TABLE oauth_connections (
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    UNIQUE (team_id, provider, provider_account_id)
+    UNIQUE (provider, provider_account_id)
 );
 
-CREATE INDEX idx_oauth_connections_team ON oauth_connections(team_id);
-CREATE INDEX idx_oauth_connections_provider ON oauth_connections(team_id, provider);
+CREATE INDEX idx_oauth_connections_provider ON oauth_connections(provider);
 
 -- Deferred FK: repos.oauth_connection_id → oauth_connections(id)
 ALTER TABLE repos ADD CONSTRAINT fk_repos_oauth_connection
@@ -419,49 +410,46 @@ CREATE TYPE mcp_install_status AS ENUM ('pending', 'installed', 'failed');
 --                     env?: Record<string,string>, package?: string }
 --                   `package` is the npm/pypi spec the installer uses to
 --                   provision the server under /workspace/.hezo/mcp/<name>/.
+-- Connectors are instance-global: one catalog shared with every team's runs.
 CREATE TABLE mcp_connections (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    -- team_id NULL = an instance-level connector, available to every team.
-    team_id              UUID REFERENCES teams(id) ON DELETE CASCADE,
-    project_id           UUID REFERENCES projects(id) ON DELETE CASCADE,
-    name                 TEXT NOT NULL,
+    name                 TEXT NOT NULL UNIQUE,
     display_name         TEXT,
     kind                 mcp_connection_kind NOT NULL,
     config               JSONB NOT NULL DEFAULT '{}'::jsonb,
     oauth_connection_id  UUID REFERENCES oauth_connections(id) ON DELETE SET NULL,
     install_status       mcp_install_status NOT NULL DEFAULT 'pending',
     install_error        TEXT,
-    -- skill_doc_id and created_by_task_id FKs added later (forward refs to documents/tasks)
-    skill_doc_id         UUID,
+    -- skill_id and created_by_task_id FKs added later (forward refs to skills/tasks)
+    skill_id             UUID,
     created_by_task_id   UUID,
     activated_at         TIMESTAMPTZ,
     revoked_at           TIMESTAMPTZ,
     auth_error           TEXT,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE (team_id, project_id, name)
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_mcp_connections_pending_auth
-    ON mcp_connections (team_id)
+    ON mcp_connections (name)
     WHERE oauth_connection_id IS NULL AND revoked_at IS NULL AND kind = 'saas';
 
-CREATE INDEX idx_mcp_connections_team ON mcp_connections(team_id);
-CREATE INDEX idx_mcp_connections_project ON mcp_connections(project_id);
 CREATE INDEX idx_mcp_connections_oauth ON mcp_connections(oauth_connection_id) WHERE oauth_connection_id IS NOT NULL;
--- Instance-level connectors (team_id NULL) are unique by name across the instance.
-CREATE UNIQUE INDEX idx_mcp_connections_instance_name ON mcp_connections (name) WHERE team_id IS NULL;
 
 -------------------------------------------------------------------------------
 -- TEAM SSH KEYS
 -------------------------------------------------------------------------------
 
+-- The Ed25519 commit-signing / SSH-auth key stays per-team (the git identity is
+-- team-scoped even though credentials/connectors are global). The private key
+-- PEM is encrypted at rest with the master key directly on this row, NOT in the
+-- global `secrets` table — a per-team key there would collide on the global
+-- UNIQUE(name) and leak into every team's egress substitution pool.
 CREATE TABLE team_ssh_keys (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id               UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     public_key            TEXT NOT NULL,
     fingerprint           TEXT,
-    private_key_secret_id UUID REFERENCES secrets(id) ON DELETE SET NULL,
+    private_key_encrypted TEXT NOT NULL,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (team_id)
 );
@@ -599,24 +587,6 @@ CREATE INDEX idx_tool_calls_comment ON tool_calls(comment_id);
 CREATE INDEX idx_tool_calls_member ON tool_calls(member_id);
 
 -------------------------------------------------------------------------------
--- SECRET GRANTS
--------------------------------------------------------------------------------
-
-CREATE TABLE secret_grants (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    secret_id  UUID NOT NULL REFERENCES secrets(id) ON DELETE CASCADE,
-    member_id  UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
-    scope      grant_scope NOT NULL DEFAULT 'single',
-    granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    revoked_at TIMESTAMPTZ,
-
-    UNIQUE (secret_id, member_id)
-);
-
-CREATE INDEX idx_grants_member ON secret_grants(member_id);
-CREATE INDEX idx_grants_secret ON secret_grants(secret_id);
-
--------------------------------------------------------------------------------
 -- APPROVALS
 -------------------------------------------------------------------------------
 
@@ -697,7 +667,7 @@ CREATE INDEX idx_audit_entity ON audit_log(entity_type, entity_id);
 -- DOCUMENTS (unified: project docs, team preferences, agent system prompts, mcp skills)
 -------------------------------------------------------------------------------
 
-CREATE TYPE document_type AS ENUM ('project_doc', 'team_preferences', 'agent_system_prompt', 'mcp_skill');
+CREATE TYPE document_type AS ENUM ('project_doc', 'team_preferences', 'agent_system_prompt');
 
 CREATE TABLE documents (
     id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -725,9 +695,6 @@ CREATE UNIQUE INDEX idx_documents_team_preferences
 CREATE UNIQUE INDEX idx_documents_agent_system_prompt
     ON documents (member_agent_id)
     WHERE type = 'agent_system_prompt';
-CREATE UNIQUE INDEX idx_documents_mcp_skill
-    ON documents (team_id, slug)
-    WHERE type = 'mcp_skill';
 
 CREATE INDEX idx_documents_team ON documents (team_id);
 CREATE INDEX idx_documents_type_team ON documents (type, team_id);
@@ -735,14 +702,11 @@ CREATE INDEX idx_documents_project ON documents (project_id) WHERE project_id IS
 CREATE INDEX idx_documents_member_agent ON documents (member_agent_id) WHERE member_agent_id IS NOT NULL;
 CREATE INDEX idx_documents_embedding ON documents USING hnsw (embedding vector_cosine_ops);
 
--- Deferred FKs on mcp_connections (forward references resolved here).
+-- Deferred FK on mcp_connections (forward reference resolved here). The skill_id
+-- FK is added after the skills table is defined (see below).
 ALTER TABLE mcp_connections
-    ADD CONSTRAINT fk_mcp_connections_skill_doc
-        FOREIGN KEY (skill_doc_id) REFERENCES documents(id) ON DELETE SET NULL,
     ADD CONSTRAINT fk_mcp_connections_created_by_task
         FOREIGN KEY (created_by_task_id) REFERENCES tasks(id) ON DELETE SET NULL;
-CREATE INDEX idx_mcp_connections_skill_doc
-    ON mcp_connections(skill_doc_id) WHERE skill_doc_id IS NOT NULL;
 CREATE INDEX idx_mcp_connections_created_by_task
     ON mcp_connections(created_by_task_id) WHERE created_by_task_id IS NOT NULL;
 
@@ -831,12 +795,15 @@ CREATE INDEX idx_comment_attachments_comment ON comment_attachments(comment_id);
 -- SKILLS
 -------------------------------------------------------------------------------
 
+-- Skills are instance-global: one reusable-skill catalog shared with every
+-- team's agents, whether admin-authored (REST / create_skill) or agent-fetched
+-- (fetch_skill_file). `auto_load` skills are written to ~/.claude/skills at run
+-- start (provider usage docs); the rest are discoverable via the prompt manifest
+-- + list_skills/get_skill.
 CREATE TABLE skills (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    -- team_id NULL = an instance-level skill, shared across every team.
-    team_id               UUID REFERENCES teams(id) ON DELETE CASCADE,
     name                  TEXT NOT NULL,
-    slug                  TEXT NOT NULL,
+    slug                  TEXT NOT NULL UNIQUE,
     description           TEXT NOT NULL DEFAULT '',
     content               TEXT NOT NULL DEFAULT '',
     source_url            TEXT,
@@ -844,17 +811,20 @@ CREATE TABLE skills (
     created_by_member_id  UUID REFERENCES members(id) ON DELETE SET NULL,
     tags                  JSONB NOT NULL DEFAULT '[]'::jsonb,
     is_active             BOOLEAN NOT NULL DEFAULT true,
+    auto_load             BOOLEAN NOT NULL DEFAULT false,
     embedding             vector(384),
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE(team_id, slug)
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Instance-level skills (team_id NULL) are unique by slug across the instance.
-CREATE UNIQUE INDEX idx_skills_instance_slug ON skills (slug) WHERE team_id IS NULL;
-CREATE INDEX idx_skills_team ON skills(team_id);
 CREATE INDEX idx_skills_embedding ON skills USING hnsw (embedding vector_cosine_ops);
+
+-- Deferred FK: a connector may bundle a provider skill file (now a skills row).
+ALTER TABLE mcp_connections
+    ADD CONSTRAINT fk_mcp_connections_skill
+        FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE SET NULL;
+CREATE INDEX idx_mcp_connections_skill
+    ON mcp_connections(skill_id) WHERE skill_id IS NOT NULL;
 
 -------------------------------------------------------------------------------
 -- SKILL REVISIONS

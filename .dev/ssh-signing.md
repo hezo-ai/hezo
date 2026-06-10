@@ -44,7 +44,7 @@ The agent CLI sees a normal Unix socket and is unaware of the relay.
 
 `releaseRunSocket(runId)` closes both listeners, unlinks the Unix socket, and forgets the token.
 
-The protocol implementation handles `MSG_REQUEST_IDENTITIES` (advertises the team's public key) and `MSG_SIGN_REQUEST` (signs the challenge with the matching private key, decrypted lazily from `secrets`). `MSG_FAILURE` is returned for any other message type.
+The protocol implementation handles `MSG_REQUEST_IDENTITIES` (advertises the team's public key) and `MSG_SIGN_REQUEST` (signs the challenge with the matching private key, decrypted lazily from `team_ssh_keys.private_key_encrypted`). `MSG_FAILURE` is returned for any other message type. The signing key stays **per-team** even though OAuth/credentials are instance-global — its encrypted PEM lives on `team_ssh_keys`, not the global `secrets` table; commit *authorship* comes from the instance-global GitHub connection while *signing* uses the team's own key.
 
 ## Agent runner integration
 

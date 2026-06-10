@@ -256,10 +256,9 @@ describe('Deny flow', () => {
 		expect(resolveRes.status).toBe(200);
 		expect((await resolveRes.json()).data.status).toBe('denied');
 
-		const skill = await db.query<{ id: string }>(
-			`SELECT id FROM skills WHERE team_id = $1 AND slug = $2`,
-			[teamId, 'deny-test'],
-		);
+		const skill = await db.query<{ id: string }>(`SELECT id FROM skills WHERE slug = $1`, [
+			'deny-test',
+		]);
 		expect(skill.rows.length).toBe(0);
 	});
 });

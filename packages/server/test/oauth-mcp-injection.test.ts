@@ -47,7 +47,6 @@ describe('mcp connection descriptor with oauth_connection_id', () => {
 		const conn = await createConnection(
 			{ db, masterKeyManager },
 			{
-				teamId,
 				provider: 'datocms',
 				providerAccountId: 'workspace-1',
 				providerAccountLabel: 'Acme Workspace',
@@ -58,10 +57,9 @@ describe('mcp connection descriptor with oauth_connection_id', () => {
 		);
 
 		await db.query(
-			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, oauth_connection_id, install_status)
-			 VALUES ($1, NULL, 'datocms', 'saas', $2::jsonb, $3, 'installed')`,
+			`INSERT INTO mcp_connections (name, kind, config, oauth_connection_id, install_status)
+			 VALUES ('datocms', 'saas', $1::jsonb, $2, 'installed')`,
 			[
-				teamId,
 				JSON.stringify({
 					url: 'https://site-api.datocms.com/mcp',
 					headers: { 'X-Custom': 'keep-me' },
@@ -70,7 +68,7 @@ describe('mcp connection descriptor with oauth_connection_id', () => {
 			],
 		);
 
-		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId, masterKeyManager);
+		const descriptors = await loadMcpConnectionDescriptors(db, masterKeyManager);
 		const dato = descriptors.find((d) => d.name === 'datocms');
 		expect(dato).toBeTruthy();
 		if (dato?.kind !== 'http') throw new Error('expected http descriptor');
@@ -83,7 +81,6 @@ describe('mcp connection descriptor with oauth_connection_id', () => {
 		const conn = await createConnection(
 			{ db, masterKeyManager },
 			{
-				teamId,
 				provider: 'linear',
 				providerAccountId: 'team-1',
 				providerAccountLabel: 'Linear Team',
@@ -94,10 +91,9 @@ describe('mcp connection descriptor with oauth_connection_id', () => {
 		);
 
 		await db.query(
-			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, oauth_connection_id, install_status)
-			 VALUES ($1, NULL, 'linear', 'saas', $2::jsonb, $3, 'installed')`,
+			`INSERT INTO mcp_connections (name, kind, config, oauth_connection_id, install_status)
+			 VALUES ('linear', 'saas', $1::jsonb, $2, 'installed')`,
 			[
-				teamId,
 				JSON.stringify({
 					url: 'https://api.linear.app/mcp',
 					headers: { authorization: 'Bearer should-be-overridden' },
@@ -106,7 +102,7 @@ describe('mcp connection descriptor with oauth_connection_id', () => {
 			],
 		);
 
-		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId, masterKeyManager);
+		const descriptors = await loadMcpConnectionDescriptors(db, masterKeyManager);
 		const linear = descriptors.find((d) => d.name === 'linear');
 		if (linear?.kind !== 'http') throw new Error('expected http descriptor');
 		expect(linear.headers?.authorization).toBeUndefined();
@@ -119,17 +115,16 @@ describe('mcp connection descriptor with oauth_connection_id', () => {
 		// still flow through untouched — those secrets are independent of the
 		// connector OAuth lifecycle and rely on the egress proxy substitution.
 		await db.query(
-			`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
-			 VALUES ($1, NULL, 'plain', 'saas', $2::jsonb, 'installed')`,
+			`INSERT INTO mcp_connections (name, kind, config, install_status)
+			 VALUES ('plain', 'saas', $1::jsonb, 'installed')`,
 			[
-				teamId,
 				JSON.stringify({
 					url: 'https://example.com/mcp',
 					headers: { authorization: 'Bearer __HEZO_SECRET_RAW_KEY__' },
 				}),
 			],
 		);
-		const descriptors = await loadMcpConnectionDescriptors(db, teamId, projectId, masterKeyManager);
+		const descriptors = await loadMcpConnectionDescriptors(db, masterKeyManager);
 		const plain = descriptors.find((d) => d.name === 'plain');
 		if (plain?.kind !== 'http') throw new Error('expected http descriptor');
 		expect(plain.headers?.authorization).toBe('Bearer __HEZO_SECRET_RAW_KEY__');

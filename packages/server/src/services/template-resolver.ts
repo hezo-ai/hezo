@@ -70,7 +70,7 @@ const SHARED_INSTRUCTIONS = `
 
 ### Third-Party Credentials Always Land in the Hezo Vault
 - Whenever you need to authenticate with a third-party service — MCP server, REST API, CLI tool, anything — the credential must be stored in the Hezo vault. Never leave a token, API key, OAuth bearer, or password in code, ticket descriptions, comments, project docs, or environment files you write.
-- For services with an MCP server: call \`register_connector\` with the MCP URL and (if applicable) a \`skill_doc_id\` from \`fetch_skill_file\`. This posts a connect_required comment with a Connect button for the human; once they authorize, the MCP becomes available across every team agent run with the token substituted at egress.
+- For services with an MCP server: call \`register_connector\` with the MCP URL and (if applicable) a \`skill_id\` from \`fetch_skill_file\`. This posts a connect_required comment with a Connect button for the human; once they authorize, the MCP becomes available across every team agent run with the token substituted at egress.
 - For bare API credentials (no MCP): call \`request_credential\` to ask the human for a paste, then reference the credential by its \`__HEZO_SECRET_<NAME>__\` placeholder in env vars or HTTP headers. The egress proxy substitutes the real value at request time; you never see it.
 - If a CLI you ran has captured a token to disk in the container (e.g. a vendor login wrote \`~/.<vendor>/config.json\`), read that file, post the contents back to Hezo via \`request_credential\` so the value lands in the vault, then delete the local copy. The container is ephemeral; the vault is the long-term store.
 - Whatever you do, do NOT commit credentials, paste them into a comment, log them, or write them into a file we'll persist. If you suspect a credential has leaked, mark it for rotation and surface the incident in a wrap-up comment.
@@ -152,8 +152,7 @@ export async function resolveSystemPrompt(
 	// The agent calls get_skill(slug) to load a skill's content on demand.
 	if (resolved.includes('{{skills_context}}')) {
 		const dbSkills = await db.query<{ name: string; slug: string; description: string }>(
-			'SELECT name, slug, description FROM skills WHERE (team_id = $1 OR team_id IS NULL) AND is_active = true ORDER BY name',
-			[ctx.teamId],
+			'SELECT name, slug, description FROM skills WHERE is_active = true ORDER BY name',
 		);
 		let skillsText = 'No skills in the team skills database yet.';
 		if (dbSkills.rows.length > 0) {

@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { CommentContentType, DocumentType, McpConnectionKind, WakeupSource } from '@hezo/shared';
+import { CommentContentType, McpConnectionKind, WakeupSource } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -78,10 +78,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
 	await db.query('DELETE FROM agent_wakeup_requests');
-	await db.query('DELETE FROM mcp_connections WHERE team_id = $1', [teamId]);
-	await db.query(`DELETE FROM documents WHERE team_id = $1 AND type = 'mcp_skill'::document_type`, [
-		teamId,
-	]);
+	await db.query('DELETE FROM mcp_connections');
+	await db.query('DELETE FROM skills');
 });
 
 describe('PRM + AS discovery', () => {
@@ -141,7 +139,6 @@ describe('DCR (RFC 7591)', () => {
 describe('Connector lifecycle helpers', () => {
 	it('creates pending, transitions to active, then revoked', async () => {
 		const { row: created, alreadyExisted } = await createOrFetchConnector(db, {
-			teamId,
 			name: 'datocms',
 			displayName: 'DatoCMS',
 			mcpUrl: `${fake.url}/mcp`,
@@ -152,15 +149,14 @@ describe('Connector lifecycle helpers', () => {
 
 		// Create a fake oauth_connection row to point to.
 		const secretRes = await db.query<{ id: string }>(
-			`INSERT INTO secrets (team_id, name, encrypted_value)
-			 VALUES ($1, 'TEST_TOKEN_FAKE', 'enc') RETURNING id`,
-			[teamId],
+			`INSERT INTO secrets (name, encrypted_value)
+			 VALUES ('TEST_TOKEN_FAKE', 'enc') RETURNING id`,
 		);
 		const ocRes = await db.query<{ id: string }>(
 			`INSERT INTO oauth_connections
-			 (team_id, provider, provider_account_id, provider_account_label, access_token_secret_id)
-			 VALUES ($1, 'mcp:test', 'acct1', 'Test', $2) RETURNING id`,
-			[teamId, secretRes.rows[0].id],
+			 (provider, provider_account_id, provider_account_label, access_token_secret_id)
+			 VALUES ('mcp:test', 'acct1', 'Test', $1) RETURNING id`,
+			[secretRes.rows[0].id],
 		);
 
 		const activated = await markActive(db, created.id, ocRes.rows[0].id);
@@ -171,16 +167,14 @@ describe('Connector lifecycle helpers', () => {
 		expect(statusOf(revoked!)).toBe('revoked');
 	});
 
-	it('createOrFetchConnector is idempotent on (team, name)', async () => {
+	it('createOrFetchConnector is idempotent on name', async () => {
 		const first = await createOrFetchConnector(db, {
-			teamId,
 			name: 'linear',
 			displayName: 'Linear',
 			mcpUrl: `${fake.url}/mcp`,
 			mcpTransport: 'http',
 		});
 		const second = await createOrFetchConnector(db, {
-			teamId,
 			name: 'linear',
 			displayName: 'Linear',
 			mcpUrl: `${fake.url}/mcp`,
@@ -192,7 +186,6 @@ describe('Connector lifecycle helpers', () => {
 
 	it('markFailed records the reason without flipping to active', async () => {
 		const { row } = await createOrFetchConnector(db, {
-			teamId,
 			name: 'sentry',
 			displayName: 'Sentry',
 			mcpUrl: `${fake.url}/mcp`,
@@ -221,7 +214,6 @@ describe('OAuth callback route (end-to-end against fake AS)', () => {
 		captainAgentToken = minted.token;
 
 		const { row } = await createOrFetchConnector(db, {
-			teamId,
 			name: 'datocms',
 			displayName: 'DatoCMS',
 			mcpUrl: `${fake.url}/mcp`,
@@ -307,7 +299,6 @@ describe('OAuth callback route (end-to-end against fake AS)', () => {
 		const broken = await startFakeMcpServer({ rejectExchange: true });
 		try {
 			const { row: brokenConn } = await createOrFetchConnector(db, {
-				teamId,
 				name: 'broken',
 				displayName: 'Broken',
 				mcpUrl: `${broken.url}/mcp`,
@@ -464,7 +455,7 @@ describe('register_connector MCP tool', () => {
 });
 
 describe('fetch_skill_file MCP tool', () => {
-	it('fetches a URL and stores it as an mcp_skill document', async () => {
+	it('fetches a URL and stores it as a global auto_load skill', async () => {
 		// Stand up a tiny HTTP server to serve the skill content.
 		const { createServer } = await import('node:http');
 		const skillBody = '# DatoCMS Skill\n\nUse the DatoCMS MCP via `register_connector`.';
@@ -509,18 +500,19 @@ describe('fetch_skill_file MCP tool', () => {
 			expect(res.status).toBe(200);
 			const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
 			const payload = JSON.parse(body.result.content[0].text) as {
-				doc_id: string;
+				skill_id: string;
 				slug: string;
 				size_bytes: number;
 			};
 			expect(payload.size_bytes).toBe(skillBody.length);
 
-			const doc = await db.query<{ content: string; type: string }>(
-				`SELECT content, type::text AS type FROM documents WHERE id = $1`,
-				[payload.doc_id],
+			const skill = await db.query<{ content: string; auto_load: boolean; source_url: string }>(
+				`SELECT content, auto_load, source_url FROM skills WHERE id = $1`,
+				[payload.skill_id],
 			);
-			expect(doc.rows[0].type).toBe(DocumentType.McpSkill);
-			expect(doc.rows[0].content).toBe(skillBody);
+			expect(skill.rows[0].auto_load).toBe(true);
+			expect(skill.rows[0].content).toBe(skillBody);
+			expect(skill.rows[0].source_url).toBe(skillUrl);
 		} finally {
 			await new Promise<void>((resolve) => server.close(() => resolve()));
 		}
@@ -573,7 +565,6 @@ describe('loadMcpConnectionsForRun excludes pending/revoked', () => {
 			[teamId, projectId, captainId],
 		);
 		await createOrFetchConnector(db, {
-			teamId,
 			name: 'pending',
 			displayName: 'Pending',
 			mcpUrl: `${fake.url}/mcp`,
@@ -583,12 +574,12 @@ describe('loadMcpConnectionsForRun excludes pending/revoked', () => {
 		// A row similar to operator-created MCP (no created_by_task_id, no oauth) —
 		// included in the result so existing behavior for public MCPs is preserved.
 		await db.query(
-			`INSERT INTO mcp_connections (team_id, name, kind, config, install_status)
-			 VALUES ($1, 'operator', $2::mcp_connection_kind, '{"url": "https://public.example/mcp"}'::jsonb, 'installed')`,
-			[teamId, McpConnectionKind.Saas],
+			`INSERT INTO mcp_connections (name, kind, config, install_status)
+			 VALUES ('operator', $1::mcp_connection_kind, '{"url": "https://public.example/mcp"}'::jsonb, 'installed')`,
+			[McpConnectionKind.Saas],
 		);
 		const { loadMcpConnectionsForRun } = await import('../src/services/mcp-connections');
-		const rows = await loadMcpConnectionsForRun(db, teamId, projectId);
+		const rows = await loadMcpConnectionsForRun(db);
 		expect(rows.find((r) => r.name === 'operator')).toBeTruthy();
 		expect(rows.find((r) => r.name === 'pending')).toBeUndefined();
 	});

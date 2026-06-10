@@ -126,8 +126,7 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr
 			ORDER BY s.updated_at ASC
 		)
 		FROM skills s
-		WHERE s.team_id = hr.team_id
-		  AND s.created_by_member_id = hr.member_id
+		WHERE s.created_by_member_id = hr.member_id
 		  AND hr.started_at IS NOT NULL
 		  AND s.updated_at >= hr.started_at
 		  AND (hr.finished_at IS NULL OR s.updated_at <= hr.finished_at)),

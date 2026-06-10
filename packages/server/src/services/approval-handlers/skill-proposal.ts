@@ -6,7 +6,6 @@ export const skillProposalHandler: ApprovalHandler = {
 	async applyApproved(ctx: ApprovalSideEffectCtx): Promise<SideEffectBroadcast[]> {
 		const { db, approval, payload } = ctx;
 
-		const teamId = approval.team_id as string;
 		const slug = payload.skill_slug as string;
 		const name = payload.skill_name as string;
 		const content = payload.content as string;
@@ -14,16 +13,16 @@ export const skillProposalHandler: ApprovalHandler = {
 		const requestedBy =
 			(payload.requested_by as string) ?? (approval.requested_by_member_id as string) ?? null;
 
-		// Write to DB (source of truth)
+		// Skills are global. Write to DB (source of truth).
 		const skillResult = await db.query<{ id: string }>(
-			`INSERT INTO skills (team_id, name, slug, description, content, content_hash, created_by_member_id)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)
-			 ON CONFLICT (team_id, slug) DO UPDATE SET
+			`INSERT INTO skills (name, slug, description, content, content_hash, created_by_member_id)
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT (slug) DO UPDATE SET
 			   content = EXCLUDED.content,
 			   content_hash = EXCLUDED.content_hash,
 			   updated_at = now()
 			 RETURNING id`,
-			[teamId, name, slug, (payload.reason as string) ?? '', content, contentHash, requestedBy],
+			[name, slug, (payload.reason as string) ?? '', content, contentHash, requestedBy],
 		);
 
 		if (skillResult.rows[0]) {

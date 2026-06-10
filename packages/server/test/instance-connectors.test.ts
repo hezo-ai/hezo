@@ -44,8 +44,8 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('instance-level connectors', () => {
-	it('an instance saas connector (team_id NULL) is shared with every team', async () => {
+describe('global connectors', () => {
+	it('a global saas connector is created, listed, and returned by the run loader', async () => {
 		const createRes = await app.request('/api/mcp-connections', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -58,62 +58,29 @@ describe('instance-level connectors', () => {
 		});
 		expect(createRes.status).toBe(201);
 		const conn = (await createRes.json()).data;
-		expect(conn.team_id).toBeNull();
 		expect(conn.install_status).toBe('installed');
 		expect(conn.kind).toBe('saas');
 
-		// Listed under the instance connectors.
+		// Listed under the global connectors.
 		const instRes = await app.request('/api/mcp-connections', { headers: authHeader(token) });
 		expect(
 			(await instRes.json()).data.some((r: { name: string }) => r.name === 'shared-docs'),
 		).toBe(true);
 
-		// A team's own connectors list includes the instance connector.
+		// The in-project connectors list (any project) shows the global catalog.
 		const teamId = await makeTeam('Connectors Team');
 		const projectSlug = 'connectors-project';
-		const projectId = await makeProject(teamId, projectSlug);
+		await makeProject(teamId, projectSlug);
 
 		const teamListRes = await app.request(`/api/projects/${projectSlug}/mcp-connections`, {
 			headers: authHeader(token),
 		});
-		const teamRows = (await teamListRes.json()).data as { name: string; team_id: string | null }[];
-		expect(teamRows.some((r) => r.name === 'shared-docs' && r.team_id === null)).toBe(true);
+		const teamRows = (await teamListRes.json()).data as { name: string }[];
+		expect(teamRows.some((r) => r.name === 'shared-docs')).toBe(true);
 
-		// And the run-loader returns it for that team/project.
-		const forRun = await loadMcpConnectionsForRun(db, teamId, projectId);
+		// And the run-loader returns it (no team/project scope).
+		const forRun = await loadMcpConnectionsForRun(db);
 		expect(forRun.some((r) => r.name === 'shared-docs')).toBe(true);
-	});
-
-	it('a team-specific connector wins the name dedup over an instance one', async () => {
-		await app.request('/api/mcp-connections', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'dup',
-				kind: 'saas',
-				config: { url: 'https://instance.example.com/mcp' },
-			}),
-		});
-
-		const teamId = await makeTeam('Dedup Team');
-		const projectSlug = 'dedup-project';
-		const projectId = await makeProject(teamId, projectSlug);
-
-		// Team-specific connector with the same name, different url.
-		await app.request(`/api/projects/${projectSlug}/mcp-connections`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'dup',
-				kind: 'saas',
-				config: { url: 'https://team.example.com/mcp' },
-			}),
-		});
-
-		const forRun = await loadMcpConnectionsForRun(db, teamId, projectId);
-		const dup = forRun.filter((r) => r.name === 'dup');
-		expect(dup.length).toBe(1);
-		expect((dup[0].config as { url: string }).url).toBe('https://team.example.com/mcp');
 	});
 
 	it('rejects a local connector at the instance level', async () => {

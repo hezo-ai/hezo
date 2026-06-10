@@ -97,10 +97,10 @@ test('links a task row to the task route with a lowercased identifier', () => {
 	});
 });
 
-test('anchors a team-scoped secret on the team internal project, instance on the instance page', () => {
-	// A team secret carries no project of its own; it anchors on the team's
-	// internal project so the team-settings page resolves.
-	const teamScoped = auditEntryLink(
+test('a secret row always links to the global Admin credentials page', () => {
+	// Credentials are instance-global, so every secret audit row anchors on the
+	// Admin page regardless of which team/project the run belonged to.
+	const teamContext = auditEntryLink(
 		entry({
 			entity_type: 'secret',
 			entity_identifier: null,
@@ -109,22 +109,14 @@ test('anchors a team-scoped secret on the team internal project, instance on the
 			team_internal_slug: 'internal-acme',
 		}),
 	);
-	expect(teamScoped).toEqual({
-		to: '/projects/$projectId/team-settings/credentials',
-		params: { projectId: 'internal-acme' },
-	});
+	expect(teamContext).toEqual({ to: '/settings/credentials' });
 
-	// A project-scoped secret prefers its own project as the anchor.
-	const projectScoped = auditEntryLink(
+	const projectContext = auditEntryLink(
 		entry({ entity_type: 'secret', entity_identifier: null, project_slug: 'ops' }),
 	);
-	expect(projectScoped).toEqual({
-		to: '/projects/$projectId/team-settings/credentials',
-		params: { projectId: 'ops' },
-	});
+	expect(projectContext).toEqual({ to: '/settings/credentials' });
 
-	// An instance secret has neither project nor team anchor.
-	const instanceScoped = auditEntryLink(
+	const noContext = auditEntryLink(
 		entry({
 			entity_type: 'secret',
 			entity_identifier: null,
@@ -135,7 +127,7 @@ test('anchors a team-scoped secret on the team internal project, instance on the
 			team_internal_slug: null,
 		}),
 	);
-	expect(instanceScoped).toEqual({ to: '/settings/credentials' });
+	expect(noContext).toEqual({ to: '/settings/credentials' });
 });
 
 test('does not link a row that lacks the slugs it needs', () => {
