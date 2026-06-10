@@ -62,6 +62,13 @@ interface Options {
 const PASSIVE_AGENT_RE_SRC = String.raw`(?<![\w@])@@([a-z][\w-]*)(?![\w/])`;
 const AGENT_RE_SRC = String.raw`(?<![\w@])@([a-z][\w-]*)(?![\w/])`;
 const TASK_RE_SRC = String.raw`(?<![\w-])([A-Z][A-Z0-9]{1,3}-\d+)(?![\w-])`;
+// Comment links embed a task identifier plus the comment's UUID
+// (`IN-42#comment-<uuid>`), reusing the `#comment-<uuid>` URL hash. The UUID is
+// shape-matched so `IN-42#comment-foo` prose stays plain text. This MUST come
+// before TASK_RE_SRC in the alternation: regex alternation prefers the leftmost
+// matching branch at a position, so otherwise TASK_RE_SRC consumes the bare
+// `IN-42` prefix and the `#comment-...` suffix is left dangling.
+const COMMENT_LINK_RE_SRC = String.raw`(?<![\w-])([A-Z][A-Z0-9]{1,3}-\d+)#comment-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?![\w-])`;
 const FILENAME_RE_SRC = String.raw`(?<![\w/.-])([a-z0-9][\w-]*\.[a-z0-9]+)(?![\w/.-])`;
 // Asset references are path-prefixed (`assets/<name>.<ext>`) and may contain
 // uppercase (e.g. a task identifier embedded in the name). The leading `assets/`
@@ -69,7 +76,7 @@ const FILENAME_RE_SRC = String.raw`(?<![\w/.-])([a-z0-9][\w-]*\.[a-z0-9]+)(?![\w
 const ASSET_RE_SRC = String.raw`(?<![\w/.-])assets/([A-Za-z0-9][\w.-]*\.[A-Za-z0-9]+)(?![\w/.-])`;
 
 const MENTION_RE = new RegExp(
-	`${PASSIVE_AGENT_RE_SRC}|${AGENT_RE_SRC}|${TASK_RE_SRC}|${FILENAME_RE_SRC}|${ASSET_RE_SRC}`,
+	`${PASSIVE_AGENT_RE_SRC}|${AGENT_RE_SRC}|${COMMENT_LINK_RE_SRC}|${TASK_RE_SRC}|${FILENAME_RE_SRC}|${ASSET_RE_SRC}`,
 	'g',
 );
 
@@ -135,9 +142,11 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 	const display = match[0];
 	const passiveAgentToken = match[1];
 	const agentToken = match[2];
-	const taskToken = match[3];
-	const filenameToken = match[4];
-	const assetToken = match[5];
+	const commentLinkTaskToken = match[3];
+	const commentLinkUuid = match[4];
+	const taskToken = match[5];
+	const filenameToken = match[6];
+	const assetToken = match[7];
 
 	if (assetToken) {
 		if (!projectSlug) return null;
@@ -214,6 +223,25 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 				hProperties: {
 					'data-mention-agent-slug': slug,
 					'data-mention-agent-title': data.title,
+				},
+			},
+		};
+	}
+
+	if (commentLinkTaskToken && commentLinkUuid) {
+		const key = commentLinkTaskToken.toLowerCase();
+		const data = tasks.get(key);
+		if (!data) return null;
+		return {
+			type: 'link',
+			url: `/projects/${data.projectSlug}/tasks/${key}#comment-${commentLinkUuid}`,
+			children: [{ type: 'text', value: display }],
+			data: {
+				hProperties: {
+					'data-mention-comment-task-identifier': key,
+					'data-mention-comment-id': commentLinkUuid,
+					'data-mention-comment-project-slug': data.projectSlug,
+					'data-mention-comment-task-title': data.title,
 				},
 			},
 		};
