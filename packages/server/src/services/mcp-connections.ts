@@ -34,8 +34,6 @@ export type McpConnectionConfig = SaasMcpConfig | LocalMcpConfig;
 
 export interface McpConnectionRow {
 	id: string;
-	team_id: string;
-	project_id: string | null;
 	name: string;
 	kind: McpConnectionKind;
 	config: McpConnectionConfig;
@@ -47,31 +45,23 @@ export interface McpConnectionRow {
 }
 
 /**
- * Load MCP connections that should be exposed to the given agent run scope:
- * connections scoped to the project AND team-wide (project_id IS NULL)
- * connections, deduped by name with project-scoped winning.
+ * Load MCP connections exposed to an agent run. Connectors are instance-global,
+ * so every run sees the same set (no team/project scope).
  */
-export async function loadMcpConnectionsForRun(
-	db: PGlite,
-	teamId: string,
-	projectId: string,
-): Promise<McpConnectionRow[]> {
+export async function loadMcpConnectionsForRun(db: PGlite): Promise<McpConnectionRow[]> {
 	// Filters: skip revoked (user disconnected); skip our connector-flow rows
 	// that haven't completed OAuth yet (saas + created_by_task_id IS NOT NULL
 	// + oauth_connection_id IS NULL). Operator-created saas rows without
 	// created_by_task_id continue to be included regardless of OAuth state
 	// (existing behavior for public MCPs).
 	const result = await db.query<McpConnectionRow>(
-		`SELECT id, team_id, project_id, name, kind::text AS kind,
+		`SELECT id, name, kind::text AS kind,
 		        config, oauth_connection_id, install_status::text AS install_status, install_error,
 		        created_at::text, updated_at::text
 		 FROM mcp_connections
-		 WHERE (team_id = $1 OR team_id IS NULL)
-		   AND (project_id IS NULL OR project_id = $2)
-		   AND revoked_at IS NULL
+		 WHERE revoked_at IS NULL
 		   AND NOT (kind = 'saas' AND created_by_task_id IS NOT NULL AND oauth_connection_id IS NULL)
-		 ORDER BY project_id NULLS FIRST, team_id NULLS FIRST`,
-		[teamId, projectId],
+		 ORDER BY name ASC`,
 	);
 
 	const out = new Map<string, McpConnectionRow>();
@@ -91,9 +81,8 @@ export async function loadMcpConnectionsForRun(
  * container is ephemeral, the vault remains the long-term store, and each
  * run materializes a fresh value (so revocation still cascades on next run).
  */
-async function loadOAuthSecretsForTeam(
+async function loadAllOAuthSecrets(
 	db: PGlite,
-	teamId: string,
 	masterKeyManager: MasterKeyManager,
 ): Promise<Map<string, { secretName: string; accessToken: string | null }>> {
 	const out = new Map<string, { secretName: string; accessToken: string | null }>();
@@ -105,9 +94,7 @@ async function loadOAuthSecretsForTeam(
 	}>(
 		`SELECT oc.id AS connection_id, s.name AS secret_name, s.encrypted_value
 		 FROM oauth_connections oc
-		 JOIN secrets s ON s.id = oc.access_token_secret_id
-		 WHERE oc.team_id = $1`,
-		[teamId],
+		 JOIN secrets s ON s.id = oc.access_token_secret_id`,
 	);
 	if (!key) {
 		// Master key locked: log per-row and emit no token. Caller falls through
@@ -142,12 +129,10 @@ async function loadOAuthSecretsForTeam(
  */
 export async function loadMcpConnectionDescriptors(
 	db: PGlite,
-	teamId: string,
-	projectId: string,
 	masterKeyManager: MasterKeyManager,
 ): Promise<McpDescriptor[]> {
-	const rows = await loadMcpConnectionsForRun(db, teamId, projectId);
-	const oauthSecrets = await loadOAuthSecretsForTeam(db, teamId, masterKeyManager);
+	const rows = await loadMcpConnectionsForRun(db);
+	const oauthSecrets = await loadAllOAuthSecrets(db, masterKeyManager);
 	const descriptors: McpDescriptor[] = [];
 	for (const row of rows) {
 		if (row.kind === McpConnectionKind.Saas) {

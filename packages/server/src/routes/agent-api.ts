@@ -357,12 +357,14 @@ agentApiRoutes.get('/secrets/mine', async (c) => {
 		return err(c, 'UNAUTHORIZED', 'Agent token required', 401);
 	}
 
+	// Secrets are instance-global; surface the user-facing credential names an
+	// agent may emit as placeholders. OAuth tokens (OAUTH_*) and the internal
+	// ssh signing key are injected by the runtime, not hinted here.
 	const result = await db.query(
-		`SELECT s.name, s.category
-		 FROM secret_grants sg
-		 JOIN secrets s ON s.id = sg.secret_id
-		 WHERE sg.member_id = $1 AND sg.revoked_at IS NULL`,
-		[auth.memberId],
+		`SELECT name, category
+		 FROM secrets
+		 WHERE name NOT LIKE 'OAUTH\\_%' AND name <> 'ssh_private_key'
+		 ORDER BY name ASC`,
 	);
 
 	return ok(c, result.rows);

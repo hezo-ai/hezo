@@ -1,15 +1,16 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { decrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
-import { refreshExpiringTokensForTeam } from '../oauth/token-resolver';
+import { refreshExpiringTokens } from '../oauth/token-resolver';
 
 /**
  * Token agents emit in headers and URLs in place of real secret values.
  * The egress proxy intercepts every outbound request and substitutes
- * these tokens with the matching `secrets.name` from the caller's
- * team before the request leaves the host. Bodies are forwarded
- * unchanged — agents that need a secret in a JSON payload should use
- * the local-MCP-with-proxy pattern instead.
+ * these tokens with the matching `secrets.name` before the request leaves
+ * the host. Secrets are instance-global, so any run can emit any
+ * placeholder (still bounded by each secret's allowed_hosts). Bodies are
+ * forwarded unchanged — agents that need a secret in a JSON payload should
+ * use the local-MCP-with-proxy pattern instead.
  */
 export const PLACEHOLDER_REGEX = /__HEZO_SECRET_([A-Z0-9_]+)__/g;
 export const PLACEHOLDER_PROBE_REGEX = /__HEZO_SECRET_/;
@@ -17,8 +18,6 @@ export const PLACEHOLDER_PROBE_REGEX = /__HEZO_SECRET_/;
 export interface SubstitutionScope {
 	db: PGlite;
 	masterKeyManager: MasterKeyManager;
-	teamId: string;
-	projectId?: string | null;
 }
 
 export interface ResolvedSecret {
@@ -49,7 +48,7 @@ interface RequestInputs {
 	host: string;
 }
 
-export async function loadSecretsForScope(
+export async function loadAllSecrets(
 	scope: SubstitutionScope,
 ): Promise<Map<string, ResolvedSecret>> {
 	const key = scope.masterKeyManager.getKey();
@@ -59,41 +58,22 @@ export async function loadSecretsForScope(
 		throw err;
 	}
 
-	await refreshExpiringTokensForTeam(
-		{ db: scope.db, masterKeyManager: scope.masterKeyManager },
-		scope.teamId,
-	);
+	await refreshExpiringTokens({ db: scope.db, masterKeyManager: scope.masterKeyManager });
 
-	// `team_id IS NULL` rows are instance-level credentials, shared with every
-	// team's egress (still bounded by allowed_hosts).
-	const params: unknown[] = [scope.teamId];
-	let where = '(team_id = $1 OR team_id IS NULL)';
-	if (scope.projectId) {
-		where += ' AND (project_id IS NULL OR project_id = $2)';
-		params.push(scope.projectId);
-	} else {
-		where += ' AND project_id IS NULL';
-	}
-
+	// All secrets are instance-global; any run may emit any placeholder, still
+	// bounded per-secret by allowed_hosts. `name` is unique, so no dedup needed.
 	const result = await scope.db.query<{
 		name: string;
 		encrypted_value: string;
 		allowed_hosts: string[];
 		allow_all_hosts: boolean;
-		project_id: string | null;
 	}>(
-		`SELECT name, encrypted_value, allowed_hosts, allow_all_hosts, project_id
-		 FROM secrets
-		 WHERE ${where}
-		 ORDER BY project_id NULLS FIRST, team_id NULLS FIRST`,
-		params,
+		`SELECT name, encrypted_value, allowed_hosts, allow_all_hosts
+		 FROM secrets`,
 	);
 
 	const out = new Map<string, ResolvedSecret>();
 	for (const row of result.rows) {
-		// Ordering puts instance rows (team NULL) before team-scoped rows, and
-		// team-wide rows (project NULL) before project-scoped rows, so on
-		// identical names the most specific wins: project > team > instance.
 		out.set(row.name, {
 			name: row.name,
 			value: decrypt(row.encrypted_value, key),

@@ -1,18 +1,29 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
-import type { CredentialUsage } from './use-credentials';
 
-// Instance-level credentials (secrets with team_id NULL) are shared with every
-// team's egress. Only the Admin (superuser) manages them, via the un-prefixed
-// /api/credentials + /api/secrets routes (no /teams/:projectId). Mutations are
-// security-sensitive, so they invalidate + refetch — never optimistic.
+// Credentials are instance-global: one set of secrets shared with every team's
+// egress. Only the Admin (superuser) manages them, via the un-prefixed
+// /api/credentials + /api/secrets routes. Mutations are security-sensitive, so
+// they invalidate + refetch — never optimistic.
 export const INSTANCE_CREDENTIALS_KEY = ['instance', 'credentials'] as const;
+
+// A secret row joined with its most-recent egress-proxy usage from the audit log.
+export interface CredentialUsage {
+	id: string;
+	name: string;
+	category: string;
+	allowed_hosts: string[];
+	allow_all_hosts: boolean;
+	created_at: string;
+	updated_at: string;
+	last_used_at: string | null;
+	use_count: number;
+	last_host: string | null;
+}
 
 export interface InstanceSecret {
 	id: string;
-	team_id: string | null;
-	project_id: string | null;
 	name: string;
 	category: string;
 	allowed_hosts: string[];

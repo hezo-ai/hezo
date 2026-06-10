@@ -8,9 +8,23 @@ import {
 	UserRoundCog,
 } from 'lucide-react';
 import type { ComponentType, SVGProps } from 'react';
+import type { TextContent } from '../comment-content';
 import type { CommentData } from './comment-data';
 
 export type LucideIcon = ComponentType<SVGProps<SVGSVGElement>>;
+
+/**
+ * Normalize a text comment's `content` to its body string. The composer sends a
+ * plain string; the seed and some API paths wrap it as `{ text }`. Falls back to
+ * the JSON form for an unexpected object shape (matches the renderer's behaviour).
+ */
+export function commentText(content: TextContent): string {
+	if (typeof content === 'string') return content;
+	if (content && typeof content === 'object') {
+		return typeof content.text === 'string' ? content.text : JSON.stringify(content);
+	}
+	return '';
+}
 
 export const REACTION_GLYPH: Record<string, string> = { ack: '✓' };
 export const REACTION_LABEL: Record<string, string> = { ack: 'Acknowledged' };

@@ -7,7 +7,7 @@ import {
 	deleteConnection,
 	findConnectionByAccount,
 	getConnection,
-	listConnectionsForTeam,
+	listConnections,
 	oauthSecretName,
 	updateTokens,
 } from '../src/services/oauth/connection-store';
@@ -40,7 +40,6 @@ describe('oauth connection store', () => {
 		const result = await createConnection(
 			{ db, masterKeyManager },
 			{
-				teamId,
 				provider: 'github',
 				providerAccountId: '12345',
 				providerAccountLabel: 'octocat',
@@ -74,7 +73,6 @@ describe('oauth connection store', () => {
 		const result = await createConnection(
 			{ db, masterKeyManager },
 			{
-				teamId,
 				provider: 'github',
 				providerAccountId: '12345',
 				providerAccountLabel: 'octocat-renamed',
@@ -92,27 +90,17 @@ describe('oauth connection store', () => {
 		expect(conn?.providerAccountLabel).toBe('octocat-renamed');
 	});
 
-	it('lists connections for a team', async () => {
-		const list = await listConnectionsForTeam({ db, masterKeyManager }, teamId);
+	it('lists connections (instance-global)', async () => {
+		const list = await listConnections({ db, masterKeyManager });
 		expect(list.length).toBe(1);
 		expect(list[0].provider).toBe('github');
 	});
 
 	it('finds a connection by provider account', async () => {
-		const found = await findConnectionByAccount(
-			{ db, masterKeyManager },
-			teamId,
-			'github',
-			'12345',
-		);
+		const found = await findConnectionByAccount({ db, masterKeyManager }, 'github', '12345');
 		expect(found?.id).toBe(connectionId);
 
-		const missing = await findConnectionByAccount(
-			{ db, masterKeyManager },
-			teamId,
-			'github',
-			'nope',
-		);
+		const missing = await findConnectionByAccount({ db, masterKeyManager }, 'github', 'nope');
 		expect(missing).toBeNull();
 	});
 
@@ -163,9 +151,9 @@ describe('oauth connection store', () => {
 		const repoId = repo.rows[0].id;
 
 		await db.query(
-			`INSERT INTO mcp_connections (team_id, name, kind, config, oauth_connection_id)
-			 VALUES ($1, 'datocms', 'saas', '{}'::jsonb, $2)`,
-			[teamId, connectionId],
+			`INSERT INTO mcp_connections (name, kind, config, oauth_connection_id)
+			 VALUES ('datocms', 'saas', '{}'::jsonb, $1)`,
+			[connectionId],
 		);
 
 		const conn = await getConnection({ db, masterKeyManager }, connectionId);

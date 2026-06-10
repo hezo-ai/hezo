@@ -1,3 +1,4 @@
+import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedComment, seedProject, seedTask, seedWorkspace } from './helpers/seed';
@@ -477,6 +478,76 @@ test('reply icon focuses composer, shows in-response-to, and persists parent lin
 	// The follow-up comment's "replying to" badge appears on the follow-up
 	const replyingToBadges = document.querySelectorAll('[data-testid="replying-to"]');
 	expect(replyingToBadges.length).toBeGreaterThan(0);
+});
+
+test('copy button copies the comment body and confirms with a check icon', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+	const { findAllByTestId, findByText, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Copy Project' });
+			const task = await seedTask(ws, project, { title: 'Copy Task' });
+			await seedComment(ws, task, 'Copy me please');
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+	await findByText('Copy me please');
+
+	const writes: string[] = [];
+	const originalDesc = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+	Object.defineProperty(navigator, 'clipboard', {
+		configurable: true,
+		value: {
+			writeText: async (t: string) => {
+				writes.push(t);
+			},
+		},
+	});
+	try {
+		const copyBtn = (await findAllByTestId('comment-copy'))[0];
+		expect(copyBtn.getAttribute('aria-label')).toBe('Copy comment');
+		await user.click(copyBtn);
+		expect(writes).toEqual(['Copy me please']);
+		// The icon swaps to a check — the aria-label flips to "Copied".
+		await waitFor(() => expect(copyBtn.getAttribute('aria-label')).toBe('Copied'));
+	} finally {
+		if (originalDesc) Object.defineProperty(navigator, 'clipboard', originalDesc);
+		else delete (navigator as { clipboard?: unknown }).clipboard;
+	}
+});
+
+test('a comment link to another comment renders as a clickable link to its hash', async () => {
+	const seeded = { projectSlug: '', taskId: '', targetCommentId: '' };
+	const { findByTestId, findByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Comment Link Project' });
+			const task = await seedTask(ws, project, { title: 'Comment Link Task' });
+			const target = await seedComment(ws, task, 'The original target comment');
+			await seedComment(ws, task, `See ${task.identifier}#comment-${target.id} for context.`);
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+			seeded.targetCommentId = target.id;
+		},
+	});
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+	await findByText(/for context/);
+
+	// findByTestId auto-waits for the useTaskMentions resolve to land and re-render.
+	const link = (await findByTestId('comment-mention-link')) as HTMLAnchorElement;
+	expect(link.getAttribute('href')).toBe(
+		`/projects/${seeded.projectSlug}/tasks/${seeded.taskId}#comment-${seeded.targetCommentId}`,
+	);
 });
 
 // Tiny helper for finding the checkbox by its aria-label within the same form

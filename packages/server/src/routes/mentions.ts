@@ -88,8 +88,8 @@ mentionsRoutes.post('/projects/:projectId/docs/resolve', async (c) => {
 		}>(
 			`SELECT slug, name AS title, octet_length(content)::int AS size, updated_at
 			 FROM skills
-			 WHERE team_id = $1 AND LOWER(slug) = ANY($2::text[])`,
-			[teamId, kbSlugs],
+			 WHERE LOWER(slug) = ANY($1::text[])`,
+			[kbSlugs],
 		);
 		kbDocs = result.rows;
 	}
@@ -234,11 +234,10 @@ mentionsRoutes.get('/projects/:projectId/mentions/search', async (c) => {
 		const r = await db.query<{ slug: string; title: string }>(
 			`SELECT slug, name AS title
 			 FROM skills
-			 WHERE team_id = $1
-			   AND ($2 = '' OR slug ILIKE $3 OR name ILIKE $3)
+			 WHERE ($1 = '' OR slug ILIKE $2 OR name ILIKE $2)
 			 ORDER BY name
-			 LIMIT $4`,
-			[teamId, q, pattern, perKind],
+			 LIMIT $3`,
+			[q, pattern, perKind],
 		);
 		for (const row of r.rows) {
 			results.push({

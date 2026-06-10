@@ -13,7 +13,7 @@ export {
 	type RunProxyScope,
 } from './proxy';
 export {
-	loadSecretsForScope,
+	loadAllSecrets,
 	PLACEHOLDER_PROBE_REGEX,
 	PLACEHOLDER_REGEX,
 	type ResolvedSecret,

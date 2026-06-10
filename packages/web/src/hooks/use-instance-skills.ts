@@ -1,10 +1,20 @@
+import type { SkillRecord } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
-import type { CreateSkillInput, Skill, SkillListItem } from './use-skills';
 
-// Instance-level skills (team_id NULL) are shared with every team. Only the
-// Admin (superuser) manages them, via the un-prefixed /api/skills routes.
+export type Skill = SkillRecord;
+export type SkillListItem = Omit<SkillRecord, 'content'>;
+export interface CreateSkillInput {
+	name: string;
+	content: string;
+	description?: string;
+	slug?: string;
+	tags?: string[];
+}
+
+// Skills are instance-global — one catalog shared with every team's agents.
+// Only the Admin (superuser) manages them, via the /api/skills routes.
 export const INSTANCE_SKILLS_KEY = ['instance', 'skills'] as const;
 
 export function useInstanceSkills() {

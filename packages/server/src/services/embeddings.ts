@@ -163,10 +163,10 @@ export async function semanticSearch(
 		}>(
 			`SELECT id, name, LEFT(content, 200) AS content, 1 - (embedding <=> $1::vector) AS score
 			 FROM skills
-			 WHERE team_id = $2 AND embedding IS NOT NULL AND is_active = true
+			 WHERE embedding IS NOT NULL AND is_active = true
 			 ORDER BY embedding <=> $1::vector
-			 LIMIT $3`,
-			[vectorStr, teamId, limit],
+			 LIMIT $2`,
+			[vectorStr, limit],
 		);
 		for (const r of skillResults.rows) {
 			results.push({ type: 'skill', id: r.id, title: r.name, snippet: r.content, score: r.score });

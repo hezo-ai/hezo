@@ -100,8 +100,8 @@ const registeredTools: ToolDef[] = [];
 // patterns.
 const TASK_COLUMNS = TASK_COLUMNS_BARE.replace(/[A-Za-z_][A-Za-z_0-9]*/g, 'i.$&');
 
-const SKILL_COLUMNS = `id, team_id, name, slug, description, content, source_url,
-	content_hash, created_by_member_id, tags, is_active, created_at, updated_at`;
+const SKILL_COLUMNS = `id, name, slug, description, content, source_url,
+	content_hash, created_by_member_id, tags, is_active, auto_load, created_at, updated_at`;
 
 const APPROVAL_COLUMNS = `id, team_id, type, status, requested_by_member_id,
 	resolution_note, resolved_at, created_at, payload`;
@@ -1315,7 +1315,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_comments',
-		"List comments for an task. Returns up to 50 most-recent comments (newest first). Pass before (a comment ID) to walk older. Pass excerpt_chars (e.g. 500) to truncate long text comments; structured comments (system/option/task_link) are always returned whole. Each row includes parent_comment_id (UUID or null) so you can see reply threading — when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment.",
+		"List comments for an task. Returns up to 50 most-recent comments (newest first). Pass before (a comment ID) to walk older. Pass excerpt_chars (e.g. 500) to truncate long text comments; structured comments (system/option/task_link) are always returned whole. Each row includes parent_comment_id (UUID or null) so you can see reply threading — when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row's id is also how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<id> (e.g. IN-42#comment-<id>), which renders as a clickable link straight to that comment.",
 		{
 			team_id: z.string().describe('Team ID'),
 			task_id: z.string().describe('Task ID'),
@@ -1496,7 +1496,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_comment',
-		'Add a comment to an task. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert. When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID — it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.',
+		'Add a comment to an task. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert. To point at a specific earlier comment (in this ticket or another), write a comment link as <TASK-ID>#comment-<uuid> (e.g. IN-42#comment-<uuid>) using a comment id from list_comments — do not paraphrase "the comment above". When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID — it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.',
 		{
 			team_id: z.string().describe('Team ID'),
 			task_id: z.string().describe('Task ID'),
@@ -1619,10 +1619,6 @@ export function registerTools(
 				.describe(
 					'Hostname allowlist for the egress proxy. The credential is only substituted into outbound requests to these hosts. REQUIRED for HTTP-auth kinds (api_key, oauth_token, github_pat) — e.g. ["api.netlify.com"]. Wildcards: *.github.com matches one label segment.',
 				),
-			scope: z
-				.enum(['team', 'project'])
-				.optional()
-				.describe('Storage scope. Default: team. Use project to scope to the current project.'),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
@@ -1655,7 +1651,6 @@ export function registerTools(
 
 			const taskId = args.task_id as string;
 			const teamId = args.team_id as string;
-			const scope = (args.scope as string | undefined) ?? 'team';
 
 			const taskRow = await db.query<{ id: string; project_id: string | null }>(
 				'SELECT id, project_id FROM tasks WHERE id = $1 AND team_id = $2',
@@ -1666,7 +1661,6 @@ export function registerTools(
 				const pDenied = assertProjectAccess(auth, taskRow.rows[0].project_id);
 				if (pDenied) return { error: pDenied };
 			}
-			const projectId = scope === 'project' ? taskRow.rows[0].project_id : null;
 
 			const placeholder = credentialPlaceholder(name);
 
@@ -1676,9 +1670,8 @@ export function registerTools(
 				   AND content_type = 'credential_request'::comment_content_type
 				   AND chosen_option IS NULL
 				   AND content->>'name' = $2
-				   AND COALESCE(content->>'scope', 'team') = $3
 				 ORDER BY created_at ASC LIMIT 1`,
-				[taskId, name, scope],
+				[taskId, name],
 			);
 			if (existing.rows.length > 0) {
 				return {
@@ -1699,8 +1692,6 @@ export function registerTools(
 					: ((args.input_type as string | undefined) ?? CredentialInputType.Text),
 				confirmation_text: args.confirmation_text ?? null,
 				allowed_hosts: requestedHosts,
-				scope,
-				project_id: projectId,
 				placeholder,
 			};
 
@@ -1714,7 +1705,7 @@ export function registerTools(
 			events?.emit({
 				type: 'credential.requested',
 				teamId,
-				projectId,
+				projectId: null,
 				actorType: AuditActorType.Agent,
 				actorMemberId: authorMemberId,
 				taskId,
@@ -1758,7 +1749,7 @@ export function registerTools(
 				.describe(
 					'Optional registry key (e.g. "datocms"). When set, capability defaults from the shared registry pre-fill display name and allowed hosts.',
 				),
-			skill_doc_id: z
+			skill_id: z
 				.string()
 				.optional()
 				.describe(
@@ -1786,11 +1777,10 @@ export function registerTools(
 			const providerId = (args.provider_id as string | undefined)?.trim() || null;
 			const mcpUrl = (args.mcp_url as string).trim();
 			const mcpTransport = (args.mcp_transport as 'http' | 'sse' | undefined) ?? 'http';
-			const skillDocId = (args.skill_doc_id as string | undefined) ?? null;
+			const skillId = (args.skill_id as string | undefined) ?? null;
 
-			// Slug from providerId if available, else from display_name. The
-			// (team_id, project_id, name) UNIQUE constraint makes this the
-			// idempotency key.
+			// Slug from providerId if available, else from display_name. Connectors
+			// are global, so `name` (UNIQUE) is the idempotency key.
 			const slugSource = providerId ?? displayName;
 			const name = slugSource
 				.toLowerCase()
@@ -1801,13 +1791,11 @@ export function registerTools(
 
 			const { createOrFetchConnector, statusOf } = await import('../services/connectors/lifecycle');
 			const { row, alreadyExisted } = await createOrFetchConnector(db, {
-				teamId,
-				projectId: null, // connectors are team-scoped today
 				name,
 				displayName,
 				mcpUrl,
 				mcpTransport,
-				skillDocId,
+				skillId,
 				createdByTaskId: taskId,
 				providerId,
 			});
@@ -1882,7 +1870,7 @@ export function registerTools(
 	tool(
 		server,
 		'fetch_skill_file',
-		"Fetch a remote agent skill file (Markdown describing how to use a third-party MCP server) and store it in the team knowledge base as a doc with kind=mcp_skill. Returns the doc_id and slug. Subsequent agent runs across every project in the team get this skill file injected into their adapter's skills directory. Idempotent on (team_id, url) — re-fetching the same URL updates the existing doc.",
+		"Fetch a remote agent skill file (Markdown describing how to use a third-party MCP server) and store it as a global skill (auto_load). Returns the skill_id and slug. Subsequent agent runs across every team get this skill file injected into their adapter's skills directory. Idempotent on the derived slug — re-fetching the same URL updates the existing skill.",
 		{
 			team_id: z.string().describe('Team ID'),
 			url: z
@@ -1947,26 +1935,36 @@ export function registerTools(
 			const title = (args.title as string | undefined) ?? parsed.pathname;
 
 			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const doc = await upsertDocument(db, wsManager, {
-				scope: { type: DocumentType.McpSkill, teamId, slug },
-				title,
-				content: body,
-				authorMemberId,
-				changeSummary: `Fetched from ${url}`,
-				audit: {
-					events,
-					actorType: auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Admin,
-				},
-			});
+			const { createHash } = await import('node:crypto');
+			const contentHash = createHash('sha256').update(body).digest('hex');
+			const description = deriveSkillSummary(body);
 
-			// Track source_url in a separate small table? For v1 we encode it in
-			// the title prefix so the doc is self-describing.
+			const existing = await db.query<{ id: string }>('SELECT id FROM skills WHERE slug = $1', [
+				slug,
+			]);
+			// Global skill, flagged auto_load so the runner writes it to
+			// ~/.claude/skills for every run. Idempotent on slug.
+			const upserted = await db.query<{ id: string; slug: string }>(
+				`INSERT INTO skills (name, slug, description, content, source_url, content_hash, created_by_member_id, tags, auto_load)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, '[]'::jsonb, true)
+				 ON CONFLICT (slug) DO UPDATE SET
+				   name = EXCLUDED.name,
+				   description = EXCLUDED.description,
+				   content = EXCLUDED.content,
+				   source_url = EXCLUDED.source_url,
+				   content_hash = EXCLUDED.content_hash,
+				   auto_load = true,
+				   updated_at = now()
+				 RETURNING id, slug`,
+				[title, slug, description, body, url, contentHash, authorMemberId],
+			);
+
 			return {
-				doc_id: doc.id,
-				slug: doc.slug,
+				skill_id: upserted.rows[0].id,
+				slug: upserted.rows[0].slug,
 				source_url: url,
 				size_bytes: body.length,
-				reused: false,
+				reused: existing.rows.length > 0,
 			};
 		},
 		db,
@@ -2743,12 +2741,12 @@ export function registerTools(
 			if (denied) return { error: denied };
 
 			let query = `SELECT id, name, slug, description, tags, created_at, updated_at
-			             FROM skills WHERE (team_id = $1 OR team_id IS NULL) AND is_active = true`;
-			const params: unknown[] = [args.team_id];
+			             FROM skills WHERE is_active = true`;
+			const params: unknown[] = [];
 
 			if (args.tags) {
 				const tagList = (args.tags as string).split(',').map((t) => t.trim());
-				query += ` AND tags ?| $2`;
+				query += ` AND tags ?| $1`;
 				params.push(tagList);
 			}
 
@@ -2771,10 +2769,9 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
-			const result = await db.query(
-				`SELECT ${SKILL_COLUMNS} FROM skills WHERE (team_id = $1 OR team_id IS NULL) AND slug = $2 ORDER BY team_id NULLS LAST LIMIT 1`,
-				[args.team_id, args.slug],
-			);
+			const result = await db.query(`SELECT ${SKILL_COLUMNS} FROM skills WHERE slug = $1 LIMIT 1`, [
+				args.slug,
+			]);
 			if (result.rows.length === 0) return { error: 'Skill not found' };
 			return result.rows[0];
 		},
@@ -2809,9 +2806,9 @@ export function registerTools(
 				(args.description as string)?.trim() || deriveSkillSummary(args.content as string);
 
 			const result = await db.query<{ id: string; slug: string }>(
-				`INSERT INTO skills (team_id, name, slug, description, content, content_hash, created_by_member_id, tags)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
-				 ON CONFLICT (team_id, slug) DO UPDATE SET
+				`INSERT INTO skills (name, slug, description, content, content_hash, created_by_member_id, tags)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+				 ON CONFLICT (slug) DO UPDATE SET
 				   content = EXCLUDED.content,
 				   content_hash = EXCLUDED.content_hash,
 				   description = EXCLUDED.description,
@@ -2819,7 +2816,6 @@ export function registerTools(
 				   updated_at = now()
 				 RETURNING id, slug`,
 				[
-					args.team_id,
 					args.name,
 					args.slug,
 					description,
@@ -2845,33 +2841,15 @@ export function registerTools(
 	tool(
 		server,
 		'list_mcp_connections',
-		'List MCP server connections registered for the team (and optionally a project). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`.',
+		'List the MCP server connections available to agent runs (instance-global — the same catalog for every team). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`.',
 		{
 			team_id: z.string().describe('Team ID'),
-			project_id: z
-				.string()
-				.optional()
-				.describe(
-					'Optional project ID. When set, returns project-scoped + team-wide connections; when absent, only team-wide.',
-				),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			const teamId = args.team_id as string;
-			const projectId = (args.project_id as string | undefined) ?? null;
-			const params: unknown[] = [teamId];
-			let where = 'team_id = $1';
-			if (projectId) {
-				where += ' AND (project_id IS NULL OR project_id = $2)';
-				params.push(projectId);
-			} else {
-				where += ' AND project_id IS NULL';
-			}
 			const r = await db.query<{
 				id: string;
-				team_id: string;
-				project_id: string | null;
 				name: string;
 				display_name: string | null;
 				kind: string;
@@ -2879,7 +2857,7 @@ export function registerTools(
 				oauth_connection_id: string | null;
 				install_status: string;
 				install_error: string | null;
-				skill_doc_id: string | null;
+				skill_id: string | null;
 				created_by_task_id: string | null;
 				activated_at: string | null;
 				revoked_at: string | null;
@@ -2887,15 +2865,13 @@ export function registerTools(
 				created_at: string;
 				updated_at: string;
 			}>(
-				`SELECT id, team_id, project_id, name, display_name, kind::text AS kind,
+				`SELECT id, name, display_name, kind::text AS kind,
 				        config, oauth_connection_id, install_status::text AS install_status, install_error,
-				        skill_doc_id, created_by_task_id,
+				        skill_id, created_by_task_id,
 				        activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
 				        created_at::text, updated_at::text
 				 FROM mcp_connections
-				 WHERE ${where}
 				 ORDER BY name ASC`,
-				params,
 			);
 			// Derive a single oauth_status field that's the load-bearing signal
 			// for whether the connector is usable by agents on subsequent runs.
@@ -2928,22 +2904,20 @@ export function registerTools(
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			const teamId = args.team_id as string;
 			const connectorId = args.connector_id as string;
 
 			const row = await db.query<{
 				id: string;
-				team_id: string;
 				name: string;
 				kind: string;
 				config: Record<string, unknown>;
 				oauth_connection_id: string | null;
 			}>(
-				`SELECT id, team_id, name, kind::text AS kind, config, oauth_connection_id
-				 FROM mcp_connections WHERE id = $1 AND team_id = $2`,
-				[connectorId, teamId],
+				`SELECT id, name, kind::text AS kind, config, oauth_connection_id
+				 FROM mcp_connections WHERE id = $1`,
+				[connectorId],
 			);
-			if (row.rows.length === 0) return { error: 'connector not found in this team' };
+			if (row.rows.length === 0) return { error: 'connector not found' };
 			const connector = row.rows[0];
 			if (connector.kind !== 'saas') {
 				return { error: `connector kind=${connector.kind}; test only meaningful for kind=saas` };
@@ -3026,18 +3000,12 @@ export function registerTools(
 	tool(
 		server,
 		'add_mcp_connection',
-		"Register an MCP server (SaaS HTTP or local stdio) for this team/project. SaaS servers go into the agent's descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect.",
+		"Register an MCP server (SaaS HTTP or local stdio). Connections are instance-global — available to every team's agent runs. SaaS servers go into the agent's descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect.",
 		{
 			team_id: z.string().describe('Team ID'),
-			project_id: z
-				.string()
-				.optional()
-				.describe('Optional project ID. Omit for a team-wide connection.'),
 			name: z
 				.string()
-				.describe(
-					'Server identifier — used as the MCP descriptor name and for de-duplication within (team, project).',
-				),
+				.describe('Server identifier — used as the MCP descriptor name and as the unique key.'),
 			kind: z.enum(['saas', 'local']).describe('saas = HTTP MCP, local = stdio MCP'),
 			config: z
 				.record(z.string(), z.unknown())
@@ -3046,8 +3014,6 @@ export function registerTools(
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
-			const teamId = args.team_id as string;
-			const projectId = (args.project_id as string | undefined) ?? null;
 			const name = String(args.name ?? '').trim();
 			const kind = args.kind as 'saas' | 'local';
 			const config = args.config as Record<string, unknown>;
@@ -3068,16 +3034,16 @@ export function registerTools(
 				id: string;
 				install_status: string;
 			}>(
-				`INSERT INTO mcp_connections (team_id, project_id, name, kind, config, install_status)
-				 VALUES ($1, $2, $3, $4::mcp_connection_kind, $5::jsonb, $6::mcp_install_status)
-				 ON CONFLICT (team_id, project_id, name) DO UPDATE
+				`INSERT INTO mcp_connections (name, kind, config, install_status)
+				 VALUES ($1, $2::mcp_connection_kind, $3::jsonb, $4::mcp_install_status)
+				 ON CONFLICT (name) DO UPDATE
 				 SET kind = EXCLUDED.kind,
 				     config = EXCLUDED.config,
 				     install_status = EXCLUDED.install_status,
 				     install_error = NULL,
 				     updated_at = now()
 				 RETURNING id, install_status::text AS install_status`,
-				[teamId, projectId, name, kind, JSON.stringify(config), initialStatus],
+				[name, kind, JSON.stringify(config), initialStatus],
 			);
 			return {
 				id: r.rows[0].id,
@@ -3094,7 +3060,7 @@ export function registerTools(
 	tool(
 		server,
 		'remove_mcp_connection',
-		'Remove a previously registered MCP connection. The next agent run in this scope will not see it.',
+		'Remove a registered MCP connection (instance-global — removing it affects every team). The next agent run will not see it.',
 		{
 			team_id: z.string().describe('Team ID'),
 			id: z
@@ -3105,8 +3071,8 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 			const r = await db.query<{ id: string }>(
-				'DELETE FROM mcp_connections WHERE id = $1 AND team_id = $2 RETURNING id',
-				[args.id as string, args.team_id as string],
+				'DELETE FROM mcp_connections WHERE id = $1 RETURNING id',
+				[args.id as string],
 			);
 			if (r.rows.length === 0) return { error: 'MCP connection not found' };
 			return { removed: true, id: r.rows[0].id };

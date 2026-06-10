@@ -58,9 +58,9 @@ beforeAll(async () => {
 	const projBData = (await projB.json()).data as { id: string; slug: string };
 	otherProjectSlug = projBData.slug;
 
-	// kb docs were unified into the skills database; mentions resolve/search read from skills.
+	// kb docs were unified into the global skills database; mentions resolve/search read from skills.
 	// Skills are referenced by slug; mentions still address them by a filename-shaped slug.
-	await app.request(`/api/projects/${projectSlug}/skills`, {
+	await app.request('/api/skills', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -139,7 +139,7 @@ describe('POST /teams/:teamId/docs/resolve', () => {
 		expect(byKey.get(`${projectSlug}/runbook.md`)?.size).toBe('Ops runbook.'.length);
 	});
 
-	it('does not cross team boundaries', async () => {
+	it('resolves global kb docs everywhere but keeps project docs team-scoped', async () => {
 		const r = await app.request(`/api/projects/${otherInternalSlug}/docs/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -150,7 +150,9 @@ describe('POST /teams/:teamId/docs/resolve', () => {
 		});
 		expect(r.status).toBe(200);
 		const body = await r.json();
-		expect(body.data.kb_docs).toHaveLength(0);
+		// Skills are instance-global: the kb doc resolves from any team's context.
+		expect(body.data.kb_docs).toHaveLength(1);
+		// Project docs remain team-scoped — another team's project doc is not resolved.
 		expect(body.data.project_docs).toHaveLength(0);
 	});
 
@@ -221,7 +223,7 @@ describe('GET /teams/:teamId/mentions/search', () => {
 		expect(rows).toHaveLength(0);
 	});
 
-	it('does not leak results across teams', async () => {
+	it('surfaces global kb skills from any team context', async () => {
 		const r = await app.request(
 			`/api/projects/${otherInternalSlug}/mentions/search?q=onboard&kind=all`,
 			{
@@ -231,6 +233,7 @@ describe('GET /teams/:teamId/mentions/search', () => {
 		expect(r.status).toBe(200);
 		const body = await r.json();
 		const handles = (body.data as Array<{ handle: string }>).map((row) => row.handle);
-		expect(handles).not.toContain('onboarding-guide.md');
+		// Skills are instance-global, so the kb doc is searchable from every team.
+		expect(handles).toContain('onboarding-guide.md');
 	});
 });
