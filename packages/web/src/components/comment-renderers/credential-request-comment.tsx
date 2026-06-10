@@ -85,10 +85,20 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 							<MarkdownProse>{instructions}</MarkdownProse>
 						</div>
 					)}
-					{allowedHosts.length > 0 && (
+					{allowedHosts.length > 0 ? (
 						<p className="text-xs text-text-muted mt-1">
 							Substituted only into requests to: {allowedHosts.join(', ')}
 						</p>
+					) : (
+						!confirmationText && (
+							<p
+								className="text-xs text-accent-amber-text mt-1"
+								data-testid="credential-no-hosts-warning"
+							>
+								⚠ Not scoped to any host — this credential won't be substituted into any request
+								until an allowlist is set.
+							</p>
+						)
 					)}
 				</div>
 			</div>

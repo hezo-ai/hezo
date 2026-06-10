@@ -142,6 +142,7 @@ describe('request_credential MCP tool', () => {
 			name: 'DUPLICATE_KEY',
 			kind: 'api_key',
 			instructions: 'test',
+			allowed_hosts: ['api.example.com'],
 		})) as { comment_id: string; reused: boolean };
 		expect(first.reused).toBe(false);
 
@@ -151,6 +152,7 @@ describe('request_credential MCP tool', () => {
 			name: 'DUPLICATE_KEY',
 			kind: 'api_key',
 			instructions: 'second call',
+			allowed_hosts: ['api.example.com'],
 		})) as { comment_id: string; reused: boolean };
 		expect(second.reused).toBe(true);
 		expect(second.comment_id).toBe(first.comment_id);
@@ -172,6 +174,83 @@ describe('request_credential MCP tool', () => {
 			instructions: 'test',
 		})) as { error?: string };
 		expect(result.error).toContain('Access denied');
+	});
+
+	it('rejects an api_key request with no allowed_hosts', async () => {
+		const result = (await callRequestCredential({
+			team_id: teamId,
+			task_id: taskId,
+			name: 'UNSCOPED_API_KEY',
+			kind: 'api_key',
+			instructions: 'I need a key',
+		})) as { error?: string; comment_id?: string };
+		expect(result.error).toContain('allowed_hosts');
+		expect(result.comment_id).toBeUndefined();
+
+		// The rejected request must not have created a comment.
+		const rows = await db.query(
+			"SELECT id FROM task_comments WHERE task_id = $1 AND content->>'name' = $2",
+			[taskId, 'UNSCOPED_API_KEY'],
+		);
+		expect(rows.rows.length).toBe(0);
+	});
+
+	it('rejects an api_key request with an empty allowed_hosts array', async () => {
+		const result = (await callRequestCredential({
+			team_id: teamId,
+			task_id: taskId,
+			name: 'EMPTY_HOSTS_KEY',
+			kind: 'api_key',
+			instructions: 'I need a key',
+			allowed_hosts: [],
+		})) as { error?: string };
+		expect(result.error).toContain('allowed_hosts');
+	});
+
+	it('rejects oauth_token and github_pat requests with no allowed_hosts', async () => {
+		const oauth = (await callRequestCredential({
+			team_id: teamId,
+			task_id: taskId,
+			name: 'UNSCOPED_OAUTH',
+			kind: 'oauth_token',
+			instructions: 'token',
+		})) as { error?: string };
+		expect(oauth.error).toContain('allowed_hosts');
+
+		const pat = (await callRequestCredential({
+			team_id: teamId,
+			task_id: taskId,
+			name: 'UNSCOPED_PAT',
+			kind: 'github_pat',
+			instructions: 'pat',
+		})) as { error?: string };
+		expect(pat.error).toContain('allowed_hosts');
+	});
+
+	it('allows an ssh_private_key request with no allowed_hosts (exempt)', async () => {
+		const result = (await callRequestCredential({
+			team_id: teamId,
+			task_id: taskId,
+			name: 'DEPLOY_SSH_KEY',
+			kind: 'ssh_private_key',
+			instructions: 'paste your deploy key',
+		})) as { error?: string; comment_id?: string; status?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.status).toBe('pending');
+		expect(result.comment_id).toBeTruthy();
+	});
+
+	it('allows a confirmation-style api_key request with no allowed_hosts', async () => {
+		const result = (await callRequestCredential({
+			team_id: teamId,
+			task_id: taskId,
+			name: 'CONFIRM_NO_HOSTS',
+			kind: 'api_key',
+			instructions: 'Did you rotate the key?',
+			confirmation_text: 'Yes, rotated',
+		})) as { error?: string; comment_id?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.comment_id).toBeTruthy();
 	});
 });
 
@@ -283,6 +362,7 @@ describe('fulfill-credential endpoint', () => {
 			name: 'BAD_PAT_TEST',
 			kind: 'github_pat',
 			instructions: 'test',
+			allowed_hosts: ['api.github.com'],
 		})) as { comment_id: string };
 
 		const res = await app.request(
@@ -305,6 +385,7 @@ describe('fulfill-credential endpoint', () => {
 			name: 'GOOD_PAT_TEST',
 			kind: 'github_pat',
 			instructions: 'test',
+			allowed_hosts: ['api.github.com'],
 		})) as { comment_id: string };
 
 		const res = await app.request(

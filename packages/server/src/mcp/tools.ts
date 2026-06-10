@@ -12,6 +12,7 @@ import {
 	CommentContentType,
 	CredentialInputType,
 	CredentialKind,
+	credentialKindRequiresAllowedHosts,
 	DocumentType,
 	extensionOf,
 	isAgentAuthorableAssetMime,
@@ -1586,7 +1587,7 @@ export function registerTools(
 	tool(
 		server,
 		'request_credential',
-		'Ask the human assignee to provide a secret value (API key, SSH private key, OAuth token, etc.). Posts a structured comment on the task with a paste form. The agent never sees the value; it gets a placeholder string to embed in env vars or HTTP headers, which the egress proxy later substitutes. Returns immediately with the placeholder; the agent should stop work on whatever needed the credential and wait for a credential_provided wakeup.',
+		'Ask the human assignee to provide a secret value (API key, SSH private key, OAuth token, etc.). Posts a structured comment on the task with a paste form. The agent never sees the value; it gets a placeholder string to embed in env vars or HTTP headers, which the egress proxy later substitutes. Returns immediately with the placeholder; the agent should stop work on whatever needed the credential and wait for a credential_provided wakeup. For HTTP-auth kinds (api_key, oauth_token, github_pat) allowed_hosts is REQUIRED — scope it to the provider API host(s) so the secret can only ever reach those hosts. Always ask for the narrowest scope and shortest expiry the provider offers. If a registered connector capability already covers the provider (e.g. a remote MCP server with OAuth), prefer register_connector over a raw paste.',
 		{
 			team_id: z.string().describe('Team ID'),
 			task_id: z.string().describe('Task ID — the request comment is posted here'),
@@ -1601,7 +1602,7 @@ export function registerTools(
 			instructions: z
 				.string()
 				.describe(
-					'Human-facing prose explaining why you need this credential and how the human can obtain it (e.g. "I need a GitHub PAT with `repo` scope to push branches. Create one at https://github.com/settings/tokens").',
+					'Human-facing prose explaining why you need this credential and how the human can obtain it. Tell the human to set the minimal scope and the shortest expiry the provider supports (e.g. "I need a GitHub PAT with only `repo` scope to push branches, ideally expiring in 7 days. Create one at https://github.com/settings/tokens").',
 				),
 			input_type: credentialInputTypeSchema
 				.optional()
@@ -1616,7 +1617,7 @@ export function registerTools(
 				.array(z.string())
 				.optional()
 				.describe(
-					'Hostname allowlist for the egress proxy. The credential will only be substituted into outbound requests to these hosts. Wildcards: *.github.com matches one label segment.',
+					'Hostname allowlist for the egress proxy. The credential is only substituted into outbound requests to these hosts. REQUIRED for HTTP-auth kinds (api_key, oauth_token, github_pat) — e.g. ["api.netlify.com"]. Wildcards: *.github.com matches one label segment.',
 				),
 			scope: z
 				.enum(['team', 'project'])
@@ -1630,6 +1631,27 @@ export function registerTools(
 			const name = args.name as string;
 			const validation = validateSecretName(name);
 			if (!validation.valid) return { error: validation.error };
+
+			// HTTP-auth credentials must be host-scoped: an unscoped api_key/oauth_token/
+			// github_pat can never be substituted (egress blocks host-unscoped secrets) or,
+			// if later flipped to allow-all, leaks into every host the agent calls. Reject
+			// early so the agent re-requests with allowed_hosts. Confirmation-style requests
+			// store no value, so hosts don't apply.
+			const isConfirmation = !!args.confirmation_text;
+			const requestedHosts = (args.allowed_hosts as string[] | undefined) ?? [];
+			if (
+				!isConfirmation &&
+				credentialKindRequiresAllowedHosts(args.kind as string) &&
+				requestedHosts.length === 0
+			) {
+				return {
+					error:
+						`${args.kind} credentials must declare allowed_hosts — the API host(s) ` +
+						`this secret is sent to (e.g. ["api.netlify.com"]). This scopes the egress ` +
+						`proxy so the value is only injected into those hosts and never leaks ` +
+						`elsewhere. Re-call request_credential with allowed_hosts set.`,
+				};
+			}
 
 			const taskId = args.task_id as string;
 			const teamId = args.team_id as string;
@@ -1676,7 +1698,7 @@ export function registerTools(
 					? null
 					: ((args.input_type as string | undefined) ?? CredentialInputType.Text),
 				confirmation_text: args.confirmation_text ?? null,
-				allowed_hosts: (args.allowed_hosts as string[] | undefined) ?? [],
+				allowed_hosts: requestedHosts,
 				scope,
 				project_id: projectId,
 				placeholder,
