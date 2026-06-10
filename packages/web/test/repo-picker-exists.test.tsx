@@ -46,10 +46,10 @@ async function seedGitHubOAuth(teamId: string): Promise<string> {
 	const encrypted = encrypt(accessToken, key);
 
 	const secretRes = await db.query<{ id: string }>(
-		`INSERT INTO secrets (team_id, name, encrypted_value, category, allowed_hosts)
-		 VALUES ($1, $2, $3, 'api_token', ARRAY['github.com'])
+		`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
+		 VALUES ($1, $2, 'api_token', ARRAY['github.com'])
 		 RETURNING id`,
-		[teamId, `OAUTH_GITHUB_${Math.random().toString(16).slice(2, 10)}`, encrypted],
+		[`OAUTH_GITHUB_${Math.random().toString(16).slice(2, 10)}`, encrypted],
 	);
 	const connRes = await db.query<{ id: string }>(
 		`INSERT INTO oauth_connections (team_id, provider, provider_account_id, provider_account_label, access_token_secret_id, scopes)
