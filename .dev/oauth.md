@@ -20,12 +20,11 @@ There is **no separate hosted callback service**. DCR connectors self-register p
 
 ## Storage
 
-`oauth_connections` — one row per (team, provider, provider_account_id):
+`oauth_connections` — **instance-global**: one row per (provider, provider_account_id), shared with every team's runs (connect GitHub/SaaS once, usable everywhere). The per-team commit-signing key stays per-team in `team_ssh_keys`.
 
 | column | notes |
 |---|---|
 | id | UUID primary key |
-| team_id | FK teams; cascade delete |
 | provider | e.g. `github`, `datocms`, `linear`, `generic` |
 | provider_account_id | stable upstream id (GH user id, DatoCMS workspace id, …) |
 | provider_account_label | display string |
@@ -85,7 +84,7 @@ For providers declaring a `deviceAuth` capability (GitHub today):
 
 ## Refresh
 
-`refreshExpiringTokensForTeam` (in `services/oauth/token-resolver.ts`) is called by the egress proxy substitution path on every outbound request. It selects connections whose `expires_at` is within 60s and whose `refresh_token_secret_id IS NOT NULL`, looks up the provider's registered `RefreshFn`, and refreshes. Concurrent refreshes for the same connection coalesce — at most one upstream round-trip at a time per connection.
+`refreshExpiringTokens` (in `services/oauth/token-resolver.ts`) is called by the egress proxy substitution path on every outbound request (across all instance-global connections). It selects connections whose `expires_at` is within 60s and whose `refresh_token_secret_id IS NOT NULL`, looks up the provider's registered `RefreshFn`, and refreshes. Concurrent refreshes for the same connection coalesce — at most one upstream round-trip at a time per connection.
 
 To register a refresh function for a provider: `registerRefreshFn(provider, fn)` at startup.
 

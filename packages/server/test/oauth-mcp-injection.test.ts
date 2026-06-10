@@ -47,7 +47,6 @@ describe('mcp connection descriptor with oauth_connection_id', () => {
 		const conn = await createConnection(
 			{ db, masterKeyManager },
 			{
-				teamId,
 				provider: 'datocms',
 				providerAccountId: 'workspace-1',
 				providerAccountLabel: 'Acme Workspace',
@@ -82,7 +81,6 @@ describe('mcp connection descriptor with oauth_connection_id', () => {
 		const conn = await createConnection(
 			{ db, masterKeyManager },
 			{
-				teamId,
 				provider: 'linear',
 				providerAccountId: 'team-1',
 				providerAccountLabel: 'Linear Team',

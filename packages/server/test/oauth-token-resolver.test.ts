@@ -48,7 +48,6 @@ async function makeConnection(opts: {
 	return createConnection(
 		{ db, masterKeyManager },
 		{
-			teamId,
 			provider: opts.provider,
 			providerAccountId: opts.providerAccountId,
 			providerAccountLabel: `${opts.provider}-${opts.providerAccountId}`,

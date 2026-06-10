@@ -366,9 +366,11 @@ CREATE TABLE secrets (
 --                  key.
 -- `metadata`     — provider-specific bag (avatar_url, account_email,
 --                  discovered_authorize_url, discovered_token_endpoint, …).
+-- OAuth account connections (GitHub login, SaaS MCP providers) are
+-- instance-global: connect an upstream account once, usable by every team's
+-- runs. The per-team commit-signing key lives in team_ssh_keys, not here.
 CREATE TABLE oauth_connections (
     id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id                  UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     provider                 TEXT NOT NULL,
     provider_account_id      TEXT NOT NULL,
     provider_account_label   TEXT NOT NULL,
@@ -380,11 +382,10 @@ CREATE TABLE oauth_connections (
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    UNIQUE (team_id, provider, provider_account_id)
+    UNIQUE (provider, provider_account_id)
 );
 
-CREATE INDEX idx_oauth_connections_team ON oauth_connections(team_id);
-CREATE INDEX idx_oauth_connections_provider ON oauth_connections(team_id, provider);
+CREATE INDEX idx_oauth_connections_provider ON oauth_connections(provider);
 
 -- Deferred FK: repos.oauth_connection_id → oauth_connections(id)
 ALTER TABLE repos ADD CONSTRAINT fk_repos_oauth_connection

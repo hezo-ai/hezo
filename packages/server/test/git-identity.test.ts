@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import {
 	buildGitIdentityEnv,
@@ -22,6 +22,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	await safeClose(db);
+});
+
+// OAuth connections are instance-global, so isolate each test's view of them.
+beforeEach(async () => {
+	await db.query('DELETE FROM oauth_connections');
 });
 
 /** Parse the GIT_CONFIG_* env entries back into a { 'user.name': '…' } map. */
@@ -88,7 +93,6 @@ describe('buildGitIdentityEnv', () => {
 		await createConnection(
 			{ db, masterKeyManager },
 			{
-				teamId,
 				provider: 'github',
 				providerAccountId: '12345',
 				providerAccountLabel: 'octocat',

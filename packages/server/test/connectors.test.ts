@@ -154,9 +154,9 @@ describe('Connector lifecycle helpers', () => {
 		);
 		const ocRes = await db.query<{ id: string }>(
 			`INSERT INTO oauth_connections
-			 (team_id, provider, provider_account_id, provider_account_label, access_token_secret_id)
-			 VALUES ($1, 'mcp:test', 'acct1', 'Test', $2) RETURNING id`,
-			[teamId, secretRes.rows[0].id],
+			 (provider, provider_account_id, provider_account_label, access_token_secret_id)
+			 VALUES ('mcp:test', 'acct1', 'Test', $1) RETURNING id`,
+			[secretRes.rows[0].id],
 		);
 
 		const activated = await markActive(db, created.id, ocRes.rows[0].id);

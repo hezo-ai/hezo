@@ -32,10 +32,10 @@ async function seedGitHubOAuthConnection(login: string): Promise<string> {
 		[`OAUTH_GITHUB_${Math.random().toString(16).slice(2, 10)}`, encrypted],
 	);
 	const connRes = await db.query<{ id: string }>(
-		`INSERT INTO oauth_connections (team_id, provider, provider_account_id, provider_account_label, access_token_secret_id, scopes)
-		 VALUES ($1, 'github', $2, $3, $4, ARRAY['repo','read:org'])
+		`INSERT INTO oauth_connections (provider, provider_account_id, provider_account_label, access_token_secret_id, scopes)
+		 VALUES ('github', $1, $2, $3, ARRAY['repo','read:org'])
 		 RETURNING id`,
-		[teamId, '9001', login, secretRes.rows[0].id],
+		['9001', login, secretRes.rows[0].id],
 	);
 	return connRes.rows[0].id;
 }

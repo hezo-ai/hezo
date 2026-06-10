@@ -27,8 +27,8 @@ import {
 import {
 	createConnection,
 	deleteConnection,
-	getConnectionForTeam,
-	listConnectionsForTeam,
+	getConnection,
+	listConnections,
 } from '../services/oauth/connection-store';
 import { registerClient } from '../services/oauth/dcr';
 import { pollDeviceFlow, resolveDeviceAuth, startDeviceFlow } from '../services/oauth/device-flow';
@@ -110,7 +110,6 @@ oauthRoutes.get('/oauth/callback', async (c) => {
 	const conn = await createConnection(
 		{ db, masterKeyManager },
 		{
-			teamId: payload.teamId,
 			provider: payload.provider,
 			providerAccountId: accountId,
 			providerAccountLabel: payload.mcpConnectionName ?? payload.provider,
@@ -524,11 +523,10 @@ oauthRoutes.get('/oauth/mcp-callback', async (c) => {
 });
 
 oauthRoutes.get('/projects/:projectId/oauth-connections', async (c) => {
-	const teamId = c.get('teamId') as string;
-
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
-	const list = await listConnectionsForTeam({ db, masterKeyManager }, teamId);
+	// OAuth connections are instance-global; the in-project page lists them all.
+	const list = await listConnections({ db, masterKeyManager });
 
 	return ok(
 		c,
@@ -547,13 +545,11 @@ oauthRoutes.get('/projects/:projectId/oauth-connections', async (c) => {
 });
 
 oauthRoutes.get('/projects/:projectId/oauth-connections/:id/scope-status', async (c) => {
-	const teamId = c.get('teamId') as string;
-
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
 	const id = c.req.param('id');
 
-	const conn = await getConnectionForTeam({ db, masterKeyManager }, teamId, id);
+	const conn = await getConnection({ db, masterKeyManager }, id);
 	if (!conn) return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
 	if (conn.provider !== 'github') {
 		return err(c, 'INVALID_REQUEST', 'scope-status is only supported for github connections', 400);
@@ -564,12 +560,11 @@ oauthRoutes.get('/projects/:projectId/oauth-connections/:id/scope-status', async
 
 oauthRoutes.delete('/projects/:projectId/oauth-connections/:id', async (c) => {
 	const teamId = c.get('teamId') as string;
-
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
 	const id = c.req.param('id');
 
-	const conn = await getConnectionForTeam({ db, masterKeyManager }, teamId, id);
+	const conn = await getConnection({ db, masterKeyManager }, id);
 	if (!conn) return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
 
 	const ok2 = await deleteConnection({ db, masterKeyManager }, id);
@@ -872,7 +867,6 @@ async function finalizeConnectorConnection(
 	const conn = await createConnection(
 		{ db, masterKeyManager },
 		{
-			teamId,
 			provider,
 			providerAccountId: identity.accountId,
 			providerAccountLabel: identity.label,

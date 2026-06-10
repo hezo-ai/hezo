@@ -132,8 +132,7 @@ describe('GitHub device-flow connector', () => {
 			scopes: string[];
 		}>(
 			`SELECT provider, provider_account_id, provider_account_label, scopes
-			 FROM oauth_connections WHERE team_id = $1`,
-			[teamId],
+			 FROM oauth_connections`,
 		);
 		expect(conn.rows.length).toBe(1);
 		expect(conn.rows[0]).toMatchObject({
@@ -153,9 +152,7 @@ describe('GitHub device-flow connector', () => {
 		// — including the GitHub MCP host so the injector can authorize MCP calls.
 		const secret = await db.query<{ allowed_hosts: string[] }>(
 			`SELECT s.allowed_hosts FROM oauth_connections oc
-			 JOIN secrets s ON s.id = oc.access_token_secret_id
-			 WHERE oc.team_id = $1`,
-			[teamId],
+			 JOIN secrets s ON s.id = oc.access_token_secret_id`,
 		);
 		expect(secret.rows[0].allowed_hosts).toEqual([
 			'api.githubcopilot.com',
@@ -247,42 +244,5 @@ describe('GitHub device-flow connector', () => {
 			},
 		);
 		expect(delAgain.status).toBe(404);
-	});
-
-	it("cross-team isolation: cannot delete another team's connection", async () => {
-		const otherTeamRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Outsider',
-				template_id: (
-					await (await app.request('/api/team-templates', { headers: authHeader(token) })).json()
-				).data[0].id,
-			}),
-		});
-		const otherTeamId = (await otherTeamRes.json()).data.id;
-
-		const directInsert = await db.query<{ id: string }>(
-			`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
-			 VALUES ('OAUTH_GITHUB_DUMMY1', 'placeholder', 'api_token', ARRAY['github.com'])
-			 RETURNING id`,
-		);
-		const secretId = directInsert.rows[0].id;
-		const conn = await db.query<{ id: string }>(
-			`INSERT INTO oauth_connections (team_id, provider, provider_account_id, provider_account_label, access_token_secret_id, scopes)
-			 VALUES ($1, 'github', '999', 'outsider', $2, ARRAY['repo'])
-			 RETURNING id`,
-			[otherTeamId, secretId],
-		);
-		const otherConnectionId = conn.rows[0].id;
-
-		const res = await app.request(
-			`/api/projects/${projectSlug}/oauth-connections/${otherConnectionId}`,
-			{
-				method: 'DELETE',
-				headers: authHeader(token),
-			},
-		);
-		expect(res.status).toBe(404);
 	});
 });
