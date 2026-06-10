@@ -66,6 +66,24 @@ test('credential request without allowed_hosts shows a not-scoped warning', asyn
 	expect(warning.textContent).toContain('Not scoped to any host');
 });
 
+test('human can set allowed_hosts when fulfilling an unscoped request', async () => {
+	const { findByTestId, user } = await renderTaskWithCredentialRequest([]);
+	await findByTestId('credential-request', undefined, { timeout: 15_000 });
+
+	await user.type(await findByTestId('credential-input'), 'tok-123');
+	await user.type(await findByTestId('credential-hosts-input'), 'api.netlify.com, *.netlify.com');
+	await user.click(await findByTestId('credential-submit'));
+
+	// Fulfillment swaps the form for the confirmation block.
+	await findByTestId('credential-fulfilled', undefined, { timeout: 15_000 });
+
+	const { db } = getTestContext();
+	const secret = await db.query<{ allowed_hosts: string[] }>(
+		"SELECT allowed_hosts FROM secrets WHERE name = 'NETLIFY_AUTH_TOKEN'",
+	);
+	expect(secret.rows[0]?.allowed_hosts).toEqual(['api.netlify.com', '*.netlify.com']);
+});
+
 test('credential request with allowed_hosts shows the scoped-hosts line', async () => {
 	const { findByTestId, findByText, queryByTestId } = await renderTaskWithCredentialRequest([
 		'api.netlify.com',
