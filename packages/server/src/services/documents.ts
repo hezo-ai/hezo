@@ -82,17 +82,7 @@ interface ScopeAgentSystemPrompt {
 	memberAgentId: string;
 }
 
-interface ScopeMcpSkill {
-	type: typeof DocumentType.McpSkill;
-	teamId: string;
-	slug: string;
-}
-
-export type DocumentScope =
-	| ScopeProjectDoc
-	| ScopePreferences
-	| ScopeAgentSystemPrompt
-	| ScopeMcpSkill;
+export type DocumentScope = ScopeProjectDoc | ScopePreferences | ScopeAgentSystemPrompt;
 
 const PREFERENCES_SLUG = 'preferences';
 const AGENT_SYSTEM_PROMPT_SLUG = 'system-prompt';
@@ -109,12 +99,6 @@ function scopeWhere(scope: DocumentScope, alias = ''): { sql: string; params: un
 		return {
 			sql: `${p}type = $1 AND ${p}team_id = $2 AND ${p}member_agent_id = $3`,
 			params: [scope.type, scope.teamId, scope.memberAgentId],
-		};
-	}
-	if (scope.type === DocumentType.McpSkill) {
-		return {
-			sql: `${p}type = $1 AND ${p}team_id = $2 AND ${p}slug = $3`,
-			params: [scope.type, scope.teamId, scope.slug],
 		};
 	}
 	return {

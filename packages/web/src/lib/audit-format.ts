@@ -108,7 +108,6 @@ export type AuditLink =
 	| { to: '/projects/$projectId/tasks/$taskId'; params: Record<string, string> }
 	| { to: '/projects/$projectId'; params: Record<string, string> }
 	| { to: '/projects/$projectId/connectors'; params: Record<string, string> }
-	| { to: '/projects/$projectId/skills'; params: Record<string, string> }
 	| { to: '/projects/$projectId/agents'; params: Record<string, string> }
 	| { to: '/settings/credentials' }
 	| { to: '/settings/connectors' }
@@ -150,9 +149,8 @@ export function auditEntryLink(entry: AuditEntry): AuditLink | null {
 				? { to: '/projects/$projectId/connectors', params: { projectId: teamAnchor } }
 				: { to: '/settings/connectors' };
 		case 'skill':
-			return teamAnchor
-				? { to: '/projects/$projectId/skills', params: { projectId: teamAnchor } }
-				: { to: '/settings/skills' };
+			// Skills are instance-global — always the Admin page.
+			return { to: '/settings/skills' };
 		case 'agent':
 			return teamAnchor
 				? { to: '/projects/$projectId/agents', params: { projectId: teamAnchor } }

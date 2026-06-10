@@ -252,9 +252,7 @@ function RunCommentBody({
 					{createdSkills.map((skill) => (
 						<Link
 							key={skill.slug}
-							to="/projects/$projectId/skills"
-							params={{ projectId }}
-							search={{ slug: skill.slug }}
+							to="/settings/skills"
 							className="text-xs text-accent-blue-text hover:underline self-start"
 						>
 							{skill.created ? 'Added' : 'Updated'} skill {skill.name}

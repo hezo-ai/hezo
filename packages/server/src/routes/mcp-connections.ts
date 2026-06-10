@@ -18,7 +18,7 @@ const log = logger.child('mcp-connections-route');
 // Admin (superuser) surface for `/settings/connectors`.
 const CONNECTOR_COLUMNS = `id, name, display_name, kind::text AS kind,
         config, oauth_connection_id, install_status::text AS install_status, install_error,
-        skill_doc_id, created_by_task_id, activated_at, revoked_at, auth_error,
+        skill_id, created_by_task_id, activated_at, revoked_at, auth_error,
         created_at, updated_at`;
 
 export const mcpConnectionsRoutes = new Hono<Env>();

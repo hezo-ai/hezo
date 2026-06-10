@@ -100,8 +100,8 @@ const registeredTools: ToolDef[] = [];
 // patterns.
 const TASK_COLUMNS = TASK_COLUMNS_BARE.replace(/[A-Za-z_][A-Za-z_0-9]*/g, 'i.$&');
 
-const SKILL_COLUMNS = `id, team_id, name, slug, description, content, source_url,
-	content_hash, created_by_member_id, tags, is_active, created_at, updated_at`;
+const SKILL_COLUMNS = `id, name, slug, description, content, source_url,
+	content_hash, created_by_member_id, tags, is_active, auto_load, created_at, updated_at`;
 
 const APPROVAL_COLUMNS = `id, team_id, type, status, requested_by_member_id,
 	resolution_note, resolved_at, created_at, payload`;
@@ -1749,7 +1749,7 @@ export function registerTools(
 				.describe(
 					'Optional registry key (e.g. "datocms"). When set, capability defaults from the shared registry pre-fill display name and allowed hosts.',
 				),
-			skill_doc_id: z
+			skill_id: z
 				.string()
 				.optional()
 				.describe(
@@ -1777,7 +1777,7 @@ export function registerTools(
 			const providerId = (args.provider_id as string | undefined)?.trim() || null;
 			const mcpUrl = (args.mcp_url as string).trim();
 			const mcpTransport = (args.mcp_transport as 'http' | 'sse' | undefined) ?? 'http';
-			const skillDocId = (args.skill_doc_id as string | undefined) ?? null;
+			const skillId = (args.skill_id as string | undefined) ?? null;
 
 			// Slug from providerId if available, else from display_name. Connectors
 			// are global, so `name` (UNIQUE) is the idempotency key.
@@ -1795,7 +1795,7 @@ export function registerTools(
 				displayName,
 				mcpUrl,
 				mcpTransport,
-				skillDocId,
+				skillId,
 				createdByTaskId: taskId,
 				providerId,
 			});
@@ -1870,7 +1870,7 @@ export function registerTools(
 	tool(
 		server,
 		'fetch_skill_file',
-		"Fetch a remote agent skill file (Markdown describing how to use a third-party MCP server) and store it in the team knowledge base as a doc with kind=mcp_skill. Returns the doc_id and slug. Subsequent agent runs across every project in the team get this skill file injected into their adapter's skills directory. Idempotent on (team_id, url) — re-fetching the same URL updates the existing doc.",
+		"Fetch a remote agent skill file (Markdown describing how to use a third-party MCP server) and store it as a global skill (auto_load). Returns the skill_id and slug. Subsequent agent runs across every team get this skill file injected into their adapter's skills directory. Idempotent on the derived slug — re-fetching the same URL updates the existing skill.",
 		{
 			team_id: z.string().describe('Team ID'),
 			url: z
@@ -1935,26 +1935,36 @@ export function registerTools(
 			const title = (args.title as string | undefined) ?? parsed.pathname;
 
 			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const doc = await upsertDocument(db, wsManager, {
-				scope: { type: DocumentType.McpSkill, teamId, slug },
-				title,
-				content: body,
-				authorMemberId,
-				changeSummary: `Fetched from ${url}`,
-				audit: {
-					events,
-					actorType: auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Admin,
-				},
-			});
+			const { createHash } = await import('node:crypto');
+			const contentHash = createHash('sha256').update(body).digest('hex');
+			const description = deriveSkillSummary(body);
 
-			// Track source_url in a separate small table? For v1 we encode it in
-			// the title prefix so the doc is self-describing.
+			const existing = await db.query<{ id: string }>('SELECT id FROM skills WHERE slug = $1', [
+				slug,
+			]);
+			// Global skill, flagged auto_load so the runner writes it to
+			// ~/.claude/skills for every run. Idempotent on slug.
+			const upserted = await db.query<{ id: string; slug: string }>(
+				`INSERT INTO skills (name, slug, description, content, source_url, content_hash, created_by_member_id, tags, auto_load)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, '[]'::jsonb, true)
+				 ON CONFLICT (slug) DO UPDATE SET
+				   name = EXCLUDED.name,
+				   description = EXCLUDED.description,
+				   content = EXCLUDED.content,
+				   source_url = EXCLUDED.source_url,
+				   content_hash = EXCLUDED.content_hash,
+				   auto_load = true,
+				   updated_at = now()
+				 RETURNING id, slug`,
+				[title, slug, description, body, url, contentHash, authorMemberId],
+			);
+
 			return {
-				doc_id: doc.id,
-				slug: doc.slug,
+				skill_id: upserted.rows[0].id,
+				slug: upserted.rows[0].slug,
 				source_url: url,
 				size_bytes: body.length,
-				reused: false,
+				reused: existing.rows.length > 0,
 			};
 		},
 		db,
@@ -2731,12 +2741,12 @@ export function registerTools(
 			if (denied) return { error: denied };
 
 			let query = `SELECT id, name, slug, description, tags, created_at, updated_at
-			             FROM skills WHERE (team_id = $1 OR team_id IS NULL) AND is_active = true`;
-			const params: unknown[] = [args.team_id];
+			             FROM skills WHERE is_active = true`;
+			const params: unknown[] = [];
 
 			if (args.tags) {
 				const tagList = (args.tags as string).split(',').map((t) => t.trim());
-				query += ` AND tags ?| $2`;
+				query += ` AND tags ?| $1`;
 				params.push(tagList);
 			}
 
@@ -2759,10 +2769,9 @@ export function registerTools(
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
 			if (denied) return { error: denied };
 
-			const result = await db.query(
-				`SELECT ${SKILL_COLUMNS} FROM skills WHERE (team_id = $1 OR team_id IS NULL) AND slug = $2 ORDER BY team_id NULLS LAST LIMIT 1`,
-				[args.team_id, args.slug],
-			);
+			const result = await db.query(`SELECT ${SKILL_COLUMNS} FROM skills WHERE slug = $1 LIMIT 1`, [
+				args.slug,
+			]);
 			if (result.rows.length === 0) return { error: 'Skill not found' };
 			return result.rows[0];
 		},
@@ -2797,9 +2806,9 @@ export function registerTools(
 				(args.description as string)?.trim() || deriveSkillSummary(args.content as string);
 
 			const result = await db.query<{ id: string; slug: string }>(
-				`INSERT INTO skills (team_id, name, slug, description, content, content_hash, created_by_member_id, tags)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
-				 ON CONFLICT (team_id, slug) DO UPDATE SET
+				`INSERT INTO skills (name, slug, description, content, content_hash, created_by_member_id, tags)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+				 ON CONFLICT (slug) DO UPDATE SET
 				   content = EXCLUDED.content,
 				   content_hash = EXCLUDED.content_hash,
 				   description = EXCLUDED.description,
@@ -2807,7 +2816,6 @@ export function registerTools(
 				   updated_at = now()
 				 RETURNING id, slug`,
 				[
-					args.team_id,
 					args.name,
 					args.slug,
 					description,
@@ -2849,7 +2857,7 @@ export function registerTools(
 				oauth_connection_id: string | null;
 				install_status: string;
 				install_error: string | null;
-				skill_doc_id: string | null;
+				skill_id: string | null;
 				created_by_task_id: string | null;
 				activated_at: string | null;
 				revoked_at: string | null;
@@ -2859,7 +2867,7 @@ export function registerTools(
 			}>(
 				`SELECT id, name, display_name, kind::text AS kind,
 				        config, oauth_connection_id, install_status::text AS install_status, install_error,
-				        skill_doc_id, created_by_task_id,
+				        skill_id, created_by_task_id,
 				        activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
 				        created_at::text, updated_at::text
 				 FROM mcp_connections

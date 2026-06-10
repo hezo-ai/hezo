@@ -7,7 +7,7 @@ const log = logger.child('connector-lifecycle');
 // Connectors are instance-global; rows carry no team/project scope.
 const CONNECTOR_COLS = `id, name, display_name, kind::text AS kind,
         config, oauth_connection_id, install_status::text AS install_status,
-        install_error, skill_doc_id, created_by_task_id,
+        install_error, skill_id, created_by_task_id,
         activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
         created_at::text AS created_at, updated_at::text AS updated_at`;
 
@@ -19,7 +19,7 @@ export interface CreateConnectorInput {
 	mcpTransport: McpTransport;
 	mcpEnv?: Record<string, string>;
 	mcpArgs?: string[];
-	skillDocId?: string | null;
+	skillId?: string | null;
 	createdByTaskId?: string | null;
 	providerId?: string | null;
 }
@@ -33,7 +33,7 @@ export interface ConnectorRow {
 	oauth_connection_id: string | null;
 	install_status: string;
 	install_error: string | null;
-	skill_doc_id: string | null;
+	skill_id: string | null;
 	created_by_task_id: string | null;
 	activated_at: string | null;
 	revoked_at: string | null;
@@ -99,7 +99,7 @@ export async function createOrFetchConnector(
 	const inserted = await db.query<ConnectorRow>(
 		`INSERT INTO mcp_connections (
 		    name, display_name, kind, config,
-		    install_status, skill_doc_id, created_by_task_id
+		    install_status, skill_id, created_by_task_id
 		 )
 		 VALUES (
 		    $1, $2, $3::mcp_connection_kind, $4::jsonb,
@@ -111,7 +111,7 @@ export async function createOrFetchConnector(
 			input.displayName,
 			kind,
 			JSON.stringify(config),
-			input.skillDocId ?? null,
+			input.skillId ?? null,
 			input.createdByTaskId ?? null,
 		],
 	);
@@ -177,19 +177,18 @@ export async function getConnector(db: PGlite, connectorId: string): Promise<Con
 }
 
 /**
- * Load all MCP skill files (documents with type='mcp_skill') so the agent
- * runner can pass them into the per-adapter MCP injection. Returns
- * `{slug, content}` pairs suitable for `McpAdapterContext.skillFiles`.
+ * Load the global skills flagged `auto_load` (e.g. provider usage docs fetched
+ * via fetch_skill_file) so the agent runner can write them into the adapter's
+ * skills directory (~/.claude/skills/<slug>.md). Returns `{slug, content}`
+ * pairs suitable for `McpAdapterContext.skillFiles`.
  */
-export async function loadSkillFilesForTeam(
+export async function loadConnectorSkillFiles(
 	db: PGlite,
-	teamId: string,
 ): Promise<Array<{ slug: string; content: string }>> {
 	const result = await db.query<{ slug: string; content: string }>(
-		`SELECT slug, content FROM documents
-		 WHERE team_id = $1 AND type = 'mcp_skill'::document_type
+		`SELECT slug, content FROM skills
+		 WHERE auto_load = true AND is_active = true
 		 ORDER BY slug ASC`,
-		[teamId],
 	);
 	return result.rows;
 }

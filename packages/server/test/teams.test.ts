@@ -51,14 +51,15 @@ describe('teams CRUD', () => {
 		expect(body.data.slug).toBe('notegenius-ai');
 		expect(body.data.agent_count).toBe(10);
 
-		const projectSlug = await projectSlugFor(body.data.id);
-		const skillsRes = await app.request(`/api/projects/${projectSlug}/skills`, {
+		// Skills are instance-global now; the template's KB docs land in the shared
+		// catalog. Assert presence (other tests may have seeded global skills too).
+		const skillsRes = await app.request('/api/skills', {
 			headers: authHeader(token),
 		});
 		const skillsBody = await skillsRes.json();
-		expect(skillsBody.data.length).toBe(2);
-		const slugs = skillsBody.data.map((d: any) => d.slug).sort();
-		expect(slugs).toEqual(['code-review-standards.md', 'development-workflow.md']);
+		const slugs = skillsBody.data.map((d: any) => d.slug);
+		expect(slugs).toContain('code-review-standards.md');
+		expect(slugs).toContain('development-workflow.md');
 	});
 
 	it('creates a team without a type and includes built-in agents', async () => {
@@ -431,17 +432,15 @@ describe('template-based team creation', () => {
 			}),
 		});
 		expect(res.status).toBe(201);
-		const teamId = (await res.json()).data.id;
+		expect((await res.json()).data.id).toBeTruthy();
 
-		const projectSlug = await projectSlugFor(teamId);
-		const skillsRes = await app.request(`/api/projects/${projectSlug}/skills`, {
+		const skillsRes = await app.request('/api/skills', {
 			headers: authHeader(token),
 		});
 		const skillsBody = await skillsRes.json();
-		expect(skillsBody.data.map((d: any) => d.slug).sort()).toEqual([
-			'api-guide',
-			'getting-started',
-		]);
+		const slugs = skillsBody.data.map((d: any) => d.slug);
+		expect(slugs).toContain('api-guide');
+		expect(slugs).toContain('getting-started');
 	});
 });
 

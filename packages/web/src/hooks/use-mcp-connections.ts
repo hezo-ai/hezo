@@ -12,7 +12,7 @@ export interface McpConnection {
 	oauth_connection_id: string | null;
 	install_status: 'pending' | 'installed' | 'failed';
 	install_error: string | null;
-	skill_doc_id: string | null;
+	skill_id: string | null;
 	created_by_task_id: string | null;
 	activated_at: string | null;
 	revoked_at: string | null;

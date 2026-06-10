@@ -107,10 +107,10 @@ async function createInlineSkillsFromTemplate(
 		const description = skill.description?.trim() || deriveSkillSummary(skill.content);
 		const hash = createHash('sha256').update(skill.content).digest('hex');
 		await db.query(
-			`INSERT INTO skills (team_id, name, slug, description, content, content_hash)
-			 VALUES ($1, $2, $3, $4, $5, $6)
-			 ON CONFLICT (team_id, slug) DO NOTHING`,
-			[teamId, name, slug, description, skill.content, hash],
+			`INSERT INTO skills (name, slug, description, content, content_hash)
+			 VALUES ($1, $2, $3, $4, $5)
+			 ON CONFLICT (slug) DO NOTHING`,
+			[name, slug, description, skill.content, hash],
 		);
 	}
 }
@@ -135,10 +135,10 @@ export async function createSkillsFromTemplate(
 			const { content, hash } = await downloadSkillContent(skill.source_url);
 			const description = skill.description?.trim() || deriveSkillSummary(content);
 			await db.query(
-				`INSERT INTO skills (team_id, name, slug, description, content, source_url, content_hash)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7)
-				 ON CONFLICT (team_id, slug) DO NOTHING`,
-				[teamId, name, slug, description, content, skill.source_url, hash],
+				`INSERT INTO skills (name, slug, description, content, source_url, content_hash)
+				 VALUES ($1, $2, $3, $4, $5, $6)
+				 ON CONFLICT (slug) DO NOTHING`,
+				[name, slug, description, content, skill.source_url, hash],
 			);
 		} catch (e) {
 			if (e instanceof SkillDownloadError) {

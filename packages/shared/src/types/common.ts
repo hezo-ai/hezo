@@ -430,7 +430,6 @@ export const DocumentType = {
 	ProjectDoc: 'project_doc',
 	TeamPreferences: 'team_preferences',
 	AgentSystemPrompt: 'agent_system_prompt',
-	McpSkill: 'mcp_skill',
 } as const;
 export type DocumentType = (typeof DocumentType)[keyof typeof DocumentType];
 
@@ -491,7 +490,6 @@ export interface SkillTemplateConfig {
 
 export interface SkillRecord {
 	id: string;
-	team_id: string;
 	name: string;
 	slug: string;
 	description: string;
@@ -501,6 +499,7 @@ export interface SkillRecord {
 	created_by_member_id: string | null;
 	tags: string[];
 	is_active: boolean;
+	auto_load: boolean;
 	created_at: string;
 	updated_at: string;
 }

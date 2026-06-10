@@ -419,8 +419,8 @@ CREATE TABLE mcp_connections (
     oauth_connection_id  UUID REFERENCES oauth_connections(id) ON DELETE SET NULL,
     install_status       mcp_install_status NOT NULL DEFAULT 'pending',
     install_error        TEXT,
-    -- skill_doc_id and created_by_task_id FKs added later (forward refs to documents/tasks)
-    skill_doc_id         UUID,
+    -- skill_id and created_by_task_id FKs added later (forward refs to skills/tasks)
+    skill_id             UUID,
     created_by_task_id   UUID,
     activated_at         TIMESTAMPTZ,
     revoked_at           TIMESTAMPTZ,
@@ -666,7 +666,7 @@ CREATE INDEX idx_audit_entity ON audit_log(entity_type, entity_id);
 -- DOCUMENTS (unified: project docs, team preferences, agent system prompts, mcp skills)
 -------------------------------------------------------------------------------
 
-CREATE TYPE document_type AS ENUM ('project_doc', 'team_preferences', 'agent_system_prompt', 'mcp_skill');
+CREATE TYPE document_type AS ENUM ('project_doc', 'team_preferences', 'agent_system_prompt');
 
 CREATE TABLE documents (
     id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -694,9 +694,6 @@ CREATE UNIQUE INDEX idx_documents_team_preferences
 CREATE UNIQUE INDEX idx_documents_agent_system_prompt
     ON documents (member_agent_id)
     WHERE type = 'agent_system_prompt';
-CREATE UNIQUE INDEX idx_documents_mcp_skill
-    ON documents (team_id, slug)
-    WHERE type = 'mcp_skill';
 
 CREATE INDEX idx_documents_team ON documents (team_id);
 CREATE INDEX idx_documents_type_team ON documents (type, team_id);
@@ -704,14 +701,11 @@ CREATE INDEX idx_documents_project ON documents (project_id) WHERE project_id IS
 CREATE INDEX idx_documents_member_agent ON documents (member_agent_id) WHERE member_agent_id IS NOT NULL;
 CREATE INDEX idx_documents_embedding ON documents USING hnsw (embedding vector_cosine_ops);
 
--- Deferred FKs on mcp_connections (forward references resolved here).
+-- Deferred FK on mcp_connections (forward reference resolved here). The skill_id
+-- FK is added after the skills table is defined (see below).
 ALTER TABLE mcp_connections
-    ADD CONSTRAINT fk_mcp_connections_skill_doc
-        FOREIGN KEY (skill_doc_id) REFERENCES documents(id) ON DELETE SET NULL,
     ADD CONSTRAINT fk_mcp_connections_created_by_task
         FOREIGN KEY (created_by_task_id) REFERENCES tasks(id) ON DELETE SET NULL;
-CREATE INDEX idx_mcp_connections_skill_doc
-    ON mcp_connections(skill_doc_id) WHERE skill_doc_id IS NOT NULL;
 CREATE INDEX idx_mcp_connections_created_by_task
     ON mcp_connections(created_by_task_id) WHERE created_by_task_id IS NOT NULL;
 
@@ -800,12 +794,15 @@ CREATE INDEX idx_comment_attachments_comment ON comment_attachments(comment_id);
 -- SKILLS
 -------------------------------------------------------------------------------
 
+-- Skills are instance-global: one reusable-skill catalog shared with every
+-- team's agents, whether admin-authored (REST / create_skill) or agent-fetched
+-- (fetch_skill_file). `auto_load` skills are written to ~/.claude/skills at run
+-- start (provider usage docs); the rest are discoverable via the prompt manifest
+-- + list_skills/get_skill.
 CREATE TABLE skills (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    -- team_id NULL = an instance-level skill, shared across every team.
-    team_id               UUID REFERENCES teams(id) ON DELETE CASCADE,
     name                  TEXT NOT NULL,
-    slug                  TEXT NOT NULL,
+    slug                  TEXT NOT NULL UNIQUE,
     description           TEXT NOT NULL DEFAULT '',
     content               TEXT NOT NULL DEFAULT '',
     source_url            TEXT,
@@ -813,17 +810,20 @@ CREATE TABLE skills (
     created_by_member_id  UUID REFERENCES members(id) ON DELETE SET NULL,
     tags                  JSONB NOT NULL DEFAULT '[]'::jsonb,
     is_active             BOOLEAN NOT NULL DEFAULT true,
+    auto_load             BOOLEAN NOT NULL DEFAULT false,
     embedding             vector(384),
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE(team_id, slug)
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Instance-level skills (team_id NULL) are unique by slug across the instance.
-CREATE UNIQUE INDEX idx_skills_instance_slug ON skills (slug) WHERE team_id IS NULL;
-CREATE INDEX idx_skills_team ON skills(team_id);
 CREATE INDEX idx_skills_embedding ON skills USING hnsw (embedding vector_cosine_ops);
+
+-- Deferred FK: a connector may bundle a provider skill file (now a skills row).
+ALTER TABLE mcp_connections
+    ADD CONSTRAINT fk_mcp_connections_skill
+        FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE SET NULL;
+CREATE INDEX idx_mcp_connections_skill
+    ON mcp_connections(skill_id) WHERE skill_id IS NOT NULL;
 
 -------------------------------------------------------------------------------
 -- SKILL REVISIONS
