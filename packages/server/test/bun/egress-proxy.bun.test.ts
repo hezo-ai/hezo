@@ -148,7 +148,61 @@ describe('EgressProxy under Bun', () => {
 			}
 		}
 	}, 30_000);
+
+	// Regression for the cross-host cert route: the library caches a bare port
+	// per hostname and never invalidates it, so when a per-host server goes away
+	// its ephemeral port can be recycled by a different host's server, leaving
+	// the original hostname pointing at the wrong leaf cert. The onConnect
+	// reconciler must drop any entry whose backing server stopped listening so
+	// the next tunnel rebuilds a correct server. Here we close a per-host server
+	// outright (the worst case — its port is now free to recycle) and assert the
+	// stale entry is gone after the next connect while a live host is untouched.
+	test('purges a per-host entry whose server stopped listening on the next connect', async () => {
+		const runId = `bun-selfheal-${process.pid}`;
+		const victim = 'victim.hezo-egress-test';
+		const survivor = 'survivor.hezo-egress-test';
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			await Promise.all([
+				servedCertThroughProxy(allocated.proxyPort, victim, ca.cert),
+				servedCertThroughProxy(allocated.proxyPort, survivor, ca.cert),
+			]);
+			const before = getSslServers(proxy, runId);
+			const victimServer = before[victim]?.server;
+			expect(victimServer?.listening).toBe(true);
+
+			// The per-host server disappears; its port may now be recycled.
+			await new Promise<void>((resolve) => victimServer?.close(() => resolve()));
+			expect(victimServer?.listening).toBe(false);
+
+			// Any subsequent CONNECT triggers the reconciler (runs on
+			// setImmediate); give it a tick to drop the stale entry.
+			await servedCertThroughProxy(allocated.proxyPort, survivor, ca.cert);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			const after = getSslServers(proxy, runId);
+			expect(victim in after).toBe(false);
+			expect(after[survivor]?.server?.listening).toBe(true);
+		} finally {
+			await proxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
 });
+
+interface SslServerEntry {
+	port?: number;
+	server?: { listening: boolean; close: (cb: () => void) => void };
+}
+
+/** Reach into the proxy's per-run internal MITM server map for assertions. */
+function getSslServers(p: EgressProxy, runId: string): Record<string, SslServerEntry> {
+	const runs = (
+		p as unknown as {
+			runs: Map<string, { proxy: { sslServers?: Record<string, SslServerEntry> } }>;
+		}
+	).runs;
+	return runs.get(runId)?.proxy.sslServers ?? {};
+}
 
 const httpsHits: Array<Record<string, string | string[] | undefined>> = [];
 

@@ -1,5 +1,5 @@
 diff --git a/dist/lib/proxy.js b/dist/lib/proxy.js
-index e89659568c500de1dcd1c3611e353353d7158714..e3992edf667e2fc89aa078e1ca4af41ffddffbf2 100644
+index e89659568c500de1dcd1c3611e353353d7158714..9588cf13352f814d6c5b228756419532debbedb6 100644
 --- a/dist/lib/proxy.js
 +++ b/dist/lib/proxy.js
 @@ -358,12 +358,14 @@ class Proxy {
@@ -44,3 +44,28 @@ index e89659568c500de1dcd1c3611e353353d7158714..e3992edf667e2fc89aa078e1ca4af41f
          }
          function getHttpsServer(hostname, callback) {
              self.onCertificateRequired(hostname, (err, files) => {
+@@ -481,6 +499,9 @@ class Proxy {
+                                     wsServer: wssServer,
+                                     port,
+                                 };
++                                httpsServer.on("close", () => {
++                                    console.debug(`https server closed for ${hostname} on ${port}`);
++                                });
+                                 hosts.forEach((host) => {
+                                     self.sslServers[host] = sslServer;
+                                 });
+@@ -526,7 +547,13 @@ class Proxy {
+                     }
+                     return makeConnection(port);
+                 });
+-                delete self.sslSemaphores[wildcardHost];
++                // Keep the per-wildcard semaphore registered for the proxy's
++                // lifetime. Deleting it here ran synchronously while the lock was
++                // still held (leave happens in getHttpsServer's async callback),
++                // so a concurrent CONNECT for the same host saw no semaphore,
++                // created a fresh one, and spun up a duplicate orphaned per-host
++                // server. The registry is bounded by the distinct wildcards this
++                // short-lived proxy sees.
+             });
+         }
+         else {
