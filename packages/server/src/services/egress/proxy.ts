@@ -103,6 +103,19 @@ export class EgressProxy {
 				.catch((e: Error) => callback(e));
 		});
 
+		// The library terminates TLS with a per-host internal server, each
+		// presenting that host's leaf cert. A production report showed one host's
+		// cert served on another host's connection (a wrong-SAN TLS failure that
+		// the in-process MITM path never reproduces). This detector runs after the
+		// per-host server is (re)selected and fails loud if two unrelated upstream
+		// hosts resolved to the same internal port — the exact cross-host route —
+		// so the next occurrence is captured with the port and hosts involved.
+		const loggedCollisions = new Set<string>();
+		proxy.onConnect(((_req: unknown, _socket: unknown, _head: unknown, callback: () => void) => {
+			setImmediate(() => detectCrossHostCertRoute(proxy, scope, runId, loggedCollisions));
+			callback();
+		}) as Parameters<IProxy['onConnect']>[0]);
+
 		try {
 			await new Promise<void>((resolve, reject) => {
 				let settled = false;
@@ -327,6 +340,51 @@ function headersContainProbe(headers: Record<string, string>): boolean {
 		if (typeof v === 'string' && PLACEHOLDER_PROBE_REGEX.test(v)) return true;
 	}
 	return false;
+}
+
+/** Collapse the first DNS label to a wildcard so subdomains sharing one
+ * wildcard-covered internal server (a legitimate single cert) don't read as a
+ * collision. `api.githubcopilot.com` → `*.githubcopilot.com`. */
+function wildcardForm(host: string): string {
+	return host.replace(/^[^.]+\./, '*.');
+}
+
+/**
+ * Inspect the library's per-host server map for the egress invariant that no
+ * two unrelated upstream hosts share one internal MITM server port. A shared
+ * port means a tunnel for one host would be served the other host's leaf cert.
+ * Subdomains of the same wildcard legitimately share a server, so only ports
+ * spanning more than one wildcard group are flagged. Read-only; logs once per
+ * offending port.
+ */
+export function detectCrossHostCertRoute(
+	proxy: IProxy,
+	scope: RunProxyScope,
+	runId: string,
+	logged: Set<string>,
+): void {
+	const sslServers = (proxy as unknown as { sslServers?: Record<string, { port?: number }> })
+		.sslServers;
+	if (!sslServers) return;
+	const hostsByPort = new Map<number, string[]>();
+	for (const [host, entry] of Object.entries(sslServers)) {
+		const port = entry?.port;
+		if (typeof port !== 'number') continue;
+		const hosts = hostsByPort.get(port);
+		if (hosts) hosts.push(host);
+		else hostsByPort.set(port, [host]);
+	}
+	for (const [port, hosts] of hostsByPort) {
+		if (hosts.length < 2) continue;
+		if (new Set(hosts.map(wildcardForm)).size < 2) continue;
+		if (logged.has(`${port}`)) continue;
+		logged.add(`${port}`);
+		log.error('egress MITM server port serves unrelated hosts — cross-host cert risk', {
+			run: ref(scope.label, runId),
+			port,
+			hosts: [...new Set(hosts)],
+		});
+	}
 }
 
 interface ErrorContext {

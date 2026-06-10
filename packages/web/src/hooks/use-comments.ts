@@ -197,16 +197,19 @@ export function useFulfillCredential(projectId: string, taskId: string) {
 			commentId,
 			value,
 			confirmed,
+			allowedHosts,
 		}: {
 			commentId: string;
 			value?: string;
 			confirmed?: boolean;
+			allowedHosts?: string[];
 		}) =>
 			api.post(
 				`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/fulfill-credential`,
 				{
 					value,
 					confirmed,
+					allowed_hosts: allowedHosts,
 				},
 			),
 		onSuccess: () =>

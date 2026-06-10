@@ -5,11 +5,12 @@ import type { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
+import type { IProxy } from 'http-mitm-proxy';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import { type HezoCA, loadOrCreateCA } from '../src/services/egress/ca';
-import { EgressProxy } from '../src/services/egress/proxy';
+import { detectCrossHostCertRoute, EgressProxy } from '../src/services/egress/proxy';
 import { safeClose } from './helpers';
 import { createTestApp, createTestProject } from './helpers/app';
 
@@ -397,3 +398,52 @@ async function fetchHttpsThroughProxy(
 		tls.setTimeout(20_000, () => tls.destroy(new Error('https fetch timed out')));
 	});
 }
+
+describe('detectCrossHostCertRoute', () => {
+	const scope = { teamId: 't', agentId: 'a', label: 'run' };
+	const fakeProxy = (sslServers: Record<string, { port: number }>) =>
+		({ sslServers }) as unknown as IProxy;
+
+	it('flags two unrelated hosts sharing one internal server port', () => {
+		const logged = new Set<string>();
+		detectCrossHostCertRoute(
+			fakeProxy({
+				'api.githubcopilot.com': { port: 5001 },
+				'registry.npmjs.org': { port: 5001 },
+			}),
+			scope,
+			'run-1',
+			logged,
+		);
+		expect(logged.has('5001')).toBe(true);
+	});
+
+	it('does not flag distinct hosts on distinct ports', () => {
+		const logged = new Set<string>();
+		detectCrossHostCertRoute(
+			fakeProxy({
+				'api.githubcopilot.com': { port: 5001 },
+				'registry.npmjs.org': { port: 5002 },
+			}),
+			scope,
+			'run-1',
+			logged,
+		);
+		expect(logged.size).toBe(0);
+	});
+
+	it('does not flag subdomains legitimately sharing a wildcard server', () => {
+		const logged = new Set<string>();
+		detectCrossHostCertRoute(
+			fakeProxy({
+				'api.example.com': { port: 5003 },
+				'cdn.example.com': { port: 5003 },
+				'*.example.com': { port: 5003 },
+			}),
+			scope,
+			'run-1',
+			logged,
+		);
+		expect(logged.size).toBe(0);
+	});
+});

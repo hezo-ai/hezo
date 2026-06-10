@@ -13,7 +13,7 @@ import { TraceComment } from './trace-comment';
 
 export type { CommentData } from './comment-data';
 export { CommentReactions } from './comment-reactions';
-export { inlineEventIcon, isInlineEventType } from './helpers';
+export { commentText, inlineEventIcon, isInlineEventType } from './helpers';
 
 interface RenderProps {
 	comment: CommentData;

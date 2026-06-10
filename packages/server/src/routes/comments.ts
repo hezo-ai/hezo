@@ -382,7 +382,11 @@ commentsRoutes.post(
 		if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 		const commentId = c.req.param('commentId');
 
-		const body = await c.req.json<{ value?: string; confirmed?: boolean }>();
+		const body = await c.req.json<{
+			value?: string;
+			confirmed?: boolean;
+			allowed_hosts?: string[];
+		}>();
 
 		const existing = await db.query<{
 			content_type: string;
@@ -406,9 +410,17 @@ commentsRoutes.post(
 		const requestContent = row.content;
 		const name = String(requestContent.name ?? '');
 		const kind = String(requestContent.kind ?? '');
-		const allowedHosts = Array.isArray(requestContent.allowed_hosts)
+		const requestHosts = Array.isArray(requestContent.allowed_hosts)
 			? (requestContent.allowed_hosts as string[])
 			: [];
+		// The human pasting the value can set or correct the host allowlist —
+		// the safety net when an agent requested an exempt kind (other/webhook)
+		// without scoping, leaving the secret undeliverable. A non-empty override
+		// wins; otherwise the agent's requested hosts stand.
+		const overrideHosts = Array.isArray(body.allowed_hosts)
+			? body.allowed_hosts.map((h) => String(h).trim().toLowerCase()).filter((h) => h.length > 0)
+			: [];
+		const allowedHosts = overrideHosts.length > 0 ? overrideHosts : requestHosts;
 		const requestingAgentId = row.author_member_id;
 
 		const isConfirmation = typeof requestContent.confirmation_text === 'string';
