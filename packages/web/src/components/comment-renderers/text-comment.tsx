@@ -1,6 +1,7 @@
 import { CommentAttachmentThumb } from '../comment-attachment-thumb';
 import { MarkdownProse } from '../markdown-prose';
 import type { CommentDataOf } from './comment-data';
+import { commentText } from './helpers';
 
 interface Props {
 	comment: CommentDataOf<'text'>;
@@ -9,15 +10,7 @@ interface Props {
 }
 
 export function TextComment({ comment, projectId, projectSlug }: Props) {
-	const raw = comment.content;
-	const content =
-		typeof raw === 'string'
-			? raw
-			: raw && typeof raw === 'object'
-				? typeof raw.text === 'string'
-					? raw.text
-					: JSON.stringify(raw)
-				: '';
+	const content = commentText(comment.content);
 	return (
 		<>
 			<MarkdownProse testId="text-comment-body" projectId={projectId} projectSlug={projectSlug}>

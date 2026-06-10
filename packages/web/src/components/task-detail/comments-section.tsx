@@ -1,5 +1,6 @@
+import { CommentContentType } from '@hezo/shared';
 import { useLocation } from '@tanstack/react-router';
-import { CornerDownRight, Reply } from 'lucide-react';
+import { Check, Copy, CornerDownRight, Reply } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useAgents } from '../../hooks/use-agents';
@@ -10,6 +11,7 @@ import {
 	type CommentData,
 	CommentReactions,
 	CommentRenderer,
+	commentText,
 	inlineEventIcon,
 	isInlineEventType,
 } from '../comment-renderers';
@@ -25,6 +27,46 @@ export function jumpToComment(commentId: string) {
 		window.history.pushState(null, '', target);
 		window.dispatchEvent(new HashChangeEvent('hashchange'));
 	};
+}
+
+/**
+ * Copies a comment's markdown body to the clipboard, swapping its icon to a
+ * check for 1.5s as confirmation (mirrors the log-viewer copy affordance). A
+ * standalone component because each comment row renders inside Virtuoso's
+ * `itemContent` callback, where per-row hooks can't live.
+ */
+function CopyCommentButton({ text }: { text: string }) {
+	const [copied, setCopied] = useState(false);
+	const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(() => {
+		return () => {
+			if (timeoutRef.current) clearTimeout(timeoutRef.current);
+		};
+	}, []);
+
+	const handleCopy = async () => {
+		try {
+			await navigator.clipboard.writeText(text);
+			setCopied(true);
+			if (timeoutRef.current) clearTimeout(timeoutRef.current);
+			timeoutRef.current = setTimeout(() => setCopied(false), 1500);
+		} catch {
+			// clipboard write failed (e.g. insecure context) — leave state unchanged
+		}
+	};
+
+	return (
+		<button
+			type="button"
+			onClick={handleCopy}
+			className="text-text-subtle hover:text-text shrink-0 p-1 -m-1"
+			aria-label={copied ? 'Copied' : 'Copy comment'}
+			data-testid="comment-copy"
+		>
+			{copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+		</button>
+	);
 }
 
 type HashScrollTarget = { idx: number; highlightId: string | null };
@@ -352,22 +394,27 @@ export function CommentsSection({
 										<span className="text-[11px] text-text-subtle">
 											{new Date(c.created_at).toLocaleString()}
 										</span>
-										{c.parent_comment_id &&
-											(() => {
-												const parent = comments?.find((x) => x.id === c.parent_comment_id);
-												if (!parent) return null;
-												return (
-													<a
-														href={`#comment-${parent.id}`}
-														onClick={jumpToComment(parent.id)}
-														className="ml-auto flex items-center gap-1 text-[11px] text-text-subtle hover:text-text"
-														data-testid="replying-to"
-													>
-														<CornerDownRight className="w-3 h-3" />
-														replying to {parent.author_name}
-													</a>
-												);
-											})()}
+										<div className="ml-auto flex items-center gap-2">
+											{c.parent_comment_id &&
+												(() => {
+													const parent = comments?.find((x) => x.id === c.parent_comment_id);
+													if (!parent) return null;
+													return (
+														<a
+															href={`#comment-${parent.id}`}
+															onClick={jumpToComment(parent.id)}
+															className="flex items-center gap-1 text-[11px] text-text-subtle hover:text-text"
+															data-testid="replying-to"
+														>
+															<CornerDownRight className="w-3 h-3" />
+															replying to {parent.author_name}
+														</a>
+													);
+												})()}
+											{c.content_type === CommentContentType.Text && (
+												<CopyCommentButton text={commentText(c.content)} />
+											)}
+										</div>
 									</div>
 									<div className="px-3 py-2.5">
 										<CommentRenderer
