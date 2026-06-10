@@ -39,7 +39,7 @@ afterAll(async () => {
 	await sim.destroy();
 });
 
-async function seedGitHubOAuth(teamId: string): Promise<string> {
+async function seedGitHubOAuth(): Promise<string> {
 	const { db, masterKeyManager } = getTestContext();
 	const key = masterKeyManager.getKey();
 	if (!key) throw new Error('master key not available');
@@ -52,10 +52,10 @@ async function seedGitHubOAuth(teamId: string): Promise<string> {
 		[`OAUTH_GITHUB_${Math.random().toString(16).slice(2, 10)}`, encrypted],
 	);
 	const connRes = await db.query<{ id: string }>(
-		`INSERT INTO oauth_connections (team_id, provider, provider_account_id, provider_account_label, access_token_secret_id, scopes)
-		 VALUES ($1, 'github', $2, $3, $4, ARRAY['repo','read:org','write:public_key'])
+		`INSERT INTO oauth_connections (provider, provider_account_id, provider_account_label, access_token_secret_id, scopes)
+		 VALUES ('github', $1, $2, $3, ARRAY['repo','read:org','write:public_key'])
 		 RETURNING id`,
-		[teamId, '9001', ghOwner, secretRes.rows[0].id],
+		['9001', ghOwner, secretRes.rows[0].id],
 	);
 	return connRes.rows[0].id;
 }
@@ -68,7 +68,7 @@ test('GITHUB_REPO_EXISTS surfaces a link-existing affordance that flips the moda
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Picker Project' });
 			projectSlug = project.slug;
-			await seedGitHubOAuth(ws.team.id);
+			await seedGitHubOAuth();
 		},
 	});
 
