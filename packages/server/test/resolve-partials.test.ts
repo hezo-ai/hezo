@@ -150,8 +150,11 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 			expect(docs[key], `${key} should explain the parent-deliverable distinction`).toContain(
 				"## What counts as the parent's deliverable",
 			);
-			expect(docs[key], `${key} should call out the planning-ticket parent case`).toContain(
-				'**Planning ticket parent**',
+			expect(docs[key], `${key} should include planning-ticket children rules`).toContain(
+				'## Draft execution plan tickets (`planning` label)',
+			);
+			expect(docs[key], `${key} should forbid nesting implementation under planning`).toContain(
+				'Implementation must **never** be a child of the draft execution plan ticket',
 			);
 			expect(docs[key], `${key} should call out the implementation/feature parent case`).toContain(
 				'**Implementation / feature / bug-fix parent**',
