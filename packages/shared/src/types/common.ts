@@ -232,6 +232,22 @@ export const CredentialKind = {
 } as const;
 export type CredentialKind = (typeof CredentialKind)[keyof typeof CredentialKind];
 
+/**
+ * Credential kinds whose value is substituted into outbound HTTP (Authorization
+ * headers / URLs) by the egress proxy, and therefore MUST declare a non-empty
+ * allowed_hosts allowlist so the secret is only ever injected into those hosts.
+ * ssh_private_key (used via the ssh-agent, not the proxy), webhook_secret (often
+ * a local HMAC secret), and the generic `other` kind are exempt.
+ */
+export const CREDENTIAL_KINDS_REQUIRING_HOSTS: readonly CredentialKind[] = [
+	CredentialKind.ApiKey,
+	CredentialKind.OauthToken,
+	CredentialKind.GithubPat,
+];
+export function credentialKindRequiresAllowedHosts(kind: string): boolean {
+	return (CREDENTIAL_KINDS_REQUIRING_HOSTS as readonly string[]).includes(kind);
+}
+
 export const CredentialInputType = {
 	Text: 'text',
 	Textarea: 'textarea',
