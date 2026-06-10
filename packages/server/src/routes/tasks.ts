@@ -28,12 +28,14 @@ import {
 import { err, ok } from '../lib/response';
 import { assertRunTaskScope } from '../lib/run-scope';
 import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/task-relationships';
+import { buildTaskListOrderBy, parseTaskListSort } from '../lib/task-sort';
 import type { AuthInfo, Env } from '../lib/types';
 import { logger } from '../logger';
 import { removeTaskWorktrees } from '../services/repo-sync';
 import { terminateRunsForTask } from '../services/run-termination';
 import { triggerStatusAutomations } from '../services/task-automation';
 import { recordAssigneeChange, recordTaskLinks, recordTitleChange } from '../services/task-events';
+import { getTaskProgressSummary } from '../services/task-progress-summary';
 import {
 	type CreateTaskCaller,
 	CreateTaskError,
@@ -148,17 +150,16 @@ tasksRoutes.get('/projects/:projectId/tasks', async (c) => {
 
 	const where = conditions.join(' AND ');
 
-	const sortParam = c.req.query('sort') || 'created_at:desc';
-	const [sortField, sortDir] = sortParam.split(':');
-	const allowedSorts = ['created_at', 'updated_at', 'priority', 'number'];
-	const sortColumn = allowedSorts.includes(sortField) ? sortField : 'created_at';
-	const sortDirection = sortDir === 'asc' ? 'ASC' : 'DESC';
+	const { field: sortField, direction: sortDirection } = parseTaskListSort(c.req.query('sort'));
 
 	const countResult = await db.query<{ count: number }>(
 		`SELECT count(*)::int AS count FROM tasks i WHERE ${where}`,
 		params,
 	);
 	const total = countResult.rows[0].count;
+
+	const orderBy = buildTaskListOrderBy(sortField, sortDirection, params, idx);
+	idx = orderBy.nextIdx;
 
 	const dataParams = [...params, adminUserId, perPage, offset];
 	const result = await db.query(
@@ -212,16 +213,18 @@ tasksRoutes.get('/projects/:projectId/tasks', async (c) => {
        LIMIT 1
      ) lr ON true
      WHERE ${where}
-     ORDER BY EXISTS (
-                SELECT 1 FROM heartbeat_runs hr
-                WHERE hr.task_id = i.id AND hr.status IN ('running', 'queued')
-              ) DESC,
-              i.${sortColumn} ${sortDirection}
+     ORDER BY ${orderBy.sql}
      LIMIT $${idx + 1} OFFSET $${idx + 2}`,
 		dataParams,
 	);
 
 	return c.json({ data: result.rows, meta: buildMeta(page, perPage, total) });
+});
+
+tasksRoutes.get('/projects/:projectId/tasks/progress-summary', async (c) => {
+	const projectId = c.get('projectId') as string;
+	const summary = await getTaskProgressSummary(c.get('db'), projectId);
+	return c.json({ data: summary });
 });
 
 tasksRoutes.post('/projects/:projectId/tasks', async (c) => {

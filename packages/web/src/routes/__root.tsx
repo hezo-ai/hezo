@@ -102,12 +102,11 @@ function ShellChrome() {
 	return (
 		<div className="h-screen flex flex-col overflow-hidden">
 			<AppHeader onOpenDrawer={() => setDrawerOpen(true)} />
-			<div className="flex flex-row flex-1 overflow-hidden">
-				{/* Cap the whole left-nav + content block (rail + project sidebar +
-				    content) at 1280px, left-aligned; wide viewports get empty space
-				    on the right rather than the app sprawling edge to edge. */}
+			<div className="flex flex-row flex-1 overflow-hidden w-full">
+				{/* Rail + project sidebar + scrollable main span the full viewport so
+				    the main-panel scrollbar sits on the browser edge, not mid-screen. */}
 				<div
-					className="flex flex-row flex-1 min-w-0 max-w-[1280px] overflow-hidden"
+					className="flex flex-row flex-1 min-w-0 w-full overflow-hidden"
 					data-testid="content-well"
 				>
 					<div className="hidden md:flex h-full">

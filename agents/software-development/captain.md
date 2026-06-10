@@ -42,7 +42,9 @@ If a peer agent later discovers a missed prerequisite, they will declare the blo
 
 When a project is created you are woken on its **planning ticket** (labelled `planning`, titled "Draft execution plan for …"). It is the **epic for the plan itself**, not a piece of execution work, so it has its own lifecycle:
 
-1. Draft the plan and fan out the chain — planning artefacts (research / PRD / spec / design) as **sub-tasks of this ticket**, execution work (implementation / security review / launch) as **top-level tickets** — per *Declaring dependencies between tickets* above.
+{{> partials/common/planning-ticket-children}}
+
+1. Draft the plan and fan out the chain — planning artefacts (research / PRD / spec / design) as **sub-tasks of this ticket**; implementation, build, deploy, QA, security review of built code, marketing launch, and every other execution milestone as **top-level tickets with no `parent_task_id`** — per *Declaring dependencies between tickets* above. **Never** file implementation under this planning ticket.
 2. Leave the planning ticket `in_progress` while its sub-tasks run. The server rejects a `done`/`closed` transition while any sub-task is still open — that rejection is expected, not a bug.
 3. **Close it out — this is the final, required step.** Once every planning sub-task has reached `closed` (Coach-reviewed) and the top-level execution tickets exist, set the planning ticket to `done` with `update_task`; the Coach closes it after the post-mortem. Do not leave it parked in `in_progress` once it is eligible — the execution tickets ship independently and do not block it from closing.
 

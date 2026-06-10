@@ -9,6 +9,25 @@ import { seedWorkspace } from './helpers/seed';
 // true, so it gets the restricted sidebar, the coordination info tooltip beside
 // its name, and the documents/settings redirects.
 
+test('HQ task list does not show the project progress bar', async () => {
+	const { findAllByRole, queryByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			await seedWorkspace();
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: HQ_PROJECT_SLUG },
+	});
+
+	await findAllByRole('link', { name: 'Tasks' }, { timeout: 10_000 });
+	expect(queryByTestId('task-progress-bar')).toBeNull();
+	expect(queryByTestId('project-task-list-phase-banner-onboarding')).toBeNull();
+	expect(queryByTestId('project-task-list-phase-banner-planning')).toBeNull();
+});
+
 test('sidebar exposes only Tasks and Container for the HQ project', async () => {
 	const { findAllByRole, queryAllByRole, container, router } = await renderApp({
 		initialPath: '/',

@@ -14,9 +14,24 @@ interface DataTableProps<T> {
 	data: T[];
 	rowKey: (row: T) => string;
 	onRowClick?: (row: T) => void;
+	/** When set with indentColumnKey, adds left padding on that column per depth. */
+	getRowDepth?: (row: T) => number;
+	indentColumnKey?: string;
 }
 
-export function DataTable<T>({ columns, data, rowKey, onRowClick }: DataTableProps<T>) {
+const depthIndentClass: Record<number, string> = {
+	1: 'pl-5 sm:pl-6',
+	2: 'pl-9 sm:pl-10',
+};
+
+export function DataTable<T>({
+	columns,
+	data,
+	rowKey,
+	onRowClick,
+	getRowDepth,
+	indentColumnKey,
+}: DataTableProps<T>) {
 	return (
 		<div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
 			<table className="w-full border-collapse">
@@ -36,24 +51,34 @@ export function DataTable<T>({ columns, data, rowKey, onRowClick }: DataTablePro
 					</tr>
 				</thead>
 				<tbody>
-					{data.map((row) => (
-						<tr
-							key={rowKey(row)}
-							onClick={onRowClick ? () => onRowClick(row) : undefined}
-							className={onRowClick ? 'cursor-pointer hover:bg-bg-subtle' : ''}
-						>
-							{columns.map((col) => (
-								<td
-									key={col.key}
-									className={`px-2 py-2.5 border-b border-border text-[13px] align-middle ${
-										col.hideOnMobile ? 'hidden md:table-cell ' : ''
-									}${col.className ?? ''}`}
-								>
-									{col.render(row)}
-								</td>
-							))}
-						</tr>
-					))}
+					{data.map((row) => {
+						const depth = getRowDepth?.(row) ?? 0;
+						return (
+							<tr
+								key={rowKey(row)}
+								data-depth={depth > 0 ? depth : undefined}
+								onClick={onRowClick ? () => onRowClick(row) : undefined}
+								className={onRowClick ? 'cursor-pointer hover:bg-bg-subtle' : ''}
+							>
+								{columns.map((col) => {
+									const indent =
+										indentColumnKey === col.key && depth > 0
+											? (depthIndentClass[depth] ?? depthIndentClass[2])
+											: '';
+									return (
+										<td
+											key={col.key}
+											className={`px-2 py-2.5 border-b border-border text-[13px] align-middle ${
+												col.hideOnMobile ? 'hidden md:table-cell ' : ''
+											}${indent ? `${indent} ` : ''}${col.className ?? ''}`}
+										>
+											{col.render(row)}
+										</td>
+									);
+								})}
+							</tr>
+						);
+					})}
 				</tbody>
 			</table>
 		</div>
