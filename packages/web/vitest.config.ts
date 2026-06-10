@@ -27,8 +27,8 @@ export default defineConfig({
 			// pull different patch versions) and a render() that pulls in two
 			// copies blows up on useState. Force every import through one path so
 			// React's hook dispatcher is shared.
-			react: resolve(ROOT, 'node_modules/react'),
-			'react-dom': resolve(ROOT, 'node_modules/react-dom'),
+			react: resolve(__dir, 'node_modules/react'),
+			'react-dom': resolve(__dir, 'node_modules/react-dom'),
 		},
 	},
 	test: {
