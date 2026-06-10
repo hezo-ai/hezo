@@ -20,22 +20,29 @@ export class PortAllocator {
 	) {}
 
 	async allocate(agentId?: string): Promise<number> {
+		// Reserve a candidate synchronously before the async availability probe.
+		// The probe yields to the event loop, so without claiming the port first
+		// two concurrent allocations would both see it free and return the same
+		// port — one run then fails to bind and aborts. Releasing the claim if
+		// the probe comes back negative keeps an externally-bound port skippable.
 		if (agentId) {
 			const previous = this.lastForAgent.get(agentId);
 			if (previous !== undefined && !this.inUse.has(previous)) {
+				this.inUse.add(previous);
 				if (await this.probeAvailability(previous)) {
-					this.inUse.add(previous);
 					return previous;
 				}
+				this.inUse.delete(previous);
 			}
 		}
 		for (let port = this.rangeStart; port <= this.rangeEnd; port++) {
 			if (this.inUse.has(port)) continue;
+			this.inUse.add(port);
 			if (await this.probeAvailability(port)) {
-				this.inUse.add(port);
 				if (agentId) this.lastForAgent.set(agentId, port);
 				return port;
 			}
+			this.inUse.delete(port);
 		}
 		throw new Error(`No free port in range [${this.rangeStart}, ${this.rangeEnd}]`);
 	}

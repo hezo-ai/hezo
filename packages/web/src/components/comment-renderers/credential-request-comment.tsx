@@ -24,8 +24,15 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 	const fulfilled = typeof comment.chosen_option?.secret_id === 'string';
 
 	const [value, setValue] = useState('');
+	const [hostsInput, setHostsInput] = useState(allowedHosts.join(', '));
 	const [error, setError] = useState<string | null>(null);
 	const fulfill = useFulfillCredential(projectId ?? '', taskId ?? '');
+
+	const parseHosts = (raw: string): string[] =>
+		raw
+			.split(/[\s,]+/)
+			.map((h) => h.trim().toLowerCase())
+			.filter((h) => h.length > 0);
 
 	if (!projectId || !taskId) {
 		return (
@@ -58,7 +65,7 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 		setError(null);
 		const args = confirmationText
 			? { commentId: comment.id, confirmed: true }
-			: { commentId: comment.id, value };
+			: { commentId: comment.id, value, allowedHosts: parseHosts(hostsInput) };
 		fulfill.mutate(args, {
 			onError: (e: unknown) => {
 				const msg = e instanceof Error ? e.message : 'Failed to submit';
@@ -150,6 +157,22 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 							data-testid="credential-input"
 						/>
 					)}
+					<div className="flex flex-col gap-1">
+						<label htmlFor={`hosts-${comment.id}`} className="text-xs text-text-muted">
+							Allowed hosts — the API host(s) this value may be sent to (comma-separated). The
+							egress proxy substitutes it only for these hosts.
+						</label>
+						<input
+							id={`hosts-${comment.id}`}
+							type="text"
+							value={hostsInput}
+							onChange={(e) => setHostsInput(e.target.value)}
+							placeholder="e.g. api.netlify.com, *.netlify.com"
+							autoComplete="off"
+							className="w-full text-sm p-2 rounded border border-border bg-bg focus:outline-none focus:border-accent-blue"
+							data-testid="credential-hosts-input"
+						/>
+					</div>
 					{error && <p className="text-xs text-accent-red-text">{error}</p>}
 					<div>
 						<Button

@@ -334,6 +334,39 @@ describe('fulfill-credential endpoint', () => {
 		expect(body.error.message).toContain('already fulfilled');
 	});
 
+	it('lets the human set allowed_hosts at fulfillment for an unscoped request', async () => {
+		// Exempt kind (other) can be requested with no hosts, leaving it
+		// undeliverable. The human scopes it when pasting the value.
+		const created = (await callRequestCredential({
+			team_id: teamId,
+			task_id: taskId,
+			name: 'FULFILL_HOST_OVERRIDE',
+			kind: 'other',
+			instructions: 'paste and scope me',
+		})) as { comment_id: string };
+
+		const res = await app.request(
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${created.comment_id}/fulfill-credential`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					value: 'tok-123',
+					allowed_hosts: ['API.NETLIFY.COM', ' app.netlify.com '],
+				}),
+			},
+		);
+		expect(res.status).toBe(200);
+		const secretId = (await res.json()).data.secret_id;
+
+		const secretRow = await db.query<{ allowed_hosts: string[] }>(
+			'SELECT allowed_hosts FROM secrets WHERE id = $1',
+			[secretId],
+		);
+		// Normalized (trimmed + lowercased) and applied over the empty request.
+		expect(secretRow.rows[0].allowed_hosts).toEqual(['api.netlify.com', 'app.netlify.com']);
+	});
+
 	it('rejects fulfill on a non-credential-request comment', async () => {
 		const textRes = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
 			method: 'POST',

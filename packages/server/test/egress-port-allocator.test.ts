@@ -32,6 +32,17 @@ describe('PortAllocator', () => {
 		expect(second).not.toBe(first);
 	});
 
+	it('hands out distinct ports for concurrent allocations', async () => {
+		// The availability probe yields to the event loop; concurrent allocations
+		// must not all settle on the same candidate port during that window.
+		const allocator = new PortAllocator(20100, 20107, async () => {
+			await new Promise((resolve) => setTimeout(resolve, 1));
+			return true;
+		});
+		const ports = await Promise.all(Array.from({ length: 8 }, () => allocator.allocate('agent-A')));
+		expect(new Set(ports).size).toBe(ports.length);
+	});
+
 	it('throws when the entire range is exhausted', async () => {
 		const allocator = new PortAllocator(20100, 20100, async () => true);
 		await allocator.allocate();
