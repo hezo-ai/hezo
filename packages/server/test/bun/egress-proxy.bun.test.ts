@@ -119,7 +119,90 @@ describe('EgressProxy under Bun', () => {
 			await new Promise<void>((resolve) => upstream.close(() => resolve()));
 		}
 	}, 30_000);
+
+	// A single run reaches multiple upstream hosts concurrently (e.g. a SaaS MCP
+	// host plus a package registry). Each host gets its own internally-minted
+	// leaf cert; a connection for one host must never be served the cert minted
+	// for another. The MITM library spins up a separate per-host HTTPS server,
+	// and concurrent first-time minting of two hosts must not cross the certs —
+	// otherwise the client sees ERR_TLS_CERT_ALTNAME_INVALID against the wrong
+	// SAN. Asserting on the served leaf cert is enough: the client↔proxy
+	// handshake completes before any upstream connection, so no upstream is
+	// needed and the hostnames need not resolve.
+	test('concurrent connections to different hosts are each served that host cert', async () => {
+		const hosts = Array.from({ length: 8 }, (_u, i) => `host-${i}.hezo-egress-test`);
+		// Fresh run proxies so every host is first-seen concurrently, forcing the
+		// per-host cert mint + listen to race within each proxy.
+		for (let attempt = 0; attempt < 8; attempt++) {
+			const runId = `bun-multihost-${process.pid}-${attempt}`;
+			const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+			try {
+				const certs = await Promise.all(
+					hosts.map((h) => servedCertThroughProxy(allocated.proxyPort, h, ca.cert)),
+				);
+				for (let i = 0; i < hosts.length; i++) {
+					expect(certs[i]).toContain(hosts[i]);
+				}
+			} finally {
+				await proxy.releaseRunProxy(runId);
+			}
+		}
+	}, 30_000);
+
+	// Regression for the cross-host cert route: the library caches a bare port
+	// per hostname and never invalidates it, so when a per-host server goes away
+	// its ephemeral port can be recycled by a different host's server, leaving
+	// the original hostname pointing at the wrong leaf cert. The onConnect
+	// reconciler must drop any entry whose backing server stopped listening so
+	// the next tunnel rebuilds a correct server. Here we close a per-host server
+	// outright (the worst case — its port is now free to recycle) and assert the
+	// stale entry is gone after the next connect while a live host is untouched.
+	test('purges a per-host entry whose server stopped listening on the next connect', async () => {
+		const runId = `bun-selfheal-${process.pid}`;
+		const victim = 'victim.hezo-egress-test';
+		const survivor = 'survivor.hezo-egress-test';
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			await Promise.all([
+				servedCertThroughProxy(allocated.proxyPort, victim, ca.cert),
+				servedCertThroughProxy(allocated.proxyPort, survivor, ca.cert),
+			]);
+			const before = getSslServers(proxy, runId);
+			const victimServer = before[victim]?.server;
+			expect(victimServer?.listening).toBe(true);
+
+			// The per-host server disappears; its port may now be recycled.
+			await new Promise<void>((resolve) => victimServer?.close(() => resolve()));
+			expect(victimServer?.listening).toBe(false);
+
+			// Any subsequent CONNECT triggers the reconciler (runs on
+			// setImmediate); give it a tick to drop the stale entry.
+			await servedCertThroughProxy(allocated.proxyPort, survivor, ca.cert);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			const after = getSslServers(proxy, runId);
+			expect(victim in after).toBe(false);
+			expect(after[survivor]?.server?.listening).toBe(true);
+		} finally {
+			await proxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
 });
+
+interface SslServerEntry {
+	port?: number;
+	server?: { listening: boolean; close: (cb: () => void) => void };
+}
+
+/** Reach into the proxy's per-run internal MITM server map for assertions. */
+function getSslServers(p: EgressProxy, runId: string): Record<string, SslServerEntry> {
+	const runs = (
+		p as unknown as {
+			runs: Map<string, { proxy: { sslServers?: Record<string, SslServerEntry> } }>;
+		}
+	).runs;
+	return runs.get(runId)?.proxy.sslServers ?? {};
+}
 
 const httpsHits: Array<Record<string, string | string[] | undefined>> = [];
 
@@ -128,12 +211,12 @@ async function insertSecret(name: string, value: string, allowedHosts: string[])
 	if (!key) throw new Error('master key unavailable in test');
 	const enc = encrypt(value, key);
 	await db.query(
-		`INSERT INTO secrets (team_id, project_id, name, encrypted_value, category, allowed_hosts)
-		 VALUES ($1, NULL, $2, $3, 'api_token'::secret_category, $4)
-		 ON CONFLICT (team_id, project_id, name) DO UPDATE
+		`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
+		 VALUES ($1, $2, 'api_token'::secret_category, $3)
+		 ON CONFLICT (name) DO UPDATE
 		 SET encrypted_value = EXCLUDED.encrypted_value,
 		     allowed_hosts = EXCLUDED.allowed_hosts`,
-		[teamId, name, enc, allowedHosts],
+		[name, enc, allowedHosts],
 	);
 }
 
@@ -210,5 +293,52 @@ async function fetchHttpsThroughProxy(
 		});
 		tls.on('error', reject);
 		tls.setTimeout(20_000, () => tls.destroy(new Error('https fetch timed out')));
+	});
+}
+
+// Open a CONNECT tunnel for `targetHost`, complete the client↔proxy TLS
+// handshake, and return a descriptor of the leaf cert the proxy served (CN +
+// subjectAltName). A wrong per-host cert makes the handshake reject with
+// ERR_TLS_CERT_ALTNAME_INVALID against `servername`, surfacing the cross-host
+// mix-up. No upstream is contacted, so the target host need not resolve.
+async function servedCertThroughProxy(
+	proxyPort: number,
+	targetHost: string,
+	caCert: string,
+): Promise<string> {
+	const tunnel = await new Promise<ReturnType<typeof netConnect>>((resolve, reject) => {
+		const sock = netConnect({ host: '127.0.0.1', port: proxyPort });
+		const onData = (chunk: Buffer) => {
+			const statusLine = chunk.toString().split('\r\n')[0] ?? '';
+			sock.removeListener('data', onData);
+			if (/^HTTP\/1\.[01] 200/.test(statusLine)) {
+				resolve(sock);
+			} else {
+				reject(new Error(`CONNECT failed: ${statusLine}`));
+			}
+		};
+		sock.on('connect', () => {
+			sock.write(`CONNECT ${targetHost}:443 HTTP/1.1\r\nHost: ${targetHost}:443\r\n\r\n`);
+		});
+		sock.on('data', onData);
+		sock.on('error', reject);
+		sock.setTimeout(20_000, () => sock.destroy(new Error('CONNECT timed out')));
+	});
+
+	return new Promise<string>((resolve, reject) => {
+		// rejectUnauthorized:false so a cross-host cert still completes the
+		// handshake — the caller asserts on which cert was served rather than
+		// the connection merely failing.
+		const tls = tlsConnect(
+			{ socket: tunnel, servername: targetHost, ca: [caCert], rejectUnauthorized: false },
+			() => {
+				const peer = tls.getPeerCertificate();
+				const descriptor = `${peer.subject?.CN ?? ''} ${peer.subjectaltname ?? ''}`;
+				tls.end();
+				resolve(descriptor);
+			},
+		);
+		tls.on('error', reject);
+		tls.setTimeout(20_000, () => tls.destroy(new Error('tls handshake timed out')));
 	});
 }

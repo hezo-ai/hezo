@@ -1,6 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { MasterKeyManager } from '../crypto/master-key';
-import { listConnectionsForTeam } from './oauth/connection-store';
+import { listConnections } from './oauth/connection-store';
 
 /**
  * Git author/committer identity plus an optional SSH commit-signing key,
@@ -60,16 +60,17 @@ export function gitConfigEnv(identity: GitIdentity): string[] {
 }
 
 /**
- * Resolve the team's Git identity from its GitHub connection (most recent wins)
- * and Ed25519 public key, falling back to a generic identity so `git commit`
- * never fails for lack of a configured author.
+ * Resolve the Git identity: author/committer from the instance-global GitHub
+ * connection (most recent wins), and the commit-signing key from the team's own
+ * Ed25519 key (the signing identity stays per-team). Falls back to a generic
+ * identity so `git commit` never fails for lack of a configured author.
  */
 export async function resolveGitIdentity(
 	db: PGlite,
 	masterKeyManager: MasterKeyManager,
 	teamId: string,
 ): Promise<GitIdentity> {
-	const connections = await listConnectionsForTeam({ db, masterKeyManager }, teamId);
+	const connections = await listConnections({ db, masterKeyManager });
 	const github = connections.find((c) => c.provider === 'github');
 	const derived = github
 		? deriveGitHubIdentity(github.metadata, github.providerAccountLabel)

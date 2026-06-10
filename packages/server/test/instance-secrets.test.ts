@@ -4,26 +4,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
-import { loadSecretsForScope } from '../src/services/egress/substitution';
+import { loadAllSecrets } from '../src/services/egress/substitution';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, projectSlugFor } from './helpers/app';
+import { authHeader, createTestApp } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 
-async function makeTeam(name: string): Promise<{ id: string; slug: string }> {
-	const res = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name }),
-	});
-	const team = (await res.json()).data;
-	return { id: team.id, slug: team.slug };
-}
-
-async function createInstanceSecret(body: Record<string, unknown>): Promise<Response> {
+async function createSecret(body: Record<string, unknown>): Promise<Response> {
 	return app.request('/api/secrets', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -43,108 +33,37 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('instance-level credentials (secrets)', () => {
-	it('an instance secret (team_id NULL) is resolved by the egress loader for any team', async () => {
-		const createRes = await createInstanceSecret({
+describe('global credentials (secrets)', () => {
+	it('a global secret is resolved & decrypted by the egress loader for any run', async () => {
+		const createRes = await createSecret({
 			name: 'SHARED_API_KEY',
 			value: 'sk-instance-123',
 			allowed_hosts: ['api.shared.example'],
 		});
 		expect(createRes.status).toBe(201);
 		const secret = (await createRes.json()).data;
-		expect(secret.team_id).toBeNull();
 		expect(secret.allowed_hosts).toEqual(['api.shared.example']);
 
-		// Listed in the instance credentials view.
+		// Listed in the global credentials view.
 		const instRes = await app.request('/api/credentials', { headers: authHeader(token) });
 		expect(
 			(await instRes.json()).data.some((s: { name: string }) => s.name === 'SHARED_API_KEY'),
 		).toBe(true);
 
-		// The egress loader resolves & decrypts it for an arbitrary team.
-		const team = await makeTeam('Secrets Team');
-		const teamId = team.id;
-		const projectSlug = `${await projectSlugFor(db, team.id)}`;
-		const loaded = await loadSecretsForScope({ db, masterKeyManager, teamId, projectId: null });
+		// The egress loader resolves & decrypts it — no team/project scope.
+		const loaded = await loadAllSecrets({ db, masterKeyManager });
 		const resolved = loaded.get('SHARED_API_KEY');
 		expect(resolved?.value).toBe('sk-instance-123');
 		expect(resolved?.allowedHosts).toEqual(['api.shared.example']);
-
-		// And it surfaces (read-only) in the team's credentials + secrets lists.
-		const teamCreds = await app.request(`/api/projects/${projectSlug}/credentials`, {
-			headers: authHeader(token),
-		});
-		const credRows = (await teamCreds.json()).data as { name: string; team_id: string | null }[];
-		expect(credRows.some((s) => s.name === 'SHARED_API_KEY' && s.team_id === null)).toBe(true);
-
-		const teamSecrets = await app.request(`/api/projects/${projectSlug}/secrets`, {
-			headers: authHeader(token),
-		});
-		const secRows = (await teamSecrets.json()).data as { name: string; team_id: string | null }[];
-		expect(secRows.some((s) => s.name === 'SHARED_API_KEY' && s.team_id === null)).toBe(true);
 	});
 
-	it('a team-scoped secret wins the name dedup over an instance one', async () => {
-		await createInstanceSecret({ name: 'DUP_KEY', value: 'instance-value', allow_all_hosts: true });
-
-		const team = await makeTeam('Dedup Secrets Team');
-		const teamId = team.id;
-		await app.request(`/api/projects/${await projectSlugFor(db, team.id)}/secrets`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'DUP_KEY', value: 'team-value', allow_all_hosts: true }),
-		});
-
-		const loaded = await loadSecretsForScope({ db, masterKeyManager, teamId, projectId: null });
-		expect(loaded.get('DUP_KEY')?.value).toBe('team-value');
-	});
-
-	it('a team cannot patch or delete an instance secret via its team routes', async () => {
-		const createRes = await createInstanceSecret({
-			name: 'PROTECTED',
-			value: 'v',
-			allow_all_hosts: true,
-		});
-		const secretId = (await createRes.json()).data.id;
-
-		const team = await makeTeam('Boundary Team');
-		const teamId = team.id;
-		const patch = await app.request(
-			`/api/projects/${await projectSlugFor(db, team.id)}/secrets/${secretId}`,
-			{
-				method: 'PATCH',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ value: 'hijack' }),
-			},
-		);
-		expect(patch.status).toBe(404);
-
-		const del = await app.request(
-			`/api/projects/${await projectSlugFor(db, team.id)}/secrets/${secretId}`,
-			{
-				method: 'DELETE',
-				headers: authHeader(token),
-			},
-		);
-		expect(del.status).toBe(404);
-
-		// Still resolves to its original value.
-		const loaded = await loadSecretsForScope({ db, masterKeyManager, teamId, projectId: null });
-		expect(loaded.get('PROTECTED')?.value).toBe('v');
-	});
-
-	it('rotates an instance secret value via upsert (re-POST) and via PATCH', async () => {
-		await createInstanceSecret({ name: 'ROTATE', value: 'v1', allow_all_hosts: true });
+	it('secret names are unique instance-wide; re-POST rotates the value', async () => {
+		await createSecret({ name: 'ROTATE', value: 'v1', allow_all_hosts: true });
 		// Re-POST same name → upsert new value (no duplicate-key error).
-		const repost = await createInstanceSecret({
-			name: 'ROTATE',
-			value: 'v2',
-			allow_all_hosts: true,
-		});
+		const repost = await createSecret({ name: 'ROTATE', value: 'v2', allow_all_hosts: true });
 		expect(repost.status).toBe(201);
 
-		const teamId = (await makeTeam('Rotate Team')).id;
-		let loaded = await loadSecretsForScope({ db, masterKeyManager, teamId, projectId: null });
+		let loaded = await loadAllSecrets({ db, masterKeyManager });
 		expect(loaded.get('ROTATE')?.value).toBe('v2');
 
 		const instList = await app.request('/api/credentials', { headers: authHeader(token) });
@@ -158,11 +77,28 @@ describe('instance-level credentials (secrets)', () => {
 		});
 		expect(patch.status).toBe(200);
 
-		loaded = await loadSecretsForScope({ db, masterKeyManager, teamId, projectId: null });
+		loaded = await loadAllSecrets({ db, masterKeyManager });
 		expect(loaded.get('ROTATE')?.value).toBe('v3');
 	});
 
-	it('requires superuser for instance credential management', async () => {
+	it('deletes a secret so the egress loader no longer resolves it', async () => {
+		const createRes = await createSecret({ name: 'EPHEMERAL', value: 'x', allow_all_hosts: true });
+		const secretId = (await createRes.json()).data.id;
+
+		let loaded = await loadAllSecrets({ db, masterKeyManager });
+		expect(loaded.has('EPHEMERAL')).toBe(true);
+
+		const del = await app.request(`/api/secrets/${secretId}`, {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
+		expect(del.status).toBe(200);
+
+		loaded = await loadAllSecrets({ db, masterKeyManager });
+		expect(loaded.has('EPHEMERAL')).toBe(false);
+	});
+
+	it('requires superuser for credential management', async () => {
 		const nonSuper = await db.query<{ id: string }>(
 			"INSERT INTO users (display_name, is_superuser) VALUES ('Member', false) RETURNING id",
 		);
@@ -177,5 +113,29 @@ describe('instance-level credentials (secrets)', () => {
 			body: JSON.stringify({ name: 'NOPE', value: 'x', allow_all_hosts: true }),
 		});
 		expect(postRes.status).toBe(403);
+	});
+
+	it('rejects create when name or value is missing', async () => {
+		const noName = await createSecret({ value: 'x', allow_all_hosts: true });
+		expect(noName.status).toBe(400);
+		const noValue = await createSecret({ name: 'NO_VALUE', allow_all_hosts: true });
+		expect(noValue.status).toBe(400);
+		const blankName = await createSecret({ name: '   ', value: 'x', allow_all_hosts: true });
+		expect(blankName.status).toBe(400);
+	});
+
+	it('returns 404 when patching or deleting a non-existent secret', async () => {
+		const fakeId = '00000000-0000-0000-0000-000000000000';
+		const patch = await app.request(`/api/secrets/${fakeId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ value: 'x' }),
+		});
+		expect(patch.status).toBe(404);
+		const del = await app.request(`/api/secrets/${fakeId}`, {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
+		expect(del.status).toBe(404);
 	});
 });

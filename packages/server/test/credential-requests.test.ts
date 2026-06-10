@@ -142,6 +142,7 @@ describe('request_credential MCP tool', () => {
 			name: 'DUPLICATE_KEY',
 			kind: 'api_key',
 			instructions: 'test',
+			allowed_hosts: ['api.example.com'],
 		})) as { comment_id: string; reused: boolean };
 		expect(first.reused).toBe(false);
 
@@ -151,6 +152,7 @@ describe('request_credential MCP tool', () => {
 			name: 'DUPLICATE_KEY',
 			kind: 'api_key',
 			instructions: 'second call',
+			allowed_hosts: ['api.example.com'],
 		})) as { comment_id: string; reused: boolean };
 		expect(second.reused).toBe(true);
 		expect(second.comment_id).toBe(first.comment_id);
@@ -173,6 +175,83 @@ describe('request_credential MCP tool', () => {
 		})) as { error?: string };
 		expect(result.error).toContain('Access denied');
 	});
+
+	it('rejects an api_key request with no allowed_hosts', async () => {
+		const result = (await callRequestCredential({
+			team_id: teamId,
+			task_id: taskId,
+			name: 'UNSCOPED_API_KEY',
+			kind: 'api_key',
+			instructions: 'I need a key',
+		})) as { error?: string; comment_id?: string };
+		expect(result.error).toContain('allowed_hosts');
+		expect(result.comment_id).toBeUndefined();
+
+		// The rejected request must not have created a comment.
+		const rows = await db.query(
+			"SELECT id FROM task_comments WHERE task_id = $1 AND content->>'name' = $2",
+			[taskId, 'UNSCOPED_API_KEY'],
+		);
+		expect(rows.rows.length).toBe(0);
+	});
+
+	it('rejects an api_key request with an empty allowed_hosts array', async () => {
+		const result = (await callRequestCredential({
+			team_id: teamId,
+			task_id: taskId,
+			name: 'EMPTY_HOSTS_KEY',
+			kind: 'api_key',
+			instructions: 'I need a key',
+			allowed_hosts: [],
+		})) as { error?: string };
+		expect(result.error).toContain('allowed_hosts');
+	});
+
+	it('rejects oauth_token and github_pat requests with no allowed_hosts', async () => {
+		const oauth = (await callRequestCredential({
+			team_id: teamId,
+			task_id: taskId,
+			name: 'UNSCOPED_OAUTH',
+			kind: 'oauth_token',
+			instructions: 'token',
+		})) as { error?: string };
+		expect(oauth.error).toContain('allowed_hosts');
+
+		const pat = (await callRequestCredential({
+			team_id: teamId,
+			task_id: taskId,
+			name: 'UNSCOPED_PAT',
+			kind: 'github_pat',
+			instructions: 'pat',
+		})) as { error?: string };
+		expect(pat.error).toContain('allowed_hosts');
+	});
+
+	it('allows an ssh_private_key request with no allowed_hosts (exempt)', async () => {
+		const result = (await callRequestCredential({
+			team_id: teamId,
+			task_id: taskId,
+			name: 'DEPLOY_SSH_KEY',
+			kind: 'ssh_private_key',
+			instructions: 'paste your deploy key',
+		})) as { error?: string; comment_id?: string; status?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.status).toBe('pending');
+		expect(result.comment_id).toBeTruthy();
+	});
+
+	it('allows a confirmation-style api_key request with no allowed_hosts', async () => {
+		const result = (await callRequestCredential({
+			team_id: teamId,
+			task_id: taskId,
+			name: 'CONFIRM_NO_HOSTS',
+			kind: 'api_key',
+			instructions: 'Did you rotate the key?',
+			confirmation_text: 'Yes, rotated',
+		})) as { error?: string; comment_id?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.comment_id).toBeTruthy();
+	});
 });
 
 describe('fulfill-credential endpoint', () => {
@@ -190,7 +269,7 @@ describe('fulfill-credential endpoint', () => {
 		credentialCommentId = result.comment_id;
 	});
 
-	it('stores the value encrypted and grants access to the requesting agent', async () => {
+	it('stores the value encrypted as a global secret', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
 		const res = await app.request(
 			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${credentialCommentId}/fulfill-credential`,
@@ -216,12 +295,6 @@ describe('fulfill-credential endpoint', () => {
 		expect(decrypt(secretRow.rows[0].encrypted_value, key)).toBe('sk-secret-value-123');
 		expect(secretRow.rows[0].category).toBe('credential');
 		expect(secretRow.rows[0].allowed_hosts).toEqual(['api.example.com']);
-
-		const grant = await db.query(
-			'SELECT id FROM secret_grants WHERE secret_id = $1 AND member_id = $2',
-			[body.data.secret_id, agentId],
-		);
-		expect(grant.rows.length).toBe(1);
 
 		const updatedComment = await db.query<{ chosen_option: Record<string, unknown> }>(
 			'SELECT chosen_option FROM task_comments WHERE id = $1',
@@ -255,6 +328,39 @@ describe('fulfill-credential endpoint', () => {
 		expect(body.error.message).toContain('already fulfilled');
 	});
 
+	it('lets the human set allowed_hosts at fulfillment for an unscoped request', async () => {
+		// Exempt kind (other) can be requested with no hosts, leaving it
+		// undeliverable. The human scopes it when pasting the value.
+		const created = (await callRequestCredential({
+			team_id: teamId,
+			task_id: taskId,
+			name: 'FULFILL_HOST_OVERRIDE',
+			kind: 'other',
+			instructions: 'paste and scope me',
+		})) as { comment_id: string };
+
+		const res = await app.request(
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${created.comment_id}/fulfill-credential`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					value: 'tok-123',
+					allowed_hosts: ['API.NETLIFY.COM', ' app.netlify.com '],
+				}),
+			},
+		);
+		expect(res.status).toBe(200);
+		const secretId = (await res.json()).data.secret_id;
+
+		const secretRow = await db.query<{ allowed_hosts: string[] }>(
+			'SELECT allowed_hosts FROM secrets WHERE id = $1',
+			[secretId],
+		);
+		// Normalized (trimmed + lowercased) and applied over the empty request.
+		expect(secretRow.rows[0].allowed_hosts).toEqual(['api.netlify.com', 'app.netlify.com']);
+	});
+
 	it('rejects fulfill on a non-credential-request comment', async () => {
 		const textRes = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
 			method: 'POST',
@@ -283,6 +389,7 @@ describe('fulfill-credential endpoint', () => {
 			name: 'BAD_PAT_TEST',
 			kind: 'github_pat',
 			instructions: 'test',
+			allowed_hosts: ['api.github.com'],
 		})) as { comment_id: string };
 
 		const res = await app.request(
@@ -305,6 +412,7 @@ describe('fulfill-credential endpoint', () => {
 			name: 'GOOD_PAT_TEST',
 			kind: 'github_pat',
 			instructions: 'test',
+			allowed_hosts: ['api.github.com'],
 		})) as { comment_id: string };
 
 		const res = await app.request(

@@ -404,8 +404,7 @@ Current date: {{current_date}}
 {{requester_context}}`;
 
 		await db.query(
-			"INSERT INTO skills (team_id, name, slug, description, content) VALUES ($1, 'Team Overview', 'team-overview', 'Team overview summary', '# Team Overview')",
-			[agentTeamId],
+			"INSERT INTO skills (name, slug, description, content) VALUES ('Team Overview', 'team-overview', 'Team overview summary', '# Team Overview')",
 		);
 
 		const result = await resolveSystemPrompt(db, template, {

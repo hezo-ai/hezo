@@ -333,10 +333,8 @@ test('run comment links updated docs, skills, and proposed skills', async () => 
 	const skillLinks = Array.from(skillsSection.querySelectorAll('a')) as HTMLAnchorElement[];
 	const added = skillLinks.find((a) => a.textContent === 'Added skill Deploy Flow');
 	const updated = skillLinks.find((a) => a.textContent === 'Updated skill Triage');
-	expect(added?.getAttribute('href')).toBe(
-		`/projects/${seeded.projectSlug}/skills?slug=deploy-flow`,
-	);
-	expect(updated?.getAttribute('href')).toBe(`/projects/${seeded.projectSlug}/skills?slug=triage`);
+	expect(added?.getAttribute('href')).toBe(`/settings/skills`);
+	expect(updated?.getAttribute('href')).toBe(`/settings/skills`);
 
 	const proposedSection = await findByTestId('run-comment-proposed-skills');
 	const proposedLink = proposedSection.querySelector('a') as HTMLAnchorElement | null;

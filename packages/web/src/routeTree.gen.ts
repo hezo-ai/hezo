@@ -28,12 +28,10 @@ import { Route as ProjectsProjectIdAuditLogRouteImport } from './routes/projects
 import { Route as ProjectsProjectIdAssetsRouteImport } from './routes/projects/$projectId/assets'
 import { Route as PreviewProjectIdFilenameRouteImport } from './routes/preview/$projectId/$filename'
 import { Route as ProjectsProjectIdTasksIndexRouteImport } from './routes/projects/$projectId/tasks/index'
-import { Route as ProjectsProjectIdSkillsIndexRouteImport } from './routes/projects/$projectId/skills/index'
 import { Route as ProjectsProjectIdSettingsIndexRouteImport } from './routes/projects/$projectId/settings/index'
 import { Route as ProjectsProjectIdInboxIndexRouteImport } from './routes/projects/$projectId/inbox/index'
 import { Route as ProjectsProjectIdAgentsIndexRouteImport } from './routes/projects/$projectId/agents/index'
 import { Route as ProjectsProjectIdTeamSettingsGeneralRouteImport } from './routes/projects/$projectId/team-settings/general'
-import { Route as ProjectsProjectIdTeamSettingsCredentialsRouteImport } from './routes/projects/$projectId/team-settings/credentials'
 import { Route as ProjectsProjectIdTeamSettingsAuditLogRouteImport } from './routes/projects/$projectId/team-settings/audit-log'
 import { Route as ProjectsProjectIdTasksTaskIdRouteImport } from './routes/projects/$projectId/tasks/$taskId'
 import { Route as ProjectsProjectIdAgentsHireRouteImport } from './routes/projects/$projectId/agents/hire'
@@ -144,12 +142,6 @@ const ProjectsProjectIdTasksIndexRoute =
     path: '/tasks/',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
-const ProjectsProjectIdSkillsIndexRoute =
-  ProjectsProjectIdSkillsIndexRouteImport.update({
-    id: '/skills/',
-    path: '/skills/',
-    getParentRoute: () => ProjectsProjectIdRouteRoute,
-  } as any)
 const ProjectsProjectIdSettingsIndexRoute =
   ProjectsProjectIdSettingsIndexRouteImport.update({
     id: '/settings/',
@@ -172,12 +164,6 @@ const ProjectsProjectIdTeamSettingsGeneralRoute =
   ProjectsProjectIdTeamSettingsGeneralRouteImport.update({
     id: '/team-settings/general',
     path: '/team-settings/general',
-    getParentRoute: () => ProjectsProjectIdRouteRoute,
-  } as any)
-const ProjectsProjectIdTeamSettingsCredentialsRoute =
-  ProjectsProjectIdTeamSettingsCredentialsRouteImport.update({
-    id: '/team-settings/credentials',
-    path: '/team-settings/credentials',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
 const ProjectsProjectIdTeamSettingsAuditLogRoute =
@@ -252,12 +238,10 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
   '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
   '/projects/$projectId/team-settings/audit-log': typeof ProjectsProjectIdTeamSettingsAuditLogRoute
-  '/projects/$projectId/team-settings/credentials': typeof ProjectsProjectIdTeamSettingsCredentialsRoute
   '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
   '/projects/$projectId/agents/': typeof ProjectsProjectIdAgentsIndexRoute
   '/projects/$projectId/inbox/': typeof ProjectsProjectIdInboxIndexRoute
   '/projects/$projectId/settings/': typeof ProjectsProjectIdSettingsIndexRoute
-  '/projects/$projectId/skills/': typeof ProjectsProjectIdSkillsIndexRoute
   '/projects/$projectId/tasks/': typeof ProjectsProjectIdTasksIndexRoute
   '/projects/$projectId/agents/$agentId/settings': typeof ProjectsProjectIdAgentsAgentIdSettingsRoute
   '/projects/$projectId/agents/$agentId/': typeof ProjectsProjectIdAgentsAgentIdIndexRoute
@@ -285,12 +269,10 @@ export interface FileRoutesByTo {
   '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
   '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
   '/projects/$projectId/team-settings/audit-log': typeof ProjectsProjectIdTeamSettingsAuditLogRoute
-  '/projects/$projectId/team-settings/credentials': typeof ProjectsProjectIdTeamSettingsCredentialsRoute
   '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
   '/projects/$projectId/agents': typeof ProjectsProjectIdAgentsIndexRoute
   '/projects/$projectId/inbox': typeof ProjectsProjectIdInboxIndexRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsIndexRoute
-  '/projects/$projectId/skills': typeof ProjectsProjectIdSkillsIndexRoute
   '/projects/$projectId/tasks': typeof ProjectsProjectIdTasksIndexRoute
   '/projects/$projectId/agents/$agentId/settings': typeof ProjectsProjectIdAgentsAgentIdSettingsRoute
   '/projects/$projectId/agents/$agentId': typeof ProjectsProjectIdAgentsAgentIdIndexRoute
@@ -321,12 +303,10 @@ export interface FileRoutesById {
   '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
   '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
   '/projects/$projectId/team-settings/audit-log': typeof ProjectsProjectIdTeamSettingsAuditLogRoute
-  '/projects/$projectId/team-settings/credentials': typeof ProjectsProjectIdTeamSettingsCredentialsRoute
   '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
   '/projects/$projectId/agents/': typeof ProjectsProjectIdAgentsIndexRoute
   '/projects/$projectId/inbox/': typeof ProjectsProjectIdInboxIndexRoute
   '/projects/$projectId/settings/': typeof ProjectsProjectIdSettingsIndexRoute
-  '/projects/$projectId/skills/': typeof ProjectsProjectIdSkillsIndexRoute
   '/projects/$projectId/tasks/': typeof ProjectsProjectIdTasksIndexRoute
   '/projects/$projectId/agents/$agentId/settings': typeof ProjectsProjectIdAgentsAgentIdSettingsRoute
   '/projects/$projectId/agents/$agentId/': typeof ProjectsProjectIdAgentsAgentIdIndexRoute
@@ -358,12 +338,10 @@ export interface FileRouteTypes {
     | '/projects/$projectId/agents/hire'
     | '/projects/$projectId/tasks/$taskId'
     | '/projects/$projectId/team-settings/audit-log'
-    | '/projects/$projectId/team-settings/credentials'
     | '/projects/$projectId/team-settings/general'
     | '/projects/$projectId/agents/'
     | '/projects/$projectId/inbox/'
     | '/projects/$projectId/settings/'
-    | '/projects/$projectId/skills/'
     | '/projects/$projectId/tasks/'
     | '/projects/$projectId/agents/$agentId/settings'
     | '/projects/$projectId/agents/$agentId/'
@@ -391,12 +369,10 @@ export interface FileRouteTypes {
     | '/projects/$projectId/agents/hire'
     | '/projects/$projectId/tasks/$taskId'
     | '/projects/$projectId/team-settings/audit-log'
-    | '/projects/$projectId/team-settings/credentials'
     | '/projects/$projectId/team-settings/general'
     | '/projects/$projectId/agents'
     | '/projects/$projectId/inbox'
     | '/projects/$projectId/settings'
-    | '/projects/$projectId/skills'
     | '/projects/$projectId/tasks'
     | '/projects/$projectId/agents/$agentId/settings'
     | '/projects/$projectId/agents/$agentId'
@@ -426,12 +402,10 @@ export interface FileRouteTypes {
     | '/projects/$projectId/agents/hire'
     | '/projects/$projectId/tasks/$taskId'
     | '/projects/$projectId/team-settings/audit-log'
-    | '/projects/$projectId/team-settings/credentials'
     | '/projects/$projectId/team-settings/general'
     | '/projects/$projectId/agents/'
     | '/projects/$projectId/inbox/'
     | '/projects/$projectId/settings/'
-    | '/projects/$projectId/skills/'
     | '/projects/$projectId/tasks/'
     | '/projects/$projectId/agents/$agentId/settings'
     | '/projects/$projectId/agents/$agentId/'
@@ -589,13 +563,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdTasksIndexRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/projects/$projectId/skills/': {
-      id: '/projects/$projectId/skills/'
-      path: '/skills'
-      fullPath: '/projects/$projectId/skills/'
-      preLoaderRoute: typeof ProjectsProjectIdSkillsIndexRouteImport
-      parentRoute: typeof ProjectsProjectIdRouteRoute
-    }
     '/projects/$projectId/settings/': {
       id: '/projects/$projectId/settings/'
       path: '/settings'
@@ -622,13 +589,6 @@ declare module '@tanstack/react-router' {
       path: '/team-settings/general'
       fullPath: '/projects/$projectId/team-settings/general'
       preLoaderRoute: typeof ProjectsProjectIdTeamSettingsGeneralRouteImport
-      parentRoute: typeof ProjectsProjectIdRouteRoute
-    }
-    '/projects/$projectId/team-settings/credentials': {
-      id: '/projects/$projectId/team-settings/credentials'
-      path: '/team-settings/credentials'
-      fullPath: '/projects/$projectId/team-settings/credentials'
-      preLoaderRoute: typeof ProjectsProjectIdTeamSettingsCredentialsRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
     '/projects/$projectId/team-settings/audit-log': {
@@ -725,12 +685,10 @@ interface ProjectsProjectIdRouteRouteChildren {
   ProjectsProjectIdAgentsHireRoute: typeof ProjectsProjectIdAgentsHireRoute
   ProjectsProjectIdTasksTaskIdRoute: typeof ProjectsProjectIdTasksTaskIdRoute
   ProjectsProjectIdTeamSettingsAuditLogRoute: typeof ProjectsProjectIdTeamSettingsAuditLogRoute
-  ProjectsProjectIdTeamSettingsCredentialsRoute: typeof ProjectsProjectIdTeamSettingsCredentialsRoute
   ProjectsProjectIdTeamSettingsGeneralRoute: typeof ProjectsProjectIdTeamSettingsGeneralRoute
   ProjectsProjectIdAgentsIndexRoute: typeof ProjectsProjectIdAgentsIndexRoute
   ProjectsProjectIdInboxIndexRoute: typeof ProjectsProjectIdInboxIndexRoute
   ProjectsProjectIdSettingsIndexRoute: typeof ProjectsProjectIdSettingsIndexRoute
-  ProjectsProjectIdSkillsIndexRoute: typeof ProjectsProjectIdSkillsIndexRoute
   ProjectsProjectIdTasksIndexRoute: typeof ProjectsProjectIdTasksIndexRoute
 }
 
@@ -748,14 +706,11 @@ const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
     ProjectsProjectIdTasksTaskIdRoute: ProjectsProjectIdTasksTaskIdRoute,
     ProjectsProjectIdTeamSettingsAuditLogRoute:
       ProjectsProjectIdTeamSettingsAuditLogRoute,
-    ProjectsProjectIdTeamSettingsCredentialsRoute:
-      ProjectsProjectIdTeamSettingsCredentialsRoute,
     ProjectsProjectIdTeamSettingsGeneralRoute:
       ProjectsProjectIdTeamSettingsGeneralRoute,
     ProjectsProjectIdAgentsIndexRoute: ProjectsProjectIdAgentsIndexRoute,
     ProjectsProjectIdInboxIndexRoute: ProjectsProjectIdInboxIndexRoute,
     ProjectsProjectIdSettingsIndexRoute: ProjectsProjectIdSettingsIndexRoute,
-    ProjectsProjectIdSkillsIndexRoute: ProjectsProjectIdSkillsIndexRoute,
     ProjectsProjectIdTasksIndexRoute: ProjectsProjectIdTasksIndexRoute,
   }
 

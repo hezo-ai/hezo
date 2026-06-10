@@ -107,9 +107,7 @@ export function describeAuditEntry(entry: AuditEntry): string {
 export type AuditLink =
 	| { to: '/projects/$projectId/tasks/$taskId'; params: Record<string, string> }
 	| { to: '/projects/$projectId'; params: Record<string, string> }
-	| { to: '/projects/$projectId/team-settings/credentials'; params: Record<string, string> }
 	| { to: '/projects/$projectId/connectors'; params: Record<string, string> }
-	| { to: '/projects/$projectId/skills'; params: Record<string, string> }
 	| { to: '/projects/$projectId/agents'; params: Record<string, string> }
 	| { to: '/settings/credentials' }
 	| { to: '/settings/connectors' }
@@ -143,21 +141,16 @@ export function auditEntryLink(entry: AuditEntry): AuditLink | null {
 		case 'project':
 			return project ? { to: '/projects/$projectId', params: { projectId: project } } : null;
 		case 'secret':
-			return teamAnchor
-				? {
-						to: '/projects/$projectId/team-settings/credentials',
-						params: { projectId: teamAnchor },
-					}
-				: { to: '/settings/credentials' };
+			// Credentials are instance-global — always the Admin page.
+			return { to: '/settings/credentials' };
 		case 'connection':
 		case 'mcp_connection':
 			return teamAnchor
 				? { to: '/projects/$projectId/connectors', params: { projectId: teamAnchor } }
 				: { to: '/settings/connectors' };
 		case 'skill':
-			return teamAnchor
-				? { to: '/projects/$projectId/skills', params: { projectId: teamAnchor } }
-				: { to: '/settings/skills' };
+			// Skills are instance-global — always the Admin page.
+			return { to: '/settings/skills' };
 		case 'agent':
 			return teamAnchor
 				? { to: '/projects/$projectId/agents', params: { projectId: teamAnchor } }

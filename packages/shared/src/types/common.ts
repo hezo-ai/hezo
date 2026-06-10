@@ -232,6 +232,22 @@ export const CredentialKind = {
 } as const;
 export type CredentialKind = (typeof CredentialKind)[keyof typeof CredentialKind];
 
+/**
+ * Credential kinds whose value is substituted into outbound HTTP (Authorization
+ * headers / URLs) by the egress proxy, and therefore MUST declare a non-empty
+ * allowed_hosts allowlist so the secret is only ever injected into those hosts.
+ * ssh_private_key (used via the ssh-agent, not the proxy), webhook_secret (often
+ * a local HMAC secret), and the generic `other` kind are exempt.
+ */
+export const CREDENTIAL_KINDS_REQUIRING_HOSTS: readonly CredentialKind[] = [
+	CredentialKind.ApiKey,
+	CredentialKind.OauthToken,
+	CredentialKind.GithubPat,
+];
+export function credentialKindRequiresAllowedHosts(kind: string): boolean {
+	return (CREDENTIAL_KINDS_REQUIRING_HOSTS as readonly string[]).includes(kind);
+}
+
 export const CredentialInputType = {
 	Text: 'text',
 	Textarea: 'textarea',
@@ -288,9 +304,6 @@ export const SecretCategory = {
 	Other: 'other',
 } as const;
 export type SecretCategory = (typeof SecretCategory)[keyof typeof SecretCategory];
-
-export const GrantScope = { Single: 'single', Project: 'project', Team: 'team' } as const;
-export type GrantScope = (typeof GrantScope)[keyof typeof GrantScope];
 
 export const ApprovalType = {
 	SecretAccess: 'secret_access',
@@ -457,7 +470,6 @@ export const DocumentType = {
 	ProjectDoc: 'project_doc',
 	TeamPreferences: 'team_preferences',
 	AgentSystemPrompt: 'agent_system_prompt',
-	McpSkill: 'mcp_skill',
 } as const;
 export type DocumentType = (typeof DocumentType)[keyof typeof DocumentType];
 
@@ -518,7 +530,6 @@ export interface SkillTemplateConfig {
 
 export interface SkillRecord {
 	id: string;
-	team_id: string;
 	name: string;
 	slug: string;
 	description: string;
@@ -528,6 +539,7 @@ export interface SkillRecord {
 	created_by_member_id: string | null;
 	tags: string[];
 	is_active: boolean;
+	auto_load: boolean;
 	created_at: string;
 	updated_at: string;
 }

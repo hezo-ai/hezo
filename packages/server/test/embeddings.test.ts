@@ -123,9 +123,9 @@ describe('semanticSearch with pre-populated embeddings', () => {
 		);
 
 		await db.query(
-			`INSERT INTO skills (team_id, name, slug, content, is_active, embedding)
-			 VALUES ($1, 'Deploy Skill', 'deploy-skill', 'How to deploy to production', true, $2::vector)`,
-			[teamId, vectorStr(vec3)],
+			`INSERT INTO skills (name, slug, content, is_active, embedding)
+			 VALUES ('Deploy Skill', 'deploy-skill', 'How to deploy to production', true, $1::vector)`,
+			[vectorStr(vec3)],
 		);
 
 		await db.query(
@@ -154,10 +154,10 @@ describe('semanticSearch with pre-populated embeddings', () => {
 		const r = await db.query<{ id: string; name: string; score: number }>(
 			`SELECT id, name, 1 - (embedding <=> $1::vector) AS score
 			 FROM skills
-			 WHERE team_id = $2 AND embedding IS NOT NULL AND is_active = true
+			 WHERE embedding IS NOT NULL AND is_active = true
 			 ORDER BY embedding <=> $1::vector
 			 LIMIT 5`,
-			[vectorStr(queryVec), teamId],
+			[vectorStr(queryVec)],
 		);
 		expect(r.rows.length).toBeGreaterThanOrEqual(1);
 		expect(r.rows[0].name).toBe('Deploy Skill');

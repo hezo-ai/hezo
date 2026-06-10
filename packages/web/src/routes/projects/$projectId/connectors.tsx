@@ -273,7 +273,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 						<StatusBadge status={status} />
 					</div>
 					{url && <p className="text-xs text-text-muted mt-1 truncate font-mono">{url}</p>}
-					{connector.skill_doc_id && (
+					{connector.skill_id && (
 						<p className="text-xs text-text-muted mt-1 flex items-center gap-1">
 							<ExternalLink className="size-3" />
 							Skill file imported

@@ -33,7 +33,7 @@ export function clearRefreshFns(): void {
 }
 
 /**
- * Refresh any oauth_connections in this team that are expiring within
+ * Refresh any oauth_connections (instance-wide) that are expiring within
  * `REFRESH_WINDOW_MS`. Called from the egress proxy's load-secrets path
  * before substitution so that no expired token is ever handed out.
  *
@@ -45,10 +45,7 @@ export function clearRefreshFns(): void {
  * Concurrent calls for the same connection coalesce — only one refresh
  * round-trip to the provider fires at a time.
  */
-export async function refreshExpiringTokensForTeam(
-	deps: ConnectionStoreDeps,
-	teamId: string,
-): Promise<void> {
+export async function refreshExpiringTokens(deps: ConnectionStoreDeps): Promise<void> {
 	const now = Date.now();
 	const cutoff = new Date(now + REFRESH_WINDOW_MS);
 
@@ -60,11 +57,10 @@ export async function refreshExpiringTokensForTeam(
 	}>(
 		`SELECT id, provider, expires_at, refresh_token_secret_id IS NOT NULL AS has_refresh
 		 FROM oauth_connections
-		 WHERE team_id = $1
-		   AND expires_at IS NOT NULL
-		   AND expires_at <= $2
+		 WHERE expires_at IS NOT NULL
+		   AND expires_at <= $1
 		   AND refresh_token_secret_id IS NOT NULL`,
-		[teamId, cutoff],
+		[cutoff],
 	);
 
 	if (candidates.rows.length === 0) return;

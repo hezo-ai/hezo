@@ -83,10 +83,7 @@ export async function snapshotTeamAsTemplate(
 			slug: string;
 			description: string;
 			content: string;
-		}>(
-			`SELECT name, slug, description, content FROM skills WHERE team_id = $1 AND is_active = true`,
-			[teamId],
-		);
+		}>(`SELECT name, slug, description, content FROM skills WHERE is_active = true`);
 		const skillsConfig = skillsRes.rows;
 
 		const prefRes = await db.query<{ content: string }>(

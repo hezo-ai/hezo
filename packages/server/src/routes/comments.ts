@@ -1,4 +1,4 @@
-import { AuthType, CommentContentType, GrantScope, WakeupSource, wsRoom } from '@hezo/shared';
+import { AuthType, CommentContentType, WakeupSource, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { encrypt } from '../crypto/encryption';
 import { signAssetUrl } from '../lib/asset-urls';
@@ -382,7 +382,11 @@ commentsRoutes.post(
 		if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 		const commentId = c.req.param('commentId');
 
-		const body = await c.req.json<{ value?: string; confirmed?: boolean }>();
+		const body = await c.req.json<{
+			value?: string;
+			confirmed?: boolean;
+			allowed_hosts?: string[];
+		}>();
 
 		const existing = await db.query<{
 			content_type: string;
@@ -406,14 +410,17 @@ commentsRoutes.post(
 		const requestContent = row.content;
 		const name = String(requestContent.name ?? '');
 		const kind = String(requestContent.kind ?? '');
-		const scope = String(requestContent.scope ?? 'team');
-		const projectId =
-			scope === 'project' && typeof requestContent.project_id === 'string'
-				? requestContent.project_id
-				: null;
-		const allowedHosts = Array.isArray(requestContent.allowed_hosts)
+		const requestHosts = Array.isArray(requestContent.allowed_hosts)
 			? (requestContent.allowed_hosts as string[])
 			: [];
+		// The human pasting the value can set or correct the host allowlist —
+		// the safety net when an agent requested an exempt kind (other/webhook)
+		// without scoping, leaving the secret undeliverable. A non-empty override
+		// wins; otherwise the agent's requested hosts stand.
+		const overrideHosts = Array.isArray(body.allowed_hosts)
+			? body.allowed_hosts.map((h) => String(h).trim().toLowerCase()).filter((h) => h.length > 0)
+			: [];
+		const allowedHosts = overrideHosts.length > 0 ? overrideHosts : requestHosts;
 		const requestingAgentId = row.author_member_id;
 
 		const isConfirmation = typeof requestContent.confirmation_text === 'string';
@@ -446,26 +453,17 @@ commentsRoutes.post(
 			const category = pickSecretCategory(kind);
 
 			const upsert = await db.query<{ id: string }>(
-				`INSERT INTO secrets (team_id, project_id, name, encrypted_value, category, allowed_hosts)
-				 VALUES ($1, $2, $3, $4, $5::secret_category, $6::text[])
-				 ON CONFLICT (team_id, project_id, name)
+				`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
+				 VALUES ($1, $2, $3::secret_category, $4::text[])
+				 ON CONFLICT (name)
 				 DO UPDATE SET encrypted_value = EXCLUDED.encrypted_value,
 				               category = EXCLUDED.category,
 				               allowed_hosts = EXCLUDED.allowed_hosts,
 				               updated_at = now()
 				 RETURNING id`,
-				[teamId, projectId, name, encryptedValue, category, allowedHosts],
+				[name, encryptedValue, category, allowedHosts],
 			);
 			const secretId = upsert.rows[0].id;
-
-			if (requestingAgentId) {
-				await db.query(
-					`INSERT INTO secret_grants (secret_id, member_id, scope)
-					 VALUES ($1, $2, $3::grant_scope)
-					 ON CONFLICT (secret_id, member_id) DO NOTHING`,
-					[secretId, requestingAgentId, GrantScope.Single],
-				);
-			}
 
 			const updated = await db.query(
 				`UPDATE task_comments
@@ -519,7 +517,7 @@ commentsRoutes.post(
 		c.get('events').emit({
 			type: 'credential.fulfilled',
 			teamId,
-			projectId,
+			projectId: null,
 			actorType: actor.actorType,
 			actorMemberId: actor.actorMemberId,
 			secretId,

@@ -355,10 +355,7 @@ describe('MCP tool handlers: data queries via DB', () => {
 	});
 
 	it('list_skills returns skills for team', async () => {
-		const r = await db.query(
-			'SELECT id, name, slug, updated_at FROM skills WHERE team_id = $1 ORDER BY name',
-			[teamId],
-		);
+		const r = await db.query('SELECT id, name, slug, updated_at FROM skills ORDER BY name');
 		// May have skills from template, or may be empty — just verify query works
 		expect(Array.isArray(r.rows)).toBe(true);
 	});
@@ -830,20 +827,16 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 
 	it('create_skill inserts a new skill', async () => {
 		const r = await db.query(
-			`INSERT INTO skills (team_id, name, slug, description, content)
-			 VALUES ($1, 'MCP Skill', 'mcp-skill', 'Created via MCP', 'How to do the thing')
+			`INSERT INTO skills (name, slug, description, content)
+			 VALUES ('MCP Skill', 'mcp-skill', 'Created via MCP', 'How to do the thing')
 			 RETURNING *`,
-			[teamId],
 		);
 		expect(r.rows.length).toBe(1);
 		expect((r.rows[0] as any).slug).toBe('mcp-skill');
 	});
 
 	it('get_skill query returns skill by slug', async () => {
-		const r = await db.query('SELECT * FROM skills WHERE team_id = $1 AND slug = $2', [
-			teamId,
-			'mcp-skill',
-		]);
+		const r = await db.query('SELECT * FROM skills WHERE slug = $1', ['mcp-skill']);
 		expect(r.rows.length).toBe(1);
 		expect((r.rows[0] as any).name).toBe('MCP Skill');
 		expect((r.rows[0] as any).content).toBe('How to do the thing');
@@ -919,30 +912,23 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 
 	it('create_skill inserts correctly', async () => {
 		const r = await db.query(
-			`INSERT INTO skills (team_id, name, slug, content, is_active)
-			 VALUES ($1, 'MCP Test Skill', 'mcp-test-skill', 'Skill content', true)
+			`INSERT INTO skills (name, slug, content, is_active)
+			 VALUES ('MCP Test Skill', 'mcp-test-skill', 'Skill content', true)
 			 RETURNING *`,
-			[teamId],
 		);
 		expect(r.rows.length).toBe(1);
 		expect((r.rows[0] as any).slug).toBe('mcp-test-skill');
 	});
 
 	it('list_skills query returns active skills', async () => {
-		const r = await db.query(
-			'SELECT * FROM skills WHERE team_id = $1 AND is_active = true ORDER BY name',
-			[teamId],
-		);
+		const r = await db.query('SELECT * FROM skills WHERE is_active = true ORDER BY name');
 		expect(r.rows.length).toBeGreaterThanOrEqual(1);
 		const slugs = r.rows.map((s: any) => s.slug);
 		expect(slugs).toContain('mcp-test-skill');
 	});
 
 	it('get_skill query returns skill by slug', async () => {
-		const r = await db.query('SELECT * FROM skills WHERE team_id = $1 AND slug = $2', [
-			teamId,
-			'mcp-test-skill',
-		]);
+		const r = await db.query('SELECT * FROM skills WHERE slug = $1', ['mcp-test-skill']);
 		expect(r.rows.length).toBe(1);
 		expect((r.rows[0] as any).name).toBe('MCP Test Skill');
 		expect((r.rows[0] as any).content).toBe('Skill content');

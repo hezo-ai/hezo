@@ -7,8 +7,8 @@ import { type Column, DataTable } from '../../components/ui/data-table';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { Input } from '../../components/ui/input';
 import { Tooltip } from '../../components/ui/tooltip';
-import type { CredentialUsage } from '../../hooks/use-credentials';
 import {
+	type CredentialUsage,
 	useCreateInstanceSecret,
 	useDeleteInstanceSecret,
 	useInstanceCredentials,

@@ -63,8 +63,8 @@ export async function installLocalMcpById(
 	const result = await deps.db.query<PendingRow & { kind: string; install_status: string }>(
 		`SELECT id, name, kind::text AS kind, config, install_status::text AS install_status
 		 FROM mcp_connections
-		 WHERE id = $1 AND team_id = $2`,
-		[rowId, deps.teamId],
+		 WHERE id = $1`,
+		[rowId],
 	);
 	const row = result.rows[0];
 	if (!row || row.kind !== McpConnectionKind.Local) return null;
@@ -72,14 +72,15 @@ export async function installLocalMcpById(
 }
 
 async function loadPending(deps: InstallerDeps): Promise<PendingRow[]> {
+	// Connectors are global; the installer provisions every pending local MCP
+	// into this run's container (deps.teamId/projectId pick the container, not
+	// the connector rows).
 	const result = await deps.db.query<PendingRow>(
 		`SELECT id, name, config
 		 FROM mcp_connections
-		 WHERE team_id = $1
-		   AND kind = $2::mcp_connection_kind
-		   AND install_status <> $3::mcp_install_status
-		   AND (project_id IS NULL OR project_id = $4)`,
-		[deps.teamId, McpConnectionKind.Local, McpInstallStatus.Installed, deps.projectId],
+		 WHERE kind = $1::mcp_connection_kind
+		   AND install_status <> $2::mcp_install_status`,
+		[McpConnectionKind.Local, McpInstallStatus.Installed],
 	);
 	return result.rows;
 }

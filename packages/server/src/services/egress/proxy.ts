@@ -9,7 +9,7 @@ import { type EgressAuditEvent, recordEgressEvent } from './audit';
 import type { HezoCA } from './ca';
 import { PortAllocator } from './port-allocator';
 import {
-	loadSecretsForScope,
+	loadAllSecrets,
 	PLACEHOLDER_PROBE_REGEX,
 	type ResolvedSecret,
 	type SubstitutionFailure,
@@ -102,6 +102,19 @@ export class EgressProxy {
 				.then(() => callback())
 				.catch((e: Error) => callback(e));
 		});
+
+		// The library terminates TLS with a per-host internal server, each
+		// presenting that host's leaf cert, but caches the host→port mapping and
+		// never invalidates it — so a recycled ephemeral port can leave a hostname
+		// pointing at another host's server (a wrong-SAN TLS failure). This runs
+		// after the per-host server is (re)selected: it purges stale mappings so
+		// the next tunnel rebuilds a correct server, then logs loud if any live
+		// cross-host route survives.
+		const loggedCollisions = new Set<string>();
+		proxy.onConnect(((_req: unknown, _socket: unknown, _head: unknown, callback: () => void) => {
+			setImmediate(() => detectCrossHostCertRoute(proxy, scope, runId, loggedCollisions));
+			callback();
+		}) as Parameters<IProxy['onConnect']>[0]);
 
 		try {
 			await new Promise<void>((resolve, reject) => {
@@ -204,11 +217,9 @@ export class EgressProxy {
 
 		let secrets: Map<string, ResolvedSecret>;
 		try {
-			secrets = await loadSecretsForScope({
+			secrets = await loadAllSecrets({
 				db: this.deps.db,
 				masterKeyManager: this.deps.masterKeyManager,
-				teamId: scope.teamId,
-				projectId: scope.projectId ?? null,
 			});
 		} catch (e) {
 			if ((e as Error).name === 'MasterKeyLocked') {
@@ -329,6 +340,85 @@ function headersContainProbe(headers: Record<string, string>): boolean {
 		if (typeof v === 'string' && PLACEHOLDER_PROBE_REGEX.test(v)) return true;
 	}
 	return false;
+}
+
+/** Collapse the first DNS label to a wildcard so subdomains sharing one
+ * wildcard-covered internal server (a legitimate single cert) don't read as a
+ * collision. `api.githubcopilot.com` → `*.githubcopilot.com`. */
+function wildcardForm(host: string): string {
+	return host.replace(/^[^.]+\./, '*.');
+}
+
+interface SslServerEntry {
+	port?: number;
+	server?: { listening?: boolean };
+}
+
+/**
+ * Reconcile the library's per-host server map, then assert the egress
+ * invariant that no two unrelated upstream hosts share one internal MITM
+ * server port.
+ *
+ * The library caches a bare port per hostname and never invalidates it: when a
+ * per-host server is gone its ephemeral port can be recycled by the OS to a
+ * different host's new server, leaving the original hostname pointing at a port
+ * that now serves the wrong leaf cert (a wrong-SAN TLS failure). So first drop
+ * any entry whose own backing server has stopped listening, plus wildcard-alias
+ * entries no longer covered by a live server — the next tunnel for those hosts
+ * then rebuilds a correct server.
+ *
+ * After reconciliation a live cross-wildcard collision should be impossible;
+ * the remaining check is a tripwire that logs once per offending port.
+ */
+export function detectCrossHostCertRoute(
+	proxy: IProxy,
+	scope: RunProxyScope,
+	runId: string,
+	logged: Set<string>,
+): void {
+	const sslServers = (proxy as unknown as { sslServers?: Record<string, SslServerEntry> })
+		.sslServers;
+	if (!sslServers) return;
+
+	const portHasLiveServer = new Map<number, boolean>();
+	for (const entry of Object.values(sslServers)) {
+		const port = entry?.port;
+		if (typeof port !== 'number') continue;
+		if (entry.server?.listening) portHasLiveServer.set(port, true);
+	}
+	for (const [host, entry] of Object.entries(sslServers)) {
+		const port = entry?.port;
+		if (typeof port !== 'number') continue;
+		if (entry.server) {
+			// A created per-host server: once its port stops listening it must
+			// not keep serving this hostname — the port may be recycled.
+			if (entry.server.listening === false) delete sslServers[host];
+		} else if (!portHasLiveServer.get(port)) {
+			// A wildcard-alias entry ({ port } only) with no live server on its
+			// port is stale.
+			delete sslServers[host];
+		}
+	}
+
+	const hostsByPort = new Map<number, string[]>();
+	for (const [host, entry] of Object.entries(sslServers)) {
+		const port = entry?.port;
+		if (typeof port !== 'number') continue;
+		const hosts = hostsByPort.get(port);
+		if (hosts) hosts.push(host);
+		else hostsByPort.set(port, [host]);
+	}
+	for (const [port, hosts] of hostsByPort) {
+		if (hosts.length < 2) continue;
+		if (new Set(hosts.map(wildcardForm)).size < 2) continue;
+		if (logged.has(`${port}`)) continue;
+		logged.add(`${port}`);
+		log.error('egress MITM server port serves unrelated hosts — cross-host cert risk', {
+			run: ref(scope.label, runId),
+			port,
+			hosts: [...new Set(hosts)],
+		});
+	}
 }
 
 interface ErrorContext {

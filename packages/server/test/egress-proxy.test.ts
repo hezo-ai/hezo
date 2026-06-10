@@ -5,11 +5,12 @@ import type { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
+import type { IProxy } from 'http-mitm-proxy';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import { type HezoCA, loadOrCreateCA } from '../src/services/egress/ca';
-import { EgressProxy } from '../src/services/egress/proxy';
+import { detectCrossHostCertRoute, EgressProxy } from '../src/services/egress/proxy';
 import { safeClose } from './helpers';
 import { createTestApp, createTestProject } from './helpers/app';
 
@@ -271,12 +272,12 @@ async function insertSecret(name: string, value: string, allowedHosts: string[])
 	if (!key) throw new Error('master key unavailable in test');
 	const enc = encrypt(value, key);
 	await db.query(
-		`INSERT INTO secrets (team_id, project_id, name, encrypted_value, category, allowed_hosts)
-		 VALUES ($1, NULL, $2, $3, 'api_token'::secret_category, $4)
-		 ON CONFLICT (team_id, project_id, name) DO UPDATE
+		`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
+		 VALUES ($1, $2, 'api_token'::secret_category, $3)
+		 ON CONFLICT (name) DO UPDATE
 		 SET encrypted_value = EXCLUDED.encrypted_value,
 		     allowed_hosts = EXCLUDED.allowed_hosts`,
-		[teamId, name, enc, allowedHosts],
+		[name, enc, allowedHosts],
 	);
 }
 
@@ -397,3 +398,79 @@ async function fetchHttpsThroughProxy(
 		tls.setTimeout(20_000, () => tls.destroy(new Error('https fetch timed out')));
 	});
 }
+
+describe('detectCrossHostCertRoute', () => {
+	const scope = { teamId: 't', agentId: 'a', label: 'run' };
+	type Entry = { port: number; server?: { listening: boolean } };
+	const live = (port: number): Entry => ({ port, server: { listening: true } });
+	const dead = (port: number): Entry => ({ port, server: { listening: false } });
+	const alias = (port: number): Entry => ({ port });
+	const fakeProxy = (sslServers: Record<string, Entry>) => ({ sslServers }) as unknown as IProxy;
+
+	it('flags two unrelated hosts sharing one live internal server port', () => {
+		const logged = new Set<string>();
+		detectCrossHostCertRoute(
+			fakeProxy({
+				'api.githubcopilot.com': live(5001),
+				'registry.npmjs.org': live(5001),
+			}),
+			scope,
+			'run-1',
+			logged,
+		);
+		expect(logged.has('5001')).toBe(true);
+	});
+
+	it('does not flag distinct hosts on distinct ports', () => {
+		const logged = new Set<string>();
+		detectCrossHostCertRoute(
+			fakeProxy({
+				'api.githubcopilot.com': live(5001),
+				'registry.npmjs.org': live(5002),
+			}),
+			scope,
+			'run-1',
+			logged,
+		);
+		expect(logged.size).toBe(0);
+	});
+
+	it('does not flag subdomains legitimately sharing a wildcard server', () => {
+		const logged = new Set<string>();
+		detectCrossHostCertRoute(
+			fakeProxy({
+				'api.example.com': live(5003),
+				'cdn.example.com': alias(5003),
+				'*.example.com': alias(5003),
+			}),
+			scope,
+			'run-1',
+			logged,
+		);
+		expect(logged.size).toBe(0);
+	});
+
+	it('purges a stale host whose server stopped listening and does not flag the recycled port', () => {
+		const logged = new Set<string>();
+		const sslServers: Record<string, Entry> = {
+			// Its server is gone and port 5001 was recycled to another host.
+			'api.githubcopilot.com': dead(5001),
+			'todo5-hezo.netlify.app': live(5001),
+		};
+		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
+		expect(logged.size).toBe(0);
+		expect('api.githubcopilot.com' in sslServers).toBe(false);
+		expect('todo5-hezo.netlify.app' in sslServers).toBe(true);
+	});
+
+	it('purges wildcard-alias entries left without a live backing server', () => {
+		const logged = new Set<string>();
+		const sslServers: Record<string, Entry> = {
+			'api.example.com': dead(5004),
+			'*.example.com': alias(5004),
+		};
+		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
+		expect('api.example.com' in sslServers).toBe(false);
+		expect('*.example.com' in sslServers).toBe(false);
+	});
+});

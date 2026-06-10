@@ -5,10 +5,8 @@ import { ApplyTypeSection } from '../../../../components/settings/apply-type-sec
 import { AutomationsSection } from '../../../../components/settings/automations-section';
 import { BudgetSection } from '../../../../components/settings/budget-section';
 import { GeneralSection } from '../../../../components/settings/general-section';
-import { McpServersSection } from '../../../../components/settings/mcp-section';
 import { PreferencesSection } from '../../../../components/settings/preferences-section';
 import { SaveAsTypeSection } from '../../../../components/settings/save-as-type-section';
-import { SecretsSection } from '../../../../components/settings/secrets-section';
 import { SkillFileSection } from '../../../../components/settings/skill-file-section';
 import { useMe } from '../../../../hooks/use-me';
 import { useTeam } from '../../../../hooks/use-teams';
@@ -16,9 +14,7 @@ import { useTeam } from '../../../../hooks/use-teams';
 const settingsNav = [
 	{ id: 'general', label: 'General' },
 	{ id: 'automations', label: 'Automations' },
-	{ id: 'secrets', label: 'Secrets vault' },
 	{ id: 'api-keys', label: 'API keys' },
-	{ id: 'mcp', label: 'MCP servers' },
 	{ id: 'budget', label: 'Budget' },
 	{ id: 'preferences', label: 'Preferences' },
 	{ id: 'skill-file', label: 'Skill file' },
@@ -66,14 +62,8 @@ function SettingsPage() {
 				<div id="settings-automations">
 					<AutomationsSection projectId={projectId} team={team} />
 				</div>
-				<div id="settings-secrets">
-					<SecretsSection projectId={projectId} />
-				</div>
 				<div id="settings-api-keys">
 					<ApiKeysSection projectId={projectId} />
-				</div>
-				<div id="settings-mcp">
-					<McpServersSection projectId={projectId} />
 				</div>
 				<div id="settings-budget">
 					<BudgetSection projectId={projectId} />

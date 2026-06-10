@@ -136,6 +136,10 @@ export function MarkdownProse({
 					'data-mention-task-identifier'?: string;
 					'data-mention-task-title'?: string;
 					'data-mention-project-slug'?: string;
+					'data-mention-comment-task-identifier'?: string;
+					'data-mention-comment-id'?: string;
+					'data-mention-comment-project-slug'?: string;
+					'data-mention-comment-task-title'?: string;
 					'data-mention-kb-slug'?: string;
 					'data-mention-kb-title'?: string;
 					'data-mention-doc-project-slug'?: string;
@@ -161,13 +165,7 @@ export function MarkdownProse({
 								/>
 							}
 						>
-							<Link
-								to="/projects/$projectId/skills"
-								params={{ projectId }}
-								search={{ slug: kbSlug }}
-								className={MENTION_CLASSES}
-								data-testid="kb-mention-link"
-							>
+							<Link to="/settings/skills" className={MENTION_CLASSES} data-testid="kb-mention-link">
 								{props.children}
 							</Link>
 						</Tooltip>
@@ -240,6 +238,31 @@ export function MarkdownProse({
 								</a>
 							)}
 						</span>
+					);
+				}
+
+				const commentTaskIdentifier = attrs['data-mention-comment-task-identifier'];
+				const commentId = attrs['data-mention-comment-id'];
+				const commentProjectSlug = attrs['data-mention-comment-project-slug'];
+				const commentTaskTitle = attrs['data-mention-comment-task-title'];
+				if (commentTaskIdentifier && commentId && commentProjectSlug && projectId) {
+					return (
+						<Tooltip
+							content={`Comment in ${commentTaskIdentifier.toUpperCase()}${commentTaskTitle ? ` — ${commentTaskTitle}` : ''}`}
+						>
+							<Link
+								to="/projects/$projectId/tasks/$taskId"
+								params={{
+									projectId: commentProjectSlug,
+									taskId: commentTaskIdentifier.toLowerCase(),
+								}}
+								hash={`comment-${commentId}`}
+								className={MENTION_CLASSES}
+								data-testid="comment-mention-link"
+							>
+								{props.children}
+							</Link>
+						</Tooltip>
 					);
 				}
 

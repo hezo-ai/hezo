@@ -110,13 +110,13 @@ function InstanceSkillsPage() {
 							<h1 className="text-[22px] font-medium">Skills</h1>
 							<InfoTooltip
 								label="About skills"
-								content="Reusable skill docs shared with every team's agents. A team-scoped skill with the same slug overrides this."
+								content="Reusable skill docs shared with every team's agents (admin-authored or agent-fetched)."
 								data-testid="skills-info"
 							/>
 						</div>
 						<p className="text-[13px] text-text-muted mt-1 max-w-[680px]">
-							Reusable skill docs shared with every team's agents. A team-scoped skill with the same
-							slug overrides the instance one for that team.
+							Reusable skill docs shared with every team's agents — whether you author them here or
+							an agent fetches them via a connector.
 						</p>
 					</div>
 					<Button

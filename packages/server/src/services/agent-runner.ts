@@ -35,7 +35,7 @@ import {
 	getProviderCredentialAndModel,
 	updateAiProviderCredential,
 } from './ai-provider-keys';
-import { loadSkillFilesForTeam } from './connectors/lifecycle';
+import { loadConnectorSkillFiles } from './connectors/lifecycle';
 import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
@@ -333,10 +333,10 @@ export async function buildRuntimeInvocation(
 			url: `http://host.docker.internal:${deps.serverPort}/mcp`,
 			bearerToken: agentJwt,
 		},
-		...(await loadMcpConnectionDescriptors(deps.db, runTeamId, projectId, deps.masterKeyManager)),
+		...(await loadMcpConnectionDescriptors(deps.db, deps.masterKeyManager)),
 	];
 
-	const skillFiles = await loadSkillFilesForTeam(deps.db, runTeamId);
+	const skillFiles = await loadConnectorSkillFiles(deps.db);
 	const mcpInjection = adapter.build(mcpDescriptors, {
 		hostHomeDir: homeMount?.hostDir ?? null,
 		containerHomeDir: homeMount?.containerDir ?? null,

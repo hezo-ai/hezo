@@ -60,14 +60,13 @@ function InstanceConnectorsPage() {
 							<h1 className="text-[22px] font-medium">Connectors</h1>
 							<InfoTooltip
 								label="About connectors"
-								content="Remote MCP servers shared with every team's agent runs. A team-scoped connector with the same name overrides this."
+								content="Remote MCP servers shared with every team's agent runs."
 								data-testid="connectors-info"
 							/>
 						</div>
 						<p className="text-[13px] text-text-muted mt-1 max-w-[680px]">
-							Remote (SaaS) MCP servers shared with every team's agent runs. A team-scoped connector
-							with the same name overrides the instance one for that team. Authenticate per-team
-							headers with a shared credential placeholder (
+							Remote (SaaS) MCP servers shared with every team's agent runs. Authenticate headers
+							with a shared credential placeholder (
 							<span className="font-mono">__HEZO_SECRET_NAME__</span>).
 						</p>
 					</div>

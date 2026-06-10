@@ -34,28 +34,24 @@ describe('SSH key management', () => {
 
 		expect(result.publicKey).toContain('ssh-ed25519');
 		expect(result.fingerprint).toBeTruthy();
-		expect(result.secretId).toBeTruthy();
 	});
 
-	it('stores the public key in team_ssh_keys', async () => {
-		const row = await db.query<{ public_key: string; fingerprint: string }>(
-			'SELECT public_key, fingerprint FROM team_ssh_keys WHERE team_id = $1',
+	it('stores the public key and encrypted private key on team_ssh_keys', async () => {
+		const row = await db.query<{
+			public_key: string;
+			fingerprint: string;
+			private_key_encrypted: string;
+		}>(
+			'SELECT public_key, fingerprint, private_key_encrypted FROM team_ssh_keys WHERE team_id = $1',
 			[teamId],
 		);
 		expect(row.rows.length).toBe(1);
 		expect(row.rows[0].public_key).toContain('ssh-ed25519');
 		expect(row.rows[0].fingerprint).toBeTruthy();
-	});
-
-	it('stores the private key encrypted in secrets', async () => {
-		const row = await db.query<{ encrypted_value: string; category: string }>(
-			"SELECT encrypted_value, category FROM secrets WHERE team_id = $1 AND name = 'ssh_private_key'",
-			[teamId],
-		);
-		expect(row.rows.length).toBe(1);
-		expect(row.rows[0].category).toBe('ssh_key');
-		// Encrypted value should be base64 (not plaintext PEM)
-		expect(row.rows[0].encrypted_value).not.toContain('-----BEGIN');
+		// Private key is encrypted at rest (not plaintext PEM) and stays per-team,
+		// out of the global secrets table.
+		expect(row.rows[0].private_key_encrypted).toBeTruthy();
+		expect(row.rows[0].private_key_encrypted).not.toContain('-----BEGIN');
 	});
 
 	it('retrieves and decrypts the key pair', async () => {
