@@ -269,7 +269,7 @@ describe('fulfill-credential endpoint', () => {
 		credentialCommentId = result.comment_id;
 	});
 
-	it('stores the value encrypted and grants access to the requesting agent', async () => {
+	it('stores the value encrypted as a global secret', async () => {
 		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
 		const res = await app.request(
 			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${credentialCommentId}/fulfill-credential`,
@@ -295,12 +295,6 @@ describe('fulfill-credential endpoint', () => {
 		expect(decrypt(secretRow.rows[0].encrypted_value, key)).toBe('sk-secret-value-123');
 		expect(secretRow.rows[0].category).toBe('credential');
 		expect(secretRow.rows[0].allowed_hosts).toEqual(['api.example.com']);
-
-		const grant = await db.query(
-			'SELECT id FROM secret_grants WHERE secret_id = $1 AND member_id = $2',
-			[body.data.secret_id, agentId],
-		);
-		expect(grant.rows.length).toBe(1);
 
 		const updatedComment = await db.query<{ chosen_option: Record<string, unknown> }>(
 			'SELECT chosen_option FROM task_comments WHERE id = $1',

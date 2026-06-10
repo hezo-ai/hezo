@@ -9,7 +9,7 @@ import { type EgressAuditEvent, recordEgressEvent } from './audit';
 import type { HezoCA } from './ca';
 import { PortAllocator } from './port-allocator';
 import {
-	loadSecretsForScope,
+	loadAllSecrets,
 	PLACEHOLDER_PROBE_REGEX,
 	type ResolvedSecret,
 	type SubstitutionFailure,
@@ -204,11 +204,9 @@ export class EgressProxy {
 
 		let secrets: Map<string, ResolvedSecret>;
 		try {
-			secrets = await loadSecretsForScope({
+			secrets = await loadAllSecrets({
 				db: this.deps.db,
 				masterKeyManager: this.deps.masterKeyManager,
-				teamId: scope.teamId,
-				projectId: scope.projectId ?? null,
 			});
 		} catch (e) {
 			if ((e as Error).name === 'MasterKeyLocked') {

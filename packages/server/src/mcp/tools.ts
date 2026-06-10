@@ -1619,10 +1619,6 @@ export function registerTools(
 				.describe(
 					'Hostname allowlist for the egress proxy. The credential is only substituted into outbound requests to these hosts. REQUIRED for HTTP-auth kinds (api_key, oauth_token, github_pat) — e.g. ["api.netlify.com"]. Wildcards: *.github.com matches one label segment.',
 				),
-			scope: z
-				.enum(['team', 'project'])
-				.optional()
-				.describe('Storage scope. Default: team. Use project to scope to the current project.'),
 		},
 		async (args, db, auth) => {
 			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
@@ -1655,7 +1651,6 @@ export function registerTools(
 
 			const taskId = args.task_id as string;
 			const teamId = args.team_id as string;
-			const scope = (args.scope as string | undefined) ?? 'team';
 
 			const taskRow = await db.query<{ id: string; project_id: string | null }>(
 				'SELECT id, project_id FROM tasks WHERE id = $1 AND team_id = $2',
@@ -1666,7 +1661,6 @@ export function registerTools(
 				const pDenied = assertProjectAccess(auth, taskRow.rows[0].project_id);
 				if (pDenied) return { error: pDenied };
 			}
-			const projectId = scope === 'project' ? taskRow.rows[0].project_id : null;
 
 			const placeholder = credentialPlaceholder(name);
 
@@ -1676,9 +1670,8 @@ export function registerTools(
 				   AND content_type = 'credential_request'::comment_content_type
 				   AND chosen_option IS NULL
 				   AND content->>'name' = $2
-				   AND COALESCE(content->>'scope', 'team') = $3
 				 ORDER BY created_at ASC LIMIT 1`,
-				[taskId, name, scope],
+				[taskId, name],
 			);
 			if (existing.rows.length > 0) {
 				return {
@@ -1699,8 +1692,6 @@ export function registerTools(
 					: ((args.input_type as string | undefined) ?? CredentialInputType.Text),
 				confirmation_text: args.confirmation_text ?? null,
 				allowed_hosts: requestedHosts,
-				scope,
-				project_id: projectId,
 				placeholder,
 			};
 
@@ -1714,7 +1705,7 @@ export function registerTools(
 			events?.emit({
 				type: 'credential.requested',
 				teamId,
-				projectId,
+				projectId: null,
 				actorType: AuditActorType.Agent,
 				actorMemberId: authorMemberId,
 				taskId,

@@ -305,9 +305,6 @@ export const SecretCategory = {
 } as const;
 export type SecretCategory = (typeof SecretCategory)[keyof typeof SecretCategory];
 
-export const GrantScope = { Single: 'single', Project: 'project', Team: 'team' } as const;
-export type GrantScope = (typeof GrantScope)[keyof typeof GrantScope];
-
 export const ApprovalType = {
 	SecretAccess: 'secret_access',
 	Hire: 'hire',

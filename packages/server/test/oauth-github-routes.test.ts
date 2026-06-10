@@ -236,10 +236,7 @@ describe('GitHub device-flow connector', () => {
 		const after = await db.query(`SELECT id FROM oauth_connections WHERE id = $1`, [conn.id]);
 		expect(after.rows.length).toBe(0);
 
-		const secrets = await db.query(
-			`SELECT id FROM secrets WHERE team_id = $1 AND name LIKE 'OAUTH_GITHUB_%'`,
-			[teamId],
-		);
+		const secrets = await db.query(`SELECT id FROM secrets WHERE name LIKE 'OAUTH_GITHUB_%'`);
 		expect(secrets.rows.length).toBe(0);
 
 		const delAgain = await app.request(
@@ -266,10 +263,9 @@ describe('GitHub device-flow connector', () => {
 		const otherTeamId = (await otherTeamRes.json()).data.id;
 
 		const directInsert = await db.query<{ id: string }>(
-			`INSERT INTO secrets (team_id, name, encrypted_value, category, allowed_hosts)
-			 VALUES ($1, 'OAUTH_GITHUB_DUMMY1', 'placeholder', 'api_token', ARRAY['github.com'])
+			`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
+			 VALUES ('OAUTH_GITHUB_DUMMY1', 'placeholder', 'api_token', ARRAY['github.com'])
 			 RETURNING id`,
-			[otherTeamId],
 		);
 		const secretId = directInsert.rows[0].id;
 		const conn = await db.query<{ id: string }>(

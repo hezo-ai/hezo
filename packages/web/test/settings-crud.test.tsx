@@ -124,56 +124,6 @@ test('automations section exposes the wake-mentioner toggle and persists the cha
 	await waitFor(() => expect(toggle.checked).toBe(true), { timeout: 15_000 });
 });
 
-test('can add and delete a secret', async () => {
-	let team!: CreatedTeam;
-	const { container, user, router } = await renderApp({
-		initialPath: '/',
-		seed: async () => {
-			team = await createTeam();
-		},
-	});
-
-	await router.navigate({
-		to: '/projects/$projectId/team-settings/general',
-		params: { projectId: team.projectSlug },
-	});
-
-	const secrets = await waitFor(
-		() => {
-			const el = container.querySelector('#settings-secrets') as HTMLElement;
-			expect(el).toBeTruthy();
-			return el;
-		},
-		{ timeout: 15_000 },
-	);
-
-	await within(secrets).findByText('Secrets vault');
-
-	const addToggle = within(secrets).getByRole('button', { name: 'Add' });
-	await user.click(addToggle);
-
-	const nameInput = within(secrets).getByPlaceholderText(/^Name/) as HTMLInputElement;
-	const valueInput = within(secrets).getByPlaceholderText('Value') as HTMLInputElement;
-	const hostsInput = within(secrets).getByPlaceholderText(/Allowed hosts/) as HTMLInputElement;
-	fireEvent.change(nameInput, { target: { value: 'MY_SECRET' } });
-	fireEvent.change(valueInput, { target: { value: 'supersecret' } });
-	fireEvent.change(hostsInput, { target: { value: 'example.com' } });
-
-	const form = nameInput.closest('form') as HTMLFormElement;
-	fireEvent.submit(form);
-
-	await within(secrets).findByText('MY_SECRET', undefined, { timeout: 15_000 });
-
-	// The trash button is the only <button> with a child <svg> in each secret row
-	// at this point. Pick the last svg-button inside the secrets section.
-	const svgButtons = secrets.querySelectorAll('button');
-	const trashBtn = Array.from(svgButtons).find((b) => b.querySelector('svg.lucide-trash-2'));
-	expect(trashBtn).toBeTruthy();
-	fireEvent.click(trashBtn!);
-
-	await within(secrets).findByText('No secrets stored.', undefined, { timeout: 15_000 });
-});
-
 test('can create and delete an api key', async () => {
 	let team!: CreatedTeam;
 	const { container, user, findByText, router } = await renderApp({

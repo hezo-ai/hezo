@@ -263,17 +263,16 @@ export class SshAgentServer {
 		}
 		const result = await this.deps.db.query<{
 			public_key: string;
-			encrypted_value: string;
+			private_key_encrypted: string;
 		}>(
-			`SELECT k.public_key, s.encrypted_value
-			 FROM team_ssh_keys k
-			 JOIN secrets s ON s.id = k.private_key_secret_id
-			 WHERE k.team_id = $1`,
+			`SELECT public_key, private_key_encrypted
+			 FROM team_ssh_keys
+			 WHERE team_id = $1`,
 			[teamId],
 		);
 		return result.rows.map((row) => {
 			const blob = sshPublicKeyToBlob(row.public_key);
-			const privateKeyPem = decrypt(row.encrypted_value, encryptionKey);
+			const privateKeyPem = decrypt(row.private_key_encrypted, encryptionKey);
 			const privateKey = createPrivateKey({ key: privateKeyPem, format: 'pem' });
 			return {
 				keyBlob: blob,

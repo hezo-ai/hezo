@@ -13,10 +13,10 @@ let projectSlug: string;
 
 async function insertConnection(provider: string, scopes: string[]): Promise<string> {
 	const secret = await db.query<{ id: string }>(
-		`INSERT INTO secrets (team_id, name, encrypted_value, category, allowed_hosts)
-		 VALUES ($1, $2, 'placeholder', 'api_token', ARRAY['github.com'])
+		`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
+		 VALUES ($1, 'placeholder', 'api_token', ARRAY['github.com'])
 		 RETURNING id`,
-		[teamId, `OAUTH_${provider.toUpperCase()}_${Math.random().toString(16).slice(2, 10)}`],
+		[`OAUTH_${provider.toUpperCase()}_${Math.random().toString(16).slice(2, 10)}`],
 	);
 	const conn = await db.query<{ id: string }>(
 		`INSERT INTO oauth_connections (team_id, provider, provider_account_id, provider_account_label, access_token_secret_id, scopes)
@@ -132,10 +132,9 @@ describe('GET /api/projects/:projectId/oauth-connections/:id/scope-status', () =
 		const otherTeamId = (await otherTeamRes.json()).data.id;
 
 		const secret = await db.query<{ id: string }>(
-			`INSERT INTO secrets (team_id, name, encrypted_value, category, allowed_hosts)
-			 VALUES ($1, 'OAUTH_GITHUB_OTHER', 'placeholder', 'api_token', ARRAY['github.com'])
+			`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
+			 VALUES ('OAUTH_GITHUB_OTHER', 'placeholder', 'api_token', ARRAY['github.com'])
 			 RETURNING id`,
-			[otherTeamId],
 		);
 		const conn = await db.query<{ id: string }>(
 			`INSERT INTO oauth_connections (team_id, provider, provider_account_id, provider_account_label, access_token_secret_id, scopes)

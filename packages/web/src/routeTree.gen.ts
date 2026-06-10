@@ -33,7 +33,6 @@ import { Route as ProjectsProjectIdSettingsIndexRouteImport } from './routes/pro
 import { Route as ProjectsProjectIdInboxIndexRouteImport } from './routes/projects/$projectId/inbox/index'
 import { Route as ProjectsProjectIdAgentsIndexRouteImport } from './routes/projects/$projectId/agents/index'
 import { Route as ProjectsProjectIdTeamSettingsGeneralRouteImport } from './routes/projects/$projectId/team-settings/general'
-import { Route as ProjectsProjectIdTeamSettingsCredentialsRouteImport } from './routes/projects/$projectId/team-settings/credentials'
 import { Route as ProjectsProjectIdTeamSettingsAuditLogRouteImport } from './routes/projects/$projectId/team-settings/audit-log'
 import { Route as ProjectsProjectIdTasksTaskIdRouteImport } from './routes/projects/$projectId/tasks/$taskId'
 import { Route as ProjectsProjectIdAgentsHireRouteImport } from './routes/projects/$projectId/agents/hire'
@@ -174,12 +173,6 @@ const ProjectsProjectIdTeamSettingsGeneralRoute =
     path: '/team-settings/general',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
-const ProjectsProjectIdTeamSettingsCredentialsRoute =
-  ProjectsProjectIdTeamSettingsCredentialsRouteImport.update({
-    id: '/team-settings/credentials',
-    path: '/team-settings/credentials',
-    getParentRoute: () => ProjectsProjectIdRouteRoute,
-  } as any)
 const ProjectsProjectIdTeamSettingsAuditLogRoute =
   ProjectsProjectIdTeamSettingsAuditLogRouteImport.update({
     id: '/team-settings/audit-log',
@@ -252,7 +245,6 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
   '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
   '/projects/$projectId/team-settings/audit-log': typeof ProjectsProjectIdTeamSettingsAuditLogRoute
-  '/projects/$projectId/team-settings/credentials': typeof ProjectsProjectIdTeamSettingsCredentialsRoute
   '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
   '/projects/$projectId/agents/': typeof ProjectsProjectIdAgentsIndexRoute
   '/projects/$projectId/inbox/': typeof ProjectsProjectIdInboxIndexRoute
@@ -285,7 +277,6 @@ export interface FileRoutesByTo {
   '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
   '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
   '/projects/$projectId/team-settings/audit-log': typeof ProjectsProjectIdTeamSettingsAuditLogRoute
-  '/projects/$projectId/team-settings/credentials': typeof ProjectsProjectIdTeamSettingsCredentialsRoute
   '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
   '/projects/$projectId/agents': typeof ProjectsProjectIdAgentsIndexRoute
   '/projects/$projectId/inbox': typeof ProjectsProjectIdInboxIndexRoute
@@ -321,7 +312,6 @@ export interface FileRoutesById {
   '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
   '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
   '/projects/$projectId/team-settings/audit-log': typeof ProjectsProjectIdTeamSettingsAuditLogRoute
-  '/projects/$projectId/team-settings/credentials': typeof ProjectsProjectIdTeamSettingsCredentialsRoute
   '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
   '/projects/$projectId/agents/': typeof ProjectsProjectIdAgentsIndexRoute
   '/projects/$projectId/inbox/': typeof ProjectsProjectIdInboxIndexRoute
@@ -358,7 +348,6 @@ export interface FileRouteTypes {
     | '/projects/$projectId/agents/hire'
     | '/projects/$projectId/tasks/$taskId'
     | '/projects/$projectId/team-settings/audit-log'
-    | '/projects/$projectId/team-settings/credentials'
     | '/projects/$projectId/team-settings/general'
     | '/projects/$projectId/agents/'
     | '/projects/$projectId/inbox/'
@@ -391,7 +380,6 @@ export interface FileRouteTypes {
     | '/projects/$projectId/agents/hire'
     | '/projects/$projectId/tasks/$taskId'
     | '/projects/$projectId/team-settings/audit-log'
-    | '/projects/$projectId/team-settings/credentials'
     | '/projects/$projectId/team-settings/general'
     | '/projects/$projectId/agents'
     | '/projects/$projectId/inbox'
@@ -426,7 +414,6 @@ export interface FileRouteTypes {
     | '/projects/$projectId/agents/hire'
     | '/projects/$projectId/tasks/$taskId'
     | '/projects/$projectId/team-settings/audit-log'
-    | '/projects/$projectId/team-settings/credentials'
     | '/projects/$projectId/team-settings/general'
     | '/projects/$projectId/agents/'
     | '/projects/$projectId/inbox/'
@@ -624,13 +611,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdTeamSettingsGeneralRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/projects/$projectId/team-settings/credentials': {
-      id: '/projects/$projectId/team-settings/credentials'
-      path: '/team-settings/credentials'
-      fullPath: '/projects/$projectId/team-settings/credentials'
-      preLoaderRoute: typeof ProjectsProjectIdTeamSettingsCredentialsRouteImport
-      parentRoute: typeof ProjectsProjectIdRouteRoute
-    }
     '/projects/$projectId/team-settings/audit-log': {
       id: '/projects/$projectId/team-settings/audit-log'
       path: '/team-settings/audit-log'
@@ -725,7 +705,6 @@ interface ProjectsProjectIdRouteRouteChildren {
   ProjectsProjectIdAgentsHireRoute: typeof ProjectsProjectIdAgentsHireRoute
   ProjectsProjectIdTasksTaskIdRoute: typeof ProjectsProjectIdTasksTaskIdRoute
   ProjectsProjectIdTeamSettingsAuditLogRoute: typeof ProjectsProjectIdTeamSettingsAuditLogRoute
-  ProjectsProjectIdTeamSettingsCredentialsRoute: typeof ProjectsProjectIdTeamSettingsCredentialsRoute
   ProjectsProjectIdTeamSettingsGeneralRoute: typeof ProjectsProjectIdTeamSettingsGeneralRoute
   ProjectsProjectIdAgentsIndexRoute: typeof ProjectsProjectIdAgentsIndexRoute
   ProjectsProjectIdInboxIndexRoute: typeof ProjectsProjectIdInboxIndexRoute
@@ -748,8 +727,6 @@ const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
     ProjectsProjectIdTasksTaskIdRoute: ProjectsProjectIdTasksTaskIdRoute,
     ProjectsProjectIdTeamSettingsAuditLogRoute:
       ProjectsProjectIdTeamSettingsAuditLogRoute,
-    ProjectsProjectIdTeamSettingsCredentialsRoute:
-      ProjectsProjectIdTeamSettingsCredentialsRoute,
     ProjectsProjectIdTeamSettingsGeneralRoute:
       ProjectsProjectIdTeamSettingsGeneralRoute,
     ProjectsProjectIdAgentsIndexRoute: ProjectsProjectIdAgentsIndexRoute,

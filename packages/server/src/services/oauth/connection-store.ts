@@ -80,20 +80,20 @@ export async function createConnection(
 
 	const row = await withTransaction(deps.db, async () => {
 		const accessSecret = await deps.db.query<{ id: string }>(
-			`INSERT INTO secrets (team_id, project_id, name, encrypted_value, category, allowed_hosts, allow_all_hosts)
-			 VALUES ($1, NULL, $2, $3, 'api_token', $4, false)
+			`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts, allow_all_hosts)
+			 VALUES ($1, $2, 'api_token', $3, false)
 			 RETURNING id`,
-			[input.teamId, accessName, encrypt(input.accessToken, key), allowedHosts],
+			[accessName, encrypt(input.accessToken, key), allowedHosts],
 		);
 		const accessSecretId = accessSecret.rows[0].id;
 
 		let refreshSecretId: string | null = null;
 		if (input.refreshToken && refreshName) {
 			const refreshSecret = await deps.db.query<{ id: string }>(
-				`INSERT INTO secrets (team_id, project_id, name, encrypted_value, category, allowed_hosts, allow_all_hosts)
-				 VALUES ($1, NULL, $2, $3, 'api_token', $4, false)
+				`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts, allow_all_hosts)
+				 VALUES ($1, $2, 'api_token', $3, false)
 				 RETURNING id`,
-				[input.teamId, refreshName, encrypt(input.refreshToken, key), allowedHosts],
+				[refreshName, encrypt(input.refreshToken, key), allowedHosts],
 			);
 			refreshSecretId = refreshSecret.rows[0].id;
 		}
@@ -275,8 +275,8 @@ export async function updateTokens(
 		} else if (input.refreshToken && !conn.refreshTokenSecretId) {
 			const refreshName = oauthSecretName(conn.provider, conn.id, 'refresh');
 			const inserted = await deps.db.query<{ id: string }>(
-				`INSERT INTO secrets (team_id, project_id, name, encrypted_value, category, allowed_hosts, allow_all_hosts)
-				 SELECT team_id, NULL, $1, $2, 'api_token', allowed_hosts, allow_all_hosts
+				`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts, allow_all_hosts)
+				 SELECT $1, $2, 'api_token', allowed_hosts, allow_all_hosts
 				 FROM secrets WHERE id = $3
 				 RETURNING id`,
 				[refreshName, encrypt(input.refreshToken, key), conn.accessTokenSecretId],

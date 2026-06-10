@@ -152,9 +152,8 @@ describe('Connector lifecycle helpers', () => {
 
 		// Create a fake oauth_connection row to point to.
 		const secretRes = await db.query<{ id: string }>(
-			`INSERT INTO secrets (team_id, name, encrypted_value)
-			 VALUES ($1, 'TEST_TOKEN_FAKE', 'enc') RETURNING id`,
-			[teamId],
+			`INSERT INTO secrets (name, encrypted_value)
+			 VALUES ('TEST_TOKEN_FAKE', 'enc') RETURNING id`,
 		);
 		const ocRes = await db.query<{ id: string }>(
 			`INSERT INTO oauth_connections

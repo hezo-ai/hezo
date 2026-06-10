@@ -51,7 +51,6 @@ CREATE TYPE task_priority AS ENUM ('urgent', 'high', 'medium', 'low');
 CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system', 'run', 'action', 'credential_request', 'connect_required');
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
-CREATE TYPE grant_scope AS ENUM ('single', 'project', 'team');
 CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'project_creation', 'strategy', 'plan_review', 'deploy_production', 'designated_repo_request', 'skill_proposal');
 CREATE TYPE approval_status AS ENUM ('pending', 'approved', 'denied');
 CREATE TYPE audit_actor_type AS ENUM ('admin', 'agent', 'system');
@@ -340,25 +339,16 @@ ALTER TABLE projects ADD CONSTRAINT fk_projects_designated_repo
 
 CREATE TABLE secrets (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    -- team_id NULL = an instance-level credential, available to every team's
-    -- egress (still bounded by allowed_hosts). Managed by the Admin (superuser).
-    team_id          UUID REFERENCES teams(id) ON DELETE CASCADE,
-    project_id       UUID REFERENCES projects(id) ON DELETE CASCADE,
-    name             TEXT NOT NULL,
+    -- All credentials are instance-level: shared with every team's egress,
+    -- bounded by allowed_hosts. Managed by the Admin (superuser).
+    name             TEXT NOT NULL UNIQUE,
     encrypted_value  TEXT NOT NULL,
     category         secret_category NOT NULL DEFAULT 'other',
     allowed_hosts    TEXT[] NOT NULL DEFAULT '{}',
     allow_all_hosts  BOOLEAN NOT NULL DEFAULT false,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE (team_id, project_id, name)
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-CREATE INDEX idx_secrets_team ON secrets(team_id);
--- Instance-level credentials (team_id NULL) are unique by name across the instance.
-CREATE UNIQUE INDEX idx_secrets_instance_name ON secrets (name) WHERE team_id IS NULL;
-CREATE INDEX idx_secrets_project ON secrets(project_id);
 
 -------------------------------------------------------------------------------
 -- OAUTH CONNECTIONS
@@ -456,12 +446,17 @@ CREATE UNIQUE INDEX idx_mcp_connections_instance_name ON mcp_connections (name) 
 -- TEAM SSH KEYS
 -------------------------------------------------------------------------------
 
+-- The Ed25519 commit-signing / SSH-auth key stays per-team (the git identity is
+-- team-scoped even though credentials/connectors are global). The private key
+-- PEM is encrypted at rest with the master key directly on this row, NOT in the
+-- global `secrets` table — a per-team key there would collide on the global
+-- UNIQUE(name) and leak into every team's egress substitution pool.
 CREATE TABLE team_ssh_keys (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id               UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     public_key            TEXT NOT NULL,
     fingerprint           TEXT,
-    private_key_secret_id UUID REFERENCES secrets(id) ON DELETE SET NULL,
+    private_key_encrypted TEXT NOT NULL,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (team_id)
 );
@@ -597,24 +592,6 @@ CREATE TABLE tool_calls (
 
 CREATE INDEX idx_tool_calls_comment ON tool_calls(comment_id);
 CREATE INDEX idx_tool_calls_member ON tool_calls(member_id);
-
--------------------------------------------------------------------------------
--- SECRET GRANTS
--------------------------------------------------------------------------------
-
-CREATE TABLE secret_grants (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    secret_id  UUID NOT NULL REFERENCES secrets(id) ON DELETE CASCADE,
-    member_id  UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
-    scope      grant_scope NOT NULL DEFAULT 'single',
-    granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    revoked_at TIMESTAMPTZ,
-
-    UNIQUE (secret_id, member_id)
-);
-
-CREATE INDEX idx_grants_member ON secret_grants(member_id);
-CREATE INDEX idx_grants_secret ON secret_grants(secret_id);
 
 -------------------------------------------------------------------------------
 -- APPROVALS

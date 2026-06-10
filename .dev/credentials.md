@@ -11,7 +11,8 @@ Every secret lives in the `secrets` table, encrypted with the master key (AES-25
 - `allowed_hosts` — the set of upstream hostnames the secret is permitted to reach (e.g. `['api.stripe.com']`); `*.example.com` works
 - `allow_all_hosts` — escape hatch for the rare case where the secret should reach any host
 - `category` — informational tag (`api_token`, `ssh_key`, `credential`, …)
-- `team_id`, optional `project_id` — scope. Project-scoped rows shadow team-wide entries with the same name. **`team_id` NULL = an instance-level credential**, shared with every team's egress (still bounded by `allowed_hosts`); the Admin (superuser) manages these via `GET /api/credentials` + `POST/PATCH/DELETE /api/secrets[/:id]`, and they cannot be mutated through a team's `/teams/:teamId/secrets` routes. On a name clash the most specific scope wins: project > team > instance.
+
+Secrets are **instance-global**: a single set shared with every team's egress (still bounded per-secret by `allowed_hosts`). `name` is unique instance-wide. There is no team or project scope. The Admin (superuser) manages them via `GET /api/credentials` + `POST/PATCH/DELETE /api/secrets[/:id]`; agents obtain them through `request_credential` (below), which writes the same global rows.
 
 An agent never sees the value. Wherever it would write the secret it instead writes the placeholder `__HEZO_SECRET_<NAME>__`. The egress proxy substitutes at request time — see `.dev/egress.md`.
 
@@ -37,10 +38,9 @@ The agent's next env emits `STRIPE_API_KEY=__HEZO_SECRET_STRIPE_API_KEY__` (or w
 ## Lifecycle
 
 - **Request** — agent calls `request_credential`, posts the form.
-- **Fulfill** — human pastes the value, server encrypts and stores.
-- **Grant** — `secret_grants` row records who/what is permitted to use this secret. (Today every run scoped to the same team can use any team-scoped secret; project-scoped works the same within a project.)
-- **Use** — proxy substitutes the placeholder when the agent's request hits an allowlisted host.
-- **Revoke** — board user deletes the secret via `DELETE /api/teams/:teamId/secrets/:secretId`. Existing in-flight runs see `unknown_secret` (400) on the next outbound call.
+- **Fulfill** — human pastes the value, server encrypts and stores a global secret.
+- **Use** — proxy substitutes the placeholder when any run's request hits an allowlisted host. Substitution is gated by `allowed_hosts`, not by per-agent grants.
+- **Revoke** — the Admin deletes the secret via `DELETE /api/secrets/:secretId`. Existing in-flight runs see `unknown_secret` (400) on the next outbound call.
 
 ## OAuth-issued credentials
 
@@ -70,7 +70,7 @@ Pending and revoked connectors are excluded from the agent runtime by `loadMcpCo
 
 Agent skill files (`AGENTS.md`-style markdown a provider ships alongside its MCP server) are fetched via `fetch_skill_file`, stored as `documents` of `type='mcp_skill'`, and written into the adapter's skills directory at each run start (Claude Code: `~/.claude/skills/<slug>.md`).
 
-The egress proxy's `loadSecretsForScope` calls `refreshExpiringTokensForTeam` on every outbound request — tokens within 60s of expiry refresh through their provider's registered refresh function before the substitution fires.
+The egress proxy's `loadAllSecrets` calls `refreshExpiringTokens` on every outbound request — tokens within 60s of expiry refresh through their provider's registered refresh function before the substitution fires.
 
 ## Why placeholders, not real values in env
 
