@@ -1,6 +1,7 @@
 import { Loader2, MessageSquare, Send, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { type CeoMessage, useCeoChat } from '../../hooks/use-ceo-chat';
+import { Tooltip } from '../ui/tooltip';
 
 function formatTime(iso: string): string {
 	const d = new Date(iso);
@@ -38,15 +39,17 @@ export function CeoChatWidget() {
 
 	if (!open) {
 		return (
-			<button
-				type="button"
-				onClick={() => setOpen(true)}
-				data-testid="ceo-chat-launcher"
-				aria-label="Chat with the CEO"
-				className="fixed bottom-4 right-4 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-white shadow-lg hover:opacity-90"
-			>
-				<MessageSquare className="h-5 w-5" />
-			</button>
+			<Tooltip content="Chat with CEO" side="left">
+				<button
+					type="button"
+					onClick={() => setOpen(true)}
+					data-testid="ceo-chat-launcher"
+					aria-label="Chat with the CEO"
+					className="fixed bottom-4 right-4 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-white shadow-lg hover:opacity-90"
+				>
+					<MessageSquare className="h-5 w-5" />
+				</button>
+			</Tooltip>
 		);
 	}
 
@@ -57,10 +60,8 @@ export function CeoChatWidget() {
 		>
 			<header className="flex items-center justify-between border-b border-border px-3 py-2.5">
 				<div className="flex flex-col">
-					<span className="text-sm font-semibold text-text">CEO</span>
-					<span className="text-[11px] text-text-muted">
-						{streaming ? 'Typing…' : 'Ask about any project'}
-					</span>
+					<span className="text-sm font-semibold text-text">🧑‍💼 CEO</span>
+					<span className="text-[11px] text-text-muted">Ask about any project</span>
 				</div>
 				<button
 					type="button"
@@ -86,13 +87,13 @@ export function CeoChatWidget() {
 				)}
 				{loaded && messages.length === 0 && (
 					<p className="px-1 py-6 text-center text-[13px] text-text-muted">
-						Say hello to the CEO. Ask about active projects, blockers, or what to do next.
+						Say hello to the CEO. Ask about anything, including active projects, notifications, task
+						blockers, etc
 					</p>
 				)}
 				{messages.map((m) => (
 					<MessageBubble key={m.id} message={m} />
 				))}
-				{streaming && <TypingIndicator />}
 			</div>
 
 			<div className="border-t border-border p-2">
@@ -131,8 +132,14 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 	const isCeo = message.role === 'assistant';
 	const interrupted = message.status === 'interrupted';
 	const failed = message.status === 'failed';
+	const streaming = message.status === 'streaming';
 
 	if (isCeo) {
+		// Still composing with no text yet → the typing indicator stands in for
+		// the (otherwise empty) bubble.
+		if (streaming && message.content.length === 0) {
+			return <TypingIndicator />;
+		}
 		return (
 			<div
 				className="flex flex-col gap-1 max-w-[90%]"
@@ -144,6 +151,9 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 					{interrupted && (
 						<span className="ml-1 text-[11px] italic text-text-subtle">(interrupted)</span>
 					)}
+					{/* Reply has begun but the CEO is still working → dots pinned to
+					    the bottom of the same bubble. */}
+					{streaming && <StreamingDots />}
 				</div>
 				<span className="text-[10px] text-text-subtle">{formatTime(message.created_at)}</span>
 			</div>
@@ -166,10 +176,43 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 
 function TypingIndicator() {
 	return (
-		<div className="flex items-center gap-1" data-testid="ceo-chat-typing" aria-live="polite">
+		<div
+			className="flex items-center gap-2 max-w-[90%]"
+			data-testid="ceo-chat-typing"
+			role="status"
+			aria-label="CEO is typing"
+		>
+			<span
+				aria-hidden
+				className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-bg-subtle text-base leading-none"
+			>
+				🧑‍💼
+			</span>
+			<div className="flex items-center gap-1.5 rounded-radius-md rounded-bl-sm border border-border bg-bg-subtle px-3 py-3">
+				<span className="h-2.5 w-2.5 rounded-full bg-text-subtle animate-pulse" />
+				<span className="h-2.5 w-2.5 rounded-full bg-text-subtle animate-pulse [animation-delay:150ms]" />
+				<span className="h-2.5 w-2.5 rounded-full bg-text-subtle animate-pulse [animation-delay:300ms]" />
+			</div>
+		</div>
+	);
+}
+
+/**
+ * Small dots pinned to the bottom of an in-flight reply bubble — signals the CEO
+ * is still working after the first tokens have already landed. (Display:flex
+ * breaks it onto its own line below the streamed text.)
+ */
+function StreamingDots() {
+	return (
+		<span
+			className="mt-1.5 flex items-center gap-1"
+			data-testid="ceo-chat-streaming-dots"
+			role="status"
+			aria-label="CEO is still typing"
+		>
 			<span className="h-1.5 w-1.5 rounded-full bg-text-subtle animate-pulse" />
 			<span className="h-1.5 w-1.5 rounded-full bg-text-subtle animate-pulse [animation-delay:150ms]" />
 			<span className="h-1.5 w-1.5 rounded-full bg-text-subtle animate-pulse [animation-delay:300ms]" />
-		</div>
+		</span>
 	);
 }
