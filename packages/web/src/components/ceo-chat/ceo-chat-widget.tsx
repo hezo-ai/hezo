@@ -53,7 +53,7 @@ export function CeoChatWidget() {
 	return (
 		<div
 			data-testid="ceo-chat-panel"
-			className="fixed z-50 flex flex-col border border-border bg-bg shadow-xl inset-x-2 bottom-2 top-16 rounded-radius-md sm:inset-auto sm:bottom-4 sm:right-4 sm:top-auto sm:h-[560px] sm:w-[380px]"
+			className="fixed z-50 flex flex-col border border-border bg-bg shadow-xl inset-x-2 bottom-2 top-16 rounded-radius-md md:inset-auto md:bottom-4 md:right-4 md:top-auto md:h-[560px] md:w-[380px]"
 		>
 			<header className="flex items-center justify-between border-b border-border px-3 py-2.5">
 				<div className="flex flex-col">
@@ -67,7 +67,7 @@ export function CeoChatWidget() {
 					onClick={() => setOpen(false)}
 					aria-label="Close chat"
 					data-testid="ceo-chat-close"
-					className="flex h-7 w-7 items-center justify-center rounded-radius-md text-text-muted hover:text-text hover:bg-bg-subtle"
+					className="flex h-9 w-9 items-center justify-center rounded-radius-md text-text-muted hover:text-text hover:bg-bg-subtle"
 				>
 					<X className="h-4 w-4" />
 				</button>
