@@ -211,6 +211,14 @@ export async function resolveSystemPrompt(
 		resolved = resolved.replace(/\{\{project_docs_context\}\}/g, docsText);
 	}
 
+	// Instance-wide project roster. Only the CEO's prompt carries this placeholder
+	// (it is the one agent with cross-team reach), so a worker prompt never leaks
+	// other teams' projects. Regenerated every turn, so the CEO answers "what
+	// projects do we have?" from live state instead of memory.
+	if (resolved.includes('{{projects_context}}')) {
+		resolved = resolved.replace(/\{\{projects_context\}\}/g, await buildProjectsContext(db));
+	}
+
 	resolved = resolved.replace(/\{\{requester_context\}\}/g, '');
 
 	if (ctx.mode === 'placeholders') {
@@ -371,6 +379,52 @@ function formatCreatedTicket(t: {
 }): string {
 	const assignee = t.assignee_name ?? 'unassigned';
 	return `- ${t.identifier} — ${t.title} (${t.status}, assigned to ${assignee})`;
+}
+
+/**
+ * Instance-wide roster of every project-team (HQ excluded). Resolved inline for
+ * the `{{projects_context}}` placeholder, which only the CEO's prompt carries.
+ * Uses slugs/names — never UUIDs — because this text is also what the CEO echoes
+ * back to the operator in the chat box.
+ */
+async function buildProjectsContext(db: PGlite): Promise<string> {
+	const terminal = terminalStatusParams(1, true);
+	const projects = await db.query<{
+		name: string;
+		slug: string;
+		task_prefix: string;
+		team_name: string;
+		team_slug: string;
+		open_task_count: number;
+		created_at: string;
+	}>(
+		`SELECT p.name, p.slug, p.task_prefix, t.name AS team_name, t.slug AS team_slug,
+		        (SELECT count(*) FROM tasks i
+		         WHERE i.project_id = p.id AND i.status NOT IN (${terminal.placeholders}))::int AS open_task_count,
+		        p.created_at
+		 FROM projects p
+		 JOIN teams t ON t.id = p.team_id
+		 WHERE p.is_internal = false
+		 ORDER BY p.created_at DESC`,
+		terminal.values,
+	);
+
+	const intro =
+		'Hezo is project-centric: one organisation containing many projects, each backed by its own dedicated team and Captain. As the instance CEO you have automatic cross-team reach over every one of them. The roster of project-teams below (HQ, your home, excluded) is regenerated every turn from the live database — trust it over memory, and never tell the operator a project does not exist without checking here first. When you name a project, ticket, or team in the chat box, use its slug, identifier, or name (e.g. the project `todo6`, ticket `TO-1`) — never a raw UUID. To act inside a project, pass its team to `list_tasks` / `list_agents`, or call `list_projects` with no `team_id` for this same live list.';
+
+	if (projects.rows.length === 0) {
+		return `${intro}\n\n_No project-teams exist yet beyond HQ. When the operator wants to start one, take it through project intake._`;
+	}
+
+	const lines = projects.rows
+		.map((p) => {
+			const date = new Date(p.created_at).toISOString().slice(0, 10);
+			const open = `${p.open_task_count} open ticket${p.open_task_count === 1 ? '' : 's'}`;
+			return `- ${p.name} (slug: ${p.slug}, prefix: ${p.task_prefix}) — team ${p.team_name} (slug: ${p.team_slug}), ${open}, created ${date}`;
+		})
+		.join('\n');
+
+	return `${intro}\n\n${lines}`;
 }
 
 function buildRunContextBlock(ctx: ResolveContext): string {

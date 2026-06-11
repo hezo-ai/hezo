@@ -1,8 +1,10 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { DEFAULT_TEAM_ID } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
+import { signCeoSessionJwt } from '../src/middleware/auth';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, mintAgentToken } from './helpers/app';
 
@@ -206,6 +208,81 @@ describe('MCP project scope — agent run scoped to its team`s project', () => {
 			task_id: taskInBId,
 		})) as { error: string };
 		expect(result.error).toMatch(/Access denied/);
+	});
+
+	it('list_projects without team_id is rejected for a project-scoped agent', async () => {
+		const result = (await callMcp(scopedToken, 'list_projects', {})) as { error: string };
+		expect(result.error).toMatch(/team_id is required/);
+	});
+});
+
+describe('MCP cross-team CEO — instance-wide discovery', () => {
+	let ceoToken: string;
+
+	beforeAll(async () => {
+		// Mint a persistent CEO chat-session principal (cross_team + cross_project),
+		// the same token the live chat box runs under.
+		const ceo = await db.query<{ id: string }>(
+			`SELECT m.id FROM members m JOIN member_agents ma ON ma.id = m.id
+			 WHERE ma.slug = 'ceo' AND m.team_id = $1`,
+			[DEFAULT_TEAM_ID],
+		);
+		const hqProject = await db.query<{ id: string }>(
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+			[DEFAULT_TEAM_ID],
+		);
+		const session = await db.query<{ id: string }>(
+			`INSERT INTO ceo_sessions (member_id, team_id, project_id, runtime_type, status)
+			 VALUES ($1, $2, $3, 'claude_code', 'running') RETURNING id`,
+			[ceo.rows[0].id, DEFAULT_TEAM_ID, hqProject.rows[0].id],
+		);
+		ceoToken = await signCeoSessionJwt(
+			masterKeyManager,
+			ceo.rows[0].id,
+			DEFAULT_TEAM_ID,
+			session.rows[0].id,
+			hqProject.rows[0].id,
+		);
+	});
+
+	it('list_teams returns every team in the instance, not just HQ', async () => {
+		const rows = (await callMcp(ceoToken, 'list_teams', {})) as Array<{ id: string }>;
+		const ids = rows.map((r) => r.id);
+		expect(ids).toContain(DEFAULT_TEAM_ID);
+		expect(ids).toContain(teamAId);
+		expect(ids).toContain(teamBId);
+	});
+
+	it('list_projects with no team_id returns every project across all teams, tagged with its team', async () => {
+		const rows = (await callMcp(ceoToken, 'list_projects', {})) as Array<{
+			id: string;
+			team_id: string;
+			team_slug: string;
+			is_internal: boolean;
+		}>;
+		const ids = rows.map((r) => r.id);
+		expect(ids).toContain(projectAId);
+		expect(ids).toContain(projectBId);
+		// HQ (the one internal project) is included so the CEO sees the whole picture.
+		expect(rows.some((r) => r.is_internal)).toBe(true);
+		// Every row carries its owning team so the CEO can drill in by team.
+		const a = rows.find((r) => r.id === projectAId);
+		expect(a?.team_id).toBe(teamAId);
+		expect(a?.team_slug).toBeTruthy();
+	});
+
+	it('list_projects still scopes to one team when team_id is given', async () => {
+		const rows = (await callMcp(ceoToken, 'list_projects', { team_id: teamBId })) as Array<{
+			id: string;
+		}>;
+		expect(rows.map((r) => r.id)).toEqual([projectBId]);
+	});
+
+	it('can list tasks in any team without being scoped to it', async () => {
+		const rows = (await callMcp(ceoToken, 'list_tasks', { team_id: teamBId })) as Array<{
+			id: string;
+		}>;
+		expect(rows.some((r) => r.id === taskInBId)).toBe(true);
 	});
 });
 

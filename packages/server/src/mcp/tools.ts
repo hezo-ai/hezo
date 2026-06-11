@@ -352,9 +352,15 @@ export function registerTools(
 	tool(
 		server,
 		'list_teams',
-		'List teams accessible to the caller',
+		'List teams accessible to the caller. The instance CEO (cross-team session) gets every team in the instance; other agents get only their own team.',
 		{},
 		async (_args, db, auth) => {
+			// The instance CEO chat session acts across every team (cross-team gated
+			// at mint time), so it discovers the whole roster — not just HQ.
+			if (auth.type === AuthType.Agent && auth.crossTeam) {
+				const r = await db.query('SELECT * FROM teams ORDER BY name');
+				return r.rows;
+			}
 			if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
 				const r = await db.query('SELECT * FROM teams WHERE id = $1', [auth.teamId]);
 				return r.rows;
@@ -1208,9 +1214,14 @@ export function registerTools(
 	tool(
 		server,
 		'list_projects',
-		'List projects for a team. Pass excerpt_chars (e.g. 300) to truncate description; omit for full content.',
+		'List projects. Omit team_id to list every project across all teams in the instance (CEO cross-team access only) — each row carries team_name/team_slug. Pass team_id to scope to one team. Pass excerpt_chars (e.g. 300) to truncate description; omit for full content.',
 		{
-			team_id: z.string().describe('Team ID'),
+			team_id: z
+				.string()
+				.optional()
+				.describe(
+					'Team ID. Omit to list every project across all teams (CEO cross-team access only).',
+				),
 			excerpt_chars: z
 				.number()
 				.int()
@@ -1219,20 +1230,41 @@ export function registerTools(
 				.describe('When set, truncates description and adds description_truncated/_length'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			const scoped = auth.type === AuthType.Agent && !auth.crossProject;
-			const r = await db.query<Record<string, unknown>>(
-				scoped
-					? `SELECT id, team_id, name, slug, task_prefix, description, created_at, updated_at
-					 FROM projects WHERE team_id = $1 AND id = $2`
-					: `SELECT id, team_id, name, slug, task_prefix, description, created_at, updated_at
-					 FROM projects WHERE team_id = $1 ORDER BY name`,
-				scoped ? [args.team_id, auth.projectId] : [args.team_id],
-			);
 			const max = args.excerpt_chars as number | undefined;
-			if (max == null) return r.rows;
-			return r.rows.map((row) => applyExcerpt(row, 'description', max));
+			const withExcerpt = (rows: Record<string, unknown>[]) =>
+				max == null ? rows : rows.map((row) => applyExcerpt(row, 'description', max));
+			const teamId = args.team_id as string | undefined;
+
+			if (teamId) {
+				const denied = await verifyTeamAccess(db, auth, teamId);
+				if (denied) return { error: denied };
+				const scoped = auth.type === AuthType.Agent && !auth.crossProject;
+				const r = await db.query<Record<string, unknown>>(
+					scoped
+						? `SELECT id, team_id, name, slug, task_prefix, description, is_internal, created_at, updated_at
+						 FROM projects WHERE team_id = $1 AND id = $2`
+						: `SELECT id, team_id, name, slug, task_prefix, description, is_internal, created_at, updated_at
+						 FROM projects WHERE team_id = $1 ORDER BY name`,
+					scoped ? [teamId, auth.projectId] : [teamId],
+				);
+				return withExcerpt(r.rows);
+			}
+
+			// No team_id → instance-wide listing across every team. Restricted to
+			// principals with cross-team reach (the CEO session) or a superuser admin;
+			// a project-scoped agent must name its team.
+			const instanceWide =
+				(auth.type === AuthType.Agent && auth.crossTeam) ||
+				(auth.type === AuthType.Admin && auth.isSuperuser);
+			if (!instanceWide) return { error: 'team_id is required' };
+			const r = await db.query<Record<string, unknown>>(
+				`SELECT p.id, p.team_id, t.name AS team_name, t.slug AS team_slug,
+				        p.name, p.slug, p.task_prefix, p.description, p.is_internal,
+				        p.created_at, p.updated_at
+				 FROM projects p JOIN teams t ON t.id = p.team_id
+				 ORDER BY t.name, p.name`,
+			);
+			return withExcerpt(r.rows);
 		},
 		db,
 	);
