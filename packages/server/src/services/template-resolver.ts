@@ -202,7 +202,7 @@ export async function resolveSystemPrompt(
 					.join('\n');
 				docsText = [
 					'The project docs database holds high-level project context (PRDs, specs, architecture decisions, research). Entries are listed below by filename.',
-					"Call read_project_doc(filename) to load a doc's full contents when relevant to your task.",
+					"Call read_project_doc(filename) to load a doc's full contents when relevant to your task. These docs live in the database, not the filesystem — there is no /workspace/.hezo/project-docs path, so don't use the Read/cat file tools; load each one by its bare filename through read_project_doc.",
 					'',
 					lines,
 				].join('\n');

@@ -2585,7 +2585,7 @@ export function registerTools(
 	tool(
 		server,
 		'read_project_doc',
-		'Read a project documentation file by filename',
+		'Read a markdown project doc by filename (e.g. "spec.md") — the high-level project context (PRDs, specs, architecture decisions, research) that list_project_docs returns; the full body comes back inline as `content`. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so do not reach for the Read/cat file tools — always load a doc through this tool by its bare filename. For non-markdown assets (mockups, wireframes, diagrams) use read_project_asset instead.',
 		{
 			team_id: z.string().describe('Team ID'),
 			project_id: z.string().describe('Project ID'),
