@@ -1,6 +1,7 @@
 import { Loader2, MessageSquare, Send, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { type CeoMessage, useCeoChat } from '../../hooks/use-ceo-chat';
+import { MarkdownProse } from '../markdown-prose';
 import { Tooltip } from '../ui/tooltip';
 
 function formatTime(iso: string): string {
@@ -146,10 +147,17 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 				data-testid="ceo-chat-message"
 				data-role="ceo"
 			>
-				<div className="rounded-radius-md rounded-bl-sm border border-border bg-bg-subtle px-3 py-2 text-[13px] leading-relaxed text-text whitespace-pre-wrap">
-					{message.content || (failed ? 'Something went wrong.' : '')}
+				<div className="rounded-radius-md rounded-bl-sm border border-border bg-bg-subtle px-3 py-2 text-text">
+					{/* The CEO's replies are LLM-authored markdown. There's no single
+					    project scope on the global chat, so MarkdownProse renders pure
+					    GFM (mention resolution stays disabled without a projectId). */}
+					{message.content ? (
+						<MarkdownProse testId="ceo-chat-markdown">{message.content}</MarkdownProse>
+					) : failed ? (
+						<span className="text-[13px] leading-relaxed">Something went wrong.</span>
+					) : null}
 					{interrupted && (
-						<span className="ml-1 text-[11px] italic text-text-subtle">(interrupted)</span>
+						<div className="mt-1 text-[11px] italic text-text-subtle">(interrupted)</div>
 					)}
 					{/* Reply has begun but the CEO is still working → dots pinned to
 					    the bottom of the same bubble. */}
@@ -166,7 +174,7 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 			data-testid="ceo-chat-message"
 			data-role="user"
 		>
-			<div className="rounded-radius-md rounded-br-sm border border-accent-blue-text/20 bg-accent-blue-bg px-3 py-2 text-[13px] leading-relaxed text-text whitespace-pre-wrap">
+			<div className="rounded-radius-md rounded-br-sm border border-accent-blue-text/20 bg-accent-blue-bg px-3 py-2 text-sm leading-relaxed text-text whitespace-pre-wrap">
 				{message.content}
 			</div>
 			<span className="text-[10px] text-text-subtle">{formatTime(message.created_at)}</span>

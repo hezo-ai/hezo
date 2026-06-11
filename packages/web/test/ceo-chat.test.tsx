@@ -133,3 +133,56 @@ test('a completed reply shows no typing dots', async () => {
 	expect(queryByTestId('ceo-chat-streaming-dots')).toBeNull();
 	expect(queryByTestId('ceo-chat-typing')).toBeNull();
 });
+
+test('a CEO reply renders its markdown as formatted HTML, not raw text', async () => {
+	const { findByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+
+	seedConversation([
+		{
+			id: 'a1',
+			role: 'assistant',
+			channel: 'web',
+			status: 'complete',
+			content: ['**Two projects** are live:', '', '- `HQ` — internal', '- `todo6` — todo app'].join(
+				'\n',
+			),
+			created_at: now(),
+		},
+	]);
+
+	const body = await findByTestId('ceo-chat-markdown');
+	// Inline emphasis and code spans become real elements rather than literal
+	// `**`/backtick syntax.
+	expect(body.querySelector('strong')?.textContent).toBe('Two projects');
+	const codeText = Array.from(body.querySelectorAll('code')).map((el) => el.textContent);
+	expect(codeText).toContain('HQ');
+	expect(codeText).toContain('todo6');
+	// The dash bullets collapse into a real list.
+	expect(body.querySelectorAll('li').length).toBe(2);
+	// The raw markdown markers are gone from the visible text.
+	expect(body.textContent ?? '').not.toContain('**');
+});
+
+test('a user message is shown as typed, not parsed as markdown', async () => {
+	const { findByTestId, findByText } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+
+	seedConversation([
+		{
+			id: 'u1',
+			role: 'user',
+			channel: 'web',
+			status: 'complete',
+			content: 'Does **HQ** use `client side storage`?',
+			created_at: now(),
+		},
+	]);
+
+	const bubble = await findByText(/Does \*\*HQ\*\* use `client side storage`\?/);
+	// The user's own input is echoed verbatim — no <strong>/<code> transformation.
+	expect(bubble.querySelector('strong')).toBeNull();
+	expect(bubble.querySelector('code')).toBeNull();
+});
