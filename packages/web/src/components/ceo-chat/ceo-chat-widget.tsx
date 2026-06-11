@@ -1,6 +1,7 @@
 import { Loader2, MessageSquare, Send, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { type CeoMessage, useCeoChat } from '../../hooks/use-ceo-chat';
+import { Tooltip } from '../ui/tooltip';
 
 function formatTime(iso: string): string {
 	const d = new Date(iso);
@@ -38,15 +39,17 @@ export function CeoChatWidget() {
 
 	if (!open) {
 		return (
-			<button
-				type="button"
-				onClick={() => setOpen(true)}
-				data-testid="ceo-chat-launcher"
-				aria-label="Chat with the CEO"
-				className="fixed bottom-4 right-4 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-white shadow-lg hover:opacity-90"
-			>
-				<MessageSquare className="h-5 w-5" />
-			</button>
+			<Tooltip content="Chat with CEO" side="left">
+				<button
+					type="button"
+					onClick={() => setOpen(true)}
+					data-testid="ceo-chat-launcher"
+					aria-label="Chat with the CEO"
+					className="fixed bottom-4 right-4 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-white shadow-lg hover:opacity-90"
+				>
+					<MessageSquare className="h-5 w-5" />
+				</button>
+			</Tooltip>
 		);
 	}
 

@@ -1,6 +1,7 @@
 import type { CeoMessage } from '@hezo/web/hooks/use-ceo-chat';
 import { queryClient } from '@hezo/web/lib/query-client';
 import { queryKeys } from '@hezo/web/lib/query-keys';
+import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 
@@ -55,6 +56,13 @@ test('shows the empty state once history loads', async () => {
 	const { findByTestId, findByText } = await renderApp({ initialPath: '/home' });
 	(await findByTestId('ceo-chat-launcher')).click();
 	expect(await findByText(/Say hello to the CEO/i)).toBeTruthy();
+});
+
+test('the closed launcher button exposes a "Chat with CEO" tooltip on hover', async () => {
+	const { findByTestId, getAllByText, user } = await renderApp({ initialPath: '/home' });
+	const launcher = await findByTestId('ceo-chat-launcher');
+	await user.hover(launcher);
+	await waitFor(() => expect(getAllByText('Chat with CEO').length).toBeGreaterThan(0));
 });
 
 test('streaming with no text yet shows the typing indicator, not an empty bubble', async () => {
