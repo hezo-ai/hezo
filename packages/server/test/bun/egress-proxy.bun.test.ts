@@ -170,10 +170,14 @@ describe('EgressProxy under Bun', () => {
 			const before = getSslServers(proxy, runId);
 			const victimServer = before[victim]?.server;
 			expect(victimServer?.listening).toBe(true);
+			expect(victimServer?.address()?.port).toBe(before[victim]?.port);
 
 			// The per-host server disappears; its port may now be recycled.
+			// The reconciler's ownership signal must read closed on the
+			// production runtime.
 			await new Promise<void>((resolve) => victimServer?.close(() => resolve()));
 			expect(victimServer?.listening).toBe(false);
+			expect(victimServer?.address()).toBeNull();
 
 			// Any subsequent CONNECT triggers the reconciler (runs on
 			// setImmediate); give it a tick to drop the stale entry.
@@ -187,11 +191,62 @@ describe('EgressProxy under Bun', () => {
 			await proxy.releaseRunProxy(runId);
 		}
 	}, 30_000);
+
+	// Regression for the observed production desync: a per-host server died
+	// while its entry still reported listening=true, so the listening-based
+	// purge kept the stale route and a later host received the wrong leaf
+	// cert from the recycled port. The reconciler must treat "no longer bound
+	// to the recorded port" (address() === null) as dead regardless of the
+	// listening flag, and the victim's next tunnel must re-mint the correct
+	// cert.
+	test('purges a stale entry whose listening flag lies and re-mints the host cert', async () => {
+		const runId = `bun-zombie-${process.pid}`;
+		const victim = 'zombie.hezo-egress-test';
+		const survivor = 'alive.hezo-egress-test';
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			await Promise.all([
+				servedCertThroughProxy(allocated.proxyPort, victim, ca.cert),
+				servedCertThroughProxy(allocated.proxyPort, survivor, ca.cert),
+			]);
+			const before = getSslServers(proxy, runId);
+			const victimServer = before[victim]?.server;
+			if (!victimServer) throw new Error('victim entry missing');
+			await new Promise<void>((resolve) => victimServer.close(() => resolve()));
+
+			// Forge the desync: the entry claims a listening server while the
+			// real one has lost its port.
+			before[victim] = {
+				port: before[victim]?.port,
+				server: {
+					listening: true,
+					address: () => victimServer.address(),
+					close: victimServer.close.bind(victimServer),
+				},
+			};
+
+			await servedCertThroughProxy(allocated.proxyPort, survivor, ca.cert);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			const after = getSslServers(proxy, runId);
+			expect(victim in after).toBe(false);
+
+			// The victim's next tunnel rebuilds a fresh server with its own cert.
+			const cert = await servedCertThroughProxy(allocated.proxyPort, victim, ca.cert);
+			expect(cert).toContain(victim);
+		} finally {
+			await proxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
 });
 
 interface SslServerEntry {
 	port?: number;
-	server?: { listening: boolean; close: (cb: () => void) => void };
+	server?: {
+		listening: boolean;
+		address: () => { port?: number } | null;
+		close: (cb: () => void) => void;
+	};
 }
 
 /** Reach into the proxy's per-run internal MITM server map for assertions. */

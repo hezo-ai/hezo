@@ -401,24 +401,38 @@ async function fetchHttpsThroughProxy(
 
 describe('detectCrossHostCertRoute', () => {
 	const scope = { teamId: 't', agentId: 'a', label: 'run' };
-	type Entry = { port: number; server?: { listening: boolean } };
-	const live = (port: number): Entry => ({ port, server: { listening: true } });
-	const dead = (port: number): Entry => ({ port, server: { listening: false } });
+	type Entry = {
+		port: number;
+		server?: { listening?: boolean; address?: () => { port?: number } | null };
+	};
+	const live = (port: number): Entry => ({
+		port,
+		server: { listening: true, address: () => ({ port }) },
+	});
+	const dead = (port: number): Entry => ({
+		port,
+		server: { listening: false, address: () => null },
+	});
+	// A server whose `listening` flag lies: still true although the server is
+	// no longer bound to any port — the observed production desync.
+	const zombie = (port: number): Entry => ({
+		port,
+		server: { listening: true, address: () => null },
+	});
 	const alias = (port: number): Entry => ({ port });
 	const fakeProxy = (sslServers: Record<string, Entry>) => ({ sslServers }) as unknown as IProxy;
 
-	it('flags two unrelated hosts sharing one live internal server port', () => {
+	it('flags two unrelated hosts sharing one live internal server port and evicts both', () => {
 		const logged = new Set<string>();
-		detectCrossHostCertRoute(
-			fakeProxy({
-				'api.githubcopilot.com': live(5001),
-				'registry.npmjs.org': live(5001),
-			}),
-			scope,
-			'run-1',
-			logged,
-		);
+		const sslServers: Record<string, Entry> = {
+			'api.githubcopilot.com': live(5001),
+			'registry.npmjs.org': live(5001),
+		};
+		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
 		expect(logged.has('5001')).toBe(true);
+		// Ownership is ambiguous (both servers claim the port), so both routes
+		// are evicted and rebuild fresh servers on their next tunnel.
+		expect(Object.keys(sslServers)).toEqual([]);
 	});
 
 	it('does not flag distinct hosts on distinct ports', () => {
@@ -472,5 +486,70 @@ describe('detectCrossHostCertRoute', () => {
 		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
 		expect('api.example.com' in sslServers).toBe(false);
 		expect('*.example.com' in sslServers).toBe(false);
+	});
+
+	it('purges a stale entry whose listening flag lies but whose server lost its port', () => {
+		const logged = new Set<string>();
+		const sslServers: Record<string, Entry> = {
+			// Reports listening but is no longer bound; its old port was
+			// recycled to the other host's live server.
+			'api.githubcopilot.com': zombie(5005),
+			'registry.npmjs.org': live(5005),
+		};
+		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
+		expect(logged.size).toBe(0);
+		expect('api.githubcopilot.com' in sslServers).toBe(false);
+		expect('registry.npmjs.org' in sslServers).toBe(true);
+	});
+
+	it('purges an alias whose port is owned by an unrelated host', () => {
+		const logged = new Set<string>();
+		const sslServers: Record<string, Entry> = {
+			// The alias's backing server is gone and its port now belongs to an
+			// unrelated host — a live server on the port must not keep the
+			// alias alive.
+			'cdn.example.com': alias(5006),
+			'registry.npmjs.org': live(5006),
+		};
+		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
+		expect(logged.size).toBe(0);
+		expect('cdn.example.com' in sslServers).toBe(false);
+		expect('registry.npmjs.org' in sslServers).toBe(true);
+	});
+
+	it('keeps the verified owner when a colliding server loses its port mid-check', () => {
+		const logged = new Set<string>();
+		// Owns the port during reconciliation, loses it before the healing
+		// pass re-checks ownership — reconciliation and per-host server
+		// lifecycle run concurrently in production. Two ownership checks
+		// happen before healing (owner indexing + purge).
+		let calls = 0;
+		const flaky: Entry = {
+			port: 5007,
+			server: { listening: true, address: () => (++calls <= 2 ? { port: 5007 } : null) },
+		};
+		const sslServers: Record<string, Entry> = {
+			'api.githubcopilot.com': flaky,
+			'registry.npmjs.org': live(5007),
+		};
+		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
+		expect(logged.has('5007')).toBe(true);
+		expect('api.githubcopilot.com' in sslServers).toBe(false);
+		expect('registry.npmjs.org' in sslServers).toBe(true);
+	});
+
+	it('logs a collision only once per port', () => {
+		const logged = new Set<string>();
+		const sslServers: Record<string, Entry> = {
+			'api.githubcopilot.com': live(5008),
+			'registry.npmjs.org': live(5008),
+		};
+		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
+		// Entries were evicted; a second pass over rebuilt state on the same
+		// port must not log again.
+		sslServers['api.githubcopilot.com'] = live(5008);
+		sslServers['registry.npmjs.org'] = live(5008);
+		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
+		expect(logged.size).toBe(1);
 	});
 });

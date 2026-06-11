@@ -64,6 +64,17 @@ const serverArgs: string[] = [
 	...forwardedArgs,
 ];
 
+// Sync dependencies before starting: a fast no-op when current, and it
+// re-applies any changed patches/*.patch to node_modules — the server
+// otherwise keeps running a stale copy of a patched dependency after a pull.
+const install = Bun.spawnSync(['bun', 'install'], { cwd: ROOT });
+if (install.exitCode !== 0) {
+	process.stdout.write(install.stdout.toString());
+	process.stderr.write(install.stderr.toString());
+	console.error('bun install failed');
+	process.exit(1);
+}
+
 // Bundle migrations before starting the server
 const bundle = Bun.spawnSync(['bun', 'run', 'scripts/bundle-migrations.ts'], {
 	cwd: resolve(ROOT, 'packages/server'),

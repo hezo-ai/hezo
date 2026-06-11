@@ -351,7 +351,22 @@ function wildcardForm(host: string): string {
 
 interface SslServerEntry {
 	port?: number;
-	server?: { listening?: boolean };
+	server?: { listening?: boolean; address?: () => { port?: number } | null };
+}
+
+/** Whether the entry's backing server is currently bound to the entry's
+ * recorded port. `address()` returns null once a server closes and two sockets
+ * can never be bound to one port, so this is the authoritative ownership
+ * signal — `listening` alone has been observed to stay true after a server
+ * died, letting a stale route survive and serve another host's recycled
+ * port. */
+function serverOwnsPort(entry: SslServerEntry): boolean {
+	if (!entry.server || typeof entry.port !== 'number') return false;
+	if (entry.server.listening === false) return false;
+	if (typeof entry.server.address === 'function') {
+		return entry.server.address()?.port === entry.port;
+	}
+	return entry.server.listening === true;
 }
 
 /**
@@ -363,12 +378,16 @@ interface SslServerEntry {
  * per-host server is gone its ephemeral port can be recycled by the OS to a
  * different host's new server, leaving the original hostname pointing at a port
  * that now serves the wrong leaf cert (a wrong-SAN TLS failure). So first drop
- * any entry whose own backing server has stopped listening, plus wildcard-alias
- * entries no longer covered by a live server — the next tunnel for those hosts
- * then rebuilds a correct server.
+ * any entry whose own backing server no longer owns its recorded port, plus
+ * wildcard-alias entries no longer covered by a related owning server — the
+ * next tunnel for those hosts then rebuilds a correct server.
  *
- * After reconciliation a live cross-wildcard collision should be impossible;
- * the remaining check is a tripwire that logs once per offending port.
+ * After reconciliation a live cross-wildcard collision should be impossible.
+ * If one is still observed, log it once per offending port with each entry's
+ * server state, then heal: keep only the entries backed by the single verified
+ * owner of the port (none, if ownership is ambiguous) so every other host
+ * rebuilds a fresh server on its next tunnel instead of failing TLS for the
+ * rest of the run.
  */
 export function detectCrossHostCertRoute(
 	proxy: IProxy,
@@ -380,44 +399,82 @@ export function detectCrossHostCertRoute(
 		.sslServers;
 	if (!sslServers) return;
 
-	const portHasLiveServer = new Map<number, boolean>();
-	for (const entry of Object.values(sslServers)) {
-		const port = entry?.port;
-		if (typeof port !== 'number') continue;
-		if (entry.server?.listening) portHasLiveServer.set(port, true);
+	const ownersByPort = new Map<number, string[]>();
+	for (const [host, entry] of Object.entries(sslServers)) {
+		if (typeof entry?.port !== 'number' || !serverOwnsPort(entry)) continue;
+		const owners = ownersByPort.get(entry.port);
+		if (owners) owners.push(host);
+		else ownersByPort.set(entry.port, [host]);
 	}
 	for (const [host, entry] of Object.entries(sslServers)) {
 		const port = entry?.port;
 		if (typeof port !== 'number') continue;
 		if (entry.server) {
-			// A created per-host server: once its port stops listening it must
-			// not keep serving this hostname — the port may be recycled.
-			if (entry.server.listening === false) delete sslServers[host];
-		} else if (!portHasLiveServer.get(port)) {
-			// A wildcard-alias entry ({ port } only) with no live server on its
-			// port is stale.
-			delete sslServers[host];
+			// A created per-host server: once it is no longer bound to its
+			// recorded port it must not keep serving this hostname — the port
+			// may be recycled to another host's server.
+			if (!serverOwnsPort(entry)) delete sslServers[host];
+		} else {
+			// A wildcard-alias entry ({ port } only) is valid only while a
+			// related (same-wildcard) server still owns that port. A live
+			// server alone is not enough — after port recycling the port's
+			// owner may be an unrelated host.
+			const related = (ownersByPort.get(port) ?? []).some(
+				(owner) => wildcardForm(owner) === wildcardForm(host),
+			);
+			if (!related) delete sslServers[host];
 		}
 	}
 
-	const hostsByPort = new Map<number, string[]>();
+	const entriesByPort = new Map<number, Array<{ host: string; entry: SslServerEntry }>>();
 	for (const [host, entry] of Object.entries(sslServers)) {
 		const port = entry?.port;
 		if (typeof port !== 'number') continue;
-		const hosts = hostsByPort.get(port);
-		if (hosts) hosts.push(host);
-		else hostsByPort.set(port, [host]);
+		const entries = entriesByPort.get(port);
+		if (entries) entries.push({ host, entry });
+		else entriesByPort.set(port, [{ host, entry }]);
 	}
-	for (const [port, hosts] of hostsByPort) {
-		if (hosts.length < 2) continue;
-		if (new Set(hosts.map(wildcardForm)).size < 2) continue;
-		if (logged.has(`${port}`)) continue;
-		logged.add(`${port}`);
-		log.error('egress MITM server port serves unrelated hosts — cross-host cert risk', {
-			run: ref(scope.label, runId),
-			port,
-			hosts: [...new Set(hosts)],
-		});
+	for (const [port, entries] of entriesByPort) {
+		if (entries.length < 2) continue;
+		if (new Set(entries.map(({ host }) => wildcardForm(host))).size < 2) continue;
+		if (!logged.has(`${port}`)) {
+			logged.add(`${port}`);
+			log.error('egress MITM server port serves unrelated hosts — cross-host cert risk', {
+				run: ref(scope.label, runId),
+				port,
+				hosts: [...new Set(entries.map(({ host }) => host))],
+				entries: entries.map(({ host, entry }) => ({
+					host,
+					listening: entry.server?.listening ?? null,
+					addressPort:
+						typeof entry.server?.address === 'function'
+							? (entry.server.address()?.port ?? null)
+							: null,
+				})),
+			});
+		}
+
+		// Heal: the port has at most one true owner. Keep entries backed by
+		// that owner's server (plus its same-wildcard aliases); evict the
+		// rest. With no single unambiguous owner, evict everything on the
+		// port — each affected host re-mints a fresh server on its next
+		// tunnel, costing one extra TLS handshake instead of wrong-SAN
+		// failures for the rest of the run.
+		const owningServers = new Set(
+			entries
+				.filter(({ entry }) => entry.server && serverOwnsPort(entry))
+				.map(({ entry }) => entry.server),
+		);
+		const keptServer = owningServers.size === 1 ? [...owningServers][0] : undefined;
+		const keptEntries =
+			keptServer === undefined ? [] : entries.filter(({ entry }) => entry.server === keptServer);
+		const keptWildcards = new Set(keptEntries.map(({ host }) => wildcardForm(host)));
+		for (const { host, entry } of entries) {
+			const kept = entry.server
+				? keptEntries.some(({ entry: keptEntry }) => keptEntry === entry)
+				: keptWildcards.has(wildcardForm(host));
+			if (!kept) delete sslServers[host];
+		}
 	}
 }
 
