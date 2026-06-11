@@ -91,7 +91,6 @@ export function CeoChatWidget() {
 				{messages.map((m) => (
 					<MessageBubble key={m.id} message={m} />
 				))}
-				{streaming && <TypingIndicator />}
 			</div>
 
 			<div className="border-t border-border p-2">
@@ -130,8 +129,14 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 	const isCeo = message.role === 'assistant';
 	const interrupted = message.status === 'interrupted';
 	const failed = message.status === 'failed';
+	const streaming = message.status === 'streaming';
 
 	if (isCeo) {
+		// Still composing with no text yet → the typing indicator stands in for
+		// the (otherwise empty) bubble.
+		if (streaming && message.content.length === 0) {
+			return <TypingIndicator />;
+		}
 		return (
 			<div
 				className="flex flex-col gap-1 max-w-[90%]"
@@ -143,6 +148,9 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 					{interrupted && (
 						<span className="ml-1 text-[11px] italic text-text-subtle">(interrupted)</span>
 					)}
+					{/* Reply has begun but the CEO is still working → dots pinned to
+					    the bottom of the same bubble. */}
+					{streaming && <StreamingDots />}
 				</div>
 				<span className="text-[10px] text-text-subtle">{formatTime(message.created_at)}</span>
 			</div>
@@ -183,5 +191,25 @@ function TypingIndicator() {
 				<span className="h-2.5 w-2.5 rounded-full bg-text-subtle animate-pulse [animation-delay:300ms]" />
 			</div>
 		</div>
+	);
+}
+
+/**
+ * Small dots pinned to the bottom of an in-flight reply bubble — signals the CEO
+ * is still working after the first tokens have already landed. (Display:flex
+ * breaks it onto its own line below the streamed text.)
+ */
+function StreamingDots() {
+	return (
+		<span
+			className="mt-1.5 flex items-center gap-1"
+			data-testid="ceo-chat-streaming-dots"
+			role="status"
+			aria-label="CEO is still typing"
+		>
+			<span className="h-1.5 w-1.5 rounded-full bg-text-subtle animate-pulse" />
+			<span className="h-1.5 w-1.5 rounded-full bg-text-subtle animate-pulse [animation-delay:150ms]" />
+			<span className="h-1.5 w-1.5 rounded-full bg-text-subtle animate-pulse [animation-delay:300ms]" />
+		</span>
 	);
 }
