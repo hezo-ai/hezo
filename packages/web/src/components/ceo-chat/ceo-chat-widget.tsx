@@ -57,10 +57,8 @@ export function CeoChatWidget() {
 		>
 			<header className="flex items-center justify-between border-b border-border px-3 py-2.5">
 				<div className="flex flex-col">
-					<span className="text-sm font-semibold text-text">CEO</span>
-					<span className="text-[11px] text-text-muted">
-						{streaming ? 'Typing…' : 'Ask about any project'}
-					</span>
+					<span className="text-sm font-semibold text-text">🧑‍💼 CEO</span>
+					<span className="text-[11px] text-text-muted">Ask about any project</span>
 				</div>
 				<button
 					type="button"
@@ -86,7 +84,8 @@ export function CeoChatWidget() {
 				)}
 				{loaded && messages.length === 0 && (
 					<p className="px-1 py-6 text-center text-[13px] text-text-muted">
-						Say hello to the CEO. Ask about active projects, blockers, or what to do next.
+						Say hello to the CEO. Ask about anything, including active projects, notifications, task
+						blockers, etc
 					</p>
 				)}
 				{messages.map((m) => (
@@ -166,10 +165,23 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 
 function TypingIndicator() {
 	return (
-		<div className="flex items-center gap-1" data-testid="ceo-chat-typing" aria-live="polite">
-			<span className="h-1.5 w-1.5 rounded-full bg-text-subtle animate-pulse" />
-			<span className="h-1.5 w-1.5 rounded-full bg-text-subtle animate-pulse [animation-delay:150ms]" />
-			<span className="h-1.5 w-1.5 rounded-full bg-text-subtle animate-pulse [animation-delay:300ms]" />
+		<div
+			className="flex items-center gap-2 max-w-[90%]"
+			data-testid="ceo-chat-typing"
+			role="status"
+			aria-label="CEO is typing"
+		>
+			<span
+				aria-hidden
+				className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-bg-subtle text-base leading-none"
+			>
+				🧑‍💼
+			</span>
+			<div className="flex items-center gap-1.5 rounded-radius-md rounded-bl-sm border border-border bg-bg-subtle px-3 py-3">
+				<span className="h-2.5 w-2.5 rounded-full bg-text-subtle animate-pulse" />
+				<span className="h-2.5 w-2.5 rounded-full bg-text-subtle animate-pulse [animation-delay:150ms]" />
+				<span className="h-2.5 w-2.5 rounded-full bg-text-subtle animate-pulse [animation-delay:300ms]" />
+			</div>
 		</div>
 	);
 }
