@@ -104,6 +104,165 @@ function createJsonlParser(
 }
 
 // ---------------------------------------------------------------------------
+// Chat parser
+//
+// The CEO chat needs the assistant's *message text* (rendered into a chat
+// bubble), not the log viewer's tool/thinking trace. This parallel parser
+// reuses each runtime's stream-json event knowledge but yields structured
+// turn events: assistant text blocks to append, optional tool-activity hints
+// for a "working…" indicator, and the terminal usage. Runs against the same
+// `--output-format stream-json` output as the log parser, so it is uniform
+// across claude/codex/gemini with no per-runtime persistent protocol.
+// ---------------------------------------------------------------------------
+
+export interface AgentChatTurnEvent {
+	/** Assistant message text to append to the streaming bubble. */
+	text?: string;
+	/** Brief, human-readable tool activity (e.g. for a subtle status line). */
+	toolActivity?: string;
+}
+
+export interface AgentChatParser {
+	onStdout(chunk: string): AgentChatTurnEvent[];
+	flush(): AgentChatTurnEvent[];
+	getUsage(): AgentRunUsage | null;
+}
+
+/** Generic JSONL reader: buffers partial bytes, parses each line, maps to T[]. */
+function createJsonlEventReader<T>(render: (event: unknown) => T[]): {
+	onStdout(chunk: string): T[];
+	flush(): T[];
+} {
+	let buffer = '';
+	const consume = (line: string): T[] => {
+		const trimmed = line.trimEnd();
+		if (trimmed === '') return [];
+		let event: unknown;
+		try {
+			event = JSON.parse(trimmed);
+		} catch {
+			return [];
+		}
+		return render(event);
+	};
+	return {
+		onStdout(chunk: string): T[] {
+			buffer += chunk;
+			const parts = buffer.split('\n');
+			buffer = parts.pop() ?? '';
+			const out: T[] = [];
+			for (const line of parts) out.push(...consume(line));
+			return out;
+		},
+		flush(): T[] {
+			if (buffer === '') return [];
+			const remainder = buffer;
+			buffer = '';
+			return consume(remainder);
+		},
+	};
+}
+
+export function createAgentChatParser(runtime: AgentRuntime): AgentChatParser {
+	switch (runtime) {
+		case AgentRuntime.ClaudeCode:
+			return createClaudeChatParser();
+		case AgentRuntime.Codex:
+			return createCodexChatParser();
+		case AgentRuntime.Gemini:
+			return createGeminiChatParser();
+		default:
+			return { onStdout: () => [], flush: () => [], getUsage: () => null };
+	}
+}
+
+function createClaudeChatParser(): AgentChatParser {
+	let usage: AgentRunUsage | null = null;
+	const render = (raw: unknown): AgentChatTurnEvent[] => {
+		const event = raw as ClaudeStreamEvent;
+		const out: AgentChatTurnEvent[] = [];
+		if (event.type === 'assistant' && event.message) {
+			for (const block of normalizeContent(event.message.content)) {
+				if (block.type === 'text') {
+					const text = block.text ?? '';
+					if (text.trim()) out.push({ text });
+				} else if (block.type === 'tool_use') {
+					out.push({ toolActivity: block.name ?? 'tool' });
+				}
+			}
+			return out;
+		}
+		if (event.type === 'result') {
+			const u = event.usage ?? {};
+			usage = {
+				inputTokens:
+					(u.input_tokens ?? 0) +
+					(u.cache_creation_input_tokens ?? 0) +
+					(u.cache_read_input_tokens ?? 0),
+				outputTokens: u.output_tokens ?? 0,
+				costCents: Math.round((event.total_cost_usd ?? 0) * 100),
+			};
+		}
+		return out;
+	};
+	const reader = createJsonlEventReader(render);
+	return { onStdout: reader.onStdout, flush: reader.flush, getUsage: () => usage };
+}
+
+function createCodexChatParser(): AgentChatParser {
+	let usage: AgentRunUsage | null = null;
+	const render = (raw: unknown): AgentChatTurnEvent[] => {
+		const event = raw as CodexEvent;
+		const type = event.type ?? '';
+		if (type === 'turn.completed' || type === 'turn.failed') {
+			const u = event.usage ?? {};
+			usage = {
+				inputTokens: u.input_tokens ?? 0,
+				outputTokens: (u.output_tokens ?? 0) + (u.reasoning_output_tokens ?? 0),
+				costCents: 0,
+			};
+			return [];
+		}
+		if (type === 'item.completed' && event.item) {
+			const item = event.item;
+			const kind = item.type ?? item.item_type ?? '';
+			if (kind === 'agent_message' || kind === 'assistant_message') {
+				const text = item.text ?? item.message ?? '';
+				return text.trim() ? [{ text }] : [];
+			}
+			if (kind === 'command_execution') return [{ toolActivity: 'shell' }];
+			if (kind === 'mcp_tool_call' || kind === 'tool_call') {
+				return [{ toolActivity: item.name ?? 'tool' }];
+			}
+		}
+		return [];
+	};
+	const reader = createJsonlEventReader(render);
+	return { onStdout: reader.onStdout, flush: reader.flush, getUsage: () => usage };
+}
+
+function createGeminiChatParser(): AgentChatParser {
+	let usage: AgentRunUsage | null = null;
+	const render = (raw: unknown): AgentChatTurnEvent[] => {
+		const event = raw as GeminiEvent;
+		const type = event.type ?? '';
+		if (type === 'message') {
+			if (event.role === 'user') return [];
+			const text = event.content ?? event.text ?? '';
+			return text.trim() ? [{ text }] : [];
+		}
+		if (type === 'tool_use') return [{ toolActivity: event.name ?? 'tool' }];
+		if (type === 'result') {
+			const { input, output } = sumGeminiTokens(event.stats);
+			usage = { inputTokens: input, outputTokens: output, costCents: 0 };
+		}
+		return [];
+	};
+	const reader = createJsonlEventReader(render);
+	return { onStdout: reader.onStdout, flush: reader.flush, getUsage: () => usage };
+}
+
+// ---------------------------------------------------------------------------
 // Claude Code (`--output-format stream-json --verbose`)
 // ---------------------------------------------------------------------------
 

@@ -55,7 +55,7 @@ async function buildCreateTaskCaller(c: Context<Env>, teamId: string): Promise<C
 	};
 	if (auth.type === AuthType.Agent) {
 		caller.agentMemberId = auth.memberId;
-		caller.runId = auth.runId;
+		caller.runId = auth.runId ?? undefined;
 	}
 	return caller;
 }

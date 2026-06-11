@@ -1,9 +1,14 @@
+import type { CeoChannel, CeoMessageRole, CeoMessageStatus } from './common.js';
+
 export enum WsMessageType {
 	Connected = 'connected',
 	RowChange = 'row_change',
 	AgentLifecycle = 'agent_lifecycle',
 	ContainerLog = 'container_log',
 	RunLog = 'run_log',
+	CeoMessageStart = 'ceo_message_start',
+	CeoMessageDelta = 'ceo_message_delta',
+	CeoMessageComplete = 'ceo_message_complete',
 	Error = 'error',
 }
 
@@ -55,11 +60,46 @@ export interface WsErrorMessage {
 	message: string;
 }
 
+/**
+ * A new CEO chat message row was created. Sent for assistant replies as they
+ * begin streaming AND for user messages from any channel, so every mirrored
+ * surface (web, future Telegram/WhatsApp) renders the full thread live.
+ */
+export interface WsCeoMessageStartMessage {
+	type: WsMessageType.CeoMessageStart;
+	messageId: string;
+	role: CeoMessageRole;
+	channel: CeoChannel;
+	content: string;
+	createdAt: string;
+}
+
+/** Incremental assistant text appended to the bubble keyed by `messageId`. */
+export interface WsCeoMessageDeltaMessage {
+	type: WsMessageType.CeoMessageDelta;
+	messageId: string;
+	text: string;
+}
+
+/** Terminal event for a CEO message: finalizes content, status, and usage. */
+export interface WsCeoMessageCompleteMessage {
+	type: WsMessageType.CeoMessageComplete;
+	messageId: string;
+	status: CeoMessageStatus;
+	content: string;
+	inputTokens: number;
+	outputTokens: number;
+	costCents: number;
+}
+
 export type WsServerMessage =
 	| WsRowChangeMessage
 	| WsAgentLifecycleMessage
 	| WsContainerLogMessage
 	| WsRunLogMessage
+	| WsCeoMessageStartMessage
+	| WsCeoMessageDeltaMessage
+	| WsCeoMessageCompleteMessage
 	| WsConnectedMessage
 	| WsErrorMessage;
 

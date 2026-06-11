@@ -40,6 +40,7 @@ function registerRuntime(result: StartupResult): void {
 		shutdown: async () => {
 			serverReady = false;
 			result.jobManager.shutdown();
+			await result.ceoSessionManager.stop();
 			await result.egressProxy.releaseAll();
 			await result.sshAgentServer.releaseAll();
 			await result.db.close();
