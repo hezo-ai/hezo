@@ -385,9 +385,9 @@ function serverOwnsPort(entry: SslServerEntry): boolean {
  * After reconciliation a live cross-wildcard collision should be impossible.
  * If one is still observed, log it once per offending port with each entry's
  * server state, then heal: keep only the entries backed by the single verified
- * owner of the port (none, if ownership is ambiguous) so every other host
- * rebuilds a fresh server on its next tunnel instead of failing TLS for the
- * rest of the run.
+ * owner of the port — none if ownership is ambiguous, or if that one owner is
+ * itself registered across unrelated hosts — so every other host rebuilds a
+ * fresh server on its next tunnel instead of failing TLS for the rest of the run.
  */
 export function detectCrossHostCertRoute(
 	proxy: IProxy,
@@ -454,20 +454,30 @@ export function detectCrossHostCertRoute(
 			});
 		}
 
-		// Heal: the port has at most one true owner. Keep entries backed by
-		// that owner's server (plus its same-wildcard aliases); evict the
-		// rest. With no single unambiguous owner, evict everything on the
-		// port — each affected host re-mints a fresh server on its next
-		// tunnel, costing one extra TLS handshake instead of wrong-SAN
-		// failures for the rest of the run.
+		// Heal: keep only entries backed by the port's single verified owner
+		// (plus its same-wildcard aliases), and only while that owner serves one
+		// host family. Evict everything otherwise — ambiguous ownership, or one
+		// server registered across unrelated hosts. Each evicted host re-mints a
+		// fresh server on its next tunnel, costing one extra TLS handshake
+		// instead of wrong-SAN failures for the rest of the run.
 		const owningServers = new Set(
 			entries
 				.filter(({ entry }) => entry.server && serverOwnsPort(entry))
 				.map(({ entry }) => entry.server),
 		);
 		const keptServer = owningServers.size === 1 ? [...owningServers][0] : undefined;
-		const keptEntries =
+		const ownerEntries =
 			keptServer === undefined ? [] : entries.filter(({ entry }) => entry.server === keptServer);
+		// A single owning server registered under more than one wildcard form is itself the
+		// cross-host route (one leaf cert can't validly serve unrelated hosts). The library can
+		// register one sslServer object under unrelated hostnames, collapsing owningServers to
+		// size 1 — so the ambiguous-owner branch never fires. Keep nothing on the port; every
+		// host re-mints a correct single-host server on its next tunnel.
+		const ownerSpansUnrelatedHosts =
+			new Set(ownerEntries.map(({ host }) => wildcardForm(host))).size > 1;
+		const keptEntries = ownerSpansUnrelatedHosts ? [] : ownerEntries;
+		// keptWildcards must derive from the post-span-check keptEntries (not ownerEntries) so an
+		// alias on a poisoned port is evicted too — do not reorder these two lines.
 		const keptWildcards = new Set(keptEntries.map(({ host }) => wildcardForm(host)));
 		for (const { host, entry } of entries) {
 			const kept = entry.server

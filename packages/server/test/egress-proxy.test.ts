@@ -435,6 +435,38 @@ describe('detectCrossHostCertRoute', () => {
 		expect(Object.keys(sslServers)).toEqual([]);
 	});
 
+	it('evicts both hosts when one shared server object is registered under unrelated hostnames', () => {
+		const logged = new Set<string>();
+		// The library's `hosts.forEach(h => sslServers[h] = sslServer)` can register ONE server
+		// object under unrelated hostnames. Both keys are the same object, so `owningServers`
+		// collapses to size 1 — the ambiguous-owner path can't fire. A single server spanning
+		// unrelated wildcards is itself the cross-host route. (Production: registry.npmjs.org and
+		// github.com both reported listening:true, addressPort:64283 — only possible if they share
+		// one live socket.)
+		const shared = live(64283);
+		const sslServers: Record<string, Entry> = {
+			'registry.npmjs.org': shared,
+			'github.com': shared,
+		};
+		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
+		expect(logged.has('64283')).toBe(true);
+		expect(Object.keys(sslServers)).toEqual([]);
+	});
+
+	it('evicts a legit wildcard pair only when an unrelated live server also claims the port', () => {
+		const logged = new Set<string>();
+		const wildcardOwner = live(5009); // serves *.example.com
+		const sslServers: Record<string, Entry> = {
+			'api.example.com': wildcardOwner,
+			'cdn.example.com': wildcardOwner, // same object, same wildcard (legit)
+			'registry.npmjs.org': live(5009), // unrelated live server on same port
+		};
+		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
+		expect(logged.has('5009')).toBe(true);
+		// Two distinct owners → ambiguous → evict all; each re-mints next tunnel.
+		expect(Object.keys(sslServers)).toEqual([]);
+	});
+
 	it('does not flag distinct hosts on distinct ports', () => {
 		const logged = new Set<string>();
 		detectCrossHostCertRoute(
