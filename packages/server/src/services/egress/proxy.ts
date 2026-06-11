@@ -19,6 +19,7 @@ import {
 const log = logger.child('egress-proxy');
 
 const PROXY_HOST = 'host.docker.internal';
+const PROXY_BIND_HOST = '127.0.0.1';
 
 /**
  * Thrown when the underlying HTTPS proxy can't bind. Bubbled up to the
@@ -38,6 +39,12 @@ export interface EgressProxyDeps {
 	ca: HezoCA;
 	portAllocator?: PortAllocator;
 	proxyHost?: string;
+	/** Interface the per-run proxy binds to. Defaults to `127.0.0.1`
+	 * (loopback-only — agent containers reach it via `host.docker.internal`,
+	 * which on Docker Desktop tunnels to host loopback). Docker integration
+	 * tests on a native-Linux daemon set this to `0.0.0.0` so the container can
+	 * reach the proxy via the bridge gateway IP, which loopback would refuse. */
+	proxyBindHost?: string;
 	/** Additional CA certs to trust when verifying upstream HTTPS servers.
 	 * Tests use this to trust upstreams that present certs minted from the
 	 * same CA the proxy uses. Production keeps this empty so the proxy
@@ -68,10 +75,12 @@ export class EgressProxy {
 	private readonly runs = new Map<string, RunRecord>();
 	private readonly portAllocator: PortAllocator;
 	private readonly proxyHost: string;
+	private readonly proxyBindHost: string;
 
 	constructor(private readonly deps: EgressProxyDeps) {
 		this.portAllocator = deps.portAllocator ?? new PortAllocator();
 		this.proxyHost = deps.proxyHost ?? PROXY_HOST;
+		this.proxyBindHost = deps.proxyBindHost ?? PROXY_BIND_HOST;
 	}
 
 	get caCertPath(): string {
@@ -135,7 +144,7 @@ export class EgressProxy {
 				proxy.listen(
 					{
 						port,
-						host: '127.0.0.1',
+						host: this.proxyBindHost,
 						sslCaDir: this.deps.ca.rootDir,
 						...(upstreamHttpsAgent ? { httpsAgent: upstreamHttpsAgent } : {}),
 					},
