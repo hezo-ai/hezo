@@ -212,6 +212,8 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 										type="button"
 										onClick={() => deleteRepo.mutate(r.id)}
 										className="text-text-subtle hover:text-accent-red"
+										aria-label={`Remove repo ${r.short_name}`}
+										data-testid={`repo-delete-${r.short_name}`}
 									>
 										<Trash2 className="w-3.5 h-3.5" />
 									</button>

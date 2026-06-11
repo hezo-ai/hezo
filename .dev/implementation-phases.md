@@ -730,7 +730,7 @@ Backend:
 
 ## Phase 13: Designated Repo Setup via OAuth
 
-**Status:** In progress
+**Status:** Done (2026-06-11)
 
 **Goal:** Drive the board through a Hezo Connect GitHub OAuth dance when a code-touching agent (`member_agents.touches_code = true`) starts work on a repo-less project. The flow either creates a new GitHub repo under a selected org or links an existing accessible one, and the first repo becomes the designated repo (immutable thereafter).
 
@@ -757,7 +757,7 @@ Frontend:
 Tests:
 - Local GitHub simulator in `packages/server/test/helpers/github-sim.ts` — Hono app on port 0 implementing the subset of GitHub API we call plus Connect's token-exchange endpoint
 - Integration: gate behavior (approval + comment + deferred wakeup, no execution lock); concurrent runs share one approval; immutability on delete; `mode=create` owner check; first-repo auto-designation race; `finalizePendingRepoSetup` idempotency; OAuth callback SSH-key idempotency; authorization on all new endpoints
-- E2E: full wizard flow end-to-end against the simulator, both `Create new` and `Select existing`, plus the disabled-delete path
+- Component tier (`packages/web/test/repo-picker-flows.test.tsx`): full wizard flow against the simulator, both `Create new` and `Select existing`, plus the designated-repo lock (no delete affordance) — component tests per the decision tree, since the wizard is pure form/dialog/mutation behavior; server tier (`repos-create-github.test.ts`) covers first-repo auto-designation and the `DESIGNATED_REPO_IMMUTABLE` 409 on delete
 
 Docs:
 - `.dev/spec.md`, `.dev/schema.md`, `.dev/api.md` updated to reflect the new flow and invariants
