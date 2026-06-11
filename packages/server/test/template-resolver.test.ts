@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { DEFAULT_TEAM_ID } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
@@ -913,5 +914,45 @@ describe('project state block', () => {
 			projectId: psProjectId,
 		});
 		expect(result).not.toContain('Tickets you created on prior runs');
+	});
+});
+
+describe('projects context block ({{projects_context}})', () => {
+	it('lists every non-internal project across teams by slug, never by UUID', async () => {
+		const result = await resolveSystemPrompt(db, 'Roster:\n{{projects_context}}', { teamId });
+		expect(result).toContain('Hezo is project-centric');
+
+		const proj = await db.query<{ slug: string }>('SELECT slug FROM projects WHERE id = $1', [
+			projectId,
+		]);
+		// The beforeAll project surfaces by slug, tagged with its owning team…
+		expect(result).toContain(`slug: ${proj.rows[0].slug}`);
+		expect(result).toContain('team Template Co');
+		// …and never by raw UUID, since this text is echoed to the human operator.
+		expect(result).not.toContain(projectId);
+
+		// HQ is the one internal project and must never appear as a roster row.
+		const hq = await db.query<{ slug: string }>(
+			'SELECT slug FROM projects WHERE is_internal = true LIMIT 1',
+		);
+		expect(result).not.toContain(`slug: ${hq.rows[0].slug}`);
+	});
+
+	it('shows an empty-state line when no project-teams exist beyond HQ', async () => {
+		// A fresh instance has only HQ (internal), so the roster is empty.
+		const fresh = await createTestApp();
+		try {
+			const result = await resolveSystemPrompt(fresh.db, '{{projects_context}}', {
+				teamId: DEFAULT_TEAM_ID,
+			});
+			expect(result).toContain('No project-teams exist yet beyond HQ');
+		} finally {
+			await safeClose(fresh.db);
+		}
+	});
+
+	it('does not inject the roster into prompts that omit the placeholder', async () => {
+		const result = await resolveSystemPrompt(db, 'No placeholder here', { teamId });
+		expect(result).not.toContain('Hezo is project-centric');
 	});
 });

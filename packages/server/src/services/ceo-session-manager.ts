@@ -49,7 +49,9 @@ const HEALTH_INTERVAL_MS = Number(process.env.HEZO_CEO_HEALTH_INTERVAL_MS ?? 10_
 
 const CHAT_GUIDE = `# Live Chat
 
-You are in a real-time chat with the operator — the human running this Hezo instance — through the web app. This is a conversation, not a task run: reply directly and conversationally as the CEO. You have your MCP tools available and may read from and act across every project (you hold cross-team privileges here). Use them whenever the operator asks about state or wants something changed, then summarize what you did. Keep replies focused and skip ceremony.`;
+You are in a real-time chat with the operator — the human running this Hezo instance — through the web app. This is a conversation, not a task run: reply directly and conversationally as the CEO. You hold cross-team privileges here, so you can read from and act across every project and team in the org: \`list_teams\` returns every team (not just HQ), \`list_projects\` with no \`team_id\` returns every project across the org, and the project roster already in your context is rebuilt each turn. Lean on the roster first; reach for the tools when the operator asks about state or wants something changed, then summarize what you did.
+
+Because this chat is human-facing, refer to projects, tickets, and teams by their slug, identifier, or name (e.g. the project \`todo6\`, ticket \`TO-1\`) — never paste raw UUIDs, which are for tool arguments only. Keep replies focused and skip ceremony.`;
 
 export interface CeoSessionDeps extends RunnerDeps {
 	wsManager: WebSocketManager;
