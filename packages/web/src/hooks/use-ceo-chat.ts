@@ -8,9 +8,11 @@ import {
 	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
-import { useCallback, useEffect, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { useSocket } from '../contexts/socket-context';
 import { api } from '../lib/api';
+import { queryKeys } from '../lib/query-keys';
 
 export interface CeoMessage {
 	id: string;
@@ -21,40 +23,32 @@ export interface CeoMessage {
 	created_at: string;
 }
 
-interface ConversationResponse {
+interface ConversationData {
 	conversation_id: string;
 	messages: CeoMessage[];
 }
 
 /**
- * Drives the single global CEO chat: loads history, subscribes to the
- * `ceo:global` room, and folds streamed start/delta/complete events into local
- * message state. Because every surface mirrors the same conversation, messages
- * (including the user's own, echoed back over the socket) all arrive via WS.
+ * Drives the single global CEO chat. The TanStack Query cache is the source of
+ * truth for messages (keyed by {@link queryKeys.ceoConversation}); the initial
+ * history loads via `useQuery` and streamed start/delta/complete events from the
+ * `ceo:global` room are folded into the same cache entry via `setQueryData`.
+ * Because every surface mirrors the one conversation, the user's own messages
+ * (echoed back over the socket) arrive the same way. The query never refetches
+ * on its own (`staleTime: Infinity`) so an in-flight reply's accumulated deltas
+ * aren't clobbered by a server snapshot that only persists on completion.
  */
 export function useCeoChat(active: boolean) {
 	const { subscribe, joinRoom, leaveRoom } = useSocket();
-	const [messages, setMessages] = useState<CeoMessage[]>([]);
-	const [loaded, setLoaded] = useState(false);
+	const queryClient = useQueryClient();
 
-	useEffect(() => {
-		if (!active || loaded) return;
-		let cancelled = false;
-		api
-			.get<ConversationResponse>('/api/ceo/conversation')
-			.then((res) => {
-				if (!cancelled) {
-					setMessages(res.messages);
-					setLoaded(true);
-				}
-			})
-			.catch(() => {
-				if (!cancelled) setLoaded(true);
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [active, loaded]);
+	const query = useQuery({
+		queryKey: queryKeys.ceoConversation(),
+		queryFn: () => api.get<ConversationData>('/api/ceo/conversation'),
+		enabled: active,
+		staleTime: Number.POSITIVE_INFINITY,
+		refetchOnWindowFocus: false,
+	});
 
 	useEffect(() => {
 		if (!active) return;
@@ -64,13 +58,18 @@ export function useCeoChat(active: boolean) {
 	}, [active, joinRoom, leaveRoom]);
 
 	useEffect(() => {
+		const patch = (fn: (messages: CeoMessage[]) => CeoMessage[]) => {
+			queryClient.setQueryData<ConversationData>(queryKeys.ceoConversation(), (prev) =>
+				prev ? { ...prev, messages: fn(prev.messages) } : prev,
+			);
+		};
 		const offStart = subscribe(WsMessageType.CeoMessageStart, (raw) => {
 			const m = raw as WsCeoMessageStartMessage;
-			setMessages((prev) =>
-				prev.some((x) => x.id === m.messageId)
-					? prev
+			patch((messages) =>
+				messages.some((x) => x.id === m.messageId)
+					? messages
 					: [
-							...prev,
+							...messages,
 							{
 								id: m.messageId,
 								role: m.role,
@@ -84,14 +83,14 @@ export function useCeoChat(active: boolean) {
 		});
 		const offDelta = subscribe(WsMessageType.CeoMessageDelta, (raw) => {
 			const m = raw as WsCeoMessageDeltaMessage;
-			setMessages((prev) =>
-				prev.map((x) => (x.id === m.messageId ? { ...x, content: x.content + m.text } : x)),
+			patch((messages) =>
+				messages.map((x) => (x.id === m.messageId ? { ...x, content: x.content + m.text } : x)),
 			);
 		});
 		const offComplete = subscribe(WsMessageType.CeoMessageComplete, (raw) => {
 			const m = raw as WsCeoMessageCompleteMessage;
-			setMessages((prev) =>
-				prev.map((x) =>
+			patch((messages) =>
+				messages.map((x) =>
 					x.id === m.messageId ? { ...x, content: m.content, status: m.status } : x,
 				),
 			);
@@ -101,15 +100,19 @@ export function useCeoChat(active: boolean) {
 			offDelta();
 			offComplete();
 		};
-	}, [subscribe]);
+	}, [subscribe, queryClient]);
 
-	const send = useCallback(async (text: string) => {
-		const trimmed = text.trim();
-		if (!trimmed) return;
-		await api.post('/api/ceo/messages', { text: trimmed });
-	}, []);
+	const sendMutation = useMutation({
+		mutationFn: (text: string) => api.post('/api/ceo/messages', { text }),
+	});
 
+	const messages = query.data?.messages ?? [];
 	const streaming = messages.some((m) => m.role === 'assistant' && m.status === 'streaming');
 
-	return { messages, send, streaming, loaded };
+	return {
+		messages,
+		send: (text: string) => sendMutation.mutateAsync(text.trim()),
+		streaming,
+		loaded: !query.isPending,
+	};
 }
