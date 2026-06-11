@@ -43,6 +43,10 @@ interface TestAppContext {
 	// resolves a newer @electric-sql/pglite whose nominal type is incompatible.
 	db: Awaited<ReturnType<typeof createTestApp>>['db'];
 	masterKeyManager: Awaited<ReturnType<typeof createTestApp>>['masterKeyManager'];
+	// Per-test temp dir backing the server's workspace/worktree layout. Lets
+	// specs pre-create `workspace/<short_name>/.git` so repo-sync treats a repo
+	// as already cloned instead of attempting a real SSH clone.
+	dataDir: string;
 }
 
 let activeContext: TestAppContext | null = null;
@@ -66,6 +70,7 @@ beforeEach(async () => {
 		apiBase,
 		db: test.db,
 		masterKeyManager: test.masterKeyManager,
+		dataDir: test.dataDir,
 	} as unknown as TestAppContext;
 
 	// Auth: drop the token into localStorage AND push it into the api singleton
@@ -93,6 +98,11 @@ beforeEach(async () => {
 	// entirely; matches the way the dev Vite proxy forwards /api, /oauth, /mcp,
 	// /health, and /skill.md to the server.
 	realFetch = globalThis.fetch;
+	// Close over the captured fetch rather than reading `realFetch` at call
+	// time: a debounced/in-flight request can land after afterEach nulls the
+	// module variable, and the late call would then throw inside the server
+	// route ("realFetch is not a function") instead of completing quietly.
+	const passthroughFetch = realFetch;
 	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
 		let req: Request;
 		if (input instanceof Request) {
@@ -112,9 +122,9 @@ beforeEach(async () => {
 		) {
 			return test.app.fetch(req);
 		}
-		// Unknown path — fall back to realFetch (which will likely fail in
+		// Unknown path — fall back to the real fetch (which will likely fail in
 		// happy-dom, which is what we want: it should surface as a test bug).
-		return realFetch!(req);
+		return passthroughFetch(req);
 	}) as typeof globalThis.fetch;
 });
 
