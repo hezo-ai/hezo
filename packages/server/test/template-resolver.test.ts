@@ -129,6 +129,10 @@ describe('template resolver', () => {
 		expect(result).toContain('The project docs database holds high-level project context');
 		expect(result).toContain('read_project_doc(filename)');
 
+		// The manifest warns docs are not on disk, steering agents off filesystem probes.
+		expect(result).toContain('not the filesystem');
+		expect(result).toContain('/workspace/.hezo/project-docs');
+
 		// Titled doc (architecture-guidelines.md is seeded by createTestProject with a non-empty title).
 		expect(result).toMatch(
 			/- architecture-guidelines\.md — Architecture Guidelines \(updated \d{4}-\d{2}-\d{2}\)/,
