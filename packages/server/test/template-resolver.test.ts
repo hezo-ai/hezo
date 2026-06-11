@@ -491,6 +491,26 @@ Current date: {{current_date}}
 		);
 	});
 
+	it('Product Lead prompt codifies the PRD metadata header and the post-approval stamp', async () => {
+		const agentsRes = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, agentTeamSlug)}/agents`,
+			{ headers: authHeader(token) },
+		);
+		const agents = ((await agentsRes.json()) as any).data;
+		const productLead = agents.find((a: any) => a.slug === 'product-lead');
+		const prompt = await getAgentPrompt(productLead.id);
+
+		// Step 5 — the draft metadata header, so the Status line is parseable for re-stamping.
+		expect(prompt).toContain('Status: Draft — awaiting admin approval');
+		expect(prompt).toContain('Author: @@product-lead');
+
+		// Step 7 — on approval, flip the status and link back to the approval task + comment.
+		expect(prompt).toContain('Status: Approved');
+		expect(prompt).toContain('Approved in <TASK-ID>#comment-<uuid>');
+		// The linked comment is the triggering (admin approval) comment, never a fabricated id.
+		expect(prompt).toContain('the comment that triggered this run');
+	});
+
 	it('Captain system prompt does not use {{reports_to}}', async () => {
 		const agentsRes = await app.request(
 			`/api/projects/${await projectSlugForTeamSlug(db, agentTeamSlug)}/agents`,
