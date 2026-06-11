@@ -87,6 +87,10 @@ beforeAll(async () => {
 		masterKeyManager,
 		ca,
 		extraUpstreamTrustedCAs: ca.cert,
+		// Bind to all interfaces so the container can reach the proxy via the
+		// bridge gateway IP on a native-Linux daemon (e.g. the CI runner), where
+		// host.docker.internal maps to the gateway, not host loopback.
+		proxyBindHost: '0.0.0.0',
 	});
 }, 60_000);
 

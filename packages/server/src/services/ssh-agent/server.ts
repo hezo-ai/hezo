@@ -31,6 +31,12 @@ const TCP_LISTEN_HOST = '127.0.0.1';
 export interface SshAgentServerDeps {
 	db: PGlite;
 	masterKeyManager: MasterKeyManager;
+	/** Interface the per-run TCP bridge binds to. Defaults to `127.0.0.1`
+	 * (loopback-only — containers reach it via `host.docker.internal`, which on
+	 * Docker Desktop tunnels to host loopback). Docker integration tests on a
+	 * native-Linux daemon set this to `0.0.0.0` so the container can reach the
+	 * bridge via the gateway IP, which loopback would refuse. */
+	tcpListenHost?: string;
 }
 
 export interface AllocatedSocket {
@@ -105,7 +111,7 @@ export class SshAgentServer {
 		);
 		await new Promise<void>((resolve, reject) => {
 			tcpServer.once('error', reject);
-			tcpServer.listen({ host: TCP_LISTEN_HOST, port: 0 }, () => {
+			tcpServer.listen({ host: this.deps.tcpListenHost ?? TCP_LISTEN_HOST, port: 0 }, () => {
 				tcpServer.removeListener('error', reject);
 				resolve();
 			});

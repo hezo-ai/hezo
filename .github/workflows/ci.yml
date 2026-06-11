@@ -30,18 +30,65 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
 
-  test-backend:
+  # Build the agent base image once and publish it to GHCR so the test-backend
+  # runner (a separate VM) can pull it. Without this image present, the three
+  # *-docker.test.ts container suites in the server package self-skip.
+  build-agent-image:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The Dockerfile builds git 2.51.0 from source (~5–10 min cold); the gha
+      # layer cache keeps unchanged-Dockerfile runs cheap.
+      - uses: docker/build-push-action@v6
+        with:
+          context: docker
+          file: docker/Dockerfile.agent-base
+          push: true
+          tags: ghcr.io/hezo-ai/agent-base:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  test-backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Gated on the image build so the *-docker.test.ts suites actually run
+    # instead of self-skipping.
+    needs: build-agent-image
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Pull the image built by build-agent-image and retag to the exact name the
+      # container suites gate on (`docker image inspect hezo/agent-base:latest`).
+      - name: Pull agent base image
+        run: |
+          docker pull ghcr.io/hezo-ai/agent-base:${{ github.sha }}
+          docker tag ghcr.io/hezo-ai/agent-base:${{ github.sha }} hezo/agent-base:latest
       - run: bun install --frozen-lockfile
-      # Runs the server vitest suite (Node runtime) followed by the Bun-native
-      # tier (test/bun/** under `bun test`), which exercises runtime-sensitive
-      # code — e.g. egress TLS — on the production Bun runtime.
+      # Runs the server vitest suite (Node runtime) — including the ssh-agent /
+      # egress-proxy / mcp-connections container suites now that the image is
+      # present — followed by the Bun-native tier (test/bun/** under `bun test`),
+      # which exercises runtime-sensitive code (e.g. egress TLS) on the
+      # production Bun runtime.
       - run: bun run test --package server
 
   test-integration:
