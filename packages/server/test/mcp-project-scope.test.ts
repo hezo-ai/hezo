@@ -108,7 +108,7 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('MCP project scope — agent run scoped to its team`s project', () => {
+describe('MCP project scope — agent run scoped to its project', () => {
 	let scopedToken: string;
 
 	beforeAll(async () => {
@@ -120,32 +120,26 @@ describe('MCP project scope — agent run scoped to its team`s project', () => {
 	});
 
 	it('list_projects returns the run`s own project', async () => {
-		const rows = (await callMcp(scopedToken, 'list_projects', { team_id: teamAId })) as Array<{
-			id: string;
-		}>;
+		const rows = (await callMcp(scopedToken, 'list_projects', {})) as Array<{ id: string }>;
 		expect(rows).toHaveLength(1);
 		expect(rows[0].id).toBe(projectAId);
 	});
 
-	it('list_tasks without project_id implicitly scopes to the run`s project', async () => {
-		const rows = (await callMcp(scopedToken, 'list_tasks', { team_id: teamAId })) as Array<{
-			project_id: string;
-		}>;
+	it('list_tasks with no project arg implicitly scopes to the run`s project', async () => {
+		const rows = (await callMcp(scopedToken, 'list_tasks', {})) as Array<{ project_id: string }>;
 		expect(rows.length).toBeGreaterThan(0);
 		for (const row of rows) expect(row.project_id).toBe(projectAId);
 	});
 
 	it('list_tasks pointed at a foreign project is denied', async () => {
 		const result = (await callMcp(scopedToken, 'list_tasks', {
-			team_id: teamAId,
-			project_id: projectBId,
+			project: projectBId,
 		})) as { error: string };
 		expect(result.error).toMatch(/not scoped/);
 	});
 
 	it('get_task on a foreign project task is denied', async () => {
 		const result = (await callMcp(scopedToken, 'get_task', {
-			team_id: teamAId,
 			task_id: taskInBId,
 		})) as { id?: string } | null;
 		expect(result?.id).toBeUndefined();
@@ -153,7 +147,6 @@ describe('MCP project scope — agent run scoped to its team`s project', () => {
 
 	it('get_task on own project task succeeds', async () => {
 		const result = (await callMcp(scopedToken, 'get_task', {
-			team_id: teamAId,
 			task_id: taskInAId,
 		})) as { id: string };
 		expect(result.id).toBe(taskInAId);
@@ -161,8 +154,7 @@ describe('MCP project scope — agent run scoped to its team`s project', () => {
 
 	it('read_project_doc on a foreign project is denied', async () => {
 		const result = (await callMcp(scopedToken, 'read_project_doc', {
-			team_id: teamAId,
-			project_id: projectBId,
+			project: projectBId,
 			filename: 'spec.md',
 		})) as { error: string };
 		expect(result.error).toMatch(/not scoped/);
@@ -170,16 +162,14 @@ describe('MCP project scope — agent run scoped to its team`s project', () => {
 
 	it('list_project_docs on a foreign project is denied', async () => {
 		const result = (await callMcp(scopedToken, 'list_project_docs', {
-			team_id: teamAId,
-			project_id: projectBId,
+			project: projectBId,
 		})) as { error: string };
 		expect(result.error).toMatch(/not scoped/);
 	});
 
 	it('create_task in another project is denied', async () => {
 		const result = (await callMcp(scopedToken, 'create_task', {
-			team_id: teamAId,
-			project_id: projectBId,
+			project: projectBId,
 			title: 'should not work',
 			assignee_slug: 'captain',
 		})) as { error: string };
@@ -188,31 +178,17 @@ describe('MCP project scope — agent run scoped to its team`s project', () => {
 
 	it('list_comments on a foreign project`s task is denied', async () => {
 		const result = (await callMcp(scopedToken, 'list_comments', {
-			team_id: teamAId,
 			task_id: taskInBId,
 		})) as { error: string };
 		expect(result.error).toMatch(/not found|not scoped/);
 	});
 
-	it('create_project is rejected for project-scoped agents', async () => {
-		const result = (await callMcp(scopedToken, 'create_project', {
-			team_id: teamAId,
-			name: 'Should Not Land',
-		})) as { error: string };
-		expect(result.error).toMatch(/not scoped/);
-	});
-
-	it('cannot reach another team', async () => {
+	it('cannot reach another project by naming it explicitly', async () => {
 		const result = (await callMcp(scopedToken, 'get_task', {
-			team_id: teamBId,
+			project: projectBId,
 			task_id: taskInBId,
 		})) as { error: string };
 		expect(result.error).toMatch(/Access denied/);
-	});
-
-	it('list_projects without team_id is rejected for a project-scoped agent', async () => {
-		const result = (await callMcp(scopedToken, 'list_projects', {})) as { error: string };
-		expect(result.error).toMatch(/team_id is required/);
 	});
 });
 
@@ -253,7 +229,7 @@ describe('MCP cross-team CEO — instance-wide discovery', () => {
 		expect(ids).toContain(teamBId);
 	});
 
-	it('list_projects with no team_id returns every project across all teams, tagged with its team', async () => {
+	it('list_projects returns every project across all teams, tagged with its team', async () => {
 		const rows = (await callMcp(ceoToken, 'list_projects', {})) as Array<{
 			id: string;
 			team_id: string;
@@ -265,21 +241,14 @@ describe('MCP cross-team CEO — instance-wide discovery', () => {
 		expect(ids).toContain(projectBId);
 		// HQ (the one internal project) is included so the CEO sees the whole picture.
 		expect(rows.some((r) => r.is_internal)).toBe(true);
-		// Every row carries its owning team so the CEO can drill in by team.
+		// Every row carries its owning team so the CEO can drill in by project.
 		const a = rows.find((r) => r.id === projectAId);
 		expect(a?.team_id).toBe(teamAId);
 		expect(a?.team_slug).toBeTruthy();
 	});
 
-	it('list_projects still scopes to one team when team_id is given', async () => {
-		const rows = (await callMcp(ceoToken, 'list_projects', { team_id: teamBId })) as Array<{
-			id: string;
-		}>;
-		expect(rows.map((r) => r.id)).toEqual([projectBId]);
-	});
-
-	it('can list tasks in any team without being scoped to it', async () => {
-		const rows = (await callMcp(ceoToken, 'list_tasks', { team_id: teamBId })) as Array<{
+	it('can list tasks in any project without being scoped to it', async () => {
+		const rows = (await callMcp(ceoToken, 'list_tasks', { project: projectBId })) as Array<{
 			id: string;
 		}>;
 		expect(rows.some((r) => r.id === taskInBId)).toBe(true);
@@ -289,11 +258,11 @@ describe('MCP cross-team CEO — instance-wide discovery', () => {
 describe('MCP project scope — admin / api-key auth bypasses the check', () => {
 	it('admin token can read tasks from any project (regression guard)', async () => {
 		const a = (await callMcp(adminToken, 'get_task', {
-			team_id: teamAId,
+			project: projectAId,
 			task_id: taskInAId,
 		})) as { id: string };
 		const b = (await callMcp(adminToken, 'get_task', {
-			team_id: teamBId,
+			project: projectBId,
 			task_id: taskInBId,
 		})) as { id: string };
 		expect(a.id).toBe(taskInAId);

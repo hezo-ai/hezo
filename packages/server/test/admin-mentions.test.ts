@@ -70,7 +70,7 @@ async function mcpComment(agentToken: string, taskIdArg: string, content: string
 			method: 'tools/call',
 			params: {
 				name: 'create_comment',
-				arguments: { team_id: teamId, task_id: taskIdArg, content },
+				arguments: { project: projectId, task_id: taskIdArg, content },
 			},
 			id: 1,
 		}),

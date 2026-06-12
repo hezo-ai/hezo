@@ -21,7 +21,6 @@ let token: string;
 let masterKeyManager: MasterKeyManager;
 
 let teamId: string;
-let teamSlug: string;
 let agentId: string;
 let projectId: string;
 let projectSlug: string;
@@ -56,7 +55,6 @@ beforeAll(async () => {
 	});
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	teamSlug = teamData.slug;
 
 	// 1:1 model — the team's single project is created first, then everything
 	// (agents lookup, tasks) is addressed through it.
@@ -159,7 +157,6 @@ describe('MCP endpoint: tool registration', () => {
 		expect(toolNames).toContain('update_task');
 		expect(toolNames).toContain('list_agents');
 		expect(toolNames).toContain('list_projects');
-		expect(toolNames).toContain('create_project');
 		expect(toolNames).toContain('list_comments');
 		expect(toolNames).toContain('create_comment');
 		expect(toolNames).toContain('list_approvals');
@@ -423,14 +420,13 @@ describe('MCP endpoint: tool call integration', () => {
 
 	it('update_task via MCP as a non-Coach agent rejects status=closed', async () => {
 		const created = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Agent MCP close target',
 			assignee_id: agentId,
 		})) as { id: string };
 
 		const result = (await callUpdateTaskAsAgent({
-			team_id: teamId,
+			project: projectId,
 			task_id: created.id,
 			status: 'closed',
 		})) as { status?: string; error?: string };
@@ -445,8 +441,7 @@ describe('MCP endpoint: tool call integration', () => {
 
 	it('update_task via MCP as Coach can set status=closed', async () => {
 		const created = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Coach MCP close target',
 			assignee_id: agentId,
 		})) as { id: string };
@@ -462,7 +457,7 @@ describe('MCP endpoint: tool call integration', () => {
 				method: 'tools/call',
 				params: {
 					name: 'update_task',
-					arguments: { team_id: teamId, task_id: created.id, status: 'closed' },
+					arguments: { project: projectId, task_id: created.id, status: 'closed' },
 				},
 				id: 1,
 			}),
@@ -480,28 +475,27 @@ describe('MCP endpoint: tool call integration', () => {
 
 	it('update_task via MCP as agent cannot re-open a closed task', async () => {
 		const created = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Agent MCP reopen target',
 			assignee_id: agentId,
 		})) as { id: string };
 
 		// Admin closes the task first.
 		await callToolViaMcp('update_task', {
-			team_id: teamId,
+			project: projectId,
 			task_id: created.id,
 			status: 'closed',
 		});
 
 		const result = (await callUpdateTaskAsAgent({
-			team_id: teamId,
+			project: projectId,
 			task_id: created.id,
 			status: 'backlog',
 		})) as { error?: string };
 		expect(result.error).toMatch(/admin/i);
 
 		const bypass = (await callUpdateTaskAsAgent({
-			team_id: teamId,
+			project: projectId,
 			task_id: created.id,
 			status: 'in_progress',
 		})) as { error?: string };
@@ -510,14 +504,13 @@ describe('MCP endpoint: tool call integration', () => {
 
 	it('update_task via MCP as agent can still set non-terminal statuses', async () => {
 		const created = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Agent MCP progress target',
 			assignee_id: agentId,
 		})) as { id: string };
 
 		const result = (await callUpdateTaskAsAgent({
-			team_id: teamId,
+			project: projectId,
 			task_id: created.id,
 			status: 'in_progress',
 		})) as { status?: string; error?: string };
@@ -529,7 +522,7 @@ describe('MCP endpoint: tool call integration', () => {
 		const taskRowId = await insertTaskDirect(agentId, 'Same-assignee wakeup guard');
 
 		const result = (await callUpdateTaskAsAgent({
-			team_id: teamId,
+			project: projectId,
 			task_id: taskRowId,
 			status: 'in_progress',
 			assignee_id: agentId,
@@ -560,7 +553,7 @@ describe('MCP endpoint: tool call integration', () => {
 		const taskRowId = await insertTaskDirect(captainId, 'Reassignment wakeup fires');
 
 		const result = (await callToolViaMcp('update_task', {
-			team_id: teamId,
+			project: projectId,
 			task_id: taskRowId,
 			assignee_id: agentId,
 		})) as { assignee_id?: string; error?: string };
@@ -606,8 +599,7 @@ describe('MCP endpoint: tool call integration', () => {
 
 	it('update_task lets an agent run set its OWN task to in_progress', async () => {
 		const own = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Scope gate — own run task',
 			assignee_id: agentId,
 		})) as { id: string };
@@ -620,7 +612,7 @@ describe('MCP endpoint: tool call integration', () => {
 		);
 
 		const result = await callUpdateTaskScoped(agentToken, {
-			team_id: teamId,
+			project: projectId,
 			task_id: own.id,
 			status: 'in_progress',
 		});
@@ -630,14 +622,12 @@ describe('MCP endpoint: tool call integration', () => {
 
 	it('update_task blocks an agent run from moving a DIFFERENT task to in_progress', async () => {
 		const own = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Scope gate — run task',
 			assignee_id: agentId,
 		})) as { id: string };
 		const other = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Scope gate — different task',
 			assignee_id: agentId,
 		})) as { id: string };
@@ -650,7 +640,7 @@ describe('MCP endpoint: tool call integration', () => {
 		);
 
 		const result = await callUpdateTaskScoped(agentToken, {
-			team_id: teamId,
+			project: projectId,
 			task_id: other.id,
 			status: 'in_progress',
 		});
@@ -665,14 +655,12 @@ describe('MCP endpoint: tool call integration', () => {
 
 	it('update_task lets an agent run edit a DIFFERENT task without starting it', async () => {
 		const own = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Scope gate — run task 2',
 			assignee_id: agentId,
 		})) as { id: string };
 		const other = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Scope gate — field-edit target',
 			assignee_id: agentId,
 		})) as { id: string };
@@ -686,7 +674,7 @@ describe('MCP endpoint: tool call integration', () => {
 
 		// Non-status field edit on another ticket (the mention-handoff fold) is allowed.
 		const summary = await callUpdateTaskScoped(agentToken, {
-			team_id: teamId,
+			project: projectId,
 			task_id: other.id,
 			progress_summary: 'context folded in from the run ticket',
 		});
@@ -694,7 +682,7 @@ describe('MCP endpoint: tool call integration', () => {
 
 		// A non-in_progress status change on another ticket is also allowed.
 		const review = await callUpdateTaskScoped(agentToken, {
-			team_id: teamId,
+			project: projectId,
 			task_id: other.id,
 			status: 'review',
 		});
@@ -704,14 +692,13 @@ describe('MCP endpoint: tool call integration', () => {
 
 	it('update_task scope gate does not apply to board callers', async () => {
 		const other = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Scope gate — board target',
 			assignee_id: agentId,
 		})) as { id: string };
 
 		const result = (await callToolViaMcp('update_task', {
-			team_id: teamId,
+			project: projectId,
 			task_id: other.id,
 			status: 'in_progress',
 		})) as { status?: string; error?: string };
@@ -721,8 +708,7 @@ describe('MCP endpoint: tool call integration', () => {
 
 	it('update_task scope gate does not apply to runs not bound to a task', async () => {
 		const other = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Scope gate — null-run target',
 			assignee_id: agentId,
 		})) as { id: string };
@@ -730,7 +716,7 @@ describe('MCP endpoint: tool call integration', () => {
 		const { token: agentToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 
 		const result = await callUpdateTaskScoped(agentToken, {
-			team_id: teamId,
+			project: projectId,
 			task_id: other.id,
 			status: 'in_progress',
 		});
@@ -740,7 +726,7 @@ describe('MCP endpoint: tool call integration', () => {
 
 	it('get_agent_system_prompt defaults to substituting placeholders without appending runtime blocks', async () => {
 		const result = (await callToolViaMcp('get_agent_system_prompt', {
-			team_id: teamId,
+			project: projectId,
 			agent_id: agentId,
 		})) as { system_prompt: string; error?: string };
 		expect(result.error).toBeUndefined();
@@ -752,7 +738,7 @@ describe('MCP endpoint: tool call integration', () => {
 
 	it('get_agent_system_prompt with placeholders=false returns the raw stored template', async () => {
 		const result = (await callToolViaMcp('get_agent_system_prompt', {
-			team_id: teamId,
+			project: projectId,
 			agent_id: agentId,
 			placeholders: false,
 		})) as { system_prompt: string; error?: string };
@@ -792,7 +778,7 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 				params: {
 					name: 'create_comment',
 					arguments: {
-						team_id: teamId,
+						project: projectId,
 						task_id: taskId,
 						content: 'Authored via MCP',
 					},
@@ -1044,7 +1030,7 @@ describe('MCP coordination: HQ agents act inside project teams', () => {
 		const ceoId = await instanceCeoId(db);
 		const { token: ceoToken } = await mintAgentToken(db, masterKeyManager, ceoId, teamId);
 		const result = await callToolAs(ceoToken, 'set_team_summary', {
-			team_id: teamId,
+			project: projectId,
 			summary: 'Coherence-written team summary.',
 		});
 		expect(result.error).toBeUndefined();
@@ -1058,11 +1044,42 @@ describe('MCP coordination: HQ agents act inside project teams', () => {
 	it('denies a non-coordinator agent from setting the team summary', async () => {
 		const { token: workerToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 		const result = await callToolAs(workerToken, 'set_team_summary', {
-			team_id: teamId,
+			project: projectId,
 			summary: 'Should be rejected.',
 		});
 		expect(result.error).toContain('Access denied');
 		expect(result.updated).toBeUndefined();
+	});
+});
+
+describe('MCP tools: project arg accepts a slug or UUID', () => {
+	// The CEO addresses projects by slug (it never sees UUIDs); project-scoped tools
+	// must resolve that slug so a cross-project status query returns real data instead
+	// of coming back empty.
+	it('list_agents resolves a project slug to the same roster as the UUID', async () => {
+		const bySlug = (await callToolViaMcp('list_agents', { project: projectSlug })) as Array<{
+			slug: string;
+		}>;
+		const byUuid = (await callToolViaMcp('list_agents', { project: projectId })) as Array<{
+			slug: string;
+		}>;
+		expect(Array.isArray(bySlug)).toBe(true);
+		expect(bySlug.length).toBeGreaterThan(0);
+		expect(bySlug.map((a) => a.slug).sort()).toEqual(byUuid.map((a) => a.slug).sort());
+	});
+
+	it('list_tasks resolves a project slug and returns the seeded task', async () => {
+		const rows = (await callToolViaMcp('list_tasks', { project: projectSlug })) as Array<{
+			title: string;
+		}>;
+		expect(rows.map((t) => t.title)).toContain('Seed Task');
+	});
+
+	it('returns an Unknown project error for a slug that resolves to nothing', async () => {
+		const result = (await callToolViaMcp('list_agents', { project: 'no-such-project-slug' })) as {
+			error?: string;
+		};
+		expect(result.error).toContain('Unknown project');
 	});
 });
 
@@ -1118,16 +1135,14 @@ describe('MCP tool: set_agent_team_context and get_agent_team_context', () => {
 describe('MCP tool: create_task sub-task depth', () => {
 	it('create_task caps sub-task depth at 2', async () => {
 		const root = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Depth root',
 			assignee_id: agentId,
 		})) as { id: string; error?: string };
 		expect(root.error).toBeUndefined();
 
 		const sub = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Depth sub',
 			assignee_id: agentId,
 			parent_task_id: root.id,
@@ -1135,8 +1150,7 @@ describe('MCP tool: create_task sub-task depth', () => {
 		expect(sub.error).toBeUndefined();
 
 		const subSub = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Depth sub-sub',
 			assignee_id: agentId,
 			parent_task_id: sub.id,
@@ -1144,8 +1158,7 @@ describe('MCP tool: create_task sub-task depth', () => {
 		expect(subSub.error).toBeUndefined();
 
 		const tooDeep = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Depth too deep',
 			assignee_id: agentId,
 			parent_task_id: subSub.id,
@@ -1157,8 +1170,7 @@ describe('MCP tool: create_task sub-task depth', () => {
 describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard', () => {
 	it('list_tasks never returns the embedding column', async () => {
 		const rows = (await callToolViaMcp('list_tasks', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 		})) as Array<Record<string, unknown>>;
 		expect(Array.isArray(rows)).toBe(true);
 		expect(rows.length).toBeGreaterThan(0);
@@ -1171,7 +1183,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 
 	it('get_task never returns the embedding column', async () => {
 		const task = (await callToolViaMcp('get_task', {
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 		})) as Record<string, unknown>;
 		expect(task).not.toHaveProperty('embedding');
@@ -1180,14 +1192,13 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 
 	it('get_task resolves a human-readable task identifier to its UUID', async () => {
 		const created = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Identifier resolution target',
 			assignee_id: agentId,
 		})) as { id: string; identifier: string };
 
 		const byIdentifier = (await callToolViaMcp('get_task', {
-			team_id: teamId,
+			project: projectId,
 			task_id: created.identifier,
 		})) as Record<string, unknown>;
 		expect(byIdentifier.id).toBe(created.id);
@@ -1196,7 +1207,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 
 	it('get_task returns a clean error for an unknown identifier instead of crashing', async () => {
 		const result = (await callToolViaMcp('get_task', {
-			team_id: teamId,
+			project: projectId,
 			task_id: 'ZZ-999',
 		})) as { error?: string };
 		expect(result.error).toContain('ZZ-999');
@@ -1204,14 +1215,13 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 
 	it('list_comments accepts a task identifier (centralized resolution)', async () => {
 		const created = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Identifier resolution for comments',
 			assignee_id: agentId,
 		})) as { id: string; identifier: string };
 
 		const comments = await callToolViaMcp('list_comments', {
-			team_id: teamId,
+			project: projectId,
 			task_id: created.identifier,
 		});
 		expect(Array.isArray(comments)).toBe(true);
@@ -1219,22 +1229,20 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 
 	it('get_task returns blockers and dependents symmetrically', async () => {
 		const upstream = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Upstream for dependents test',
 			assignee_id: agentId,
 		})) as { id: string; identifier: string };
 
 		const downstream = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Downstream for dependents test',
 			assignee_id: agentId,
 			blocked_by_task_ids: [upstream.identifier],
 		})) as { id: string; identifier: string };
 
 		const upstreamView = (await callToolViaMcp('get_task', {
-			team_id: teamId,
+			project: projectId,
 			task_id: upstream.id,
 		})) as {
 			blockers: Array<{ identifier: string }>;
@@ -1247,7 +1255,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		expect(upstreamView.dependents[0].status).toBe('blocked');
 
 		const downstreamView = (await callToolViaMcp('get_task', {
-			team_id: teamId,
+			project: projectId,
 			task_id: downstream.id,
 		})) as {
 			blockers: Array<{ id: string; identifier: string }>;
@@ -1261,16 +1269,14 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 	it('list_tasks with excerpt_chars returns the excerpt/truncated/length triple', async () => {
 		const longBody = `Paragraph one is the headline.\n\n${'detail '.repeat(200)}`;
 		const created = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Excerpt target',
 			description: longBody,
 			assignee_id: agentId,
 		})) as { id: string };
 
 		const rows = (await callToolViaMcp('list_tasks', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			excerpt_chars: 50,
 		})) as Array<Record<string, unknown>>;
 		const target = rows.find((r) => r.id === created.id) as Record<string, unknown>;
@@ -1284,16 +1290,14 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 	it('list_tasks without excerpt_chars returns the full description', async () => {
 		const body = 'Single short body.';
 		const created = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Full body target',
 			description: body,
 			assignee_id: agentId,
 		})) as { id: string };
 
 		const rows = (await callToolViaMcp('list_tasks', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 		})) as Array<Record<string, unknown>>;
 		const target = rows.find((r) => r.id === created.id) as Record<string, unknown>;
 		expect(target.description).toBe(body);
@@ -1302,8 +1306,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 
 	it('list_comments caps at 50, walks backward via `before`, and truncates with excerpt_chars', async () => {
 		const task = (await callToolViaMcp('create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Comment pagination target',
 			assignee_id: agentId,
 		})) as { id: string };
@@ -1318,7 +1321,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		}
 
 		const first = (await callToolViaMcp('list_comments', {
-			team_id: teamId,
+			project: projectId,
 			task_id: task.id,
 		})) as Array<Record<string, unknown>>;
 		expect(first.length).toBe(50);
@@ -1326,7 +1329,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 
 		const oldest = first[first.length - 1] as { id: string };
 		const next = (await callToolViaMcp('list_comments', {
-			team_id: teamId,
+			project: projectId,
 			task_id: task.id,
 			before: oldest.id,
 		})) as Array<Record<string, unknown>>;
@@ -1344,7 +1347,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			[task.id, JSON.stringify({ text: longText })],
 		);
 		const truncated = (await callToolViaMcp('list_comments', {
-			team_id: teamId,
+			project: projectId,
 			task_id: task.id,
 			excerpt_chars: 100,
 		})) as Array<Record<string, unknown>>;
@@ -1368,8 +1371,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		const fatBody = 'lorem '.repeat(1800);
 		for (let i = 0; i < 8; i++) {
 			await callToolViaMcp('create_task', {
-				team_id: teamId,
-				project_id: fatProjectId,
+				project: fatProjectId,
 				title: `Fat ticket ${i}`,
 				description: fatBody,
 				assignee_id: agentId,
@@ -1377,8 +1379,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		}
 
 		const result = (await callToolViaMcp('list_tasks', {
-			team_id: teamId,
-			project_id: fatProjectId,
+			project: fatProjectId,
 		})) as {
 			error?: string;
 			tool?: string;
@@ -1392,8 +1393,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		expect(result.hint).toContain('excerpt_chars');
 
 		const slim = (await callToolViaMcp('list_tasks', {
-			team_id: teamId,
-			project_id: fatProjectId,
+			project: fatProjectId,
 			excerpt_chars: 200,
 		})) as Array<Record<string, unknown>>;
 		expect(Array.isArray(slim)).toBe(true);
@@ -1410,16 +1410,14 @@ describe('read_project_asset', () => {
 	it('round-trips a text asset written via write_project_asset', async () => {
 		const html = '<html><body><h1>Login mockup</h1></body></html>';
 		const write = (await callToolViaMcp('write_project_asset', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			filename: 'ui-mockups.html',
 			content: html,
 		})) as { written?: boolean };
 		expect(write.written).toBe(true);
 
 		const read = (await callToolViaMcp('read_project_asset', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			filename: 'ui-mockups.html',
 		})) as { filename?: string; content_type?: string; content?: string };
 		expect(read.filename).toBe('ui-mockups.html');
@@ -1429,8 +1427,7 @@ describe('read_project_asset', () => {
 
 	it('returns an error for an unknown asset', async () => {
 		const res = (await callToolViaMcp('read_project_asset', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			filename: 'does-not-exist.html',
 		})) as { error?: string };
 		expect(res.error).toMatch(/not found/i);
@@ -1446,7 +1443,7 @@ describe('read_project_asset', () => {
 				method: 'tools/call',
 				params: {
 					name: 'read_project_asset',
-					arguments: { team_id: teamId, project_id: projectId, filename: 'ui-mockups.html' },
+					arguments: { project: projectId, filename: 'ui-mockups.html' },
 				},
 				id: 1,
 			}),

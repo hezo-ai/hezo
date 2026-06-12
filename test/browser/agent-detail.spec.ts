@@ -10,7 +10,7 @@ type Page = import('@playwright/test').Page;
 async function setAgentSummary(
 	page: Page,
 	token: string,
-	teamId: string,
+	project: string,
 	agentId: string,
 	summary: string,
 ) {
@@ -22,7 +22,7 @@ async function setAgentSummary(
 			method: 'tools/call',
 			params: {
 				name: 'set_agent_summary',
-				arguments: { team_id: teamId, agent_id: agentId, summary },
+				arguments: { project, agent_id: agentId, summary },
 			},
 		},
 	});
@@ -35,16 +35,16 @@ test('long agent summary collapses to first line and toggles on click; short sum
 	page,
 	freshWorkspace,
 }) => {
-	const { team, agents, token } = freshWorkspace;
+	const { agents, token, projectSlug } = freshWorkspace;
 	const longAgent = agents[0];
 	const shortAgent = agents[1] ?? agents[0];
 
 	const longSummary = Array.from({ length: 8 }, (_, i) => `Line ${i + 1} of the description.`).join(
 		' ',
 	);
-	await setAgentSummary(page, token, team.id, longAgent.id, longSummary);
+	await setAgentSummary(page, token, projectSlug, longAgent.id, longSummary);
 
-	await page.goto(`/projects/${freshWorkspace.projectSlug}/agents/${longAgent.id}`);
+	await page.goto(`/projects/${projectSlug}/agents/${longAgent.id}`);
 
 	const summary = page.getByTestId('agent-summary');
 	await expect(summary).toBeVisible({ timeout: 15000 });
@@ -68,8 +68,8 @@ test('long agent summary collapses to first line and toggles on click; short sum
 	expect(await paragraph.evaluate((el) => el.clientHeight)).toBe(collapsedHeight);
 
 	if (shortAgent !== longAgent) {
-		await setAgentSummary(page, token, team.id, shortAgent.id, 'Short.');
-		await page.goto(`/projects/${freshWorkspace.projectSlug}/agents/${shortAgent.id}`);
+		await setAgentSummary(page, token, projectSlug, shortAgent.id, 'Short.');
+		await page.goto(`/projects/${projectSlug}/agents/${shortAgent.id}`);
 		const shortSummary = page.getByTestId('agent-summary');
 		await expect(shortSummary).toBeVisible({ timeout: 15000 });
 		await expect(shortSummary.locator('p')).toContainText('Short.');

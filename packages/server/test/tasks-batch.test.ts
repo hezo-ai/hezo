@@ -191,25 +191,21 @@ describe('MCP tool: create_tasks (agent caller)', () => {
 		);
 
 		const result = (await callMcpTool(architectToken, 'create_tasks', {
-			team_id: teamId,
+			project: projectId,
 			items: [
 				{
-					project_id: projectId,
 					title: 'Architect → self (ok)',
 					assignee_id: architectId,
 				},
 				{
-					project_id: projectId,
 					title: 'Architect → subordinate engineer (ok)',
 					assignee_id: engineerId,
 				},
 				{
-					project_id: projectId,
 					title: 'Architect → peer product-lead (forbidden)',
 					assignee_id: productLeadId,
 				},
 				{
-					project_id: projectId,
 					title: 'Architect → manager Captain (forbidden — manager is not a subordinate)',
 					assignee_id: captainId,
 				},
@@ -243,9 +239,8 @@ describe('MCP tool: create_tasks (agent caller)', () => {
 				params: {
 					name: 'create_tasks',
 					arguments: {
-						team_id: teamId,
+						project: projectId,
 						items: Array.from({ length: 51 }, (_, i) => ({
-							project_id: projectId,
 							title: `Too many ${i}`,
 							assignee_id: engineerId,
 						})),

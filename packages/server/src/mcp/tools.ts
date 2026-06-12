@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { PGlite } from '@electric-sql/pglite';
 import {
-	AgentAdminStatus,
 	ApprovalStatus,
 	ApprovalType,
 	ATTACHMENT_EXTENSIONS,
@@ -40,7 +39,12 @@ import {
 	wakeIfReady,
 	wouldCreateCycle,
 } from '../lib/dependencies';
-import { resolveActorMemberId, resolveTaskId } from '../lib/resolve';
+import {
+	projectIdForTeam,
+	resolveActorMemberId,
+	resolveProject,
+	resolveTaskId,
+} from '../lib/resolve';
 import { assertRunTaskScope } from '../lib/run-scope';
 import { deriveSkillSummary } from '../lib/skill-summary';
 import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/task-relationships';
@@ -64,7 +68,6 @@ import {
 	listDocuments,
 	upsertDocument,
 } from '../services/documents';
-import { createProjectWithPlanningTask } from '../services/project-create';
 import {
 	addCommentReaction,
 	loadReactionsForTask,
@@ -201,30 +204,6 @@ function tool(
 				],
 			};
 		}
-		// Agents reference tickets by their project-scoped identifier (e.g. "TO-8")
-		// as readily as by UUID. Normalize the canonical task argument to a UUID
-		// once here so every task-scoped tool handler can query tasks.id directly.
-		// resolveTaskId returns a UUID input unchanged (no DB round-trip), so this
-		// is a no-op for callers that already pass UUIDs.
-		if (
-			typeof args.task_id === 'string' &&
-			args.task_id.length > 0 &&
-			typeof args.team_id === 'string' &&
-			args.team_id.length > 0
-		) {
-			const resolved = await resolveTaskId(db, args.team_id, args.task_id);
-			if (!resolved) {
-				return {
-					content: [
-						{
-							type: 'text' as const,
-							text: JSON.stringify({ error: `Task not found: ${args.task_id}` }),
-						},
-					],
-				};
-			}
-			args.task_id = resolved;
-		}
 		const result = await handler(args, db, auth);
 		const text = JSON.stringify(result, null, 2);
 		const sizeBytes = Buffer.byteLength(text, 'utf8');
@@ -266,9 +245,12 @@ async function buildMcpCreateTaskCaller(
 	return caller;
 }
 
-function mcpArgsToCreateTaskInput(args: Record<string, unknown>): CreateTaskInput {
+function mcpArgsToCreateTaskInput(
+	args: Record<string, unknown>,
+	projectId: string,
+): CreateTaskInput {
 	return {
-		project_id: args.project_id as string,
+		project_id: projectId,
 		title: args.title as string,
 		description: args.description as string | undefined,
 		assignee_id: args.assignee_id as string | undefined,
@@ -280,63 +262,138 @@ function mcpArgsToCreateTaskInput(args: Record<string, unknown>): CreateTaskInpu
 	};
 }
 
+export interface ToolScope {
+	projectId: string;
+	teamId: string;
+}
+
 /**
- * Verify the caller has access to the given team_id.
- * Returns an error string if access denied, null if allowed.
+ * Resolve the project a tool call targets, then authorize the caller for it.
+ *
+ * Hezo is project-centric: callers address resources by `project` (slug or UUID)
+ * and the backing team is derived from it (1:1). When `project` is omitted the
+ * call falls back to the caller's own run scope — a normal agent run passes
+ * nothing and operates on its own project, while an instance principal (the CEO
+ * chat session) names the project it wants to reach. `team_id` is never part of
+ * the tool surface; it stays an internal key.
  */
-async function verifyTeamAccess(
+async function resolveScope(
 	db: PGlite,
 	auth: AuthInfo,
-	teamId: string,
-): Promise<string | null> {
-	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
-		// The instance CEO chat session acts across every team (gated at mint time).
-		if (auth.type === AuthType.Agent && auth.crossTeam) return null;
-		if (auth.teamId !== teamId) return 'Access denied: team mismatch';
-		return null;
+	args: Record<string, unknown>,
+): Promise<ToolScope | { error: string }> {
+	const raw =
+		typeof args.project === 'string' && args.project.trim().length > 0 ? args.project.trim() : null;
+
+	let scope: ToolScope | null = null;
+	if (raw) {
+		const p = await resolveProject(db, raw);
+		if (!p) return { error: `Unknown project: ${raw}` };
+		scope = { projectId: p.projectId, teamId: p.teamId };
+	} else if (auth.type === AuthType.Agent) {
+		scope = { projectId: auth.projectId, teamId: auth.teamId };
+	} else if (auth.type === AuthType.ApiKey) {
+		const projectId = await projectIdForTeam(db, auth.teamId);
+		if (!projectId) return { error: 'No project found for this API key' };
+		scope = { projectId, teamId: auth.teamId };
+	} else {
+		return { error: '`project` is required' };
 	}
-	if (auth.type === AuthType.Admin) {
-		if (auth.isSuperuser) return null;
-		const result = await db.query(
-			'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.team_id = $2',
-			[auth.userId, teamId],
+
+	const denied = await authorizeScope(db, auth, scope);
+	if (denied) return { error: denied };
+	return scope;
+}
+
+/** Authorize `auth` to act inside `scope`. Returns an error string, or null when allowed. */
+async function authorizeScope(
+	db: PGlite,
+	auth: AuthInfo,
+	scope: ToolScope,
+): Promise<string | null> {
+	switch (auth.type) {
+		case AuthType.Agent:
+			// Instance principals (CEO chat session / cross-project runs) roam every project.
+			if (auth.crossProject || auth.crossTeam) return null;
+			if (auth.projectId !== scope.projectId) {
+				return 'Access denied: run is not scoped to this project';
+			}
+			return null;
+		case AuthType.ApiKey:
+			return auth.teamId === scope.teamId ? null : 'Access denied: project outside this API key';
+		case AuthType.Admin: {
+			if (auth.isSuperuser) return null;
+			const r = await db.query(
+				`SELECT 1 FROM members m JOIN member_users mu ON mu.id = m.id
+				 WHERE mu.user_id = $1 AND m.team_id = $2`,
+				[auth.userId, scope.teamId],
+			);
+			return r.rows.length > 0 ? null : 'Access denied: not a member of this project';
+		}
+		default:
+			return 'Access denied';
+	}
+}
+
+/**
+ * Authorize `auth` for a team derived from a resource (e.g. an approval's team),
+ * not from tool input. Used by the handful of tools keyed by a resource id whose
+ * team is looked up server-side rather than passed in.
+ */
+async function authorizeTeam(db: PGlite, auth: AuthInfo, teamId: string): Promise<string | null> {
+	switch (auth.type) {
+		case AuthType.Agent:
+			if (auth.crossTeam) return null;
+			return auth.teamId === teamId ? null : 'Access denied: team mismatch';
+		case AuthType.ApiKey:
+			return auth.teamId === teamId ? null : 'Access denied: team mismatch';
+		case AuthType.Admin: {
+			if (auth.isSuperuser) return null;
+			const r = await db.query(
+				`SELECT 1 FROM members m JOIN member_users mu ON mu.id = m.id
+				 WHERE mu.user_id = $1 AND m.team_id = $2`,
+				[auth.userId, teamId],
+			);
+			return r.rows.length > 0 ? null : 'Access denied: not a member of this team';
+		}
+		default:
+			return 'Access denied';
+	}
+}
+
+/**
+ * Resolve a tool call's project scope and its `task_id` argument (identifier or
+ * UUID) together, verifying the task belongs to the resolved project.
+ */
+async function resolveTaskScope(
+	db: PGlite,
+	auth: AuthInfo,
+	args: Record<string, unknown>,
+): Promise<(ToolScope & { taskId: string }) | { error: string }> {
+	const scope = await resolveScope(db, auth, args);
+	if ('error' in scope) return scope;
+	const raw = typeof args.task_id === 'string' ? args.task_id : '';
+	if (!raw) return { error: 'task_id is required' };
+	const taskId = await resolveTaskId(db, scope.teamId, raw);
+	if (!taskId) return { error: `Task not found: ${raw}` };
+	const r = await db.query<{ project_id: string }>(
+		'SELECT project_id FROM tasks WHERE id = $1 AND team_id = $2',
+		[taskId, scope.teamId],
+	);
+	if (r.rows.length === 0 || r.rows[0].project_id !== scope.projectId) {
+		return { error: `Task not found in project: ${raw}` };
+	}
+	return { ...scope, taskId };
+}
+
+/** Standard schema entry for the optional `project` selector shared by project-scoped tools. */
+const projectArg = () =>
+	z
+		.string()
+		.optional()
+		.describe(
+			'Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in.',
 		);
-		if (result.rows.length === 0) return 'Access denied: not a member of this team';
-		return null;
-	}
-	return 'Access denied';
-}
-
-/**
- * For Agent auth without cross-project privilege, the run is scoped to a single
- * project. Reject any tool call referencing a different project's data. Admin
- * and ApiKey auth pass through — their team-level checks already cover them.
- */
-function assertProjectAccess(auth: AuthInfo, projectId: string): string | null {
-	if (auth.type !== AuthType.Agent) return null;
-	if (auth.crossProject) return null;
-	if (auth.projectId !== projectId) return 'Access denied: run is not scoped to this project';
-	return null;
-}
-
-/**
- * Resolve the task's project and assert scoped access. Used by tools whose
- * input is a task_id rather than a project_id directly.
- */
-async function assertProjectAccessForTask(
-	db: PGlite,
-	auth: AuthInfo,
-	taskId: string,
-): Promise<string | null> {
-	if (auth.type !== AuthType.Agent || auth.crossProject) return null;
-	const r = await db.query<{ project_id: string }>('SELECT project_id FROM tasks WHERE id = $1', [
-		taskId,
-	]);
-	const projectId = r.rows[0]?.project_id;
-	if (!projectId) return 'Access denied: task not found';
-	if (projectId !== auth.projectId) return 'Access denied: run is not scoped to this project';
-	return null;
-}
 
 export function registerTools(
 	server: McpServer,
@@ -388,14 +445,14 @@ export function registerTools(
 	tool(
 		server,
 		'get_team',
-		'Get a team by ID',
+		'Get the team backing a project',
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			const r = await db.query('SELECT * FROM teams WHERE id = $1', [args.team_id]);
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const r = await db.query('SELECT * FROM teams WHERE id = $1', [scope.teamId]);
 			return r.rows[0] ?? null;
 		},
 		db,
@@ -430,10 +487,9 @@ export function registerTools(
 	tool(
 		server,
 		'list_tasks',
-		'List tasks for a team. Returns up to 50 tasks ordered by creation date (newest first). Filter by project_id to scope to one project (the common case), and optionally by status (comma-separated) or assignee_id/assignee_slug to narrow further. The Project State block in your system prompt already gives you the active tickets in the current project — only call this if you need older or terminal tickets, a different project, or a specific status filter. Pass excerpt_chars (e.g. 300) to truncate description and rules to triage-sized excerpts; omit for full content.',
+		"List a project's tasks. Returns up to 50 tasks ordered by creation date (newest first). Omit `project` to use the project your run is in; pass it (slug or ID) to inspect another project. Narrow with status (comma-separated) or assignee_id/assignee_slug. The Project State block in your system prompt already gives you the active tickets in the current project — only call this if you need older or terminal tickets, another project, or a specific status filter. Pass excerpt_chars (e.g. 300) to truncate description and rules to triage-sized excerpts; omit for full content.",
 		{
-			team_id: z.string().describe('Team ID'),
-			project_id: z.string().optional().describe('Filter by project ID'),
+			project: projectArg(),
 			status: z.string().optional().describe('Filter by status (comma-separated)'),
 			assignee_id: z.string().optional().describe('Filter by assignee member ID'),
 			assignee_slug: z
@@ -450,22 +506,11 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			const conditions = ['i.team_id = $1'];
-			const params: unknown[] = [args.team_id];
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const conditions = ['i.project_id = $1'];
+			const params: unknown[] = [scope.projectId];
 			let idx = 2;
-			if (args.project_id) {
-				const pDenied = assertProjectAccess(auth, args.project_id as string);
-				if (pDenied) return { error: pDenied };
-				conditions.push(`i.project_id = $${idx}`);
-				params.push(args.project_id);
-				idx++;
-			} else if (auth.type === AuthType.Agent && !auth.crossProject) {
-				conditions.push(`i.project_id = $${idx}`);
-				params.push(auth.projectId);
-				idx++;
-			}
 			if (args.status) {
 				const statuses = (args.status as string).split(',');
 				const ph = statuses.map((_, i) => `$${idx + i}::task_status`).join(', ');
@@ -479,7 +524,7 @@ export function registerTools(
 					`SELECT ma.id FROM member_agents ma
 					 JOIN members m ON m.id = ma.id
 					 WHERE ma.slug = $1 AND m.team_id = $2`,
-					[args.assignee_slug, args.team_id],
+					[args.assignee_slug, scope.teamId],
 				);
 				if (agent.rows.length === 0) return [];
 				assigneeId = agent.rows[0].id;
@@ -512,27 +557,26 @@ export function registerTools(
 		'get_task',
 		"Get task details, including the ticket's declared blockers (upstream — what this ticket is waiting on) and dependents (downstream — tickets that are blocked on this one). Each entry has identifier, title, and current status. A non-empty blockers list means an automatic agent run on this ticket is paused until every blocker reaches a terminal status (done, closed, cancelled). The dependents list shows which teammates' tickets will be auto-unblocked when this ticket is marked terminal — you do not need to @-mention them, the auto-wake handles it.",
 		{
-			team_id: z.string().describe('Team ID'),
-			task_id: z.string().describe('Task ID'),
+			project: projectArg(),
+			task_id: z.string().describe('Task identifier or UUID'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveTaskScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { taskId } = scope;
 			const r = await db.query<Record<string, unknown> & { project_id: string }>(
-				`SELECT ${TASK_COLUMNS_BARE} FROM tasks i WHERE i.id = $1 AND i.team_id = $2`,
-				[args.task_id, args.team_id],
+				`SELECT ${TASK_COLUMNS_BARE} FROM tasks i WHERE i.id = $1`,
+				[taskId],
 			);
 			const task = r.rows[0];
 			if (!task) return null;
-			const pDenied = assertProjectAccess(auth, task.project_id);
-			if (pDenied) return { error: pDenied };
 			const blockers = await db.query(
 				`SELECT d.id AS dependency_id, b.id, b.identifier, b.title, b.status::text AS status
 				 FROM task_dependencies d
 				 JOIN tasks b ON b.id = d.blocked_by_task_id
 				 WHERE d.task_id = $1
 				 ORDER BY d.created_at ASC`,
-				[args.task_id],
+				[taskId],
 			);
 			const dependents = await db.query(
 				`SELECT d.id AS dependency_id, b.id, b.identifier, b.title, b.status::text AS status
@@ -540,7 +584,7 @@ export function registerTools(
 				 JOIN tasks b ON b.id = d.task_id
 				 WHERE d.blocked_by_task_id = $1
 				 ORDER BY d.created_at ASC`,
-				[args.task_id],
+				[taskId],
 			);
 			return {
 				...(task as Record<string, unknown>),
@@ -556,8 +600,7 @@ export function registerTools(
 		'create_task',
 		'Create a new task. Use parent_task_id for sub-tasks — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates — to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites — the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, closed, cancelled). In title/description, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
-			team_id: z.string().describe('Team ID'),
-			project_id: z.string().describe('Project ID'),
+			project: projectArg(),
 			title: z.string().describe('Task title'),
 			description: z.string().optional().describe('Task description'),
 			priority: z.string().optional().describe('Priority: low, medium, high, urgent'),
@@ -586,18 +629,14 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			const pDenied = assertProjectAccess(auth, args.project_id as string);
-			if (pDenied) return { error: pDenied };
-
-			const teamId = args.team_id as string;
-			const caller = await buildMcpCreateTaskCaller(db, auth, teamId);
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const caller = await buildMcpCreateTaskCaller(db, auth, scope.teamId);
 			try {
 				return await createTask(
 					db,
-					teamId,
-					mcpArgsToCreateTaskInput(args),
+					scope.teamId,
+					mcpArgsToCreateTaskInput(args, scope.projectId),
 					caller,
 					wsManager,
 					events,
@@ -615,11 +654,10 @@ export function registerTools(
 		'create_tasks',
 		`Create multiple tasks in one call (max ${MAX_BATCH_CREATE_TASKS}). Each item has the same shape as create_task; per-item errors are returned without aborting the rest. Use this when filing a related set of tickets in one go (planning a feature, splitting a project into sub-tasks). For a single task, use create_task.`,
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			items: z
 				.array(
 					z.object({
-						project_id: z.string().describe('Project ID'),
 						title: z.string().describe('Task title'),
 						description: z.string().optional().describe('Task description'),
 						priority: z.string().optional().describe('Priority: low, medium, high, urgent'),
@@ -653,24 +691,19 @@ export function registerTools(
 				.describe(`Up to ${MAX_BATCH_CREATE_TASKS} items.`),
 		},
 		async (args, db, auth) => {
-			const teamId = args.team_id as string;
-			const denied = await verifyTeamAccess(db, auth, teamId);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 
 			const items = args.items as Array<Record<string, unknown>>;
-			const caller = await buildMcpCreateTaskCaller(db, auth, teamId);
+			const caller = await buildMcpCreateTaskCaller(db, auth, scope.teamId);
 
 			const results = await Promise.all(
 				items.map(async (item, index) => {
-					const pDenied = assertProjectAccess(auth, item.project_id as string);
-					if (pDenied) {
-						return { index, ok: false as const, error: pDenied, code: 'FORBIDDEN' as const };
-					}
 					try {
 						const task = await createTask(
 							db,
-							teamId,
-							mcpArgsToCreateTaskInput(item),
+							scope.teamId,
+							mcpArgsToCreateTaskInput(item, scope.projectId),
 							caller,
 							wsManager,
 							events,
@@ -700,8 +733,8 @@ export function registerTools(
 		'update_task',
 		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` — that wakes Coach for review, who will set the ticket to `closed` after the review passes. Agents other than Coach cannot set status to `closed` directly. Re-opening a closed task is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
-			team_id: z.string().describe('Team ID'),
-			task_id: z.string().describe('Task ID'),
+			project: projectArg(),
+			task_id: z.string().describe('Task identifier or UUID'),
 			title: z.string().optional().describe('New title'),
 			description: z.string().optional().describe('New description'),
 			status: z
@@ -728,28 +761,17 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveTaskScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId, taskId } = scope;
 
 			const currentRowResult = await db.query<{
 				status: string;
 				assignee_id: string | null;
-				project_id: string;
-			}>('SELECT status, assignee_id, project_id FROM tasks WHERE id = $1 AND team_id = $2', [
-				args.task_id,
-				args.team_id,
-			]);
+			}>('SELECT status, assignee_id FROM tasks WHERE id = $1', [taskId]);
 			const currentRow = currentRowResult.rows[0];
-			if (currentRow) {
-				const pDenied = assertProjectAccess(auth, currentRow.project_id);
-				if (pDenied) return { error: pDenied };
-			}
 
-			const scopeDenied = assertRunTaskScope(
-				auth,
-				args.task_id as string,
-				args.status as string | undefined,
-			);
+			const scopeDenied = assertRunTaskScope(auth, taskId, args.status as string | undefined);
 			if (scopeDenied) return { error: scopeDenied };
 
 			const currentStatus = currentRow?.status;
@@ -775,34 +797,22 @@ export function registerTools(
 			}
 
 			if (args.status === TaskStatus.Done || args.status === TaskStatus.Closed) {
-				const childrenCheck = await assertChildrenAllClosed(
-					db,
-					args.team_id as string,
-					args.task_id as string,
-				);
+				const childrenCheck = await assertChildrenAllClosed(db, teamId, taskId);
 				if (!childrenCheck.ok) return { error: childrenCheck.message };
 			}
 			if (args.status === TaskStatus.Done) {
 				const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-				const activityCheck = await assertNoOutstandingActivity(
-					db,
-					args.task_id as string,
-					callerMemberId,
-				);
+				const activityCheck = await assertNoOutstandingActivity(db, taskId, callerMemberId);
 				if (!activityCheck.ok) return { error: activityCheck.message };
 			}
 
 			if (args.status !== undefined) {
-				args.status = await coerceTargetStatusForBlockers(
-					db,
-					args.task_id as string,
-					args.status as string,
-				);
+				args.status = await coerceTargetStatusForBlockers(db, taskId, args.status as string);
 			}
 
 			if (args.assignee_id && currentRow) {
 				if (args.assignee_id !== previousAssigneeId) {
-					const activeRunCheck = await assertNoActiveRun(db, args.task_id as string);
+					const activeRunCheck = await assertNoActiveRun(db, taskId);
 					if (!activeRunCheck.ok) return { error: activeRunCheck.message };
 				}
 				if (auth.type === AuthType.Agent && args.assignee_id !== previousAssigneeId) {
@@ -819,7 +829,7 @@ export function registerTools(
 			const params: unknown[] = [];
 			let idx = 1;
 			for (const [key, val] of Object.entries(args)) {
-				if (['team_id', 'task_id'].includes(key) || val === undefined) continue;
+				if (['project', 'task_id'].includes(key) || val === undefined) continue;
 				if (key === 'status') {
 					sets.push(`status = $${idx}::task_status`);
 				} else if (key === 'priority') {
@@ -846,9 +856,9 @@ export function registerTools(
 				idx++;
 			}
 			if (sets.length === 0) return { unchanged: true };
-			params.push(args.task_id, args.team_id);
+			params.push(taskId);
 			const r = await db.query(
-				`UPDATE tasks SET ${sets.join(', ')} WHERE id = $${idx} AND team_id = $${idx + 1} RETURNING ${TASK_COLUMNS_BARE}`,
+				`UPDATE tasks SET ${sets.join(', ')} WHERE id = $${idx} RETURNING ${TASK_COLUMNS_BARE}`,
 				params,
 			);
 			if (!r.rows[0]) return null;
@@ -859,8 +869,8 @@ export function registerTools(
 				trackBackground(
 					recordTaskLinks(
 						db,
-						args.team_id as string,
-						args.task_id as string,
+						teamId,
+						taskId,
 						args.description as string,
 						actorMemberId,
 						wsManager,
@@ -872,8 +882,8 @@ export function registerTools(
 				try {
 					await triggerStatusAutomations(
 						db,
-						args.team_id as string,
-						args.task_id as string,
+						teamId,
+						taskId,
 						currentStatus,
 						args.status as string,
 						actorMemberId,
@@ -890,15 +900,9 @@ export function registerTools(
 				]);
 				if (isAgent.rows.length > 0) {
 					trackBackground(
-						createWakeup(
-							db,
-							args.assignee_id as string,
-							args.team_id as string,
-							WakeupSource.Assignment,
-							{
-								task_id: args.task_id,
-							},
-						).catch((e) => log.error('Failed to wake agent:', e)),
+						createWakeup(db, args.assignee_id as string, teamId, WakeupSource.Assignment, {
+							task_id: taskId,
+						}).catch((e) => log.error('Failed to wake agent:', e)),
 					);
 				}
 			}
@@ -913,22 +917,17 @@ export function registerTools(
 		'add_task_blocker',
 		'Declare that one task blocks another. The downstream ticket will not start an automatic agent run until the blocker reaches a terminal status (done, closed, cancelled). Use this when you discover that a ticket you have been woken on depends on work that has not landed yet — declare the blocker and end your turn; the system will wake you again when the blocker resolves. Cycles are rejected.',
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID that should be blocked'),
 			blocked_by_task_id: z.string().describe('Task identifier or UUID of the upstream blocker'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			const teamId = args.team_id as string;
-			const taskId = args.task_id as string;
-			const taskScope = await assertProjectAccessForTask(db, auth, taskId);
-			if (taskScope) return { error: taskScope };
+			const scope = await resolveTaskScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId, taskId } = scope;
 			const blockerId = await resolveTaskId(db, teamId, args.blocked_by_task_id as string);
-			if (!blockerId) return { error: 'Blocking task not found in this team' };
-			const blockerScope = await assertProjectAccessForTask(db, auth, blockerId);
-			if (blockerScope) return { error: blockerScope };
-			if (blockerId === taskId) return { error: 'An task cannot block itself' };
+			if (!blockerId) return { error: 'Blocking task not found in this project' };
+			if (blockerId === taskId) return { error: 'A task cannot block itself' };
 			if (await wouldCreateCycle(db, taskId, blockerId)) {
 				return { error: 'Dependency would create a cycle' };
 			}
@@ -951,17 +950,14 @@ export function registerTools(
 		'remove_task_blocker',
 		"Remove a blocker between two tasks. Call this when a dependency that was previously declared no longer applies. If removing this dependency clears the downstream ticket's last open blocker, its assignee is woken automatically.",
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID that is currently blocked'),
 			blocked_by_task_id: z.string().describe('Task identifier or UUID of the blocker to remove'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			const teamId = args.team_id as string;
-			const taskId = args.task_id as string;
-			const taskScope = await assertProjectAccessForTask(db, auth, taskId);
-			if (taskScope) return { error: taskScope };
+			const scope = await resolveTaskScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId, taskId } = scope;
 			const blockerId = await resolveTaskId(db, teamId, args.blocked_by_task_id as string);
 			if (!blockerId) return { error: 'Blocking task not found' };
 			const r = await db.query(
@@ -981,18 +977,18 @@ export function registerTools(
 	tool(
 		server,
 		'list_agents',
-		'List agents for a team',
+		"List the agents on a project's team",
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 			const r = await db.query(
 				`SELECT m.id, ma.agent_type_id, ma.title, ma.slug,
 				        ma.monthly_budget_cents, ma.budget_used_cents, ma.runtime_status, ma.admin_status
 				 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.team_id = $1 ORDER BY ma.title`,
-				[args.team_id],
+				[scope.teamId],
 			);
 			return r.rows;
 		},
@@ -1177,12 +1173,8 @@ export function registerTools(
 		server,
 		'list_team_templates',
 		'List team templates (built-in Startup for software development, Blank, and custom). Use when recommending a team structure to hire.',
-		{
-			team_id: z.string().describe('Team ID'),
-		},
-		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+		{},
+		async (_args, db) => {
 			const r = await db.query<{
 				id: string;
 				name: string;
@@ -1214,14 +1206,8 @@ export function registerTools(
 	tool(
 		server,
 		'list_projects',
-		'List projects. Omit team_id to list every project across all teams in the instance (CEO cross-team access only) — each row carries team_name/team_slug. Pass team_id to scope to one team. Pass excerpt_chars (e.g. 300) to truncate description; omit for full content.',
+		'List projects. With CEO cross-team access (or as superuser) returns every project across the instance, each row carrying team_name/team_slug; a board user gets the projects on teams they belong to; an agent run gets its own project. Pass excerpt_chars (e.g. 300) to truncate description; omit for full content.',
 		{
-			team_id: z
-				.string()
-				.optional()
-				.describe(
-					'Team ID. Omit to list every project across all teams (CEO cross-team access only).',
-				),
 			excerpt_chars: z
 				.number()
 				.int()
@@ -1233,114 +1219,45 @@ export function registerTools(
 			const max = args.excerpt_chars as number | undefined;
 			const withExcerpt = (rows: Record<string, unknown>[]) =>
 				max == null ? rows : rows.map((row) => applyExcerpt(row, 'description', max));
-			const teamId = args.team_id as string | undefined;
 
-			if (teamId) {
-				const denied = await verifyTeamAccess(db, auth, teamId);
-				if (denied) return { error: denied };
-				const scoped = auth.type === AuthType.Agent && !auth.crossProject;
+			const instanceWide =
+				(auth.type === AuthType.Agent && auth.crossTeam) ||
+				(auth.type === AuthType.Admin && auth.isSuperuser);
+			if (instanceWide) {
 				const r = await db.query<Record<string, unknown>>(
-					scoped
-						? `SELECT id, team_id, name, slug, task_prefix, description, is_internal, created_at, updated_at
-						 FROM projects WHERE team_id = $1 AND id = $2`
-						: `SELECT id, team_id, name, slug, task_prefix, description, is_internal, created_at, updated_at
-						 FROM projects WHERE team_id = $1 ORDER BY name`,
-					scoped ? [teamId, auth.projectId] : [teamId],
+					`SELECT p.id, p.team_id, t.name AS team_name, t.slug AS team_slug,
+					        p.name, p.slug, p.task_prefix, p.description, p.is_internal,
+					        p.created_at, p.updated_at
+					 FROM projects p JOIN teams t ON t.id = p.team_id
+					 ORDER BY t.name, p.name`,
 				);
 				return withExcerpt(r.rows);
 			}
 
-			// No team_id → instance-wide listing across every team. Restricted to
-			// principals with cross-team reach (the CEO session) or a superuser admin;
-			// a project-scoped agent must name its team.
-			const instanceWide =
-				(auth.type === AuthType.Agent && auth.crossTeam) ||
-				(auth.type === AuthType.Admin && auth.isSuperuser);
-			if (!instanceWide) return { error: 'team_id is required' };
+			if (auth.type === AuthType.Admin) {
+				const r = await db.query<Record<string, unknown>>(
+					`SELECT DISTINCT p.id, p.team_id, t.name AS team_name, t.slug AS team_slug,
+					        p.name, p.slug, p.task_prefix, p.description, p.is_internal,
+					        p.created_at, p.updated_at
+					 FROM projects p
+					 JOIN teams t ON t.id = p.team_id
+					 JOIN members m ON m.team_id = p.team_id
+					 JOIN member_users mu ON mu.id = m.id
+					 WHERE mu.user_id = $1
+					 ORDER BY t.name, p.name`,
+					[auth.userId],
+				);
+				return withExcerpt(r.rows);
+			}
+
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 			const r = await db.query<Record<string, unknown>>(
-				`SELECT p.id, p.team_id, t.name AS team_name, t.slug AS team_slug,
-				        p.name, p.slug, p.task_prefix, p.description, p.is_internal,
-				        p.created_at, p.updated_at
-				 FROM projects p JOIN teams t ON t.id = p.team_id
-				 ORDER BY t.name, p.name`,
+				`SELECT id, team_id, name, slug, task_prefix, description, is_internal, created_at, updated_at
+				 FROM projects WHERE id = $1`,
+				[scope.projectId],
 			);
 			return withExcerpt(r.rows);
-		},
-		db,
-	);
-
-	tool(
-		server,
-		'create_project',
-		'Create a new project',
-		{
-			team_id: z.string().describe('Team ID'),
-			name: z.string().describe('Project name'),
-			description: z.string().optional().describe('Project description'),
-			task_prefix: z
-				.string()
-				.optional()
-				.describe('2–4 uppercase alphanumeric chars; derived from name if omitted'),
-		},
-		async (args, db, auth) => {
-			const teamId = args.team_id as string;
-			const denied = await verifyTeamAccess(db, auth, teamId);
-			if (denied) return { error: denied };
-			if (auth.type === AuthType.Agent && !auth.crossProject) {
-				return { error: 'Access denied: run is not scoped to create projects' };
-			}
-
-			const captainResult = await db.query<{ id: string }>(
-				`SELECT ma.id FROM member_agents ma
-				 JOIN members m ON m.id = ma.id
-				 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status
-				 LIMIT 1`,
-				[teamId, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
-			);
-			const captainMemberId = captainResult.rows[0]?.id;
-			if (!captainMemberId) {
-				return { error: 'No enabled Captain found for this team' };
-			}
-
-			const slug = (args.name as string)
-				.toLowerCase()
-				.replace(/[^a-z0-9]+/g, '-')
-				.replace(/^-|-$/g, '');
-			const prefixResult = await resolveProjectTaskPrefix(
-				db,
-				teamId,
-				args.task_prefix as string | undefined,
-				args.name as string,
-			);
-			if (!prefixResult.ok) return { error: prefixResult.message };
-
-			const { project, planningTask, deferCaptainPlanningWake } =
-				await createProjectWithPlanningTask(db, {
-					teamId,
-					captainMemberId,
-					name: args.name as string,
-					slug,
-					taskPrefix: prefixResult.prefix,
-					description: (args.description as string | undefined) ?? '',
-					events,
-					actorType: auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Admin,
-					actorMemberId: auth.type === AuthType.Agent ? auth.memberId : null,
-				});
-
-			broadcastRowChange(wsManager, wsRoom.team(teamId), 'projects', 'INSERT', project);
-			broadcastRowChange(wsManager, wsRoom.team(teamId), 'tasks', 'INSERT', planningTask);
-
-			if (!deferCaptainPlanningWake) {
-				await createWakeup(db, captainMemberId, teamId, WakeupSource.Assignment, {
-					task_id: planningTask.id,
-				});
-			}
-
-			return {
-				...project,
-				planning_task_id: planningTask.id,
-				planning_task_identifier: planningTask.identifier,
-			};
 		},
 		db,
 	);
@@ -1351,8 +1268,8 @@ export function registerTools(
 		'list_comments',
 		"List comments for an task. Returns up to 50 most-recent comments (newest first). Pass before (a comment ID) to walk older. Pass excerpt_chars (e.g. 500) to truncate long text comments; structured comments (system/option/task_link) are always returned whole. Each row includes parent_comment_id (UUID or null) so you can see reply threading — when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row's id is also how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<id> (e.g. IN-42#comment-<id>), which renders as a clickable link straight to that comment.",
 		{
-			team_id: z.string().describe('Team ID'),
-			task_id: z.string().describe('Task ID'),
+			project: projectArg(),
+			task_id: z.string().describe('Task identifier or UUID'),
 			before: z
 				.string()
 				.optional()
@@ -1367,17 +1284,11 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			const taskCheck = await db.query<{ project_id: string }>(
-				'SELECT project_id FROM tasks WHERE id = $1 AND team_id = $2',
-				[args.task_id, args.team_id],
-			);
-			if (taskCheck.rows.length === 0) return { error: 'Task not found in this team' };
-			const pDenied = assertProjectAccess(auth, taskCheck.rows[0].project_id);
-			if (pDenied) return { error: pDenied };
+			const scope = await resolveTaskScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId, taskId } = scope;
 			const conditions = ['ic.task_id = $1'];
-			const params: unknown[] = [args.task_id];
+			const params: unknown[] = [taskId];
 			if (args.before) {
 				params.push(args.before);
 				conditions.push(
@@ -1395,12 +1306,8 @@ export function registerTools(
 				 ORDER BY ic.created_at DESC, ic.id DESC LIMIT 50`,
 				params,
 			);
-			const viewerMemberId = await resolveActorMemberId(db, auth, args.team_id as string);
-			const reactionsByComment = await loadReactionsForTask(
-				db,
-				args.task_id as string,
-				viewerMemberId,
-			);
+			const viewerMemberId = await resolveActorMemberId(db, auth, teamId);
+			const reactionsByComment = await loadReactionsForTask(db, taskId, viewerMemberId);
 			const commentIds = r.rows.map((row) => row.id as string);
 			const attachmentsByComment = await loadAgentAttachmentsForComments(db, commentIds);
 			const enriched: Record<string, unknown>[] = r.rows.map((row) => ({
@@ -1434,8 +1341,8 @@ export function registerTools(
 		'add_reaction',
 		'React to a comment without waking its author. Use this to acknowledge mentions or signal "seen / picked up" without forcing the original commenter to run again. Prefer this over a follow-up create_comment when you have nothing substantive to add — comments wake the author, reactions do not. Only react when the situation calls for it: a clean handoff to your own new ticket (✓ on the mention), or a brief acknowledgement that a request landed. If you need the original commenter to read something, post a comment instead.',
 		{
-			team_id: z.string().describe('Team ID'),
-			task_id: z.string().describe('Task ID the comment belongs to'),
+			project: projectArg(),
+			task_id: z.string().describe('Task identifier or UUID the comment belongs to'),
 			comment_id: z
 				.string()
 				.uuid()
@@ -1447,17 +1354,15 @@ export function registerTools(
 			),
 		},
 		async (args, db, auth) => {
-			const teamId = args.team_id as string;
-			const denied = await verifyTeamAccess(db, auth, teamId);
-			if (denied) return { error: denied };
-			const taskScope = await assertProjectAccessForTask(db, auth, args.task_id as string);
-			if (taskScope) return { error: taskScope };
+			const scope = await resolveTaskScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId, taskId } = scope;
 			const memberId = await resolveActorMemberId(db, auth, teamId);
 			if (!memberId) return { error: 'No member identity for caller' };
 			const result = await addCommentReaction({
 				db,
 				teamId,
-				taskId: args.task_id as string,
+				taskId,
 				commentId: args.comment_id as string,
 				kind: args.kind as string,
 				memberId,
@@ -1465,7 +1370,7 @@ export function registerTools(
 			if (!result.ok) return { error: result.message };
 			broadcastRowChange(wsManager, wsRoom.team(teamId), 'comment_reactions', 'INSERT', {
 				comment_id: args.comment_id,
-				task_id: args.task_id,
+				task_id: taskId,
 				member_id: memberId,
 				kind: args.kind,
 			});
@@ -1483,8 +1388,8 @@ export function registerTools(
 		'remove_reaction',
 		'Remove your own reaction from a comment. Removing a reaction does not wake the comment author.',
 		{
-			team_id: z.string().describe('Team ID'),
-			task_id: z.string().describe('Task ID the comment belongs to'),
+			project: projectArg(),
+			task_id: z.string().describe('Task identifier or UUID the comment belongs to'),
 			comment_id: z
 				.string()
 				.uuid()
@@ -1496,17 +1401,15 @@ export function registerTools(
 			),
 		},
 		async (args, db, auth) => {
-			const teamId = args.team_id as string;
-			const denied = await verifyTeamAccess(db, auth, teamId);
-			if (denied) return { error: denied };
-			const taskScope = await assertProjectAccessForTask(db, auth, args.task_id as string);
-			if (taskScope) return { error: taskScope };
+			const scope = await resolveTaskScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId, taskId } = scope;
 			const memberId = await resolveActorMemberId(db, auth, teamId);
 			if (!memberId) return { error: 'No member identity for caller' };
 			const result = await removeCommentReaction({
 				db,
 				teamId,
-				taskId: args.task_id as string,
+				taskId,
 				commentId: args.comment_id as string,
 				kind: args.kind as string,
 				memberId,
@@ -1514,7 +1417,7 @@ export function registerTools(
 			if (!result.ok) return { error: result.message };
 			broadcastRowChange(wsManager, wsRoom.team(teamId), 'comment_reactions', 'DELETE', {
 				comment_id: args.comment_id,
-				task_id: args.task_id,
+				task_id: taskId,
 				member_id: memberId,
 				kind: args.kind,
 			});
@@ -1532,8 +1435,8 @@ export function registerTools(
 		'create_comment',
 		'Add a comment to an task. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert. To point at a specific earlier comment (in this ticket or another), write a comment link as <TASK-ID>#comment-<uuid> (e.g. IN-42#comment-<uuid>) using a comment id from list_comments — do not paraphrase "the comment above". When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID — it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.',
 		{
-			team_id: z.string().describe('Team ID'),
-			task_id: z.string().describe('Task ID'),
+			project: projectArg(),
+			task_id: z.string().describe('Task identifier or UUID'),
 			content: z.string().describe('Comment text'),
 			parent_comment_id: z
 				.string()
@@ -1543,21 +1446,14 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			// Verify task belongs to team
-			const taskCheck = await db.query<{ project_id: string }>(
-				'SELECT project_id FROM tasks WHERE id = $1 AND team_id = $2',
-				[args.task_id, args.team_id],
-			);
-			if (taskCheck.rows.length === 0) return { error: 'Task not found in this team' };
-			const pDenied = assertProjectAccess(auth, taskCheck.rows[0].project_id);
-			if (pDenied) return { error: pDenied };
+			const scope = await resolveTaskScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId, taskId } = scope;
 			let parentCommentId: string | null = null;
 			if (args.parent_comment_id) {
 				const parentCheck = await db.query(
 					'SELECT 1 FROM task_comments WHERE id = $1 AND task_id = $2',
-					[args.parent_comment_id, args.task_id],
+					[args.parent_comment_id, taskId],
 				);
 				if (parentCheck.rows.length === 0) {
 					return { error: 'parent_comment_id does not belong to this task' };
@@ -1568,18 +1464,12 @@ export function registerTools(
 			const content = { text: args.content };
 			const r = await db.query<{ id: string }>(
 				`INSERT INTO task_comments (task_id, author_member_id, parent_comment_id, content_type, content) VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
-				[
-					args.task_id,
-					authorMemberId,
-					parentCommentId,
-					CommentContentType.Text,
-					JSON.stringify(content),
-				],
+				[taskId, authorMemberId, parentCommentId, CommentContentType.Text, JSON.stringify(content)],
 			);
 			await fireCommentWakeups({
 				db,
-				taskId: args.task_id as string,
-				teamId: args.team_id as string,
+				taskId,
+				teamId,
 				commentId: r.rows[0].id,
 				content,
 				contentType: CommentContentType.Text,
@@ -1592,8 +1482,8 @@ export function registerTools(
 			trackBackground(
 				recordTaskLinks(
 					db,
-					args.team_id as string,
-					args.task_id as string,
+					teamId,
+					taskId,
 					args.content as string,
 					authorMemberId,
 					wsManager,
@@ -1623,8 +1513,8 @@ export function registerTools(
 		'request_credential',
 		'Ask the human assignee to provide a secret value (API key, SSH private key, OAuth token, etc.). Posts a structured comment on the task with a paste form. The agent never sees the value; it gets a placeholder string to embed in env vars or HTTP headers, which the egress proxy later substitutes. Returns immediately with the placeholder; the agent should stop work on whatever needed the credential and wait for a credential_provided wakeup. For HTTP-auth kinds (api_key, oauth_token, github_pat) allowed_hosts is REQUIRED — scope it to the provider API host(s) so the secret can only ever reach those hosts. Always ask for the narrowest scope and shortest expiry the provider offers. If a registered connector capability already covers the provider (e.g. a remote MCP server with OAuth), prefer register_connector over a raw paste.',
 		{
-			team_id: z.string().describe('Team ID'),
-			task_id: z.string().describe('Task ID — the request comment is posted here'),
+			project: projectArg(),
+			task_id: z.string().describe('Task identifier or UUID — the request comment is posted here'),
 			name: z
 				.string()
 				.describe(
@@ -1655,8 +1545,9 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveTaskScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId, taskId } = scope;
 
 			const name = args.name as string;
 			const validation = validateSecretName(name);
@@ -1681,19 +1572,6 @@ export function registerTools(
 						`proxy so the value is only injected into those hosts and never leaks ` +
 						`elsewhere. Re-call request_credential with allowed_hosts set.`,
 				};
-			}
-
-			const taskId = args.task_id as string;
-			const teamId = args.team_id as string;
-
-			const taskRow = await db.query<{ id: string; project_id: string | null }>(
-				'SELECT id, project_id FROM tasks WHERE id = $1 AND team_id = $2',
-				[taskId, teamId],
-			);
-			if (taskRow.rows.length === 0) return { error: 'Task not found in this team' };
-			if (taskRow.rows[0].project_id) {
-				const pDenied = assertProjectAccess(auth, taskRow.rows[0].project_id);
-				if (pDenied) return { error: pDenied };
 			}
 
 			const placeholder = credentialPlaceholder(name);
@@ -1761,8 +1639,10 @@ export function registerTools(
 		'register_connector',
 		'Register a third-party MCP server connector for the team and ask the human to authenticate. Posts a connect_required comment on the task with a Connect button; the human clicks it to run OAuth in their own browser. The agent never sees the token; subsequent runs receive the MCP via the egress proxy + placeholder substitution. Idempotent: re-registering an already-active connector returns its current state and fires the wakeup immediately. Auth mechanism is chosen automatically by what the provider supports: servers that advertise OAuth Dynamic Client Registration (most MCP servers) need only mcp_url and authorize with zero config. Providers whose Authorization Server cannot do DCR (e.g. GitHub) require a pre-registered client_id and use the device flow instead — these MUST be registered with provider_id set to a known registry key (e.g. "github"); passing only a raw mcp_url for such a provider will fail to authorize.',
 		{
-			team_id: z.string().describe('Team ID'),
-			task_id: z.string().describe('Task ID where the connect_required comment is posted'),
+			project: projectArg(),
+			task_id: z
+				.string()
+				.describe('Task identifier or UUID where the connect_required comment is posted'),
 			display_name: z
 				.string()
 				.describe(
@@ -1791,21 +1671,9 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
-			const teamId = args.team_id as string;
-			const taskId = args.task_id as string;
-			const denied = await verifyTeamAccess(db, auth, teamId);
-			if (denied) return { error: denied };
-
-			const taskRow = await db.query<{ id: string; project_id: string | null }>(
-				'SELECT id, project_id FROM tasks WHERE id = $1 AND team_id = $2',
-				[taskId, teamId],
-			);
-			if (taskRow.rows.length === 0) return { error: 'Task not found in this team' };
-			const projectId = taskRow.rows[0].project_id;
-			if (projectId) {
-				const pDenied = assertProjectAccess(auth, projectId);
-				if (pDenied) return { error: pDenied };
-			}
+			const scope = await resolveTaskScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId, taskId } = scope;
 
 			const displayName = (args.display_name as string).trim();
 			const providerId = (args.provider_id as string | undefined)?.trim() || null;
@@ -1906,7 +1774,7 @@ export function registerTools(
 		'fetch_skill_file',
 		"Fetch a remote agent skill file (Markdown describing how to use a third-party MCP server) and store it as a global skill (auto_load). Returns the skill_id and slug. Subsequent agent runs across every team get this skill file injected into their adapter's skills directory. Idempotent on the derived slug — re-fetching the same URL updates the existing skill.",
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			url: z
 				.string()
 				.describe(
@@ -1918,9 +1786,8 @@ export function registerTools(
 				.describe('Human-readable title shown in the team KB. Defaults to the URL pathname.'),
 		},
 		async (args, db, auth) => {
-			const teamId = args.team_id as string;
-			const denied = await verifyTeamAccess(db, auth, teamId);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 
 			const url = (args.url as string).trim();
 			let parsed: URL;
@@ -2010,7 +1877,7 @@ export function registerTools(
 		'list_approvals',
 		'List pending approvals. Pass excerpt_chars (e.g. 500) to truncate long fields inside payload (e.g. skill-proposal content); omit for full payload.',
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			excerpt_chars: z
 				.number()
 				.int()
@@ -2021,21 +1888,13 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			const scoped = auth.type === AuthType.Agent && !auth.crossProject;
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 			const r = await db.query<Record<string, unknown>>(
-				scoped
-					? `SELECT ${APPROVAL_COLUMNS} FROM approvals
-					 WHERE team_id = $1 AND status = $2::approval_status
-					   AND payload->>'project_id' = $3
-					 ORDER BY created_at DESC`
-					: `SELECT ${APPROVAL_COLUMNS} FROM approvals
-					 WHERE team_id = $1 AND status = $2::approval_status
-					 ORDER BY created_at DESC`,
-				scoped
-					? [args.team_id, ApprovalStatus.Pending, auth.projectId]
-					: [args.team_id, ApprovalStatus.Pending],
+				`SELECT ${APPROVAL_COLUMNS} FROM approvals
+				 WHERE team_id = $1 AND status = $2::approval_status
+				 ORDER BY created_at DESC`,
+				[scope.teamId, ApprovalStatus.Pending],
 			);
 			const max = args.excerpt_chars as number | undefined;
 			if (max == null) return r.rows;
@@ -2061,14 +1920,20 @@ export function registerTools(
 				[args.approval_id],
 			);
 			if (existing.rows.length === 0) return { error: 'Approval not found' };
-			const denied = await verifyTeamAccess(db, auth, existing.rows[0].team_id);
-			if (denied) return { error: denied };
+			const approvalTeamId = existing.rows[0].team_id;
 			const approvalProjectId = existing.rows[0].payload?.project_id;
 			if (typeof approvalProjectId === 'string') {
-				const pDenied = assertProjectAccess(auth, approvalProjectId);
-				if (pDenied) return { error: pDenied };
-			} else if (auth.type === AuthType.Agent && !auth.crossProject) {
-				return { error: 'Access denied: run is not scoped to resolve this approval' };
+				const denied = await authorizeScope(db, auth, {
+					teamId: approvalTeamId,
+					projectId: approvalProjectId,
+				});
+				if (denied) return { error: denied };
+			} else {
+				const denied = await authorizeTeam(db, auth, approvalTeamId);
+				if (denied) return { error: denied };
+				if (auth.type === AuthType.Agent && !auth.crossProject) {
+					return { error: 'Access denied: run is not scoped to resolve this approval' };
+				}
 			}
 
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
@@ -2102,26 +1967,26 @@ export function registerTools(
 	tool(
 		server,
 		'get_costs',
-		'Get cost summary for a team',
+		'Get the cost summary for a project',
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			group_by: z.enum(['agent', 'project', 'day']).optional().describe('Group costs by'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 			if (args.group_by === 'agent') {
 				const r = await db.query(
 					`SELECT ce.member_id, COALESCE(ma.title, m.display_name) AS agent_title, sum(ce.amount_cents)::int AS total_cents
 				 FROM cost_entries ce LEFT JOIN members m ON m.id = ce.member_id LEFT JOIN member_agents ma ON ma.id = ce.member_id
 				 WHERE ce.team_id = $1 GROUP BY ce.member_id, ma.title, m.display_name`,
-					[args.team_id],
+					[scope.teamId],
 				);
 				return r.rows;
 			}
 			const r = await db.query(
 				`SELECT sum(amount_cents)::int AS total_cents, count(*)::int AS entry_count FROM cost_entries WHERE team_id = $1`,
-				[args.team_id],
+				[scope.teamId],
 			);
 			return r.rows[0];
 		},
@@ -2134,7 +1999,7 @@ export function registerTools(
 		'get_agent_system_prompt',
 		"Read an agent's system prompt. Accessible by any agent or the admin in the same team. Returns the resolved role doc by default — `{{…}}` placeholders substituted with the real team name, mission, manager, KB, project docs, and team context — so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt.",
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			agent_id: z.string().describe('Target agent member ID'),
 			placeholders: z
 				.boolean()
@@ -2145,8 +2010,9 @@ export function registerTools(
 				),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
 
 			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Admin) {
 				return { error: 'Access denied' };
@@ -2156,14 +2022,14 @@ export function registerTools(
 				`SELECT ma.title, ma.slug
 				 FROM member_agents ma JOIN members m ON m.id = ma.id
 				 WHERE ma.id = $1 AND m.team_id = $2`,
-				[args.agent_id, args.team_id],
+				[args.agent_id, teamId],
 			);
 			if (agent.rows.length === 0) return { error: 'Agent not found in this team' };
 
-			const raw = await getAgentSystemPrompt(db, args.team_id as string, args.agent_id as string);
+			const raw = await getAgentSystemPrompt(db, teamId, args.agent_id as string);
 			const system_prompt = args.placeholders
 				? await resolveSystemPrompt(db, raw, {
-						teamId: args.team_id as string,
+						teamId,
 						agentId: args.agent_id as string,
 						mode: 'placeholders',
 					})
@@ -2178,7 +2044,7 @@ export function registerTools(
 		'get_agent_system_prompts',
 		`Read multiple agent system prompts in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}). Per-item \`mode\` chooses the resolution depth: \`placeholders\` (default) substitutes \`{{…}}\` with real values and stops, matching get_agent_system_prompt's default; \`preview\` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; \`raw\` returns the stored template untouched. Use this to compare prompts across the team in one round-trip — e.g. Captain auditing how team_context renders for every agent. For a single prompt, use get_agent_system_prompt.`,
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			items: z
 				.array(
 					z.object({
@@ -2196,9 +2062,9 @@ export function registerTools(
 				.describe(`Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} items.`),
 		},
 		async (args, db, auth) => {
-			const teamId = args.team_id as string;
-			const denied = await verifyTeamAccess(db, auth, teamId);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
 
 			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Admin) {
 				return { error: 'Access denied' };
@@ -2239,17 +2105,17 @@ export function registerTools(
 		'update_agent_system_prompt',
 		'Apply a system prompt change for an agent. Callable by the Coach agent (for after-task learned-rules updates) or by the Captain of the same team (during team-coherence reviews). The change is applied immediately and a revision snapshot is stored so the admin can restore previous versions.',
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			agent_id: z.string().describe('Target agent member ID'),
 			new_system_prompt: z.string().describe('The full updated system prompt'),
 			change_summary: z.string().describe('Summary of what changed and why'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
 
-			const allowed =
-				(await isCoach(db, auth)) || (await canCoordinateTeam(db, auth, args.team_id as string));
+			const allowed = (await isCoach(db, auth)) || (await canCoordinateTeam(db, auth, teamId));
 			if (!allowed) {
 				return {
 					error: 'Access denied: only the Coach or the Captain can update system prompts',
@@ -2259,7 +2125,7 @@ export function registerTools(
 			const agentCheck = await db.query<{ id: string }>(
 				`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
 				 WHERE ma.id = $1 AND m.team_id = $2`,
-				[args.agent_id, args.team_id],
+				[args.agent_id, teamId],
 			);
 			if (agentCheck.rows.length === 0) return { error: 'Agent not found in this team' };
 
@@ -2268,7 +2134,7 @@ export function registerTools(
 			const doc = await upsertDocument(db, undefined, {
 				scope: {
 					type: DocumentType.AgentSystemPrompt,
-					teamId: args.team_id as string,
+					teamId,
 					memberAgentId: args.agent_id as string,
 				},
 				content: args.new_system_prompt as string,
@@ -2277,7 +2143,7 @@ export function registerTools(
 			});
 
 			trackBackground(
-				enqueueTeamCoherenceReviewTask(db, args.team_id as string, 'prompt_updated').catch((e) =>
+				enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated').catch((e) =>
 					log.error('Failed to enqueue team coherence review after prompt update:', e),
 				),
 			);
@@ -2294,13 +2160,14 @@ export function registerTools(
 		'set_agent_summary',
 		'Save a short human-readable summary for an agent (≤1000 chars, single paragraph, plain prose). Callable by any agent in the same team or any the admin; the Captain is the expected caller, but agents may also self-summarise.',
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			agent_id: z.string().describe('Target agent member ID'),
 			summary: z.string().describe('The new summary, ≤1000 chars'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
 
 			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Admin) {
 				return { error: 'Access denied' };
@@ -2318,12 +2185,12 @@ export function registerTools(
 				   SELECT m.id FROM members m WHERE m.id = $2 AND m.team_id = $3
 				 )
 				 RETURNING id`,
-				[summary, args.agent_id, args.team_id],
+				[summary, args.agent_id, teamId],
 			);
 			if (r.rows.length === 0) return { error: 'Agent not found in this team' };
 
 			trackBackground(
-				enqueueTeamCoherenceReviewTask(db, args.team_id as string, 'summary_updated').catch((e) =>
+				enqueueTeamCoherenceReviewTask(db, teamId, 'summary_updated').catch((e) =>
 					log.error('Failed to enqueue team coherence review after summary update:', e),
 				),
 			);
@@ -2338,14 +2205,15 @@ export function registerTools(
 		'set_team_summary',
 		'Save the team-level collaboration summary for a team (≤4000 chars, plain prose, may span paragraphs). Only callable by the Captain of that team.',
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			summary: z.string().describe('The new team summary, ≤4000 chars'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
 
-			if (!(await canCoordinateTeam(db, auth, args.team_id as string))) {
+			if (!(await canCoordinateTeam(db, auth, teamId))) {
 				return { error: 'Access denied: only the Captain can update the team summary' };
 			}
 
@@ -2357,7 +2225,7 @@ export function registerTools(
 
 			await db.query('UPDATE teams SET summary = $1, updated_at = now() WHERE id = $2', [
 				summary,
-				args.team_id,
+				teamId,
 			]);
 
 			return { updated: true };
@@ -2370,15 +2238,16 @@ export function registerTools(
 		'set_agent_team_context',
 		"Save the team-relationships context for an agent (≤6000 chars, plain prose, second-person 'you', describes how this agent relates to its manager, direct reports, peers, indirect reports, and humans). This blob is injected into the agent's system prompt at the start of every run. Only callable by the Captain of the same team.",
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			agent_id: z.string().describe('Target agent member ID'),
 			content: z.string().describe('The new team_context, ≤6000 chars'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
 
-			if (!(await canCoordinateTeam(db, auth, args.team_id as string))) {
+			if (!(await canCoordinateTeam(db, auth, teamId))) {
 				return { error: 'Access denied: only the Captain can update agent team contexts' };
 			}
 
@@ -2394,7 +2263,7 @@ export function registerTools(
 				   SELECT m.id FROM members m WHERE m.id = $2 AND m.team_id = $3
 				 )
 				 RETURNING id`,
-				[content, args.agent_id, args.team_id],
+				[content, args.agent_id, teamId],
 			);
 			if (r.rows.length === 0) return { error: 'Agent not found in this team' };
 
@@ -2408,12 +2277,13 @@ export function registerTools(
 		'get_agent_team_context',
 		"Read an agent's stored team-relationships context. Useful for the Captain when regenerating siblings' contexts. Accessible by any agent or the admin in the same team.",
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			agent_id: z.string().describe('Target agent member ID'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
 
 			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Admin) {
 				return { error: 'Access denied' };
@@ -2423,7 +2293,7 @@ export function registerTools(
 				`SELECT ma.title, ma.slug, ma.team_context
 				 FROM member_agents ma JOIN members m ON m.id = ma.id
 				 WHERE ma.id = $1 AND m.team_id = $2`,
-				[args.agent_id, args.team_id],
+				[args.agent_id, teamId],
 			);
 			if (r.rows.length === 0) return { error: 'Agent not found in this team' };
 
@@ -2438,18 +2308,15 @@ export function registerTools(
 		'list_project_docs',
 		'List project documentation files (PRD, spec, implementation plan, etc.)',
 		{
-			team_id: z.string().describe('Team ID'),
-			project_id: z.string().describe('Project ID'),
+			project: projectArg(),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			const pDenied = assertProjectAccess(auth, args.project_id as string);
-			if (pDenied) return { error: pDenied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 			const docs = await listDocuments(db, {
 				type: DocumentType.ProjectDoc,
-				teamId: args.team_id as string,
-				projectId: args.project_id as string,
+				teamId: scope.teamId,
+				projectId: scope.projectId,
 			});
 			return {
 				files: docs.map((d) => ({
@@ -2468,14 +2335,11 @@ export function registerTools(
 		'list_project_assets',
 		"List the project's assets — non-markdown files (UI mockups, wireframes, diagrams, PDFs). Reference one in a comment or doc as `assets/<filename>` (e.g. assets/login-mockup.png), no backticks. You can author text-based assets (.html, .svg, .txt) with write_project_asset; binary assets (images, PDFs) are human-uploaded.",
 		{
-			team_id: z.string().describe('Team ID'),
-			project_id: z.string().describe('Project ID'),
+			project: projectArg(),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			const pDenied = assertProjectAccess(auth, args.project_id as string);
-			if (pDenied) return { error: pDenied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 			const assets = await db.query<{
 				id: string;
 				original_filename: string;
@@ -2484,7 +2348,7 @@ export function registerTools(
 			}>(
 				`SELECT id, original_filename, content_type, created_at
 				 FROM assets WHERE project_id = $1 ORDER BY created_at DESC`,
-				[args.project_id as string],
+				[scope.projectId],
 			);
 			return {
 				files: assets.rows.map((a) => ({
@@ -2503,19 +2367,15 @@ export function registerTools(
 		'write_project_asset',
 		'Save a text-based file to the project assets library so a human can open it (an interactive HTML mockup, an SVG diagram, a plain-text export). Allowed extensions: .html, .svg, .txt. Re-saving the same filename overwrites it, so the reference stays stable. Returns the reference string to drop into a comment as `assets/<filename>` (no backticks). HTML opens interactively in a new tab. Mockups and other deliverables belong here, never committed to the source repo.',
 		{
-			team_id: z.string().describe('Team ID'),
-			project_id: z.string().describe('Project ID'),
+			project: projectArg(),
 			filename: z.string().describe('Filename to write (e.g. "ui-mockups.html")'),
 			content: z.string().describe('File content'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			const pDenied = assertProjectAccess(auth, args.project_id as string);
-			if (pDenied) return { error: pDenied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 
-			const teamId = args.team_id as string;
-			const projectId = args.project_id as string;
+			const { teamId, projectId } = scope;
 			const filename = normalizeAssetFilename(args.filename as string);
 			const ext = extensionOf(filename);
 			const contentType = ext
@@ -2565,18 +2425,14 @@ export function registerTools(
 		'read_project_asset',
 		'Read a project asset\'s contents by filename (e.g. "ui-mockups.html") — the non-markdown files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports). Text-based assets (HTML, SVG, plain text) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a read-only container path under /workspace/.hezo/assets/ to open directly. For markdown project docs use read_project_doc instead.',
 		{
-			team_id: z.string().describe('Team ID'),
-			project_id: z.string().describe('Project ID'),
+			project: projectArg(),
 			filename: z.string().describe('Asset filename to read (e.g. "ui-mockups.html")'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			const pDenied = assertProjectAccess(auth, args.project_id as string);
-			if (pDenied) return { error: pDenied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 
-			const teamId = args.team_id as string;
-			const projectId = args.project_id as string;
+			const { teamId, projectId } = scope;
 			const filename = normalizeAssetFilename(args.filename as string);
 
 			const found = await db.query<{
@@ -2621,19 +2477,16 @@ export function registerTools(
 		'read_project_doc',
 		'Read a markdown project doc by filename (e.g. "spec.md") — the high-level project context (PRDs, specs, architecture decisions, research) that list_project_docs returns; the full body comes back inline as `content`. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so do not reach for the Read/cat file tools — always load a doc through this tool by its bare filename. For non-markdown assets (mockups, wireframes, diagrams) use read_project_asset instead.',
 		{
-			team_id: z.string().describe('Team ID'),
-			project_id: z.string().describe('Project ID'),
+			project: projectArg(),
 			filename: z.string().describe('Filename to read (e.g. "spec.md")'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			const pDenied = assertProjectAccess(auth, args.project_id as string);
-			if (pDenied) return { error: pDenied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 			const doc = await getDocument(db, {
 				type: DocumentType.ProjectDoc,
-				teamId: args.team_id as string,
-				projectId: args.project_id as string,
+				teamId: scope.teamId,
+				projectId: scope.projectId,
 				slug: args.filename as string,
 			});
 			if (!doc) return { error: `File '${args.filename}' not found` };
@@ -2647,16 +2500,13 @@ export function registerTools(
 		'write_project_doc',
 		'Write a project documentation file. Project docs are markdown only — the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead — reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
-			team_id: z.string().describe('Team ID'),
-			project_id: z.string().describe('Project ID'),
+			project: projectArg(),
 			filename: z.string().describe('Markdown filename to write (e.g. "spec.md")'),
 			content: z.string().describe('File content (markdown)'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
-			const pDenied = assertProjectAccess(auth, args.project_id as string);
-			if (pDenied) return { error: pDenied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 			if (!isMarkdownDocSlug(args.filename as string)) {
 				return {
 					error:
@@ -2667,8 +2517,8 @@ export function registerTools(
 			const doc = await upsertDocument(db, wsManager, {
 				scope: {
 					type: DocumentType.ProjectDoc,
-					teamId: args.team_id as string,
-					projectId: args.project_id as string,
+					teamId: scope.teamId,
+					projectId: scope.projectId,
 					slug: args.filename as string,
 				},
 				content: args.content as string,
@@ -2689,17 +2539,17 @@ export function registerTools(
 		'propose_skill',
 		"Propose a new skill for the team's skills database (reusable team know-how: MCP server usage, integration steps, conventions, how agents coordinate). Creates an approval request; when approved the skill is written to the skills database.",
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			skill_name: z.string().describe('Human-readable skill name'),
 			skill_slug: z.string().describe('URL-safe slug for the skill file'),
 			content: z.string().describe('Skill content (markdown)'),
 			reason: z.string().describe('Why this skill should be added'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const teamId = args.team_id as string;
+			const teamId = scope.teamId;
 			const result = await db.query<Record<string, unknown>>(
 				`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
 				 VALUES ($1, $2::approval_type, $3, $4::jsonb)
@@ -2731,7 +2581,7 @@ export function registerTools(
 		'semantic_search',
 		'Search the team skills database, tasks, and project docs using natural language. Returns ranked results by relevance.',
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			query: z.string().describe('Natural language search query'),
 			scope: z
 				.enum(['all', 'tasks', 'skills', 'project_docs'])
@@ -2740,8 +2590,8 @@ export function registerTools(
 			limit: z.number().optional().describe('Max results (default: 10)'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const projectScope = await resolveScope(db, auth, args);
+			if ('error' in projectScope) return projectScope;
 
 			const { isModelReady, semanticSearch } = await import('../services/embeddings');
 			if (!isModelReady()) {
@@ -2751,7 +2601,7 @@ export function registerTools(
 				};
 			}
 
-			const results = await semanticSearch(db, args.team_id as string, args.query as string, {
+			const results = await semanticSearch(db, projectScope.teamId, args.query as string, {
 				scope: (args.scope as 'all' | 'tasks' | 'skills' | 'project_docs') ?? 'all',
 				limit: (args.limit as number) ?? 10,
 			});
@@ -2767,12 +2617,12 @@ export function registerTools(
 		'list_skills',
 		"List the team's skills database — the manifest of reusable team know-how (MCP server usage, integration steps, conventions, how agents coordinate). Returns each skill's name, slug, and description; call get_skill to load a skill's full body on demand.",
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			tags: z.string().optional().describe('Filter by tag (comma-separated)'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 
 			let query = `SELECT id, name, slug, description, tags, created_at, updated_at
 			             FROM skills WHERE is_active = true`;
@@ -2796,12 +2646,12 @@ export function registerTools(
 		'get_skill',
 		"Load the full body of a skill from the team's skills database by slug. Use after list_skills surfaces a relevant skill in the manifest.",
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			slug: z.string().describe('Skill slug'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 
 			const result = await db.query(`SELECT ${SKILL_COLUMNS} FROM skills WHERE slug = $1 LIMIT 1`, [
 				args.slug,
@@ -2817,7 +2667,7 @@ export function registerTools(
 		'create_skill',
 		"Add or update a skill in the team's skills database directly (no approval needed) — record reusable team know-how such as MCP server usage, integration steps, conventions, and how agents coordinate. Use propose_skill when approval is required. If description is omitted it is derived from the skill body.",
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			name: z.string().describe('Human-readable skill name'),
 			slug: z.string().describe('URL-safe slug'),
 			content: z.string().describe('Skill content (markdown)'),
@@ -2825,8 +2675,8 @@ export function registerTools(
 			tags: z.string().optional().describe('Comma-separated tags'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const { createHash } = await import('node:crypto');
@@ -2877,11 +2727,11 @@ export function registerTools(
 		'list_mcp_connections',
 		'List the MCP server connections available to agent runs (instance-global — the same catalog for every team). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`.',
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 			const r = await db.query<{
 				id: string;
 				name: string;
@@ -2932,12 +2782,12 @@ export function registerTools(
 		'test_connector',
 		'Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server (bypassing the agent container and its egress proxy entirely). Returns the upstream status code, response excerpt, and the secret name + masked-token-prefix used. Use this when oauth_status says "active" but the MCP\'s tools are absent from your tool list — it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?".',
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			connector_id: z.string().describe('mcp_connections.id from list_mcp_connections'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 			const connectorId = args.connector_id as string;
 
 			const row = await db.query<{
@@ -3036,7 +2886,7 @@ export function registerTools(
 		'add_mcp_connection',
 		"Register an MCP server (SaaS HTTP or local stdio). Connections are instance-global — available to every team's agent runs. SaaS servers go into the agent's descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect.",
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			name: z
 				.string()
 				.describe('Server identifier — used as the MCP descriptor name and as the unique key.'),
@@ -3046,8 +2896,8 @@ export function registerTools(
 				.describe('For saas: { url, headers? }. For local: { command, args?, env?, package? }.'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 			const name = String(args.name ?? '').trim();
 			const kind = args.kind as 'saas' | 'local';
 			const config = args.config as Record<string, unknown>;
@@ -3096,14 +2946,14 @@ export function registerTools(
 		'remove_mcp_connection',
 		'Remove a registered MCP connection (instance-global — removing it affects every team). The next agent run will not see it.',
 		{
-			team_id: z.string().describe('Team ID'),
+			project: projectArg(),
 			id: z
 				.string()
 				.describe('mcp_connections.id (returned by add_mcp_connection or list_mcp_connections)'),
 		},
 		async (args, db, auth) => {
-			const denied = await verifyTeamAccess(db, auth, args.team_id as string);
-			if (denied) return { error: denied };
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
 			const r = await db.query<{ id: string }>(
 				'DELETE FROM mcp_connections WHERE id = $1 RETURNING id',
 				[args.id as string],

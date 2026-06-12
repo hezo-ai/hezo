@@ -87,7 +87,7 @@ async function postMcpComment(
 			method: 'tools/call',
 			params: {
 				name: 'create_comment',
-				arguments: { team_id: teamId, task_id: taskId, content },
+				arguments: { project: projectId, task_id: taskId, content },
 			},
 			id: 1,
 		}),
@@ -438,7 +438,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 				params: {
 					name: 'create_comment',
 					arguments: {
-						team_id: teamId,
+						project: projectId,
 						task_id: taskId,
 						content: text,
 						parent_comment_id: parentCommentId,
@@ -630,7 +630,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 				params: {
 					name: 'create_comment',
 					arguments: {
-						team_id: teamId,
+						project: projectId,
 						task_id: taskB,
 						content: 'Cross-task reply.',
 						parent_comment_id: parentIdInA,

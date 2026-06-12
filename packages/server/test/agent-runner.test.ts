@@ -451,7 +451,7 @@ describe('runAgent', () => {
 		expect(capturedUser).toBe('node');
 	});
 
-	it('injects Run Context with team, project, and task IDs into the system prompt', async () => {
+	it('injects Run Context with the project slug and current ticket into the system prompt', async () => {
 		const project = makeProject();
 		let capturedPrompt = '';
 		const docker = createMockDocker({
@@ -474,10 +474,13 @@ describe('runAgent', () => {
 
 		await runAgent(deps, makeAgent(), makeTask(), project);
 
+		const taskIdentifier = (
+			await db.query<{ identifier: string }>('SELECT identifier FROM tasks WHERE id = $1', [taskId])
+		).rows[0].identifier;
+
 		expect(capturedPrompt).toContain('## Run Context');
-		expect(capturedPrompt).toContain(`Team ID: ${teamId}`);
-		expect(capturedPrompt).toContain(`Project ID: ${projectId}`);
-		expect(capturedPrompt).toContain(`Task ID: ${taskId}`);
+		expect(capturedPrompt).toContain(`- Project: \`${projectSlug}\``);
+		expect(capturedPrompt).toContain(`- Current ticket: \`${taskIdentifier}\``);
 	});
 
 	it('handles coach review trigger', async () => {

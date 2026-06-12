@@ -361,7 +361,7 @@ describe('register_connector MCP tool', () => {
 				params: {
 					name: 'register_connector',
 					arguments: {
-						team_id: teamId,
+						project: projectId,
 						task_id: tId,
 						display_name: 'DatoCMS',
 						mcp_url: `${fake.url}/mcp`,
@@ -429,7 +429,7 @@ describe('register_connector MCP tool', () => {
 					params: {
 						name: 'register_connector',
 						arguments: {
-							team_id: teamId,
+							project: projectId,
 							task_id: tId,
 							display_name: 'Linear',
 							mcp_url: `${fake.url}/mcp`,
@@ -493,7 +493,7 @@ describe('fetch_skill_file MCP tool', () => {
 					method: 'tools/call',
 					params: {
 						name: 'fetch_skill_file',
-						arguments: { team_id: teamId, url: skillUrl, title: 'DatoCMS Skill' },
+						arguments: { project: projectId, url: skillUrl, title: 'DatoCMS Skill' },
 					},
 				}),
 			});
@@ -543,7 +543,7 @@ describe('fetch_skill_file MCP tool', () => {
 				method: 'tools/call',
 				params: {
 					name: 'fetch_skill_file',
-					arguments: { team_id: teamId, url: 'file:///etc/passwd' },
+					arguments: { project: projectId, url: 'file:///etc/passwd' },
 				},
 			}),
 		});

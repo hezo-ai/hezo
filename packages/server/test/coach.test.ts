@@ -305,7 +305,7 @@ describe('Agent system-prompt access', () => {
 				params: {
 					name: 'update_agent_system_prompt',
 					arguments: {
-						team_id: teamId,
+						project: projectId,
 						agent_id: architectId,
 						new_system_prompt: 'hostile rewrite',
 						change_summary: 'unauthorized',
@@ -330,7 +330,7 @@ describe('Agent system-prompt access', () => {
 				params: {
 					name: 'update_agent_system_prompt',
 					arguments: {
-						team_id: teamId,
+						project: projectId,
 						agent_id: architectId,
 						new_system_prompt: 'Captain coherence rewrite',
 						change_summary: 'team coherence review',
