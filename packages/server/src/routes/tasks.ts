@@ -39,6 +39,7 @@ import {
 	CreateTaskError,
 	type CreateTaskInput,
 	createTask,
+	createTaskBatch,
 } from '../services/tasks';
 import { createWakeup } from '../services/wakeup';
 
@@ -263,34 +264,14 @@ tasksRoutes.post('/projects/:projectId/tasks/batch', async (c) => {
 	}
 
 	const caller = await buildCreateTaskCaller(c, teamId);
-	const wsManager = c.get('wsManager');
-	const events = c.get('events');
 
-	const results = await Promise.all(
-		raw.map(async (item, index) => {
-			try {
-				const task = await createTask(
-					db,
-					teamId,
-					item as CreateTaskInput,
-					caller,
-					wsManager,
-					events,
-				);
-				return { index, ok: true as const, task };
-			} catch (e) {
-				if (e instanceof CreateTaskError) {
-					return { index, ok: false as const, error: e.message, code: e.code };
-				}
-				log.error('Unexpected error in batch task creation:', e);
-				return {
-					index,
-					ok: false as const,
-					error: e instanceof Error ? e.message : 'internal_error',
-					code: 'INTERNAL_ERROR' as const,
-				};
-			}
-		}),
+	const results = await createTaskBatch(
+		db,
+		teamId,
+		raw as CreateTaskInput[],
+		caller,
+		c.get('wsManager'),
+		c.get('events'),
 	);
 
 	return ok(c, results, 200);

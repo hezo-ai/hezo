@@ -149,6 +149,36 @@ describe('POST /teams/:teamId/tasks/batch (admin caller)', () => {
 		expect(dbRow.rows[0].created_by_member_id).not.toBeNull();
 	});
 
+	it('chains items with index tokens via the REST batch endpoint', async () => {
+		const r = await app.request(`/api/projects/${projectSlug}/tasks/batch`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				items: [
+					{ project_id: projectId, title: 'REST chain 1', assignee_id: engineerId },
+					{
+						project_id: projectId,
+						title: 'REST chain 2',
+						assignee_id: engineerId,
+						blocked_by_task_ids: ['#0'],
+					},
+				],
+			}),
+		});
+		expect(r.status).toBe(200);
+		const body = await r.json();
+		expect(body.data[0].ok).toBe(true);
+		expect(body.data[1].ok).toBe(true);
+		expect(body.data[0].task.status).toBe('backlog');
+		expect(body.data[1].task.status).toBe('blocked');
+
+		const deps = await db.query<{ blocked_by_task_id: string }>(
+			'SELECT blocked_by_task_id FROM task_dependencies WHERE task_id = $1',
+			[body.data[1].task.id],
+		);
+		expect(deps.rows).toEqual([{ blocked_by_task_id: body.data[0].task.id }]);
+	});
+
 	it('rejects empty, non-array, and oversized item lists', async () => {
 		const emptyRes = await app.request(`/api/projects/${projectSlug}/tasks/batch`, {
 			method: 'POST',
@@ -227,6 +257,120 @@ describe('MCP tool: create_tasks (agent caller)', () => {
 		expect(result[2]).toMatchObject({ index: 2, ok: false, code: 'FORBIDDEN' });
 		expect(result[2].error).toMatch(/subordinate/i);
 		expect(result[3]).toMatchObject({ index: 3, ok: false, code: 'FORBIDDEN' });
+	});
+
+	it('chains items with zero-based index tokens in blocked_by_task_ids', async () => {
+		const result = (await callMcpTool(token, 'create_tasks', {
+			project: projectId,
+			items: [
+				{ title: 'Phase 1 chain', assignee_id: engineerId },
+				{ title: 'Phase 2 chain', assignee_id: engineerId, blocked_by_task_ids: ['#0'] },
+				{ title: 'Phase 3 chain', assignee_id: engineerId, blocked_by_task_ids: ['#1'] },
+			],
+		})) as Array<{ ok: boolean; task: { id: string; status: string } }>;
+
+		expect(result).toHaveLength(3);
+		for (const row of result) expect(row.ok).toBe(true);
+		expect(result[0].task.status).toBe('backlog');
+		expect(result[1].task.status).toBe('blocked');
+		expect(result[2].task.status).toBe('blocked');
+
+		const deps = await db.query<{ task_id: string; blocked_by_task_id: string }>(
+			'SELECT task_id, blocked_by_task_id FROM task_dependencies WHERE task_id = ANY($1)',
+			[[result[1].task.id, result[2].task.id]],
+		);
+		expect(deps.rows).toHaveLength(2);
+		expect(deps.rows).toContainEqual({
+			task_id: result[1].task.id,
+			blocked_by_task_id: result[0].task.id,
+		});
+		expect(deps.rows).toContainEqual({
+			task_id: result[2].task.id,
+			blocked_by_task_id: result[1].task.id,
+		});
+	});
+
+	it('mixes identifier references and index tokens in one item', async () => {
+		const existing = (await callMcpTool(token, 'create_task', {
+			project: projectId,
+			title: 'Pre-existing blocker',
+			assignee_id: engineerId,
+		})) as { id: string; identifier: string };
+
+		const result = (await callMcpTool(token, 'create_tasks', {
+			project: projectId,
+			items: [
+				{ title: 'Mixed refs first', assignee_id: engineerId },
+				{
+					title: 'Mixed refs second',
+					assignee_id: engineerId,
+					blocked_by_task_ids: [existing.identifier, '#0'],
+				},
+			],
+		})) as Array<{ ok: boolean; task: { id: string; status: string } }>;
+
+		expect(result[0].ok).toBe(true);
+		expect(result[1].ok).toBe(true);
+		expect(result[1].task.status).toBe('blocked');
+
+		const deps = await db.query<{ blocked_by_task_id: string }>(
+			'SELECT blocked_by_task_id FROM task_dependencies WHERE task_id = $1',
+			[result[1].task.id],
+		);
+		const blockerIds = deps.rows.map((r) => r.blocked_by_task_id).sort();
+		expect(blockerIds).toEqual([existing.id, result[0].task.id].sort());
+	});
+
+	it('rejects self- and forward-referencing index tokens without inserting rows', async () => {
+		const result = (await callMcpTool(token, 'create_tasks', {
+			project: projectId,
+			items: [
+				{ title: 'Forward ref', assignee_id: engineerId, blocked_by_task_ids: ['#1'] },
+				{ title: 'Self ref', assignee_id: engineerId, blocked_by_task_ids: ['#1'] },
+			],
+		})) as Array<{ index: number; ok: boolean; code?: string; error?: string }>;
+
+		expect(result[0]).toMatchObject({ index: 0, ok: false, code: 'INVALID_REQUEST' });
+		expect(result[1]).toMatchObject({ index: 1, ok: false, code: 'INVALID_REQUEST' });
+		expect(result[0].error).toMatch(/earlier item/i);
+
+		const rows = await db.query(
+			"SELECT id FROM tasks WHERE team_id = $1 AND title IN ('Forward ref', 'Self ref')",
+			[teamId],
+		);
+		expect(rows.rows).toHaveLength(0);
+	});
+
+	it('errors an item whose token references a failed item, without aborting the rest', async () => {
+		const result = (await callMcpTool(token, 'create_tasks', {
+			project: projectId,
+			items: [
+				{ title: '', assignee_id: engineerId },
+				{ title: 'Depends on failed', assignee_id: engineerId, blocked_by_task_ids: ['#0'] },
+				{ title: 'Independent survivor', assignee_id: engineerId },
+			],
+		})) as Array<{ index: number; ok: boolean; code?: string; error?: string }>;
+
+		expect(result[0]).toMatchObject({ index: 0, ok: false });
+		expect(result[1]).toMatchObject({ index: 1, ok: false, code: 'INVALID_REQUEST' });
+		expect(result[1].error).toMatch(/failed to create/i);
+		expect(result[2]).toMatchObject({ index: 2, ok: true });
+	});
+
+	it('rejects malformed and out-of-range index tokens', async () => {
+		const result = (await callMcpTool(token, 'create_tasks', {
+			project: projectId,
+			items: [
+				{ title: 'Anchor item', assignee_id: engineerId },
+				{ title: 'Malformed token', assignee_id: engineerId, blocked_by_task_ids: ['#abc'] },
+				{ title: 'Out of range', assignee_id: engineerId, blocked_by_task_ids: ['#99'] },
+			],
+		})) as Array<{ index: number; ok: boolean; code?: string; error?: string }>;
+
+		expect(result[0]).toMatchObject({ index: 0, ok: true });
+		expect(result[1]).toMatchObject({ index: 1, ok: false, code: 'INVALID_REQUEST' });
+		expect(result[1].error).toMatch(/zero-based index/i);
+		expect(result[2]).toMatchObject({ index: 2, ok: false, code: 'INVALID_REQUEST' });
 	});
 
 	it('Zod schema rejects oversized item lists at the MCP boundary', async () => {

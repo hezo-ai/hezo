@@ -97,6 +97,7 @@ Heartbeats are the recurring forcing function that keeps the codebase clean as i
 {{> partials/common/no-redundant-comments}}
 {{> partials/common/linking-syntax}}
 {{> partials/common/subtask-preference}}
+{{> partials/common/ticket-dependencies}}
 {{> partials/common/check-before-create}}
 {{> partials/common/assignment-hierarchy}}
 {{> partials/common/mention-handoff}}

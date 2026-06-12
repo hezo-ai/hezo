@@ -56,6 +56,7 @@ You are the operator's guide to Hezo. Help them understand and set up their inst
 {{> partials/common/no-redundant-comments}}
 {{> partials/common/linking-syntax}}
 {{> partials/common/subtask-preference}}
+{{> partials/common/ticket-dependencies}}
 {{> partials/common/check-before-create}}
 {{> partials/common/mention-handoff}}
 
