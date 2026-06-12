@@ -8,6 +8,13 @@ interface ResolveContext {
 	agentId?: string;
 	dataDir?: string;
 	mode?: 'runtime' | 'preview' | 'placeholders';
+	/**
+	 * The session roams across every team rather than being scoped to one (the CEO
+	 * chat). Run-scoped blocks that pin to a single team/project — Project State,
+	 * Teammates, and the identifier list in Run Context — are suppressed, since
+	 * pinning them to the home team (HQ) would misreport every other project.
+	 */
+	crossTeam?: boolean;
 }
 
 const SHARED_INSTRUCTIONS = `
@@ -86,7 +93,7 @@ const SHARED_INSTRUCTIONS = `
   - \`oauth_status = "pending"\` → human hasn't clicked Connect yet. Don't repost the ask; the connect_required comment is still live.
   - \`oauth_status = "failed"\` → an attempt errored (read \`auth_error\` for the AS's message). Surface this to the human; they may need to retry or fix something.
   - \`oauth_status = "revoked"\` → a human explicitly disconnected. Don't auto-reconnect; ask first.
-- If your tool list doesn't include the MCP's tools but \`oauth_status\` is \`"active"\`, it's NOT a "waiting on auth" situation. Call \`test_connector(team_id, connector_id)\` — it resolves the stored token server-side and pings the MCP URL directly, bypassing the container entirely. The result tells you (a) whether the token is still valid against the provider (and if not, surface to the user so they can reconnect), or (b) the token is valid and the issue is in the container/proxy chain (post a wrap-up comment explaining what \`test_connector\` returned so the human can file a bug).
+- If your tool list doesn't include the MCP's tools but \`oauth_status\` is \`"active"\`, it's NOT a "waiting on auth" situation. Call \`test_connector(connector_id)\` — it resolves the stored token server-side and pings the MCP URL directly, bypassing the container entirely. The result tells you (a) whether the token is still valid against the provider (and if not, surface to the user so they can reconnect), or (b) the token is valid and the issue is in the container/proxy chain (post a wrap-up comment explaining what \`test_connector\` returned so the human can file a bug).
 `;
 
 export async function resolveSystemPrompt(
@@ -226,11 +233,15 @@ export async function resolveSystemPrompt(
 	}
 
 	if (ctx.mode !== 'preview') {
-		resolved += buildRunContextBlock(ctx);
+		resolved += await buildRunContextBlock(db, ctx);
 	}
-	resolved += await buildProjectStateBlock(db, ctx);
+	if (!ctx.crossTeam) {
+		resolved += await buildProjectStateBlock(db, ctx);
+	}
 	resolved += await buildTeamContextBlock(db, ctx);
-	resolved += await buildTeammatesBlock(db, ctx);
+	if (!ctx.crossTeam) {
+		resolved += await buildTeammatesBlock(db, ctx);
+	}
 	resolved += SHARED_INSTRUCTIONS;
 
 	return resolved;
@@ -410,7 +421,7 @@ async function buildProjectsContext(db: PGlite): Promise<string> {
 	);
 
 	const intro =
-		'Hezo is project-centric: one organisation containing many projects, each backed by its own dedicated team and Captain. As the instance CEO you have automatic cross-team reach over every one of them. The roster of project-teams below (HQ, your home, excluded) is regenerated every turn from the live database — trust it over memory, and never tell the operator a project does not exist without checking here first. When you name a project, ticket, or team in the chat box, use its slug, identifier, or name (e.g. the project `todo6`, ticket `TO-1`) — never a raw UUID. To act inside a project, pass its team to `list_tasks` / `list_agents`, or call `list_projects` with no `team_id` for this same live list.';
+		'Hezo is project-centric: one organisation containing many projects, each backed by its own dedicated team and Captain. As the instance CEO you have automatic cross-team reach over every one of them. The roster of project-teams below (HQ, your home, excluded) is regenerated every turn from the live database — trust it over memory, and never tell the operator a project does not exist without checking here first. When you name a project, ticket, or team in the chat box, use its slug, identifier, or name (e.g. the project `todo6`, ticket `TO-1`) — never a raw UUID. To read or act inside a project, pass its slug (shown on its line below) as the `project` argument to tools like `list_tasks` / `list_agents`; or call `list_projects` for this same live list.';
 
 	if (projects.rows.length === 0) {
 		return `${intro}\n\n_No project-teams exist yet beyond HQ. When the operator wants to start one, take it through project intake._`;
@@ -427,17 +438,41 @@ async function buildProjectsContext(db: PGlite): Promise<string> {
 	return `${intro}\n\n${lines}`;
 }
 
-function buildRunContextBlock(ctx: ResolveContext): string {
-	const lines = [`- Team ID: ${ctx.teamId}`];
-	if (ctx.projectId) lines.push(`- Project ID: ${ctx.projectId}`);
-	if (ctx.taskId) lines.push(`- Task ID: ${ctx.taskId}`);
+async function buildRunContextBlock(db: PGlite, ctx: ResolveContext): Promise<string> {
+	if (ctx.crossTeam) {
+		return `
+
+---
+
+## Run Context
+
+You are not scoped to a single project — you roam across the whole org, so there is no "current" project for tools to default to. To read or act inside a specific project, take its slug from the roster above and pass it as the \`project\` argument to tools like \`list_tasks\` / \`list_agents\`.`;
+	}
+
+	let projectSlug = '';
+	if (ctx.projectId) {
+		const r = await db.query<{ slug: string }>('SELECT slug FROM projects WHERE id = $1', [
+			ctx.projectId,
+		]);
+		projectSlug = r.rows[0]?.slug ?? '';
+	}
+	let taskIdentifier = '';
+	if (ctx.taskId) {
+		const r = await db.query<{ identifier: string }>('SELECT identifier FROM tasks WHERE id = $1', [
+			ctx.taskId,
+		]);
+		taskIdentifier = r.rows[0]?.identifier ?? '';
+	}
+
+	const lines: string[] = [];
+	if (projectSlug) lines.push(`- Project: \`${projectSlug}\``);
+	if (taskIdentifier) lines.push(`- Current ticket: \`${taskIdentifier}\``);
+
 	return `
 
 ---
 
 ## Run Context
 
-You are currently running with the following identifiers. Pass them directly to MCP tools that take \`team_id\` / \`project_id\` / \`task_id\` — do not guess or re-derive them.
-
-${lines.join('\n')}`;
+This run operates inside one project. MCP tools that take a \`project\` argument default to it — omit \`project\` to act here, and only pass another project's slug to reach a different one. Reference tickets by their identifier (e.g. \`${taskIdentifier || 'ABC-12'}\`), never a UUID.${lines.length ? `\n\n${lines.join('\n')}` : ''}`;
 }

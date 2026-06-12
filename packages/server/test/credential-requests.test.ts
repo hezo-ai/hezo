@@ -89,7 +89,7 @@ async function callRequestCredential(args: Record<string, unknown>): Promise<unk
 describe('request_credential MCP tool', () => {
 	it('rejects invalid name', async () => {
 		const result = (await callRequestCredential({
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			name: 'lowercase_name',
 			kind: 'api_key',
@@ -100,7 +100,7 @@ describe('request_credential MCP tool', () => {
 
 	it('rejects name with hyphens or special chars', async () => {
 		const result = (await callRequestCredential({
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			name: 'GITHUB-PAT',
 			kind: 'api_key',
@@ -111,7 +111,7 @@ describe('request_credential MCP tool', () => {
 
 	it('creates a credential_request comment and returns placeholder', async () => {
 		const result = (await callRequestCredential({
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			name: 'STRIPE_API_KEY',
 			kind: 'api_key',
@@ -137,7 +137,7 @@ describe('request_credential MCP tool', () => {
 
 	it('returns the existing comment on duplicate request (idempotent)', async () => {
 		const first = (await callRequestCredential({
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			name: 'DUPLICATE_KEY',
 			kind: 'api_key',
@@ -147,7 +147,7 @@ describe('request_credential MCP tool', () => {
 		expect(first.reused).toBe(false);
 
 		const second = (await callRequestCredential({
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			name: 'DUPLICATE_KEY',
 			kind: 'api_key',
@@ -165,9 +165,12 @@ describe('request_credential MCP tool', () => {
 			body: JSON.stringify({ name: 'Other Co' }),
 		});
 		const otherTeamId = (await otherTeamRes.json()).data.id;
+		const otherProject = (
+			await (await createTestProject(db, otherTeamId, { name: 'Other Main' })).json()
+		).data;
 
 		const result = (await callRequestCredential({
-			team_id: otherTeamId,
+			project: otherProject.id,
 			task_id: taskId,
 			name: 'CROSS_TEAM',
 			kind: 'api_key',
@@ -178,7 +181,7 @@ describe('request_credential MCP tool', () => {
 
 	it('rejects an api_key request with no allowed_hosts', async () => {
 		const result = (await callRequestCredential({
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			name: 'UNSCOPED_API_KEY',
 			kind: 'api_key',
@@ -197,7 +200,7 @@ describe('request_credential MCP tool', () => {
 
 	it('rejects an api_key request with an empty allowed_hosts array', async () => {
 		const result = (await callRequestCredential({
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			name: 'EMPTY_HOSTS_KEY',
 			kind: 'api_key',
@@ -209,7 +212,7 @@ describe('request_credential MCP tool', () => {
 
 	it('rejects oauth_token and github_pat requests with no allowed_hosts', async () => {
 		const oauth = (await callRequestCredential({
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			name: 'UNSCOPED_OAUTH',
 			kind: 'oauth_token',
@@ -218,7 +221,7 @@ describe('request_credential MCP tool', () => {
 		expect(oauth.error).toContain('allowed_hosts');
 
 		const pat = (await callRequestCredential({
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			name: 'UNSCOPED_PAT',
 			kind: 'github_pat',
@@ -229,7 +232,7 @@ describe('request_credential MCP tool', () => {
 
 	it('allows an ssh_private_key request with no allowed_hosts (exempt)', async () => {
 		const result = (await callRequestCredential({
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			name: 'DEPLOY_SSH_KEY',
 			kind: 'ssh_private_key',
@@ -242,7 +245,7 @@ describe('request_credential MCP tool', () => {
 
 	it('allows a confirmation-style api_key request with no allowed_hosts', async () => {
 		const result = (await callRequestCredential({
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			name: 'CONFIRM_NO_HOSTS',
 			kind: 'api_key',
@@ -259,7 +262,7 @@ describe('fulfill-credential endpoint', () => {
 
 	it('creates a credential request to fulfill', async () => {
 		const result = (await callRequestCredential({
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			name: 'FULFILL_TEST_KEY',
 			kind: 'api_key',
@@ -332,7 +335,7 @@ describe('fulfill-credential endpoint', () => {
 		// Exempt kind (other) can be requested with no hosts, leaving it
 		// undeliverable. The human scopes it when pasting the value.
 		const created = (await callRequestCredential({
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			name: 'FULFILL_HOST_OVERRIDE',
 			kind: 'other',
@@ -384,7 +387,7 @@ describe('fulfill-credential endpoint', () => {
 
 	it('rejects bad GitHub PAT format', async () => {
 		const reqResult = (await callRequestCredential({
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			name: 'BAD_PAT_TEST',
 			kind: 'github_pat',
@@ -407,7 +410,7 @@ describe('fulfill-credential endpoint', () => {
 
 	it('accepts a well-formed classic GitHub PAT', async () => {
 		const reqResult = (await callRequestCredential({
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			name: 'GOOD_PAT_TEST',
 			kind: 'github_pat',
@@ -428,7 +431,7 @@ describe('fulfill-credential endpoint', () => {
 
 	it('fulfills a confirmation-style request with confirmed=true', async () => {
 		const reqResult = (await callRequestCredential({
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			name: 'CONFIRM_TEST',
 			kind: 'other',

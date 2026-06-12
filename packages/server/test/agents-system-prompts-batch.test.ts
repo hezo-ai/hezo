@@ -8,8 +8,6 @@ import { authHeader, createTestApp, projectSlugFor } from './helpers/app';
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let teamId: string;
-let otherTeamId: string;
 let projectSlug: string;
 let otherProjectSlug: string;
 let agentAId: string;
@@ -33,10 +31,8 @@ beforeAll(async () => {
 	};
 
 	const team = await makeTeam('Batch Prompt Co');
-	teamId = team.id;
 	projectSlug = `${await projectSlugFor(db, team.id)}`;
 	const otherTeam = await makeTeam('Other Co');
-	otherTeamId = otherTeam.id;
 	otherProjectSlug = `${await projectSlugFor(db, otherTeam.id)}`;
 
 	const TEMPLATE = [
@@ -223,7 +219,7 @@ describe('POST /teams/:teamId/agents/system-prompts/batch', () => {
 describe('MCP tool: get_agent_system_prompts', () => {
 	it('returns per-item resolved prompts via MCP transport', async () => {
 		const result = (await callMcpTool('get_agent_system_prompts', {
-			team_id: teamId,
+			project: projectSlug,
 			items: [{ agent_id: agentAId, mode: 'preview' }, { agent_id: agentBId }],
 		})) as Array<{
 			ok: boolean;
@@ -243,7 +239,7 @@ describe('MCP tool: get_agent_system_prompts', () => {
 
 	it("returns per-item NOT_FOUND when an agent doesn't belong to the queried team", async () => {
 		const result = (await callMcpTool('get_agent_system_prompts', {
-			team_id: teamId,
+			project: projectSlug,
 			items: [{ agent_id: foreignAgentId }],
 		})) as Array<{ ok: boolean; error?: string }>;
 		expect(result).toHaveLength(1);

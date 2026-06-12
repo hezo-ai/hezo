@@ -285,34 +285,38 @@ describe('template resolver', () => {
 		expect(result).toContain('at most one');
 	});
 
-	it('injects Run Context with only team id when no project/task', async () => {
+	it('Run Context carries no project line when no project is set', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('## Run Context');
-		expect(result).toContain(`Team ID: ${teamId}`);
-		expect(result).not.toContain('Project ID:');
-		expect(result).not.toContain('Task ID:');
+		expect(result).not.toContain('- Project:');
+		expect(result).not.toContain('Current ticket:');
 	});
 
-	it('injects Run Context with team + project ids when task missing', async () => {
+	it('Run Context names the project by slug (never a UUID) when projectId is set', async () => {
+		const proj = await db.query<{ slug: string }>('SELECT slug FROM projects WHERE id = $1', [
+			projectId,
+		]);
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId, projectId });
+		expect(result).toContain(`- Project: \`${proj.rows[0].slug}\``);
+		expect(result).not.toContain(projectId);
+		expect(result).not.toContain('Current ticket:');
+	});
+
+	it('Run Context names the current ticket by identifier when taskId is set', async () => {
+		const inserted = await db.query<{ id: string; identifier: string }>(
+			`INSERT INTO tasks (team_id, project_id, number, identifier, title, status, priority, labels)
+			 VALUES ($1, $2, next_project_task_number($2), 'RC-1', 'Run context ticket', 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
+			 RETURNING id, identifier`,
+			[teamId, projectId],
+		);
+		const task = inserted.rows[0];
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
 			teamId,
 			projectId,
+			taskId: task.id,
 		});
-		expect(result).toContain(`Team ID: ${teamId}`);
-		expect(result).toContain(`Project ID: ${projectId}`);
-		expect(result).not.toContain('Task ID:');
-	});
-
-	it('injects Run Context with all three ids when taskId supplied', async () => {
-		const fakeTaskId = '11111111-2222-3333-4444-555555555555';
-		const result = await resolveSystemPrompt(db, 'Simple prompt', {
-			teamId,
-			projectId,
-			taskId: fakeTaskId,
-		});
-		expect(result).toContain(`Team ID: ${teamId}`);
-		expect(result).toContain(`Project ID: ${projectId}`);
-		expect(result).toContain(`Task ID: ${fakeTaskId}`);
+		expect(result).toContain(`- Current ticket: \`${task.identifier}\``);
+		expect(result).not.toContain(task.id);
 	});
 
 	it('preview mode substitutes placeholders, omits Run Context, keeps Teammates and Working Guidelines', async () => {
@@ -761,7 +765,6 @@ describe('team context block', () => {
 
 describe('project state block', () => {
 	let psTeamId: string;
-	let psTeamSlug: string;
 	let psProjectId: string;
 	let psProjectSlug: string;
 	let psCaptainMemberId: string;
@@ -782,7 +785,6 @@ describe('project state block', () => {
 		});
 		const psTeamData = ((await teamRes.json()) as any).data;
 		psTeamId = psTeamData.id;
-		psTeamSlug = psTeamData.slug;
 
 		// Materialize the team's single project up front so its prefix (PP) and
 		// planning ticket are the ones the Project State block reflects. Creating it
@@ -974,5 +976,54 @@ describe('projects context block ({{projects_context}})', () => {
 	it('does not inject the roster into prompts that omit the placeholder', async () => {
 		const result = await resolveSystemPrompt(db, 'No placeholder here', { teamId });
 		expect(result).not.toContain('Hezo is project-centric');
+	});
+});
+
+describe('cross-team chat resolution (crossTeam: true)', () => {
+	// The CEO chat roams across every project, so its prompt is resolved with the
+	// home team (HQ) as teamId/projectId only to load the CEO's own template. The
+	// single-team run blocks must NOT pin to that home team, or every project the
+	// operator asks about gets misreported as HQ's (empty) state.
+	it('suppresses the home-team-pinned Project State and Teammates blocks', async () => {
+		const result = await resolveSystemPrompt(db, 'Roster:\n{{projects_context}}', {
+			teamId,
+			projectId,
+			crossTeam: true,
+		});
+		expect(result).not.toContain('## Project State');
+		expect(result).not.toContain('No active tickets in this project');
+		expect(result).not.toContain('## Teammates');
+	});
+
+	it('replaces the Run Context identifier list with cross-team guidance', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			teamId,
+			projectId,
+			crossTeam: true,
+		});
+		expect(result).toContain('## Run Context');
+		expect(result).toContain('You are not scoped to a single project');
+		// The home-team identifiers must not be handed to the agent — no UUIDs leak.
+		expect(result).not.toContain(teamId);
+		expect(result).not.toContain(projectId);
+	});
+
+	it('still renders the cross-team project roster', async () => {
+		const result = await resolveSystemPrompt(db, '{{projects_context}}', {
+			teamId,
+			projectId,
+			crossTeam: true,
+		});
+		expect(result).toContain('Hezo is project-centric');
+	});
+
+	it('leaves the single-team blocks intact for a normal (non-crossTeam) run', async () => {
+		const proj = await db.query<{ slug: string }>('SELECT slug FROM projects WHERE id = $1', [
+			projectId,
+		]);
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId, projectId });
+		expect(result).toContain('## Project State');
+		expect(result).toContain('## Teammates');
+		expect(result).toContain(`- Project: \`${proj.rows[0].slug}\``);
 	});
 });

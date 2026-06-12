@@ -196,8 +196,7 @@ describe('agent-authored assets (write_project_asset)', () => {
 			taskId,
 		);
 		const result = await callToolViaMcp(agentToken, 'write_project_asset', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			filename: 'ui-mockups.html',
 			content: '<!doctype html><title>Mock</title><h1>v1</h1>',
 		});
@@ -223,14 +222,12 @@ describe('agent-authored assets (write_project_asset)', () => {
 			taskId,
 		);
 		const first = await callToolViaMcp(agentToken, 'write_project_asset', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			filename: 'iterate.html',
 			content: '<h1>first</h1>',
 		});
 		const second = await callToolViaMcp(agentToken, 'write_project_asset', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			filename: 'iterate.html',
 			content: '<h1>second-and-longer</h1>',
 		});
@@ -265,8 +262,7 @@ describe('agent-authored assets (write_project_asset)', () => {
 			taskId,
 		);
 		const result = await callToolViaMcp(agentToken, 'write_project_asset', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			filename: 'diagram.png',
 			content: 'not really a png',
 		});

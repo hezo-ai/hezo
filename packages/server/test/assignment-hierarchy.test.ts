@@ -176,8 +176,7 @@ describe('MCP create_task: agent assignment hierarchy', () => {
 			{ projectId },
 		);
 		const result = await callTool(archToken, 'create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Architect → Engineer (subordinate)',
 			assignee_id: engineerId,
 		});
@@ -195,8 +194,7 @@ describe('MCP create_task: agent assignment hierarchy', () => {
 			{ projectId },
 		);
 		const result = await callTool(engToken, 'create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Engineer self-assigning',
 			assignee_id: engineerId,
 		});
@@ -214,8 +212,7 @@ describe('MCP create_task: agent assignment hierarchy', () => {
 			{ projectId },
 		);
 		const result = await callTool(engToken, 'create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Engineer → QA (peer, should fail)',
 			assignee_id: qaEngineerId,
 		});
@@ -233,8 +230,7 @@ describe('MCP create_task: agent assignment hierarchy', () => {
 			{ projectId },
 		);
 		const result = await callTool(archToken, 'create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Architect → Captain (manager, should fail)',
 			assignee_id: captainId,
 		});
@@ -251,8 +247,7 @@ describe('MCP create_task: agent assignment hierarchy', () => {
 			{ projectId },
 		);
 		const result = await callTool(ceoToken, 'create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Captain → Engineer (transitive subordinate, should fail)',
 			assignee_id: engineerId,
 		});
@@ -261,8 +256,7 @@ describe('MCP create_task: agent assignment hierarchy', () => {
 
 	it('the admin can create_task assigned to anyone (rule does not apply to humans)', async () => {
 		const result = await callTool(token, 'create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Admin → Engineer (cross-hierarchy, allowed for humans)',
 			assignee_id: engineerId,
 		});
@@ -282,15 +276,14 @@ describe('MCP create_task: agent assignment hierarchy', () => {
 			{ projectId },
 		);
 		const ticket = await callTool(engToken, 'create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Engineer ticket needing QA review',
 			assignee_id: engineerId,
 		});
 		expect(ticket.error).toBeUndefined();
 
 		const comment = await callTool(engToken, 'create_comment', {
-			team_id: teamId,
+			project: projectId,
 			task_id: ticket.id,
 			content: 'Ready for review @qa-engineer — please pick this up when you have a slot.',
 		});
@@ -310,14 +303,13 @@ describe('MCP update_task: agent assignment hierarchy', () => {
 			{ projectId },
 		);
 		const task = await callTool(archToken, 'create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Architect drafts then hands off to engineer',
 			assignee_id: architectId,
 		});
 
 		const result = await callTool(archToken, 'update_task', {
-			team_id: teamId,
+			project: projectId,
 			task_id: task.id,
 			assignee_id: engineerId,
 		});
@@ -335,14 +327,13 @@ describe('MCP update_task: agent assignment hierarchy', () => {
 			{ projectId },
 		);
 		const task = await callTool(engToken, 'create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Engineer self-assigned, will try to dump on QA',
 			assignee_id: engineerId,
 		});
 
 		const result = await callTool(engToken, 'update_task', {
-			team_id: teamId,
+			project: projectId,
 			task_id: task.id,
 			assignee_id: qaEngineerId,
 		});
@@ -360,14 +351,13 @@ describe('MCP update_task: agent assignment hierarchy', () => {
 			{ projectId },
 		);
 		const task = await callTool(engToken, 'create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Engineer no-op reassign',
 			assignee_id: engineerId,
 		});
 
 		const result = await callTool(engToken, 'update_task', {
-			team_id: teamId,
+			project: projectId,
 			task_id: task.id,
 			assignee_id: engineerId,
 			progress_summary: 'still working',
@@ -379,13 +369,12 @@ describe('MCP update_task: agent assignment hierarchy', () => {
 		// Admin mints the ticket assigned to engineer, then reassigns it to
 		// product-lead even though engineer→product-lead is not a hierarchy edge.
 		const task = await callTool(token, 'create_task', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			title: 'Admin reassign across hierarchy',
 			assignee_id: engineerId,
 		});
 		const result = await callTool(token, 'update_task', {
-			team_id: teamId,
+			project: projectId,
 			task_id: task.id,
 			assignee_id: productLeadId,
 		});

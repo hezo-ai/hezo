@@ -216,6 +216,12 @@ describe('CeoSessionManager', () => {
 		expect(secondPrompt).toContain('Hi there');
 		expect(secondPrompt).toContain('And the next step?');
 
+		// The chat roams across projects, so the prompt must not carry the home-team
+		// (HQ) Project State block — that pin is what made the CEO report every project
+		// as empty. Run Context carries cross-team guidance instead of HQ identifiers.
+		expect(secondPrompt).not.toContain('## Project State');
+		expect(secondPrompt).toContain('You are not scoped to a single project');
+
 		await manager.stop();
 	});
 

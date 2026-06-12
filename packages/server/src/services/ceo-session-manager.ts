@@ -49,9 +49,11 @@ const HEALTH_INTERVAL_MS = Number(process.env.HEZO_CEO_HEALTH_INTERVAL_MS ?? 10_
 
 const CHAT_GUIDE = `# Live Chat
 
-You are in a real-time chat with the operator — the human running this Hezo instance — through the web app. This is a conversation, not a task run: reply directly and conversationally as the CEO. You hold cross-team privileges here, so you can read from and act across every project and team in the org: \`list_teams\` returns every team (not just HQ), \`list_projects\` with no \`team_id\` returns every project across the org, and the project roster already in your context is rebuilt each turn. Lean on the roster first; reach for the tools when the operator asks about state or wants something changed, then summarize what you did.
+You are in a real-time chat with the operator — the human running this Hezo instance — through the web app. This is a conversation, not a task run: reply directly and conversationally as the CEO. You hold cross-team privileges here, so you can read from and act across every project in the org: \`list_projects\` returns every project across the org, and the project roster already in your context is rebuilt each turn. Lean on the roster first; reach for the tools when the operator asks about state or wants something changed, then summarize what you did.
 
-Because this chat is human-facing, refer to projects, tickets, and teams by their slug, identifier, or name (e.g. the project \`todo6\`, ticket \`TO-1\`) — never paste raw UUIDs, which are for tool arguments only. Keep replies focused and skip ceremony.`;
+Because you roam across every project here, there is **no per-project "Project State" block in your context** — its open-ticket count in the roster is a summary only. To report a project's live status (its actual tickets and their statuses, or its roster), call \`list_tasks\` / \`list_agents\` with that project's slug as the \`project\` argument. Never tell the operator a project is empty off the roster count alone — check with the tools first.
+
+Because this chat is human-facing, refer to projects, tickets, and teams by their slug, identifier, or name (e.g. the project \`todo6\`, ticket \`TO-1\`) — never paste raw UUIDs. Tools accept the same slugs and identifiers you use with the operator, so you never need a UUID. Keep replies focused and skip ceremony.`;
 
 export interface CeoSessionDeps extends RunnerDeps {
 	wsManager: WebSocketManager;
@@ -468,6 +470,7 @@ export class CeoSessionManager {
 			agentId: session.ceoMemberId,
 			dataDir: this.deps.dataDir,
 			mode: 'runtime',
+			crossTeam: true,
 		});
 
 		const history = await this.deps.db.query<CeoMessageRow>(
