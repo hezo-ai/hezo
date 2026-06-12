@@ -14,17 +14,25 @@ On first boot Hezo generates an RSA-2048 CA at `<dataDir>/ca/`:
     └── ca.public.key       # CA public key derived from cert
 ```
 
-The layout matches what `http-mitm-proxy`'s CA loader expects so the same CA both signs server certs in the proxy and bind-mounts into the container's trust store.
+The same CA both signs per-host leaf certs in the proxy and bind-mounts into the container's trust store.
 
 The cert is world-readable so the unprivileged in-container `node` user can verify TLS handshakes against it. The private key stays host-owner-only.
 
 ## Proxy lifecycle
 
-One mockttp-equivalent (`http-mitm-proxy`) instance per run, listening on `127.0.0.1` in the `[20000, 29999]` port range. The `PortAllocator` reuses the previous port for the same agent ID where possible (debugging-friendly) and probes for binding availability before claiming.
+The proxy is implemented in-house (`packages/server/src/services/egress/proxy.ts`) — no third-party MITM library. One instance per run, listening on `127.0.0.1` in the `[20000, 29999]` port range. The `PortAllocator` reuses the previous port for the same agent ID where possible (debugging-friendly) and probes for binding availability before claiming.
 
-`EgressProxy.allocateRunProxy(runId, scope)` returns `{ proxyHost: 'host.docker.internal', proxyPort }`. `releaseRunProxy(runId)` shuts the instance down at run cleanup.
+`EgressProxy.allocateRunProxy(runId, scope)` returns `{ proxyHost: 'host.docker.internal', proxyPort }`. `releaseRunProxy(runId)` shuts the instance down at run cleanup, closing the front server and every per-host server.
 
 If the proxy fails to bind, the run aborts with `EgressProxyUnavailableError`. **There is no fall-through path.** A run that can't bring its proxy up is a run that would otherwise have to either (a) ship real secrets in the container env, or (b) drop the secrets and break — both worse than failing fast.
+
+## TLS termination architecture
+
+Each run's proxy is a single front `http.Server` on the allocated port. Plain proxied requests fire its `request` event (`isSSL=false`); HTTPS `CONNECT` tunnels fire its `connect` event.
+
+For a CONNECT, the proxy looks up (or builds) a **per-host `https.Server`** keyed by the CONNECT hostname, minting that host's leaf cert from the CA via mockttp's `getCA`/`generateCertificate`. The agent's raw CONNECT socket is bridged into that per-host server over a loopback `net.connect`; TLS terminates there, the decrypted request runs through substitution, and a fresh upstream request carries the substituted values on.
+
+Per-host servers are keyed **by hostname → live server object**, not by a cached bare port. Before reuse the proxy checks the server still owns its recorded port (`server.listening && server.address().port === recordedPort`); a server that has died or lost its port is rebuilt on the next tunnel. This makes the historical failure mode — a hostname routed to an ephemeral port that has since died (ECONNREFUSED) or been recycled to another host's server (cross-host wrong-SAN cert) — structurally impossible: the hostname never routes through a port that isn't currently owned by that host's live server. Concurrent first-touches for the same host share one in-flight build so a run never spins up duplicate servers.
 
 ## Container wiring
 
@@ -86,14 +94,27 @@ The audit row is only written when there was a substitution attempt — pure pas
 ## Edge cases
 
 - **HMAC-signed bodies** (e.g. AWS SigV4): substitution after signing is impossible. Use the local-MCP-with-proxy pattern — the MCP server itself does the signing using the substituted secret in its env.
-- **WebSocket / HTTP/2**: the proxy passes WebSocket upgrades through but does not scan frames; only the upgrade headers go through substitution. HTTP/2 is forwarded transparently.
-- **Streaming responses** (SSE etc.): the proxy does not buffer or modify response bodies.
-- **Cert minting cost**: ~50 ms per host on first request because cert generation uses `node-forge`. Hot upstreams stay cached for the lifetime of the per-run proxy.
+- **WebSocket / HTTP/2**: `Upgrade` requests are not proxied (no agent egress uses them today). An upgrade with no handler is closed cleanly rather than hung. Add an `upgrade`-event path if a real need appears.
+- **Streaming responses** (SSE etc.): the proxy does not buffer or modify response bodies — the upstream response is piped straight back to the client.
+- **Cert minting cost**: a few ms per host on first request. Per-host servers stay live for the lifetime of the per-run proxy, so a hot upstream mints once.
 - **Bypass for Hezo backend**: `NO_PROXY=host.docker.internal,localhost,127.0.0.1` excludes the agent → backend path. Verified for Node `undici`, Python `requests`, curl, git, Go.
 
 ## Bun compatibility
 
-The implementation uses `http-mitm-proxy` rather than `mockttp`. Mockttp's TLS server initialisation depends on Node's internal `connection`-listener layout and fails to start under Bun. `http-mitm-proxy` works on both runtimes and uses `node-forge` for cert generation — IP-as-CN certs include the right SAN entries automatically.
+The proxy runs on Bun in dev/prod. Bun's TLS stack diverges from Node's in ways that dictate the per-host-server topology — these were re-confirmed empirically on **Bun 1.3.14**:
+
+| Termination approach | Result under Bun |
+|---|---|
+| `new tls.TLSSocket(sock, { isServer: true })` in-process | **broken** — handshake never completes |
+| One server + `SNICallback` / `addContext` to pick the cert per-connection | **ignored** — serves the base cert; `SNICallback` never fires (`addContext` is a no-op stub) |
+| `https.Server.emit('connection', rawSocket)` (with or without `listen()`) | **broken** — handshake never completes |
+| `tls.createServer` / `https.createServer` **listening**, reached by a real socket | **works** |
+
+So TLS can only be terminated by a genuinely-listening server reached over a socket, and a single SNI-multiplexed server can't serve per-host certs — hence one listening `https.Server` per host, bridged from the CONNECT socket over loopback. Do not re-attempt the broken approaches above to "simplify"; they pass under Node/vitest and fail only on the production Bun runtime, so a Node-only test gives false confidence (this is why the egress proxy has a `bun test` tier).
+
+Upstream cert verification under Bun checks the connection's Host header verbatim, which carries the port for non-default ports and fails against a bare-host SAN. The forwarder drops the client Host header on the TLS path so the runtime regenerates it from the connection target.
+
+Cert generation uses mockttp's CA (`@peculiar/x509`), the same path the tests trust.
 
 ## Tests
 
