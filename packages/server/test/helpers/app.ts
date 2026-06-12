@@ -2,13 +2,24 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
-import { AgentAdminStatus, CAPTAIN_AGENT_SLUG } from '@hezo/shared';
+import {
+	AgentAdminStatus,
+	buildLoginMessage,
+	buildUnlockMessage,
+	CAPTAIN_AGENT_SLUG,
+	deriveAuthKeyPair,
+	deriveUnlockKey,
+	generateMnemonic,
+	signAuthMessage,
+} from '@hezo/shared';
+import type { Hono } from 'hono';
 import { encrypt } from '../../src/crypto/encryption';
-import { generateMasterKey, MasterKeyManager } from '../../src/crypto/master-key';
+import { MasterKeyManager } from '../../src/crypto/master-key';
 import { loadAgentRoles } from '../../src/db/agent-roles';
 import { seedBuiltins } from '../../src/db/seed';
 import { DomainEventBus } from '../../src/events/bus';
 import { toSlug, uniqueSlug } from '../../src/lib/slug';
+import type { Env } from '../../src/lib/types';
 import { signAdminJwt, signAgentJwt } from '../../src/middleware/auth';
 import { resolveProjectTaskPrefix } from '../../src/routes/projects';
 import { ContainerLogStreamer } from '../../src/services/container-logs';
@@ -62,8 +73,10 @@ export { encrypt };
 export async function createTestApp(opts: { webUrl?: string } = {}) {
 	const db = await createTestDbWithMigrations();
 	const masterKeyManager = new MasterKeyManager();
-	const masterKeyHex = generateMasterKey();
-	await masterKeyManager.initialize(db, masterKeyHex);
+	const mnemonic = generateMnemonic();
+	const unlockKeyHex = deriveUnlockKey(mnemonic);
+	const authKeys = deriveAuthKeyPair(mnemonic);
+	await masterKeyManager.initialize(db, unlockKeyHex, authKeys.publicKeyHex);
 	const roleDocs = await loadAgentRoles();
 	await seedBuiltins(db, roleDocs);
 	const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
@@ -117,7 +130,96 @@ export async function createTestApp(opts: { webUrl?: string } = {}) {
 		containerLogStreamer,
 	});
 
-	return { app, db, token, masterKeyHex, masterKeyManager, dataDir };
+	return { app, db, token, mnemonic, unlockKeyHex, authKeys, masterKeyManager, dataDir };
+}
+
+/**
+ * A test app whose master key was never set (state 'unset'): no canary, no
+ * enrolled public key, no superuser, no token. Mirrors a fresh production
+ * boot, which also seeds the default team before any key exists. For suites
+ * exercising /api/auth/setup.
+ */
+export async function createUnsetTestApp() {
+	const db = await createTestDbWithMigrations();
+	const masterKeyManager = new MasterKeyManager();
+	await masterKeyManager.initialize(db);
+	const roleDocs = await loadAgentRoles();
+	await seedBuiltins(db, roleDocs);
+	const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
+	const docker = createStubDocker();
+	const wsManager = new WebSocketManager();
+	const logs = new LogStreamBroker();
+	logs.setWsManager(wsManager);
+	const containerLogStreamer = new ContainerLogStreamer();
+	const events = new DomainEventBus();
+	const app = buildApp(
+		db,
+		masterKeyManager,
+		{ dataDir, webUrl: '' },
+		docker,
+		wsManager,
+		undefined,
+		logs,
+		null,
+		null,
+		containerLogStreamer,
+		events,
+	);
+	await seedDefaultTeam({
+		db,
+		docker,
+		dataDir,
+		wsManager,
+		masterKeyManager,
+		logs,
+		containerLogStreamer,
+	});
+	return { app, db, masterKeyManager, dataDir };
+}
+
+/**
+ * Drives the full challenge-response login over the app's HTTP surface and
+ * returns the /api/auth/verify response. `includeUnlockKey` mirrors the
+ * locked-server flow (signature covers nonce + unlock key). Extra `headers`
+ * land on the verify request — the one that captures the instance base URL.
+ */
+export async function loginViaAuthApi(
+	app: Hono<Env>,
+	mnemonic: string,
+	opts: { headers?: Record<string, string>; includeUnlockKey?: boolean } = {},
+): Promise<Response> {
+	const headers = { 'Content-Type': 'application/json', ...(opts.headers ?? {}) };
+	const challengeRes = await app.request('/api/auth/challenge', { method: 'POST', headers });
+	if (challengeRes.status !== 200) return challengeRes;
+	const challenge = (await challengeRes.json()) as {
+		data: { challenge_id: string; nonce: string };
+	};
+	const { challenge_id, nonce } = challenge.data;
+	const keys = deriveAuthKeyPair(mnemonic);
+	const body: Record<string, string> = { challenge_id };
+	if (opts.includeUnlockKey) {
+		const unlockKeyHex = deriveUnlockKey(mnemonic);
+		body.unlock_key = unlockKeyHex;
+		body.signature = signAuthMessage(keys.privateKey, buildUnlockMessage(nonce, unlockKeyHex));
+	} else {
+		body.signature = signAuthMessage(keys.privateKey, buildLoginMessage(nonce));
+	}
+	return app.request('/api/auth/verify', {
+		method: 'POST',
+		headers,
+		body: JSON.stringify(body),
+	});
+}
+
+/**
+ * Simulates a server restart over the same database: a fresh manager holds no
+ * key material, so the canary leaves it 'locked' until an unlock-flow login.
+ */
+export async function restartTestApp(db: PGlite, dataDir: string) {
+	const masterKeyManager = new MasterKeyManager();
+	await masterKeyManager.initialize(db);
+	const app = buildApp(db, masterKeyManager, { dataDir, webUrl: '' }, createStubDocker());
+	return { app, masterKeyManager };
 }
 
 export function authHeader(token: string) {

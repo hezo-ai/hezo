@@ -14,7 +14,6 @@ import { DEFAULT_PORT, AgentRuntime, type HezoConfig } from "@hezo/shared";
 
 ### Types
 
-- `HezoConfig` — server configuration (port, dataDir, masterKey, etc.)
 - `ConnectConfig` — OAuth gateway configuration
 - `MasterKeyState` — `"unset" | "locked" | "unlocked"`
 

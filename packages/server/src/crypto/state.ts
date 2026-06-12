@@ -44,9 +44,9 @@ export async function signOAuthState(
 	payload: OAuthStatePayload,
 	masterKeyManager: MasterKeyManager,
 ): Promise<string> {
-	const masterKeyHex = masterKeyManager.getMasterKeyHex();
-	if (!masterKeyHex) throw new Error('Master key not available');
-	const key = await deriveKey(masterKeyHex, 'oauth-state');
+	const unlockKeyHex = masterKeyManager.getUnlockKeyHex();
+	if (!unlockKeyHex) throw new Error('Master key not available');
+	const key = await deriveKey(unlockKeyHex, 'oauth-state');
 	const json = JSON.stringify(payload);
 	const encoded = Buffer.from(json).toString('base64url');
 	const signature = createHmac('sha256', key).update(encoded).digest('base64url');
@@ -67,9 +67,9 @@ export async function verifyOAuthState(
 	const signature = signedState.substring(dotIndex + 1);
 
 	try {
-		const masterKeyHex = masterKeyManager.getMasterKeyHex();
-		if (!masterKeyHex) return null;
-		const key = await deriveKey(masterKeyHex, 'oauth-state');
+		const unlockKeyHex = masterKeyManager.getUnlockKeyHex();
+		if (!unlockKeyHex) return null;
+		const key = await deriveKey(unlockKeyHex, 'oauth-state');
 		const expected = createHmac('sha256', key).update(encoded).digest('base64url');
 
 		if (signature.length !== expected.length) return null;

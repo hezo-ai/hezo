@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { decrypt, deriveKey, encrypt, generateMasterKey } from '../src/crypto/encryption';
+import { decrypt, deriveKey, encrypt, generateUnlockKey } from '../src/crypto/encryption';
 import { MasterKeyManager } from '../src/crypto/master-key';
 
 describe('encryption', () => {
@@ -18,8 +18,8 @@ describe('encryption', () => {
 		expect(() => decrypt(encrypted, key2)).toThrow();
 	});
 
-	it('generates a 64-char hex master key', () => {
-		const key = generateMasterKey();
+	it('generates a 64-char hex unlock key', () => {
+		const key = generateUnlockKey();
 		expect(key).toMatch(/^[0-9a-f]{64}$/);
 	});
 
@@ -55,14 +55,14 @@ describe('MasterKeyManager', () => {
 
 	it("returns 'unlocked' on first run with key provided", async () => {
 		const mgr = new MasterKeyManager();
-		const key = generateMasterKey();
+		const key = generateUnlockKey();
 		const state = await mgr.initialize(db, key);
 		expect(state).toBe('unlocked');
 		expect(mgr.getKey()).not.toBeNull();
 	});
 
 	it("returns 'unlocked' on subsequent run with correct key", async () => {
-		const key = generateMasterKey();
+		const key = generateUnlockKey();
 		const mgr1 = new MasterKeyManager();
 		await mgr1.initialize(db, key);
 
@@ -72,8 +72,8 @@ describe('MasterKeyManager', () => {
 	});
 
 	it("returns 'locked' on subsequent run with wrong key", async () => {
-		const correctKey = generateMasterKey();
-		const wrongKey = generateMasterKey();
+		const correctKey = generateUnlockKey();
+		const wrongKey = generateUnlockKey();
 		const mgr1 = new MasterKeyManager();
 		await mgr1.initialize(db, correctKey);
 
@@ -84,7 +84,7 @@ describe('MasterKeyManager', () => {
 	});
 
 	it("returns 'locked' on subsequent run with no key", async () => {
-		const key = generateMasterKey();
+		const key = generateUnlockKey();
 		const mgr1 = new MasterKeyManager();
 		await mgr1.initialize(db, key);
 
@@ -94,7 +94,7 @@ describe('MasterKeyManager', () => {
 	});
 
 	it("unlocks from 'locked' with correct key", async () => {
-		const key = generateMasterKey();
+		const key = generateUnlockKey();
 		const mgr1 = new MasterKeyManager();
 		await mgr1.initialize(db, key);
 
@@ -109,36 +109,82 @@ describe('MasterKeyManager', () => {
 	});
 
 	it("stays 'locked' when unlocking with wrong key", async () => {
-		const key = generateMasterKey();
+		const key = generateUnlockKey();
 		const mgr1 = new MasterKeyManager();
 		await mgr1.initialize(db, key);
 
 		const mgr2 = new MasterKeyManager();
 		await mgr2.initialize(db);
 
-		const result = await mgr2.unlock(db, generateMasterKey());
+		const result = await mgr2.unlock(db, generateUnlockKey());
 		expect(result).toBe(false);
 		expect(mgr2.getState()).toBe('locked');
 	});
 
-	it("unlocks from 'unset' by storing canary", async () => {
+	it("refuses unlock() from 'unset' — enrollment is explicit via setup()", async () => {
 		const mgr = new MasterKeyManager();
 		await mgr.initialize(db);
 		expect(mgr.getState()).toBe('unset');
 
-		const key = generateMasterKey();
-		const result = await mgr.unlock(db, key);
+		const result = await mgr.unlock(db, generateUnlockKey());
+		expect(result).toBe(false);
+		expect(mgr.getState()).toBe('unset');
+	});
+
+	it("setup() from 'unset' stores public key + canary atomically and unlocks", async () => {
+		const mgr = new MasterKeyManager();
+		await mgr.initialize(db);
+		const key = generateUnlockKey();
+		const publicKey = 'ab'.repeat(32);
+
+		const result = await mgr.setup(db, key, publicKey);
 		expect(result).toBe(true);
 		expect(mgr.getState()).toBe('unlocked');
+		expect(await mgr.getAuthPublicKeyHex(db)).toBe(publicKey);
 
-		// Verify canary was stored by initializing a new manager
+		// A fresh manager unlocks against the stored canary and reads the key.
 		const mgr2 = new MasterKeyManager();
-		const state = await mgr2.initialize(db, key);
+		expect(await mgr2.initialize(db, key)).toBe('unlocked');
+		expect(await mgr2.getAuthPublicKeyHex(db)).toBe(publicKey);
+	});
+
+	it('setup() refuses to run twice', async () => {
+		const mgr = new MasterKeyManager();
+		await mgr.initialize(db);
+		const key = generateUnlockKey();
+		expect(await mgr.setup(db, key, 'ab'.repeat(32))).toBe(true);
+		expect(await mgr.setup(db, generateUnlockKey(), 'cd'.repeat(32))).toBe(false);
+		expect(await mgr.getAuthPublicKeyHex(db)).toBe('ab'.repeat(32));
+	});
+
+	it('initialize() with both params enrolls a fresh database (CLI/env boot)', async () => {
+		const mgr = new MasterKeyManager();
+		const key = generateUnlockKey();
+		const state = await mgr.initialize(db, key, 'ab'.repeat(32));
 		expect(state).toBe('unlocked');
+		expect(await mgr.getAuthPublicKeyHex(db)).toBe('ab'.repeat(32));
+	});
+
+	it('initialize() backfills a missing public key on an already-enrolled database', async () => {
+		const key = generateUnlockKey();
+		const mgr1 = new MasterKeyManager();
+		// Canary without a public key (the bare test-helper path).
+		await mgr1.initialize(db, key);
+
+		const mgr2 = new MasterKeyManager();
+		await mgr2.initialize(db, key, 'ef'.repeat(32));
+		expect(mgr2.getState()).toBe('unlocked');
+		expect(await mgr2.getAuthPublicKeyHex(db)).toBe('ef'.repeat(32));
+	});
+
+	it('getAuthPublicKeyHex returns null when nothing is enrolled', async () => {
+		const mgr = new MasterKeyManager();
+		await mgr.initialize(db);
+		expect(await mgr.getAuthPublicKeyHex(db)).toBeNull();
 	});
 
 	it('fires onUnlock callback when transitioning to unlocked', async () => {
-		const key = generateMasterKey();
+		const key = generateUnlockKey();
 		const mgr = new MasterKeyManager();
 		await mgr.initialize(db);
 		expect(mgr.getState()).toBe('unset');
@@ -146,7 +192,7 @@ describe('MasterKeyManager', () => {
 		let callCount = 0;
 		mgr.onUnlock(() => callCount++);
 
-		await mgr.unlock(db, key);
+		await mgr.setup(db, key, 'ab'.repeat(32));
 		expect(callCount).toBe(1);
 
 		// Subsequent unlock with same key should NOT fire again
@@ -155,7 +201,7 @@ describe('MasterKeyManager', () => {
 	});
 
 	it('fires onUnlock immediately if already unlocked when registered', async () => {
-		const key = generateMasterKey();
+		const key = generateUnlockKey();
 		const mgr = new MasterKeyManager();
 		await mgr.initialize(db, key);
 		expect(mgr.getState()).toBe('unlocked');
@@ -168,7 +214,7 @@ describe('MasterKeyManager', () => {
 	});
 
 	it('fires onUnlock callback on initialize with key', async () => {
-		const key = generateMasterKey();
+		const key = generateUnlockKey();
 		const mgr = new MasterKeyManager();
 
 		let callCount = 0;

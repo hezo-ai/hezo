@@ -1,6 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { generateMasterKey, MasterKeyManager } from '../src/crypto/master-key';
+import { generateUnlockKey, MasterKeyManager } from '../src/crypto/master-key';
 import { loadAgentRoles } from '../src/db/agent-roles';
 import { seedBuiltins } from '../src/db/seed';
 import { generateTeamSSHKey, getTeamSSHKey } from '../src/services/ssh-keys';
@@ -13,7 +13,7 @@ let teamId: string;
 beforeAll(async () => {
 	db = await createTestDbWithMigrations();
 	masterKeyManager = new MasterKeyManager();
-	await masterKeyManager.initialize(db, generateMasterKey());
+	await masterKeyManager.initialize(db, generateUnlockKey());
 	await seedBuiltins(db, await loadAgentRoles());
 
 	// Create a team

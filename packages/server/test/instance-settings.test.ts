@@ -5,20 +5,20 @@ import { getSystemMeta, INSTANCE_BASE_URL_KEY } from '../src/lib/system-meta';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, loginViaAuthApi } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let nonSuperuserToken: string;
-let masterKeyHex: string;
+let mnemonic: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
 	app = ctx.app;
 	db = ctx.db;
 	token = ctx.token;
-	masterKeyHex = ctx.masterKeyHex;
+	mnemonic = ctx.mnemonic;
 
 	const nonAdmin = await db.query<{ id: string }>(
 		"INSERT INTO users (display_name, is_superuser) VALUES ('Regular Admin', false) RETURNING id",
@@ -31,11 +31,9 @@ afterAll(async () => {
 });
 
 function unlock(headers: Record<string, string> = {}) {
-	return app.request('/api/auth/token', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json', ...headers },
-		body: JSON.stringify({ master_key: masterKeyHex }),
-	});
+	// Base-URL capture fires from the /api/auth/verify request that completes
+	// the challenge dance, so the headers land there.
+	return loginViaAuthApi(app, mnemonic, { headers });
 }
 
 function patchBaseUrl(value: unknown, authToken = token) {

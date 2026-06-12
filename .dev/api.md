@@ -16,23 +16,46 @@ Timestamps are ISO 8601. IDs are UUIDs. Money is in cents.
 
 Three auth methods:
 
-### Bootstrap — Master Key Exchange
+### Bootstrap — Challenge-Response Master Key Auth
 
-`POST /auth/token` exchanges the master key for a board JWT. This is the bootstrap endpoint for initial access.
+The master key is a 12-word BIP39 phrase that **never leaves the client**. From its seed the client derives two independent keys (HKDF-SHA256, distinct salts):
+
+- an **Ed25519 auth keypair** — the private key signs server challenges; the public key is enrolled at setup and stored in `system_meta` (`auth_public_key`);
+- a 32-byte **unlock key** — the input to the server's at-rest key derivations (canary, secrets encryption, JWT signing). It transits only at setup and at unlock-after-restart, always inside an Ed25519-signed payload.
+
+Signed payloads use versioned, domain-separated messages: `hezo-auth-v1:setup:<pub>:<unlock>`, `hezo-auth-v1:login:<nonce>`, `hezo-auth-v1:unlock:<nonce>:<unlock>`. All key/nonce fields are lowercase hex (keys 64 chars, signatures 128, nonces 64).
+
+#### `POST /auth/setup`
+
+First-boot enrollment (master-key state `unset` only). Self-certifying: the signature (over the setup message) proves possession of the private key matching the submitted public key. Verified before anything is persisted; the public key and canary are stored in one transaction.
 
 Request:
 ```json
-{ "master_key": "..." }
+{ "public_key": "<64 hex>", "unlock_key": "<64 hex>", "signature": "<128 hex>" }
 ```
 
-Response:
+Response: `{ "data": { "token": "<user_jwt>" } }` — 400 `INVALID_REQUEST` (shape), 401 `INVALID_SIGNATURE`, 409 `ALREADY_SET`.
+
+#### `POST /auth/challenge`
+
+Issues a single-use nonce (in-memory, ~2 min TTL) for the client to sign.
+
+Response: `{ "data": { "challenge_id": "<uuid>", "nonce": "<64 hex>", "expires_in": 120 } }` — 409 `SETUP_REQUIRED` while `unset`.
+
+#### `POST /auth/verify`
+
+Completes login (and unlock, when the server is locked after a restart). The nonce is never echoed back — the server reconstructs the signed message from its stored copy, so the signature is the sole authenticator. The challenge is consumed before verification: a failed attempt burns it.
+
+Request (login while unlocked / unlock while locked):
 ```json
-{ "data": { "token": "<user_jwt>" } }
+{ "challenge_id": "<uuid>", "signature": "<128 hex>", "unlock_key": "<64 hex, only when unlocking>" }
 ```
+
+Response: `{ "data": { "token": "<user_jwt>" } }` — 400 `INVALID_REQUEST`, 401 `INVALID_CHALLENGE` (unknown/expired/used), 401 `INVALID_SIGNATURE`, 401 `UNLOCK_KEY_REQUIRED` (locked, no key supplied — client retries the dance with the key), 401 `INVALID_UNLOCK_KEY` (canary mismatch), 409 `SETUP_REQUIRED`. Supplying `unlock_key` while already unlocked succeeds (stale-locked-client tolerance).
 
 ### Board — User JWT
 
-All subsequent requests use a stateless JWT signed with the master key. No session cookies.
+All subsequent requests use a stateless JWT (HS256, secret derived from the unlock key). No session cookies.
 
 ```
 Authorization: Bearer <user_jwt>
@@ -1459,7 +1482,7 @@ Return the models this provider offers for the stored credential. Calls the prov
 
 ### Instance Settings
 
-Instance-wide settings live in the `system_meta` key-value table. The only setting today is the **instance base URL** — the public origin of this Hezo instance (e.g. `https://hezo.example.com`), used to build absolute entity links for external chat channels (Telegram). It is captured automatically from the request origin (`host` + first `x-forwarded-proto` entry) on the first successful `POST /auth/token` unlock and never overwritten after that; it stays editable on the global settings page.
+Instance-wide settings live in the `system_meta` key-value table. The only setting today is the **instance base URL** — the public origin of this Hezo instance (e.g. `https://hezo.example.com`), used to build absolute entity links for external chat channels (Telegram). It is captured automatically from the request origin (`host` + first `x-forwarded-proto` entry) on the first successful auth (`POST /auth/setup` or `POST /auth/verify`) and never overwritten after that; it stays editable on the global settings page.
 
 #### `GET /instance-settings`
 Returns `{ base_url: string | null }`. Any authenticated principal.
@@ -1889,7 +1912,7 @@ List installed plugins for a team.
 
 ### Auth & Team
 
-Current auth uses `POST /auth/token` to exchange the master key for a board JWT (see Authentication section above). OAuth login (GitHub/GitLab) is planned for Phase 6.5.
+Current auth is the challenge-response flow over `POST /auth/setup` / `/auth/challenge` / `/auth/verify` (see Authentication section above). OAuth login (GitHub/GitLab) is planned for Phase 6.5.
 
 **OAuth login endpoints — not yet implemented — planned for Phase 6.5.**
 
