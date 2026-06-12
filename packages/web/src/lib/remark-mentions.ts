@@ -4,10 +4,12 @@ import {
 	assetPath,
 	buildMentionRegex,
 	commentPath,
+	GLOBAL_INBOX_PATH,
 	type MentionToken,
 	parseMentionMatch,
 	projectDocPath,
 	projectInboxPath,
+	SKILLS_SETTINGS_PATH,
 	taskPath,
 } from '@hezo/shared';
 
@@ -38,6 +40,8 @@ type MdNode = ParentNode | TextNode | LinkNode;
 
 export interface AgentMentionData {
 	title: string;
+	/** Set in instance scope: the agent's home project (HQ agents → `hq`). */
+	projectSlug?: string;
 }
 
 export interface TaskMentionData {
@@ -62,11 +66,19 @@ export interface AssetMentionData {
 	id: string;
 	contentType: string;
 	signedUrl: string;
+	/** Set in instance scope: the project the asset belongs to. */
+	projectSlug?: string;
 }
 
 interface Options {
-	projectId: string;
+	/**
+	 * Project scope: links resolve against this project (agents, admin inbox,
+	 * KB). Instance scope (the global CEO chat) omits it and sets `instance` —
+	 * every link then derives its project from the per-entity resolution data.
+	 */
+	projectId?: string;
 	projectSlug?: string;
+	instance?: boolean;
 	agents: Map<string, AgentMentionData>;
 	tasks: Map<string, TaskMentionData>;
 	kbDocs: Map<string, KbDocMentionData>;
@@ -138,10 +150,10 @@ function buildLink(token: MentionToken, opts: Options): LinkNode | null {
 	const display = token.raw;
 
 	if (token.kind === 'asset') {
-		if (!projectSlug) return null;
-		const slug = projectSlug.toLowerCase();
 		const data = assets.get(token.filename);
 		if (!data) return null;
+		const slug = (data.projectSlug ?? projectSlug)?.toLowerCase();
+		if (!slug) return null;
 		return {
 			type: 'link',
 			url: assetPath(slug, token.filename),
@@ -163,7 +175,7 @@ function buildLink(token: MentionToken, opts: Options): LinkNode | null {
 		if (token.slug === ADMIN_MENTION_SLUG) {
 			return {
 				type: 'link',
-				url: projectInboxPath(projectId),
+				url: projectId ? projectInboxPath(projectId) : GLOBAL_INBOX_PATH,
 				children: [{ type: 'text', value: passiveDisplay }],
 				data: {
 					hProperties: {
@@ -175,14 +187,17 @@ function buildLink(token: MentionToken, opts: Options): LinkNode | null {
 		}
 		const data = agents.get(token.slug);
 		if (!data) return null;
+		const agentProject = data.projectSlug ?? projectId;
+		if (!agentProject) return null;
 		return {
 			type: 'link',
-			url: agentPath(projectId, token.slug),
+			url: agentPath(agentProject, token.slug),
 			children: [{ type: 'text', value: passiveDisplay }],
 			data: {
 				hProperties: {
 					'data-mention-agent-slug': token.slug,
 					'data-mention-agent-title': data.title,
+					'data-mention-agent-project-slug': agentProject,
 					'data-mention-passive': 'true',
 				},
 			},
@@ -193,7 +208,7 @@ function buildLink(token: MentionToken, opts: Options): LinkNode | null {
 		if (token.slug === ADMIN_MENTION_SLUG) {
 			return {
 				type: 'link',
-				url: projectInboxPath(projectId),
+				url: projectId ? projectInboxPath(projectId) : GLOBAL_INBOX_PATH,
 				children: [{ type: 'text', value: display }],
 				data: {
 					hProperties: {
@@ -204,14 +219,17 @@ function buildLink(token: MentionToken, opts: Options): LinkNode | null {
 		}
 		const data = agents.get(token.slug);
 		if (!data) return null;
+		const agentProject = data.projectSlug ?? projectId;
+		if (!agentProject) return null;
 		return {
 			type: 'link',
-			url: agentPath(projectId, token.slug),
+			url: agentPath(agentProject, token.slug),
 			children: [{ type: 'text', value: display }],
 			data: {
 				hProperties: {
 					'data-mention-agent-slug': token.slug,
 					'data-mention-agent-title': data.title,
+					'data-mention-agent-project-slug': agentProject,
 				},
 			},
 		};
@@ -253,33 +271,32 @@ function buildLink(token: MentionToken, opts: Options): LinkNode | null {
 	}
 
 	if (token.kind === 'filename') {
-		if (projectSlug) {
-			const slug = projectSlug.toLowerCase();
-			const perProject = projectDocs.get(slug);
-			const data = perProject?.get(token.filename);
-			if (data) {
-				return {
-					type: 'link',
-					url: projectDocPath(slug, token.filename),
-					children: [{ type: 'text', value: display }],
-					data: {
-						hProperties: {
-							'data-mention-doc-project-slug': slug,
-							'data-mention-doc-filename': token.filename,
-							'data-mention-size': String(data.size),
-							'data-mention-updated-at': data.updatedAt,
-						},
+		const docHit = findProjectDoc(token.filename, opts);
+		if (docHit) {
+			return {
+				type: 'link',
+				url: projectDocPath(docHit.projectSlug, token.filename),
+				children: [{ type: 'text', value: display }],
+				data: {
+					hProperties: {
+						'data-mention-doc-project-slug': docHit.projectSlug,
+						'data-mention-doc-filename': token.filename,
+						'data-mention-size': String(docHit.data.size),
+						'data-mention-updated-at': docHit.data.updatedAt,
 					},
-				};
-			}
+				},
+			};
 		}
 
 		const kbKey = token.filename.toLowerCase();
 		const kbData = kbDocs.get(kbKey);
 		if (kbData) {
+			const slugParam = `slug=${encodeURIComponent(kbKey)}`;
 			return {
 				type: 'link',
-				url: `/projects/${projectId}/skills?slug=${encodeURIComponent(kbKey)}`,
+				url: projectId
+					? `/projects/${projectId}/skills?${slugParam}`
+					: `${SKILLS_SETTINGS_PATH}?${slugParam}`,
 				children: [{ type: 'text', value: display }],
 				data: {
 					hProperties: {
@@ -293,5 +310,25 @@ function buildLink(token: MentionToken, opts: Options): LinkNode | null {
 		}
 	}
 
+	return null;
+}
+
+function findProjectDoc(
+	filename: string,
+	opts: Options,
+): { projectSlug: string; data: ProjectDocMentionData } | null {
+	if (opts.projectSlug) {
+		const slug = opts.projectSlug.toLowerCase();
+		const data = opts.projectDocs.get(slug)?.get(filename);
+		return data ? { projectSlug: slug, data } : null;
+	}
+	if (opts.instance) {
+		// Instance scope: the resolver returns a filename only when exactly one
+		// project has it, so the first per-project hit is the only one.
+		for (const [slug, perProject] of opts.projectDocs) {
+			const data = perProject.get(filename);
+			if (data) return { projectSlug: slug, data };
+		}
+	}
 	return null;
 }
