@@ -7,6 +7,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { decrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import { ref } from '../../lib/log-ref';
+import { closeServerWithDeadline } from '../../lib/net';
 import { logger } from '../../logger';
 import {
 	type AgentIdentity,
@@ -50,8 +51,27 @@ export class SshAgentServer {
 	private readonly listeners = new Map<string, Server>();
 	private readonly tcpListeners = new Map<string, Server>();
 	private readonly tokens = new Map<string, Buffer>();
+	// Accepted connections per run. `net.Server.close()` only completes once
+	// every accepted socket has ended, so release must be able to destroy any
+	// stragglers rather than wait on them.
+	private readonly connections = new Map<string, Set<Socket>>();
 
 	constructor(private readonly deps: SshAgentServerDeps) {}
+
+	private trackConnection(runId: string, socket: Socket): void {
+		let set = this.connections.get(runId);
+		if (!set) {
+			set = new Set();
+			this.connections.set(runId, set);
+		}
+		set.add(socket);
+		socket.on('close', () => {
+			const live = this.connections.get(runId);
+			if (!live) return;
+			live.delete(socket);
+			if (live.size === 0) this.connections.delete(runId);
+		});
+	}
 
 	async allocateRunSocket(
 		runId: string,
@@ -71,6 +91,7 @@ export class SshAgentServer {
 		});
 
 		const unixServer = createServer((socket) => {
+			this.trackConnection(runId, socket);
 			this.handleAuthenticatedConnection(socket, runId).catch((e) => {
 				log.error('ssh-agent connection error', {
 					run: ref(fullIdentity.label, runId),
@@ -95,6 +116,7 @@ export class SshAgentServer {
 		this.listeners.set(runId, unixServer);
 
 		const tcpServer = createServer((socket) => {
+			this.trackConnection(runId, socket);
 			this.handleTcpConnection(socket, runId).catch((e) => {
 				log.error('ssh-agent tcp connection error', {
 					run: ref(fullIdentity.label, runId),
@@ -129,14 +151,18 @@ export class SshAgentServer {
 	}
 
 	async releaseRunSocket(runId: string): Promise<void> {
+		for (const socket of this.connections.get(runId) ?? []) {
+			socket.destroy();
+		}
+		this.connections.delete(runId);
 		const server = this.listeners.get(runId);
 		if (server) {
-			await new Promise<void>((resolve) => server.close(() => resolve()));
+			await closeServerWithDeadline(server, `ssh-agent:${runId}`);
 			this.listeners.delete(runId);
 		}
 		const tcpServer = this.tcpListeners.get(runId);
 		if (tcpServer) {
-			await new Promise<void>((resolve) => tcpServer.close(() => resolve()));
+			await closeServerWithDeadline(tcpServer, `ssh-agent-tcp:${runId}`);
 			this.tcpListeners.delete(runId);
 		}
 		this.tokens.delete(runId);

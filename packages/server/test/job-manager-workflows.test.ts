@@ -2352,4 +2352,158 @@ describe('JobManager workflow methods', () => {
 			void taskBId;
 		});
 	});
+
+	describe('sweepStaleDispatches', () => {
+		it('reaps a dispatch whose run is terminal but whose completion never settled', async () => {
+			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
+			const manager = createJobManager();
+			const key = `${agentId}:${projectId}`;
+
+			// Simulate the wedge: the dispatched closure never settles on its own
+			// (it resolves only when the sweep aborts it), while its run row has
+			// long since gone terminal.
+			(manager as any).activeTaskRuns.add(taskId);
+			(manager as any).acquireProjectRun(projectId);
+			const launched = manager.launchTask(
+				key,
+				(signal) =>
+					new Promise((resolve) => {
+						signal.addEventListener('abort', () => resolve(null));
+					}),
+				60 * 60 * 1000,
+				{ memberId: agentId, taskId, projectId },
+			);
+			expect(launched).toBe(true);
+			await db.query(
+				`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at, finished_at, exit_code)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - interval '10 minutes', now() - interval '8 minutes', 0)`,
+				[teamId, agentId, taskId, HeartbeatRunStatus.Succeeded],
+			);
+			(manager as any).runningTasks.get(key).startedAt = Date.now() - 10 * 60 * 1000;
+
+			await (manager as any).sweepStaleDispatches();
+
+			expect(manager.isTaskRunning(key)).toBe(false);
+			expect((manager as any).activeTaskRuns.has(taskId)).toBe(false);
+			expect((manager as any).activeProjectRuns.has(projectId)).toBe(false);
+
+			// The wedged closure settling afterwards must not double-release the
+			// project refcount a fresh dispatch now holds.
+			await waitForBackground();
+			(manager as any).activeTaskRuns.add(taskId);
+			(manager as any).acquireProjectRun(projectId);
+			expect(
+				manager.launchTask(key, async () => null, 1000, {
+					memberId: agentId,
+					taskId,
+					projectId,
+				}),
+			).toBe(true);
+			expect((manager as any).activeProjectRuns.get(projectId)).toBe(1);
+			await waitForBackground();
+
+			manager.shutdown();
+			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
+		});
+
+		it('leaves a dispatch with a live run untouched', async () => {
+			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
+			const manager = createJobManager();
+			const key = `${agentId}:${projectId}`;
+
+			(manager as any).activeTaskRuns.add(taskId);
+			(manager as any).acquireProjectRun(projectId);
+			let settle: (() => void) | undefined;
+			manager.launchTask(
+				key,
+				() =>
+					new Promise<void>((resolve) => {
+						settle = resolve;
+					}),
+				60 * 60 * 1000,
+				{ memberId: agentId, taskId, projectId },
+			);
+			await db.query(
+				`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - interval '10 minutes')`,
+				[teamId, agentId, taskId, HeartbeatRunStatus.Running],
+			);
+			(manager as any).runningTasks.get(key).startedAt = Date.now() - 10 * 60 * 1000;
+
+			await (manager as any).sweepStaleDispatches();
+
+			expect(manager.isTaskRunning(key)).toBe(true);
+			expect((manager as any).activeTaskRuns.has(taskId)).toBe(true);
+
+			settle?.();
+			await waitForBackground();
+			manager.shutdown();
+			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
+		});
+	});
+
+	describe('completion bookkeeping when runAgent throws', () => {
+		it('releases the lock, idles the agent, and fails the wakeup', async () => {
+			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
+			await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+			await db.query(
+				'UPDATE execution_locks SET released_at = now() WHERE member_id = $1 AND released_at IS NULL',
+				[agentId],
+			);
+
+			// A log broker whose begin() throws makes runAgent throw outside its
+			// own try/catch — the exact shape of a completion path that never
+			// reaches onAgentComplete on its own.
+			// The dispatch path requires a running container on the project; the
+			// stub docker reports any container id as running.
+			await db.query(
+				`UPDATE projects SET container_id = 'stub-contain', container_status = 'running' WHERE id = $1`,
+				[projectId],
+			);
+			let threw = false;
+			const throwingLogs = new LogStreamBroker();
+			throwingLogs.begin = () => {
+				threw = true;
+				throw new Error('synthetic stream failure');
+			};
+			const manager = createJobManager({ logs: throwingLogs });
+
+			const wakeupRes = await db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload, created_at)
+				 VALUES ($1, $2, 'assignment', 'queued', $3::jsonb, now() - interval '30 seconds')
+				 RETURNING id`,
+				[agentId, teamId, JSON.stringify({ task_id: taskId, reason: 'unblocked' })],
+			);
+			const wakeupId = wakeupRes.rows[0].id;
+
+			await (manager as any).processWakeups();
+			await waitForBackground();
+
+			expect(threw).toBe(true);
+			const wakeup = await db.query<{ status: string }>(
+				'SELECT status FROM agent_wakeup_requests WHERE id = $1',
+				[wakeupId],
+			);
+			expect(wakeup.rows[0].status).toBe(WakeupStatus.Failed);
+
+			const locks = await db.query<{ id: string }>(
+				'SELECT id FROM execution_locks WHERE member_id = $1 AND released_at IS NULL',
+				[agentId],
+			);
+			expect(locks.rows).toHaveLength(0);
+
+			const agent = await db.query<{ runtime_status: string }>(
+				'SELECT runtime_status FROM member_agents WHERE id = $1',
+				[agentId],
+			);
+			expect(agent.rows[0].runtime_status).toBe(AgentRuntimeStatus.Idle);
+
+			expect(manager.isTaskRunning(`${agentId}:${projectId}`)).toBe(false);
+			expect((manager as any).activeTaskRuns.has(taskId)).toBe(false);
+
+			manager.shutdown();
+			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
+			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
+		});
+	});
 });
