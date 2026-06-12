@@ -5,12 +5,11 @@ import type { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
-import type { IProxy } from 'http-mitm-proxy';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import { type HezoCA, loadOrCreateCA } from '../src/services/egress/ca';
-import { detectCrossHostCertRoute, EgressProxy } from '../src/services/egress/proxy';
+import { EgressProxy } from '../src/services/egress/proxy';
 import { safeClose } from './helpers';
 import { createTestApp, createTestProject } from './helpers/app';
 
@@ -399,189 +398,113 @@ async function fetchHttpsThroughProxy(
 	});
 }
 
-describe('detectCrossHostCertRoute', () => {
-	const scope = { teamId: 't', agentId: 'a', label: 'run' };
-	type Entry = {
-		port: number;
-		server?: { listening?: boolean; address?: () => { port?: number } | null };
-	};
-	const live = (port: number): Entry => ({
-		port,
-		server: { listening: true, address: () => ({ port }) },
-	});
-	const dead = (port: number): Entry => ({
-		port,
-		server: { listening: false, address: () => null },
-	});
-	// A server whose `listening` flag lies: still true although the server is
-	// no longer bound to any port — the observed production desync.
-	const zombie = (port: number): Entry => ({
-		port,
-		server: { listening: true, address: () => null },
-	});
-	const alias = (port: number): Entry => ({ port });
-	const fakeProxy = (sslServers: Record<string, Entry>) => ({ sslServers }) as unknown as IProxy;
+/** Open a CONNECT tunnel for `targetHost`, complete the client↔proxy TLS
+ * handshake, and return a descriptor of the leaf cert the proxy served (CN +
+ * subjectAltName). No upstream is contacted, so the host need not resolve. */
+async function servedCertThroughProxy(
+	proxyPort: number,
+	targetHost: string,
+	caCert: string,
+): Promise<string> {
+	const { connect: netConnect } = await import('node:net');
+	const { connect: tlsConnect } = await import('node:tls');
 
-	it('flags two unrelated hosts sharing one live internal server port and evicts both', () => {
-		const logged = new Set<string>();
-		const sslServers: Record<string, Entry> = {
-			'api.githubcopilot.com': live(5001),
-			'registry.npmjs.org': live(5001),
+	const tunnel = await new Promise<Socket>((resolve, reject) => {
+		const sock = netConnect({ host: '127.0.0.1', port: proxyPort });
+		const onData = (chunk: Buffer) => {
+			const statusLine = chunk.toString().split('\r\n')[0] ?? '';
+			sock.removeListener('data', onData);
+			if (/^HTTP\/1\.[01] 200/.test(statusLine)) resolve(sock);
+			else reject(new Error(`CONNECT failed: ${statusLine}`));
 		};
-		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
-		expect(logged.has('5001')).toBe(true);
-		// Ownership is ambiguous (both servers claim the port), so both routes
-		// are evicted and rebuild fresh servers on their next tunnel.
-		expect(Object.keys(sslServers)).toEqual([]);
+		sock.on('connect', () => {
+			sock.write(`CONNECT ${targetHost}:443 HTTP/1.1\r\nHost: ${targetHost}:443\r\n\r\n`);
+		});
+		sock.on('data', onData);
+		sock.on('error', reject);
+		sock.setTimeout(20_000, () => sock.destroy(new Error('CONNECT timed out')));
 	});
 
-	it('evicts both hosts when one shared server object is registered under unrelated hostnames', () => {
-		const logged = new Set<string>();
-		// The library's `hosts.forEach(h => sslServers[h] = sslServer)` can register ONE server
-		// object under unrelated hostnames. Both keys are the same object, so `owningServers`
-		// collapses to size 1 — the ambiguous-owner path can't fire. A single server spanning
-		// unrelated wildcards is itself the cross-host route. (Production: registry.npmjs.org and
-		// github.com both reported listening:true, addressPort:64283 — only possible if they share
-		// one live socket.)
-		const shared = live(64283);
-		const sslServers: Record<string, Entry> = {
-			'registry.npmjs.org': shared,
-			'github.com': shared,
-		};
-		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
-		expect(logged.has('64283')).toBe(true);
-		expect(Object.keys(sslServers)).toEqual([]);
-	});
-
-	it('evicts a legit wildcard pair only when an unrelated live server also claims the port', () => {
-		const logged = new Set<string>();
-		const wildcardOwner = live(5009); // serves *.example.com
-		const sslServers: Record<string, Entry> = {
-			'api.example.com': wildcardOwner,
-			'cdn.example.com': wildcardOwner, // same object, same wildcard (legit)
-			'registry.npmjs.org': live(5009), // unrelated live server on same port
-		};
-		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
-		expect(logged.has('5009')).toBe(true);
-		// Two distinct owners → ambiguous → evict all; each re-mints next tunnel.
-		expect(Object.keys(sslServers)).toEqual([]);
-	});
-
-	it('does not flag distinct hosts on distinct ports', () => {
-		const logged = new Set<string>();
-		detectCrossHostCertRoute(
-			fakeProxy({
-				'api.githubcopilot.com': live(5001),
-				'registry.npmjs.org': live(5002),
-			}),
-			scope,
-			'run-1',
-			logged,
+	return new Promise<string>((resolve, reject) => {
+		const tls = tlsConnect(
+			{ socket: tunnel, servername: targetHost, ca: [caCert], rejectUnauthorized: false },
+			() => {
+				const peer = tls.getPeerCertificate();
+				const descriptor = `${peer.subject?.CN ?? ''} ${peer.subjectaltname ?? ''}`;
+				tls.end();
+				resolve(descriptor);
+			},
 		);
-		expect(logged.size).toBe(0);
+		tls.on('error', reject);
+		tls.setTimeout(20_000, () => tls.destroy(new Error('tls handshake timed out')));
 	});
+}
 
-	it('does not flag subdomains legitimately sharing a wildcard server', () => {
-		const logged = new Set<string>();
-		detectCrossHostCertRoute(
-			fakeProxy({
-				'api.example.com': live(5003),
-				'cdn.example.com': alias(5003),
-				'*.example.com': alias(5003),
-			}),
-			scope,
-			'run-1',
-			logged,
-		);
-		expect(logged.size).toBe(0);
-	});
+/** Reach into the proxy's per-run internals and close the live per-host server
+ * for a hostname, leaving a stale map entry — the production death scenario. */
+async function killHostServer(proxy: EgressProxy, runId: string, host: string): Promise<void> {
+	const runs = (
+		proxy as unknown as {
+			runs: Map<string, { hostServers: Map<string, { server: HttpsServer }> }>;
+		}
+	).runs;
+	const server = runs.get(runId)?.hostServers.get(host)?.server;
+	if (!server) throw new Error(`no per-host server for ${host}`);
+	await new Promise<void>((resolve) => server.close(() => resolve()));
+}
 
-	it('purges a stale host whose server stopped listening and does not flag the recycled port', () => {
-		const logged = new Set<string>();
-		const sslServers: Record<string, Entry> = {
-			// Its server is gone and port 5001 was recycled to another host.
-			'api.githubcopilot.com': dead(5001),
-			'todo5-hezo.netlify.app': live(5001),
-		};
-		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
-		expect(logged.size).toBe(0);
-		expect('api.githubcopilot.com' in sslServers).toBe(false);
-		expect('todo5-hezo.netlify.app' in sslServers).toBe(true);
-	});
+describe('EgressProxy per-host cert routing', () => {
+	// Each upstream host the agent reaches over TLS gets its own minted leaf
+	// cert served from a dedicated internal server. A connection for one host
+	// must always be served that host's cert — never a stale or recycled one.
+	it('serves each concurrent host its own leaf cert (no cross-host mix-up)', async () => {
+		const httpsProxy = new EgressProxy({
+			db,
+			masterKeyManager,
+			ca,
+			extraUpstreamTrustedCAs: ca.cert,
+		});
+		const runId = `run-${Date.now()}-multihost`;
+		const allocated = await httpsProxy.allocateRunProxy(runId, { teamId, agentId });
+		const hosts = ['hosta.egress-test', 'hostb.egress-test', 'hostc.egress-test'];
+		try {
+			const certs = await Promise.all(
+				hosts.map((h) => servedCertThroughProxy(allocated.proxyPort, h, ca.cert)),
+			);
+			for (let i = 0; i < hosts.length; i++) {
+				expect(certs[i]).toContain(hosts[i]);
+			}
+		} finally {
+			await httpsProxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
 
-	it('purges wildcard-alias entries left without a live backing server', () => {
-		const logged = new Set<string>();
-		const sslServers: Record<string, Entry> = {
-			'api.example.com': dead(5004),
-			'*.example.com': alias(5004),
-		};
-		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
-		expect('api.example.com' in sslServers).toBe(false);
-		expect('*.example.com' in sslServers).toBe(false);
-	});
+	// The production incident: a per-host internal server dies mid-run while the
+	// hostname is still routed to it. The next connection must rebuild a live
+	// server and serve the correct cert — never dial a dead loopback port
+	// (ECONNREFUSED) for the rest of the run.
+	it('rebuilds a per-host server after it dies and still serves the right cert', async () => {
+		const httpsProxy = new EgressProxy({
+			db,
+			masterKeyManager,
+			ca,
+			extraUpstreamTrustedCAs: ca.cert,
+		});
+		const runId = `run-${Date.now()}-rebuild`;
+		const host = 'registry.egress-test';
+		const allocated = await httpsProxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const first = await servedCertThroughProxy(allocated.proxyPort, host, ca.cert);
+			expect(first).toContain(host);
 
-	it('purges a stale entry whose listening flag lies but whose server lost its port', () => {
-		const logged = new Set<string>();
-		const sslServers: Record<string, Entry> = {
-			// Reports listening but is no longer bound; its old port was
-			// recycled to the other host's live server.
-			'api.githubcopilot.com': zombie(5005),
-			'registry.npmjs.org': live(5005),
-		};
-		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
-		expect(logged.size).toBe(0);
-		expect('api.githubcopilot.com' in sslServers).toBe(false);
-		expect('registry.npmjs.org' in sslServers).toBe(true);
-	});
+			// Kill the live per-host server behind this hostname; its entry is now
+			// stale (server closed, port free to recycle).
+			await killHostServer(httpsProxy, runId, host);
 
-	it('purges an alias whose port is owned by an unrelated host', () => {
-		const logged = new Set<string>();
-		const sslServers: Record<string, Entry> = {
-			// The alias's backing server is gone and its port now belongs to an
-			// unrelated host — a live server on the port must not keep the
-			// alias alive.
-			'cdn.example.com': alias(5006),
-			'registry.npmjs.org': live(5006),
-		};
-		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
-		expect(logged.size).toBe(0);
-		expect('cdn.example.com' in sslServers).toBe(false);
-		expect('registry.npmjs.org' in sslServers).toBe(true);
-	});
-
-	it('keeps the verified owner when a colliding server loses its port mid-check', () => {
-		const logged = new Set<string>();
-		// Owns the port during reconciliation, loses it before the healing
-		// pass re-checks ownership — reconciliation and per-host server
-		// lifecycle run concurrently in production. Two ownership checks
-		// happen before healing (owner indexing + purge).
-		let calls = 0;
-		const flaky: Entry = {
-			port: 5007,
-			server: { listening: true, address: () => (++calls <= 2 ? { port: 5007 } : null) },
-		};
-		const sslServers: Record<string, Entry> = {
-			'api.githubcopilot.com': flaky,
-			'registry.npmjs.org': live(5007),
-		};
-		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
-		expect(logged.has('5007')).toBe(true);
-		expect('api.githubcopilot.com' in sslServers).toBe(false);
-		expect('registry.npmjs.org' in sslServers).toBe(true);
-	});
-
-	it('logs a collision only once per port', () => {
-		const logged = new Set<string>();
-		const sslServers: Record<string, Entry> = {
-			'api.githubcopilot.com': live(5008),
-			'registry.npmjs.org': live(5008),
-		};
-		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
-		// Entries were evicted; a second pass over rebuilt state on the same
-		// port must not log again.
-		sslServers['api.githubcopilot.com'] = live(5008);
-		sslServers['registry.npmjs.org'] = live(5008);
-		detectCrossHostCertRoute(fakeProxy(sslServers), scope, 'run-1', logged);
-		expect(logged.size).toBe(1);
-	});
+			const second = await servedCertThroughProxy(allocated.proxyPort, host, ca.cert);
+			expect(second).toContain(host);
+		} finally {
+			await httpsProxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
 });

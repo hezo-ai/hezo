@@ -1,4 +1,3 @@
-import './console-shim';
 import type { PGlite } from '@electric-sql/pglite';
 import { AuthType, DEFAULT_WEB_PORT } from '@hezo/shared';
 import { app } from './app';
