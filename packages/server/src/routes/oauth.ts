@@ -8,6 +8,7 @@ import {
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
+import { requestOrigin } from '../lib/request-origin';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -219,9 +220,7 @@ oauthRoutes.post('/projects/:projectId/oauth/auth-code/start', async (c) => {
 		scopes = body.scopes ?? (body.manual_config as ManualOAuthConfig).scopes;
 	}
 
-	const protocol = c.req.header('x-forwarded-proto') ?? 'http';
-	const host = c.req.header('host') ?? 'localhost';
-	const redirectUri = `${protocol}://${host}/api/oauth/callback`;
+	const redirectUri = `${requestOrigin(c)}/api/oauth/callback`;
 
 	const { state, codeChallenge } = await signState(masterKeyManager, {
 		teamId: teamId,
@@ -318,9 +317,7 @@ async function startConnectorAuthCode(
 			status: 400,
 		};
 
-	const protocol = c.req.header('x-forwarded-proto') ?? 'http';
-	const host = c.req.header('host') ?? 'localhost';
-	const redirectUri = `${protocol}://${host}/api/oauth/mcp-callback`;
+	const redirectUri = `${requestOrigin(c)}/api/oauth/mcp-callback`;
 
 	const capability = getConnectorCapability(connector.name);
 

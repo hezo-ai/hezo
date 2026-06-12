@@ -1,8 +1,18 @@
 import { DEFAULT_TEAM_ID, MemberType } from '@hezo/shared';
 import { Hono } from 'hono';
+import { requestOrigin } from '../lib/request-origin';
 import { err, ok } from '../lib/response';
+import {
+	getSystemMeta,
+	INSTANCE_BASE_URL_KEY,
+	normalizeBaseUrl,
+	setSystemMeta,
+} from '../lib/system-meta';
 import type { Env } from '../lib/types';
+import { logger } from '../logger';
 import { signAdminJwt } from '../middleware/auth';
+
+const log = logger.child('routes');
 
 export const authRoutes = new Hono<Env>();
 
@@ -20,6 +30,19 @@ authRoutes.post('/auth/token', async (c) => {
 
 	if (!unlocked) {
 		return err(c, 'UNAUTHORIZED', 'Invalid master key', 401);
+	}
+
+	// Capture the public base URL of this instance from the URL the operator
+	// used to reach it. Only when unset — a configured or previously captured
+	// value is never clobbered (it stays editable in global settings). Awaited
+	// so the settings page the operator lands on next reflects it.
+	try {
+		if (!(await getSystemMeta(db, INSTANCE_BASE_URL_KEY))) {
+			const origin = normalizeBaseUrl(requestOrigin(c));
+			if (origin) await setSystemMeta(db, INSTANCE_BASE_URL_KEY, origin);
+		}
+	} catch (e) {
+		log.error('Failed to capture instance base URL:', e);
 	}
 
 	const existing = await db.query<{ id: string }>(

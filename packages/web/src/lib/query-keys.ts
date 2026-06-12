@@ -24,6 +24,7 @@ export const queryKeys = {
 	teamTemplates: () => ['team-templates'],
 	aiProviderModels: (configId: string) => ['ai-providers', configId, 'models'],
 	instanceAuditLog: (filters: KeyParam) => ['instance', 'audit-log', filters],
+	instanceSettings: () => ['instance', 'settings'],
 	/** The single global CEO chat conversation (history + streamed messages). */
 	ceoConversation: () => ['ceo', 'conversation'],
 
