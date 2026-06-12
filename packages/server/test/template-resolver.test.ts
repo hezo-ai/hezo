@@ -283,6 +283,9 @@ describe('template resolver', () => {
 		// the exact pattern that over-pinged the roster: crediting reviewers in a recap stays passive
 		expect(result).toContain('Status updates and review recaps credit people');
 		expect(result).toContain('at most one');
+		// crediting the admin in a recap is also passive — active @admin lands an
+		// inbox row for every admin
+		expect(result).toContain('@@admin approved on first review');
 	});
 
 	it('Run Context carries no project line when no project is set', async () => {
