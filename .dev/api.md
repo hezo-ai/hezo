@@ -1453,6 +1453,41 @@ Return the models this provider offers for the stored credential. Calls the prov
 
 ---
 
+### Instance Settings
+
+Instance-wide settings live in the `system_meta` key-value table. The only setting today is the **instance base URL** — the public origin of this Hezo instance (e.g. `https://hezo.example.com`), used to build absolute entity links for external chat channels (Telegram). It is captured automatically from the request origin (`host` + first `x-forwarded-proto` entry) on the first successful `POST /auth/token` unlock and never overwritten after that; it stays editable on the global settings page.
+
+#### `GET /instance-settings`
+Returns `{ base_url: string | null }`. Any authenticated principal.
+
+#### `PATCH /instance-settings`
+Superuser only. Request: `{ "base_url": "https://hezo.example.com" }`. The value must be a bare http(s) origin — anything with a path, query, fragment, or credentials is rejected with `INVALID_REQUEST` — and is normalised to `URL.origin` (lowercased host, trailing slash dropped). Send `null` or `""` to clear. Echoes the stored value.
+
+---
+
+### Instance-wide mention resolution
+
+#### `POST /mentions/resolve`
+Resolution backing the global CEO chat's entity links (the project-scoped equivalents are `POST /projects/:projectId/tasks/resolve` and `POST /projects/:projectId/docs/resolve`). Gated on HQ-team access, exactly like the `/ceo/*` routes.
+
+Request — all fields optional string arrays, max 100 entries each (case-insensitive for tasks/agents, exact-case for filenames/assets):
+```json
+{
+  "tasks": ["to-1"],
+  "filenames": ["prd.md"],
+  "assets": ["mock.png"],
+  "agents": ["ceo"]
+}
+```
+
+Response: `{ tasks, kb_docs, project_docs, assets, agents }` mirroring the project-scoped resolve shapes (`assets` rows carry a `signed_url`; `agents` rows carry `{ slug, title, project_slug }` with HQ agents resolving to the `hq` project).
+
+**Uniqueness rule:** candidates are matched across every team, and a reference resolves only when it is unique instance-wide — task identifiers are unique per team but can collide across teams, and doc filenames / asset names / agent slugs collide commonly (every Startup team has a `captain`). Ambiguous or unknown references are omitted so the client renders them as plain text; a wrong link is worse than no link. Skills (KB docs) are instance-global and slug-unique, so they always resolve. Disabled agents are ignored.
+
+The per-channel rendering seam for stored CEO messages is `renderCeoMessageForChannel` (`packages/server/src/services/ceo-message-render.ts`): `web` returns content unchanged (the web client resolves and renders links itself), `telegram` rewrites unique references into absolute markdown links built from the instance base URL, `whatsapp` stays plain text. Stored `ceo_messages.content` is never mutated.
+
+---
+
 ### Execution Locks
 
 #### `GET /projects/:projectId/tasks/:taskId/lock`
