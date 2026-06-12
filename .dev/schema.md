@@ -18,7 +18,7 @@
 | `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to team |
 | `api_keys` | Team-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to team |
 | `projects` | Group of related work under a team. Has `task_prefix` (2–4 uppercase chars used for task identifiers), Docker container config, dev ports, designated repo. `is_internal` flag marks auto-created projects (e.g. Internal) that cannot be deleted. | belongs to team |
-| `repos` | Git repo (GitHub only). Stores `org/repo` identifier. Short name for @-mentions. | belongs to project |
+| `repos` | Git repo (GitHub only). Stores `org/repo` identifier; the repo name (segment after the owner) is the display label, directory name, and @-mention handle. | belongs to project |
 | `tasks` | Ticket. Must have a project. Linear-style `identifier` (e.g. `IN-42`) built from the project's `task_prefix` + per-project number. Assignee references `members.id`. Has `rules` (approach instructions) and `progress_summary` (agent-maintained status). | belongs to team + project, assigned to member |
 | `task_dependencies` | Many-to-many blocking relationships between tasks. | links task ↔ task |
 | `task_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. Includes execution-type comments auto-created when agent runs complete. | belongs to task |
@@ -163,8 +163,10 @@ The app layer performs a two-step validation before inserting:
    (403/404), the request fails with `REPO_ACCESS_FAILED` and includes the
    GitHub username so the board knows which account needs to be added.
 
-Short names are unique within a project and used for @-mentions in task
-comments (`@frontend`, `@api`).
+The repo's name — `split_part(repo_identifier, '/', 2)` — is its display label
+and the name of its workspace/worktree directories, so it is unique within a
+project (unique expression index), even across owners. It is also used for
+@-mentions in task comments (`@frontend`, `@api`).
 
 ### Designated repo immutability
 
@@ -270,7 +272,7 @@ ensure unambiguous @-mentions.
 
 All inter-agent communication happens via @-mentions in task comments — no
 side channels, no direct messaging. The server parses `@<slug>` from comment
-text and creates notifications for mentioned agents. Repo short names can also
+text and creates notifications for mentioned agents. Repo names can also
 be @-referenced (`@frontend`, `@api`).
 
 ### Subagents
@@ -653,7 +655,7 @@ Each row captures:
 - **Invocation**: `invocation_command` is the exact CLI that was passed to
   `docker exec` (with the agent JWT redacted to `Bearer ***`). `working_dir` is
   the container path the exec was rooted at (normally the designated repo's
-  per-task worktree, e.g. `/worktrees/<task-identifier>/<repo-short-name>`).
+  per-task worktree, e.g. `/worktrees/<task-identifier>/<repo-name>`).
 - **Logs**: `log_text` holds interleaved stdout and stderr captured from the
   streaming Docker exec, capped at 1 MB (with a `...[truncated — log capped at
   N bytes]` marker when exceeded). Stderr lines are prefixed `[stderr] ` so
@@ -673,13 +675,14 @@ is bind-mounted into the container:
 
 - `<dataDir>/teams/<team-slug>/projects/<project-slug>/workspace/` ↔
   `/workspace/` in the container. For every repo linked to the project,
-  `ensureProjectRepos` populates a subdirectory `<workspace>/<short-name>/`.
+  `ensureProjectRepos` populates a subdirectory `<workspace>/<repo-name>/`
+  (the repo name is the segment after the owner in `repo_identifier`).
   The repo-add route (`POST /repos`), container provision, and the agent
   runner all call this helper, so the set of on-disk clones stays in sync
   with the `repos` rows for the project.
 - `<dataDir>/.../worktrees/` ↔ `/worktrees/` in the container. For each task
   an agent works on, the runner creates `git worktree` directories under
-  `/worktrees/<task-identifier>/<repo-short-name>/` on the branch
+  `/worktrees/<task-identifier>/<repo-name>/` on the branch
   `hezo/<task-identifier>`. Worktrees persist across runs on the same task
   so iterative work survives between invocations, and are torn down when the
   task transitions to a terminal status (`done`, `cancelled`, etc.) or its

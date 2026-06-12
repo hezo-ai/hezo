@@ -127,8 +127,8 @@ describe('finalizePendingRepoSetup + enqueueRepoSetupResumeWakeups (multi-agent)
 			await seedDeferredWakeup(db, teamId, carolId, projectId, taskC);
 
 			const repoInsert = await db.query<{ id: string }>(
-				`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
-				 VALUES ($1, 'main', 'octo/multi', 'github') RETURNING id`,
+				`INSERT INTO repos (project_id, repo_identifier, host_type)
+				 VALUES ($1, 'octo/multi', 'github') RETURNING id`,
 				[projectId],
 			);
 
@@ -137,7 +137,6 @@ describe('finalizePendingRepoSetup + enqueueRepoSetupResumeWakeups (multi-agent)
 				projectId,
 				repoId: repoInsert.rows[0].id,
 				repoIdentifier: 'octo/multi',
-				shortName: 'main',
 			});
 
 			expect(result.resolvedApprovalId).toBe(approvalId);
@@ -210,7 +209,6 @@ describe('finalizePendingRepoSetup + enqueueRepoSetupResumeWakeups (multi-agent)
 				projectId,
 				repoId: '00000000-0000-0000-0000-000000000000',
 				repoIdentifier: 'octo/none',
-				shortName: 'main',
 			});
 
 			expect(result.resolvedApprovalId).toBeNull();

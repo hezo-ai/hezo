@@ -1,4 +1,4 @@
-import { wsRoom } from '@hezo/shared';
+import { repoNameFromIdentifier, wsRoom } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { getProjectLocator, resolveProjectId } from '../lib/resolve';
@@ -23,7 +23,7 @@ reposRoutes.get('/projects/:projectId/repos', async (c) => {
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const result = await db.query(
-		`SELECT r.id, r.project_id, r.short_name, r.repo_identifier, r.host_type,
+		`SELECT r.id, r.project_id, r.repo_identifier, r.host_type,
 		        r.oauth_connection_id, r.created_at,
 		        (p.designated_repo_id = r.id) AS is_designated,
 		        oc.provider_account_label AS oauth_account_label
@@ -53,7 +53,6 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
 	const body = await c.req.json<{
-		short_name: string;
 		mode?: 'link' | 'create';
 		url?: string;
 		owner?: string;
@@ -61,10 +60,6 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 		private?: boolean;
 		oauth_connection_id: string;
 	}>();
-
-	if (!body.short_name?.trim()) {
-		return err(c, 'INVALID_REQUEST', 'short_name is required', 400);
-	}
 
 	const mode = body.mode ?? 'link';
 	let parsedOwner: string | null = null;
@@ -137,7 +132,6 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 	type InsertedRepo = {
 		id: string;
 		project_id: string;
-		short_name: string;
 		repo_identifier: string;
 		host_type: string;
 		oauth_connection_id: string | null;
@@ -166,10 +160,10 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 			const projectRow = lockRes.rows[0];
 
 			const insertRes = await db.query<InsertedRepo>(
-				`INSERT INTO repos (project_id, short_name, repo_identifier, host_type, oauth_connection_id)
-				 VALUES ($1, $2, $3, 'github'::repo_host_type, $4)
-				 RETURNING id, project_id, short_name, repo_identifier, host_type, oauth_connection_id, created_at`,
-				[projectId, body.short_name.trim(), repoIdentifier, conn.id],
+				`INSERT INTO repos (project_id, repo_identifier, host_type, oauth_connection_id)
+				 VALUES ($1, $2, 'github'::repo_host_type, $3)
+				 RETURNING id, project_id, repo_identifier, host_type, oauth_connection_id, created_at`,
+				[projectId, repoIdentifier, conn.id],
 			);
 			const inserted = insertRes.rows[0];
 
@@ -187,7 +181,6 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 					projectId,
 					repoId: inserted.id,
 					repoIdentifier,
-					shortName: inserted.short_name,
 				});
 			}
 			return { inserted, becameDesignated, finalize };
@@ -197,7 +190,12 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 		finalizeResult = txResult.finalize;
 	} catch (e) {
 		if (isUniqueViolation(e)) {
-			return err(c, 'SHORT_NAME_TAKEN', `short_name "${body.short_name}" already used`, 409);
+			return err(
+				c,
+				'REPO_NAME_TAKEN',
+				`a repository named "${repoName}" is already linked to this project`,
+				409,
+			);
 		}
 		const msg = e instanceof Error ? e.message : 'Failed to insert repo';
 		return err(c, 'REPO_INSERT_FAILED', msg, 500);
@@ -220,12 +218,12 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 				dataDir,
 				c.get('sshAgentServer'),
 			);
-			const failed = syncRes.failed.find((f) => f.short_name === insertedRepo.short_name);
+			const failed = syncRes.failed.find((f) => f.name === repoName);
 			if (failed) {
 				cloneStatus = 'failed';
 				cloneError = failed.error;
 				log.error(`Failed to clone ${repoIdentifier}:`, cloneError);
-			} else if (syncRes.cloned.includes(insertedRepo.short_name)) {
+			} else if (syncRes.cloned.includes(repoName)) {
 				cloneStatus = 'cloned';
 			}
 		}
@@ -293,8 +291,8 @@ reposRoutes.delete('/projects/:projectId/repos/:repoId', async (c) => {
 		return err(c, 'DESIGNATED_REPO_IMMUTABLE', 'The designated repository cannot be removed', 409);
 	}
 
-	const result = await db.query<{ id: string; short_name: string }>(
-		'DELETE FROM repos WHERE id = $1 AND project_id = $2 RETURNING id, short_name',
+	const result = await db.query<{ id: string; repo_identifier: string }>(
+		'DELETE FROM repos WHERE id = $1 AND project_id = $2 RETURNING id, repo_identifier',
 		[repoId, projectId],
 	);
 
@@ -306,10 +304,11 @@ reposRoutes.delete('/projects/:projectId/repos/:repoId', async (c) => {
 	if (dataDir) {
 		const locator = await getProjectLocator(db, projectId);
 		if (locator) {
+			const repoName = repoNameFromIdentifier(result.rows[0].repo_identifier);
 			try {
-				removeRepoFromWorkspace(dataDir, locator.teamId, locator.id, result.rows[0].short_name);
+				removeRepoFromWorkspace(dataDir, locator.teamId, locator.id, repoName);
 			} catch (error) {
-				log.error(`Failed to clean up workspace for repo ${result.rows[0].short_name}:`, error);
+				log.error(`Failed to clean up workspace for repo ${repoName}:`, error);
 			}
 		}
 	}

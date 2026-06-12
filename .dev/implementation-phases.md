@@ -201,7 +201,7 @@ per-task worktrees on every linked repo, realtime run-log streaming, and the
 Backend:
 - Project Docker container lifecycle (provision, start, stop, rebuild via Docker Engine API)
   - One container per project (all project repos checked out at
-    `/workspace/<repo-short-name>/` inside; kept in sync by
+    `/workspace/<repo-name>/` inside; kept in sync by
     `ensureProjectRepos` on provision, on repo attach, and before every run)
   - Dev port forwarding for preview access
 - Agent subprocess management (`claude_code` adapter: subprocess in project container via `docker exec`)
@@ -212,7 +212,7 @@ Backend:
   each request against the run row's status, so the token is automatically
   rejected once the run finalizes.
 - Git worktrees per task on every linked repo
-  (`/worktrees/<task-identifier>/<repo-short-name>/` on branch
+  (`/worktrees/<task-identifier>/<repo-name>/` on branch
   `hezo/<task-identifier>`). The agent's working directory resolves to the
   designated repo's worktree; other repos sit alongside. Worktrees persist
   across runs on the same task and are removed when the task transitions to
@@ -765,7 +765,7 @@ Docs:
 
 **How to test:**
 - Create a team + project with no repo, assign an engineer to an task, see the action comment + inbox approval, drive the wizard with the GitHub simulator (integration) or a real local Connect + GitHub account (manual)
-- Verify the cloned repo appears at `/workspace/{short_name}/` inside the project container and a worktree is created on the engineer's resume
+- Verify the cloned repo appears at `/workspace/{repo-name}/` inside the project container and a worktree is created on the engineer's resume
 - Verify `DELETE` on the designated repo returns 409
 - `bun run test` and `bun run test --e2e` pass
 

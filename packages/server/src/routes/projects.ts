@@ -420,9 +420,10 @@ projectsRoutes.get('/projects/:projectId', async (c) => {
 		return err(c, 'NOT_FOUND', 'Project not found', 404);
 	}
 
-	const repos = await db.query('SELECT * FROM repos WHERE project_id = $1 ORDER BY short_name', [
-		projectId,
-	]);
+	const repos = await db.query(
+		`SELECT * FROM repos WHERE project_id = $1 ORDER BY split_part(repo_identifier, '/', 2)`,
+		[projectId],
+	);
 
 	return ok(c, { ...(result.rows[0] as Record<string, unknown>), repos: repos.rows });
 });

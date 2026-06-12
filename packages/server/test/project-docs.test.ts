@@ -277,8 +277,8 @@ describe('AGENTS.md (filesystem-based)', () => {
 		repoProjectId = (await projRes.json()).data.id;
 
 		const repoResult = await db.query(
-			`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
-			 VALUES ($1, 'main-app', 'org/main-app', 'github') RETURNING id`,
+			`INSERT INTO repos (project_id, repo_identifier, host_type)
+			 VALUES ($1, 'org/main-app', 'github') RETURNING id`,
 			[repoProjectId],
 		);
 		const repoId = (repoResult.rows[0] as any).id;

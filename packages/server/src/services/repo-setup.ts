@@ -143,7 +143,6 @@ export interface FinalizeInput {
 	projectId: string;
 	repoId: string;
 	repoIdentifier: string;
-	shortName: string;
 }
 
 export interface FinalizeResult {
@@ -200,7 +199,6 @@ export async function finalizePendingRepoSetup(
 					result: {
 						repo_id: input.repoId,
 						repo_identifier: input.repoIdentifier,
-						short_name: input.shortName,
 					},
 				}),
 				row.id,

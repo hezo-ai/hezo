@@ -44,7 +44,7 @@ interface TestAppContext {
 	db: Awaited<ReturnType<typeof createTestApp>>['db'];
 	masterKeyManager: Awaited<ReturnType<typeof createTestApp>>['masterKeyManager'];
 	// Per-test temp dir backing the server's workspace/worktree layout. Lets
-	// specs pre-create `workspace/<short_name>/.git` so repo-sync treats a repo
+	// specs pre-create `workspace/<repo name>/.git` so repo-sync treats a repo
 	// as already cloned instead of attempting a real SSH clone.
 	dataDir: string;
 }

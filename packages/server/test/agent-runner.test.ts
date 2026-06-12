@@ -817,8 +817,8 @@ describe('runAgent', () => {
 
 		it('fails the run before exec when the primary repo worktree cannot be prepared', async () => {
 			const repoRes = await db.query<{ id: string }>(
-				`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
-				 VALUES ($1, 'todos', 'acme/todos', 'github') RETURNING id`,
+				`INSERT INTO repos (project_id, repo_identifier, host_type)
+				 VALUES ($1, 'acme/todos', 'github') RETURNING id`,
 				[projectId],
 			);
 			const repoId = repoRes.rows[0].id;

@@ -1,3 +1,4 @@
+import { repoNameFromIdentifier } from '@hezo/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, GitBranch, Github, Loader2, Lock, Trash2 } from 'lucide-react';
 import { useState } from 'react';
@@ -170,56 +171,59 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 			<div className="mt-4">
 				{hasRepos ? (
 					<div className="flex flex-col gap-2">
-						{repos?.map((r) => (
-							<div
-								key={r.id}
-								className="flex items-center justify-between rounded-md border border-border-subtle bg-bg px-3 py-2 text-sm"
-							>
-								<div className="flex items-center gap-2">
-									<Badge color="gray">{r.host_type}</Badge>
-									<span className="font-medium">{r.short_name}</span>
-									{(() => {
-										const url = repoWebUrl(r.repo_identifier, r.host_type);
-										return url ? (
-											<a
-												href={url}
-												target="_blank"
-												rel="noopener noreferrer"
-												className="text-accent-blue-text hover:underline"
-												data-testid={`repo-link-${r.short_name}`}
+						{repos?.map((r) => {
+							const repoName = repoNameFromIdentifier(r.repo_identifier);
+							return (
+								<div
+									key={r.id}
+									className="flex items-center justify-between rounded-md border border-border-subtle bg-bg px-3 py-2 text-sm"
+								>
+									<div className="flex items-center gap-2">
+										<Badge color="gray">{r.host_type}</Badge>
+										<span className="font-medium">{repoName}</span>
+										{(() => {
+											const url = repoWebUrl(r.repo_identifier, r.host_type);
+											return url ? (
+												<a
+													href={url}
+													target="_blank"
+													rel="noopener noreferrer"
+													className="text-accent-blue-text hover:underline"
+													data-testid={`repo-link-${repoName}`}
+												>
+													{r.repo_identifier}
+												</a>
+											) : (
+												<span className="text-text-muted">{r.repo_identifier}</span>
+											);
+										})()}
+										{r.is_designated && <Badge color="blue">Designated</Badge>}
+									</div>
+									{r.is_designated ? (
+										<Tooltip content="Designated repository cannot be removed">
+											<span
+												role="img"
+												aria-label="Designated repository cannot be removed"
+												className="text-text-subtle"
+												data-testid={`repo-locked-${repoName}`}
 											>
-												{r.repo_identifier}
-											</a>
-										) : (
-											<span className="text-text-muted">{r.repo_identifier}</span>
-										);
-									})()}
-									{r.is_designated && <Badge color="blue">Designated</Badge>}
-								</div>
-								{r.is_designated ? (
-									<Tooltip content="Designated repository cannot be removed">
-										<span
-											role="img"
-											aria-label="Designated repository cannot be removed"
-											className="text-text-subtle"
-											data-testid={`repo-locked-${r.short_name}`}
+												<Lock className="w-3.5 h-3.5" />
+											</span>
+										</Tooltip>
+									) : (
+										<button
+											type="button"
+											onClick={() => deleteRepo.mutate(r.id)}
+											className="text-text-subtle hover:text-accent-red"
+											aria-label={`Remove repo ${repoName}`}
+											data-testid={`repo-delete-${repoName}`}
 										>
-											<Lock className="w-3.5 h-3.5" />
-										</span>
-									</Tooltip>
-								) : (
-									<button
-										type="button"
-										onClick={() => deleteRepo.mutate(r.id)}
-										className="text-text-subtle hover:text-accent-red"
-										aria-label={`Remove repo ${r.short_name}`}
-										data-testid={`repo-delete-${r.short_name}`}
-									>
-										<Trash2 className="w-3.5 h-3.5" />
-									</button>
-								)}
-							</div>
-						))}
+											<Trash2 className="w-3.5 h-3.5" />
+										</button>
+									)}
+								</div>
+							);
+						})}
 					</div>
 				) : (
 					isReady && (

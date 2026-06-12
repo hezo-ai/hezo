@@ -319,16 +319,17 @@ CREATE UNIQUE INDEX idx_projects_team_task_prefix ON projects(team_id, task_pref
 CREATE TABLE repos (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id           UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    short_name           TEXT NOT NULL,
     repo_identifier      TEXT NOT NULL,
     host_type            repo_host_type NOT NULL,
     oauth_connection_id  UUID,
-    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE (project_id, short_name)
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_repos_project ON repos(project_id);
+-- Clones land in `<workspace>/<repo name>/` — the segment after the owner in
+-- repo_identifier — so the repo name must be unique within a project even
+-- across owners. Also rules out linking the exact same repo twice.
+CREATE UNIQUE INDEX idx_repos_project_repo_name ON repos(project_id, split_part(repo_identifier, '/', 2));
 CREATE INDEX idx_repos_oauth_connection ON repos(oauth_connection_id) WHERE oauth_connection_id IS NOT NULL;
 
 -- Deferred FK: projects.designated_repo_id → repos(id) (repos defined after projects)
