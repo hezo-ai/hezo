@@ -71,7 +71,7 @@ async function seedGitHubOAuth(): Promise<string> {
 // SshAgentServer, so emulate an existing clone (repo-sync skips dirs that
 // already contain .git) and mark the container running so the post-designation
 // container auto-start is a no-op. Keeps the success path quiet and green.
-async function neutralizeRepoSideEffects(teamId: string, projectId: string, shortName: string) {
+async function neutralizeRepoSideEffects(teamId: string, projectId: string, repoName: string) {
 	const { db, dataDir } = getTestContext();
 	const gitDir = join(
 		dataDir,
@@ -80,7 +80,7 @@ async function neutralizeRepoSideEffects(teamId: string, projectId: string, shor
 		'projects',
 		projectId,
 		'workspace',
-		shortName,
+		repoName,
 		'.git',
 	);
 	mkdirSync(gitDir, { recursive: true });
@@ -197,13 +197,13 @@ test('designated repo shows a lock with no delete affordance; extras stay deleta
 
 			const { db } = getTestContext();
 			const designated = await db.query<{ id: string }>(
-				`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
-				 VALUES ($1, 'main-repo', $2, 'github') RETURNING id`,
+				`INSERT INTO repos (project_id, repo_identifier, host_type)
+				 VALUES ($1, $2, 'github') RETURNING id`,
 				[project.id, `${ghOwner}/main-repo`],
 			);
 			await db.query(
-				`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
-				 VALUES ($1, 'extra-repo', $2, 'github')`,
+				`INSERT INTO repos (project_id, repo_identifier, host_type)
+				 VALUES ($1, $2, 'github')`,
 				[project.id, `${ghOwner}/extra-repo`],
 			);
 			await db.query('UPDATE projects SET designated_repo_id = $1 WHERE id = $2', [

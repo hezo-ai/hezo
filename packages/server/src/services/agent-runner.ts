@@ -18,6 +18,7 @@ import {
 	RUNTIME_HEADLESS_PREFIX_ARGS,
 	RUNTIME_HEADLESS_SUFFIX_ARGS,
 	RUNTIME_STREAM_ARGS,
+	repoNameFromIdentifier,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 	WakeupSource,
@@ -126,7 +127,6 @@ export interface RunnerDeps {
 
 interface RepoRow {
 	id: string;
-	short_name: string;
 	repo_identifier: string;
 }
 
@@ -1010,7 +1010,7 @@ async function prepareWorktrees(
 		emit(stream, `[system] ${text}\n`);
 
 	const repos = await deps.db.query<RepoRow>(
-		`SELECT id, short_name, repo_identifier FROM repos
+		`SELECT id, repo_identifier FROM repos
 		 WHERE project_id = $1 ORDER BY created_at ASC`,
 		[project.id],
 	);
@@ -1047,7 +1047,9 @@ async function prepareWorktrees(
 		const branchName = `hezo/${task.identifier}`;
 		const knownHostsPath = await ensureGithubKnownHosts(deps.dataDir);
 		const reposNeedingWorktree = repos.rows.filter(
-			(r) => !signal?.aborted && existsSync(join(workspaceRoot, r.short_name, '.git')),
+			(r) =>
+				!signal?.aborted &&
+				existsSync(join(workspaceRoot, repoNameFromIdentifier(r.repo_identifier), '.git')),
 		);
 
 		if (reposNeedingWorktree.length > 0 && deps.sshAgentServer) {
@@ -1058,14 +1060,15 @@ async function prepareWorktrees(
 				async ({ sshAuthSock }) => {
 					for (const repo of reposNeedingWorktree) {
 						if (signal?.aborted) break;
-						const repoDir = join(workspaceRoot, repo.short_name);
+						const repoName = repoNameFromIdentifier(repo.repo_identifier);
+						const repoDir = join(workspaceRoot, repoName);
 
-						emitSystem('stdout', `git fetch ${repo.short_name}...`);
+						emitSystem('stdout', `git fetch ${repoName}...`);
 						const fetchRes = await fetchRepo(repoDir, sshAuthSock, knownHostsPath);
 						if (fetchRes.success) {
-							emitSystem('stdout', `git fetch ${repo.short_name} done`);
+							emitSystem('stdout', `git fetch ${repoName} done`);
 						} else {
-							emitSystem('stderr', `git fetch ${repo.short_name} failed: ${fetchRes.error ?? '?'}`);
+							emitSystem('stderr', `git fetch ${repoName} failed: ${fetchRes.error ?? '?'}`);
 						}
 					}
 				},
@@ -1075,25 +1078,23 @@ async function prepareWorktrees(
 		const worktreeErrors = new Map<string, string>();
 		for (const repo of repos.rows) {
 			if (signal?.aborted) break;
-			const repoDir = join(workspaceRoot, repo.short_name);
-			const worktreePath = join(taskWorktreeRoot, repo.short_name);
+			const repoName = repoNameFromIdentifier(repo.repo_identifier);
+			const repoDir = join(workspaceRoot, repoName);
+			const worktreePath = join(taskWorktreeRoot, repoName);
 
 			if (!existsSync(join(repoDir, '.git'))) {
 				worktreeErrors.set(repo.id, 'repo is not cloned');
-				emitSystem('stderr', `(skipping worktree for ${repo.short_name} — not cloned)`);
+				emitSystem('stderr', `(skipping worktree for ${repoName} — not cloned)`);
 				continue;
 			}
 
-			emitSystem('stdout', `git worktree ${repo.short_name}...`);
+			emitSystem('stdout', `git worktree ${repoName}...`);
 			const wt = await ensureTaskWorktree(repoDir, worktreePath, branchName);
 			if (!wt.success) {
 				worktreeErrors.set(repo.id, wt.error ?? 'unknown');
-				emitSystem(
-					'stderr',
-					`git worktree for ${repo.short_name} failed: ${wt.error ?? 'unknown'}`,
-				);
+				emitSystem('stderr', `git worktree for ${repoName} failed: ${wt.error ?? 'unknown'}`);
 			} else if (wt.created) {
-				emitSystem('stdout', `git worktree add ${repo.short_name} @ ${branchName}`);
+				emitSystem('stdout', `git worktree add ${repoName} @ ${branchName}`);
 			}
 		}
 
@@ -1103,15 +1104,16 @@ async function prepareWorktrees(
 			? repos.rows.find((r) => r.id === project.designated_repo_id)
 			: null;
 		const primary = designated ?? repos.rows[0];
+		const primaryName = repoNameFromIdentifier(primary.repo_identifier);
 
 		// The run executes with this worktree as its cwd; proceeding without it
 		// would only surface later as an opaque container chdir failure.
 		const primaryError = worktreeErrors.get(primary.id);
 		if (primaryError) {
-			throw new Error(`cannot prepare worktree for ${primary.short_name}: ${primaryError}`);
+			throw new Error(`cannot prepare worktree for ${primaryName}: ${primaryError}`);
 		}
 
-		const workingDir = `/worktrees/${task.identifier}/${primary.short_name}`;
+		const workingDir = `/worktrees/${task.identifier}/${primaryName}`;
 
 		return { workingDir, designatedRepo: primary ?? null };
 	});

@@ -66,8 +66,8 @@ describe('ensureProjectRepos', () => {
 	it('skips repos whose target dir already contains .git', async () => {
 		// Insert a repo record directly; emulate an existing clone by creating .git.
 		await db.query(
-			`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
-			 VALUES ($1, 'preexisting', 'owner/preexisting', 'github'::repo_host_type)`,
+			`INSERT INTO repos (project_id, repo_identifier, host_type)
+			 VALUES ($1, 'owner/preexisting', 'github'::repo_host_type)`,
 			[projectId],
 		);
 
@@ -110,7 +110,7 @@ describe('removeRepoFromWorkspace', () => {
 		expect(existsSync(wtDir2)).toBe(false);
 	});
 
-	it('is a no-op for dangerous short_name values', () => {
+	it('is a no-op for dangerous repo name values', () => {
 		const workspacePath = join(dataDir, 'teams', teamId, 'projects', projectId, 'workspace');
 		const stayDir = join(workspacePath, 'stay');
 		mkdirSync(stayDir, { recursive: true });

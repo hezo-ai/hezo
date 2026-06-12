@@ -144,8 +144,8 @@ describe('oauth connection store', () => {
 		const projectId = proj.rows[0].id;
 
 		const repo = await db.query<{ id: string }>(
-			`INSERT INTO repos (project_id, short_name, repo_identifier, host_type, oauth_connection_id)
-			 VALUES ($1, 'r', 'octocat/x', 'github', $2) RETURNING id`,
+			`INSERT INTO repos (project_id, repo_identifier, host_type, oauth_connection_id)
+			 VALUES ($1, 'octocat/x', 'github', $2) RETURNING id`,
 			[projectId, connectionId],
 		);
 		const repoId = repo.rows[0].id;

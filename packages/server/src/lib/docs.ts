@@ -8,7 +8,7 @@ export function resolveAgentsMdPath(
 	dataDir: string,
 	teamSlug: string,
 	projectSlug: string,
-	repoShortName: string,
+	repoName: string,
 ): string {
-	return join(dataDir, 'teams', teamSlug, 'projects', projectSlug, repoShortName, 'AGENTS.md');
+	return join(dataDir, 'teams', teamSlug, 'projects', projectSlug, repoName, 'AGENTS.md');
 }

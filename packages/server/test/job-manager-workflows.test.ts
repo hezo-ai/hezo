@@ -106,8 +106,8 @@ beforeAll(async () => {
 	// These tests focus on wakeup/lock lifecycle, not the designated-repo gate.
 	// Seed a designated repo on the project so the gate short-circuit is bypassed.
 	const repoRes = await db.query<{ id: string }>(
-		`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
-		 VALUES ($1, 'test', 'test-org/test-repo', 'github'::repo_host_type)
+		`INSERT INTO repos (project_id, repo_identifier, host_type)
+		 VALUES ($1, 'test-org/test-repo', 'github'::repo_host_type)
 		 RETURNING id`,
 		[projectId],
 	);

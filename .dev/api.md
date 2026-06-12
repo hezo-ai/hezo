@@ -604,14 +604,17 @@ Response:
     {
       "id": "uuid",
       "project_id": "uuid",
-      "short_name": "frontend",
-      "url": "https://github.com/org/frontend",
+      "repo_identifier": "org/frontend",
       "host_type": "github",
       "created_at": "..."
     }
   ]
 }
 ```
+
+The repo's name — the segment after the owner in `repo_identifier` — is its
+display label and the name of its workspace/worktree directories. It is unique
+within a project (enforced by a DB index), even across owners.
 
 #### `POST /projects/:projectId/repos`
 Add a repo — either by linking an existing GitHub repository or creating a new
@@ -623,7 +626,6 @@ Requires: GitHub platform must be connected for this team.
 **Mode: link** (default) — link an existing repo:
 ```json
 {
-  "short_name": "frontend",
   "mode": "link",
   "url": "https://github.com/org/frontend"
 }
@@ -632,13 +634,15 @@ Requires: GitHub platform must be connected for this team.
 **Mode: create** — create a new repo on GitHub and link it:
 ```json
 {
-  "short_name": "app",
   "mode": "create",
   "owner": "acme-corp",
   "name": "my-app",
   "private": true
 }
 ```
+
+Returns 409 `REPO_NAME_TAKEN` if a repo with the same name (regardless of
+owner) is already linked to the project — its workspace directory would clash.
 The `owner` must appear in the user's accessible GitHub orgs (or match the
 authenticated user's personal namespace). Server re-checks this via
 `GET /user/orgs` before creating. Returns 403 `OWNER_NOT_ACCESSIBLE` otherwise.
@@ -684,8 +688,8 @@ The `REPO_ACCESS_FAILED` message includes the connected GitHub username (from
 access to the repository.
 
 **Synchronous clone:** on a successful insert the server clones the repo via
-SSH into `<dataDir>/teams/<team-slug>/projects/<project-slug>/workspace/<short_name>/`
-(bind-mounted as `/workspace/<short_name>/` inside the project container) and
+SSH into `<dataDir>/teams/<team-slug>/projects/<project-slug>/workspace/<repo-name>/`
+(bind-mounted as `/workspace/<repo-name>/` inside the project container) and
 returns the result in the response body as `clone_status` (`"cloned"`,
 `"skipped"`, or `"failed"`) and `clone_error` (string or `null`). Clone
 failures do not fail the request — the repo record is still created, and
@@ -695,7 +699,7 @@ provision.
 #### `DELETE /projects/:projectId/repos/:repoId`
 Remove a repo from a project. The server also removes the repo's on-disk
 workspace directory and every per-task worktree derived from it
-(`<workspace>/<short_name>/` and `<worktrees>/<task>/<short_name>/`).
+(`<workspace>/<repo-name>/` and `<worktrees>/<task>/<repo-name>/`).
 
 Returns 409 `DESIGNATED_REPO_IMMUTABLE` if `repoId` equals the project's
 `designated_repo_id`. The designated repo cannot be removed.
@@ -2137,7 +2141,7 @@ Response:
         "project_goal": "Ship collaboration features",
         "team_description": "Build the #1 AI note-taking app",
         "repos": [
-          { "short_name": "api", "url": "https://github.com/org/api" }
+          { "repo_identifier": "org/api", "url": "https://github.com/org/api" }
         ],
         "unread_comments": 1
       }
@@ -2202,7 +2206,7 @@ as GitHub. No side channels, no direct messaging. Everything is on the record.
 
 Text content can contain `@<agent-slug>` references. The slug is derived from
 the agent title (lowercased, spaces → hyphens, e.g. "Dev Engineer" → `dev-engineer`).
-Repo short names can also be referenced: `@frontend`, `@api`.
+Repo names can also be referenced: `@frontend`, `@api`.
 
 The resolved system prompt every agent receives ends with a **Teammates** block
 listing each enabled peer in the team in `@<slug> — Title` form. This block

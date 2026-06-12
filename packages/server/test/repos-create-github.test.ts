@@ -101,7 +101,6 @@ describe('POST /api/projects/:projectId/repos with mode=create', () => {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				short_name: 'collision',
 				mode: 'create',
 				owner: 'octo-repo',
 				name: 'already-taken',
@@ -126,7 +125,7 @@ describe('POST /api/projects/:projectId/repos with mode=create', () => {
 // POST /repos clones over SSH after the insert; the test app has no
 // SshAgentServer, so emulate an existing clone (repo-sync skips dirs that
 // already contain .git) to keep the success path quiet and deterministic.
-function fakeClonedRepoDir(shortName: string) {
+function fakeClonedRepoDir(repoName: string) {
 	const gitDir = join(
 		dataDir,
 		'teams',
@@ -134,7 +133,7 @@ function fakeClonedRepoDir(shortName: string) {
 		'projects',
 		projectId,
 		'workspace',
-		shortName,
+		repoName,
 		'.git',
 	);
 	mkdirSync(gitDir, { recursive: true });
@@ -151,13 +150,12 @@ describe('repo creation, first-repo designation, and designated immutability', (
 			`UPDATE projects SET container_id = 'test-container', container_status = 'running' WHERE id = $1`,
 			[projectId],
 		);
-		fakeClonedRepoDir('svc');
+		fakeClonedRepoDir('fresh-service');
 
 		const res = await app.request(`/api/projects/${projectId}/repos`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				short_name: 'svc',
 				mode: 'create',
 				owner: 'octo-repo',
 				name: 'fresh-service',
@@ -183,13 +181,12 @@ describe('repo creation, first-repo designation, and designated immutability', (
 	});
 
 	it('mode=link adds a second repo without re-designating', async () => {
-		fakeClonedRepoDir('second');
+		fakeClonedRepoDir('already-taken');
 
 		const res = await app.request(`/api/projects/${projectId}/repos`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				short_name: 'second',
 				mode: 'link',
 				url: 'https://github.com/octo-repo/already-taken',
 				oauth_connection_id: oauthConnectionId,

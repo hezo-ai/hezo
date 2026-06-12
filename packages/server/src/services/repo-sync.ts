@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
+import { repoNameFromIdentifier } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { logger } from '../logger';
 import { cloneRepo, ensureGithubKnownHosts } from './git';
@@ -12,10 +13,11 @@ const log = logger.child('repo-sync');
 
 export type LogEmitter = (stream: 'stdout' | 'stderr', text: string) => void;
 
+/** Repos keyed by name — the workspace directory each clone lives in. */
 export interface RepoSyncResult {
 	cloned: string[];
 	skipped: string[];
-	failed: Array<{ short_name: string; error: string }>;
+	failed: Array<{ name: string; error: string }>;
 }
 
 export interface ProjectIdentity {
@@ -34,7 +36,7 @@ export async function ensureProjectRepos(
 	const result: RepoSyncResult = { cloned: [], skipped: [], failed: [] };
 
 	const repos = await db.query<RepoRow>(
-		`SELECT short_name, repo_identifier FROM repos
+		`SELECT repo_identifier FROM repos
 		 WHERE project_id = $1 ORDER BY created_at ASC`,
 		[project.id],
 	);
@@ -46,9 +48,10 @@ export async function ensureProjectRepos(
 
 	const pending: RepoRow[] = [];
 	for (const r of repos.rows) {
-		const targetDir = join(workspacePath, r.short_name);
+		const name = repoNameFromIdentifier(r.repo_identifier);
+		const targetDir = join(workspacePath, name);
 		if (existsSync(join(targetDir, '.git'))) {
-			result.skipped.push(r.short_name);
+			result.skipped.push(name);
 		} else {
 			pending.push(r);
 		}
@@ -60,7 +63,7 @@ export async function ensureProjectRepos(
 		const msg = 'SshAgentServer not available — cannot clone over SSH';
 		for (const r of pending) {
 			logEmit?.('stderr', `✗ ${msg}`);
-			result.failed.push({ short_name: r.short_name, error: msg });
+			result.failed.push({ name: repoNameFromIdentifier(r.repo_identifier), error: msg });
 		}
 		return result;
 	}
@@ -69,16 +72,17 @@ export async function ensureProjectRepos(
 
 	await withHostAgentSocket(sshAgentServer, project.team_id, dataDir, async ({ sshAuthSock }) => {
 		for (const r of pending) {
-			const targetDir = join(workspacePath, r.short_name);
-			logEmit?.('stdout', `→ Cloning ${r.repo_identifier} into ${r.short_name}/`);
+			const name = repoNameFromIdentifier(r.repo_identifier);
+			const targetDir = join(workspacePath, name);
+			logEmit?.('stdout', `→ Cloning ${r.repo_identifier} into ${name}/`);
 			const clone = await cloneRepo(r.repo_identifier, targetDir, sshAuthSock, knownHostsPath);
 			if (clone.success) {
-				logEmit?.('stdout', `✓ Cloned ${r.short_name}`);
-				result.cloned.push(r.short_name);
+				logEmit?.('stdout', `✓ Cloned ${name}`);
+				result.cloned.push(name);
 			} else {
 				const errMsg = clone.error ?? 'unknown error';
-				logEmit?.('stderr', `✗ Clone failed for ${r.short_name}: ${errMsg}`);
-				result.failed.push({ short_name: r.short_name, error: errMsg });
+				logEmit?.('stderr', `✗ Clone failed for ${name}: ${errMsg}`);
+				result.failed.push({ name, error: errMsg });
 				log.error(`Failed to clone ${r.repo_identifier}`, errMsg);
 			}
 		}
@@ -88,7 +92,6 @@ export async function ensureProjectRepos(
 }
 
 interface RepoRow {
-	short_name: string;
 	repo_identifier: string;
 }
 
@@ -96,11 +99,11 @@ export function removeRepoFromWorkspace(
 	dataDir: string,
 	teamId: string,
 	projectId: string,
-	shortName: string,
+	repoName: string,
 ): void {
-	if (!shortName || shortName.includes('/') || shortName === '..' || shortName === '.') return;
+	if (!repoName || repoName.includes('/') || repoName === '..' || repoName === '.') return;
 	const workspacePath = getWorkspacePath(dataDir, teamId, projectId);
-	const repoDir = join(workspacePath, shortName);
+	const repoDir = join(workspacePath, repoName);
 	if (existsSync(repoDir)) {
 		rmSync(repoDir, { recursive: true, force: true });
 	}
@@ -110,7 +113,7 @@ export function removeRepoFromWorkspace(
 
 	for (const entry of readdirSync(worktreesRoot, { withFileTypes: true })) {
 		if (!entry.isDirectory()) continue;
-		const repoWorktree = join(worktreesRoot, entry.name, shortName);
+		const repoWorktree = join(worktreesRoot, entry.name, repoName);
 		if (existsSync(repoWorktree)) {
 			rmSync(repoWorktree, { recursive: true, force: true });
 		}

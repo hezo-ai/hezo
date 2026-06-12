@@ -34,7 +34,6 @@ export interface Project {
 export interface Repo {
 	id: string;
 	project_id: string;
-	short_name: string;
 	repo_identifier: string;
 	host_type: string;
 	created_at: string;

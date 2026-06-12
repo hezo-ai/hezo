@@ -154,7 +154,6 @@ export interface ActionChosen {
 	result?: {
 		repo_id?: string;
 		repo_identifier?: string;
-		short_name?: string;
 	};
 }
 

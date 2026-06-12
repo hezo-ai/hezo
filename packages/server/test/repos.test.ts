@@ -59,7 +59,7 @@ describe('repos CRUD', () => {
 		const res = await app.request(`/api/projects/${projectId}/repos`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ short_name: 'bad', url: 'not-a-url' }),
+			body: JSON.stringify({ url: 'not-a-url' }),
 		});
 		expect(res.status).toBe(400);
 		const body = await res.json();
@@ -70,7 +70,7 @@ describe('repos CRUD', () => {
 		const res = await app.request(`/api/projects/${projectId}/repos`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ short_name: 'x' }),
+			body: JSON.stringify({}),
 		});
 		expect(res.status).toBe(400);
 	});
@@ -78,8 +78,8 @@ describe('repos CRUD', () => {
 	it('deletes a repo', async () => {
 		// Insert a repo directly for deletion test
 		const insertResult = await db.query<{ id: string }>(
-			`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
-			 VALUES ($1, 'to-delete', 'acme/to-delete', 'github') RETURNING id`,
+			`INSERT INTO repos (project_id, repo_identifier, host_type)
+			 VALUES ($1, 'acme/to-delete', 'github') RETURNING id`,
 			[projectId],
 		);
 		const repoId = insertResult.rows[0].id;
@@ -101,21 +101,22 @@ describe('repos CRUD', () => {
 		expect(res.status).toBe(404);
 	});
 
-	it('enforces unique short_name within project', async () => {
+	it('enforces unique repo name within project, even across owners', async () => {
 		await db.query(
-			`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
-			 VALUES ($1, 'unique-test', 'acme/unique-test', 'github')`,
+			`INSERT INTO repos (project_id, repo_identifier, host_type)
+			 VALUES ($1, 'acme/unique-test', 'github')`,
 			[projectId],
 		);
 
-		// Trying to insert the same short_name should fail at DB level
+		// A repo with the same name under a different owner would clash on the
+		// workspace directory, so the DB must reject it.
 		try {
 			await db.query(
-				`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
-				 VALUES ($1, 'unique-test', 'acme/other-repo', 'github')`,
+				`INSERT INTO repos (project_id, repo_identifier, host_type)
+				 VALUES ($1, 'other-org/unique-test', 'github')`,
 				[projectId],
 			);
-			expect.fail('Should have thrown on duplicate short_name');
+			expect.fail('Should have thrown on duplicate repo name');
 		} catch (e: any) {
 			expect(e.message).toContain('unique');
 		}

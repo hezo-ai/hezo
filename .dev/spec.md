@@ -787,13 +787,13 @@ All Hezo data lives under `~/.hezo/` on the host machine. The structure mirrors 
 
 ### Git worktrees for parallelism
 
-Repos are cloned once (via SSH) into the project's `workspace/<repo-short-name>/` directory. When an agent starts a run on an task, the runner lazily creates a **git worktree per (task × repo)** so iterative work across runs on the same task persists and concurrent tasks cannot collide.
+Repos are cloned once (via SSH) into the project's `workspace/<repo-name>/` directory (the repo name is the segment after the owner in the `org/repo` identifier). When an agent starts a run on an task, the runner lazily creates a **git worktree per (task × repo)** so iterative work across runs on the same task persists and concurrent tasks cannot collide.
 
 - Multiple agents working on different tasks use different worktrees — no conflicts.
 - Repeated runs on the same task reuse the existing worktree, pulling latest changes via `git fetch` + fast-forward merge.
 - The agent's working directory is the **designated repo's worktree**; other repos sit alongside and the agent can `cd` into them.
 
-Worktree layout: `~/.hezo/teams/{team}/projects/{project}/worktrees/{task-identifier}/{repo-short-name}/`
+Worktree layout: `~/.hezo/teams/{team}/projects/{project}/worktrees/{task-identifier}/{repo-name}/`
 Branch name: `hezo/{task-identifier}`
 
 Worktrees are created on first run of an task and removed when the task transitions to a terminal status (done/cancelled) or its repo is detached.
@@ -856,7 +856,7 @@ At runtime, the team's SSH private key is injected into agent subprocesses for g
 | Team deleted | All project containers destroyed. |
 | Server startup / every 5s | Container status sync — DB state reconciled with Docker. Stale "running" status corrected to "stopped" or "error". Changes broadcast via WebSocket. |
 | Task assigned | No-op until the first run. Worktrees are created lazily when an agent starts executing against the task. |
-| Task first run | Runner creates `/worktrees/{task-identifier}/{repo-short-name}/` on branch `hezo/{task-identifier}` for every linked repo, then runs the agent with the designated repo's worktree as its working directory. |
+| Task first run | Runner creates `/worktrees/{task-identifier}/{repo-name}/` on branch `hezo/{task-identifier}` for every linked repo, then runs the agent with the designated repo's worktree as its working directory. |
 | Task closed | Per-task worktree directory `/worktrees/{task-identifier}/` is removed (all per-repo worktrees under it). |
 
 ### Agent subprocess model
@@ -1042,10 +1042,9 @@ Hezo generates an SSH key pair per team, stores the private key encrypted in the
 ### Repos belong to projects
 
 - A project can reference multiple repos
-- Each repo within a project has a unique short name (e.g. `frontend`, `api`, `infra`)
-- Short names are user-defined at add time
-- Short names are used for @-mentioning in task comments: `@frontend`, `@api`
-- Uniqueness is enforced within a project (DB unique constraint)
+- Each repo is labelled by its own name — the segment after the owner in the `org/repo` identifier (e.g. `frontend`, `api`, `infra`)
+- Repo names are used for @-mentioning in task comments: `@frontend`, `@api`
+- Repo-name uniqueness is enforced within a project, even across owners (DB unique index on `split_part(repo_identifier, '/', 2)`), because the name is also the workspace directory
 
 ### What happens when a repo is linked
 
@@ -1058,8 +1057,8 @@ When a repo is added to a project via the API:
 2. **Repo access validation** — using the team's GitHub OAuth token, the system calls the GitHub API (`GET /repos/{owner}/{repo}`) to verify the authorized GitHub user has access. If access fails (403/404):
    - The request fails with `REPO_ACCESS_FAILED`
    - The error message includes the GitHub username from `connected_platforms.metadata` so the board knows which account needs access: *"Cannot access this repo — the GitHub user '{username}' needs to be added to {owner}/{repo}"*
-3. The repo is cloned (via SSH using the team's generated key) into `~/.hezo/teams/{team}/projects/{project}/{short_name}/`
-4. A symlink is created: `{short_name}/AGENTS.md → ../../../AGENTS.md` (pointing to team-level AGENTS.md)
+3. The repo is cloned (via SSH using the team's generated key) into `~/.hezo/teams/{team}/projects/{project}/{repo-name}/`
+4. A symlink is created: `{repo-name}/AGENTS.md → ../../../AGENTS.md` (pointing to team-level AGENTS.md)
 5. Git SSH command is configured to use the team's SSH key for all operations
 6. The repo is now available to any agent working on tasks in this project
 
@@ -1089,7 +1088,7 @@ Submitting the wizard calls `POST /repos` which, in one transaction:
 5. Sweeps every pending `action` setup-repo comment for this project, stamps each with `chosen_option = { status: 'complete', result: {...} }`, and appends a `system` confirmation comment per affected task.
 6. Resolves the pending approval.
 
-Post-commit the server clones the repo into the host workspace (`ensureProjectRepos`), then brings up the project container if it isn't already (`provisionContainer`) so `/workspace/{short_name}/` is live inside the container. Only then are the deferred wakeups re-enqueued as fresh `Automation` wakeups, so agents never wake up against an empty workspace.
+Post-commit the server clones the repo into the host workspace (`ensureProjectRepos`), then brings up the project container if it isn't already (`provisionContainer`) so `/workspace/{repo-name}/` is live inside the container. Only then are the deferred wakeups re-enqueued as fresh `Automation` wakeups, so agents never wake up against an empty workspace.
 
 ### Designated repo is immutable
 
@@ -1235,7 +1234,7 @@ An agent can `@architect` or `@engineer` in a comment. The mentioned agent wakes
 
 Every agent's resolved system prompt is auto-appended with a **Teammates** block listing each enabled peer in the team in `@<slug> — Title` form, sourced from `member_agents` filtered by `admin_status = 'enabled'` and excluding the running agent itself. This is the authoritative slug list at compose time — agents read it inline rather than calling `list_agents` on every reference. The block sits between the Project State block and the shared working guidelines.
 
-Repo short names can also be @-mentioned: `@frontend`, `@api` — these reference the repo, not an agent.
+Repo names can also be @-mentioned: `@frontend`, `@api` — these reference the repo, not an agent.
 
 **Handoff contract.** When an agent is woken by a mention, its run opens on the triggering ticket for *triage only* — not as new assigned work. The agent's task prompt is prepended with a Mention Handoff block showing the mentioner, the full comment, and the agent's own open tickets. The expected behaviour is:
 
@@ -2173,7 +2172,7 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 | `api_keys` | Team-scoped API keys for external orchestrators. Stored hashed. |
 | `team_ssh_keys` | Generated SSH key pairs per team. Registered on GitHub via OAuth API. |
 | `projects` | Groups of work under a team. Each gets its own Docker container. |
-| `repos` | Git repos (GitHub only). Stores `org/repo` identifier. Short name for @-mentions. |
+| `repos` | Git repos (GitHub only). Stores `org/repo` identifier; the repo name (segment after the owner) is the label, directory name, and @-mention handle. |
 | `tasks` | Tickets. Must have a project. Assignee references `members.id`. |
 | `task_dependencies` | Many-to-many blocking relationships between tasks. |
 | `task_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. |
@@ -2231,7 +2230,7 @@ auth_provider:        github, gitlab
 
 - `agents(team_id, slug)` UNIQUE: slugs unique within team (for unambiguous @-mentions)
 - `repos.url` CHECK: must match `github.com`
-- `repos(project_id, short_name)` UNIQUE: short names unique within project
+- `repos(project_id, split_part(repo_identifier, '/', 2))` UNIQUE: repo names unique within project (the name doubles as the workspace directory)
 - `tasks(team_id, number)` UNIQUE: task numbers unique within team
 - `tasks(team_id, identifier)` UNIQUE: identifiers unique within team
 - `tasks.project_id` NOT NULL: every task must belong to a project

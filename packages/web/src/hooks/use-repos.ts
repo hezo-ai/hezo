@@ -5,7 +5,6 @@ import { queryKeys } from '../lib/query-keys';
 import type { Repo } from './use-projects';
 
 export interface CreateRepoPayload {
-	short_name: string;
 	mode?: 'link' | 'create';
 	url?: string;
 	owner?: string;

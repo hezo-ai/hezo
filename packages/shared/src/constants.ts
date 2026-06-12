@@ -44,6 +44,18 @@ export const wsRoom = {
 } as const;
 
 /**
+ * The repository's own name — the segment after the owner in an `owner/name`
+ * identifier. Serves as the repo's display label and as its directory name
+ * under the project workspace and per-task worktrees. Must match the SQL
+ * expression `split_part(repo_identifier, '/', 2)` used by the per-project
+ * uniqueness index on repos.
+ */
+export function repoNameFromIdentifier(repoIdentifier: string): string {
+	const slash = repoIdentifier.indexOf('/');
+	return slash === -1 ? repoIdentifier : repoIdentifier.slice(slash + 1);
+}
+
+/**
  * Conventional-commit type → changelog heading, in render order. Single source
  * of truth shared by the release script and its tests. Commit types not listed
  * here (and non-conventional commits) fall into the "Other" section.
