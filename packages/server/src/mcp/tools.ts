@@ -80,6 +80,7 @@ import {
 	CreateTaskError,
 	type CreateTaskInput,
 	createTask,
+	createTaskBatch,
 	TASK_COLUMNS_BARE,
 } from '../services/tasks';
 import { resolveSystemPrompt } from '../services/template-resolver';
@@ -598,7 +599,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_task',
-		'Create a new task. Use parent_task_id for sub-tasks — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates — to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites — the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, closed, cancelled). In title/description, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		"Create a new task. Use parent_task_id for sub-tasks — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates — to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites — the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, closed, cancelled). When splitting work into sequential phases, prefer create_tasks and chain the items with '#<index>' blockers instead of filing them unordered. In title/description, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.",
 		{
 			project: projectArg(),
 			title: z.string().describe('Task title'),
@@ -652,7 +653,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_tasks',
-		`Create multiple tasks in one call (max ${MAX_BATCH_CREATE_TASKS}). Each item has the same shape as create_task; per-item errors are returned without aborting the rest. Use this when filing a related set of tickets in one go (planning a feature, splitting a project into sub-tasks). For a single task, use create_task.`,
+		`Create multiple tasks in one call (max ${MAX_BATCH_CREATE_TASKS}). Items are created in order; each has the same shape as create_task, and per-item errors are returned without aborting the rest. Within a batch, blocked_by_task_ids entries may reference an earlier item in the same call by zero-based index token — '#0' is the first item. To chain sequential work (e.g. implementation phases that must run one at a time), set blocked_by_task_ids: ['#<previous index>'] on every item after the first; each task then stays blocked until the one before it reaches a terminal status. Filing sequential phases WITHOUT these blockers makes all of them runnable at once. Index tokens may only point at earlier items; a token that is self-referencing, forward-referencing, or points at an item that failed errors that item. Use this when filing a related set of tickets in one go (planning a feature, splitting a ticket into phases or sub-tasks). For a single task, use create_task.`,
 		{
 			project: projectArg(),
 			items: z
@@ -682,7 +683,7 @@ export function registerTools(
 							.array(z.string())
 							.optional()
 							.describe(
-								'Task identifiers (e.g. ["BE-2"]) or UUIDs that must reach a terminal status before this ticket is started.',
+								'Task identifiers (e.g. ["BE-2"]), UUIDs, or zero-based index tokens referencing earlier items in this same call (e.g. "#0" = first item). All must reach a terminal status before this ticket starts. To chain phases sequentially, set ["#<previous index>"] on each item after the first.',
 							),
 					}),
 				)
@@ -697,33 +698,14 @@ export function registerTools(
 			const items = args.items as Array<Record<string, unknown>>;
 			const caller = await buildMcpCreateTaskCaller(db, auth, scope.teamId);
 
-			const results = await Promise.all(
-				items.map(async (item, index) => {
-					try {
-						const task = await createTask(
-							db,
-							scope.teamId,
-							mcpArgsToCreateTaskInput(item, scope.projectId),
-							caller,
-							wsManager,
-							events,
-						);
-						return { index, ok: true as const, task };
-					} catch (e) {
-						if (e instanceof CreateTaskError) {
-							return { index, ok: false as const, error: e.message, code: e.code };
-						}
-						log.error('Unexpected error in create_tasks batch:', e);
-						return {
-							index,
-							ok: false as const,
-							error: e instanceof Error ? e.message : 'internal_error',
-							code: 'INTERNAL_ERROR' as const,
-						};
-					}
-				}),
+			return createTaskBatch(
+				db,
+				scope.teamId,
+				items.map((item) => mcpArgsToCreateTaskInput(item, scope.projectId)),
+				caller,
+				wsManager,
+				events,
 			);
-			return results;
 		},
 		db,
 	);
