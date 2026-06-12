@@ -31,6 +31,7 @@ import { costsRoutes } from './routes/costs';
 import { executionLocksRoutes } from './routes/execution-locks';
 import { healthRoutes } from './routes/health';
 import { inboxRoutes } from './routes/inbox';
+import { instanceSettingsRoutes } from './routes/instance-settings';
 import { mcpConnectionsRoutes } from './routes/mcp-connections';
 import { meRoutes } from './routes/me';
 import { mentionsRoutes } from './routes/mentions';
@@ -327,6 +328,7 @@ export function buildApp(
 	app.route('/api', projectDocsRoutes);
 	app.route('/api', mentionsRoutes);
 	app.route('/api', aiProvidersRoutes);
+	app.route('/api', instanceSettingsRoutes);
 	app.route('/api', reposRoutes);
 	app.route('/api', executionLocksRoutes);
 	app.route('/api', queuedWakeupsRoutes);

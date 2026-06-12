@@ -148,11 +148,15 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 				data-role="ceo"
 			>
 				<div className="rounded-radius-md rounded-bl-sm border border-border bg-bg-subtle px-3 py-2 text-text">
-					{/* The CEO's replies are LLM-authored markdown. There's no single
-					    project scope on the global chat, so MarkdownProse renders pure
-					    GFM (mention resolution stays disabled without a projectId). */}
+					{/* The CEO's replies are LLM-authored markdown. The global chat has
+					    no single project scope, so mentions resolve instance-wide:
+					    references that are unique across all projects (TO-1, prd.md,
+					    @agent, …) render as client-side links; ambiguous ones stay
+					    plain text. */}
 					{message.content ? (
-						<MarkdownProse testId="ceo-chat-markdown">{message.content}</MarkdownProse>
+						<MarkdownProse testId="ceo-chat-markdown" instance>
+							{message.content}
+						</MarkdownProse>
 					) : failed ? (
 						<span className="text-[13px] leading-relaxed">Something went wrong.</span>
 					) : null}

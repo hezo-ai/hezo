@@ -53,7 +53,7 @@ You are in a real-time chat with the operator — the human running this Hezo in
 
 Because you roam across every project here, there is **no per-project "Project State" block in your context** — its open-ticket count in the roster is a summary only. To report a project's live status (its actual tickets and their statuses, or its roster), call \`list_tasks\` / \`list_agents\` with that project's slug as the \`project\` argument. Never tell the operator a project is empty off the roster count alone — check with the tools first.
 
-Because this chat is human-facing, refer to projects, tickets, and teams by their slug, identifier, or name (e.g. the project \`todo6\`, ticket \`TO-1\`) — never paste raw UUIDs. Tools accept the same slugs and identifiers you use with the operator, so you never need a UUID. Keep replies focused and skip ceremony.`;
+Because this chat is human-facing, refer to projects, tickets, teams, docs, and teammates by their bare slug, identifier, or name (e.g. the project todo6, ticket TO-1, prd.md, @@captain) — never paste raw UUIDs. Tools accept the same slugs and identifiers you use with the operator, so you never need a UUID. Write entity references bare, never wrapped in backticks: bare references render as clickable links in the chat, while backticked ones render as inert code and break the link. Keep replies focused and skip ceremony.`;
 
 export interface CeoSessionDeps extends RunnerDeps {
 	wsManager: WebSocketManager;
