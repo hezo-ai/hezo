@@ -73,37 +73,37 @@ packages/
 
 ### Master key lifecycle
 
-The master key is held in memory only — never written to disk. It encrypts all secrets, agent JWTs, and the canary value stored in `system_meta`.
+The master key is a **12-word BIP39 phrase held by the operator**. It never reaches the server. From its seed the client (browser, or the CLI boot path) derives two independent keys via HKDF-SHA256 with distinct salts:
 
-**First startup** (no canary in `system_meta`):
-1. If `--master-key <key>` provided on CLI → use that key, store canary (`encrypt("CANARY", master_key)`), proceed.
-2. If no CLI key → server starts but master key is "unset". The web UI shows a **master key gate modal** on the first authenticated user's first visit:
-   - **Option A: Generate a new key.** Server generates a random 256-bit key, displays it once in the UI, and warns the user to save it — it will not be shown again.
-   - **Option B: Enter an existing key.** User provides a key they already have (e.g., restoring from backup).
-3. Store canary and proceed.
+- **Ed25519 auth keypair** (`hezo-auth-key-v1`) — the private key exists only client-side, re-derived from the typed phrase at each login, never persisted. The public key is enrolled at setup, stored plaintext in `system_meta.auth_public_key`, and verifies every login/unlock signature.
+- **Unlock key** (`hezo-unlock-key-v1`, 32 bytes) — the input to all server-side key derivations: the canary, the at-rest secrets-encryption key, and the JWT signing key. The server holds it in memory only — never on disk. It transits exactly twice in a server's life-per-boot: at setup and at unlock-after-restart, always inside an Ed25519-signed payload (the server must hold symmetric key material at runtime because it decrypts secrets with no client in the loop — egress substitution, ssh-agent signing, provider keys).
 
-**Subsequent startup** (canary exists in `system_meta`):
-1. If `--master-key <key>` provided on CLI → attempt to decrypt canary.
-   - **Success** → unlock, proceed normally.
-   - **Failure** → server starts but in locked state. Web UI shows "incorrect master key" with option to re-enter.
-2. If no CLI key → server starts in locked state. Web UI prompts user to enter master key.
-   - **Success** → unlock, proceed normally.
-   - **Failure** → prompt again or offer recovery.
+Routine logins transmit **zero key material**: the client signs a single-use server nonce (`POST /auth/challenge` → `POST /auth/verify`) and gets a JWT.
 
-**Key principle:** CLI `--master-key` is for **unlocking** (verifying the canary) on startup. The web UI is for **setting/managing** the key. The CLI never sets a new key interactively.
+**First startup** (no canary in `system_meta`, state `unset`):
+1. If `--master-key <phrase>` / `HEZO_MASTER_KEY` is provided → the CLI derives both keys, enrolls the public key + canary (equivalent to web setup), and unlocks.
+2. Otherwise the web UI shows the **setup wizard's master-key step**: it generates a 12-word phrase client-side, the operator saves it, and submit runs `POST /auth/setup` (public key + unlock key + self-certifying signature, persisted in one transaction).
+
+**Subsequent startup** (canary exists):
+1. With `--master-key <phrase>` → derived unlock key decrypts the canary → unlocked (the enrolled public key is backfilled if missing; the phrase is the root of trust). A wrong phrase leaves the server **locked**.
+2. Without it → server starts **locked**. The web UI gate prompts for the phrase; the client signs the challenge *and* includes the unlock key (`POST /auth/verify` with `unlock_key`).
+
+**Key principles:** the phrase/seed never transits; enrollment is explicit (`unlock()` never implicitly trusts-on-first-use — only `setup`/the CLI boot path enroll); `--master-key` accepts only a valid mnemonic (a raw derived key could never enroll the public key, which would leave an unlocked server nobody can log into — boot fails fast instead).
 
 **On unlock:** `MasterKeyManager` fires registered `onUnlock` callbacks when the state transitions to `unlocked`. The server registers a callback at startup that starts the `JobManager` (agent wakeups, heartbeats, container sync, orphan detection). This means background processing begins as soon as the server is unlocked, regardless of whether the key was provided via CLI or web UI.
 
-**Recovery options** (after failed canary decryption, via web UI):
-- **Re-enter a different master key.** Try again with the correct key.
-- **Generate a new master key and start fresh.** Warn that all existing instance data (secrets, teams, agents) will be lost. If confirmed, wipe the database, store a new canary, and proceed with a clean instance.
+**Recovery options** (locked, phrase rejected):
+- **Re-enter the correct phrase.** Try again.
+- **Reset and start fresh.** Wipe the database (`--reset`), run setup with a new phrase. All existing instance data (secrets, teams, agents) is lost.
+
+**Threat notes:** a captured setup/unlock request could be replayed against a *different, freshly-reset* instance to enroll the same key there — the same exposure class as any first-boot credential; TLS is the transit defense. Login signatures are bound to single-use nonces (consumed before verification, so a failed attempt burns the challenge) and to domain-separated message tags, so they cannot be replayed or cross-purposed.
 
 ### CLI interface and default configuration
 
 ```
 hezo                          # Start server with sensible defaults
 hezo --data-dir /path/to/dir  # Custom persistence directory (default: ~/.hezo/)
-hezo --master-key <key>       # Supply master key (skip terminal prompt)
+hezo --master-key <phrase>    # The 12-word master key phrase (setup/unlock)
 hezo --port 3100              # Custom port (default: 3100)
 hezo --connect-url <url>      # Hezo Connect URL (default: http://localhost:4100)
 hezo --connect-api-key <key>  # API key for centrally hosted Connect

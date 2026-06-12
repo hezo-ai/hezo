@@ -50,6 +50,7 @@ import { teamTemplatesRoutes } from './routes/team-templates';
 import { teamsRoutes } from './routes/teams';
 import { uiStateRoutes } from './routes/ui-state';
 import { updatesRoutes } from './routes/updates';
+import { AuthChallengeStore } from './services/auth-challenges';
 import { CeoSessionManager } from './services/ceo-session-manager';
 import { ContainerLogStreamer } from './services/container-logs';
 import { DockerClient } from './services/docker';
@@ -237,6 +238,7 @@ export function buildApp(
 	ceoSessionManager?: CeoSessionManager,
 ): Hono<Env> {
 	const app = new Hono<Env>();
+	const authChallenges = new AuthChallengeStore();
 	logs.setWsManager(wsManager);
 	registerAuditObserver(events, db);
 
@@ -248,6 +250,7 @@ export function buildApp(
 	app.use('*', async (c, next) => {
 		c.set('db', db);
 		c.set('masterKeyManager', masterKeyManager);
+		c.set('authChallenges', authChallenges);
 		c.set('docker', docker);
 		c.set('wsManager', wsManager);
 		c.set('events', events);
@@ -487,10 +490,14 @@ async function runSeed(db: PGlite): Promise<void> {
 async function resolveMasterKeyState(
 	db: PGlite,
 	masterKeyManager: MasterKeyManager,
-	masterKey?: string,
+	masterKey?: { unlockKeyHex: string; publicKeyHex: string },
 ): Promise<MasterKeyState> {
 	try {
-		const state = await masterKeyManager.initialize(db, masterKey);
+		const state = await masterKeyManager.initialize(
+			db,
+			masterKey?.unlockKeyHex,
+			masterKey?.publicKeyHex,
+		);
 
 		const messages: Record<string, string> = {
 			unlocked: 'Master key verified. Server unlocked.',

@@ -37,6 +37,8 @@ interface RenderOptions {
 interface TestAppContext {
 	app: Hono;
 	token: string;
+	/** The 12-word master key phrase the test app was enrolled with. */
+	mnemonic: string;
 	apiBase: (path: string, init?: RequestInit) => Promise<Response>;
 	// Source the PGlite type from the server helper so it stays in lockstep with
 	// the version server-side seeders (createTestProject) expect — the web tree
@@ -67,6 +69,7 @@ beforeEach(async () => {
 	activeContext = {
 		app: test.app,
 		token: test.token,
+		mnemonic: test.mnemonic,
 		apiBase,
 		db: test.db,
 		masterKeyManager: test.masterKeyManager,

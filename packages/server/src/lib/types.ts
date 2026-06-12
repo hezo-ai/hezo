@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { AuthType } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { DomainEventBus } from '../events/bus';
+import type { AuthChallengeStore } from '../services/auth-challenges';
 import type { CeoSessionManager } from '../services/ceo-session-manager';
 import type { ContainerLogStreamer } from '../services/container-logs';
 import type { DockerClient } from '../services/docker';
@@ -33,6 +34,7 @@ export type Env = {
 	Variables: {
 		db: PGlite;
 		masterKeyManager: MasterKeyManager;
+		authChallenges: AuthChallengeStore;
 		docker: DockerClient;
 		wsManager: WebSocketManager;
 		events: DomainEventBus;

@@ -1,17 +1,10 @@
-import {
-	generateMnemonic,
-	mnemonicToMasterKey,
-	normalizeMnemonic,
-	validateMnemonic,
-} from '@hezo/shared';
+import { generateMnemonic, normalizeMnemonic, validateMnemonic } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 
-// Canonical BIP39 test vector (the all-"abandon" phrase). Its seed is the
-// well-known 5eb00bbd... value; the first 32 bytes pin our derivation so a
-// library/algorithm change is caught.
+// Canonical BIP39 test vector (the all-"abandon" phrase). The derived-key
+// pins for this vector live in auth-crypto.test.ts.
 const VECTOR =
 	'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
-const VECTOR_HEX = '5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc1';
 
 describe('mnemonic', () => {
 	it('generates a valid 12-word phrase', () => {
@@ -24,23 +17,11 @@ describe('mnemonic', () => {
 		expect(generateMnemonic()).not.toBe(generateMnemonic());
 	});
 
-	it('derives the pinned hex for the canonical vector', () => {
-		expect(validateMnemonic(VECTOR)).toBe(true);
-		const hex = mnemonicToMasterKey(VECTOR);
-		expect(hex).toBe(VECTOR_HEX);
-		expect(hex).toMatch(/^[0-9a-f]{64}$/);
-	});
-
-	it('is deterministic', () => {
-		expect(mnemonicToMasterKey(VECTOR)).toBe(mnemonicToMasterKey(VECTOR));
-	});
-
-	it('normalizes whitespace, newlines and case before deriving', () => {
+	it('normalizes whitespace, newlines and case', () => {
 		const messy = `  ABANDON   abandon\tabandon abandon abandon abandon
 			abandon abandon abandon abandon abandon ABOUT  `;
 		expect(normalizeMnemonic(messy)).toBe(VECTOR);
 		expect(validateMnemonic(messy)).toBe(true);
-		expect(mnemonicToMasterKey(messy)).toBe(VECTOR_HEX);
 	});
 
 	it('rejects invalid phrases without throwing', () => {

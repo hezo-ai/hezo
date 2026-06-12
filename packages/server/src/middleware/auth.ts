@@ -13,7 +13,15 @@ const AGENT_JWT_TTL_SECONDS = 60 * 60 * 4;
 // the ceo_sessions row status, so a long TTL is safe.
 const CEO_SESSION_JWT_TTL_SECONDS = 60 * 60 * 24 * 30;
 
-const PUBLIC_PATHS = ['/health', '/api/status', '/api/auth/token', '/', '/api/oauth/callback'];
+const PUBLIC_PATHS = [
+	'/health',
+	'/api/status',
+	'/api/auth/setup',
+	'/api/auth/challenge',
+	'/api/auth/verify',
+	'/',
+	'/api/oauth/callback',
+];
 
 /**
  * Shared token verification used by HTTP middleware, MCP, and WebSocket auth.

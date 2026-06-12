@@ -6,9 +6,9 @@ import type { MasterKeyManager } from '../crypto/master-key';
 const KEY_PURPOSE = 'asset-url';
 
 async function getSigningKey(masterKeyManager: MasterKeyManager): Promise<Buffer> {
-	const masterKeyHex = masterKeyManager.getMasterKeyHex();
-	if (!masterKeyHex) throw new Error('Master key not available');
-	return deriveKey(masterKeyHex, KEY_PURPOSE);
+	const unlockKeyHex = masterKeyManager.getUnlockKeyHex();
+	if (!unlockKeyHex) throw new Error('Master key not available');
+	return deriveKey(unlockKeyHex, KEY_PURPOSE);
 }
 
 export async function signAssetUrl(

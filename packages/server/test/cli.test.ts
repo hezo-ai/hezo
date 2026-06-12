@@ -1,7 +1,12 @@
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
+import { deriveAuthKeyPair, deriveUnlockKey } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import { parseConfig } from '../src/cli';
+
+// Canonical BIP39 vector — parseMasterKey only accepts a valid mnemonic.
+const PHRASE =
+	'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 
 // Helper to build argv with the standard bun/node + script prefix
 const argv = (...flags: string[]) => ['bun', 'src/index.ts', ...flags];
@@ -49,9 +54,23 @@ describe('parseConfig', () => {
 		expect(config.dataDir).toBe(resolve(homedir(), 'custom'));
 	});
 
-	it('parses --master-key', () => {
-		const config = parseConfig(argv('--master-key', 'mykey'), EMPTY_ENV);
-		expect(config.masterKey).toBe('mykey');
+	it('derives unlock key + auth public key from a --master-key phrase', () => {
+		const config = parseConfig(argv('--master-key', PHRASE), EMPTY_ENV);
+		expect(config.masterKey).toEqual({
+			unlockKeyHex: deriveUnlockKey(PHRASE),
+			publicKeyHex: deriveAuthKeyPair(PHRASE).publicKeyHex,
+		});
+	});
+
+	it('rejects a --master-key that is not a valid mnemonic', () => {
+		expect(() => parseConfig(argv('--master-key', 'not-a-phrase'), EMPTY_ENV)).toThrow(
+			'Invalid master key',
+		);
+		// A raw derived hex key is no longer accepted either — it could never
+		// enroll the auth public key.
+		expect(() => parseConfig(argv('--master-key', 'ab'.repeat(32)), EMPTY_ENV)).toThrow(
+			'Invalid master key',
+		);
 	});
 
 	it('parses --reset', () => {
@@ -86,7 +105,7 @@ describe('parseConfig', () => {
 				'--data-dir',
 				'/tmp/hezo',
 				'--master-key',
-				'secret',
+				PHRASE,
 				'--reset',
 				'--open',
 			),
@@ -94,7 +113,7 @@ describe('parseConfig', () => {
 		);
 		expect(config.port).toBe(9000);
 		expect(config.dataDir).toBe('/tmp/hezo');
-		expect(config.masterKey).toBe('secret');
+		expect(config.masterKey?.unlockKeyHex).toBe(deriveUnlockKey(PHRASE));
 		expect(config.reset).toBe(true);
 		expect(config.open).toBe(true);
 	});

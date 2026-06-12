@@ -1,10 +1,17 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { defineConfig } from '@playwright/test';
+import { TEST_MNEMONIC } from './test/browser/constants';
 
 const SERVER_PORT = 3101;
 const WEB_PORT = 5174;
 const TEST_DATA_DIR = join(tmpdir(), 'hezo-e2e-test');
+
+// The master-key-gate spec owns its own backend lifecycle (boot, kill,
+// restart on :3102), so it gets a dedicated vite instance proxying there —
+// the shared server on :3101 must stay up for every other project.
+const GATE_SERVER_PORT = 3102;
+const GATE_WEB_PORT = 5175;
 
 export default defineConfig({
 	tsconfig: './tsconfig.json',
@@ -44,7 +51,8 @@ export default defineConfig({
 		},
 		{
 			name: 'parallel',
-			testIgnore: /(?:ai-providers|\.mobile|agent-run-logs|run-trigger-reason)\.spec\.ts$/,
+			testIgnore:
+				/(?:ai-providers|\.mobile|agent-run-logs|run-trigger-reason|master-key-gate)\.spec\.ts$/,
 			// Run after agent-runs-serial so the shared e2e job queue is not flooded first.
 			dependencies: ['ai-provider-serial', 'agent-runs-serial'],
 		},
@@ -54,21 +62,36 @@ export default defineConfig({
 			use: { viewport: { width: 390, height: 844 } },
 			dependencies: ['ai-provider-serial'],
 		},
+		{
+			// Self-contained: drives the pre-token setup wizard + locked gate
+			// against its own server on :3102 (spawned by the spec itself).
+			name: 'auth-gate',
+			testMatch: /master-key-gate\.spec\.ts$/,
+			fullyParallel: false,
+			workers: 1,
+			use: {
+				baseURL: `http://localhost:${GATE_WEB_PORT}`,
+				viewport: { width: 390, height: 844 },
+			},
+		},
 	],
 	webServer: [
 		{
-			command: `bun run src/index.ts -- --port ${SERVER_PORT} --data-dir ${TEST_DATA_DIR} --master-key e2e-test-master-key-0123456789abcdef0123456789abcdef --reset`,
+			command: `bun run src/index.ts -- --port ${SERVER_PORT} --data-dir ${TEST_DATA_DIR} --reset`,
 			cwd: './packages/server',
 			// `Bun.serve` opens the port before `startup()` finishes registering
 			// routes, so a port-only check races against route mounting and the
-			// first /api/auth/token call sees Hono's default "404 Not Found".
-			// /api/status is only mounted inside startup, so polling it waits
-			// for full readiness.
+			// first auth call sees Hono's default "404 Not Found". /api/status is
+			// only mounted inside startup, so polling it waits for full readiness.
 			url: `http://localhost:${SERVER_PORT}/api/status`,
 			reuseExistingServer: false,
 			env: {
 				SKIP_AI_KEY_VALIDATION: '1',
 				HEZO_SKIP_DOCKER: '1',
+				// Boot-enrolls the master key (canary + auth public key) so tests
+				// log in via the challenge dance instead of running setup. Env var
+				// rather than a flag: a 12-word phrase is hostile to shell quoting.
+				HEZO_MASTER_KEY: TEST_MNEMONIC,
 				HEZO_WAKEUP_COALESCING_MS: '100',
 				HEZO_WAKEUP_CRON: '* * * * * *',
 				HEZO_HEARTBEAT_CRON: '* * * * * *',
@@ -87,6 +110,16 @@ export default defineConfig({
 			env: {
 				HEZO_WEB_PORT: String(WEB_PORT),
 				HEZO_SERVER_PORT: String(SERVER_PORT),
+			},
+		},
+		{
+			command: 'bun run dev',
+			cwd: './packages/web',
+			port: GATE_WEB_PORT,
+			reuseExistingServer: false,
+			env: {
+				HEZO_WEB_PORT: String(GATE_WEB_PORT),
+				HEZO_SERVER_PORT: String(GATE_SERVER_PORT),
 			},
 		},
 	],
