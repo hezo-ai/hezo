@@ -17,6 +17,7 @@ import type { CA } from 'mockttp/dist/util/certificates';
 import { getCA } from 'mockttp/dist/util/certificates';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import { ref } from '../../lib/log-ref';
+import { closeServerWithDeadline } from '../../lib/net';
 import { logger } from '../../logger';
 import { type EgressAuditEvent, recordEgressEvent } from './audit';
 import type { HezoCA } from './ca';
@@ -232,13 +233,13 @@ class RunProxyInstance {
 	async close(): Promise<void> {
 		this.closed = true;
 		const closables: Array<Promise<void>> = [];
-		for (const { server } of this.hostServers.values()) {
-			closables.push(closeServer(server));
+		for (const [host, { server }] of this.hostServers.entries()) {
+			closables.push(closeServer(server, `${this.cfg.scope.label}/${host}`));
 		}
 		this.hostServers.clear();
 		this.pendingHostServers.clear();
 		if (this.front) {
-			closables.push(closeServer(this.front));
+			closables.push(closeServer(this.front, `${this.cfg.scope.label}/front`));
 			this.front = null;
 		}
 		await Promise.all(closables);
@@ -301,7 +302,7 @@ class RunProxyInstance {
 		const stale = this.hostServers.get(host);
 		if (stale) {
 			this.hostServers.delete(host);
-			void closeServer(stale.server);
+			void closeServer(stale.server, `${this.cfg.scope.label}/${host}`);
 		}
 
 		const ca = await this.cfg.getMintCa();
@@ -328,7 +329,7 @@ class RunProxyInstance {
 		});
 
 		if (this.closed) {
-			await closeServer(server);
+			await closeServer(server, `${this.cfg.scope.label}/${host}`);
 			throw new Error('proxy closed');
 		}
 
@@ -540,10 +541,8 @@ function serverOwnsPort(rec: HostServer): boolean {
 	return typeof addr === 'object' && addr !== null && addr.port === rec.port;
 }
 
-function closeServer(server: HttpServer | HttpsServer): Promise<void> {
-	return new Promise<void>((resolve) => {
-		server.close(() => resolve());
-	});
+function closeServer(server: HttpServer | HttpsServer, label: string): Promise<void> {
+	return closeServerWithDeadline(server, `egress:${label}`);
 }
 
 interface FailureDescription {

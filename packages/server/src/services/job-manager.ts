@@ -43,7 +43,7 @@ import {
 import type { DockerClient } from './docker';
 import type { EgressProxy } from './egress';
 import type { LogStreamBroker } from './log-stream-broker';
-import { detectOrphans } from './orphan-detector';
+import { detectOrphans, healStaleRunState, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
 import { ensureRepoSetupAction } from './repo-setup';
 import { getProjectConcurrency, isTaskBusyInDb } from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
@@ -66,12 +66,25 @@ const cronLog = {
 	error: (msg: unknown) => log.error(msg),
 };
 
+/** Identifies the agent-run dispatch a launchTask entry belongs to, so the
+ * stale-state sweep can correlate the in-memory entry with its run rows and
+ * release the dispatch guards if the completion path never lands. */
+interface RunDispatchContext {
+	memberId: string;
+	taskId: string;
+	projectId: string;
+}
+
 interface RunningTask {
 	key: string;
 	abortController: AbortController;
 	promise: Promise<unknown>;
 	startedAt: number;
 	timeoutId: ReturnType<typeof setTimeout>;
+	runContext?: RunDispatchContext;
+	/** Set when the stale-state sweep already released this entry's dispatch
+	 * guards, so the task's own settle handler doesn't double-release. */
+	reaped: boolean;
 }
 
 export interface LiveRun {
@@ -364,6 +377,7 @@ export class JobManager {
 		key: string,
 		fn: (signal: AbortSignal) => Promise<unknown>,
 		timeoutMs: number,
+		runContext?: RunDispatchContext,
 	): boolean {
 		if (this.runningTasks.has(key)) return false;
 		const ac = new AbortController();
@@ -373,21 +387,32 @@ export class JobManager {
 			ac.abort();
 		}, timeoutMs);
 
-		const promise = trackBackground(
+		const entry: RunningTask = {
+			key,
+			abortController: ac,
+			promise: Promise.resolve(),
+			startedAt: Date.now(),
+			timeoutId,
+			runContext,
+			reaped: false,
+		};
+		entry.promise = trackBackground(
 			fn(ac.signal).finally(() => {
 				clearTimeout(timeoutId);
-				this.runningTasks.delete(key);
+				// The sweep may have reaped this entry and a fresh launch may
+				// occupy the key, so only release what still belongs to us.
+				if (this.runningTasks.get(key) === entry) this.runningTasks.delete(key);
+				if (runContext && !entry.reaped) this.releaseRunDispatch(runContext);
 			}),
 		);
 
-		this.runningTasks.set(key, {
-			key,
-			abortController: ac,
-			promise,
-			startedAt: Date.now(),
-			timeoutId,
-		});
+		this.runningTasks.set(key, entry);
 		return true;
+	}
+
+	private releaseRunDispatch(ctx: RunDispatchContext): void {
+		this.activeTaskRuns.delete(ctx.taskId);
+		this.releaseProjectRun(ctx.projectId);
 	}
 
 	cancelTask(key: string, reason?: unknown): boolean {
@@ -1458,14 +1483,43 @@ export class JobManager {
 						err,
 					);
 					if (registeredRunId) this.unregisterLiveRun(registeredRunId);
+					// The completion bookkeeping (lock release, idle flip, wakeup
+					// resolution) must still run or the agent stays stuck busy with
+					// no recovery path. Synthesize a failed result; the failure-ping
+					// path reads the run row's real status so this never misreports.
+					try {
+						await this.onAgentComplete(
+							memberId,
+							agent.rows[0].slug,
+							task.id,
+							task.identifier,
+							teamId,
+							wakeupId,
+							wakeupPayload,
+							{
+								success: false,
+								exitCode: -1,
+								stdout: '',
+								stderr: err instanceof Error ? err.message : String(err),
+								durationMs: 0,
+								heartbeatRunId: registeredRunId,
+							},
+						);
+					} catch (completeErr) {
+						log.error(
+							`Completion bookkeeping after failed run for agent ${ref(agent.rows[0].slug, memberId)} failed:`,
+							completeErr,
+						);
+					}
 					return null;
 				} finally {
-					this.activeTaskRuns.delete(lockedTaskId);
-					this.releaseProjectRun(projectId);
+					// Dispatch guards (activeTaskRuns / activeProjectRuns) are
+					// released by launchTask's settle handler via runContext.
 					void trackBackground(this.guarded('wakeups', () => this.processWakeups()));
 				}
 			},
 			timeoutMs,
+			{ memberId, taskId: lockedTaskId, projectId },
 		);
 
 		if (!launched) {
@@ -1768,6 +1822,50 @@ export class JobManager {
 
 	private async detectOrphanedRuns(): Promise<void> {
 		await detectOrphans(this.deps.db, this.getLiveRunIds(), this.deps.wsManager);
+		await this.sweepStaleDispatches();
+		await healStaleRunState(this.deps.db, this.deps.wsManager);
+	}
+
+	/**
+	 * Release in-memory dispatch state for runs whose row went terminal but
+	 * whose completion path never settled (e.g. a wedged teardown). Without
+	 * this, the launchTask key, activeTaskRuns entry, and activeProjectRuns
+	 * refcount leak forever and the agent can never be dispatched again. The
+	 * DB-side counterpart is `healStaleRunState`.
+	 */
+	private async sweepStaleDispatches(): Promise<void> {
+		const { db } = this.deps;
+		const now = Date.now();
+		for (const [key, entry] of [...this.runningTasks]) {
+			const ctx = entry.runContext;
+			if (!ctx || entry.reaped) continue;
+			if (now - entry.startedAt < STALE_STATE_GRACE_SECONDS * 1000) continue;
+			const active = await db.query(
+				`SELECT 1 FROM heartbeat_runs
+				 WHERE member_id = $1 AND task_id = $2
+				   AND (status IN ($3::heartbeat_run_status, $4::heartbeat_run_status)
+				        OR finished_at > now() - ($5 || ' seconds')::interval)
+				 LIMIT 1`,
+				[
+					ctx.memberId,
+					ctx.taskId,
+					HeartbeatRunStatus.Queued,
+					HeartbeatRunStatus.Running,
+					String(STALE_STATE_GRACE_SECONDS),
+				],
+			);
+			if (active.rows.length > 0) continue;
+
+			log.warn(`Reaping stale dispatch ${key}: its run is terminal but completion never settled`);
+			entry.reaped = true;
+			clearTimeout(entry.timeoutId);
+			entry.abortController.abort();
+			if (this.runningTasks.get(key) === entry) this.runningTasks.delete(key);
+			this.releaseRunDispatch(ctx);
+			for (const [runId, liveRun] of this.liveRuns) {
+				if (liveRun.taskKey === key) this.liveRuns.delete(runId);
+			}
+		}
 	}
 
 	private async syncContainerStatuses(): Promise<void> {

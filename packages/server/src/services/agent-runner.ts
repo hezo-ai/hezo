@@ -29,6 +29,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import type { DomainEventBus } from '../events/bus';
 import { broadcastRowChange } from '../lib/broadcast';
 import { withTransaction } from '../lib/sql';
+import { logger } from '../logger';
 import { signAgentJwt } from '../middleware/auth';
 import { type AgentRunUsage, createAgentStreamParser } from './agent-stream-parser';
 import {
@@ -64,6 +65,8 @@ import { recordStatusChange } from './task-events';
 import { resolveSystemPrompt } from './template-resolver';
 import { getRunSocketPath, getWorkspacePath, getWorktreesPath } from './workspace';
 import type { WebSocketManager } from './ws';
+
+const log = logger.child('agent-runner');
 
 export interface AgentInfo {
 	id: string;
@@ -809,20 +812,6 @@ export async function runAgent(
 			egressEnv,
 		);
 
-		if (signal?.aborted) {
-			const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
-			if (dirToRemove) {
-				rmSync(dirToRemove, { recursive: true, force: true });
-			}
-			if (deps.sshAgentServer) {
-				await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
-			}
-			if (deps.egressProxy && egressAllocated) {
-				await deps.egressProxy.releaseRunProxy(heartbeatRunId);
-			}
-			return finalizeAbort();
-		}
-
 		const hostPromptPath = getHostPromptPath(
 			deps.dataDir,
 			project.team_id,
@@ -855,20 +844,42 @@ export async function runAgent(
 			}
 		};
 
+		// Best-effort teardown of run-scoped artifacts. Each step is isolated so a
+		// failed or slow release can never block the run result from reaching the
+		// completion bookkeeping (lock release, idle flip, wakeup completion) —
+		// a wedge here previously left agents stuck "running" forever.
 		const cleanupRunArtifacts = async () => {
-			await persistRotatedAuth();
-			rmSync(hostPromptPath, { force: true });
-			const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
-			if (dirToRemove) {
-				rmSync(dirToRemove, { recursive: true, force: true });
-			}
-			if (deps.sshAgentServer) {
-				await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
-			}
-			if (deps.egressProxy && egressAllocated) {
-				await deps.egressProxy.releaseRunProxy(heartbeatRunId);
-			}
+			const step = async (label: string, fn: () => void | Promise<void>) => {
+				try {
+					await fn();
+				} catch (e) {
+					log.error(`Run ${heartbeatRunId} artifact cleanup step '${label}' failed:`, e);
+				}
+			};
+			await step('persist-rotated-auth', persistRotatedAuth);
+			await step('remove-prompt', () => rmSync(hostPromptPath, { force: true }));
+			await step('remove-home-mount', () => {
+				const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
+				if (dirToRemove) {
+					rmSync(dirToRemove, { recursive: true, force: true });
+				}
+			});
+			await step('release-ssh-socket', async () => {
+				if (deps.sshAgentServer) {
+					await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
+				}
+			});
+			await step('release-egress-proxy', async () => {
+				if (deps.egressProxy && egressAllocated) {
+					await deps.egressProxy.releaseRunProxy(heartbeatRunId);
+				}
+			});
 		};
+
+		if (signal?.aborted) {
+			await cleanupRunArtifacts();
+			return finalizeAbort();
+		}
 
 		try {
 			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
