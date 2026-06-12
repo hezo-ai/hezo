@@ -823,26 +823,12 @@ export async function runAgent(
 			return finalizeAbort();
 		}
 
-		const prep = await prepareWorktrees(deps, project, task, emit, signal);
-
 		const hostPromptPath = getHostPromptPath(
 			deps.dataDir,
 			project.team_id,
 			project.id,
 			heartbeatRunId,
 		);
-		mkdirSync(dirname(hostPromptPath), { recursive: true });
-		writeFileSync(hostPromptPath, context.taskPrompt);
-
-		const redactedCmd = context.cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
-		const invocationCommand = `$ ${redactedCmd.map(shellQuoteArg).join(' ')} < ${context.promptFilePath}`;
-
-		await deps.db.query(
-			`UPDATE heartbeat_runs SET invocation_command = $1, working_dir = $2 WHERE id = $3`,
-			[invocationCommand, prep.workingDir, heartbeatRunId],
-		);
-
-		emit('stdout', `${invocationCommand}\n`);
 
 		const parser = createAgentStreamParser(runtimeType);
 
@@ -886,6 +872,23 @@ export async function runAgent(
 
 		try {
 			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
+			const prep = await prepareWorktrees(deps, project, task, emit, signal);
+
+			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
+			mkdirSync(dirname(hostPromptPath), { recursive: true });
+			writeFileSync(hostPromptPath, context.taskPrompt);
+
+			const redactedCmd = context.cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
+			const invocationCommand = `$ ${redactedCmd.map(shellQuoteArg).join(' ')} < ${context.promptFilePath}`;
+
+			await deps.db.query(
+				`UPDATE heartbeat_runs SET invocation_command = $1, working_dir = $2 WHERE id = $3`,
+				[invocationCommand, prep.workingDir, heartbeatRunId],
+			);
+
+			emit('stdout', `${invocationCommand}\n`);
 
 			const execId = await deps.docker.execCreate(project.container_id, {
 				Cmd: context.execCmd,
@@ -1069,12 +1072,14 @@ async function prepareWorktrees(
 			);
 		}
 
+		const worktreeErrors = new Map<string, string>();
 		for (const repo of repos.rows) {
 			if (signal?.aborted) break;
 			const repoDir = join(workspaceRoot, repo.short_name);
 			const worktreePath = join(taskWorktreeRoot, repo.short_name);
 
 			if (!existsSync(join(repoDir, '.git'))) {
+				worktreeErrors.set(repo.id, 'repo is not cloned');
 				emitSystem('stderr', `(skipping worktree for ${repo.short_name} — not cloned)`);
 				continue;
 			}
@@ -1082,6 +1087,7 @@ async function prepareWorktrees(
 			emitSystem('stdout', `git worktree ${repo.short_name}...`);
 			const wt = await ensureTaskWorktree(repoDir, worktreePath, branchName);
 			if (!wt.success) {
+				worktreeErrors.set(repo.id, wt.error ?? 'unknown');
 				emitSystem(
 					'stderr',
 					`git worktree for ${repo.short_name} failed: ${wt.error ?? 'unknown'}`,
@@ -1091,10 +1097,20 @@ async function prepareWorktrees(
 			}
 		}
 
+		if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null };
+
 		const designated = project.designated_repo_id
 			? repos.rows.find((r) => r.id === project.designated_repo_id)
 			: null;
 		const primary = designated ?? repos.rows[0];
+
+		// The run executes with this worktree as its cwd; proceeding without it
+		// would only surface later as an opaque container chdir failure.
+		const primaryError = worktreeErrors.get(primary.id);
+		if (primaryError) {
+			throw new Error(`cannot prepare worktree for ${primary.short_name}: ${primaryError}`);
+		}
+
 		const workingDir = `/worktrees/${task.identifier}/${primary.short_name}`;
 
 		return { workingDir, designatedRepo: primary ?? null };

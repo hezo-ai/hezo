@@ -815,6 +815,51 @@ describe('runAgent', () => {
 			expect(new Date(row.rows[0].started_at!).getTime()).toBeGreaterThan(Date.now() - 10_000);
 		});
 
+		it('fails the run before exec when the primary repo worktree cannot be prepared', async () => {
+			const repoRes = await db.query<{ id: string }>(
+				`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
+				 VALUES ($1, 'todos', 'acme/todos', 'github') RETURNING id`,
+				[projectId],
+			);
+			const repoId = repoRes.rows[0].id;
+
+			let execCreateCalled = false;
+			const docker = createMockDocker({
+				execCreate: async () => {
+					execCreateCalled = true;
+					return 'exec-wt-fail';
+				},
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
+			};
+
+			try {
+				// No ssh agent is available, so the linked repo can't clone and the
+				// task worktree for the primary repo can't exist. The run must fail
+				// with the worktree error instead of exec'ing into a missing cwd.
+				const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+				expect(result.success).toBe(false);
+				expect(execCreateCalled).toBe(false);
+				expect(result.stderr).toContain('cannot prepare worktree for todos');
+
+				const row = await db.query<{ status: string; error: string | null }>(
+					'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+					[result.heartbeatRunId],
+				);
+				expect(row.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+				expect(row.rows[0].error).toContain('cannot prepare worktree for todos');
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
+
 		it('passes --mcp-config and --strict-mcp-config for claude_code runtime', async () => {
 			let capturedCmd: string[] = [];
 			const docker = createMockDocker({

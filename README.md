@@ -4,7 +4,7 @@ Self-hosted orchestration platform for teams of AI agents. Spin up independent t
 
 ## Prerequisites
 
-- [Bun](https://bun.sh/) v1.1+
+- [Bun](https://bun.sh/) v1.3.14+ **(IMPORTANT)**
 
 ## Setup
 
