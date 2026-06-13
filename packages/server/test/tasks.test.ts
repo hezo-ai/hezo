@@ -854,6 +854,39 @@ describe('sub-task depth + ancestors', () => {
 		expect(tooDeep.body.error.message).toMatch(/2 levels deep/);
 	});
 
+	it('resolves a parent_task_id passed by identifier (not just UUID)', async () => {
+		const root = (await createTask()).body.data;
+		// Reference the parent by its bare identifier (lowercased), the way an
+		// agent or API caller would — must resolve to the parent UUID, not 500.
+		const childRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Child by identifier',
+				assignee_id: agentId,
+				parent_task_id: root.identifier.toLowerCase(),
+			}),
+		});
+		expect(childRes.status).toBe(201);
+		expect((await childRes.json()).data.parent_task_id).toBe(root.id);
+	});
+
+	it('returns 404 (not 500) when parent_task_id references an unknown task', async () => {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Orphan child',
+				assignee_id: agentId,
+				parent_task_id: 'MP-999999',
+			}),
+		});
+		expect(res.status).toBe(404);
+		expect((await res.json()).error.message).toMatch(/parent task/i);
+	});
+
 	it('rejects depth-3 creation via POST /tasks/:id/sub-tasks', async () => {
 		const root = (await createTask()).body.data;
 		const sub = (await createSub(root.id)).body.data;

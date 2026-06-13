@@ -1165,6 +1165,36 @@ describe('MCP tool: create_task sub-task depth', () => {
 		})) as { error?: string };
 		expect(tooDeep.error).toMatch(/2 levels deep/);
 	});
+
+	it('create_task resolves a parent passed by identifier (the agent-facing form)', async () => {
+		const parent = (await callToolViaMcp('create_task', {
+			project: projectId,
+			title: 'Parent by identifier',
+			assignee_id: agentId,
+		})) as { id: string; identifier: string };
+
+		// Agents reference tasks by bare identifier (e.g. "BE-2") everywhere; passing
+		// that as parent_task_id must resolve to the parent UUID rather than reach the
+		// uuid column and crash with "invalid input syntax for type uuid".
+		const child = (await callToolViaMcp('create_task', {
+			project: projectId,
+			title: 'Child by identifier',
+			assignee_id: agentId,
+			parent_task_id: parent.identifier,
+		})) as { id: string; parent_task_id: string | null; error?: string };
+		expect(child.error).toBeUndefined();
+		expect(child.parent_task_id).toBe(parent.id);
+	});
+
+	it('create_task returns a clean not-found error for an unknown parent identifier', async () => {
+		const result = (await callToolViaMcp('create_task', {
+			project: projectId,
+			title: 'Orphan child',
+			assignee_id: agentId,
+			parent_task_id: 'ZZ-999999',
+		})) as { error?: string };
+		expect(result.error).toMatch(/parent task/i);
+	});
 });
 
 describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard', () => {

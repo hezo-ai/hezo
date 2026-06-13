@@ -357,6 +357,56 @@ describe('MCP tool: create_tasks (agent caller)', () => {
 		expect(result[2]).toMatchObject({ index: 2, ok: true });
 	});
 
+	it('nests a batch item under an existing parent referenced by identifier', async () => {
+		const parent = (await callMcpTool(token, 'create_task', {
+			project: projectId,
+			title: 'Existing parent for batch',
+			assignee_id: engineerId,
+		})) as { id: string; identifier: string };
+
+		const result = (await callMcpTool(token, 'create_tasks', {
+			project: projectId,
+			items: [
+				{
+					title: 'Child of existing parent',
+					assignee_id: engineerId,
+					parent_task_id: parent.identifier,
+				},
+			],
+		})) as Array<{ ok: boolean; code?: string; task?: { parent_task_id: string | null } }>;
+
+		expect(result[0].ok).toBe(true);
+		expect(result[0].task?.parent_task_id).toBe(parent.id);
+	});
+
+	it('nests a later batch item under an earlier one via a #index parent token', async () => {
+		const result = (await callMcpTool(token, 'create_tasks', {
+			project: projectId,
+			items: [
+				{ title: 'Batch parent', assignee_id: engineerId },
+				{ title: 'Batch child', assignee_id: engineerId, parent_task_id: '#0' },
+			],
+		})) as Array<{ ok: boolean; task?: { id: string; parent_task_id: string | null } }>;
+
+		expect(result[0].ok).toBe(true);
+		expect(result[1].ok).toBe(true);
+		expect(result[1].task?.parent_task_id).toBe(result[0].task?.id);
+	});
+
+	it('rejects a forward-referencing #index parent token without aborting the rest', async () => {
+		const result = (await callMcpTool(token, 'create_tasks', {
+			project: projectId,
+			items: [
+				{ title: 'Parent forward ref', assignee_id: engineerId, parent_task_id: '#1' },
+				{ title: 'Independent after bad parent', assignee_id: engineerId },
+			],
+		})) as Array<{ index: number; ok: boolean; code?: string; error?: string }>;
+
+		expect(result[0]).toMatchObject({ index: 0, ok: false, code: 'INVALID_REQUEST' });
+		expect(result[0].error).toMatch(/earlier item/i);
+		expect(result[1]).toMatchObject({ index: 1, ok: true });
+	});
+
 	it('rejects malformed and out-of-range index tokens', async () => {
 		const result = (await callMcpTool(token, 'create_tasks', {
 			project: projectId,

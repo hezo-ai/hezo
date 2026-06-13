@@ -845,6 +845,12 @@ Request:
 the agent receives an event trigger. If a board member, they are notified via
 inbox and configured messaging channels.
 
+`parent_task_id`, when set, accepts a task **identifier** (e.g. `IN-42`) or a UUID —
+it is resolved to the parent's UUID within the team before insert (an unknown
+reference is a `404`, not a `500`). Nesting is capped at `MAX_SUB_TASK_DEPTH` (2).
+The same field on the `create_tasks` MCP batch additionally accepts a `'#<index>'`
+token referencing an earlier item in the same call, mirroring `blocked_by_task_ids`.
+
 `runtime_type` is optional. It pins this task to a specific AI adapter
 (`claude_code | codex | gemini`). When unset, the server picks the
 instance default — the single active AI provider if only one is configured,
