@@ -84,6 +84,11 @@ function windowStatus(spentCents: number, limitCents: number): WindowStatus {
 	return { spentCents, limitCents, overBudget: limitCents > 0 && spentCents >= limitCents };
 }
 
+/** Build per-window status from already-fetched spend + limits (no DB access). */
+export function toEntityBudgetStatus(spend: WindowSpend, limits: BudgetLimits): EntityBudgetStatus {
+	return buildStatus(spend, limits);
+}
+
 function buildStatus(spend: WindowSpend, limits: BudgetLimits): EntityBudgetStatus {
 	const daily = windowStatus(spend.daily, limits.daily_budget_cents);
 	const weekly = windowStatus(spend.weekly, limits.weekly_budget_cents);

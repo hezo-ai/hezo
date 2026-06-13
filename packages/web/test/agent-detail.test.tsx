@@ -60,7 +60,7 @@ test('agent settings tab shows budget, heartbeat, title, and save controls', asy
 		params: { projectId: teamSlug, agentId },
 	});
 
-	await findByText('Budget Usage');
+	await findByText('Monthly spend');
 	await findByText('Every 60 min');
 	await findByLabelText('Title');
 	await findByLabelText('Run timeout (min)');

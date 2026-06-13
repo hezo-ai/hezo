@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { checkOverBudget, getAgentBudgetStatus, getProjectBudgetStatus } from '../services/budget';
+import { checkOverBudget, getProjectBudgetStatus, toEntityBudgetStatus } from '../services/budget';
 
 export const costsRoutes = new Hono<Env>();
 
@@ -170,37 +170,56 @@ costsRoutes.get('/projects/:projectId/budget-status', async (c) => {
 
 	const projectStatus = await getProjectBudgetStatus(db, projectId);
 
+	// One grouped query for all agents (per-window spend + limits) rather than N+1.
 	const agents = await db.query<{
 		id: string;
 		title: string;
 		slug: string;
 		runtime_status: string;
+		daily_budget_cents: number;
+		weekly_budget_cents: number;
+		monthly_budget_cents: number;
+		daily_spent: number;
+		weekly_spent: number;
+		monthly_spent: number;
 	}>(
-		`SELECT ma.id, ma.title, ma.slug, ma.runtime_status
+		`SELECT ma.id, ma.title, ma.slug, ma.runtime_status,
+		        ma.daily_budget_cents, ma.weekly_budget_cents, ma.monthly_budget_cents,
+		        COALESCE(SUM(ce.amount_cents) FILTER (WHERE ce.created_at >= date_trunc('day',   now() AT TIME ZONE 'UTC')), 0)::int AS daily_spent,
+		        COALESCE(SUM(ce.amount_cents) FILTER (WHERE ce.created_at >= date_trunc('week',  now() AT TIME ZONE 'UTC')), 0)::int AS weekly_spent,
+		        COALESCE(SUM(ce.amount_cents) FILTER (WHERE ce.created_at >= date_trunc('month', now() AT TIME ZONE 'UTC')), 0)::int AS monthly_spent
 		 FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
+		 LEFT JOIN cost_entries ce ON ce.member_id = ma.id
 		 WHERE m.team_id = $1
+		 GROUP BY ma.id, ma.title, ma.slug, ma.runtime_status,
+		          ma.daily_budget_cents, ma.weekly_budget_cents, ma.monthly_budget_cents
 		 ORDER BY ma.title`,
 		[teamId],
 	);
 
-	const agentStatuses = await Promise.all(
-		agents.rows.map(async (a) => {
-			const status = await getAgentBudgetStatus(db, a.id);
-			return {
-				agent_id: a.id,
-				agent_title: a.title,
-				agent_slug: a.slug,
-				runtime_status: a.runtime_status,
-				daily: status.daily,
-				weekly: status.weekly,
-				monthly: status.monthly,
-				agent_over_budget: status.overBudget,
-				project_over_budget: projectStatus.overBudget,
-				overBudget: status.overBudget || projectStatus.overBudget,
-			};
-		}),
-	);
+	const agentStatuses = agents.rows.map((a) => {
+		const status = toEntityBudgetStatus(
+			{ daily: a.daily_spent, weekly: a.weekly_spent, monthly: a.monthly_spent },
+			{
+				daily_budget_cents: a.daily_budget_cents,
+				weekly_budget_cents: a.weekly_budget_cents,
+				monthly_budget_cents: a.monthly_budget_cents,
+			},
+		);
+		return {
+			agent_id: a.id,
+			agent_title: a.title,
+			agent_slug: a.slug,
+			runtime_status: a.runtime_status,
+			daily: status.daily,
+			weekly: status.weekly,
+			monthly: status.monthly,
+			agent_over_budget: status.overBudget,
+			project_over_budget: projectStatus.overBudget,
+			overBudget: status.overBudget || projectStatus.overBudget,
+		};
+	});
 
 	return ok(c, { project: projectStatus, agents: agentStatuses });
 });
