@@ -49,6 +49,7 @@ import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
 import { loadMcpConnectionDescriptors } from './mcp-connections';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
+import type { PricingService } from './pricing';
 import { loadReactionsForTask, type ReactionGroup } from './reactions';
 import { ensureProjectRepos } from './repo-sync';
 import {
@@ -128,6 +129,8 @@ export interface RunnerDeps {
 	sshAgentServer?: SshAgentServer;
 	egressProxy?: EgressProxy | null;
 	egressCAPath?: string | null;
+	/** Runtime model pricing; when present, the parser computes run cost from it. */
+	pricing?: PricingService;
 }
 
 interface RepoRow {
@@ -824,7 +827,11 @@ export async function runAgent(
 			heartbeatRunId,
 		);
 
-		const parser = createAgentStreamParser(runtimeType);
+		const pricing = deps.pricing;
+		const parser = createAgentStreamParser(
+			runtimeType,
+			pricing ? (model, tokens) => pricing.costCents(model, tokens) : undefined,
+		);
 
 		const persistRotatedAuth = async () => {
 			const mount = context.subscriptionMount;

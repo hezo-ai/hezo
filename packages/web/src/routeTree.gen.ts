@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as HomeIndexRouteImport } from './routes/home/index'
 import { Route as SettingsSkillsRouteImport } from './routes/settings/skills'
+import { Route as SettingsModelPricingRouteImport } from './routes/settings/model-pricing'
 import { Route as SettingsCredentialsRouteImport } from './routes/settings/credentials'
 import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
 import { Route as SettingsChatboxRouteImport } from './routes/settings/chatbox'
@@ -61,6 +62,11 @@ const HomeIndexRoute = HomeIndexRouteImport.update({
 const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
   id: '/settings/skills',
   path: '/settings/skills',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsModelPricingRoute = SettingsModelPricingRouteImport.update({
+  id: '/settings/model-pricing',
+  path: '/settings/model-pricing',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
@@ -235,6 +241,7 @@ export interface FileRoutesByFullPath {
   '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/model-pricing': typeof SettingsModelPricingRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/home/': typeof HomeIndexRoute
   '/settings/': typeof SettingsIndexRoute
@@ -269,6 +276,7 @@ export interface FileRoutesByTo {
   '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/model-pricing': typeof SettingsModelPricingRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/home': typeof HomeIndexRoute
   '/settings': typeof SettingsIndexRoute
@@ -304,6 +312,7 @@ export interface FileRoutesById {
   '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/model-pricing': typeof SettingsModelPricingRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/home/': typeof HomeIndexRoute
   '/settings/': typeof SettingsIndexRoute
@@ -341,6 +350,7 @@ export interface FileRouteTypes {
     | '/settings/chatbox'
     | '/settings/connectors'
     | '/settings/credentials'
+    | '/settings/model-pricing'
     | '/settings/skills'
     | '/home/'
     | '/settings/'
@@ -375,6 +385,7 @@ export interface FileRouteTypes {
     | '/settings/chatbox'
     | '/settings/connectors'
     | '/settings/credentials'
+    | '/settings/model-pricing'
     | '/settings/skills'
     | '/home'
     | '/settings'
@@ -409,6 +420,7 @@ export interface FileRouteTypes {
     | '/settings/chatbox'
     | '/settings/connectors'
     | '/settings/credentials'
+    | '/settings/model-pricing'
     | '/settings/skills'
     | '/home/'
     | '/settings/'
@@ -445,6 +457,7 @@ export interface RootRouteChildren {
   SettingsChatboxRoute: typeof SettingsChatboxRoute
   SettingsConnectorsRoute: typeof SettingsConnectorsRoute
   SettingsCredentialsRoute: typeof SettingsCredentialsRoute
+  SettingsModelPricingRoute: typeof SettingsModelPricingRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
   HomeIndexRoute: typeof HomeIndexRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
@@ -481,6 +494,13 @@ declare module '@tanstack/react-router' {
       path: '/settings/skills'
       fullPath: '/settings/skills'
       preLoaderRoute: typeof SettingsSkillsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/model-pricing': {
+      id: '/settings/model-pricing'
+      path: '/settings/model-pricing'
+      fullPath: '/settings/model-pricing'
+      preLoaderRoute: typeof SettingsModelPricingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/credentials': {
@@ -768,6 +788,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsChatboxRoute: SettingsChatboxRoute,
   SettingsConnectorsRoute: SettingsConnectorsRoute,
   SettingsCredentialsRoute: SettingsCredentialsRoute,
+  SettingsModelPricingRoute: SettingsModelPricingRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,
   HomeIndexRoute: HomeIndexRoute,
   SettingsIndexRoute: SettingsIndexRoute,

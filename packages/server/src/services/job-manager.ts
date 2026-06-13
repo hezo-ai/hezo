@@ -45,6 +45,7 @@ import type { DockerClient } from './docker';
 import type { EgressProxy } from './egress';
 import type { LogStreamBroker } from './log-stream-broker';
 import { detectOrphans, healStaleRunState, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
+import type { PricingService } from './pricing';
 import { ensureRepoSetupAction } from './repo-setup';
 import { getProjectConcurrency, isTaskBusyInDb } from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
@@ -123,6 +124,7 @@ export interface JobManagerDeps {
 	sshAgentServer?: SshAgentServer;
 	egressProxy?: EgressProxy | null;
 	egressCAPath?: string;
+	pricing?: PricingService;
 }
 
 const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
@@ -1442,6 +1444,7 @@ export class JobManager {
 			sshAgentServer: this.deps.sshAgentServer,
 			egressProxy: this.deps.egressProxy ?? null,
 			egressCAPath: this.deps.egressCAPath ?? null,
+			pricing: this.deps.pricing,
 		};
 		const timeoutMs = agent.rows[0].run_timeout_min * 60 * 1000;
 
