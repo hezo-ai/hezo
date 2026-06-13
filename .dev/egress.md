@@ -53,7 +53,7 @@ GIT_SSL_CAINFO             = /usr/local/share/ca-certificates/hezo-egress.crt
 
 ## Substitution
 
-`PLACEHOLDER_REGEX = /__HEZO_SECRET_([A-Z0-9_]+)__/g` runs against:
+The canonical placeholder grammar `__HEZO_SECRET_<NAME>__` (where `<NAME>` matches `[A-Z][A-Z0-9_]{0,63}`) is defined once in `lib/credential-placeholder.ts` and shared by the proxy, `request_credential`, and the admin secrets route — a name the proxy will substitute is exactly a name those paths permit to be created, so a stored secret is never un-referenceable and a placeholder never matches a name no path could have created. The match runs against:
 
 - The full request URL (path + query string)
 - Every header value (single-string and array-valued)

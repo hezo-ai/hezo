@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { decrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
+import { createPlaceholderRegex, PLACEHOLDER_PROBE } from '../../lib/credential-placeholder';
 import { refreshExpiringTokens } from '../oauth/token-resolver';
 
 /**
@@ -11,9 +12,16 @@ import { refreshExpiringTokens } from '../oauth/token-resolver';
  * placeholder (still bounded by each secret's allowed_hosts). Bodies are
  * forwarded unchanged — agents that need a secret in a JSON payload should
  * use the local-MCP-with-proxy pattern instead.
+ *
+ * The match grammar is the SINGLE canonical one shared with
+ * `request_credential` and the admin secrets route (see
+ * `lib/credential-placeholder.ts`): a name the proxy would substitute is
+ * exactly a name those paths permit, so a stored secret can never be
+ * un-referenceable and a placeholder can never match a name no path could
+ * have created. The probe is a non-global literal test (cheap pre-scan);
+ * the substitution regex is fresh per call to avoid shared `lastIndex`.
  */
-export const PLACEHOLDER_REGEX = /__HEZO_SECRET_([A-Z0-9_]+)__/g;
-export const PLACEHOLDER_PROBE_REGEX = /__HEZO_SECRET_/;
+export const PLACEHOLDER_PROBE_REGEX = new RegExp(PLACEHOLDER_PROBE);
 
 export interface SubstitutionScope {
 	db: PGlite;
@@ -153,7 +161,7 @@ function applyToString(
 		return { value: input, changed: false, failure: null };
 	}
 	let failure: SubstitutionFailure | null = null;
-	const result = input.replace(PLACEHOLDER_REGEX, (match, name: string) => {
+	const result = input.replace(createPlaceholderRegex(), (match, name: string) => {
 		const access = checkAccess(name);
 		if (access) {
 			failure ??= access;

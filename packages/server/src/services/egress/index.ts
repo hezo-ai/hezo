@@ -15,7 +15,6 @@ export {
 export {
 	loadAllSecrets,
 	PLACEHOLDER_PROBE_REGEX,
-	PLACEHOLDER_REGEX,
 	type ResolvedSecret,
 	type SubstitutionFailure,
 	type SubstitutionResult,
