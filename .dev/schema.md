@@ -27,7 +27,7 @@
 | `secrets` | Encrypted key/value. Scoped to team or team+project; `team_id NULL` = an instance-level credential shared with every team's egress (Admin-managed, unique by name). | belongs to team (or instance), optionally project |
 | `secret_grants` | Which agent has access to which secret. Revocable. | links secret ↔ member_agent |
 | `approvals` | Pending board decisions. Polymorphic payload. | belongs to team, requested by member_agent |
-| `cost_entries` | Immutable spend records per agent per task. | belongs to team + member_agent, optionally task/project |
+| `cost_entries` | Immutable spend records per agent per task, attributed to the AI adapter config (`ai_provider_config_id` + `provider` snapshot) that produced them. Cost is project/agent/adapter-scoped — there is **no** `team_id` (cost is never tracked per team). | belongs to member_agent, optionally task/project/ai_provider_config |
 | `audit_log` | Append-only activity trail. `team_id` is nullable (NULL = an instance-level admin action not bound to a team); `project_id` is nullable (set for project-scoped events). Read at three scopes: instance (`GET /api/audit-log`, superuser), team, and per-project. | optionally team, optionally project |
 | `documents` | Unified Markdown document store keyed by `type` (`project_doc` / `team_preferences` / `agent_system_prompt`). Project docs scope by `(project_id, slug)`; preferences by `(team_id)` (one per team); agent system prompts by `(member_agent_id)` (one per agent). Embeddings live on this table for project docs. The team-level reference store is the `skills` table, not this one. | belongs to team, optionally project or member_agent |
 | `document_revisions` | Snapshot of prior content created on every change. `change_summary` captures intent; `Restored to revision N` is set automatically by the rollback path. Shared by all document types — agent system prompt history lives here too. | belongs to document |
@@ -112,8 +112,15 @@ A run is blocked when the agent **or** its project is over **any** window. Enfor
 points: (1) a **pre-run gate** in `JobManager.activateAgent` skips the run (no
 `heartbeat_runs` row, no container/repo work), pauses the agent, and marks the wakeup
 skipped with `WakeupSkipReason.OverBudget`; (2) **run completion** (`agent-runner.ts`)
-records the run's cost as one `cost_entries` row and reactively pauses the agent if it
-is now over; (3) the manual `POST /costs` path does the same reactive pause. Run
+records the run's cost as one `cost_entries` row — attributed to the AI adapter config
+resolved for the run (stamped on `heartbeat_runs.ai_provider_config_id`/`provider` at
+start, read back when recording) — and reactively pauses the agent if it is now over;
+(3) the manual `POST /costs` path does the same reactive pause.
+
+Cost **reads** are project-scoped: `GET /projects/:projectId/costs` filters by
+`project_id`, and `group_by=day` (optionally `breakdown=agent|adapter`) powers the
+per-day Budgets-page charts (project total, stacked by agent, stacked by adapter
+config). There is no team-scoped cost query. Run
 completion is the single source of truth for run spend — the tool-call report path
 (`agent-api.ts`) records `tool_calls.cost_cents` for display only and does **not** debit
 (the run total already includes tool-call cost).

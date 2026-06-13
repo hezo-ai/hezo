@@ -78,9 +78,9 @@ beforeEach(async () => {
 /** Insert a cost_entry at an explicit age (negative offset from now). */
 async function insertCost(amountCents: number, ageInterval: string): Promise<void> {
 	await db.query(
-		`INSERT INTO cost_entries (team_id, member_id, project_id, amount_cents, created_at)
-		 VALUES ($1, $2, $3, $4, now() AT TIME ZONE 'UTC' - $5::interval)`,
-		[teamId, agentId, projectId, amountCents, ageInterval],
+		`INSERT INTO cost_entries (member_id, project_id, amount_cents, created_at)
+		 VALUES ($1, $2, $3, now() AT TIME ZONE 'UTC' - $4::interval)`,
+		[agentId, projectId, amountCents, ageInterval],
 	);
 }
 
@@ -161,26 +161,48 @@ describe('budget service - checkOverBudget gate', () => {
 describe('budget service - recordRunCost', () => {
 	it('inserts exactly one cost_entry for a positive amount', async () => {
 		const entry = await recordRunCost(db, {
-			teamId,
 			memberId: agentId,
 			taskId: null,
 			projectId,
 			amountCents: 250,
 			description: 'Agent run abc',
+			aiProviderConfigId: null,
+			provider: null,
 		});
 		expect(entry).not.toBeNull();
 		const spend = await getAgentSpend(db, agentId);
 		expect(spend.daily).toBe(250);
 	});
 
+	it('attributes the cost to the AI adapter config that produced it', async () => {
+		const cfg = await db.query<{ id: string }>(
+			`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential)
+			 VALUES ('anthropic', 'api_key', 'Attribution Test Key', 'x') RETURNING id`,
+		);
+		const configId = cfg.rows[0].id;
+		const entry = await recordRunCost(db, {
+			memberId: agentId,
+			taskId: null,
+			projectId,
+			amountCents: 99,
+			description: 'Agent run xyz',
+			aiProviderConfigId: configId,
+			provider: 'anthropic',
+		});
+		expect(entry).not.toBeNull();
+		expect((entry as Record<string, unknown>).ai_provider_config_id).toBe(configId);
+		expect((entry as Record<string, unknown>).provider).toBe('anthropic');
+	});
+
 	it('is a no-op for non-positive amounts', async () => {
 		const entry = await recordRunCost(db, {
-			teamId,
 			memberId: agentId,
 			taskId: null,
 			projectId,
 			amountCents: 0,
 			description: 'free run',
+			aiProviderConfigId: null,
+			provider: null,
 		});
 		expect(entry).toBeNull();
 		const spend = await getAgentSpend(db, agentId);

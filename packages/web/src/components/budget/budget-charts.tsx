@@ -61,8 +61,8 @@ export function BudgetCharts({
 
 	return (
 		<div className="rounded-radius-md border border-border bg-bg p-4">
-			<div className="mb-3 flex items-center justify-between gap-2">
-				<span className="text-[13px] font-medium text-text">{title ?? 'Spend per day'}</span>
+			<div className={`mb-3 flex items-center gap-2 ${title ? 'justify-between' : 'justify-end'}`}>
+				{title && <span className="text-[13px] font-medium text-text">{title}</span>}
 				<div
 					role="tablist"
 					aria-label="Chart type"

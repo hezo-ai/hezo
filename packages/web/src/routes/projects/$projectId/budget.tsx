@@ -4,10 +4,15 @@ import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { BudgetCharts } from '../../../components/budget/budget-charts';
 import { BudgetWindowsEditor } from '../../../components/budget/budget-windows-editor';
+import { type SpendCell, StackedSpendChart } from '../../../components/budget/stacked-spend-chart';
 import { BudgetBar } from '../../../components/ui/budget-bar';
 import { Button } from '../../../components/ui/button';
 import {
+	type AdapterDailyCostPoint,
+	type AgentDailyCostPoint,
 	type EntityBudgetStatus,
+	useAdapterDailyCostSeries,
+	useAgentDailyCostSeries,
 	useBudgetStatus,
 	type WindowStatus,
 } from '../../../hooks/use-costs';
@@ -120,11 +125,32 @@ function ProjectBudgetForm({ projectId }: { projectId: string }) {
 	);
 }
 
+/** A NULL adapter config (manual entries, historical rows) groups under one label. */
+const UNATTRIBUTED_KEY = 'unattributed';
+
+function toAgentCells(points: AgentDailyCostPoint[] | undefined): SpendCell[] {
+	return (points ?? []).map((p) => ({
+		day: p.day,
+		seriesKey: p.agent_id,
+		seriesLabel: p.agent_title,
+		total_cents: p.total_cents,
+	}));
+}
+
+function toAdapterCells(points: AdapterDailyCostPoint[] | undefined): SpendCell[] {
+	return (points ?? []).map((p) => ({
+		day: p.day,
+		seriesKey: p.ai_provider_config_id ?? UNATTRIBUTED_KEY,
+		seriesLabel: p.adapter_label ?? p.provider ?? 'Unattributed',
+		total_cents: p.total_cents,
+	}));
+}
+
 function BudgetPage() {
 	const { projectId } = Route.useParams();
 	const { data: status } = useBudgetStatus(projectId);
-	// `null` scopes the chart to the whole project; an agent id scopes it to that agent.
-	const [chartAgentId, setChartAgentId] = useState<string | null>(null);
+	const { data: agentSeries, isLoading: agentLoading } = useAgentDailyCostSeries(projectId);
+	const { data: adapterSeries, isLoading: adapterLoading } = useAdapterDailyCostSeries(projectId);
 
 	return (
 		<div className="flex flex-col gap-8">
@@ -140,23 +166,21 @@ function BudgetPage() {
 			)}
 
 			<section>
-				<div className="mb-3 flex items-center justify-between gap-2">
-					<h2 className="text-sm font-medium text-text-muted">
-						Spend over time
-						{chartAgentId &&
-							status &&
-							(() => {
-								const a = status.agents.find((x) => x.agent_id === chartAgentId);
-								return a ? ` — ${a.agent_title}` : '';
-							})()}
-					</h2>
-					{chartAgentId && (
-						<Button variant="ghost" size="sm" onClick={() => setChartAgentId(null)}>
-							Show project
-						</Button>
-					)}
-				</div>
-				<BudgetCharts projectId={projectId} agentId={chartAgentId ?? undefined} />
+				<h2 className="mb-3 text-sm font-medium text-text-muted">Project spend per day</h2>
+				<BudgetCharts projectId={projectId} />
+			</section>
+
+			<section>
+				<h2 className="mb-3 text-sm font-medium text-text-muted">Spend per day by agent</h2>
+				<StackedSpendChart cells={toAgentCells(agentSeries?.summary)} isLoading={agentLoading} />
+			</section>
+
+			<section>
+				<h2 className="mb-3 text-sm font-medium text-text-muted">Spend per day by AI adapter</h2>
+				<StackedSpendChart
+					cells={toAdapterCells(adapterSeries?.summary)}
+					isLoading={adapterLoading}
+				/>
 			</section>
 
 			{status && (
@@ -167,14 +191,10 @@ function BudgetPage() {
 					) : (
 						<div className="flex flex-col gap-2">
 							{status.agents.map((agent) => (
-								<button
-									type="button"
+								<div
 									key={agent.agent_id}
-									onClick={() => setChartAgentId(agent.agent_id)}
 									data-testid={`agent-budget-row-${agent.agent_slug}`}
-									className={`flex flex-col gap-3 rounded-radius-md border bg-bg p-4 text-left transition-colors hover:border-border-hover ${
-										chartAgentId === agent.agent_id ? 'border-accent-blue' : 'border-border'
-									}`}
+									className="flex flex-col gap-3 rounded-radius-md border border-border bg-bg p-4"
 								>
 									<div className="flex items-center justify-between gap-2">
 										<span className="text-[13px] font-medium text-text">{agent.agent_title}</span>
@@ -185,7 +205,7 @@ function BudgetPage() {
 										)}
 									</div>
 									<WindowGrid status={agent} />
-								</button>
+								</div>
 							))}
 						</div>
 					)}

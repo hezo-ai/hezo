@@ -46,3 +46,42 @@ test('Budgets page shows per-agent windows and flags an over-budget agent', asyn
 	const banner = await findByTestId('budget-banner');
 	expect(banner).toBeTruthy();
 });
+
+test('Budgets page renders per-day breakdown panels by agent and adapter', async () => {
+	let teamSlug = '';
+
+	const { findByText, findAllByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const { apiBase } = getTestContext();
+			const agent = ws.agents.find((a) => a.slug === 'engineer') ?? ws.agents[0];
+			teamSlug = ws.internalSlug;
+
+			const projects = (await (await apiBase('/api/projects', { headers: ws.headers })).json()) as {
+				data: Array<{ id: string; slug: string }>;
+			};
+			const projectId = projects.data.find((p) => p.slug === ws.internalSlug)?.id;
+			await apiBase(`/api/projects/${ws.internalSlug}/costs`, {
+				method: 'POST',
+				headers: ws.headers,
+				body: JSON.stringify({
+					member_id: agent.id,
+					amount_cents: 120,
+					project_id: projectId,
+					description: 'a run',
+				}),
+			});
+		},
+	});
+
+	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
+
+	// Both stacked panels are present...
+	await findByText('Spend per day by agent');
+	await findByText('Spend per day by AI adapter');
+	// ...and each renders its chart once the seeded cost flows through the breakdown
+	// endpoints (project chart uses its own test id, so exactly two stacked charts).
+	const charts = await findAllByTestId('stacked-spend-chart');
+	expect(charts.length).toBe(2);
+});

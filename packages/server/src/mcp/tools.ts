@@ -1952,7 +1952,7 @@ export function registerTools(
 		'Get the cost summary for a project',
 		{
 			project: projectArg(),
-			group_by: z.enum(['agent', 'project', 'day']).optional().describe('Group costs by'),
+			group_by: z.enum(['agent', 'day']).optional().describe('Group costs by'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -1961,14 +1961,22 @@ export function registerTools(
 				const r = await db.query(
 					`SELECT ce.member_id, COALESCE(ma.title, m.display_name) AS agent_title, sum(ce.amount_cents)::int AS total_cents
 				 FROM cost_entries ce LEFT JOIN members m ON m.id = ce.member_id LEFT JOIN member_agents ma ON ma.id = ce.member_id
-				 WHERE ce.team_id = $1 GROUP BY ce.member_id, ma.title, m.display_name`,
-					[scope.teamId],
+				 WHERE ce.project_id = $1 GROUP BY ce.member_id, ma.title, m.display_name`,
+					[scope.projectId],
+				);
+				return r.rows;
+			}
+			if (args.group_by === 'day') {
+				const r = await db.query(
+					`SELECT date_trunc('day', ce.created_at)::date AS day, sum(ce.amount_cents)::int AS total_cents
+				 FROM cost_entries ce WHERE ce.project_id = $1 GROUP BY day ORDER BY day`,
+					[scope.projectId],
 				);
 				return r.rows;
 			}
 			const r = await db.query(
-				`SELECT sum(amount_cents)::int AS total_cents, count(*)::int AS entry_count FROM cost_entries WHERE team_id = $1`,
-				[scope.teamId],
+				`SELECT sum(amount_cents)::int AS total_cents, count(*)::int AS entry_count FROM cost_entries WHERE project_id = $1`,
+				[scope.projectId],
 			);
 			return r.rows[0];
 		},

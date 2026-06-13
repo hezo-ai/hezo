@@ -848,8 +848,8 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 
 	it('get_costs query returns cost summary', async () => {
 		const r = await db.query<{ total_cents: number }>(
-			'SELECT COALESCE(SUM(amount_cents), 0)::int AS total_cents FROM cost_entries WHERE team_id = $1',
-			[teamId],
+			'SELECT COALESCE(SUM(amount_cents), 0)::int AS total_cents FROM cost_entries WHERE project_id = $1',
+			[projectId],
 		);
 		expect(r.rows[0].total_cents).toBeDefined();
 	});
