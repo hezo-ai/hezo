@@ -20,6 +20,7 @@ import {
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
+import { budgetWindowsError } from '../lib/budget-validation';
 import {
 	actorTypeFromAuth,
 	resolveActor,
@@ -213,6 +214,8 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 		reports_to?: string;
 		default_effort?: string;
 		heartbeat_interval_min?: number;
+		daily_budget_cents?: number;
+		weekly_budget_cents?: number;
 		monthly_budget_cents?: number;
 		touches_code?: boolean;
 		mcp_servers?: unknown[];
@@ -224,6 +227,15 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 
 	if (body.default_effort !== undefined && !isAgentEffort(body.default_effort)) {
 		return err(c, 'INVALID_REQUEST', `Invalid default_effort: ${body.default_effort}`, 400);
+	}
+
+	const budgetError = budgetWindowsError({
+		daily_budget_cents: body.daily_budget_cents ?? 0,
+		weekly_budget_cents: body.weekly_budget_cents ?? 0,
+		monthly_budget_cents: body.monthly_budget_cents ?? 3000,
+	});
+	if (budgetError) {
+		return err(c, 'INVALID_REQUEST', budgetError, 400);
 	}
 
 	const slug = toSlug(body.title);
@@ -254,8 +266,8 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 			const newMemberId = memberResult.rows[0].id;
 
 			await db.query(
-				`INSERT INTO member_agents (id, title, slug, role_description, reports_to, default_effort, heartbeat_interval_min, monthly_budget_cents, touches_code, mcp_servers)
-       VALUES ($1, $2, $3, $4, $5, $6::agent_effort, $7, $8, $9, $10::jsonb)`,
+				`INSERT INTO member_agents (id, title, slug, role_description, reports_to, default_effort, heartbeat_interval_min, daily_budget_cents, weekly_budget_cents, monthly_budget_cents, touches_code, mcp_servers)
+       VALUES ($1, $2, $3, $4, $5, $6::agent_effort, $7, $8, $9, $10, $11, $12::jsonb)`,
 				[
 					newMemberId,
 					body.title.trim(),
@@ -264,6 +276,8 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 					body.reports_to ?? null,
 					body.default_effort ?? DEFAULT_EFFORT,
 					body.heartbeat_interval_min ?? 60,
+					body.daily_budget_cents ?? 0,
+					body.weekly_budget_cents ?? 0,
 					body.monthly_budget_cents ?? 3000,
 					body.touches_code ?? false,
 					JSON.stringify(body.mcp_servers ?? []),
@@ -324,6 +338,8 @@ agentsRoutes.post('/projects/:projectId/agents/onboard', async (c) => {
 		system_prompt?: string;
 		default_effort?: string;
 		heartbeat_interval_min?: number;
+		daily_budget_cents?: number;
+		weekly_budget_cents?: number;
 		monthly_budget_cents?: number;
 		touches_code?: boolean;
 	}>();
@@ -334,6 +350,15 @@ agentsRoutes.post('/projects/:projectId/agents/onboard', async (c) => {
 
 	if (body.default_effort !== undefined && !isAgentEffort(body.default_effort)) {
 		return err(c, 'INVALID_REQUEST', `Invalid default_effort: ${body.default_effort}`, 400);
+	}
+
+	const budgetError = budgetWindowsError({
+		daily_budget_cents: body.daily_budget_cents ?? 0,
+		weekly_budget_cents: body.weekly_budget_cents ?? 0,
+		monthly_budget_cents: body.monthly_budget_cents ?? 3000,
+	});
+	if (budgetError) {
+		return err(c, 'INVALID_REQUEST', budgetError, 400);
 	}
 
 	const slug = toSlug(body.title);
@@ -373,6 +398,8 @@ agentsRoutes.post('/projects/:projectId/agents/onboard', async (c) => {
 		system_prompt: body.system_prompt ?? '',
 		default_effort: body.default_effort ?? DEFAULT_EFFORT,
 		heartbeat_interval_min: body.heartbeat_interval_min ?? 60,
+		daily_budget_cents: body.daily_budget_cents ?? 0,
+		weekly_budget_cents: body.weekly_budget_cents ?? 0,
 		monthly_budget_cents: body.monthly_budget_cents ?? 3000,
 		touches_code: body.touches_code ?? false,
 	};
@@ -389,9 +416,10 @@ agentsRoutes.post('/projects/:projectId/agents/onboard', async (c) => {
 
 			await db.query(
 				`INSERT INTO member_agents (id, title, slug, role_description,
-				                            default_effort, heartbeat_interval_min, monthly_budget_cents,
+				                            default_effort, heartbeat_interval_min,
+				                            daily_budget_cents, weekly_budget_cents, monthly_budget_cents,
 				                            touches_code, admin_status)
-				 VALUES ($1, $2, $3, $4, $5::agent_effort, $6, $7, $8, $9::agent_admin_status)`,
+				 VALUES ($1, $2, $3, $4, $5::agent_effort, $6, $7, $8, $9, $10, $11::agent_admin_status)`,
 				[
 					memberId,
 					proposal.title,
@@ -399,6 +427,8 @@ agentsRoutes.post('/projects/:projectId/agents/onboard', async (c) => {
 					proposal.role_description,
 					proposal.default_effort,
 					proposal.heartbeat_interval_min,
+					proposal.daily_budget_cents,
+					proposal.weekly_budget_cents,
 					proposal.monthly_budget_cents,
 					proposal.touches_code,
 					AgentAdminStatus.Enabled,
@@ -772,6 +802,34 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 				'model_override_model requires model_override_provider',
 				400,
 			);
+		}
+	}
+
+	// Budget limits: 0 = unlimited. Validate the *merged* trio (incoming ?? stored)
+	// since a PATCH may touch only one window — per-field integer ≥ 0 plus the
+	// cross-window consistency rules (shared with the web forms).
+	if (
+		body.daily_budget_cents !== undefined ||
+		body.weekly_budget_cents !== undefined ||
+		body.monthly_budget_cents !== undefined
+	) {
+		const current = await db.query<{
+			daily_budget_cents: number;
+			weekly_budget_cents: number;
+			monthly_budget_cents: number;
+		}>(
+			`SELECT daily_budget_cents, weekly_budget_cents, monthly_budget_cents
+			 FROM member_agents WHERE id = $1`,
+			[agentId],
+		);
+		const stored = current.rows[0];
+		const budgetError = budgetWindowsError({
+			daily_budget_cents: body.daily_budget_cents ?? stored.daily_budget_cents,
+			weekly_budget_cents: body.weekly_budget_cents ?? stored.weekly_budget_cents,
+			monthly_budget_cents: body.monthly_budget_cents ?? stored.monthly_budget_cents,
+		});
+		if (budgetError) {
+			return err(c, 'INVALID_REQUEST', budgetError, 400);
 		}
 	}
 

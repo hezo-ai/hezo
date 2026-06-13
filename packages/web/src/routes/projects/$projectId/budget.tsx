@@ -1,11 +1,11 @@
-import { HQ_PROJECT_SLUG } from '@hezo/shared';
+import { type BudgetWindowsCents, centsToDollars, HQ_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { BudgetCharts } from '../../../components/budget/budget-charts';
+import { BudgetWindowsEditor } from '../../../components/budget/budget-windows-editor';
 import { BudgetBar } from '../../../components/ui/budget-bar';
 import { Button } from '../../../components/ui/button';
-import { Input } from '../../../components/ui/input';
 import {
 	type EntityBudgetStatus,
 	useBudgetStatus,
@@ -14,7 +14,7 @@ import {
 import { useProject, useUpdateProject } from '../../../hooks/use-projects';
 
 function dollars(cents: number): string {
-	return `$${(cents / 100).toFixed(2)}`;
+	return `$${centsToDollars(cents)}`;
 }
 
 /** A single window's spend vs. limit with a fill bar. 0 limit renders "unlimited". */
@@ -52,32 +52,27 @@ function ProjectBudgetForm({ projectId }: { projectId: string }) {
 	const { data: project } = useProject(projectId);
 	const updateProject = useUpdateProject(projectId);
 	const [editing, setEditing] = useState(false);
-	const [daily, setDaily] = useState('0');
-	const [weekly, setWeekly] = useState('0');
-	const [monthly, setMonthly] = useState('0');
+	const [budget, setBudget] = useState<BudgetWindowsCents>({
+		daily_budget_cents: 0,
+		weekly_budget_cents: 0,
+		monthly_budget_cents: 0,
+	});
 
 	if (!project) return null;
 
-	function toDollars(cents: number): string {
-		return (cents / 100).toFixed(2);
-	}
-
 	function startEditing() {
 		if (!project) return;
-		setDaily(toDollars(project.daily_budget_cents));
-		setWeekly(toDollars(project.weekly_budget_cents));
-		setMonthly(toDollars(project.monthly_budget_cents));
+		setBudget({
+			daily_budget_cents: project.daily_budget_cents,
+			weekly_budget_cents: project.weekly_budget_cents,
+			monthly_budget_cents: project.monthly_budget_cents,
+		});
 		setEditing(true);
 	}
 
 	async function handleSave(e: React.FormEvent) {
 		e.preventDefault();
-		const toCents = (v: string) => Math.max(0, Math.round(Number.parseFloat(v || '0') * 100));
-		await updateProject.mutateAsync({
-			daily_budget_cents: toCents(daily),
-			weekly_budget_cents: toCents(weekly),
-			monthly_budget_cents: toCents(monthly),
-		});
+		await updateProject.mutateAsync(budget);
 		setEditing(false);
 	}
 
@@ -86,37 +81,11 @@ function ProjectBudgetForm({ projectId }: { projectId: string }) {
 			<h2 className="mb-3 text-sm font-medium text-text-muted">Project budget limits</h2>
 			<p className="-mt-2 mb-3 text-xs text-text-subtle">
 				Spend across all agents in this project. A run is blocked when the project exceeds any
-				window. 0 means unlimited.
+				window. Disable a window to leave it unlimited.
 			</p>
 			{editing ? (
-				<form onSubmit={handleSave} className="flex flex-col gap-3 sm:max-w-md">
-					<Input
-						label="Daily ($)"
-						type="number"
-						min={0}
-						step="0.01"
-						value={daily}
-						onChange={(e) => setDaily(e.target.value)}
-						data-testid="project-daily-budget"
-					/>
-					<Input
-						label="Weekly ($)"
-						type="number"
-						min={0}
-						step="0.01"
-						value={weekly}
-						onChange={(e) => setWeekly(e.target.value)}
-						data-testid="project-weekly-budget"
-					/>
-					<Input
-						label="Monthly ($)"
-						type="number"
-						min={0}
-						step="0.01"
-						value={monthly}
-						onChange={(e) => setMonthly(e.target.value)}
-						data-testid="project-monthly-budget"
-					/>
+				<form onSubmit={handleSave} className="flex flex-col gap-3 sm:max-w-xl">
+					<BudgetWindowsEditor value={budget} onChange={setBudget} />
 					<div className="flex gap-2">
 						<Button type="submit" size="sm" disabled={updateProject.isPending}>
 							{updateProject.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}

@@ -180,6 +180,8 @@ export function useOnboardAgent(projectId: string) {
 			title: string;
 			role_description?: string;
 			system_prompt?: string;
+			daily_budget_cents?: number;
+			weekly_budget_cents?: number;
 			monthly_budget_cents?: number;
 			heartbeat_interval_min?: number;
 			touches_code?: boolean;

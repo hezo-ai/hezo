@@ -10,6 +10,7 @@ import {
 import { type Context, Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange, broadcastProjectUpdate } from '../lib/broadcast';
+import { budgetWindowsError } from '../lib/budget-validation';
 import { ref } from '../lib/log-ref';
 import { err, ok } from '../lib/response';
 import { toProjectTaskPrefix, toSlug, uniqueSlug } from '../lib/slug';
@@ -516,10 +517,15 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 	const projectId = c.get('projectId') as string;
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const existing = await db.query('SELECT id FROM projects WHERE id = $1 AND team_id = $2', [
-		projectId,
-		teamId,
-	]);
+	const existing = await db.query<{
+		daily_budget_cents: number;
+		weekly_budget_cents: number;
+		monthly_budget_cents: number;
+	}>(
+		`SELECT daily_budget_cents, weekly_budget_cents, monthly_budget_cents
+		 FROM projects WHERE id = $1 AND team_id = $2`,
+		[projectId, teamId],
+	);
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Project not found', 404);
 	}
@@ -574,20 +580,31 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		params.push(body.memory_limit_gib);
 		idx++;
 	}
-	// Budget limits: 0 = unlimited. Reject negatives/non-integers.
-	for (const column of [
+	// Budget limits: 0 = unlimited. Validate the *merged* trio (incoming ?? stored)
+	// since a PATCH may touch only one window — enforces both per-field integer ≥ 0
+	// and the cross-window consistency rules (shared with the web forms).
+	const budgetColumns = [
 		'daily_budget_cents',
 		'weekly_budget_cents',
 		'monthly_budget_cents',
-	] as const) {
-		const value = body[column];
-		if (value === undefined) continue;
-		if (!Number.isInteger(value) || value < 0) {
-			return err(c, 'INVALID_REQUEST', `${column} must be an integer ≥ 0`, 400);
+	] as const;
+	if (budgetColumns.some((column) => body[column] !== undefined)) {
+		const current = existing.rows[0];
+		const merged = {
+			daily_budget_cents: body.daily_budget_cents ?? current.daily_budget_cents,
+			weekly_budget_cents: body.weekly_budget_cents ?? current.weekly_budget_cents,
+			monthly_budget_cents: body.monthly_budget_cents ?? current.monthly_budget_cents,
+		};
+		const budgetError = budgetWindowsError(merged);
+		if (budgetError) {
+			return err(c, 'INVALID_REQUEST', budgetError, 400);
 		}
-		sets.push(`${column} = $${idx}`);
-		params.push(value);
-		idx++;
+		for (const column of budgetColumns) {
+			if (body[column] === undefined) continue;
+			sets.push(`${column} = $${idx}`);
+			params.push(body[column]);
+			idx++;
+		}
 	}
 
 	if (sets.length === 0) {

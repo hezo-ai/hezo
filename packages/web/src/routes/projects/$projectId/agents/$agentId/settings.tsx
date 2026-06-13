@@ -1,7 +1,13 @@
-import { AgentAdminStatus, AI_PROVIDER_INFO, type AiProvider } from '@hezo/shared';
+import {
+	AgentAdminStatus,
+	AI_PROVIDER_INFO,
+	type AiProvider,
+	type BudgetWindowsCents,
+} from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Loader2, Power, PowerOff } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { BudgetWindowsEditor } from '../../../../../components/budget/budget-windows-editor';
 import { MarkdownProse } from '../../../../../components/markdown-prose';
 import { RevisionsPanel } from '../../../../../components/revisions-panel';
 import { Button } from '../../../../../components/ui/button';
@@ -44,9 +50,11 @@ function AgentSettingsPage() {
 		promptMode === 'preview',
 	);
 	const [reportsTo, setReportsTo] = useState('');
-	const [dailyBudget, setDailyBudget] = useState('');
-	const [weeklyBudget, setWeeklyBudget] = useState('');
-	const [budget, setBudget] = useState('');
+	const [budget, setBudget] = useState<BudgetWindowsCents>({
+		daily_budget_cents: 0,
+		weekly_budget_cents: 0,
+		monthly_budget_cents: 0,
+	});
 	const [heartbeat, setHeartbeat] = useState('');
 	const [runTimeout, setRunTimeout] = useState('');
 	const [touchesCode, setTouchesCode] = useState(false);
@@ -60,9 +68,11 @@ function AgentSettingsPage() {
 		setTitle(agent.title);
 		setRoleDesc(agent.role_description ?? '');
 		setReportsTo(agent.reports_to ?? '');
-		setDailyBudget(String(agent.daily_budget_cents / 100));
-		setWeeklyBudget(String(agent.weekly_budget_cents / 100));
-		setBudget(String(agent.monthly_budget_cents / 100));
+		setBudget({
+			daily_budget_cents: agent.daily_budget_cents,
+			weekly_budget_cents: agent.weekly_budget_cents,
+			monthly_budget_cents: agent.monthly_budget_cents,
+		});
 		setHeartbeat(String(agent.heartbeat_interval_min));
 		setRunTimeout(String(agent.run_timeout_min));
 		setTouchesCode(agent.touches_code);
@@ -91,9 +101,9 @@ function AgentSettingsPage() {
 			role_description: roleDesc || undefined,
 			system_prompt: promptChanged ? systemPrompt : undefined,
 			reports_to: reportsTo || null,
-			daily_budget_cents: Math.max(0, Math.round(Number.parseFloat(dailyBudget || '0') * 100)),
-			weekly_budget_cents: Math.max(0, Math.round(Number.parseFloat(weeklyBudget || '0') * 100)),
-			monthly_budget_cents: Math.max(0, Math.round(Number.parseFloat(budget || '0') * 100)),
+			daily_budget_cents: budget.daily_budget_cents,
+			weekly_budget_cents: budget.weekly_budget_cents,
+			monthly_budget_cents: budget.monthly_budget_cents,
 			heartbeat_interval_min: Number.parseInt(heartbeat, 10),
 			run_timeout_min: Number.parseInt(runTimeout, 10),
 			touches_code: touchesCode,
@@ -256,31 +266,12 @@ function AgentSettingsPage() {
 					</p>
 				</div>
 
+				<div className="flex flex-col gap-1.5">
+					<span className="text-sm text-text-muted">Budget limits</span>
+					<BudgetWindowsEditor value={budget} onChange={setBudget} />
+				</div>
+
 				<div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-					<Input
-						label="Daily Budget ($)"
-						type="number"
-						step="0.01"
-						min="0"
-						value={dailyBudget}
-						onChange={(e) => setDailyBudget(e.target.value)}
-					/>
-					<Input
-						label="Weekly Budget ($)"
-						type="number"
-						step="0.01"
-						min="0"
-						value={weeklyBudget}
-						onChange={(e) => setWeeklyBudget(e.target.value)}
-					/>
-					<Input
-						label="Monthly Budget ($)"
-						type="number"
-						step="0.01"
-						min="0"
-						value={budget}
-						onChange={(e) => setBudget(e.target.value)}
-					/>
 					<Input
 						label="Heartbeat (min)"
 						type="number"
