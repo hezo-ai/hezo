@@ -21,6 +21,8 @@ interface RosterAgent {
 	reports_to: string | null;
 	heartbeat_interval_min: number;
 	monthly_budget_cents: number;
+	daily_budget_cents: number;
+	weekly_budget_cents: number;
 	team_context: string;
 }
 
@@ -46,7 +48,8 @@ export async function snapshotTeamAsTemplate(
 	return withTransaction(db, async () => {
 		const agentsRes = await db.query<RosterAgent>(
 			`SELECT ma.id, ma.slug, ma.agent_type_id, ma.reports_to,
-			        ma.heartbeat_interval_min, ma.monthly_budget_cents, ma.team_context
+			        ma.heartbeat_interval_min, ma.monthly_budget_cents,
+			        ma.daily_budget_cents, ma.weekly_budget_cents, ma.team_context
 			 FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
 			 WHERE m.team_id = $1 AND m.member_type = $2
@@ -125,14 +128,16 @@ export async function snapshotTeamAsTemplate(
 			await db.query(
 				`INSERT INTO team_template_agent_types
 				   (team_template_id, agent_type_id, reports_to_slug, heartbeat_interval_override,
-				    monthly_budget_override, sort_order)
-				 VALUES ($1, $2, $3, $4, $5, $6)`,
+				    monthly_budget_override, daily_budget_override, weekly_budget_override, sort_order)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 				[
 					newTemplateId,
 					a.agent_type_id,
 					reportsToSlug,
 					a.heartbeat_interval_min,
 					a.monthly_budget_cents,
+					a.daily_budget_cents,
+					a.weekly_budget_cents,
 					sortOrder,
 				],
 			);

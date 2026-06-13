@@ -402,6 +402,10 @@ Agent types are linked to team types through the `team_template_agent_types`
 join table, which stores:
 - `reports_to_slug` — org chart hierarchy specific to this team type composition
 - Override columns — allow a team type to customize an agent type's defaults
+  (`heartbeat_interval_override`, and the per-window budget overrides
+  `monthly_budget_override` / `daily_budget_override` / `weekly_budget_override`,
+  nullable; an unset override falls back to the agent type / unlimited). Cloning a
+  team snapshots its agents' live daily/weekly/monthly budgets into these columns.
 - `sort_order` — ensures parents are created before children during agent provisioning
 
 When agents are created from a team type, `member_agents.agent_type_id`

@@ -59,6 +59,31 @@ async function templateCount(): Promise<number> {
 	return res.rows[0].n;
 }
 
+async function agentBudgets(
+	teamId: string,
+	slug: string,
+): Promise<{ daily: number; weekly: number; monthly: number } | undefined> {
+	const res = await db.query<{
+		daily_budget_cents: number;
+		weekly_budget_cents: number;
+		monthly_budget_cents: number;
+	}>(
+		`SELECT ma.daily_budget_cents, ma.weekly_budget_cents, ma.monthly_budget_cents
+		 FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE m.team_id = $1 AND ma.slug = $2`,
+		[teamId, slug],
+	);
+	const row = res.rows[0];
+	return row
+		? {
+				daily: row.daily_budget_cents,
+				weekly: row.weekly_budget_cents,
+				monthly: row.monthly_budget_cents,
+			}
+		: undefined;
+}
+
 describe('POST /projects — clone an existing team (source_team_id)', () => {
 	it('provisions the new team from a fresh snapshot of the source team', async () => {
 		// A source team with a non-trivial roster.
@@ -107,6 +132,47 @@ describe('POST /projects — clone an existing team (source_team_id)', () => {
 			'Clone Source Co',
 		]);
 		expect(minted.rows).toHaveLength(1);
+	});
+
+	it("mirrors the source agents' per-window (daily/weekly/monthly) budgets", async () => {
+		const source = (
+			await (
+				await createProject({
+					name: 'Budget Source Co',
+					description: 'Source with tuned budgets.',
+					template_id: startupTemplateId,
+				})
+			).json()
+		).data as CreatedProjectTeam;
+
+		// Tune the captain's three budget windows on the source team.
+		await db.query(
+			`UPDATE member_agents ma SET daily_budget_cents = 111, weekly_budget_cents = 222, monthly_budget_cents = 333
+			 FROM members m WHERE m.id = ma.id AND m.team_id = $1 AND ma.slug = 'captain'`,
+			[source.team_id],
+		);
+
+		// Sanity: the source captain actually carries the tuned windows.
+		expect(await agentBudgets(source.team_id, 'captain')).toEqual({
+			daily: 111,
+			weekly: 222,
+			monthly: 333,
+		});
+
+		const cloneRes = await createProject({
+			name: 'Budget Clone Co',
+			description: 'Clones the tuned budgets.',
+			source_team_id: source.team_id,
+		});
+		expect(cloneRes.status).toBe(201);
+		const clone = (await cloneRes.json()).data as CreatedProjectTeam;
+
+		// The clone carries all three windows, not just monthly.
+		expect(await agentBudgets(clone.team_id, 'captain')).toEqual({
+			daily: 111,
+			weekly: 222,
+			monthly: 333,
+		});
 	});
 
 	it('mints a fresh, distinctly-named template each time the same team is cloned', async () => {
