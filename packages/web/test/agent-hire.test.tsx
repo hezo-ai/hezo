@@ -108,7 +108,12 @@ test('can hire agent with full fields', async () => {
 	await user.clear(budgetInput);
 	await user.type(budgetInput, '50');
 
-	const touchesCode = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+	// The budget editor renders its own enable toggles first, so the touches-code
+	// checkbox is the last one in the form.
+	const checkboxes = container.querySelectorAll(
+		'input[type="checkbox"]',
+	) as NodeListOf<HTMLInputElement>;
+	const touchesCode = checkboxes[checkboxes.length - 1];
 	await user.click(touchesCode);
 
 	const textarea = container.querySelector('textarea') as HTMLTextAreaElement;

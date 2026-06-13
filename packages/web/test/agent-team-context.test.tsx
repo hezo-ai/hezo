@@ -72,7 +72,7 @@ test('section appears between Reports To and Monthly Budget controls in DOM orde
 
 	const section = await findByTestId('agent-team-context', undefined, { timeout: 20_000 });
 	const reportsToLabel = await findByText('Reports To');
-	const budgetLabel = await findByText(/Monthly Budget/);
+	const budgetLabel = await findByText('Budget limits');
 
 	// Assert DOM order via compareDocumentPosition since happy-dom lacks layout.
 	const all = Array.from(container.querySelectorAll('*')) as HTMLElement[];
