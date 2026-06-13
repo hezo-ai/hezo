@@ -1188,7 +1188,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_projects',
-		'List projects. With CEO cross-team access (or as superuser) returns every project across the instance, each row carrying team_name/team_slug; a board user gets the projects on teams they belong to; an agent run gets its own project. Pass excerpt_chars (e.g. 300) to truncate description; omit for full content.',
+		'List projects. With CEO cross-team access (or as superuser) returns every project across the instance; a board user gets the projects on teams they belong to; an agent run gets its own project. Pass excerpt_chars (e.g. 300) to truncate description; omit for full content.',
 		{
 			excerpt_chars: z
 				.number()
@@ -1207,26 +1207,25 @@ export function registerTools(
 				(auth.type === AuthType.Admin && auth.isSuperuser);
 			if (instanceWide) {
 				const r = await db.query<Record<string, unknown>>(
-					`SELECT p.id, p.team_id, t.name AS team_name, t.slug AS team_slug,
+					`SELECT p.id, p.team_id,
 					        p.name, p.slug, p.task_prefix, p.description, p.is_internal,
 					        p.created_at, p.updated_at
-					 FROM projects p JOIN teams t ON t.id = p.team_id
-					 ORDER BY t.name, p.name`,
+					 FROM projects p
+					 ORDER BY p.name`,
 				);
 				return withExcerpt(r.rows);
 			}
 
 			if (auth.type === AuthType.Admin) {
 				const r = await db.query<Record<string, unknown>>(
-					`SELECT DISTINCT p.id, p.team_id, t.name AS team_name, t.slug AS team_slug,
+					`SELECT DISTINCT p.id, p.team_id,
 					        p.name, p.slug, p.task_prefix, p.description, p.is_internal,
 					        p.created_at, p.updated_at
 					 FROM projects p
-					 JOIN teams t ON t.id = p.team_id
 					 JOIN members m ON m.team_id = p.team_id
 					 JOIN member_users mu ON mu.id = m.id
 					 WHERE mu.user_id = $1
-					 ORDER BY t.name, p.name`,
+					 ORDER BY p.name`,
 					[auth.userId],
 				);
 				return withExcerpt(r.rows);

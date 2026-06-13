@@ -404,34 +404,31 @@ async function buildProjectsContext(db: PGlite): Promise<string> {
 		name: string;
 		slug: string;
 		task_prefix: string;
-		team_name: string;
-		team_slug: string;
 		open_task_count: number;
 		created_at: string;
 	}>(
-		`SELECT p.name, p.slug, p.task_prefix, t.name AS team_name, t.slug AS team_slug,
+		`SELECT p.name, p.slug, p.task_prefix,
 		        (SELECT count(*) FROM tasks i
 		         WHERE i.project_id = p.id AND i.status NOT IN (${terminal.placeholders}))::int AS open_task_count,
 		        p.created_at
 		 FROM projects p
-		 JOIN teams t ON t.id = p.team_id
 		 WHERE p.is_internal = false
 		 ORDER BY p.created_at DESC`,
 		terminal.values,
 	);
 
 	const intro =
-		'Hezo is project-centric: one organisation containing many projects, each backed by its own dedicated team and Captain. As the instance CEO you have automatic cross-team reach over every one of them. The roster of project-teams below (HQ, your home, excluded) is regenerated every turn from the live database — trust it over memory, and never tell the operator a project does not exist without checking here first. When you name a project, ticket, or team in the chat box, use its slug, identifier, or name (e.g. the project `todo6`, ticket `TO-1`) — never a raw UUID. To read or act inside a project, pass its slug (shown on its line below) as the `project` argument to tools like `list_tasks` / `list_agents`; or call `list_projects` for this same live list.';
+		'Hezo is project-centric: one organisation containing many projects, each with its own Captain and roster of agents. As the instance CEO you have automatic cross-project reach over every one of them. The roster of projects below (HQ, your home, excluded) is regenerated every turn from the live database — trust it over memory, and never tell the operator a project does not exist without checking here first. When you name a project or ticket in the chat box, use its slug, identifier, or name (e.g. the project `todo6`, ticket `TO-1`) — never a raw UUID. To read or act inside a project, pass its slug (shown on its line below) as the `project` argument to tools like `list_tasks` / `list_agents`; or call `list_projects` for this same live list.';
 
 	if (projects.rows.length === 0) {
-		return `${intro}\n\n_No project-teams exist yet beyond HQ. When the operator wants to start one, take it through project intake._`;
+		return `${intro}\n\n_No projects exist yet beyond HQ. When the operator wants to start one, take it through project intake._`;
 	}
 
 	const lines = projects.rows
 		.map((p) => {
 			const date = new Date(p.created_at).toISOString().slice(0, 10);
 			const open = `${p.open_task_count} open ticket${p.open_task_count === 1 ? '' : 's'}`;
-			return `- ${p.name} (slug: ${p.slug}, prefix: ${p.task_prefix}) — team ${p.team_name} (slug: ${p.team_slug}), ${open}, created ${date}`;
+			return `- ${p.name} (slug: ${p.slug}, prefix: ${p.task_prefix}) — ${open}, created ${date}`;
 		})
 		.join('\n');
 

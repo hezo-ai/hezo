@@ -943,16 +943,23 @@ describe('project state block', () => {
 });
 
 describe('projects context block ({{projects_context}})', () => {
-	it('lists every non-internal project across teams by slug, never by UUID', async () => {
+	it('lists every non-internal project by name and slug, with no team in the line', async () => {
 		const result = await resolveSystemPrompt(db, 'Roster:\n{{projects_context}}', { teamId });
 		expect(result).toContain('Hezo is project-centric');
 
-		const proj = await db.query<{ slug: string }>('SELECT slug FROM projects WHERE id = $1', [
-			projectId,
-		]);
-		// The beforeAll project surfaces by slug, tagged with its owning team…
-		expect(result).toContain(`slug: ${proj.rows[0].slug}`);
-		expect(result).toContain('team Template Co');
+		const proj = await db.query<{ name: string; slug: string }>(
+			'SELECT name, slug FROM projects WHERE id = $1',
+			[projectId],
+		);
+		// The beforeAll project surfaces on its own roster line by name and slug…
+		const rosterLine = result
+			.split('\n')
+			.find((line) => line.includes(`slug: ${proj.rows[0].slug}`));
+		expect(rosterLine).toBeDefined();
+		expect(rosterLine).toContain(proj.rows[0].name);
+		// …with no team name or slug — projects are the unit; teams are just a part of them.
+		expect(rosterLine).not.toContain('team');
+		expect(rosterLine).not.toContain('Template Co');
 		// …and never by raw UUID, since this text is echoed to the human operator.
 		expect(result).not.toContain(projectId);
 
@@ -963,14 +970,14 @@ describe('projects context block ({{projects_context}})', () => {
 		expect(result).not.toContain(`slug: ${hq.rows[0].slug}`);
 	});
 
-	it('shows an empty-state line when no project-teams exist beyond HQ', async () => {
+	it('shows an empty-state line when no projects exist beyond HQ', async () => {
 		// A fresh instance has only HQ (internal), so the roster is empty.
 		const fresh = await createTestApp();
 		try {
 			const result = await resolveSystemPrompt(fresh.db, '{{projects_context}}', {
 				teamId: DEFAULT_TEAM_ID,
 			});
-			expect(result).toContain('No project-teams exist yet beyond HQ');
+			expect(result).toContain('No projects exist yet beyond HQ');
 		} finally {
 			await safeClose(fresh.db);
 		}
