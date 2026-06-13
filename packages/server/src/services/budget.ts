@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { BudgetPeriod } from '@hezo/shared';
+import { type AiProvider, BudgetPeriod } from '@hezo/shared';
 
 /**
  * Budget enforcement — the single source of truth for agent/project spend.
@@ -185,26 +185,28 @@ export async function checkOverBudget(
 export async function recordRunCost(
 	db: PGlite,
 	entry: {
-		teamId: string;
 		memberId: string;
 		taskId: string | null;
 		projectId: string | null;
 		amountCents: number;
 		description: string;
+		aiProviderConfigId: string | null;
+		provider: AiProvider | null;
 	},
 ): Promise<Record<string, unknown> | null> {
 	if (entry.amountCents <= 0) return null;
 	const res = await db.query<Record<string, unknown>>(
-		`INSERT INTO cost_entries (team_id, member_id, task_id, project_id, amount_cents, description)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO cost_entries (member_id, task_id, project_id, amount_cents, description, ai_provider_config_id, provider)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7::ai_provider)
 		 RETURNING *`,
 		[
-			entry.teamId,
 			entry.memberId,
 			entry.taskId,
 			entry.projectId,
 			entry.amountCents,
 			entry.description,
+			entry.aiProviderConfigId,
+			entry.provider,
 		],
 	);
 	return res.rows[0] ?? null;

@@ -7,28 +7,29 @@ import { checkOverBudget, getProjectBudgetStatus, toEntityBudgetStatus } from '.
 
 export const costsRoutes = new Hono<Env>();
 
+/**
+ * Cost reads are scoped to a single project (`ce.project_id`) — cost is
+ * project/agent/adapter-scoped, never team-scoped. `group_by=day` powers the
+ * project total chart; `breakdown=agent` / `breakdown=adapter` add a per-day
+ * series split for the stacked charts on the Budgets page.
+ */
 costsRoutes.get('/projects/:projectId/costs', async (c) => {
-	const teamId = c.get('teamId') as string;
+	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
 	const agentId = c.req.query('agent_id');
-	const projectId = c.req.query('project_id');
 	const taskId = c.req.query('task_id');
 	const from = c.req.query('from');
 	const to = c.req.query('to');
 	const groupBy = c.req.query('group_by');
+	const breakdown = c.req.query('breakdown');
 
-	const conditions: string[] = ['ce.team_id = $1'];
-	const params: unknown[] = [teamId];
+	const conditions: string[] = ['ce.project_id = $1'];
+	const params: unknown[] = [projectId];
 	let idx = 2;
 
 	if (agentId) {
 		conditions.push(`ce.member_id = $${idx}`);
 		params.push(agentId);
-		idx++;
-	}
-	if (projectId) {
-		conditions.push(`ce.project_id = $${idx}`);
-		params.push(projectId);
 		idx++;
 	}
 	if (taskId) {
@@ -65,14 +66,36 @@ costsRoutes.get('/projects/:projectId/costs', async (c) => {
 		return ok(c, { summary: result.rows, total_cents: totalCents });
 	}
 
-	if (groupBy === 'project') {
+	if (groupBy === 'day' && breakdown === 'agent') {
 		const result = await db.query<{ total_cents: number }>(
-			`SELECT ce.project_id, p.name AS project_name,
+			`SELECT date_trunc('day', ce.created_at)::date AS day,
+              ce.member_id AS agent_id,
+              COALESCE(ma.title, m.display_name) AS agent_title,
               sum(ce.amount_cents)::int AS total_cents
        FROM cost_entries ce
-       LEFT JOIN projects p ON p.id = ce.project_id
+       LEFT JOIN members m ON m.id = ce.member_id
+       LEFT JOIN member_agents ma ON ma.id = ce.member_id
        WHERE ${where}
-       GROUP BY ce.project_id, p.name`,
+       GROUP BY day, ce.member_id, ma.title, m.display_name
+       ORDER BY day`,
+			params,
+		);
+		const totalCents = result.rows.reduce((sum, r) => sum + r.total_cents, 0);
+		return ok(c, { summary: result.rows, total_cents: totalCents });
+	}
+
+	if (groupBy === 'day' && breakdown === 'adapter') {
+		const result = await db.query<{ total_cents: number }>(
+			`SELECT date_trunc('day', ce.created_at)::date AS day,
+              ce.ai_provider_config_id,
+              ce.provider,
+              apc.label AS adapter_label,
+              sum(ce.amount_cents)::int AS total_cents
+       FROM cost_entries ce
+       LEFT JOIN ai_provider_configs apc ON apc.id = ce.ai_provider_config_id
+       WHERE ${where}
+       GROUP BY day, ce.ai_provider_config_id, ce.provider, apc.label
+       ORDER BY day`,
 			params,
 		);
 		const totalCents = result.rows.reduce((sum, r) => sum + r.total_cents, 0);
@@ -102,6 +125,7 @@ costsRoutes.get('/projects/:projectId/costs', async (c) => {
 
 costsRoutes.post('/projects/:projectId/costs', async (c) => {
 	const teamId = c.get('teamId') as string;
+	const projectId = c.get('projectId') as string;
 	const db = c.get('db');
 
 	const body = await c.req.json<{
@@ -117,17 +141,18 @@ costsRoutes.post('/projects/:projectId/costs', async (c) => {
 	}
 
 	// Spend is always recorded; budgets are enforced by windowed sums (services/budget.ts),
-	// not a debit counter. After recording, reactively pause the agent if this pushed it
-	// or its project over any window — mirroring the run-completion enforcement path.
+	// not a debit counter. Cost is project-scoped, so attribute it to the path project
+	// unless the body names a specific one. After recording, reactively pause the agent if
+	// this pushed it or its project over any window — mirroring the run-completion path.
+	const costProjectId = body.project_id ?? projectId;
 	const result = await db.query(
-		`INSERT INTO cost_entries (team_id, member_id, task_id, project_id, amount_cents, description)
-     VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO cost_entries (member_id, task_id, project_id, amount_cents, description)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
 		[
-			teamId,
 			body.member_id,
 			body.task_id ?? null,
-			body.project_id ?? null,
+			costProjectId,
 			body.amount_cents,
 			body.description ?? '',
 		],
@@ -141,7 +166,7 @@ costsRoutes.post('/projects/:projectId/costs', async (c) => {
 		result.rows[0] as Record<string, unknown>,
 	);
 
-	const block = await checkOverBudget(db, body.member_id, body.project_id ?? null);
+	const block = await checkOverBudget(db, body.member_id, costProjectId);
 	if (block) {
 		await db.query(
 			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2',

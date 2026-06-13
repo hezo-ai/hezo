@@ -1272,14 +1272,16 @@ When approved, side effects depend on approval type:
 ### Cost & Budget
 
 #### `GET /projects/:projectId/costs`
-List cost entries with aggregation.
+List cost entries with aggregation. Scoped to the path project (`project_id`) — cost
+is never team-scoped.
 
 Query params:
 - `?agent_id=uuid`
-- `?project_id=uuid`
 - `?task_id=uuid`
 - `?from=2026-03-01&to=2026-03-31`
-- `?group_by=agent|project|day`
+- `?group_by=agent|day`
+- `?breakdown=agent|adapter` (with `group_by=day`) — per-day series split by agent or
+  by AI adapter config, for the stacked Budgets-page charts
 
 Response (when `group_by=agent`):
 ```json
@@ -1337,7 +1339,8 @@ page and the project warning banner.
 ```
 
 A limit of `0` means unlimited. `group_by=day` on `GET /costs` (with optional
-`agent_id`/`project_id`/`from`/`to`) returns the per-day series for the charts.
+`agent_id`/`from`/`to`, and optional `breakdown=agent|adapter`) returns the per-day
+series for the charts.
 
 ---
 
@@ -2813,7 +2816,7 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 | `create_comment` | Add comment to task | `team_id`, `task_id`, `content`, `content_type?` |
 | `list_approvals` | List pending approvals | `team_id` |
 | `resolve_approval` | Resolve an approval | `team_id`, `approval_id`, `status` (`approved`/`denied`), `resolution_note?` |
-| `get_costs` | Get cost summary | `team_id`, `group_by?` (`agent`/`project`/`day`) |
+| `get_costs` | Get project cost summary | `project`, `group_by?` (`agent`/`day`) |
 | `get_agent_system_prompt` | Read agent's system prompt. Any agent or board user in the same team. | `team_id`, `agent_id` |
 | `update_agent_system_prompt` | Apply a system prompt change. **Coach-only.** Writes immediately and snapshots a revision for board rollback. | `team_id`, `agent_id`, `new_system_prompt`, `change_summary` |
 | `list_project_docs` | List project docs | `team_id`, `project_id` |

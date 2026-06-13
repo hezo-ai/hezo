@@ -73,7 +73,7 @@ export interface DailyCostPoint {
 	total_cents: number;
 }
 
-/** Per-day spend series for the project (or a single agent), for the charts. */
+/** Per-day project spend total — powers the project "spend per day" chart. */
 export function useDailyCostSeries(
 	projectId: string,
 	params?: { agent_id?: string; from?: string; to?: string },
@@ -85,6 +85,50 @@ export function useDailyCostSeries(
 			api.get<{ summary: DailyCostPoint[]; total_cents: number }>(
 				`/api/projects/${projectId}/costs`,
 				query as Record<string, string>,
+			),
+		enabled: !!projectId,
+	});
+}
+
+/** One day's spend for a single series (agent or adapter) in a breakdown. */
+export interface AgentDailyCostPoint {
+	day: string;
+	agent_id: string;
+	agent_title: string;
+	total_cents: number;
+}
+
+export interface AdapterDailyCostPoint {
+	day: string;
+	ai_provider_config_id: string | null;
+	provider: string | null;
+	adapter_label: string | null;
+	total_cents: number;
+}
+
+/** Per-day spend split by agent — powers the stacked "by agent" chart. */
+export function useAgentDailyCostSeries(projectId: string) {
+	const query = { group_by: 'day', breakdown: 'agent' };
+	return useQuery({
+		queryKey: queryKeys.projects.costs(projectId, query),
+		queryFn: () =>
+			api.get<{ summary: AgentDailyCostPoint[]; total_cents: number }>(
+				`/api/projects/${projectId}/costs`,
+				query,
+			),
+		enabled: !!projectId,
+	});
+}
+
+/** Per-day spend split by AI adapter configuration — powers the stacked "by adapter" chart. */
+export function useAdapterDailyCostSeries(projectId: string) {
+	const query = { group_by: 'day', breakdown: 'adapter' };
+	return useQuery({
+		queryKey: queryKeys.projects.costs(projectId, query),
+		queryFn: () =>
+			api.get<{ summary: AdapterDailyCostPoint[]; total_cents: number }>(
+				`/api/projects/${projectId}/costs`,
+				query,
 			),
 		enabled: !!projectId,
 	});

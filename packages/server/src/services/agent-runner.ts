@@ -752,7 +752,10 @@ export async function runAgent(
 	// run on this credential forever. Release is idempotent, so the explicit cleanup
 	// paths below don't double-free.
 	try {
-		await markHeartbeatRunRunning(deps.db, heartbeatRunId, runBroadcast);
+		await markHeartbeatRunRunning(deps.db, heartbeatRunId, runBroadcast, {
+			aiProviderConfigId: credential.configId,
+			provider,
+		});
 
 		// Human-friendly label for run-scoped logs (egress proxy, ssh-agent),
 		// since a run has no friendly identifier of its own.
@@ -1735,13 +1738,23 @@ async function markHeartbeatRunRunning(
 	db: PGlite,
 	runId: string,
 	broadcast: HeartbeatRunBroadcast,
+	adapter: { aiProviderConfigId: string | null; provider: AiProvider | null },
 ): Promise<void> {
+	// Stamp the resolved AI adapter config on the run so recordRunCostAndEnforce
+	// can attribute the run's cost to it without re-resolving.
 	const result = await db.query<{ id: string }>(
 		`UPDATE heartbeat_runs
-		    SET status = $1::heartbeat_run_status, started_at = now()
+		    SET status = $1::heartbeat_run_status, started_at = now(),
+		        ai_provider_config_id = $4, provider = $5::ai_provider
 		  WHERE id = $2 AND status = $3::heartbeat_run_status
 		  RETURNING id`,
-		[HeartbeatRunStatus.Running, runId, HeartbeatRunStatus.Queued],
+		[
+			HeartbeatRunStatus.Running,
+			runId,
+			HeartbeatRunStatus.Queued,
+			adapter.aiProviderConfigId,
+			adapter.provider,
+		],
 	);
 	if (result.rows.length > 0) {
 		broadcastHeartbeatRunChange(broadcast, runId, HeartbeatRunStatus.Running, 'UPDATE');
@@ -1814,13 +1827,22 @@ async function recordRunCostAndEnforce(
 ): Promise<void> {
 	if (!usage || usage.costCents <= 0) return;
 	try {
+		// The resolved AI adapter config was stamped on the run at start
+		// (markHeartbeatRunRunning); read it back to attribute this cost to it.
+		const runRow = await db.query<{
+			ai_provider_config_id: string | null;
+			provider: AiProvider | null;
+		}>(`SELECT ai_provider_config_id, provider FROM heartbeat_runs WHERE id = $1`, [runId]);
+		const adapter = runRow.rows[0] ?? { ai_provider_config_id: null, provider: null };
+
 		const entry = await recordRunCost(db, {
-			teamId: broadcast.teamId,
 			memberId: broadcast.memberId,
 			taskId: broadcast.taskId ?? null,
 			projectId: broadcast.projectId ?? null,
 			amountCents: usage.costCents,
 			description: `Agent run ${runId}`,
+			aiProviderConfigId: adapter.ai_provider_config_id,
+			provider: adapter.provider,
 		});
 		if (entry && broadcast.wsManager) {
 			broadcastRowChange(
