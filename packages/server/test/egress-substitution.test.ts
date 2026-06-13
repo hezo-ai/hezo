@@ -134,4 +134,84 @@ describe('substituteRequest', () => {
 		expect(result.headersChanged).toBe(false);
 		expect(result.urlChanged).toBe(false);
 	});
+
+	it('substitutes multiple distinct placeholders in one header value', () => {
+		const secrets = new Map([
+			['USER', makeSecret('USER', 'alice', ['x.example'])],
+			['PASS', makeSecret('PASS', 'hunter2', ['x.example'])],
+		]);
+		const result = substituteRequest(
+			{
+				...baseRequest,
+				host: 'x.example',
+				url: 'https://x.example/y',
+				headers: { authorization: 'Basic __HEZO_SECRET_USER__:__HEZO_SECRET_PASS__' },
+			},
+			secrets,
+		);
+		expect(result.failure).toBeNull();
+		expect(result.headers.authorization).toBe('Basic alice:hunter2');
+		expect([...result.secretsUsed].sort()).toEqual(['PASS', 'USER']);
+	});
+
+	it('does not recursively substitute a placeholder that appears inside a secret value', () => {
+		// A secret whose value happens to contain another placeholder string must
+		// be emitted verbatim — the substituted value is never re-scanned, or a
+		// secret could be used to exfiltrate a second secret to an unrelated host.
+		const secrets = new Map([
+			['OUTER', makeSecret('OUTER', '__HEZO_SECRET_INNER__', ['x.example'])],
+			['INNER', makeSecret('INNER', 'top-secret', ['other.example'])],
+		]);
+		const result = substituteRequest(
+			{
+				...baseRequest,
+				host: 'x.example',
+				url: 'https://x.example/y',
+				headers: { authorization: 'Bearer __HEZO_SECRET_OUTER__' },
+			},
+			secrets,
+		);
+		expect(result.failure).toBeNull();
+		expect(result.headers.authorization).toBe('Bearer __HEZO_SECRET_INNER__');
+		expect([...result.secretsUsed]).toEqual(['OUTER']);
+	});
+
+	describe('name grammar (matches request_credential / admin-route validation)', () => {
+		// The proxy match must be exactly the canonical secret-name grammar: a
+		// looser matcher would substitute names no creation path can produce
+		// (drift between "what can be stored" and "what can be referenced").
+		const secrets = new Map([['VALID', makeSecret('VALID', 'v', ['x.example'])]]);
+
+		it('does not treat a lowercase placeholder body as a secret reference', () => {
+			const result = substituteRequest(
+				{
+					...baseRequest,
+					host: 'x.example',
+					url: 'https://x.example/y',
+					headers: { authorization: 'Bearer __HEZO_SECRET_valid__' },
+				},
+				secrets,
+			);
+			// No canonical match → treated as plain text, forwarded verbatim.
+			expect(result.failure).toBeNull();
+			expect(result.headers.authorization).toBe('Bearer __HEZO_SECRET_valid__');
+			expect(result.headersChanged).toBe(false);
+		});
+
+		it('does not match a body that starts with a digit or underscore', () => {
+			for (const bad of ['__HEZO_SECRET_1ABC__', '__HEZO_SECRET__LEADING__']) {
+				const result = substituteRequest(
+					{
+						...baseRequest,
+						host: 'x.example',
+						url: 'https://x.example/y',
+						headers: { authorization: `Bearer ${bad}` },
+					},
+					secrets,
+				);
+				expect(result.failure).toBeNull();
+				expect(result.headersChanged).toBe(false);
+			}
+		});
+	});
 });
