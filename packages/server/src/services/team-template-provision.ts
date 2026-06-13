@@ -5,6 +5,7 @@ import { deriveSkillSummary } from '../lib/skill-summary';
 import { toSlug } from '../lib/slug';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
+import { resolveAgentBudgets } from './agent-budget';
 import { initAgentSystemPrompt } from './documents';
 import { downloadSkillContent, SkillDownloadError } from './skill-downloader';
 
@@ -39,6 +40,8 @@ interface AgentTypeRow {
 	reports_to_slug: string | null;
 	heartbeat_interval_override: number | null;
 	monthly_budget_override: number | null;
+	daily_budget_override: number | null;
+	weekly_budget_override: number | null;
 }
 
 export interface ProvisionTeamTemplateResult {
@@ -55,7 +58,8 @@ async function loadTemplateAgentTypes(db: PGlite, templateIds: string[]): Promis
 			        at.default_effort, at.heartbeat_interval_min, at.monthly_budget_cents,
 			        at.touches_code,
 			        ctat.reports_to_slug,
-			        ctat.heartbeat_interval_override, ctat.monthly_budget_override
+			        ctat.heartbeat_interval_override, ctat.monthly_budget_override,
+				        ctat.daily_budget_override, ctat.weekly_budget_override
 			 FROM team_template_agent_types ctat
 			 JOIN agent_types at ON at.id = ctat.agent_type_id
 			 WHERE ctat.team_template_id = $1
@@ -190,7 +194,7 @@ export async function provisionTeamTemplate(
 			}
 
 			const heartbeat = row.heartbeat_interval_override ?? row.heartbeat_interval_min;
-			const budget = row.monthly_budget_override ?? row.monthly_budget_cents;
+			const budgets = resolveAgentBudgets(row.monthly_budget_cents, row);
 
 			const memberResult = await db.query<{ id: string }>(
 				`INSERT INTO members (team_id, member_type, display_name)
@@ -206,8 +210,9 @@ export async function provisionTeamTemplate(
 				`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
 			                            team_context,
 			                            default_effort, heartbeat_interval_min, monthly_budget_cents,
+			                            daily_budget_cents, weekly_budget_cents,
 			                            touches_code)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11, $12, $13)`,
 				[
 					memberId,
 					row.id,
@@ -218,7 +223,9 @@ export async function provisionTeamTemplate(
 					row.default_team_context ?? '',
 					row.default_effort,
 					heartbeat,
-					budget,
+					budgets.monthlyBudgetCents,
+					budgets.dailyBudgetCents,
+					budgets.weeklyBudgetCents,
 					row.touches_code ?? false,
 				],
 			);

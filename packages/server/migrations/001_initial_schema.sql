@@ -151,6 +151,9 @@ CREATE TABLE teams (
     slug                 TEXT NOT NULL UNIQUE,
     description          TEXT NOT NULL DEFAULT '',
     summary              TEXT NOT NULL DEFAULT '',
+    budget_monthly_cents INTEGER NOT NULL DEFAULT 50000,
+    budget_used_cents    INTEGER NOT NULL DEFAULT 0,
+    budget_reset_at      TIMESTAMPTZ NOT NULL DEFAULT date_trunc('month', now()),
     mcp_servers          JSONB NOT NULL DEFAULT '[]'::jsonb,
     mpp_config           JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
     settings             JSONB NOT NULL DEFAULT '{"wake_mentioner_on_reply": true}'::jsonb,
@@ -199,12 +202,10 @@ CREATE TABLE member_agents (
     default_effort          agent_effort NOT NULL DEFAULT 'medium',
     heartbeat_interval_min  INTEGER NOT NULL DEFAULT 60,
     run_timeout_min         INTEGER NOT NULL DEFAULT 60,
-    -- Spend limits per rolling UTC window; 0 = unlimited. Spend is derived from
-    -- cost_entries (no running counter), so there is no reset bookkeeping here.
-    daily_budget_cents      INTEGER NOT NULL DEFAULT 0,
-    weekly_budget_cents     INTEGER NOT NULL DEFAULT 0,
     monthly_budget_cents    INTEGER NOT NULL DEFAULT 3000,
     touches_code            BOOLEAN NOT NULL DEFAULT false,
+    budget_used_cents       INTEGER NOT NULL DEFAULT 0,
+    budget_reset_at         TIMESTAMPTZ NOT NULL DEFAULT date_trunc('month', now()),
     runtime_status          agent_runtime_status NOT NULL DEFAULT 'idle',
     admin_status            agent_admin_status NOT NULL DEFAULT 'enabled',
     mcp_servers             JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -297,10 +298,6 @@ CREATE TABLE projects (
     designated_repo_id  UUID,
     max_concurrent_runs INTEGER NOT NULL DEFAULT 3 CHECK (max_concurrent_runs >= 1),
     memory_limit_gib    INTEGER NOT NULL DEFAULT 16 CHECK (memory_limit_gib >= 1),
-    -- Spend limits per rolling UTC window; 0 = unlimited. Spend derived from cost_entries.
-    daily_budget_cents      INTEGER NOT NULL DEFAULT 0,
-    weekly_budget_cents     INTEGER NOT NULL DEFAULT 0,
-    monthly_budget_cents    INTEGER NOT NULL DEFAULT 0,
     dev_ports               JSONB NOT NULL DEFAULT '[]'::jsonb,
     execution_started_at    TIMESTAMPTZ,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -643,9 +640,6 @@ CREATE INDEX idx_costs_member ON cost_entries(member_id);
 CREATE INDEX idx_costs_task ON cost_entries(task_id);
 CREATE INDEX idx_costs_project ON cost_entries(project_id);
 CREATE INDEX idx_costs_created ON cost_entries(created_at);
--- Windowed spend sums for budget enforcement scan by entity + created_at.
-CREATE INDEX idx_costs_member_created ON cost_entries(member_id, created_at);
-CREATE INDEX idx_costs_project_created ON cost_entries(project_id, created_at);
 
 -------------------------------------------------------------------------------
 -- AUDIT LOG
@@ -1193,6 +1187,46 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Budget enforcement no longer uses a running-counter debit function. Spend is
--- computed on demand from cost_entries over UTC windows (see services/budget.ts),
--- and limits live on member_agents / projects (daily/weekly/monthly_budget_cents).
+CREATE OR REPLACE FUNCTION debit_agent_budget(
+    p_member_id UUID,
+    p_amount_cents INTEGER
+) RETURNS BOOLEAN AS $$
+DECLARE
+    v_agent_budget INTEGER;
+    v_agent_used INTEGER;
+    v_team_id UUID;
+    v_team_budget INTEGER;
+    v_team_used INTEGER;
+BEGIN
+    SELECT ma.monthly_budget_cents, ma.budget_used_cents, m.team_id
+    INTO v_agent_budget, v_agent_used, v_team_id
+    FROM member_agents ma
+    JOIN members m ON m.id = ma.id
+    WHERE ma.id = p_member_id
+    FOR UPDATE OF ma;
+
+    IF (v_agent_used + p_amount_cents) > v_agent_budget THEN
+        RETURN FALSE;
+    END IF;
+
+    SELECT budget_monthly_cents, budget_used_cents
+    INTO v_team_budget, v_team_used
+    FROM teams
+    WHERE id = v_team_id
+    FOR UPDATE;
+
+    IF (v_team_used + p_amount_cents) > v_team_budget THEN
+        RETURN FALSE;
+    END IF;
+
+    UPDATE member_agents
+    SET budget_used_cents = budget_used_cents + p_amount_cents
+    WHERE id = p_member_id;
+
+    UPDATE teams
+    SET budget_used_cents = budget_used_cents + p_amount_cents
+    WHERE id = v_team_id;
+
+    RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql;
