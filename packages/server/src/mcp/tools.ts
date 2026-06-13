@@ -614,7 +614,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'Parent task ID (creates a sub-task). Sub-tasks can themselves have sub-tasks, but no deeper — depth is capped at 2.',
+					'Parent task to nest this under as a sub-task — a task identifier (e.g. "BE-2") or UUID. Sub-tasks can themselves have sub-tasks, but no deeper — depth is capped at 2.',
 				),
 			runtime_type: z
 				.string()
@@ -671,7 +671,7 @@ export function registerTools(
 							.string()
 							.optional()
 							.describe(
-								'Parent task ID (creates a sub-task). Sub-tasks can themselves have sub-tasks, but no deeper — depth is capped at 2.',
+								'Parent task to nest this under as a sub-task — a task identifier (e.g. "BE-2"), UUID, or a zero-based index token referencing an earlier item in this same call (e.g. "#0" = first item). Sub-tasks can themselves have sub-tasks, but no deeper — depth is capped at 2.',
 							),
 						runtime_type: z
 							.string()
