@@ -229,11 +229,10 @@ describe('MCP cross-team CEO — instance-wide discovery', () => {
 		expect(ids).toContain(teamBId);
 	});
 
-	it('list_projects returns every project across all teams, tagged with its team', async () => {
+	it('list_projects returns every project across all teams, with team_id but no team name or slug', async () => {
 		const rows = (await callMcp(ceoToken, 'list_projects', {})) as Array<{
 			id: string;
 			team_id: string;
-			team_slug: string;
 			is_internal: boolean;
 		}>;
 		const ids = rows.map((r) => r.id);
@@ -241,10 +240,14 @@ describe('MCP cross-team CEO — instance-wide discovery', () => {
 		expect(ids).toContain(projectBId);
 		// HQ (the one internal project) is included so the CEO sees the whole picture.
 		expect(rows.some((r) => r.is_internal)).toBe(true);
-		// Every row carries its owning team so the CEO can drill in by project.
+		// Every row still carries its owning team_id so the CEO can drill in by
+		// project, but the human-readable team name/slug never leaks into output —
+		// projects are the unit the CEO names; teams are just a part of them.
 		const a = rows.find((r) => r.id === projectAId);
 		expect(a?.team_id).toBe(teamAId);
-		expect(a?.team_slug).toBeTruthy();
+		const aRecord = a as unknown as Record<string, unknown>;
+		expect(aRecord.team_name).toBeUndefined();
+		expect(aRecord.team_slug).toBeUndefined();
 	});
 
 	it('can list tasks in any project without being scoped to it', async () => {
