@@ -12,6 +12,7 @@ const settingsNav = [
 
 // Instance-level resources shared across every team — Admin (superuser) only.
 const instanceNav = [
+	{ to: '/settings/chatbox', label: 'Chatbox' },
 	{ to: '/settings/skills', label: 'Skills' },
 	{ to: '/settings/connectors', label: 'Connectors' },
 	{ to: '/settings/credentials', label: 'Credentials' },

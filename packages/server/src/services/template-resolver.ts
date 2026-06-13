@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { CHAT_MEMORY_SLUG } from '@hezo/shared';
 import { terminalStatusParams } from '../lib/sql';
 
 interface ResolveContext {
@@ -195,9 +196,12 @@ export async function resolveSystemPrompt(
 	if (resolved.includes('{{project_docs_context}}')) {
 		let docsText = 'No project documentation available.';
 		if (ctx.projectId) {
+			// chat-memory.md (HQ) is injected in full into the chatbox prompt, so it
+			// is excluded from the manifest — listing it would tell the agent to
+			// read_project_doc something it already has verbatim.
 			const docs = await db.query<{ filename: string; title: string; updated_at: string }>(
-				"SELECT slug AS filename, title, updated_at FROM documents WHERE type = 'project_doc' AND project_id = $1 ORDER BY slug",
-				[ctx.projectId],
+				"SELECT slug AS filename, title, updated_at FROM documents WHERE type = 'project_doc' AND project_id = $1 AND slug != $2 ORDER BY slug",
+				[ctx.projectId, CHAT_MEMORY_SLUG],
 			);
 			if (docs.rows.length > 0) {
 				const lines = docs.rows

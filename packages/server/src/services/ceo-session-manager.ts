@@ -9,12 +9,15 @@ import {
 	CeoMessageRole,
 	CeoMessageStatus,
 	CeoSessionStatus,
+	CHAT_MEMORY_SLUG,
 	DEFAULT_TEAM_ID,
+	DocumentType,
 	PROVIDER_RUNTIME_ADAPTERS,
 	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
 import { trackBackground } from '../lib/background';
+import { getChatHistoryLimit } from '../lib/system-meta';
 import { logger } from '../logger';
 import { signCeoSessionJwt } from '../middleware/auth';
 import {
@@ -30,7 +33,7 @@ import {
 	createAgentChatParser,
 } from './agent-stream-parser';
 import { getProviderCredentialAndModel } from './ai-provider-keys';
-import { getAgentSystemPrompt } from './documents';
+import { getAgentSystemPrompt, getDocument } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication } from './effort';
 import { resolveRuntimeForTask } from './runtime-resolver';
 import type { BridgeRunnerArgs } from './ssh-agent';
@@ -42,8 +45,6 @@ const log = logger.child('ceo-session');
 
 /** Container working directory for the (repo-free) chat session. */
 const CHAT_WORKING_DIR = '/workspace';
-/** How many recent messages to replay into each turn's prompt. */
-const HISTORY_LIMIT = 80;
 /** How often to verify the live session's container is still healthy. */
 const HEALTH_INTERVAL_MS = Number(process.env.HEZO_CEO_HEALTH_INTERVAL_MS ?? 10_000);
 
@@ -53,7 +54,29 @@ You are in a real-time chat with the operator — the human running this Hezo in
 
 Because you roam across every project here, there is **no per-project "Project State" block in your context** — its open-ticket count in the roster is a summary only. To report a project's live status (its actual tickets and their statuses, or its roster), call \`list_tasks\` / \`list_agents\` with that project's slug as the \`project\` argument. Never tell the operator a project is empty off the roster count alone — check with the tools first.
 
-Because this chat is human-facing, refer to projects, tickets, teams, docs, and teammates by their bare slug, identifier, or name (e.g. the project todo6, ticket TO-1, prd.md, @@captain) — never paste raw UUIDs. Tools accept the same slugs and identifiers you use with the operator, so you never need a UUID. Write entity references bare, never wrapped in backticks: bare references render as clickable links in the chat, while backticked ones render as inert code and break the link. Keep replies focused and skip ceremony.`;
+Because this chat is human-facing, refer to projects, tickets, teams, docs, and teammates by their bare slug, identifier, or name (e.g. the project todo6, ticket TO-1, prd.md, @@captain) — never paste raw UUIDs. Tools accept the same slugs and identifiers you use with the operator, so you never need a UUID. Write entity references bare, never wrapped in backticks: bare references render as clickable links in the chat, while backticked ones render as inert code and break the link. Keep replies focused and skip ceremony.
+
+## Chatbox memory
+
+Your context carries a **Chatbox memory** block (below the guide, above the conversation). It is the persisted contents of \`chat-memory.md\` in the hq project, injected in full on every turn, so anything recorded there survives once older messages scroll out of the conversation window.
+
+Use it for **durable, standing knowledge only**:
+
+- **Record:** operator preferences and guidelines (how they like things done, tone, defaults, recurring decisions), and **anything the operator explicitly asks you to remember** — record that regardless of what it is.
+- **Do NOT record:** live data you can already fetch each turn — project/ticket/comment contents or status, rosters, counts, or any metadata about them. That is rebuilt into your context from the live database every turn; copying it into memory only goes stale. The roster and the tools are the source of truth for state, not this memory.
+
+When something belongs in memory, update it by **rewriting the whole document via \`write_project_doc\` (project: hq, filename: chat-memory.md)** — read the current memory block, merge the new fact in, and write the full result back. Do not blindly append; keep it short, curated, and free of stale entries. There is no separate "remember" tool — \`write_project_doc\` is how you maintain it.`;
+
+/**
+ * Render the persistent chatbox-memory data block injected into every turn. The
+ * curation rules live in CHAT_GUIDE; this is just the current contents (or a
+ * placeholder when empty so the agent knows the facility exists).
+ */
+export function formatChatMemoryBlock(content: string): string {
+	const trimmed = content.trim();
+	const body = trimmed === '' ? '_(nothing recorded yet)_' : trimmed;
+	return `## Chatbox memory\n\nPersisted across the conversation (from ${CHAT_MEMORY_SLUG} in hq). Maintain it with write_project_doc — see the guidance above.\n\n${body}`;
+}
 
 export interface CeoSessionDeps extends RunnerDeps {
 	wsManager: WebSocketManager;
@@ -473,11 +496,19 @@ export class CeoSessionManager {
 			crossTeam: true,
 		});
 
+		const memoryDoc = await getDocument(this.deps.db, {
+			type: DocumentType.ProjectDoc,
+			teamId: DEFAULT_TEAM_ID,
+			projectId: session.projectId,
+			slug: CHAT_MEMORY_SLUG,
+		});
+
+		const historyLimit = await getChatHistoryLimit(this.deps.db);
 		const history = await this.deps.db.query<CeoMessageRow>(
 			`SELECT id, role, channel, status, content, created_at FROM ceo_messages
 			 WHERE conversation_id = $1 AND id != $2
 			 ORDER BY created_at DESC LIMIT $3`,
-			[session.conversationId, excludeMessageId, HISTORY_LIMIT],
+			[session.conversationId, excludeMessageId, historyLimit],
 		);
 		const transcript = history.rows
 			.reverse()
@@ -489,6 +520,7 @@ export class CeoSessionManager {
 			resolved,
 			session.promptDirective ?? '',
 			CHAT_GUIDE,
+			formatChatMemoryBlock(memoryDoc?.content ?? ''),
 			'## Conversation so far',
 			transcript,
 			'Reply to the latest operator message as the CEO.',

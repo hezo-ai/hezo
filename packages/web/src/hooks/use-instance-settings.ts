@@ -5,7 +5,13 @@ import { queryKeys } from '../lib/query-keys';
 
 export interface InstanceSettings {
 	base_url: string | null;
+	chat_history_limit: number;
 }
+
+export type InstanceSettingsUpdate = Partial<{
+	base_url: string | null;
+	chat_history_limit: number;
+}>;
 
 export function useInstanceSettings() {
 	return useQuery({
@@ -15,13 +21,14 @@ export function useInstanceSettings() {
 }
 
 /**
- * Response-driven (not optimistic): the server validates and normalizes the
- * URL, so the cache is seeded from its echo rather than the typed value.
+ * Response-driven (not optimistic): the server validates and normalizes values,
+ * so the cache is seeded from its echo rather than the typed input. Accepts a
+ * partial patch — only the supplied fields change.
  */
 export function useUpdateInstanceSettings() {
 	return useMutation({
-		mutationFn: (base_url: string | null) =>
-			api.patch<InstanceSettings>('/api/instance-settings', { base_url }),
+		mutationFn: (update: InstanceSettingsUpdate) =>
+			api.patch<InstanceSettings>('/api/instance-settings', update),
 		onSuccess: (data) => {
 			queryClient.setQueryData(queryKeys.instanceSettings(), data);
 		},

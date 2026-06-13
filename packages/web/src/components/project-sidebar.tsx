@@ -69,14 +69,15 @@ export function ProjectSidebar() {
 			count: project?.open_task_count,
 			testId: 'project-sidebar-tasks',
 		},
+		// HQ (internal) exposes Documents for the chatbox memory doc, but not Assets.
+		{
+			to: '/projects/$projectId/documents',
+			params: projectParams,
+			label: 'Documents',
+		},
 		...(isInternal
 			? []
 			: [
-					{
-						to: '/projects/$projectId/documents',
-						params: projectParams,
-						label: 'Documents',
-					},
 					{
 						to: '/projects/$projectId/assets',
 						params: projectParams,

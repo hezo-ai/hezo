@@ -15,6 +15,7 @@ import { Route as HomeIndexRouteImport } from './routes/home/index'
 import { Route as SettingsSkillsRouteImport } from './routes/settings/skills'
 import { Route as SettingsCredentialsRouteImport } from './routes/settings/credentials'
 import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
+import { Route as SettingsChatboxRouteImport } from './routes/settings/chatbox'
 import { Route as SettingsAuditLogRouteImport } from './routes/settings/audit-log'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
 import { Route as ProjectsProjectIdRouteRouteImport } from './routes/projects/$projectId/route'
@@ -69,6 +70,11 @@ const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
 const SettingsConnectorsRoute = SettingsConnectorsRouteImport.update({
   id: '/settings/connectors',
   path: '/settings/connectors',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsChatboxRoute = SettingsChatboxRouteImport.update({
+  id: '/settings/chatbox',
+  path: '/settings/chatbox',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsAuditLogRoute = SettingsAuditLogRouteImport.update({
@@ -220,6 +226,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
+  '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/skills': typeof SettingsSkillsRoute
@@ -252,6 +259,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
+  '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/skills': typeof SettingsSkillsRoute
@@ -285,6 +293,7 @@ export interface FileRoutesById {
   '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
+  '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/skills': typeof SettingsSkillsRoute
@@ -320,6 +329,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/settings/ai-providers'
     | '/settings/audit-log'
+    | '/settings/chatbox'
     | '/settings/connectors'
     | '/settings/credentials'
     | '/settings/skills'
@@ -352,6 +362,7 @@ export interface FileRouteTypes {
     | '/'
     | '/settings/ai-providers'
     | '/settings/audit-log'
+    | '/settings/chatbox'
     | '/settings/connectors'
     | '/settings/credentials'
     | '/settings/skills'
@@ -384,6 +395,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/settings/ai-providers'
     | '/settings/audit-log'
+    | '/settings/chatbox'
     | '/settings/connectors'
     | '/settings/credentials'
     | '/settings/skills'
@@ -418,6 +430,7 @@ export interface RootRouteChildren {
   ProjectsProjectIdRouteRoute: typeof ProjectsProjectIdRouteRouteWithChildren
   SettingsAiProvidersRoute: typeof SettingsAiProvidersRoute
   SettingsAuditLogRoute: typeof SettingsAuditLogRoute
+  SettingsChatboxRoute: typeof SettingsChatboxRoute
   SettingsConnectorsRoute: typeof SettingsConnectorsRoute
   SettingsCredentialsRoute: typeof SettingsCredentialsRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
@@ -470,6 +483,13 @@ declare module '@tanstack/react-router' {
       path: '/settings/connectors'
       fullPath: '/settings/connectors'
       preLoaderRoute: typeof SettingsConnectorsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/chatbox': {
+      id: '/settings/chatbox'
+      path: '/settings/chatbox'
+      fullPath: '/settings/chatbox'
+      preLoaderRoute: typeof SettingsChatboxRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/audit-log': {
@@ -724,6 +744,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProjectsProjectIdRouteRoute: ProjectsProjectIdRouteRouteWithChildren,
   SettingsAiProvidersRoute: SettingsAiProvidersRoute,
   SettingsAuditLogRoute: SettingsAuditLogRoute,
+  SettingsChatboxRoute: SettingsChatboxRoute,
   SettingsConnectorsRoute: SettingsConnectorsRoute,
   SettingsCredentialsRoute: SettingsCredentialsRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,
