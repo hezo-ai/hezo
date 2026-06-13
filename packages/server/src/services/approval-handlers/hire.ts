@@ -103,8 +103,8 @@ export const hireHandler: ApprovalHandler = {
 			`SELECT m.id, m.team_id, m.display_name, m.created_at,
 			        ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary,
 			        ma.default_effort, ma.heartbeat_interval_min,
-			        ma.monthly_budget_cents, ma.budget_used_cents, ma.touches_code,
-			        ma.budget_reset_at, ma.runtime_status, ma.admin_status,
+			        ma.daily_budget_cents, ma.weekly_budget_cents, ma.monthly_budget_cents,
+			        ma.touches_code, ma.runtime_status, ma.admin_status,
 			        ma.last_heartbeat_at, ma.reports_to, ma.mcp_servers, ma.updated_at
 			 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1`,
 			[memberId],

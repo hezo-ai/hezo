@@ -5,7 +5,6 @@ import {
 	AuthType,
 	TaskPriority,
 	TERMINAL_TASK_STATUSES,
-	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { resolveTaskId } from '../lib/resolve';
@@ -13,6 +12,7 @@ import { err, ok } from '../lib/response';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { broadcastApprovalChange } from '../services/approval-broadcast';
+import { getAgentBudgetStatus } from '../services/budget';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 
 export const agentApiRoutes = new Hono<Env>();
@@ -35,10 +35,8 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 		runtime_status: string;
 		admin_status: string;
 		monthly_budget_cents: number;
-		budget_used_cents: number;
 	}>(
-		`SELECT ma.id, ma.title, ma.runtime_status, ma.admin_status,
-		        ma.monthly_budget_cents, ma.budget_used_cents
+		`SELECT ma.id, ma.title, ma.runtime_status, ma.admin_status, ma.monthly_budget_cents
 		 FROM member_agents ma
 		 WHERE ma.id = $1`,
 		[memberId],
@@ -49,7 +47,13 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 	}
 
 	const agentRow = agent.rows[0];
-	const budgetRemaining = agentRow.monthly_budget_cents - agentRow.budget_used_cents;
+	// Remaining monthly budget is derived from cost_entries (no running counter);
+	// 0 limit means unlimited, surfaced as null remaining.
+	const monthlyStatus = await getAgentBudgetStatus(db, memberId);
+	const budgetRemaining =
+		agentRow.monthly_budget_cents > 0
+			? agentRow.monthly_budget_cents - monthlyStatus.monthly.spentCents
+			: null;
 
 	if (
 		agentRow.admin_status === AgentAdminStatus.Disabled ||
@@ -255,54 +259,9 @@ agentApiRoutes.post('/tasks/:taskId/comments/:commentId/tool-calls', async (c) =
 			],
 		);
 		results.push(result.rows[0]);
-
-		if (tc.cost_cents && tc.cost_cents > 0) {
-			const task = await db.query<{ project_id: string }>(
-				'SELECT project_id FROM tasks WHERE id = $1',
-				[taskId],
-			);
-
-			const debitResult = await db.query<{ debit_agent_budget: boolean }>(
-				'SELECT debit_agent_budget($1, $2)',
-				[auth.memberId, tc.cost_cents],
-			);
-
-			await db.query(
-				`INSERT INTO cost_entries (team_id, member_id, task_id, project_id, amount_cents, description)
-				 VALUES ($1, $2, $3, $4, $5, $6)`,
-				[
-					auth.teamId,
-					auth.memberId,
-					taskId,
-					task.rows[0]?.project_id,
-					tc.cost_cents,
-					`Tool call: ${tc.tool_name}`,
-				],
-			);
-
-			if (!debitResult.rows[0]?.debit_agent_budget) {
-				await db.query(
-					`UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2`,
-					[AgentRuntimeStatus.Paused, auth.memberId],
-				);
-				const wsManager = c.get('wsManager');
-				wsManager.broadcast(wsRoom.team(auth.teamId), {
-					type: 'row_change',
-					table: 'member_agents',
-					action: 'UPDATE',
-					row: { id: auth.memberId, runtime_status: AgentRuntimeStatus.Paused },
-				});
-				return c.json(
-					{
-						error: {
-							code: 'BUDGET_EXCEEDED',
-							message: 'Agent budget limit reached. Agent has been paused.',
-						},
-					},
-					402,
-				);
-			}
-		}
+		// tool_calls.cost_cents is retained for display only. Budget spend is recorded
+		// once per run at completion (services/agent-runner.ts → recordRunCost) — the
+		// run total already includes tool-call cost, so debiting here would double-count.
 	}
 
 	return ok(c, results, 201);

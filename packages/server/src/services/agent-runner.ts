@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentRuntime,
+	AgentRuntimeStatus,
 	AiAuthMethod,
 	type AiProvider,
 	CLAUDE_CODE_QUIET_ENV,
@@ -37,6 +38,7 @@ import {
 	getProviderCredentialAndModel,
 	updateAiProviderCredential,
 } from './ai-provider-keys';
+import { checkOverBudget, recordRunCost } from './budget';
 import { loadConnectorSkillFiles } from './connectors/lifecycle';
 import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
@@ -1791,6 +1793,64 @@ async function updateHeartbeatRun(
 		exitCode: update.exitCode,
 		error: update.error ?? null,
 	});
+
+	// Run completion is the canonical cost event: record the run's total spend as a
+	// single cost_entries row (guarded on positive usage so failure/abort paths and
+	// retries — which carry no usage — never double-insert), then reactively pause
+	// the agent if this pushed it (or its project) over any budget window.
+	await recordRunCostAndEnforce(db, runId, update.usage ?? null, broadcast);
+}
+
+/**
+ * Insert the run's cost into `cost_entries` and pause the agent if now over
+ * budget. Best-effort: a failure here logs and continues — it must not turn a
+ * completed run into a failed one.
+ */
+async function recordRunCostAndEnforce(
+	db: PGlite,
+	runId: string,
+	usage: AgentRunUsage | null,
+	broadcast: HeartbeatRunBroadcast,
+): Promise<void> {
+	if (!usage || usage.costCents <= 0) return;
+	try {
+		const entry = await recordRunCost(db, {
+			teamId: broadcast.teamId,
+			memberId: broadcast.memberId,
+			taskId: broadcast.taskId ?? null,
+			projectId: broadcast.projectId ?? null,
+			amountCents: usage.costCents,
+			description: `Agent run ${runId}`,
+		});
+		if (entry && broadcast.wsManager) {
+			broadcastRowChange(
+				broadcast.wsManager,
+				wsRoom.team(broadcast.teamId),
+				'cost_entries',
+				'INSERT',
+				entry,
+			);
+		}
+
+		const block = await checkOverBudget(db, broadcast.memberId, broadcast.projectId ?? null);
+		if (block) {
+			await db.query(
+				`UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2`,
+				[AgentRuntimeStatus.Paused, broadcast.memberId],
+			);
+			if (broadcast.wsManager) {
+				broadcastRowChange(
+					broadcast.wsManager,
+					wsRoom.team(broadcast.teamId),
+					'member_agents',
+					'UPDATE',
+					{ id: broadcast.memberId, runtime_status: AgentRuntimeStatus.Paused },
+				);
+			}
+		}
+	} catch (e) {
+		log.error({ err: e, runId }, 'failed to record run cost / enforce budget');
+	}
 }
 
 /**

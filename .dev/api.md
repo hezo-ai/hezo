@@ -336,8 +336,9 @@ Response:
       "role_description": "Senior Engineer",
       "default_effort": "medium",
       "heartbeat_interval_min": 30,
+      "daily_budget_cents": 0,
+      "weekly_budget_cents": 0,
       "monthly_budget_cents": 3000,
-      "budget_used_cents": 1800,
       "status": "active",
       "last_heartbeat_at": "...",
       "assigned_task_count": 4,
@@ -351,7 +352,7 @@ Response:
 #### `POST /projects/:projectId/agents`
 Internal direct-create endpoint used by team provisioning (seeding the template team). Board-initiated hires must go through `POST /projects/:projectId/agents/onboard` instead — this endpoint is not wired to the hire form and skips the Captain/board review cycle. Tests and bootstrap paths are the only expected callers.
 
-Request fields: `title` (required), `role_description`, `system_prompt`, `reports_to`, `default_effort`, `heartbeat_interval_min`, `monthly_budget_cents`, `touches_code`, `mcp_servers`.
+Request fields: `title` (required), `role_description`, `system_prompt`, `reports_to`, `default_effort`, `heartbeat_interval_min`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `touches_code`, `mcp_servers`.
 
 Response: full agent object.
 
@@ -410,10 +411,11 @@ Response: full agent object (same as list item + `system_prompt` + `mcp_servers`
 
 #### `PATCH /projects/:projectId/agents/:agentId`
 Update agent config: title, role_description, system_prompt, default_effort,
-heartbeat_interval_min, monthly_budget_cents, reports_to, mcp_servers,
-model_override_provider, model_override_model.
+heartbeat_interval_min, daily_budget_cents, weekly_budget_cents, monthly_budget_cents,
+reports_to, mcp_servers, model_override_provider, model_override_model.
 
-Cannot update: status (use lifecycle endpoints), budget_used_cents (system-managed).
+Cannot update: status (use lifecycle endpoints). Spend is derived from cost_entries,
+so there is no writable "used" field.
 
 `default_effort` accepts `minimal | low | medium | high | max`. It sets the
 baseline reasoning level applied to every run of this agent; an `@`-mentioning
@@ -1288,7 +1290,9 @@ Response (when `group_by=agent`):
 ```
 
 #### `POST /projects/:projectId/costs`
-Create a cost entry. Returns 402 if the agent's budget is exceeded.
+Create a cost entry (201). Spend is always recorded; if this pushes the agent or its
+project over any budget window the agent is reactively paused (no 402 — budgets are
+enforced by windowed sums, not a debit that can be refused).
 
 Request:
 ```json
@@ -1300,6 +1304,34 @@ Request:
   "description": "API call cost"
 }
 ```
+
+#### `GET /projects/:projectId/budget-status`
+Per-window spend vs. limit for the project and each of its agents. Powers the Budgets
+page and the project warning banner.
+
+```json
+{
+  "project": {
+    "daily":   { "spentCents": 150, "limitCents": 1000, "overBudget": false },
+    "weekly":  { "spentCents": 150, "limitCents": 0,    "overBudget": false },
+    "monthly": { "spentCents": 150, "limitCents": 0,    "overBudget": false },
+    "overBudget": false
+  },
+  "agents": [
+    {
+      "agent_id": "uuid", "agent_title": "Engineer", "agent_slug": "engineer",
+      "runtime_status": "paused",
+      "daily":   { "spentCents": 250, "limitCents": 100, "overBudget": true },
+      "weekly":  { "spentCents": 250, "limitCents": 0,   "overBudget": false },
+      "monthly": { "spentCents": 250, "limitCents": 0,   "overBudget": false },
+      "agent_over_budget": true, "project_over_budget": false, "overBudget": true
+    }
+  ]
+}
+```
+
+A limit of `0` means unlimited. `group_by=day` on `GET /costs` (with optional
+`agent_id`/`project_id`/`from`/`to`) returns the per-day series for the charts.
 
 ---
 
@@ -2354,16 +2386,10 @@ Request:
 }
 ```
 
-Each tool call with `cost_cents > 0` also creates a `cost_entries` row and
-debits the agent's budget atomically. If budget is exceeded, returns:
-```json
-{
-  "error": {
-    "code": "BUDGET_EXCEEDED",
-    "message": "Agent budget limit reached."
-  }
-}
-```
+`tool_calls.cost_cents` is recorded for display only and does **not** debit the
+budget — the run's total cost (which already includes tool-call cost) is recorded
+once at run completion as a single `cost_entries` row and counts against the agent's
+windowed budgets. So this endpoint never returns `BUDGET_EXCEEDED`.
 
 ---
 

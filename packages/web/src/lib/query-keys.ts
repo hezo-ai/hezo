@@ -197,6 +197,7 @@ export const queryKeys = {
 		team: (slug: string) => ['projects', slug, 'team'],
 		assets: (slug: string) => ['projects', slug, 'assets'],
 		costs: (slug: string, params: KeyParam) => ['projects', slug, 'costs', params],
+		budgetStatus: (slug: string) => ['projects', slug, 'budget-status'],
 		auditLog: (slug: string, filters: KeyParam) => ['projects', slug, 'audit-log', filters],
 		teamAuditLog: (slug: string, filters: KeyParam) => [
 			'projects',

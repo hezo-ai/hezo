@@ -93,22 +93,25 @@ describe('costs CRUD', () => {
 		expect(body.data.total_cents).toBeGreaterThan(0);
 	});
 
-	it('rejects budget-exceeding cost', async () => {
-		// Engineer budget is 5000 cents
-		const res = await app.request(
-			`/api/projects/${await projectSlugForTeamSlug(db, teamSlug)}/costs`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					member_id: agentId,
-					amount_cents: 99999,
-					description: 'Way too expensive',
-				}),
-			},
-		);
-		expect(res.status).toBe(402);
-		const body = await res.json();
-		expect(body.error.code).toBe('BUDGET_EXCEEDED');
+	it('records an over-budget cost and pauses the agent', async () => {
+		const slug = await projectSlugForTeamSlug(db, teamSlug);
+		// Far exceeds any monthly limit. Spend is always recorded (no 402), but the
+		// agent is reactively paused since this pushes it over budget.
+		const res = await app.request(`/api/projects/${slug}/costs`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				member_id: agentId,
+				amount_cents: 9_999_999,
+				description: 'Way too expensive',
+			}),
+		});
+		expect(res.status).toBe(201);
+
+		const agentRes = await app.request(`/api/projects/${slug}/agents/${agentId}`, {
+			headers: authHeader(token),
+		});
+		const agent = (await agentRes.json()).data;
+		expect(agent.runtime_status).toBe('paused');
 	});
 });

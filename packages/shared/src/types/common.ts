@@ -405,8 +405,18 @@ export const WakeupSkipReason = {
 	TaskBusy: 'task_busy',
 	ProjectAtCapacity: 'project_at_capacity',
 	AgentRunning: 'agent_running',
+	OverBudget: 'over_budget',
 } as const;
 export type WakeupSkipReason = (typeof WakeupSkipReason)[keyof typeof WakeupSkipReason];
+
+// Rolling spend windows for agent/project budgets. Each is enforced independently;
+// a 0 limit means unlimited for that window. Spend is summed from cost_entries.
+export const BudgetPeriod = {
+	Daily: 'daily',
+	Weekly: 'weekly',
+	Monthly: 'monthly',
+} as const;
+export type BudgetPeriod = (typeof BudgetPeriod)[keyof typeof BudgetPeriod];
 
 export const HeartbeatRunStatus = {
 	Queued: 'queued',
