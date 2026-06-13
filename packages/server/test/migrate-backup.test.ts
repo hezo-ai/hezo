@@ -8,14 +8,12 @@ import { openPersistentDb } from '../src/db/client';
 import { getPendingMigrations, runMigrations } from '../src/db/migrate';
 import { safeClose } from './helpers';
 
-// HID-188: the one production migration behavior that is *not* exercisable
-// in-memory — the pre-migration backup snapshot. Production opens a disk-backed
-// PGlite (`openPersistentDb`) and, before applying pending migrations to an
-// already-populated instance, dumps a gzipped tarball of pgdata
-// (`startup.ts` runAvailableMigrations -> backupDataDir). This test reproduces
-// that exact sequence against a real on-disk data dir with synthetic refactor
-// migrations, asserting the snapshot is written AND the data survives the
-// refactor.
+// HID-188: covers `backupDataDir` against a disk-backed PGlite — a gzipped
+// snapshot of pgdata that survives a destructive refactor. Startup's automatic
+// migration path no longer calls this (copy-migrate-swap leaves the original
+// pgdata untouched on failure and keeps the prior pgdata aside on success), but
+// `backupDataDir`/`restoreDataDir` remain the engine behind the manual
+// `hezo restore` snapshot/downgrade flow, so the round-trip stays under test.
 
 describe('migration backup-then-migrate (persistent, production path)', () => {
 	it('snapshots pgdata before applying pending refactor migrations and preserves data', async () => {

@@ -9,6 +9,7 @@ const log = logger.child('startup');
 
 import { MasterKeyManager } from './crypto/master-key';
 import { openPersistentDb } from './db/client';
+import type { Migration } from './db/migrate';
 import { BASE_SCHEMA } from './db/schema';
 import { registerAuditObserver } from './events/audit-observer';
 import { DomainEventBus } from './events/bus';
@@ -91,10 +92,12 @@ export interface StartupResult {
 export async function startup(config: HezoConfig): Promise<StartupResult> {
 	mkdirSync(config.dataDir, { recursive: true });
 
-	const db = await openPersistentDb(config.dataDir, { reset: config.reset });
+	// `db` may be replaced by a fresh handle if migrations run against a copy and
+	// swap it in, so it's a `let` — every consumer below uses the post-migration handle.
+	let db = await openPersistentDb(config.dataDir, { reset: config.reset });
 
 	await db.exec(BASE_SCHEMA);
-	await runAvailableMigrations(db, config.dataDir);
+	db = await runAvailableMigrations(db, config.dataDir);
 	await runSeed(db);
 
 	const masterKeyManager = new MasterKeyManager();
@@ -409,65 +412,44 @@ async function cleanupOrphanRunSockets(_db: PGlite, dataDir: string): Promise<vo
 	}
 }
 
-async function loadMigrations(): Promise<Record<string, string> | null> {
+async function loadMigrations(): Promise<Record<string, Migration> | null> {
 	const { loadBundledMigrations, loadFilesystemMigrations } = await import('./db/migrate.js');
+	const { codeMigrations } = await import('./db/migrations/code/index.js');
+
+	let sql: Record<string, string> | null = null;
 	try {
-		return await loadBundledMigrations();
+		sql = await loadBundledMigrations();
 	} catch {
 		// Dev (`bun run`): the bundle isn't generated — read from the source tree.
+		// `HEZO_MIGRATIONS_DIR` lets tests point startup at synthetic migrations.
+		try {
+			const migrationsDir =
+				process.env.HEZO_MIGRATIONS_DIR ??
+				join(new URL('.', import.meta.url).pathname, '..', 'migrations');
+			sql = await loadFilesystemMigrations(migrationsDir);
+		} catch {
+			sql = null;
+		}
 	}
-	try {
-		const migrationsDir = join(new URL('.', import.meta.url).pathname, '..', 'migrations');
-		return await loadFilesystemMigrations(migrationsDir);
-	} catch {
-		return null;
-	}
+	if (!sql) return null;
+
+	// SQL migrations + code migrations share one ordered sequence (the runner
+	// sorts by name). Code migrations travel through the TS module graph.
+	return { ...sql, ...codeMigrations };
 }
 
-async function runAvailableMigrations(db: PGlite, dataDir: string): Promise<void> {
+async function runAvailableMigrations(db: PGlite, dataDir: string): Promise<PGlite> {
 	const migrations = await loadMigrations();
 	if (!migrations) {
 		log.warn('No migrations found. Run build:migrations or add migration files.');
-		return;
+		return db;
 	}
 
-	const { getPendingMigrations, runMigrations } = await import('./db/migrate.js');
-	const pending = await getPendingMigrations(db, migrations);
-	if (pending.length === 0) return;
-
-	// Snapshot before mutating an *existing* instance. A brand-new DB (nothing
-	// applied yet) has no data worth saving, so skip the backup there.
-	const applied = await countAppliedMigrations(db);
-	if (applied > 0) {
-		try {
-			const { backupDataDir } = await import('./db/backup.js');
-			await backupDataDir(db, dataDir, { version: HEZO_VERSION, pending });
-		} catch (err) {
-			log.error('Pre-migration backup failed; aborting migrations to protect existing data', err);
-			throw err;
-		}
-	}
-
-	try {
-		await runMigrations(db, migrations);
-	} catch (err) {
-		log.error(
-			`Migration failed. To recover, downgrade to the previous Hezo version and restore the ` +
-				`pre-migration snapshot from ${join(dataDir, 'backups')} ` +
-				`(\`hezo restore <backup.tar.gz>\`).`,
-			err,
-		);
-		throw err;
-	}
-}
-
-async function countAppliedMigrations(db: PGlite): Promise<number> {
-	try {
-		const r = await db.query<{ c: number }>('SELECT COUNT(*)::int AS c FROM _migrations');
-		return r.rows[0]?.c ?? 0;
-	} catch {
-		return 0;
-	}
+	// Migrate a copy and swap on success; on failure the original is untouched
+	// (a downgraded binary can run against it as-is). Returns the live handle to
+	// use, which is a fresh one after a successful swap.
+	const { applyPendingMigrations } = await import('./db/migrate-runner.js');
+	return applyPendingMigrations(db, dataDir, migrations);
 }
 
 async function runSeed(db: PGlite): Promise<void> {
