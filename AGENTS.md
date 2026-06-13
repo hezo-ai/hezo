@@ -8,6 +8,7 @@
 - `bun run test --pattern <substring>` — filter by file-path substring (works across all tiers; combine with `--browser` to narrow browser tests)
 - `bun run test --package <server|web>` — restrict vitest run to one package
 - `bun run test --concurrency <n>` — override worker count (default 10)
+- `bun run test --shard <index>/<count>` — run one vitest shard (e.g. `1/3`); CI fans `test-backend` (2 shards) and `test-integration` (3 shards) across runners this way. The Bun-native tier runs only on shard 1. Composes with `--package`/`--concurrency`.
 - `bun run test --bail` — stop on first failure
 - `bun run build` / `check` / `check:fix` / `typecheck` / `dev`
 

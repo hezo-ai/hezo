@@ -17,6 +17,11 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - run: bun run check
 
@@ -27,6 +32,11 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - run: bun run build
 
@@ -67,11 +77,24 @@ jobs:
     permissions:
       contents: read
       packages: read
+    # Sharded across runners: each shard runs ~half the server files at the same
+    # per-runner fork concurrency, so the per-fork PGlite+Hono contention ceiling
+    # (the reason we can't just raise --concurrency) is unchanged. fail-fast off
+    # so one shard failing still lets the others report.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -79,6 +102,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       # Pull the image built by build-agent-image and retag to the exact name the
       # container suites gate on (`docker image inspect hezo/agent-base:latest`).
+      # Every shard pulls it — vitest file-sharding is non-deterministic about
+      # which shard gets the *-docker.test.ts suites. Image is cached in GHCR.
       - name: Pull agent base image
         run: |
           docker pull ghcr.io/hezo-ai/agent-base:${{ github.sha }}
@@ -86,23 +111,34 @@ jobs:
       - run: bun install --frozen-lockfile
       # Runs the server vitest suite (Node runtime) — including the ssh-agent /
       # egress-proxy / mcp-connections container suites now that the image is
-      # present — followed by the Bun-native tier (test/bun/** under `bun test`),
-      # which exercises runtime-sensitive code (e.g. egress TLS) on the
-      # production Bun runtime.
-      - run: bun run test --package server
+      # present — followed by the Bun-native tier (test/bun/** under `bun test`,
+      # gated to shard 1 by scripts/test.ts), which exercises runtime-sensitive
+      # code (e.g. egress TLS) on the production Bun runtime.
+      - run: bun run test --package server --shard ${{ matrix.shard }}/2
 
   test-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Sharded across runners; each shard stays at --concurrency 4. The 4-core
+    # contention budget below is per-runner, so adding runners is safe.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       # ubuntu-latest is 4 cores; 10 forks each owning a PGlite + Hono boot
       # produces enough contention that random `findBy*` queries time out.
-      - run: bun run test --package web --concurrency 4
+      - run: bun run test --package web --concurrency 4 --shard ${{ matrix.shard }}/3
 
   test-browser:
     runs-on: ubuntu-latest
@@ -112,6 +148,11 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - uses: actions/cache@v4
         id: playwright-cache
@@ -132,3 +173,21 @@ jobs:
             test-results/
           retention-days: 7
           if-no-files-found: ignore
+
+  # Stable aggregate check names for branch protection. The sharded jobs above
+  # fan out to `test-backend (1)`, `test-integration (2)`, … which a required
+  # status check can't pin to; these roll each matrix up to a single name that
+  # is green only when every shard passed. Point branch protection at these.
+  test-backend-complete:
+    if: always()
+    needs: test-backend
+    runs-on: ubuntu-latest
+    steps:
+      - run: '[ "${{ needs.test-backend.result }}" = "success" ]'
+
+  test-integration-complete:
+    if: always()
+    needs: test-integration
+    runs-on: ubuntu-latest
+    steps:
+      - run: '[ "${{ needs.test-integration.result }}" = "success" ]'
