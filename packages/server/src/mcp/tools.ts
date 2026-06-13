@@ -968,7 +968,8 @@ export function registerTools(
 			if ('error' in scope) return scope;
 			const r = await db.query(
 				`SELECT m.id, ma.agent_type_id, ma.title, ma.slug,
-				        ma.monthly_budget_cents, ma.budget_used_cents, ma.runtime_status, ma.admin_status
+				        ma.daily_budget_cents, ma.weekly_budget_cents, ma.monthly_budget_cents,
+				        ma.runtime_status, ma.admin_status
 				 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.team_id = $1 ORDER BY ma.title`,
 				[scope.teamId],
 			);

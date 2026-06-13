@@ -447,6 +447,9 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		description?: string;
 		max_concurrent_runs?: number;
 		memory_limit_gib?: number;
+		daily_budget_cents?: number;
+		weekly_budget_cents?: number;
+		monthly_budget_cents?: number;
 	}>();
 
 	const sets: string[] = [];
@@ -487,6 +490,21 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		}
 		sets.push(`memory_limit_gib = $${idx}`);
 		params.push(body.memory_limit_gib);
+		idx++;
+	}
+	// Budget limits: 0 = unlimited. Reject negatives/non-integers.
+	for (const column of [
+		'daily_budget_cents',
+		'weekly_budget_cents',
+		'monthly_budget_cents',
+	] as const) {
+		const value = body[column];
+		if (value === undefined) continue;
+		if (!Number.isInteger(value) || value < 0) {
+			return err(c, 'INVALID_REQUEST', `${column} must be an integer ≥ 0`, 400);
+		}
+		sets.push(`${column} = $${idx}`);
+		params.push(value);
 		idx++;
 	}
 

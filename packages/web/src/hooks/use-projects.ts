@@ -17,6 +17,9 @@ export interface Project {
 	is_internal?: boolean;
 	max_concurrent_runs: number;
 	memory_limit_gib: number;
+	daily_budget_cents: number;
+	weekly_budget_cents: number;
+	monthly_budget_cents: number;
 	docker_base_image: string | null;
 	container_id: string | null;
 	container_status: 'creating' | 'running' | 'stopping' | 'stopped' | 'error' | null;
@@ -144,6 +147,9 @@ interface UpdateProjectVars {
 	description?: string;
 	max_concurrent_runs?: number;
 	memory_limit_gib?: number;
+	daily_budget_cents?: number;
+	weekly_budget_cents?: number;
+	monthly_budget_cents?: number;
 }
 
 export function useUpdateProject(projectId: string) {

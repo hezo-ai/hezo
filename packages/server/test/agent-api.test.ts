@@ -256,8 +256,8 @@ describe('agent API - self system prompt (removed)', () => {
 	});
 });
 
-describe('agent API - budget enforcement', () => {
-	it('returns 402 and pauses agent when tool call exceeds budget', async () => {
+describe('agent API - tool call cost reporting', () => {
+	it('records tool-call cost for display only — no cost_entry, no debit, no pause', async () => {
 		const agentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			method: 'POST',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
@@ -286,6 +286,10 @@ describe('agent API - budget enforcement', () => {
 		});
 		const commentId = (await commentRes.json()).data.id;
 
+		// Tool-call cost far exceeds the agent's tiny monthly limit, but the tool-call
+		// endpoint no longer debits or enforces — run completion is the single cost
+		// source (the run total already includes tool-call cost). So this succeeds and
+		// the agent stays active; spend is enforced at run completion / pre-run gate.
 		const res = await app.request(`/agent-api/tasks/${taskId}/comments/${commentId}/tool-calls`, {
 			method: 'POST',
 			headers: { ...authHeader(cheapToken), 'Content-Type': 'application/json' },
@@ -293,15 +297,22 @@ describe('agent API - budget enforcement', () => {
 				tool_calls: [{ tool_name: 'expensive_op', status: 'success', cost_cents: 9999 }],
 			}),
 		});
-		expect(res.status).toBe(402);
+		expect(res.status).toBe(201);
 		const body = await res.json();
-		expect(body.error.code).toBe('BUDGET_EXCEEDED');
+		expect(body.data[0].cost_cents).toBe(9999);
+
+		// No cost_entry was created from the tool-call path (avoids double counting).
+		const entries = await db.query<{ count: string }>(
+			'SELECT count(*)::int AS count FROM cost_entries WHERE member_id = $1',
+			[cheapAgent.id],
+		);
+		expect(Number(entries.rows[0].count)).toBe(0);
 
 		const agentCheck = await db.query<{ runtime_status: string }>(
 			'SELECT runtime_status FROM member_agents WHERE id = $1',
 			[cheapAgent.id],
 		);
-		expect(agentCheck.rows[0].runtime_status).toBe('paused');
+		expect(agentCheck.rows[0].runtime_status).not.toBe('paused');
 
 		await app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 			method: 'PATCH',

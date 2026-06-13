@@ -114,6 +114,12 @@ export function ProjectSidebar() {
 			? []
 			: [
 					{
+						to: '/projects/$projectId/budget',
+						params: projectParams,
+						label: 'Budget',
+						testId: 'project-sidebar-budget',
+					},
+					{
 						to: '/projects/$projectId/settings',
 						params: projectParams,
 						label: 'Settings',

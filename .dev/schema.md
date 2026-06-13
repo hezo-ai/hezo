@@ -13,7 +13,7 @@
 | `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget, `default_summary` (pre-generated description loaded from `packages/server/src/db/agent-summaries.json`), `touches_code` (default capability flag — seeded true for builder roles, copied onto `member_agents` at hire time). Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by team_template_agent_types, member_agents. |
 | `team_templates` | Team blueprints (team type recipes). Groups of agent types plus default skills, preferences, MCP servers, `default_summary` (pre-generated team collaboration description). | Referenced by team_template_assignments. |
 | `team_template_agent_types` | Join table linking team types to agent types. Stores org chart hierarchy (reports_to_slug) and per-team-type config overrides (runtime type, heartbeat, budget). | belongs to team_template + agent_type |
-| `teams` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), team-level budget, `summary` (auto-generated team collaboration description, ≤20 lines). | Parent of everything. |
+| `teams` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), `summary` (auto-generated team collaboration description, ≤20 lines). No team budget — budgets live on agents/projects. | Parent of everything. |
 | `team_template_assignments` | Many-to-many join table linking teams to the team types they were created from. | belongs to team + team_template |
 | `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to team |
 | `api_keys` | Team-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to team |
@@ -98,12 +98,25 @@ The `content_type` enum discriminates the shape:
 - `execution` → `{ "heartbeat_run_id", "agent_id", "agent_title", "status", "exit_code", "duration_ms", "stdout_preview" }` (auto-created on agent run completion)
 - `action` → `{ "kind": "setup_repo", "approval_id": "..." }` — surfaces a board-required action inline on the ticket. Resolves by setting `chosen_option` to `{ status: 'complete', result: {...} }`. Currently only `setup_repo` is defined, used by the designated-repo gate.
 
-### Atomic budget enforcement
+### Budget enforcement (windowed)
 
-`debit_agent_budget()` uses `SELECT ... FOR UPDATE` to row-lock the agent before
-checking + debiting. This prevents two concurrent heartbeats from overspending.
-Returns FALSE if the debit would exceed the budget — the caller should then
-pause the agent and emit a system comment.
+Budgets live on `member_agents` and `projects` as `daily_/weekly_/monthly_budget_cents`
+(0 = unlimited for that window). There is **no team budget** (project-centric model).
+Spend is **computed on demand** by summing `cost_entries.amount_cents` over rolling
+UTC windows (`date_trunc('day'|'week'|'month', now() AT TIME ZONE 'UTC')`) — there is
+no running counter to reset. The logic lives in `services/budget.ts` (`getAgentSpend`,
+`getProjectSpend`, `getAgentBudgetStatus`, `getProjectBudgetStatus`, `checkOverBudget`,
+`recordRunCost`), not a stored function.
+
+A run is blocked when the agent **or** its project is over **any** window. Enforcement
+points: (1) a **pre-run gate** in `JobManager.activateAgent` skips the run (no
+`heartbeat_runs` row, no container/repo work), pauses the agent, and marks the wakeup
+skipped with `WakeupSkipReason.OverBudget`; (2) **run completion** (`agent-runner.ts`)
+records the run's cost as one `cost_entries` row and reactively pauses the agent if it
+is now over; (3) the manual `POST /costs` path does the same reactive pause. Run
+completion is the single source of truth for run spend — the tool-call report path
+(`agent-api.ts`) records `tool_calls.cost_cents` for display only and does **not** debit
+(the run total already includes tool-call cost).
 
 ### Atomic task numbering
 
@@ -230,15 +243,16 @@ blanket `DO INSTEAD NOTHING` rule on UPDATE/DELETE is intentionally **not**
 added (it would break those FK actions). Immutability is enforced at the app
 layer: the observer is the only writer, and nothing else touches the table.
 
-### Budget resets
+### Budget windows (no resets)
 
-`member_agents.budget_reset_at` tracks when the budget was last zeroed. A scheduled
-job (or heartbeat check) compares this to the current month boundary and resets
-`budget_used_cents = 0` when a new month starts.
+There is no reset bookkeeping. Each window's spend is the sum of `cost_entries`
+since the window's UTC start (today / this ISO-week / this month), so windows
+"reset" implicitly as the clock advances. Limits are `daily_/weekly_/monthly_budget_cents`
+on `member_agents` and `projects`; 0 means unlimited.
 
-When budget is exceeded mid-execution, the agent's subprocess is terminated
-immediately. A system comment is posted on the active task. The board can
-adjust the budget and resume the agent at any time.
+When an agent goes over budget it is paused (`runtime_status = 'paused'`) and its
+pending wakeup is skipped — no run is started. The board can raise the limit or
+wait for the window to roll over; the next eligible wakeup then runs.
 
 ### Preview files (not in DB)
 
@@ -327,8 +341,9 @@ Settings are merged on PATCH (`settings = settings || $1::jsonb`), so partial up
 The wallet private key is not stored in `mpp_config` — it lives in the
 `secrets` table, referenced by `wallet_key_secret_name`. When MPP is enabled,
 the project container gets `mppx` CLI and wallet credentials are injected into agent subprocesses. Every MPP
-payment is reported as a tool call cost and debited against the agent's budget
-via the same `debit_agent_budget()` atomic function.
+payment is reported as a tool call cost (`tool_calls.cost_cents`) for display; the
+run's total cost is recorded once at run completion and counts against the agent's
+windowed budgets (see "Budget enforcement (windowed)").
 
 ### Team onboarding
 
@@ -355,8 +370,7 @@ agents from the selected team type via the `team_template_agent_types` join tabl
 2. For each agent type, creates `members` + `member_agents` rows with:
    - `agent_type_id` set to the originating agent type (for provenance tracking)
    - System prompt copied from `agent_types.system_prompt_template`
-   - Config overrides applied from the join table (runtime type, heartbeat, budget)
-   - `budget_used_cents` reset to 0
+   - Config overrides applied from the join table (runtime type, heartbeat, monthly budget)
 4. Second pass resolves `reports_to_slug` → `reports_to` UUID for the org chart
 5. Creates `skills` rows from the team type's default skills
 6. Creates `documents` row of type `team_preferences` from `team_templates.preferences_config`
@@ -745,11 +759,12 @@ are served over time-limited HMAC-signed URLs (S3 support planned for V2).
 namespace + key). `plugin_jobs` declares cron schedules for plugin-registered
 jobs.
 
-### Team-level budget
+### Project-level budget
 
-`teams.budget_monthly_cents` and `teams.budget_used_cents` provide an
-aggregate spending cap across all agents. The `debit_agent_budget()` function
-checks both agent-level and team-level budgets atomically.
+`projects.daily_/weekly_/monthly_budget_cents` cap aggregate spend across all the
+project's agents (0 = unlimited). Enforcement sums `cost_entries` for the project
+over each UTC window; a run is blocked when the project (or the individual agent) is
+over any window. There is **no team-level budget** — Hezo is project-centric.
 
 ### Messaging integrations (optional)
 

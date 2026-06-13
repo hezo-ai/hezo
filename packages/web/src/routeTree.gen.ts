@@ -25,6 +25,7 @@ import { Route as HomeInboxIndexRouteImport } from './routes/home/inbox/index'
 import { Route as ProjectsProjectIdDocumentsRouteImport } from './routes/projects/$projectId/documents'
 import { Route as ProjectsProjectIdContainerRouteImport } from './routes/projects/$projectId/container'
 import { Route as ProjectsProjectIdConnectorsRouteImport } from './routes/projects/$projectId/connectors'
+import { Route as ProjectsProjectIdBudgetRouteImport } from './routes/projects/$projectId/budget'
 import { Route as ProjectsProjectIdAuditLogRouteImport } from './routes/projects/$projectId/audit-log'
 import { Route as ProjectsProjectIdAssetsRouteImport } from './routes/projects/$projectId/assets'
 import { Route as PreviewProjectIdFilenameRouteImport } from './routes/preview/$projectId/$filename'
@@ -125,6 +126,11 @@ const ProjectsProjectIdConnectorsRoute =
     path: '/connectors',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
+const ProjectsProjectIdBudgetRoute = ProjectsProjectIdBudgetRouteImport.update({
+  id: '/budget',
+  path: '/budget',
+  getParentRoute: () => ProjectsProjectIdRouteRoute,
+} as any)
 const ProjectsProjectIdAuditLogRoute =
   ProjectsProjectIdAuditLogRouteImport.update({
     id: '/audit-log',
@@ -235,6 +241,7 @@ export interface FileRoutesByFullPath {
   '/preview/$projectId/$filename': typeof PreviewProjectIdFilenameRoute
   '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
   '/projects/$projectId/audit-log': typeof ProjectsProjectIdAuditLogRoute
+  '/projects/$projectId/budget': typeof ProjectsProjectIdBudgetRoute
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
@@ -268,6 +275,7 @@ export interface FileRoutesByTo {
   '/preview/$projectId/$filename': typeof PreviewProjectIdFilenameRoute
   '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
   '/projects/$projectId/audit-log': typeof ProjectsProjectIdAuditLogRoute
+  '/projects/$projectId/budget': typeof ProjectsProjectIdBudgetRoute
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
@@ -302,6 +310,7 @@ export interface FileRoutesById {
   '/preview/$projectId/$filename': typeof PreviewProjectIdFilenameRoute
   '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
   '/projects/$projectId/audit-log': typeof ProjectsProjectIdAuditLogRoute
+  '/projects/$projectId/budget': typeof ProjectsProjectIdBudgetRoute
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
@@ -338,6 +347,7 @@ export interface FileRouteTypes {
     | '/preview/$projectId/$filename'
     | '/projects/$projectId/assets'
     | '/projects/$projectId/audit-log'
+    | '/projects/$projectId/budget'
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
     | '/projects/$projectId/documents'
@@ -371,6 +381,7 @@ export interface FileRouteTypes {
     | '/preview/$projectId/$filename'
     | '/projects/$projectId/assets'
     | '/projects/$projectId/audit-log'
+    | '/projects/$projectId/budget'
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
     | '/projects/$projectId/documents'
@@ -404,6 +415,7 @@ export interface FileRouteTypes {
     | '/preview/$projectId/$filename'
     | '/projects/$projectId/assets'
     | '/projects/$projectId/audit-log'
+    | '/projects/$projectId/budget'
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
     | '/projects/$projectId/documents'
@@ -555,6 +567,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdConnectorsRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
+    '/projects/$projectId/budget': {
+      id: '/projects/$projectId/budget'
+      path: '/budget'
+      fullPath: '/projects/$projectId/budget'
+      preLoaderRoute: typeof ProjectsProjectIdBudgetRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
     '/projects/$projectId/audit-log': {
       id: '/projects/$projectId/audit-log'
       path: '/audit-log'
@@ -697,6 +716,7 @@ const ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren =
 interface ProjectsProjectIdRouteRouteChildren {
   ProjectsProjectIdAssetsRoute: typeof ProjectsProjectIdAssetsRoute
   ProjectsProjectIdAuditLogRoute: typeof ProjectsProjectIdAuditLogRoute
+  ProjectsProjectIdBudgetRoute: typeof ProjectsProjectIdBudgetRoute
   ProjectsProjectIdConnectorsRoute: typeof ProjectsProjectIdConnectorsRoute
   ProjectsProjectIdContainerRoute: typeof ProjectsProjectIdContainerRoute
   ProjectsProjectIdDocumentsRoute: typeof ProjectsProjectIdDocumentsRoute
@@ -716,6 +736,7 @@ const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
   {
     ProjectsProjectIdAssetsRoute: ProjectsProjectIdAssetsRoute,
     ProjectsProjectIdAuditLogRoute: ProjectsProjectIdAuditLogRoute,
+    ProjectsProjectIdBudgetRoute: ProjectsProjectIdBudgetRoute,
     ProjectsProjectIdConnectorsRoute: ProjectsProjectIdConnectorsRoute,
     ProjectsProjectIdContainerRoute: ProjectsProjectIdContainerRoute,
     ProjectsProjectIdDocumentsRoute: ProjectsProjectIdDocumentsRoute,

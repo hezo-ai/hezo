@@ -17,10 +17,10 @@ export interface Agent {
 	default_effort: AgentEffort;
 	heartbeat_interval_min: number;
 	run_timeout_min: number;
+	daily_budget_cents: number;
+	weekly_budget_cents: number;
 	monthly_budget_cents: number;
-	budget_used_cents: number;
 	touches_code: boolean;
-	budget_reset_at: string | null;
 	runtime_status: string;
 	admin_status: string;
 	last_heartbeat_at: string | null;
@@ -78,6 +78,8 @@ interface UpdateAgentVars {
 	system_prompt?: string;
 	system_prompt_change_summary?: string;
 	reports_to?: string | null;
+	daily_budget_cents?: number;
+	weekly_budget_cents?: number;
 	monthly_budget_cents?: number;
 	heartbeat_interval_min?: number;
 	run_timeout_min?: number;

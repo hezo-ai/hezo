@@ -28,6 +28,7 @@ import { assertChildrenAllClosed } from '../lib/task-relationships';
 import { logger } from '../logger';
 import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
 import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
+import { checkOverBudget } from './budget';
 import type { ContainerLogStreamer } from './container-logs';
 import {
 	type ContainerDeps,
@@ -1285,6 +1286,28 @@ export class JobManager {
 		// Realign the working team to the chosen task's project. For an instance
 		// agent this is the project-team it is acting on, not its HQ home team.
 		teamId = projectRow.team_id;
+
+		// Budget gate: skip the run (no heartbeat_runs row, no container/repo work)
+		// and pause the agent when it or its project is over any daily/weekly/monthly
+		// window. The wakeup is recorded as skipped rather than re-queued so it does
+		// not spin. Placed after project resolution so broadcasts hit the project team.
+		const budgetBlock = await checkOverBudget(db, memberId, projectRow.id);
+		if (budgetBlock) {
+			log.debug(
+				`Agent ${ref(agent.rows[0].slug, memberId)} over ${budgetBlock.scope} ${budgetBlock.period} budget — pausing and skipping wakeup`,
+			);
+			await db.query(
+				'UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2',
+				[AgentRuntimeStatus.Paused, memberId],
+			);
+			broadcastRowChange(this.deps.wsManager, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
+				id: memberId,
+				runtime_status: AgentRuntimeStatus.Paused,
+			});
+			await this.markWakeupSkipped(wakeupId, WakeupSkipReason.OverBudget, task.id, teamId, null);
+			return;
+		}
+
 		const agentSlug = agent.rows[0].slug;
 		const isConversationalWakeup =
 			wakeupSource === WakeupSource.Mention ||
