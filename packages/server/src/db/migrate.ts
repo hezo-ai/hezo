@@ -4,7 +4,40 @@ import { logger } from '../logger';
 
 const log = logger.child('migrate');
 
-export async function runMigrations(db: PGlite, migrations: Record<string, string>): Promise<void> {
+/**
+ * A migration is either a SQL string (the common case) or a code step — a JS
+ * function that reshapes data in ways SQL can't express (parse/re-encode/
+ * re-encrypt with app-side logic). Both run inside the same per-migration
+ * transaction, so a throw rolls the whole step back. A code step must NOT
+ * issue its own BEGIN/COMMIT — the runner owns the transaction.
+ */
+export type CodeMigration = {
+	run: (db: PGlite) => Promise<void>;
+	/**
+	 * Stable identity for change-detection. Prefer setting this explicitly (a
+	 * minifier rewriting `run.toString()` would otherwise shift the checksum and
+	 * log a spurious "changed since applied" warning — never a re-apply).
+	 */
+	checksum?: string;
+};
+
+export type Migration = string | CodeMigration;
+
+function isCodeMigration(m: Migration): m is CodeMigration {
+	return typeof m !== 'string';
+}
+
+function checksumOf(m: Migration): string {
+	if (isCodeMigration(m)) {
+		return m.checksum ?? createHash('sha256').update(m.run.toString()).digest('hex');
+	}
+	return createHash('sha256').update(m).digest('hex');
+}
+
+export async function runMigrations(
+	db: PGlite,
+	migrations: Record<string, Migration>,
+): Promise<void> {
 	await db.exec(`
     CREATE TABLE IF NOT EXISTS _migrations (
       id          SERIAL PRIMARY KEY,
@@ -22,8 +55,8 @@ export async function runMigrations(db: PGlite, migrations: Record<string, strin
 	const filenames = Object.keys(migrations).sort();
 
 	for (const filename of filenames) {
-		const sql = migrations[filename];
-		const checksum = createHash('sha256').update(sql).digest('hex');
+		const migration = migrations[filename];
+		const checksum = checksumOf(migration);
 
 		if (appliedMap.has(filename)) {
 			if (appliedMap.get(filename) !== checksum) {
@@ -34,7 +67,11 @@ export async function runMigrations(db: PGlite, migrations: Record<string, strin
 
 		await db.exec('BEGIN');
 		try {
-			await db.exec(sql);
+			if (isCodeMigration(migration)) {
+				await migration.run(db);
+			} else {
+				await db.exec(migration);
+			}
 			await db.query('INSERT INTO _migrations (filename, checksum) VALUES ($1, $2)', [
 				filename,
 				checksum,
@@ -48,10 +85,35 @@ export async function runMigrations(db: PGlite, migrations: Record<string, strin
 	}
 }
 
+/**
+ * Applied migrations recorded in `_migrations` that the running binary does not
+ * know about — i.e. the data dir was migrated by a *newer* Hezo version. Relies
+ * on the append-only, stable-filename policy (released migrations are never
+ * renamed or removed), so an unknown applied filename can only mean "from the
+ * future". Returns `[]` when `_migrations` doesn't exist yet (brand-new DB).
+ */
+export async function findUnknownAppliedMigrations(
+	db: PGlite,
+	migrations: Record<string, Migration>,
+): Promise<string[]> {
+	let appliedRows: { filename: string }[];
+	try {
+		const res = await db.query<{ filename: string }>('SELECT filename FROM _migrations');
+		appliedRows = res.rows;
+	} catch {
+		return [];
+	}
+	const known = new Set(Object.keys(migrations));
+	return appliedRows
+		.map((r) => r.filename)
+		.filter((f) => !known.has(f))
+		.sort();
+}
+
 /** Bundled migration filenames (sorted) not yet recorded in `_migrations`. */
 export async function getPendingMigrations(
 	db: PGlite,
-	migrations: Record<string, string>,
+	migrations: Record<string, Migration>,
 ): Promise<string[]> {
 	let appliedSet = new Set<string>();
 	try {
