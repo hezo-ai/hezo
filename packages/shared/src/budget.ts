@@ -5,10 +5,10 @@
  *
  * 0 = unlimited/disabled for a window and is skipped by every check. Longer
  * windows must be consistent with shorter ones: a longer window can't be set
- * below what the shorter window's rate implies over the same span.
- *   - weekly  >= daily  * 7
- *   - monthly >= daily  * 365/12
- *   - monthly >= weekly * 52/12
+ * below what the shorter window's rate implies over the same span —
+ *   weekly  >= daily  * 7
+ *   monthly >= daily  * 365/12
+ *   monthly >= weekly * 52/12
  */
 
 export interface BudgetWindowsCents {
@@ -45,8 +45,7 @@ export function minWeeklyCents(dailyCents: number): number {
 
 /**
  * Minimum monthly cents implied by the daily and/or weekly caps — the larger of
- * daily × 365/12 and weekly × 52/12, over whichever are enabled. 0 when neither
- * is. `ceil` so the integer-cent floor still satisfies `monthly*12 >= daily*365`.
+ * daily × 365/12 and weekly × 52/12, over whichever are enabled. 0 when neither is.
  */
 export function minMonthlyCents(dailyCents: number, weeklyCents: number): number {
 	let min = 0;
@@ -80,7 +79,7 @@ export function validateBudgetWindows(w: BudgetWindowsCents): BudgetViolation[] 
 
 	const monthlyFloor = minMonthlyCents(w.daily_budget_cents, w.weekly_budget_cents);
 	if (isEnabled(w.monthly_budget_cents) && w.monthly_budget_cents < monthlyFloor) {
-		// Name the window that binds, for an actionable message.
+		// Name whichever shorter window binds the floor, for a clearer message.
 		const dailyImplied = isEnabled(w.daily_budget_cents)
 			? Math.ceil(w.daily_budget_cents * DAYS_PER_MONTH)
 			: 0;
