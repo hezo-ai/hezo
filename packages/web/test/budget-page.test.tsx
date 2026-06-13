@@ -1,3 +1,4 @@
+import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedWorkspace } from './helpers/seed';
@@ -50,7 +51,7 @@ test('Budgets page shows per-agent windows and flags an over-budget agent', asyn
 test('Budgets page renders per-day breakdown panels by agent and adapter', async () => {
 	let teamSlug = '';
 
-	const { findByText, findAllByTestId, router } = await renderApp({
+	const { findByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -82,6 +83,9 @@ test('Budgets page renders per-day breakdown panels by agent and adapter', async
 	await findByText('Spend per day by AI adapter');
 	// ...and each renders its chart once the seeded cost flows through the breakdown
 	// endpoints (project chart uses its own test id, so exactly two stacked charts).
-	const charts = await findAllByTestId('stacked-spend-chart');
-	expect(charts.length).toBe(2);
+	// The two breakdown queries resolve independently, so wait for both charts to mount
+	// rather than letting findAllByTestId return after just the first.
+	await waitFor(() => {
+		expect(document.querySelectorAll('[data-testid="stacked-spend-chart"]').length).toBe(2);
+	});
 });
