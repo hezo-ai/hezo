@@ -213,6 +213,8 @@ export interface TaskDependency {
 	blocked_by_title: string;
 	blocked_by_status: string;
 	blocked_by_project_slug: string;
+	blocked_by_has_active_run: boolean;
+	blocked_by_queued_wakeup: QueuedWakeup | null;
 }
 
 export function useTaskDependencies(projectId: string, taskId: string) {

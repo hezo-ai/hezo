@@ -806,10 +806,35 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId/dependencies', async (c) => 
 	const result = await db.query(
 		`SELECT d.id, d.task_id, d.blocked_by_task_id, d.created_at,
             i.identifier AS blocked_by_identifier, i.title AS blocked_by_title, i.status AS blocked_by_status,
-            p.slug AS blocked_by_project_slug
+            p.slug AS blocked_by_project_slug,
+            EXISTS (
+              SELECT 1 FROM heartbeat_runs hr
+              WHERE hr.task_id = i.id AND hr.status IN ('running', 'queued')
+            ) AS blocked_by_has_active_run,
+            CASE WHEN qw.last_skipped_reason IS NOT NULL THEN json_build_object(
+              'reason', qw.last_skipped_reason,
+              'since', qw.last_skipped_at,
+              'blocker_task_id', qw.last_skipped_blocker_task_id,
+              'blocker_identifier', qw.blocker_identifier,
+              'blocker_project_slug', qw.blocker_project_slug
+            ) ELSE NULL END AS blocked_by_queued_wakeup
      FROM task_dependencies d
      JOIN tasks i ON i.id = d.blocked_by_task_id
      JOIN projects p ON p.id = i.project_id
+     LEFT JOIN LATERAL (
+       SELECT w.last_skipped_reason, w.last_skipped_at, w.last_skipped_blocker_task_id,
+              b.identifier AS blocker_identifier,
+              bp.slug AS blocker_project_slug
+       FROM agent_wakeup_requests w
+       LEFT JOIN tasks b ON b.id = w.last_skipped_blocker_task_id
+       LEFT JOIN projects bp ON bp.id = b.project_id
+       WHERE w.member_id = i.assignee_id
+         AND w.payload->>'task_id' = i.id::text
+         AND w.status = 'queued'
+         AND w.last_skipped_at IS NOT NULL
+       ORDER BY w.last_skipped_at DESC
+       LIMIT 1
+     ) qw ON true
      WHERE d.task_id = $1`,
 		[taskId],
 	);

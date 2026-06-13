@@ -6,6 +6,7 @@ import { useAgents } from '../hooks/use-agents';
 import { type TaskFilters, useTasks } from '../hooks/use-tasks';
 import { AdminApprovalsBanner } from './admin-approvals-banner';
 import { CreateTaskDialog } from './create-task-dialog';
+import { TaskRunDot } from './task-run-dot';
 import { TaskStatusBadge } from './task-status-badge';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -178,36 +179,7 @@ export function TaskList({ projectId }: TaskListProps) {
 					(row.last_run_status === 'failed' || row.last_run_status === 'timed_out');
 				return (
 					<span className="inline-flex items-center gap-1.5">
-						{row.has_active_run && (
-							<Tooltip content="Agent run in progress">
-								<span
-									role="img"
-									aria-label="Agent run in progress"
-									data-testid="task-running-dot"
-									className="inline-block w-2 h-2 rounded-full bg-accent-amber animate-pulse shrink-0"
-								/>
-							</Tooltip>
-						)}
-						{!row.has_active_run && row.queued_wakeup && (
-							<Tooltip
-								content={
-									row.queued_wakeup.reason === 'project_at_capacity'
-										? 'Run queued — project at capacity'
-										: 'Run queued — waiting'
-								}
-							>
-								<span
-									role="img"
-									aria-label={
-										row.queued_wakeup.reason === 'project_at_capacity'
-											? 'Run queued — project at capacity'
-											: 'Run queued — waiting'
-									}
-									data-testid="task-queued-dot"
-									className="inline-block w-2 h-2 rounded-full bg-accent-blue shrink-0"
-								/>
-							</Tooltip>
-						)}
+						<TaskRunDot hasActiveRun={row.has_active_run} queuedWakeup={row.queued_wakeup} />
 						{lastRunFailed && (
 							<Tooltip content="Last run failed">
 								<span

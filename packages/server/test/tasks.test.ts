@@ -307,6 +307,47 @@ describe('tasks CRUD', () => {
 		expect(removeRes.status).toBe(200);
 	});
 
+	it('reports the blocker run state in the dependencies list', async () => {
+		const blocker = await insertTaskDirect(agentId, 'Upstream blocker');
+		const blocked = await insertTaskDirect(agentId, 'Downstream blocked');
+
+		const addRes = await app.request(
+			`/api/projects/${projectSlug}/tasks/${blocked.id}/dependencies`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ blocked_by_task_id: blocker.id }),
+			},
+		);
+		expect(addRes.status).toBe(201);
+
+		const listDeps = async () =>
+			(
+				await (
+					await app.request(`/api/projects/${projectSlug}/tasks/${blocked.id}/dependencies`, {
+						headers: authHeader(token),
+					})
+				).json()
+			).data;
+
+		// No run yet — the blocker is idle.
+		let deps = await listDeps();
+		expect(deps).toHaveLength(1);
+		expect(deps[0].blocked_by_has_active_run).toBe(false);
+		expect(deps[0].blocked_by_queued_wakeup).toBeNull();
+
+		// A run lands on the blocker — the downstream's dependency row reflects it.
+		await db.query(
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status)
+			 VALUES ($1, $2, $3, 'running')`,
+			[teamId, agentId, blocker.id],
+		);
+		deps = await listDeps();
+		expect(deps[0].blocked_by_has_active_run).toBe(true);
+
+		await db.query(`DELETE FROM heartbeat_runs WHERE task_id = $1`, [blocker.id]);
+	});
+
 	it('updates and retrieves progress_summary', async () => {
 		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
