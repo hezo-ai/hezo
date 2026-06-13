@@ -30,14 +30,16 @@ teamsRoutes.get('/teams', async (c) => {
 		query = `SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $1)::int AS agent_count,
        (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count,
-       (SELECT tt.name FROM team_template_assignments tta JOIN team_templates tt ON tt.id = tta.team_template_id WHERE tta.team_id = c.id ORDER BY tt.is_builtin DESC LIMIT 1) AS primary_template_name
+       (SELECT tt.name FROM team_template_assignments tta JOIN team_templates tt ON tt.id = tta.team_template_id WHERE tta.team_id = c.id ORDER BY tt.is_builtin DESC LIMIT 1) AS primary_template_name,
+       EXISTS (SELECT 1 FROM projects p WHERE p.team_id = c.id AND p.is_internal = true) AS is_internal
      FROM teams c
      ORDER BY c.created_at DESC`;
 	} else {
 		query = `SELECT c.*,
        (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $1)::int AS agent_count,
        (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count,
-       (SELECT tt.name FROM team_template_assignments tta JOIN team_templates tt ON tt.id = tta.team_template_id WHERE tta.team_id = c.id ORDER BY tt.is_builtin DESC LIMIT 1) AS primary_template_name
+       (SELECT tt.name FROM team_template_assignments tta JOIN team_templates tt ON tt.id = tta.team_template_id WHERE tta.team_id = c.id ORDER BY tt.is_builtin DESC LIMIT 1) AS primary_template_name,
+       EXISTS (SELECT 1 FROM projects p WHERE p.team_id = c.id AND p.is_internal = true) AS is_internal
      FROM teams c
      JOIN members m2 ON m2.team_id = c.id
      JOIN member_users mu ON mu.id = m2.id

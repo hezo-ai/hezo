@@ -31,6 +31,7 @@ import { loadCoordinationContext } from '../services/internal-intake';
 import type { JobManager } from '../services/job-manager';
 import { createPlanningTask, createProject } from '../services/project-create';
 import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
+import { snapshotTeamAsTemplate } from '../services/team-template-snapshot';
 import { createTeam } from '../services/teams';
 import { createWakeup } from '../services/wakeup';
 
@@ -177,6 +178,7 @@ projectsRoutes.post('/projects', async (c) => {
 		name: string;
 		description?: string;
 		template_id?: string;
+		source_team_id?: string;
 		task_prefix?: string;
 		initial_prd?: string;
 		docker_base_image?: string;
@@ -185,15 +187,17 @@ projectsRoutes.post('/projects', async (c) => {
 	if (!body.name?.trim()) return err(c, 'INVALID_REQUEST', 'name is required', 400);
 	if (!body.description?.trim()) return err(c, 'INVALID_REQUEST', 'description is required', 400);
 
-	// A project is always created from a team-type template — the Blank template
-	// (Captain only) when the caller doesn't choose one.
-	let templateId = body.template_id;
-	if (!templateId) {
-		const blank = await db.query<{ id: string }>('SELECT id FROM team_templates WHERE name = $1', [
-			'Blank',
-		]);
-		templateId = blank.rows[0]?.id;
-	}
+	// A project is always created from a team-type template: an existing one, a
+	// fresh snapshot of an existing team (source_team_id), or the Blank template
+	// (Captain only) when the caller chooses neither.
+	const templateResult = await resolveCreationTemplate(db, {
+		templateId: body.template_id,
+		sourceTeamId: body.source_team_id,
+		description: body.description,
+	});
+	if (!templateResult.ok)
+		return err(c, templateResult.code, templateResult.message, templateResult.status);
+	const templateId = templateResult.templateId;
 
 	// 1. Create the project's dedicated team (its roster), named after the project.
 	const auth = c.get('auth');
@@ -308,12 +312,82 @@ projectsRoutes.post('/projects', async (c) => {
 	);
 });
 
-async function resolveTemplateId(db: PGlite, requested?: string): Promise<string | undefined> {
-	if (requested) return requested;
+type ResolveTemplateResult =
+	| { ok: true; templateId: string | undefined }
+	| { ok: false; code: 'INVALID_REQUEST' | 'NOT_FOUND'; message: string; status: 400 | 404 };
+
+/**
+ * Generates a `team_templates.name` that doesn't clash with an existing one by
+ * appending " (2)", " (3)", … to the base. Mirrors `uniqueSlug` — each
+ * snapshot of a source team mints a fresh, distinctly-named template.
+ */
+async function uniqueTemplateName(db: PGlite, base: string): Promise<string> {
+	let candidate = base;
+	let n = 2;
+	while (
+		(await db.query('SELECT 1 FROM team_templates WHERE name = $1', [candidate])).rows.length
+	) {
+		candidate = `${base} (${n})`;
+		n++;
+	}
+	return candidate;
+}
+
+/**
+ * Resolves the team-type template a new project's team is provisioned from.
+ * A caller picks either an existing template (`templateId`) or an existing team
+ * to clone (`sourceTeamId`); cloning snapshots that team into a fresh permanent
+ * template (reusable from then on). With neither, defaults to the Blank template.
+ */
+async function resolveCreationTemplate(
+	db: PGlite,
+	opts: { templateId?: string; sourceTeamId?: string; description?: string },
+): Promise<ResolveTemplateResult> {
+	const templateId = opts.templateId?.trim() || undefined;
+	const sourceTeamId = opts.sourceTeamId?.trim() || undefined;
+
+	if (templateId && sourceTeamId) {
+		return {
+			ok: false,
+			code: 'INVALID_REQUEST',
+			message: 'Provide either template_id or source_team_id, not both',
+			status: 400,
+		};
+	}
+
+	if (templateId) return { ok: true, templateId };
+
+	if (sourceTeamId) {
+		const team = await db.query<{ name: string; is_internal: boolean }>(
+			`SELECT t.name,
+			        EXISTS (SELECT 1 FROM projects p WHERE p.team_id = t.id AND p.is_internal = true) AS is_internal
+			 FROM teams t WHERE t.id = $1`,
+			[sourceTeamId],
+		);
+		const row = team.rows[0];
+		if (!row) {
+			return { ok: false, code: 'NOT_FOUND', message: 'Source team not found', status: 404 };
+		}
+		if (row.is_internal) {
+			return {
+				ok: false,
+				code: 'INVALID_REQUEST',
+				message: 'The HQ team cannot be used as a source team',
+				status: 400,
+			};
+		}
+		const name = await uniqueTemplateName(db, row.name);
+		const snapshot = await snapshotTeamAsTemplate(db, sourceTeamId, {
+			name,
+			description: opts.description?.trim() || `Snapshot of the "${row.name}" team`,
+		});
+		return { ok: true, templateId: snapshot.template_id };
+	}
+
 	const blank = await db.query<{ id: string }>('SELECT id FROM team_templates WHERE name = $1', [
 		'Blank',
 	]);
-	return blank.rows[0]?.id;
+	return { ok: true, templateId: blank.rows[0]?.id };
 }
 
 // CEO-assisted project creation: stand up the project's team up front, then open
@@ -329,6 +403,7 @@ projectsRoutes.post('/project-intakes', async (c) => {
 		name: string;
 		description?: string;
 		template_id?: string;
+		source_team_id?: string;
 		task_prefix?: string;
 		initial_prd?: string;
 	}>();
@@ -342,7 +417,14 @@ projectsRoutes.post('/project-intakes', async (c) => {
 		return err(c, 'INTERNAL', 'HQ coordination project is not available', 500);
 	}
 
-	const templateId = await resolveTemplateId(db, body.template_id);
+	const templateResult = await resolveCreationTemplate(db, {
+		templateId: body.template_id,
+		sourceTeamId: body.source_team_id,
+		description: body.description,
+	});
+	if (!templateResult.ok)
+		return err(c, templateResult.code, templateResult.message, templateResult.status);
+	const templateId = templateResult.templateId;
 	const auth = c.get('auth');
 	const team = await createTeam(
 		{
