@@ -154,7 +154,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		egressCAPath: egressCA.certPath,
 	});
 
-	const { seedDefaultTeam } = await import('./services/teams.js');
+	const { seedDefaultTeam, ensureChatMemoryDoc } = await import('./services/teams.js');
 	try {
 		await seedDefaultTeam({
 			db,
@@ -166,6 +166,9 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			dataDir: config.dataDir,
 			egressCAPath: egressCA.certPath,
 		});
+		// Self-heal: instances created before the chatbox memory doc existed (or
+		// where it was removed) get it back. Idempotent.
+		await ensureChatMemoryDoc(db);
 	} catch (err) {
 		log.error('Failed to seed default team:', err);
 	}

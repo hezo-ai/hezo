@@ -6,10 +6,12 @@ import { seedWorkspace } from './helpers/seed';
 
 // HQ is the only internal project: the instance-wide coordination project that
 // hosts the CEO and Coach. Its slug is HQ_PROJECT_SLUG and `is_internal` is
-// true, so it gets the restricted sidebar, the coordination info tooltip beside
-// its name, and the documents/settings redirects.
+// true, so it gets the restricted sidebar (no Assets, no Settings) and the
+// coordination info tooltip beside its name. It DOES expose Documents — that's
+// where the chatbox memory (chat-memory.md) is viewed/edited — and the settings
+// route still redirects to tasks.
 
-test('sidebar exposes only Tasks and Container for the HQ project', async () => {
+test('sidebar exposes Tasks, Documents and Container for the HQ project (not Assets/Settings)', async () => {
 	const { findAllByRole, queryAllByRole, container, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -30,8 +32,11 @@ test('sidebar exposes only Tasks and Container for the HQ project', async () => 
 	const tasksLinks = queryAllByRole('link', { name: 'Tasks' });
 	expect(tasksLinks.length).toBeGreaterThan(0);
 
-	// Documents/Assets are dropped once the index resolves the project as internal.
-	await waitFor(() => expect(queryAllByRole('link', { name: 'Documents' }).length).toBe(0));
+	// Documents is exposed for HQ (the chatbox memory lives here); Assets is not.
+	await waitFor(() =>
+		expect(queryAllByRole('link', { name: 'Documents' }).length).toBeGreaterThan(0),
+	);
+	expect(queryAllByRole('link', { name: 'Assets' }).length).toBe(0);
 
 	// No settings link pointing at the HQ project.
 	const settingsLinks = queryAllByRole('link', { name: 'Settings' });
@@ -67,7 +72,7 @@ test('coordination info tooltip sits beside the HQ name', async () => {
 	);
 });
 
-test('direct navigation to /documents and /settings redirects to /tasks', async () => {
+test('HQ /documents renders (chatbox memory) while /settings still redirects to /tasks', async () => {
 	const { router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -75,13 +80,15 @@ test('direct navigation to /documents and /settings redirects to /tasks', async 
 		},
 	});
 
+	// Documents is a real page for HQ now — no redirect.
 	await router.navigate({
 		to: '/projects/$projectId/documents',
 		params: { projectId: HQ_PROJECT_SLUG },
 	});
 	await new Promise((r) => setTimeout(r, 200));
-	expect(router.state.location.pathname).toBe(`/projects/${HQ_PROJECT_SLUG}/tasks`);
+	expect(router.state.location.pathname).toBe(`/projects/${HQ_PROJECT_SLUG}/documents`);
 
+	// Settings still redirects to tasks.
 	await router.navigate({
 		to: '/projects/$projectId/settings',
 		params: { projectId: HQ_PROJECT_SLUG },

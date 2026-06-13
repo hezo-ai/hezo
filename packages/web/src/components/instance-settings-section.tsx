@@ -48,9 +48,9 @@ function BaseUrlForm({ settings }: { settings: InstanceSettings }) {
 	async function handleSave() {
 		setError(null);
 		try {
-			const result = await updateSettings.mutateAsync(
-				baseUrl.trim() === '' ? null : baseUrl.trim(),
-			);
+			const result = await updateSettings.mutateAsync({
+				base_url: baseUrl.trim() === '' ? null : baseUrl.trim(),
+			});
 			// Reflect the server-normalized origin (response-driven, never preempted).
 			setBaseUrl(result.base_url ?? '');
 		} catch (e) {
