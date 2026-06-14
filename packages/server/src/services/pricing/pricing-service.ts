@@ -19,23 +19,54 @@ const log = logger.child('pricing');
 
 /**
  * Normalize a model id for fuzzy lookup. The CLI may emit a provider-prefixed,
- * dated, or 1M-context-tagged id (`openai/gpt-5`, `claude-opus-4-8-20260205`,
- * `deepseek-v4-pro[1m]`) while the feed keys the bare base id — strip those so
- * they resolve to the same rate.
+ * dated, or context-tagged id (`openai/gpt-5`, `claude-opus-4-8-20260205`,
+ * `deepseek-v4-pro[1m]`, `glm-4.7[200k]`) while the feed keys the bare base id —
+ * strip those so they resolve to the same rate. The context tag is any bracketed
+ * window size (`[1m]`, `[2m]`, `[200k]`, …), not only `[1m]`.
  */
 export function normalizeModelId(id: string): string {
 	let s = id.toLowerCase().trim();
 	const slash = s.lastIndexOf('/');
 	if (slash >= 0) s = s.slice(slash + 1);
-	s = s.replace(/\[1m\]/g, '');
+	s = s.replace(/\[[^\]]*\]/g, '');
 	s = s.replace(/-\d{8}$/, '').replace(/-\d{4}-\d{2}-\d{2}$/, '');
 	return s;
+}
+
+/** Model-id segment separators — ids break on dashes and version dots. */
+const SEGMENT_SEPARATOR = /[-.]/;
+
+/**
+ * Length of the longest common prefix of two normalized model ids that ends on a
+ * segment boundary in both — i.e. one id is a whole-segment prefix of the other.
+ * `gpt-5` ↔ `gpt-5-codex` and `deepseek-v4-pro` ↔ `deepseek-v4-pro-0606` match
+ * (returning the shorter length); siblings like `gpt-5.1` ↔ `gpt-5.2` and partial
+ * tokens like `gpt-5` ↔ `gpt-50` return 0. A shared *vendor-only* prefix
+ * (`deepseek-v4-pro` ↔ `deepseek-chat`) never matches, because the whole shorter
+ * id — boundary included — has to prefix the longer one.
+ */
+function segmentPrefixLen(a: string, b: string): number {
+	if (a === b) return a.length;
+	const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+	if (short.length === 0 || !long.startsWith(short)) return 0;
+	return SEGMENT_SEPARATOR.test(long[short.length]) ? short.length : 0;
+}
+
+/**
+ * Tie-break equal-length prefix matches deterministically: prefer the key closest
+ * in length to the query (fewest extra segments), then the lexically smaller one
+ * so the choice never depends on map iteration order.
+ */
+function isCloserKey(candidate: string, current: string): boolean {
+	if (candidate.length !== current.length) return candidate.length < current.length;
+	return candidate < current;
 }
 
 export class PricingService {
 	private byId = new Map<string, ModelRate>();
 	private byNorm = new Map<string, ModelRate>();
 	private warned = new Set<string>();
+	private fuzzyMatched = new Set<string>();
 
 	constructor(private readonly db: PGlite) {}
 
@@ -98,6 +129,38 @@ export class PricingService {
 
 	private resolve(model: string | undefined): ModelRate | undefined {
 		if (!model) return undefined;
-		return this.byId.get(model.toLowerCase()) ?? this.byNorm.get(normalizeModelId(model));
+		const norm = normalizeModelId(model);
+		const exact = this.byId.get(model.toLowerCase()) ?? this.byNorm.get(norm);
+		return exact ?? this.resolveByPrefix(model, norm);
+	}
+
+	/**
+	 * Last-resort match for a model the feed doesn't list exactly: the entry whose
+	 * normalized id shares the longest segment-aligned prefix with `norm` (so
+	 * `deepseek-v4-pro[1m]` prices off a `deepseek-v4-pro-0606` feed row when only
+	 * the dated variant is listed). Best-effort — an approximate rate beats
+	 * recording the run at $0 — so it logs once per model instead of warning.
+	 */
+	private resolveByPrefix(model: string, norm: string): ModelRate | undefined {
+		if (!norm) return undefined;
+		let bestKey: string | undefined;
+		let bestLen = 0;
+		for (const key of this.byNorm.keys()) {
+			const len = segmentPrefixLen(norm, key);
+			if (len === 0) continue;
+			if (
+				len > bestLen ||
+				(len === bestLen && bestKey !== undefined && isCloserKey(key, bestKey))
+			) {
+				bestKey = key;
+				bestLen = len;
+			}
+		}
+		if (bestKey === undefined) return undefined;
+		if (!this.fuzzyMatched.has(model)) {
+			this.fuzzyMatched.add(model);
+			log.info(`No exact pricing for model "${model}"; using nearest match "${bestKey}"`);
+		}
+		return this.byNorm.get(bestKey);
 	}
 }

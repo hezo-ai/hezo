@@ -34,6 +34,12 @@ describe('normalizeModelId', () => {
 		expect(normalizeModelId('deepseek-v4-pro[1m]')).toBe('deepseek-v4-pro');
 		expect(normalizeModelId('zai/glm-4.7')).toBe('glm-4.7');
 	});
+
+	it('strips any bracketed context-window tag, not just [1m]', () => {
+		expect(normalizeModelId('deepseek-v4-pro[2m]')).toBe('deepseek-v4-pro');
+		expect(normalizeModelId('glm-4.7[200k]')).toBe('glm-4.7');
+		expect(normalizeModelId('anthropic/claude-opus-4-8[1m]')).toBe('claude-opus-4-8');
+	});
 });
 
 describe('PricingService', () => {
@@ -63,6 +69,47 @@ describe('PricingService', () => {
 		await svc.init();
 		expect(svc.costCents('no-such-model-xyz', { inputTokens: M, outputTokens: M })).toBe(0);
 		expect(svc.costCents(undefined, { inputTokens: M, outputTokens: M })).toBe(0);
+	});
+
+	it('prices a context-tagged model off its nearest feed sibling', async () => {
+		const svc = new PricingService(db);
+		await svc.init();
+		// The feed lists only a dated variant of the model the CLI reports.
+		await svc.refresh(
+			stubFetch({
+				'deepseek-v4-pro-0606': {
+					input_cost_per_token: 0.000001,
+					output_cost_per_token: 0.000002,
+				},
+			}),
+		);
+		// Exact dated id prices directly: 1M input @ $1/M → 100c.
+		const exact = svc.costCents('deepseek-v4-pro-0606', { inputTokens: M, outputTokens: 0 });
+		expect(exact).toBe(100);
+		// The logged miss now resolves: strip `[1m]`, then match the segment-prefix
+		// sibling instead of recording $0.
+		expect(svc.costCents('deepseek-v4-pro[1m]', { inputTokens: M, outputTokens: 0 })).toBe(exact);
+	});
+
+	it('prices a more-specific variant off its base model', async () => {
+		const svc = new PricingService(db);
+		await svc.init();
+		// `gpt-5-pro` isn't in the feed but `gpt-5` is; the variant borrows the base
+		// rate rather than falling through to $0.
+		const base = svc.costCents('gpt-5', { inputTokens: M, outputTokens: 0 });
+		expect(base).toBeGreaterThan(0);
+		expect(svc.costCents('gpt-5-pro[1m]', { inputTokens: M, outputTokens: 0 })).toBe(base);
+	});
+
+	it('does not cross-match a model sharing only a vendor prefix', async () => {
+		const svc = new PricingService(db);
+		await svc.init();
+		// `deepseek-v4-pro` shares only the `deepseek` vendor token with the seeded
+		// `deepseek-chat` / `deepseek-reasoner` rows — not a whole-segment prefix —
+		// so it must stay unpriced rather than borrow an unrelated rate.
+		expect(svc.costCents('deepseek-v4-pro[1m]', { inputTokens: M, outputTokens: 0 })).toBe(0);
+		// A sibling version is likewise not a match for a different sibling.
+		expect(svc.costCents('claude-sonnet-9', { inputTokens: M, outputTokens: 0 })).toBe(0);
 	});
 
 	it('lets a manual override win over the feed row', async () => {
