@@ -14,12 +14,14 @@ Use a top-level (or peer) ticket — do **not** set `parent_task_id` — when:
 - The work has its own lifecycle and can ship independently of the parent (cleanup, monitoring, follow-up improvements).
 - The work belongs in a different domain or project from the parent.
 - The new ticket is the assignee's first-class deliverable in their own right and the parent does not need its output to be done.
+- The parent is a draft execution plan ticket (`planning` label) and the work is implementation or any other execution of the plan — **always** top-level; never nest execution under planning.
 
 ## What counts as the parent's deliverable
 
 The deliverable-feed test depends on what the parent ticket is for:
 
-- **Planning ticket parent** — the parent is a `planning` ticket, or any ticket whose deliverable is itself a *plan* (research, PRD, spec, design, anything other tickets will execute against). Sub-tasks: the artefacts the plan itself depends on (research.md, prd.md, spec.md, design mockups). Top-level: the implementation / build / launch / post-impl review tickets that execute the finished plan. The planning ticket is complete once the plan exists and the work tickets have been created — it does not stay open while the build ships.
+{{> partials/common/planning-ticket-children}}
+
 - **Implementation / feature / bug-fix parent** — the parent's deliverable is the built thing itself (a feature, a fix, a deployed service). Sub-tasks of any kind — a small design spike, a sub-implementation slice, a test ticket — are sub-tasks of the parent if they are part of completing it. Planning steps inside an implementation ticket count as part of the work; they are sub-tasks, not top-level peers.
 
 The same shape recurs at each level. An Architect's spec ticket is planning-shaped: it can have research sub-tasks and spawns the Engineer's implementation tickets as top-level peers. An Engineer's implementation ticket is feature-shaped: it can have sub-implementation sub-tasks, design spike sub-tasks, and test sub-tasks — all nested under it.

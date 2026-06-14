@@ -6,6 +6,12 @@ export interface ApiError {
 	status: number;
 }
 
+export interface PaginationMeta {
+	page: number;
+	per_page: number;
+	total: number;
+}
+
 class ApiClient {
 	private token: string | null = localStorage.getItem(TOKEN_KEY);
 
@@ -23,6 +29,12 @@ class ApiClient {
 		localStorage.removeItem(TOKEN_KEY);
 	}
 
+	private authHeaders(contentType = 'application/json'): Record<string, string> {
+		const headers: Record<string, string> = { 'Content-Type': contentType };
+		if (this.token) headers.Authorization = `Bearer ${this.token}`;
+		return headers;
+	}
+
 	private async extractError(res: Response): Promise<ApiError> {
 		const json = await res.json().catch(() => null);
 		return {
@@ -32,32 +44,50 @@ class ApiClient {
 		};
 	}
 
-	private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-		const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-		if (this.token) headers.Authorization = `Bearer ${this.token}`;
-
+	private async fetchJson<T>(method: string, path: string, body?: unknown): Promise<T> {
 		const res = await fetch(path, {
 			method,
-			headers,
+			headers: this.authHeaders(),
 			body: body !== undefined ? JSON.stringify(body) : undefined,
 		});
 
 		if (!res.ok) throw await this.extractError(res);
+		return (await res.json()) as T;
+	}
 
-		const json = await res.json();
-		return json.data !== undefined ? json.data : json;
+	private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+		const json = await this.fetchJson<{ data?: T } & Record<string, unknown>>(method, path, body);
+		return json.data !== undefined ? json.data : (json as T);
+	}
+
+	private withQuery(path: string, params?: Record<string, string | undefined>): string {
+		if (!params) return path;
+		const qs = new URLSearchParams();
+		for (const [k, v] of Object.entries(params)) {
+			if (v !== undefined) qs.set(k, v);
+		}
+		const str = qs.toString();
+		return str ? `${path}?${str}` : path;
 	}
 
 	get<T>(path: string, params?: Record<string, string | undefined>) {
-		if (params) {
-			const qs = new URLSearchParams();
-			for (const [k, v] of Object.entries(params)) {
-				if (v !== undefined) qs.set(k, v);
-			}
-			const str = qs.toString();
-			if (str) path = `${path}?${str}`;
-		}
-		return this.request<T>('GET', path);
+		return this.request<T>('GET', this.withQuery(path, params));
+	}
+
+	/** GET that preserves `{ data, meta }` pagination envelopes from the API. */
+	async getPaginated<TItem>(
+		path: string,
+		params?: Record<string, string | undefined>,
+	): Promise<{ data: TItem[]; meta: PaginationMeta }> {
+		const json = await this.fetchJson<{ data?: TItem[]; meta?: PaginationMeta }>(
+			'GET',
+			this.withQuery(path, params),
+		);
+		const data = json.data ?? [];
+		return {
+			data,
+			meta: json.meta ?? { page: 1, per_page: data.length, total: data.length },
+		};
 	}
 
 	post<T>(path: string, body?: unknown) {
@@ -79,7 +109,12 @@ class ApiClient {
 	async postForm<T>(path: string, formData: FormData): Promise<T> {
 		const headers: Record<string, string> = {};
 		if (this.token) headers.Authorization = `Bearer ${this.token}`;
-		const res = await fetch(path, { method: 'POST', headers, body: formData });
+
+		const res = await fetch(path, {
+			method: 'POST',
+			headers,
+			body: formData,
+		});
 		if (!res.ok) throw await this.extractError(res);
 		const json = await res.json();
 		return json.data !== undefined ? json.data : json;

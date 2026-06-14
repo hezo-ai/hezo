@@ -59,6 +59,7 @@ export const queryKeys = {
 		// tasks
 		tasks: (slug: string) => ['projects', slug, 'tasks'],
 		tasksFiltered: (slug: string, filters: KeyParam) => ['projects', slug, 'tasks', filters],
+		tasksProgressSummary: (slug: string) => ['projects', slug, 'tasks', 'progress-summary'],
 		tasksResolve: (slug: string, key: string[]) => ['projects', slug, 'tasks', 'resolve', key],
 		task: (slug: string, taskId: string) => ['projects', slug, 'tasks', taskId],
 		taskComments: (slug: string, taskId: string) => ['projects', slug, 'tasks', taskId, 'comments'],

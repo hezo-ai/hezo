@@ -357,7 +357,7 @@ describe('tasks list — sort parameter', () => {
 		}
 	});
 
-	it('sorts by created_at descending (default)', async () => {
+	it('sorts by created_at descending', async () => {
 		const res = await app.request(`/api/projects/${projectSlug}/tasks?sort=created_at:desc`, {
 			headers: authHeader(token),
 		});
@@ -381,11 +381,10 @@ describe('tasks list — sort parameter', () => {
 		}
 	});
 
-	it('falls back to created_at desc for an unknown sort field', async () => {
+	it('falls back to work order for an unknown sort field', async () => {
 		const res = await app.request(`/api/projects/${projectSlug}/tasks?sort=invalid_field:asc`, {
 			headers: authHeader(token),
 		});
-		// Should not error — falls back to created_at desc
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(Array.isArray(body.data)).toBe(true);

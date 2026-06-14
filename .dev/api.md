@@ -824,6 +824,40 @@ Response:
 
 `assignee_type` is `"agent"` or `"user"` depending on whether the assignee is an agent member or a human board member (matches `members.member_type`). `has_active_run` is `true` when at least one `heartbeat_runs` row exists for the task in `running` or `queued` status — used by the UI to show a live indicator next to the assignee name.
 
+Sort values include `work_order:asc` (default when no `sort` is supplied) — parent tasks before their sub-tasks, then by `created_at` within each group.
+
+#### `GET /projects/:projectId/tasks/progress-summary`
+Aggregated execution progress and phase context for the project task list header. Counts include only execution-scope tasks (the planning epic and its direct sub-tasks are excluded). Progress totals are zero until the draft execution plan ticket (`labels` contains `planning`) reaches `closed`.
+
+Response:
+```json
+{
+  "data": {
+    "planning_complete": true,
+    "total": 12,
+    "complete": 4,
+    "in_progress": 2,
+    "not_done": 6,
+    "percent_complete": 33,
+    "by_status": {
+      "done": 3,
+      "closed": 1,
+      "in_progress": 1,
+      "review": 1,
+      "backlog": 6
+    },
+    "project_status": "working",
+    "project_name": "Backend API",
+    "phase_banner": null
+  }
+}
+```
+
+- `planning_complete` — `true` once the planning epic is `closed`.
+- `project_status` — headline status for the current scope: `completed`, `working`, `error`, or `idle`. Precedence is Completed → Working → Error → Idle. `null` during onboarding (open team-coherence review) or before planning is complete when no planning-phase banner is shown.
+- `phase_banner` — `onboarding` while the team-coherence review ticket is open; `planning` while the planning epic is `in_progress` or `review`; otherwise `null`. When a banner is shown, the segmented progress bar is hidden.
+- `project_status` during the planning banner reflects planning-scope tasks only; after `planning_complete`, it reflects execution-scope tasks.
+
 #### `POST /projects/:projectId/tasks`
 Create an task.
 

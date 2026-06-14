@@ -170,7 +170,7 @@ test('effort dropdown marks the agent default and omits it from the submit body'
 	// Spy on POST /api/.../comments to confirm the body omits `effort`.
 	const original = globalThis.fetch;
 	const posts: Array<Record<string, unknown>> = [];
-	globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+	globalThis.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url = typeof input === 'string' ? input : input.toString();
 		if (init?.method === 'POST' && /\/tasks\/[^/]+\/comments$/.test(url)) {
 			const body = init.body;
@@ -181,7 +181,7 @@ test('effort dropdown marks the agent default and omits it from the submit body'
 			}
 		}
 		return original(input, init);
-	};
+	}, original);
 	try {
 		const composer = await findByPlaceholderText('Add a comment...');
 		const { user } = await import('@testing-library/user-event').then((m) => ({
@@ -260,7 +260,7 @@ test('wake-assignee checkbox is default-checked and reflected in submit body', a
 
 	const original = globalThis.fetch;
 	const posts: Array<Record<string, unknown>> = [];
-	globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+	globalThis.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url = typeof input === 'string' ? input : input.toString();
 		if (init?.method === 'POST' && /\/tasks\/[^/]+\/comments$/.test(url)) {
 			const body = init.body;
@@ -271,7 +271,7 @@ test('wake-assignee checkbox is default-checked and reflected in submit body', a
 			}
 		}
 		return original(input, init);
-	};
+	}, original);
 	try {
 		const userMod = await import('@testing-library/user-event');
 		const user = userMod.default.setup({ delay: null });
@@ -341,7 +341,7 @@ test('replying to an agent hides the wake-assignee toggle and omits the flag', a
 
 	const original = globalThis.fetch;
 	const posts: Array<Record<string, unknown>> = [];
-	globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+	globalThis.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url = typeof input === 'string' ? input : input.toString();
 		if (init?.method === 'POST' && /\/tasks\/[^/]+\/comments$/.test(url)) {
 			const body = init.body;
@@ -352,7 +352,7 @@ test('replying to an agent hides the wake-assignee toggle and omits the flag', a
 			}
 		}
 		return original(input, init);
-	};
+	}, original);
 	try {
 		await user.type(composer, 'My reply to the agent');
 		await user.click(getByRole('button', { name: 'Comment' }));
@@ -405,7 +405,7 @@ test('replying to a human keeps the wake-assignee toggle and sends the flag', as
 
 	const original = globalThis.fetch;
 	const posts: Array<Record<string, unknown>> = [];
-	globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+	globalThis.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url = typeof input === 'string' ? input : input.toString();
 		if (init?.method === 'POST' && /\/tasks\/[^/]+\/comments$/.test(url)) {
 			const body = init.body;
@@ -416,7 +416,7 @@ test('replying to a human keeps the wake-assignee toggle and sends the flag', as
 			}
 		}
 		return original(input, init);
-	};
+	}, original);
 	try {
 		await user.type(composer, 'My reply to the human');
 		await user.click(getByRole('button', { name: 'Comment' }));

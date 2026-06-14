@@ -55,11 +55,6 @@ export interface TaskFilters {
 	per_page?: string;
 }
 
-interface TaskListResponse {
-	data: Task[];
-	meta: { page: number; per_page: number; total: number };
-}
-
 export function useTasks(
 	projectId: string,
 	filters?: TaskFilters,
@@ -69,13 +64,7 @@ export function useTasks(
 		queryKey: queryKeys.projects.tasksFiltered(projectId, filters),
 		queryFn: async () => {
 			const params: Record<string, string | undefined> = { ...filters };
-			const res = await api.get<TaskListResponse | Task[]>(
-				`/api/projects/${projectId}/tasks`,
-				params,
-			);
-			if (Array.isArray(res))
-				return { data: res, meta: { page: 1, per_page: 50, total: res.length } };
-			return res;
+			return api.getPaginated<Task>(`/api/projects/${projectId}/tasks`, params);
 		},
 		enabled: options?.enabled ?? true,
 	});
@@ -94,10 +83,9 @@ export function useAllTasks(projects: { slug: string; teamSlug: string; teamName
 		queryFn: async (): Promise<GlobalTask[]> => {
 			const perProject = await Promise.all(
 				projects.map(async (p) => {
-					const res = await api.get<TaskListResponse | Task[]>(`/api/projects/${p.slug}/tasks`, {
+					const { data: rows } = await api.getPaginated<Task>(`/api/projects/${p.slug}/tasks`, {
 						per_page: '200',
 					});
-					const rows = Array.isArray(res) ? res : res.data;
 					return rows.map((task) => ({ ...task, team_slug: p.teamSlug, team_name: p.teamName }));
 				}),
 			);
