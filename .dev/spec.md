@@ -1580,7 +1580,7 @@ Agents execute inside project containers. Container state changes directly affec
 - **Container rebuild**: Same as stop (cancel running agents, release locks), followed by a full re-provision. After the new container is running, agents are re-triggered as with container start. The UI shows a confirmation dialog warning about unpushed work loss.
 - **Container crash**: The container-sync job detects the status change within 1 second and updates the DB. Orphan detection handles stale agent state.
 
-Agent runtime status (`active` / `idle` / `paused`) is updated in the database and broadcast via WebSocket when an agent is activated and when it completes.
+Agent runtime status (`active` / `idle`, plus the reactive budget pauses `out_of_agent_budget` / `out_of_project_budget`) is updated in the database and broadcast via WebSocket when an agent is activated, when it completes, and when it trips or clears a budget window. The budget states are set and lifted automatically by the budget gate and the resume sweep. Manually turning an agent off is a separate axis (`admin_status = 'disabled'`), not a runtime state.
 
 ### Task work ownership (observational execution locks)
 
@@ -2219,7 +2219,7 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 ```
 member_type:          agent, user
 agent_runtime:        claude_code, codex, gemini
-agent_runtime_status: active, idle
+agent_runtime_status: active, idle, out_of_agent_budget, out_of_project_budget
 agent_admin_status:   enabled, disabled, terminated
 member_role:          board, member
 container_status:     creating, running, stopping, stopped, error    (tracks project container status; `error` only fires on a verified terminal signal — HTTP 404 from `docker inspect` or a provisioning failure — never on transport errors like daemon unreachable / EPIPE, which leave the previous status untouched and retry next tick)

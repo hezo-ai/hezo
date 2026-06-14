@@ -1586,42 +1586,6 @@ describe('JobManager workflow methods', () => {
 	});
 
 	describe('processScheduledHeartbeats', () => {
-		it('does not process agents with paused runtime status', async () => {
-			const manager = createJobManager();
-
-			// Park every other seeded agent (recent heartbeat) so this agent is the
-			// only one processScheduledHeartbeats would otherwise pick up — isolating
-			// the assertion to the paused agent.
-			await db.query(
-				'UPDATE member_agents SET last_heartbeat_at = now(), heartbeat_interval_min = 60 WHERE id != $1',
-				[agentId],
-			);
-			await db.query('DELETE FROM agent_wakeup_requests');
-			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
-
-			// Pause the agent (and make it otherwise due) — paused must win over due.
-			await db.query(
-				"UPDATE member_agents SET runtime_status = 'paused', last_heartbeat_at = now() - interval '2 hours', heartbeat_interval_min = 60 WHERE id = $1",
-				[agentId],
-			);
-
-			await (manager as any).processScheduledHeartbeats();
-
-			// Task should NOT be launched for a paused agent
-			expect(manager.isMemberRunning(agentId)).toBe(false);
-			// And no heartbeat wakeup should have been enqueued for it.
-			const wakeups = await db.query<{ id: string }>(
-				`SELECT id FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'heartbeat'`,
-				[agentId],
-			);
-			expect(wakeups.rows.length).toBe(0);
-
-			// Restore runtime status
-			await db.query("UPDATE member_agents SET runtime_status = 'idle' WHERE id = $1", [agentId]);
-
-			manager.shutdown();
-		});
-
 		it('finds agents with past-due heartbeats via query', async () => {
 			// Ensure the agent is enabled and idle with an overdue heartbeat
 			await db.query(
@@ -1635,7 +1599,7 @@ describe('JobManager workflow methods', () => {
 				 FROM member_agents ma
 				 JOIN members m ON m.id = ma.id
 				 WHERE ma.admin_status = 'enabled'
-				   AND ma.runtime_status != 'paused'
+				   AND ma.runtime_status <> ALL('{out_of_agent_budget,out_of_project_budget}'::agent_runtime_status[])
 				   AND (ma.last_heartbeat_at IS NULL
 				        OR ma.last_heartbeat_at + (ma.heartbeat_interval_min || ' minutes')::interval < now())
 				 LIMIT 20`,
@@ -1674,7 +1638,7 @@ describe('JobManager workflow methods', () => {
 				 FROM member_agents ma
 				 JOIN members m ON m.id = ma.id
 				 WHERE ma.admin_status = 'enabled'
-				   AND ma.runtime_status != 'paused'
+				   AND ma.runtime_status <> ALL('{out_of_agent_budget,out_of_project_budget}'::agent_runtime_status[])
 				   AND (ma.last_heartbeat_at IS NULL
 				        OR ma.last_heartbeat_at + (ma.heartbeat_interval_min || ' minutes')::interval < now())
 				   AND ma.id = $1`,
@@ -1788,6 +1752,87 @@ describe('JobManager workflow methods', () => {
 			);
 			expect(wakeups.rows.length).toBe(0);
 
+			manager.shutdown();
+		});
+
+		it('does not process agents in a budget-pause state', async () => {
+			const manager = createJobManager();
+
+			await db.query(
+				'UPDATE member_agents SET last_heartbeat_at = now(), heartbeat_interval_min = 60 WHERE id != $1',
+				[agentId],
+			);
+			await db.query('DELETE FROM agent_wakeup_requests');
+			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
+			// Over budget (out_of_agent_budget) and otherwise due — the budget pause
+			// must keep it out of the scheduler just like a manual `paused`.
+			await db.query(
+				"UPDATE member_agents SET runtime_status = 'out_of_agent_budget', last_heartbeat_at = now() - interval '2 hours', heartbeat_interval_min = 60 WHERE id = $1",
+				[agentId],
+			);
+
+			await (manager as any).processScheduledHeartbeats();
+
+			expect(manager.isMemberRunning(agentId)).toBe(false);
+			const wakeups = await db.query<{ id: string }>(
+				`SELECT id FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'heartbeat'`,
+				[agentId],
+			);
+			expect(wakeups.rows.length).toBe(0);
+
+			await db.query("UPDATE member_agents SET runtime_status = 'idle' WHERE id = $1", [agentId]);
+			manager.shutdown();
+		});
+	});
+
+	describe('processBudgetResumes', () => {
+		it('lifts a budget pause back to idle once spend is within budget', async () => {
+			const manager = createJobManager();
+			await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+			// Paused for budget, but no spend and no limits → reconcile resumes it.
+			await db.query(
+				`UPDATE member_agents
+				 SET runtime_status = 'out_of_agent_budget',
+				     daily_budget_cents = 0, weekly_budget_cents = 0, monthly_budget_cents = 0
+				 WHERE id = $1`,
+				[agentId],
+			);
+
+			await (manager as any).processBudgetResumes();
+
+			const status = await db.query<{ runtime_status: string }>(
+				'SELECT runtime_status FROM member_agents WHERE id = $1',
+				[agentId],
+			);
+			expect(status.rows[0].runtime_status).toBe('idle');
+			manager.shutdown();
+		});
+
+		it('keeps an agent paused while still over budget', async () => {
+			const manager = createJobManager();
+			await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+			await db.query(
+				`UPDATE member_agents SET runtime_status = 'out_of_agent_budget', daily_budget_cents = 100 WHERE id = $1`,
+				[agentId],
+			);
+			await db.query(
+				`INSERT INTO cost_entries (member_id, project_id, amount_cents) VALUES ($1, $2, 250)`,
+				[agentId, projectId],
+			);
+
+			await (manager as any).processBudgetResumes();
+
+			const status = await db.query<{ runtime_status: string }>(
+				'SELECT runtime_status FROM member_agents WHERE id = $1',
+				[agentId],
+			);
+			expect(status.rows[0].runtime_status).toBe('out_of_agent_budget');
+
+			await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+			await db.query(
+				"UPDATE member_agents SET runtime_status = 'idle', daily_budget_cents = 0 WHERE id = $1",
+				[agentId],
+			);
 			manager.shutdown();
 		});
 	});

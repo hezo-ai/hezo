@@ -4,6 +4,7 @@ import {
 	type AgentRuntime,
 	AgentRuntimeStatus,
 	type AiProvider,
+	BUDGET_PAUSE_STATUSES,
 	COACH_AGENT_SLUG,
 	CommentContentType,
 	ContainerStatus,
@@ -27,7 +28,11 @@ import { ref } from '../lib/log-ref';
 import { assertChildrenAllClosed } from '../lib/task-relationships';
 import { logger } from '../logger';
 import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
-import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
+import {
+	pauseAgentForBudget,
+	reconcileBudgetPause,
+	setAgentIdleIfNoActiveRuns,
+} from './agent-runtime-status';
 import { checkOverBudget } from './budget';
 import type { ContainerLogStreamer } from './container-logs';
 import {
@@ -131,6 +136,16 @@ const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_0
 const WAKEUP_CRON = process.env.HEZO_WAKEUP_CRON ?? '*/5 * * * * *';
 const HEARTBEAT_CRON = process.env.HEZO_HEARTBEAT_CRON ?? '*/5 * * * * *';
 const INBOX_ARCHIVE_CRON = process.env.HEZO_INBOX_ARCHIVE_CRON ?? '0 0 3 * * *';
+// How often to re-evaluate budget-paused agents. Spend is summed over rolling
+// UTC windows, so a daily/weekly/monthly window rolling over silently frees an
+// agent's budget with no event — this sweep notices and lifts the reactive
+// pause so the heartbeat scheduler (which skips paused agents) resumes it.
+const BUDGET_RESUME_CRON = process.env.HEZO_BUDGET_RESUME_CRON ?? '*/30 * * * * *';
+// The reactive budget pauses, which the heartbeat scheduler must not wake (the
+// budget-resume sweep lifts them back to `idle` once the window rolls over).
+// Disabled agents are filtered separately via `admin_status`. Postgres array
+// literal for the `<> ALL(...)` / `= ANY(...)` enum-array params.
+const BUDGET_PAUSE_STATUSES_PG = `{${BUDGET_PAUSE_STATUSES.join(',')}}`;
 const INBOX_RETENTION_DAYS = Number(process.env.HEZO_INBOX_RETENTION_DAYS ?? 30);
 // Lower bound on how often a heartbeat can fire, regardless of an agent's
 // configured `heartbeat_interval_min`. Defends against misconfigured low/zero
@@ -372,6 +387,11 @@ export class JobManager {
 			cron: INBOX_ARCHIVE_CRON,
 			log: cronLog,
 			onTick: () => this.guarded('inbox-archive', () => this.archiveInboxItems()),
+		});
+		this.cron.createJob('budget-resume', {
+			cron: BUDGET_RESUME_CRON,
+			log: cronLog,
+			onTick: () => this.guarded('budget-resume', () => this.processBudgetResumes()),
 		});
 		log.info('Job manager started.');
 	}
@@ -1048,7 +1068,7 @@ export class JobManager {
 			 FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
 			 WHERE ma.admin_status = $1
-			   AND ma.runtime_status != $2
+			   AND ma.runtime_status <> ALL($2::agent_runtime_status[])
 			   AND (ma.last_heartbeat_at IS NULL
 			        OR ma.last_heartbeat_at + (GREATEST(ma.heartbeat_interval_min, $3::int) || ' minutes')::interval < now())
 			   AND NOT EXISTS (
@@ -1060,7 +1080,7 @@ export class JobManager {
 			 LIMIT 5`,
 			[
 				AgentAdminStatus.Enabled,
-				AgentRuntimeStatus.Paused,
+				BUDGET_PAUSE_STATUSES_PG,
 				HEARTBEAT_INTERVAL_FLOOR_MIN,
 				HEARTBEAT_POST_RUN_COOLDOWN_SEC,
 			],
@@ -1087,6 +1107,46 @@ export class JobManager {
 				[WakeupStatus.Claimed, wakeupId],
 			);
 			await this.activateAgent(agent.id, agent.team_id, wakeupId, payload, WakeupSource.Heartbeat);
+		}
+	}
+
+	/**
+	 * Lift (or restamp) a reactive budget pause once the agent's spend changes.
+	 *
+	 * Spend is summed on demand over rolling UTC windows (daily/weekly/monthly),
+	 * so when a window rolls over the agent's effective spend drops with no event
+	 * to react to. The budget gate (`activateAgent`) only fires on a wakeup, and
+	 * `processScheduledHeartbeats` deliberately skips paused agents — so without
+	 * this sweep an autonomous (heartbeat-only) agent that trips a daily/weekly
+	 * cap would stay paused indefinitely, never re-evaluated after the window
+	 * resets. Only the budget-pause states are candidates (a human `paused` and
+	 * in-flight runs are left alone); `reconcileBudgetPause` re-checks each and
+	 * resumes it to `idle`, or restamps the scope if a different window now binds.
+	 * The gate stays the authority: it re-pauses on the next run if breached again.
+	 */
+	private async processBudgetResumes(): Promise<void> {
+		const { db } = this.deps;
+		// The agent's own project (1:1 team↔project) feeds the project-window half
+		// of the check; instance agents (HQ, only an internal project) resolve to
+		// NULL and are checked on their agent windows alone — matching the gate,
+		// which checks agent windows always and a project's only when one is resolved.
+		const paused = await db.query<{ id: string; team_id: string; project_id: string | null }>(
+			`SELECT ma.id, m.team_id, p.id AS project_id
+			 FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 LEFT JOIN projects p ON p.team_id = m.team_id AND p.is_internal = false
+			 WHERE ma.runtime_status = ANY($1::agent_runtime_status[])`,
+			[BUDGET_PAUSE_STATUSES_PG],
+		);
+
+		for (const agent of paused.rows) {
+			await reconcileBudgetPause(
+				db,
+				agent.id,
+				agent.team_id,
+				agent.project_id,
+				this.deps.wsManager,
+			);
 		}
 	}
 
@@ -1298,14 +1358,7 @@ export class JobManager {
 			log.debug(
 				`Agent ${ref(agent.rows[0].slug, memberId)} over ${budgetBlock.scope} ${budgetBlock.period} budget — pausing and skipping wakeup`,
 			);
-			await db.query(
-				'UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2',
-				[AgentRuntimeStatus.Paused, memberId],
-			);
-			broadcastRowChange(this.deps.wsManager, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
-				id: memberId,
-				runtime_status: AgentRuntimeStatus.Paused,
-			});
+			await pauseAgentForBudget(db, memberId, teamId, budgetBlock, this.deps.wsManager);
 			await this.markWakeupSkipped(wakeupId, WakeupSkipReason.OverBudget, task.id, teamId, null);
 			return;
 		}

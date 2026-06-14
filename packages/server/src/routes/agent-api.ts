@@ -1,8 +1,8 @@
 import {
 	AgentAdminStatus,
-	AgentRuntimeStatus,
 	ApprovalType,
 	AuthType,
+	isBudgetPauseStatus,
 	TaskPriority,
 	TERMINAL_TASK_STATUSES,
 } from '@hezo/shared';
@@ -57,7 +57,7 @@ agentApiRoutes.post('/heartbeat', async (c) => {
 
 	if (
 		agentRow.admin_status === AgentAdminStatus.Disabled ||
-		agentRow.runtime_status === AgentRuntimeStatus.Paused
+		isBudgetPauseStatus(agentRow.runtime_status)
 	) {
 		return ok(c, {
 			agent: {

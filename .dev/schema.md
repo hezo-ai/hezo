@@ -258,9 +258,15 @@ since the window's UTC start (today / this ISO-week / this month), so windows
 "reset" implicitly as the clock advances. Limits are `daily_/weekly_/monthly_budget_cents`
 on `member_agents` and `projects`; 0 means unlimited.
 
-When an agent goes over budget it is paused (`runtime_status = 'paused'`) and its
-pending wakeup is skipped — no run is started. The board can raise the limit or
-wait for the window to roll over; the next eligible wakeup then runs.
+When an agent goes over budget it is reactively paused — `runtime_status` becomes
+`out_of_agent_budget` or `out_of_project_budget`, depending on which limit
+tripped — and its pending wakeup is skipped, so no run is started. (Manually
+turning an agent off is a separate axis, `admin_status = 'disabled'`.) Because
+spend is summed over rolling windows
+with no reset event, a background sweep (`processBudgetResumes`, ~30s) re-checks
+every budget-paused agent and lifts it back to `idle` once the window rolls over
+or the board raises the limit; the next eligible wakeup then runs. The pre-run
+gate stays the authority and re-pauses if a window is breached again.
 
 ### Preview files (not in DB)
 
