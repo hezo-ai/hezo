@@ -1,4 +1,5 @@
 import {
+	type ClientRequest,
 	createServer as createHttpServer,
 	type Server as HttpServer,
 	request as httpRequest,
@@ -193,8 +194,46 @@ class RunProxyInstance {
 	private readonly hostServers = new Map<string, HostServer>();
 	private readonly pendingHostServers = new Map<string, Promise<HostServer>>();
 	private closed = false;
+	/** Every socket this run has accepted or bridged (front CONNECT sockets,
+	 * per-host loopback sockets, and the loopback client legs), tracked so close
+	 * can sever them directly. Bun's `closeAllConnections()` does not reach
+	 * hijacked CONNECT sockets or an in-flight streamed response, so a long-lived
+	 * stream (e.g. an MCP server→client SSE channel) would otherwise park
+	 * `server.close()` until the deadline on every teardown. */
+	private readonly liveSockets = new Set<Socket>();
+	/** Every in-flight upstream request. Destroying the client/bridge sockets
+	 * breaks the pipe but leaves the proxy→upstream socket open, so a streamed
+	 * upstream connection (the SSE channel to api.githubcopilot.com) leaks unless
+	 * the request itself is aborted on teardown. */
+	private readonly liveUpstreams = new Set<ClientRequest>();
 
 	constructor(private readonly cfg: RunProxyConfig) {}
+
+	/** Register a socket for forced teardown; auto-untracks when it closes. */
+	private trackSocket(sock: Socket): void {
+		if (this.closed || sock.destroyed) {
+			sock.destroy();
+			return;
+		}
+		this.liveSockets.add(sock);
+		sock.once('close', () => this.liveSockets.delete(sock));
+	}
+
+	/** Register an upstream request for forced abort; auto-untracks on settle.
+	 * Also tracks the underlying socket: under Bun `ClientRequest.destroy()` does
+	 * not reliably tear down the proxy→upstream socket of a streamed response, so
+	 * the socket itself must be severed to release the upstream connection. */
+	private trackUpstream(reqOut: ClientRequest): void {
+		if (this.closed) {
+			reqOut.destroy();
+			return;
+		}
+		this.liveUpstreams.add(reqOut);
+		const cleanup = () => this.liveUpstreams.delete(reqOut);
+		reqOut.once('close', cleanup);
+		reqOut.once('error', cleanup);
+		reqOut.on('socket', (sock) => this.trackSocket(sock));
+	}
 
 	get port(): number {
 		return this.cfg.port;
@@ -207,6 +246,10 @@ class RunProxyInstance {
 	listen(): Promise<void> {
 		const front = createHttpServer();
 		this.front = front;
+		// Track every accepted socket (plain-request and CONNECT alike) so close
+		// can sever it — a hijacked CONNECT socket leaves the server's own
+		// connection list under Bun.
+		front.on('connection', (socket) => this.trackSocket(socket as Socket));
 		front.on('request', (req, res) => {
 			this.forward(false, null, req, res).catch((e: Error) => this.onForwardError(res, e));
 		});
@@ -232,6 +275,15 @@ class RunProxyInstance {
 
 	async close(): Promise<void> {
 		this.closed = true;
+		// Sever every tracked connection first. Without this, a long-lived stream
+		// (an MCP server→client SSE channel) parks each server.close() until the
+		// 5s deadline and leaks the upstream connection — observed in production
+		// as repeated "server close timed out" warnings on api.githubcopilot.com.
+		for (const sock of this.liveSockets) sock.destroy();
+		this.liveSockets.clear();
+		for (const up of this.liveUpstreams) up.destroy();
+		this.liveUpstreams.clear();
+
 		const closables: Array<Promise<void>> = [];
 		for (const [host, { server }] of this.hostServers.entries()) {
 			closables.push(closeServer(server, `${this.cfg.scope.label}/${host}`));
@@ -260,6 +312,7 @@ class RunProxyInstance {
 					return;
 				}
 				const up = netConnect({ host: '127.0.0.1', port: rec.port }, () => {
+					this.trackSocket(up);
 					client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
 					if (head?.length) up.write(head);
 					client.pipe(up);
@@ -310,6 +363,7 @@ class RunProxyInstance {
 		const server = createHttpsServer({ key: leaf.key, cert: leaf.cert }, (req, res) => {
 			this.forward(true, host, req, res).catch((e: Error) => this.onForwardError(res, e));
 		});
+		server.on('connection', (socket) => this.trackSocket(socket as Socket));
 		server.on('clientError', (_err, socket) => socket.destroy());
 		server.on('error', (err) => {
 			log.warn('egress per-host server error', {
@@ -451,6 +505,7 @@ class RunProxyInstance {
 				upstreamRes.pipe(res);
 			},
 		);
+		this.trackUpstream(upstream);
 		upstream.on('error', (err) => this.onForwardError(res, err));
 		req.pipe(upstream);
 	}

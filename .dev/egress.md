@@ -95,7 +95,7 @@ The audit row is only written when there was a substitution attempt — pure pas
 
 - **HMAC-signed bodies** (e.g. AWS SigV4): substitution after signing is impossible. Use the local-MCP-with-proxy pattern — the MCP server itself does the signing using the substituted secret in its env.
 - **WebSocket / HTTP/2**: `Upgrade` requests are not proxied (no agent egress uses them today). An upgrade with no handler is closed cleanly rather than hung. Add an `upgrade`-event path if a real need appears.
-- **Streaming responses** (SSE etc.): the proxy does not buffer or modify response bodies — the upstream response is piped straight back to the client.
+- **Streaming responses** (SSE etc.): the proxy does not buffer or modify response bodies — the upstream response is piped straight back to the client. This is what carries a Streamable-HTTP MCP server's server→client channel (e.g. `api.githubcopilot.com/mcp/`). Because such a stream stays open for the whole run, the proxy **tracks every accepted/bridged socket and every in-flight upstream request** and severs them on `releaseRunProxy`. Without that, an open stream parks `server.close()` on the 5s deadline and **leaks the proxy→upstream socket** on every run — under Bun, `closeAllConnections()` reaches neither a hijacked CONNECT socket nor an in-flight streamed response, and aborting the `ClientRequest` alone does not drop its socket. Accumulated leaked sessions against a remote MCP host are a plausible cause of later "socket connection was closed unexpectedly" failures, so teardown must actually close them.
 - **Cert minting cost**: a few ms per host on first request. Per-host servers stay live for the lifetime of the per-run proxy, so a hot upstream mints once.
 - **Bypass for Hezo backend**: `NO_PROXY=host.docker.internal,localhost,127.0.0.1` excludes the agent → backend path. Verified for Node `undici`, Python `requests`, curl, git, Go.
 
@@ -124,3 +124,7 @@ Cert generation uses mockttp's CA (`@peculiar/x509`), the same path the tests tr
 - `egress-ca.test.ts` — CA generation + idempotent reload
 - `egress-proxy.test.ts` — in-process proxy with a Node HTTP upstream
 - `egress-proxy-docker.test.ts` — real container exercising substitution through curl with the CA bind-mounted into the trust store
+
+`packages/server/test/bun/` (run under `bun test` on the production runtime — Node/vitest can't see the Bun TLS/connection divergences):
+- `egress-proxy.bun.test.ts` — HTTPS MITM termination + per-host cert routing under Bun
+- `egress-streaming.bun.test.ts` — long-lived SSE responses pipe through incrementally, and an open stream is severed (not leaked) on run teardown without parking the close deadline
