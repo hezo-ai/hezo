@@ -100,6 +100,9 @@ export default defineConfig({
 				// agents synthetically (~30-60s per team setup) and no e2e test asserts
 				// on it. Turning it off keeps team-creation under 5s.
 				HEZO_E2E_SKIP_COHERENCE_REVIEW: '1',
+				// Pricing still seeds from the bundled snapshot (offline); skip the
+				// boot-time refresh so e2e doesn't make an outbound feed fetch.
+				HEZO_SKIP_PRICING_REFRESH: '1',
 			},
 		},
 		{

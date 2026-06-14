@@ -1661,9 +1661,32 @@ Different providers report token usage differently. The system normalizes all us
 - Input tokens
 - Output tokens
 - Total tokens
-- Cost in cents (using provider-specific pricing tables)
+- Cost in cents (computed from the runtime pricing table, see below)
 
 This enables accurate cross-provider cost comparison and budget tracking regardless of which runtime an agent uses.
+
+#### Runtime model pricing
+
+Cost is **computed uniformly for every runtime** from per-model token rates, not read from any
+CLI's own cost field. The stream parser (`services/agent-stream-parser`) extracts a run's token
+buckets — regular input, cache-read, cache-creation, output — and the `PricingService`
+(`services/pricing`) multiplies them by the matching model's per-token rates
+(`shared/pricing.ts:costCentsFromRate`). Cache reads and cache writes are priced at their own
+rates (Anthropic: ~0.1x and ~1.25x of base input), so cache-heavy agent runs aren't overstated.
+
+Rates live in the `model_pricing` table and come from two sources, distinguished by `source`:
+
+- **`litellm`** — seeded on first boot from a bundled snapshot of LiteLLM's public pricing feed
+  (`model_prices_and_context_window.json`), then refreshed periodically from the live feed over the
+  server's normal outbound HTTPS (skipped when `HEZO_SKIP_PRICING_REFRESH` is set; a failed refresh
+  keeps the last-known rows, so costing never breaks).
+- **`manual`** — operator overrides entered on the **Model pricing** settings page (superuser).
+  These **win** at lookup time and are never touched by the feed refresh — used for ids the feed
+  doesn't carry (DeepSeek's `deepseek-v4-pro`, Z.ai's GLM ids) or to correct a rate.
+
+Model-id resolution is fuzzy: a CLI-emitted id is matched exactly, then provider-prefix-/date-/
+`[1m]`-stripped, so `claude-opus-4-8-20260205` and `anthropic/claude-opus-4-8` resolve to the same
+rate. An unknown model records `$0` (with a one-time warning) rather than a fabricated cost.
 
 ---
 

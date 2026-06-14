@@ -17,13 +17,23 @@
  * client parses in `parse-agent-log.ts`, so the log viewer's Done block shows
  * tokens uniformly across runtimes.
  */
-import { AgentRuntime } from '@hezo/shared';
+import { AgentRuntime, type CostTokens } from '@hezo/shared';
 
 export interface AgentRunUsage {
 	inputTokens: number;
 	outputTokens: number;
 	costCents: number;
 }
+
+/**
+ * Computes a run's cost in cents from its token buckets, looked up against the
+ * runtime pricing table (see `services/pricing`). Injected by the runner so the
+ * parser stays a pure stream transform; defaults to `0` when no pricing is
+ * wired (standalone use / tests that don't exercise cost).
+ */
+export type PriceModelFn = (model: string | undefined, tokens: CostTokens) => number;
+
+const NO_PRICE: PriceModelFn = () => 0;
 
 export interface AgentStreamParser {
 	onStdout(chunk: string): string;
@@ -32,14 +42,17 @@ export interface AgentStreamParser {
 	getUsage(): AgentRunUsage | null;
 }
 
-export function createAgentStreamParser(runtime: AgentRuntime): AgentStreamParser {
+export function createAgentStreamParser(
+	runtime: AgentRuntime,
+	price: PriceModelFn = NO_PRICE,
+): AgentStreamParser {
 	switch (runtime) {
 		case AgentRuntime.ClaudeCode:
-			return createClaudeCodeParser();
+			return createClaudeCodeParser(price);
 		case AgentRuntime.Codex:
-			return createCodexParser();
+			return createCodexParser(price);
 		case AgentRuntime.Gemini:
-			return createGeminiParser();
+			return createGeminiParser(price);
 		default:
 			return createPassthroughParser();
 	}
@@ -304,8 +317,9 @@ interface ClaudeStreamEvent {
 	usage?: ClaudeUsage;
 }
 
-function createClaudeCodeParser(): AgentStreamParser {
+function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 	let usage: AgentRunUsage | null = null;
+	let modelId: string | undefined;
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as ClaudeStreamEvent;
@@ -313,8 +327,8 @@ function createClaudeCodeParser(): AgentStreamParser {
 
 		if (event.type === 'system' && event.subtype === 'init') {
 			const toolCount = Array.isArray(event.tools) ? event.tools.length : 0;
-			const model = event.model ?? 'unknown';
-			out.push(`[session] model=${model} tools=${toolCount}`);
+			modelId = event.model ?? undefined;
+			out.push(`[session] model=${modelId ?? 'unknown'} tools=${toolCount}`);
 			return out;
 		}
 
@@ -345,16 +359,23 @@ function createClaudeCodeParser(): AgentStreamParser {
 
 		if (event.type === 'result') {
 			const u = event.usage ?? {};
-			const input =
-				(u.input_tokens ?? 0) +
-				(u.cache_creation_input_tokens ?? 0) +
-				(u.cache_read_input_tokens ?? 0);
+			const regularInput = u.input_tokens ?? 0;
+			const cacheCreation = u.cache_creation_input_tokens ?? 0;
+			const cacheRead = u.cache_read_input_tokens ?? 0;
+			// Displayed aggregate keeps every input token; cost prices the buckets
+			// separately (cache read ~0.1x, cache creation ~1.25x of base input).
+			const input = regularInput + cacheCreation + cacheRead;
 			const output = u.output_tokens ?? 0;
 			const costUsd = event.total_cost_usd ?? 0;
 			usage = {
 				inputTokens: input,
 				outputTokens: output,
-				costCents: Math.round(costUsd * 100),
+				costCents: price(modelId, {
+					inputTokens: regularInput,
+					cacheCreationTokens: cacheCreation,
+					cacheReadTokens: cacheRead,
+					outputTokens: output,
+				}),
 			};
 			const duration = event.duration_ms ?? 0;
 			const turns = event.num_turns ?? 0;
@@ -405,16 +426,18 @@ interface CodexEvent {
 	error?: { message?: string } | string;
 }
 
-function createCodexParser(): AgentStreamParser {
+function createCodexParser(price: PriceModelFn): AgentStreamParser {
 	let usage: AgentRunUsage | null = null;
 	let turns = 0;
+	let modelId: string | undefined;
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as CodexEvent;
 		const type = event.type ?? '';
 
 		if (type === 'thread.started') {
-			return [`[session] model=${event.model ?? 'codex'} tools=0`];
+			modelId = event.model ?? undefined;
+			return [`[session] model=${modelId ?? 'codex'} tools=0`];
 		}
 
 		// A turn wraps one user→assistant exchange (tool calls included), so a
@@ -424,8 +447,19 @@ function createCodexParser(): AgentStreamParser {
 			turns += 1;
 			const u = event.usage ?? {};
 			const input = u.input_tokens ?? 0;
+			const cached = u.cached_input_tokens ?? 0;
 			const output = (u.output_tokens ?? 0) + (u.reasoning_output_tokens ?? 0);
-			usage = { inputTokens: input, outputTokens: output, costCents: 0 };
+			// `input_tokens` already includes `cached_input_tokens`; price the cached
+			// portion at the (discounted) cache-read rate, the rest at full input.
+			usage = {
+				inputTokens: input,
+				outputTokens: output,
+				costCents: price(modelId, {
+					inputTokens: Math.max(0, input - cached),
+					cacheReadTokens: cached,
+					outputTokens: output,
+				}),
+			};
 			const status = type === 'turn.failed' ? 'error' : 'success';
 			return [`[done] ${status} turns=${turns} tokens=${input}/${output}`];
 		}
@@ -515,7 +549,7 @@ interface GeminiEvent {
 	error?: { message?: string } | string;
 }
 
-function createGeminiParser(): AgentStreamParser {
+function createGeminiParser(price: PriceModelFn): AgentStreamParser {
 	let usage: AgentRunUsage | null = null;
 
 	const renderEvent = (raw: unknown): string[] => {
@@ -546,7 +580,8 @@ function createGeminiParser(): AgentStreamParser {
 
 		if (type === 'result') {
 			const { input, output } = sumGeminiTokens(event.stats);
-			usage = { inputTokens: input, outputTokens: output, costCents: 0 };
+			const costCents = priceGeminiModels(event.stats, price);
+			usage = { inputTokens: input, outputTokens: output, costCents };
 			const status = event.error ? 'error' : 'success';
 			return [`[done] ${status} tokens=${input}/${output}`];
 		}
@@ -577,6 +612,28 @@ function sumGeminiTokens(stats: GeminiStats | undefined): { input: number; outpu
 		output += (t.candidates ?? 0) + (t.thoughts ?? 0);
 	}
 	return { input, output };
+}
+
+/**
+ * Price each model Gemini reports separately and sum the cents. `cached` is a
+ * subset of `prompt` billed at the cache-read rate; the rest of `prompt` is
+ * full-rate input, and billed output is `candidates` + reasoning `thoughts`.
+ */
+function priceGeminiModels(stats: GeminiStats | undefined, price: PriceModelFn): number {
+	let cents = 0;
+	for (const [modelId, model] of Object.entries(stats?.models ?? {})) {
+		const t = model.tokens;
+		if (!t) continue;
+		const prompt = t.prompt ?? 0;
+		const cached = t.cached ?? 0;
+		const output = (t.candidates ?? 0) + (t.thoughts ?? 0);
+		cents += price(modelId, {
+			inputTokens: Math.max(0, prompt - cached),
+			cacheReadTokens: cached,
+			outputTokens: output,
+		});
+	}
+	return cents;
 }
 
 // ---------------------------------------------------------------------------

@@ -23,6 +23,7 @@ import {
 } from '../src/services/agent-runner';
 import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import { PricingService, upsertManualRate } from '../src/services/pricing';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject } from './helpers/app';
 
@@ -1633,6 +1634,16 @@ describe('runAgent', () => {
 				},
 				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 			});
+			// Wire pricing so the run's cost is computed from the table (a manual
+			// override keeps the expected value deterministic, independent of the
+			// bundled snapshot's real rates).
+			const pricing = new PricingService(db);
+			await upsertManualRate(db, {
+				model_id: 'claude-opus-4-7',
+				input_per_token: 0.0001,
+				output_per_token: 0.0002,
+			});
+			await pricing.reload();
 			const deps: RunnerDeps = {
 				db,
 				docker,
@@ -1640,6 +1651,7 @@ describe('runAgent', () => {
 				serverPort: 3000,
 				dataDir: '/tmp/test-data',
 				logs: new LogStreamBroker(),
+				pricing,
 			};
 
 			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
@@ -1663,7 +1675,9 @@ describe('runAgent', () => {
 
 			expect(row.rows[0].input_tokens).toBe(1200);
 			expect(row.rows[0].output_tokens).toBe(350);
-			expect(row.rows[0].cost_cents).toBe(12);
+			// Computed from the table, not total_cost_usd (0.1234 → would have been 12c):
+			// 1200*0.0001 + 350*0.0002 = 0.12 + 0.07 = 0.19 → 19 cents.
+			expect(row.rows[0].cost_cents).toBe(19);
 		});
 
 		it('falls back to /workspace when no repos are linked', async () => {

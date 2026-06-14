@@ -9,6 +9,7 @@ import type { DockerClient } from '../services/docker';
 import type { EgressProxy } from '../services/egress';
 import type { JobManager } from '../services/job-manager';
 import type { LogStreamBroker } from '../services/log-stream-broker';
+import type { PricingService } from '../services/pricing';
 import type { SshAgentServer } from '../services/ssh-agent';
 import type { WebSocketManager } from '../services/ws';
 
@@ -47,6 +48,7 @@ export type Env = {
 		webUrl: string;
 		sshAgentServer: SshAgentServer | null;
 		egressProxy: EgressProxy | null;
+		pricing?: PricingService;
 		teamId?: string;
 		projectId?: string;
 	};

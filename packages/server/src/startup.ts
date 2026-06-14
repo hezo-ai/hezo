@@ -36,6 +36,7 @@ import { instanceSettingsRoutes } from './routes/instance-settings';
 import { mcpConnectionsRoutes } from './routes/mcp-connections';
 import { meRoutes } from './routes/me';
 import { mentionsRoutes } from './routes/mentions';
+import { modelPricingRoutes } from './routes/model-pricing';
 import { oauthRoutes } from './routes/oauth';
 import { preferencesRoutes } from './routes/preferences';
 import { previewRoutes } from './routes/preview';
@@ -59,6 +60,7 @@ import { EgressProxy, loadOrCreateCA } from './services/egress';
 import { pruneStaleBundledImages } from './services/image-registry';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
+import { PricingService } from './services/pricing';
 import { SshAgentServer } from './services/ssh-agent';
 import { WebSocketManager } from './services/ws';
 import { loadStaticBundle } from './static-assets';
@@ -99,6 +101,12 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	await db.exec(BASE_SCHEMA);
 	db = await runAvailableMigrations(db, config.dataDir);
 	await runSeed(db);
+
+	// Runtime model pricing: seed the table from the bundled snapshot if empty,
+	// load it into memory, and (unless disabled) refresh from the live LiteLLM
+	// feed in the background. Drives per-run cost across every runtime.
+	const pricing = new PricingService(db);
+	await pricing.init({ refresh: !process.env.HEZO_SKIP_PRICING_REFRESH });
 
 	const masterKeyManager = new MasterKeyManager();
 	const masterKeyState = await resolveMasterKeyState(db, masterKeyManager, config.masterKey);
@@ -142,6 +150,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		sshAgentServer,
 		egressProxy,
 		egressCAPath: egressCA.certPath,
+		pricing,
 	});
 	const ceoSessionManager = new CeoSessionManager({
 		db,
@@ -210,6 +219,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		containerLogStreamer,
 		events,
 		ceoSessionManager,
+		pricing,
 	);
 
 	return {
@@ -242,6 +252,7 @@ export function buildApp(
 	containerLogStreamer: ContainerLogStreamer = new ContainerLogStreamer(),
 	events: DomainEventBus = new DomainEventBus(),
 	ceoSessionManager?: CeoSessionManager,
+	pricing?: PricingService,
 ): Hono<Env> {
 	const app = new Hono<Env>();
 	const authChallenges = new AuthChallengeStore();
@@ -268,6 +279,7 @@ export function buildApp(
 		c.set('webUrl', config.webUrl);
 		c.set('sshAgentServer', sshAgentServer);
 		c.set('egressProxy', egressProxy);
+		if (pricing) c.set('pricing', pricing);
 		return next();
 	});
 
@@ -338,6 +350,7 @@ export function buildApp(
 	app.route('/api', mentionsRoutes);
 	app.route('/api', aiProvidersRoutes);
 	app.route('/api', instanceSettingsRoutes);
+	app.route('/api', modelPricingRoutes);
 	app.route('/api', reposRoutes);
 	app.route('/api', executionLocksRoutes);
 	app.route('/api', queuedWakeupsRoutes);
