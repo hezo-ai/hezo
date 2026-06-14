@@ -86,8 +86,10 @@ test('CEO replies render unique refs as links; unknown and backticked refs stay 
 		`/projects/${refs.projectSlug}/tasks/${ident.toLowerCase()}#comment-${refs.commentId}`,
 	);
 
+	// The doc name now opens the standalone preview in a new tab (same as the suffix).
 	const docLink = getByTestId('doc-mention-link');
-	expect(docLink.getAttribute('href')).toBe(`/projects/${refs.projectSlug}/documents?file=prd.md`);
+	expect(docLink.getAttribute('href')).toBe(`/preview/${refs.projectSlug}/prd.md`);
+	expect(docLink.getAttribute('target')).toBe('_blank');
 
 	// Unknown identifiers stay plain text — no link wraps ZZ-99.
 	const body = getByTestId('ceo-chat-markdown');

@@ -73,6 +73,9 @@ test('an assets/<name> reference in a comment links to the asset and opens it in
 	await findByTestId('text-comment-body', undefined, { timeout: 15_000 });
 	const link = await findByTestId('asset-mention-link', undefined, { timeout: 15_000 });
 	expect(link.textContent).toContain('assets/login.png');
+	// Clicking the name now does the same as the icon: open the asset in a new tab.
+	expect(link.getAttribute('href')).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
+	expect(link.getAttribute('target')).toBe('_blank');
 	const preview = await findByTestId('asset-mention-preview-link', undefined, { timeout: 15_000 });
 	expect(preview.getAttribute('href')).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
 	expect(preview.getAttribute('target')).toBe('_blank');
