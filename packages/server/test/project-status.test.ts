@@ -29,7 +29,7 @@ describe('deriveProjectStatus', () => {
 
 	it('returns null when the execution scope is empty', () => {
 		expect(
-			deriveProjectStatus([row({ id: planningId, labels: ['planning'] })], planningId, 'execution'),
+			deriveProjectStatus([row({ id: planningId, labels: ['planning'] })], planningId),
 		).toBeNull();
 	});
 
@@ -39,12 +39,12 @@ describe('deriveProjectStatus', () => {
 			row({ id: 'a', status: TaskStatus.Done }),
 			row({ id: 'b', status: TaskStatus.Closed }),
 		];
-		expect(deriveProjectStatus(tasks, planningId, 'execution')).toBe(ProjectStatus.Completed);
+		expect(deriveProjectStatus(tasks, planningId)).toBe(ProjectStatus.Completed);
 	});
 
 	it('returns working when a scoped task has a queued run', () => {
 		const tasks = [row({ id: 'a', status: TaskStatus.Backlog, has_active_run: true })];
-		expect(deriveProjectStatus(tasks, null, 'execution')).toBe(ProjectStatus.Working);
+		expect(deriveProjectStatus(tasks, null)).toBe(ProjectStatus.Working);
 	});
 
 	it('prefers working over error', () => {
@@ -56,7 +56,7 @@ describe('deriveProjectStatus', () => {
 			}),
 			row({ id: 'b', status: TaskStatus.InProgress, has_active_run: true }),
 		];
-		expect(deriveProjectStatus(tasks, null, 'execution')).toBe(ProjectStatus.Working);
+		expect(deriveProjectStatus(tasks, null)).toBe(ProjectStatus.Working);
 	});
 
 	it('returns error only when every in_progress task has a failed last run', () => {
@@ -64,31 +64,23 @@ describe('deriveProjectStatus', () => {
 			row({ id: 'a', status: TaskStatus.InProgress, last_run_status: 'failed' }),
 			row({ id: 'b', status: TaskStatus.InProgress, last_run_status: 'timed_out' }),
 		];
-		expect(deriveProjectStatus(tasks, null, 'execution')).toBe(ProjectStatus.Error);
+		expect(deriveProjectStatus(tasks, null)).toBe(ProjectStatus.Error);
 
 		const mixed = [
 			row({ id: 'a', status: TaskStatus.InProgress, last_run_status: 'failed' }),
 			row({ id: 'b', status: TaskStatus.InProgress, last_run_status: 'succeeded' }),
 		];
-		expect(deriveProjectStatus(mixed, null, 'execution')).toBe(ProjectStatus.Idle);
+		expect(deriveProjectStatus(mixed, null)).toBe(ProjectStatus.Idle);
 	});
 
 	it('does not return error when there are no in_progress tasks', () => {
 		const tasks = [row({ id: 'a', status: TaskStatus.Backlog, last_run_status: 'failed' })];
-		expect(deriveProjectStatus(tasks, null, 'execution')).toBe(ProjectStatus.Idle);
+		expect(deriveProjectStatus(tasks, null)).toBe(ProjectStatus.Idle);
 	});
 
 	it('returns idle as the fallback', () => {
 		const tasks = [row({ id: 'a', status: TaskStatus.Backlog })];
-		expect(deriveProjectStatus(tasks, null, 'execution')).toBe(ProjectStatus.Idle);
-	});
-
-	it('derives status from the planning epic and its sub-tasks', () => {
-		const tasks = [
-			row({ id: planningId, labels: ['planning'], status: TaskStatus.InProgress }),
-			row({ id: 'prd', parent_task_id: planningId, status: TaskStatus.Backlog }),
-		];
-		expect(deriveProjectStatus(tasks, planningId, 'planning')).toBe(ProjectStatus.Idle);
+		expect(deriveProjectStatus(tasks, null)).toBe(ProjectStatus.Idle);
 	});
 });
 

@@ -2,40 +2,6 @@ import { expect, test } from './fixtures';
 import { createProjectAndClearPlanning, uniqueName, waitForPageLoad } from './helpers';
 
 test.describe('Project task list — progress header (mobile)', () => {
-	test('shows the planning phase banner while the draft execution plan is active', async ({
-		page,
-		sharedWorkspace,
-	}) => {
-		const { token } = sharedWorkspace;
-		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-
-		const projRes = await page.request.post('/api/projects', {
-			headers,
-			data: { name: uniqueName('Planning Phase'), description: 'E2E planning banner.' },
-		});
-		expect(projRes.ok()).toBeTruthy();
-		const project = (
-			(await projRes.json()) as {
-				data: { slug: string; name: string; planning_task_id: string };
-			}
-		).data;
-
-		const patchRes = await page.request.patch(
-			`/api/projects/${project.slug}/tasks/${project.planning_task_id}`,
-			{ headers, data: { status: 'in_progress' } },
-		);
-		expect(patchRes.ok()).toBeTruthy();
-
-		await page.goto(`/projects/${project.slug}/tasks`);
-		await waitForPageLoad(page);
-
-		const banner = page.getByTestId('project-task-list-phase-banner-planning');
-		await expect(banner).toBeVisible({ timeout: 20_000 });
-		await expect(banner).toContainText(`${project.name} - Planning phase`);
-		await expect(page.getByTestId('project-status-idle')).toBeVisible();
-		await expect(page.getByTestId('task-progress-bar')).toBeHidden();
-	});
-
 	test('shows the segmented progress bar after planning is closed', async ({
 		page,
 		sharedWorkspace,
@@ -102,6 +68,5 @@ test.describe('Project task list — progress header (mobile)', () => {
 				.getByTestId('task-progress-segment-in-progress')
 				.or(page.getByTestId('task-progress-segment-not-done')),
 		).toBeVisible({ timeout: 20_000 });
-		await expect(page.getByTestId('project-task-list-phase-banner-planning')).toBeHidden();
 	});
 });

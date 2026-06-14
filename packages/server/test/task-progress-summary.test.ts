@@ -182,7 +182,7 @@ describe('GET /projects/:projectId/tasks/progress-summary phase_banner', () => {
 		expect(summary.phase_banner).toBe(ProjectTaskListPhaseBanner.Onboarding);
 	});
 
-	it('returns planning when coherence is done and the planning ticket is in progress', async () => {
+	it('shows no banner when coherence is done and the planning ticket is in progress', async () => {
 		await insertCoherenceTask(TaskStatus.Done);
 		await db.query('UPDATE tasks SET status = $1::task_status WHERE id = $2', [
 			TaskStatus.InProgress,
@@ -190,15 +190,11 @@ describe('GET /projects/:projectId/tasks/progress-summary phase_banner', () => {
 		]);
 
 		const summary = await getSummary();
-		expect(summary.phase_banner).toBe(ProjectTaskListPhaseBanner.Planning);
-		expect(summary.project_status).toBe('idle');
-		const nameRow = await db.query<{ name: string }>('SELECT name FROM projects WHERE id = $1', [
-			projectId,
-		]);
-		expect(summary.project_name).toBe(nameRow.rows[0].name);
+		expect(summary.phase_banner).toBeNull();
+		expect(summary.project_status).toBeNull();
 	});
 
-	it('prefers onboarding over planning when both tickets are active', async () => {
+	it('shows onboarding while coherence is open even if planning is in progress', async () => {
 		await insertCoherenceTask(TaskStatus.InProgress);
 		await db.query('UPDATE tasks SET status = $1::task_status WHERE id = $2', [
 			TaskStatus.InProgress,
