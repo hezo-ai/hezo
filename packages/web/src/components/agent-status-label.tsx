@@ -10,9 +10,11 @@ interface AgentStatusLabelProps {
 export function AgentStatusLabel({ name, runtimeStatus, className = '' }: AgentStatusLabelProps) {
 	const badge = agentRuntimeStatusMeta(runtimeStatus);
 	return (
-		<span className={`inline-flex items-center gap-1.5 ${className}`}>
-			<span className="truncate">{name}</span>
-			<Badge color={badge.color}>{badge.label}</Badge>
+		<span className={`inline-flex min-w-0 items-center gap-1.5 ${className}`}>
+			<span className="min-w-0 truncate">{name}</span>
+			<Badge color={badge.color} className="shrink-0">
+				{badge.label}
+			</Badge>
 		</span>
 	);
 }

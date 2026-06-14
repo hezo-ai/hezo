@@ -330,9 +330,13 @@ export function TaskList({ projectId }: TaskListProps) {
 		{
 			key: 'assignee',
 			header: 'Assignee',
-			width: '100px',
+			width: '120px',
 			hideOnMobile: true,
-			render: (row) => <span className="text-text-muted">{row.assignee_name || '—'}</span>,
+			render: (row) => (
+				<span className="block max-w-[140px] truncate text-text-muted">
+					{row.assignee_name || '—'}
+				</span>
+			),
 		},
 	];
 
