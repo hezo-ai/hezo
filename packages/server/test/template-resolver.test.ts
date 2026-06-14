@@ -942,6 +942,110 @@ describe('project state block', () => {
 	});
 });
 
+describe('repository block', () => {
+	let repoTeamId: string;
+	let repoProjectId: string;
+
+	beforeAll(async () => {
+		const teamRes = await app.request('/api/teams', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Repo Co', description: 'Repository block test team' }),
+		});
+		repoTeamId = ((await teamRes.json()) as any).data.id;
+		const projectRes = await createTestProject(db, repoTeamId, {
+			name: 'Repo Project',
+			description: 'Test',
+		});
+		repoProjectId = ((await projectRes.json()) as any).data.id;
+	});
+
+	it('omits the Repository block when the project has no linked repo', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			teamId: repoTeamId,
+			projectId: repoProjectId,
+		});
+		expect(result).not.toContain('## Repository');
+	});
+
+	it('names the designated repo by owner/name and forbids inventing/creating one or using a PAT', async () => {
+		const repoIns = await db.query<{ id: string }>(
+			`INSERT INTO repos (project_id, repo_identifier, host_type)
+			 VALUES ($1, 'acme/widgets', 'github'::repo_host_type)
+			 RETURNING id`,
+			[repoProjectId],
+		);
+		await db.query('UPDATE projects SET designated_repo_id = $1 WHERE id = $2', [
+			repoIns.rows[0].id,
+			repoProjectId,
+		]);
+
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			teamId: repoTeamId,
+			projectId: repoProjectId,
+		});
+		expect(result).toContain('## Repository');
+		expect(result).toContain('Designated repository: `acme/widgets` (github)');
+		// The four behaviours the agent got wrong: inventing/creating a repo,
+		// repointing origin, fetching a PAT for git, and disabling TLS.
+		expect(result).toContain('Never create a new repository');
+		expect(result).toContain('repoint `origin`');
+		expect(result).toContain('git push -u origin');
+		expect(result).toContain('do **not** need a GitHub Personal Access Token');
+		expect(result).toContain('Never disable TLS verification');
+		// PRs go through the github MCP, not raw curl to api.github.com.
+		expect(result).toContain('`github` MCP');
+		expect(result).toContain('api.github.com');
+		// The repo is named by owner/name, never by its internal UUID.
+		expect(result).not.toContain(repoIns.rows[0].id);
+	});
+
+	it('lists additional linked repos under the designated one', async () => {
+		await db.query(
+			`INSERT INTO repos (project_id, repo_identifier, host_type)
+			 VALUES ($1, 'acme/docs', 'github'::repo_host_type)`,
+			[repoProjectId],
+		);
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			teamId: repoTeamId,
+			projectId: repoProjectId,
+		});
+		expect(result).toContain('Designated repository: `acme/widgets`');
+		expect(result).toContain('Also linked: `acme/docs`');
+	});
+
+	it('omits the Repository block for a cross-team (roaming) resolve', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			teamId: repoTeamId,
+			projectId: repoProjectId,
+			crossTeam: true,
+		});
+		expect(result).not.toContain('## Repository');
+	});
+
+	it('omits the Repository block in preview mode', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			teamId: repoTeamId,
+			projectId: repoProjectId,
+			mode: 'preview',
+		});
+		expect(result).not.toContain('## Repository');
+	});
+
+	it('renders the Repository block after Run Context and before Project State', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', {
+			teamId: repoTeamId,
+			projectId: repoProjectId,
+		});
+		const runCtxIdx = result.indexOf('## Run Context');
+		const repoIdx = result.indexOf('## Repository');
+		const stateIdx = result.indexOf('## Project State');
+		expect(runCtxIdx).toBeGreaterThan(-1);
+		expect(repoIdx).toBeGreaterThan(runCtxIdx);
+		expect(stateIdx).toBeGreaterThan(repoIdx);
+	});
+});
+
 describe('projects context block ({{projects_context}})', () => {
 	it('lists every non-internal project by name and slug, with no team in the line', async () => {
 		const result = await resolveSystemPrompt(db, 'Roster:\n{{projects_context}}', { teamId });
