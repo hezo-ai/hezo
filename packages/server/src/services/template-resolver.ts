@@ -238,6 +238,9 @@ export async function resolveSystemPrompt(
 
 	if (ctx.mode !== 'preview') {
 		resolved += await buildRunContextBlock(db, ctx);
+		if (!ctx.crossTeam) {
+			resolved += await buildRepositoryBlock(db, ctx);
+		}
 	}
 	if (!ctx.crossTeam) {
 		resolved += await buildProjectStateBlock(db, ctx);
@@ -476,4 +479,60 @@ You are not scoped to a single project — you roam across the whole org, so the
 ## Run Context
 
 This run operates inside one project. MCP tools that take a \`project\` argument default to it — omit \`project\` to act here, and only pass another project's slug to reach a different one. Reference tickets by their identifier (e.g. \`${taskIdentifier || 'ABC-12'}\`), never a UUID.${lines.length ? `\n\n${lines.join('\n')}` : ''}`;
+}
+
+interface RepoContextRow {
+	repo_identifier: string;
+	host_type: string;
+	is_designated: boolean | null;
+}
+
+/**
+ * Names the project's designated repository in-prompt so an agent never has to
+ * guess where its code goes. The repo is already cloned and the run's working
+ * directory is a worktree checked out from it (so `origin` is preconfigured to
+ * it over SSH). Without this, agents that need to push or open a PR have no idea
+ * the repo exists and invent a name — then chase a PAT / disable TLS / create a
+ * brand-new repo to make their invented name work. Regenerated every run from
+ * live DB state; omitted entirely when the project has no linked repo (a
+ * code-touching run with no repo is gated upstream by the repo-setup approval).
+ */
+async function buildRepositoryBlock(db: PGlite, ctx: ResolveContext): Promise<string> {
+	if (!ctx.projectId) return '';
+
+	const repos = await db.query<RepoContextRow>(
+		`SELECT r.repo_identifier, r.host_type::text AS host_type,
+		        (r.id = p.designated_repo_id) AS is_designated
+		 FROM repos r
+		 JOIN projects p ON p.id = r.project_id
+		 WHERE r.project_id = $1
+		 ORDER BY (r.id = p.designated_repo_id) DESC NULLS LAST, r.created_at ASC`,
+		[ctx.projectId],
+	);
+	if (repos.rows.length === 0) return '';
+
+	const designated = repos.rows.find((r) => r.is_designated === true) ?? repos.rows[0];
+	const others = repos.rows.filter((r) => r !== designated);
+
+	const repoLines = [
+		`- Designated repository: \`${designated.repo_identifier}\` (${designated.host_type})`,
+	];
+	if (others.length > 0) {
+		repoLines.push(`- Also linked: ${others.map((r) => `\`${r.repo_identifier}\``).join(', ')}`);
+	}
+
+	return `
+
+---
+
+## Repository
+
+This project has a **designated repository** — the one and only place your code goes. It is already cloned into your workspace, and your run's working directory is a git worktree checked out from it, so the \`origin\` remote is already pointed at it. **Never create a new repository, invent a repo name, or repoint \`origin\`** — the repo below already exists and is the target for every push and pull request.
+
+${repoLines.join('\n')}
+
+- **Push to \`origin\` as-is.** \`git push -u origin <branch>\` (e.g. \`git push -u origin hezo/<TICKET>\`) works out of the box — git authenticates over **SSH** with the project's key. You do **not** need a GitHub Personal Access Token for git, so never call \`request_credential\` for a PAT to push or to create a repo.
+- **Open and manage pull requests against this repository** with the \`github\` MCP tools (e.g. \`create_pull_request\`), targeting this repo. Use the \`github\` MCP for any other GitHub API need rather than raw \`curl\` to \`api.github.com\`.
+- **Never disable TLS verification** (\`curl -k\`, \`-c http.sslVerify=false\`, \`GIT_SSL_NO_VERIFY\`). Outbound HTTPS is already trusted via the preconfigured CA; a TLS error is a signal to diagnose, not to bypass.
+- If the \`github\` MCP is unavailable, push the branch and say so in your wrap-up — do not fall back to creating a repo or fetching a PAT.`;
 }
