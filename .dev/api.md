@@ -854,9 +854,8 @@ Response:
 ```
 
 - `planning_complete` — `true` once the planning epic is `closed`.
-- `project_status` — headline status for the current scope: `completed`, `working`, `error`, or `idle`. Precedence is Completed → Working → Error → Idle. `null` during onboarding (open team-coherence review) or before planning is complete when no planning-phase banner is shown.
-- `phase_banner` — `onboarding` while the team-coherence review ticket is open; `planning` while the planning epic is `in_progress` or `review`; otherwise `null`. When a banner is shown, the segmented progress bar is hidden.
-- `project_status` during the planning banner reflects planning-scope tasks only; after `planning_complete`, it reflects execution-scope tasks.
+- `project_status` — headline status across execution-scope tasks: `completed`, `working`, `error`, or `idle`. Precedence is Completed → Working → Error → Idle. `null` until `planning_complete` (during onboarding and the planning phase the per-task run dot is the working indicator).
+- `phase_banner` — `onboarding` while the team-coherence review ticket is open; otherwise `null`. When the onboarding banner is shown, the segmented progress bar is hidden.
 
 #### `POST /projects/:projectId/tasks`
 Create an task.

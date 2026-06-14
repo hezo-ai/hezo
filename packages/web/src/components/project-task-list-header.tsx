@@ -1,36 +1,18 @@
-import {
-	ProjectTaskListPhaseBanner as PhaseBannerKind,
-	type TaskProgressSummary,
-} from '@hezo/shared';
+import type { TaskProgressSummary } from '@hezo/shared';
 import { useTaskProgressSummary } from '../hooks/use-task-progress-summary';
 import { ProjectStatusBadge } from './project-status-badge';
 
 const bannerClass =
 	'mb-4 rounded-md border border-border bg-bg-elevated px-3 py-2.5 sm:px-4 text-sm text-text';
 
-function PhaseBanner({ summary }: { summary: TaskProgressSummary }) {
-	if (summary.phase_banner === PhaseBannerKind.Onboarding) {
-		return (
-			<div
-				data-testid="project-task-list-phase-banner-onboarding"
-				className={bannerClass}
-				role="status"
-			>
-				Please wait whilst the CEO onboards your new team members
-			</div>
-		);
-	}
-
+function OnboardingBanner() {
 	return (
 		<div
-			data-testid="project-task-list-phase-banner-planning"
+			data-testid="project-task-list-phase-banner-onboarding"
 			className={bannerClass}
 			role="status"
 		>
-			<div className="flex flex-wrap items-center gap-2 min-w-0">
-				{summary.project_status && <ProjectStatusBadge status={summary.project_status} />}
-				<span className="font-medium">{summary.project_name} - Planning phase</span>
-			</div>
+			Please wait whilst the CEO onboards your new team members
 		</div>
 	);
 }
@@ -115,7 +97,7 @@ export function ProjectTaskListHeader({ projectId }: { projectId: string }) {
 
 	return (
 		<>
-			{summary.phase_banner && <PhaseBanner summary={summary} />}
+			{summary.phase_banner && <OnboardingBanner />}
 			{showProgressBar && <ProgressBar summary={summary} />}
 		</>
 	);

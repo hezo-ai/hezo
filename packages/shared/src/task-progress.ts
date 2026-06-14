@@ -34,18 +34,6 @@ export function isExecutionScopeTask(
 	return !hasPlanningLabel(task.labels);
 }
 
-/** Planning-scope tasks are the planning epic and its direct sub-tasks. */
-export function isPlanningScopeTask(
-	task: TaskProgressScopeInput,
-	planningTaskId: string | null,
-): boolean {
-	if (!planningTaskId) return false;
-	if (task.id === planningTaskId) return true;
-	return task.parent_task_id === planningTaskId;
-}
-
-export type ProjectStatusScope = 'execution' | 'planning';
-
 /** Planning phase ends when the Captain's planning epic is Coach-closed. */
 export function isPlanningPhaseComplete(planningTaskStatus: string | null): boolean {
 	return planningTaskStatus === TaskStatus.Closed;
@@ -74,7 +62,6 @@ export const TEAM_COHERENCE_REVIEW_LABEL = 'team-coherence-review';
 
 export const ProjectTaskListPhaseBanner = {
 	Onboarding: 'onboarding',
-	Planning: 'planning',
 } as const;
 export type ProjectTaskListPhaseBanner =
 	(typeof ProjectTaskListPhaseBanner)[keyof typeof ProjectTaskListPhaseBanner];
@@ -83,20 +70,12 @@ function isOpenTaskStatus(status: string): boolean {
 	return !(TERMINAL_TASK_STATUSES as readonly string[]).includes(status);
 }
 
-function isActivePlanningStatus(status: string): boolean {
-	return status === TaskStatus.InProgress || status === TaskStatus.Review;
-}
-
 /** Banner shown above the project task list before execution tracking begins. */
 export function deriveProjectTaskListPhaseBanner(input: {
 	coherenceReviewStatus: string | null;
-	planningTaskStatus: string | null;
 }): ProjectTaskListPhaseBanner | null {
 	if (input.coherenceReviewStatus !== null && isOpenTaskStatus(input.coherenceReviewStatus)) {
 		return ProjectTaskListPhaseBanner.Onboarding;
-	}
-	if (input.planningTaskStatus !== null && isActivePlanningStatus(input.planningTaskStatus)) {
-		return ProjectTaskListPhaseBanner.Planning;
 	}
 	return null;
 }
@@ -110,7 +89,7 @@ export interface TaskProgressSummary {
 	not_done: number;
 	percent_complete: number;
 	by_status: Record<string, number>;
-	/** Null before planning is complete (execution) or during the planning-phase banner. */
+	/** Null until planning is complete; then the execution-scope headline status. */
 	project_status: ProjectStatus | null;
 	project_name: string;
 	phase_banner: ProjectTaskListPhaseBanner | null;
@@ -133,19 +112,14 @@ export function isLastRunFailed(hasActiveRun: boolean, lastRunStatus: string | n
 }
 
 /**
- * Derive the headline project status for a task scope.
+ * Derive the headline project status across execution-scope tasks.
  * Precedence: Completed → Working → Error → Idle.
  */
 export function deriveProjectStatus(
 	tasks: TaskProgressStatusRow[],
 	planningTaskId: string | null,
-	scope: ProjectStatusScope,
 ): ProjectStatus | null {
-	const scoped = tasks.filter((t) =>
-		scope === 'execution'
-			? isExecutionScopeTask(t, planningTaskId)
-			: isPlanningScopeTask(t, planningTaskId),
-	);
+	const scoped = tasks.filter((t) => isExecutionScopeTask(t, planningTaskId));
 	if (scoped.length === 0) return null;
 
 	const terminal = TERMINAL_TASK_STATUSES as readonly string[];
@@ -199,14 +173,11 @@ export function buildTaskProgressSummary(input: {
 
 	const phase_banner = deriveProjectTaskListPhaseBanner({
 		coherenceReviewStatus: input.coherenceReviewStatus,
-		planningTaskStatus: input.planningTaskStatus,
 	});
 
 	const project_status = planningComplete
-		? deriveProjectStatus(input.tasks, input.planningTaskId, 'execution')
-		: phase_banner === ProjectTaskListPhaseBanner.Planning
-			? deriveProjectStatus(input.tasks, input.planningTaskId, 'planning')
-			: null;
+		? deriveProjectStatus(input.tasks, input.planningTaskId)
+		: null;
 
 	return {
 		planning_complete: planningComplete,

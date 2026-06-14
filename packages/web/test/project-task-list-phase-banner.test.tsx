@@ -83,10 +83,10 @@ test('tasks page shows onboarding banner while coherence review is open', async 
 	expect(queryByTestId('project-task-list-phase-banner-planning')).toBeNull();
 });
 
-test('tasks page shows planning banner when the draft execution plan is in progress', async () => {
+test('tasks page shows no phase banner during planning', async () => {
 	let projectSlug = '';
 
-	const { findByTestId, findByText, queryByTestId, router } = await renderApp({
+	const { findByText, queryByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -103,8 +103,10 @@ test('tasks page shows planning banner when the draft execution plan is in progr
 		params: { projectId: projectSlug },
 	});
 
-	await findByTestId('project-task-list-phase-banner-planning', undefined, { timeout: 10_000 });
-	await findByTestId('project-status-idle');
-	await findByText('Planning Phase Project - Planning phase');
+	// The planning epic renders in the list, but no phase banner is shown — the
+	// per-task run dot is the only "working" indicator during the planning phase.
+	await findByText(/Draft execution plan for/, undefined, { timeout: 10_000 });
+	expect(queryByTestId('project-task-list-phase-banner-planning')).toBeNull();
 	expect(queryByTestId('project-task-list-phase-banner-onboarding')).toBeNull();
+	expect(queryByTestId('task-progress-bar')).toBeNull();
 });
