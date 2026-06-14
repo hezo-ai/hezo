@@ -130,4 +130,9 @@ test('a doc mention in a task comment gets a suffix link to the standalone previ
 	const preview = await findByTestId('doc-mention-preview-link', undefined, { timeout: 15_000 });
 	expect(preview.getAttribute('href')).toBe(`/preview/${ctx.projectSlug}/ui-mockups.md`);
 	expect(preview.getAttribute('target')).toBe('_blank');
+
+	// Clicking the name now does the same as the icon: open the preview in a new tab.
+	const name = await findByTestId('doc-mention-link');
+	expect(name.getAttribute('href')).toBe(`/preview/${ctx.projectSlug}/ui-mockups.md`);
+	expect(name.getAttribute('target')).toBe('_blank');
 });

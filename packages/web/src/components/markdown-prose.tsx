@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { ExternalLink } from 'lucide-react';
-import { useMemo } from 'react';
+import { type ReactNode, useMemo } from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAgents } from '../hooks/use-agents';
@@ -207,37 +207,21 @@ export function MarkdownProse({
 				const docFilename = attrs['data-mention-doc-filename'];
 				if (docProject && docFilename && mentionsEnabled) {
 					return (
-						<span className="inline-flex items-baseline gap-0.5">
-							<Tooltip
-								content={
-									<DocTooltipContent
-										title={docFilename}
-										size={Number(attrs['data-mention-size'] ?? 0)}
-										updatedAt={attrs['data-mention-updated-at'] ?? ''}
-									/>
-								}
-							>
-								<Link
-									to="/projects/$projectId/documents"
-									params={{ projectId: docProject }}
-									search={{ file: docFilename }}
-									className={MENTION_CLASSES}
-									data-testid="doc-mention-link"
-								>
-									{props.children}
-								</Link>
-							</Tooltip>
-							<a
-								href={docPreviewPath(docProject, docFilename)}
-								target="_blank"
-								rel="noopener noreferrer"
-								aria-label="Open preview in new tab"
-								data-testid="doc-mention-preview-link"
-								className="text-accent-blue-text hover:underline"
-							>
-								<ExternalLink className="w-3 h-3" />
-							</a>
-						</span>
+						<DedicatedViewMention
+							href={docPreviewPath(docProject, docFilename)}
+							nameTestId="doc-mention-link"
+							previewTestId="doc-mention-preview-link"
+							previewAriaLabel="Open preview in new tab"
+							tooltip={
+								<DocTooltipContent
+									title={docFilename}
+									size={Number(attrs['data-mention-size'] ?? 0)}
+									updatedAt={attrs['data-mention-updated-at'] ?? ''}
+								/>
+							}
+						>
+							{props.children}
+						</DedicatedViewMention>
 					);
 				}
 
@@ -245,30 +229,30 @@ export function MarkdownProse({
 				const assetFilename = attrs['data-mention-asset-filename'];
 				const assetUrl = attrs['data-mention-asset-url'];
 				if (assetProject && assetFilename && mentionsEnabled) {
-					return (
-						<span className="inline-flex items-baseline gap-0.5">
-							<Link
-								to="/projects/$projectId/assets"
-								params={{ projectId: assetProject }}
-								search={{ file: assetFilename }}
-								className={MENTION_CLASSES}
-								data-testid="asset-mention-link"
+					if (assetUrl) {
+						return (
+							<DedicatedViewMention
+								href={assetUrl}
+								nameTestId="asset-mention-link"
+								previewTestId="asset-mention-preview-link"
+								previewAriaLabel="Open asset in new tab"
 							>
 								{props.children}
-							</Link>
-							{assetUrl && (
-								<a
-									href={assetUrl}
-									target="_blank"
-									rel="noopener noreferrer"
-									aria-label="Open asset in new tab"
-									data-testid="asset-mention-preview-link"
-									className="text-accent-blue-text hover:underline"
-								>
-									<ExternalLink className="w-3 h-3" />
-								</a>
-							)}
-						</span>
+							</DedicatedViewMention>
+						);
+					}
+					// No signed URL → no dedicated view to open. Keep the same-tab
+					// library link with no icon (consistent with the general rule).
+					return (
+						<Link
+							to="/projects/$projectId/assets"
+							params={{ projectId: assetProject }}
+							search={{ file: assetFilename }}
+							className={MENTION_CLASSES}
+							data-testid="asset-mention-link"
+						>
+							{props.children}
+						</Link>
 					);
 				}
 
@@ -374,6 +358,55 @@ export function MarkdownProse({
 				{children}
 			</Markdown>
 		</div>
+	);
+}
+
+/**
+ * A mention whose name and trailing icon both open the same dedicated view in a
+ * new tab. The icon suffix is the visual marker for "this link opens a new tab",
+ * so it is rendered here and only here — same-tab in-app mentions never use this
+ * component and therefore never get the icon.
+ */
+function DedicatedViewMention({
+	href,
+	children,
+	nameTestId,
+	previewTestId,
+	previewAriaLabel,
+	tooltip,
+}: {
+	href: string;
+	children: ReactNode;
+	nameTestId: string;
+	previewTestId: string;
+	previewAriaLabel: string;
+	tooltip?: ReactNode;
+}) {
+	const name = (
+		<a
+			href={href}
+			target="_blank"
+			rel="noopener noreferrer"
+			className={MENTION_CLASSES}
+			data-testid={nameTestId}
+		>
+			{children}
+		</a>
+	);
+	return (
+		<span className="inline-flex items-baseline gap-0.5">
+			{tooltip ? <Tooltip content={tooltip}>{name}</Tooltip> : name}
+			<a
+				href={href}
+				target="_blank"
+				rel="noopener noreferrer"
+				aria-label={previewAriaLabel}
+				data-testid={previewTestId}
+				className="text-accent-blue-text hover:underline"
+			>
+				<ExternalLink className="w-3 h-3" />
+			</a>
+		</span>
 	);
 }
 
