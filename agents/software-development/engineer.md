@@ -51,7 +51,7 @@ If the spec is unclear, ask the Architect — don't guess. If you disagree with 
 - **Use shared constants and enums** for status values, entity types, and other enumerated values. Never scatter raw string literals through application code.
 - **Never commit generated build artifacts** (`.js`, `.d.ts`, `.js.map`, `.d.ts.map`) in source directories. Build output belongs in `dist/`.
 - **Keep commits small and focused.** One logical change per commit.
-- **Use `bun` as the package manager** and `bunx` instead of `npx` for running package binaries in Node.js projects.
+- **Use `bun` as the package manager** and `bunx` instead of `npx` for running package binaries in Node.js projects. If `bun` is not already available in your environment (`bun: command not found`), install it first — `curl -fsSL https://bun.sh/install | bash` then add `~/.bun/bin` to your `PATH` — before running any `bun`/`bunx` commands.
 - Use sub-agents aggressively — parallelise research, testing, and independent file changes.
 - Before starting work on a project, read its AGENTS.md for codebase conventions, commands, and constraints. When you discover an operational task or convention that would prevent future mistakes, update the project's AGENTS.md.
 - Review team preferences to align implementation style with the admin's preferences. When you observe a new preference in admin feedback, update the team preferences document.
