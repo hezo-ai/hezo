@@ -323,6 +323,8 @@ test('replying to an agent hides the wake-assignee toggle and omits the flag', a
 
 	const replyButtons = document.querySelectorAll('[data-testid="comment-reply"]');
 	expect(replyButtons.length).toBeGreaterThan(0);
+	// The button surfaces a visible "Reply" label alongside the icon.
+	expect(replyButtons[0].textContent).toContain('Reply');
 	await user.click(replyButtons[0] as HTMLElement);
 
 	const indicator = await findByTestId('reply-indicator');

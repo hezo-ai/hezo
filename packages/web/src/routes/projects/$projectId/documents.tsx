@@ -1,6 +1,6 @@
-import { HQ_PROJECT_SLUG, isMarkdownDocSlug } from '@hezo/shared';
-import { createFileRoute, redirect } from '@tanstack/react-router';
-import { Loader2 } from 'lucide-react';
+import { CHAT_MEMORY_SLUG, HQ_PROJECT_SLUG, isMarkdownDocSlug } from '@hezo/shared';
+import { createFileRoute } from '@tanstack/react-router';
+import { Info, Loader2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { type DocItem, DocsLibrary } from '../../../components/docs-library';
 import { MentionTextarea } from '../../../components/mention-textarea';
@@ -39,6 +39,7 @@ function ProjectDocumentsPage() {
 
 	const [isCreating, setIsCreating] = useState(false);
 
+	const isHq = projectId === HQ_PROJECT_SLUG;
 	const isAgentsMd = file === AGENTS_MD_KEY;
 	const filenameForFetch = file && !isAgentsMd ? file : null;
 	const { data: doc, isLoading: isLoadingDoc } = useProjectDoc(projectId, filenameForFetch);
@@ -55,14 +56,19 @@ function ProjectDocumentsPage() {
 			});
 		}
 		for (const d of docs ?? []) {
+			// The chatbox memory doc is permanent — never offer to delete it.
+			const isChatMemory = isHq && d.filename === CHAT_MEMORY_SLUG;
 			list.push({
 				key: d.filename,
 				label: d.filename,
 				meta: `Updated ${new Date(d.updated_at).toLocaleDateString()}`,
+				canDelete: isChatMemory ? false : undefined,
 			});
 		}
 		return list;
-	}, [agentsMd, docs]);
+	}, [agentsMd, docs, isHq]);
+
+	const showChatMemoryBanner = isHq && file === CHAT_MEMORY_SLUG;
 
 	const docContent = isAgentsMd ? (agentsMd?.content ?? null) : (doc?.content ?? null);
 
@@ -130,6 +136,22 @@ function ProjectDocumentsPage() {
 			viewerExtras={
 				file && !isAgentsMd ? (
 					<ProjectDocRevisionsPanel projectId={projectId} filename={file} />
+				) : null
+			}
+			viewerBanner={
+				showChatMemoryBanner ? (
+					<div
+						data-testid="chat-memory-banner"
+						className="flex items-start gap-2 mb-4 rounded-radius-md border border-border bg-bg-subtle px-3 py-2.5 text-[13px] text-text-muted"
+					>
+						<Info className="w-4 h-4 mt-0.5 shrink-0 text-text-subtle" aria-hidden="true" />
+						<span>
+							This is the chatbox's persistent memory. Its full contents are injected into every
+							chat turn, so anything here is always in the assistant's context. The assistant keeps
+							durable operator preferences and standing guidelines here; edit it to correct what it
+							remembers. This document cannot be deleted.
+						</span>
+					</div>
 				) : null
 			}
 			emptyTitle="Select a document"
@@ -222,15 +244,8 @@ export const Route = createFileRoute('/projects/$projectId/documents')({
 	validateSearch: (search: Record<string, unknown>): DocumentsSearch => ({
 		file: typeof search.file === 'string' ? search.file : undefined,
 	}),
-	beforeLoad: ({ params }) => {
-		// Internal projects (slug `internal-<teamSlug>`) have no documents page.
-		if (params.projectId === HQ_PROJECT_SLUG) {
-			throw redirect({
-				to: '/projects/$projectId/tasks',
-				params,
-				replace: true,
-			});
-		}
-	},
+	// HQ renders its documents page so the operator can view/edit the chatbox
+	// memory (chat-memory.md). Other internal projects don't exist (HQ is the
+	// only one), so no redirect is needed.
 	component: ProjectDocumentsPage,
 });

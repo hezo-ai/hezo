@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAgents } from '../hooks/use-agents';
-import { useDocMentions } from '../hooks/use-mentions';
+import { useDocMentions, useInstanceMentions } from '../hooks/use-mentions';
 import { useTaskMentions } from '../hooks/use-tasks';
 import { docPreviewPath } from '../lib/doc-preview';
 import {
@@ -33,6 +33,13 @@ interface MarkdownProseProps {
 	className?: string;
 	projectId?: string;
 	projectSlug?: string;
+	/**
+	 * Instance scope (the global CEO chat): mentions resolve across every
+	 * project via /api/mentions/resolve instead of the project-scoped
+	 * endpoints; only instance-unique references become links. Mutually
+	 * exclusive with `projectId`.
+	 */
+	instance?: boolean;
 }
 
 export function MarkdownProse({
@@ -41,6 +48,7 @@ export function MarkdownProse({
 	className,
 	projectId,
 	projectSlug,
+	instance,
 }: MarkdownProseProps) {
 	const { data: agents } = useAgents(projectId ?? '');
 	const taskCandidates = useMemo(() => extractTaskCandidates(children), [children]);
@@ -50,36 +58,46 @@ export function MarkdownProse({
 		[children, projectSlug],
 	);
 	const { data: resolvedDocs } = useDocMentions(projectId ?? '', docCandidates);
+	const { data: instanceResolved } = useInstanceMentions(children, instance === true && !projectId);
 
 	const agentsMap = useMemo<Map<string, AgentMentionData>>(() => {
 		const m = new Map<string, AgentMentionData>();
+		if (instanceResolved) {
+			for (const a of instanceResolved.agents) {
+				m.set(a.slug.toLowerCase(), { title: a.title, projectSlug: a.project_slug });
+			}
+			return m;
+		}
 		if (!agents) return m;
 		for (const a of agents) m.set(a.slug.toLowerCase(), { title: a.title });
 		return m;
-	}, [agents]);
+	}, [agents, instanceResolved]);
 
 	const tasksMap = useMemo<Map<string, TaskMentionData>>(() => {
 		const m = new Map<string, TaskMentionData>();
-		if (!resolvedTasks) return m;
-		for (const i of resolvedTasks) {
+		const source = instanceResolved?.tasks ?? resolvedTasks;
+		if (!source) return m;
+		for (const i of source) {
 			m.set(i.identifier.toLowerCase(), { title: i.title, projectSlug: i.project_slug });
 		}
 		return m;
-	}, [resolvedTasks]);
+	}, [resolvedTasks, instanceResolved]);
 
 	const kbDocsMap = useMemo<Map<string, KbDocMentionData>>(() => {
 		const m = new Map<string, KbDocMentionData>();
-		if (!resolvedDocs) return m;
-		for (const d of resolvedDocs.kb_docs) {
+		const source = instanceResolved?.kb_docs ?? resolvedDocs?.kb_docs;
+		if (!source) return m;
+		for (const d of source) {
 			m.set(d.slug.toLowerCase(), { title: d.title, size: d.size, updatedAt: d.updated_at });
 		}
 		return m;
-	}, [resolvedDocs]);
+	}, [resolvedDocs, instanceResolved]);
 
 	const projectDocsMap = useMemo<ProjectDocsMap>(() => {
 		const m: ProjectDocsMap = new Map();
-		if (!resolvedDocs) return m;
-		for (const d of resolvedDocs.project_docs) {
+		const source = instanceResolved?.project_docs ?? resolvedDocs?.project_docs;
+		if (!source) return m;
+		for (const d of source) {
 			const slug = d.project_slug.toLowerCase();
 			let perProject = m.get(slug);
 			if (!perProject) {
@@ -89,21 +107,27 @@ export function MarkdownProse({
 			perProject.set(d.filename, { size: d.size, updatedAt: d.updated_at });
 		}
 		return m;
-	}, [resolvedDocs]);
+	}, [resolvedDocs, instanceResolved]);
 
 	const assetsMap = useMemo<Map<string, AssetMentionData>>(() => {
 		const m = new Map<string, AssetMentionData>();
-		if (!resolvedDocs) return m;
-		for (const a of resolvedDocs.assets) {
-			m.set(a.filename, { id: a.id, contentType: a.content_type, signedUrl: a.signed_url });
+		const source = instanceResolved?.assets ?? resolvedDocs?.assets;
+		if (!source) return m;
+		for (const a of source) {
+			m.set(a.filename, {
+				id: a.id,
+				contentType: a.content_type,
+				signedUrl: a.signed_url,
+				projectSlug: a.project_slug,
+			});
 		}
 		return m;
-	}, [resolvedDocs]);
+	}, [resolvedDocs, instanceResolved]);
 
 	const remarkPlugins = useMemo<RemarkPlugin>(() => {
 		const plugins: NonNullable<RemarkPlugin> = [remarkGfm];
 		if (
-			projectId &&
+			(projectId || instance) &&
 			(agentsMap.size > 0 ||
 				tasksMap.size > 0 ||
 				kbDocsMap.size > 0 ||
@@ -115,6 +139,7 @@ export function MarkdownProse({
 				{
 					projectId,
 					projectSlug,
+					instance,
 					agents: agentsMap,
 					tasks: tasksMap,
 					kbDocs: kbDocsMap,
@@ -124,14 +149,20 @@ export function MarkdownProse({
 			]);
 		}
 		return plugins;
-	}, [projectId, projectSlug, agentsMap, tasksMap, kbDocsMap, projectDocsMap, assetsMap]);
+	}, [projectId, projectSlug, instance, agentsMap, tasksMap, kbDocsMap, projectDocsMap, assetsMap]);
 
-	const components = useMemo<Components>(
-		() => ({
+	const components = useMemo<Components>(() => {
+		// Mention links render whenever a scope is active: project scope carries
+		// the route's projectId; instance scope (CEO chat) derives each link's
+		// project from the per-entity data attributes instead.
+		const mentionsEnabled = Boolean(projectId) || instance === true;
+		return {
 			a: (props) => {
 				const attrs = props as {
+					'data-mention-admin'?: string;
 					'data-mention-agent-slug'?: string;
 					'data-mention-agent-title'?: string;
+					'data-mention-agent-project-slug'?: string;
 					'data-mention-passive'?: string;
 					'data-mention-task-identifier'?: string;
 					'data-mention-task-title'?: string;
@@ -154,7 +185,7 @@ export function MarkdownProse({
 
 				const kbSlug = attrs['data-mention-kb-slug'];
 				const kbTitle = attrs['data-mention-kb-title'];
-				if (kbSlug && kbTitle && projectId) {
+				if (kbSlug && kbTitle && mentionsEnabled) {
 					return (
 						<Tooltip
 							content={
@@ -174,7 +205,7 @@ export function MarkdownProse({
 
 				const docProject = attrs['data-mention-doc-project-slug'];
 				const docFilename = attrs['data-mention-doc-filename'];
-				if (docProject && docFilename && projectId) {
+				if (docProject && docFilename && mentionsEnabled) {
 					return (
 						<span className="inline-flex items-baseline gap-0.5">
 							<Tooltip
@@ -213,7 +244,7 @@ export function MarkdownProse({
 				const assetProject = attrs['data-mention-asset-project-slug'];
 				const assetFilename = attrs['data-mention-asset-filename'];
 				const assetUrl = attrs['data-mention-asset-url'];
-				if (assetProject && assetFilename && projectId) {
+				if (assetProject && assetFilename && mentionsEnabled) {
 					return (
 						<span className="inline-flex items-baseline gap-0.5">
 							<Link
@@ -245,7 +276,7 @@ export function MarkdownProse({
 				const commentId = attrs['data-mention-comment-id'];
 				const commentProjectSlug = attrs['data-mention-comment-project-slug'];
 				const commentTaskTitle = attrs['data-mention-comment-task-title'];
-				if (commentTaskIdentifier && commentId && commentProjectSlug && projectId) {
+				if (commentTaskIdentifier && commentId && commentProjectSlug && mentionsEnabled) {
 					return (
 						<Tooltip
 							content={`Comment in ${commentTaskIdentifier.toUpperCase()}${commentTaskTitle ? ` — ${commentTaskTitle}` : ''}`}
@@ -269,7 +300,7 @@ export function MarkdownProse({
 				const taskIdentifier = attrs['data-mention-task-identifier'];
 				const taskTitle = attrs['data-mention-task-title'];
 				const taskProjectSlug = attrs['data-mention-project-slug'];
-				if (taskIdentifier && taskTitle && taskProjectSlug && projectId) {
+				if (taskIdentifier && taskTitle && taskProjectSlug && mentionsEnabled) {
 					return (
 						<Tooltip content={taskTitle}>
 							<Link
@@ -290,12 +321,13 @@ export function MarkdownProse({
 				const agentSlug = attrs['data-mention-agent-slug'];
 				const agentTitle = attrs['data-mention-agent-title'];
 				const agentPassive = attrs['data-mention-passive'] === 'true';
-				if (agentSlug && projectId) {
+				const agentProjectSlug = attrs['data-mention-agent-project-slug'] ?? projectId;
+				if (agentSlug && agentProjectSlug && mentionsEnabled) {
 					return (
 						<Tooltip content={agentTitle ?? `@${agentSlug}`}>
 							<Link
 								to="/projects/$projectId/agents/$agentId"
-								params={{ projectId, agentId: agentSlug }}
+								params={{ projectId: agentProjectSlug, agentId: agentSlug }}
 								className={MENTION_CLASSES}
 								data-testid="agent-mention-link"
 								data-mention-passive={agentPassive ? 'true' : undefined}
@@ -305,15 +337,33 @@ export function MarkdownProse({
 						</Tooltip>
 					);
 				}
+
+				if (attrs['data-mention-admin'] === 'true' && mentionsEnabled) {
+					const adminLink = projectId ? (
+						<Link
+							to="/projects/$projectId/inbox"
+							params={{ projectId }}
+							className={MENTION_CLASSES}
+							data-testid="admin-mention-link"
+						>
+							{props.children}
+						</Link>
+					) : (
+						<Link to="/home/inbox" className={MENTION_CLASSES} data-testid="admin-mention-link">
+							{props.children}
+						</Link>
+					);
+					return <Tooltip content="Admin inbox">{adminLink}</Tooltip>;
+				}
+
 				return (
 					<a href={props.href} target="_blank" rel="noopener noreferrer">
 						{props.children}
 					</a>
 				);
 			},
-		}),
-		[projectId],
-	);
+		};
+	}, [projectId, instance]);
 
 	return (
 		<div

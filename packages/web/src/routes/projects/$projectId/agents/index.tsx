@@ -97,7 +97,7 @@ function TeamPage() {
 								<StatusDot status="active" /> Active
 							</div>
 							<div className="flex items-center gap-1.5">
-								<StatusDot status="paused" /> Paused
+								<StatusDot status="paused" /> Over budget
 							</div>
 							<div className="flex items-center gap-1.5">
 								<StatusDot status="disabled" /> Disabled

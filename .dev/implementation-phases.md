@@ -201,7 +201,7 @@ per-task worktrees on every linked repo, realtime run-log streaming, and the
 Backend:
 - Project Docker container lifecycle (provision, start, stop, rebuild via Docker Engine API)
   - One container per project (all project repos checked out at
-    `/workspace/<repo-short-name>/` inside; kept in sync by
+    `/workspace/<repo-name>/` inside; kept in sync by
     `ensureProjectRepos` on provision, on repo attach, and before every run)
   - Dev port forwarding for preview access
 - Agent subprocess management (`claude_code` adapter: subprocess in project container via `docker exec`)
@@ -212,7 +212,7 @@ Backend:
   each request against the run row's status, so the token is automatically
   rejected once the run finalizes.
 - Git worktrees per task on every linked repo
-  (`/worktrees/<task-identifier>/<repo-short-name>/` on branch
+  (`/worktrees/<task-identifier>/<repo-name>/` on branch
   `hezo/<task-identifier>`). The agent's working directory resolves to the
   designated repo's worktree; other repos sit alongside. Worktrees persist
   across runs on the same task and are removed when the task transitions to
@@ -730,7 +730,7 @@ Backend:
 
 ## Phase 13: Designated Repo Setup via OAuth
 
-**Status:** In progress
+**Status:** Done (2026-06-11)
 
 **Goal:** Drive the board through a Hezo Connect GitHub OAuth dance when a code-touching agent (`member_agents.touches_code = true`) starts work on a repo-less project. The flow either creates a new GitHub repo under a selected org or links an existing accessible one, and the first repo becomes the designated repo (immutable thereafter).
 
@@ -757,7 +757,7 @@ Frontend:
 Tests:
 - Local GitHub simulator in `packages/server/test/helpers/github-sim.ts` — Hono app on port 0 implementing the subset of GitHub API we call plus Connect's token-exchange endpoint
 - Integration: gate behavior (approval + comment + deferred wakeup, no execution lock); concurrent runs share one approval; immutability on delete; `mode=create` owner check; first-repo auto-designation race; `finalizePendingRepoSetup` idempotency; OAuth callback SSH-key idempotency; authorization on all new endpoints
-- E2E: full wizard flow end-to-end against the simulator, both `Create new` and `Select existing`, plus the disabled-delete path
+- Component tier (`packages/web/test/repo-picker-flows.test.tsx`): full wizard flow against the simulator, both `Create new` and `Select existing`, plus the designated-repo lock (no delete affordance) — component tests per the decision tree, since the wizard is pure form/dialog/mutation behavior; server tier (`repos-create-github.test.ts`) covers first-repo auto-designation and the `DESIGNATED_REPO_IMMUTABLE` 409 on delete
 
 Docs:
 - `.dev/spec.md`, `.dev/schema.md`, `.dev/api.md` updated to reflect the new flow and invariants
@@ -765,7 +765,7 @@ Docs:
 
 **How to test:**
 - Create a team + project with no repo, assign an engineer to an task, see the action comment + inbox approval, drive the wizard with the GitHub simulator (integration) or a real local Connect + GitHub account (manual)
-- Verify the cloned repo appears at `/workspace/{short_name}/` inside the project container and a worktree is created on the engineer's resume
+- Verify the cloned repo appears at `/workspace/{repo-name}/` inside the project container and a worktree is created on the engineer's resume
 - Verify `DELETE` on the designated repo returns 409
 - `bun run test` and `bun run test --e2e` pass
 

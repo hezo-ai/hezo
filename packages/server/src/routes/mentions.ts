@@ -1,8 +1,10 @@
-import { ADMIN_MENTION_SLUG } from '@hezo/shared';
+import { ADMIN_MENTION_SLUG, DEFAULT_TEAM_ID, type MentionCandidates } from '@hezo/shared';
 import { Hono } from 'hono';
 import { signAssetUrl } from '../lib/asset-urls';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { requireTeamAccessForResource } from '../middleware/auth';
+import { resolveInstanceMentions } from '../services/instance-mentions';
 
 export const mentionsRoutes = new Hono<Env>();
 
@@ -21,6 +23,63 @@ interface SearchResult {
 	label: string;
 	sublabel?: string;
 }
+
+// Instance-wide resolution for the global CEO chat. No `:projectId` in the
+// path, so the project-access middleware does not apply — access is gated on
+// the HQ team exactly like the /ceo/* routes. References resolve only when
+// unique across the whole instance (see resolveInstanceMentions).
+mentionsRoutes.post('/mentions/resolve', async (c) => {
+	const db = c.get('db');
+	const access = await requireTeamAccessForResource(db, c, DEFAULT_TEAM_ID);
+	if (access instanceof Response) return access;
+
+	const body = await c.req.json<{
+		tasks?: unknown;
+		filenames?: unknown;
+		assets?: unknown;
+		agents?: unknown;
+	}>();
+
+	const parseStrings = (raw: unknown, lowercase: boolean): string[] | null => {
+		if (raw === undefined) return [];
+		if (!Array.isArray(raw)) return null;
+		if (raw.length > 100) return null;
+		const out = new Set<string>();
+		for (const entry of raw) {
+			if (typeof entry !== 'string') continue;
+			const trimmed = entry.trim();
+			if (!trimmed) continue;
+			out.add(lowercase ? trimmed.toLowerCase() : trimmed);
+		}
+		return Array.from(out);
+	};
+
+	const tasks = parseStrings(body.tasks, true);
+	const filenames = parseStrings(body.filenames, false);
+	const assets = parseStrings(body.assets, false);
+	const agents = parseStrings(body.agents, true);
+	if (!tasks || !filenames || !assets || !agents) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			'tasks / filenames / assets / agents must be string arrays of at most 100 entries',
+			400,
+		);
+	}
+
+	const candidates: MentionCandidates = { tasks, filenames, assets, agents };
+	const resolution = await resolveInstanceMentions(db, candidates);
+
+	const masterKeyManager = c.get('masterKeyManager');
+	const signedAssets = await Promise.all(
+		resolution.assets.map(async (a) => ({
+			...a,
+			signed_url: await signAssetUrl(a.id, masterKeyManager),
+		})),
+	);
+
+	return ok(c, { ...resolution, assets: signedAssets });
+});
 
 mentionsRoutes.post('/projects/:projectId/docs/resolve', async (c) => {
 	const teamId = c.get('teamId') as string;

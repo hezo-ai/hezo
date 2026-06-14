@@ -116,7 +116,7 @@ async function callListTasks(
 		body: JSON.stringify({
 			jsonrpc: '2.0',
 			method: 'tools/call',
-			params: { name: 'list_tasks', arguments: { team_id: teamId, ...args } },
+			params: { name: 'list_tasks', arguments: { project: projectId, ...args } },
 			id: 1,
 		}),
 	});

@@ -83,6 +83,12 @@ team from a team-type template (default **Blank** = Captain only).
    (Captain, blocked on coherence), and closes the intake. `GET /api/project-intakes`
    returns the open intake for the home/welcome view.
 
+Both flows also accept a `source_team_id` (mutually exclusive with `template_id`):
+the chosen existing team is snapshotted into a fresh, permanent, uniquely-named
+team-type template (via `snapshotTeamAsTemplate`) and the new team is provisioned
+from it — so cloning a team also seeds a reusable type. The internal HQ team is
+rejected as a source (its CEO/Coach must not land in a project roster).
+
 Both the first-run welcome and the ongoing "new project with the CEO" use flow 2's
 intake in HQ. The old per-team onboarding/onboarding-intake machinery is gone.
 

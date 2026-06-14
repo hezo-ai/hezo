@@ -3,6 +3,7 @@ import { ChevronDown, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { useCreateSubTask, useTasks } from '../../hooks/use-tasks';
 import { DEFAULT_SUBTASK_PAGE_SIZE, useTeam } from '../../hooks/use-teams';
+import { TaskRunDot } from '../task-run-dot';
 import { TaskStatusBadge } from '../task-status-badge';
 import { Button } from '../ui/button';
 
@@ -138,6 +139,7 @@ export function SubTasksSection({
 							data-testid="sub-task-item"
 						>
 							<TaskStatusBadge status={s.status} className="shrink-0" />
+							<TaskRunDot hasActiveRun={s.has_active_run} queuedWakeup={s.queued_wakeup} />
 							<span className="font-mono text-xs text-text-muted shrink-0 whitespace-nowrap">
 								{s.identifier}
 							</span>

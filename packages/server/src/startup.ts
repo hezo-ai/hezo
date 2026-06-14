@@ -9,6 +9,7 @@ const log = logger.child('startup');
 
 import { MasterKeyManager } from './crypto/master-key';
 import { openPersistentDb } from './db/client';
+import type { Migration } from './db/migrate';
 import { BASE_SCHEMA } from './db/schema';
 import { registerAuditObserver } from './events/audit-observer';
 import { DomainEventBus } from './events/bus';
@@ -25,14 +26,17 @@ import { approvalsRoutes } from './routes/approvals';
 import { assetsRoutes, publicAssetsRoutes } from './routes/assets';
 import { auditLogRoutes } from './routes/audit-log';
 import { authRoutes } from './routes/auth';
+import { ceoChatRoutes } from './routes/ceo-chat';
 import { commentsRoutes } from './routes/comments';
 import { costsRoutes } from './routes/costs';
 import { executionLocksRoutes } from './routes/execution-locks';
 import { healthRoutes } from './routes/health';
 import { inboxRoutes } from './routes/inbox';
+import { instanceSettingsRoutes } from './routes/instance-settings';
 import { mcpConnectionsRoutes } from './routes/mcp-connections';
 import { meRoutes } from './routes/me';
 import { mentionsRoutes } from './routes/mentions';
+import { modelPricingRoutes } from './routes/model-pricing';
 import { oauthRoutes } from './routes/oauth';
 import { preferencesRoutes } from './routes/preferences';
 import { previewRoutes } from './routes/preview';
@@ -48,12 +52,15 @@ import { teamTemplatesRoutes } from './routes/team-templates';
 import { teamsRoutes } from './routes/teams';
 import { uiStateRoutes } from './routes/ui-state';
 import { updatesRoutes } from './routes/updates';
+import { AuthChallengeStore } from './services/auth-challenges';
+import { CeoSessionManager } from './services/ceo-session-manager';
 import { ContainerLogStreamer } from './services/container-logs';
 import { DockerClient } from './services/docker';
 import { EgressProxy, loadOrCreateCA } from './services/egress';
 import { pruneStaleBundledImages } from './services/image-registry';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
+import { PricingService } from './services/pricing';
 import { SshAgentServer } from './services/ssh-agent';
 import { WebSocketManager } from './services/ws';
 import { loadStaticBundle } from './static-assets';
@@ -73,6 +80,7 @@ export interface StartupResult {
 	port: number;
 	masterKeyState: MasterKeyState;
 	jobManager: JobManager;
+	ceoSessionManager: CeoSessionManager;
 	wsManager: WebSocketManager;
 	db: PGlite;
 	docker: DockerClient;
@@ -86,11 +94,19 @@ export interface StartupResult {
 export async function startup(config: HezoConfig): Promise<StartupResult> {
 	mkdirSync(config.dataDir, { recursive: true });
 
-	const db = await openPersistentDb(config.dataDir, { reset: config.reset });
+	// `db` may be replaced by a fresh handle if migrations run against a copy and
+	// swap it in, so it's a `let` — every consumer below uses the post-migration handle.
+	let db = await openPersistentDb(config.dataDir, { reset: config.reset });
 
 	await db.exec(BASE_SCHEMA);
-	await runAvailableMigrations(db, config.dataDir);
+	db = await runAvailableMigrations(db, config.dataDir);
 	await runSeed(db);
+
+	// Runtime model pricing: seed the table from the bundled snapshot if empty,
+	// load it into memory, and (unless disabled) refresh from the live LiteLLM
+	// feed in the background. Drives per-run cost across every runtime.
+	const pricing = new PricingService(db);
+	await pricing.init({ refresh: !process.env.HEZO_SKIP_PRICING_REFRESH });
 
 	const masterKeyManager = new MasterKeyManager();
 	const masterKeyState = await resolveMasterKeyState(db, masterKeyManager, config.masterKey);
@@ -134,9 +150,23 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		sshAgentServer,
 		egressProxy,
 		egressCAPath: egressCA.certPath,
+		pricing,
+	});
+	const ceoSessionManager = new CeoSessionManager({
+		db,
+		docker,
+		masterKeyManager,
+		serverPort: config.port,
+		dataDir: config.dataDir,
+		wsManager,
+		events,
+		logs,
+		sshAgentServer,
+		egressProxy,
+		egressCAPath: egressCA.certPath,
 	});
 
-	const { seedDefaultTeam } = await import('./services/teams.js');
+	const { seedDefaultTeam, ensureChatMemoryDoc } = await import('./services/teams.js');
 	try {
 		await seedDefaultTeam({
 			db,
@@ -148,6 +178,9 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			dataDir: config.dataDir,
 			egressCAPath: egressCA.certPath,
 		});
+		// Self-heal: instances created before the chatbox memory doc existed (or
+		// where it was removed) get it back. Idempotent.
+		await ensureChatMemoryDoc(db);
 	} catch (err) {
 		log.error('Failed to seed default team:', err);
 	}
@@ -157,6 +190,10 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			.reconcileOnStartup()
 			.catch((err) => log.error('Startup reconciliation failed:', err))
 			.finally(() => jobManager.start());
+		ceoSessionManager
+			.reconcileOnStartup()
+			.catch((err) => log.error('CEO session reconciliation failed:', err))
+			.finally(() => ceoSessionManager.start());
 		// Initialize embedding model in background (downloads on first use)
 		import('./services/embeddings').then(({ initializeEmbeddingModel }) => {
 			const { join } = require('node:path') as typeof import('node:path');
@@ -181,6 +218,8 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		egressProxy,
 		containerLogStreamer,
 		events,
+		ceoSessionManager,
+		pricing,
 	);
 
 	return {
@@ -188,6 +227,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		port: config.port,
 		masterKeyState,
 		jobManager,
+		ceoSessionManager,
 		wsManager,
 		db,
 		docker,
@@ -211,8 +251,11 @@ export function buildApp(
 	egressProxy: EgressProxy | null = null,
 	containerLogStreamer: ContainerLogStreamer = new ContainerLogStreamer(),
 	events: DomainEventBus = new DomainEventBus(),
+	ceoSessionManager?: CeoSessionManager,
+	pricing?: PricingService,
 ): Hono<Env> {
 	const app = new Hono<Env>();
+	const authChallenges = new AuthChallengeStore();
 	logs.setWsManager(wsManager);
 	registerAuditObserver(events, db);
 
@@ -224,16 +267,19 @@ export function buildApp(
 	app.use('*', async (c, next) => {
 		c.set('db', db);
 		c.set('masterKeyManager', masterKeyManager);
+		c.set('authChallenges', authChallenges);
 		c.set('docker', docker);
 		c.set('wsManager', wsManager);
 		c.set('events', events);
 		if (jobManager) c.set('jobManager', jobManager);
+		if (ceoSessionManager) c.set('ceoSessionManager', ceoSessionManager);
 		c.set('logs', logs);
 		c.set('containerLogStreamer', containerLogStreamer);
 		c.set('dataDir', config.dataDir);
 		c.set('webUrl', config.webUrl);
 		c.set('sshAgentServer', sshAgentServer);
 		c.set('egressProxy', egressProxy);
+		if (pricing) c.set('pricing', pricing);
 		return next();
 	});
 
@@ -303,6 +349,8 @@ export function buildApp(
 	app.route('/api', projectDocsRoutes);
 	app.route('/api', mentionsRoutes);
 	app.route('/api', aiProvidersRoutes);
+	app.route('/api', instanceSettingsRoutes);
+	app.route('/api', modelPricingRoutes);
 	app.route('/api', reposRoutes);
 	app.route('/api', executionLocksRoutes);
 	app.route('/api', queuedWakeupsRoutes);
@@ -312,6 +360,7 @@ export function buildApp(
 	app.route('/api', previewRoutes);
 	app.route('/api', searchRoutes);
 	app.route('/api', updatesRoutes);
+	app.route('/api', ceoChatRoutes);
 
 	// Frontend (SPA) serving. The compiled binary serves from the in-memory
 	// bundle embedded at build time (`loadStaticBundle`); in dev that bundle is
@@ -379,65 +428,44 @@ async function cleanupOrphanRunSockets(_db: PGlite, dataDir: string): Promise<vo
 	}
 }
 
-async function loadMigrations(): Promise<Record<string, string> | null> {
+async function loadMigrations(): Promise<Record<string, Migration> | null> {
 	const { loadBundledMigrations, loadFilesystemMigrations } = await import('./db/migrate.js');
+	const { codeMigrations } = await import('./db/migrations/code/index.js');
+
+	let sql: Record<string, string> | null = null;
 	try {
-		return await loadBundledMigrations();
+		sql = await loadBundledMigrations();
 	} catch {
 		// Dev (`bun run`): the bundle isn't generated — read from the source tree.
+		// `HEZO_MIGRATIONS_DIR` lets tests point startup at synthetic migrations.
+		try {
+			const migrationsDir =
+				process.env.HEZO_MIGRATIONS_DIR ??
+				join(new URL('.', import.meta.url).pathname, '..', 'migrations');
+			sql = await loadFilesystemMigrations(migrationsDir);
+		} catch {
+			sql = null;
+		}
 	}
-	try {
-		const migrationsDir = join(new URL('.', import.meta.url).pathname, '..', 'migrations');
-		return await loadFilesystemMigrations(migrationsDir);
-	} catch {
-		return null;
-	}
+	if (!sql) return null;
+
+	// SQL migrations + code migrations share one ordered sequence (the runner
+	// sorts by name). Code migrations travel through the TS module graph.
+	return { ...sql, ...codeMigrations };
 }
 
-async function runAvailableMigrations(db: PGlite, dataDir: string): Promise<void> {
+async function runAvailableMigrations(db: PGlite, dataDir: string): Promise<PGlite> {
 	const migrations = await loadMigrations();
 	if (!migrations) {
 		log.warn('No migrations found. Run build:migrations or add migration files.');
-		return;
+		return db;
 	}
 
-	const { getPendingMigrations, runMigrations } = await import('./db/migrate.js');
-	const pending = await getPendingMigrations(db, migrations);
-	if (pending.length === 0) return;
-
-	// Snapshot before mutating an *existing* instance. A brand-new DB (nothing
-	// applied yet) has no data worth saving, so skip the backup there.
-	const applied = await countAppliedMigrations(db);
-	if (applied > 0) {
-		try {
-			const { backupDataDir } = await import('./db/backup.js');
-			await backupDataDir(db, dataDir, { version: HEZO_VERSION, pending });
-		} catch (err) {
-			log.error('Pre-migration backup failed; aborting migrations to protect existing data', err);
-			throw err;
-		}
-	}
-
-	try {
-		await runMigrations(db, migrations);
-	} catch (err) {
-		log.error(
-			`Migration failed. To recover, downgrade to the previous Hezo version and restore the ` +
-				`pre-migration snapshot from ${join(dataDir, 'backups')} ` +
-				`(\`hezo restore <backup.tar.gz>\`).`,
-			err,
-		);
-		throw err;
-	}
-}
-
-async function countAppliedMigrations(db: PGlite): Promise<number> {
-	try {
-		const r = await db.query<{ c: number }>('SELECT COUNT(*)::int AS c FROM _migrations');
-		return r.rows[0]?.c ?? 0;
-	} catch {
-		return 0;
-	}
+	// Migrate a copy and swap on success; on failure the original is untouched
+	// (a downgraded binary can run against it as-is). Returns the live handle to
+	// use, which is a fresh one after a successful swap.
+	const { applyPendingMigrations } = await import('./db/migrate-runner.js');
+	return applyPendingMigrations(db, dataDir, migrations);
 }
 
 async function runSeed(db: PGlite): Promise<void> {
@@ -460,10 +488,14 @@ async function runSeed(db: PGlite): Promise<void> {
 async function resolveMasterKeyState(
 	db: PGlite,
 	masterKeyManager: MasterKeyManager,
-	masterKey?: string,
+	masterKey?: { unlockKeyHex: string; publicKeyHex: string },
 ): Promise<MasterKeyState> {
 	try {
-		const state = await masterKeyManager.initialize(db, masterKey);
+		const state = await masterKeyManager.initialize(
+			db,
+			masterKey?.unlockKeyHex,
+			masterKey?.publicKeyHex,
+		);
 
 		const messages: Record<string, string> = {
 			unlocked: 'Master key verified. Server unlocked.',

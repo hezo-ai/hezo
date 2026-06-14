@@ -18,6 +18,7 @@ export interface StartProjectIntakeInput {
 	name: string;
 	description: string;
 	template_id?: string;
+	source_team_id?: string;
 	task_prefix?: string;
 	initial_prd?: string;
 }
@@ -50,6 +51,8 @@ export function useStartProjectIntake() {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.projectIntakes() });
 			queryClient.invalidateQueries({ queryKey: queryKeys.teams.all() });
+			// Cloning a team mints a new reusable template — refresh the catalog.
+			queryClient.invalidateQueries({ queryKey: queryKeys.teamTemplates() });
 		},
 	});
 }

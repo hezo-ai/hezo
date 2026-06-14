@@ -14,13 +14,15 @@ export interface ServerTestContext {
 	baseUrl: string;
 	port: number;
 	token: string;
-	masterKeyHex: string;
+	mnemonic: string;
+	unlockKeyHex: string;
 	masterKeyManager: MasterKeyManager;
 	dataDir: string;
 }
 
 export async function createTestContext(): Promise<ServerTestContext> {
-	const { app, db, token, masterKeyHex, masterKeyManager, dataDir } = await createTestApp();
+	const { app, db, token, mnemonic, unlockKeyHex, masterKeyManager, dataDir } =
+		await createTestApp();
 
 	const server = createServer(async (req, res) => {
 		const url = `http://localhost${req.url}`;
@@ -51,7 +53,18 @@ export async function createTestContext(): Promise<ServerTestContext> {
 	const port = typeof addr === 'object' && addr ? addr.port : 0;
 	const baseUrl = `http://localhost:${port}`;
 
-	return { db, app, server, baseUrl, port, token, masterKeyHex, masterKeyManager, dataDir };
+	return {
+		db,
+		app,
+		server,
+		baseUrl,
+		port,
+		token,
+		mnemonic,
+		unlockKeyHex,
+		masterKeyManager,
+		dataDir,
+	};
 }
 
 export async function destroyTestContext(ctx: ServerTestContext): Promise<void> {

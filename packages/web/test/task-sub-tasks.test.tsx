@@ -1,6 +1,6 @@
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { renderApp } from './helpers/render';
+import { getTestContext, renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 test('sub-tasks panel is expanded by default and collapses on click', async () => {
@@ -135,6 +135,53 @@ test('sub-tasks paginate to team page size with a Show more link', async () => {
 	await waitFor(() => {
 		expect(countItems()).toBe(7);
 		expect(queryByTestId('sub-tasks-show-more')).toBeNull();
+	});
+});
+
+test('sub-task row shows the running dot when the child has an active run', async () => {
+	let teamSlug = '';
+	let parentIdentifier = '';
+
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async ({ apiBase }) => {
+			const ws = await seedWorkspace();
+			const engineer = ws.agents.find((a) => a.slug === 'engineer') ?? ws.agents[0];
+			const project = await seedProject(ws, { name: 'Running Sub-Task Project' });
+			teamSlug = project.slug;
+			const parent = await seedTask(ws, project, {
+				title: 'Parent Task',
+				assignee_id: engineer.id,
+			});
+			parentIdentifier = parent.identifier;
+
+			const res = await apiBase(`/api/projects/${ws.internalSlug}/tasks/${parent.id}/sub-tasks`, {
+				method: 'POST',
+				headers: ws.headers,
+				body: JSON.stringify({ title: 'Running child', assignee_id: engineer.id }),
+			});
+			if (!res.ok) throw new Error(`sub-task create failed: ${res.status}`);
+			const child = ((await res.json()) as { data: { id: string } }).data;
+
+			// Put an in-flight run on the child so its row lights up.
+			await getTestContext().db.query(
+				`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status)
+				 VALUES ($1, $2, $3, 'running')`,
+				[ws.team.id, engineer.id, child.id],
+			);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: teamSlug, taskId: parentIdentifier.toLowerCase() },
+	});
+
+	const list = await findByTestId('sub-tasks-list');
+	await waitFor(() => {
+		const item = list.querySelector('[data-testid="sub-task-item"]');
+		expect(item).not.toBeNull();
+		expect(item?.querySelector('[data-testid="task-running-dot"]')).not.toBeNull();
 	});
 });
 

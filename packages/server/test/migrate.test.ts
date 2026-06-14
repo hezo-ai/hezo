@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createMemoryDb } from '../src/db/client';
-import { getPendingMigrations, runMigrations } from '../src/db/migrate';
+import {
+	findUnknownAppliedMigrations,
+	getPendingMigrations,
+	runMigrations,
+} from '../src/db/migrate';
 import { safeClose } from './helpers';
 
 describe('migration runner', () => {
@@ -105,6 +109,48 @@ describe('migration runner', () => {
 				"SELECT tablename FROM pg_tables WHERE tablename = 'bad_table'",
 			);
 			expect(badTable.rows).toHaveLength(0);
+		} finally {
+			await safeClose(db);
+		}
+	});
+});
+
+describe('findUnknownAppliedMigrations', () => {
+	it('returns applied migrations the binary does not know about (newer DB)', async () => {
+		const db = await createMemoryDb();
+		try {
+			// Simulate a DB migrated by a newer binary: 001 + 002 applied...
+			await runMigrations(db, {
+				'001_a.sql': 'CREATE TABLE a (id SERIAL PRIMARY KEY);',
+				'002_b.sql': 'CREATE TABLE b (id SERIAL PRIMARY KEY);',
+			});
+			// ...but this binary only ships 001.
+			expect(
+				await findUnknownAppliedMigrations(db, { '001_a.sql': 'CREATE TABLE a (...);' }),
+			).toEqual(['002_b.sql']);
+		} finally {
+			await safeClose(db);
+		}
+	});
+
+	it('returns [] when every applied migration is known', async () => {
+		const db = await createMemoryDb();
+		try {
+			const migrations = {
+				'001_a.sql': 'CREATE TABLE a (id SERIAL PRIMARY KEY);',
+				'002_b.sql': 'CREATE TABLE b (id SERIAL PRIMARY KEY);',
+			};
+			await runMigrations(db, migrations);
+			expect(await findUnknownAppliedMigrations(db, migrations)).toEqual([]);
+		} finally {
+			await safeClose(db);
+		}
+	});
+
+	it('returns [] for a brand-new DB with no _migrations table', async () => {
+		const db = await createMemoryDb();
+		try {
+			expect(await findUnknownAppliedMigrations(db, { '001_a.sql': 'SELECT 1;' })).toEqual([]);
 		} finally {
 			await safeClose(db);
 		}

@@ -17,6 +17,7 @@ const program = new Command()
 	.option('--package <name>', 'Run tests only in a specific package')
 	.option('--skip-browser', 'Skip Playwright browser tests')
 	.option('--browser', 'Run only Playwright browser tests')
+	.option('--shard <value>', 'Vitest shard, form <index>/<count> (e.g. 1/3)')
 	.parse();
 
 const opts = program.opts();
@@ -26,6 +27,8 @@ const pattern = opts.pattern as string | undefined;
 const packageFilter = opts.package as string | undefined;
 const skipBrowser = opts.skipBrowser as boolean;
 const browserFlag = opts.browser as boolean;
+const shard = opts.shard as string | undefined;
+const shardIndex = shard ? Number.parseInt(shard.split('/')[0], 10) : undefined;
 
 const TEST_PACKAGES = ['packages/server', 'packages/web'];
 
@@ -66,9 +69,11 @@ async function runVitestForPackage(pkg: string): Promise<boolean> {
 		`--poolOptions.forks.minForks=${concurrency}`,
 	];
 	if (bail) args.push('--bail=1');
-	if (pattern) {
-		args.push('--passWithNoTests', pattern);
-	}
+	if (shard) args.push(`--shard=${shard}`);
+	// --passWithNoTests guards an empty selection (a pattern matching nothing, or
+	// a shard that lands zero files); add it once if either is in play.
+	if (pattern || shard) args.push('--passWithNoTests');
+	if (pattern) args.push(pattern);
 
 	console.log(`\n── Running ${pkg} tests (pool=forks, workers=${concurrency}) ──`);
 	const start = Date.now();
@@ -146,8 +151,11 @@ async function main() {
 		// The Bun-native tier runs under `bun test` (production runtime). Its
 		// files live in test/bun/ and contain "bun" in their path, so honour
 		// --pattern by running it only when no pattern is set or the pattern
-		// targets that tier.
-		const runBunNative = !pattern || pattern.includes('bun');
+		// targets that tier. It isn't shardable by vitest, so when sharding run
+		// it exactly once (on shard 1) — not duplicated across the matrix, not
+		// dropped. Without --shard, shardIndex is undefined → unchanged behavior.
+		const runBunNative =
+			(!pattern || pattern.includes('bun')) && (shardIndex === undefined || shardIndex === 1);
 
 		for (const pkg of packages) {
 			const passed = await runVitestForPackage(pkg);

@@ -59,6 +59,7 @@ The Architect uses a four-stage planning workflow, gated on a finalised PRD.
 {{> partials/common/no-redundant-comments}}
 {{> partials/common/linking-syntax}}
 {{> partials/common/subtask-preference}}
+{{> partials/common/ticket-dependencies}}
 {{> partials/common/subagent-usage}}
 {{> partials/common/check-before-create}}
 {{> partials/common/assignment-hierarchy}}

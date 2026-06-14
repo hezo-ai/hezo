@@ -1,14 +1,13 @@
 import {
 	generateMnemonic,
 	type MasterKeyState,
-	mnemonicToMasterKey,
 	normalizeMnemonic,
 	validateMnemonic,
 } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
 import { KeyRound, Loader2, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
-import { authenticate } from '../lib/auth';
+import { authenticateWithMnemonic } from '../lib/auth';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 import { Button } from './ui/button';
@@ -44,7 +43,7 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 		}
 		setLoading(true);
 		try {
-			await authenticate(mnemonicToMasterKey(phrase));
+			await authenticateWithMnemonic(phrase, state);
 			queryClient.invalidateQueries({ queryKey: queryKeys.status() });
 		} catch (err: unknown) {
 			const apiErr = err as { message?: string };

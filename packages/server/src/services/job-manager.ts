@@ -4,6 +4,7 @@ import {
 	type AgentRuntime,
 	AgentRuntimeStatus,
 	type AiProvider,
+	BUDGET_PAUSE_STATUSES,
 	COACH_AGENT_SLUG,
 	CommentContentType,
 	ContainerStatus,
@@ -27,7 +28,12 @@ import { ref } from '../lib/log-ref';
 import { assertChildrenAllClosed } from '../lib/task-relationships';
 import { logger } from '../logger';
 import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
-import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
+import {
+	pauseAgentForBudget,
+	reconcileBudgetPause,
+	setAgentIdleIfNoActiveRuns,
+} from './agent-runtime-status';
+import { checkOverBudget } from './budget';
 import type { ContainerLogStreamer } from './container-logs';
 import {
 	type ContainerDeps,
@@ -43,7 +49,8 @@ import {
 import type { DockerClient } from './docker';
 import type { EgressProxy } from './egress';
 import type { LogStreamBroker } from './log-stream-broker';
-import { detectOrphans } from './orphan-detector';
+import { detectOrphans, healStaleRunState, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
+import type { PricingService } from './pricing';
 import { ensureRepoSetupAction } from './repo-setup';
 import { getProjectConcurrency, isTaskBusyInDb } from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
@@ -66,12 +73,25 @@ const cronLog = {
 	error: (msg: unknown) => log.error(msg),
 };
 
+/** Identifies the agent-run dispatch a launchTask entry belongs to, so the
+ * stale-state sweep can correlate the in-memory entry with its run rows and
+ * release the dispatch guards if the completion path never lands. */
+interface RunDispatchContext {
+	memberId: string;
+	taskId: string;
+	projectId: string;
+}
+
 interface RunningTask {
 	key: string;
 	abortController: AbortController;
 	promise: Promise<unknown>;
 	startedAt: number;
 	timeoutId: ReturnType<typeof setTimeout>;
+	runContext?: RunDispatchContext;
+	/** Set when the stale-state sweep already released this entry's dispatch
+	 * guards, so the task's own settle handler doesn't double-release. */
+	reaped: boolean;
 }
 
 export interface LiveRun {
@@ -109,12 +129,23 @@ export interface JobManagerDeps {
 	sshAgentServer?: SshAgentServer;
 	egressProxy?: EgressProxy | null;
 	egressCAPath?: string;
+	pricing?: PricingService;
 }
 
 const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
 const WAKEUP_CRON = process.env.HEZO_WAKEUP_CRON ?? '*/5 * * * * *';
 const HEARTBEAT_CRON = process.env.HEZO_HEARTBEAT_CRON ?? '*/5 * * * * *';
 const INBOX_ARCHIVE_CRON = process.env.HEZO_INBOX_ARCHIVE_CRON ?? '0 0 3 * * *';
+// How often to re-evaluate budget-paused agents. Spend is summed over rolling
+// UTC windows, so a daily/weekly/monthly window rolling over silently frees an
+// agent's budget with no event — this sweep notices and lifts the reactive
+// pause so the heartbeat scheduler (which skips paused agents) resumes it.
+const BUDGET_RESUME_CRON = process.env.HEZO_BUDGET_RESUME_CRON ?? '*/30 * * * * *';
+// The reactive budget pauses, which the heartbeat scheduler must not wake (the
+// budget-resume sweep lifts them back to `idle` once the window rolls over).
+// Disabled agents are filtered separately via `admin_status`. Postgres array
+// literal for the `<> ALL(...)` / `= ANY(...)` enum-array params.
+const BUDGET_PAUSE_STATUSES_PG = `{${BUDGET_PAUSE_STATUSES.join(',')}}`;
 const INBOX_RETENTION_DAYS = Number(process.env.HEZO_INBOX_RETENTION_DAYS ?? 30);
 // Lower bound on how often a heartbeat can fire, regardless of an agent's
 // configured `heartbeat_interval_min`. Defends against misconfigured low/zero
@@ -357,6 +388,11 @@ export class JobManager {
 			log: cronLog,
 			onTick: () => this.guarded('inbox-archive', () => this.archiveInboxItems()),
 		});
+		this.cron.createJob('budget-resume', {
+			cron: BUDGET_RESUME_CRON,
+			log: cronLog,
+			onTick: () => this.guarded('budget-resume', () => this.processBudgetResumes()),
+		});
 		log.info('Job manager started.');
 	}
 
@@ -364,6 +400,7 @@ export class JobManager {
 		key: string,
 		fn: (signal: AbortSignal) => Promise<unknown>,
 		timeoutMs: number,
+		runContext?: RunDispatchContext,
 	): boolean {
 		if (this.runningTasks.has(key)) return false;
 		const ac = new AbortController();
@@ -373,21 +410,32 @@ export class JobManager {
 			ac.abort();
 		}, timeoutMs);
 
-		const promise = trackBackground(
+		const entry: RunningTask = {
+			key,
+			abortController: ac,
+			promise: Promise.resolve(),
+			startedAt: Date.now(),
+			timeoutId,
+			runContext,
+			reaped: false,
+		};
+		entry.promise = trackBackground(
 			fn(ac.signal).finally(() => {
 				clearTimeout(timeoutId);
-				this.runningTasks.delete(key);
+				// The sweep may have reaped this entry and a fresh launch may
+				// occupy the key, so only release what still belongs to us.
+				if (this.runningTasks.get(key) === entry) this.runningTasks.delete(key);
+				if (runContext && !entry.reaped) this.releaseRunDispatch(runContext);
 			}),
 		);
 
-		this.runningTasks.set(key, {
-			key,
-			abortController: ac,
-			promise,
-			startedAt: Date.now(),
-			timeoutId,
-		});
+		this.runningTasks.set(key, entry);
 		return true;
+	}
+
+	private releaseRunDispatch(ctx: RunDispatchContext): void {
+		this.activeTaskRuns.delete(ctx.taskId);
+		this.releaseProjectRun(ctx.projectId);
 	}
 
 	cancelTask(key: string, reason?: unknown): boolean {
@@ -1020,7 +1068,7 @@ export class JobManager {
 			 FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
 			 WHERE ma.admin_status = $1
-			   AND ma.runtime_status != $2
+			   AND ma.runtime_status <> ALL($2::agent_runtime_status[])
 			   AND (ma.last_heartbeat_at IS NULL
 			        OR ma.last_heartbeat_at + (GREATEST(ma.heartbeat_interval_min, $3::int) || ' minutes')::interval < now())
 			   AND NOT EXISTS (
@@ -1032,7 +1080,7 @@ export class JobManager {
 			 LIMIT 5`,
 			[
 				AgentAdminStatus.Enabled,
-				AgentRuntimeStatus.Paused,
+				BUDGET_PAUSE_STATUSES_PG,
 				HEARTBEAT_INTERVAL_FLOOR_MIN,
 				HEARTBEAT_POST_RUN_COOLDOWN_SEC,
 			],
@@ -1059,6 +1107,46 @@ export class JobManager {
 				[WakeupStatus.Claimed, wakeupId],
 			);
 			await this.activateAgent(agent.id, agent.team_id, wakeupId, payload, WakeupSource.Heartbeat);
+		}
+	}
+
+	/**
+	 * Lift (or restamp) a reactive budget pause once the agent's spend changes.
+	 *
+	 * Spend is summed on demand over rolling UTC windows (daily/weekly/monthly),
+	 * so when a window rolls over the agent's effective spend drops with no event
+	 * to react to. The budget gate (`activateAgent`) only fires on a wakeup, and
+	 * `processScheduledHeartbeats` deliberately skips paused agents — so without
+	 * this sweep an autonomous (heartbeat-only) agent that trips a daily/weekly
+	 * cap would stay paused indefinitely, never re-evaluated after the window
+	 * resets. Only the budget-pause states are candidates (a human `paused` and
+	 * in-flight runs are left alone); `reconcileBudgetPause` re-checks each and
+	 * resumes it to `idle`, or restamps the scope if a different window now binds.
+	 * The gate stays the authority: it re-pauses on the next run if breached again.
+	 */
+	private async processBudgetResumes(): Promise<void> {
+		const { db } = this.deps;
+		// The agent's own project (1:1 team↔project) feeds the project-window half
+		// of the check; instance agents (HQ, only an internal project) resolve to
+		// NULL and are checked on their agent windows alone — matching the gate,
+		// which checks agent windows always and a project's only when one is resolved.
+		const paused = await db.query<{ id: string; team_id: string; project_id: string | null }>(
+			`SELECT ma.id, m.team_id, p.id AS project_id
+			 FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 LEFT JOIN projects p ON p.team_id = m.team_id AND p.is_internal = false
+			 WHERE ma.runtime_status = ANY($1::agent_runtime_status[])`,
+			[BUDGET_PAUSE_STATUSES_PG],
+		);
+
+		for (const agent of paused.rows) {
+			await reconcileBudgetPause(
+				db,
+				agent.id,
+				agent.team_id,
+				agent.project_id,
+				this.deps.wsManager,
+			);
 		}
 	}
 
@@ -1260,6 +1348,21 @@ export class JobManager {
 		// Realign the working team to the chosen task's project. For an instance
 		// agent this is the project-team it is acting on, not its HQ home team.
 		teamId = projectRow.team_id;
+
+		// Budget gate: skip the run (no heartbeat_runs row, no container/repo work)
+		// and pause the agent when it or its project is over any daily/weekly/monthly
+		// window. The wakeup is recorded as skipped rather than re-queued so it does
+		// not spin. Placed after project resolution so broadcasts hit the project team.
+		const budgetBlock = await checkOverBudget(db, memberId, projectRow.id);
+		if (budgetBlock) {
+			log.debug(
+				`Agent ${ref(agent.rows[0].slug, memberId)} over ${budgetBlock.scope} ${budgetBlock.period} budget — pausing and skipping wakeup`,
+			);
+			await pauseAgentForBudget(db, memberId, teamId, budgetBlock, this.deps.wsManager);
+			await this.markWakeupSkipped(wakeupId, WakeupSkipReason.OverBudget, task.id, teamId, null);
+			return;
+		}
+
 		const agentSlug = agent.rows[0].slug;
 		const isConversationalWakeup =
 			wakeupSource === WakeupSource.Mention ||
@@ -1394,6 +1497,7 @@ export class JobManager {
 			sshAgentServer: this.deps.sshAgentServer,
 			egressProxy: this.deps.egressProxy ?? null,
 			egressCAPath: this.deps.egressCAPath ?? null,
+			pricing: this.deps.pricing,
 		};
 		const timeoutMs = agent.rows[0].run_timeout_min * 60 * 1000;
 
@@ -1458,14 +1562,43 @@ export class JobManager {
 						err,
 					);
 					if (registeredRunId) this.unregisterLiveRun(registeredRunId);
+					// The completion bookkeeping (lock release, idle flip, wakeup
+					// resolution) must still run or the agent stays stuck busy with
+					// no recovery path. Synthesize a failed result; the failure-ping
+					// path reads the run row's real status so this never misreports.
+					try {
+						await this.onAgentComplete(
+							memberId,
+							agent.rows[0].slug,
+							task.id,
+							task.identifier,
+							teamId,
+							wakeupId,
+							wakeupPayload,
+							{
+								success: false,
+								exitCode: -1,
+								stdout: '',
+								stderr: err instanceof Error ? err.message : String(err),
+								durationMs: 0,
+								heartbeatRunId: registeredRunId,
+							},
+						);
+					} catch (completeErr) {
+						log.error(
+							`Completion bookkeeping after failed run for agent ${ref(agent.rows[0].slug, memberId)} failed:`,
+							completeErr,
+						);
+					}
 					return null;
 				} finally {
-					this.activeTaskRuns.delete(lockedTaskId);
-					this.releaseProjectRun(projectId);
+					// Dispatch guards (activeTaskRuns / activeProjectRuns) are
+					// released by launchTask's settle handler via runContext.
 					void trackBackground(this.guarded('wakeups', () => this.processWakeups()));
 				}
 			},
 			timeoutMs,
+			{ memberId, taskId: lockedTaskId, projectId },
 		);
 
 		if (!launched) {
@@ -1768,6 +1901,50 @@ export class JobManager {
 
 	private async detectOrphanedRuns(): Promise<void> {
 		await detectOrphans(this.deps.db, this.getLiveRunIds(), this.deps.wsManager);
+		await this.sweepStaleDispatches();
+		await healStaleRunState(this.deps.db, this.deps.wsManager);
+	}
+
+	/**
+	 * Release in-memory dispatch state for runs whose row went terminal but
+	 * whose completion path never settled (e.g. a wedged teardown). Without
+	 * this, the launchTask key, activeTaskRuns entry, and activeProjectRuns
+	 * refcount leak forever and the agent can never be dispatched again. The
+	 * DB-side counterpart is `healStaleRunState`.
+	 */
+	private async sweepStaleDispatches(): Promise<void> {
+		const { db } = this.deps;
+		const now = Date.now();
+		for (const [key, entry] of [...this.runningTasks]) {
+			const ctx = entry.runContext;
+			if (!ctx || entry.reaped) continue;
+			if (now - entry.startedAt < STALE_STATE_GRACE_SECONDS * 1000) continue;
+			const active = await db.query(
+				`SELECT 1 FROM heartbeat_runs
+				 WHERE member_id = $1 AND task_id = $2
+				   AND (status IN ($3::heartbeat_run_status, $4::heartbeat_run_status)
+				        OR finished_at > now() - ($5 || ' seconds')::interval)
+				 LIMIT 1`,
+				[
+					ctx.memberId,
+					ctx.taskId,
+					HeartbeatRunStatus.Queued,
+					HeartbeatRunStatus.Running,
+					String(STALE_STATE_GRACE_SECONDS),
+				],
+			);
+			if (active.rows.length > 0) continue;
+
+			log.warn(`Reaping stale dispatch ${key}: its run is terminal but completion never settled`);
+			entry.reaped = true;
+			clearTimeout(entry.timeoutId);
+			entry.abortController.abort();
+			if (this.runningTasks.get(key) === entry) this.runningTasks.delete(key);
+			this.releaseRunDispatch(ctx);
+			for (const [runId, liveRun] of this.liveRuns) {
+				if (liveRun.taskKey === key) this.liveRuns.delete(runId);
+			}
+		}
 	}
 
 	private async syncContainerStatuses(): Promise<void> {

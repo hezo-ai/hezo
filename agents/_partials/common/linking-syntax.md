@@ -34,7 +34,7 @@ Skills in the team skills database are referenced by their slug (e.g. `deploy-ru
 - Good (active address, you want product-lead to act on this ticket): `@product-lead — please confirm the PRD scope before the architect picks this up.`
 - Bad (handoff comment uses `@`, but the cascade unblock will wake the architect on BE-4 and BE-5 already): `Admin approved. @architect — BE-4 (technical spec) and BE-5 (UI/UX design) are unblocked and ready for you.`
 - Good: `Admin approved. @@architect — BE-4 (technical spec) and BE-5 (UI/UX design) unblock now.` Then mark this ticket `done` so the cascade fires; the architect wakes on BE-4 and BE-5, not on this PRD ticket.
-- Bad (review recap pings every teammate it credits — wakes the whole roster): `From @ui-designer review (12 findings); @security-engineer flagged 3 — all addressed.`
-- Good: `From @@ui-designer review (12 findings); @@security-engineer flagged 3 — all addressed.` Crediting reviewers in a recap is attribution, not an ask — keep it passive.
+- Bad (review recap pings every teammate it credits — wakes the whole roster, and the `@admin` lands a needless row in every admin's inbox): `From @ui-designer review (12 findings); @security-engineer flagged 3 — all addressed. @admin approved.`
+- Good: `From @@ui-designer review (12 findings); @@security-engineer flagged 3 — all addressed. @@admin approved.` Crediting reviewers or the admin in a recap is attribution, not an ask — keep it passive.
 - Bad (paraphrases an earlier comment instead of linking it): `As I noted in the comment above, paste the token into the request form.`
 - Good: `As I noted in IN-42#comment-a1b2c3d4-e5f6-7890-abcd-ef1234567890, paste the token into the request form.` Point at the exact comment so the reader can jump to it.

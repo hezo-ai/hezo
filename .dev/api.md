@@ -16,23 +16,46 @@ Timestamps are ISO 8601. IDs are UUIDs. Money is in cents.
 
 Three auth methods:
 
-### Bootstrap — Master Key Exchange
+### Bootstrap — Challenge-Response Master Key Auth
 
-`POST /auth/token` exchanges the master key for a board JWT. This is the bootstrap endpoint for initial access.
+The master key is a 12-word BIP39 phrase that **never leaves the client**. From its seed the client derives two independent keys (HKDF-SHA256, distinct salts):
+
+- an **Ed25519 auth keypair** — the private key signs server challenges; the public key is enrolled at setup and stored in `system_meta` (`auth_public_key`);
+- a 32-byte **unlock key** — the input to the server's at-rest key derivations (canary, secrets encryption, JWT signing). It transits only at setup and at unlock-after-restart, always inside an Ed25519-signed payload.
+
+Signed payloads use versioned, domain-separated messages: `hezo-auth-v1:setup:<pub>:<unlock>`, `hezo-auth-v1:login:<nonce>`, `hezo-auth-v1:unlock:<nonce>:<unlock>`. All key/nonce fields are lowercase hex (keys 64 chars, signatures 128, nonces 64).
+
+#### `POST /auth/setup`
+
+First-boot enrollment (master-key state `unset` only). Self-certifying: the signature (over the setup message) proves possession of the private key matching the submitted public key. Verified before anything is persisted; the public key and canary are stored in one transaction.
 
 Request:
 ```json
-{ "master_key": "..." }
+{ "public_key": "<64 hex>", "unlock_key": "<64 hex>", "signature": "<128 hex>" }
 ```
 
-Response:
+Response: `{ "data": { "token": "<user_jwt>" } }` — 400 `INVALID_REQUEST` (shape), 401 `INVALID_SIGNATURE`, 409 `ALREADY_SET`.
+
+#### `POST /auth/challenge`
+
+Issues a single-use nonce (in-memory, ~2 min TTL) for the client to sign.
+
+Response: `{ "data": { "challenge_id": "<uuid>", "nonce": "<64 hex>", "expires_in": 120 } }` — 409 `SETUP_REQUIRED` while `unset`.
+
+#### `POST /auth/verify`
+
+Completes login (and unlock, when the server is locked after a restart). The nonce is never echoed back — the server reconstructs the signed message from its stored copy, so the signature is the sole authenticator. The challenge is consumed before verification: a failed attempt burns it.
+
+Request (login while unlocked / unlock while locked):
 ```json
-{ "data": { "token": "<user_jwt>" } }
+{ "challenge_id": "<uuid>", "signature": "<128 hex>", "unlock_key": "<64 hex, only when unlocking>" }
 ```
+
+Response: `{ "data": { "token": "<user_jwt>" } }` — 400 `INVALID_REQUEST`, 401 `INVALID_CHALLENGE` (unknown/expired/used), 401 `INVALID_SIGNATURE`, 401 `UNLOCK_KEY_REQUIRED` (locked, no key supplied — client retries the dance with the key), 401 `INVALID_UNLOCK_KEY` (canary mismatch), 409 `SETUP_REQUIRED`. Supplying `unlock_key` while already unlocked succeeds (stale-locked-client tolerance).
 
 ### Board — User JWT
 
-All subsequent requests use a stateless JWT signed with the master key. No session cookies.
+All subsequent requests use a stateless JWT (HS256, secret derived from the unlock key). No session cookies.
 
 ```
 Authorization: Bearer <user_jwt>
@@ -313,8 +336,9 @@ Response:
       "role_description": "Senior Engineer",
       "default_effort": "medium",
       "heartbeat_interval_min": 30,
+      "daily_budget_cents": 0,
+      "weekly_budget_cents": 0,
       "monthly_budget_cents": 3000,
-      "budget_used_cents": 1800,
       "status": "active",
       "last_heartbeat_at": "...",
       "assigned_task_count": 4,
@@ -328,7 +352,7 @@ Response:
 #### `POST /projects/:projectId/agents`
 Internal direct-create endpoint used by team provisioning (seeding the template team). Board-initiated hires must go through `POST /projects/:projectId/agents/onboard` instead — this endpoint is not wired to the hire form and skips the Captain/board review cycle. Tests and bootstrap paths are the only expected callers.
 
-Request fields: `title` (required), `role_description`, `system_prompt`, `reports_to`, `default_effort`, `heartbeat_interval_min`, `monthly_budget_cents`, `touches_code`, `mcp_servers`.
+Request fields: `title` (required), `role_description`, `system_prompt`, `reports_to`, `default_effort`, `heartbeat_interval_min`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `touches_code`, `mcp_servers`.
 
 Response: full agent object.
 
@@ -387,10 +411,11 @@ Response: full agent object (same as list item + `system_prompt` + `mcp_servers`
 
 #### `PATCH /projects/:projectId/agents/:agentId`
 Update agent config: title, role_description, system_prompt, default_effort,
-heartbeat_interval_min, monthly_budget_cents, reports_to, mcp_servers,
-model_override_provider, model_override_model.
+heartbeat_interval_min, daily_budget_cents, weekly_budget_cents, monthly_budget_cents,
+reports_to, mcp_servers, model_override_provider, model_override_model.
 
-Cannot update: status (use lifecycle endpoints), budget_used_cents (system-managed).
+Cannot update: status (use lifecycle endpoints). Spend is derived from cost_entries,
+so there is no writable "used" field.
 
 `default_effort` accepts `minimal | low | medium | high | max`. It sets the
 baseline reasoning level applied to every run of this agent; an `@`-mentioning
@@ -604,14 +629,17 @@ Response:
     {
       "id": "uuid",
       "project_id": "uuid",
-      "short_name": "frontend",
-      "url": "https://github.com/org/frontend",
+      "repo_identifier": "org/frontend",
       "host_type": "github",
       "created_at": "..."
     }
   ]
 }
 ```
+
+The repo's name — the segment after the owner in `repo_identifier` — is its
+display label and the name of its workspace/worktree directories. It is unique
+within a project (enforced by a DB index), even across owners.
 
 #### `POST /projects/:projectId/repos`
 Add a repo — either by linking an existing GitHub repository or creating a new
@@ -623,7 +651,6 @@ Requires: GitHub platform must be connected for this team.
 **Mode: link** (default) — link an existing repo:
 ```json
 {
-  "short_name": "frontend",
   "mode": "link",
   "url": "https://github.com/org/frontend"
 }
@@ -632,13 +659,15 @@ Requires: GitHub platform must be connected for this team.
 **Mode: create** — create a new repo on GitHub and link it:
 ```json
 {
-  "short_name": "app",
   "mode": "create",
   "owner": "acme-corp",
   "name": "my-app",
   "private": true
 }
 ```
+
+Returns 409 `REPO_NAME_TAKEN` if a repo with the same name (regardless of
+owner) is already linked to the project — its workspace directory would clash.
 The `owner` must appear in the user's accessible GitHub orgs (or match the
 authenticated user's personal namespace). Server re-checks this via
 `GET /user/orgs` before creating. Returns 403 `OWNER_NOT_ACCESSIBLE` otherwise.
@@ -684,8 +713,8 @@ The `REPO_ACCESS_FAILED` message includes the connected GitHub username (from
 access to the repository.
 
 **Synchronous clone:** on a successful insert the server clones the repo via
-SSH into `<dataDir>/teams/<team-slug>/projects/<project-slug>/workspace/<short_name>/`
-(bind-mounted as `/workspace/<short_name>/` inside the project container) and
+SSH into `<dataDir>/teams/<team-slug>/projects/<project-slug>/workspace/<repo-name>/`
+(bind-mounted as `/workspace/<repo-name>/` inside the project container) and
 returns the result in the response body as `clone_status` (`"cloned"`,
 `"skipped"`, or `"failed"`) and `clone_error` (string or `null`). Clone
 failures do not fail the request — the repo record is still created, and
@@ -695,7 +724,7 @@ provision.
 #### `DELETE /projects/:projectId/repos/:repoId`
 Remove a repo from a project. The server also removes the repo's on-disk
 workspace directory and every per-task worktree derived from it
-(`<workspace>/<short_name>/` and `<worktrees>/<task>/<short_name>/`).
+(`<workspace>/<repo-name>/` and `<worktrees>/<task>/<repo-name>/`).
 
 Returns 409 `DESIGNATED_REPO_IMMUTABLE` if `repoId` equals the project's
 `designated_repo_id`. The designated repo cannot be removed.
@@ -851,6 +880,12 @@ Request:
 `{project.task_prefix}-{number}` (e.g. `IN-42`). If the assignee is an agent,
 the agent receives an event trigger. If a board member, they are notified via
 inbox and configured messaging channels.
+
+`parent_task_id`, when set, accepts a task **identifier** (e.g. `IN-42`) or a UUID —
+it is resolved to the parent's UUID within the team before insert (an unknown
+reference is a `404`, not a `500`). Nesting is capped at `MAX_SUB_TASK_DEPTH` (2).
+The same field on the `create_tasks` MCP batch additionally accepts a `'#<index>'`
+token referencing an earlier item in the same call, mirroring `blocked_by_task_ids`.
 
 `runtime_type` is optional. It pins this task to a specific AI adapter
 (`claude_code | codex | gemini`). When unset, the server picks the
@@ -1271,14 +1306,16 @@ When approved, side effects depend on approval type:
 ### Cost & Budget
 
 #### `GET /projects/:projectId/costs`
-List cost entries with aggregation.
+List cost entries with aggregation. Scoped to the path project (`project_id`) — cost
+is never team-scoped.
 
 Query params:
 - `?agent_id=uuid`
-- `?project_id=uuid`
 - `?task_id=uuid`
 - `?from=2026-03-01&to=2026-03-31`
-- `?group_by=agent|project|day`
+- `?group_by=agent|day`
+- `?breakdown=agent|adapter` (with `group_by=day`) — per-day series split by agent or
+  by AI adapter config, for the stacked Budgets-page charts
 
 Response (when `group_by=agent`):
 ```json
@@ -1295,7 +1332,11 @@ Response (when `group_by=agent`):
 ```
 
 #### `POST /projects/:projectId/costs`
-Create a cost entry. Returns 402 if the agent's budget is exceeded.
+Create a cost entry (201). Spend is always recorded; if this pushes the agent or its
+project over any budget window the agent is reactively paused (no 402 — budgets are
+enforced by windowed sums, not a debit that can be refused). `runtime_status`
+becomes `out_of_agent_budget` or `out_of_project_budget` per the window that
+tripped; a background sweep lifts it back to `idle` once spend is within limits.
 
 Request:
 ```json
@@ -1307,6 +1348,35 @@ Request:
   "description": "API call cost"
 }
 ```
+
+#### `GET /projects/:projectId/budget-status`
+Per-window spend vs. limit for the project and each of its agents. Powers the Budgets
+page and the project warning banner.
+
+```json
+{
+  "project": {
+    "daily":   { "spentCents": 150, "limitCents": 1000, "overBudget": false },
+    "weekly":  { "spentCents": 150, "limitCents": 0,    "overBudget": false },
+    "monthly": { "spentCents": 150, "limitCents": 0,    "overBudget": false },
+    "overBudget": false
+  },
+  "agents": [
+    {
+      "agent_id": "uuid", "agent_title": "Engineer", "agent_slug": "engineer",
+      "runtime_status": "out_of_agent_budget",
+      "daily":   { "spentCents": 250, "limitCents": 100, "overBudget": true },
+      "weekly":  { "spentCents": 250, "limitCents": 0,   "overBudget": false },
+      "monthly": { "spentCents": 250, "limitCents": 0,   "overBudget": false },
+      "agent_over_budget": true, "project_over_budget": false, "overBudget": true
+    }
+  ]
+}
+```
+
+A limit of `0` means unlimited. `group_by=day` on `GET /costs` (with optional
+`agent_id`/`from`/`to`, and optional `breakdown=agent|adapter`) returns the per-day
+series for the charts.
 
 ---
 
@@ -1484,6 +1554,41 @@ Update a config. Currently accepts `{ default_model: string | null }`. When set,
 
 #### `GET /ai-providers/:configId/models`
 Return the models this provider offers for the stored credential. Calls the provider's `/v1/models` endpoint live (same URL + auth headers used by `verify`) and normalises the response into `{ id, label }[]`. Chat models only — embeddings / audio / image / moderation endpoints are filtered out. Superuser only; surfaces 401 if the provider rejects the credential and 503 if the provider is unreachable.
+
+---
+
+### Instance Settings
+
+Instance-wide settings live in the `system_meta` key-value table. The only setting today is the **instance base URL** — the public origin of this Hezo instance (e.g. `https://hezo.example.com`), used to build absolute entity links for external chat channels (Telegram). It is captured automatically from the request origin (`host` + first `x-forwarded-proto` entry) on the first successful auth (`POST /auth/setup` or `POST /auth/verify`) and never overwritten after that; it stays editable on the global settings page.
+
+#### `GET /instance-settings`
+Returns `{ base_url: string | null }`. Any authenticated principal.
+
+#### `PATCH /instance-settings`
+Superuser only. Request: `{ "base_url": "https://hezo.example.com" }`. The value must be a bare http(s) origin — anything with a path, query, fragment, or credentials is rejected with `INVALID_REQUEST` — and is normalised to `URL.origin` (lowercased host, trailing slash dropped). Send `null` or `""` to clear. Echoes the stored value.
+
+---
+
+### Instance-wide mention resolution
+
+#### `POST /mentions/resolve`
+Resolution backing the global CEO chat's entity links (the project-scoped equivalents are `POST /projects/:projectId/tasks/resolve` and `POST /projects/:projectId/docs/resolve`). Gated on HQ-team access, exactly like the `/ceo/*` routes.
+
+Request — all fields optional string arrays, max 100 entries each (case-insensitive for tasks/agents, exact-case for filenames/assets):
+```json
+{
+  "tasks": ["to-1"],
+  "filenames": ["prd.md"],
+  "assets": ["mock.png"],
+  "agents": ["ceo"]
+}
+```
+
+Response: `{ tasks, kb_docs, project_docs, assets, agents }` mirroring the project-scoped resolve shapes (`assets` rows carry a `signed_url`; `agents` rows carry `{ slug, title, project_slug }` with HQ agents resolving to the `hq` project).
+
+**Uniqueness rule:** candidates are matched across every team, and a reference resolves only when it is unique instance-wide — task identifiers are unique per team but can collide across teams, and doc filenames / asset names / agent slugs collide commonly (every Startup team has a `captain`). Ambiguous or unknown references are omitted so the client renders them as plain text; a wrong link is worse than no link. Skills (KB docs) are instance-global and slug-unique, so they always resolve. Disabled agents are ignored.
+
+The per-channel rendering seam for stored CEO messages is `renderCeoMessageForChannel` (`packages/server/src/services/ceo-message-render.ts`): `web` returns content unchanged (the web client resolves and renders links itself), `telegram` rewrites unique references into absolute markdown links built from the instance base URL, `whatsapp` stays plain text. Stored `ceo_messages.content` is never mutated.
 
 ---
 
@@ -1884,7 +1989,7 @@ List installed plugins for a team.
 
 ### Auth & Team
 
-Current auth uses `POST /auth/token` to exchange the master key for a board JWT (see Authentication section above). OAuth login (GitHub/GitLab) is planned for Phase 6.5.
+Current auth is the challenge-response flow over `POST /auth/setup` / `/auth/challenge` / `/auth/verify` (see Authentication section above). OAuth login (GitHub/GitLab) is planned for Phase 6.5.
 
 **OAuth login endpoints — not yet implemented — planned for Phase 6.5.**
 
@@ -2171,7 +2276,7 @@ Response:
         "project_goal": "Ship collaboration features",
         "team_description": "Build the #1 AI note-taking app",
         "repos": [
-          { "short_name": "api", "url": "https://github.com/org/api" }
+          { "repo_identifier": "org/api", "url": "https://github.com/org/api" }
         ],
         "unread_comments": 1
       }
@@ -2236,7 +2341,7 @@ as GitHub. No side channels, no direct messaging. Everything is on the record.
 
 Text content can contain `@<agent-slug>` references. The slug is derived from
 the agent title (lowercased, spaces → hyphens, e.g. "Dev Engineer" → `dev-engineer`).
-Repo short names can also be referenced: `@frontend`, `@api`.
+Repo names can also be referenced: `@frontend`, `@api`.
 
 The resolved system prompt every agent receives ends with a **Teammates** block
 listing each enabled peer in the team in `@<slug> — Title` form. This block
@@ -2326,16 +2431,10 @@ Request:
 }
 ```
 
-Each tool call with `cost_cents > 0` also creates a `cost_entries` row and
-debits the agent's budget atomically. If budget is exceeded, returns:
-```json
-{
-  "error": {
-    "code": "BUDGET_EXCEEDED",
-    "message": "Agent budget limit reached."
-  }
-}
-```
+`tool_calls.cost_cents` is recorded for display only and does **not** debit the
+budget — the run's total cost (which already includes tool-call cost) is recorded
+once at run completion as a single `cost_entries` row and counts against the agent's
+windowed budgets. So this endpoint never returns `BUDGET_EXCEEDED`.
 
 ---
 
@@ -2753,7 +2852,7 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 | `create_comment` | Add comment to task | `team_id`, `task_id`, `content`, `content_type?` |
 | `list_approvals` | List pending approvals | `team_id` |
 | `resolve_approval` | Resolve an approval | `team_id`, `approval_id`, `status` (`approved`/`denied`), `resolution_note?` |
-| `get_costs` | Get cost summary | `team_id`, `group_by?` (`agent`/`project`/`day`) |
+| `get_costs` | Get project cost summary | `project`, `group_by?` (`agent`/`day`) |
 | `get_agent_system_prompt` | Read agent's system prompt. Any agent or board user in the same team. | `team_id`, `agent_id` |
 | `update_agent_system_prompt` | Apply a system prompt change. **Coach-only.** Writes immediately and snapshots a revision for board rollback. | `team_id`, `agent_id`, `new_system_prompt`, `change_summary` |
 | `list_project_docs` | List project docs | `team_id`, `project_id` |

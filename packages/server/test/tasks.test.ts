@@ -307,6 +307,47 @@ describe('tasks CRUD', () => {
 		expect(removeRes.status).toBe(200);
 	});
 
+	it('reports the blocker run state in the dependencies list', async () => {
+		const blocker = await insertTaskDirect(agentId, 'Upstream blocker');
+		const blocked = await insertTaskDirect(agentId, 'Downstream blocked');
+
+		const addRes = await app.request(
+			`/api/projects/${projectSlug}/tasks/${blocked.id}/dependencies`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ blocked_by_task_id: blocker.id }),
+			},
+		);
+		expect(addRes.status).toBe(201);
+
+		const listDeps = async () =>
+			(
+				await (
+					await app.request(`/api/projects/${projectSlug}/tasks/${blocked.id}/dependencies`, {
+						headers: authHeader(token),
+					})
+				).json()
+			).data;
+
+		// No run yet — the blocker is idle.
+		let deps = await listDeps();
+		expect(deps).toHaveLength(1);
+		expect(deps[0].blocked_by_has_active_run).toBe(false);
+		expect(deps[0].blocked_by_queued_wakeup).toBeNull();
+
+		// A run lands on the blocker — the downstream's dependency row reflects it.
+		await db.query(
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status)
+			 VALUES ($1, $2, $3, 'running')`,
+			[teamId, agentId, blocker.id],
+		);
+		deps = await listDeps();
+		expect(deps[0].blocked_by_has_active_run).toBe(true);
+
+		await db.query(`DELETE FROM heartbeat_runs WHERE task_id = $1`, [blocker.id]);
+	});
+
 	it('updates and retrieves progress_summary', async () => {
 		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
@@ -811,6 +852,39 @@ describe('sub-task depth + ancestors', () => {
 		const tooDeep = await createTask(subSub.id);
 		expect(tooDeep.res.status).toBe(400);
 		expect(tooDeep.body.error.message).toMatch(/2 levels deep/);
+	});
+
+	it('resolves a parent_task_id passed by identifier (not just UUID)', async () => {
+		const root = (await createTask()).body.data;
+		// Reference the parent by its bare identifier (lowercased), the way an
+		// agent or API caller would — must resolve to the parent UUID, not 500.
+		const childRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Child by identifier',
+				assignee_id: agentId,
+				parent_task_id: root.identifier.toLowerCase(),
+			}),
+		});
+		expect(childRes.status).toBe(201);
+		expect((await childRes.json()).data.parent_task_id).toBe(root.id);
+	});
+
+	it('returns 404 (not 500) when parent_task_id references an unknown task', async () => {
+		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Orphan child',
+				assignee_id: agentId,
+				parent_task_id: 'MP-999999',
+			}),
+		});
+		expect(res.status).toBe(404);
+		expect((await res.json()).error.message).toMatch(/parent task/i);
 	});
 
 	it('rejects depth-3 creation via POST /tasks/:id/sub-tasks', async () => {

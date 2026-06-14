@@ -41,8 +41,9 @@ export const hireHandler: ApprovalHandler = {
 		await db.query(
 			`INSERT INTO member_agents (id, title, slug, role_description,
 			                            default_effort, heartbeat_interval_min,
-			                            monthly_budget_cents, touches_code, admin_status)
-			 VALUES ($1, $2, $3, $4, $5::agent_effort, $6, $7, $8, $9::agent_admin_status)`,
+			                            daily_budget_cents, weekly_budget_cents, monthly_budget_cents,
+			                            touches_code, admin_status)
+			 VALUES ($1, $2, $3, $4, $5::agent_effort, $6, $7, $8, $9, $10, $11::agent_admin_status)`,
 			[
 				memberId,
 				title,
@@ -50,6 +51,8 @@ export const hireHandler: ApprovalHandler = {
 				(payload.role_description as string) ?? '',
 				(payload.default_effort as string) ?? 'medium',
 				(payload.heartbeat_interval_min as number) ?? 60,
+				(payload.daily_budget_cents as number) ?? 0,
+				(payload.weekly_budget_cents as number) ?? 0,
 				(payload.monthly_budget_cents as number) ?? 3000,
 				(payload.touches_code as boolean) ?? false,
 				AgentAdminStatus.Enabled,
@@ -103,8 +106,8 @@ export const hireHandler: ApprovalHandler = {
 			`SELECT m.id, m.team_id, m.display_name, m.created_at,
 			        ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary,
 			        ma.default_effort, ma.heartbeat_interval_min,
-			        ma.monthly_budget_cents, ma.budget_used_cents, ma.touches_code,
-			        ma.budget_reset_at, ma.runtime_status, ma.admin_status,
+			        ma.daily_budget_cents, ma.weekly_budget_cents, ma.monthly_budget_cents,
+			        ma.touches_code, ma.runtime_status, ma.admin_status,
 			        ma.last_heartbeat_at, ma.reports_to, ma.mcp_servers, ma.updated_at
 			 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1`,
 			[memberId],

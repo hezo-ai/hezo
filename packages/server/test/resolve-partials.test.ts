@@ -137,6 +137,9 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 			expect(docs[key], `${key} should include the review-recap antipattern example`).toContain(
 				'review recap',
 			);
+			expect(docs[key], `${key} should keep admin attribution passive in recaps`).toContain(
+				'@@admin approved',
+			);
 		}
 
 		// Every role doc picks up the subtask-preference guidance.

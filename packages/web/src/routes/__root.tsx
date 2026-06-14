@@ -3,6 +3,7 @@ import { createRootRoute, Outlet, useMatches, useNavigate } from '@tanstack/reac
 import { X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { AppHeader } from '../components/app-header';
+import { CeoChatWidget } from '../components/ceo-chat/ceo-chat-widget';
 import { MasterKeyGate } from '../components/master-key-gate';
 import { ProjectRail } from '../components/project-rail';
 import { ProjectSidebar } from '../components/project-sidebar';
@@ -92,7 +93,12 @@ function ShellLayout() {
 	// without the header, project rail, or mobile drawer.
 	if (bare) return <Outlet />;
 
-	return <ShellChrome />;
+	return (
+		<>
+			<ShellChrome />
+			<CeoChatWidget />
+		</>
+	);
 }
 
 function ShellChrome() {

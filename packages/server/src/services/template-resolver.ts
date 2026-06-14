@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { CHAT_MEMORY_SLUG } from '@hezo/shared';
 import { terminalStatusParams } from '../lib/sql';
 
 interface ResolveContext {
@@ -8,6 +9,13 @@ interface ResolveContext {
 	agentId?: string;
 	dataDir?: string;
 	mode?: 'runtime' | 'preview' | 'placeholders';
+	/**
+	 * The session roams across every team rather than being scoped to one (the CEO
+	 * chat). Run-scoped blocks that pin to a single team/project — Project State,
+	 * Teammates, and the identifier list in Run Context — are suppressed, since
+	 * pinning them to the home team (HQ) would misreport every other project.
+	 */
+	crossTeam?: boolean;
 }
 
 const SHARED_INSTRUCTIONS = `
@@ -41,7 +49,7 @@ const SHARED_INSTRUCTIONS = `
 - **Handoff comments specifically.** If your comment is "I'm done with this; the next role's tickets are now unblocked / are now assigned to them," reference the next role as \`@@<slug>\`, not \`@<slug>\`. Then mark this ticket terminal — the cascade unblock (or the existing assignment) is what wakes them, on the ticket the work lives on. Naming them with \`@\` here wakes them on the wrong ticket. Most common antipattern: an "Assignee" column in a plan-fan-out table written with \`@<slug>\` — every row wakes that agent on this ticket for no reason.
 - **A handoff with nothing structural behind it uses active \`@\`.** The \`@@\`-for-handoffs rule above holds *only* when something else will wake the recipient: you're marking this ticket terminal and they own a dependent the cascade releases, or you've just assigned them a ticket. When none of that is true, the mention is the **only** wake there is — use a single active \`@<slug>\`. The case that bites: asking *this ticket's own assignee* to act while the ticket stays non-terminal — a reviewer approving and asking the assignee to merge and mark \`done\`, or handing a ticket back for changes without a status flip that wakes them. The assignee being on the ticket is not a pending wake; an approval comment does not re-wake them. A passive \`@@\` there pings no one and the ticket stalls with both sides waiting. If you catch yourself writing "approved, please merge / please fix and re-submit" as \`@@\`, it must be \`@\`.
 - **Use \`@@<slug>\` for passive references.** When you need to *name* a teammate in prose, a plan table, or a wrap-up / handoff summary without pinging them, write \`@@<slug>\`. The double-\`@\` form renders as the same teammate chip as \`@<slug>\` in the admin UI but is not extracted as a mention, so no wakeup fires.
-- **Rubric.** "Hey @architect, please confirm the spec here" — active, wakes architect on this ticket → \`@\`. "BE-2 is assigned to @@researcher, BE-3 to @@product-lead" — passive, just naming who owns what → \`@@\`. "Approved. @@architect — BE-4 and BE-5 unblock now" — passive handoff, the cascade does the wake → \`@@\`. "From @@ui-designer review (12 findings); @@security-engineer flagged 3 — all addressed" — passive recap, crediting reviewers → \`@@\`.
+- **Rubric.** "Hey @architect, please confirm the spec here" — active, wakes architect on this ticket → \`@\`. "BE-2 is assigned to @@researcher, BE-3 to @@product-lead" — passive, just naming who owns what → \`@@\`. "Approved. @@architect — BE-4 and BE-5 unblock now" — passive handoff, the cascade does the wake → \`@@\`. "From @@ui-designer review (12 findings); @@security-engineer flagged 3 — all addressed" — passive recap, crediting reviewers → \`@@\`. "Shipped cleanly: @@product-lead drafted the PRD, @@admin approved on first review" — passive recap, crediting the admin; an active \`@admin\` is a decision-needed signal that lands a row in every admin's inbox → \`@@\`.
 
 ### Knowledge Maintenance
 - **Project docs**: Use \`list_project_docs\`, \`read_project_doc\`, and \`write_project_doc\` for high-level project context — PRDs, architecture decisions, API designs, schemas, implementation plans. Docs live in the project-doc store and are addressed by bare filename (e.g. \`prd.md\`, \`spec.md\`, \`research.md\`) — they are NOT filesystem paths, so never prefix a folder. Keep them aligned with the actual codebase. Do NOT put agent-specific working knowledge here.
@@ -86,7 +94,7 @@ const SHARED_INSTRUCTIONS = `
   - \`oauth_status = "pending"\` → human hasn't clicked Connect yet. Don't repost the ask; the connect_required comment is still live.
   - \`oauth_status = "failed"\` → an attempt errored (read \`auth_error\` for the AS's message). Surface this to the human; they may need to retry or fix something.
   - \`oauth_status = "revoked"\` → a human explicitly disconnected. Don't auto-reconnect; ask first.
-- If your tool list doesn't include the MCP's tools but \`oauth_status\` is \`"active"\`, it's NOT a "waiting on auth" situation. Call \`test_connector(team_id, connector_id)\` — it resolves the stored token server-side and pings the MCP URL directly, bypassing the container entirely. The result tells you (a) whether the token is still valid against the provider (and if not, surface to the user so they can reconnect), or (b) the token is valid and the issue is in the container/proxy chain (post a wrap-up comment explaining what \`test_connector\` returned so the human can file a bug).
+- If your tool list doesn't include the MCP's tools but \`oauth_status\` is \`"active"\`, it's NOT a "waiting on auth" situation. Call \`test_connector(connector_id)\` — it resolves the stored token server-side and pings the MCP URL directly, bypassing the container entirely. The result tells you (a) whether the token is still valid against the provider (and if not, surface to the user so they can reconnect), or (b) the token is valid and the issue is in the container/proxy chain (post a wrap-up comment explaining what \`test_connector\` returned so the human can file a bug).
 `;
 
 export async function resolveSystemPrompt(
@@ -188,9 +196,12 @@ export async function resolveSystemPrompt(
 	if (resolved.includes('{{project_docs_context}}')) {
 		let docsText = 'No project documentation available.';
 		if (ctx.projectId) {
+			// chat-memory.md (HQ) is injected in full into the chatbox prompt, so it
+			// is excluded from the manifest — listing it would tell the agent to
+			// read_project_doc something it already has verbatim.
 			const docs = await db.query<{ filename: string; title: string; updated_at: string }>(
-				"SELECT slug AS filename, title, updated_at FROM documents WHERE type = 'project_doc' AND project_id = $1 ORDER BY slug",
-				[ctx.projectId],
+				"SELECT slug AS filename, title, updated_at FROM documents WHERE type = 'project_doc' AND project_id = $1 AND slug != $2 ORDER BY slug",
+				[ctx.projectId, CHAT_MEMORY_SLUG],
 			);
 			if (docs.rows.length > 0) {
 				const lines = docs.rows
@@ -202,13 +213,21 @@ export async function resolveSystemPrompt(
 					.join('\n');
 				docsText = [
 					'The project docs database holds high-level project context (PRDs, specs, architecture decisions, research). Entries are listed below by filename.',
-					"Call read_project_doc(filename) to load a doc's full contents when relevant to your task.",
+					"Call read_project_doc(filename) to load a doc's full contents when relevant to your task. These docs live in the database, not the filesystem — there is no /workspace/.hezo/project-docs path, so don't use the Read/cat file tools; load each one by its bare filename through read_project_doc.",
 					'',
 					lines,
 				].join('\n');
 			}
 		}
 		resolved = resolved.replace(/\{\{project_docs_context\}\}/g, docsText);
+	}
+
+	// Instance-wide project roster. Only the CEO's prompt carries this placeholder
+	// (it is the one agent with cross-team reach), so a worker prompt never leaks
+	// other teams' projects. Regenerated every turn, so the CEO answers "what
+	// projects do we have?" from live state instead of memory.
+	if (resolved.includes('{{projects_context}}')) {
+		resolved = resolved.replace(/\{\{projects_context\}\}/g, await buildProjectsContext(db));
 	}
 
 	resolved = resolved.replace(/\{\{requester_context\}\}/g, '');
@@ -218,11 +237,15 @@ export async function resolveSystemPrompt(
 	}
 
 	if (ctx.mode !== 'preview') {
-		resolved += buildRunContextBlock(ctx);
+		resolved += await buildRunContextBlock(db, ctx);
 	}
-	resolved += await buildProjectStateBlock(db, ctx);
+	if (!ctx.crossTeam) {
+		resolved += await buildProjectStateBlock(db, ctx);
+	}
 	resolved += await buildTeamContextBlock(db, ctx);
-	resolved += await buildTeammatesBlock(db, ctx);
+	if (!ctx.crossTeam) {
+		resolved += await buildTeammatesBlock(db, ctx);
+	}
 	resolved += SHARED_INSTRUCTIONS;
 
 	return resolved;
@@ -373,17 +396,84 @@ function formatCreatedTicket(t: {
 	return `- ${t.identifier} — ${t.title} (${t.status}, assigned to ${assignee})`;
 }
 
-function buildRunContextBlock(ctx: ResolveContext): string {
-	const lines = [`- Team ID: ${ctx.teamId}`];
-	if (ctx.projectId) lines.push(`- Project ID: ${ctx.projectId}`);
-	if (ctx.taskId) lines.push(`- Task ID: ${ctx.taskId}`);
+/**
+ * Instance-wide roster of every project-team (HQ excluded). Resolved inline for
+ * the `{{projects_context}}` placeholder, which only the CEO's prompt carries.
+ * Uses slugs/names — never UUIDs — because this text is also what the CEO echoes
+ * back to the operator in the chat box.
+ */
+async function buildProjectsContext(db: PGlite): Promise<string> {
+	const terminal = terminalStatusParams(1, true);
+	const projects = await db.query<{
+		name: string;
+		slug: string;
+		task_prefix: string;
+		open_task_count: number;
+		created_at: string;
+	}>(
+		`SELECT p.name, p.slug, p.task_prefix,
+		        (SELECT count(*) FROM tasks i
+		         WHERE i.project_id = p.id AND i.status NOT IN (${terminal.placeholders}))::int AS open_task_count,
+		        p.created_at
+		 FROM projects p
+		 WHERE p.is_internal = false
+		 ORDER BY p.created_at DESC`,
+		terminal.values,
+	);
+
+	const intro =
+		'Hezo is project-centric: one organisation containing many projects, each with its own Captain and roster of agents. As the instance CEO you have automatic cross-project reach over every one of them. The roster of projects below (HQ, your home, excluded) is regenerated every turn from the live database — trust it over memory, and never tell the operator a project does not exist without checking here first. When you name a project or ticket in the chat box, use its slug, identifier, or name (e.g. the project `todo6`, ticket `TO-1`) — never a raw UUID. To read or act inside a project, pass its slug (shown on its line below) as the `project` argument to tools like `list_tasks` / `list_agents`; or call `list_projects` for this same live list.';
+
+	if (projects.rows.length === 0) {
+		return `${intro}\n\n_No projects exist yet beyond HQ. When the operator wants to start one, take it through project intake._`;
+	}
+
+	const lines = projects.rows
+		.map((p) => {
+			const date = new Date(p.created_at).toISOString().slice(0, 10);
+			const open = `${p.open_task_count} open ticket${p.open_task_count === 1 ? '' : 's'}`;
+			return `- ${p.name} (slug: ${p.slug}, prefix: ${p.task_prefix}) — ${open}, created ${date}`;
+		})
+		.join('\n');
+
+	return `${intro}\n\n${lines}`;
+}
+
+async function buildRunContextBlock(db: PGlite, ctx: ResolveContext): Promise<string> {
+	if (ctx.crossTeam) {
+		return `
+
+---
+
+## Run Context
+
+You are not scoped to a single project — you roam across the whole org, so there is no "current" project for tools to default to. To read or act inside a specific project, take its slug from the roster above and pass it as the \`project\` argument to tools like \`list_tasks\` / \`list_agents\`.`;
+	}
+
+	let projectSlug = '';
+	if (ctx.projectId) {
+		const r = await db.query<{ slug: string }>('SELECT slug FROM projects WHERE id = $1', [
+			ctx.projectId,
+		]);
+		projectSlug = r.rows[0]?.slug ?? '';
+	}
+	let taskIdentifier = '';
+	if (ctx.taskId) {
+		const r = await db.query<{ identifier: string }>('SELECT identifier FROM tasks WHERE id = $1', [
+			ctx.taskId,
+		]);
+		taskIdentifier = r.rows[0]?.identifier ?? '';
+	}
+
+	const lines: string[] = [];
+	if (projectSlug) lines.push(`- Project: \`${projectSlug}\``);
+	if (taskIdentifier) lines.push(`- Current ticket: \`${taskIdentifier}\``);
+
 	return `
 
 ---
 
 ## Run Context
 
-You are currently running with the following identifiers. Pass them directly to MCP tools that take \`team_id\` / \`project_id\` / \`task_id\` — do not guess or re-derive them.
-
-${lines.join('\n')}`;
+This run operates inside one project. MCP tools that take a \`project\` argument default to it — omit \`project\` to act here, and only pass another project's slug to reach a different one. Reference tickets by their identifier (e.g. \`${taskIdentifier || 'ABC-12'}\`), never a UUID.${lines.length ? `\n\n${lines.join('\n')}` : ''}`;
 }

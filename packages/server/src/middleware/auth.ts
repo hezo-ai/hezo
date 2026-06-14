@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
-import { AuthType, HeartbeatRunStatus } from '@hezo/shared';
+import { AuthType, CeoSessionStatus, HeartbeatRunStatus } from '@hezo/shared';
 import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { sign, verify } from 'hono/jwt';
@@ -9,8 +9,19 @@ import { resolveProject, resolveTeamId } from '../lib/resolve';
 import type { AuthInfo, Env } from '../lib/types';
 
 const AGENT_JWT_TTL_SECONDS = 60 * 60 * 4;
+// The CEO chat session outlives a run; the token is revoked structurally via
+// the ceo_sessions row status, so a long TTL is safe.
+const CEO_SESSION_JWT_TTL_SECONDS = 60 * 60 * 24 * 30;
 
-const PUBLIC_PATHS = ['/health', '/api/status', '/api/auth/token', '/', '/api/oauth/callback'];
+const PUBLIC_PATHS = [
+	'/health',
+	'/api/status',
+	'/api/auth/setup',
+	'/api/auth/challenge',
+	'/api/auth/verify',
+	'/',
+	'/api/oauth/callback',
+];
 
 /**
  * Shared token verification used by HTTP middleware, MCP, and WebSocket auth.
@@ -49,9 +60,39 @@ export async function verifyToken(
 		const payload = await verify(token, secret, 'HS256');
 
 		if (payload.member_id && payload.team_id) {
-			if (!payload.run_id || !payload.project_id) return null;
 			const memberId = payload.member_id as string;
 			const teamId = payload.team_id as string;
+
+			// Persistent CEO chat session principal: validated against the
+			// ceo_sessions row (the live-session proof, revoked by flipping its
+			// status), not a heartbeat_runs row. Carries cross-team privilege.
+			if (payload.session_id) {
+				const sessionId = payload.session_id as string;
+				const sessionResult = await db.query<{ status: string; project_id: string }>(
+					'SELECT status, project_id FROM ceo_sessions WHERE id = $1 AND member_id = $2 AND team_id = $3',
+					[sessionId, memberId, teamId],
+				);
+				const sessionRow = sessionResult.rows[0];
+				if (
+					sessionRow?.status !== CeoSessionStatus.Starting &&
+					sessionRow?.status !== CeoSessionStatus.Running
+				) {
+					return null;
+				}
+				return {
+					type: AuthType.Agent,
+					memberId,
+					teamId,
+					runId: null,
+					taskId: null,
+					projectId: sessionRow.project_id,
+					crossProject: true,
+					sessionId,
+					crossTeam: payload.cross_team === true,
+				};
+			}
+
+			if (!payload.run_id || !payload.project_id) return null;
 			const runId = payload.run_id as string;
 			const projectId = payload.project_id as string;
 			const crossProject = payload.cross_project === true;
@@ -172,6 +213,40 @@ export async function signAgentJwt(
 	);
 }
 
+/**
+ * Mint the long-lived MCP token for the persistent CEO chat session. Unlike a
+ * run token it carries `session_id` (validated against `ceo_sessions`) and
+ * `cross_team` (act across every team — the team-level analogue of
+ * `cross_project`). Revocation is structural via the session row's status, so
+ * the TTL is long; the caller is responsible for asserting the member is the
+ * instance CEO in the HQ team before minting.
+ */
+export async function signCeoSessionJwt(
+	masterKeyManager: { getJwtKey: () => Promise<Buffer> },
+	memberId: string,
+	teamId: string,
+	sessionId: string,
+	projectId: string,
+): Promise<string> {
+	const jwtKey = await masterKeyManager.getJwtKey();
+	const secret = jwtKey.toString('base64');
+	const now = Math.floor(Date.now() / 1000);
+	return sign(
+		{
+			member_id: memberId,
+			team_id: teamId,
+			session_id: sessionId,
+			project_id: projectId,
+			cross_project: true,
+			cross_team: true,
+			iat: now,
+			exp: now + CEO_SESSION_JWT_TTL_SECONDS,
+		},
+		secret,
+		'HS256',
+	);
+}
+
 export function safeCompareHex(a: string, b: string): boolean {
 	const bufA = Buffer.from(a, 'hex');
 	const bufB = Buffer.from(b, 'hex');
@@ -190,6 +265,8 @@ async function assertTeamAccess(
 	teamId: string,
 ): Promise<Response | null> {
 	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
+		// The instance CEO chat session acts across every team (gated at mint time).
+		if (auth.type === AuthType.Agent && auth.crossTeam) return null;
 		if (auth.teamId !== teamId) {
 			return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
 		}

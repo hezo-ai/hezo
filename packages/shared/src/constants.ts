@@ -32,6 +32,23 @@ export const DEFAULT_TEAM_SLUG = 'default';
 export const DEFAULT_TEAM_NAME = 'Team';
 export const DEFAULT_TEAM_TEMPLATE_NAME = 'Blank';
 
+/**
+ * Reserved project-doc filename for the chatbox's persistent memory. A single
+ * undeletable doc seeded in the HQ project; its full contents are injected into
+ * every chatbox (CEO) turn so durable preferences survive the rolling message
+ * window. Maintained by the agent via `write_project_doc` and editable by the
+ * operator in the docs UI.
+ */
+export const CHAT_MEMORY_SLUG = 'chat-memory.md';
+
+/**
+ * How many recent chatbox messages are replayed into each turn's prompt.
+ * Operator-adjustable in global settings; clamped to [MIN, MAX].
+ */
+export const DEFAULT_CHAT_HISTORY_LIMIT = 80;
+export const CHAT_HISTORY_LIMIT_MIN = 10;
+export const CHAT_HISTORY_LIMIT_MAX = 500;
+
 export const PROJECT_INTAKE_LABEL = 'project-intake';
 export const PROJECT_INTAKE_SKIP_SIGNAL_TEXT =
 	'Admin chose to skip further questions — finalise the project proposal with what we have so far.';
@@ -39,7 +56,21 @@ export const PROJECT_INTAKE_SKIP_SIGNAL_TEXT =
 export const wsRoom = {
 	team: (id: string) => `team:${id}`,
 	agent: (id: string) => `agent:${id}`,
+	/** The single global CEO chat room. Every mirrored surface subscribes here. */
+	ceo: () => 'ceo:global',
 } as const;
+
+/**
+ * The repository's own name — the segment after the owner in an `owner/name`
+ * identifier. Serves as the repo's display label and as its directory name
+ * under the project workspace and per-task worktrees. Must match the SQL
+ * expression `split_part(repo_identifier, '/', 2)` used by the per-project
+ * uniqueness index on repos.
+ */
+export function repoNameFromIdentifier(repoIdentifier: string): string {
+	const slash = repoIdentifier.indexOf('/');
+	return slash === -1 ? repoIdentifier : repoIdentifier.slice(slash + 1);
+}
 
 /**
  * Conventional-commit type → changelog heading, in render order. Single source

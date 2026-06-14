@@ -1,10 +1,10 @@
-import './console-shim';
 import type { PGlite } from '@electric-sql/pglite';
 import { AuthType, DEFAULT_WEB_PORT } from '@hezo/shared';
 import { app } from './app';
 import { parseConfig, runRestore } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
 import { PgDataCorruptError } from './db/client';
+import { DbNewerThanAppError, MigrationFailedError } from './db/migrate-errors';
 import { logger, setLogLevel } from './logger';
 import { loadAdminAuth, verifyToken } from './middleware/auth';
 import type { ContainerLogStreamer } from './services/container-logs';
@@ -40,6 +40,7 @@ function registerRuntime(result: StartupResult): void {
 		shutdown: async () => {
 			serverReady = false;
 			result.jobManager.shutdown();
+			await result.ceoSessionManager.stop();
 			await result.egressProxy.releaseAll();
 			await result.sshAgentServer.releaseAll();
 			await result.db.close();
@@ -149,6 +150,13 @@ void (async () => {
 		}
 	} catch (err) {
 		if (thisStartupGeneration !== startupGeneration) return;
+		// Fatal, operator-actionable migration conditions: the DB is fine but the
+		// binary can't proceed. Print the guidance and exit rather than limping
+		// along in minimal mode.
+		if (err instanceof DbNewerThanAppError || err instanceof MigrationFailedError) {
+			log.error(`\n${err.message}\n`);
+			process.exit(1);
+		}
 		if (err instanceof PgDataCorruptError) {
 			log.error(`\n${err.message}\n`);
 		} else {

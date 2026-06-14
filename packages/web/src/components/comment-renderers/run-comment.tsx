@@ -135,6 +135,12 @@ function RunCommentBody({
 							<span data-testid="run-comment-duration">{formatElapsed(durationMs)}</span>
 						</>
 					)}
+					{run?.cost_cents != null && run.cost_cents > 0 && (
+						<>
+							<span aria-hidden="true">·</span>
+							<span data-testid="run-comment-cost">${(run.cost_cents / 100).toFixed(2)}</span>
+						</>
+					)}
 				</span>
 			)}
 			<span className="text-[11px] text-text-subtle truncate min-w-0">

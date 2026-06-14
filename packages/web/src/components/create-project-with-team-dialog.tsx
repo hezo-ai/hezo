@@ -6,6 +6,7 @@ import { setActiveTeamSlug } from '../hooks/use-active-team-slug';
 import { useStartProjectIntake } from '../hooks/use-project-intake';
 import { useCreateProjectWithTeam } from '../hooks/use-projects';
 import { useTeamTemplates } from '../hooks/use-team-templates';
+import { useTeams } from '../hooks/use-teams';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
@@ -18,6 +19,12 @@ interface CreateProjectWithTeamDialogProps {
 }
 
 /**
+ * Exactly one source backs the new team: either a catalog template or an
+ * existing team to clone (snapshotted into a fresh template server-side).
+ */
+type Selection = { kind: 'template'; id: string } | { kind: 'team'; id: string } | null;
+
+/**
  * Projects-primary "New project": each project owns its own team. Pick a team
  * type, name the project, describe it, then either create it straight away or
  * hand the brief to the CEO, who scopes it with you in HQ before it opens.
@@ -27,30 +34,43 @@ export function CreateProjectWithTeamDialog({
 	onOpenChange,
 }: CreateProjectWithTeamDialogProps) {
 	const { data: templates, isLoading } = useTeamTemplates();
+	const { data: teams } = useTeams();
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
-	const [templateId, setTemplateId] = useState<string | null>(null);
+	const [selection, setSelection] = useState<Selection>(null);
 	const createProject = useCreateProjectWithTeam();
 	const startIntake = useStartProjectIntake();
 	const navigate = useNavigate();
 
+	// Existing teams the new project's team can be cloned from. HQ (the internal
+	// team) is excluded — snapshotting it would carry the CEO/Coach into the roster.
+	const sourceTeams = (teams ?? []).filter((t) => !t.is_internal);
+
 	const pending = createProject.isPending || startIntake.isPending;
 	const canSubmit =
-		name.trim().length > 0 && description.trim().length > 0 && !!templateId && !pending;
+		name.trim().length > 0 && description.trim().length > 0 && !!selection && !pending;
 	const error = createProject.error || startIntake.error;
+
+	// The chosen source as request fields: a template id or a source-team id.
+	const sourceFields =
+		selection?.kind === 'template'
+			? { template_id: selection.id }
+			: selection?.kind === 'team'
+				? { source_team_id: selection.id }
+				: null;
 
 	function reset() {
 		setName('');
 		setDescription('');
-		setTemplateId(null);
+		setSelection(null);
 	}
 
 	async function handleCreateNow() {
-		if (!templateId) return;
+		if (!sourceFields) return;
 		const res = await createProject.mutateAsync({
 			name: name.trim(),
 			description: description.trim(),
-			template_id: templateId,
+			...sourceFields,
 		});
 		setActiveTeamSlug(res.team_slug);
 		onOpenChange(false);
@@ -66,11 +86,11 @@ export function CreateProjectWithTeamDialog({
 	}
 
 	async function handlePlanWithCeo() {
-		if (!templateId) return;
+		if (!sourceFields) return;
 		const res = await startIntake.mutateAsync({
 			name: name.trim(),
 			description: description.trim(),
-			template_id: templateId,
+			...sourceFields,
 		});
 		setActiveTeamSlug(res.team_slug);
 		onOpenChange(false);
@@ -126,12 +146,12 @@ export function CreateProjectWithTeamDialog({
 							) : (
 								<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
 									{(templates ?? []).map((tpl) => {
-										const selected = templateId === tpl.id;
+										const selected = selection?.kind === 'template' && selection.id === tpl.id;
 										return (
 											<button
 												key={tpl.id}
 												type="button"
-												onClick={() => setTemplateId(tpl.id)}
+												onClick={() => setSelection({ kind: 'template', id: tpl.id })}
 												className="text-left"
 												data-testid={`team-type-card-${tpl.name}`}
 												aria-pressed={selected}
@@ -161,6 +181,43 @@ export function CreateProjectWithTeamDialog({
 								</div>
 							)}
 						</div>
+						{sourceTeams.length > 0 && (
+							<div>
+								<span className="text-[13px] font-medium text-text">Copy an existing team</span>
+								<p className="text-[12px] text-text-muted">
+									Start from another team's roster. A reusable team type is saved from its current
+									setup.
+								</p>
+								<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+									{sourceTeams.map((team) => {
+										const selected = selection?.kind === 'team' && selection.id === team.id;
+										return (
+											<button
+												key={team.id}
+												type="button"
+												onClick={() => setSelection({ kind: 'team', id: team.id })}
+												className="text-left"
+												data-testid={`source-team-card-${team.slug}`}
+												aria-pressed={selected}
+											>
+												<Card
+													className={`p-3 h-full transition-colors ${
+														selected ? 'border-primary' : 'hover:border-border-hover'
+													}`}
+												>
+													<h3 className="text-[14px] font-medium mb-1">{team.name}</h3>
+													<p className="text-[11px] text-text-muted">
+														{team.agent_count === 0
+															? 'No agents yet'
+															: `${team.agent_count} agent${team.agent_count === 1 ? '' : 's'}`}
+													</p>
+												</Card>
+											</button>
+										);
+									})}
+								</div>
+							</div>
+						)}
 						{error && (
 							<p className="text-[13px] text-accent-red">
 								{(error as { message?: string }).message || 'Failed to create project'}

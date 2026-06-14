@@ -141,6 +141,62 @@ async function isWorktreeHealthy(worktreePath: string): Promise<boolean> {
 	return existsSync(resolved);
 }
 
+interface WorktreeListEntry {
+	path: string;
+	branch?: string;
+}
+
+async function listWorktrees(repoDir: string): Promise<WorktreeListEntry[]> {
+	const res = await spawn('git', ['worktree', 'list', '--porcelain'], {
+		cwd: repoDir,
+		timeout: 30_000,
+	});
+	if (res.exitCode !== 0) return [];
+	const entries: WorktreeListEntry[] = [];
+	let current: WorktreeListEntry | null = null;
+	for (const line of res.stdout.split('\n')) {
+		if (line.startsWith('worktree ')) {
+			if (current) entries.push(current);
+			current = { path: line.slice('worktree '.length).trim() };
+		} else if (line.startsWith('branch ') && current) {
+			current.branch = line.slice('branch '.length).trim();
+		}
+	}
+	if (current) entries.push(current);
+	return entries;
+}
+
+/**
+ * A branch can be checked out in at most one worktree, so a stale checkout
+ * anywhere in the clone blocks recreating the task worktree. Strays come from
+ * runs that died mid-task — e.g. a worktree the agent created inside the clone,
+ * registered under a container-absolute path that resolves nowhere on the host.
+ * Unregisters every holder of the branch: unresolvable registrations are
+ * pruned, linked worktrees are force-removed, and a checkout in the main
+ * worktree is detached. Committed work survives on the branch ref.
+ */
+async function releaseBranchFromWorktrees(repoDir: string, branchName: string): Promise<void> {
+	await spawn('git', ['worktree', 'prune', '--expire', 'now'], {
+		cwd: repoDir,
+		timeout: 30_000,
+	});
+
+	const entries = await listWorktrees(repoDir);
+	const ref = `refs/heads/${branchName}`;
+	for (const [i, entry] of entries.entries()) {
+		if (entry.branch !== ref) continue;
+		if (i === 0) {
+			// The main worktree holds the branch; detach HEAD to free it.
+			await spawn('git', ['checkout', '--detach'], { cwd: repoDir, timeout: 30_000 });
+		} else {
+			await spawn('git', ['worktree', 'remove', '--force', '--force', entry.path], {
+				cwd: repoDir,
+				timeout: 30_000,
+			});
+		}
+	}
+}
+
 /**
  * Adds a worktree for the task branch, choosing the checkout source by what
  * already exists: an existing local branch is checked out as-is (preserving its
@@ -152,6 +208,8 @@ async function addTaskWorktree(
 	worktreePath: string,
 	branchName: string,
 ): Promise<{ success: boolean; created: boolean; error?: string }> {
+	await releaseBranchFromWorktrees(repoDir, branchName);
+
 	const localBranch = await spawn(
 		'git',
 		['show-ref', '--verify', '--quiet', `refs/heads/${branchName}`],
@@ -237,5 +295,5 @@ export async function removeWorktree(
 }
 
 export async function pruneWorktrees(repoDir: string): Promise<void> {
-	await spawn('git', ['worktree', 'prune'], { cwd: repoDir });
+	await spawn('git', ['worktree', 'prune', '--expire', 'now'], { cwd: repoDir });
 }

@@ -6,6 +6,7 @@ import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { hasOpenBlockers, wouldCreateCycle } from '../lib/dependencies';
 import { resolveTaskId } from '../lib/resolve';
+import { withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { assertChildDepthAllowed } from '../lib/task-relationships';
 import { logger } from '../logger';
@@ -74,8 +75,17 @@ export async function createTask(
 		throw new CreateTaskError('INVALID_REQUEST', 'project_id and title are required');
 	}
 
+	// A parent may be referenced by identifier (e.g. "BE-2") or UUID, like every
+	// other task reference in the API. Resolve to a UUID before the depth check
+	// and INSERT — an unresolved identifier would otherwise reach the uuid column
+	// and surface as an opaque "invalid input syntax for type uuid" internal error.
+	let parentTaskId: string | null = null;
 	if (input.parent_task_id) {
-		const depthCheck = await assertChildDepthAllowed(db, teamId, input.parent_task_id);
+		parentTaskId = await resolveTaskId(db, teamId, input.parent_task_id);
+		if (!parentTaskId) {
+			throw new CreateTaskError('NOT_FOUND', `Parent task '${input.parent_task_id}' not found`);
+		}
+		const depthCheck = await assertChildDepthAllowed(db, teamId, parentTaskId);
 		if (!depthCheck.ok) {
 			throw new CreateTaskError('INVALID_REQUEST', depthCheck.message);
 		}
@@ -105,45 +115,51 @@ export async function createTask(
 		}
 	}
 
-	const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, input.project_id);
+	// Identifier allocation, the insert, and blocker attachment must land
+	// atomically — a rejected blocker reference would otherwise leave an
+	// orphan task row behind.
+	const task = await withTransaction(db, async () => {
+		const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, input.project_id);
 
-	const r = await db.query<TaskRow>(
-		`INSERT INTO tasks (team_id, project_id, assignee_id, parent_task_id,
-		                     created_by_member_id, created_by_run_id,
-		                     number, identifier, title, description,
-		                     status, priority, labels, runtime_type)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-		         $11::task_status, $12::task_priority, $13::jsonb, $14::agent_runtime)
-		 RETURNING ${TASK_COLUMNS_BARE}`,
-		[
-			teamId,
-			input.project_id,
-			assigneeId,
-			input.parent_task_id ?? null,
-			caller.actorMemberId,
-			caller.runId ?? null,
-			taskNumber,
-			identifier,
-			title,
-			input.description ?? '',
-			TaskStatus.Backlog,
-			input.priority ?? TaskPriority.Medium,
-			JSON.stringify(input.labels ?? []),
-			input.runtime_type ?? null,
-		],
-	);
-	let task = r.rows[0];
+		const r = await db.query<TaskRow>(
+			`INSERT INTO tasks (team_id, project_id, assignee_id, parent_task_id,
+			                     created_by_member_id, created_by_run_id,
+			                     number, identifier, title, description,
+			                     status, priority, labels, runtime_type)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+			         $11::task_status, $12::task_priority, $13::jsonb, $14::agent_runtime)
+			 RETURNING ${TASK_COLUMNS_BARE}`,
+			[
+				teamId,
+				input.project_id,
+				assigneeId,
+				parentTaskId,
+				caller.actorMemberId,
+				caller.runId ?? null,
+				taskNumber,
+				identifier,
+				title,
+				input.description ?? '',
+				TaskStatus.Backlog,
+				input.priority ?? TaskPriority.Medium,
+				JSON.stringify(input.labels ?? []),
+				input.runtime_type ?? null,
+			],
+		);
+		let created = r.rows[0];
 
-	if (input.blocked_by_task_ids?.length) {
-		await attachBlockers(db, teamId, task.id, input.blocked_by_task_ids);
-		if (await hasOpenBlockers(db, task.id)) {
-			const updated = await db.query<typeof task>(
-				'UPDATE tasks SET status = $1::task_status WHERE id = $2 RETURNING *',
-				[TaskStatus.Blocked, task.id],
-			);
-			if (updated.rows[0]) task = updated.rows[0];
+		if (input.blocked_by_task_ids?.length) {
+			await attachBlockers(db, teamId, created.id, input.blocked_by_task_ids);
+			if (await hasOpenBlockers(db, created.id)) {
+				const updated = await db.query<typeof created>(
+					'UPDATE tasks SET status = $1::task_status WHERE id = $2 RETURNING *',
+					[TaskStatus.Blocked, created.id],
+				);
+				if (updated.rows[0]) created = updated.rows[0];
+			}
 		}
-	}
+		return created;
+	});
 
 	const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
 	if (isAgent.rows.length > 0) {
@@ -163,7 +179,7 @@ export async function createTask(
 		actorType: caller.actorType,
 		actorMemberId: caller.actorMemberId,
 		taskId: task.id,
-		identifier,
+		identifier: task.identifier,
 	});
 
 	if (input.description) {
@@ -180,6 +196,132 @@ export async function createTask(
 	}
 
 	return task;
+}
+
+export type CreateTaskBatchResult =
+	| { index: number; ok: true; task: TaskRow }
+	| { index: number; ok: false; error: string; code: CreateTaskErrorCode | 'INTERNAL_ERROR' };
+
+// Matches a reference to an earlier item in the same batch by zero-based
+// index (e.g. "#0"). Cannot collide with task identifiers (PREFIX-number)
+// or UUIDs, neither of which starts with '#'.
+const BATCH_INDEX_TOKEN_RE = /^#(0|[1-9]\d*)$/;
+
+/**
+ * Create a set of tasks in input order, continuing past per-item failures.
+ * Within the batch, `blocked_by_task_ids` entries and `parent_task_id` may
+ * reference an earlier item by zero-based index token (`'#0'` = first item);
+ * the token is substituted with that item's UUID before creation. Tokens that
+ * are malformed, self/forward-referencing, or point at a failed item error
+ * that item without aborting the rest.
+ */
+export async function createTaskBatch(
+	db: PGlite,
+	teamId: string,
+	items: CreateTaskInput[],
+	caller: CreateTaskCaller,
+	wsManager: WebSocketManager | undefined,
+	events?: DomainEventBus,
+): Promise<CreateTaskBatchResult[]> {
+	const results: CreateTaskBatchResult[] = [];
+	const createdIds: (string | null)[] = [];
+
+	for (let index = 0; index < items.length; index++) {
+		const item = items[index];
+		try {
+			const blocked_by_task_ids = resolveBatchBlockerRefs(
+				item.blocked_by_task_ids,
+				index,
+				createdIds,
+			);
+			const parent_task_id = resolveBatchParentRef(item.parent_task_id, index, createdIds);
+			const task = await createTask(
+				db,
+				teamId,
+				{ ...item, blocked_by_task_ids, parent_task_id },
+				caller,
+				wsManager,
+				events,
+			);
+			createdIds.push(task.id);
+			results.push({ index, ok: true, task });
+		} catch (e) {
+			createdIds.push(null);
+			if (e instanceof CreateTaskError) {
+				results.push({ index, ok: false, error: e.message, code: e.code });
+			} else {
+				log.error('Unexpected error in batch task creation:', e);
+				results.push({
+					index,
+					ok: false,
+					error: e instanceof Error ? e.message : 'internal_error',
+					code: 'INTERNAL_ERROR',
+				});
+			}
+		}
+	}
+
+	return results;
+}
+
+// Resolve a single '#<index>' batch token to the referenced item's UUID,
+// enforcing that it points at an earlier, successfully-created item. Shared by
+// the blocker-list and parent resolvers so both report identical errors.
+function resolveBatchIndexRef(
+	trimmed: string,
+	index: number,
+	createdIds: readonly (string | null)[],
+): string {
+	const match = BATCH_INDEX_TOKEN_RE.exec(trimmed);
+	if (!match) {
+		throw new CreateTaskError(
+			'INVALID_REQUEST',
+			`Invalid batch reference '${trimmed}' — use '#<zero-based index>' of an earlier item in this call`,
+		);
+	}
+	const ref = Number(match[1]);
+	if (ref >= index) {
+		throw new CreateTaskError(
+			'INVALID_REQUEST',
+			`'${trimmed}' must reference an earlier item in this batch (this is item ${index})`,
+		);
+	}
+	const refId = createdIds[ref];
+	if (!refId) {
+		throw new CreateTaskError(
+			'INVALID_REQUEST',
+			`'${trimmed}' references item ${ref}, which failed to create`,
+		);
+	}
+	return refId;
+}
+
+function resolveBatchBlockerRefs(
+	rawIds: readonly string[] | undefined,
+	index: number,
+	createdIds: readonly (string | null)[],
+): string[] | undefined {
+	if (!rawIds?.length) return rawIds as string[] | undefined;
+	return rawIds.map((raw) => {
+		const trimmed = typeof raw === 'string' ? raw.trim() : '';
+		if (!trimmed.startsWith('#')) return raw;
+		return resolveBatchIndexRef(trimmed, index, createdIds);
+	});
+}
+
+// A batch item's parent may also use a '#<index>' token to nest under an earlier
+// item in the same call (e.g. file a parent then its sub-tasks in one batch).
+// Non-token values (identifier or UUID) pass through to createTask, which
+// resolves them.
+function resolveBatchParentRef(
+	raw: string | undefined,
+	index: number,
+	createdIds: readonly (string | null)[],
+): string | undefined {
+	if (typeof raw !== 'string') return raw;
+	const trimmed = raw.trim();
+	if (!trimmed.startsWith('#')) return raw;
+	return resolveBatchIndexRef(trimmed, index, createdIds);
 }
 
 async function attachBlockers(

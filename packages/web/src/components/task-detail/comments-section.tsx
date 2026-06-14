@@ -438,11 +438,12 @@ export function CommentsSection({
 											<button
 												type="button"
 												onClick={() => onStartReply(c)}
-												className="mt-2 text-text-subtle hover:text-text shrink-0 p-1 -m-1"
+												className="mt-2 flex items-center gap-1 text-[11px] text-text-subtle hover:text-text shrink-0 p-1 -m-1"
 												aria-label="Reply to comment"
 												data-testid="comment-reply"
 											>
 												<Reply className="w-3.5 h-3.5" />
+												Reply
 											</button>
 										</div>
 									</div>

@@ -15,7 +15,7 @@ export interface HezoCA {
 	certPath: string;
 	/** Filesystem path to the CA private key PEM (mode 0600). */
 	keyPath: string;
-	/** Root directory of the CA layout, suitable for `http-mitm-proxy.sslCaDir`. */
+	/** Root directory of the on-disk CA layout (`certs/`, `keys/`). */
 	rootDir: string;
 }
 
@@ -23,7 +23,7 @@ const CA_DIR_NAME = 'ca';
 
 /**
  * Load the persistent egress CA from `<dataDir>/ca`, generating it on first
- * boot. The on-disk layout is the one http-mitm-proxy's CA loader expects:
+ * boot. The on-disk layout is:
  *
  *   <dataDir>/ca/certs/ca.pem            (CA certificate, mode 0644)
  *   <dataDir>/ca/keys/ca.private.key     (CA private key, mode 0600)

@@ -73,37 +73,37 @@ packages/
 
 ### Master key lifecycle
 
-The master key is held in memory only — never written to disk. It encrypts all secrets, agent JWTs, and the canary value stored in `system_meta`.
+The master key is a **12-word BIP39 phrase held by the operator**. It never reaches the server. From its seed the client (browser, or the CLI boot path) derives two independent keys via HKDF-SHA256 with distinct salts:
 
-**First startup** (no canary in `system_meta`):
-1. If `--master-key <key>` provided on CLI → use that key, store canary (`encrypt("CANARY", master_key)`), proceed.
-2. If no CLI key → server starts but master key is "unset". The web UI shows a **master key gate modal** on the first authenticated user's first visit:
-   - **Option A: Generate a new key.** Server generates a random 256-bit key, displays it once in the UI, and warns the user to save it — it will not be shown again.
-   - **Option B: Enter an existing key.** User provides a key they already have (e.g., restoring from backup).
-3. Store canary and proceed.
+- **Ed25519 auth keypair** (`hezo-auth-key-v1`) — the private key exists only client-side, re-derived from the typed phrase at each login, never persisted. The public key is enrolled at setup, stored plaintext in `system_meta.auth_public_key`, and verifies every login/unlock signature.
+- **Unlock key** (`hezo-unlock-key-v1`, 32 bytes) — the input to all server-side key derivations: the canary, the at-rest secrets-encryption key, and the JWT signing key. The server holds it in memory only — never on disk. It transits exactly twice in a server's life-per-boot: at setup and at unlock-after-restart, always inside an Ed25519-signed payload (the server must hold symmetric key material at runtime because it decrypts secrets with no client in the loop — egress substitution, ssh-agent signing, provider keys).
 
-**Subsequent startup** (canary exists in `system_meta`):
-1. If `--master-key <key>` provided on CLI → attempt to decrypt canary.
-   - **Success** → unlock, proceed normally.
-   - **Failure** → server starts but in locked state. Web UI shows "incorrect master key" with option to re-enter.
-2. If no CLI key → server starts in locked state. Web UI prompts user to enter master key.
-   - **Success** → unlock, proceed normally.
-   - **Failure** → prompt again or offer recovery.
+Routine logins transmit **zero key material**: the client signs a single-use server nonce (`POST /auth/challenge` → `POST /auth/verify`) and gets a JWT.
 
-**Key principle:** CLI `--master-key` is for **unlocking** (verifying the canary) on startup. The web UI is for **setting/managing** the key. The CLI never sets a new key interactively.
+**First startup** (no canary in `system_meta`, state `unset`):
+1. If `--master-key <phrase>` / `HEZO_MASTER_KEY` is provided → the CLI derives both keys, enrolls the public key + canary (equivalent to web setup), and unlocks.
+2. Otherwise the web UI shows the **setup wizard's master-key step**: it generates a 12-word phrase client-side, the operator saves it, and submit runs `POST /auth/setup` (public key + unlock key + self-certifying signature, persisted in one transaction).
+
+**Subsequent startup** (canary exists):
+1. With `--master-key <phrase>` → derived unlock key decrypts the canary → unlocked (the enrolled public key is backfilled if missing; the phrase is the root of trust). A wrong phrase leaves the server **locked**.
+2. Without it → server starts **locked**. The web UI gate prompts for the phrase; the client signs the challenge *and* includes the unlock key (`POST /auth/verify` with `unlock_key`).
+
+**Key principles:** the phrase/seed never transits; enrollment is explicit (`unlock()` never implicitly trusts-on-first-use — only `setup`/the CLI boot path enroll); `--master-key` accepts only a valid mnemonic (a raw derived key could never enroll the public key, which would leave an unlocked server nobody can log into — boot fails fast instead).
 
 **On unlock:** `MasterKeyManager` fires registered `onUnlock` callbacks when the state transitions to `unlocked`. The server registers a callback at startup that starts the `JobManager` (agent wakeups, heartbeats, container sync, orphan detection). This means background processing begins as soon as the server is unlocked, regardless of whether the key was provided via CLI or web UI.
 
-**Recovery options** (after failed canary decryption, via web UI):
-- **Re-enter a different master key.** Try again with the correct key.
-- **Generate a new master key and start fresh.** Warn that all existing instance data (secrets, teams, agents) will be lost. If confirmed, wipe the database, store a new canary, and proceed with a clean instance.
+**Recovery options** (locked, phrase rejected):
+- **Re-enter the correct phrase.** Try again.
+- **Reset and start fresh.** Wipe the database (`--reset`), run setup with a new phrase. All existing instance data (secrets, teams, agents) is lost.
+
+**Threat notes:** a captured setup/unlock request could be replayed against a *different, freshly-reset* instance to enroll the same key there — the same exposure class as any first-boot credential; TLS is the transit defense. Login signatures are bound to single-use nonces (consumed before verification, so a failed attempt burns the challenge) and to domain-separated message tags, so they cannot be replayed or cross-purposed.
 
 ### CLI interface and default configuration
 
 ```
 hezo                          # Start server with sensible defaults
 hezo --data-dir /path/to/dir  # Custom persistence directory (default: ~/.hezo/)
-hezo --master-key <key>       # Supply master key (skip terminal prompt)
+hezo --master-key <phrase>    # The 12-word master key phrase (setup/unlock)
 hezo --port 3100              # Custom port (default: 3100)
 hezo --connect-url <url>      # Hezo Connect URL (default: http://localhost:4100)
 hezo --connect-api-key <key>  # API key for centrally hosted Connect
@@ -787,13 +787,13 @@ All Hezo data lives under `~/.hezo/` on the host machine. The structure mirrors 
 
 ### Git worktrees for parallelism
 
-Repos are cloned once (via SSH) into the project's `workspace/<repo-short-name>/` directory. When an agent starts a run on an task, the runner lazily creates a **git worktree per (task × repo)** so iterative work across runs on the same task persists and concurrent tasks cannot collide.
+Repos are cloned once (via SSH) into the project's `workspace/<repo-name>/` directory (the repo name is the segment after the owner in the `org/repo` identifier). When an agent starts a run on an task, the runner lazily creates a **git worktree per (task × repo)** so iterative work across runs on the same task persists and concurrent tasks cannot collide.
 
 - Multiple agents working on different tasks use different worktrees — no conflicts.
 - Repeated runs on the same task reuse the existing worktree, pulling latest changes via `git fetch` + fast-forward merge.
 - The agent's working directory is the **designated repo's worktree**; other repos sit alongside and the agent can `cd` into them.
 
-Worktree layout: `~/.hezo/teams/{team}/projects/{project}/worktrees/{task-identifier}/{repo-short-name}/`
+Worktree layout: `~/.hezo/teams/{team}/projects/{project}/worktrees/{task-identifier}/{repo-name}/`
 Branch name: `hezo/{task-identifier}`
 
 Worktrees are created on first run of an task and removed when the task transitions to a terminal status (done/cancelled) or its repo is detached.
@@ -856,7 +856,7 @@ At runtime, the team's SSH private key is injected into agent subprocesses for g
 | Team deleted | All project containers destroyed. |
 | Server startup / every 5s | Container status sync — DB state reconciled with Docker. Stale "running" status corrected to "stopped" or "error". Changes broadcast via WebSocket. |
 | Task assigned | No-op until the first run. Worktrees are created lazily when an agent starts executing against the task. |
-| Task first run | Runner creates `/worktrees/{task-identifier}/{repo-short-name}/` on branch `hezo/{task-identifier}` for every linked repo, then runs the agent with the designated repo's worktree as its working directory. |
+| Task first run | Runner creates `/worktrees/{task-identifier}/{repo-name}/` on branch `hezo/{task-identifier}` for every linked repo, then runs the agent with the designated repo's worktree as its working directory. |
 | Task closed | Per-task worktree directory `/worktrees/{task-identifier}/` is removed (all per-repo worktrees under it). |
 
 ### Agent subprocess model
@@ -1042,10 +1042,9 @@ Hezo generates an SSH key pair per team, stores the private key encrypted in the
 ### Repos belong to projects
 
 - A project can reference multiple repos
-- Each repo within a project has a unique short name (e.g. `frontend`, `api`, `infra`)
-- Short names are user-defined at add time
-- Short names are used for @-mentioning in task comments: `@frontend`, `@api`
-- Uniqueness is enforced within a project (DB unique constraint)
+- Each repo is labelled by its own name — the segment after the owner in the `org/repo` identifier (e.g. `frontend`, `api`, `infra`)
+- Repo names are used for @-mentioning in task comments: `@frontend`, `@api`
+- Repo-name uniqueness is enforced within a project, even across owners (DB unique index on `split_part(repo_identifier, '/', 2)`), because the name is also the workspace directory
 
 ### What happens when a repo is linked
 
@@ -1058,8 +1057,8 @@ When a repo is added to a project via the API:
 2. **Repo access validation** — using the team's GitHub OAuth token, the system calls the GitHub API (`GET /repos/{owner}/{repo}`) to verify the authorized GitHub user has access. If access fails (403/404):
    - The request fails with `REPO_ACCESS_FAILED`
    - The error message includes the GitHub username from `connected_platforms.metadata` so the board knows which account needs access: *"Cannot access this repo — the GitHub user '{username}' needs to be added to {owner}/{repo}"*
-3. The repo is cloned (via SSH using the team's generated key) into `~/.hezo/teams/{team}/projects/{project}/{short_name}/`
-4. A symlink is created: `{short_name}/AGENTS.md → ../../../AGENTS.md` (pointing to team-level AGENTS.md)
+3. The repo is cloned (via SSH using the team's generated key) into `~/.hezo/teams/{team}/projects/{project}/{repo-name}/`
+4. A symlink is created: `{repo-name}/AGENTS.md → ../../../AGENTS.md` (pointing to team-level AGENTS.md)
 5. Git SSH command is configured to use the team's SSH key for all operations
 6. The repo is now available to any agent working on tasks in this project
 
@@ -1089,7 +1088,7 @@ Submitting the wizard calls `POST /repos` which, in one transaction:
 5. Sweeps every pending `action` setup-repo comment for this project, stamps each with `chosen_option = { status: 'complete', result: {...} }`, and appends a `system` confirmation comment per affected task.
 6. Resolves the pending approval.
 
-Post-commit the server clones the repo into the host workspace (`ensureProjectRepos`), then brings up the project container if it isn't already (`provisionContainer`) so `/workspace/{short_name}/` is live inside the container. Only then are the deferred wakeups re-enqueued as fresh `Automation` wakeups, so agents never wake up against an empty workspace.
+Post-commit the server clones the repo into the host workspace (`ensureProjectRepos`), then brings up the project container if it isn't already (`provisionContainer`) so `/workspace/{repo-name}/` is live inside the container. Only then are the deferred wakeups re-enqueued as fresh `Automation` wakeups, so agents never wake up against an empty workspace.
 
 ### Designated repo is immutable
 
@@ -1235,7 +1234,7 @@ An agent can `@architect` or `@engineer` in a comment. The mentioned agent wakes
 
 Every agent's resolved system prompt is auto-appended with a **Teammates** block listing each enabled peer in the team in `@<slug> — Title` form, sourced from `member_agents` filtered by `admin_status = 'enabled'` and excluding the running agent itself. This is the authoritative slug list at compose time — agents read it inline rather than calling `list_agents` on every reference. The block sits between the Project State block and the shared working guidelines.
 
-Repo short names can also be @-mentioned: `@frontend`, `@api` — these reference the repo, not an agent.
+Repo names can also be @-mentioned: `@frontend`, `@api` — these reference the repo, not an agent.
 
 **Handoff contract.** When an agent is woken by a mention, its run opens on the triggering ticket for *triage only* — not as new assigned work. The agent's task prompt is prepended with a Mention Handoff block showing the mentioner, the full comment, and the agent's own open tickets. The expected behaviour is:
 
@@ -1581,7 +1580,7 @@ Agents execute inside project containers. Container state changes directly affec
 - **Container rebuild**: Same as stop (cancel running agents, release locks), followed by a full re-provision. After the new container is running, agents are re-triggered as with container start. The UI shows a confirmation dialog warning about unpushed work loss.
 - **Container crash**: The container-sync job detects the status change within 1 second and updates the DB. Orphan detection handles stale agent state.
 
-Agent runtime status (`active` / `idle` / `paused`) is updated in the database and broadcast via WebSocket when an agent is activated and when it completes.
+Agent runtime status (`active` / `idle`, plus the reactive budget pauses `out_of_agent_budget` / `out_of_project_budget`) is updated in the database and broadcast via WebSocket when an agent is activated, when it completes, and when it trips or clears a budget window. The budget states are set and lifted automatically by the budget gate and the resume sweep. Manually turning an agent off is a separate axis (`admin_status = 'disabled'`), not a runtime state.
 
 ### Task work ownership (observational execution locks)
 
@@ -1662,9 +1661,32 @@ Different providers report token usage differently. The system normalizes all us
 - Input tokens
 - Output tokens
 - Total tokens
-- Cost in cents (using provider-specific pricing tables)
+- Cost in cents (computed from the runtime pricing table, see below)
 
 This enables accurate cross-provider cost comparison and budget tracking regardless of which runtime an agent uses.
+
+#### Runtime model pricing
+
+Cost is **computed uniformly for every runtime** from per-model token rates, not read from any
+CLI's own cost field. The stream parser (`services/agent-stream-parser`) extracts a run's token
+buckets — regular input, cache-read, cache-creation, output — and the `PricingService`
+(`services/pricing`) multiplies them by the matching model's per-token rates
+(`shared/pricing.ts:costCentsFromRate`). Cache reads and cache writes are priced at their own
+rates (Anthropic: ~0.1x and ~1.25x of base input), so cache-heavy agent runs aren't overstated.
+
+Rates live in the `model_pricing` table and come from two sources, distinguished by `source`:
+
+- **`litellm`** — seeded on first boot from a bundled snapshot of LiteLLM's public pricing feed
+  (`model_prices_and_context_window.json`), then refreshed periodically from the live feed over the
+  server's normal outbound HTTPS (skipped when `HEZO_SKIP_PRICING_REFRESH` is set; a failed refresh
+  keeps the last-known rows, so costing never breaks).
+- **`manual`** — operator overrides entered on the **Model pricing** settings page (superuser).
+  These **win** at lookup time and are never touched by the feed refresh — used for ids the feed
+  doesn't carry (DeepSeek's `deepseek-v4-pro`, Z.ai's GLM ids) or to correct a rate.
+
+Model-id resolution is fuzzy: a CLI-emitted id is matched exactly, then provider-prefix-/date-/
+`[1m]`-stripped, so `claude-opus-4-8-20260205` and `anthropic/claude-opus-4-8` resolve to the same
+rate. An unknown model records `$0` (with a one-time warning) rather than a fabricated cost.
 
 ---
 
@@ -2173,7 +2195,7 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 | `api_keys` | Team-scoped API keys for external orchestrators. Stored hashed. |
 | `team_ssh_keys` | Generated SSH key pairs per team. Registered on GitHub via OAuth API. |
 | `projects` | Groups of work under a team. Each gets its own Docker container. |
-| `repos` | Git repos (GitHub only). Stores `org/repo` identifier. Short name for @-mentions. |
+| `repos` | Git repos (GitHub only). Stores `org/repo` identifier; the repo name (segment after the owner) is the label, directory name, and @-mention handle. |
 | `tasks` | Tickets. Must have a project. Assignee references `members.id`. |
 | `task_dependencies` | Many-to-many blocking relationships between tasks. |
 | `task_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. |
@@ -2197,7 +2219,7 @@ See `schema.md` for the full table reference and design decisions. Key tables:
 ```
 member_type:          agent, user
 agent_runtime:        claude_code, codex, gemini
-agent_runtime_status: active, idle
+agent_runtime_status: active, idle, out_of_agent_budget, out_of_project_budget
 agent_admin_status:   enabled, disabled, terminated
 member_role:          board, member
 container_status:     creating, running, stopping, stopped, error    (tracks project container status; `error` only fires on a verified terminal signal — HTTP 404 from `docker inspect` or a provisioning failure — never on transport errors like daemon unreachable / EPIPE, which leave the previous status untouched and retry next tick)
@@ -2231,7 +2253,7 @@ auth_provider:        github, gitlab
 
 - `agents(team_id, slug)` UNIQUE: slugs unique within team (for unambiguous @-mentions)
 - `repos.url` CHECK: must match `github.com`
-- `repos(project_id, short_name)` UNIQUE: short names unique within project
+- `repos(project_id, split_part(repo_identifier, '/', 2))` UNIQUE: repo names unique within project (the name doubles as the workspace directory)
 - `tasks(team_id, number)` UNIQUE: task numbers unique within team
 - `tasks(team_id, identifier)` UNIQUE: identifiers unique within team
 - `tasks.project_id` NOT NULL: every task must belong to a project

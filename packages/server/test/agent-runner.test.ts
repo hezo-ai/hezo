@@ -23,6 +23,7 @@ import {
 } from '../src/services/agent-runner';
 import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import { PricingService, upsertManualRate } from '../src/services/pricing';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject } from './helpers/app';
 
@@ -451,7 +452,7 @@ describe('runAgent', () => {
 		expect(capturedUser).toBe('node');
 	});
 
-	it('injects Run Context with team, project, and task IDs into the system prompt', async () => {
+	it('injects Run Context with the project slug and current ticket into the system prompt', async () => {
 		const project = makeProject();
 		let capturedPrompt = '';
 		const docker = createMockDocker({
@@ -474,10 +475,13 @@ describe('runAgent', () => {
 
 		await runAgent(deps, makeAgent(), makeTask(), project);
 
+		const taskIdentifier = (
+			await db.query<{ identifier: string }>('SELECT identifier FROM tasks WHERE id = $1', [taskId])
+		).rows[0].identifier;
+
 		expect(capturedPrompt).toContain('## Run Context');
-		expect(capturedPrompt).toContain(`Team ID: ${teamId}`);
-		expect(capturedPrompt).toContain(`Project ID: ${projectId}`);
-		expect(capturedPrompt).toContain(`Task ID: ${taskId}`);
+		expect(capturedPrompt).toContain(`- Project: \`${projectSlug}\``);
+		expect(capturedPrompt).toContain(`- Current ticket: \`${taskIdentifier}\``);
 	});
 
 	it('handles coach review trigger', async () => {
@@ -810,6 +814,51 @@ describe('runAgent', () => {
 			);
 			expect(row.rows[0].started_at).not.toBeNull();
 			expect(new Date(row.rows[0].started_at!).getTime()).toBeGreaterThan(Date.now() - 10_000);
+		});
+
+		it('fails the run before exec when the primary repo worktree cannot be prepared', async () => {
+			const repoRes = await db.query<{ id: string }>(
+				`INSERT INTO repos (project_id, repo_identifier, host_type)
+				 VALUES ($1, 'acme/todos', 'github') RETURNING id`,
+				[projectId],
+			);
+			const repoId = repoRes.rows[0].id;
+
+			let execCreateCalled = false;
+			const docker = createMockDocker({
+				execCreate: async () => {
+					execCreateCalled = true;
+					return 'exec-wt-fail';
+				},
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
+			};
+
+			try {
+				// No ssh agent is available, so the linked repo can't clone and the
+				// task worktree for the primary repo can't exist. The run must fail
+				// with the worktree error instead of exec'ing into a missing cwd.
+				const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+				expect(result.success).toBe(false);
+				expect(execCreateCalled).toBe(false);
+				expect(result.stderr).toContain('cannot prepare worktree for todos');
+
+				const row = await db.query<{ status: string; error: string | null }>(
+					'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+					[result.heartbeatRunId],
+				);
+				expect(row.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+				expect(row.rows[0].error).toContain('cannot prepare worktree for todos');
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
 		});
 
 		it('passes --mcp-config and --strict-mcp-config for claude_code runtime', async () => {
@@ -1585,6 +1634,16 @@ describe('runAgent', () => {
 				},
 				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 			});
+			// Wire pricing so the run's cost is computed from the table (a manual
+			// override keeps the expected value deterministic, independent of the
+			// bundled snapshot's real rates).
+			const pricing = new PricingService(db);
+			await upsertManualRate(db, {
+				model_id: 'claude-opus-4-7',
+				input_per_token: 0.0001,
+				output_per_token: 0.0002,
+			});
+			await pricing.reload();
 			const deps: RunnerDeps = {
 				db,
 				docker,
@@ -1592,6 +1651,7 @@ describe('runAgent', () => {
 				serverPort: 3000,
 				dataDir: '/tmp/test-data',
 				logs: new LogStreamBroker(),
+				pricing,
 			};
 
 			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
@@ -1615,7 +1675,9 @@ describe('runAgent', () => {
 
 			expect(row.rows[0].input_tokens).toBe(1200);
 			expect(row.rows[0].output_tokens).toBe(350);
-			expect(row.rows[0].cost_cents).toBe(12);
+			// Computed from the table, not total_cost_usd (0.1234 → would have been 12c):
+			// 1200*0.0001 + 350*0.0002 = 0.12 + 0.07 = 0.19 → 19 cents.
+			expect(row.rows[0].cost_cents).toBe(19);
 		});
 
 		it('falls back to /workspace when no repos are linked', async () => {

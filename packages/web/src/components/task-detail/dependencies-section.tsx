@@ -5,6 +5,7 @@ import {
 	useRemoveDependency,
 	useTaskDependencies,
 } from '../../hooks/use-tasks';
+import { TaskRunDot } from '../task-run-dot';
 import { TaskStatusBadge } from '../task-status-badge';
 
 interface DependenciesSectionProps {
@@ -41,6 +42,10 @@ export function DependenciesSection({ projectId, taskId }: DependenciesSectionPr
 							data-testid="blocked-by-item"
 						>
 							<TaskStatusBadge status={d.blocked_by_status} />
+							<TaskRunDot
+								hasActiveRun={d.blocked_by_has_active_run}
+								queuedWakeup={d.blocked_by_queued_wakeup}
+							/>
 							<span className="font-mono text-xs text-text-muted">{d.blocked_by_identifier}</span>
 							<span className="truncate">{d.blocked_by_title}</span>
 						</Link>

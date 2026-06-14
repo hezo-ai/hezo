@@ -17,6 +17,9 @@ export interface Project {
 	is_internal?: boolean;
 	max_concurrent_runs: number;
 	memory_limit_gib: number;
+	daily_budget_cents: number;
+	weekly_budget_cents: number;
+	monthly_budget_cents: number;
 	docker_base_image: string | null;
 	container_id: string | null;
 	container_status: 'creating' | 'running' | 'stopping' | 'stopped' | 'error' | null;
@@ -34,7 +37,6 @@ export interface Project {
 export interface Repo {
 	id: string;
 	project_id: string;
-	short_name: string;
 	repo_identifier: string;
 	host_type: string;
 	created_at: string;
@@ -121,8 +123,9 @@ export interface ProjectWithTeamResponse {
 /**
  * Projects-primary creation: a project owns its own team (1:1). Calls
  * POST /api/projects, which provisions a fresh team from the chosen team-type
- * template (default Blank) and directly creates the project + planning task.
- * See .dev/per-project-teams.md.
+ * template (default Blank) — or, when `source_team_id` is given, from a fresh
+ * snapshot of an existing team — and directly creates the project + planning
+ * task. See .dev/per-project-teams.md.
  */
 export function useCreateProjectWithTeam() {
 	return useMutation({
@@ -130,12 +133,15 @@ export function useCreateProjectWithTeam() {
 			name: string;
 			description: string;
 			template_id?: string;
+			source_team_id?: string;
 			initial_prd?: string;
 			task_prefix?: string;
 		}) => api.post<ProjectWithTeamResponse>('/api/projects', data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
 			queryClient.invalidateQueries({ queryKey: queryKeys.teams.all() });
+			// Cloning a team mints a new reusable template — refresh the catalog.
+			queryClient.invalidateQueries({ queryKey: queryKeys.teamTemplates() });
 		},
 	});
 }
@@ -145,6 +151,9 @@ interface UpdateProjectVars {
 	description?: string;
 	max_concurrent_runs?: number;
 	memory_limit_gib?: number;
+	daily_budget_cents?: number;
+	weekly_budget_cents?: number;
+	monthly_budget_cents?: number;
 }
 
 export function useUpdateProject(projectId: string) {

@@ -41,9 +41,28 @@ export function isAgentEffort(value: unknown): value is AgentEffort {
 export const AgentRuntimeStatus = {
 	Active: 'active',
 	Idle: 'idle',
-	Paused: 'paused',
+	/** Reactively paused because the agent breached one of its own daily/weekly/
+	 *  monthly budget windows. Cleared automatically once the window rolls over.
+	 *  (A human turning an agent off is `admin_status = 'disabled'`, a separate axis.) */
+	OutOfAgentBudget: 'out_of_agent_budget',
+	/** Reactively paused because the agent's project breached a budget window.
+	 *  Cleared automatically once the project's window rolls over. */
+	OutOfProjectBudget: 'out_of_project_budget',
 } as const;
 export type AgentRuntimeStatus = (typeof AgentRuntimeStatus)[keyof typeof AgentRuntimeStatus];
+
+/** The runtime states an agent sits in while reactively paused for budget (vs a
+ *  human-initiated `Paused`). Pausing and resuming for any of the three windows
+ *  flows through these uniformly. */
+export const BUDGET_PAUSE_STATUSES = [
+	AgentRuntimeStatus.OutOfAgentBudget,
+	AgentRuntimeStatus.OutOfProjectBudget,
+] as const;
+
+/** True when a runtime status is one of the budget-pause states. */
+export function isBudgetPauseStatus(status: string): boolean {
+	return (BUDGET_PAUSE_STATUSES as readonly string[]).includes(status);
+}
 
 export const AgentAdminStatus = {
 	Enabled: 'enabled',
@@ -405,8 +424,18 @@ export const WakeupSkipReason = {
 	TaskBusy: 'task_busy',
 	ProjectAtCapacity: 'project_at_capacity',
 	AgentRunning: 'agent_running',
+	OverBudget: 'over_budget',
 } as const;
 export type WakeupSkipReason = (typeof WakeupSkipReason)[keyof typeof WakeupSkipReason];
+
+// Rolling spend windows for agent/project budgets. Each is enforced independently;
+// a 0 limit means unlimited for that window. Spend is summed from cost_entries.
+export const BudgetPeriod = {
+	Daily: 'daily',
+	Weekly: 'weekly',
+	Monthly: 'monthly',
+} as const;
+export type BudgetPeriod = (typeof BudgetPeriod)[keyof typeof BudgetPeriod];
 
 export const HeartbeatRunStatus = {
 	Queued: 'queued',
@@ -417,6 +446,46 @@ export const HeartbeatRunStatus = {
 	TimedOut: 'timed_out',
 } as const;
 export type HeartbeatRunStatus = (typeof HeartbeatRunStatus)[keyof typeof HeartbeatRunStatus];
+
+// --- CEO chat ---
+
+/**
+ * Surface a CEO chat message arrived through. There is exactly one CEO
+ * conversation; every channel (web today, Telegram/WhatsApp later) mirrors the
+ * full thread, so `channel` is message *provenance* only, never a partition key.
+ */
+export const CeoChannel = {
+	Web: 'web',
+	Telegram: 'telegram',
+	WhatsApp: 'whatsapp',
+} as const;
+export type CeoChannel = (typeof CeoChannel)[keyof typeof CeoChannel];
+
+export const CeoMessageRole = {
+	User: 'user',
+	Assistant: 'assistant',
+	System: 'system',
+} as const;
+export type CeoMessageRole = (typeof CeoMessageRole)[keyof typeof CeoMessageRole];
+
+export const CeoMessageStatus = {
+	Pending: 'pending',
+	Streaming: 'streaming',
+	Complete: 'complete',
+	Failed: 'failed',
+	/** A reply cut short because a newer message interrupted it (partial text kept). */
+	Interrupted: 'interrupted',
+} as const;
+export type CeoMessageStatus = (typeof CeoMessageStatus)[keyof typeof CeoMessageStatus];
+
+/** Lifecycle of the persistent CEO chat session (its warm-resource lease + auth principal). */
+export const CeoSessionStatus = {
+	Starting: 'starting',
+	Running: 'running',
+	Crashed: 'crashed',
+	Stopped: 'stopped',
+} as const;
+export type CeoSessionStatus = (typeof CeoSessionStatus)[keyof typeof CeoSessionStatus];
 
 export const PluginStatus = {
 	Installed: 'installed',

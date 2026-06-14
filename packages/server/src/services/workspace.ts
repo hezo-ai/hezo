@@ -80,13 +80,13 @@ export function getWorktreePath(
 	dataDir: string,
 	teamId: string,
 	projectId: string,
-	repoShortName: string,
+	repoName: string,
 	branchSlug: string,
 	agentIdShort: string,
 ): string {
 	return join(
 		getWorktreesPath(dataDir, teamId, projectId),
-		`${repoShortName}-${branchSlug}-agent-${agentIdShort}`,
+		`${repoName}-${branchSlug}-agent-${agentIdShort}`,
 	);
 }
 

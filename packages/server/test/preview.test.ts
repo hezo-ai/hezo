@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { generateMasterKey, MasterKeyManager } from '../src/crypto/master-key';
+import { generateUnlockKey, MasterKeyManager } from '../src/crypto/master-key';
 import { loadAgentRoles } from '../src/db/agent-roles';
 import { seedBuiltins } from '../src/db/seed';
 import type { Env } from '../src/lib/types';
@@ -27,7 +27,7 @@ beforeAll(async () => {
 
 	db = await createTestDbWithMigrations();
 	const masterKeyManager = new MasterKeyManager();
-	const masterKeyHex = generateMasterKey();
+	const masterKeyHex = generateUnlockKey();
 	await masterKeyManager.initialize(db, masterKeyHex);
 	await seedBuiltins(db, await loadAgentRoles());
 	app = buildApp(db, masterKeyManager, { dataDir, webUrl: '' }, createStubDocker());

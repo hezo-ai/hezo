@@ -1,7 +1,13 @@
-import { AgentAdminStatus, AI_PROVIDER_INFO, type AiProvider } from '@hezo/shared';
-import { createFileRoute } from '@tanstack/react-router';
+import {
+	AgentAdminStatus,
+	AI_PROVIDER_INFO,
+	type AiProvider,
+	type BudgetWindowsCents,
+} from '@hezo/shared';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import { Loader2, Power, PowerOff } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { BudgetWindowsEditor } from '../../../../../components/budget/budget-windows-editor';
 import { MarkdownProse } from '../../../../../components/markdown-prose';
 import { RevisionsPanel } from '../../../../../components/revisions-panel';
 import { Button } from '../../../../../components/ui/button';
@@ -20,6 +26,7 @@ import {
 	useUpdateAgent,
 } from '../../../../../hooks/use-agents';
 import { useAiProviderModels, useAiProviders } from '../../../../../hooks/use-ai-providers';
+import { useBudgetStatus } from '../../../../../hooks/use-costs';
 
 function AgentSettingsPage() {
 	const { projectId, agentId } = Route.useParams();
@@ -31,6 +38,7 @@ function AgentSettingsPage() {
 	const updateAgent = useUpdateAgent(projectId, agentId);
 	const disableAgent = useDisableAgent(projectId);
 	const enableAgent = useEnableAgent(projectId);
+	const { data: budgetStatus } = useBudgetStatus(projectId);
 
 	const [title, setTitle] = useState('');
 	const [roleDesc, setRoleDesc] = useState('');
@@ -42,7 +50,11 @@ function AgentSettingsPage() {
 		promptMode === 'preview',
 	);
 	const [reportsTo, setReportsTo] = useState('');
-	const [budget, setBudget] = useState('');
+	const [budget, setBudget] = useState<BudgetWindowsCents>({
+		daily_budget_cents: 0,
+		weekly_budget_cents: 0,
+		monthly_budget_cents: 0,
+	});
 	const [heartbeat, setHeartbeat] = useState('');
 	const [runTimeout, setRunTimeout] = useState('');
 	const [touchesCode, setTouchesCode] = useState(false);
@@ -56,7 +68,11 @@ function AgentSettingsPage() {
 		setTitle(agent.title);
 		setRoleDesc(agent.role_description ?? '');
 		setReportsTo(agent.reports_to ?? '');
-		setBudget(String(agent.monthly_budget_cents / 100));
+		setBudget({
+			daily_budget_cents: agent.daily_budget_cents,
+			weekly_budget_cents: agent.weekly_budget_cents,
+			monthly_budget_cents: agent.monthly_budget_cents,
+		});
 		setHeartbeat(String(agent.heartbeat_interval_min));
 		setRunTimeout(String(agent.run_timeout_min));
 		setTouchesCode(agent.touches_code);
@@ -85,7 +101,9 @@ function AgentSettingsPage() {
 			role_description: roleDesc || undefined,
 			system_prompt: promptChanged ? systemPrompt : undefined,
 			reports_to: reportsTo || null,
-			monthly_budget_cents: Math.round(Number.parseFloat(budget) * 100),
+			daily_budget_cents: budget.daily_budget_cents,
+			weekly_budget_cents: budget.weekly_budget_cents,
+			monthly_budget_cents: budget.monthly_budget_cents,
 			heartbeat_interval_min: Number.parseInt(heartbeat, 10),
 			run_timeout_min: Number.parseInt(runTimeout, 10),
 			touches_code: touchesCode,
@@ -99,27 +117,33 @@ function AgentSettingsPage() {
 			{/* Budget & Heartbeat */}
 			<div className="mb-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
 				<div className="rounded-lg border border-border-subtle bg-bg p-4">
-					<div className="text-xs text-text-muted mb-2">Budget Usage</div>
+					<div className="text-xs text-text-muted mb-2">Monthly spend</div>
 					{(() => {
-						const pct =
-							agent.monthly_budget_cents > 0
-								? Math.round((agent.budget_used_cents / agent.monthly_budget_cents) * 100)
-								: 0;
+						const entry = budgetStatus?.agents.find((a) => a.agent_id === agent.id);
+						const spent = entry?.monthly.spentCents ?? 0;
+						const limit = agent.monthly_budget_cents;
+						const pct = limit > 0 ? Math.round((spent / limit) * 100) : 0;
 						return (
 							<>
-								<div className="h-2 rounded-full bg-bg-muted overflow-hidden mb-1">
-									<div
-										className={`h-full rounded-full transition-all ${pct > 80 ? 'bg-danger' : pct > 60 ? 'bg-warning' : 'bg-primary'}`}
-										style={{ width: `${Math.min(pct, 100)}%` }}
-									/>
-								</div>
-								<div className="text-sm font-medium">
-									{pct}% — ${(agent.budget_used_cents / 100).toFixed(2)} / $
-									{(agent.monthly_budget_cents / 100).toFixed(2)}
-								</div>
-								{pct > 80 && (
-									<div className="text-xs text-accent-red mt-1">Budget nearly exhausted</div>
+								{limit > 0 && (
+									<div className="h-2 rounded-full bg-bg-muted overflow-hidden mb-1">
+										<div
+											className={`h-full rounded-full transition-all ${pct > 80 ? 'bg-accent-red' : pct > 60 ? 'bg-accent-amber' : 'bg-accent-blue'}`}
+											style={{ width: `${Math.min(pct, 100)}%` }}
+										/>
+									</div>
 								)}
+								<div className="text-sm font-medium">
+									${(spent / 100).toFixed(2)}
+									{limit > 0 ? ` / $${(limit / 100).toFixed(2)} (${pct}%)` : ' (unlimited)'}
+								</div>
+								<Link
+									to="/projects/$projectId/budget"
+									params={{ projectId }}
+									className="mt-1 inline-block text-xs text-accent-blue-text hover:underline"
+								>
+									View budgets & charts
+								</Link>
 							</>
 						);
 					})()}
@@ -242,15 +266,12 @@ function AgentSettingsPage() {
 					</p>
 				</div>
 
-				<div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-					<Input
-						label="Monthly Budget ($)"
-						type="number"
-						step="0.01"
-						min="0"
-						value={budget}
-						onChange={(e) => setBudget(e.target.value)}
-					/>
+				<div className="flex flex-col gap-1.5">
+					<span className="text-sm text-text-muted">Budget limits</span>
+					<BudgetWindowsEditor value={budget} onChange={setBudget} />
+				</div>
+
+				<div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
 					<Input
 						label="Heartbeat (min)"
 						type="number"

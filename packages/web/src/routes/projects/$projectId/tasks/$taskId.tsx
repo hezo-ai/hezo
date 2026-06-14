@@ -157,8 +157,10 @@ function TaskDetailPage() {
 				/>
 			</div>
 
+			{/* Sits above the persistent CEO chat launcher (fixed bottom-right) so
+			    the two floating controls don't overlap / intercept each other. */}
 			<div
-				className="sticky bottom-4 z-30 flex justify-end pointer-events-none"
+				className="sticky bottom-20 z-30 flex justify-end pointer-events-none"
 				aria-hidden={atBottom}
 			>
 				<button

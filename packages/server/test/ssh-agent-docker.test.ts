@@ -73,7 +73,10 @@ beforeAll(async () => {
 	const ssh = await generateTeamSSHKey(db, teamId, masterKeyManager);
 	publicKey = ssh.publicKey;
 
-	server = new SshAgentServer({ db, masterKeyManager });
+	// Bind the TCP bridge to all interfaces so the container can reach it via
+	// the bridge gateway IP on a native-Linux daemon (e.g. the CI runner),
+	// where host.docker.internal maps to the gateway, not host loopback.
+	server = new SshAgentServer({ db, masterKeyManager, tcpListenHost: '0.0.0.0' });
 	socketDir = mkdtempSync(join(tmpdir(), 'hezo-ssh-docker-'));
 }, 30_000);
 

@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { GitBranch, Loader2, Lock } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
 	type GitHubRepoSummary,
 	useCreateRepo,
@@ -29,15 +29,6 @@ function isApiError(e: unknown): e is ApiError {
 	return typeof e === 'object' && e !== null && 'code' in e && 'message' in e && 'status' in e;
 }
 
-function slugify(value: string): string {
-	return value
-		.toLowerCase()
-		.trim()
-		.replace(/[^a-z0-9]+/g, '-')
-		.replace(/^-+|-+$/g, '')
-		.slice(0, 40);
-}
-
 export function RepoPickerModal({
 	open,
 	onOpenChange,
@@ -49,8 +40,6 @@ export function RepoPickerModal({
 	const [search, setSearch] = useState('');
 	const [debouncedSearch, setDebouncedSearch] = useState('');
 	const [selectedRepoFullName, setSelectedRepoFullName] = useState<string | null>(null);
-	const [shortName, setShortName] = useState('');
-	const [shortNameTouched, setShortNameTouched] = useState(false);
 	const [newRepoName, setNewRepoName] = useState('');
 	const [newRepoPrivate, setNewRepoPrivate] = useState(true);
 	const [createError, setCreateError] = useState<CreateError | null>(null);
@@ -66,8 +55,6 @@ export function RepoPickerModal({
 			setSearch('');
 			setDebouncedSearch('');
 			setSelectedRepoFullName(null);
-			setShortName('');
-			setShortNameTouched(false);
 			setNewRepoName('');
 			setNewRepoPrivate(true);
 			setCreateError(null);
@@ -84,19 +71,8 @@ export function RepoPickerModal({
 		if (orgs && orgs.length > 0 && !owner) setOwner(orgs[0].login);
 	}, [orgsQuery.data, owner]);
 
-	const derivedShortName = useMemo(() => {
-		if (mode === 'link') {
-			const sel = reposQuery.data?.find((r) => r.full_name === selectedRepoFullName);
-			return sel ? slugify(sel.name) : '';
-		}
-		return slugify(newRepoName);
-	}, [mode, selectedRepoFullName, newRepoName, reposQuery.data]);
-
-	const effectiveShortName = shortNameTouched ? shortName : derivedShortName;
-
 	const canSubmit =
 		!createRepo.isPending &&
-		!!effectiveShortName.trim() &&
 		!!owner &&
 		(mode === 'link' ? !!selectedRepoFullName : !!newRepoName.trim());
 
@@ -109,14 +85,12 @@ export function RepoPickerModal({
 				const sel = reposQuery.data?.find((r) => r.full_name === selectedRepoFullName);
 				if (!sel) return;
 				await createRepo.mutateAsync({
-					short_name: effectiveShortName.trim(),
 					mode: 'link',
 					url: `https://github.com/${sel.full_name}`,
 					oauth_connection_id: oauthConnectionId,
 				});
 			} else {
 				await createRepo.mutateAsync({
-					short_name: effectiveShortName.trim(),
 					mode: 'create',
 					owner,
 					name: newRepoName.trim(),
@@ -141,7 +115,6 @@ export function RepoPickerModal({
 		setSearch(targetName);
 		setDebouncedSearch(targetName);
 		setSelectedRepoFullName(`${targetOwner}/${targetName}`);
-		setShortNameTouched(false);
 		setCreateError(null);
 	}
 
@@ -276,17 +249,6 @@ export function RepoPickerModal({
 								</label>
 							</>
 						)}
-
-						<Input
-							label="Short name"
-							placeholder={derivedShortName || 'api'}
-							value={effectiveShortName}
-							onChange={(e) => {
-								setShortNameTouched(true);
-								setShortName(e.target.value);
-							}}
-							required
-						/>
 
 						{createError?.kind === 'generic' && (
 							<div className="rounded-radius-md border border-accent-red/40 bg-accent-red/10 px-3 py-2 text-sm text-accent-red">

@@ -24,6 +24,11 @@ export const queryKeys = {
 	teamTemplates: () => ['team-templates'],
 	aiProviderModels: (configId: string) => ['ai-providers', configId, 'models'],
 	instanceAuditLog: (filters: KeyParam) => ['instance', 'audit-log', filters],
+	instanceSettings: () => ['instance', 'settings'],
+	/** Instance-wide mention resolution (global CEO chat), keyed by sorted candidates. */
+	instanceMentionsResolve: (key: KeyParam) => ['instance', 'mentions', 'resolve', key],
+	/** The single global CEO chat conversation (history + streamed messages). */
+	ceoConversation: () => ['ceo', 'conversation'],
 
 	teams: {
 		all: () => ['teams'],
@@ -193,6 +198,7 @@ export const queryKeys = {
 		team: (slug: string) => ['projects', slug, 'team'],
 		assets: (slug: string) => ['projects', slug, 'assets'],
 		costs: (slug: string, params: KeyParam) => ['projects', slug, 'costs', params],
+		budgetStatus: (slug: string) => ['projects', slug, 'budget-status'],
 		auditLog: (slug: string, filters: KeyParam) => ['projects', slug, 'audit-log', filters],
 		teamAuditLog: (slug: string, filters: KeyParam) => [
 			'projects',
