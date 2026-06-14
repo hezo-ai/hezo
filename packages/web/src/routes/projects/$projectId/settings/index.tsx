@@ -2,6 +2,7 @@ import { HQ_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { useState } from 'react';
+import { ProjectBudgetPanel } from '../../../../components/budget/project-budget-panel';
 import { GitHubSection } from '../../../../components/github-section';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
@@ -119,6 +120,8 @@ function ProjectSettingsPage() {
 					</div>
 				)}
 			</section>
+
+			<ProjectBudgetPanel projectId={projectId} variant="limits" />
 
 			{project.container_status === 'running' && project.dev_ports?.length > 0 && (
 				<section>

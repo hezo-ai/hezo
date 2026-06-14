@@ -60,11 +60,11 @@ export interface BudgetStatus {
 }
 
 /** Project + per-agent budget status; powers the Budgets page and warning banner. */
-export function useBudgetStatus(projectId: string) {
+export function useBudgetStatus(projectId: string, options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: queryKeys.projects.budgetStatus(projectId),
 		queryFn: () => api.get<BudgetStatus>(`/api/projects/${projectId}/budget-status`),
-		enabled: !!projectId,
+		enabled: !!projectId && (options?.enabled ?? true),
 	});
 }
 

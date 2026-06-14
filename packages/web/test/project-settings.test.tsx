@@ -203,6 +203,54 @@ test('edits the per-project memory limit and persists it', async () => {
 	);
 });
 
+test('edits the project budget limits from settings and persists them', async () => {
+	const projectName = uniqueName('Budget Settings Project');
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+	let projectId = '';
+
+	const { findByTestId, findByRole, getByRole, ctx, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, {
+				name: projectName,
+				description: 'Budget settings.',
+			});
+			projectSlug = project.slug;
+			projectId = project.id;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/settings',
+		params: { projectId: projectSlug },
+	});
+
+	// The budget editor lives in its own "Edit limits" affordance, distinct from the
+	// General section's "Edit".
+	await user.click(await findByTestId('edit-project-budget'));
+	await user.click(await findByTestId('budget-daily-toggle'));
+	const daily = (await findByTestId('budget-daily')) as HTMLInputElement;
+	await user.clear(daily);
+	await user.type(daily, '15');
+	await user.click(getByRole('button', { name: 'Save' }));
+
+	await waitFor(
+		async () => {
+			const row = await ctx.db.query<{ daily_budget_cents: number }>(
+				'SELECT daily_budget_cents FROM projects WHERE id = $1',
+				[projectId],
+			);
+			expect(row.rows[0]?.daily_budget_cents).toBe(1500);
+		},
+		{ timeout: 8_000 },
+	);
+
+	// Returns to the read-only view (the "Edit limits" button reappears).
+	await findByRole('button', { name: 'Edit limits' });
+});
+
 test('State A — no GitHub connection: shows Connect GitHub CTA', async () => {
 	const projectName = uniqueName('Settings Project');
 	let ws!: SeededWorkspace;
