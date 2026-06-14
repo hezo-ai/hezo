@@ -199,6 +199,12 @@ describe('costs – group_by=day', () => {
 		// Days are ordered ascending
 		const days = body.data.summary.map((r: any) => r.day);
 		expect(days).toEqual([...days].sort());
+		// Regression: `day` must be a date-only "YYYY-MM-DD" string, never a full ISO
+		// timestamp. A Postgres `date` deserializes to a JS Date that c.json() renders as
+		// "2024-01-15T00:00:00.000Z", which the chart can't parse (new Date(`${day}T00:00:00Z`)
+		// => Invalid Date). The route casts `::date::text` to keep it date-only.
+		for (const d of days) expect(d).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+		expect(days).toEqual(['2024-01-15', '2024-01-20', '2024-02-10', '2024-03-01']);
 		// Total across all days
 		expect(body.data.total_cents).toBe(275); // 50+75+120+30
 	});
@@ -227,6 +233,8 @@ describe('costs – group_by=day&breakdown=agent', () => {
 		// 4 (day, agent) cells; each row carries the agent's title.
 		expect(rows.length).toBe(4);
 		for (const r of rows) expect(typeof r.agent_title).toBe('string');
+		// `day` stays a date-only string in the breakdown too (chart parses it as such).
+		for (const r of rows) expect(r.day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
 		const byAgent = (id: string) =>
 			rows.filter((r) => r.agent_id === id).reduce((s, r) => s + r.total_cents, 0);
@@ -245,6 +253,8 @@ describe('costs – group_by=day&breakdown=adapter', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		const rows: any[] = body.data.summary;
+		// `day` stays a date-only string in the breakdown too (chart parses it as such).
+		for (const r of rows) expect(r.day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
 		const byConfig = (id: string | null) =>
 			rows.filter((r) => r.ai_provider_config_id === id).reduce((s, r) => s + r.total_cents, 0);
