@@ -160,7 +160,13 @@ export function useUpdateProject(projectId: string) {
 	return useSimpleOptimisticUpdate<Project, UpdateProjectVars>(
 		`/api/projects/${projectId}`,
 		queryKeys.projects.detail(projectId),
-		{ invalidateOnSettled: [queryKeys.projects.all()], errorMessage: 'Failed to update project' },
+		{
+			// budgetStatus carries the per-window limits the Budget page KPI cards read,
+			// so a budget-limit edit must refetch it (the optimistic update only touches
+			// the project detail cache).
+			invalidateOnSettled: [queryKeys.projects.all(), queryKeys.projects.budgetStatus(projectId)],
+			errorMessage: 'Failed to update project',
+		},
 	);
 }
 
