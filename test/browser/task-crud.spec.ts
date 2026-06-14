@@ -37,9 +37,13 @@ test('Agent Queue running row links the name to the agent page and the run indic
 	const task = (await taskRes.json()).data;
 
 	const commentId = 'bbbb0000-0000-0000-0000-000000000001';
+	// Deep-link anchors use the comment's public_id slug (a creation timestamp),
+	// not the UUID; the mocked comment must carry it for the jump to resolve.
+	const publicId = '20260614120000';
 	const runId = 'cccc0000-0000-0000-0000-000000000001';
 	const runComment = {
 		id: commentId,
+		public_id: publicId,
 		task_id: task.id,
 		content_type: 'run',
 		content: { run_id: runId, agent_id: agent.id, agent_title: agent.title },
@@ -65,6 +69,7 @@ test('Agent Queue running row links the name to the agent page and the run indic
 
 	const filler = Array.from({ length: 20 }, (_, i) => ({
 		id: `dddd0000-0000-0000-0000-${String(i).padStart(12, '0')}`,
+		public_id: `202606140000${String(i).padStart(2, '0')}`,
 		task_id: task.id,
 		content_type: 'text',
 		content: { text: `Filler comment ${i} — lorem ipsum dolor sit amet.` },
@@ -105,9 +110,9 @@ test('Agent Queue running row links the name to the agent page and the run indic
 
 	// The running indicator jumps to — and scrolls in — the live run comment.
 	const runLink = agentQueue.getByRole('link', { name: 'Jump to run' });
-	await expect(runLink).toHaveAttribute('href', `#comment-${commentId}`);
+	await expect(runLink).toHaveAttribute('href', `#comment-${publicId}`);
 
-	const targetComment = page.locator(`#comment-${commentId}`);
+	const targetComment = page.locator(`#comment-${publicId}`);
 	await expect(targetComment).not.toBeInViewport();
 
 	await runLink.click();

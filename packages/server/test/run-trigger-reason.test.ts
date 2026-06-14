@@ -12,12 +12,14 @@ interface RunRow {
 	trigger_source: string | null;
 	trigger_payload: Record<string, unknown> | null;
 	trigger_comment_id: string | null;
+	trigger_comment_public_id: string | null;
 	trigger_actor_member_id: string | null;
 	trigger_actor_slug: string | null;
 	trigger_actor_title: string | null;
 	trigger_comment_task_id: string | null;
 	trigger_comment_task_identifier: string | null;
 	trigger_comment_project_slug: string | null;
+	run_comment_public_id: string | null;
 }
 
 let app: Hono<Env>;
@@ -153,6 +155,8 @@ describe('GET /heartbeat-runs/:runId trigger reason', () => {
 		const run = await fetchRun(architectId, runId);
 		expect(run.trigger_source).toBe(WakeupSource.Mention);
 		expect(run.trigger_comment_id).toBe(commentId);
+		// The deep-link slug is the comment's public_id (creation timestamp).
+		expect(run.trigger_comment_public_id).toMatch(/^\d{14}(-\d+)?$/);
 		expect(run.trigger_actor_member_id).toBe(productLeadId);
 		expect(run.trigger_actor_slug).toBe('product-lead');
 		expect(run.trigger_comment_task_id).toBe(taskId);

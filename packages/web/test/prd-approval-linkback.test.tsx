@@ -4,9 +4,9 @@ import { seedComment, seedProject, seedTask, seedWorkspace } from './helpers/see
 
 // Guards the codified PRD metadata format from product-lead.md: once the admin
 // approves, the Product Lead rewrites prd.md's header with
-// `Approved in <TASK-ID>#comment-<uuid>`. This asserts that header renders in the
-// documents viewer as a clickable deep link to the approval comment. Render-driven
-// (no real layout/WebSocket), so it belongs in the component tier.
+// `Approved in <TASK-ID>#comment-<public_id>`. This asserts that header renders in
+// the documents viewer as a clickable deep link to the approval comment.
+// Render-driven (no real layout/WebSocket), so it belongs in the component tier.
 test('approved PRD metadata links back to the approval task + comment', async () => {
 	const seeded = { projectSlug: '', taskId: '', commentId: '' };
 
@@ -26,7 +26,7 @@ test('approved PRD metadata links back to the approval task + comment', async ()
 				'Author: @@product-lead',
 				'Input: research.md by @@researcher',
 				'Date: 2026-06-11',
-				`Approved in ${task.identifier}#comment-${approval.id}`,
+				`Approved in ${task.identifier}#comment-${approval.public_id}`,
 			].join('\n');
 
 			const res = await apiBase(`/api/projects/${project.slug}/docs/prd.md`, {
@@ -38,7 +38,7 @@ test('approved PRD metadata links back to the approval task + comment', async ()
 
 			seeded.projectSlug = project.slug;
 			seeded.taskId = task.identifier.toLowerCase();
-			seeded.commentId = approval.id;
+			seeded.commentId = approval.public_id;
 		},
 	});
 

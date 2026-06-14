@@ -37,7 +37,7 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 				projectId: mention.project_slug,
 				taskId: mention.task_identifier.toLowerCase(),
 			} as never,
-			hash: `comment-${mention.comment_id}`,
+			hash: `comment-${mention.comment_public_id}`,
 		});
 	};
 

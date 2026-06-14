@@ -26,6 +26,12 @@ export interface CommentAttachment {
 
 export interface Comment {
 	id: string;
+	/**
+	 * Human-friendly per-task slug (creation timestamp, e.g. `20261009112345`)
+	 * used for deep-link anchors and `<TASK-ID>#comment-<public_id>` mention
+	 * links. `id` (the UUID) stays the key for API calls and parent references.
+	 */
+	public_id: string;
 	task_id: string;
 	content_type: string;
 	content: string;

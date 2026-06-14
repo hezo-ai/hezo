@@ -26,6 +26,7 @@ interface AdminMentionRow {
 	task_title: string;
 	project_slug: string;
 	comment_id: string;
+	comment_public_id: string;
 	content: unknown;
 	author_member_id: string | null;
 	author_display_name: string | null;
@@ -48,7 +49,7 @@ inboxRoutes.get('/projects/:projectId/inbox/mentions', async (c) => {
 		`SELECT bm.id, bm.team_id, t.slug AS team_slug,
 		        bm.task_id, i.identifier AS task_identifier, i.title AS task_title,
 		        p.slug AS project_slug,
-		        bm.comment_id, tc.content,
+		        bm.comment_id, tc.public_id AS comment_public_id, tc.content,
 		        tc.author_member_id,
 		        COALESCE(ma.title, m.display_name) AS author_display_name,
 		        ma.slug AS author_slug,
@@ -78,6 +79,7 @@ inboxRoutes.get('/projects/:projectId/inbox/mentions', async (c) => {
 			task_title: r.task_title,
 			project_slug: r.project_slug,
 			comment_id: r.comment_id,
+			comment_public_id: r.comment_public_id,
 			snippet: buildSnippet(r.content),
 			author_member_id: r.author_member_id,
 			author_display_name: r.author_display_name ?? 'Admin',

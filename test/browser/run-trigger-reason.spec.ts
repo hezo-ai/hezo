@@ -187,7 +187,7 @@ test('task link on run detail page scrolls to the run comment', async ({ page })
 	await expect(taskLink).toBeVisible({ timeout: 15000 });
 
 	const href = await taskLink.getAttribute('href');
-	expect(href).toMatch(/#comment-[0-9a-f-]{36}$/);
+	expect(href).toMatch(/#comment-\d{14}(?:-\d+)?$/);
 	const commentId = href!.split('#comment-')[1];
 
 	await taskLink.click();

@@ -11,13 +11,15 @@ import { ADMIN_MENTION_SLUG } from '../constants.js';
 export const PASSIVE_AGENT_RE_SRC = String.raw`(?<![\w@])@@([a-z][\w-]*)(?![\w/])`;
 export const AGENT_RE_SRC = String.raw`(?<![\w@])@([a-z][\w-]*)(?![\w/])`;
 export const TASK_RE_SRC = String.raw`(?<![\w-])([A-Z][A-Z0-9]{1,3}-\d+)(?![\w-])`;
-// Comment links embed a task identifier plus the comment's UUID
-// (`IN-42#comment-<uuid>`), reusing the `#comment-<uuid>` URL hash. The UUID is
-// shape-matched so `IN-42#comment-foo` prose stays plain text. This MUST come
+// Comment links embed a task identifier plus the comment's `public_id`
+// (`IN-42#comment-20261009112345`), reusing the `#comment-<public_id>` URL hash.
+// A comment's public_id is its creation timestamp (`YYYYMMDDHHMMSS`, UTC) with
+// an optional `-N` suffix when several comments on a task share a second. The id
+// is shape-matched so `IN-42#comment-foo` prose stays plain text. This MUST come
 // before TASK_RE_SRC in the alternation: regex alternation prefers the leftmost
 // matching branch at a position, so otherwise TASK_RE_SRC consumes the bare
 // `IN-42` prefix and the `#comment-...` suffix is left dangling.
-export const COMMENT_LINK_RE_SRC = String.raw`(?<![\w-])([A-Z][A-Z0-9]{1,3}-\d+)#comment-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?![\w-])`;
+export const COMMENT_LINK_RE_SRC = String.raw`(?<![\w-])([A-Z][A-Z0-9]{1,3}-\d+)#comment-(\d{14}(?:-\d+)?)(?![\w-])`;
 export const FILENAME_RE_SRC = String.raw`(?<![\w/.-])([a-z0-9][\w-]*\.[a-z0-9]+)(?![\w/.-])`;
 // Asset references are path-prefixed (`assets/<name>.<ext>`) and may contain
 // uppercase (e.g. a task identifier embedded in the name). The leading `assets/`
@@ -27,7 +29,7 @@ export const ASSET_RE_SRC = String.raw`(?<![\w/.-])assets/([A-Za-z0-9][\w.-]*\.[
 /**
  * Combined mention regex. Capture-group layout (consumed by
  * `parseMentionMatch`): 1 = passive agent slug, 2 = agent slug, 3+4 = comment
- * link (task identifier, comment UUID), 5 = task identifier, 6 = bare
+ * link (task identifier, comment public_id), 5 = task identifier, 6 = bare
  * filename, 7 = asset filename.
  *
  * Returns a fresh `g`-flagged instance per call — `g` regexes carry

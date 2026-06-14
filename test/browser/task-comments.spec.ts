@@ -47,7 +47,7 @@ test.describe('Task Comments', () => {
 		const { task, project, headers } = await createProjectAndTask(page, sharedWorkspace.token);
 
 		const TOTAL = 120;
-		const created: { id: string; index: number }[] = [];
+		const created: { id: string; public_id: string; index: number }[] = [];
 		const BATCH = 12;
 		for (let start = 0; start < TOTAL; start += BATCH) {
 			const batch = Array.from({ length: Math.min(BATCH, TOTAL - start) }, (_, i) => start + i);
@@ -60,8 +60,8 @@ test.describe('Task Comments', () => {
 				),
 			);
 			for (const [k, res] of results.entries()) {
-				const json = (await res.json()) as { data: { id: string } };
-				created.push({ id: json.data.id, index: batch[k] });
+				const json = (await res.json()) as { data: { id: string; public_id: string } };
+				created.push({ id: json.data.id, public_id: json.data.public_id, index: batch[k] });
 			}
 		}
 
@@ -79,10 +79,10 @@ test.describe('Task Comments', () => {
 
 		const target = created[Math.floor(TOTAL / 2)];
 		await page.goto(
-			`/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}#comment-${target.id}`,
+			`/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}#comment-${target.public_id}`,
 		);
 		await waitForPageLoad(page);
-		const anchored = page.locator(`#comment-${target.id}`);
+		const anchored = page.locator(`#comment-${target.public_id}`);
 		await expect(anchored).toBeVisible({ timeout: 20_000 });
 		await expect(anchored).toContainText(`seeded-comment-${target.index}`);
 	});
@@ -103,7 +103,7 @@ test.describe('Task Comments', () => {
 		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
 		await waitForPageLoad(page);
 
-		const parentItem = page.locator(`#comment-${parent.id}`);
+		const parentItem = page.locator(`#comment-${parent.public_id}`);
 		await expect(parentItem).toBeVisible({ timeout: 20_000 });
 
 		await parentItem.getByTestId('comment-reply').click();

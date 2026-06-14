@@ -301,6 +301,7 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
             ) AS has_active_run,
             lr.status AS last_run_status,
             lr.comment_id AS last_run_comment_id,
+            lr.comment_public_id AS last_run_comment_public_id,
             CASE WHEN qw.last_skipped_reason IS NOT NULL THEN json_build_object(
               'reason', qw.last_skipped_reason,
               'since', qw.last_skipped_at,
@@ -330,7 +331,7 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
        LIMIT 1
      ) qw ON true
      LEFT JOIN LATERAL (
-       SELECT hr.status, hrc.id AS comment_id
+       SELECT hr.status, hrc.id AS comment_id, hrc.public_id AS comment_public_id
        FROM heartbeat_runs hr
        LEFT JOIN task_comments hrc
          ON hrc.task_id = hr.task_id

@@ -1248,7 +1248,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_comments',
-		"List comments for an task. Returns up to 50 most-recent comments (newest first). Pass before (a comment ID) to walk older. Pass excerpt_chars (e.g. 500) to truncate long text comments; structured comments (system/option/task_link) are always returned whole. Each row includes parent_comment_id (UUID or null) so you can see reply threading — when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row's id is also how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<id> (e.g. IN-42#comment-<id>), which renders as a clickable link straight to that comment.",
+		"List comments for an task. Returns up to 50 most-recent comments (newest first). Pass before (a comment ID) to walk older. Pass excerpt_chars (e.g. 500) to truncate long text comments; structured comments (system/option/task_link) are always returned whole. Each row includes parent_comment_id (UUID or null) so you can see reply threading — when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment.",
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -1278,7 +1278,7 @@ export function registerTools(
 				);
 			}
 			const r = await db.query<Record<string, unknown>>(
-				`SELECT ic.id, ic.task_id, ic.author_member_id, ic.parent_comment_id,
+				`SELECT ic.id, ic.public_id, ic.task_id, ic.author_member_id, ic.parent_comment_id,
 				        ic.content_type, ic.content, ic.chosen_option, ic.created_at,
 				        COALESCE(ma.title, m.display_name, 'Admin') AS author_name
 				 FROM task_comments ic
@@ -1415,7 +1415,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_comment',
-		'Add a comment to an task. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert. To point at a specific earlier comment (in this ticket or another), write a comment link as <TASK-ID>#comment-<uuid> (e.g. IN-42#comment-<uuid>) using a comment id from list_comments — do not paraphrase "the comment above". When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID — it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.',
+		'Add a comment to an task. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert. To point at a specific earlier comment (in this ticket or another), write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345) using a comment public_id from list_comments — do not paraphrase "the comment above". When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID — it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.',
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -1444,7 +1444,9 @@ export function registerTools(
 			}
 			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const content = { text: args.content };
-			const r = await db.query<{ id: string }>(
+			// RETURNING * includes public_id (the timestamp slug for comment links),
+			// so the agent gets it back without a follow-up list_comments.
+			const r = await db.query<{ id: string; public_id: string }>(
 				`INSERT INTO task_comments (task_id, author_member_id, parent_comment_id, content_type, content) VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
 				[taskId, authorMemberId, parentCommentId, CommentContentType.Text, JSON.stringify(content)],
 			);
