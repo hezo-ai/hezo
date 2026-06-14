@@ -11,6 +11,7 @@ import {
 	XAxis,
 	YAxis,
 } from 'recharts';
+import { dollars, formatDay } from './chart-format';
 
 type ChartKind = 'bar' | 'line';
 
@@ -30,15 +31,6 @@ const SERIES_COLORS = [
 	'var(--color-accent-purple)',
 	'var(--color-accent-red)',
 ];
-
-function formatDay(day: string): string {
-	const d = new Date(`${day}T00:00:00Z`);
-	return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
-}
-
-function dollars(cents: number): string {
-	return `$${(cents / 100).toFixed(2)}`;
-}
 
 interface PivotedRow {
 	day: string;

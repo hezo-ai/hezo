@@ -11,18 +11,9 @@ import {
 	YAxis,
 } from 'recharts';
 import { type DailyCostPoint, useDailyCostSeries } from '../../hooks/use-costs';
+import { dollars, formatDay } from './chart-format';
 
 type ChartKind = 'bar' | 'line';
-
-function formatDay(day: string): string {
-	// `day` is a date-only string (YYYY-MM-DD) from date_trunc; render month/day.
-	const d = new Date(`${day}T00:00:00Z`);
-	return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
-}
-
-function dollars(cents: number): string {
-	return `$${(cents / 100).toFixed(2)}`;
-}
 
 interface ChartDatum {
 	day: string;
