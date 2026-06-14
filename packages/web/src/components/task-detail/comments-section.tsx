@@ -80,8 +80,12 @@ type HashScrollTarget = { idx: number; highlightId: string | null };
 function resolveHashTarget(hash: string, comments: Comment[]): HashScrollTarget {
 	if (hash.startsWith('#comment-')) {
 		const targetId = hash.slice('#comment-'.length);
-		const idx = comments.findIndex((c) => c.id === targetId);
-		return { idx, highlightId: idx >= 0 ? targetId : null };
+		// Match by public_id (the canonical anchor) first, but also accept a raw
+		// UUID so legacy/internal jump hashes still resolve. Normalize the
+		// highlight id back to the matched comment's public_id, which is what the
+		// DOM anchor uses.
+		const idx = comments.findIndex((c) => c.public_id === targetId || c.id === targetId);
+		return { idx, highlightId: idx >= 0 ? comments[idx].public_id : null };
 	}
 	if (hash === '#setup-repo') {
 		const idx = comments.findIndex((c) => {
@@ -309,13 +313,13 @@ export function CommentsSection({
 						const content = typeof c.content === 'object' ? (c.content as { kind?: string }) : null;
 						const isPendingSetupRepo =
 							c.content_type === 'action' && content?.kind === 'setup_repo' && !c.chosen_option;
-						const isHighlighted = highlightedCommentId === c.id;
+						const isHighlighted = highlightedCommentId === c.public_id;
 
 						if (isInlineEventType(c.content_type)) {
 							const Icon = inlineEventIcon(commentData);
 							return (
 								<div
-									id={`comment-${c.id}`}
+									id={`comment-${c.public_id}`}
 									className={`flex items-start gap-2.5 scroll-mt-20 pb-4 ${isHighlighted ? 'rounded-md ring-2 ring-accent-blue/60 transition-shadow' : ''}`}
 									data-testid="comment-item"
 									data-comment-highlighted={isHighlighted ? 'true' : undefined}
@@ -345,7 +349,7 @@ export function CommentsSection({
 
 						return (
 							<div
-								id={`comment-${c.id}`}
+								id={`comment-${c.public_id}`}
 								className={`flex gap-2.5 scroll-mt-20 pb-4 ${isHighlighted ? 'rounded-md ring-2 ring-accent-blue/60 transition-shadow' : ''}`}
 								data-testid="comment-item"
 								data-comment-highlighted={isHighlighted ? 'true' : undefined}
@@ -401,8 +405,8 @@ export function CommentsSection({
 													if (!parent) return null;
 													return (
 														<a
-															href={`#comment-${parent.id}`}
-															onClick={jumpToComment(parent.id)}
+															href={`#comment-${parent.public_id}`}
+															onClick={jumpToComment(parent.public_id)}
 															className="flex items-center gap-1 text-[11px] text-text-subtle hover:text-text"
 															data-testid="replying-to"
 														>

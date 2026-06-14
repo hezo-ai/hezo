@@ -13,7 +13,7 @@ import { Tooltip } from '../ui/tooltip';
 // Run comments carry a JSON object payload, but the shared Comment type declares
 // `content: string`; accept `unknown` here and narrow at read time (same shape
 // the old RunningAgentsLine used).
-type RunCommentRef = { id: string; content_type: string; content: unknown };
+type RunCommentRef = { id: string; public_id: string; content_type: string; content: unknown };
 
 interface AgentQueueSectionProps {
 	projectId: string;
@@ -58,7 +58,7 @@ export function AgentQueueSection({
 				? (c.content as { agent_id?: string; run_id?: string })
 				: null;
 		if (content?.agent_id && content.run_id) {
-			runByMemberId.set(content.agent_id, { runId: content.run_id, commentId: c.id });
+			runByMemberId.set(content.agent_id, { runId: content.run_id, commentId: c.public_id });
 		}
 	}
 

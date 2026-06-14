@@ -28,7 +28,7 @@ async function seedAgentAdminMention(
 	workspace: SeededWorkspace,
 	task: SeededTask,
 	text: string,
-): Promise<{ commentId: string; mentionId: string }> {
+): Promise<{ commentId: string; commentPublicId: string; mentionId: string }> {
 	const { db } = getTestContext();
 
 	const architect = workspace.agents.find((a) => a.slug === 'architect');
@@ -44,10 +44,10 @@ async function seedAgentAdminMention(
 	const userId = userRow.rows[0]?.user_id;
 	if (!userId) throw new Error('seedAgentAdminMention: no the admin on team');
 
-	const commentRow = await db.query<{ id: string }>(
+	const commentRow = await db.query<{ id: string; public_id: string }>(
 		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 		 VALUES ($1, $2, 'text'::comment_content_type, $3::jsonb)
-		 RETURNING id`,
+		 RETURNING id, public_id`,
 		[task.id, architect.id, JSON.stringify({ text })],
 	);
 	const commentId = commentRow.rows[0].id;
@@ -59,7 +59,11 @@ async function seedAgentAdminMention(
 		[workspace.team.id, task.id, commentId, userId],
 	);
 
-	return { commentId, mentionId: mentionRow.rows[0].id };
+	return {
+		commentId,
+		commentPublicId: commentRow.rows[0].public_id,
+		mentionId: mentionRow.rows[0].id,
+	};
 }
 
 test('inbox renders a admin mention card with author + snippet', async () => {
@@ -149,7 +153,7 @@ test('clicking a mention navigates to the task and marks it read', async () => {
 });
 
 test('clicking a mention deep-links to and highlights the source comment', async () => {
-	let ctx: { projectSlug: string; commentId: string };
+	let ctx: { projectSlug: string; commentPublicId: string };
 	const { findByTestId, user, router } = await renderApp({
 		initialPath: '/',
 		// Run under StrictMode so the mount→cleanup→mount double-invoke that used
@@ -162,13 +166,13 @@ test('clicking a mention deep-links to and highlights the source comment', async
 			// Seed the mention's comment first (comments sort created_at ASC) so it
 			// sits at the top and Virtuoso mounts it under happy-dom; the trailing
 			// comments make it a real multi-row thread rather than a single row.
-			const { commentId } = await seedAgentAdminMention(
+			const { commentPublicId } = await seedAgentAdminMention(
 				ws,
 				task,
 				'@admin please review the source comment.',
 			);
 			for (let i = 0; i < 4; i++) await seedComment(ws, task, `follow-up comment ${i}`);
-			ctx = { projectSlug: project.slug, commentId };
+			ctx = { projectSlug: project.slug, commentPublicId };
 		},
 	});
 
@@ -188,7 +192,7 @@ test('clicking a mention deep-links to and highlights the source comment', async
 	const highlighted = await waitFor(
 		() => {
 			const el = document.querySelector(
-				`#comment-${ctx!.commentId}[data-comment-highlighted="true"]`,
+				`#comment-${ctx!.commentPublicId}[data-comment-highlighted="true"]`,
 			);
 			if (!el) throw new Error('source comment not highlighted yet');
 			return el as HTMLElement;

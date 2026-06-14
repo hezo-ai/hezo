@@ -14,7 +14,8 @@ let token: string;
 
 let projectSlug: string;
 const BASE = 'https://hezo.example.com';
-const COMMENT_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+// A comment's public_id is its creation-timestamp slug (YYYYMMDDHHMMSS).
+const COMMENT_ID = '20261009112345';
 
 beforeAll(async () => {
 	const ctx = await createTestApp();

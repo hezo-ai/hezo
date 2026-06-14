@@ -4,9 +4,9 @@ import { jumpToComment } from './comments-section';
 
 export function LastRunFailedBanner({ task }: { task: Task }) {
 	const failed = task.last_run_status === 'failed' || task.last_run_status === 'timed_out';
-	if (task.has_active_run || !failed || !task.last_run_comment_id) return null;
+	if (task.has_active_run || !failed || !task.last_run_comment_public_id) return null;
 
-	const commentId = task.last_run_comment_id;
+	const commentId = task.last_run_comment_public_id;
 	return (
 		<a
 			href={`#comment-${commentId}`}

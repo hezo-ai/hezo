@@ -300,6 +300,8 @@ export interface BlockedTicket {
 	title: string;
 	project_slug: string;
 	comment_id: string;
+	/** Timestamp slug for the comment's deep-link anchor (`#comment-<public_id>`). */
+	comment_public_id: string;
 	comment_created_at: string;
 	agent_name: string | null;
 	agent_slug: string | null;
@@ -352,6 +354,8 @@ export interface AdminMentionItem {
 	task_title: string;
 	project_slug: string;
 	comment_id: string;
+	/** Timestamp slug for the comment's deep-link anchor (`#comment-<public_id>`). */
+	comment_public_id: string;
 	snippet: string;
 	author_member_id: string | null;
 	author_display_name: string;

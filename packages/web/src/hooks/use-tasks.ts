@@ -30,6 +30,8 @@ export interface Task {
 	has_unread_admin_mention: boolean;
 	last_run_status: 'succeeded' | 'failed' | 'cancelled' | 'timed_out' | null;
 	last_run_comment_id: string | null;
+	/** Deep-link slug for the last run's comment (`#comment-<public_id>`). */
+	last_run_comment_public_id: string | null;
 	queued_wakeup: QueuedWakeup | null;
 	parent_task_id: string | null;
 	labels: string[];

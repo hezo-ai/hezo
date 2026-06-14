@@ -13,7 +13,8 @@ import {
 } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 
-const UUID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+// A comment's public_id is its creation-timestamp slug (YYYYMMDDHHMMSS).
+const PUBLIC_ID = '20261009112345';
 
 function tokensOf(value: string): MentionToken[] {
 	const re = buildMentionRegex();
@@ -29,13 +30,18 @@ function tokensOf(value: string): MentionToken[] {
 describe('parseMentionMatch', () => {
 	it('maps each alternation branch to its token kind', () => {
 		const tokens = tokensOf(
-			`@@product-lead and @captain should read TO-1, IN-42#comment-${UUID}, prd.md and assets/mock.png`,
+			`@@product-lead and @captain should read TO-1, IN-42#comment-${PUBLIC_ID}, prd.md and assets/mock.png`,
 		);
 		expect(tokens).toEqual([
 			{ kind: 'passive_agent', raw: '@@product-lead', slug: 'product-lead' },
 			{ kind: 'agent', raw: '@captain', slug: 'captain' },
 			{ kind: 'task', raw: 'TO-1', identifier: 'to-1' },
-			{ kind: 'comment', raw: `IN-42#comment-${UUID}`, taskIdentifier: 'in-42', commentId: UUID },
+			{
+				kind: 'comment',
+				raw: `IN-42#comment-${PUBLIC_ID}`,
+				taskIdentifier: 'in-42',
+				commentId: PUBLIC_ID,
+			},
 			{ kind: 'filename', raw: 'prd.md', filename: 'prd.md' },
 			{ kind: 'asset', raw: 'assets/mock.png', filename: 'mock.png' },
 		]);
@@ -46,8 +52,14 @@ describe('parseMentionMatch', () => {
 		expect(token).toEqual({ kind: 'task', raw: 'TO-7', identifier: 'to-7' });
 	});
 
-	it('does not treat a non-UUID comment suffix as a comment link', () => {
+	it('does not treat a non-timestamp comment suffix as a comment link', () => {
 		const tokens = tokensOf('IN-42#comment-foo');
+		expect(tokens[0]).toEqual({ kind: 'task', raw: 'IN-42', identifier: 'in-42' });
+	});
+
+	it('no longer treats a legacy UUID comment suffix as a comment link', () => {
+		const tokens = tokensOf('IN-42#comment-a1b2c3d4-e5f6-7890-abcd-ef1234567890');
+		expect(tokens.some((t) => t.kind === 'comment')).toBe(false);
 		expect(tokens[0]).toEqual({ kind: 'task', raw: 'IN-42', identifier: 'in-42' });
 	});
 });
@@ -55,7 +67,7 @@ describe('parseMentionMatch', () => {
 describe('extractMentionCandidates', () => {
 	it('collects deduped candidates per kind', () => {
 		const c = extractMentionCandidates(
-			`TO-1 again TO-1 and to boot IN-42#comment-${UUID}; ask @captain or @@captain about prd.md and assets/a.png`,
+			`TO-1 again TO-1 and to boot IN-42#comment-${PUBLIC_ID}; ask @captain or @@captain about prd.md and assets/a.png`,
 		);
 		expect(c.tasks.sort()).toEqual(['in-42', 'to-1']);
 		expect(c.filenames).toEqual(['prd.md']);
@@ -100,7 +112,9 @@ describe('transformMentionsOutsideCode', () => {
 describe('entity paths', () => {
 	it('builds web-route-shaped paths', () => {
 		expect(taskPath('todo6', 'TO-1')).toBe('/projects/todo6/tasks/to-1');
-		expect(commentPath('todo6', 'TO-1', UUID)).toBe(`/projects/todo6/tasks/to-1#comment-${UUID}`);
+		expect(commentPath('todo6', 'TO-1', PUBLIC_ID)).toBe(
+			`/projects/todo6/tasks/to-1#comment-${PUBLIC_ID}`,
+		);
 		expect(projectDocPath('todo6', 'prd.md')).toBe('/projects/todo6/documents?file=prd.md');
 		expect(assetPath('todo6', 'a b.png')).toBe('/projects/todo6/assets?file=a%20b.png');
 		expect(agentPath('hq', 'ceo')).toBe('/projects/hq/agents/ceo');

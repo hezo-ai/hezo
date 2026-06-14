@@ -533,10 +533,14 @@ test('a comment link to another comment renders as a clickable link to its hash'
 			const project = await seedProject(ws, { name: 'Comment Link Project' });
 			const task = await seedTask(ws, project, { title: 'Comment Link Task' });
 			const target = await seedComment(ws, task, 'The original target comment');
-			await seedComment(ws, task, `See ${task.identifier}#comment-${target.id} for context.`);
+			await seedComment(
+				ws,
+				task,
+				`See ${task.identifier}#comment-${target.public_id} for context.`,
+			);
 			seeded.projectSlug = project.slug;
 			seeded.taskId = task.identifier.toLowerCase();
-			seeded.targetCommentId = target.id;
+			seeded.targetCommentId = target.public_id;
 		},
 	});
 	await router.navigate({

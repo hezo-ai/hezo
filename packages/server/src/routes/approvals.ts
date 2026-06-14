@@ -76,6 +76,7 @@ approvalsRoutes.get('/projects/:projectId/approvals/:approvalId/blocked-tickets'
 		title: string;
 		project_slug: string;
 		comment_id: string;
+		comment_public_id: string;
 		comment_created_at: string;
 		agent_name: string | null;
 		agent_slug: string | null;
@@ -87,6 +88,7 @@ approvalsRoutes.get('/projects/:projectId/approvals/:approvalId/blocked-tickets'
 			   i.title,
 			   p.slug AS project_slug,
 			   ic.id AS comment_id,
+			   ic.public_id AS comment_public_id,
 			   ic.created_at AS comment_created_at,
 			   COALESCE(ma.title, m.display_name) AS agent_name,
 			   ma.slug AS agent_slug,
@@ -120,6 +122,7 @@ approvalsRoutes.get('/projects/:projectId/approvals/:approvalId/blocked-tickets'
 		title: r.title,
 		project_slug: r.project_slug,
 		comment_id: r.comment_id,
+		comment_public_id: r.comment_public_id,
 		comment_created_at: r.comment_created_at,
 		agent_name: r.agent_name,
 		agent_slug: r.agent_slug,

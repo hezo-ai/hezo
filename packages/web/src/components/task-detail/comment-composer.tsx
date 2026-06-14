@@ -122,8 +122,8 @@ export function CommentComposer({
 						<CornerDownRight className="w-3.5 h-3.5 shrink-0" />
 						<span className="shrink-0">In response to</span>
 						<a
-							href={`#comment-${replyTarget.id}`}
-							onClick={jumpToComment(replyTarget.id)}
+							href={`#comment-${replyTarget.public_id}`}
+							onClick={jumpToComment(replyTarget.public_id)}
 							className="truncate text-accent-blue hover:underline"
 						>
 							{replyTarget.author_name}: {previewCommentText(replyTarget)}

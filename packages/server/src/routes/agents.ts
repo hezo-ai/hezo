@@ -81,6 +81,7 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr
 	aw.source AS trigger_source,
 	aw.payload AS trigger_payload,
 	tic.id AS trigger_comment_id,
+	tic.public_id AS trigger_comment_public_id,
 	tic.author_member_id AS trigger_actor_member_id,
 	tama.slug AS trigger_actor_slug,
 	tama.title AS trigger_actor_title,
@@ -88,6 +89,7 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr
 	tii.identifier AS trigger_comment_task_identifier,
 	tip.slug AS trigger_comment_project_slug,
 	hrc.id AS run_comment_id,
+	hrc.public_id AS run_comment_public_id,
 	COALESCE(
 		(SELECT jsonb_agg(
 			jsonb_build_object(

@@ -23,7 +23,11 @@ export function RepoSetupApprovalModal({
 	// (the public handle) rather than the now-internal team id.
 	const { data: tickets = [], isLoading } = useBlockedTickets(projectSlug, approval.id, open);
 
-	function openTicket(ticket: { project_slug: string; identifier: string; comment_id: string }) {
+	function openTicket(ticket: {
+		project_slug: string;
+		identifier: string;
+		comment_public_id: string;
+	}) {
 		onOpenChange(false);
 		navigate({
 			to: '/projects/$projectId/tasks/$taskId',
@@ -31,7 +35,7 @@ export function RepoSetupApprovalModal({
 				projectId: ticket.project_slug,
 				taskId: ticket.identifier.toLowerCase(),
 			},
-			hash: `comment-${ticket.comment_id}`,
+			hash: `comment-${ticket.comment_public_id}`,
 		});
 	}
 

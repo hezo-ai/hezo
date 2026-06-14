@@ -32,7 +32,7 @@ commentsRoutes.get('/projects/:projectId/tasks/:taskId/comments', async (c) => {
 	const includeToolCalls = c.req.query('include_tool_calls') === 'true';
 
 	const result = await db.query(
-		`SELECT ic.id, ic.task_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
+		`SELECT ic.id, ic.public_id, ic.task_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
             m.member_type AS author_type,
             COALESCE(ma.title, m.display_name, 'Admin') AS author_name,
             ic.author_member_id,

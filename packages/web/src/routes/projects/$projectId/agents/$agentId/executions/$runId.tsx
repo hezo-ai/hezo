@@ -180,7 +180,7 @@ function ExecutionDetailPage() {
 							projectId: run.project_slug ?? projectId,
 							taskId: run.task_identifier.toLowerCase(),
 						}}
-						{...(run.run_comment_id ? { hash: `comment-${run.run_comment_id}` } : {})}
+						{...(run.run_comment_public_id ? { hash: `comment-${run.run_comment_public_id}` } : {})}
 						className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-muted hover:text-text"
 					>
 						{taskLineInner}

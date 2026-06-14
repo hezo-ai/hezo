@@ -155,25 +155,25 @@ export async function seedComment(
 	task: SeededTask,
 	body: string,
 	opts?: { authorMemberId?: string },
-): Promise<{ id: string }> {
+): Promise<{ id: string; public_id: string }> {
 	const { apiBase, db } = getTestContext();
 	// The API attributes authorship to the board token, so it can only produce
 	// author_type: 'user'. To seed an agent-authored comment, insert directly.
 	if (opts?.authorMemberId) {
-		const inserted = await db.query<{ id: string }>(
+		const inserted = await db.query<{ id: string; public_id: string }>(
 			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 			 VALUES ($1, $2, 'text', $3::jsonb)
-			 RETURNING id`,
+			 RETURNING id, public_id`,
 			[task.id, opts.authorMemberId, JSON.stringify({ text: body })],
 		);
-		return { id: inserted.rows[0].id };
+		return inserted.rows[0];
 	}
 	const res = await apiBase(`/api/projects/${workspace.internalSlug}/tasks/${task.id}/comments`, {
 		method: 'POST',
 		headers: workspace.headers,
 		body: JSON.stringify({ content_type: 'text', content: { text: body } }),
 	});
-	return ((await res.json()) as { data: { id: string } }).data;
+	return ((await res.json()) as { data: { id: string; public_id: string } }).data;
 }
 
 /**

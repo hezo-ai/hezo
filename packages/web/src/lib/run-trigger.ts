@@ -16,7 +16,7 @@ function getString(payload: Record<string, unknown> | null, key: string): string
 function commentHref(run: HeartbeatRun, teamSlug: string): string | undefined {
 	const taskIdentifier = run.trigger_comment_task_identifier;
 	const projectSlug = run.trigger_comment_project_slug;
-	const commentId = run.trigger_comment_id;
+	const commentId = run.trigger_comment_public_id;
 	if (!taskIdentifier || !projectSlug || !commentId) return undefined;
 	return `/teams/${teamSlug}/projects/${projectSlug}/tasks/${taskIdentifier}#comment-${commentId}`;
 }

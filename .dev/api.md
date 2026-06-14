@@ -473,6 +473,11 @@ Each row also includes resolved trigger fields so the UI can render a
   is the agent who posted the mentioning comment; for `reply`, the actor is
   the agent who posted the replying comment. Null when the source has no
   comment context (e.g. `assignment`, `heartbeat`, `timer`).
+- `trigger_comment_public_id`, `run_comment_public_id` — the comment
+  `public_id` slugs (creation-timestamp, e.g. `20261009112345`) for the
+  triggering comment and the run's own `run`-type comment, used to build the
+  `#comment-<public_id>` deep-link anchors. `trigger_comment_id` /
+  `run_comment_id` remain the UUID keys.
 
 #### `GET /projects/:projectId/agents/:agentId/heartbeat-runs/:runId`
 Get a single heartbeat run with task metadata, the full log/usage fields

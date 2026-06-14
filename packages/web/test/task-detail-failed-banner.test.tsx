@@ -13,7 +13,7 @@ async function insertFailedRunWithComment(
 	workspace: SeededWorkspace,
 	task: SeededTask,
 	status: 'failed' | 'timed_out' = 'failed',
-): Promise<{ runId: string; commentId: string }> {
+): Promise<{ runId: string; commentId: string; commentPublicId: string }> {
 	const { db } = getTestContext();
 	const agentId = workspace.agents[0].id;
 	const runRes = await db.query<{ id: string }>(
@@ -23,13 +23,13 @@ async function insertFailedRunWithComment(
 		[agentId, workspace.team.id, task.id, status],
 	);
 	const runId = runRes.rows[0].id;
-	const commentRes = await db.query<{ id: string }>(
+	const commentRes = await db.query<{ id: string; public_id: string }>(
 		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 		 VALUES ($1, $2, 'run'::comment_content_type, $3::jsonb)
-		 RETURNING id`,
+		 RETURNING id, public_id`,
 		[task.id, agentId, JSON.stringify({ run_id: runId, agent_id: agentId })],
 	);
-	return { runId, commentId: commentRes.rows[0].id };
+	return { runId, commentId: commentRes.rows[0].id, commentPublicId: commentRes.rows[0].public_id };
 }
 
 async function insertRunningRun(workspace: SeededWorkspace, task: SeededTask): Promise<void> {
@@ -49,10 +49,10 @@ test('banner appears when last run failed and jumps to the run comment when clic
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Demo' });
 			const task = await seedTask(ws, project, { title: 'Failed Task' });
-			const { commentId } = await insertFailedRunWithComment(ws, task, 'failed');
+			const { commentPublicId } = await insertFailedRunWithComment(ws, task, 'failed');
 			seeded.projectSlug = project.slug;
 			seeded.taskIdentifier = task.identifier.toLowerCase();
-			seeded.commentId = commentId;
+			seeded.commentId = commentPublicId;
 		},
 	});
 

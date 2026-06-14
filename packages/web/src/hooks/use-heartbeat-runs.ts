@@ -29,6 +29,8 @@ export interface HeartbeatRun {
 	trigger_source: WakeupSource | null;
 	trigger_payload: Record<string, unknown> | null;
 	trigger_comment_id: string | null;
+	/** Deep-link slug for the triggering comment (`#comment-<public_id>`). */
+	trigger_comment_public_id: string | null;
 	trigger_actor_member_id: string | null;
 	trigger_actor_slug: string | null;
 	trigger_actor_title: string | null;
@@ -36,6 +38,8 @@ export interface HeartbeatRun {
 	trigger_comment_task_identifier: string | null;
 	trigger_comment_project_slug: string | null;
 	run_comment_id: string | null;
+	/** Deep-link slug for this run's own comment (`#comment-<public_id>`). */
+	run_comment_public_id: string | null;
 	created_tasks: { id: string; identifier: string; title: string; project_slug: string }[];
 	created_docs: { filename: string; project_slug: string }[];
 	created_skills: { name: string; slug: string; created: boolean }[];

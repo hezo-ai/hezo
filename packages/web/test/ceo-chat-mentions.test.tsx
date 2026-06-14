@@ -47,7 +47,13 @@ async function seedEntities(): Promise<SeededRefs> {
 		headers: ws.headers,
 		body: JSON.stringify({ content: '# PRD' }),
 	});
-	return { projectSlug: project.slug, taskIdentifier: task.identifier, commentId: comment.id };
+	// commentId carries the comment's public_id — the slug used in `#comment-…`
+	// deep-links and `<TASK-ID>#comment-…` mention references.
+	return {
+		projectSlug: project.slug,
+		taskIdentifier: task.identifier,
+		commentId: comment.public_id,
+	};
 }
 
 test('CEO replies render unique refs as links; unknown and backticked refs stay plain', async () => {
