@@ -124,7 +124,7 @@
 - `POST /connections/github/start` — generates auth URL via Hezo Connect
 - `GET /oauth/callback` — receives token, encrypts, stores in `connected_platforms`
 - Repo CRUD with GitHub access validation (API check with OAuth token before saving)
-- Repo cloning via SSH with team-generated SSH key pair (registered on GitHub via OAuth API)
+- Repo cloning via SSH with the project's SSH key pair (registered on GitHub via OAuth API)
 - Team-level folder setup with AGENTS.md in project root
 - Board inbox `oauth_request` items when GitHub not connected
 - Connected platforms management (connect, disconnect)
@@ -796,7 +796,7 @@ After successful container provisioning or rebuild, runs that died with `error='
 **What's included:**
 
 - **P1 — `request_credential` MCP tool** (commit `9fa5be6`). Agent posts a `credential_request` comment on an task; human pastes the value via the task thread; server encrypts to `secrets`; agent receives a `credential_provided` wakeup. Generic for any kind: API key, SSH key, OAuth token, database URL, webhook secret.
-- **P2 — SSH signing server** (commit `9fa5be6`). Per-run `SshAgentServer` with Unix-socket + loopback-TCP listeners. Agents do `git clone` over SSH using the team's Ed25519 deploy key; private key never leaves the server. `setup_github_repo` MCP tool surfaces the public key in a credential_request comment for one-time human deploy-key onboarding.
+- **P2 — SSH signing server** (commit `9fa5be6`). Per-run `SshAgentServer` with Unix-socket + loopback-TCP listeners. Agents do `git clone` over SSH using the project's Ed25519 deploy key; private key never leaves the server. `setup_github_repo` MCP tool surfaces the public key in a credential_request comment for one-time human deploy-key onboarding.
 - **P2-followup — macOS Docker SSH socket relay** (commit `c9b9be9`). Adds a per-run `socat` bridge baked into the agent base image so the same wire-up works on macOS Docker Desktop (which does not forward `AF_UNIX` bind mounts) and Linux production. Token-authenticated TCP listener on the host; `hezo-run-with-bridge` wrapper inside the container.
 - **P3 — HTTPS MITM egress proxy** (commit `98d63de`). Per-run `http-mitm-proxy` instance allocated against a per-instance CA at `<dataDir>/ca/`. Substitutes `__HEZO_SECRET_<NAME>__` placeholders in request headers and URLs against the `secrets` table scoped to `(team_id, project_id)`. Failures (unknown secret, host not allow-listed, locked master key) return 400 / 403 / 503 to the agent. Audit log records every substitution by name; values never serialised. Falling through to direct egress is **not** an option — failure to bind aborts the run.
 - **P4 — MCP connection persistence** (commit `d1c3f97`). New `mcp_connections` table for SaaS HTTP and local stdio MCP servers, with team / project scope. `add_mcp_connection` / `list_mcp_connections` / `remove_mcp_connection` MCP tools plus REST CRUD. All three runtime adapters (Claude Code, Codex, Gemini) handle both descriptor kinds. SaaS header values support `__HEZO_SECRET_*__` placeholders, substituted by the egress proxy.

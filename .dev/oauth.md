@@ -8,7 +8,7 @@ Every third-party connection is an **MCP connector**. Token acquisition is chose
 | **Device flow (RFC 8628)** | `connectors/:id/device/start` → user types the code at the provider → `connectors/:id/device/poll`. Needs a **pre-registered public client_id**; no redirect, no secret. | The capability registry declares a `deviceAuth` descriptor (provider can't do DCR). | **GitHub** (GitLab / Google / Microsoft fit the same shape) |
 | **Paste / `request_credential`** | Raw API key pasted into the vault | Provider exposes no OAuth at all | capability `paste` fallback |
 
-**Why GitHub uses the device flow.** GitHub's Authorization Server (`https://github.com/login/oauth`) advertises **no** `registration_endpoint`, so DCR is impossible — and a redirect/secret flow would need a per-host registered callback. The device flow needs only a public client_id and works on any self-hosted origin. GitHub is otherwise not special at the transport level; it just resolves its real identity and registers the team SSH key as a post-connect side effect.
+**Why GitHub uses the device flow.** GitHub's Authorization Server (`https://github.com/login/oauth`) advertises **no** `registration_endpoint`, so DCR is impossible — and a redirect/secret flow would need a per-host registered callback. The device flow needs only a public client_id and works on any self-hosted origin. GitHub is otherwise not special at the transport level; it just resolves its real identity and registers the project's SSH key as a post-connect side effect.
 
 The selection is data-driven: device-flow providers carry a `deviceAuth` block in the capability registry (`packages/shared/src/types/connector-capabilities.ts`); the generic RFC 8628 service lives in `services/oauth/device-flow.ts`. `services/oauth/*` is provider-agnostic OAuth machinery; GitHub-specific REST helpers (identity fetch, SSH-key registration, scope status) live in `services/github.ts`.
 
@@ -20,7 +20,7 @@ There is **no separate hosted callback service**. DCR connectors self-register p
 
 ## Storage
 
-`oauth_connections` — **instance-global**: one row per (provider, provider_account_id), shared with every team's runs (connect GitHub/SaaS once, usable everywhere). The per-team commit-signing key stays per-team in `team_ssh_keys`.
+`oauth_connections` — **instance-global**: one row per (provider, provider_account_id), shared with every team's runs (connect GitHub/SaaS once, usable everywhere). The per-project commit-signing key stays on the project's backing team row (`team_ssh_keys`, keyed by `team_id` — one team backs one project).
 
 | column | notes |
 |---|---|
@@ -80,7 +80,7 @@ For providers declaring a `deviceAuth` capability (GitHub today):
 
 `finalizeConnectorConnection` (in `routes/oauth.ts`) is the single post-token path for **both** strategies: resolve the provider identity, store the access (+refresh) token in `oauth_connections`, `markActive(connectorId, oauthConnectionId)`, run provider side effects, live-push to running containers, fire the `CredentialProvided` wakeup, and broadcast. Provider-specific behavior is a `ProviderConnectHooks` entry keyed by capability id; the generic case synthesizes an opaque account id and runs no side effects.
 
-**GitHub's hook**: resolves the real identity via `GET /user` (so `provider = 'github'` and downstream `provider === 'github'` filters match), and registers the team's Ed25519 public key on the connecting user's account as **both** a signing key (`POST /user/ssh_signing_keys`) and an authentication key (`POST /user/keys`). Both registrations are idempotent — GitHub returns 422 "key is already in use" on repeat, treated as a no-op.
+**GitHub's hook**: resolves the real identity via `GET /user` (so `provider = 'github'` and downstream `provider === 'github'` filters match), and registers the project's Ed25519 public key on the connecting user's account as **both** a signing key (`POST /user/ssh_signing_keys`) and an authentication key (`POST /user/keys`). Both registrations are idempotent — GitHub returns 422 "key is already in use" on repeat, treated as a no-op.
 
 ## Refresh
 
@@ -92,7 +92,7 @@ To register a refresh function for a provider: `registerRefreshFn(provider, fn)`
 
 Once a connection exists, agents (or the host) refer to it via the placeholder `__HEZO_SECRET_<secret_name>__`. For SaaS MCPs with `oauth_connection_id` set, the MCP injector emits `Authorization: Bearer __HEZO_SECRET_OAUTH_<PROVIDER>_<HEX>__`, overriding any user-supplied Authorization header.
 
-Repo clone/fetch/push does **not** use the OAuth token. The OAuth token is reserved for GitHub REST API calls (listing orgs/repos, creating repos via the picker, registering the auth/signing keys). The actual git transport is SSH (`git@github.com:owner/repo.git`), authenticated by the team Ed25519 key via the `SshAgentServer`. Host-side git ops allocate an ephemeral agent socket through `withHostAgentSocket` in `services/ssh-agent/host.ts`; container-side ops use the per-run socat bridge already provisioned for commit signing. See `.dev/ssh-signing.md`.
+Repo clone/fetch/push does **not** use the OAuth token. The OAuth token is reserved for GitHub REST API calls (listing orgs/repos, creating repos via the picker, registering the auth/signing keys). The actual git transport is SSH (`git@github.com:owner/repo.git`), authenticated by the project's Ed25519 key via the `SshAgentServer`. Host-side git ops allocate an ephemeral agent socket through `withHostAgentSocket` in `services/ssh-agent/host.ts`; container-side ops use the per-run socat bridge already provisioned for commit signing. See `.dev/ssh-signing.md`.
 
 Secret allowed_hosts gate substitution: a leak attempt to the wrong host (e.g. exfiltration via a placeholder in a header to a non-allowed origin) returns `secret_not_allowed_for_host` and is audited.
 
@@ -115,7 +115,7 @@ Secret allowed_hosts gate substitution: a leak attempt to the wrong host (e.g. e
 
 ## Config
 
-GitHub uses a **pre-registered public OAuth App** (device flow needs a client_id; GitHub doesn't do DCR). The client_id is public and committed as a dev fallback; production overrides via `GITHUB_OAUTH_CLIENT_ID`. The OAuth App must have "Enable Device Flow" checked. The GitHub connector requests `repo`, `workflow`, `read:org`, `write:ssh_signing_key`, and `write:public_key` scopes (the `github` capability's `scopes` list). The last two register the team's Ed25519 key as a GitHub signing/authentication key; `repo` and `read:org` drive REST API calls (listing/creating repos and orgs).
+GitHub uses a **pre-registered public OAuth App** (device flow needs a client_id; GitHub doesn't do DCR). The client_id is public and committed as a dev fallback; production overrides via `GITHUB_OAUTH_CLIENT_ID`. The OAuth App must have "Enable Device Flow" checked. The GitHub connector requests `repo`, `workflow`, `read:org`, `write:ssh_signing_key`, and `write:public_key` scopes (the `github` capability's `scopes` list). The last two register the project's Ed25519 key as a GitHub signing/authentication key; `repo` and `read:org` drive REST API calls (listing/creating repos and orgs).
 
 DCR connectors (DatoCMS, Linear, …) need no config — each Hezo instance self-registers as a public client and caches the client_id in `mcp_connections.config.dcr`.
 

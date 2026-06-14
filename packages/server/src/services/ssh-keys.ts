@@ -26,8 +26,8 @@ export async function generateTeamSSHKey(
 	const fingerprint = createHash('sha256').update(Buffer.from(publicKey)).digest('hex');
 	const encryptedPrivateKey = encrypt(privateKey, encryptionKey);
 
-	// The per-team signing key's PEM is encrypted directly on team_ssh_keys, not
-	// in the global `secrets` table.
+	// The project's signing key PEM is encrypted directly on its team_ssh_keys row
+	// (one team backs one project), not in the global `secrets` table.
 	await db.query(
 		`INSERT INTO team_ssh_keys (team_id, public_key, fingerprint, private_key_encrypted)
 		 VALUES ($1, $2, $3, $4)
