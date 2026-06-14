@@ -67,9 +67,14 @@ costsRoutes.get('/projects/:projectId/costs', async (c) => {
 		return ok(c, { summary: result.rows, total_cents: totalCents });
 	}
 
+	// The per-day buckets cast to `::date::text` (not bare `::date`) on purpose: PGlite
+	// deserializes a Postgres `date` into a JS Date, which Hono's c.json() then renders
+	// as a full ISO timestamp ("2024-01-15T00:00:00.000Z"). The chart parses `day` as a
+	// date-only string, so the timestamp form breaks it ("Invalid Date"). `::text` keeps
+	// it a plain "YYYY-MM-DD". Keep the cast on all three group_by=day queries below.
 	if (groupBy === 'day' && breakdown === 'agent') {
 		const result = await db.query<{ total_cents: number }>(
-			`SELECT date_trunc('day', ce.created_at)::date AS day,
+			`SELECT date_trunc('day', ce.created_at)::date::text AS day,
               ce.member_id AS agent_id,
               COALESCE(ma.title, m.display_name) AS agent_title,
               sum(ce.amount_cents)::int AS total_cents
@@ -87,7 +92,7 @@ costsRoutes.get('/projects/:projectId/costs', async (c) => {
 
 	if (groupBy === 'day' && breakdown === 'adapter') {
 		const result = await db.query<{ total_cents: number }>(
-			`SELECT date_trunc('day', ce.created_at)::date AS day,
+			`SELECT date_trunc('day', ce.created_at)::date::text AS day,
               ce.ai_provider_config_id,
               ce.provider,
               apc.label AS adapter_label,
@@ -105,7 +110,7 @@ costsRoutes.get('/projects/:projectId/costs', async (c) => {
 
 	if (groupBy === 'day') {
 		const result = await db.query<{ total_cents: number }>(
-			`SELECT date_trunc('day', ce.created_at)::date AS day,
+			`SELECT date_trunc('day', ce.created_at)::date::text AS day,
               sum(ce.amount_cents)::int AS total_cents
        FROM cost_entries ce
        WHERE ${where}
