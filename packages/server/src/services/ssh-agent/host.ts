@@ -4,7 +4,7 @@ import type { SshAgentServer } from './server';
 
 /**
  * Allocates a short-lived ssh-agent unix socket on the host bound to the
- * team's Ed25519 key, runs `fn` with `SSH_AUTH_SOCK=<socketPath>` in scope,
+ * project's Ed25519 key, runs `fn` with `SSH_AUTH_SOCK=<socketPath>` in scope,
  * and releases the socket. The same SshAgentServer that signs commits also
  * signs SSH auth challenges, so this socket can authenticate `git@github.com:`
  * clones without ever exposing the private key to the child process.

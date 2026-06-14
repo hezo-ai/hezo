@@ -55,7 +55,12 @@ test('sidebar exposes Tasks, Documents and Container for the HQ project (not Ass
 	await waitFor(() =>
 		expect(queryAllByRole('link', { name: 'Documents' }).length).toBeGreaterThan(0),
 	);
-	expect(queryAllByRole('link', { name: 'Assets' }).length).toBe(0);
+	// `is_internal` arrives with the project-meta query; until it resolves the
+	// generic nav (with Assets + a project Settings link) renders, then the
+	// restricted HQ nav swaps in. Wait for that to settle rather than snapshotting
+	// synchronously — otherwise a slow meta query (e.g. a loaded CI shard) catches
+	// the transient generic nav and sees an Assets link.
+	await waitFor(() => expect(queryAllByRole('link', { name: 'Assets' }).length).toBe(0));
 
 	// No settings link pointing at the HQ project.
 	const settingsLinks = queryAllByRole('link', { name: 'Settings' });

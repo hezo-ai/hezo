@@ -33,7 +33,7 @@
 | `documents` | Unified Markdown document store keyed by `type` (`project_doc` / `team_preferences` / `agent_system_prompt`). Project docs scope by `(project_id, slug)`; preferences by `(team_id)` (one per team); agent system prompts by `(member_agent_id)` (one per agent). Embeddings live on this table for project docs. The team-level reference store is the `skills` table, not this one. | belongs to team, optionally project or member_agent |
 | `document_revisions` | Snapshot of prior content created on every change. `change_summary` captures intent; `Restored to revision N` is set automatically by the rollback path. Shared by all document types — agent system prompt history lives here too. | belongs to document |
 | `connected_platforms` | OAuth connections to external services. Tokens stored in secrets. | belongs to team |
-| `team_ssh_keys` | Generated SSH key pairs per team. Private key stored encrypted in secrets vault. Registered on GitHub via OAuth API. | belongs to team |
+| `team_ssh_keys` | One Ed25519 key per project (stored on its backing team row). Private key encrypted on the row (`private_key_encrypted`), not in the secrets vault. Registered on GitHub via OAuth API. | belongs to team |
 | `execution_locks` | Task work ownership tracking. Read/write locks — multiple readers (reviewers) or one exclusive writer. | belongs to task + member_agent |
 | `skills` | The reference store (unified skills database). Each row has `name`, `slug`, `description`, `content`, optional `source_url` (set for downloaded skills), `content_hash`, `tags`, `is_active`, `embedding`. Authored manually in the UI, created by agents via MCP, or downloaded from a URL. Surfaces in `semantic_search` and is injected into runs as a manifest. `team_id NULL` = an instance-level skill shared with every team (Admin-managed, unique by slug). | belongs to team (or instance) |
 | `skill_revisions` | Version history for skills — a snapshot row on every content change. | belongs to skill |
@@ -227,18 +227,20 @@ When the board drives the wizard to completion (via `POST /repos`):
 - Each deferred wakeup is re-enqueued as a fresh `Automation` wakeup with
   `payload.reason = 'repo_setup_complete'`.
 
-### SSH keys per team
+### SSH keys per project
 
-Hezo generates an SSH key pair per team for git operations. The private key
-is stored encrypted in the secrets vault. The public key is registered on the
-connected GitHub account via the OAuth API (`POST /user/keys`).
+Hezo generates one Ed25519 key per project for git operations (commit signing
++ SSH auth). The private key is stored encrypted on the project's backing team
+row, not in the secrets vault. The public key is registered on the connected
+GitHub account via the OAuth API (signing key + auth key).
 
-The `team_ssh_keys` table tracks: `team_id`, `public_key`, `fingerprint`,
-`private_key_secret_id` (FK to secrets), `github_key_id` (for cleanup on
-disconnect), `created_at`.
+The `team_ssh_keys` table tracks: `team_id` (the backing team, `UNIQUE` — one
+team backs one project), `public_key`, `fingerprint`, `private_key_encrypted`,
+`created_at`.
 
-Git clone/push/pull uses SSH with the team's generated key. GitHub OAuth
-token is used for API calls (repo validation, PRs, Actions).
+Git clone/push/pull uses SSH with the project's key, served by the per-run
+`SshAgentServer` so agents never see the private key (see `.dev/ssh-signing.md`).
+The GitHub OAuth token is used for API calls only (repo validation, PRs, Actions).
 
 ### Audit log immutability
 

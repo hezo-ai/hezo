@@ -809,9 +809,9 @@ If a team has 3 projects, 3 containers run. If a project has multiple repos, the
 | Base image | Configurable per project (default: `hezo/agent-base:latest`, built from `docker/Dockerfile.agent-base` with `claude`, `codex`, and `gemini` CLIs pre-installed) |
 | Project mount | Host `~/.hezo/teams/{team}/projects/{project}/` → Container `/workspace/` (rw) |
 | Worktrees mount | Host `~/.hezo/teams/{team}/projects/{project}/worktrees/` → Container `/worktrees/` (rw) |
-| SSH keys | Team-generated SSH key injected per subprocess (from secrets vault). Host `~/.ssh/` also mounted (ro) for fallback. |
-| Git config | Host `~/.gitconfig` → Container `/root/.gitconfig` (ro) |
-| SSH agent | Host `$SSH_AUTH_SOCK` → Container `/tmp/ssh-agent.sock` (if available) |
+| SSH keys | Project's Ed25519 key served via the per-run `SshAgentServer` over `SSH_AUTH_SOCK`; the private key (encrypted on the project's backing team row) is never written to disk. |
+| Git config | Identity (name, email, signing key) injected via `GIT_CONFIG_*` env entries — no `.gitconfig` file. |
+| SSH agent | Per-run agent socket bridged into the container via socat; serves both commit signing and `git@github.com:` auth. |
 | AGENTS.md | Per-repo at repo root. Designated repo's AGENTS.md is the primary source. Non-designated repos reference it. |
 | Project docs | In `project_docs` table, accessed by agents via MCP tools (`list_project_docs`, `read_project_doc`, `write_project_doc`) |
 | Secrets | Injected as environment variables per subprocess (never container-wide, never written to disk) |
@@ -832,16 +832,16 @@ Project containers support **port forwarding** so users can interact with the ru
 
 ### SSH and Git authentication
 
-Hezo generates an SSH key pair per team and registers it on the connected GitHub account via the OAuth API (`POST /user/keys`). The private key is stored encrypted in the secrets vault.
+Hezo generates one Ed25519 key per project and registers its public key on the connected GitHub account via the OAuth API — as both a signing key (commits land Verified) and an authentication key (SSH git transport). The private key is stored encrypted on the project's backing team row (`team_ssh_keys`); agents never see it and it is never written to disk.
 
-At runtime, the team's SSH private key is injected into agent subprocesses for git operations:
+At runtime, both git authentication and commit signing go through a per-run `SshAgentServer` reachable via `SSH_AUTH_SOCK`:
 
-1. Team SSH key is written to a temporary file inside the container and configured via `GIT_SSH_COMMAND`
-2. Host `~/.ssh/` is also mounted read-only as a fallback (known_hosts, SSH config)
-3. Host `~/.gitconfig` is mounted so git identity (name, email) is consistent
-4. If the host has an SSH agent running (`SSH_AUTH_SOCK`), the socket is forwarded into the container
-5. Git clone/push/pull use SSH with the team-generated key
-6. GitHub OAuth token is used for GitHub API calls (repo validation, PRs, Actions) — not for git operations
+1. The server holds the project's key and answers ssh-agent-protocol requests over a host Unix socket (host-side ops) and a loopback TCP listener bridged into the container by socat (in-container ops)
+2. `GIT_SSH_COMMAND` points SSH at that agent (`IdentityAgent=$SSH_AUTH_SOCK`); `git@github.com:` clone/fetch/push authenticate through it
+3. Commit signing uses `ssh-keygen -Y sign` against the same agent; git identity (name, email, signing key) is injected via `GIT_CONFIG_*` env entries, so the container needs no `.gitconfig`
+4. The GitHub OAuth token is used for GitHub API calls (repo validation, PRs, Actions) — never for git transport, which is always SSH
+
+See `.dev/ssh-signing.md` for the full design.
 
 ### Container lifecycle
 
@@ -1026,18 +1026,18 @@ GitHub only (MVP). Repos are stored as `org/repo` identifiers (e.g. `acme-corp/f
 
 ### Repo access — OAuth for API, SSH for git
 
-Git operations (clone, push, pull) use **SSH** with a team-generated SSH key pair. The GitHub **OAuth token** is used for API calls (repo validation, PRs, Actions, tasks).
+Git operations (clone, push, pull) use **SSH** with the project's Ed25519 key. The GitHub **OAuth token** is used for API calls (repo validation, PRs, Actions, tasks).
 
 ```
 git clone git@github.com:org/repo.git
 ```
 
-Hezo generates an SSH key pair per team, stores the private key encrypted in the secrets vault, and registers the public key on the connected GitHub account via the OAuth API (`POST /user/keys`). When a new repo is added, the system tests access using the OAuth token (GitHub API) before saving. If access fails, the board is told which GitHub account needs access.
+Hezo generates one Ed25519 key per project, stores the private key encrypted on the project's backing team row (`team_ssh_keys`), and registers the public key on the connected GitHub account via the OAuth API. When a new repo is added, the system tests access using the OAuth token (GitHub API) before saving. If access fails, the board is told which GitHub account needs access.
 
 **Prerequisites:**
-- The team must have GitHub connected via Hezo Connect
+- The project must have a GitHub OAuth account connected
 - The connected GitHub account must have access to the repo
-- The team SSH key is auto-registered on the GitHub account
+- The project's SSH key is auto-registered on the GitHub account
 
 ### Repos belong to projects
 
@@ -1054,12 +1054,12 @@ When a repo is added to a project via the API:
    - The request fails with `GITHUB_NOT_CONNECTED`
    - A board inbox item of type `oauth_request` is created automatically, prompting the board to connect GitHub via Hezo Connect
    - The inbox item includes an actionable link to start the OAuth flow
-2. **Repo access validation** — using the team's GitHub OAuth token, the system calls the GitHub API (`GET /repos/{owner}/{repo}`) to verify the authorized GitHub user has access. If access fails (403/404):
+2. **Repo access validation** — using the connected GitHub OAuth token, the system calls the GitHub API (`GET /repos/{owner}/{repo}`) to verify the authorized GitHub user has access. If access fails (403/404):
    - The request fails with `REPO_ACCESS_FAILED`
    - The error message includes the GitHub username from `connected_platforms.metadata` so the board knows which account needs access: *"Cannot access this repo — the GitHub user '{username}' needs to be added to {owner}/{repo}"*
-3. The repo is cloned (via SSH using the team's generated key) into `~/.hezo/teams/{team}/projects/{project}/{repo-name}/`
+3. The repo is cloned (via SSH using the project's generated key) into `~/.hezo/teams/{team}/projects/{project}/{repo-name}/`
 4. A symlink is created: `{repo-name}/AGENTS.md → ../../../AGENTS.md` (pointing to team-level AGENTS.md)
-5. Git SSH command is configured to use the team's SSH key for all operations
+5. Git SSH command is configured to use the project's SSH key for all operations
 6. The repo is now available to any agent working on tasks in this project
 
 ### Agent access to repos

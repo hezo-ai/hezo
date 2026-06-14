@@ -735,7 +735,7 @@ function buildCallbackPage(
 }
 
 /**
- * On first connect, ensure the team's Ed25519 public key is registered on
+ * On first connect, ensure the project's Ed25519 public key is registered on
  * the connecting user's GitHub account as both a signing key (so commits agents
  * push appear Verified) and an authentication key (so the ssh-agent-backed git
  * clone/fetch/push over `git@github.com:` works without exchanging tokens).
@@ -750,22 +750,22 @@ async function ensureTeamKeyRegisteredOnGitHub(
 	if (!teamKey) {
 		await generateTeamSSHKey(db, teamId, masterKeyManager);
 		teamKey = await getTeamSSHKey(db, teamId, masterKeyManager);
-		if (!teamKey) throw new Error('failed to generate team ssh key');
+		if (!teamKey) throw new Error('failed to generate project ssh key');
 	}
 
 	const signing = await registerSigningKey(accessToken, teamKey.publicKey, 'Hezo signing key');
 	log.info(
 		signing.status === 'already_exists'
-			? 'team ssh signing key already registered on GitHub'
-			: 'registered team ssh key on GitHub for signing',
+			? 'project ssh signing key already registered on GitHub'
+			: 'registered project ssh key on GitHub for signing',
 		{ teamId },
 	);
 
 	const auth = await registerAuthKey(accessToken, teamKey.publicKey, 'Hezo authentication key');
 	log.info(
 		auth.status === 'already_exists'
-			? 'team ssh auth key already registered on GitHub'
-			: 'registered team ssh key on GitHub for authentication',
+			? 'project ssh auth key already registered on GitHub'
+			: 'registered project ssh key on GitHub for authentication',
 		{ teamId },
 	);
 }
@@ -784,8 +784,8 @@ interface ConnectIdentity {
 /**
  * Provider-specific behavior layered onto the otherwise-uniform connect flow.
  * Keyed by capability id; absent for the generic case (synthetic identity, no
- * side effects). GitHub resolves its real identity and registers the team SSH
- * key so signed-commit + SSH git ops work.
+ * side effects). GitHub resolves its real identity and registers the project's
+ * SSH key so signed-commit + SSH git ops work.
  */
 interface ProviderConnectHooks {
 	fetchIdentity?(accessToken: string): Promise<ConnectIdentity>;
