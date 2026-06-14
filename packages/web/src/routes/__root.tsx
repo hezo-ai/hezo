@@ -1,7 +1,13 @@
 import { QueryClientProvider } from '@tanstack/react-query';
-import { createRootRoute, Outlet, useMatches, useNavigate } from '@tanstack/react-router';
+import {
+	createRootRoute,
+	Outlet,
+	useLocation,
+	useMatches,
+	useNavigate,
+} from '@tanstack/react-router';
 import { X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AppHeader } from '../components/app-header';
 import { CeoChatWidget } from '../components/ceo-chat/ceo-chat-widget';
 import { MasterKeyGate } from '../components/master-key-gate';
@@ -104,6 +110,22 @@ function ShellLayout() {
 function ShellChrome() {
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const active = useActiveProject();
+	const mainRef = useRef<HTMLElement>(null);
+	const pathname = useLocation({ select: (l) => l.pathname });
+	const hash = useLocation({ select: (l) => l.hash });
+
+	// Reset the main scroll container to the top on every page change. <main> is the
+	// only scroller here and it never unmounts across navigations (just the <Outlet>
+	// content swaps), so its scrollTop otherwise persists and a freshly-opened page
+	// shows scrolled down to wherever the previous page left off. Skip when the URL
+	// carries a hash: that navigation targets an in-page anchor (e.g. #comment-…)
+	// whose own scroll logic should win. `behavior: 'instant'` overrides the global
+	// `html { scroll-behavior: smooth }` so the reset is immediate, not animated.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: pathname is the navigation trigger — its value isn't read, its change is what should reset the scroll
+	useEffect(() => {
+		if (hash) return;
+		mainRef.current?.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+	}, [pathname, hash]);
 
 	return (
 		<div className="h-screen flex flex-col overflow-hidden">
@@ -123,7 +145,7 @@ function ShellChrome() {
 							<ProjectSidebar />
 						</div>
 					)}
-					<main className="flex-1 min-w-0 overflow-auto relative">
+					<main ref={mainRef} className="flex-1 min-w-0 overflow-auto relative">
 						<UpdateBanner />
 						<Outlet />
 					</main>
