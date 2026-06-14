@@ -1,7 +1,7 @@
 import { WsMessageType, type WsRowChangeMessage, wsRoom } from '@hezo/shared';
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useSocket } from '../contexts/socket-context';
 import { invalidateTeamAgentCaches } from '../lib/invalidate-team-caches';
 import { queryKeys } from '../lib/query-keys';
@@ -115,6 +115,26 @@ interface TeamRoom {
 }
 
 /**
+ * Refetch everything after a WebSocket drop heals. Row-change events emitted
+ * while the socket was down (e.g. a dev-server restart kicking off container
+ * rebuilds at boot) are lost — there is no replay — so the only way to catch
+ * up is a full invalidation once the connection is back. The initial connect
+ * is skipped: queries are freshly fetched on mount anyway.
+ */
+export function useInvalidateOnReconnect(connected: boolean): void {
+	const queryClient = useQueryClient();
+	const hadConnected = useRef(false);
+
+	useEffect(() => {
+		if (!connected) return;
+		if (hadConnected.current) {
+			queryClient.invalidateQueries();
+		}
+		hadConnected.current = true;
+	}, [connected, queryClient]);
+}
+
+/**
  * Subscribe to all team rooms so global UI (inbox badge, home) updates without a
  * full page refresh. Row-change events carry team/project UUIDs; we translate
  * them to the relevant project slug (the row's own project, or the team's
@@ -123,7 +143,9 @@ interface TeamRoom {
  */
 export function useShellWebSockets(teams: TeamRoom[] | undefined): void {
 	const queryClient = useQueryClient();
-	const { joinRoom, leaveRoom, subscribe } = useSocket();
+	const { connected, joinRoom, leaveRoom, subscribe } = useSocket();
+
+	useInvalidateOnReconnect(connected);
 
 	const teamsKey =
 		teams

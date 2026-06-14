@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { generateMasterKey, MasterKeyManager } from '../src/crypto/master-key';
+import { generateUnlockKey, MasterKeyManager } from '../src/crypto/master-key';
 import { loadAgentRoles } from '../src/db/agent-roles';
 import { seedBuiltins } from '../src/db/seed';
 import type { Env } from '../src/lib/types';
@@ -27,7 +27,7 @@ beforeAll(async () => {
 
 	db = await createTestDbWithMigrations();
 	const masterKeyManager = new MasterKeyManager();
-	const masterKeyHex = generateMasterKey();
+	const masterKeyHex = generateUnlockKey();
 	await masterKeyManager.initialize(db, masterKeyHex);
 	await seedBuiltins(db, await loadAgentRoles());
 	app = buildApp(db, masterKeyManager, { dataDir: tempDataDir, webUrl: '' }, createStubDocker());
@@ -277,8 +277,8 @@ describe('AGENTS.md (filesystem-based)', () => {
 		repoProjectId = (await projRes.json()).data.id;
 
 		const repoResult = await db.query(
-			`INSERT INTO repos (project_id, short_name, repo_identifier, host_type)
-			 VALUES ($1, 'main-app', 'org/main-app', 'github') RETURNING id`,
+			`INSERT INTO repos (project_id, repo_identifier, host_type)
+			 VALUES ($1, 'org/main-app', 'github') RETURNING id`,
 			[repoProjectId],
 		);
 		const repoId = (repoResult.rows[0] as any).id;

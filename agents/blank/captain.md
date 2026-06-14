@@ -63,6 +63,7 @@ When the team is past first-run onboarding but you identify work that needs addi
 {{> partials/common/no-redundant-comments}}
 {{> partials/common/linking-syntax}}
 {{> partials/common/subtask-preference}}
+{{> partials/common/ticket-dependencies}}
 {{> partials/common/check-before-create}}
 {{> partials/common/assignment-hierarchy}}
 {{> partials/common/mention-handoff}}

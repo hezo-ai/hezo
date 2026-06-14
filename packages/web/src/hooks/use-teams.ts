@@ -19,6 +19,8 @@ export interface Team {
 	summary: string | null;
 	/** Name of the team template this team was created from ("its type"), or null. */
 	primary_template_name: string | null;
+	/** True for the instance-level HQ team (owns the one is_internal project). */
+	is_internal: boolean;
 	mcp_servers: unknown[];
 	settings: TeamSettings;
 	agent_count: number;

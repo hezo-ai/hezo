@@ -65,11 +65,13 @@ Local MCPs default to `install_status='pending'` and are skipped from agent runt
 
 ## How agents register MCPs
 
-Three MCP tools, callable by board / api-key / agent auth:
+Three MCP tools, callable by board / api-key / agent auth. Like every project-scoped
+tool they take an optional `project` (slug or UUID) that defaults to the caller's run
+scope — `team_id` is never part of the tool surface:
 
-- `list_mcp_connections({ team_id, project_id? })`
-- `add_mcp_connection({ team_id, project_id?, name, kind, config })`
-- `remove_mcp_connection({ team_id, id })`
+- `list_mcp_connections({ project? })`
+- `add_mcp_connection({ project?, name, kind, config })`
+- `remove_mcp_connection({ project?, id })`
 
 A REST surface mirrors them for board UIs:
 

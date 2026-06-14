@@ -37,6 +37,8 @@ interface DocsLibraryProps {
 	getPopOutUrl?: (key: string) => string | null;
 
 	viewerExtras?: ReactNode;
+	/** Banner rendered above the selected doc (view and edit), e.g. for protected docs. */
+	viewerBanner?: ReactNode;
 
 	emptyTitle?: string;
 	emptyDescription?: string;
@@ -61,6 +63,7 @@ export function DocsLibrary({
 	newForm,
 	getPopOutUrl,
 	viewerExtras,
+	viewerBanner,
 	emptyTitle = 'No documents yet',
 	emptyDescription,
 	projectId,
@@ -182,6 +185,7 @@ export function DocsLibrary({
 					<div className="text-text-muted text-[13px] py-4">Loading...</div>
 				) : (
 					<div className="flex flex-col">
+						{viewerBanner}
 						<div className="flex items-center justify-between gap-2 mb-4 pb-3 border-b border-border-subtle">
 							<h2 className="text-base font-semibold text-text truncate">
 								{docTitle ?? selectedItem?.label ?? selectedKey}

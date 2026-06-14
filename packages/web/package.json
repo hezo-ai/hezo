@@ -31,6 +31,7 @@
 		"react-dom": "^19",
 		"react-markdown": "^10",
 		"react-virtuoso": "^4",
+		"recharts": "^3.8.1",
 		"reconnecting-websocket": "^4.4.0",
 		"remark-gfm": "^4"
 	},

@@ -268,6 +268,11 @@ describe('Coach review prompt builder', () => {
 		const template = res.rows[0].system_prompt_template;
 		expect(template).toContain('End every review with exactly one `create_comment`');
 		expect(template).toMatch(/do not end the turn without posting it/i);
+		// The summary is a wrap-up, never an ask: every reference in it must be
+		// passive so it can't wake teammates or land rows in the admin inbox.
+		expect(template).toContain('Use **passive references only** throughout this comment');
+		expect(template).toContain('`@@admin` for the admin');
+		expect(template).toContain('@@admin approved on first review');
 	});
 });
 
@@ -305,7 +310,7 @@ describe('Agent system-prompt access', () => {
 				params: {
 					name: 'update_agent_system_prompt',
 					arguments: {
-						team_id: teamId,
+						project: projectId,
 						agent_id: architectId,
 						new_system_prompt: 'hostile rewrite',
 						change_summary: 'unauthorized',
@@ -330,7 +335,7 @@ describe('Agent system-prompt access', () => {
 				params: {
 					name: 'update_agent_system_prompt',
 					arguments: {
-						team_id: teamId,
+						project: projectId,
 						agent_id: architectId,
 						new_system_prompt: 'Captain coherence rewrite',
 						change_summary: 'team coherence review',

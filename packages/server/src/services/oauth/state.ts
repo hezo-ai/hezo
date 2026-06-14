@@ -42,7 +42,7 @@ export async function signState(
 	masterKeyManager: MasterKeyManager,
 	input: NewStateInput,
 ): Promise<{ state: string; codeVerifier: string; codeChallenge: string }> {
-	const masterHex = masterKeyManager.getMasterKeyHex();
+	const masterHex = masterKeyManager.getUnlockKeyHex();
 	if (!masterHex) throw new Error('master key not unlocked');
 
 	const codeVerifier = base64url(randomBytes(32));
@@ -73,7 +73,7 @@ export async function verifyState(
 	masterKeyManager: MasterKeyManager,
 	state: string,
 ): Promise<StatePayload | null> {
-	const masterHex = masterKeyManager.getMasterKeyHex();
+	const masterHex = masterKeyManager.getUnlockKeyHex();
 	if (!masterHex) return null;
 
 	const [payloadB64, sigB64] = state.split('.');

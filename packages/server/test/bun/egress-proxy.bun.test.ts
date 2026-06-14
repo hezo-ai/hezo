@@ -149,59 +149,87 @@ describe('EgressProxy under Bun', () => {
 		}
 	}, 30_000);
 
-	// Regression for the cross-host cert route: the library caches a bare port
-	// per hostname and never invalidates it, so when a per-host server goes away
-	// its ephemeral port can be recycled by a different host's server, leaving
-	// the original hostname pointing at the wrong leaf cert. The onConnect
-	// reconciler must drop any entry whose backing server stopped listening so
-	// the next tunnel rebuilds a correct server. Here we close a per-host server
-	// outright (the worst case — its port is now free to recycle) and assert the
-	// stale entry is gone after the next connect while a live host is untouched.
-	test('purges a per-host entry whose server stopped listening on the next connect', async () => {
-		const runId = `bun-selfheal-${process.pid}`;
-		const victim = 'victim.hezo-egress-test';
-		const survivor = 'survivor.hezo-egress-test';
+	// Regression for the production incident (run engineer/TO-3): a per-host
+	// internal server died mid-run while its hostname was still routed to it, so
+	// every later CONNECT for that host dialed a dead loopback port
+	// (ECONNREFUSED) for the rest of the run. The hostname must route to a *live*
+	// server: a dead one is rebuilt on the next tunnel, never dialed.
+	test('rebuilds a per-host server that died mid-run instead of dialing a dead port', async () => {
+		const runId = `bun-rebuild-${process.pid}`;
+		const host = 'registry.npmjs.org';
 		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
 		try {
-			await Promise.all([
-				servedCertThroughProxy(allocated.proxyPort, victim, ca.cert),
-				servedCertThroughProxy(allocated.proxyPort, survivor, ca.cert),
-			]);
-			const before = getSslServers(proxy, runId);
-			const victimServer = before[victim]?.server;
-			expect(victimServer?.listening).toBe(true);
+			const first = await servedCertThroughProxy(allocated.proxyPort, host, ca.cert);
+			expect(first).toContain(host);
 
-			// The per-host server disappears; its port may now be recycled.
-			await new Promise<void>((resolve) => victimServer?.close(() => resolve()));
-			expect(victimServer?.listening).toBe(false);
+			const before = getHostServers(proxy, runId);
+			const rec = before.get(host);
+			if (!rec) throw new Error('per-host server missing');
+			expect(rec.server.listening).toBe(true);
+			expect(rec.server.address()?.port).toBe(rec.port);
 
-			// Any subsequent CONNECT triggers the reconciler (runs on
-			// setImmediate); give it a tick to drop the stale entry.
-			await servedCertThroughProxy(allocated.proxyPort, survivor, ca.cert);
-			await new Promise((resolve) => setTimeout(resolve, 50));
+			// The per-host server dies; its loopback port is now refused.
+			await new Promise<void>((resolve) => rec.server.close(() => resolve()));
+			expect(rec.server.listening).toBe(false);
 
-			const after = getSslServers(proxy, runId);
-			expect(victim in after).toBe(false);
-			expect(after[survivor]?.server?.listening).toBe(true);
+			// The next tunnel must rebuild a fresh live server, not ECONNREFUSED.
+			const second = await servedCertThroughProxy(allocated.proxyPort, host, ca.cert);
+			expect(second).toContain(host);
+
+			const after = getHostServers(proxy, runId);
+			expect(after.get(host)?.server.listening).toBe(true);
+			expect(after.get(host)).not.toBe(rec);
+		} finally {
+			await proxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
+	// The liveness check must not trust the `listening` flag alone — a server
+	// observed in production stayed listening=true after losing its port. The
+	// authoritative signal is `address().port === recordedPort`; a server that
+	// lost its port is dead and must be rebuilt even while its flag lies.
+	test('treats a server that lost its port as dead even when its listening flag lies', async () => {
+		const runId = `bun-zombie-${process.pid}`;
+		const host = 'zombie.hezo-egress-test';
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			await servedCertThroughProxy(allocated.proxyPort, host, ca.cert);
+			const map = getHostServers(proxy, runId);
+			const rec = map.get(host);
+			if (!rec) throw new Error('per-host server missing');
+			const realServer = rec.server;
+			await new Promise<void>((resolve) => realServer.close(() => resolve()));
+
+			// Forge the desync: claim a listening server whose socket is gone.
+			map.set(host, {
+				port: rec.port,
+				server: {
+					listening: true,
+					address: () => null,
+					close: realServer.close.bind(realServer),
+				} as unknown as HttpsServer,
+			});
+
+			const cert = await servedCertThroughProxy(allocated.proxyPort, host, ca.cert);
+			expect(cert).toContain(host);
+			expect(map.get(host)?.server.listening).toBe(true);
 		} finally {
 			await proxy.releaseRunProxy(runId);
 		}
 	}, 30_000);
 });
 
-interface SslServerEntry {
-	port?: number;
-	server?: { listening: boolean; close: (cb: () => void) => void };
-}
-
-/** Reach into the proxy's per-run internal MITM server map for assertions. */
-function getSslServers(p: EgressProxy, runId: string): Record<string, SslServerEntry> {
+/** Reach into the proxy's per-run internal per-host server map for assertions. */
+function getHostServers(
+	p: EgressProxy,
+	runId: string,
+): Map<string, { server: HttpsServer; port: number }> {
 	const runs = (
 		p as unknown as {
-			runs: Map<string, { proxy: { sslServers?: Record<string, SslServerEntry> } }>;
+			runs: Map<string, { hostServers: Map<string, { server: HttpsServer; port: number }> }>;
 		}
 	).runs;
-	return runs.get(runId)?.proxy.sslServers ?? {};
+	return runs.get(runId)?.hostServers ?? new Map();
 }
 
 const httpsHits: Array<Record<string, string | string[] | undefined>> = [];

@@ -1,8 +1,10 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { DEFAULT_TEAM_ID } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
+import { signCeoSessionJwt } from '../src/middleware/auth';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, mintAgentToken } from './helpers/app';
 
@@ -106,7 +108,7 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('MCP project scope — agent run scoped to its team`s project', () => {
+describe('MCP project scope — agent run scoped to its project', () => {
 	let scopedToken: string;
 
 	beforeAll(async () => {
@@ -118,32 +120,26 @@ describe('MCP project scope — agent run scoped to its team`s project', () => {
 	});
 
 	it('list_projects returns the run`s own project', async () => {
-		const rows = (await callMcp(scopedToken, 'list_projects', { team_id: teamAId })) as Array<{
-			id: string;
-		}>;
+		const rows = (await callMcp(scopedToken, 'list_projects', {})) as Array<{ id: string }>;
 		expect(rows).toHaveLength(1);
 		expect(rows[0].id).toBe(projectAId);
 	});
 
-	it('list_tasks without project_id implicitly scopes to the run`s project', async () => {
-		const rows = (await callMcp(scopedToken, 'list_tasks', { team_id: teamAId })) as Array<{
-			project_id: string;
-		}>;
+	it('list_tasks with no project arg implicitly scopes to the run`s project', async () => {
+		const rows = (await callMcp(scopedToken, 'list_tasks', {})) as Array<{ project_id: string }>;
 		expect(rows.length).toBeGreaterThan(0);
 		for (const row of rows) expect(row.project_id).toBe(projectAId);
 	});
 
 	it('list_tasks pointed at a foreign project is denied', async () => {
 		const result = (await callMcp(scopedToken, 'list_tasks', {
-			team_id: teamAId,
-			project_id: projectBId,
+			project: projectBId,
 		})) as { error: string };
 		expect(result.error).toMatch(/not scoped/);
 	});
 
 	it('get_task on a foreign project task is denied', async () => {
 		const result = (await callMcp(scopedToken, 'get_task', {
-			team_id: teamAId,
 			task_id: taskInBId,
 		})) as { id?: string } | null;
 		expect(result?.id).toBeUndefined();
@@ -151,7 +147,6 @@ describe('MCP project scope — agent run scoped to its team`s project', () => {
 
 	it('get_task on own project task succeeds', async () => {
 		const result = (await callMcp(scopedToken, 'get_task', {
-			team_id: teamAId,
 			task_id: taskInAId,
 		})) as { id: string };
 		expect(result.id).toBe(taskInAId);
@@ -159,8 +154,7 @@ describe('MCP project scope — agent run scoped to its team`s project', () => {
 
 	it('read_project_doc on a foreign project is denied', async () => {
 		const result = (await callMcp(scopedToken, 'read_project_doc', {
-			team_id: teamAId,
-			project_id: projectBId,
+			project: projectBId,
 			filename: 'spec.md',
 		})) as { error: string };
 		expect(result.error).toMatch(/not scoped/);
@@ -168,16 +162,14 @@ describe('MCP project scope — agent run scoped to its team`s project', () => {
 
 	it('list_project_docs on a foreign project is denied', async () => {
 		const result = (await callMcp(scopedToken, 'list_project_docs', {
-			team_id: teamAId,
-			project_id: projectBId,
+			project: projectBId,
 		})) as { error: string };
 		expect(result.error).toMatch(/not scoped/);
 	});
 
 	it('create_task in another project is denied', async () => {
 		const result = (await callMcp(scopedToken, 'create_task', {
-			team_id: teamAId,
-			project_id: projectBId,
+			project: projectBId,
 			title: 'should not work',
 			assignee_slug: 'captain',
 		})) as { error: string };
@@ -186,37 +178,94 @@ describe('MCP project scope — agent run scoped to its team`s project', () => {
 
 	it('list_comments on a foreign project`s task is denied', async () => {
 		const result = (await callMcp(scopedToken, 'list_comments', {
-			team_id: teamAId,
 			task_id: taskInBId,
 		})) as { error: string };
 		expect(result.error).toMatch(/not found|not scoped/);
 	});
 
-	it('create_project is rejected for project-scoped agents', async () => {
-		const result = (await callMcp(scopedToken, 'create_project', {
-			team_id: teamAId,
-			name: 'Should Not Land',
-		})) as { error: string };
-		expect(result.error).toMatch(/not scoped/);
-	});
-
-	it('cannot reach another team', async () => {
+	it('cannot reach another project by naming it explicitly', async () => {
 		const result = (await callMcp(scopedToken, 'get_task', {
-			team_id: teamBId,
+			project: projectBId,
 			task_id: taskInBId,
 		})) as { error: string };
 		expect(result.error).toMatch(/Access denied/);
 	});
 });
 
+describe('MCP cross-team CEO — instance-wide discovery', () => {
+	let ceoToken: string;
+
+	beforeAll(async () => {
+		// Mint a persistent CEO chat-session principal (cross_team + cross_project),
+		// the same token the live chat box runs under.
+		const ceo = await db.query<{ id: string }>(
+			`SELECT m.id FROM members m JOIN member_agents ma ON ma.id = m.id
+			 WHERE ma.slug = 'ceo' AND m.team_id = $1`,
+			[DEFAULT_TEAM_ID],
+		);
+		const hqProject = await db.query<{ id: string }>(
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+			[DEFAULT_TEAM_ID],
+		);
+		const session = await db.query<{ id: string }>(
+			`INSERT INTO ceo_sessions (member_id, team_id, project_id, runtime_type, status)
+			 VALUES ($1, $2, $3, 'claude_code', 'running') RETURNING id`,
+			[ceo.rows[0].id, DEFAULT_TEAM_ID, hqProject.rows[0].id],
+		);
+		ceoToken = await signCeoSessionJwt(
+			masterKeyManager,
+			ceo.rows[0].id,
+			DEFAULT_TEAM_ID,
+			session.rows[0].id,
+			hqProject.rows[0].id,
+		);
+	});
+
+	it('list_teams returns every team in the instance, not just HQ', async () => {
+		const rows = (await callMcp(ceoToken, 'list_teams', {})) as Array<{ id: string }>;
+		const ids = rows.map((r) => r.id);
+		expect(ids).toContain(DEFAULT_TEAM_ID);
+		expect(ids).toContain(teamAId);
+		expect(ids).toContain(teamBId);
+	});
+
+	it('list_projects returns every project across all teams, with team_id but no team name or slug', async () => {
+		const rows = (await callMcp(ceoToken, 'list_projects', {})) as Array<{
+			id: string;
+			team_id: string;
+			is_internal: boolean;
+		}>;
+		const ids = rows.map((r) => r.id);
+		expect(ids).toContain(projectAId);
+		expect(ids).toContain(projectBId);
+		// HQ (the one internal project) is included so the CEO sees the whole picture.
+		expect(rows.some((r) => r.is_internal)).toBe(true);
+		// Every row still carries its owning team_id so the CEO can drill in by
+		// project, but the human-readable team name/slug never leaks into output —
+		// projects are the unit the CEO names; teams are just a part of them.
+		const a = rows.find((r) => r.id === projectAId);
+		expect(a?.team_id).toBe(teamAId);
+		const aRecord = a as unknown as Record<string, unknown>;
+		expect(aRecord.team_name).toBeUndefined();
+		expect(aRecord.team_slug).toBeUndefined();
+	});
+
+	it('can list tasks in any project without being scoped to it', async () => {
+		const rows = (await callMcp(ceoToken, 'list_tasks', { project: projectBId })) as Array<{
+			id: string;
+		}>;
+		expect(rows.some((r) => r.id === taskInBId)).toBe(true);
+	});
+});
+
 describe('MCP project scope — admin / api-key auth bypasses the check', () => {
 	it('admin token can read tasks from any project (regression guard)', async () => {
 		const a = (await callMcp(adminToken, 'get_task', {
-			team_id: teamAId,
+			project: projectAId,
 			task_id: taskInAId,
 		})) as { id: string };
 		const b = (await callMcp(adminToken, 'get_task', {
-			team_id: teamBId,
+			project: projectBId,
 			task_id: taskInBId,
 		})) as { id: string };
 		expect(a.id).toBe(taskInAId);

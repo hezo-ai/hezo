@@ -3,7 +3,8 @@ import { resolve } from 'node:path';
 import {
 	DEFAULT_DATA_DIR,
 	DEFAULT_PORT,
-	mnemonicToMasterKey,
+	deriveAuthKeyPair,
+	deriveUnlockKey,
 	validateMnemonic,
 } from '@hezo/shared';
 import { Command } from 'commander';
@@ -13,7 +14,7 @@ export type LogLevelName = 'debug' | 'info' | 'warn' | 'error';
 export interface HezoConfig {
 	port: number;
 	dataDir: string;
-	masterKey?: string;
+	masterKey?: { unlockKeyHex: string; publicKeyHex: string };
 	webUrl: string;
 	reset: boolean;
 	open: boolean;
@@ -47,8 +48,19 @@ function parseBool(raw: string): boolean {
 	return lower !== '0' && lower !== 'false' && lower !== 'no' && lower !== 'off';
 }
 
-function parseMasterKey(raw: string): string {
-	return validateMnemonic(raw) ? mnemonicToMasterKey(raw) : raw;
+/**
+ * The master key is always the 12-word mnemonic — a raw derived key is
+ * rejected because it could never enroll the auth public key, leaving an
+ * unlocked server nobody can log into.
+ */
+function parseMasterKey(raw: string): { unlockKeyHex: string; publicKeyHex: string } {
+	if (!validateMnemonic(raw)) {
+		throw new Error('Invalid master key: must be the 12-word master key phrase.');
+	}
+	return {
+		unlockKeyHex: deriveUnlockKey(raw),
+		publicKeyHex: deriveAuthKeyPair(raw).publicKeyHex,
+	};
 }
 
 /**
@@ -92,7 +104,10 @@ export function parseConfig(
 		.description('Hezo server — self-hosted AI agent management platform')
 		.option('--port <port>', 'Server port (env: HEZO_PORT)', String(DEFAULT_PORT))
 		.option('--data-dir <path>', 'Data directory (env: HEZO_DATA_DIR)', DEFAULT_DATA_DIR)
-		.option('--master-key <key>', 'Master key for unlocking (env: HEZO_MASTER_KEY)')
+		.option(
+			'--master-key <phrase>',
+			'The 12-word master key phrase for setup/unlock (env: HEZO_MASTER_KEY)',
+		)
 		.option('--web-url <url>', 'Web UI base URL for redirects (env: HEZO_WEB_URL)', '')
 		.option('--reset', 'Reset database and start fresh (env: HEZO_RESET)')
 		.option('--open', 'Auto-open the browser (env: HEZO_OPEN)')

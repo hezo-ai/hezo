@@ -1,9 +1,23 @@
-import { Agent as HttpsAgent } from 'node:https';
+import {
+	createServer as createHttpServer,
+	type Server as HttpServer,
+	request as httpRequest,
+	type IncomingMessage,
+	type ServerResponse,
+} from 'node:http';
+import {
+	createServer as createHttpsServer,
+	Agent as HttpsAgent,
+	type Server as HttpsServer,
+	request as httpsRequest,
+} from 'node:https';
+import { connect as netConnect, type Socket } from 'node:net';
 import type { PGlite } from '@electric-sql/pglite';
-import type { IContext, IProxy } from 'http-mitm-proxy';
-import { Proxy as MitmProxy } from 'http-mitm-proxy';
+import type { CA } from 'mockttp/dist/util/certificates';
+import { getCA } from 'mockttp/dist/util/certificates';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import { ref } from '../../lib/log-ref';
+import { closeServerWithDeadline } from '../../lib/net';
 import { logger } from '../../logger';
 import { type EgressAuditEvent, recordEgressEvent } from './audit';
 import type { HezoCA } from './ca';
@@ -19,11 +33,11 @@ import {
 const log = logger.child('egress-proxy');
 
 const PROXY_HOST = 'host.docker.internal';
+const PROXY_BIND_HOST = '127.0.0.1';
 
 /**
- * Thrown when the underlying HTTPS proxy can't bind. Bubbled up to the
- * agent runner so the run aborts — never fall through to direct egress
- * with real secrets.
+ * Thrown when the front proxy can't bind. Bubbled up to the agent runner so
+ * the run aborts — never fall through to direct egress with real secrets.
  */
 export class EgressProxyUnavailableError extends Error {
 	constructor(reason: string) {
@@ -38,10 +52,16 @@ export interface EgressProxyDeps {
 	ca: HezoCA;
 	portAllocator?: PortAllocator;
 	proxyHost?: string;
+	/** Interface the per-run proxy binds to. Defaults to `127.0.0.1`
+	 * (loopback-only — agent containers reach it via `host.docker.internal`,
+	 * which on Docker Desktop tunnels to host loopback). Docker integration
+	 * tests on a native-Linux daemon set this to `0.0.0.0` so the container can
+	 * reach the proxy via the bridge gateway IP, which loopback would refuse. */
+	proxyBindHost?: string;
 	/** Additional CA certs to trust when verifying upstream HTTPS servers.
 	 * Tests use this to trust upstreams that present certs minted from the
 	 * same CA the proxy uses. Production keeps this empty so the proxy
-	 * relies on Node's system CA bundle. */
+	 * relies on the runtime's system CA bundle. */
 	extraUpstreamTrustedCAs?: string | string[];
 }
 
@@ -58,24 +78,34 @@ export interface AllocatedRunProxy {
 	proxyPort: number;
 }
 
-interface RunRecord {
-	proxy: IProxy;
-	port: number;
-	scope: RunProxyScope;
-}
-
 export class EgressProxy {
-	private readonly runs = new Map<string, RunRecord>();
+	private readonly runs = new Map<string, RunProxyInstance>();
 	private readonly portAllocator: PortAllocator;
 	private readonly proxyHost: string;
+	private readonly proxyBindHost: string;
+	private readonly upstreamHttpsAgent?: HttpsAgent;
+	private mintCa: Promise<CA> | null = null;
 
 	constructor(private readonly deps: EgressProxyDeps) {
 		this.portAllocator = deps.portAllocator ?? new PortAllocator();
 		this.proxyHost = deps.proxyHost ?? PROXY_HOST;
+		this.proxyBindHost = deps.proxyBindHost ?? PROXY_BIND_HOST;
+		this.upstreamHttpsAgent = deps.extraUpstreamTrustedCAs
+			? new HttpsAgent({ keepAlive: true, ca: deps.extraUpstreamTrustedCAs })
+			: undefined;
 	}
 
 	get caCertPath(): string {
 		return this.deps.ca.certPath;
+	}
+
+	/** The certificate authority that mints per-host leaf certs, derived once
+	 * from the persistent Hezo CA and reused across every run. */
+	private getMintCa(): Promise<CA> {
+		if (!this.mintCa) {
+			this.mintCa = getCA({ cert: this.deps.ca.cert, key: this.deps.ca.key });
+		}
+		return this.mintCa;
 	}
 
 	async allocateRunProxy(runId: string, scope: RunProxyScope): Promise<AllocatedRunProxy> {
@@ -84,76 +114,19 @@ export class EgressProxy {
 		}
 		const port = await this.portAllocator.allocate(scope.agentId);
 
-		const proxy = new MitmProxy();
-		const upstreamHttpsAgent = this.deps.extraUpstreamTrustedCAs
-			? new HttpsAgent({ keepAlive: true, ca: this.deps.extraUpstreamTrustedCAs })
-			: undefined;
-		proxy.onError((ctx, err, errorKind) => {
-			if (!err) return;
-			log.warn('mitm proxy error', {
-				run: ref(scope.label, runId),
-				kind: errorKind,
-				error: err.message,
-				...describeErrorContext(proxy, ctx, err),
-			});
+		const instance = new RunProxyInstance({
+			runId,
+			scope,
+			port,
+			bindHost: this.proxyBindHost,
+			db: this.deps.db,
+			masterKeyManager: this.deps.masterKeyManager,
+			getMintCa: () => this.getMintCa(),
+			upstreamHttpsAgent: this.upstreamHttpsAgent,
 		});
-		proxy.onRequest((ctx, callback) => {
-			this.handleRequest(runId, scope, ctx)
-				.then(() => callback())
-				.catch((e: Error) => callback(e));
-		});
-
-		// The library terminates TLS with a per-host internal server, each
-		// presenting that host's leaf cert, but caches the host→port mapping and
-		// never invalidates it — so a recycled ephemeral port can leave a hostname
-		// pointing at another host's server (a wrong-SAN TLS failure). This runs
-		// after the per-host server is (re)selected: it purges stale mappings so
-		// the next tunnel rebuilds a correct server, then logs loud if any live
-		// cross-host route survives.
-		const loggedCollisions = new Set<string>();
-		proxy.onConnect(((_req: unknown, _socket: unknown, _head: unknown, callback: () => void) => {
-			setImmediate(() => detectCrossHostCertRoute(proxy, scope, runId, loggedCollisions));
-			callback();
-		}) as Parameters<IProxy['onConnect']>[0]);
 
 		try {
-			await new Promise<void>((resolve, reject) => {
-				let settled = false;
-				proxy.onError((_ctx, err, kind) => {
-					if (kind === 'HTTPS_SERVER_ERROR' && !settled) {
-						settled = true;
-						reject(err ?? new Error('HTTPS_SERVER_ERROR'));
-					}
-				});
-				// The library terminates TLS with a separate internal HTTPS
-				// server per host, each presenting a statically-minted leaf cert.
-				// (forceSNI — a single SNI-multiplexed server via addContext — is
-				// unusable here: the runtime's https.Server has no addContext and
-				// ignores SNICallback, so dynamic SNI never fires. The patched
-				// loopback connect retries then fails fast instead of hanging when
-				// a per-host server is mid-listen or closing under run churn.)
-				proxy.listen(
-					{
-						port,
-						host: '127.0.0.1',
-						sslCaDir: this.deps.ca.rootDir,
-						...(upstreamHttpsAgent ? { httpsAgent: upstreamHttpsAgent } : {}),
-					},
-					((err?: Error | null) => {
-						if (err) {
-							if (!settled) {
-								settled = true;
-								reject(err);
-							}
-							return;
-						}
-						if (!settled) {
-							settled = true;
-							resolve();
-						}
-					}) as () => void,
-				);
-			});
+			await instance.listen();
 		} catch (e) {
 			this.portAllocator.release(port);
 			const reason = (e as Error).message;
@@ -161,26 +134,18 @@ export class EgressProxy {
 			throw new EgressProxyUnavailableError(reason);
 		}
 
-		this.runs.set(runId, { proxy, port, scope });
+		this.runs.set(runId, instance);
 		log.debug('egress proxy allocated', { run: ref(scope.label, runId), port });
-
 		return { proxyHost: this.proxyHost, proxyPort: port };
 	}
 
 	async releaseRunProxy(runId: string): Promise<void> {
-		const record = this.runs.get(runId);
-		if (!record) return;
-		try {
-			record.proxy.close();
-		} catch (e) {
-			log.warn('egress proxy close failed', {
-				run: ref(record.scope.label, runId),
-				error: (e as Error).message,
-			});
-		}
-		this.portAllocator.release(record.port);
+		const instance = this.runs.get(runId);
+		if (!instance) return;
+		await instance.close();
+		this.portAllocator.release(instance.port);
 		this.runs.delete(runId);
-		log.debug('egress proxy released', { run: ref(record.scope.label, runId) });
+		log.debug('egress proxy released', { run: ref(instance.scope.label, runId) });
 	}
 
 	async releaseAll(): Promise<void> {
@@ -188,18 +153,213 @@ export class EgressProxy {
 			await this.releaseRunProxy(runId);
 		}
 	}
+}
 
-	private async handleRequest(runId: string, scope: RunProxyScope, ctx: IContext): Promise<void> {
-		const opts = ctx.proxyToServerRequestOptions;
-		if (!opts) return;
-		const host = (opts.host ?? '').toLowerCase();
-		const method = opts.method ?? 'GET';
-		const urlPath = opts.path ?? '/';
-		const headers = opts.headers ?? {};
-		const protocol = ctx.isSSL ? 'https' : 'http';
-		const url = `${protocol}://${host}${urlPath}`;
+interface RunProxyConfig {
+	runId: string;
+	scope: RunProxyScope;
+	port: number;
+	bindHost: string;
+	db: PGlite;
+	masterKeyManager: MasterKeyManager;
+	getMintCa: () => Promise<CA>;
+	upstreamHttpsAgent?: HttpsAgent;
+}
 
-		if (ctx.isSSL) {
+/** A per-host internal TLS-terminating server. The agent's CONNECT socket is
+ * bridged into it over loopback; it presents that host's minted leaf cert and
+ * hands the decrypted request to the forwarder. */
+interface HostServer {
+	server: HttpsServer;
+	port: number;
+}
+
+/**
+ * One run's egress proxy. A single front HTTP server accepts the agent's
+ * traffic: plain proxied requests fire `request`; HTTPS `CONNECT` tunnels fire
+ * `connect`. Each CONNECT is bridged over loopback into a per-host TLS server
+ * that presents that host's minted leaf cert, so the agent's TLS terminates
+ * here, the request is scanned for secret placeholders, and a fresh upstream
+ * request carries the substituted values on to the real server.
+ *
+ * Per-host servers are keyed by hostname and looked up live: an entry is reused
+ * only while its server still owns its recorded port, otherwise it is rebuilt.
+ * The hostname never routes through a cached bare port that could die or be
+ * recycled to another host, which is the failure mode that an ephemeral-port
+ * MITM cache suffers under run churn.
+ */
+class RunProxyInstance {
+	private front: HttpServer | null = null;
+	private readonly hostServers = new Map<string, HostServer>();
+	private readonly pendingHostServers = new Map<string, Promise<HostServer>>();
+	private closed = false;
+
+	constructor(private readonly cfg: RunProxyConfig) {}
+
+	get port(): number {
+		return this.cfg.port;
+	}
+
+	get scope(): RunProxyScope {
+		return this.cfg.scope;
+	}
+
+	listen(): Promise<void> {
+		const front = createHttpServer();
+		this.front = front;
+		front.on('request', (req, res) => {
+			this.forward(false, null, req, res).catch((e: Error) => this.onForwardError(res, e));
+		});
+		front.on('connect', (req, socket, head) => this.onConnect(req, socket as Socket, head));
+		// A client that drops mid-handshake should not surface as an unhandled error.
+		front.on('clientError', (_err, socket) => socket.destroy());
+
+		return new Promise<void>((resolve, reject) => {
+			const onListenError = (err: Error) => reject(err);
+			front.once('error', onListenError);
+			front.listen(this.cfg.port, this.cfg.bindHost, () => {
+				front.removeListener('error', onListenError);
+				front.on('error', (err) => {
+					log.warn('egress front server error', {
+						run: ref(this.cfg.scope.label, this.cfg.runId),
+						error: err.message,
+					});
+				});
+				resolve();
+			});
+		});
+	}
+
+	async close(): Promise<void> {
+		this.closed = true;
+		const closables: Array<Promise<void>> = [];
+		for (const [host, { server }] of this.hostServers.entries()) {
+			closables.push(closeServer(server, `${this.cfg.scope.label}/${host}`));
+		}
+		this.hostServers.clear();
+		this.pendingHostServers.clear();
+		if (this.front) {
+			closables.push(closeServer(this.front, `${this.cfg.scope.label}/front`));
+			this.front = null;
+		}
+		await Promise.all(closables);
+	}
+
+	private onConnect(req: IncomingMessage, client: Socket, head: Buffer): void {
+		const target = req.url ?? '';
+		const sep = target.lastIndexOf(':');
+		const host = (sep === -1 ? target : target.slice(0, sep)).toLowerCase();
+
+		client.on('error', () => client.destroy());
+		client.pause();
+
+		this.ensureHostServer(host)
+			.then((rec) => {
+				if (this.closed) {
+					client.destroy();
+					return;
+				}
+				const up = netConnect({ host: '127.0.0.1', port: rec.port }, () => {
+					client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+					if (head?.length) up.write(head);
+					client.pipe(up);
+					up.pipe(client);
+					client.resume();
+				});
+				up.on('error', () => client.destroy());
+				up.on('close', () => client.destroy());
+				client.on('close', () => up.destroy());
+			})
+			.catch((e: Error) => {
+				log.warn('egress CONNECT setup failed', {
+					run: ref(this.cfg.scope.label, this.cfg.runId),
+					host,
+					error: e.message,
+				});
+				client.destroy();
+			});
+	}
+
+	/** Return a live per-host TLS server, rebuilding it if the cached one has
+	 * stopped owning its port. Concurrent first-touches for the same host share
+	 * one in-flight build so the run never spins up duplicate servers. */
+	private ensureHostServer(host: string): Promise<HostServer> {
+		const existing = this.hostServers.get(host);
+		if (existing && serverOwnsPort(existing)) return Promise.resolve(existing);
+
+		const pending = this.pendingHostServers.get(host);
+		if (pending) return pending;
+
+		const build = this.buildHostServer(host);
+		this.pendingHostServers.set(host, build);
+		build.finally(() => {
+			if (this.pendingHostServers.get(host) === build) this.pendingHostServers.delete(host);
+		});
+		return build;
+	}
+
+	private async buildHostServer(host: string): Promise<HostServer> {
+		const stale = this.hostServers.get(host);
+		if (stale) {
+			this.hostServers.delete(host);
+			void closeServer(stale.server, `${this.cfg.scope.label}/${host}`);
+		}
+
+		const ca = await this.cfg.getMintCa();
+		const leaf = await ca.generateCertificate(host);
+		const server = createHttpsServer({ key: leaf.key, cert: leaf.cert }, (req, res) => {
+			this.forward(true, host, req, res).catch((e: Error) => this.onForwardError(res, e));
+		});
+		server.on('clientError', (_err, socket) => socket.destroy());
+		server.on('error', (err) => {
+			log.warn('egress per-host server error', {
+				run: ref(this.cfg.scope.label, this.cfg.runId),
+				host,
+				error: err.message,
+			});
+		});
+
+		await new Promise<void>((resolve, reject) => {
+			const onErr = (err: Error) => reject(err);
+			server.once('error', onErr);
+			server.listen(0, '127.0.0.1', () => {
+				server.removeListener('error', onErr);
+				resolve();
+			});
+		});
+
+		if (this.closed) {
+			await closeServer(server, `${this.cfg.scope.label}/${host}`);
+			throw new Error('proxy closed');
+		}
+
+		const rec: HostServer = { server, port: (server.address() as { port: number }).port };
+		this.hostServers.set(host, rec);
+		return rec;
+	}
+
+	/** Scan the decrypted (or plain) request for secret placeholders, substitute
+	 * them, and forward a fresh request to the real upstream. */
+	private async forward(
+		isSSL: boolean,
+		connectHost: string | null,
+		req: IncomingMessage,
+		res: ServerResponse,
+	): Promise<void> {
+		// Hold the body until we decide whether to forward — the secret lookup
+		// awaits the DB and must not let request bytes drain to nowhere.
+		req.pause();
+
+		const { host, port, path } = resolveTarget(isSSL, connectHost, req);
+		const method = req.method ?? 'GET';
+		const headers: Record<string, string | string[] | undefined> = {};
+		for (const [name, value] of Object.entries(req.headers)) {
+			// Strip hop-by-hop proxy headers; they must not reach the upstream.
+			if (/^proxy-/i.test(name)) continue;
+			headers[name] = value;
+		}
+
+		if (isSSL) {
 			// Drop the client-forwarded Host header so the runtime regenerates it
 			// from the connection target. Some runtimes verify the upstream cert
 			// against the Host header verbatim — which carries the port for
@@ -211,75 +371,115 @@ export class EgressProxy {
 			delete headers.Host;
 		}
 
-		const probeInUrlOrHeaders =
-			PLACEHOLDER_PROBE_REGEX.test(urlPath) || headersContainProbe(headers);
-		if (!probeInUrlOrHeaders) return;
+		const protocol = isSSL ? 'https' : 'http';
+		const url = `${protocol}://${host}${path}`;
+		const probeInUrlOrHeaders = PLACEHOLDER_PROBE_REGEX.test(path) || headersContainProbe(headers);
 
-		let secrets: Map<string, ResolvedSecret>;
-		try {
-			secrets = await loadAllSecrets({
-				db: this.deps.db,
-				masterKeyManager: this.deps.masterKeyManager,
-			});
-		} catch (e) {
-			if ((e as Error).name === 'MasterKeyLocked') {
-				await this.audit(runId, scope, host, method, urlPath, 503, 0, [], 'secrets_unavailable');
-				respondEarly(ctx, 503, 'secrets_unavailable', 'Master key is locked.');
-				throw new Error('secrets_unavailable');
-			}
-			throw e;
-		}
-
-		const result = substituteRequest({ url, headers, method, host }, secrets);
-		if (result.failure) {
-			const fail = describeFailure(result.failure);
-			await this.audit(runId, scope, host, method, urlPath, fail.statusCode, 0, [], fail.code);
-			respondEarly(ctx, fail.statusCode, fail.code, fail.message);
-			throw new Error(fail.code);
-		}
-		if (result.headersChanged) {
-			for (const [name, value] of Object.entries(result.headers)) {
-				headers[name] = Array.isArray(value) ? value.join(', ') : value;
-			}
-		}
-		if (result.urlChanged) {
+		if (probeInUrlOrHeaders) {
+			let secrets: Map<string, ResolvedSecret>;
 			try {
-				const u = new URL(result.url);
-				opts.path = `${u.pathname}${u.search}`;
-			} catch {
-				// pre-validated regex match — defensive only
+				secrets = await loadAllSecrets({
+					db: this.cfg.db,
+					masterKeyManager: this.cfg.masterKeyManager,
+				});
+			} catch (e) {
+				if ((e as Error).name === 'MasterKeyLocked') {
+					await this.audit(host, method, path, 503, 0, [], 'secrets_unavailable');
+					respondEarly(res, 503, 'secrets_unavailable', 'Master key is locked.');
+					req.resume();
+					return;
+				}
+				throw e;
 			}
+
+			const result = substituteRequest({ url, headers, method, host }, secrets);
+			if (result.failure) {
+				const fail = describeFailure(result.failure);
+				await this.audit(host, method, path, fail.statusCode, 0, [], fail.code);
+				respondEarly(res, fail.statusCode, fail.code, fail.message);
+				req.resume();
+				return;
+			}
+			if (result.headersChanged) {
+				for (const [name, value] of Object.entries(result.headers)) {
+					headers[name] = value;
+				}
+			}
+			let upstreamPath = path;
+			if (result.urlChanged) {
+				try {
+					const u = new URL(result.url);
+					upstreamPath = `${u.pathname}${u.search}`;
+				} catch {
+					// pre-validated regex match — defensive only
+				}
+			}
+			if (result.secretsUsed.size > 0) {
+				await this.audit(host, method, path, null, result.secretsUsed.size, [
+					...result.secretsUsed,
+				]);
+			}
+			this.pipeUpstream(isSSL, host, port, method, upstreamPath, headers, req, res);
+			return;
 		}
-		if (result.secretsUsed.size > 0) {
-			await this.audit(
-				runId,
-				scope,
+
+		this.pipeUpstream(isSSL, host, port, method, path, headers, req, res);
+	}
+
+	private pipeUpstream(
+		isSSL: boolean,
+		host: string,
+		port: number,
+		method: string,
+		path: string,
+		headers: Record<string, string | string[] | undefined>,
+		req: IncomingMessage,
+		res: ServerResponse,
+	): void {
+		const requestFn = isSSL ? httpsRequest : httpRequest;
+		const upstream = requestFn(
+			{
 				host,
+				port,
 				method,
-				urlPath,
-				null,
-				result.secretsUsed.size,
-				[...result.secretsUsed],
-				null,
-			);
+				path,
+				headers,
+				...(isSSL ? { servername: host, agent: this.cfg.upstreamHttpsAgent } : {}),
+			},
+			(upstreamRes) => {
+				res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+				upstreamRes.pipe(res);
+			},
+		);
+		upstream.on('error', (err) => this.onForwardError(res, err));
+		req.pipe(upstream);
+	}
+
+	private onForwardError(res: ServerResponse, err: Error): void {
+		log.warn('egress upstream request failed', {
+			run: ref(this.cfg.scope.label, this.cfg.runId),
+			error: err.message,
+		});
+		if (!res.headersSent) {
+			respondEarly(res, 502, 'upstream_error', err.message);
+		} else {
+			res.end();
 		}
 	}
 
 	private async audit(
-		runId: string,
-		scope: RunProxyScope,
 		host: string,
 		method: string,
 		urlPath: string,
 		statusCode: number | null,
 		substitutionsCount: number,
 		secretNamesUsed: string[],
-		error: string | null,
+		error: string | null = null,
 	): Promise<void> {
 		const event: EgressAuditEvent = {
-			teamId: scope.teamId,
-			agentId: scope.agentId,
-			runId,
+			teamId: this.cfg.scope.teamId,
+			agentId: this.cfg.scope.agentId,
+			runId: this.cfg.runId,
 			host,
 			method,
 			urlPath,
@@ -288,8 +488,61 @@ export class EgressProxy {
 			secretNamesUsed,
 			error,
 		};
-		await recordEgressEvent(this.deps.db, event);
+		await recordEgressEvent(this.cfg.db, event);
 	}
+}
+
+interface TargetAddress {
+	host: string;
+	port: number;
+	path: string;
+}
+
+/** Resolve the upstream host, port, and request path. For TLS the host is the
+ * CONNECT target the per-host server was minted for; the port rides on the Host
+ * header for non-default ports. For plain HTTP the absolute-form request line
+ * carries all three. */
+function resolveTarget(
+	isSSL: boolean,
+	connectHost: string | null,
+	req: IncomingMessage,
+): TargetAddress {
+	if (isSSL) {
+		const hostHeader = req.headers.host ?? '';
+		const portFromHeader = Number(hostHeader.split(':')[1]);
+		return {
+			host: connectHost ?? hostHeader.split(':')[0] ?? '',
+			port: Number.isFinite(portFromHeader) && portFromHeader > 0 ? portFromHeader : 443,
+			path: req.url ?? '/',
+		};
+	}
+	const rawUrl = req.url ?? '/';
+	try {
+		const u = new URL(
+			rawUrl.startsWith('http') ? rawUrl : `http://${req.headers.host ?? ''}${rawUrl}`,
+		);
+		return {
+			host: u.hostname.toLowerCase(),
+			port: u.port ? Number(u.port) : 80,
+			path: `${u.pathname}${u.search}`,
+		};
+	} catch {
+		return { host: (req.headers.host ?? '').split(':')[0] ?? '', port: 80, path: rawUrl };
+	}
+}
+
+/** Whether the server still owns its recorded port. `address()` returns null
+ * once a server closes and two sockets can never share one port, so this is the
+ * authoritative liveness signal — a closed or recycled server fails it and is
+ * rebuilt on the next request. */
+function serverOwnsPort(rec: HostServer): boolean {
+	if (!rec.server.listening) return false;
+	const addr = rec.server.address();
+	return typeof addr === 'object' && addr !== null && addr.port === rec.port;
+}
+
+function closeServer(server: HttpServer | HttpsServer, label: string): Promise<void> {
+	return closeServerWithDeadline(server, `egress:${label}`);
 }
 
 interface FailureDescription {
@@ -321,13 +574,17 @@ function describeFailure(failure: SubstitutionFailure): FailureDescription {
 	}
 }
 
-function respondEarly(ctx: IContext, statusCode: number, code: string, message: string): void {
-	const body = JSON.stringify({ error: code, message });
-	const res = ctx.proxyToClientResponse;
+function respondEarly(
+	res: ServerResponse,
+	statusCode: number,
+	code: string,
+	message: string,
+): void {
 	if (res.headersSent) {
 		res.end();
 		return;
 	}
+	const body = JSON.stringify({ error: code, message });
 	res.writeHead(statusCode, {
 		'content-type': 'application/json',
 		'content-length': Buffer.byteLength(body).toString(),
@@ -335,121 +592,10 @@ function respondEarly(ctx: IContext, statusCode: number, code: string, message: 
 	res.end(body);
 }
 
-function headersContainProbe(headers: Record<string, string>): boolean {
+function headersContainProbe(headers: Record<string, string | string[] | undefined>): boolean {
 	for (const v of Object.values(headers)) {
 		if (typeof v === 'string' && PLACEHOLDER_PROBE_REGEX.test(v)) return true;
+		if (Array.isArray(v) && v.some((s) => PLACEHOLDER_PROBE_REGEX.test(s))) return true;
 	}
 	return false;
-}
-
-/** Collapse the first DNS label to a wildcard so subdomains sharing one
- * wildcard-covered internal server (a legitimate single cert) don't read as a
- * collision. `api.githubcopilot.com` → `*.githubcopilot.com`. */
-function wildcardForm(host: string): string {
-	return host.replace(/^[^.]+\./, '*.');
-}
-
-interface SslServerEntry {
-	port?: number;
-	server?: { listening?: boolean };
-}
-
-/**
- * Reconcile the library's per-host server map, then assert the egress
- * invariant that no two unrelated upstream hosts share one internal MITM
- * server port.
- *
- * The library caches a bare port per hostname and never invalidates it: when a
- * per-host server is gone its ephemeral port can be recycled by the OS to a
- * different host's new server, leaving the original hostname pointing at a port
- * that now serves the wrong leaf cert (a wrong-SAN TLS failure). So first drop
- * any entry whose own backing server has stopped listening, plus wildcard-alias
- * entries no longer covered by a live server — the next tunnel for those hosts
- * then rebuilds a correct server.
- *
- * After reconciliation a live cross-wildcard collision should be impossible;
- * the remaining check is a tripwire that logs once per offending port.
- */
-export function detectCrossHostCertRoute(
-	proxy: IProxy,
-	scope: RunProxyScope,
-	runId: string,
-	logged: Set<string>,
-): void {
-	const sslServers = (proxy as unknown as { sslServers?: Record<string, SslServerEntry> })
-		.sslServers;
-	if (!sslServers) return;
-
-	const portHasLiveServer = new Map<number, boolean>();
-	for (const entry of Object.values(sslServers)) {
-		const port = entry?.port;
-		if (typeof port !== 'number') continue;
-		if (entry.server?.listening) portHasLiveServer.set(port, true);
-	}
-	for (const [host, entry] of Object.entries(sslServers)) {
-		const port = entry?.port;
-		if (typeof port !== 'number') continue;
-		if (entry.server) {
-			// A created per-host server: once its port stops listening it must
-			// not keep serving this hostname — the port may be recycled.
-			if (entry.server.listening === false) delete sslServers[host];
-		} else if (!portHasLiveServer.get(port)) {
-			// A wildcard-alias entry ({ port } only) with no live server on its
-			// port is stale.
-			delete sslServers[host];
-		}
-	}
-
-	const hostsByPort = new Map<number, string[]>();
-	for (const [host, entry] of Object.entries(sslServers)) {
-		const port = entry?.port;
-		if (typeof port !== 'number') continue;
-		const hosts = hostsByPort.get(port);
-		if (hosts) hosts.push(host);
-		else hostsByPort.set(port, [host]);
-	}
-	for (const [port, hosts] of hostsByPort) {
-		if (hosts.length < 2) continue;
-		if (new Set(hosts.map(wildcardForm)).size < 2) continue;
-		if (logged.has(`${port}`)) continue;
-		logged.add(`${port}`);
-		log.error('egress MITM server port serves unrelated hosts — cross-host cert risk', {
-			run: ref(scope.label, runId),
-			port,
-			hosts: [...new Set(hosts)],
-		});
-	}
-}
-
-interface ErrorContext {
-	method?: string;
-	url?: string;
-	hostname?: string;
-	port?: number;
-}
-
-function describeErrorContext(proxy: IProxy, ctx: IContext | null, err: Error): ErrorContext {
-	if (ctx?.proxyToServerRequestOptions) {
-		const opts = ctx.proxyToServerRequestOptions;
-		const host = (opts.host ?? '').toLowerCase();
-		const method = opts.method ?? 'GET';
-		const urlPath = opts.path ?? '/';
-		const protocol = ctx.isSSL ? 'https' : 'http';
-		return { method, url: `${protocol}://${host}${urlPath}` };
-	}
-
-	const errPort = (err as { port?: unknown }).port;
-	const failedPort = typeof errPort === 'number' ? errPort : undefined;
-	if (failedPort === undefined) return {};
-
-	const sslServers = (proxy as unknown as { sslServers?: Record<string, { port: number }> })
-		.sslServers;
-	if (!sslServers) return { port: failedPort };
-
-	for (const [hostname, entry] of Object.entries(sslServers)) {
-		if (entry?.port === failedPort) {
-			return { hostname, port: failedPort };
-		}
-	}
-	return { port: failedPort };
 }

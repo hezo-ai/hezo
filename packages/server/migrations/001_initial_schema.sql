@@ -67,6 +67,10 @@ CREATE TYPE agent_type_source AS ENUM ('builtin', 'custom', 'remote');
 CREATE TYPE team_template_source AS ENUM ('builtin', 'custom', 'marketplace');
 CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'google', 'deepseek', 'z_ai');
 CREATE TYPE ai_auth_method AS ENUM ('api_key', 'subscription');
+CREATE TYPE ceo_channel AS ENUM ('web', 'telegram', 'whatsapp');
+CREATE TYPE ceo_message_role AS ENUM ('user', 'assistant', 'system');
+CREATE TYPE ceo_message_status AS ENUM ('pending', 'streaming', 'complete', 'failed', 'interrupted');
+CREATE TYPE ceo_session_status AS ENUM ('starting', 'running', 'crashed', 'stopped');
 
 -------------------------------------------------------------------------------
 -- AGENT TYPES
@@ -315,16 +319,17 @@ CREATE UNIQUE INDEX idx_projects_team_task_prefix ON projects(team_id, task_pref
 CREATE TABLE repos (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id           UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    short_name           TEXT NOT NULL,
     repo_identifier      TEXT NOT NULL,
     host_type            repo_host_type NOT NULL,
     oauth_connection_id  UUID,
-    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE (project_id, short_name)
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_repos_project ON repos(project_id);
+-- Clones land in `<workspace>/<repo name>/` — the segment after the owner in
+-- repo_identifier — so the repo name must be unique within a project even
+-- across owners. Also rules out linking the exact same repo twice.
+CREATE UNIQUE INDEX idx_repos_project_repo_name ON repos(project_id, split_part(repo_identifier, '/', 2));
 CREATE INDEX idx_repos_oauth_connection ON repos(oauth_connection_id) WHERE oauth_connection_id IS NOT NULL;
 
 -- Deferred FK: projects.designated_repo_id → repos(id) (repos defined after projects)
@@ -908,6 +913,69 @@ ALTER TABLE tasks
     FOREIGN KEY (created_by_run_id) REFERENCES heartbeat_runs(id) ON DELETE SET NULL;
 
 CREATE INDEX idx_tasks_created_by_run ON tasks(created_by_run_id) WHERE created_by_run_id IS NOT NULL;
+
+-------------------------------------------------------------------------------
+-- CEO CHAT
+--
+-- A persistent, real-time chat with the instance CEO. Unlike one-shot task
+-- runs, a chat session keeps warm resources (egress proxy, ssh socket, MCP
+-- token) for the HQ container and executes each turn as a one-shot exec with
+-- conversation history composed into the prompt. There is exactly one global
+-- conversation; web/Telegram/WhatsApp are all mirrors of it.
+-------------------------------------------------------------------------------
+
+-- The warm-resource lease for the live session AND the long-lived auth principal
+-- the MCP token is validated against (analogous to a heartbeat_runs row).
+CREATE TABLE ceo_sessions (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    member_id     UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,   -- the CEO agent
+    team_id       UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,     -- HQ team
+    project_id    UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,  -- HQ (is_internal) project
+    container_id  TEXT,
+    runtime_type  agent_runtime NOT NULL,
+    status        ceo_session_status NOT NULL DEFAULT 'starting',
+    restart_count INTEGER NOT NULL DEFAULT 0,
+    error         TEXT,
+    started_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_activity_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    stopped_at        TIMESTAMPTZ
+);
+
+CREATE INDEX idx_ceo_sessions_status ON ceo_sessions(status);
+-- At most one live session per CEO member; concurrent starts collide here
+-- rather than racing two in-container processes.
+CREATE UNIQUE INDEX idx_ceo_sessions_singleton
+    ON ceo_sessions(member_id) WHERE status IN ('starting', 'running');
+
+-- The single global conversation. Kept as a table (not a constant) so a future
+-- per-operator conversation is non-breaking, but today there is exactly one row.
+CREATE TABLE ceo_conversations (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    member_id  UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,  -- the CEO agent
+    team_id    UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,    -- HQ team
+    title      TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE ceo_messages (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id UUID NOT NULL REFERENCES ceo_conversations(id) ON DELETE CASCADE,
+    role            ceo_message_role NOT NULL,
+    channel         ceo_channel NOT NULL DEFAULT 'web',
+    status          ceo_message_status NOT NULL DEFAULT 'complete',
+    content         TEXT NOT NULL DEFAULT '',
+    author_user_id  UUID REFERENCES users(id) ON DELETE SET NULL,        -- set for role='user'
+    session_id      UUID REFERENCES ceo_sessions(id) ON DELETE SET NULL, -- session that produced an assistant msg
+    input_tokens    BIGINT NOT NULL DEFAULT 0,
+    output_tokens   BIGINT NOT NULL DEFAULT 0,
+    cost_cents      INTEGER NOT NULL DEFAULT 0,
+    error           TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at    TIMESTAMPTZ
+);
+
+CREATE INDEX idx_ceo_messages_conversation ON ceo_messages(conversation_id, created_at);
 
 -------------------------------------------------------------------------------
 -- AGENT TASK SESSIONS

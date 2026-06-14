@@ -307,14 +307,25 @@ describe('authMiddleware (via HTTP)', () => {
 		expect(res.status).toBe(200);
 	});
 
-	it('allows /api/auth/token without auth', async () => {
-		// Should get 400 (missing body), not 401
-		const res = await app.request('/api/auth/token', {
+	it('allows the /api/auth/* endpoints without auth', async () => {
+		// Malformed bodies should get 400/409 from the handlers, not the
+		// middleware's 401 — proving the paths are public.
+		const setup = await app.request('/api/auth/setup', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({}),
 		});
-		expect(res.status).not.toBe(401);
+		expect(setup.status).not.toBe(401);
+
+		const challenge = await app.request('/api/auth/challenge', { method: 'POST' });
+		expect(challenge.status).not.toBe(401);
+
+		const verify = await app.request('/api/auth/verify', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({}),
+		});
+		expect(verify.status).not.toBe(401);
 	});
 
 	it('allows API requests without auth header (anonymous admin while unlocked)', async () => {

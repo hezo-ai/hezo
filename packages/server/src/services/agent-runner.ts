@@ -18,6 +18,7 @@ import {
 	RUNTIME_HEADLESS_PREFIX_ARGS,
 	RUNTIME_HEADLESS_SUFFIX_ARGS,
 	RUNTIME_STREAM_ARGS,
+	repoNameFromIdentifier,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 	WakeupSource,
@@ -28,13 +29,16 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import type { DomainEventBus } from '../events/bus';
 import { broadcastRowChange } from '../lib/broadcast';
 import { withTransaction } from '../lib/sql';
+import { logger } from '../logger';
 import { signAgentJwt } from '../middleware/auth';
+import { pauseAgentForBudget } from './agent-runtime-status';
 import { type AgentRunUsage, createAgentStreamParser } from './agent-stream-parser';
 import {
 	type AiProviderCredential,
 	getProviderCredentialAndModel,
 	updateAiProviderCredential,
 } from './ai-provider-keys';
+import { checkOverBudget, recordRunCost } from './budget';
 import { loadConnectorSkillFiles } from './connectors/lifecycle';
 import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
@@ -45,6 +49,7 @@ import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
 import { loadMcpConnectionDescriptors } from './mcp-connections';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
+import type { PricingService } from './pricing';
 import { loadReactionsForTask, type ReactionGroup } from './reactions';
 import { ensureProjectRepos } from './repo-sync';
 import {
@@ -63,6 +68,8 @@ import { recordStatusChange } from './task-events';
 import { resolveSystemPrompt } from './template-resolver';
 import { getRunSocketPath, getWorkspacePath, getWorktreesPath } from './workspace';
 import type { WebSocketManager } from './ws';
+
+const log = logger.child('agent-runner');
 
 export interface AgentInfo {
 	id: string;
@@ -122,11 +129,12 @@ export interface RunnerDeps {
 	sshAgentServer?: SshAgentServer;
 	egressProxy?: EgressProxy | null;
 	egressCAPath?: string | null;
+	/** Runtime model pricing; when present, the parser computes run cost from it. */
+	pricing?: PricingService;
 }
 
 interface RepoRow {
 	id: string;
-	short_name: string;
 	repo_identifier: string;
 }
 
@@ -235,10 +243,190 @@ function wrapExecCmd(cmd: string[], bridge: BridgeRunnerArgs | null): string[] {
 	return ['sh', '-c', 'exec "$@" < "$HEZO_PROMPT_FILE"', 'sh', ...cmd];
 }
 
-interface EgressEnvDescriptor {
+export interface EgressEnvDescriptor {
 	host: string;
 	port: number;
 	containerCAPath: string;
+}
+
+export interface RuntimeInvocation {
+	env: string[];
+	cmd: string[];
+	execCmd: string[];
+	subscriptionMount: SubscriptionMount | null;
+	homeMount: RuntimeHomeMount | null;
+}
+
+export interface RuntimeInvocationInput {
+	deps: RunnerDeps;
+	/** The team the run/session executes against (project's team). */
+	runTeamId: string;
+	projectId: string;
+	provider: AiProvider;
+	credential: AiProviderCredential;
+	runtimeType: AgentRuntime;
+	/** Pre-minted MCP bearer token (run token for a task run; session token for chat). */
+	agentJwt: string;
+	agentId: string;
+	/** Keys the per-resource home/subscription/config dirs — heartbeatRunId or sessionId. */
+	resourceId: string;
+	/** Container path the prompt is read from on stdin. */
+	promptContainerPath: string;
+	effort: string;
+	effortApplication: EffortRuntimeApplication;
+	modelOverride: string | null;
+	sshSocketContainerPath: string | null;
+	bridge: BridgeRunnerArgs | null;
+	egress: EgressEnvDescriptor | null;
+	/** Caller-specific env entries (e.g. HEZO_TASK_ID for a run). */
+	extraEnv?: string[];
+}
+
+/**
+ * Assemble the container env vars and CLI invocation shared by every runtime
+ * launch — provider credentials, MCP injection (with the caller's bearer token),
+ * the per-resource runtime config dir, ssh/git identity, egress proxy, and the
+ * headless command. Used by both the one-shot task run path ({@link buildRunContext})
+ * and the persistent CEO chat session, so a change to how a runtime is launched
+ * applies to both. Writes the MCP/settings files to disk as a side effect.
+ */
+export async function buildRuntimeInvocation(
+	input: RuntimeInvocationInput,
+): Promise<RuntimeInvocation> {
+	const {
+		deps,
+		runTeamId,
+		projectId,
+		provider,
+		credential,
+		runtimeType,
+		agentJwt,
+		agentId,
+		resourceId,
+		promptContainerPath,
+		effort,
+		effortApplication,
+		modelOverride,
+		sshSocketContainerPath,
+		bridge,
+		egress,
+		extraEnv = [],
+	} = input;
+
+	const subscriptionMount = buildSubscriptionMount(
+		deps.dataDir,
+		runTeamId,
+		projectId,
+		resourceId,
+		provider,
+		credential,
+	);
+
+	const adapter = MCP_ADAPTERS[runtimeType];
+	const homeMount: RuntimeHomeMount | null = adapter.capabilities.requiresHomeDir
+		? ensureRuntimeHomeDir(
+				provider,
+				deps.dataDir,
+				runTeamId,
+				projectId,
+				resourceId,
+				subscriptionMount,
+			)
+		: null;
+
+	const mcpDescriptors: McpDescriptor[] = [
+		{
+			kind: 'http',
+			name: 'hezo',
+			url: `http://host.docker.internal:${deps.serverPort}/mcp`,
+			bearerToken: agentJwt,
+		},
+		...(await loadMcpConnectionDescriptors(deps.db, deps.masterKeyManager)),
+	];
+
+	const skillFiles = await loadConnectorSkillFiles(deps.db);
+	const mcpInjection = adapter.build(mcpDescriptors, {
+		hostHomeDir: homeMount?.hostDir ?? null,
+		containerHomeDir: homeMount?.containerDir ?? null,
+		provider,
+		skillFiles,
+	});
+	validateInjection(adapter, mcpInjection);
+
+	for (const file of mcpInjection.files) {
+		mkdirSync(dirname(file.hostPath), { recursive: true, mode: 0o700 });
+		writeFileSync(file.hostPath, file.contents, { mode: file.mode });
+	}
+
+	const env: string[] = [
+		`HEZO_API_URL=http://host.docker.internal:${deps.serverPort}/agent-api`,
+		`HEZO_AGENT_TOKEN=${agentJwt}`,
+		`HEZO_AGENT_ID=${agentId}`,
+		`HEZO_TEAM_ID=${runTeamId}`,
+		`HEZO_AGENT_EFFORT=${effort}`,
+		`HEZO_PROMPT_FILE=${promptContainerPath}`,
+		...extraEnv,
+		...effortApplication.extraEnv,
+		...buildProviderEnv(provider, credential),
+		// Subscription mount sets the runtime HOME env var when present; otherwise
+		// fall through to the home-mount entry so the runtime CLI finds its
+		// per-run config dir even without a subscription credential.
+		...(subscriptionMount?.envEntries ?? (homeMount ? [homeMount.envEntry] : [])),
+		...mcpInjection.envEntries,
+	];
+	if (sshSocketContainerPath) {
+		env.push(`SSH_AUTH_SOCK=${sshSocketContainerPath}`);
+	}
+	// Configure git author/committer identity and SSH commit signing from the
+	// team's connected GitHub account + Ed25519 key, so in-container commits
+	// don't fail for lack of an author and land Verified via the agent socket.
+	env.push(...(await buildGitIdentityEnv(deps.db, deps.masterKeyManager, runTeamId)));
+	if (egress) {
+		const proxyUrl = `http://${egress.host}:${egress.port}`;
+		const noProxyHosts = [
+			egress.host,
+			'localhost',
+			'127.0.0.1',
+			...providerDirectUpstreamHosts(provider),
+		];
+		const noProxy = [...new Set(noProxyHosts)].join(',');
+		env.push(
+			`HTTP_PROXY=${proxyUrl}`,
+			`http_proxy=${proxyUrl}`,
+			`HTTPS_PROXY=${proxyUrl}`,
+			`https_proxy=${proxyUrl}`,
+			`NO_PROXY=${noProxy}`,
+			`no_proxy=${noProxy}`,
+			// Rely on update-ca-certificates for curl/git; do not set SSL_CERT_FILE to
+			// the egress CA alone — that replaces the system trust store and breaks TLS.
+			`NODE_EXTRA_CA_CERTS=${egress.containerCAPath}`,
+			`CURL_CA_BUNDLE=${egress.containerCAPath}`,
+			`GIT_SSL_CAINFO=${egress.containerCAPath}`,
+		);
+	}
+
+	const cliCommand = RUNTIME_COMMANDS[runtimeType];
+	const cliModel =
+		modelOverride && runtimeType === AgentRuntime.ClaudeCode
+			? claudeCodeModelArg(provider, modelOverride)
+			: modelOverride;
+	const modelArgs = cliModel ? ['--model', cliModel] : [];
+
+	const cmd = [
+		cliCommand,
+		...RUNTIME_HEADLESS_PREFIX_ARGS[runtimeType],
+		...mcpInjection.cliArgs,
+		...RUNTIME_STREAM_ARGS[runtimeType],
+		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
+		...RUNTIME_DISALLOWED_TOOLS_ARGS[runtimeType],
+		...effortApplication.extraArgs,
+		...modelArgs,
+		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtimeType],
+	];
+
+	const execCmd = wrapExecCmd(cmd, bridge);
+
+	return { env, cmd, execCmd, subscriptionMount, homeMount };
 }
 
 async function buildRunContext(
@@ -327,119 +515,25 @@ async function buildRunContext(
 
 	const promptFilePath = getContainerPromptPath(heartbeatRunId);
 
-	const subscriptionMount = buildSubscriptionMount(
-		deps.dataDir,
-		project.team_id,
-		project.id,
-		heartbeatRunId,
+	const { env, cmd, execCmd, subscriptionMount, homeMount } = await buildRuntimeInvocation({
+		deps,
+		runTeamId,
+		projectId: project.id,
 		provider,
 		credential,
-	);
-
-	const adapter = MCP_ADAPTERS[runtimeType];
-	const homeMount: RuntimeHomeMount | null = adapter.capabilities.requiresHomeDir
-		? ensureRuntimeHomeDir(
-				provider,
-				deps.dataDir,
-				project.team_id,
-				project.id,
-				heartbeatRunId,
-				subscriptionMount,
-			)
-		: null;
-
-	const mcpDescriptors: McpDescriptor[] = [
-		{
-			kind: 'http',
-			name: 'hezo',
-			url: `http://host.docker.internal:${deps.serverPort}/mcp`,
-			bearerToken: agentJwt,
-		},
-		...(await loadMcpConnectionDescriptors(deps.db, deps.masterKeyManager)),
-	];
-
-	const skillFiles = await loadConnectorSkillFiles(deps.db);
-	const mcpInjection = adapter.build(mcpDescriptors, {
-		hostHomeDir: homeMount?.hostDir ?? null,
-		containerHomeDir: homeMount?.containerDir ?? null,
-		provider,
-		skillFiles,
+		runtimeType,
+		agentJwt,
+		agentId: agent.id,
+		resourceId: heartbeatRunId,
+		promptContainerPath: promptFilePath,
+		effort,
+		effortApplication,
+		modelOverride,
+		sshSocketContainerPath,
+		bridge,
+		egress,
+		extraEnv: [`HEZO_TASK_ID=${task.id}`, `HEZO_TASK_IDENTIFIER=${task.identifier}`],
 	});
-	validateInjection(adapter, mcpInjection);
-
-	for (const file of mcpInjection.files) {
-		mkdirSync(dirname(file.hostPath), { recursive: true, mode: 0o700 });
-		writeFileSync(file.hostPath, file.contents, { mode: file.mode });
-	}
-
-	const env: string[] = [
-		`HEZO_API_URL=http://host.docker.internal:${deps.serverPort}/agent-api`,
-		`HEZO_AGENT_TOKEN=${agentJwt}`,
-		`HEZO_AGENT_ID=${agent.id}`,
-		`HEZO_TEAM_ID=${runTeamId}`,
-		`HEZO_TASK_ID=${task.id}`,
-		`HEZO_TASK_IDENTIFIER=${task.identifier}`,
-		`HEZO_AGENT_EFFORT=${effort}`,
-		`HEZO_PROMPT_FILE=${promptFilePath}`,
-		...effortApplication.extraEnv,
-		...buildProviderEnv(provider, credential),
-		// Subscription mount sets the runtime HOME env var when present; otherwise
-		// fall through to the home-mount entry so the runtime CLI finds its
-		// per-run config dir even without a subscription credential.
-		...(subscriptionMount?.envEntries ?? (homeMount ? [homeMount.envEntry] : [])),
-		...mcpInjection.envEntries,
-	];
-	if (sshSocketContainerPath) {
-		env.push(`SSH_AUTH_SOCK=${sshSocketContainerPath}`);
-	}
-	// Configure git author/committer identity and SSH commit signing from the
-	// team's connected GitHub account + Ed25519 key, so in-container commits
-	// don't fail for lack of an author and land Verified via the agent socket.
-	env.push(...(await buildGitIdentityEnv(deps.db, deps.masterKeyManager, runTeamId)));
-	if (egress) {
-		const proxyUrl = `http://${egress.host}:${egress.port}`;
-		const noProxyHosts = [
-			egress.host,
-			'localhost',
-			'127.0.0.1',
-			...providerDirectUpstreamHosts(provider),
-		];
-		const noProxy = [...new Set(noProxyHosts)].join(',');
-		env.push(
-			`HTTP_PROXY=${proxyUrl}`,
-			`http_proxy=${proxyUrl}`,
-			`HTTPS_PROXY=${proxyUrl}`,
-			`https_proxy=${proxyUrl}`,
-			`NO_PROXY=${noProxy}`,
-			`no_proxy=${noProxy}`,
-			// Rely on update-ca-certificates for curl/git; do not set SSL_CERT_FILE to
-			// the egress CA alone — that replaces the system trust store and breaks TLS.
-			`NODE_EXTRA_CA_CERTS=${egress.containerCAPath}`,
-			`CURL_CA_BUNDLE=${egress.containerCAPath}`,
-			`GIT_SSL_CAINFO=${egress.containerCAPath}`,
-		);
-	}
-
-	const cliCommand = RUNTIME_COMMANDS[runtimeType];
-	const cliModel =
-		modelOverride && runtimeType === AgentRuntime.ClaudeCode
-			? claudeCodeModelArg(provider, modelOverride)
-			: modelOverride;
-	const modelArgs = cliModel ? ['--model', cliModel] : [];
-
-	const cmd = [
-		cliCommand,
-		...RUNTIME_HEADLESS_PREFIX_ARGS[runtimeType],
-		...mcpInjection.cliArgs,
-		...RUNTIME_STREAM_ARGS[runtimeType],
-		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
-		...RUNTIME_DISALLOWED_TOOLS_ARGS[runtimeType],
-		...effortApplication.extraArgs,
-		...modelArgs,
-		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtimeType],
-	];
-
-	const execCmd = wrapExecCmd(cmd, bridge);
 
 	return {
 		cmd,
@@ -661,7 +755,10 @@ export async function runAgent(
 	// run on this credential forever. Release is idempotent, so the explicit cleanup
 	// paths below don't double-free.
 	try {
-		await markHeartbeatRunRunning(deps.db, heartbeatRunId, runBroadcast);
+		await markHeartbeatRunRunning(deps.db, heartbeatRunId, runBroadcast, {
+			aiProviderConfigId: credential.configId,
+			provider,
+		});
 
 		// Human-friendly label for run-scoped logs (egress proxy, ssh-agent),
 		// since a run has no friendly identifier of its own.
@@ -723,42 +820,18 @@ export async function runAgent(
 			egressEnv,
 		);
 
-		if (signal?.aborted) {
-			const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
-			if (dirToRemove) {
-				rmSync(dirToRemove, { recursive: true, force: true });
-			}
-			if (deps.sshAgentServer) {
-				await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
-			}
-			if (deps.egressProxy && egressAllocated) {
-				await deps.egressProxy.releaseRunProxy(heartbeatRunId);
-			}
-			return finalizeAbort();
-		}
-
-		const prep = await prepareWorktrees(deps, project, task, emit, signal);
-
 		const hostPromptPath = getHostPromptPath(
 			deps.dataDir,
 			project.team_id,
 			project.id,
 			heartbeatRunId,
 		);
-		mkdirSync(dirname(hostPromptPath), { recursive: true });
-		writeFileSync(hostPromptPath, context.taskPrompt);
 
-		const redactedCmd = context.cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
-		const invocationCommand = `$ ${redactedCmd.map(shellQuoteArg).join(' ')} < ${context.promptFilePath}`;
-
-		await deps.db.query(
-			`UPDATE heartbeat_runs SET invocation_command = $1, working_dir = $2 WHERE id = $3`,
-			[invocationCommand, prep.workingDir, heartbeatRunId],
+		const pricing = deps.pricing;
+		const parser = createAgentStreamParser(
+			runtimeType,
+			pricing ? (model, tokens) => pricing.costCents(model, tokens) : undefined,
 		);
-
-		emit('stdout', `${invocationCommand}\n`);
-
-		const parser = createAgentStreamParser(runtimeType);
 
 		const persistRotatedAuth = async () => {
 			const mount = context.subscriptionMount;
@@ -783,23 +856,62 @@ export async function runAgent(
 			}
 		};
 
+		// Best-effort teardown of run-scoped artifacts. Each step is isolated so a
+		// failed or slow release can never block the run result from reaching the
+		// completion bookkeeping (lock release, idle flip, wakeup completion) —
+		// a wedge here previously left agents stuck "running" forever.
 		const cleanupRunArtifacts = async () => {
-			await persistRotatedAuth();
-			rmSync(hostPromptPath, { force: true });
-			const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
-			if (dirToRemove) {
-				rmSync(dirToRemove, { recursive: true, force: true });
-			}
-			if (deps.sshAgentServer) {
-				await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
-			}
-			if (deps.egressProxy && egressAllocated) {
-				await deps.egressProxy.releaseRunProxy(heartbeatRunId);
-			}
+			const step = async (label: string, fn: () => void | Promise<void>) => {
+				try {
+					await fn();
+				} catch (e) {
+					log.error(`Run ${heartbeatRunId} artifact cleanup step '${label}' failed:`, e);
+				}
+			};
+			await step('persist-rotated-auth', persistRotatedAuth);
+			await step('remove-prompt', () => rmSync(hostPromptPath, { force: true }));
+			await step('remove-home-mount', () => {
+				const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
+				if (dirToRemove) {
+					rmSync(dirToRemove, { recursive: true, force: true });
+				}
+			});
+			await step('release-ssh-socket', async () => {
+				if (deps.sshAgentServer) {
+					await deps.sshAgentServer.releaseRunSocket(heartbeatRunId);
+				}
+			});
+			await step('release-egress-proxy', async () => {
+				if (deps.egressProxy && egressAllocated) {
+					await deps.egressProxy.releaseRunProxy(heartbeatRunId);
+				}
+			});
 		};
+
+		if (signal?.aborted) {
+			await cleanupRunArtifacts();
+			return finalizeAbort();
+		}
 
 		try {
 			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
+			const prep = await prepareWorktrees(deps, project, task, emit, signal);
+
+			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
+			mkdirSync(dirname(hostPromptPath), { recursive: true });
+			writeFileSync(hostPromptPath, context.taskPrompt);
+
+			const redactedCmd = context.cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
+			const invocationCommand = `$ ${redactedCmd.map(shellQuoteArg).join(' ')} < ${context.promptFilePath}`;
+
+			await deps.db.query(
+				`UPDATE heartbeat_runs SET invocation_command = $1, working_dir = $2 WHERE id = $3`,
+				[invocationCommand, prep.workingDir, heartbeatRunId],
+			);
+
+			emit('stdout', `${invocationCommand}\n`);
 
 			const execId = await deps.docker.execCreate(project.container_id, {
 				Cmd: context.execCmd,
@@ -921,7 +1033,7 @@ async function prepareWorktrees(
 		emit(stream, `[system] ${text}\n`);
 
 	const repos = await deps.db.query<RepoRow>(
-		`SELECT id, short_name, repo_identifier FROM repos
+		`SELECT id, repo_identifier FROM repos
 		 WHERE project_id = $1 ORDER BY created_at ASC`,
 		[project.id],
 	);
@@ -958,7 +1070,9 @@ async function prepareWorktrees(
 		const branchName = `hezo/${task.identifier}`;
 		const knownHostsPath = await ensureGithubKnownHosts(deps.dataDir);
 		const reposNeedingWorktree = repos.rows.filter(
-			(r) => !signal?.aborted && existsSync(join(workspaceRoot, r.short_name, '.git')),
+			(r) =>
+				!signal?.aborted &&
+				existsSync(join(workspaceRoot, repoNameFromIdentifier(r.repo_identifier), '.git')),
 		);
 
 		if (reposNeedingWorktree.length > 0 && deps.sshAgentServer) {
@@ -969,47 +1083,60 @@ async function prepareWorktrees(
 				async ({ sshAuthSock }) => {
 					for (const repo of reposNeedingWorktree) {
 						if (signal?.aborted) break;
-						const repoDir = join(workspaceRoot, repo.short_name);
+						const repoName = repoNameFromIdentifier(repo.repo_identifier);
+						const repoDir = join(workspaceRoot, repoName);
 
-						emitSystem('stdout', `git fetch ${repo.short_name}...`);
+						emitSystem('stdout', `git fetch ${repoName}...`);
 						const fetchRes = await fetchRepo(repoDir, sshAuthSock, knownHostsPath);
 						if (fetchRes.success) {
-							emitSystem('stdout', `git fetch ${repo.short_name} done`);
+							emitSystem('stdout', `git fetch ${repoName} done`);
 						} else {
-							emitSystem('stderr', `git fetch ${repo.short_name} failed: ${fetchRes.error ?? '?'}`);
+							emitSystem('stderr', `git fetch ${repoName} failed: ${fetchRes.error ?? '?'}`);
 						}
 					}
 				},
 			);
 		}
 
+		const worktreeErrors = new Map<string, string>();
 		for (const repo of repos.rows) {
 			if (signal?.aborted) break;
-			const repoDir = join(workspaceRoot, repo.short_name);
-			const worktreePath = join(taskWorktreeRoot, repo.short_name);
+			const repoName = repoNameFromIdentifier(repo.repo_identifier);
+			const repoDir = join(workspaceRoot, repoName);
+			const worktreePath = join(taskWorktreeRoot, repoName);
 
 			if (!existsSync(join(repoDir, '.git'))) {
-				emitSystem('stderr', `(skipping worktree for ${repo.short_name} — not cloned)`);
+				worktreeErrors.set(repo.id, 'repo is not cloned');
+				emitSystem('stderr', `(skipping worktree for ${repoName} — not cloned)`);
 				continue;
 			}
 
-			emitSystem('stdout', `git worktree ${repo.short_name}...`);
+			emitSystem('stdout', `git worktree ${repoName}...`);
 			const wt = await ensureTaskWorktree(repoDir, worktreePath, branchName);
 			if (!wt.success) {
-				emitSystem(
-					'stderr',
-					`git worktree for ${repo.short_name} failed: ${wt.error ?? 'unknown'}`,
-				);
+				worktreeErrors.set(repo.id, wt.error ?? 'unknown');
+				emitSystem('stderr', `git worktree for ${repoName} failed: ${wt.error ?? 'unknown'}`);
 			} else if (wt.created) {
-				emitSystem('stdout', `git worktree add ${repo.short_name} @ ${branchName}`);
+				emitSystem('stdout', `git worktree add ${repoName} @ ${branchName}`);
 			}
 		}
+
+		if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null };
 
 		const designated = project.designated_repo_id
 			? repos.rows.find((r) => r.id === project.designated_repo_id)
 			: null;
 		const primary = designated ?? repos.rows[0];
-		const workingDir = `/worktrees/${task.identifier}/${primary.short_name}`;
+		const primaryName = repoNameFromIdentifier(primary.repo_identifier);
+
+		// The run executes with this worktree as its cwd; proceeding without it
+		// would only surface later as an opaque container chdir failure.
+		const primaryError = worktreeErrors.get(primary.id);
+		if (primaryError) {
+			throw new Error(`cannot prepare worktree for ${primaryName}: ${primaryError}`);
+		}
+
+		const workingDir = `/worktrees/${task.identifier}/${primaryName}`;
 
 		return { workingDir, designatedRepo: primary ?? null };
 	});
@@ -1618,13 +1745,23 @@ async function markHeartbeatRunRunning(
 	db: PGlite,
 	runId: string,
 	broadcast: HeartbeatRunBroadcast,
+	adapter: { aiProviderConfigId: string | null; provider: AiProvider | null },
 ): Promise<void> {
+	// Stamp the resolved AI adapter config on the run so recordRunCostAndEnforce
+	// can attribute the run's cost to it without re-resolving.
 	const result = await db.query<{ id: string }>(
 		`UPDATE heartbeat_runs
-		    SET status = $1::heartbeat_run_status, started_at = now()
+		    SET status = $1::heartbeat_run_status, started_at = now(),
+		        ai_provider_config_id = $4, provider = $5::ai_provider
 		  WHERE id = $2 AND status = $3::heartbeat_run_status
 		  RETURNING id`,
-		[HeartbeatRunStatus.Running, runId, HeartbeatRunStatus.Queued],
+		[
+			HeartbeatRunStatus.Running,
+			runId,
+			HeartbeatRunStatus.Queued,
+			adapter.aiProviderConfigId,
+			adapter.provider,
+		],
 	);
 	if (result.rows.length > 0) {
 		broadcastHeartbeatRunChange(broadcast, runId, HeartbeatRunStatus.Running, 'UPDATE');
@@ -1676,6 +1813,67 @@ async function updateHeartbeatRun(
 		exitCode: update.exitCode,
 		error: update.error ?? null,
 	});
+
+	// Run completion is the canonical cost event: record the run's total spend as a
+	// single cost_entries row (guarded on positive usage so failure/abort paths and
+	// retries — which carry no usage — never double-insert), then reactively pause
+	// the agent if this pushed it (or its project) over any budget window.
+	await recordRunCostAndEnforce(db, runId, update.usage ?? null, broadcast);
+}
+
+/**
+ * Insert the run's cost into `cost_entries` and pause the agent if now over
+ * budget. Best-effort: a failure here logs and continues — it must not turn a
+ * completed run into a failed one.
+ */
+async function recordRunCostAndEnforce(
+	db: PGlite,
+	runId: string,
+	usage: AgentRunUsage | null,
+	broadcast: HeartbeatRunBroadcast,
+): Promise<void> {
+	if (!usage || usage.costCents <= 0) return;
+	try {
+		// The resolved AI adapter config was stamped on the run at start
+		// (markHeartbeatRunRunning); read it back to attribute this cost to it.
+		const runRow = await db.query<{
+			ai_provider_config_id: string | null;
+			provider: AiProvider | null;
+		}>(`SELECT ai_provider_config_id, provider FROM heartbeat_runs WHERE id = $1`, [runId]);
+		const adapter = runRow.rows[0] ?? { ai_provider_config_id: null, provider: null };
+
+		const entry = await recordRunCost(db, {
+			memberId: broadcast.memberId,
+			taskId: broadcast.taskId ?? null,
+			projectId: broadcast.projectId ?? null,
+			amountCents: usage.costCents,
+			description: `Agent run ${runId}`,
+			aiProviderConfigId: adapter.ai_provider_config_id,
+			provider: adapter.provider,
+		});
+		if (entry && broadcast.wsManager) {
+			broadcastRowChange(
+				broadcast.wsManager,
+				wsRoom.team(broadcast.teamId),
+				'cost_entries',
+				'INSERT',
+				entry,
+			);
+		}
+
+		const block = await checkOverBudget(db, broadcast.memberId, broadcast.projectId ?? null);
+		if (block) {
+			await pauseAgentForBudget(
+				db,
+				broadcast.memberId,
+				broadcast.teamId,
+				block,
+				broadcast.wsManager,
+			);
+		}
+	} catch (e) {
+		log.error({ err: e, runId }, 'failed to record run cost / enforce budget');
+	}
 }
 
 /**

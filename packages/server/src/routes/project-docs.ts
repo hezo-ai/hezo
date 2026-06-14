@@ -1,4 +1,12 @@
-import { ApprovalType, AuthType, DocumentType, isMarkdownDocSlug } from '@hezo/shared';
+import {
+	ApprovalType,
+	AuthType,
+	CHAT_MEMORY_SLUG,
+	DEFAULT_TEAM_ID,
+	DocumentType,
+	isMarkdownDocSlug,
+	repoNameFromIdentifier,
+} from '@hezo/shared';
 import { Hono } from 'hono';
 import { resolveAgentsMdPath } from '../lib/docs';
 import { actorTypeFromAuth, resolveActorMemberId, resolveProjectId } from '../lib/resolve';
@@ -128,6 +136,12 @@ projectDocsRoutes.delete('/projects/:projectId/docs/:filename', async (c) => {
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
+	// The chatbox memory doc lives only in the HQ project (the default team) and
+	// is permanent — block deletion by any principal.
+	if (teamId === DEFAULT_TEAM_ID && filename === CHAT_MEMORY_SLUG) {
+		return err(c, 'FORBIDDEN', `'${filename}' is the chatbox memory and cannot be deleted`, 403);
+	}
+
 	const actorMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
 	const removed = await deleteDocument(
 		db,
@@ -217,12 +231,7 @@ projectDocsRoutes.get('/projects/:projectId/agents-md', async (c) => {
 	const info = await getDesignatedRepoInfo(db, teamId, projectId);
 	if (!info) return err(c, 'NOT_FOUND', 'Project has no designated repo', 404);
 
-	const agentsMdPath = resolveAgentsMdPath(
-		dataDir,
-		info.teamSlug,
-		info.projectSlug,
-		info.repoShortName,
-	);
+	const agentsMdPath = resolveAgentsMdPath(dataDir, info.teamSlug, info.projectSlug, info.repoName);
 	const { existsSync, readFileSync } = await import('node:fs');
 	if (!existsSync(agentsMdPath)) {
 		return err(c, 'NOT_FOUND', 'AGENTS.md not found', 404);
@@ -246,12 +255,7 @@ projectDocsRoutes.put('/projects/:projectId/agents-md', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'content is required', 400);
 	}
 
-	const agentsMdPath = resolveAgentsMdPath(
-		dataDir,
-		info.teamSlug,
-		info.projectSlug,
-		info.repoShortName,
-	);
+	const agentsMdPath = resolveAgentsMdPath(dataDir, info.teamSlug, info.projectSlug, info.repoName);
 	const { mkdirSync, writeFileSync } = await import('node:fs');
 	const { dirname } = await import('node:path');
 	mkdirSync(dirname(agentsMdPath), { recursive: true });
@@ -264,13 +268,13 @@ async function getDesignatedRepoInfo(
 	db: import('@electric-sql/pglite').PGlite,
 	teamId: string,
 	projectId: string,
-): Promise<{ teamSlug: string; projectSlug: string; repoShortName: string } | null> {
+): Promise<{ teamSlug: string; projectSlug: string; repoName: string } | null> {
 	const result = await db.query<{
 		team_slug: string;
 		project_slug: string;
-		repo_short_name: string;
+		repo_identifier: string;
 	}>(
-		`SELECT co.slug AS team_slug, p.slug AS project_slug, r.short_name AS repo_short_name
+		`SELECT co.slug AS team_slug, p.slug AS project_slug, r.repo_identifier
 		 FROM projects p
 		 JOIN teams co ON co.id = p.team_id
 		 JOIN repos r ON r.id = p.designated_repo_id
@@ -282,6 +286,6 @@ async function getDesignatedRepoInfo(
 	return {
 		teamSlug: row.team_slug,
 		projectSlug: row.project_slug,
-		repoShortName: row.repo_short_name,
+		repoName: repoNameFromIdentifier(row.repo_identifier),
 	};
 }

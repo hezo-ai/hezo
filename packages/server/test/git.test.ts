@@ -188,3 +188,88 @@ describe('rebuilds a worktree orphaned from its clone', () => {
 		expect(dotGit).not.toMatch(/gitdir: \//);
 	});
 });
+
+// A branch can be checked out in at most one worktree, so a stale checkout left
+// behind by a crashed run — e.g. a worktree the agent created inside the clone
+// itself (.claude/worktrees/...), possibly registered under container-absolute
+// paths that resolve nowhere on the host — blocks recreating the task worktree.
+// ensureTaskWorktree must free the branch from any such holder first.
+describe('frees the task branch from stray worktree holders', () => {
+	const projectDir = join(testDir, 'stray');
+	const repoDir = join(projectDir, 'workspace', 'todos');
+
+	function worktreeHead(cwd: string): string {
+		return execSync('git rev-parse --abbrev-ref HEAD', { cwd }).toString().trim();
+	}
+
+	beforeAll(() => {
+		mkdirSync(join(projectDir, 'workspace'), { recursive: true });
+		run(`git clone ${bareRepoDir} ${repoDir}`);
+		run('git config user.name Test', repoDir);
+		run('git config user.email test@test.com', repoDir);
+		run('git config commit.gpgsign false', repoDir);
+	});
+
+	it('removes a stray worktree inside the clone that holds the branch', async () => {
+		const branch = 'hezo/TO-9';
+		const worktreePath = join(projectDir, 'worktrees', 'TO-9', 'todos');
+		const created = await ensureTaskWorktree(repoDir, worktreePath, branch);
+		expect(created.success).toBe(true);
+
+		// A local-only commit on the branch — must survive the healing.
+		writeFileSync(join(worktreePath, 'feature.txt'), 'work in progress\n');
+		run('git add .', worktreePath);
+		run('git commit -m wip', worktreePath);
+
+		// The task worktree vanishes (freeing the branch) and a worktree created
+		// inside the clone picks the branch up — the state a dead run leaves behind.
+		rmSync(worktreePath, { recursive: true, force: true });
+		await pruneWorktrees(repoDir);
+		run(`git worktree add .claude/worktrees/hezo+TO-9 ${branch}`, repoDir);
+
+		const healed = await ensureTaskWorktree(repoDir, worktreePath, branch);
+		expect(healed.success).toBe(true);
+		expect(healed.created).toBe(true);
+
+		expect(worktreeHead(worktreePath)).toBe(branch);
+		expect(existsSync(join(worktreePath, 'feature.txt'))).toBe(true);
+		const list = execSync('git worktree list --porcelain', { cwd: repoDir }).toString();
+		expect(list).not.toContain('.claude/worktrees');
+	});
+
+	it('prunes a holder registered under a path that does not resolve on the host', async () => {
+		const branch = 'hezo/TO-10';
+		const worktreePath = join(projectDir, 'worktrees', 'TO-10', 'todos');
+		const created = await ensureTaskWorktree(repoDir, worktreePath, branch);
+		expect(created.success).toBe(true);
+
+		rmSync(worktreePath, { recursive: true, force: true });
+		await pruneWorktrees(repoDir);
+		run(`git worktree add .claude/worktrees/hezo+TO-10 ${branch}`, repoDir);
+
+		// Rewrite the registration to the container-absolute path it would carry
+		// in production and drop the tree, so nothing resolves host-side.
+		writeFileSync(
+			join(repoDir, '.git', 'worktrees', 'hezo+TO-10', 'gitdir'),
+			'/workspace/todos/.claude/worktrees/hezo+TO-10/.git\n',
+		);
+		rmSync(join(repoDir, '.claude'), { recursive: true, force: true });
+
+		const healed = await ensureTaskWorktree(repoDir, worktreePath, branch);
+		expect(healed.success).toBe(true);
+		expect(worktreeHead(worktreePath)).toBe(branch);
+	});
+
+	it('detaches the main clone when it has the task branch checked out', async () => {
+		const branch = 'hezo/TO-11';
+		run(`git checkout -b ${branch}`, repoDir);
+
+		const worktreePath = join(projectDir, 'worktrees', 'TO-11', 'todos');
+		const res = await ensureTaskWorktree(repoDir, worktreePath, branch);
+		expect(res.success).toBe(true);
+		expect(res.created).toBe(true);
+
+		expect(worktreeHead(worktreePath)).toBe(branch);
+		expect(worktreeHead(repoDir)).toBe('HEAD');
+	});
+});

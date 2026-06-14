@@ -1,6 +1,18 @@
+import {
+	buildLoginMessage,
+	buildSetupMessage,
+	buildUnlockMessage,
+	deriveAuthKeyPair,
+	deriveUnlockKey,
+	signAuthMessage,
+} from '@hezo/shared';
 import { expect, type Locator, type Page, type Response } from '@playwright/test';
+import { TEST_MNEMONIC } from './constants';
 
-const TEST_MASTER_KEY = 'e2e-test-master-key-0123456789abcdef0123456789abcdef';
+// The phrase never goes over the wire: the Node test process derives the same
+// keys the browser would and runs the challenge-response dance over HTTP.
+const TEST_AUTH_KEYS = deriveAuthKeyPair(TEST_MNEMONIC);
+const TEST_UNLOCK_KEY = deriveUnlockKey(TEST_MNEMONIC);
 
 // Bun's webserver starts listening before Hono routes are mounted, so the very
 // first request during cold start can hit the default 404 ("404 Not Found"
@@ -10,21 +22,65 @@ async function requestToken(page: Page): Promise<string> {
 	let lastError: unknown = null;
 	while (Date.now() < deadline) {
 		try {
-			const res = await page.request.post('/api/auth/token', {
-				data: { master_key: TEST_MASTER_KEY },
-			});
-			if (res.ok()) {
-				const json = (await res.json()) as { data?: { token: string }; token?: string };
-				const token = json.data?.token ?? json.token;
+			const statusRes = await page.request.get('/api/status');
+			if (statusRes.ok()) {
+				const { masterKeyState } = (await statusRes.json()) as { masterKeyState: string };
+				// The shared e2e server boots enrolled via HEZO_MASTER_KEY, so the
+				// setup branch only fires against a fresh/unset server (and a 409
+				// race between workers just loops into the login branch).
+				const token =
+					masterKeyState === 'unset'
+						? await setupViaApi(page)
+						: await loginViaApi(page, masterKeyState === 'locked');
 				if (token) return token;
 			}
-			lastError = new Error(`Unexpected ${res.status()} from /api/auth/token`);
+			lastError = new Error(`Unexpected ${statusRes.status()} from /api/status`);
 		} catch (err) {
 			lastError = err;
 		}
 		await new Promise((resolve) => setTimeout(resolve, 250));
 	}
-	throw lastError ?? new Error('Timed out waiting for /api/auth/token');
+	throw lastError ?? new Error('Timed out authenticating via /api/auth');
+}
+
+async function setupViaApi(page: Page): Promise<string | null> {
+	const res = await page.request.post('/api/auth/setup', {
+		data: {
+			public_key: TEST_AUTH_KEYS.publicKeyHex,
+			unlock_key: TEST_UNLOCK_KEY,
+			signature: signAuthMessage(
+				TEST_AUTH_KEYS.privateKey,
+				buildSetupMessage(TEST_AUTH_KEYS.publicKeyHex, TEST_UNLOCK_KEY),
+			),
+		},
+	});
+	if (!res.ok()) throw new Error(`Unexpected ${res.status()} from /api/auth/setup`);
+	const json = (await res.json()) as { data?: { token: string } };
+	return json.data?.token ?? null;
+}
+
+async function loginViaApi(page: Page, includeUnlockKey: boolean): Promise<string | null> {
+	const challengeRes = await page.request.post('/api/auth/challenge');
+	if (!challengeRes.ok()) {
+		throw new Error(`Unexpected ${challengeRes.status()} from /api/auth/challenge`);
+	}
+	const challenge = (
+		(await challengeRes.json()) as { data: { challenge_id: string; nonce: string } }
+	).data;
+	const body: Record<string, string> = { challenge_id: challenge.challenge_id };
+	if (includeUnlockKey) {
+		body.unlock_key = TEST_UNLOCK_KEY;
+		body.signature = signAuthMessage(
+			TEST_AUTH_KEYS.privateKey,
+			buildUnlockMessage(challenge.nonce, TEST_UNLOCK_KEY),
+		);
+	} else {
+		body.signature = signAuthMessage(TEST_AUTH_KEYS.privateKey, buildLoginMessage(challenge.nonce));
+	}
+	const res = await page.request.post('/api/auth/verify', { data: body });
+	if (!res.ok()) throw new Error(`Unexpected ${res.status()} from /api/auth/verify`);
+	const json = (await res.json()) as { data?: { token: string } };
+	return json.data?.token ?? null;
 }
 
 export async function authenticate(page: Page) {
@@ -540,5 +596,3 @@ export async function clickAndWaitForResponse(
 	]);
 	return response;
 }
-
-export { TEST_MASTER_KEY };

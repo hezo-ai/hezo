@@ -214,6 +214,9 @@ export async function provisionContainer(
 		ContainerStatus.Creating,
 		project.id,
 	]);
+	// Broadcast the creating transition so the web banner shows for provisions that
+	// don't go through the rebuild route (startup repair, self-heal, reprovision).
+	await broadcastProjectUpdate(db, wsManager, teamId, project.id);
 
 	beginProvisionStream(logs, project.id);
 	const streamId = provisionStreamId(project.id);

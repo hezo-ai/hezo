@@ -1,16 +1,22 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { AiProvidersSection } from '../../components/ai-providers-section';
+import { InstanceSettingsSection } from '../../components/instance-settings-section';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { useMe } from '../../hooks/use-me';
 
-const settingsNav = [{ id: 'ai-providers', label: 'AI providers' }];
+const settingsNav = [
+	{ id: 'ai-providers', label: 'AI providers' },
+	{ id: 'instance', label: 'Instance' },
+];
 
 // Instance-level resources shared across every team — Admin (superuser) only.
 const instanceNav = [
+	{ to: '/settings/chatbox', label: 'Chatbox' },
 	{ to: '/settings/skills', label: 'Skills' },
 	{ to: '/settings/connectors', label: 'Connectors' },
 	{ to: '/settings/credentials', label: 'Credentials' },
+	{ to: '/settings/model-pricing', label: 'Model pricing' },
 	{ to: '/settings/audit-log', label: 'Activity' },
 ] as const;
 
@@ -65,6 +71,9 @@ function GlobalSettingsPage() {
 				<div className="space-y-8">
 					<div id="settings-ai-providers">
 						<AiProvidersSection />
+					</div>
+					<div id="settings-instance">
+						<InstanceSettingsSection />
 					</div>
 				</div>
 			</div>

@@ -1,3 +1,4 @@
+import { extractMentionCandidates } from '@hezo/shared';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { api } from '../lib/api';
@@ -72,6 +73,56 @@ export function useDocMentions(projectId: string, candidates: DocMentionsRequest
 		enabled:
 			!!projectId &&
 			(key.kbSlugs.length > 0 || key.projectDocs.length > 0 || key.assets.length > 0),
+		staleTime: 60_000,
+	});
+}
+
+export interface InstanceResolvedTask {
+	identifier: string;
+	title: string;
+	project_slug: string;
+	status: string;
+}
+
+export interface InstanceResolvedAgent {
+	slug: string;
+	title: string;
+	project_slug: string;
+}
+
+export interface InstanceMentionsResponse {
+	tasks: InstanceResolvedTask[];
+	kb_docs: ResolvedKbDoc[];
+	project_docs: ResolvedProjectDoc[];
+	assets: ResolvedAsset[];
+	agents: InstanceResolvedAgent[];
+}
+
+/**
+ * Instance-wide mention resolution for the global CEO chat. Candidates are
+ * extracted from the message content client-side; the server resolves only
+ * references that are unique across the whole instance (ambiguous ones stay
+ * plain text). The sorted-array key dedupes identical candidate sets across
+ * messages and bounds refetches while a reply streams.
+ */
+export function useInstanceMentions(content: string, enabled: boolean) {
+	const key = useMemo(() => {
+		const c = extractMentionCandidates(content);
+		return {
+			tasks: [...c.tasks].sort(),
+			filenames: [...c.filenames].sort(),
+			assets: [...c.assets].sort(),
+			agents: [...c.agents].sort(),
+		};
+	}, [content]);
+
+	const hasCandidates =
+		key.tasks.length + key.filenames.length + key.assets.length + key.agents.length > 0;
+
+	return useQuery({
+		queryKey: queryKeys.instanceMentionsResolve(key),
+		queryFn: () => api.post<InstanceMentionsResponse>('/api/mentions/resolve', key),
+		enabled: enabled && hasCandidates,
 		staleTime: 60_000,
 	});
 }

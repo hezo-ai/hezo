@@ -1,0 +1,134 @@
+import type { PGlite } from '@electric-sql/pglite';
+import { CeoChannel, HQ_PROJECT_SLUG } from '@hezo/shared';
+import type { Hono } from 'hono';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { INSTANCE_BASE_URL_KEY, setSystemMeta } from '../src/lib/system-meta';
+import type { Env } from '../src/lib/types';
+import { renderCeoMessageForChannel } from '../src/services/ceo-message-render';
+import { safeClose } from './helpers';
+import { authHeader, createTestApp, createTestProject } from './helpers/app';
+
+let app: Hono<Env>;
+let db: PGlite;
+let token: string;
+
+let projectSlug: string;
+const BASE = 'https://hezo.example.com';
+const COMMENT_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+
+beforeAll(async () => {
+	const ctx = await createTestApp();
+	app = ctx.app;
+	db = ctx.db;
+	token = ctx.token;
+
+	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
+	const typeId = (await typesRes.json()).data.find(
+		(t: Record<string, unknown>) => t.name === 'Startup',
+	).id;
+	const teamRes = await app.request('/api/teams', {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ name: 'Render Co', template_id: typeId }),
+	});
+	const teamId = (await teamRes.json()).data.id;
+	const projectRes = await createTestProject(db, teamId, { name: 'Render Project' });
+	const project = (await projectRes.json()).data;
+	projectSlug = project.slug;
+
+	await db.query(
+		`INSERT INTO tasks (team_id, project_id, number, identifier, title)
+		 VALUES ($1, $2, 901, 'RD-901', 'Render ticket')`,
+		[teamId, project.id],
+	);
+	await db.query(
+		`INSERT INTO documents (team_id, project_id, type, slug, title, content)
+		 VALUES ($1, $2, 'project_doc'::document_type, 'spec.md', 'spec.md', 'spec body')`,
+		[teamId, project.id],
+	);
+	await db.query(
+		`INSERT INTO assets (team_id, project_id, content_type, byte_size, sha256, original_filename)
+		 VALUES ($1, $2, 'image/png', 4, 'deadbeef', 'mock.png')`,
+		[teamId, project.id],
+	);
+	await db.query(
+		`INSERT INTO skills (slug, name, content) VALUES ('playbook.md', 'Playbook', 'kb')`,
+	);
+});
+
+afterAll(async () => {
+	await safeClose(db);
+});
+
+describe('renderCeoMessageForChannel', () => {
+	const message = 'Check RD-901 and spec.md before review.';
+
+	it('returns web content unchanged — the client renders links itself', async () => {
+		expect(await renderCeoMessageForChannel(db, message, CeoChannel.Web)).toBe(message);
+	});
+
+	it('returns whatsapp content unchanged — plain-text policy', async () => {
+		await setSystemMeta(db, INSTANCE_BASE_URL_KEY, BASE);
+		expect(await renderCeoMessageForChannel(db, message, CeoChannel.WhatsApp)).toBe(message);
+	});
+
+	it('returns telegram content unchanged while no base URL is configured', async () => {
+		await db.query('DELETE FROM system_meta WHERE key = $1', [INSTANCE_BASE_URL_KEY]);
+		expect(await renderCeoMessageForChannel(db, message, CeoChannel.Telegram)).toBe(message);
+	});
+
+	describe('telegram with a base URL', () => {
+		beforeAll(async () => {
+			await setSystemMeta(db, INSTANCE_BASE_URL_KEY, BASE);
+		});
+
+		it('links a unique task reference', async () => {
+			expect(await renderCeoMessageForChannel(db, 'See RD-901 now', CeoChannel.Telegram)).toBe(
+				`See [RD-901](${BASE}/projects/${projectSlug}/tasks/rd-901) now`,
+			);
+		});
+
+		it('links a comment reference via the task it belongs to', async () => {
+			expect(
+				await renderCeoMessageForChannel(
+					db,
+					`Answered in RD-901#comment-${COMMENT_ID} today`,
+					CeoChannel.Telegram,
+				),
+			).toBe(
+				`Answered in [RD-901#comment-${COMMENT_ID}](${BASE}/projects/${projectSlug}/tasks/rd-901#comment-${COMMENT_ID}) today`,
+			);
+		});
+
+		it('links project docs, KB docs, and assets', async () => {
+			expect(
+				await renderCeoMessageForChannel(
+					db,
+					'Read spec.md and playbook.md plus assets/mock.png today',
+					CeoChannel.Telegram,
+				),
+			).toBe(
+				`Read [spec.md](${BASE}/projects/${projectSlug}/documents?file=spec.md) ` +
+					`and [playbook.md](${BASE}/settings/skills?slug=playbook.md) ` +
+					`plus [assets/mock.png](${BASE}/projects/${projectSlug}/assets?file=mock.png) today`,
+			);
+		});
+
+		it('links agents to their home project and @admin to the global inbox', async () => {
+			expect(
+				await renderCeoMessageForChannel(db, 'Ask @@ceo or @admin first', CeoChannel.Telegram),
+			).toBe(
+				`Ask [@ceo](${BASE}/projects/${HQ_PROJECT_SLUG}/agents/ceo) ` +
+					`or [@admin](${BASE}${'/home/inbox'}) first`,
+			);
+		});
+
+		it('keeps unknown references and code spans bare in a mixed message', async () => {
+			const mixed = 'RD-901 is real but ZZ-99 is not, and `RD-901` stays code:\n```\nRD-901\n```';
+			expect(await renderCeoMessageForChannel(db, mixed, CeoChannel.Telegram)).toBe(
+				`[RD-901](${BASE}/projects/${projectSlug}/tasks/rd-901) is real but ZZ-99 is not, ` +
+					'and `RD-901` stays code:\n```\nRD-901\n```',
+			);
+		});
+	});
+});

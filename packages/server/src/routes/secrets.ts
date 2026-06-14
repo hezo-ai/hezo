@@ -1,8 +1,18 @@
 import { SecretCategory } from '@hezo/shared';
 import { Hono } from 'hono';
+import { validateSecretName } from '../lib/credential-placeholder';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireSuperuser } from '../middleware/auth';
+
+/** Trim, lowercase, and drop empties so the egress allowlist match (which
+ * lowercases the request host) sees clean entries. Mirrors the normalization
+ * the request_credential fulfillment path applies, so both creation routes
+ * store hosts identically. */
+function normalizeAllowedHosts(hosts: unknown): string[] {
+	if (!Array.isArray(hosts)) return [];
+	return hosts.map((h) => String(h).trim().toLowerCase()).filter((h) => h.length > 0);
+}
 
 export const secretsRoutes = new Hono<Env>();
 
@@ -61,6 +71,17 @@ secretsRoutes.post('/secrets', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'name and value are required', 400);
 	}
 
+	// Enforce the canonical name grammar at creation. A name the egress proxy
+	// can't match (lowercase, hyphenated, leading digit/underscore, >64 chars)
+	// would store a secret that no placeholder could ever reference — a silent
+	// footgun where the agent's request leaves the placeholder literal and auth
+	// fails with no error. Same validation request_credential applies.
+	const name = body.name.trim();
+	const nameValidation = validateSecretName(name);
+	if (!nameValidation.valid) {
+		return err(c, 'INVALID_REQUEST', nameValidation.error, 400);
+	}
+
 	const key = masterKeyManager.getKey();
 	if (!key) {
 		return err(c, 'LOCKED', 'Server must be unlocked to manage secrets', 401);
@@ -68,7 +89,7 @@ secretsRoutes.post('/secrets', async (c) => {
 
 	const { encrypt } = await import('../crypto/encryption');
 	const encryptedValue = encrypt(body.value, key);
-	const allowedHosts = Array.isArray(body.allowed_hosts) ? body.allowed_hosts : [];
+	const allowedHosts = normalizeAllowedHosts(body.allowed_hosts);
 	const allowAllHosts = !!body.allow_all_hosts;
 
 	const result = await db.query(
@@ -81,13 +102,7 @@ secretsRoutes.post('/secrets', async (c) => {
 		     allow_all_hosts = EXCLUDED.allow_all_hosts,
 		     updated_at = now()
 		 RETURNING id, name, category, allowed_hosts, allow_all_hosts, created_at, updated_at`,
-		[
-			body.name.trim(),
-			encryptedValue,
-			body.category ?? SecretCategory.Other,
-			allowedHosts,
-			allowAllHosts,
-		],
+		[name, encryptedValue, body.category ?? SecretCategory.Other, allowedHosts, allowAllHosts],
 	);
 	const created = result.rows[0] as { id: string; name: string };
 	c.get('events').emit({
@@ -144,7 +159,7 @@ secretsRoutes.patch('/secrets/:secretId', async (c) => {
 			return err(c, 'INVALID_REQUEST', 'allowed_hosts must be an array of strings', 400);
 		}
 		sets.push(`allowed_hosts = $${idx}`);
-		params.push(body.allowed_hosts);
+		params.push(normalizeAllowedHosts(body.allowed_hosts));
 		idx++;
 	}
 	if (body.allow_all_hosts !== undefined) {

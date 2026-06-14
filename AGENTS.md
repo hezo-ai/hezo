@@ -8,6 +8,7 @@
 - `bun run test --pattern <substring>` — filter by file-path substring (works across all tiers; combine with `--browser` to narrow browser tests)
 - `bun run test --package <server|web>` — restrict vitest run to one package
 - `bun run test --concurrency <n>` — override worker count (default 10)
+- `bun run test --shard <index>/<count>` — run one vitest shard (e.g. `1/3`); CI fans `test-backend` (2 shards) and `test-integration` (3 shards) across runners this way. The Bun-native tier runs only on shard 1. Composes with `--package`/`--concurrency`.
 - `bun run test --bail` — stop on first failure
 - `bun run build` / `check` / `check:fix` / `typecheck` / `dev`
 
@@ -49,7 +50,12 @@ Project-teams get a **Captain** + the chosen template's worker roles; templates 
 
 ## Database migrations
 
-Pre-v1: modify `packages/server/migrations/001_initial_schema.sql` in place and reset. Do not create new migration files.
+We ship **real, tracked, append-only migrations** that preserve user data across upgrades. `packages/server/migrations/001_initial_schema.sql` is the **frozen baseline** — never edit a migration that has shipped (each is checksummed and applied exactly once; editing it only logs a warning and is skipped on existing instances).
+
+- **Schema change** → add a new `NNN_description.sql` (next free number) under `packages/server/migrations/`. Never edit `001` (or any released file) in place.
+- **Data transform SQL can't express** (parse/re-encode/re-encrypt with app-side logic) → add a **code migration** TS module under `packages/server/src/db/migrations/code/` and register it in that dir's `index.ts`. SQL and code migrations share one ordered `NNN_` sequence and run in the same per-migration transaction.
+- **How they apply:** on startup the runner migrates a *copy* of the database (`<dataDir>/.migrate-tmp`) and atomically swaps it in on success. On failure the live `pgdata` is left untouched, so downgrading to the previous binary just works. A data dir carrying migrations the binary doesn't recognize (a downgrade) makes the server **exit** and ask the operator to upgrade.
+- Migration tests live in `packages/server/test/migrate-*.test.ts` — exercise real refactors (FK/layout changes, code transforms) against populated data and assert preservation. Don't just assert "the migration ran".
 
 ## Testing
 

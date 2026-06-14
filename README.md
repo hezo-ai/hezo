@@ -4,7 +4,7 @@ Self-hosted orchestration platform for teams of AI agents. Spin up independent t
 
 ## Prerequisites
 
-- [Bun](https://bun.sh/) v1.1+
+- [Bun](https://bun.sh/) v1.3.14+ **(IMPORTANT)**
 
 ## Setup
 
@@ -31,7 +31,7 @@ The server creates its database at `~/.hezo/pgdata` on first run.
 hezo                              # Start with defaults
 hezo --port 3100                  # Custom port (default: 3100)
 hezo --data-dir /path/to/dir     # Custom data directory (default: ~/.hezo/)
-hezo --master-key <key>          # Provide master key for unlock
+hezo --master-key <phrase>       # 12-word master key phrase (setup/unlock)
 hezo --web-url <url>             # Web UI base URL for redirects (default: same origin)
 hezo --reset                      # Wipe database and start fresh
 ```

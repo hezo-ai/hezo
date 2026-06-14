@@ -1,3 +1,4 @@
+import { isBudgetPauseStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import type { OrgNode } from '../hooks/use-org-chart';
@@ -39,7 +40,9 @@ type VisibleStatus = 'active' | 'paused' | 'disabled';
 
 function orgDotStatus(node: OrgNode): VisibleStatus | null {
 	if (node.admin_status === 'disabled') return 'disabled';
-	if (node.runtime_status === 'paused') return 'paused';
+	// Budget-paused agents render as the (red) paused dot; the agent badge
+	// carries the precise reason (over agent vs project budget).
+	if (isBudgetPauseStatus(node.runtime_status)) return 'paused';
 	if (node.runtime_status === 'active') return 'active';
 	return null;
 }

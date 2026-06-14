@@ -1,4 +1,21 @@
-import { ADMIN_MENTION_SLUG } from '@hezo/shared';
+import {
+	ADMIN_MENTION_SLUG,
+	agentPath,
+	assetPath,
+	buildMentionRegex,
+	commentPath,
+	GLOBAL_INBOX_PATH,
+	type MentionToken,
+	parseMentionMatch,
+	projectDocPath,
+	projectInboxPath,
+	SKILLS_SETTINGS_PATH,
+	taskPath,
+} from '@hezo/shared';
+
+// Candidate extraction lives in @hezo/shared (the server-side renderer uses it
+// too); re-exported here so web consumers keep a single import path.
+export { type DocCandidates, extractDocCandidates, extractTaskCandidates } from '@hezo/shared';
 
 interface TextNode {
 	type: 'text';
@@ -23,6 +40,8 @@ type MdNode = ParentNode | TextNode | LinkNode;
 
 export interface AgentMentionData {
 	title: string;
+	/** Set in instance scope: the agent's home project (HQ agents → `hq`). */
+	projectSlug?: string;
 }
 
 export interface TaskMentionData {
@@ -47,11 +66,19 @@ export interface AssetMentionData {
 	id: string;
 	contentType: string;
 	signedUrl: string;
+	/** Set in instance scope: the project the asset belongs to. */
+	projectSlug?: string;
 }
 
 interface Options {
-	projectId: string;
+	/**
+	 * Project scope: links resolve against this project (agents, admin inbox,
+	 * KB). Instance scope (the global CEO chat) omits it and sets `instance` —
+	 * every link then derives its project from the per-entity resolution data.
+	 */
+	projectId?: string;
 	projectSlug?: string;
+	instance?: boolean;
 	agents: Map<string, AgentMentionData>;
 	tasks: Map<string, TaskMentionData>;
 	kbDocs: Map<string, KbDocMentionData>;
@@ -59,26 +86,7 @@ interface Options {
 	assets: Map<string, AssetMentionData>;
 }
 
-const PASSIVE_AGENT_RE_SRC = String.raw`(?<![\w@])@@([a-z][\w-]*)(?![\w/])`;
-const AGENT_RE_SRC = String.raw`(?<![\w@])@([a-z][\w-]*)(?![\w/])`;
-const TASK_RE_SRC = String.raw`(?<![\w-])([A-Z][A-Z0-9]{1,3}-\d+)(?![\w-])`;
-// Comment links embed a task identifier plus the comment's UUID
-// (`IN-42#comment-<uuid>`), reusing the `#comment-<uuid>` URL hash. The UUID is
-// shape-matched so `IN-42#comment-foo` prose stays plain text. This MUST come
-// before TASK_RE_SRC in the alternation: regex alternation prefers the leftmost
-// matching branch at a position, so otherwise TASK_RE_SRC consumes the bare
-// `IN-42` prefix and the `#comment-...` suffix is left dangling.
-const COMMENT_LINK_RE_SRC = String.raw`(?<![\w-])([A-Z][A-Z0-9]{1,3}-\d+)#comment-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?![\w-])`;
-const FILENAME_RE_SRC = String.raw`(?<![\w/.-])([a-z0-9][\w-]*\.[a-z0-9]+)(?![\w/.-])`;
-// Asset references are path-prefixed (`assets/<name>.<ext>`) and may contain
-// uppercase (e.g. a task identifier embedded in the name). The leading `assets/`
-// keeps them from colliding with the bare project-doc filenames above.
-const ASSET_RE_SRC = String.raw`(?<![\w/.-])assets/([A-Za-z0-9][\w.-]*\.[A-Za-z0-9]+)(?![\w/.-])`;
-
-const MENTION_RE = new RegExp(
-	`${PASSIVE_AGENT_RE_SRC}|${AGENT_RE_SRC}|${COMMENT_LINK_RE_SRC}|${TASK_RE_SRC}|${FILENAME_RE_SRC}|${ASSET_RE_SRC}`,
-	'g',
-);
+const MENTION_RE = buildMentionRegex();
 
 const SKIP_TYPES = new Set(['code', 'inlineCode', 'link']);
 
@@ -116,7 +124,7 @@ function splitTextNode(node: TextNode, opts: Options): MdNode[] {
 	MENTION_RE.lastIndex = 0;
 	let match = MENTION_RE.exec(value);
 	while (match !== null) {
-		const link = buildLink(match, opts);
+		const link = buildLink(parseMentionMatch(match), opts);
 		if (!link) {
 			match = MENTION_RE.exec(value);
 			continue;
@@ -137,30 +145,23 @@ function splitTextNode(node: TextNode, opts: Options): MdNode[] {
 	return parts;
 }
 
-function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
+function buildLink(token: MentionToken, opts: Options): LinkNode | null {
 	const { projectId, projectSlug, agents, tasks, kbDocs, projectDocs, assets } = opts;
-	const display = match[0];
-	const passiveAgentToken = match[1];
-	const agentToken = match[2];
-	const commentLinkTaskToken = match[3];
-	const commentLinkUuid = match[4];
-	const taskToken = match[5];
-	const filenameToken = match[6];
-	const assetToken = match[7];
+	const display = token.raw;
 
-	if (assetToken) {
-		if (!projectSlug) return null;
-		const slug = projectSlug.toLowerCase();
-		const data = assets.get(assetToken);
+	if (token.kind === 'asset') {
+		const data = assets.get(token.filename);
 		if (!data) return null;
+		const slug = (data.projectSlug ?? projectSlug)?.toLowerCase();
+		if (!slug) return null;
 		return {
 			type: 'link',
-			url: `/projects/${slug}/assets?file=${encodeURIComponent(assetToken)}`,
+			url: assetPath(slug, token.filename),
 			children: [{ type: 'text', value: display }],
 			data: {
 				hProperties: {
 					'data-mention-asset-project-slug': slug,
-					'data-mention-asset-filename': assetToken,
+					'data-mention-asset-filename': token.filename,
 					'data-mention-asset-content-type': data.contentType,
 					'data-mention-asset-url': data.signedUrl,
 				},
@@ -168,13 +169,14 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 		};
 	}
 
-	if (passiveAgentToken) {
-		const slug = passiveAgentToken.toLowerCase();
-		if (slug === ADMIN_MENTION_SLUG) {
+	if (token.kind === 'passive_agent') {
+		// `@@slug` renders as `@slug` — passive mentions display like active ones.
+		const passiveDisplay = display.slice(1);
+		if (token.slug === ADMIN_MENTION_SLUG) {
 			return {
 				type: 'link',
-				url: `/projects/${projectId}/inbox`,
-				children: [{ type: 'text', value: `@${passiveAgentToken}` }],
+				url: projectId ? projectInboxPath(projectId) : GLOBAL_INBOX_PATH,
+				children: [{ type: 'text', value: passiveDisplay }],
 				data: {
 					hProperties: {
 						'data-mention-admin': 'true',
@@ -183,28 +185,30 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 				},
 			};
 		}
-		const data = agents.get(slug);
+		const data = agents.get(token.slug);
 		if (!data) return null;
+		const agentProject = data.projectSlug ?? projectId;
+		if (!agentProject) return null;
 		return {
 			type: 'link',
-			url: `/projects/${projectId}/agents/${slug}`,
-			children: [{ type: 'text', value: `@${passiveAgentToken}` }],
+			url: agentPath(agentProject, token.slug),
+			children: [{ type: 'text', value: passiveDisplay }],
 			data: {
 				hProperties: {
-					'data-mention-agent-slug': slug,
+					'data-mention-agent-slug': token.slug,
 					'data-mention-agent-title': data.title,
+					'data-mention-agent-project-slug': agentProject,
 					'data-mention-passive': 'true',
 				},
 			},
 		};
 	}
 
-	if (agentToken) {
-		const slug = agentToken.toLowerCase();
-		if (slug === ADMIN_MENTION_SLUG) {
+	if (token.kind === 'agent') {
+		if (token.slug === ADMIN_MENTION_SLUG) {
 			return {
 				type: 'link',
-				url: `/projects/${projectId}/inbox`,
+				url: projectId ? projectInboxPath(projectId) : GLOBAL_INBOX_PATH,
 				children: [{ type: 'text', value: display }],
 				data: {
 					hProperties: {
@@ -213,33 +217,35 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 				},
 			};
 		}
-		const data = agents.get(slug);
+		const data = agents.get(token.slug);
 		if (!data) return null;
+		const agentProject = data.projectSlug ?? projectId;
+		if (!agentProject) return null;
 		return {
 			type: 'link',
-			url: `/projects/${projectId}/agents/${slug}`,
+			url: agentPath(agentProject, token.slug),
 			children: [{ type: 'text', value: display }],
 			data: {
 				hProperties: {
-					'data-mention-agent-slug': slug,
+					'data-mention-agent-slug': token.slug,
 					'data-mention-agent-title': data.title,
+					'data-mention-agent-project-slug': agentProject,
 				},
 			},
 		};
 	}
 
-	if (commentLinkTaskToken && commentLinkUuid) {
-		const key = commentLinkTaskToken.toLowerCase();
-		const data = tasks.get(key);
+	if (token.kind === 'comment') {
+		const data = tasks.get(token.taskIdentifier);
 		if (!data) return null;
 		return {
 			type: 'link',
-			url: `/projects/${data.projectSlug}/tasks/${key}#comment-${commentLinkUuid}`,
+			url: commentPath(data.projectSlug, token.taskIdentifier, token.commentId),
 			children: [{ type: 'text', value: display }],
 			data: {
 				hProperties: {
-					'data-mention-comment-task-identifier': key,
-					'data-mention-comment-id': commentLinkUuid,
+					'data-mention-comment-task-identifier': token.taskIdentifier,
+					'data-mention-comment-id': token.commentId,
 					'data-mention-comment-project-slug': data.projectSlug,
 					'data-mention-comment-task-title': data.title,
 				},
@@ -247,17 +253,16 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 		};
 	}
 
-	if (taskToken) {
-		const key = taskToken.toLowerCase();
-		const data = tasks.get(key);
+	if (token.kind === 'task') {
+		const data = tasks.get(token.identifier);
 		if (!data) return null;
 		return {
 			type: 'link',
-			url: `/projects/${data.projectSlug}/tasks/${key}`,
+			url: taskPath(data.projectSlug, token.identifier),
 			children: [{ type: 'text', value: display }],
 			data: {
 				hProperties: {
-					'data-mention-task-identifier': key,
+					'data-mention-task-identifier': token.identifier,
 					'data-mention-task-title': data.title,
 					'data-mention-project-slug': data.projectSlug,
 				},
@@ -265,34 +270,33 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 		};
 	}
 
-	if (filenameToken) {
-		if (projectSlug) {
-			const slug = projectSlug.toLowerCase();
-			const perProject = projectDocs.get(slug);
-			const data = perProject?.get(filenameToken);
-			if (data) {
-				return {
-					type: 'link',
-					url: `/projects/${slug}/documents?file=${encodeURIComponent(filenameToken)}`,
-					children: [{ type: 'text', value: display }],
-					data: {
-						hProperties: {
-							'data-mention-doc-project-slug': slug,
-							'data-mention-doc-filename': filenameToken,
-							'data-mention-size': String(data.size),
-							'data-mention-updated-at': data.updatedAt,
-						},
-					},
-				};
-			}
-		}
-
-		const kbKey = filenameToken.toLowerCase();
-		const kbData = kbDocs.get(kbKey);
-		if (kbData) {
+	if (token.kind === 'filename') {
+		const docHit = findProjectDoc(token.filename, opts);
+		if (docHit) {
 			return {
 				type: 'link',
-				url: `/projects/${projectId}/skills?slug=${encodeURIComponent(kbKey)}`,
+				url: projectDocPath(docHit.projectSlug, token.filename),
+				children: [{ type: 'text', value: display }],
+				data: {
+					hProperties: {
+						'data-mention-doc-project-slug': docHit.projectSlug,
+						'data-mention-doc-filename': token.filename,
+						'data-mention-size': String(docHit.data.size),
+						'data-mention-updated-at': docHit.data.updatedAt,
+					},
+				},
+			};
+		}
+
+		const kbKey = token.filename.toLowerCase();
+		const kbData = kbDocs.get(kbKey);
+		if (kbData) {
+			const slugParam = `slug=${encodeURIComponent(kbKey)}`;
+			return {
+				type: 'link',
+				url: projectId
+					? `/projects/${projectId}/skills?${slugParam}`
+					: `${SKILLS_SETTINGS_PATH}?${slugParam}`,
 				children: [{ type: 'text', value: display }],
 				data: {
 					hProperties: {
@@ -309,59 +313,22 @@ function buildLink(match: RegExpExecArray, opts: Options): LinkNode | null {
 	return null;
 }
 
-export function extractTaskCandidates(value: string): string[] {
-	const stripped = stripCode(value);
-	const re = new RegExp(TASK_RE_SRC, 'g');
-	const out = new Set<string>();
-	let m = re.exec(stripped);
-	while (m !== null) {
-		out.add(m[1].toLowerCase());
-		m = re.exec(stripped);
+function findProjectDoc(
+	filename: string,
+	opts: Options,
+): { projectSlug: string; data: ProjectDocMentionData } | null {
+	if (opts.projectSlug) {
+		const slug = opts.projectSlug.toLowerCase();
+		const data = opts.projectDocs.get(slug)?.get(filename);
+		return data ? { projectSlug: slug, data } : null;
 	}
-	return Array.from(out);
-}
-
-export interface DocCandidates {
-	kbSlugs: string[];
-	projectDocs: Array<{ project_slug: string; filename: string }>;
-	assets: Array<{ project_slug: string; filename: string }>;
-}
-
-export function extractDocCandidates(value: string, projectSlug?: string): DocCandidates {
-	const stripped = stripCode(value);
-	const filenameSet = new Set<string>();
-
-	const re = new RegExp(FILENAME_RE_SRC, 'g');
-	let m = re.exec(stripped);
-	while (m !== null) {
-		filenameSet.add(m[1]);
-		m = re.exec(stripped);
-	}
-
-	const assetSet = new Set<string>();
-	const assetRe = new RegExp(ASSET_RE_SRC, 'g');
-	let am = assetRe.exec(stripped);
-	while (am !== null) {
-		assetSet.add(am[1]);
-		am = assetRe.exec(stripped);
-	}
-
-	const kbSlugs = Array.from(filenameSet, (f) => f.toLowerCase());
-	const projectDocs: Array<{ project_slug: string; filename: string }> = [];
-	const assets: Array<{ project_slug: string; filename: string }> = [];
-	if (projectSlug) {
-		const slug = projectSlug.toLowerCase();
-		for (const filename of filenameSet) {
-			projectDocs.push({ project_slug: slug, filename });
-		}
-		for (const filename of assetSet) {
-			assets.push({ project_slug: slug, filename });
+	if (opts.instance) {
+		// Instance scope: the resolver returns a filename only when exactly one
+		// project has it, so the first per-project hit is the only one.
+		for (const [slug, perProject] of opts.projectDocs) {
+			const data = perProject.get(filename);
+			if (data) return { projectSlug: slug, data };
 		}
 	}
-
-	return { kbSlugs, projectDocs, assets };
-}
-
-function stripCode(value: string): string {
-	return value.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, ' ').replace(/`[^`]*`/g, ' ');
+	return null;
 }

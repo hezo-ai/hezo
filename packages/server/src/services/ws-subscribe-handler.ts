@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { DEFAULT_TEAM_ID, wsRoom } from '@hezo/shared';
 import type { ContainerLogStreamer } from './container-logs';
 import type { DockerClient } from './docker';
 import type { LogStreamBroker } from './log-stream-broker';
@@ -19,6 +20,14 @@ export async function handleWsSubscribe(
 	room: string,
 	deps: WsSubscribeDeps,
 ): Promise<void> {
+	// The single global CEO chat room: gated on HQ-team access (superuser or HQ member).
+	if (room === wsRoom.ceo()) {
+		const allowed = await deps.canAccessTeam(ws.data.auth, DEFAULT_TEAM_ID);
+		if (!allowed) return;
+		deps.wsManager.subscribe(ws, room);
+		return;
+	}
+
 	const teamMatch = room.match(/^team:(.+)$/);
 	if (teamMatch) {
 		const allowed = await deps.canAccessTeam(ws.data.auth, teamMatch[1]);

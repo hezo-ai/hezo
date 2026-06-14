@@ -1,6 +1,8 @@
+import type { BudgetWindowsCents } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
+import { BudgetWindowsEditor } from '../../../../components/budget/budget-windows-editor';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
 import { useOnboardAgent } from '../../../../hooks/use-agents';
@@ -24,7 +26,11 @@ function HireAgentPage() {
 	const [title, setTitle] = useState('');
 	const [roleDesc, setRoleDesc] = useState('');
 	const [systemPrompt, setSystemPrompt] = useState('');
-	const [budget, setBudget] = useState('20');
+	const [budget, setBudget] = useState<BudgetWindowsCents>({
+		daily_budget_cents: 0,
+		weekly_budget_cents: 0,
+		monthly_budget_cents: 2000,
+	});
 	const [heartbeat, setHeartbeat] = useState('60');
 	const [touchesCode, setTouchesCode] = useState(false);
 
@@ -34,7 +40,9 @@ function HireAgentPage() {
 			title,
 			role_description: roleDesc || undefined,
 			system_prompt: systemPrompt || undefined,
-			monthly_budget_cents: Math.round(Number.parseFloat(budget) * 100),
+			daily_budget_cents: budget.daily_budget_cents,
+			weekly_budget_cents: budget.weekly_budget_cents,
+			monthly_budget_cents: budget.monthly_budget_cents,
 			heartbeat_interval_min: Number.parseInt(heartbeat, 10),
 			touches_code: touchesCode,
 		});
@@ -97,15 +105,12 @@ function HireAgentPage() {
 					</select>
 				</div>
 
-				<Input
-					label="Monthly budget"
-					type="number"
-					step="0.01"
-					min="0"
-					value={budget}
-					onChange={(e) => setBudget(e.target.value)}
-					className="max-w-[140px]"
-				/>
+				<div className="flex flex-col gap-1.5 max-w-[500px]">
+					<span className="text-xs font-medium uppercase tracking-wider text-text-muted">
+						Budget limits
+					</span>
+					<BudgetWindowsEditor value={budget} onChange={setBudget} />
+				</div>
 
 				<label className="flex items-start gap-2 cursor-pointer max-w-[500px]">
 					<input

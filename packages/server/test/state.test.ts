@@ -1,6 +1,6 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { generateMasterKey, MasterKeyManager } from '../src/crypto/master-key';
+import { generateUnlockKey, MasterKeyManager } from '../src/crypto/master-key';
 import { signOAuthState, verifyConnectState, verifyOAuthState } from '../src/crypto/state';
 import { createTestDbWithMigrations } from './helpers/db';
 
@@ -73,7 +73,7 @@ describe('signOAuthState + verifyOAuthState', () => {
 	it('roundtrips team_id', async () => {
 		const db = await createTestDbWithMigrations();
 		const mkm = new MasterKeyManager();
-		await mkm.initialize(db, generateMasterKey());
+		await mkm.initialize(db, generateUnlockKey());
 
 		const signed = await signOAuthState({ team_id: 'abc-123' }, mkm);
 		const result = await verifyOAuthState(signed, mkm);
@@ -84,7 +84,7 @@ describe('signOAuthState + verifyOAuthState', () => {
 	it('returns null for tampered state', async () => {
 		const db = await createTestDbWithMigrations();
 		const mkm = new MasterKeyManager();
-		await mkm.initialize(db, generateMasterKey());
+		await mkm.initialize(db, generateUnlockKey());
 
 		const signed = await signOAuthState({ team_id: 'abc-123' }, mkm);
 		const tampered = `${signed.slice(0, -4)}xxxx`;
@@ -96,11 +96,11 @@ describe('signOAuthState + verifyOAuthState', () => {
 	it('returns null with different master key', async () => {
 		const db1 = await createTestDbWithMigrations();
 		const mkm1 = new MasterKeyManager();
-		await mkm1.initialize(db1, generateMasterKey());
+		await mkm1.initialize(db1, generateUnlockKey());
 
 		const db2 = await createTestDbWithMigrations();
 		const mkm2 = new MasterKeyManager();
-		await mkm2.initialize(db2, generateMasterKey());
+		await mkm2.initialize(db2, generateUnlockKey());
 
 		const signed = await signOAuthState({ team_id: 'abc' }, mkm1);
 		const result = await verifyOAuthState(signed, mkm2);
@@ -113,7 +113,7 @@ describe('signOAuthState + verifyOAuthState', () => {
 	it('returns null for no dot separator', async () => {
 		const db = await createTestDbWithMigrations();
 		const mkm = new MasterKeyManager();
-		await mkm.initialize(db, generateMasterKey());
+		await mkm.initialize(db, generateUnlockKey());
 
 		const result = await verifyOAuthState('nodot', mkm);
 		expect(result).toBeNull();
@@ -123,7 +123,7 @@ describe('signOAuthState + verifyOAuthState', () => {
 	it('roundtrips a payload that includes an task_id alongside team_id', async () => {
 		const db = await createTestDbWithMigrations();
 		const mkm = new MasterKeyManager();
-		await mkm.initialize(db, generateMasterKey());
+		await mkm.initialize(db, generateUnlockKey());
 
 		const signed = await signOAuthState({ team_id: 'co-1', task_id: 'iss-9' }, mkm);
 		const result = await verifyOAuthState(signed, mkm);

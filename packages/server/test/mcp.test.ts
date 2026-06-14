@@ -17,6 +17,7 @@ let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
+let projectSlug: string;
 let agentId: string;
 
 beforeAll(async () => {
@@ -37,12 +38,10 @@ beforeAll(async () => {
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 
-	const agentsRes = await app.request(
-		`/api/projects/${await projectSlugFor(db, teamData.id)}/agents`,
-		{
-			headers: authHeader(token),
-		},
-	);
+	projectSlug = await projectSlugFor(db, teamData.id);
+	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
+		headers: authHeader(token),
+	});
 	agentId = (await agentsRes.json()).data[0].id;
 });
 
@@ -123,7 +122,7 @@ describe('MCP endpoint', () => {
 			body: JSON.stringify({
 				jsonrpc: '2.0',
 				method: 'tools/call',
-				params: { name: 'list_agents', arguments: { team_id: teamId } },
+				params: { name: 'list_agents', arguments: { project: projectSlug } },
 				id: 4,
 			}),
 		});

@@ -46,6 +46,17 @@ export async function resolveTeamId(db: PGlite, raw: string): Promise<string | n
 	return result.rows[0]?.id ?? null;
 }
 
+/**
+ * The single project backing a team (1:1). Lets a team-scoped principal (API key)
+ * reach its project without naming it.
+ */
+export async function projectIdForTeam(db: PGlite, teamId: string): Promise<string | null> {
+	const result = await db.query<{ id: string }>('SELECT id FROM projects WHERE team_id = $1', [
+		teamId,
+	]);
+	return result.rows[0]?.id ?? null;
+}
+
 export async function resolveProjectId(
 	db: PGlite,
 	teamId: string,

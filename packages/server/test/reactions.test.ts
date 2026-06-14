@@ -185,7 +185,7 @@ describe('REST reactions endpoints', () => {
 			taskId,
 		);
 		const arc = await callMcp(architectToken, 'add_reaction', {
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,
@@ -260,7 +260,7 @@ describe('REST reactions endpoints', () => {
 			taskId,
 		);
 		await callMcp(ceoToken, 'add_reaction', {
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,
@@ -346,14 +346,14 @@ describe('MCP add_reaction / remove_reaction tools', () => {
 		);
 
 		const first = await callMcp(agentToken, 'add_reaction', {
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,
 		});
 		expect((first.result as { error?: string }).error).toBeUndefined();
 		const second = await callMcp(agentToken, 'add_reaction', {
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,
@@ -380,19 +380,19 @@ describe('MCP add_reaction / remove_reaction tools', () => {
 			taskId,
 		);
 		await callMcp(ceoToken, 'add_reaction', {
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,
 		});
 		await callMcp(archToken, 'add_reaction', {
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,
 		});
 		await callMcp(ceoToken, 'remove_reaction', {
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,
@@ -416,13 +416,13 @@ describe('MCP add_reaction / remove_reaction tools', () => {
 			taskId,
 		);
 		await callMcp(agentToken, 'add_reaction', {
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,
 		});
 		const list = await callMcp(agentToken, 'list_comments', {
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 		});
 		const rows = list.result as Array<{ id: string; reactions: ReactionGroup[] }>;
@@ -450,7 +450,7 @@ describe('MCP add_reaction / remove_reaction tools', () => {
 				params: {
 					name: 'add_reaction',
 					arguments: {
-						team_id: teamId,
+						project: projectId,
 						task_id: taskId,
 						comment_id: 'last',
 						kind: ReactionKind.Ack,
@@ -480,7 +480,7 @@ describe('MCP add_reaction / remove_reaction tools', () => {
 
 		const before = await wakeupCount();
 		await callMcp(agentToken, 'add_reaction', {
-			team_id: teamId,
+			project: projectId,
 			task_id: taskId,
 			comment_id: commentId,
 			kind: ReactionKind.Ack,

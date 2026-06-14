@@ -36,6 +36,6 @@ export function deriveKey(masterKey: string, purpose: string): Promise<Buffer> {
 	});
 }
 
-export function generateMasterKey(): string {
+export function generateUnlockKey(): string {
 	return randomBytes(32).toString('hex');
 }

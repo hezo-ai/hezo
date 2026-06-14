@@ -756,14 +756,14 @@ describe('provisionContainer broadcasting', () => {
 		);
 	});
 
-	it('broadcasts row_change on successful provisioning', async () => {
+	it('broadcasts creating then running row_changes on successful provisioning', async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
-		const mockDocker = {
+		const mockDocker = createStubDocker({
 			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn().mockResolvedValue(undefined),
 			createContainer: vi.fn().mockResolvedValue({ Id: 'test-container-123' }),
 			startContainer: vi.fn().mockResolvedValue(undefined),
-		} as any;
+		});
 		const mockWsManager = { broadcast: vi.fn() } as any;
 
 		const project = (
@@ -776,8 +776,18 @@ describe('provisionContainer broadcasting', () => {
 			'container-sync-co',
 		);
 
-		expect(mockWsManager.broadcast).toHaveBeenCalledTimes(1);
-		const [room, event] = mockWsManager.broadcast.mock.calls[0];
+		// The creating broadcast must precede the docker work — it is what shows
+		// the provisioning banner for rebuilds launched outside the rebuild route
+		// (startup stale-mount repair, self-heal, missing-container reprovision).
+		expect(mockWsManager.broadcast).toHaveBeenCalledTimes(2);
+		const [creatingRoom, creatingEvent] = mockWsManager.broadcast.mock.calls[0];
+		expect(creatingRoom).toBe(wsRoom.team(teamId));
+		expect(creatingEvent.type).toBe('row_change');
+		expect(creatingEvent.table).toBe('projects');
+		expect(creatingEvent.action).toBe('UPDATE');
+		expect(creatingEvent.row.container_status).toBe('creating');
+
+		const [room, event] = mockWsManager.broadcast.mock.calls[1];
 		expect(room).toBe(wsRoom.team(teamId));
 		expect(event.type).toBe('row_change');
 		expect(event.table).toBe('projects');
@@ -900,10 +910,10 @@ describe('provisionContainer broadcasting', () => {
 		);
 
 		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
-		const mockDocker = {
+		const mockDocker = createStubDocker({
 			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn().mockRejectedValue(new Error('Image not found')),
-		} as any;
+		});
 		const mockWsManager = { broadcast: vi.fn() } as any;
 
 		const project = (
@@ -918,8 +928,9 @@ describe('provisionContainer broadcasting', () => {
 			),
 		).rejects.toThrow('Image not found');
 
-		expect(mockWsManager.broadcast).toHaveBeenCalledTimes(1);
-		const [room, event] = mockWsManager.broadcast.mock.calls[0];
+		expect(mockWsManager.broadcast).toHaveBeenCalledTimes(2);
+		expect(mockWsManager.broadcast.mock.calls[0][1].row.container_status).toBe('creating');
+		const [room, event] = mockWsManager.broadcast.mock.calls[1];
 		expect(room).toBe(wsRoom.team(teamId));
 		expect(event.type).toBe('row_change');
 		expect(event.table).toBe('projects');

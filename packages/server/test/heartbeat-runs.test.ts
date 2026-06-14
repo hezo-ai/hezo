@@ -492,8 +492,7 @@ describe('created_tasks tracking', () => {
 				params: {
 					name: 'create_task',
 					arguments: {
-						team_id: teamId,
-						project_id: projectId,
+						project: projectId,
 						title: 'Spawned Task',
 						description: 'Created by agent during run',
 						assignee_id: agentId,
@@ -595,19 +594,18 @@ describe('created_tasks tracking', () => {
 		};
 
 		await callMcp('write_project_doc', {
-			team_id: teamId,
-			project_id: projectId,
+			project: projectId,
 			filename: 'spec.md',
 			content: '# Spec\n\nDetails.',
 		});
 		await callMcp('create_skill', {
-			team_id: teamId,
+			project: projectId,
 			name: 'Deploy Flow',
 			slug: 'deploy-flow',
 			content: '# Deploy Flow\n\nHow to deploy.',
 		});
 		await callMcp('propose_skill', {
-			team_id: teamId,
+			project: projectId,
 			skill_name: 'Linear Triage',
 			skill_slug: 'linear-triage',
 			content: '# Linear Triage',
@@ -654,8 +652,7 @@ describe('created_tasks tracking', () => {
 				params: {
 					name: 'create_task',
 					arguments: {
-						team_id: teamId,
-						project_id: projectId,
+						project: projectId,
 						title: 'Admin-created Task',
 						assignee_id: agentId,
 					},

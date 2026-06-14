@@ -9,13 +9,13 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let teamId: string;
-let teamSlug: string;
 let projectSlug: string;
 let agentId: string;
 let agent2Id: string;
 let projectId: string;
-let project2Id: string;
 let taskId: string;
+let anthropicConfigId: string;
+let openaiConfigId: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -39,7 +39,6 @@ beforeAll(async () => {
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
-	teamSlug = team.slug;
 
 	// Get two agents to work with
 	const agentsRes = await app.request(`/api/projects/${await projectSlugFor(db, teamId)}/agents`, {
@@ -49,7 +48,7 @@ beforeAll(async () => {
 	agentId = agents.find((a: Record<string, unknown>) => a.slug === 'engineer').id;
 	agent2Id = agents.find((a: Record<string, unknown>) => a.slug === 'ui-designer').id;
 
-	// Create two projects
+	// All cost reads are project-scoped now; everything below belongs to this project.
 	const proj1Res = await createTestProject(db, teamId, {
 		name: 'Project Alpha',
 		description: 'Test project.',
@@ -58,22 +57,7 @@ beforeAll(async () => {
 	projectId = proj1.id;
 	projectSlug = proj1.slug;
 
-	// With 1:1 teams↔projects a second project needs its own team. The cost_entries
-	// below stay scoped to this team (team_id = teamId); project2Id is only a
-	// project reference used by the project_id/group-by filters.
-	const team2Res = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Extended Cost Co Beta', template_id: typeId }),
-	});
-	const team2Id = (await team2Res.json()).data.id;
-	const proj2Res = await createTestProject(db, team2Id, {
-		name: 'Project Beta',
-		description: 'Test project.',
-	});
-	project2Id = (await proj2Res.json()).data.id;
-
-	// Create an task under project 1
+	// Create an task under the project
 	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -85,17 +69,27 @@ beforeAll(async () => {
 	});
 	taskId = (await taskRes.json()).data.id;
 
-	// Insert cost entries with varied dates, agents, and projects directly via DB
-	// so we can control timestamps precisely for date-range tests.
-	// All amounts are small to stay within budget limits.
+	// Two AI adapter configs to exercise the per-adapter breakdown.
+	const cfg = await db.query<{ id: string }>(
+		`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential)
+		 VALUES ('anthropic', 'api_key', 'Anthropic Prod', 'x'),
+		        ('openai', 'api_key', 'OpenAI Prod', 'y')
+		 RETURNING id, provider`,
+	);
+	anthropicConfigId = (cfg.rows as any[]).find((r) => r.provider === 'anthropic').id;
+	openaiConfigId = (cfg.rows as any[]).find((r) => r.provider === 'openai').id;
+
+	// Insert cost entries with varied dates, agents, and adapters directly via DB
+	// so we can control timestamps precisely for date-range tests. All belong to the
+	// project above. Amounts stay small to stay within budget limits.
 	await db.query(
-		`INSERT INTO cost_entries (team_id, member_id, project_id, task_id, amount_cents, description, created_at)
+		`INSERT INTO cost_entries (member_id, project_id, task_id, amount_cents, description, ai_provider_config_id, provider, created_at)
      VALUES
-       ($1, $2, $3, $4, 50,  'past entry',          '2024-01-15 10:00:00+00'),
-       ($1, $2, $3, NULL, 75,  'past no-task',      '2024-01-20 12:00:00+00'),
-       ($1, $5, $6, NULL, 120, 'agent2 project2',    '2024-02-10 08:00:00+00'),
-       ($1, $2, NULL, NULL, 30, 'agent1 no project',  '2024-03-01 09:00:00+00')`,
-		[teamId, agentId, projectId, taskId, agent2Id, project2Id],
+       ($2, $1, $3, 50,  'past entry',         $4, 'anthropic', '2024-01-15 10:00:00+00'),
+       ($2, $1, NULL, 75, 'past no-task',       $4, 'anthropic', '2024-01-20 12:00:00+00'),
+       ($5, $1, NULL, 120,'agent2 openai',      $6, 'openai',    '2024-02-10 08:00:00+00'),
+       ($2, $1, NULL, 30, 'agent1 unattributed', NULL, NULL,     '2024-03-01 09:00:00+00')`,
+		[projectId, agentId, taskId, anthropicConfigId, agent2Id, openaiConfigId],
 	);
 });
 
@@ -105,26 +99,20 @@ afterAll(async () => {
 
 describe('costs – date range filtering', () => {
 	it('filters by from date (inclusive)', async () => {
-		const res = await app.request(
-			`/api/projects/${await projectSlugFor(db, teamId)}/costs?from=2024-02-01`,
-			{
-				headers: authHeader(token),
-			},
-		);
+		const res = await app.request(`/api/projects/${projectSlug}/costs?from=2024-02-01`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		// Only entries on/after 2024-02-01: agent2 (120) + agent1 no-project (30)
+		// Only entries on/after 2024-02-01: agent2 (120) + agent1 unattributed (30)
 		expect(body.data.entries.length).toBe(2);
 		expect(body.data.total_cents).toBe(150);
 	});
 
 	it('filters by to date (inclusive)', async () => {
-		const res = await app.request(
-			`/api/projects/${await projectSlugFor(db, teamId)}/costs?to=2024-01-31`,
-			{
-				headers: authHeader(token),
-			},
-		);
+		const res = await app.request(`/api/projects/${projectSlug}/costs?to=2024-01-31`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		// Only entries on/before 2024-01-31: past entry (50) + past no-task (75)
@@ -134,58 +122,61 @@ describe('costs – date range filtering', () => {
 
 	it('filters by from and to range together', async () => {
 		const res = await app.request(
-			`/api/projects/${await projectSlugFor(db, teamId)}/costs?from=2024-01-18&to=2024-02-28`,
+			`/api/projects/${projectSlug}/costs?from=2024-01-18&to=2024-02-28`,
 			{
 				headers: authHeader(token),
 			},
 		);
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		// Entries in range: past no-task (75, Jan 20) + agent2 project2 (120, Feb 10)
+		// Entries in range: past no-task (75, Jan 20) + agent2 openai (120, Feb 10)
 		expect(body.data.entries.length).toBe(2);
 		expect(body.data.total_cents).toBe(195);
 	});
 });
 
-describe('costs – project_id filter', () => {
-	it('returns only entries for the specified project', async () => {
-		const res = await app.request(
-			`/api/projects/${await projectSlugFor(db, teamId)}/costs?project_id=${projectId}`,
-			{
-				headers: authHeader(token),
-			},
-		);
+describe('costs – project scoping', () => {
+	it('returns only entries for the path project', async () => {
+		const res = await app.request(`/api/projects/${projectSlug}/costs`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		// past entry (50) + past no-task (75) both belong to project 1
-		expect(body.data.entries.length).toBe(2);
+		expect(body.data.entries.length).toBe(4);
 		for (const entry of body.data.entries) {
 			expect(entry.project_id).toBe(projectId);
 		}
+		expect(body.data.total_cents).toBe(275);
 	});
 
-	it('returns only entries for project2', async () => {
-		const res = await app.request(
-			`/api/projects/${await projectSlugFor(db, teamId)}/costs?project_id=${project2Id}`,
-			{
-				headers: authHeader(token),
-			},
-		);
+	it('returns no entries for a different project', async () => {
+		// A team owns exactly one project (1:1), so a second project needs its own
+		// team. None of our cost entries belong to it, so it should read empty.
+		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
+		const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
+		const team2Res = await app.request('/api/teams', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Other Cost Co', template_id: typeId }),
+		});
+		const team2Id = (await team2Res.json()).data.id;
+		const other = await createTestProject(db, team2Id, { name: 'Project Beta' });
+		const otherSlug = (await other.json()).data.slug;
+		const res = await app.request(`/api/projects/${otherSlug}/costs`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.entries.length).toBe(1);
-		expect(body.data.total_cents).toBe(120);
+		expect(body.data.entries.length).toBe(0);
+		expect(body.data.total_cents).toBe(0);
 	});
 });
 
 describe('costs – task_id filter', () => {
 	it('returns only entries linked to the specified task', async () => {
-		const res = await app.request(
-			`/api/projects/${await projectSlugFor(db, teamId)}/costs?task_id=${taskId}`,
-			{
-				headers: authHeader(token),
-			},
-		);
+		const res = await app.request(`/api/projects/${projectSlug}/costs?task_id=${taskId}`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		// Only "past entry" (50) has task_id set
@@ -197,12 +188,9 @@ describe('costs – task_id filter', () => {
 
 describe('costs – group_by=day', () => {
 	it('groups cost entries by day with correct totals', async () => {
-		const res = await app.request(
-			`/api/projects/${await projectSlugFor(db, teamId)}/costs?group_by=day`,
-			{
-				headers: authHeader(token),
-			},
-		);
+		const res = await app.request(`/api/projects/${projectSlug}/costs?group_by=day`, {
+			headers: authHeader(token),
+		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.summary).toBeDefined();
@@ -217,7 +205,7 @@ describe('costs – group_by=day', () => {
 
 	it('group_by=day with date range returns subset', async () => {
 		const res = await app.request(
-			`/api/projects/${await projectSlugFor(db, teamId)}/costs?group_by=day&from=2024-02-01&to=2024-03-31`,
+			`/api/projects/${projectSlug}/costs?group_by=day&from=2024-02-01&to=2024-03-31`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(200);
@@ -227,37 +215,53 @@ describe('costs – group_by=day', () => {
 	});
 });
 
-describe('costs – group_by=project', () => {
-	it('groups cost entries by project', async () => {
+describe('costs – group_by=day&breakdown=agent', () => {
+	it('returns per-day spend split by agent', async () => {
 		const res = await app.request(
-			`/api/projects/${await projectSlugFor(db, teamId)}/costs?group_by=project`,
-			{
-				headers: authHeader(token),
-			},
+			`/api/projects/${projectSlug}/costs?group_by=day&breakdown=agent`,
+			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.summary).toBeDefined();
+		const rows: any[] = body.data.summary;
+		// 4 (day, agent) cells; each row carries the agent's title.
+		expect(rows.length).toBe(4);
+		for (const r of rows) expect(typeof r.agent_title).toBe('string');
 
-		const proj1Row = body.data.summary.find((r: any) => r.project_id === projectId);
-		const proj2Row = body.data.summary.find((r: any) => r.project_id === project2Id);
-		const nullRow = body.data.summary.find((r: any) => r.project_id === null);
+		const byAgent = (id: string) =>
+			rows.filter((r) => r.agent_id === id).reduce((s, r) => s + r.total_cents, 0);
+		expect(byAgent(agentId)).toBe(155); // 50 + 75 + 30
+		expect(byAgent(agent2Id)).toBe(120);
+		expect(body.data.total_cents).toBe(275);
+	});
+});
 
-		expect(proj1Row).toBeDefined();
-		expect(proj1Row.total_cents).toBe(125); // 50+75
-		expect(proj2Row).toBeDefined();
-		expect(proj2Row.total_cents).toBe(120);
-		// The entry with no project lands in the null bucket
-		expect(nullRow).toBeDefined();
-		expect(nullRow.total_cents).toBe(30);
+describe('costs – group_by=day&breakdown=adapter', () => {
+	it('returns per-day spend split by AI adapter config', async () => {
+		const res = await app.request(
+			`/api/projects/${projectSlug}/costs?group_by=day&breakdown=adapter`,
+			{ headers: authHeader(token) },
+		);
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		const rows: any[] = body.data.summary;
 
+		const byConfig = (id: string | null) =>
+			rows.filter((r) => r.ai_provider_config_id === id).reduce((s, r) => s + r.total_cents, 0);
+		expect(byConfig(anthropicConfigId)).toBe(125); // 50 + 75
+		expect(byConfig(openaiConfigId)).toBe(120);
+		expect(byConfig(null)).toBe(30); // unattributed
+
+		const anthropicRow = rows.find((r) => r.ai_provider_config_id === anthropicConfigId);
+		expect(anthropicRow.adapter_label).toBe('Anthropic Prod');
+		expect(anthropicRow.provider).toBe('anthropic');
 		expect(body.data.total_cents).toBe(275);
 	});
 });
 
 describe('costs – POST validation', () => {
 	it('returns 400 when member_id is missing', async () => {
-		const res = await app.request(`/api/projects/${await projectSlugFor(db, teamId)}/costs`, {
+		const res = await app.request(`/api/projects/${projectSlug}/costs`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ amount_cents: 100 }),
@@ -268,7 +272,7 @@ describe('costs – POST validation', () => {
 	});
 
 	it('returns 400 when amount_cents is zero', async () => {
-		const res = await app.request(`/api/projects/${await projectSlugFor(db, teamId)}/costs`, {
+		const res = await app.request(`/api/projects/${projectSlug}/costs`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ member_id: agentId, amount_cents: 0 }),
@@ -279,7 +283,7 @@ describe('costs – POST validation', () => {
 	});
 
 	it('returns 400 when amount_cents is negative', async () => {
-		const res = await app.request(`/api/projects/${await projectSlugFor(db, teamId)}/costs`, {
+		const res = await app.request(`/api/projects/${projectSlug}/costs`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ member_id: agentId, amount_cents: -50 }),
@@ -290,7 +294,7 @@ describe('costs – POST validation', () => {
 	});
 
 	it('returns 400 when amount_cents is missing', async () => {
-		const res = await app.request(`/api/projects/${await projectSlugFor(db, teamId)}/costs`, {
+		const res = await app.request(`/api/projects/${projectSlug}/costs`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ member_id: agentId }),

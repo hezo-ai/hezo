@@ -13,8 +13,10 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as HomeIndexRouteImport } from './routes/home/index'
 import { Route as SettingsSkillsRouteImport } from './routes/settings/skills'
+import { Route as SettingsModelPricingRouteImport } from './routes/settings/model-pricing'
 import { Route as SettingsCredentialsRouteImport } from './routes/settings/credentials'
 import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
+import { Route as SettingsChatboxRouteImport } from './routes/settings/chatbox'
 import { Route as SettingsAuditLogRouteImport } from './routes/settings/audit-log'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
 import { Route as ProjectsProjectIdRouteRouteImport } from './routes/projects/$projectId/route'
@@ -24,6 +26,7 @@ import { Route as HomeInboxIndexRouteImport } from './routes/home/inbox/index'
 import { Route as ProjectsProjectIdDocumentsRouteImport } from './routes/projects/$projectId/documents'
 import { Route as ProjectsProjectIdContainerRouteImport } from './routes/projects/$projectId/container'
 import { Route as ProjectsProjectIdConnectorsRouteImport } from './routes/projects/$projectId/connectors'
+import { Route as ProjectsProjectIdBudgetRouteImport } from './routes/projects/$projectId/budget'
 import { Route as ProjectsProjectIdAuditLogRouteImport } from './routes/projects/$projectId/audit-log'
 import { Route as ProjectsProjectIdAssetsRouteImport } from './routes/projects/$projectId/assets'
 import { Route as PreviewProjectIdFilenameRouteImport } from './routes/preview/$projectId/$filename'
@@ -61,6 +64,11 @@ const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
   path: '/settings/skills',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsModelPricingRoute = SettingsModelPricingRouteImport.update({
+  id: '/settings/model-pricing',
+  path: '/settings/model-pricing',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
   id: '/settings/credentials',
   path: '/settings/credentials',
@@ -69,6 +77,11 @@ const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
 const SettingsConnectorsRoute = SettingsConnectorsRouteImport.update({
   id: '/settings/connectors',
   path: '/settings/connectors',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsChatboxRoute = SettingsChatboxRouteImport.update({
+  id: '/settings/chatbox',
+  path: '/settings/chatbox',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsAuditLogRoute = SettingsAuditLogRouteImport.update({
@@ -119,6 +132,11 @@ const ProjectsProjectIdConnectorsRoute =
     path: '/connectors',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
+const ProjectsProjectIdBudgetRoute = ProjectsProjectIdBudgetRouteImport.update({
+  id: '/budget',
+  path: '/budget',
+  getParentRoute: () => ProjectsProjectIdRouteRoute,
+} as any)
 const ProjectsProjectIdAuditLogRoute =
   ProjectsProjectIdAuditLogRouteImport.update({
     id: '/audit-log',
@@ -220,14 +238,17 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
+  '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/model-pricing': typeof SettingsModelPricingRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/home/': typeof HomeIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/preview/$projectId/$filename': typeof PreviewProjectIdFilenameRoute
   '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
   '/projects/$projectId/audit-log': typeof ProjectsProjectIdAuditLogRoute
+  '/projects/$projectId/budget': typeof ProjectsProjectIdBudgetRoute
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
@@ -252,14 +273,17 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
+  '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/model-pricing': typeof SettingsModelPricingRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/home': typeof HomeIndexRoute
   '/settings': typeof SettingsIndexRoute
   '/preview/$projectId/$filename': typeof PreviewProjectIdFilenameRoute
   '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
   '/projects/$projectId/audit-log': typeof ProjectsProjectIdAuditLogRoute
+  '/projects/$projectId/budget': typeof ProjectsProjectIdBudgetRoute
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
@@ -285,14 +309,17 @@ export interface FileRoutesById {
   '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
+  '/settings/chatbox': typeof SettingsChatboxRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
+  '/settings/model-pricing': typeof SettingsModelPricingRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/home/': typeof HomeIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/preview/$projectId/$filename': typeof PreviewProjectIdFilenameRoute
   '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
   '/projects/$projectId/audit-log': typeof ProjectsProjectIdAuditLogRoute
+  '/projects/$projectId/budget': typeof ProjectsProjectIdBudgetRoute
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
   '/projects/$projectId/documents': typeof ProjectsProjectIdDocumentsRoute
@@ -320,14 +347,17 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/settings/ai-providers'
     | '/settings/audit-log'
+    | '/settings/chatbox'
     | '/settings/connectors'
     | '/settings/credentials'
+    | '/settings/model-pricing'
     | '/settings/skills'
     | '/home/'
     | '/settings/'
     | '/preview/$projectId/$filename'
     | '/projects/$projectId/assets'
     | '/projects/$projectId/audit-log'
+    | '/projects/$projectId/budget'
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
     | '/projects/$projectId/documents'
@@ -352,14 +382,17 @@ export interface FileRouteTypes {
     | '/'
     | '/settings/ai-providers'
     | '/settings/audit-log'
+    | '/settings/chatbox'
     | '/settings/connectors'
     | '/settings/credentials'
+    | '/settings/model-pricing'
     | '/settings/skills'
     | '/home'
     | '/settings'
     | '/preview/$projectId/$filename'
     | '/projects/$projectId/assets'
     | '/projects/$projectId/audit-log'
+    | '/projects/$projectId/budget'
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
     | '/projects/$projectId/documents'
@@ -384,14 +417,17 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/settings/ai-providers'
     | '/settings/audit-log'
+    | '/settings/chatbox'
     | '/settings/connectors'
     | '/settings/credentials'
+    | '/settings/model-pricing'
     | '/settings/skills'
     | '/home/'
     | '/settings/'
     | '/preview/$projectId/$filename'
     | '/projects/$projectId/assets'
     | '/projects/$projectId/audit-log'
+    | '/projects/$projectId/budget'
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
     | '/projects/$projectId/documents'
@@ -418,8 +454,10 @@ export interface RootRouteChildren {
   ProjectsProjectIdRouteRoute: typeof ProjectsProjectIdRouteRouteWithChildren
   SettingsAiProvidersRoute: typeof SettingsAiProvidersRoute
   SettingsAuditLogRoute: typeof SettingsAuditLogRoute
+  SettingsChatboxRoute: typeof SettingsChatboxRoute
   SettingsConnectorsRoute: typeof SettingsConnectorsRoute
   SettingsCredentialsRoute: typeof SettingsCredentialsRoute
+  SettingsModelPricingRoute: typeof SettingsModelPricingRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
   HomeIndexRoute: typeof HomeIndexRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
@@ -458,6 +496,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsSkillsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/model-pricing': {
+      id: '/settings/model-pricing'
+      path: '/settings/model-pricing'
+      fullPath: '/settings/model-pricing'
+      preLoaderRoute: typeof SettingsModelPricingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings/credentials': {
       id: '/settings/credentials'
       path: '/settings/credentials'
@@ -470,6 +515,13 @@ declare module '@tanstack/react-router' {
       path: '/settings/connectors'
       fullPath: '/settings/connectors'
       preLoaderRoute: typeof SettingsConnectorsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/chatbox': {
+      id: '/settings/chatbox'
+      path: '/settings/chatbox'
+      fullPath: '/settings/chatbox'
+      preLoaderRoute: typeof SettingsChatboxRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/audit-log': {
@@ -533,6 +585,13 @@ declare module '@tanstack/react-router' {
       path: '/connectors'
       fullPath: '/projects/$projectId/connectors'
       preLoaderRoute: typeof ProjectsProjectIdConnectorsRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/budget': {
+      id: '/projects/$projectId/budget'
+      path: '/budget'
+      fullPath: '/projects/$projectId/budget'
+      preLoaderRoute: typeof ProjectsProjectIdBudgetRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
     '/projects/$projectId/audit-log': {
@@ -677,6 +736,7 @@ const ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren =
 interface ProjectsProjectIdRouteRouteChildren {
   ProjectsProjectIdAssetsRoute: typeof ProjectsProjectIdAssetsRoute
   ProjectsProjectIdAuditLogRoute: typeof ProjectsProjectIdAuditLogRoute
+  ProjectsProjectIdBudgetRoute: typeof ProjectsProjectIdBudgetRoute
   ProjectsProjectIdConnectorsRoute: typeof ProjectsProjectIdConnectorsRoute
   ProjectsProjectIdContainerRoute: typeof ProjectsProjectIdContainerRoute
   ProjectsProjectIdDocumentsRoute: typeof ProjectsProjectIdDocumentsRoute
@@ -696,6 +756,7 @@ const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
   {
     ProjectsProjectIdAssetsRoute: ProjectsProjectIdAssetsRoute,
     ProjectsProjectIdAuditLogRoute: ProjectsProjectIdAuditLogRoute,
+    ProjectsProjectIdBudgetRoute: ProjectsProjectIdBudgetRoute,
     ProjectsProjectIdConnectorsRoute: ProjectsProjectIdConnectorsRoute,
     ProjectsProjectIdContainerRoute: ProjectsProjectIdContainerRoute,
     ProjectsProjectIdDocumentsRoute: ProjectsProjectIdDocumentsRoute,
@@ -724,8 +785,10 @@ const rootRouteChildren: RootRouteChildren = {
   ProjectsProjectIdRouteRoute: ProjectsProjectIdRouteRouteWithChildren,
   SettingsAiProvidersRoute: SettingsAiProvidersRoute,
   SettingsAuditLogRoute: SettingsAuditLogRoute,
+  SettingsChatboxRoute: SettingsChatboxRoute,
   SettingsConnectorsRoute: SettingsConnectorsRoute,
   SettingsCredentialsRoute: SettingsCredentialsRoute,
+  SettingsModelPricingRoute: SettingsModelPricingRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,
   HomeIndexRoute: HomeIndexRoute,
   SettingsIndexRoute: SettingsIndexRoute,

@@ -40,8 +40,9 @@ export function taskStatusMeta(status: string): BadgeMeta {
 
 export const AGENT_RUNTIME_STATUS_META: Record<AgentRuntimeStatus, BadgeMeta> = {
 	[AgentRuntimeStatus.Active]: { color: 'green', label: 'Running' },
-	[AgentRuntimeStatus.Paused]: { color: 'yellow', label: 'Paused' },
 	[AgentRuntimeStatus.Idle]: { color: 'neutral', label: 'Idle' },
+	[AgentRuntimeStatus.OutOfAgentBudget]: { color: 'red', label: 'Over agent budget' },
+	[AgentRuntimeStatus.OutOfProjectBudget]: { color: 'red', label: 'Over project budget' },
 };
 
 /** Runtime-status badge meta, defaulting to Idle for unknown values. */

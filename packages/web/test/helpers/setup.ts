@@ -30,6 +30,33 @@ console.error = (...args: unknown[]) => {
 	originalConsoleError(...args);
 };
 
+// Node ≥22 ships an experimental `localStorage` global that is undefined unless
+// the process runs with --localstorage-file. Vitest's happy-dom environment
+// won't overwrite an existing global, so on those Node versions every module
+// that touches localStorage at import time (the api singleton) explodes with
+// "Cannot read properties of undefined". Backfill a plain in-memory Storage.
+if (globalThis.localStorage === undefined) {
+	const store = new Map<string, string>();
+	const memoryStorage: Storage = {
+		get length() {
+			return store.size;
+		},
+		clear: () => store.clear(),
+		getItem: (key: string) => store.get(key) ?? null,
+		key: (index: number) => [...store.keys()][index] ?? null,
+		removeItem: (key: string) => {
+			store.delete(key);
+		},
+		setItem: (key: string, value: string) => {
+			store.set(key, String(value));
+		},
+	};
+	Object.defineProperty(globalThis, 'localStorage', {
+		value: memoryStorage,
+		configurable: true,
+	});
+}
+
 // happy-dom has no layout, so react-virtuoso measures zero viewport and refuses
 // to mount any items. Component-tier tests don't care about virtualization;
 // stub Virtuoso to a plain mapped list so comments / sub-tasks / KB lists

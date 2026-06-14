@@ -124,6 +124,39 @@ describe('global credentials (secrets)', () => {
 		expect(blankName.status).toBe(400);
 	});
 
+	it('rejects names the egress proxy could never reference', async () => {
+		// These would store a secret no canonical placeholder can match —
+		// silently un-substitutable. The admin route must reject them, matching
+		// request_credential's validation.
+		for (const name of ['stripe-key', 'lowercase', '1LEADING', '_LEADING', 'A'.repeat(65)]) {
+			const res = await createSecret({ name, value: 'x', allow_all_hosts: true });
+			expect(res.status, `name ${name} should be rejected`).toBe(400);
+		}
+	});
+
+	it('normalizes allowed_hosts (trim, lowercase, drop empties) on create and patch', async () => {
+		const createRes = await createSecret({
+			name: 'NORMALIZED_HOST',
+			value: 'v',
+			allowed_hosts: [' API.Example.COM ', '', '   ', 'b.example'],
+		});
+		expect(createRes.status).toBe(201);
+		const created = (await createRes.json()).data;
+		expect(created.allowed_hosts).toEqual(['api.example.com', 'b.example']);
+
+		const patch = await app.request(`/api/secrets/${created.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ allowed_hosts: ['  C.EXAMPLE  ', ''] }),
+		});
+		expect(patch.status).toBe(200);
+		expect((await patch.json()).data.allowed_hosts).toEqual(['c.example']);
+
+		// The egress loader sees the cleaned entries, so the host match works.
+		const loaded = await loadAllSecrets({ db, masterKeyManager });
+		expect(loaded.get('NORMALIZED_HOST')?.allowedHosts).toEqual(['c.example']);
+	});
+
 	it('returns 404 when patching or deleting a non-existent secret', async () => {
 		const fakeId = '00000000-0000-0000-0000-000000000000';
 		const patch = await app.request(`/api/secrets/${fakeId}`, {

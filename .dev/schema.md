@@ -13,12 +13,12 @@
 | `agent_types` | First-class agent type catalog. Each type defines a role template: name, slug, system prompt template, default runtime config, budget, `default_summary` (pre-generated description loaded from `packages/server/src/db/agent-summaries.json`), `touches_code` (default capability flag — seeded true for builder roles, copied onto `member_agents` at hire time). Built-in types ship with Hezo; custom types can be user-created; remote types can be loaded from hezo connect. | Referenced by team_template_agent_types, member_agents. |
 | `team_templates` | Team blueprints (team type recipes). Groups of agent types plus default skills, preferences, MCP servers, `default_summary` (pre-generated team collaboration description). | Referenced by team_template_assignments. |
 | `team_template_agent_types` | Join table linking team types to agent types. Stores org chart hierarchy (reports_to_slug) and per-team-type config overrides (runtime type, heartbeat, budget). | belongs to team_template + agent_type |
-| `teams` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), team-level budget, `summary` (auto-generated team collaboration description, ≤20 lines). | Parent of everything. |
+| `teams` | Top-level tenant. Has `mcp_servers` (JSONB), `mpp_config` (JSONB), `settings` (JSONB), `summary` (auto-generated team collaboration description, ≤20 lines). No team budget — budgets live on agents/projects. | Parent of everything. |
 | `team_template_assignments` | Many-to-many join table linking teams to the team types they were created from. | belongs to team + team_template |
 | `invites` | Pending invitations. Carries role, title, permissions, project scope. | belongs to team |
 | `api_keys` | Team-scoped keys for external orchestrators. Stored bcrypt-hashed. | belongs to team |
 | `projects` | Group of related work under a team. Has `task_prefix` (2–4 uppercase chars used for task identifiers), Docker container config, dev ports, designated repo. `is_internal` flag marks auto-created projects (e.g. Internal) that cannot be deleted. | belongs to team |
-| `repos` | Git repo (GitHub only). Stores `org/repo` identifier. Short name for @-mentions. | belongs to project |
+| `repos` | Git repo (GitHub only). Stores `org/repo` identifier; the repo name (segment after the owner) is the display label, directory name, and @-mention handle. | belongs to project |
 | `tasks` | Ticket. Must have a project. Linear-style `identifier` (e.g. `IN-42`) built from the project's `task_prefix` + per-project number. Assignee references `members.id`. Has `rules` (approach instructions) and `progress_summary` (agent-maintained status). | belongs to team + project, assigned to member |
 | `task_dependencies` | Many-to-many blocking relationships between tasks. | links task ↔ task |
 | `task_comments` | Thread entries. Polymorphic via `content_type` + `content` JSONB. Includes execution-type comments auto-created when agent runs complete. | belongs to task |
@@ -27,7 +27,8 @@
 | `secrets` | Encrypted key/value. Scoped to team or team+project; `team_id NULL` = an instance-level credential shared with every team's egress (Admin-managed, unique by name). | belongs to team (or instance), optionally project |
 | `secret_grants` | Which agent has access to which secret. Revocable. | links secret ↔ member_agent |
 | `approvals` | Pending board decisions. Polymorphic payload. | belongs to team, requested by member_agent |
-| `cost_entries` | Immutable spend records per agent per task. | belongs to team + member_agent, optionally task/project |
+| `cost_entries` | Immutable spend records per agent per task, attributed to the AI adapter config (`ai_provider_config_id` + `provider` snapshot) that produced them. Cost is project/agent/adapter-scoped — there is **no** `team_id` (cost is never tracked per team). | belongs to member_agent, optionally task/project/ai_provider_config |
+| `model_pricing` | Per-model token rates (per-token) used to compute run cost across every runtime. `source='litellm'` rows seed from a bundled snapshot and refresh from the public LiteLLM feed; `source='manual'` operator overrides win at lookup. `UNIQUE(model_id, source)`. | instance-global |
 | `audit_log` | Append-only activity trail. `team_id` is nullable (NULL = an instance-level admin action not bound to a team); `project_id` is nullable (set for project-scoped events). Read at three scopes: instance (`GET /api/audit-log`, superuser), team, and per-project. | optionally team, optionally project |
 | `documents` | Unified Markdown document store keyed by `type` (`project_doc` / `team_preferences` / `agent_system_prompt`). Project docs scope by `(project_id, slug)`; preferences by `(team_id)` (one per team); agent system prompts by `(member_agent_id)` (one per agent). Embeddings live on this table for project docs. The team-level reference store is the `skills` table, not this one. | belongs to team, optionally project or member_agent |
 | `document_revisions` | Snapshot of prior content created on every change. `change_summary` captures intent; `Restored to revision N` is set automatically by the rollback path. Shared by all document types — agent system prompt history lives here too. | belongs to document |
@@ -98,12 +99,32 @@ The `content_type` enum discriminates the shape:
 - `execution` → `{ "heartbeat_run_id", "agent_id", "agent_title", "status", "exit_code", "duration_ms", "stdout_preview" }` (auto-created on agent run completion)
 - `action` → `{ "kind": "setup_repo", "approval_id": "..." }` — surfaces a board-required action inline on the ticket. Resolves by setting `chosen_option` to `{ status: 'complete', result: {...} }`. Currently only `setup_repo` is defined, used by the designated-repo gate.
 
-### Atomic budget enforcement
+### Budget enforcement (windowed)
 
-`debit_agent_budget()` uses `SELECT ... FOR UPDATE` to row-lock the agent before
-checking + debiting. This prevents two concurrent heartbeats from overspending.
-Returns FALSE if the debit would exceed the budget — the caller should then
-pause the agent and emit a system comment.
+Budgets live on `member_agents` and `projects` as `daily_/weekly_/monthly_budget_cents`
+(0 = unlimited for that window). There is **no team budget** (project-centric model).
+Spend is **computed on demand** by summing `cost_entries.amount_cents` over rolling
+UTC windows (`date_trunc('day'|'week'|'month', now() AT TIME ZONE 'UTC')`) — there is
+no running counter to reset. The logic lives in `services/budget.ts` (`getAgentSpend`,
+`getProjectSpend`, `getAgentBudgetStatus`, `getProjectBudgetStatus`, `checkOverBudget`,
+`recordRunCost`), not a stored function.
+
+A run is blocked when the agent **or** its project is over **any** window. Enforcement
+points: (1) a **pre-run gate** in `JobManager.activateAgent` skips the run (no
+`heartbeat_runs` row, no container/repo work), pauses the agent, and marks the wakeup
+skipped with `WakeupSkipReason.OverBudget`; (2) **run completion** (`agent-runner.ts`)
+records the run's cost as one `cost_entries` row — attributed to the AI adapter config
+resolved for the run (stamped on `heartbeat_runs.ai_provider_config_id`/`provider` at
+start, read back when recording) — and reactively pauses the agent if it is now over;
+(3) the manual `POST /costs` path does the same reactive pause.
+
+Cost **reads** are project-scoped: `GET /projects/:projectId/costs` filters by
+`project_id`, and `group_by=day` (optionally `breakdown=agent|adapter`) powers the
+per-day Budgets-page charts (project total, stacked by agent, stacked by adapter
+config). There is no team-scoped cost query. Run
+completion is the single source of truth for run spend — the tool-call report path
+(`agent-api.ts`) records `tool_calls.cost_cents` for display only and does **not** debit
+(the run total already includes tool-call cost).
 
 ### Atomic task numbering
 
@@ -163,8 +184,10 @@ The app layer performs a two-step validation before inserting:
    (403/404), the request fails with `REPO_ACCESS_FAILED` and includes the
    GitHub username so the board knows which account needs to be added.
 
-Short names are unique within a project and used for @-mentions in task
-comments (`@frontend`, `@api`).
+The repo's name — `split_part(repo_identifier, '/', 2)` — is its display label
+and the name of its workspace/worktree directories, so it is unique within a
+project (unique expression index), even across owners. It is also used for
+@-mentions in task comments (`@frontend`, `@api`).
 
 ### Designated repo immutability
 
@@ -228,15 +251,22 @@ blanket `DO INSTEAD NOTHING` rule on UPDATE/DELETE is intentionally **not**
 added (it would break those FK actions). Immutability is enforced at the app
 layer: the observer is the only writer, and nothing else touches the table.
 
-### Budget resets
+### Budget windows (no resets)
 
-`member_agents.budget_reset_at` tracks when the budget was last zeroed. A scheduled
-job (or heartbeat check) compares this to the current month boundary and resets
-`budget_used_cents = 0` when a new month starts.
+There is no reset bookkeeping. Each window's spend is the sum of `cost_entries`
+since the window's UTC start (today / this ISO-week / this month), so windows
+"reset" implicitly as the clock advances. Limits are `daily_/weekly_/monthly_budget_cents`
+on `member_agents` and `projects`; 0 means unlimited.
 
-When budget is exceeded mid-execution, the agent's subprocess is terminated
-immediately. A system comment is posted on the active task. The board can
-adjust the budget and resume the agent at any time.
+When an agent goes over budget it is reactively paused — `runtime_status` becomes
+`out_of_agent_budget` or `out_of_project_budget`, depending on which limit
+tripped — and its pending wakeup is skipped, so no run is started. (Manually
+turning an agent off is a separate axis, `admin_status = 'disabled'`.) Because
+spend is summed over rolling windows
+with no reset event, a background sweep (`processBudgetResumes`, ~30s) re-checks
+every budget-paused agent and lifts it back to `idle` once the window rolls over
+or the board raises the limit; the next eligible wakeup then runs. The pre-run
+gate stays the authority and re-pauses if a window is breached again.
 
 ### Preview files (not in DB)
 
@@ -270,7 +300,7 @@ ensure unambiguous @-mentions.
 
 All inter-agent communication happens via @-mentions in task comments — no
 side channels, no direct messaging. The server parses `@<slug>` from comment
-text and creates notifications for mentioned agents. Repo short names can also
+text and creates notifications for mentioned agents. Repo names can also
 be @-referenced (`@frontend`, `@api`).
 
 ### Subagents
@@ -325,8 +355,9 @@ Settings are merged on PATCH (`settings = settings || $1::jsonb`), so partial up
 The wallet private key is not stored in `mpp_config` — it lives in the
 `secrets` table, referenced by `wallet_key_secret_name`. When MPP is enabled,
 the project container gets `mppx` CLI and wallet credentials are injected into agent subprocesses. Every MPP
-payment is reported as a tool call cost and debited against the agent's budget
-via the same `debit_agent_budget()` atomic function.
+payment is reported as a tool call cost (`tool_calls.cost_cents`) for display; the
+run's total cost is recorded once at run completion and counts against the agent's
+windowed budgets (see "Budget enforcement (windowed)").
 
 ### Team onboarding
 
@@ -353,8 +384,7 @@ agents from the selected team type via the `team_template_agent_types` join tabl
 2. For each agent type, creates `members` + `member_agents` rows with:
    - `agent_type_id` set to the originating agent type (for provenance tracking)
    - System prompt copied from `agent_types.system_prompt_template`
-   - Config overrides applied from the join table (runtime type, heartbeat, budget)
-   - `budget_used_cents` reset to 0
+   - Config overrides applied from the join table (runtime type, heartbeat, monthly budget)
 4. Second pass resolves `reports_to_slug` → `reports_to` UUID for the org chart
 5. Creates `skills` rows from the team type's default skills
 6. Creates `documents` row of type `team_preferences` from `team_templates.preferences_config`
@@ -386,6 +416,10 @@ Agent types are linked to team types through the `team_template_agent_types`
 join table, which stores:
 - `reports_to_slug` — org chart hierarchy specific to this team type composition
 - Override columns — allow a team type to customize an agent type's defaults
+  (`heartbeat_interval_override`, and the per-window budget overrides
+  `monthly_budget_override` / `daily_budget_override` / `weekly_budget_override`,
+  nullable; an unset override falls back to the agent type / unlimited). Cloning a
+  team snapshots its agents' live daily/weekly/monthly budgets into these columns.
 - `sort_order` — ensures parents are created before children during agent provisioning
 
 When agents are created from a team type, `member_agents.agent_type_id`
@@ -653,7 +687,7 @@ Each row captures:
 - **Invocation**: `invocation_command` is the exact CLI that was passed to
   `docker exec` (with the agent JWT redacted to `Bearer ***`). `working_dir` is
   the container path the exec was rooted at (normally the designated repo's
-  per-task worktree, e.g. `/worktrees/<task-identifier>/<repo-short-name>`).
+  per-task worktree, e.g. `/worktrees/<task-identifier>/<repo-name>`).
 - **Logs**: `log_text` holds interleaved stdout and stderr captured from the
   streaming Docker exec, capped at 1 MB (with a `...[truncated — log capped at
   N bytes]` marker when exceeded). Stderr lines are prefixed `[stderr] ` so
@@ -673,13 +707,14 @@ is bind-mounted into the container:
 
 - `<dataDir>/teams/<team-slug>/projects/<project-slug>/workspace/` ↔
   `/workspace/` in the container. For every repo linked to the project,
-  `ensureProjectRepos` populates a subdirectory `<workspace>/<short-name>/`.
+  `ensureProjectRepos` populates a subdirectory `<workspace>/<repo-name>/`
+  (the repo name is the segment after the owner in `repo_identifier`).
   The repo-add route (`POST /repos`), container provision, and the agent
   runner all call this helper, so the set of on-disk clones stays in sync
   with the `repos` rows for the project.
 - `<dataDir>/.../worktrees/` ↔ `/worktrees/` in the container. For each task
   an agent works on, the runner creates `git worktree` directories under
-  `/worktrees/<task-identifier>/<repo-short-name>/` on the branch
+  `/worktrees/<task-identifier>/<repo-name>/` on the branch
   `hezo/<task-identifier>`. Worktrees persist across runs on the same task
   so iterative work survives between invocations, and are torn down when the
   task transitions to a terminal status (`done`, `cancelled`, etc.) or its
@@ -742,11 +777,12 @@ are served over time-limited HMAC-signed URLs (S3 support planned for V2).
 namespace + key). `plugin_jobs` declares cron schedules for plugin-registered
 jobs.
 
-### Team-level budget
+### Project-level budget
 
-`teams.budget_monthly_cents` and `teams.budget_used_cents` provide an
-aggregate spending cap across all agents. The `debit_agent_budget()` function
-checks both agent-level and team-level budgets atomically.
+`projects.daily_/weekly_/monthly_budget_cents` cap aggregate spend across all the
+project's agents (0 = unlimited). Enforcement sums `cost_entries` for the project
+over each UTC window; a run is blocked when the project (or the individual agent) is
+over any window. There is **no team-level budget** — Hezo is project-centric.
 
 ### Messaging integrations (optional)
 

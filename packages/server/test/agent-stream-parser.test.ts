@@ -1,6 +1,27 @@
-import { AgentRuntime } from '@hezo/shared';
+import { AgentRuntime, type CostTokens, costCentsFromRate, type ModelRate } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
-import { createAgentStreamParser } from '../src/services/agent-stream-parser';
+import { createAgentStreamParser, type PriceModelFn } from '../src/services/agent-stream-parser';
+
+/** A price function backed by a fixed rate table, mirroring PricingService. */
+const RATES: Record<string, ModelRate> = {
+	'claude-x': {
+		inputPerToken: 0.001,
+		outputPerToken: 0.002,
+		cacheReadPerToken: 0.0001,
+		cacheCreationPerToken: 0.002,
+	},
+	'codex-x': { inputPerToken: 0.00001, outputPerToken: 0.00003, cacheReadPerToken: 0.000001 },
+	'gemini-2.5-pro': {
+		inputPerToken: 0.00001,
+		outputPerToken: 0.00003,
+		cacheReadPerToken: 0.000001,
+	},
+	'gemini-2.5-flash': { inputPerToken: 0.000005, outputPerToken: 0.00001 },
+};
+const price: PriceModelFn = (model: string | undefined, tokens: CostTokens) => {
+	const rate = model ? RATES[model] : undefined;
+	return rate ? costCentsFromRate(rate, tokens) : 0;
+};
 
 describe('agent-stream-parser', () => {
 	it('buffers partial lines and parses when a newline arrives', () => {
@@ -57,8 +78,12 @@ describe('agent-stream-parser', () => {
 		expect(out).toContain('[tool-error] ENOENT: missing file');
 	});
 
-	it('captures usage and cost from the result event', () => {
-		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+	it('captures usage and computes cost from the pricing table (not total_cost_usd)', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
+		// The model arrives on the init event; the parser needs it to price the run.
+		parser.onStdout(
+			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-x', tools: [] })}\n`,
+		);
 		const event = {
 			type: 'result',
 			subtype: 'success',
@@ -74,13 +99,17 @@ describe('agent-stream-parser', () => {
 			},
 		};
 		const out = parser.onStdout(`${JSON.stringify(event)}\n`);
+		// total_cost_usd is still echoed in the log line as a cross-check…
 		expect(out).toContain('[done] success turns=3 duration=2000ms tokens=150/50 cost=$0.4567');
 
 		const usage = parser.getUsage();
 		expect(usage).not.toBeNull();
 		expect(usage?.inputTokens).toBe(150);
 		expect(usage?.outputTokens).toBe(50);
-		expect(usage?.costCents).toBe(46);
+		// …but the persisted cost is computed from the table, pricing the cache
+		// buckets separately: 100*0.001 + 30*0.0001 + 20*0.002 + 50*0.002
+		//   = 0.1 + 0.003 + 0.04 + 0.1 = 0.243 → 24 cents (not the 46c of total_cost_usd).
+		expect(usage?.costCents).toBe(24);
 	});
 
 	it('passes through lines that fail to parse as JSON', () => {
@@ -222,6 +251,56 @@ describe('agent-stream-parser', () => {
 			const parser = createAgentStreamParser(AgentRuntime.Gemini);
 			const out = parser.onStdout(`${JSON.stringify({ type: 'init', model: 'gemini-2.5-pro' })}\n`);
 			expect(out).toBe('[session] model=gemini-2.5-pro tools=0\n');
+		});
+	});
+
+	describe('cost from the pricing table', () => {
+		it('prices a codex run, charging cached input at the cache-read rate', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex, price);
+			parser.onStdout(`${JSON.stringify({ type: 'thread.started', model: 'codex-x' })}\n`);
+			parser.onStdout(
+				`${JSON.stringify({
+					type: 'turn.completed',
+					usage: {
+						input_tokens: 24763,
+						cached_input_tokens: 24448,
+						output_tokens: 122,
+						reasoning_output_tokens: 8,
+					},
+				})}\n`,
+			);
+			// regular=315@1e-5, cacheRead=24448@1e-6, output=130@3e-5
+			//   = 0.00315 + 0.024448 + 0.0039 = 0.031498 → 3 cents
+			expect(parser.getUsage()?.costCents).toBe(3);
+		});
+
+		it('prices a gemini run per model and sums', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Gemini, price);
+			parser.onStdout(
+				`${JSON.stringify({
+					type: 'result',
+					stats: {
+						models: {
+							'gemini-2.5-pro': { tokens: { prompt: 1_000_000, candidates: 200_000, thoughts: 0 } },
+							'gemini-2.5-flash': { tokens: { prompt: 200_000, candidates: 100_000, thoughts: 0 } },
+						},
+					},
+				})}\n`,
+			);
+			const usage = parser.getUsage();
+			expect(usage?.inputTokens).toBe(1_200_000);
+			expect(usage?.outputTokens).toBe(300_000);
+			// pro: 1e6*1e-5 + 2e5*3e-5 = 16.0 → 1600c; flash: 2e5*5e-6 + 1e5*1e-5 = 2.0 → 200c
+			expect(usage?.costCents).toBe(1800);
+		});
+
+		it('records 0 cost for an unpriced model', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex, price);
+			parser.onStdout(`${JSON.stringify({ type: 'thread.started', model: 'unknown-xyz' })}\n`);
+			parser.onStdout(
+				`${JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 9999, output_tokens: 9999 } })}\n`,
+			);
+			expect(parser.getUsage()?.costCents).toBe(0);
 		});
 	});
 });
