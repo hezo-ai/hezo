@@ -41,9 +41,28 @@ export function isAgentEffort(value: unknown): value is AgentEffort {
 export const AgentRuntimeStatus = {
 	Active: 'active',
 	Idle: 'idle',
-	Paused: 'paused',
+	/** Reactively paused because the agent breached one of its own daily/weekly/
+	 *  monthly budget windows. Cleared automatically once the window rolls over.
+	 *  (A human turning an agent off is `admin_status = 'disabled'`, a separate axis.) */
+	OutOfAgentBudget: 'out_of_agent_budget',
+	/** Reactively paused because the agent's project breached a budget window.
+	 *  Cleared automatically once the project's window rolls over. */
+	OutOfProjectBudget: 'out_of_project_budget',
 } as const;
 export type AgentRuntimeStatus = (typeof AgentRuntimeStatus)[keyof typeof AgentRuntimeStatus];
+
+/** The runtime states an agent sits in while reactively paused for budget (vs a
+ *  human-initiated `Paused`). Pausing and resuming for any of the three windows
+ *  flows through these uniformly. */
+export const BUDGET_PAUSE_STATUSES = [
+	AgentRuntimeStatus.OutOfAgentBudget,
+	AgentRuntimeStatus.OutOfProjectBudget,
+] as const;
+
+/** True when a runtime status is one of the budget-pause states. */
+export function isBudgetPauseStatus(status: string): boolean {
+	return (BUDGET_PAUSE_STATUSES as readonly string[]).includes(status);
+}
 
 export const AgentAdminStatus = {
 	Enabled: 'enabled',

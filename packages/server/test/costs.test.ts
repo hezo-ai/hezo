@@ -112,6 +112,8 @@ describe('costs CRUD', () => {
 			headers: authHeader(token),
 		});
 		const agent = (await agentRes.json()).data;
-		expect(agent.runtime_status).toBe('paused');
+		// The agent's own monthly window trips (the project is unlimited), so it
+		// lands in the scoped budget-pause state — not a manual `paused`.
+		expect(agent.runtime_status).toBe('out_of_agent_budget');
 	});
 });

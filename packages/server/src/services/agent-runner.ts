@@ -3,7 +3,6 @@ import { dirname, join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentRuntime,
-	AgentRuntimeStatus,
 	AiAuthMethod,
 	type AiProvider,
 	CLAUDE_CODE_QUIET_ENV,
@@ -32,6 +31,7 @@ import { broadcastRowChange } from '../lib/broadcast';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { signAgentJwt } from '../middleware/auth';
+import { pauseAgentForBudget } from './agent-runtime-status';
 import { type AgentRunUsage, createAgentStreamParser } from './agent-stream-parser';
 import {
 	type AiProviderCredential,
@@ -1863,19 +1863,13 @@ async function recordRunCostAndEnforce(
 
 		const block = await checkOverBudget(db, broadcast.memberId, broadcast.projectId ?? null);
 		if (block) {
-			await db.query(
-				`UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2`,
-				[AgentRuntimeStatus.Paused, broadcast.memberId],
+			await pauseAgentForBudget(
+				db,
+				broadcast.memberId,
+				broadcast.teamId,
+				block,
+				broadcast.wsManager,
 			);
-			if (broadcast.wsManager) {
-				broadcastRowChange(
-					broadcast.wsManager,
-					wsRoom.team(broadcast.teamId),
-					'member_agents',
-					'UPDATE',
-					{ id: broadcast.memberId, runtime_status: AgentRuntimeStatus.Paused },
-				);
-			}
 		}
 	} catch (e) {
 		log.error({ err: e, runId }, 'failed to record run cost / enforce budget');

@@ -39,13 +39,17 @@ describe('status-meta registry', () => {
 			color: 'green',
 			label: 'Running',
 		});
-		expect(agentRuntimeStatusMeta(AgentRuntimeStatus.Paused)).toEqual({
-			color: 'yellow',
-			label: 'Paused',
-		});
 		expect(agentRuntimeStatusMeta(AgentRuntimeStatus.Idle)).toEqual({
 			color: 'neutral',
 			label: 'Idle',
+		});
+		expect(agentRuntimeStatusMeta(AgentRuntimeStatus.OutOfAgentBudget)).toEqual({
+			color: 'red',
+			label: 'Over agent budget',
+		});
+		expect(agentRuntimeStatusMeta(AgentRuntimeStatus.OutOfProjectBudget)).toEqual({
+			color: 'red',
+			label: 'Over project budget',
 		});
 	});
 

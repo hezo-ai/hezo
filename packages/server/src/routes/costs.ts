@@ -1,8 +1,9 @@
-import { AgentRuntimeStatus, wsRoom } from '@hezo/shared';
+import { wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
+import { pauseAgentForBudget } from '../services/agent-runtime-status';
 import { checkOverBudget, getProjectBudgetStatus, toEntityBudgetStatus } from '../services/budget';
 
 export const costsRoutes = new Hono<Env>();
@@ -168,14 +169,7 @@ costsRoutes.post('/projects/:projectId/costs', async (c) => {
 
 	const block = await checkOverBudget(db, body.member_id, costProjectId);
 	if (block) {
-		await db.query(
-			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2',
-			[AgentRuntimeStatus.Paused, body.member_id],
-		);
-		broadcastChange(c, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
-			id: body.member_id,
-			runtime_status: AgentRuntimeStatus.Paused,
-		});
+		await pauseAgentForBudget(db, body.member_id, teamId, block, c.get('wsManager'));
 	}
 
 	return ok(c, result.rows[0], 201);

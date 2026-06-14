@@ -1300,7 +1300,9 @@ Response (when `group_by=agent`):
 #### `POST /projects/:projectId/costs`
 Create a cost entry (201). Spend is always recorded; if this pushes the agent or its
 project over any budget window the agent is reactively paused (no 402 — budgets are
-enforced by windowed sums, not a debit that can be refused).
+enforced by windowed sums, not a debit that can be refused). `runtime_status`
+becomes `out_of_agent_budget` or `out_of_project_budget` per the window that
+tripped; a background sweep lifts it back to `idle` once spend is within limits.
 
 Request:
 ```json
@@ -1328,7 +1330,7 @@ page and the project warning banner.
   "agents": [
     {
       "agent_id": "uuid", "agent_title": "Engineer", "agent_slug": "engineer",
-      "runtime_status": "paused",
+      "runtime_status": "out_of_agent_budget",
       "daily":   { "spentCents": 250, "limitCents": 100, "overBudget": true },
       "weekly":  { "spentCents": 250, "limitCents": 0,   "overBudget": false },
       "monthly": { "spentCents": 250, "limitCents": 0,   "overBudget": false },
