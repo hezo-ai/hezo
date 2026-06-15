@@ -5,6 +5,8 @@ export const AgentRuntime = {
 	ClaudeCode: 'claude_code',
 	Codex: 'codex',
 	Gemini: 'gemini',
+	OpenCode: 'opencode',
+	Kimi: 'kimi',
 } as const;
 export type AgentRuntime = (typeof AgentRuntime)[keyof typeof AgentRuntime];
 
@@ -608,6 +610,8 @@ export const AiProvider = {
 	Google: 'google',
 	DeepSeek: 'deepseek',
 	ZAi: 'z_ai',
+	OpenRouter: 'openrouter',
+	Kimi: 'kimi',
 } as const;
 export type AiProvider = (typeof AiProvider)[keyof typeof AiProvider];
 
@@ -657,6 +661,13 @@ export const CLAUDE_CODE_QUIET_ENV = {
 	DISABLE_BUG_COMMAND: '1',
 } as const;
 
+/**
+ * Kimi Code's OpenAI-compatible coding endpoint. Used both as the
+ * `[providers.kimi-for-coding].base_url` the kimi adapter writes into
+ * config.toml and as the upstream the in-container Stop-hook judge calls.
+ */
+export const KIMI_CODING_BASE_URL = 'https://api.kimi.com/coding/v1';
+
 export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapter> = {
 	[AiProvider.Anthropic]: {
 		runtime: AgentRuntime.ClaudeCode,
@@ -693,6 +704,24 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		},
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
 	},
+	// OpenCode reads its model-provider key straight from env. OpenRouter is the
+	// first provider wired to the OpenCode runtime; additional OpenCode providers
+	// are just another entry here plus an `opencode.json` provider block.
+	[AiProvider.OpenRouter]: {
+		runtime: AgentRuntime.OpenCode,
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'OPENROUTER_API_KEY' },
+	},
+	// Kimi Code CLI takes its provider api_key/base_url from config.toml (written
+	// by the kimi MCP adapter). KIMI_API_KEY is still exported so the in-container
+	// Stop-hook judge can call the same upstream; KIMI_BASE_URL points it at the
+	// coding endpoint.
+	[AiProvider.Kimi]: {
+		runtime: AgentRuntime.Kimi,
+		staticEnv: {
+			KIMI_BASE_URL: KIMI_CODING_BASE_URL,
+		},
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'KIMI_API_KEY' },
+	},
 };
 
 /** Default upstream API hostnames per provider (for egress NO_PROXY). */
@@ -702,6 +731,8 @@ const PROVIDER_UPSTREAM_HOSTS: Record<AiProvider, readonly string[]> = {
 	[AiProvider.Google]: ['generativelanguage.googleapis.com'],
 	[AiProvider.DeepSeek]: ['api.deepseek.com'],
 	[AiProvider.ZAi]: ['api.z.ai'],
+	[AiProvider.OpenRouter]: ['openrouter.ai'],
+	[AiProvider.Kimi]: ['api.kimi.com'],
 };
 
 /**
@@ -734,6 +765,28 @@ export function claudeCodeModelArg(provider: AiProvider, model: string): string 
 	return model;
 }
 
+/**
+ * OpenCode addresses every model as `<providerKey>/<model>` (e.g.
+ * `openrouter/anthropic/claude-sonnet-4.5`). Maps a Hezo AI provider to the
+ * OpenCode provider key its models live under, so the runner can prefix a bare
+ * model id before passing it to `opencode run --model`.
+ */
+export const OPENCODE_PROVIDER_KEY: Partial<Record<AiProvider, string>> = {
+	[AiProvider.OpenRouter]: 'openrouter',
+};
+
+/**
+ * Normalize a model id for `opencode run --model`. Prefixes the OpenCode
+ * provider key when the stored id isn't already qualified; leaves already
+ * `providerKey/…` ids untouched (the provider catalog already returns them
+ * unqualified, but a user may have typed the full form).
+ */
+export function opencodeModelArg(provider: AiProvider, model: string): string {
+	const key = OPENCODE_PROVIDER_KEY[provider];
+	if (!key) return model;
+	return model.startsWith(`${key}/`) ? model : `${key}/${model}`;
+}
+
 export const PROVIDER_TO_RUNTIME: Record<AiProvider, AgentRuntime> = Object.freeze(
 	(Object.keys(PROVIDER_RUNTIME_ADAPTERS) as AiProvider[]).reduce(
 		(acc, p) => {
@@ -761,6 +814,23 @@ export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 	[AgentRuntime.ClaudeCode]: 'claude',
 	[AgentRuntime.Codex]: 'codex',
 	[AgentRuntime.Gemini]: 'gemini',
+	[AgentRuntime.OpenCode]: 'opencode',
+	[AgentRuntime.Kimi]: 'kimi',
+};
+
+/**
+ * How each CLI receives the task prompt. Most runtimes read it from stdin (the
+ * runner redirects `< $HEZO_PROMPT_FILE`); OpenCode (`opencode run <message>`)
+ * and Kimi (`kimi --prompt <text>`) take it as a trailing argument instead, so
+ * the exec wrapper appends `"$(cat $HEZO_PROMPT_FILE)"` for them. The mode is
+ * threaded to the container via `HEZO_PROMPT_MODE`.
+ */
+export const RUNTIME_PROMPT_DELIVERY: Record<AgentRuntime, 'stdin' | 'arg'> = {
+	[AgentRuntime.ClaudeCode]: 'stdin',
+	[AgentRuntime.Codex]: 'stdin',
+	[AgentRuntime.Gemini]: 'stdin',
+	[AgentRuntime.OpenCode]: 'arg',
+	[AgentRuntime.Kimi]: 'arg',
 };
 
 /**
@@ -772,6 +842,8 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
 	[AgentRuntime.ClaudeCode]: ['--dangerously-skip-permissions'],
 	[AgentRuntime.Codex]: ['--dangerously-bypass-approvals-and-sandbox'],
 	[AgentRuntime.Gemini]: ['--yolo'],
+	[AgentRuntime.OpenCode]: ['--dangerously-skip-permissions'],
+	[AgentRuntime.Kimi]: ['--yolo'],
 };
 
 /**
@@ -786,6 +858,8 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
 	[AgentRuntime.ClaudeCode]: ['--disallowedTools', 'WebFetch'],
 	[AgentRuntime.Codex]: [],
 	[AgentRuntime.Gemini]: [],
+	[AgentRuntime.OpenCode]: [],
+	[AgentRuntime.Kimi]: [],
 };
 
 /**
@@ -801,6 +875,10 @@ export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
 	[AgentRuntime.ClaudeCode]: ['--output-format', 'stream-json', '--verbose'],
 	[AgentRuntime.Codex]: ['--json'],
 	[AgentRuntime.Gemini]: ['--output-format', 'stream-json'],
+	// OpenCode `run --format json` emits raw JSON events; Kimi `--output-format
+	// stream-json` emits JSONL. Both terminal events carry token usage.
+	[AgentRuntime.OpenCode]: ['--format', 'json'],
+	[AgentRuntime.Kimi]: ['--output-format', 'stream-json'],
 };
 
 /**
@@ -812,6 +890,9 @@ export const RUNTIME_HEADLESS_PREFIX_ARGS: Record<AgentRuntime, readonly string[
 	[AgentRuntime.ClaudeCode]: [],
 	[AgentRuntime.Codex]: ['exec'],
 	[AgentRuntime.Gemini]: [],
+	// `opencode run …` gates non-interactive execution behind the `run` subcommand.
+	[AgentRuntime.OpenCode]: ['run'],
+	[AgentRuntime.Kimi]: [],
 };
 
 /**
@@ -824,6 +905,11 @@ export const RUNTIME_HEADLESS_SUFFIX_ARGS: Record<AgentRuntime, readonly string[
 	[AgentRuntime.ClaudeCode]: ['-p'],
 	[AgentRuntime.Codex]: ['-'],
 	[AgentRuntime.Gemini]: [],
+	// OpenCode takes the prompt as a positional `message` (appended in arg mode).
+	[AgentRuntime.OpenCode]: [],
+	// Kimi `--print` runs non-interactively; `--prompt` takes the prompt text,
+	// which the exec wrapper appends as the trailing arg in arg mode.
+	[AgentRuntime.Kimi]: ['--print', '--prompt'],
 };
 
 export interface AiProviderVerifyEndpoint {
@@ -890,6 +976,28 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
 		},
 	},
+	[AiProvider.OpenRouter]: {
+		name: 'OpenRouter',
+		runtimeLabel: 'OpenCode',
+		keyPrefix: 'sk-or-',
+		keyPlaceholder: 'sk-or-...',
+		// `/api/v1/models` is the OpenRouter catalog (drives the model dropdown).
+		// It's public, so this doubles as a reachability check rather than a
+		// strict key validation — a bad key surfaces on the first run.
+		verifyEndpoint: {
+			url: 'https://openrouter.ai/api/v1/models',
+			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
+		},
+	},
+	[AiProvider.Kimi]: {
+		name: 'Kimi',
+		runtimeLabel: 'Kimi Code',
+		keyPlaceholder: 'sk-...',
+		verifyEndpoint: {
+			url: `${KIMI_CODING_BASE_URL}/models`,
+			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
+		},
+	},
 };
 
 export const ALL_AI_PROVIDERS: ReadonlyArray<AiProvider> = Object.values(AiProvider);
@@ -931,7 +1039,11 @@ export function parseProviderModels(provider: AiProvider, json: unknown): AiProv
 	return data
 		.map((m) => {
 			const id = typeof m.id === 'string' ? m.id : '';
-			const displayName = typeof m.display_name === 'string' ? m.display_name : '';
+			// OpenRouter labels models under `name`; OpenAI-style APIs use `display_name`.
+			const displayName =
+				(typeof m.display_name === 'string' && m.display_name) ||
+				(typeof m.name === 'string' && m.name) ||
+				'';
 			return { id, label: displayName || id };
 		})
 		.filter((m) => m.id && isChatModelId(provider, m.id));

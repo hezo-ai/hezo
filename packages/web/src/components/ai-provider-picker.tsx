@@ -13,6 +13,8 @@ const PROVIDERS = [
 	AiProvider.Anthropic,
 	AiProvider.OpenAI,
 	AiProvider.Google,
+	AiProvider.OpenRouter,
+	AiProvider.Kimi,
 ] as const;
 
 export function AiProviderPicker() {

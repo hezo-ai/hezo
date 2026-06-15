@@ -371,3 +371,129 @@ describe('validateInjection', () => {
 		).toThrow(/inlined a bearer token/);
 	});
 });
+
+describe('opencode adapter', () => {
+	const adapter = MCP_ADAPTERS[AgentRuntime.OpenCode];
+
+	it('declares inline bearer storage and a required home dir', () => {
+		expect(adapter.capabilities.requiresHomeDir).toBe(true);
+		expect(adapter.capabilities.bearerTokenStorage).toBe('inline');
+	});
+
+	it('throws when no host home dir is provided', () => {
+		expect(() =>
+			adapter.build([HEZO_DESCRIPTOR], { hostHomeDir: null, containerHomeDir: null }),
+		).toThrow(/hostHomeDir/);
+	});
+
+	it('writes opencode.json with a remote MCP server and points OPENCODE_CONFIG at it', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+
+		expect(injection.cliArgs).toEqual([]);
+		expect(injection.envEntries).toEqual([`OPENCODE_CONFIG=${HOME}/opencode.json`]);
+		expect(injection.files.length).toBe(1);
+		const file = injection.files[0];
+		expect(file.hostPath).toBe(`${HOME}/opencode.json`);
+		expect(file.mode).toBe(0o600);
+
+		const config = JSON.parse(file.contents) as {
+			mcp: Record<
+				string,
+				{ type: string; url: string; enabled: boolean; headers?: Record<string, string> }
+			>;
+		};
+		expect(config.mcp.hezo.type).toBe('remote');
+		expect(config.mcp.hezo.url).toBe(URL);
+		expect(config.mcp.hezo.enabled).toBe(true);
+		expect(config.mcp.hezo.headers?.Authorization).toBe(`Bearer ${TOKEN}`);
+	});
+
+	it('emits NO Stop-hook judge script (OpenCode has no in-process block-and-continue hook)', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+		expect(injection.files.some((f) => f.hostPath.endsWith('stop-hook-judge.mjs'))).toBe(false);
+		expect(injection.files.every((f) => !f.contents.includes('quality gate'))).toBe(true);
+	});
+
+	it('omits the mcp block entirely for an empty descriptor list', () => {
+		const injection = adapter.build([], { hostHomeDir: HOME, containerHomeDir: HOME });
+		const config = JSON.parse(injection.files[0].contents) as { mcp?: unknown };
+		expect(config.mcp).toBeUndefined();
+	});
+});
+
+describe('kimi adapter', () => {
+	const adapter = MCP_ADAPTERS[AgentRuntime.Kimi];
+
+	it('declares inline bearer storage and a required home dir', () => {
+		expect(adapter.capabilities.requiresHomeDir).toBe(true);
+		expect(adapter.capabilities.bearerTokenStorage).toBe('inline');
+	});
+
+	it('throws when no host home dir is provided', () => {
+		expect(() =>
+			adapter.build([HEZO_DESCRIPTOR], { hostHomeDir: null, containerHomeDir: null }),
+		).toThrow(/hostHomeDir/);
+	});
+
+	it('writes config.toml, mcp.json, and a Stop-hook judge script', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+			providerApiKey: 'sk-kimi-test',
+			model: 'kimi-k2-test',
+		});
+
+		expect(injection.cliArgs).toEqual([]);
+		expect(injection.envEntries).toEqual([]);
+		expect(injection.files.length).toBe(3);
+
+		const config = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
+		const mcp = injection.files.find((f) => f.hostPath === `${HOME}/mcp.json`);
+		const judge = injection.files.find((f) => f.hostPath === `${HOME}/stop-hook-judge.mjs`);
+		expect(config).toBeDefined();
+		expect(mcp).toBeDefined();
+		expect(judge).toBeDefined();
+		if (!config || !mcp || !judge) throw new Error('expected files not emitted');
+
+		// config.toml: top-level default_model precedes the first [table].
+		expect(config.contents).toContain('default_model = "kimi-k2-test"');
+		expect(config.contents).toContain('default_yolo = true');
+		expect(config.contents.indexOf('default_model')).toBeLessThan(config.contents.indexOf('['));
+		expect(config.contents).toContain('[providers.kimi-for-coding]');
+		expect(config.contents).toContain('type = "kimi"');
+		expect(config.contents).toContain('api_key = "sk-kimi-test"');
+		expect(config.contents).toContain('[models.kimi-k2-test]');
+		expect(config.contents).toContain('[[hooks]]');
+		expect(config.contents).toContain('event = "Stop"');
+		expect(config.contents).toContain(`command = "node ${HOME}/stop-hook-judge.mjs"`);
+
+		// mcp.json: well-known mcpServers shape with inline bearer.
+		const parsed = JSON.parse(mcp.contents) as {
+			mcpServers: Record<string, { url: string; headers?: Record<string, string> }>;
+		};
+		expect(parsed.mcpServers.hezo.url).toBe(URL);
+		expect(parsed.mcpServers.hezo.headers?.Authorization).toBe(`Bearer ${TOKEN}`);
+
+		// judge script: exit-2 block protocol + Kimi upstream + rule body.
+		expect(judge.mode).toBe(0o700);
+		expect(judge.contents).toContain('quality gate');
+		expect(judge.contents).toContain('process.exit(2)');
+		expect(judge.contents).toContain('KIMI_API_KEY');
+	});
+
+	it('omits api_key when no provider credential is supplied and falls back to the default model', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+		const config = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
+		expect(config?.contents).not.toContain('api_key');
+		expect(config?.contents).toContain('default_model = "kimi-for-coding"');
+	});
+});

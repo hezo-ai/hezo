@@ -13,8 +13,11 @@
  * `buildGeminiJudgeScript`).
  *
  * The judge runs inside the container against the team's existing
- * provider credential. No server-side LLM client. The hook is always on;
- * teams do not opt in or out. The judge model is chosen per provider so the
+ * provider credential. No server-side LLM client. The hook is on for every
+ * runtime that exposes a turn-end hook — the one exception is OpenCode, whose
+ * plugin API can't block-and-continue the agent loop in headless `opencode run`
+ * (upstream sst/opencode#16626), so OpenCode runs with no completeness judge.
+ * The judge model is chosen per provider so the
  * call resolves against the team's own upstream — see
  * CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER for the Claude Code runtimes and the
  * OpenAI/Google constants below. If a judge is genuinely unreachable
@@ -23,13 +26,14 @@
  * — and the agent stops normally.
  */
 
-import { AgentRuntime, AiProvider } from '@hezo/shared';
+import { AgentRuntime, AiProvider, KIMI_CODING_BASE_URL } from '@hezo/shared';
 
 export const STOP_HOOK_JUDGE_MODEL_ANTHROPIC = 'claude-sonnet-4-6';
 export const STOP_HOOK_JUDGE_MODEL_DEEPSEEK = 'deepseek-v4-pro';
 export const STOP_HOOK_JUDGE_MODEL_ZAI = 'GLM-4.7';
 export const STOP_HOOK_JUDGE_MODEL_OPENAI = 'gpt-4o-mini';
 export const STOP_HOOK_JUDGE_MODEL_GOOGLE = 'gemini-1.5-flash';
+export const STOP_HOOK_JUDGE_MODEL_KIMI = 'kimi-for-coding';
 
 /**
  * Judge model for the Claude Code `type:"prompt"` Stop hook, keyed by provider.
@@ -248,4 +252,77 @@ export function buildCodexJudgeScript(): string {
  */
 export function buildGeminiJudgeScript(): string {
 	return buildJudgeScript(JUDGE_SPECS[AgentRuntime.Gemini] as JudgeRuntimeSpec);
+}
+
+/**
+ * Node script that runs inside the Kimi container as the `[[hooks]]`
+ * `event = "Stop"` command. Kimi's hook protocol differs from Codex/Gemini: a
+ * judge that wants to keep the agent working exits with code 2 and writes the
+ * reason to stderr (Kimi feeds stderr back to the model as a correction). Exit
+ * 0 with empty stdout lets the turn end.
+ *
+ * Kimi's Stop stdin payload isn't documented to carry the final assistant
+ * message, so the script probes a list of candidate fields and fails open (exit
+ * 0) when none is present — never blocking a run it cannot evaluate. The judge
+ * calls Kimi's OpenAI-compatible coding endpoint (`KIMI_BASE_URL`) with
+ * `KIMI_API_KEY`; absent either, it fails open like the other runtimes.
+ */
+export function buildKimiJudgeScript(): string {
+	return `#!/usr/bin/env node
+const SYSTEM_PROMPT = ${JSON.stringify(STOP_HOOK_RULES)};
+const JUDGE_MODEL = ${JSON.stringify(STOP_HOOK_JUDGE_MODEL_KIMI)};
+const apiKey = process.env.KIMI_API_KEY;
+const baseUrl = (process.env.KIMI_BASE_URL || ${JSON.stringify(KIMI_CODING_BASE_URL)}).replace(/\\/$/, '');
+// Candidate fields that might carry the agent's final message across kimi versions.
+const MESSAGE_FIELDS = ['last_assistant_message', 'final_message', 'last_message', 'prompt_response', 'message'];
+
+async function readStdin() {
+	let buf = '';
+	for await (const chunk of process.stdin) buf += chunk;
+	return buf;
+}
+
+async function main() {
+	if (!apiKey) return; // no api key — fail open
+	const raw = await readStdin();
+	if (!raw.trim()) return;
+	let input;
+	try { input = JSON.parse(raw); } catch { return; }
+	let message;
+	for (const f of MESSAGE_FIELDS) {
+		if (typeof input[f] === 'string' && input[f].trim()) { message = input[f]; break; }
+	}
+	if (!message) return; // no final message available — fail open
+
+	let verdict;
+	try {
+		const res = await fetch(baseUrl + '/chat/completions', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+			body: JSON.stringify({
+				model: JUDGE_MODEL,
+				messages: [
+					{ role: 'system', content: SYSTEM_PROMPT },
+					{ role: 'user', content: "Agent's final response:\\n" + message },
+				],
+				response_format: { type: 'json_object' },
+				temperature: 0,
+			}),
+			signal: AbortSignal.timeout(25_000),
+		});
+		if (!res.ok) return;
+		const data = await res.json();
+		const text = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+		if (!text) return;
+		verdict = JSON.parse(text);
+	} catch { return; }
+
+	if (verdict && verdict.decision === 'block' && typeof verdict.reason === 'string' && verdict.reason.length > 0) {
+		process.stderr.write(verdict.reason);
+		process.exit(2);
+	}
+}
+
+main().catch(() => {});
+`;
 }

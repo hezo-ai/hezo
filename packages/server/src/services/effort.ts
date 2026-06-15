@@ -104,5 +104,11 @@ export function applyEffortToRuntime(
 				extraEnv: [`GEMINI_REASONING_EFFORT=${effort}`],
 				promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
 			};
+		// OpenCode (`--variant`) and Kimi expose model-dependent reasoning knobs
+		// whose accepted values aren't stable across versions, so steer effort
+		// through the prompt directive — the portable lever every runtime honors.
+		case AgentRuntime.OpenCode:
+		case AgentRuntime.Kimi:
+			return { extraArgs: [], extraEnv: [], promptDirective: GENERIC_PROMPT_DIRECTIVE[effort] };
 	}
 }
