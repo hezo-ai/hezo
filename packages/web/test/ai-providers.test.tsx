@@ -42,6 +42,8 @@ test('lists Anthropic / OpenAI / Google on /settings/ai-providers (no Moonshot, 
 	await findByText('Anthropic');
 	await findByText('OpenAI');
 	await findByText('Google');
+	await findByText('OpenRouter');
+	await findByText('Kimi');
 	expect(queryAllByText('Moonshot').length).toBe(0);
 	expect(queryAllByRole('button', { name: /OAuth/i }).length).toBe(0);
 });

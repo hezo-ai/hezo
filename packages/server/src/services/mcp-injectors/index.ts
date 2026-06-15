@@ -2,6 +2,8 @@ import { AgentRuntime } from '@hezo/shared';
 import { claudeCodeAdapter } from './claude-code';
 import { codexAdapter } from './codex';
 import { geminiAdapter } from './gemini';
+import { kimiAdapter } from './kimi';
+import { opencodeAdapter } from './opencode';
 import type { RuntimeMcpAdapter } from './types';
 
 /**
@@ -13,6 +15,8 @@ export const MCP_ADAPTERS: Record<AgentRuntime, RuntimeMcpAdapter> = {
 	[AgentRuntime.ClaudeCode]: claudeCodeAdapter,
 	[AgentRuntime.Codex]: codexAdapter,
 	[AgentRuntime.Gemini]: geminiAdapter,
+	[AgentRuntime.OpenCode]: opencodeAdapter,
+	[AgentRuntime.Kimi]: kimiAdapter,
 };
 
 export type {

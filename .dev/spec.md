@@ -421,7 +421,7 @@ Saving as a type does **not** include: projects, repos, tasks, secrets, connecte
 | Role description | Short description of responsibilities |
 | System prompt | Full prompt with variable templating (see below) |
 | Reports to | Parent agent in org chart |
-| Runtime type | `claude_code`, `codex`, `gemini` |
+| Runtime type | `claude_code`, `codex`, `gemini`, `opencode`, `kimi` |
 | Heartbeat interval | How often the agent wakes up (default: 60 min) |
 | Monthly budget | Hard spending limit in cents |
 | MCP servers | Agent-level MCP server list (merged with team-level at runtime) |
@@ -806,7 +806,7 @@ If a team has 3 projects, 3 containers run. If a project has multiple repos, the
 
 | Aspect | Configuration |
 |--------|-------------|
-| Base image | Configurable per project (default: `hezo/agent-base:latest`, built from `docker/Dockerfile.agent-base` with `claude`, `codex`, and `gemini` CLIs pre-installed) |
+| Base image | Configurable per project (default: `hezo/agent-base:latest`, built from `docker/Dockerfile.agent-base` with `claude`, `codex`, `gemini`, `opencode`, and `kimi` CLIs pre-installed) |
 | Project mount | Host `~/.hezo/teams/{team}/projects/{project}/` → Container `/workspace/` (rw) |
 | Worktrees mount | Host `~/.hezo/teams/{team}/projects/{project}/worktrees/` → Container `/worktrees/` (rw) |
 | SSH keys | Project's Ed25519 key served via the per-run `SshAgentServer` over `SSH_AUTH_SOCK`; the private key (encrypted on the project's backing team row) is never written to disk. |

@@ -41,9 +41,13 @@ ENV PATH="/root/.local/bin:${PATH}"
 #   @anthropic-ai/claude-code → claude
 #   @openai/codex             → codex
 #   @google/gemini-cli        → gemini
+#   opencode-ai               → opencode
+#   @moonshot-ai/kimi-code    → kimi
 RUN npm install -g @anthropic-ai/claude-code \
     && npm install -g @openai/codex \
-    && npm install -g @google/gemini-cli
+    && npm install -g @google/gemini-cli \
+    && npm install -g opencode-ai \
+    && npm install -g @moonshot-ai/kimi-code
 
 # SSH agent bridge: in-container Unix socket relayed to host TCP. Used so
 # the same wire-up runs on macOS Docker Desktop (which does not forward

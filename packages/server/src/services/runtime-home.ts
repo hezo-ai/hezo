@@ -52,6 +52,25 @@ export const SUBSCRIPTION_LAYOUTS: Partial<Record<AiProvider, SubscriptionLayout
 		envVarName: 'HEZO_CLAUDE_CONFIG_DIR',
 		rotates: false,
 	},
+	// OpenCode (OpenRouter) needs a per-run dir to host `opencode.json`. The
+	// envVarName is a Hezo-internal marker; the OpenCode adapter points the CLI at
+	// the config file via an explicit `OPENCODE_CONFIG=<dir>/opencode.json` env
+	// entry (OPENCODE_CONFIG wants a file path, not a directory).
+	[AiProvider.OpenRouter]: {
+		dirName: 'opencode',
+		authFileRelative: '.placeholder',
+		envVarName: 'HEZO_OPENCODE_CONFIG_DIR',
+		rotates: false,
+	},
+	// Kimi reads its config dir from KIMI_CODE_HOME, so the home-mount env entry
+	// configures the CLI directly; the kimi adapter writes config.toml + mcp.json
+	// into this dir.
+	[AiProvider.Kimi]: {
+		dirName: 'kimi',
+		authFileRelative: '.placeholder',
+		envVarName: 'KIMI_CODE_HOME',
+		rotates: false,
+	},
 };
 
 export function getContainerSubscriptionRoot(

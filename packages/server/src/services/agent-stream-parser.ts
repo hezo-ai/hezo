@@ -53,6 +53,16 @@ export function createAgentStreamParser(
 			return createCodexParser(price);
 		case AgentRuntime.Gemini:
 			return createGeminiParser(price);
+		// OpenCode (`run --format json`) and Kimi (`--output-format stream-json`)
+		// both emit JSONL but with shapes that vary across versions and aren't
+		// fully documented. The generic parser is lenient — it renders recognizable
+		// assistant text / tool activity and captures token usage from whatever
+		// terminal event carries it, dropping anything it doesn't recognize so the
+		// log stays clean. Tighten into bespoke parsers once a real run's events
+		// are captured (see PR notes).
+		case AgentRuntime.OpenCode:
+		case AgentRuntime.Kimi:
+			return createGenericJsonlParser(price);
 		default:
 			return createPassthroughParser();
 	}
@@ -184,6 +194,9 @@ export function createAgentChatParser(runtime: AgentRuntime): AgentChatParser {
 			return createCodexChatParser();
 		case AgentRuntime.Gemini:
 			return createGeminiChatParser();
+		case AgentRuntime.OpenCode:
+		case AgentRuntime.Kimi:
+			return createGenericChatParser();
 		default:
 			return { onStdout: () => [], flush: () => [], getUsage: () => null };
 	}
@@ -634,6 +647,169 @@ function priceGeminiModels(stats: GeminiStats | undefined, price: PriceModelFn):
 		});
 	}
 	return cents;
+}
+
+// ---------------------------------------------------------------------------
+// Generic JSONL parser (OpenCode, Kimi)
+//
+// These CLIs emit JSONL whose event shapes vary by version and aren't fully
+// documented, so rather than guess a single rigid schema this parser probes a
+// broad set of conventional field names. It renders assistant text, tool
+// activity, thinking, and errors when recognizable, and captures token usage
+// from whatever terminal event carries it. Unknown events are dropped so the
+// log stays clean. Replace with bespoke parsers once a real run is captured.
+// ---------------------------------------------------------------------------
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+	return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function firstString(obj: Record<string, unknown>, keys: string[]): string | undefined {
+	for (const k of keys) {
+		const v = obj[k];
+		if (typeof v === 'string' && v.trim()) return v;
+	}
+	return undefined;
+}
+
+function firstNumber(obj: Record<string, unknown>, keys: string[]): number {
+	for (const k of keys) {
+		const v = obj[k];
+		if (typeof v === 'number' && Number.isFinite(v)) return v;
+	}
+	return 0;
+}
+
+/** Pull assistant-visible text out of a loosely-typed event. */
+function extractGenericText(event: Record<string, unknown>): string {
+	const role = typeof event.role === 'string' ? event.role : undefined;
+	if (role === 'user' || role === 'tool') return '';
+
+	const direct = firstString(event, ['text', 'content', 'response', 'output_text']);
+	if (direct) return direct.trim();
+
+	for (const nestedKey of ['delta', 'part', 'message']) {
+		const nested = event[nestedKey];
+		if (typeof nested === 'string' && nested.trim()) return nested.trim();
+		if (isRecord(nested)) {
+			const nestedRole = typeof nested.role === 'string' ? nested.role : undefined;
+			if (nestedRole === 'user' || nestedRole === 'tool') continue;
+			const text = firstString(nested, ['text', 'content']);
+			if (text) return text.trim();
+			if (Array.isArray(nested.content)) {
+				const joined = (nested.content as unknown[])
+					.map((b) => (isRecord(b) && typeof b.text === 'string' ? b.text : ''))
+					.filter(Boolean)
+					.join(' ')
+					.trim();
+				if (joined) return joined;
+			}
+		}
+	}
+	return '';
+}
+
+/** Detect a tool-call event and return its display name, or null. */
+function extractGenericTool(event: Record<string, unknown>, type: string): string | null {
+	const looksToolish = /tool|function|command|bash|shell/.test(type.toLowerCase());
+	const name = firstString(event, ['name', 'tool', 'tool_name', 'function']);
+	const part = isRecord(event.part) ? event.part : undefined;
+	const partName = part ? firstString(part, ['name', 'tool', 'tool_name']) : undefined;
+	if (looksToolish || name || partName) return name ?? partName ?? 'tool';
+	return null;
+}
+
+/** Find a token-usage object on the event and normalize it. */
+function extractGenericUsage(
+	event: Record<string, unknown>,
+	price: PriceModelFn,
+	modelId: string | undefined,
+): AgentRunUsage | null {
+	const u = [event.usage, event.tokens, event.stats].find(isRecord);
+	const costUsd = firstNumber(event, ['total_cost_usd', 'cost_usd', 'cost']);
+	if (!u && costUsd === 0) return null;
+	const bag = u ?? {};
+	const input = firstNumber(bag, ['input_tokens', 'prompt_tokens', 'prompt', 'input']);
+	const cached = firstNumber(bag, ['cached_input_tokens', 'cache_read_input_tokens', 'cached']);
+	const output =
+		firstNumber(bag, ['output_tokens', 'completion_tokens', 'candidates', 'output']) +
+		firstNumber(bag, ['reasoning_output_tokens', 'thoughts']);
+	if (input === 0 && output === 0 && costUsd === 0) return null;
+	const costCents =
+		costUsd > 0
+			? Math.round(costUsd * 100)
+			: price(modelId, {
+					inputTokens: Math.max(0, input - cached),
+					cacheReadTokens: cached,
+					outputTokens: output,
+				});
+	return { inputTokens: input, outputTokens: output, costCents };
+}
+
+const GENERIC_TERMINAL_RE = /complete|finish|result|done|stop|\bend\b/i;
+
+function createGenericJsonlParser(price: PriceModelFn): AgentStreamParser {
+	let usage: AgentRunUsage | null = null;
+	let modelId: string | undefined;
+
+	const renderEvent = (raw: unknown): string[] => {
+		if (!isRecord(raw)) return [];
+		const event = raw;
+		const type = typeof event.type === 'string' ? event.type : '';
+		const model = firstString(event, ['model']);
+		if (model) modelId = model;
+
+		const captured = extractGenericUsage(event, price, modelId);
+		if (captured) usage = captured;
+
+		const errText = extractErrorMessage(
+			event.error as { message?: string } | string | undefined,
+			typeof event.message === 'string' ? event.message : undefined,
+		);
+		if (/error|fail/i.test(type) && errText) {
+			return [`[tool-error] ${truncate(errText.replace(/\s+/g, ' ').trim(), MAX_LINE_LEN)}`];
+		}
+
+		if (/reason|think/i.test(type)) {
+			const t = firstString(event, ['text', 'content', 'thinking']);
+			return t ? [formatThinking(t)] : [];
+		}
+
+		const toolName = extractGenericTool(event, type);
+		if (toolName) {
+			return [formatToolUse(toolName, event.input ?? event.arguments ?? event.args)];
+		}
+
+		const text = extractGenericText(event);
+		if (text) return [text];
+
+		if (captured && GENERIC_TERMINAL_RE.test(type)) {
+			return [`[done] success tokens=${captured.inputTokens}/${captured.outputTokens}`];
+		}
+		return [];
+	};
+
+	return createJsonlParser(renderEvent, () => usage);
+}
+
+function createGenericChatParser(): AgentChatParser {
+	let usage: AgentRunUsage | null = null;
+	let modelId: string | undefined;
+	const render = (raw: unknown): AgentChatTurnEvent[] => {
+		if (!isRecord(raw)) return [];
+		const event = raw;
+		const type = typeof event.type === 'string' ? event.type : '';
+		const model = firstString(event, ['model']);
+		if (model) modelId = model;
+		const captured = extractGenericUsage(event, NO_PRICE, modelId);
+		if (captured) usage = captured;
+		const toolName = extractGenericTool(event, type);
+		if (toolName) return [{ toolActivity: toolName }];
+		const text = extractGenericText(event);
+		return text ? [{ text }] : [];
+	};
+	const reader = createJsonlEventReader(render);
+	return { onStdout: reader.onStdout, flush: reader.flush, getUsage: () => usage };
 }
 
 // ---------------------------------------------------------------------------

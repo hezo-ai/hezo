@@ -304,3 +304,66 @@ describe('agent-stream-parser', () => {
 		});
 	});
 });
+
+describe('agent-stream-parser — generic (opencode / kimi)', () => {
+	it('renders assistant text from a loosely-shaped event', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		const out = parser.onStdout(
+			`${JSON.stringify({ type: 'message', role: 'assistant', text: 'Hello there' })}\n`,
+		);
+		expect(out).toBe('Hello there\n');
+	});
+
+	it('skips user-role messages', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Kimi);
+		const out = parser.onStdout(
+			`${JSON.stringify({ type: 'message', role: 'user', text: 'the prompt' })}\n`,
+		);
+		expect(out).toBe('');
+	});
+
+	it('renders a tool call with a condensed input preview', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		const out = parser.onStdout(
+			`${JSON.stringify({ type: 'tool_use', name: 'bash', input: { command: 'ls -la' } })}\n`,
+		);
+		expect(out).toContain('[tool] bash(');
+		expect(out).toContain('command=ls -la');
+	});
+
+	it('captures token usage and prices it from a terminal event', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Kimi, price);
+		parser.onStdout(`${JSON.stringify({ type: 'init', model: 'gemini-2.5-flash' })}\n`);
+		const out = parser.onStdout(
+			`${JSON.stringify({
+				type: 'result',
+				usage: { input_tokens: 1000, output_tokens: 200 },
+			})}\n`,
+		);
+		expect(out).toBe('[done] success tokens=1000/200\n');
+		const usage = parser.getUsage();
+		expect(usage?.inputTokens).toBe(1000);
+		expect(usage?.outputTokens).toBe(200);
+		// 1000 * 0.000005 + 200 * 0.00001 = 0.005 + 0.002 = 0.007 USD = 0.7 cents → round 1.
+		expect(usage?.costCents).toBe(1);
+	});
+
+	it('honors a provider-reported usd cost over computed pricing', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode, price);
+		const out = parser.onStdout(
+			`${JSON.stringify({
+				type: 'turn.completed',
+				total_cost_usd: 0.25,
+				usage: { prompt_tokens: 10, completion_tokens: 5 },
+			})}\n`,
+		);
+		expect(out).toBe('[done] success tokens=10/5\n');
+		expect(parser.getUsage()?.costCents).toBe(25);
+	});
+
+	it('drops unrecognized structured events instead of dumping raw JSON', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		const out = parser.onStdout(`${JSON.stringify({ type: 'session.status', status: 'busy' })}\n`);
+		expect(out).toBe('');
+	});
+});

@@ -92,6 +92,19 @@ export interface McpAdapterContext {
 	 *  write these to their conventional skills directory; Claude Code reads
 	 *  `~/.claude/skills/<slug>.md`, others use whatever convention they have. */
 	skillFiles?: readonly McpSkillFile[];
+	/**
+	 * Resolved provider API key (api-key auth only). Most runtimes receive the
+	 * credential via container env (`buildProviderEnv`); the Kimi adapter needs it
+	 * to write `api_key` into the provider block of `config.toml`, since the kimi
+	 * CLI takes its provider credential from the config file, not the environment.
+	 */
+	providerApiKey?: string;
+	/**
+	 * Resolved model id for this run (the user's `default_model`, or null). The
+	 * Kimi adapter declares it as a `[models.<id>]` block and sets `default_model`,
+	 * because the kimi CLI only accepts models declared in config.
+	 */
+	model?: string | null;
 }
 
 export interface RuntimeMcpAdapter {

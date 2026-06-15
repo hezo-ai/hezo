@@ -36,8 +36,14 @@ if [ -n "${HTTPS_PROXY:-}" ]; then
         | sudo tee /etc/apt/apt.conf.d/01hezo-proxy >/dev/null
 fi
 
+# Deliver the prompt either on stdin (default) or as a trailing arg when
+# HEZO_PROMPT_MODE=arg (OpenCode `run <message>`, Kimi `--prompt <text>`).
 if [ -n "${HEZO_PROMPT_FILE:-}" ] && [ -r "$HEZO_PROMPT_FILE" ]; then
-    "$@" < "$HEZO_PROMPT_FILE"
+    if [ "${HEZO_PROMPT_MODE:-stdin}" = arg ]; then
+        "$@" "$(cat "$HEZO_PROMPT_FILE")"
+    else
+        "$@" < "$HEZO_PROMPT_FILE"
+    fi
 else
     "$@"
 fi

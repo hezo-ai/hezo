@@ -10,6 +10,7 @@ import {
 	ContainerStatus,
 	claudeCodeModelArg,
 	HeartbeatRunStatus,
+	opencodeModelArg,
 	PROVIDER_RUNTIME_ADAPTERS,
 	providerDirectUpstreamHosts,
 	RUNTIME_AUTO_APPROVE_ARGS,
@@ -17,6 +18,7 @@ import {
 	RUNTIME_DISALLOWED_TOOLS_ARGS,
 	RUNTIME_HEADLESS_PREFIX_ARGS,
 	RUNTIME_HEADLESS_SUFFIX_ARGS,
+	RUNTIME_PROMPT_DELIVERY,
 	RUNTIME_STREAM_ARGS,
 	repoNameFromIdentifier,
 	TaskStatus,
@@ -203,6 +205,8 @@ export interface RunContext {
 	env: string[];
 	taskPrompt: string;
 	promptFilePath: string;
+	/** True when the runtime takes the prompt as a trailing arg, not on stdin. */
+	promptAsArg: boolean;
 	effort: string;
 	effortApplication: EffortRuntimeApplication;
 	agentJwt: string;
@@ -236,11 +240,17 @@ export function getHostPromptPath(
 	);
 }
 
+// Deliver the prompt either on stdin (default) or as a trailing arg (OpenCode,
+// Kimi), selected per runtime via the HEZO_PROMPT_MODE env var. The bridge
+// wrapper script honors the same env var.
+const PROMPT_DELIVERY_SH =
+	'if [ "$HEZO_PROMPT_MODE" = arg ]; then exec "$@" "$(cat "$HEZO_PROMPT_FILE")"; else exec "$@" < "$HEZO_PROMPT_FILE"; fi';
+
 function wrapExecCmd(cmd: string[], bridge: BridgeRunnerArgs | null): string[] {
 	if (bridge) {
 		return [...buildBridgeRunnerArgv(bridge), ...cmd];
 	}
-	return ['sh', '-c', 'exec "$@" < "$HEZO_PROMPT_FILE"', 'sh', ...cmd];
+	return ['sh', '-c', PROMPT_DELIVERY_SH, 'sh', ...cmd];
 }
 
 export interface EgressEnvDescriptor {
@@ -350,6 +360,10 @@ export async function buildRuntimeInvocation(
 		containerHomeDir: homeMount?.containerDir ?? null,
 		provider,
 		skillFiles,
+		// Kimi takes its provider credential and model from config.toml rather than
+		// env, so the adapter needs them directly (api-key auth only).
+		providerApiKey: credential.authMethod === AiAuthMethod.ApiKey ? credential.value : undefined,
+		model: modelOverride,
 	});
 	validateInjection(adapter, mcpInjection);
 
@@ -365,6 +379,7 @@ export async function buildRuntimeInvocation(
 		`HEZO_TEAM_ID=${runTeamId}`,
 		`HEZO_AGENT_EFFORT=${effort}`,
 		`HEZO_PROMPT_FILE=${promptContainerPath}`,
+		`HEZO_PROMPT_MODE=${RUNTIME_PROMPT_DELIVERY[runtimeType]}`,
 		...extraEnv,
 		...effortApplication.extraEnv,
 		...buildProviderEnv(provider, credential),
@@ -406,11 +421,17 @@ export async function buildRuntimeInvocation(
 	}
 
 	const cliCommand = RUNTIME_COMMANDS[runtimeType];
-	const cliModel =
-		modelOverride && runtimeType === AgentRuntime.ClaudeCode
-			? claudeCodeModelArg(provider, modelOverride)
-			: modelOverride;
-	const modelArgs = cliModel ? ['--model', cliModel] : [];
+	let cliModel = modelOverride;
+	if (modelOverride) {
+		if (runtimeType === AgentRuntime.ClaudeCode) {
+			cliModel = claudeCodeModelArg(provider, modelOverride);
+		} else if (runtimeType === AgentRuntime.OpenCode) {
+			cliModel = opencodeModelArg(provider, modelOverride);
+		}
+	}
+	// Kimi resolves its model from config.toml (default_model), so it takes no
+	// --model flag; every other runtime accepts one.
+	const modelArgs = cliModel && runtimeType !== AgentRuntime.Kimi ? ['--model', cliModel] : [];
 
 	const cmd = [
 		cliCommand,
@@ -541,6 +562,7 @@ async function buildRunContext(
 		env,
 		taskPrompt,
 		promptFilePath,
+		promptAsArg: RUNTIME_PROMPT_DELIVERY[runtimeType] === 'arg',
 		effort,
 		effortApplication,
 		agentJwt,
@@ -904,7 +926,10 @@ export async function runAgent(
 			writeFileSync(hostPromptPath, context.taskPrompt);
 
 			const redactedCmd = context.cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
-			const invocationCommand = `$ ${redactedCmd.map(shellQuoteArg).join(' ')} < ${context.promptFilePath}`;
+			const promptSuffix = context.promptAsArg
+				? ` "$(cat ${context.promptFilePath})"`
+				: ` < ${context.promptFilePath}`;
+			const invocationCommand = `$ ${redactedCmd.map(shellQuoteArg).join(' ')}${promptSuffix}`;
 
 			await deps.db.query(
 				`UPDATE heartbeat_runs SET invocation_command = $1, working_dir = $2 WHERE id = $3`,
