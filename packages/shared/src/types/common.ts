@@ -671,7 +671,14 @@ export const KIMI_CODING_BASE_URL = 'https://api.kimi.com/coding/v1';
 export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapter> = {
 	[AiProvider.Anthropic]: {
 		runtime: AgentRuntime.ClaudeCode,
-		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_API_KEY' },
+		// Subscription (Claude Pro/Max) is delivered as a long-lived OAuth token from
+		// `claude setup-token`, injected via CLAUDE_CODE_OAUTH_TOKEN — not a
+		// credentials-file mount (Claude Code rotates single-use refresh tokens and
+		// recreates ~/.claude/.credentials.json, which breaks on a per-run mount).
+		credentialEnvByAuthMethod: {
+			[AiAuthMethod.ApiKey]: 'ANTHROPIC_API_KEY',
+			[AiAuthMethod.Subscription]: 'CLAUDE_CODE_OAUTH_TOKEN',
+		},
 	},
 	[AiProvider.OpenAI]: {
 		runtime: AgentRuntime.Codex,
@@ -843,7 +850,11 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
 	[AgentRuntime.Codex]: ['--dangerously-bypass-approvals-and-sandbox'],
 	[AgentRuntime.Gemini]: ['--yolo'],
 	[AgentRuntime.OpenCode]: ['--dangerously-skip-permissions'],
-	[AgentRuntime.Kimi]: ['--yolo'],
+	// Kimi's `--yolo`/`--auto` flags are rejected when combined with `--prompt`
+	// ("Cannot combine --prompt with --yolo"); auto-approval in non-interactive
+	// prompt mode comes from `default_yolo = true` in config.toml (written by the
+	// kimi MCP adapter) instead.
+	[AgentRuntime.Kimi]: [],
 };
 
 /**
@@ -907,9 +918,10 @@ export const RUNTIME_HEADLESS_SUFFIX_ARGS: Record<AgentRuntime, readonly string[
 	[AgentRuntime.Gemini]: [],
 	// OpenCode takes the prompt as a positional `message` (appended in arg mode).
 	[AgentRuntime.OpenCode]: [],
-	// Kimi `--print` runs non-interactively; `--prompt` takes the prompt text,
-	// which the exec wrapper appends as the trailing arg in arg mode.
-	[AgentRuntime.Kimi]: ['--print', '--prompt'],
+	// Kimi runs one prompt non-interactively via `--prompt <text>`; the exec
+	// wrapper appends the prompt as the trailing arg in arg mode. (There is no
+	// `--print` flag — the CLI rejects it.)
+	[AgentRuntime.Kimi]: ['--prompt'],
 };
 
 export interface AiProviderVerifyEndpoint {
@@ -930,6 +942,7 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 	[AiProvider.Anthropic]: {
 		name: 'Anthropic',
 		runtimeLabel: 'Claude Code',
+		supportsSubscription: true,
 		keyPrefix: 'sk-ant-',
 		keyPlaceholder: 'sk-ant-...',
 		verifyEndpoint: {
@@ -992,6 +1005,7 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 	[AiProvider.Kimi]: {
 		name: 'Kimi',
 		runtimeLabel: 'Kimi Code',
+		supportsSubscription: true,
 		keyPlaceholder: 'sk-...',
 		verifyEndpoint: {
 			url: `${KIMI_CODING_BASE_URL}/models`,

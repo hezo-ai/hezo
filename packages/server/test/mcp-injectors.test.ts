@@ -1,4 +1,4 @@
-import { AgentRuntime, AiProvider } from '@hezo/shared';
+import { AgentRuntime, AiAuthMethod, AiProvider } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from '../src/services/mcp-injectors';
 import {
@@ -468,7 +468,10 @@ describe('kimi adapter', () => {
 		expect(config.contents).toContain('[providers.kimi-for-coding]');
 		expect(config.contents).toContain('type = "kimi"');
 		expect(config.contents).toContain('api_key = "sk-kimi-test"');
+		expect(config.contents).not.toContain('oauth');
 		expect(config.contents).toContain('[models.kimi-k2-test]');
+		// The model block requires max_context_size or the CLI rejects the config.
+		expect(config.contents).toContain('max_context_size =');
 		expect(config.contents).toContain('[[hooks]]');
 		expect(config.contents).toContain('event = "Stop"');
 		expect(config.contents).toContain(`command = "node ${HOME}/stop-hook-judge.mjs"`);
@@ -495,5 +498,28 @@ describe('kimi adapter', () => {
 		const config = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
 		expect(config?.contents).not.toContain('api_key');
 		expect(config?.contents).toContain('default_model = "kimi-for-coding"');
+	});
+
+	it('writes the managed OAuth provider block (no api_key) for subscription auth', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+			authMethod: AiAuthMethod.Subscription,
+			// Subscription credential is delivered via the mounted file, not providerApiKey.
+		});
+		const config = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
+		expect(config).toBeDefined();
+		if (!config) throw new Error('expected config.toml');
+
+		// Built-in managed provider with a colon must be a quoted TOML table key,
+		// plus an .oauth sub-table pointing at the file-backed credential.
+		expect(config.contents).toContain('[providers."managed:kimi-code"]');
+		expect(config.contents).toContain('[providers."managed:kimi-code".oauth]');
+		expect(config.contents).toContain('storage = "file"');
+		expect(config.contents).toContain('key = "oauth/kimi-code"');
+		// No api_key on the subscription path; the model points at the managed provider.
+		expect(config.contents).not.toContain('api_key');
+		expect(config.contents).toContain('provider = "managed:kimi-code"');
+		expect(config.contents).toContain('max_context_size =');
 	});
 });

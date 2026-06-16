@@ -8,8 +8,18 @@ export const CONTAINER_SUBSCRIPTION_DIR = '/workspace/.hezo/subscription';
 
 export interface SubscriptionLayout {
 	dirName: string;
-	authFileRelative: string;
+	/**
+	 * Path (relative to the per-run home dir) where the runtime CLI reads its
+	 * subscription credential file. Present only for providers whose subscription
+	 * credential is delivered as a file mount (Codex, Gemini, Kimi). Omitted for
+	 * providers that need only a config home dir (the credential, if any, is
+	 * delivered via env var — e.g. Anthropic's CLAUDE_CODE_OAUTH_TOKEN). When
+	 * omitted, `buildSubscriptionMount` writes no file and returns null.
+	 */
+	authFileRelative?: string;
 	envVarName: string;
+	/** True when the runtime CLI rotates a single-use refresh token in place,
+	 *  so runs on the credential must serialise and the rotated file persist back. */
 	rotates: boolean;
 }
 
@@ -30,25 +40,22 @@ export const SUBSCRIPTION_LAYOUTS: Partial<Record<AiProvider, SubscriptionLayout
 	// config dir so the runner can drop a settings.json with the Stop hook the
 	// agent CLI loads via `--settings`. The envVarName is a Hezo-internal
 	// marker, not consumed by Claude Code itself; HOME is intentionally not
-	// overridden so git/ssh keep finding the container's default $HOME. The
-	// authFileRelative is a placeholder — Anthropic-family providers don't yet
-	// have a subscription-auth path wired up in Hezo, and buildSubscriptionMount
-	// short-circuits when authMethod !== Subscription anyway.
+	// overridden so git/ssh keep finding the container's default $HOME. No
+	// authFileRelative: Anthropic subscription is delivered via the
+	// CLAUDE_CODE_OAUTH_TOKEN env var (see PROVIDER_RUNTIME_ADAPTERS), and
+	// DeepSeek/Z.ai have no subscription path at all.
 	[AiProvider.Anthropic]: {
 		dirName: 'claude-code-anthropic',
-		authFileRelative: '.placeholder',
 		envVarName: 'HEZO_CLAUDE_CONFIG_DIR',
 		rotates: false,
 	},
 	[AiProvider.DeepSeek]: {
 		dirName: 'claude-code-deepseek',
-		authFileRelative: '.placeholder',
 		envVarName: 'HEZO_CLAUDE_CONFIG_DIR',
 		rotates: false,
 	},
 	[AiProvider.ZAi]: {
 		dirName: 'claude-code-zai',
-		authFileRelative: '.placeholder',
 		envVarName: 'HEZO_CLAUDE_CONFIG_DIR',
 		rotates: false,
 	},
@@ -58,18 +65,21 @@ export const SUBSCRIPTION_LAYOUTS: Partial<Record<AiProvider, SubscriptionLayout
 	// entry (OPENCODE_CONFIG wants a file path, not a directory).
 	[AiProvider.OpenRouter]: {
 		dirName: 'opencode',
-		authFileRelative: '.placeholder',
 		envVarName: 'HEZO_OPENCODE_CONFIG_DIR',
 		rotates: false,
 	},
 	// Kimi reads its config dir from KIMI_CODE_HOME, so the home-mount env entry
 	// configures the CLI directly; the kimi adapter writes config.toml + mcp.json
-	// into this dir.
+	// into this dir. For subscription auth the managed-Kimi-Code OAuth credential
+	// is materialised at `<KIMI_CODE_HOME>/credentials/kimi-code.json` — the exact
+	// path the CLI reads (verified against @moonshot-ai/kimi-code) — and the kimi
+	// adapter writes a `[providers."managed:kimi-code".oauth]` ref pointing at it.
+	// The CLI rotates the refresh token in place each run, so rotates: true.
 	[AiProvider.Kimi]: {
 		dirName: 'kimi',
-		authFileRelative: '.placeholder',
+		authFileRelative: 'credentials/kimi-code.json',
 		envVarName: 'KIMI_CODE_HOME',
-		rotates: false,
+		rotates: true,
 	},
 };
 
@@ -120,6 +130,10 @@ export function buildSubscriptionMount(
 
 	const layout = SUBSCRIPTION_LAYOUTS[provider];
 	if (!layout) return null;
+	// No credential file for this provider — the subscription credential is
+	// delivered via env var (buildProviderEnv), so there is nothing to mount.
+	const { authFileRelative } = layout;
+	if (!authFileRelative) return null;
 
 	const hostDir = getHostSubscriptionRoot(
 		provider,
@@ -129,7 +143,7 @@ export function buildSubscriptionMount(
 		heartbeatRunId,
 	) as string;
 	const containerDir = getContainerSubscriptionRoot(provider, heartbeatRunId) as string;
-	const hostAuthFile = join(hostDir, layout.authFileRelative);
+	const hostAuthFile = join(hostDir, authFileRelative);
 
 	mkdirSync(dirname(hostAuthFile), { recursive: true, mode: 0o700 });
 	writeFileSync(hostAuthFile, credential.value, { mode: 0o600 });

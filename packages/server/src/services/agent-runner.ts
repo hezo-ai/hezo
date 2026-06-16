@@ -66,6 +66,7 @@ import {
 import { resolveRuntimeForTask } from './runtime-resolver';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
 import { withHostAgentSocket } from './ssh-agent/host';
+import { validateSubscriptionBlob } from './subscription-auth';
 import { recordStatusChange } from './task-events';
 import { resolveSystemPrompt } from './template-resolver';
 import { getRunSocketPath, getWorkspacePath, getWorktreesPath } from './workspace';
@@ -359,6 +360,7 @@ export async function buildRuntimeInvocation(
 		hostHomeDir: homeMount?.hostDir ?? null,
 		containerHomeDir: homeMount?.containerDir ?? null,
 		provider,
+		authMethod: credential.authMethod,
 		skillFiles,
 		// Kimi takes its provider credential and model from config.toml rather than
 		// env, so the adapter needs them directly (api-key auth only).
@@ -861,14 +863,25 @@ export async function runAgent(
 			try {
 				if (existsSync(mount.hostAuthFile)) {
 					const rotated = readFileSync(mount.hostAuthFile, 'utf8');
-					if (rotated && rotated !== credential.value) {
-						await updateAiProviderCredential(
-							deps.db,
-							deps.masterKeyManager,
-							credential.configId,
-							rotated,
+					if (!rotated || rotated === credential.value) return;
+					// The CLI rewrites this file on every run: a rotated credential on
+					// success, but an empty "tombstone" (blank tokens) when the refresh
+					// fails. Persisting a tombstone would wipe the stored credential, so
+					// only write back a value that still validates as a usable credential.
+					const check = validateSubscriptionBlob(provider, rotated);
+					if (!check.ok) {
+						emit(
+							'stderr',
+							`[runner] skipping rotated-auth write-back: ${check.error ?? 'invalid credential'}\n`,
 						);
+						return;
 					}
+					await updateAiProviderCredential(
+						deps.db,
+						deps.masterKeyManager,
+						credential.configId,
+						rotated,
+					);
 				}
 			} catch (e) {
 				emit(

@@ -100,8 +100,8 @@ test('can add an Anthropic API key via the settings UI', async () => {
 	await findByText('active', undefined, { timeout: 15_000 });
 });
 
-test('does not offer subscription auth for Anthropic', async () => {
-	const { container, findByRole } = await renderApp({
+test('offers Claude Code subscription (setup-token) paste flow for Anthropic', async () => {
+	const { container, findByRole, findByText, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {
 			await clearAiProviders();
@@ -116,10 +116,51 @@ test('does not offer subscription auth for Anthropic', async () => {
 	const anthropicCard = modalCards.find((el) => el.textContent?.includes('Anthropic'));
 	expect(anthropicCard).toBeTruthy();
 
-	expect(within(anthropicCard!).queryByRole('button', { name: /Enter API key/i })).toBeTruthy();
-	expect(
-		within(anthropicCard!).queryByRole('button', { name: /Use Claude Code subscription/i }),
-	).toBeNull();
+	await user.click(
+		within(anthropicCard!).getByRole('button', { name: /Use Claude Code subscription/i }),
+	);
+	const setupHits = await within(anthropicCard!).findAllByText(/setup-token/i);
+	expect(setupHits.length).toBeGreaterThan(0);
+	const textarea = anthropicCard!.querySelector('textarea') as HTMLTextAreaElement;
+	fireEvent.change(textarea, { target: { value: 'sk-ant-oat01-component-test-token' } });
+	await user.click(within(anthropicCard!).getByRole('button', { name: 'Save' }));
+
+	await findByText('Subscription', undefined, { timeout: 15_000 });
+});
+
+test('offers Kimi Code subscription paste flow for Kimi', async () => {
+	const { container, findByRole, findByText, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+		},
+	});
+
+	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
+
+	const modalCards = Array.from(
+		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-radius-md.p-4'),
+	);
+	const kimiCard = modalCards.find((el) => el.textContent?.includes('Kimi'));
+	expect(kimiCard).toBeTruthy();
+
+	await user.click(within(kimiCard!).getByRole('button', { name: /Use Kimi Code subscription/i }));
+	const loginHits = await within(kimiCard!).findAllByText(/kimi login/i);
+	expect(loginHits.length).toBeGreaterThan(0);
+	const textarea = kimiCard!.querySelector('textarea') as HTMLTextAreaElement;
+	fireEvent.change(textarea, {
+		target: {
+			value: JSON.stringify({
+				access_token: 'kc-access',
+				refresh_token: 'kc-refresh',
+				expires_at: 1813110988251,
+				token_type: 'Bearer',
+			}),
+		},
+	});
+	await user.click(within(kimiCard!).getByRole('button', { name: 'Save' }));
+
+	await findByText('Subscription', undefined, { timeout: 15_000 });
 });
 
 test('offers Codex subscription paste flow for OpenAI', async () => {

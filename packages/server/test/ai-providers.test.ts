@@ -206,12 +206,21 @@ describe('AI providers subscription auth', () => {
 		expiry_date: 1745780000000,
 	});
 
-	it('rejects subscription auth for anthropic (no subscription support)', async () => {
+	const validKimiBlob = JSON.stringify({
+		access_token: 'kc-access',
+		refresh_token: 'kc-refresh',
+		expires_at: 1813110988251,
+		token_type: 'Bearer',
+		scope: 'kimi-code',
+		expires_in: 3600,
+	});
+
+	it('rejects subscription auth for deepseek (no subscription support)', async () => {
 		const res = await app.request('/api/ai-providers', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				provider: 'anthropic',
+				provider: 'deepseek',
 				api_key: validCodexBlob,
 				auth_method: 'subscription',
 			}),
@@ -219,6 +228,21 @@ describe('AI providers subscription auth', () => {
 		expect(res.status).toBe(400);
 		const body = await res.json();
 		expect(body.error.code).toBe('UNSUPPORTED_AUTH_METHOD');
+	});
+
+	it('rejects an API key pasted as an anthropic setup-token', async () => {
+		const res = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'anthropic',
+				api_key: 'sk-ant-api03-not-a-setup-token',
+				auth_method: 'subscription',
+			}),
+		});
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.code).toBe('INVALID_SUBSCRIPTION_BLOB');
 	});
 
 	it('rejects malformed auth.json for openai', async () => {
@@ -322,6 +346,65 @@ describe('AI providers subscription auth', () => {
 			}),
 		});
 		expect(res.status).toBe(201);
+	});
+
+	it('stores an anthropic setup-token as a subscription credential', async () => {
+		await db.query('DELETE FROM ai_provider_configs');
+		const res = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'anthropic',
+				api_key: 'sk-ant-oat01-live-token',
+				auth_method: 'subscription',
+				label: 'claude-max',
+			}),
+		});
+		expect(res.status).toBe(201);
+
+		const list = await app.request('/api/ai-providers', { headers: authHeader(token) });
+		const body = await list.json();
+		const stored = (body.data as Array<{ provider: string; auth_method: string }>).find(
+			(r) => r.provider === 'anthropic',
+		);
+		expect(stored?.auth_method).toBe('subscription');
+	});
+
+	it('rejects a kimi blob missing refresh_token', async () => {
+		const res = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'kimi',
+				api_key: JSON.stringify({ access_token: 'only-access' }),
+				auth_method: 'subscription',
+			}),
+		});
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.code).toBe('INVALID_SUBSCRIPTION_BLOB');
+	});
+
+	it('stores a valid kimi-code.json blob for kimi', async () => {
+		await db.query('DELETE FROM ai_provider_configs');
+		const res = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'kimi',
+				api_key: validKimiBlob,
+				auth_method: 'subscription',
+				label: 'kimi-pro',
+			}),
+		});
+		expect(res.status).toBe(201);
+
+		const list = await app.request('/api/ai-providers', { headers: authHeader(token) });
+		const body = await list.json();
+		const stored = (body.data as Array<{ provider: string; auth_method: string }>).find(
+			(r) => r.provider === 'kimi',
+		);
+		expect(stored?.auth_method).toBe('subscription');
 	});
 });
 

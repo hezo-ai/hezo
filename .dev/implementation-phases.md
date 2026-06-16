@@ -479,13 +479,13 @@ Backend:
 - AI provider status endpoint for setup detection
 - Agent runner injects provider-specific env vars per exec (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
 - Agent runner dispatches correct CLI command per runtime type (claude, codex, gemini)
-- Subscription credentials (Codex auth.json, Gemini oauth_creds.json) accepted via paste-flow and materialised to per-run mounts inside the agent container
+- Subscription credentials accepted per provider: **Anthropic** (Claude Code) takes a `claude setup-token` token injected as `CLAUDE_CODE_OAUTH_TOKEN` (env var, no file); **OpenAI** (Codex `auth.json`), **Google** (Gemini `oauth_creds.json`), and **Kimi** (`kimi-code.json`, the managed `managed:kimi-code` OAuth provider) are pasted and materialised to per-run file mounts inside the agent container. Codex/Kimi rotate single-use refresh tokens, so runs serialise on the credential and the rotated file is validated (never an empty tombstone) before persisting back.
 - Dockerfile.agent-base with all AI CLIs pre-installed
 
 UI:
 - Dedicated `/settings/ai-providers` route with per-provider cards
 - Manual API key entry (password input, format validation)
-- OAuth connection for subscription mode (Anthropic, OpenAI, Google)
+- Subscription (paste) flow for Anthropic (setup-token), OpenAI (Codex), Google (Gemini), and Kimi
 - Each provider card renders every stored config row (API key and/or OAuth subscription) and exposes add buttons only for auth methods not yet configured, so an API key and an OAuth subscription can coexist for the same provider. A `Default` badge and `Set default` button let the operator pick which config the agent runner uses.
 - Full-screen setup gate rendered by the root shell immediately after master-key unlock, before the app is interactive. Blocks team creation until at least one provider is active. Re-raises if the last provider is deleted.
 

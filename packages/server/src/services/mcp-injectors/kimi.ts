@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { KIMI_CODING_BASE_URL } from '@hezo/shared';
+import { AiAuthMethod, KIMI_CODING_BASE_URL } from '@hezo/shared';
 import { buildKimiJudgeScript } from '../stop-hook-prompt';
 import type {
 	McpAdapterContext,
@@ -14,24 +14,46 @@ import type {
  *
  * Kimi reads its config from `$KIMI_CODE_HOME/config.toml` (the home-mount env
  * entry points it at the per-run dir) and MCP servers from a sibling
- * `mcp.json`. The provider credential goes into the `[providers.kimi-for-coding]`
- * block — the kimi CLI takes its api_key from config, not env (KIMI_API_KEY is
- * still exported for the Stop-hook judge). The model the user selected is
- * declared as a `[models.<id>]` block and set as `default_model`, because kimi
- * only accepts models declared in config.
+ * `mcp.json`. The model the user selected is declared as a `[models.<id>]`
+ * block (with the schema-required `max_context_size`) and set as
+ * `default_model`, because kimi only accepts models declared in config.
+ * `default_yolo = true` provides non-interactive auto-approval — the `--yolo`
+ * CLI flag is rejected in `--prompt` mode.
+ *
+ * The provider block depends on the auth method:
+ * - **api key**: a custom `[providers.kimi-for-coding]` block carries the
+ *   `api_key` (the kimi CLI takes its api_key from config, not env; KIMI_API_KEY
+ *   is still exported for the Stop-hook judge).
+ * - **subscription**: the built-in managed provider `[providers."managed:kimi-code"]`
+ *   with a `[providers."managed:kimi-code".oauth]` ref (`storage = "file"`,
+ *   `key = "oauth/kimi-code"`) that points the CLI at the OAuth credential file
+ *   Hezo mounts at `<KIMI_CODE_HOME>/credentials/kimi-code.json`.
  *
  * Completeness is enforced by a `[[hooks]]` `event = "Stop"` command that runs
  * the judge script; on incomplete work the script exits 2 with the reason on
  * stderr, which kimi feeds back to the model to keep it working.
  */
 
-const PROVIDER_NAME = 'kimi-for-coding';
+/** Custom provider id for api-key auth. */
+const API_KEY_PROVIDER_NAME = 'kimi-for-coding';
+/** Built-in managed OAuth provider id (subscription auth). */
+const MANAGED_PROVIDER_NAME = 'managed:kimi-code';
+/** OAuth credential key; resolves to `<KIMI_CODE_HOME>/credentials/kimi-code.json`. */
+const MANAGED_OAUTH_KEY = 'oauth/kimi-code';
 const DEFAULT_MODEL = 'kimi-for-coding';
+/** kimi-for-coding context window; `[models.*]` requires a positive value. */
+const DEFAULT_MAX_CONTEXT_SIZE = 262144;
 const JUDGE_SCRIPT_BASENAME = 'stop-hook-judge.mjs';
 const CONFIG_BASENAME = 'config.toml';
 const MCP_BASENAME = 'mcp.json';
 
 const TOML_KEY_RE = /^[A-Za-z0-9_-]+$/;
+
+/** Render a provider id as a TOML table-key segment: bare when it only uses
+ *  `[A-Za-z0-9_-]`, otherwise a quoted basic string (e.g. `"managed:kimi-code"`). */
+function tomlTableKey(name: string): string {
+	return TOML_KEY_RE.test(name) ? name : escapeTomlBasicString(name);
+}
 
 function escapeTomlBasicString(value: string): string {
 	let out = '';
@@ -82,6 +104,8 @@ function buildMcpLocal(d: McpStdioDescriptor): KimiMcpLocal {
 }
 
 function buildConfigToml(ctx: McpAdapterContext, judgeScriptContainerPath: string): string {
+	const isSubscription = ctx.authMethod === AiAuthMethod.Subscription;
+	const providerName = isSubscription ? MANAGED_PROVIDER_NAME : API_KEY_PROVIDER_NAME;
 	const rawModel = ctx.model?.trim() ? ctx.model.trim() : DEFAULT_MODEL;
 	const key = modelKey(rawModel);
 
@@ -91,20 +115,36 @@ function buildConfigToml(ctx: McpAdapterContext, judgeScriptContainerPath: strin
 	];
 
 	const providerLines = [
-		`[providers.${PROVIDER_NAME}]`,
+		`[providers.${tomlTableKey(providerName)}]`,
 		'type = "kimi"',
 		`base_url = ${escapeTomlBasicString(KIMI_CODING_BASE_URL)}`,
 	];
-	if (ctx.providerApiKey) {
+	// api-key auth: credential goes inline. subscription auth: no api_key — the
+	// OAuth ref below points at the mounted credential file instead.
+	if (!isSubscription && ctx.providerApiKey) {
 		providerLines.push(`api_key = ${escapeTomlBasicString(ctx.providerApiKey)}`);
 	}
 	blocks.push(providerLines.join('\n'));
 
+	// Subscription: an [providers.<name>.oauth] sub-table tells the CLI to load
+	// the managed-Kimi-Code credential from its file store (Hezo mounts it at
+	// <KIMI_CODE_HOME>/credentials/kimi-code.json). Must follow the parent table.
+	if (isSubscription) {
+		blocks.push(
+			[
+				`[providers.${tomlTableKey(providerName)}.oauth]`,
+				'storage = "file"',
+				`key = ${escapeTomlBasicString(MANAGED_OAUTH_KEY)}`,
+			].join('\n'),
+		);
+	}
+
 	blocks.push(
 		[
 			`[models.${key}]`,
-			`provider = ${escapeTomlBasicString(PROVIDER_NAME)}`,
+			`provider = ${escapeTomlBasicString(providerName)}`,
 			`model = ${escapeTomlBasicString(rawModel)}`,
+			`max_context_size = ${DEFAULT_MAX_CONTEXT_SIZE}`,
 		].join('\n'),
 	);
 
