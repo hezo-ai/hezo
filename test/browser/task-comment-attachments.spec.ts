@@ -14,6 +14,12 @@ const PNG_BYTES = Uint8Array.from([
 	0x42, 0x60, 0x82,
 ]);
 
+// Attachment chips/previews only render after the dropped file's upload
+// round-trips to the server (handleFiles → upload.mutateAsync). Under CI load
+// (parallel workers + 1 Hz agent cron + dev-mode Vite) that can outrun
+// Playwright's default, so wait as generously as the composer's own load wait.
+const UPLOAD_WAIT_MS = 20_000;
+
 test.describe('Task Comment Attachments', () => {
 	async function createTask(page: import('@playwright/test').Page, token: string) {
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -86,7 +92,7 @@ test.describe('Task Comment Attachments', () => {
 		);
 
 		const chip = page.locator('[data-testid="comment-attachment-chip"]', { hasText: 'shot.png' });
-		await expect(chip).toBeVisible({ timeout: 10000 });
+		await expect(chip).toBeVisible({ timeout: UPLOAD_WAIT_MS });
 
 		const send = page.getByRole('button', { name: 'Comment', exact: true });
 		await expect(send).toBeEnabled();
@@ -95,7 +101,7 @@ test.describe('Task Comment Attachments', () => {
 		const thumb = page
 			.locator('[data-testid="comment-attachment-thumb"][data-filename="shot.png"]')
 			.first();
-		await expect(thumb).toBeVisible({ timeout: 15000 });
+		await expect(thumb).toBeVisible({ timeout: UPLOAD_WAIT_MS });
 
 		const [popup] = await Promise.all([context.waitForEvent('page'), thumb.click()]);
 		await popup.waitForLoadState();
@@ -119,14 +125,17 @@ test.describe('Task Comment Attachments', () => {
 
 		const info = page.locator('[data-testid="comment-attachment-hint-info"]');
 		const tooltip = page.getByRole('tooltip');
-		// The Radix hover tooltip is transient: a single open can be missed while the
-		// comment form is still settling, and it closes on any pointer drift or
-		// re-render. Re-trigger a fresh pointerenter on each poll and assert the whole
-		// content as one snapshot, so a missed open or mid-assertion close self-heals.
+		// Radix opens this tooltip immediately on keyboard focus, but on hover only
+		// after a delay and only while the synthetic pointer stays put — in headless
+		// Chromium that hover open is unreliable and can be missed for the whole poll
+		// window. Drive it by focusing the trigger (deterministic), with a hover as a
+		// secondary nudge, and re-assert under toPass so a stray blur/re-render while
+		// the form settles self-heals.
 		await expect(async () => {
 			await page.mouse.move(0, 0);
 			await info.hover();
-			await expect(tooltip).toBeVisible({ timeout: 1500 });
+			await info.focus();
+			await expect(tooltip).toBeVisible({ timeout: 2500 });
 			const text = (await tooltip.textContent()) ?? '';
 			expect(text).toContain('PNG');
 			expect(text).toContain('PDF');
@@ -144,7 +153,7 @@ test.describe('Task Comment Attachments', () => {
 		);
 
 		const chip = page.locator('[data-testid="comment-attachment-chip"]', { hasText: 'shot.png' });
-		await expect(chip).toBeVisible({ timeout: 10000 });
+		await expect(chip).toBeVisible({ timeout: UPLOAD_WAIT_MS });
 		await expect(hint).toBeHidden();
 
 		await chip.getByRole('button', { name: 'Remove attachment' }).click();
@@ -173,7 +182,7 @@ test.describe('Task Comment Attachments', () => {
 		const preview = page
 			.locator('[data-testid="comment-attachment-preview"]')
 			.filter({ hasText: 'preview.png' });
-		await expect(preview).toBeVisible({ timeout: 10000 });
+		await expect(preview).toBeVisible({ timeout: UPLOAD_WAIT_MS });
 		await expect(preview).toHaveAttribute('target', '_blank');
 		await expect(preview).toHaveAttribute('rel', 'noopener noreferrer');
 		const href = await preview.getAttribute('href');
@@ -230,7 +239,7 @@ test.describe('Task Comment Attachments', () => {
 		const chip = page.locator('[data-testid="comment-attachment-chip"]', {
 			hasText: 'mobile.png',
 		});
-		await expect(chip).toBeVisible({ timeout: 10000 });
+		await expect(chip).toBeVisible({ timeout: UPLOAD_WAIT_MS });
 		await expect(hint).toBeHidden();
 		await expect(chip.locator('[data-testid="comment-attachment-preview"]')).toBeVisible();
 	});
