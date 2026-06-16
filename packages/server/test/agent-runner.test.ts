@@ -1939,6 +1939,41 @@ describe('runAgent', () => {
 			).toBeNull();
 		});
 
+		it('returns null mount for Anthropic subscription (delivered via env var, not a file)', () => {
+			// Anthropic subscription has no authFileRelative — the token goes in
+			// CLAUDE_CODE_OAUTH_TOKEN (buildProviderEnv), so there is nothing to mount.
+			expect(
+				buildSubscriptionMount('/tmp', 'co', 'pj', 'r1', AiProvider.Anthropic, {
+					value: 'sk-ant-oat01-token',
+					authMethod: AiAuthMethod.Subscription,
+				}),
+			).toBeNull();
+		});
+
+		it('writes kimi-code.json to a per-run path, points KIMI_CODE_HOME at it, and rotates', () => {
+			const dataDir = `/tmp/kimi-mount-${Date.now()}`;
+			const runId = 'run-kimi-1';
+			const kimiBlob = JSON.stringify({
+				access_token: 'kc-access',
+				refresh_token: 'kc-refresh',
+				expires_at: 1813110988251,
+				token_type: 'Bearer',
+			});
+			const mount = buildSubscriptionMount(dataDir, 'co', 'pj', runId, AiProvider.Kimi, {
+				value: kimiBlob,
+				authMethod: AiAuthMethod.Subscription,
+			});
+			expect(mount).not.toBeNull();
+			expect(mount!.rotates).toBe(true);
+			expect(mount!.envEntries).toEqual([
+				`KIMI_CODE_HOME=/workspace/.hezo/subscription/kimi/${runId}`,
+			]);
+			// The CLI reads the OAuth credential from <KIMI_CODE_HOME>/credentials/kimi-code.json.
+			expect(mount!.hostAuthFile.endsWith('/credentials/kimi-code.json')).toBe(true);
+			expect(existsSync(mount!.hostAuthFile)).toBe(true);
+			expect(readFileSync(mount!.hostAuthFile, 'utf8')).toBe(kimiBlob);
+		});
+
 		it('runAgent injects CODEX_HOME and stages auth.json on host', async () => {
 			await configureCodexSubscription('codex-mount-run');
 
@@ -2181,6 +2216,19 @@ describe('buildProviderEnv (Anthropic)', () => {
 		}
 		expect(env).toContain('ANTHROPIC_API_KEY=sk-ant-secret');
 		expect(env.some((e) => e.startsWith('ANTHROPIC_BASE_URL='))).toBe(false);
+	});
+
+	it('injects CLAUDE_CODE_OAUTH_TOKEN (and never ANTHROPIC_API_KEY) for a subscription credential', () => {
+		const env = buildProviderEnv(AiProvider.Anthropic, {
+			value: 'sk-ant-oat01-subtoken',
+			authMethod: AiAuthMethod.Subscription,
+		});
+		expect(env).toContain('CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-subtoken');
+		expect(env.some((e) => e.startsWith('ANTHROPIC_API_KEY='))).toBe(false);
+		// Quiet env still applies on the subscription path.
+		for (const entry of CLAUDE_CODE_QUIET_ENTRIES) {
+			expect(env).toContain(entry);
+		}
 	});
 });
 

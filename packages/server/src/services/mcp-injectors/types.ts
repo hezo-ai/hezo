@@ -1,4 +1,4 @@
-import type { AiProvider } from '@hezo/shared';
+import type { AiAuthMethod, AiProvider } from '@hezo/shared';
 
 /**
  * Normalized MCP server descriptor passed by the agent runner. Per-runtime
@@ -88,6 +88,13 @@ export interface McpAdapterContext {
 	 * that don't need it; the Claude Code adapter falls back to the Anthropic judge.
 	 */
 	provider?: AiProvider;
+	/**
+	 * Auth method for this run's provider credential. The Kimi adapter uses it to
+	 * choose between an api-key provider block (`api_key = …`) and the managed
+	 * OAuth provider block (`[providers."managed:kimi-code".oauth]`) in config.toml.
+	 * Defaults to api-key semantics when absent.
+	 */
+	authMethod?: AiAuthMethod;
 	/** Team-scoped agent skill files (e.g. from `fetch_skill_file`). Adapters
 	 *  write these to their conventional skills directory; Claude Code reads
 	 *  `~/.claude/skills/<slug>.md`, others use whatever convention they have. */
