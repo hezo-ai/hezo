@@ -39,7 +39,7 @@ describe('ensureImage', () => {
 			'hezo/agent-base:latest',
 			'/repo/docker',
 			'/repo/docker/Dockerfile.agent-base',
-			{ onLine: undefined, labels: { 'hezo.bundle.sha': 'a'.repeat(64) } },
+			expect.objectContaining({ labels: { 'hezo.bundle.sha': 'a'.repeat(64) } }),
 		);
 		expect(docker.pullImage).not.toHaveBeenCalled();
 	});
@@ -55,7 +55,18 @@ describe('ensureImage', () => {
 			context: '/repo/docker',
 			bundleSourceHash: 'a'.repeat(64),
 		});
-		const build = vi.fn().mockResolvedValue(undefined);
+		const build = vi
+			.fn()
+			.mockImplementation(
+				async (
+					_image,
+					_ctx,
+					_dockerfile,
+					options?: { onLine?: (s: string, t: string) => void },
+				) => {
+					options?.onLine?.('stdout', 'building line');
+				},
+			);
 		const onLine = vi.fn();
 
 		await ensureImage(docker, 'hezo/agent-base:latest', { resolveLocal, build, onLine });
@@ -64,8 +75,9 @@ describe('ensureImage', () => {
 			'hezo/agent-base:latest',
 			'/repo/docker',
 			'/repo/docker/Dockerfile.agent-base',
-			{ onLine, labels: { 'hezo.bundle.sha': 'a'.repeat(64) } },
+			expect.objectContaining({ labels: { 'hezo.bundle.sha': 'a'.repeat(64) } }),
 		);
+		expect(onLine).toHaveBeenCalledWith('stdout', 'building line');
 	});
 
 	it('falls back to pullImage when missing and not locally registered', async () => {
@@ -111,6 +123,103 @@ describe('ensureImage', () => {
 		await expect(
 			ensureImage(docker, 'hezo/agent-base:latest', { resolveLocal, build }),
 		).rejects.toThrow('docker build exited with code 1');
+		expect(docker.pullImage).not.toHaveBeenCalled();
+	});
+
+	it('deduplicates concurrent builds of the same image to a single build', async () => {
+		const docker = {
+			imageExists: vi.fn().mockResolvedValue(false),
+			pullImage: vi.fn(),
+		} as unknown as DockerClient;
+		const resolveLocal = vi.fn().mockReturnValue({
+			image: 'hezo/dedup:latest',
+			dockerfile: '/repo/docker/Dockerfile.agent-base',
+			context: '/repo/docker',
+			bundleSourceHash: 'a'.repeat(64),
+		});
+
+		let releaseBuild!: () => void;
+		const buildGate = new Promise<void>((resolve) => {
+			releaseBuild = resolve;
+		});
+		const build = vi.fn().mockImplementation(async () => {
+			await buildGate;
+		});
+
+		const first = ensureImage(docker, 'hezo/dedup:latest', { resolveLocal, build });
+		const second = ensureImage(docker, 'hezo/dedup:latest', { resolveLocal, build });
+		releaseBuild();
+		await Promise.all([first, second]);
+
+		expect(build).toHaveBeenCalledTimes(1);
+	});
+
+	it('fans build output out to every concurrent caller', async () => {
+		const docker = {
+			imageExists: vi.fn().mockResolvedValue(false),
+			pullImage: vi.fn(),
+		} as unknown as DockerClient;
+		const resolveLocal = vi.fn().mockReturnValue({
+			image: 'hezo/fanout:latest',
+			dockerfile: '/repo/docker/Dockerfile.agent-base',
+			context: '/repo/docker',
+			bundleSourceHash: 'a'.repeat(64),
+		});
+
+		let releaseBuild!: () => void;
+		const buildGate = new Promise<void>((resolve) => {
+			releaseBuild = resolve;
+		});
+		const build = vi
+			.fn()
+			.mockImplementation(
+				async (
+					_image,
+					_ctx,
+					_dockerfile,
+					options?: { onLine?: (s: string, t: string) => void },
+				) => {
+					await buildGate;
+					options?.onLine?.('stdout', 'building line');
+				},
+			);
+		const onLineFirst = vi.fn();
+		const onLineSecond = vi.fn();
+
+		const first = ensureImage(docker, 'hezo/fanout:latest', {
+			resolveLocal,
+			build,
+			onLine: onLineFirst,
+		});
+		const second = ensureImage(docker, 'hezo/fanout:latest', {
+			resolveLocal,
+			build,
+			onLine: onLineSecond,
+		});
+		releaseBuild();
+		await Promise.all([first, second]);
+
+		expect(build).toHaveBeenCalledTimes(1);
+		expect(onLineFirst).toHaveBeenCalledWith('stdout', 'building line');
+		expect(onLineSecond).toHaveBeenCalledWith('stdout', 'building line');
+	});
+
+	it('treats a build failure as success when the image is present afterward', async () => {
+		const docker = {
+			imageExists: vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true),
+			pullImage: vi.fn(),
+		} as unknown as DockerClient;
+		const resolveLocal = vi.fn().mockReturnValue({
+			image: 'hezo/benign:latest',
+			dockerfile: '/repo/docker/Dockerfile.agent-base',
+			context: '/repo/docker',
+			bundleSourceHash: 'a'.repeat(64),
+		});
+		const build = vi.fn().mockRejectedValue(new Error('docker build exited with code 1'));
+
+		await expect(
+			ensureImage(docker, 'hezo/benign:latest', { resolveLocal, build }),
+		).resolves.toBeUndefined();
 		expect(docker.pullImage).not.toHaveBeenCalled();
 	});
 });

@@ -1,10 +1,13 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { FetchLike } from '../src/services/pricing';
+import type { FetchLike, LlmPricesFeed } from '../src/services/pricing';
 import {
 	countModelPricing,
+	LLM_PRICES_URL,
+	mergeRates,
 	normalizeModelId,
 	PricingService,
+	parseLlmPrices,
 	upsertManualRate,
 } from '../src/services/pricing';
 import { createTestDbWithMigrations } from './helpers/db';
@@ -22,6 +25,15 @@ afterEach(async () => {
 /** A `fetch` stub returning a fixed LiteLLM-shaped payload. */
 function stubFetch(payload: Record<string, unknown>): FetchLike {
 	return async () => ({ ok: true, status: 200, json: async () => payload });
+}
+
+/** A `fetch` stub serving each feed its own payload, keyed by URL. */
+function stubFeeds(litellm: Record<string, unknown>, llmPrices: LlmPricesFeed): FetchLike {
+	return async (url) => ({
+		ok: true,
+		status: 200,
+		json: async () => (url === LLM_PRICES_URL ? llmPrices : litellm),
+	});
 }
 
 const M = 1_000_000;
@@ -77,18 +89,18 @@ describe('PricingService', () => {
 		// The feed lists only a dated variant of the model the CLI reports.
 		await svc.refresh(
 			stubFetch({
-				'deepseek-v4-pro-0606': {
+				'deepseek-r2-pro-0606': {
 					input_cost_per_token: 0.000001,
 					output_cost_per_token: 0.000002,
 				},
 			}),
 		);
 		// Exact dated id prices directly: 1M input @ $1/M → 100c.
-		const exact = svc.costCents('deepseek-v4-pro-0606', { inputTokens: M, outputTokens: 0 });
+		const exact = svc.costCents('deepseek-r2-pro-0606', { inputTokens: M, outputTokens: 0 });
 		expect(exact).toBe(100);
 		// The logged miss now resolves: strip `[1m]`, then match the segment-prefix
 		// sibling instead of recording $0.
-		expect(svc.costCents('deepseek-v4-pro[1m]', { inputTokens: M, outputTokens: 0 })).toBe(exact);
+		expect(svc.costCents('deepseek-r2-pro[1m]', { inputTokens: M, outputTokens: 0 })).toBe(exact);
 	});
 
 	it('prices a more-specific variant off its base model', async () => {
@@ -104,10 +116,10 @@ describe('PricingService', () => {
 	it('does not cross-match a model sharing only a vendor prefix', async () => {
 		const svc = new PricingService(db);
 		await svc.init();
-		// `deepseek-v4-pro` shares only the `deepseek` vendor token with the seeded
-		// `deepseek-chat` / `deepseek-reasoner` rows — not a whole-segment prefix —
-		// so it must stay unpriced rather than borrow an unrelated rate.
-		expect(svc.costCents('deepseek-v4-pro[1m]', { inputTokens: M, outputTokens: 0 })).toBe(0);
+		// `deepseek-r2-pro` shares only the `deepseek` vendor token with the seeded
+		// deepseek rows — not a whole-segment prefix — so it must stay unpriced
+		// rather than borrow an unrelated rate.
+		expect(svc.costCents('deepseek-r2-pro[1m]', { inputTokens: M, outputTokens: 0 })).toBe(0);
 		// A sibling version is likewise not a match for a different sibling.
 		expect(svc.costCents('claude-sonnet-9', { inputTokens: M, outputTokens: 0 })).toBe(0);
 	});
@@ -159,5 +171,112 @@ describe('PricingService', () => {
 		expect(
 			svc.costCents('claude-opus-4-8', { inputTokens: 0, cacheReadTokens: M, outputTokens: 0 }),
 		).toBe(50);
+	});
+
+	it('combines both feeds: llm-prices supplies new models, LiteLLM backfills cache-creation', async () => {
+		const svc = new PricingService(db);
+		await svc.init();
+		await svc.refresh(
+			stubFeeds(
+				{
+					// Overlapping model — LiteLLM carries the cache-creation cost that
+					// llm-prices omits.
+					'claude-x': {
+						input_cost_per_token: 0.000005,
+						output_cost_per_token: 0.000025,
+						cache_creation_input_token_cost: 0.00000625,
+					},
+				},
+				{
+					updated_at: 'now',
+					prices: [
+						// New model LiteLLM lacks; quoted per million tokens.
+						{ id: 'deepseek-v4-pro', input: 1.74, output: 3.48, input_cached: 0.145 },
+						// Same model as LiteLLM, with a different (winning) input price.
+						{ id: 'claude-x', input: 6, output: 30 },
+					],
+				},
+			),
+		);
+		// DeepSeek V4 Pro comes from llm-prices: 1M input @ $1.74/M → 174c.
+		expect(svc.costCents('deepseek-v4-pro', { inputTokens: M, outputTokens: 0 })).toBe(174);
+		// The id the CLI actually reports (context-tagged) resolves to the same rate.
+		expect(svc.costCents('deepseek-v4-pro[1m]', { inputTokens: M, outputTokens: 0 })).toBe(174);
+		// On the overlap, llm-prices' input price wins: 1M input @ $6/M → 600c.
+		expect(svc.costCents('claude-x', { inputTokens: M, outputTokens: 0 })).toBe(600);
+		// …but cache-creation, absent from llm-prices, is backfilled from LiteLLM:
+		// 1M cache-creation @ $6.25/M → 625c (not the input-rate fallback of 600c).
+		expect(
+			svc.costCents('claude-x', { inputTokens: 0, cacheCreationTokens: M, outputTokens: 0 }),
+		).toBe(625);
+	});
+});
+
+describe('parseLlmPrices', () => {
+	it('converts per-million costs to per-token and skips incomplete rows', () => {
+		const rates = parseLlmPrices({
+			updated_at: 'now',
+			prices: [
+				{ id: 'deepseek-v4-pro', input: 1.74, output: 3.48, input_cached: 0.145 },
+				{ id: 'no-output', input: 1 },
+				{ input: 1, output: 2 },
+			] as LlmPricesFeed['prices'],
+		});
+		expect(rates).toEqual([
+			{
+				modelId: 'deepseek-v4-pro',
+				inputPerToken: 1.74e-6,
+				outputPerToken: 3.48e-6,
+				cacheReadPerToken: 1.45e-7,
+				cacheCreationPerToken: null,
+			},
+		]);
+	});
+
+	it('tolerates a missing or non-array prices field', () => {
+		expect(parseLlmPrices({})).toEqual([]);
+		expect(parseLlmPrices({ prices: undefined })).toEqual([]);
+	});
+});
+
+describe('mergeRates', () => {
+	it('lets primary win and backfills null fields from secondary', () => {
+		const primary = [
+			{
+				modelId: 'claude-x',
+				inputPerToken: 6e-6,
+				outputPerToken: 30e-6,
+				cacheReadPerToken: null,
+				cacheCreationPerToken: null,
+			},
+		];
+		const secondary = [
+			{
+				modelId: 'claude-x',
+				inputPerToken: 5e-6,
+				outputPerToken: 25e-6,
+				cacheReadPerToken: 5e-7,
+				cacheCreationPerToken: 6.25e-6,
+			},
+			{
+				modelId: 'only-in-secondary',
+				inputPerToken: 1e-6,
+				outputPerToken: 2e-6,
+				cacheReadPerToken: null,
+				cacheCreationPerToken: null,
+			},
+		];
+		const merged = mergeRates(primary, secondary);
+		const byId = Object.fromEntries(merged.map((r) => [r.modelId, r]));
+		// Primary input/output win; null cache fields fall back to secondary.
+		expect(byId['claude-x']).toEqual({
+			modelId: 'claude-x',
+			inputPerToken: 6e-6,
+			outputPerToken: 30e-6,
+			cacheReadPerToken: 5e-7,
+			cacheCreationPerToken: 6.25e-6,
+		});
+		// Secondary-only models are retained.
+		expect(byId['only-in-secondary'].inputPerToken).toBe(1e-6);
 	});
 });
