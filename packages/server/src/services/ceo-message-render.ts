@@ -83,8 +83,9 @@ export async function renderCeoMessageForChannel(
 			}
 			case 'agent':
 			case 'passive_agent': {
-				// Passive `@@slug` displays as `@slug`, matching the web renderer.
-				const display = token.kind === 'passive_agent' ? token.raw.slice(1) : token.raw;
+				// Passive `@@slug` displays as the bare slug (no prefix), matching the
+				// web renderer; active `@slug` keeps its prefix.
+				const display = token.kind === 'passive_agent' ? token.raw.slice(2) : token.raw;
 				if (token.slug === ADMIN_MENTION_SLUG) {
 					return `[${display}](${baseUrl}${GLOBAL_INBOX_PATH})`;
 				}

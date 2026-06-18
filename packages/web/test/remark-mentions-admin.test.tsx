@@ -38,11 +38,12 @@ test('@admin renders as a link to the team inbox with data-mention-admin="true"'
 	expect(link?.getAttribute('data-mention-passive')).toBeNull();
 });
 
-test('@@admin renders the passive variant', () => {
+test('@@admin renders the passive variant as a bare slug (no @ prefix)', () => {
 	const { container } = renderMarkdown('Admin approved — @@admin.');
 	const link = container.querySelector('a[data-mention-admin="true"]');
 	expect(link).not.toBeNull();
 	expect(link?.getAttribute('data-mention-passive')).toBe('true');
+	expect(link?.textContent).toBe('admin');
 });
 
 test('@admin inside a code fence is not linked', () => {

@@ -170,8 +170,9 @@ function buildLink(token: MentionToken, opts: Options): LinkNode | null {
 	}
 
 	if (token.kind === 'passive_agent') {
-		// `@@slug` renders as `@slug` — passive mentions display like active ones.
-		const passiveDisplay = display.slice(1);
+		// `@@slug` renders as the bare slug (no prefix) — passive references stay
+		// visually distinct from an active `@slug` ask, which keeps its prefix.
+		const passiveDisplay = display.slice(2);
 		if (token.slug === ADMIN_MENTION_SLUG) {
 			return {
 				type: 'link',

@@ -213,10 +213,11 @@ test('passive @@<slug> renders a clickable chip but stays marked passive', async
 			const archChips = match!.querySelectorAll(`a[href*="/agents/${fix!.architect.slug}"]`);
 			expect(archChips).toHaveLength(1);
 			expect(archChips[0].getAttribute('data-mention-passive')).toBe('true');
-			expect(archChips[0].textContent).toBe(`@${fix!.architect.slug}`);
+			expect(archChips[0].textContent).toBe(fix!.architect.slug);
 			const captChips = match!.querySelectorAll(`a[href*="/agents/${fix!.captain.slug}"]`);
 			expect(captChips).toHaveLength(1);
 			expect(captChips[0].getAttribute('data-mention-passive')).toBe('true');
+			expect(captChips[0].textContent).toBe(fix!.captain.slug);
 		},
 		{ timeout: 10_000 },
 	);
