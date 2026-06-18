@@ -231,15 +231,6 @@ export function TaskSidebar({
 
 				<div>
 					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
-						Spent
-					</span>
-					<span className="text-[13px] text-text font-mono" data-testid="task-spent">
-						${(task.cost_cents / 100).toFixed(2)}
-					</span>
-				</div>
-
-				<div>
-					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
 						Effort
 					</span>
 					<select
