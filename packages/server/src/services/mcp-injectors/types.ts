@@ -68,13 +68,6 @@ export interface McpAdapterCapabilities {
 	requiresHomeDir: boolean;
 }
 
-export interface McpSkillFile {
-	/** Filename-safe slug; renderers write `<slug>.md`. */
-	slug: string;
-	/** Skill file body (markdown). */
-	content: string;
-}
-
 export interface McpAdapterContext {
 	/** Per-run host config directory. Required when capabilities.requiresHomeDir is true. */
 	hostHomeDir: string | null;
@@ -95,10 +88,6 @@ export interface McpAdapterContext {
 	 * Defaults to api-key semantics when absent.
 	 */
 	authMethod?: AiAuthMethod;
-	/** Team-scoped agent skill files (e.g. from `fetch_skill_file`). Adapters
-	 *  write these to their conventional skills directory; Claude Code reads
-	 *  `~/.claude/skills/<slug>.md`, others use whatever convention they have. */
-	skillFiles?: readonly McpSkillFile[];
 	/**
 	 * Resolved provider API key (api-key auth only). Most runtimes receive the
 	 * credential via container env (`buildProviderEnv`); the Kimi adapter needs it

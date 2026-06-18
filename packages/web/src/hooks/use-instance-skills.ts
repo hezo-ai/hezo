@@ -1,4 +1,4 @@
-import type { SkillRecord } from '@hezo/shared';
+import type { RegistrySkillSearchResult, SkillRecord } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -62,6 +62,51 @@ export function useUpdateInstanceSkill() {
 export function useDeleteInstanceSkill() {
 	return useMutation({
 		mutationFn: (slug: string) => api.delete(`/api/skills/${slug}`),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: INSTANCE_SKILLS_KEY });
+		},
+	});
+}
+
+// --- skills.sh registry (admin "search and add"). Token-gated; agents bypass
+// this entirely and discover skills with the `npx skills` CLI in the container.
+
+const REGISTRY_TOKEN_KEY = [...INSTANCE_SKILLS_KEY, 'registry', 'token'] as const;
+
+export function useRegistryTokenStatus() {
+	return useQuery({
+		queryKey: REGISTRY_TOKEN_KEY,
+		queryFn: () => api.get<{ configured: boolean }>('/api/skills/registry/token'),
+	});
+}
+
+export function useSetRegistryToken() {
+	return useMutation({
+		mutationFn: (token: string) =>
+			api.put<{ configured: boolean }>('/api/skills/registry/token', { token }),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: REGISTRY_TOKEN_KEY });
+		},
+	});
+}
+
+export function useSearchRegistrySkills(query: string) {
+	const trimmed = query.trim();
+	return useQuery({
+		queryKey: [...INSTANCE_SKILLS_KEY, 'registry', 'search', trimmed],
+		queryFn: () =>
+			api.get<RegistrySkillSearchResult[]>(
+				`/api/skills/registry/search?q=${encodeURIComponent(trimmed)}`,
+			),
+		enabled: trimmed.length >= 2,
+		retry: false,
+	});
+}
+
+export function useInstallRegistrySkill() {
+	return useMutation({
+		mutationFn: (id: string) =>
+			api.post<{ slug: string; name: string }>('/api/skills/registry/install', { id }),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: INSTANCE_SKILLS_KEY });
 		},

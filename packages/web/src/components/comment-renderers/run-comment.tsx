@@ -51,6 +51,15 @@ export function RunComment({ comment, projectId, inline }: Props) {
 	);
 }
 
+/** Short provenance hint for a created skill, e.g. "skills.sh" or "github.com". */
+function skillSourceLabel(url: string): string {
+	try {
+		return new URL(url).hostname.replace(/^www\./, '');
+	} catch {
+		return 'source';
+	}
+}
+
 function RunCommentBody({
 	projectId,
 	runId,
@@ -265,13 +274,17 @@ function RunCommentBody({
 			{createdSkills.length > 0 && (
 				<div className="flex flex-col gap-1 pt-1" data-testid="run-comment-created-skills">
 					{createdSkills.map((skill) => (
-						<Link
-							key={skill.slug}
-							to="/settings/skills"
-							className="text-xs text-accent-blue-text hover:underline self-start"
-						>
-							{skill.created ? 'Added' : 'Updated'} skill {skill.name}
-						</Link>
+						<span key={skill.slug} className="text-xs self-start">
+							<Link to="/settings/skills" className="text-accent-blue-text hover:underline">
+								{skill.created ? 'Added' : 'Updated'} skill {skill.name}
+							</Link>
+							{skill.source_url && (
+								<span className="text-text-subtle">
+									{' '}
+									· from {skillSourceLabel(skill.source_url)}
+								</span>
+							)}
+						</span>
 					))}
 				</div>
 			)}

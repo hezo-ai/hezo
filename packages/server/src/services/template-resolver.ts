@@ -157,25 +157,37 @@ export async function resolveSystemPrompt(
 		resolved = resolved.replace(/\{\{kb_context\}\}\n?/g, '');
 	}
 
-	// Skills are injected as a manifest (name + slug + summary), not full bodies.
-	// The agent calls get_skill(slug) to load a skill's content on demand.
+	// Skills are injected as a manifest (name + slug + summary), not full bodies —
+	// the agent calls get_skill(slug) to load one on demand. The built-in
+	// `find-skills` skill is the exception: its full body is inlined below so every
+	// run carries the discovery workflow without a tool call.
 	if (resolved.includes('{{skills_context}}')) {
 		const dbSkills = await db.query<{ name: string; slug: string; description: string }>(
-			'SELECT name, slug, description FROM skills WHERE is_active = true ORDER BY name',
+			'SELECT name, slug, description FROM skills WHERE is_active = true AND is_builtin = false ORDER BY name',
 		);
-		let skillsText = 'No skills in the team skills database yet.';
+		const builtin = await db.query<{ content: string }>(
+			"SELECT content FROM skills WHERE slug = 'find-skills' AND is_active = true LIMIT 1",
+		);
+		const sections: string[] = [];
 		if (dbSkills.rows.length > 0) {
 			const lines = dbSkills.rows
 				.map((s) => `- ${s.name} (slug: ${s.slug})${s.description ? `: ${s.description}` : ''}`)
 				.join('\n');
-			skillsText = [
-				'The team skills database holds reusable know-how. Entries are listed below by name and slug.',
-				"Call get_skill(slug) to load a skill's full instructions when it is relevant to your task.",
-				'',
-				lines,
-			].join('\n');
+			sections.push(
+				[
+					'The team skills database holds reusable know-how. Entries are listed below by name and slug.',
+					"Call get_skill(slug) to load a skill's full instructions when it is relevant to your task.",
+					'',
+					lines,
+				].join('\n'),
+			);
+		} else {
+			sections.push('No skills in the team skills database yet.');
 		}
-		resolved = resolved.replace(/\{\{skills_context\}\}/g, skillsText);
+		if (builtin.rows[0]?.content?.trim()) {
+			sections.push(builtin.rows[0].content.trim());
+		}
+		resolved = resolved.replace(/\{\{skills_context\}\}/g, sections.join('\n\n'));
 	}
 
 	if (resolved.includes('{{team_preferences_context}}')) {

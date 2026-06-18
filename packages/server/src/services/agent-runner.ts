@@ -41,7 +41,6 @@ import {
 	updateAiProviderCredential,
 } from './ai-provider-keys';
 import { checkOverBudget, recordRunCost } from './budget';
-import { loadConnectorSkillFiles } from './connectors/lifecycle';
 import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
@@ -355,13 +354,11 @@ export async function buildRuntimeInvocation(
 		...(await loadMcpConnectionDescriptors(deps.db, deps.masterKeyManager)),
 	];
 
-	const skillFiles = await loadConnectorSkillFiles(deps.db);
 	const mcpInjection = adapter.build(mcpDescriptors, {
 		hostHomeDir: homeMount?.hostDir ?? null,
 		containerHomeDir: homeMount?.containerDir ?? null,
 		provider,
 		authMethod: credential.authMethod,
-		skillFiles,
 		// Kimi takes its provider credential and model from config.toml rather than
 		// env, so the adapter needs them directly (api-key auth only).
 		providerApiKey: credential.authMethod === AiAuthMethod.ApiKey ? credential.value : undefined,

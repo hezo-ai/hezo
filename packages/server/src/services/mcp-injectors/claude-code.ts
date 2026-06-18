@@ -64,23 +64,16 @@ export const claudeCodeAdapter: RuntimeMcpAdapter = {
 			cliArgs.push('--mcp-config', JSON.stringify({ mcpServers }), '--strict-mcp-config');
 		}
 
-		const files = [
-			{
-				hostPath: settingsHostPath,
-				mode: 0o600,
-				contents: settingsContents,
-			},
-			...(ctx.skillFiles ?? []).map((skill) => ({
-				hostPath: join(ctx.hostHomeDir!, 'skills', `${skill.slug}.md`),
-				mode: 0o600,
-				contents: skill.content,
-			})),
-		];
-
 		return {
 			cliArgs,
 			envEntries: [],
-			files,
+			files: [
+				{
+					hostPath: settingsHostPath,
+					mode: 0o600,
+					contents: settingsContents,
+				},
+			],
 		};
 	},
 };

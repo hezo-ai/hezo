@@ -176,23 +176,6 @@ export async function getConnector(db: PGlite, connectorId: string): Promise<Con
 	return result.rows[0] ?? null;
 }
 
-/**
- * Load the global skills flagged `auto_load` (e.g. provider usage docs fetched
- * via fetch_skill_file) so the agent runner can write them into the adapter's
- * skills directory (~/.claude/skills/<slug>.md). Returns `{slug, content}`
- * pairs suitable for `McpAdapterContext.skillFiles`.
- */
-export async function loadConnectorSkillFiles(
-	db: PGlite,
-): Promise<Array<{ slug: string; content: string }>> {
-	const result = await db.query<{ slug: string; content: string }>(
-		`SELECT slug, content FROM skills
-		 WHERE auto_load = true AND is_active = true
-		 ORDER BY slug ASC`,
-	);
-	return result.rows;
-}
-
 export async function listConnectors(db: PGlite): Promise<ConnectorRow[]> {
 	const result = await db.query<ConnectorRow>(
 		`SELECT ${CONNECTOR_COLS} FROM mcp_connections ORDER BY created_at ASC`,

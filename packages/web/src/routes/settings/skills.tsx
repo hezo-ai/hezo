@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { ExternalLink, Loader2, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { MarkdownProse } from '../../components/markdown-prose';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
@@ -8,8 +9,12 @@ import { Input } from '../../components/ui/input';
 import {
 	useCreateInstanceSkill,
 	useDeleteInstanceSkill,
+	useInstallRegistrySkill,
 	useInstanceSkill,
 	useInstanceSkills,
+	useRegistryTokenStatus,
+	useSearchRegistrySkills,
+	useSetRegistryToken,
 	useUpdateInstanceSkill,
 } from '../../hooks/use-instance-skills';
 import { useMe } from '../../hooks/use-me';
@@ -22,11 +27,13 @@ function InstanceSkillsPage() {
 	const deleteSkill = useDeleteInstanceSkill();
 
 	const [showForm, setShowForm] = useState(false);
+	const [showSearch, setShowSearch] = useState(false);
 	// `editingSlug` null = the form (when open) creates; otherwise it edits.
 	const [editingSlug, setEditingSlug] = useState<string | null>(null);
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
 	const [content, setContent] = useState('');
+	const [contentMode, setContentMode] = useState<'edit' | 'preview'>('edit');
 	const [tags, setTags] = useState('');
 	const [error, setError] = useState<string | null>(null);
 
@@ -48,6 +55,7 @@ function InstanceSkillsPage() {
 		setName('');
 		setDescription('');
 		setContent('');
+		setContentMode('edit');
 		setTags('');
 		setError(null);
 	}
@@ -110,23 +118,35 @@ function InstanceSkillsPage() {
 							<h1 className="text-[22px] font-medium">Skills</h1>
 							<InfoTooltip
 								label="About skills"
-								content="Reusable skill docs shared with every team's agents (admin-authored or agent-fetched)."
+								content="Reusable, project-independent skill docs shared with every team's agents. Agents also discover new skills from skills.sh and add them here."
 								data-testid="skills-info"
 							/>
 						</div>
 						<p className="text-[13px] text-text-muted mt-1 max-w-[680px]">
-							Reusable skill docs shared with every team's agents — whether you author them here or
-							an agent fetches them via a connector.
+							Reusable skill docs shared with every team's agents — author them here, search and add
+							them from skills.sh, or let an agent fetch one while it works.
 						</p>
 					</div>
-					<Button
-						variant="secondary"
-						size="sm"
-						onClick={() => (showForm ? resetForm() : openCreate())}
-					>
-						<Plus className="w-3 h-3" /> Add
-					</Button>
+					<div className="flex items-center gap-2 shrink-0">
+						<Button
+							variant="secondary"
+							size="sm"
+							onClick={() => setShowSearch((s) => !s)}
+							data-testid="toggle-search"
+						>
+							<Search className="w-3 h-3" /> Search skills.sh
+						</Button>
+						<Button
+							variant="secondary"
+							size="sm"
+							onClick={() => (showForm ? resetForm() : openCreate())}
+						>
+							<Plus className="w-3 h-3" /> Add
+						</Button>
+					</div>
 				</div>
+
+				{showSearch && <RegistrySearch />}
 
 				{showForm && (
 					<form onSubmit={handleSubmit} className="flex flex-col gap-2 mb-4">
@@ -150,14 +170,59 @@ function InstanceSkillsPage() {
 							value={description}
 							onChange={(e) => setDescription(e.target.value)}
 						/>
-						<textarea
-							placeholder="Skill content (markdown)"
-							value={content}
-							onChange={(e) => setContent(e.target.value)}
-							required
-							rows={8}
-							className="w-full rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px] font-mono focus:outline-none focus:ring-1 focus:ring-accent"
-						/>
+						<div className="flex items-center justify-between">
+							<span className="text-[13px] text-text-muted">Content (markdown)</span>
+							<div
+								role="tablist"
+								aria-label="Content view mode"
+								className="inline-flex rounded-md border border-border-subtle bg-bg-subtle p-0.5 text-xs"
+							>
+								<button
+									type="button"
+									role="tab"
+									aria-selected={contentMode === 'edit'}
+									onClick={() => setContentMode('edit')}
+									className={`px-2.5 py-1 rounded ${
+										contentMode === 'edit'
+											? 'bg-bg text-text shadow-sm'
+											: 'text-text-muted hover:text-text'
+									}`}
+								>
+									Edit
+								</button>
+								<button
+									type="button"
+									role="tab"
+									aria-selected={contentMode === 'preview'}
+									onClick={() => setContentMode('preview')}
+									className={`px-2.5 py-1 rounded ${
+										contentMode === 'preview'
+											? 'bg-bg text-text shadow-sm'
+											: 'text-text-muted hover:text-text'
+									}`}
+								>
+									Preview
+								</button>
+							</div>
+						</div>
+						{contentMode === 'edit' ? (
+							<textarea
+								aria-label="Skill content"
+								placeholder="Skill content (markdown)"
+								value={content}
+								onChange={(e) => setContent(e.target.value)}
+								required
+								rows={10}
+								className="w-full rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px] font-mono focus:outline-none focus:ring-1 focus:ring-accent"
+							/>
+						) : (
+							<div
+								data-testid="skill-content-preview"
+								className="min-h-[200px] rounded-radius-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+							>
+								<MarkdownProse>{content || '_(nothing to preview)_'}</MarkdownProse>
+							</div>
+						)}
 						{error && <p className="text-[13px] text-accent-red">{error}</p>}
 						<div className="flex gap-2">
 							<Button
@@ -187,6 +252,7 @@ function InstanceSkillsPage() {
 							>
 								<div className="flex items-center gap-2 min-w-0 flex-1">
 									<span className="font-medium">{s.name}</span>
+									{s.is_builtin && <Badge color="blue">built-in</Badge>}
 									{s.tags?.map((t) => (
 										<Badge key={t} color="neutral">
 											{t}
@@ -205,18 +271,20 @@ function InstanceSkillsPage() {
 									>
 										<Pencil className="w-3.5 h-3.5" />
 									</button>
-									<button
-										type="button"
-										onClick={() => {
-											if (confirm(`Delete instance skill "${s.name}"?`)) {
-												deleteSkill.mutate(s.slug);
-											}
-										}}
-										aria-label={`Delete ${s.name}`}
-										className="text-text-subtle hover:text-accent-red"
-									>
-										<Trash2 className="w-3.5 h-3.5" />
-									</button>
+									{!s.is_builtin && (
+										<button
+											type="button"
+											onClick={() => {
+												if (confirm(`Delete instance skill "${s.name}"?`)) {
+													deleteSkill.mutate(s.slug);
+												}
+											}}
+											aria-label={`Delete ${s.name}`}
+											className="text-text-subtle hover:text-accent-red"
+										>
+											<Trash2 className="w-3.5 h-3.5" />
+										</button>
+									)}
 								</span>
 							</div>
 						))}
@@ -227,6 +295,154 @@ function InstanceSkillsPage() {
 
 	return (
 		<div className="max-w-[900px] w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">{content_}</div>
+	);
+}
+
+/**
+ * Search skills.sh and add a result straight into the instance catalog. The
+ * registry API needs a bearer token, so this panel is gated on a configured
+ * token (agents don't need it — they use the `npx skills` CLI in the container).
+ */
+function RegistrySearch() {
+	const { data: tokenStatus } = useRegistryTokenStatus();
+	const setToken = useSetRegistryToken();
+	const installSkill = useInstallRegistrySkill();
+
+	const [tokenInput, setTokenInput] = useState('');
+	const [queryInput, setQueryInput] = useState('');
+	const [submitted, setSubmitted] = useState('');
+	const [installingId, setInstallingId] = useState<string | null>(null);
+
+	const search = useSearchRegistrySkills(submitted);
+	const configured = tokenStatus?.configured ?? false;
+
+	async function handleInstall(id: string) {
+		setInstallingId(id);
+		try {
+			await installSkill.mutateAsync(id);
+		} finally {
+			setInstallingId(null);
+		}
+	}
+
+	return (
+		<div className="mb-4 rounded-radius-md border border-border bg-bg-subtle p-3">
+			{!configured ? (
+				<div className="flex flex-col gap-2">
+					<p className="text-[13px] text-text-muted">
+						Searching skills.sh needs a skills.sh API token. Paste one to enable search and add.
+						Agents discover skills without it (via the <code>npx skills</code> CLI).
+					</p>
+					<div className="flex flex-col sm:flex-row gap-2">
+						<Input
+							type="password"
+							placeholder="skills.sh API token"
+							value={tokenInput}
+							onChange={(e) => setTokenInput(e.target.value)}
+							className="flex-1"
+							aria-label="skills.sh API token"
+						/>
+						<Button
+							size="sm"
+							disabled={!tokenInput.trim() || setToken.isPending}
+							onClick={() =>
+								setToken.mutate(tokenInput.trim(), { onSuccess: () => setTokenInput('') })
+							}
+						>
+							Save token
+						</Button>
+					</div>
+				</div>
+			) : (
+				<div className="flex flex-col gap-2">
+					<form
+						className="flex gap-2"
+						onSubmit={(e) => {
+							e.preventDefault();
+							setSubmitted(queryInput.trim());
+						}}
+					>
+						<Input
+							placeholder="Search skills.sh (e.g. react, stripe, playwright)"
+							value={queryInput}
+							onChange={(e) => setQueryInput(e.target.value)}
+							className="flex-1"
+							aria-label="Search skills.sh"
+						/>
+						<Button type="submit" size="sm" disabled={queryInput.trim().length < 2}>
+							<Search className="w-3 h-3" /> Search
+						</Button>
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={() => setToken.mutate('')}
+							title="Clear the stored token"
+						>
+							Clear token
+						</Button>
+					</form>
+
+					{search.isFetching && (
+						<div className="flex items-center gap-1.5 text-[13px] text-text-muted">
+							<Loader2 className="w-3.5 h-3.5 animate-spin" /> Searching…
+						</div>
+					)}
+					{search.error && (
+						<p className="text-[13px] text-accent-red">
+							{(search.error as { message?: string }).message ?? 'Search failed'}
+						</p>
+					)}
+					{search.data?.length === 0 && !search.isFetching && submitted && (
+						<p className="text-[13px] text-text-muted">No results for “{submitted}”.</p>
+					)}
+					{search.data && search.data.length > 0 && (
+						<div className="flex flex-col gap-1">
+							{search.data.map((r) => (
+								<div
+									key={r.id}
+									className="flex items-center justify-between gap-2 rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px]"
+								>
+									<div className="min-w-0 flex-1">
+										<div className="flex items-center gap-2">
+											<span className="font-medium truncate">{r.name}</span>
+											{r.url && (
+												<a
+													href={r.url}
+													target="_blank"
+													rel="noopener noreferrer"
+													className="text-text-subtle hover:text-text"
+													aria-label={`Open ${r.name} on skills.sh`}
+												>
+													<ExternalLink className="w-3 h-3" />
+												</a>
+											)}
+										</div>
+										<div className="text-xs text-text-subtle truncate">
+											{r.source}
+											{r.installs > 0 && ` · ${r.installs.toLocaleString()} installs`}
+										</div>
+									</div>
+									<Button
+										size="sm"
+										variant="secondary"
+										disabled={installSkill.isPending && installingId === r.id}
+										onClick={() => handleInstall(r.id)}
+									>
+										{installSkill.isPending && installingId === r.id ? (
+											<Loader2 className="w-3 h-3 animate-spin" />
+										) : (
+											<Plus className="w-3 h-3" />
+										)}
+										Add
+									</Button>
+								</div>
+							))}
+						</div>
+					)}
+				</div>
+			)}
+		</div>
 	);
 }
 

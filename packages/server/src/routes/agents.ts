@@ -126,7 +126,7 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr
 	-- Skills the agent added/updated directly in the skills database this run.
 	COALESCE(
 		(SELECT jsonb_agg(
-			jsonb_build_object('name', s.name, 'slug', s.slug, 'created', (s.created_at >= hr.started_at))
+			jsonb_build_object('name', s.name, 'slug', s.slug, 'source_url', s.source_url, 'created', (s.created_at >= hr.started_at))
 			ORDER BY s.updated_at ASC
 		)
 		FROM skills s
