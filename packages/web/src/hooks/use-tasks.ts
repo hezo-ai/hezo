@@ -29,6 +29,8 @@ export interface Task {
 	has_active_run: boolean;
 	has_unread_admin_mention: boolean;
 	last_run_status: 'succeeded' | 'failed' | 'cancelled' | 'timed_out' | null;
+	/** Id of the last completed run — the target of a manual retry. */
+	last_run_id: string | null;
 	last_run_comment_id: string | null;
 	/** Deep-link slug for the last run's comment (`#comment-<public_id>`). */
 	last_run_comment_public_id: string | null;

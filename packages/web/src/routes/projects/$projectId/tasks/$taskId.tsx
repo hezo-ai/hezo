@@ -90,7 +90,7 @@ function TaskDetailPage() {
 		<>
 			<div className="grid grid-cols-1 lg:grid-cols-[1fr_190px] gap-5">
 				<div className="min-w-0">
-					<LastRunFailedBanner task={task} />
+					<LastRunFailedBanner task={task} projectId={projectId} taskId={taskId} />
 					<TaskHeader task={task} projectId={projectId} taskProjectSlug={taskProjectSlug} />
 
 					<TaskSummary
