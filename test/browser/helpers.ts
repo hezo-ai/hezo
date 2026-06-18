@@ -450,6 +450,15 @@ export async function dismissAiProviderModal(page: Page) {
 }
 
 export async function waitForPageLoad(page: Page, timeout = 15000) {
+	// The app shell renders the route outlet inside `<main>` (see __root.tsx), and
+	// a route shows its own "Loading..." placeholder there while its data resolves.
+	// `toBeHidden()` is *also* satisfied by an absent element, so checking the
+	// loader before React has mounted passes immediately — leaving the caller
+	// asserting against an unrendered page (the flaky "element(s) not found" right
+	// after navigation). Gate on the shell mounting first: once <main> is visible
+	// the route has committed either its loader or its content, so the loader
+	// check below waits for data to land instead of racing the initial mount.
+	await expect(page.locator('main').first()).toBeVisible({ timeout });
 	await expect(page.getByText('Loading...')).toBeHidden({ timeout });
 }
 
