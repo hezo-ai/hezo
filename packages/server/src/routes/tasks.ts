@@ -294,7 +294,6 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
             m.member_type AS assignee_type,
             COALESCE(ma_ps.title, m_ps.display_name) AS progress_summary_updated_by_name,
             (SELECT count(*)::int FROM task_comments ic WHERE ic.task_id = i.id) AS comment_count,
-            (SELECT COALESCE(sum(ce.amount_cents), 0)::int FROM cost_entries ce WHERE ce.task_id = i.id) AS cost_cents,
             EXISTS (
               SELECT 1 FROM heartbeat_runs hr
               WHERE hr.task_id = i.id AND hr.status IN ('running', 'queued')

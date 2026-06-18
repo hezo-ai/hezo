@@ -216,7 +216,6 @@ describe('tasks CRUD', () => {
 		const body = await res.json();
 		expect(body.data).toHaveProperty('project_name');
 		expect(body.data).toHaveProperty('comment_count');
-		expect(body.data).toHaveProperty('cost_cents');
 	});
 
 	it('resolves an task by identifier (case-insensitive)', async () => {
