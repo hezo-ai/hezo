@@ -6,10 +6,9 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { generateUnlockKey, MasterKeyManager } from '../src/crypto/master-key';
 import { loadAgentRoles } from '../src/db/agent-roles';
-import { seedBuiltins } from '../src/db/seed';
+import { ensureBuiltinSkills, seedBuiltins } from '../src/db/seed';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
-import { loadConnectorSkillFiles } from '../src/services/connectors/lifecycle';
 import { parseGitHubRawUrl, SkillDownloadError } from '../src/services/skill-downloader';
 import { resolveSystemPrompt } from '../src/services/template-resolver';
 import { buildApp } from '../src/startup';
@@ -150,18 +149,61 @@ describe('template resolver {{skills_context}} (global)', () => {
 		});
 		expect(resolved).toContain('No skills');
 	});
+
+	it('inlines the built-in find-skills body and keeps it out of the manifest list', async () => {
+		await db.query(
+			`INSERT INTO skills (name, slug, content, content_hash, is_active, is_builtin)
+			 VALUES ('find-skills', 'find-skills', '# Finding skills\nRun npx skills find.', 'h', true, true),
+			        ('React', 'react', '# React', 'h', true, false)`,
+		);
+		const resolved = await resolveSystemPrompt(db, '{{skills_context}}', {
+			teamId,
+			dataDir: tempDataDir,
+		});
+		// Built-in body is inlined in full…
+		expect(resolved).toContain('Run npx skills find.');
+		// …and not shown as a one-line manifest entry.
+		expect(resolved).not.toContain('(slug: find-skills)');
+		// Other active skills still appear in the manifest.
+		expect(resolved).toContain('- React (slug: react)');
+	});
 });
 
-describe('loadConnectorSkillFiles', () => {
-	it('returns only auto_load + active skills for run-start injection', async () => {
-		await db.query(
-			`INSERT INTO skills (name, slug, content, content_hash, auto_load, is_active)
-			 VALUES ('Provider Doc', 'provider-doc', 'usage', 'h', true, true),
-			        ('Manual Skill', 'manual-skill', 'body', 'h', false, true),
-			        ('Inactive', 'inactive', 'x', 'h', true, false)`,
+describe('ensureBuiltinSkills', () => {
+	const roleDocs = {
+		'_instance/skills/find-skills.md':
+			'---\nname: find-skills\ndescription: Discover skills\n---\n# Finding skills\nUse npx skills find.',
+	};
+
+	it('upserts the built-in skill (is_builtin, frontmatter stripped) idempotently', async () => {
+		await ensureBuiltinSkills(db, roleDocs);
+		const r1 = await db.query<{
+			name: string;
+			description: string;
+			content: string;
+			is_builtin: boolean;
+		}>("SELECT name, description, content, is_builtin FROM skills WHERE slug = 'find-skills'");
+		expect(r1.rows).toHaveLength(1);
+		expect(r1.rows[0].is_builtin).toBe(true);
+		expect(r1.rows[0].name).toBe('find-skills');
+		expect(r1.rows[0].description).toBe('Discover skills');
+		expect(r1.rows[0].content).toContain('Use npx skills find.');
+		expect(r1.rows[0].content).not.toContain('description: Discover skills');
+
+		// Re-running reconciles in place (no duplicate row).
+		await ensureBuiltinSkills(db, roleDocs);
+		const count = await db.query<{ n: number }>(
+			"SELECT COUNT(*)::int AS n FROM skills WHERE slug = 'find-skills'",
 		);
-		const files = await loadConnectorSkillFiles(db);
-		expect(files.map((f) => f.slug)).toEqual(['provider-doc']);
-		expect(files[0].content).toBe('usage');
+		expect(count.rows[0].n).toBe(1);
+	});
+
+	it('blocks deletion of a built-in skill via the API', async () => {
+		await ensureBuiltinSkills(db, roleDocs);
+		const res = await app.request('/api/skills/find-skills', {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(403);
 	});
 });

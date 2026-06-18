@@ -68,7 +68,7 @@ Subsequent agent runs (any project in the team) get the MCP injected into their 
 
 Pending and revoked connectors are excluded from the agent runtime by `loadMcpConnectionsForRun` so an agent never sees an MCP it can't authenticate against.
 
-Agent skill files (`AGENTS.md`-style markdown a provider ships alongside its MCP server) are fetched via `fetch_skill_file`, stored as `documents` of `type='mcp_skill'`, and written into the adapter's skills directory at each run start (Claude Code: `~/.claude/skills/<slug>.md`).
+Agent skill files (`AGENTS.md`-style markdown a provider ships alongside its MCP server) are fetched via `fetch_skill_file` and upserted into the instance-global `skills` catalog. Skills are surfaced to every run through the `{{skills_context}}` prompt manifest (name + slug + description, with `get_skill(slug)` to load a body on demand) — not written as files into the adapter's skills directory. The built-in `find-skills` skill is the one exception: its full body is inlined into the prompt. Agents discover new skills from the open ecosystem with the `npx skills` CLI and persist the chosen one back into the catalog via `create_skill` / `fetch_skill_file`.
 
 The egress proxy's `loadAllSecrets` calls `refreshExpiringTokens` on every outbound request — tokens within 60s of expiry refresh through their provider's registered refresh function before the substitution fires.
 

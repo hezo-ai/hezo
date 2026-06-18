@@ -1,5 +1,9 @@
+import { createHash } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
 import { AgentEffort, CEO_AGENT_SLUG, INSTANCE_AGENT_SLUGS } from '@hezo/shared';
+import { parseFrontmatter } from '../lib/frontmatter';
+import { deriveSkillSummary } from '../lib/skill-summary';
+import { toSlug } from '../lib/slug';
 import agentSummaries from './agent-summaries.json' with { type: 'json' };
 
 const summaries: {
@@ -387,4 +391,42 @@ Approval is conveyed via comment, not status. From **Review**, the ticket either
 			JSON.stringify(blankBuiltinTeamContexts),
 		],
 	);
+
+	await ensureBuiltinSkills(db, roleDocs);
+}
+
+// Skill docs shipped by Hezo, bundled under `agents/_instance/skills/` and loaded
+// by `loadAgentRoles()` keyed by their path. Upserted into the global skills
+// catalog on every boot (so existing instances pick them up and edits propagate),
+// marked `is_builtin` so the admin UI labels them and blocks deletion.
+const BUILTIN_SKILL_DOCS = ['_instance/skills/find-skills.md'];
+
+export async function ensureBuiltinSkills(
+	db: PGlite,
+	roleDocs: Record<string, string>,
+): Promise<void> {
+	for (const key of BUILTIN_SKILL_DOCS) {
+		const raw = roleDocs[key];
+		if (!raw) continue;
+		const { data, body } = parseFrontmatter(raw);
+		const fallback = key.split('/').pop()?.replace(/\.md$/, '') ?? key;
+		const slug = toSlug(data.slug || data.name || fallback);
+		const name = data.name?.trim() || slug;
+		const content = body.trim();
+		const description = data.description?.trim() || deriveSkillSummary(content);
+		const hash = createHash('sha256').update(content).digest('hex');
+		await db.query(
+			`INSERT INTO skills (name, slug, description, content, source_url, content_hash, tags, is_builtin, is_active)
+			 VALUES ($1, $2, $3, $4, NULL, $5, '["builtin"]'::jsonb, true, true)
+			 ON CONFLICT (slug) DO UPDATE SET
+			     name = EXCLUDED.name,
+			     description = EXCLUDED.description,
+			     content = EXCLUDED.content,
+			     content_hash = EXCLUDED.content_hash,
+			     is_builtin = true,
+			     is_active = true,
+			     updated_at = now()`,
+			[name, slug, description, content, hash],
+		);
+	}
 }

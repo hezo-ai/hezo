@@ -106,9 +106,11 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 		expect(architectDoc).not.toContain('No designated repo means no run.');
 		expect(architectDoc).toContain('You can run without a designated repo.');
 
-		// Every role doc picks up the no-auto-timelines guidance.
+		// Every role doc picks up the no-auto-timelines guidance. Skill docs (e.g.
+		// `_instance/skills/find-skills.md`) are not agent prompts and don't carry
+		// these behavioral partials, so exclude them.
 		const allRoleKeys = Object.keys(docs).filter(
-			(k) => !k.startsWith('_partials/') && k.endsWith('.md'),
+			(k) => !k.startsWith('_partials/') && !k.includes('/skills/') && k.endsWith('.md'),
 		);
 		expect(allRoleKeys.length).toBeGreaterThan(0);
 		for (const key of allRoleKeys) {

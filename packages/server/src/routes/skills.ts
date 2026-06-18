@@ -6,6 +6,14 @@ import { deriveSkillSummary } from '../lib/skill-summary';
 import { toSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
 import { requireSuperuser } from '../middleware/auth';
+import {
+	getRegistryToken,
+	hasRegistryToken,
+	installRegistrySkill,
+	SkillsRegistryError,
+	searchRegistry,
+	setRegistryToken,
+} from '../services/skills-registry';
 
 export const skillsRoutes = new Hono<Env>();
 
@@ -18,7 +26,7 @@ skillsRoutes.get('/skills', async (c) => {
 	const db = c.get('db');
 	const result = await db.query<Omit<SkillRecord, 'content'>>(
 		`SELECT id, name, slug, description, source_url, content_hash,
-		        created_by_member_id, tags, is_active, auto_load, created_at, updated_at
+		        created_by_member_id, tags, is_active, auto_load, is_builtin, created_at, updated_at
 		 FROM skills
 		 WHERE is_active = true
 		 ORDER BY name`,
@@ -70,6 +78,79 @@ skillsRoutes.post('/skills', async (c) => {
 		name: skill.name,
 	});
 	return ok(c, skill, 201);
+});
+
+// --- skills.sh registry: admin "search and add" (token-gated; agents bypass this
+// and use the `npx skills` CLI directly). Registered before /skills/:slug; the
+// two-segment paths don't collide with the single-segment slug route. ---
+
+skillsRoutes.get('/skills/registry/token', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	return ok(c, { configured: await hasRegistryToken(c.get('db')) });
+});
+
+skillsRoutes.put('/skills/registry/token', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	const key = c.get('masterKeyManager').getKey();
+	if (!key) return err(c, 'LOCKED', 'Server must be unlocked to manage the token', 401);
+	const body = await c.req.json<{ token?: string }>();
+	await setRegistryToken(c.get('db'), key, body.token ?? '');
+	return ok(c, { configured: (body.token ?? '').trim().length > 0 });
+});
+
+skillsRoutes.get('/skills/registry/search', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	const key = c.get('masterKeyManager').getKey();
+	if (!key) return err(c, 'LOCKED', 'Server must be unlocked', 401);
+	const token = await getRegistryToken(c.get('db'), key);
+	if (!token) {
+		return err(
+			c,
+			'REGISTRY_TOKEN_REQUIRED',
+			'Configure a skills.sh token to search the registry',
+			400,
+		);
+	}
+	const limit = Number.parseInt(c.req.query('limit') ?? '20', 10);
+	try {
+		return ok(c, await searchRegistry(token, c.req.query('q') ?? '', limit));
+	} catch (e) {
+		if (e instanceof SkillsRegistryError) {
+			return err(c, 'REGISTRY_ERROR', e.message, e.status >= 500 ? 503 : 400);
+		}
+		throw e;
+	}
+});
+
+skillsRoutes.post('/skills/registry/install', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+	const key = c.get('masterKeyManager').getKey();
+	if (!key) return err(c, 'LOCKED', 'Server must be unlocked', 401);
+	const body = await c.req.json<{ id?: string }>();
+	if (!body.id?.trim()) return err(c, 'INVALID_REQUEST', 'id is required', 400);
+	const token = await getRegistryToken(c.get('db'), key);
+	try {
+		const skill = await installRegistrySkill(c.get('db'), body.id.trim(), token, null);
+		c.get('events').emit({
+			type: 'skill.created',
+			teamId: null,
+			actorType: 'admin',
+			actorMemberId: null,
+			skillId: skill.id,
+			slug: skill.slug,
+			name: skill.name,
+		});
+		return ok(c, skill, skill.reused ? 200 : 201);
+	} catch (e) {
+		if (e instanceof SkillsRegistryError) {
+			return err(c, 'REGISTRY_ERROR', e.message, e.status >= 500 ? 503 : 400);
+		}
+		throw e;
+	}
 });
 
 skillsRoutes.get('/skills/:slug', async (c) => {
@@ -170,21 +251,27 @@ skillsRoutes.delete('/skills/:slug', async (c) => {
 	if (denied) return denied;
 	const db = c.get('db');
 	const slug = c.req.param('slug');
-	const result = await db.query<{ id: string; name: string }>(
-		'DELETE FROM skills WHERE slug = $1 RETURNING id, name',
+	const existing = await db.query<{ id: string; name: string; is_builtin: boolean }>(
+		'SELECT id, name, is_builtin FROM skills WHERE slug = $1',
 		[slug],
 	);
-	if (result.rows.length === 0) {
+	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Skill not found', 404);
 	}
+	if (existing.rows[0].is_builtin) {
+		// Built-ins are re-seeded by the startup reconcile, so deletion would just
+		// reappear on next boot — block it outright instead.
+		return err(c, 'FORBIDDEN', 'Built-in skills cannot be deleted', 403);
+	}
+	await db.query('DELETE FROM skills WHERE slug = $1', [slug]);
 	c.get('events').emit({
 		type: 'skill.deleted',
 		teamId: null,
 		actorType: 'admin',
 		actorMemberId: null,
-		skillId: result.rows[0].id,
+		skillId: existing.rows[0].id,
 		slug,
-		name: result.rows[0].name,
+		name: existing.rows[0].name,
 	});
 	return c.json({ data: null }, 200);
 });

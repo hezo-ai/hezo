@@ -575,8 +575,22 @@ export interface SkillRecord {
 	tags: string[];
 	is_active: boolean;
 	auto_load: boolean;
+	is_builtin: boolean;
 	created_at: string;
 	updated_at: string;
+}
+
+/** A search hit from the skills.sh registry (the UI "search and add" panel). */
+export interface RegistrySkillSearchResult {
+	/** Registry id, "owner/repo/skill". */
+	id: string;
+	name: string;
+	/** "owner/repo" source. */
+	source: string;
+	slug: string;
+	installs: number;
+	/** Human-facing skills.sh page URL. */
+	url: string;
 }
 
 export const AuditAction = {
