@@ -273,13 +273,17 @@ describe('template resolver', () => {
 		// the approval-to-merge / hand-back case that stalls on a passive @@
 		expect(result).toContain('the mention is the **only** wake there is');
 		expect(result).toContain('A passive `@@` there pings no one and the ticket stalls');
+		// a direct instruction to the assignee leads the section as a co-equal rule
+		expect(result).toContain('A direct instruction is the only wake there is');
+		// rubric carries the directive phrasing that misfired as passive
+		expect(result).toContain('you can proceed with the design');
 	});
 
 	it('mention discipline makes @@ the explicit default and flags the status-recap antipattern', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
-		// passive is the explicit presumption; single-@ is the deliberate exception
-		expect(result).toContain('Default to `@@` (passive)');
-		expect(result).toContain('do I need this agent to act on this ticket right now');
+		// passive is the explicit presumption; the about-vs-to test leads the section
+		expect(result).toContain('Referring → `@@`; instructing → `@`');
+		expect(result).toContain('am I referring to them, or instructing them');
 		// the exact pattern that over-pinged the roster: crediting reviewers in a recap stays passive
 		expect(result).toContain('Status updates and review recaps credit people');
 		expect(result).toContain('at most one');

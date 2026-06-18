@@ -119,7 +119,7 @@ describe('renderCeoMessageForChannel', () => {
 			expect(
 				await renderCeoMessageForChannel(db, 'Ask @@ceo or @admin first', CeoChannel.Telegram),
 			).toBe(
-				`Ask [@ceo](${BASE}/projects/${HQ_PROJECT_SLUG}/agents/ceo) ` +
+				`Ask [ceo](${BASE}/projects/${HQ_PROJECT_SLUG}/agents/ceo) ` +
 					`or [@admin](${BASE}${'/home/inbox'}) first`,
 			);
 		});
