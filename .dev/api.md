@@ -897,7 +897,7 @@ instance default — the single active AI provider if only one is configured,
 or the oldest/default active provider otherwise.
 
 #### `GET /projects/:projectId/tasks/:taskId`
-Full task detail including description, goal chain, cost.
+Full task detail including description and goal chain.
 
 Response: full task object + computed fields:
 ```json
@@ -918,7 +918,6 @@ Response: full task object + computed fields:
     "status": "in_progress",
     "priority": "urgent",
     "labels": ["backend", "collab"],
-    "cost_cents": 234,
     "comment_count": 4,
     "created_at": "...",
     "updated_at": "..."
