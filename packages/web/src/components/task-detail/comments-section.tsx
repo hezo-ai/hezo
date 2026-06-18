@@ -395,9 +395,15 @@ export function CommentsSection({
 												{authorName}
 											</span>
 										)}
-										<span className="text-[11px] text-text-subtle">
+										<a
+											href={`#comment-${c.public_id}`}
+											onClick={jumpToComment(c.public_id)}
+											className="text-[11px] text-text-subtle hover:text-text hover:underline"
+											title="Link to this comment"
+											data-testid="comment-timestamp-link"
+										>
 											{new Date(c.created_at).toLocaleString()}
-										</span>
+										</a>
 										<div className="ml-auto flex items-center gap-2">
 											{c.parent_comment_id &&
 												(() => {

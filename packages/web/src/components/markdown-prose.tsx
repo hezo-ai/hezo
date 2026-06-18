@@ -7,6 +7,7 @@ import { useAgents } from '../hooks/use-agents';
 import { useDocMentions, useInstanceMentions } from '../hooks/use-mentions';
 import { useTaskMentions } from '../hooks/use-tasks';
 import { docPreviewPath } from '../lib/doc-preview';
+import { type CommentRefTask, remarkCommentRefs } from '../lib/remark-comment-refs';
 import {
 	type AgentMentionData,
 	type AssetMentionData,
@@ -18,14 +19,13 @@ import {
 	remarkMentions,
 	type TaskMentionData,
 } from '../lib/remark-mentions';
+import { CommentRefLink, MENTION_CLASSES } from './comment-ref-link';
 import { Tooltip } from './ui/tooltip';
 
 type RemarkPlugin = Parameters<typeof Markdown>[0]['remarkPlugins'];
 
 const PROSE_CLASSES =
 	'prose prose-sm max-w-none text-sm text-text [&_a]:text-accent-blue-text [&_h1]:text-text [&_h2]:text-text [&_h3]:text-text [&_h4]:text-text [&_strong]:text-text [&_code]:text-accent-blue-text [&_code]:bg-bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-bg-muted [&_pre]:border [&_pre]:border-border [&_blockquote]:text-text [&_blockquote]:border-l-border-hover [&_blockquote_p]:text-text [&_p:last-child]:mb-0 [&_p:first-child]:mt-0 [&_hr]:my-6';
-
-const MENTION_CLASSES = 'font-semibold text-[1.05em] text-accent-blue-text hover:underline';
 
 interface MarkdownProseProps {
 	children: string;
@@ -40,6 +40,12 @@ interface MarkdownProseProps {
 	 * exclusive with `projectId`.
 	 */
 	instance?: boolean;
+	/**
+	 * Agent-run context: links bare/inline-code comment public_ids in the text to
+	 * the run's task comment (see remarkCommentRefs). Only set by the formatted
+	 * log view.
+	 */
+	commentRefTask?: CommentRefTask;
 }
 
 export function MarkdownProse({
@@ -49,6 +55,7 @@ export function MarkdownProse({
 	projectId,
 	projectSlug,
 	instance,
+	commentRefTask,
 }: MarkdownProseProps) {
 	const { data: agents } = useAgents(projectId ?? '');
 	const taskCandidates = useMemo(() => extractTaskCandidates(children), [children]);
@@ -148,8 +155,21 @@ export function MarkdownProse({
 				},
 			]);
 		}
+		// Comment-ref linking runs regardless of resolved @mentions — it only needs
+		// the run's task context, which the formatted log view supplies directly.
+		if (commentRefTask) plugins.push([remarkCommentRefs, commentRefTask]);
 		return plugins;
-	}, [projectId, projectSlug, instance, agentsMap, tasksMap, kbDocsMap, projectDocsMap, assetsMap]);
+	}, [
+		projectId,
+		projectSlug,
+		instance,
+		agentsMap,
+		tasksMap,
+		kbDocsMap,
+		projectDocsMap,
+		assetsMap,
+		commentRefTask,
+	]);
 
 	const components = useMemo<Components>(() => {
 		// Mention links render whenever a scope is active: project scope carries
@@ -262,22 +282,14 @@ export function MarkdownProse({
 				const commentTaskTitle = attrs['data-mention-comment-task-title'];
 				if (commentTaskIdentifier && commentId && commentProjectSlug && mentionsEnabled) {
 					return (
-						<Tooltip
-							content={`Comment in ${commentTaskIdentifier.toUpperCase()}${commentTaskTitle ? ` — ${commentTaskTitle}` : ''}`}
+						<CommentRefLink
+							taskIdentifier={commentTaskIdentifier}
+							commentId={commentId}
+							projectSlug={commentProjectSlug}
+							taskTitle={commentTaskTitle}
 						>
-							<Link
-								to="/projects/$projectId/tasks/$taskId"
-								params={{
-									projectId: commentProjectSlug,
-									taskId: commentTaskIdentifier.toLowerCase(),
-								}}
-								hash={`comment-${commentId}`}
-								className={MENTION_CLASSES}
-								data-testid="comment-mention-link"
-							>
-								{props.children}
-							</Link>
-						</Tooltip>
+							{props.children}
+						</CommentRefLink>
 					);
 				}
 

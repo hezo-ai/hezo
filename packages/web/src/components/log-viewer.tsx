@@ -1,6 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { AlignLeft, Check, Code, Copy, Maximize2, Minimize2, MoveVertical } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import type { CommentRefTask } from '../lib/remark-comment-refs';
 import { FormattedLogView } from './formatted-log-view';
 import { Button } from './ui/button';
 import { Tooltip } from './ui/tooltip';
@@ -27,6 +28,11 @@ interface LogViewerProps {
 	/** Threaded to the formatted view's markdown renderer for @mention links. */
 	projectId?: string;
 	projectSlug?: string;
+	/**
+	 * Run's task. When set, bare/inline-code comment public_ids in the formatted
+	 * view link to that comment in the task thread.
+	 */
+	commentRefTask?: CommentRefTask;
 }
 
 export function LogViewer({
@@ -41,6 +47,7 @@ export function LogViewer({
 	formattable = false,
 	projectId,
 	projectSlug,
+	commentRefTask,
 }: LogViewerProps) {
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [copied, setCopied] = useState(false);
@@ -188,7 +195,12 @@ export function LogViewer({
 				{lines.length === 0 ? (
 					<span className="text-text-subtle">{emptyState ?? 'No output.'}</span>
 				) : isFormatted ? (
-					<FormattedLogView lines={lines} projectId={projectId} projectSlug={projectSlug} />
+					<FormattedLogView
+						lines={lines}
+						projectId={projectId}
+						projectSlug={projectSlug}
+						commentRefTask={commentRefTask}
+					/>
 				) : (
 					lines.map((line) => (
 						<div
