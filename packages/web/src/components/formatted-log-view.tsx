@@ -1,6 +1,6 @@
 import { Boxes, ChevronDown, ChevronRight, Cpu, Sparkles, Terminal, Wrench } from 'lucide-react';
 import { type ComponentType, useMemo, useState } from 'react';
-import Markdown from 'react-markdown';
+import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
 	type CommandBlock,
@@ -15,6 +15,8 @@ import {
 	type ToolBlock,
 } from '../lib/parse-agent-log';
 import { reflowEnumerations } from '../lib/reflow-thinking-lists';
+import { type CommentRefTask, remarkCommentRefs } from '../lib/remark-comment-refs';
+import { CommentRefLink } from './comment-ref-link';
 import { MarkdownProse } from './markdown-prose';
 import { Badge } from './ui/badge';
 
@@ -22,6 +24,8 @@ interface FormattedLogViewProps {
 	lines: { id: number; stream: 'stdout' | 'stderr'; text: string }[];
 	projectId?: string;
 	projectSlug?: string;
+	/** Run's task — links bare comment public_ids in the prose to its thread. */
+	commentRefTask?: CommentRefTask;
 	testId?: string;
 }
 
@@ -30,13 +34,25 @@ interface FormattedLogViewProps {
  * sections, prose/lists via markdown, and indented tool-use blocks whose result
  * shows on expand. Parses the prefixed lines client-side (see parse-agent-log).
  */
-export function FormattedLogView({ lines, projectId, projectSlug, testId }: FormattedLogViewProps) {
+export function FormattedLogView({
+	lines,
+	projectId,
+	projectSlug,
+	commentRefTask,
+	testId,
+}: FormattedLogViewProps) {
 	const blocks = useMemo(() => parseAgentLog(lines), [lines]);
 
 	return (
 		<div data-testid={testId} className="space-y-3 text-sm leading-relaxed text-text">
 			{blocks.map((block) => (
-				<BlockView key={block.id} block={block} projectId={projectId} projectSlug={projectSlug} />
+				<BlockView
+					key={block.id}
+					block={block}
+					projectId={projectId}
+					projectSlug={projectSlug}
+					commentRefTask={commentRefTask}
+				/>
 			))}
 		</div>
 	);
@@ -46,18 +62,27 @@ function BlockView({
 	block,
 	projectId,
 	projectSlug,
+	commentRefTask,
 }: {
 	block: LogBlock;
 	projectId?: string;
 	projectSlug?: string;
+	commentRefTask?: CommentRefTask;
 }) {
 	switch (block.type) {
 		case 'session':
 			return <SessionView block={block} />;
 		case 'text':
-			return <TextView block={block} projectId={projectId} projectSlug={projectSlug} />;
+			return (
+				<TextView
+					block={block}
+					projectId={projectId}
+					projectSlug={projectSlug}
+					commentRefTask={commentRefTask}
+				/>
+			);
 		case 'thinking':
-			return <ThinkingView block={block} />;
+			return <ThinkingView block={block} commentRefTask={commentRefTask} />;
 		case 'command':
 			return <CommandView block={block} />;
 		case 'tool':
@@ -94,10 +119,12 @@ function TextView({
 	block,
 	projectId,
 	projectSlug,
+	commentRefTask,
 }: {
 	block: TextBlock;
 	projectId?: string;
 	projectSlug?: string;
+	commentRefTask?: CommentRefTask;
 }) {
 	if (block.stream === 'stderr') {
 		return (
@@ -107,11 +134,46 @@ function TextView({
 		);
 	}
 	return (
-		<MarkdownProse projectId={projectId} projectSlug={projectSlug}>
+		<MarkdownProse projectId={projectId} projectSlug={projectSlug} commentRefTask={commentRefTask}>
 			{block.text}
 		</MarkdownProse>
 	);
 }
+
+// `a`-component for the thinking block's bare markdown renderer: turns the
+// comment-ref link nodes emitted by remarkCommentRefs into in-app scroll-to
+// links, and leaves any other anchor as a plain external link.
+const THINKING_COMPONENTS: Components = {
+	a: (props) => {
+		const attrs = props as {
+			'data-mention-comment-task-identifier'?: string;
+			'data-mention-comment-id'?: string;
+			'data-mention-comment-project-slug'?: string;
+			'data-mention-comment-task-title'?: string;
+			href?: string;
+		};
+		const taskIdentifier = attrs['data-mention-comment-task-identifier'];
+		const commentId = attrs['data-mention-comment-id'];
+		const projectSlug = attrs['data-mention-comment-project-slug'];
+		if (taskIdentifier && commentId && projectSlug) {
+			return (
+				<CommentRefLink
+					taskIdentifier={taskIdentifier}
+					commentId={commentId}
+					projectSlug={projectSlug}
+					taskTitle={attrs['data-mention-comment-task-title']}
+				>
+					{props.children}
+				</CommentRefLink>
+			);
+		}
+		return (
+			<a href={attrs.href} target="_blank" rel="noopener noreferrer">
+				{props.children}
+			</a>
+		);
+	},
+};
 
 // Markers (`1.`/`2.`/`•`) the server flattened onto a single line are reflowed into
 // markdown so they render as lists; the de-emphasized thinking look (small, italic,
@@ -120,8 +182,18 @@ function TextView({
 const THINKING_PROSE =
 	'text-xs italic leading-relaxed [&_ol]:list-decimal [&_ul]:list-disc [&_ol]:pl-5 [&_ul]:pl-5 [&_li]:my-0.5 [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_li]:marker:text-text-subtle';
 
-function ThinkingView({ block }: { block: ThinkingBlock }) {
+function ThinkingView({
+	block,
+	commentRefTask,
+}: {
+	block: ThinkingBlock;
+	commentRefTask?: CommentRefTask;
+}) {
 	const reflowed = useMemo(() => reflowEnumerations(block.text), [block.text]);
+	const remarkPlugins = useMemo<Parameters<typeof Markdown>[0]['remarkPlugins']>(
+		() => (commentRefTask ? [remarkGfm, [remarkCommentRefs, commentRefTask]] : [remarkGfm]),
+		[commentRefTask],
+	);
 	return (
 		<div className="border-l-2 border-border-subtle pl-3 text-text-subtle">
 			<div className="mb-0.5 flex items-center gap-1 text-[10px] uppercase tracking-wider">
@@ -129,7 +201,12 @@ function ThinkingView({ block }: { block: ThinkingBlock }) {
 				Thinking
 			</div>
 			<div className={THINKING_PROSE}>
-				<Markdown remarkPlugins={[remarkGfm]}>{reflowed}</Markdown>
+				<Markdown
+					remarkPlugins={remarkPlugins}
+					components={commentRefTask ? THINKING_COMPONENTS : undefined}
+				>
+					{reflowed}
+				</Markdown>
 			</div>
 		</div>
 	);

@@ -238,6 +238,15 @@ function ExecutionDetailPage() {
 					formattable
 					projectId={projectId}
 					projectSlug={run.project_slug ?? undefined}
+					commentRefTask={
+						run.task_identifier
+							? {
+									identifier: run.task_identifier,
+									title: run.task_title ?? '',
+									projectSlug: run.project_slug ?? projectId,
+								}
+							: undefined
+					}
 					emptyState={
 						isActive ? getRunWaitingMessage(run.status, run.queued_reason) : 'No output captured.'
 					}
