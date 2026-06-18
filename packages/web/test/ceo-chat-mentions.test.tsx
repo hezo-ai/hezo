@@ -146,5 +146,5 @@ test('agent mentions link to the agent home project; HQ singletons resolve to hq
 
 	const agentLink = await findByTestId('agent-mention-link');
 	expect(agentLink.getAttribute('href')).toBe('/projects/hq/agents/ceo');
-	expect(agentLink.textContent).toBe('@ceo');
+	expect(agentLink.textContent).toBe('ceo');
 });
