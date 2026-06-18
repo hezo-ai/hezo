@@ -17,6 +17,7 @@ interface TaskRow {
 	id: string;
 	identifier: string;
 	last_run_status: string | null;
+	last_run_id?: string | null;
 	last_run_comment_id?: string | null;
 	has_active_run: boolean;
 }
@@ -132,6 +133,15 @@ describe('task last-run fields', () => {
 		expect(detail.last_run_comment_id).toBe(commentId);
 	});
 
+	it('exposes the last run id as the retry target for a failed run', async () => {
+		const taskId = await createTask('Retryable failure');
+		const runId = await insertRun(taskId, 'failed', new Date());
+		await insertRunComment(taskId, runId);
+		const detail = await fetchDetail(taskId);
+		expect(detail.last_run_status).toBe('failed');
+		expect(detail.last_run_id).toBe(runId);
+	});
+
 	it('picks the most recent completed run when history exists', async () => {
 		const taskId = await createTask('History wins');
 		const earlier = await insertRun(taskId, 'succeeded', new Date(Date.now() - 60_000));
@@ -140,6 +150,7 @@ describe('task last-run fields', () => {
 		const laterCommentId = await insertRunComment(taskId, later);
 		const detail = await fetchDetail(taskId);
 		expect(detail.last_run_status).toBe('failed');
+		expect(detail.last_run_id).toBe(later);
 		expect(detail.last_run_comment_id).toBe(laterCommentId);
 	});
 

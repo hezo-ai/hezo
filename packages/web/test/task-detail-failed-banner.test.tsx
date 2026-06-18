@@ -118,6 +118,62 @@ test('banner is hidden when the task has no completed runs', async () => {
 	});
 });
 
+test('banner Retry button retries the last failed run even when no run_failed comment exists', async () => {
+	// Reproduces the 3+ consecutive-failure case: the `run_failed` ping (which
+	// hosts the inline Retry button) is suppressed, so only the `run` comment
+	// remains. The banner must still expose a working manual-retry path.
+	const seeded = { projectSlug: '', taskIdentifier: '', runId: '' };
+	const retryCalls: string[] = [];
+
+	const { findByTestId, queryByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Demo' });
+			const task = await seedTask(ws, project, { title: 'Crash Loop Task' });
+			const { runId } = await insertFailedRunWithComment(ws, task, 'failed');
+			seeded.projectSlug = project.slug;
+			seeded.taskIdentifier = task.identifier.toLowerCase();
+			seeded.runId = runId;
+
+			// Intercept the retry POST so we assert on the call without driving a
+			// real container dispatch; everything else falls through to the
+			// in-process backend so the task GET returns a real `last_run_id`.
+			const passthrough = globalThis.fetch;
+			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = typeof input === 'string' ? input : (input as Request).url;
+				const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
+				const retryMatch = url.match(/\/api\/projects\/[^/]+\/tasks\/[^/]+\/runs\/([^/]+)\/retry/);
+				if (method === 'POST' && retryMatch) {
+					retryCalls.push(retryMatch[1]);
+					return new Response(JSON.stringify({ data: { dispatched: true } }), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					});
+				}
+				return passthrough(input as RequestInfo, init);
+			}) as typeof globalThis.fetch;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskIdentifier },
+	});
+
+	const retryButton = (await findByTestId('retry-failed-run-banner', undefined, {
+		timeout: 10_000,
+	})) as HTMLButtonElement;
+	// No inline run_failed retry in this scenario — the banner is the only path.
+	expect(queryByTestId('retry-failed-run')).toBeNull();
+
+	await user.click(retryButton);
+
+	await waitFor(() => {
+		expect(retryCalls).toEqual([seeded.runId]);
+	});
+});
+
 test('banner is suppressed while a retry is currently running', async () => {
 	const seeded = { projectSlug: '', taskIdentifier: '' };
 	const { findByRole, queryByTestId, router } = await renderApp({
