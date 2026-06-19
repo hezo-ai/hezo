@@ -113,16 +113,24 @@ function ShellChrome() {
 	const mainRef = useRef<HTMLElement>(null);
 	const pathname = useLocation({ select: (l) => l.pathname });
 	const hash = useLocation({ select: (l) => l.hash });
+	const lastPathnameRef = useRef(pathname);
 
 	// Reset the main scroll container to the top on every page change. <main> is the
 	// only scroller here and it never unmounts across navigations (just the <Outlet>
 	// content swaps), so its scrollTop otherwise persists and a freshly-opened page
-	// shows scrolled down to wherever the previous page left off. Skip when the URL
-	// carries a hash: that navigation targets an in-page anchor (e.g. #comment-…)
-	// whose own scroll logic should win. `behavior: 'instant'` overrides the global
-	// `html { scroll-behavior: smooth }` so the reset is immediate, not animated.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: pathname is the navigation trigger — its value isn't read, its change is what should reset the scroll
+	// shows scrolled down to wherever the previous page left off. `behavior: 'instant'`
+	// overrides the global `html { scroll-behavior: smooth }` so the reset is
+	// immediate, not animated. Two guards keep this from stealing the viewport:
+	//   - Only reset when the PATHNAME actually changed. A hash-only change is an
+	//     in-page jump, not a page change — notably the deep-link executor strips
+	//     `#comment-…` once it settles (TanStack patches replaceState, so `hash`
+	//     here flips to ''); resetting on that would yank the reader to the top.
+	//   - Skip when the new URL carries a hash: that navigation targets an in-page
+	//     anchor whose own scroll logic should win.
 	useEffect(() => {
+		const pathnameChanged = lastPathnameRef.current !== pathname;
+		lastPathnameRef.current = pathname;
+		if (!pathnameChanged) return;
 		if (hash) return;
 		mainRef.current?.scrollTo({ top: 0, left: 0, behavior: 'instant' });
 	}, [pathname, hash]);

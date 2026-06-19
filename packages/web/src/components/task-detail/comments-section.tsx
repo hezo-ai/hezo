@@ -222,6 +222,56 @@ export function CommentsSection({
 
 		const consumedHash = hashTarget;
 		const timers: ReturnType<typeof setTimeout>[] = [];
+		// Headroom left above the landed comment: matches the rows' `scroll-mt-20`
+		// (scroll-margin-top: 80px) that `scrollIntoView({ block: 'start' })`
+		// honours, and the wake-the-list pre-scroll below.
+		const HEADROOM = 80;
+		let settled = false;
+
+		// The live DOM node we're aiming at: the highlighted comment, or the
+		// unresolved setup-repo card for `#setup-repo` (which has no highlight).
+		const targetEl = (): HTMLElement | null =>
+			highlightId
+				? document.getElementById(`comment-${highlightId}`)
+				: (listContainerRef.current?.querySelector<HTMLElement>('[data-setup-repo-anchor]') ??
+					null);
+
+		// Stop re-anchoring and consume the hash. Runs once — on natural settle or
+		// the moment the user takes over scrolling. Aborting the signal removes the
+		// input listeners; stripping the hash keeps a reload from re-jumping. The
+		// `__root` shell no longer resets scroll on a hash-only change, so this
+		// replaceState can't bounce the viewport to the top.
+		const inputAbort = new AbortController();
+		const finish = () => {
+			if (settled) return;
+			settled = true;
+			for (const t of timers) clearTimeout(t);
+			inputAbort.abort();
+			if (window.location.hash === consumedHash) {
+				window.history.replaceState(null, '', window.location.pathname + window.location.search);
+			}
+		};
+
+		// Never fight the user: the first real scroll *intent* aborts the
+		// re-anchor loop. Listen for input events (wheel / touch / scroll keys),
+		// NOT `scroll` — our own programmatic scrolls and Virtuoso's height
+		// adjustments fire `scroll` too and must not self-abort.
+		const SCROLL_KEYS = new Set(['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' ']);
+		const isEditable = (t: EventTarget | null): boolean =>
+			t instanceof HTMLElement &&
+			(t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA');
+		scrollParent.addEventListener('wheel', finish, { passive: true, signal: inputAbort.signal });
+		scrollParent.addEventListener('touchmove', finish, {
+			passive: true,
+			signal: inputAbort.signal,
+		});
+		window.addEventListener(
+			'keydown',
+			(e) => {
+				if (!isEditable(e.target) && SCROLL_KEYS.has(e.key)) finish();
+			},
+			{ signal: inputAbort.signal },
+		);
 
 		// Virtuoso with `customScrollParent` only mounts items once its container
 		// intersects the parent's viewport. On a fresh task page the comments list
@@ -232,55 +282,48 @@ export function CommentsSection({
 			const listTop = listContainerRef.current.getBoundingClientRect().top;
 			const parentTop = scrollParent.getBoundingClientRect().top;
 			const offset = scrollParent.scrollTop + listTop - parentTop;
-			scrollParent.scrollTo({ top: Math.max(0, offset - 80), behavior: 'auto' });
+			scrollParent.scrollTo({ top: Math.max(0, offset - HEADROOM), behavior: 'auto' });
 		}
 
-		// Retry ladder: each tick asks Virtuoso to mount the target row, then reads
-		// the rendered element's real position and scrolls precisely to it. The
-		// later ticks absorb post-mount height growth (LazyMount run comments,
-		// async log bodies) that would otherwise leave scrollToIndex short.
+		// Re-anchor the target to the TOP of the viewport (not centred), absorbing
+		// post-mount height growth (LazyMount run comments, async log bodies) that
+		// would otherwise leave a single scroll short. Each tick mounts the row via
+		// Virtuoso (`align: 'start'`), then fine-tunes against its real rendered
+		// position; `scroll-mt-20` provides the 80px headroom. The loop self-
+		// terminates once the row has held its spot for two consecutive ticks, or
+		// when the budget runs out — so it doesn't keep yanking the viewport.
 		//
 		// Mark the hash consumed inside the FIRST tick, not now: React StrictMode
-		// runs setup -> cleanup -> setup synchronously and the cleanup clears these
-		// timers before the 16ms tick fires. Setting the ref now would make the
+		// runs setup -> cleanup -> setup synchronously and the cleanup aborts this
+		// run before the first tick fires. Setting the ref now would make the
 		// second setup's `=== hashTarget` guard skip the re-arm and nothing would
 		// scroll; deferring it lets the surviving setup re-arm and land the scroll.
-		const scrollDelays = [16, 200, 600, 1500, 3000];
-		scrollDelays.forEach((delay, i) => {
-			timers.push(
-				setTimeout(() => {
-					if (i === 0) lastScrolledHashRef.current = consumedHash;
-					virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center' });
-					if (highlightId) {
-						document
-							.getElementById(`comment-${highlightId}`)
-							?.scrollIntoView({ block: 'center', behavior: 'auto' });
-					}
-				}, delay),
-			);
-		});
+		const scrollDelays = [16, 150, 400, 800, 1500];
+		let landedStreak = 0;
+		const step = (attempt: number) => {
+			if (settled) return;
+			if (attempt === 0) lastScrolledHashRef.current = consumedHash;
+			virtuosoRef.current?.scrollToIndex({ index: idx, align: 'start' });
+			const el = targetEl();
+			el?.scrollIntoView({ block: 'start', behavior: 'auto' });
+
+			const top = el
+				? el.getBoundingClientRect().top - scrollParent.getBoundingClientRect().top
+				: null;
+			landedStreak = top !== null && Math.abs(top - HEADROOM) <= 8 ? landedStreak + 1 : 0;
+
+			if (landedStreak >= 2 || attempt >= scrollDelays.length - 1) {
+				finish();
+				return;
+			}
+			timers.push(setTimeout(() => step(attempt + 1), scrollDelays[attempt + 1]));
+		};
+		timers.push(setTimeout(() => step(0), scrollDelays[0]));
 
 		if (highlightId) setHighlightedCommentId(highlightId);
 
-		// Strip the hash once the scroll settles so a reload doesn't re-jump — but
-		// only if it still points at what we consumed, so a fresh click during the
-		// scroll isn't swallowed.
-		timers.push(
-			setTimeout(
-				() => {
-					if (window.location.hash === consumedHash) {
-						window.history.replaceState(
-							null,
-							'',
-							window.location.pathname + window.location.search,
-						);
-					}
-				},
-				scrollDelays[scrollDelays.length - 1] + 50,
-			),
-		);
-
 		return () => {
+			inputAbort.abort();
 			for (const t of timers) clearTimeout(t);
 		};
 	}, [comments, scrollParent, hashTarget]);
