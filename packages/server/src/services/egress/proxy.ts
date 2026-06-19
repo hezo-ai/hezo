@@ -305,32 +305,42 @@ class RunProxyInstance {
 		client.on('error', () => client.destroy());
 		client.pause();
 
-		this.ensureHostServer(host)
-			.then((rec) => {
-				if (this.closed) {
-					client.destroy();
-					return;
-				}
-				const up = netConnect({ host: '127.0.0.1', port: rec.port }, () => {
-					this.trackSocket(up);
-					client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-					if (head?.length) up.write(head);
-					client.pipe(up);
-					up.pipe(client);
-					client.resume();
-				});
-				up.on('error', () => client.destroy());
-				up.on('close', () => client.destroy());
-				client.on('close', () => up.destroy());
-			})
-			.catch((e: Error) => {
-				log.warn('egress CONNECT setup failed', {
-					run: ref(this.cfg.scope.label, this.cfg.runId),
-					host,
-					error: e.message,
-				});
-				client.destroy();
+		this.bridgeConnect(host, client, head).catch((e: Error) => {
+			log.warn('egress CONNECT setup failed', {
+				run: ref(this.cfg.scope.label, this.cfg.runId),
+				host,
+				error: e.message,
 			});
+			client.destroy();
+		});
+	}
+
+	/** Bridge a CONNECT tunnel into the host's per-host TLS server. The dial
+	 * re-validates port ownership synchronously and rebuilds a stale server,
+	 * then connects with no further `await` — only synchronous code separates the
+	 * ownership check from the `netConnect`, so a concurrently-built server can
+	 * never recycle the freed ephemeral port in between and route the tunnel to
+	 * another host's leaf cert. */
+	private async bridgeConnect(host: string, client: Socket, head: Buffer): Promise<void> {
+		let rec = await this.ensureHostServer(host);
+		while (!this.closed && !serverOwnsPort(rec)) {
+			rec = await this.buildHostServer(host);
+		}
+		if (this.closed) {
+			client.destroy();
+			return;
+		}
+		const up = netConnect({ host: '127.0.0.1', port: rec.port }, () => {
+			this.trackSocket(up);
+			client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+			if (head?.length) up.write(head);
+			client.pipe(up);
+			up.pipe(client);
+			client.resume();
+		});
+		up.on('error', () => client.destroy());
+		up.on('close', () => client.destroy());
+		client.on('close', () => up.destroy());
 	}
 
 	/** Return a live per-host TLS server, rebuilding it if the cached one has

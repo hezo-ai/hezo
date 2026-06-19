@@ -67,6 +67,9 @@ const SHARED_INSTRUCTIONS = `
 ### Sub-Task Delegation
 - Use \`create_task\` with \`parent_task_id\` and \`assignee_slug\` to create sub-tasks and delegate work to other agents. The Teammates block above lists every enabled peer's slug — use \`list_agents\` only when you need details (description / reports_to) on a specific teammate.
 
+### Shell Commands
+- Shell commands run from your run's working directory (a git worktree when the project has a repo) — you do not need to specify it. To run a command in a different directory, prefix it with \`cd <path> && …\`. Don't pass a separate directory / \`workdir\` / \`cwd\` argument to the shell tool; prefixing with \`cd\` works on every runtime, whereas a directory argument may be rejected.
+
 ### Fetching External URLs
 - To read a web page or hit an HTTP endpoint, use \`curl\` (or \`wget\`) from the shell. The container's proxy and CA trust are preconfigured, so HTTPS to any host works with no extra flags.
 - Use your native web-search tool for discovery, then fetch the resulting pages with \`curl\`/\`wget\`.

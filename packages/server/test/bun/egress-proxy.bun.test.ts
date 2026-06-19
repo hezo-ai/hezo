@@ -126,22 +126,26 @@ describe('EgressProxy under Bun', () => {
 	// for another. The MITM library spins up a separate per-host HTTPS server,
 	// and concurrent first-time minting of two hosts must not cross the certs —
 	// otherwise the client sees ERR_TLS_CERT_ALTNAME_INVALID against the wrong
-	// SAN. Asserting on the served leaf cert is enough: the client↔proxy
-	// handshake completes before any upstream connection, so no upstream is
-	// needed and the hostnames need not resolve.
-	test('concurrent connections to different hosts are each served that host cert', async () => {
-		const hosts = Array.from({ length: 8 }, (_u, i) => `host-${i}.hezo-egress-test`);
+	// SAN. Full verification is on (`strictHandshakeThroughProxy`) so a crossed
+	// cert *rejects the handshake* exactly as curl does, rather than completing
+	// and being papered over by a CN that mockttp always sets to the host. The
+	// set mixes 3-label hosts with a 2-label apex (`bun.sh`, the production
+	// incident) so apex minting is covered too. The handshake completes before
+	// any upstream connection, so no upstream is needed and the hosts need not
+	// resolve.
+	test('concurrent connections to different hosts each pass strict verification', async () => {
+		const hosts = ['bun.sh', ...Array.from({ length: 7 }, (_u, i) => `host-${i}.hezo-egress-test`)];
 		// Fresh run proxies so every host is first-seen concurrently, forcing the
 		// per-host cert mint + listen to race within each proxy.
 		for (let attempt = 0; attempt < 8; attempt++) {
 			const runId = `bun-multihost-${process.pid}-${attempt}`;
 			const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
 			try {
-				const certs = await Promise.all(
-					hosts.map((h) => servedCertThroughProxy(allocated.proxyPort, h, ca.cert)),
+				const sans = await Promise.all(
+					hosts.map((h) => strictHandshakeThroughProxy(allocated.proxyPort, h, ca.cert)),
 				);
 				for (let i = 0; i < hosts.length; i++) {
-					expect(certs[i]).toContain(hosts[i]);
+					expect(sans[i]).toContain(hosts[i]);
 				}
 			} finally {
 				await proxy.releaseRunProxy(runId);
@@ -159,7 +163,7 @@ describe('EgressProxy under Bun', () => {
 		const host = 'registry.npmjs.org';
 		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
 		try {
-			const first = await servedCertThroughProxy(allocated.proxyPort, host, ca.cert);
+			const first = await strictHandshakeThroughProxy(allocated.proxyPort, host, ca.cert);
 			expect(first).toContain(host);
 
 			const before = getHostServers(proxy, runId);
@@ -168,12 +172,14 @@ describe('EgressProxy under Bun', () => {
 			expect(rec.server.listening).toBe(true);
 			expect(rec.server.address()?.port).toBe(rec.port);
 
-			// The per-host server dies; its loopback port is now refused.
+			// The per-host server dies; its loopback port is now refused. A later
+			// CONNECT must rebuild and still pass strict verification — never dial
+			// a dead/recycled port and serve another host's cert.
 			await new Promise<void>((resolve) => rec.server.close(() => resolve()));
 			expect(rec.server.listening).toBe(false);
 
 			// The next tunnel must rebuild a fresh live server, not ECONNREFUSED.
-			const second = await servedCertThroughProxy(allocated.proxyPort, host, ca.cert);
+			const second = await strictHandshakeThroughProxy(allocated.proxyPort, host, ca.cert);
 			expect(second).toContain(host);
 
 			const after = getHostServers(proxy, runId);
@@ -193,7 +199,7 @@ describe('EgressProxy under Bun', () => {
 		const host = 'zombie.hezo-egress-test';
 		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
 		try {
-			await servedCertThroughProxy(allocated.proxyPort, host, ca.cert);
+			await servedSanThroughProxy(allocated.proxyPort, host, ca.cert);
 			const map = getHostServers(proxy, runId);
 			const rec = map.get(host);
 			if (!rec) throw new Error('per-host server missing');
@@ -210,7 +216,7 @@ describe('EgressProxy under Bun', () => {
 				} as unknown as HttpsServer,
 			});
 
-			const cert = await servedCertThroughProxy(allocated.proxyPort, host, ca.cert);
+			const cert = await servedSanThroughProxy(allocated.proxyPort, host, ca.cert);
 			expect(cert).toContain(host);
 			expect(map.get(host)?.server.listening).toBe(true);
 		} finally {
@@ -324,17 +330,64 @@ async function fetchHttpsThroughProxy(
 	});
 }
 
-// Open a CONNECT tunnel for `targetHost`, complete the client↔proxy TLS
-// handshake, and return a descriptor of the leaf cert the proxy served (CN +
-// subjectAltName). A wrong per-host cert makes the handshake reject with
-// ERR_TLS_CERT_ALTNAME_INVALID against `servername`, surfacing the cross-host
-// mix-up. No upstream is contacted, so the target host need not resolve.
-async function servedCertThroughProxy(
+// Open a CONNECT tunnel for `targetHost` and return the served leaf's
+// subjectAltName. The SAN — not the CN — is what real clients (curl, OpenSSL,
+// Node with verification on) check, and mockttp sets CN=host unconditionally,
+// so asserting on the CN would pass even when the proxy serves another host's
+// cert. `rejectUnauthorized:false` so a wrong cert still completes the
+// handshake and the caller can inspect which SAN was actually served. No
+// upstream is contacted, so the target host need not resolve.
+async function servedSanThroughProxy(
 	proxyPort: number,
 	targetHost: string,
 	caCert: string,
 ): Promise<string> {
-	const tunnel = await new Promise<ReturnType<typeof netConnect>>((resolve, reject) => {
+	const tunnel = await openConnectTunnel(proxyPort, targetHost);
+	return new Promise<string>((resolve, reject) => {
+		const tls = tlsConnect(
+			{ socket: tunnel, servername: targetHost, ca: [caCert], rejectUnauthorized: false },
+			() => {
+				const san = tls.getPeerCertificate().subjectaltname ?? '';
+				tls.end();
+				resolve(san);
+			},
+		);
+		tls.on('error', reject);
+		tls.setTimeout(20_000, () => tls.destroy(new Error('tls handshake timed out')));
+	});
+}
+
+// Complete a CONNECT + client↔proxy TLS handshake with full verification on
+// (`rejectUnauthorized:true`, `servername:targetHost`), exactly as curl does.
+// A leaf whose SAN doesn't cover `targetHost` rejects with
+// ERR_TLS_CERT_ALTNAME_INVALID — the production symptom (`curl: (60) SSL: no
+// alternative certificate subject name matches target host name`). Resolves
+// with the verified SAN.
+async function strictHandshakeThroughProxy(
+	proxyPort: number,
+	targetHost: string,
+	caCert: string,
+): Promise<string> {
+	const tunnel = await openConnectTunnel(proxyPort, targetHost);
+	return new Promise<string>((resolve, reject) => {
+		const tls = tlsConnect(
+			{ socket: tunnel, servername: targetHost, ca: [caCert], rejectUnauthorized: true },
+			() => {
+				const san = tls.getPeerCertificate().subjectaltname ?? '';
+				tls.end();
+				resolve(san);
+			},
+		);
+		tls.on('error', reject);
+		tls.setTimeout(20_000, () => tls.destroy(new Error('tls handshake timed out')));
+	});
+}
+
+async function openConnectTunnel(
+	proxyPort: number,
+	targetHost: string,
+): Promise<ReturnType<typeof netConnect>> {
+	return new Promise<ReturnType<typeof netConnect>>((resolve, reject) => {
 		const sock = netConnect({ host: '127.0.0.1', port: proxyPort });
 		const onData = (chunk: Buffer) => {
 			const statusLine = chunk.toString().split('\r\n')[0] ?? '';
@@ -351,22 +404,5 @@ async function servedCertThroughProxy(
 		sock.on('data', onData);
 		sock.on('error', reject);
 		sock.setTimeout(20_000, () => sock.destroy(new Error('CONNECT timed out')));
-	});
-
-	return new Promise<string>((resolve, reject) => {
-		// rejectUnauthorized:false so a cross-host cert still completes the
-		// handshake — the caller asserts on which cert was served rather than
-		// the connection merely failing.
-		const tls = tlsConnect(
-			{ socket: tunnel, servername: targetHost, ca: [caCert], rejectUnauthorized: false },
-			() => {
-				const peer = tls.getPeerCertificate();
-				const descriptor = `${peer.subject?.CN ?? ''} ${peer.subjectaltname ?? ''}`;
-				tls.end();
-				resolve(descriptor);
-			},
-		);
-		tls.on('error', reject);
-		tls.setTimeout(20_000, () => tls.destroy(new Error('tls handshake timed out')));
 	});
 }

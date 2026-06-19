@@ -99,6 +99,51 @@ export interface ToolDef {
 
 const registeredTools: ToolDef[] = [];
 
+// Tools that persist data. When an agent run invokes one of these and it
+// succeeds, the run has produced output — recorded on the run row so the
+// completion path can distinguish a useful run from a no-op that merely exited
+// cleanly. Read-only tools (list_*/get_*/read_*/semantic_search/test_connector)
+// and run-local fetches (fetch_skill_file) are excluded.
+const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
+	'create_team',
+	'create_task',
+	'create_tasks',
+	'update_task',
+	'add_task_blocker',
+	'remove_task_blocker',
+	'update_hire_proposal',
+	'update_project_creation_proposal',
+	'add_reaction',
+	'remove_reaction',
+	'create_comment',
+	'request_credential',
+	'register_connector',
+	'resolve_approval',
+	'update_agent_system_prompt',
+	'set_agent_summary',
+	'set_team_summary',
+	'set_agent_team_context',
+	'write_project_asset',
+	'write_project_doc',
+	'propose_skill',
+	'create_skill',
+	'add_mcp_connection',
+	'remove_mcp_connection',
+]);
+
+/** A handler result that signals failure rather than a persisted write. */
+function isErrorResult(result: unknown): boolean {
+	return typeof result === 'object' && result !== null && 'error' in result;
+}
+
+/** Flag an agent run as having produced output. Idempotent and self-contained. */
+async function markRunProducedOutput(db: PGlite, runId: string): Promise<void> {
+	await db.query(
+		'UPDATE heartbeat_runs SET produced_output = true WHERE id = $1 AND produced_output = false',
+		[runId],
+	);
+}
+
 // Qualified-column variant of services/tasks.ts TASK_COLUMNS_BARE — prefixes
 // every column with the `i.` alias for SELECT ... FROM tasks i JOIN ...
 // patterns.
@@ -206,6 +251,14 @@ function tool(
 			};
 		}
 		const result = await handler(args, db, auth);
+		if (
+			auth.type === AuthType.Agent &&
+			auth.runId &&
+			MCP_WRITE_TOOLS.has(name) &&
+			!isErrorResult(result)
+		) {
+			await markRunProducedOutput(db, auth.runId);
+		}
 		const text = JSON.stringify(result, null, 2);
 		const sizeBytes = Buffer.byteLength(text, 'utf8');
 		if (sizeBytes > MCP_RESULT_BYTE_LIMIT) {

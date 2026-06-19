@@ -45,7 +45,13 @@ import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import type { EgressProxy } from './egress';
-import { ensureGithubKnownHosts, ensureTaskWorktree, fetchRepo } from './git';
+import {
+	ensureGithubKnownHosts,
+	ensureTaskWorktree,
+	fetchRepo,
+	getWorktreeHead,
+	worktreeHasChanges,
+} from './git';
 import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
 import { loadMcpConnectionDescriptors } from './mcp-connections';
@@ -968,7 +974,30 @@ export async function runAgent(
 			if (tail) emit('stdout', tail);
 			const execInfo = await deps.docker.execInspect(execId);
 			const durationMs = Date.now() - startTime;
-			const success = execInfo.ExitCode === 0;
+			const exitedClean = execInfo.ExitCode === 0;
+
+			// A clean exit is only a real success if the run produced persisted
+			// output: a Hezo write (comment/task/doc/blocker/…, flagged on the run
+			// row by the MCP tool layer) or a code change in a worktree. A run that
+			// exits 0 having written nothing — e.g. a model that drifts into plan
+			// mode and only describes a plan — is a no-op, not a success, and is
+			// marked failed so it surfaces and is retried rather than silently
+			// counting as servicing the task.
+			let producedOutput = false;
+			if (exitedClean) {
+				const flagged = await deps.db.query<{ produced_output: boolean }>(
+					'SELECT produced_output FROM heartbeat_runs WHERE id = $1',
+					[heartbeatRunId],
+				);
+				producedOutput =
+					(flagged.rows[0]?.produced_output ?? false) || (await anyWorktreeChanged(prep.worktrees));
+			}
+			const success = exitedClean && producedOutput;
+			const noOutputError =
+				exitedClean && !producedOutput
+					? 'run produced no output (no code changes, comments, tasks, documents, or other writes)'
+					: undefined;
+			if (noOutputError) emit('stderr', `\n[runner] ${noOutputError}\n`);
 
 			await deps.logs.end(streamId);
 			await updateHeartbeatRun(
@@ -978,6 +1007,7 @@ export async function runAgent(
 					status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
 					exitCode: execInfo.ExitCode,
 					durationMs,
+					error: noOutputError,
 					usage: parser.getUsage(),
 				},
 				runBroadcast,
@@ -1057,13 +1087,26 @@ function withProjectGitLock<T>(projectId: string, fn: () => Promise<T>): Promise
 	return run;
 }
 
+interface WorktreeRef {
+	path: string;
+	headBefore: string | null;
+}
+
+/** Whether any of a run's worktrees has an uncommitted change or an advanced branch tip. */
+async function anyWorktreeChanged(worktrees: WorktreeRef[]): Promise<boolean> {
+	for (const wt of worktrees) {
+		if (await worktreeHasChanges(wt.path, wt.headBefore)) return true;
+	}
+	return false;
+}
+
 async function prepareWorktrees(
 	deps: RunnerDeps,
 	project: ProjectInfo,
 	task: TaskInfo,
 	emit: (stream: 'stdout' | 'stderr', text: string) => void,
 	signal?: AbortSignal,
-): Promise<{ workingDir: string; designatedRepo: RepoRow | null }> {
+): Promise<{ workingDir: string; designatedRepo: RepoRow | null; worktrees: WorktreeRef[] }> {
 	const emitSystem = (stream: 'stdout' | 'stderr', text: string) =>
 		emit(stream, `[system] ${text}\n`);
 
@@ -1075,7 +1118,7 @@ async function prepareWorktrees(
 
 	if (repos.rows.length === 0) {
 		emitSystem('stdout', '(no repos linked to project — running in /workspace)');
-		return { workingDir: '/workspace', designatedRepo: null };
+		return { workingDir: '/workspace', designatedRepo: null, worktrees: [] };
 	}
 
 	return withProjectGitLock(project.id, async () => {
@@ -1095,7 +1138,7 @@ async function prepareWorktrees(
 			emitSystem('stdout', `(cloned ${syncRes.cloned.length} repo(s) on demand)`);
 		}
 
-		if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null };
+		if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null, worktrees: [] };
 
 		const workspaceRoot = getWorkspacePath(deps.dataDir, project.team_id, project.id);
 		const worktreesRoot = getWorktreesPath(deps.dataDir, project.team_id, project.id);
@@ -1156,7 +1199,7 @@ async function prepareWorktrees(
 			}
 		}
 
-		if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null };
+		if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null, worktrees: [] };
 
 		const designated = project.designated_repo_id
 			? repos.rows.find((r) => r.id === project.designated_repo_id)
@@ -1173,7 +1216,17 @@ async function prepareWorktrees(
 
 		const workingDir = `/worktrees/${task.identifier}/${primaryName}`;
 
-		return { workingDir, designatedRepo: primary ?? null };
+		// Capture each prepared worktree's host path and pre-run commit so the
+		// completion path can detect whether the run produced any code change.
+		const worktrees: WorktreeRef[] = [];
+		for (const repo of repos.rows) {
+			if (worktreeErrors.has(repo.id)) continue;
+			const worktreePath = join(taskWorktreeRoot, repoNameFromIdentifier(repo.repo_identifier));
+			if (!existsSync(join(worktreePath, '.git'))) continue;
+			worktrees.push({ path: worktreePath, headBefore: await getWorktreeHead(worktreePath) });
+		}
+
+		return { workingDir, designatedRepo: primary ?? null, worktrees };
 	});
 }
 

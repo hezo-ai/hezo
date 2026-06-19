@@ -803,6 +803,69 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 		expect(fetched.rows[0].author_member_id).toBe(agentId);
 	});
 
+	it('a write tool marks produced_output on the calling run', async () => {
+		const { token: agentToken, runId } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+		);
+
+		const before = await db.query<{ produced_output: boolean }>(
+			'SELECT produced_output FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(before.rows[0].produced_output).toBe(false);
+
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: {
+					name: 'create_comment',
+					arguments: { project: projectId, task_id: taskId, content: 'real output' },
+				},
+				id: 1,
+			}),
+		});
+		expect(res.status).toBe(200);
+
+		const after = await db.query<{ produced_output: boolean }>(
+			'SELECT produced_output FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(after.rows[0].produced_output).toBe(true);
+	});
+
+	it('a read tool does not mark produced_output', async () => {
+		const { token: agentToken, runId } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+		);
+
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: { name: 'list_comments', arguments: { project: projectId, task_id: taskId } },
+				id: 1,
+			}),
+		});
+		expect(res.status).toBe(200);
+
+		const after = await db.query<{ produced_output: boolean }>(
+			'SELECT produced_output FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(after.rows[0].produced_output).toBe(false);
+	});
+
 	it('list_comments query returns comments for task', async () => {
 		const r = await db.query(
 			'SELECT * FROM task_comments WHERE task_id = $1 ORDER BY created_at ASC',

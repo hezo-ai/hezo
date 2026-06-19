@@ -297,3 +297,36 @@ export async function removeWorktree(
 export async function pruneWorktrees(repoDir: string): Promise<void> {
 	await spawn('git', ['worktree', 'prune', '--expire', 'now'], { cwd: repoDir });
 }
+
+/**
+ * Resolve the current commit a worktree points at, or null if the worktree is
+ * missing or has no commit (e.g. an unborn branch). Captured before a run so a
+ * post-run comparison can tell whether the agent advanced the branch.
+ */
+export async function getWorktreeHead(worktreePath: string): Promise<string | null> {
+	if (!existsSync(join(worktreePath, '.git'))) return null;
+	const { exitCode, stdout } = await spawn('git', ['rev-parse', 'HEAD'], {
+		cwd: worktreePath,
+		timeout: 10_000,
+	});
+	return exitCode === 0 ? stdout.trim() || null : null;
+}
+
+/**
+ * Whether a run changed code in this worktree: any uncommitted/untracked change
+ * (`git status --porcelain` non-empty), or the branch tip advanced past the
+ * commit captured before the run.
+ */
+export async function worktreeHasChanges(
+	worktreePath: string,
+	headBefore: string | null,
+): Promise<boolean> {
+	if (!existsSync(join(worktreePath, '.git'))) return false;
+	const status = await spawn('git', ['status', '--porcelain'], {
+		cwd: worktreePath,
+		timeout: 10_000,
+	});
+	if (status.exitCode === 0 && status.stdout.trim().length > 0) return true;
+	const headAfter = await getWorktreeHead(worktreePath);
+	return headAfter !== null && headBefore !== null && headAfter !== headBefore;
+}

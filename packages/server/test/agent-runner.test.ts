@@ -119,7 +119,14 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
+// A real agent run produces persisted output (an MCP write or a code change);
+// the runner only treats a clean exit as success when it did. Mirror that here
+// by flipping the run's produced_output flag during exec — the same thing the
+// MCP tool layer does mid-run — so exit-0 mocks read as genuine successes.
+// `producesOutput: false` simulates a no-op run (e.g. a plan-only termination).
 function createMockDocker(overrides: Record<string, any> = {}): DockerClient {
+	const { execStart: execStartOverride, producesOutput = true, ...rest } = overrides;
+	const innerExecStart = execStartOverride ?? (async () => ({ stdout: 'done', stderr: '' }));
 	return {
 		ping: async () => true,
 		imageExists: async () => true,
@@ -135,9 +142,17 @@ function createMockDocker(overrides: Record<string, any> = {}): DockerClient {
 		}),
 		containerLogs: async () => new ReadableStream(),
 		execCreate: async () => 'exec-123',
-		execStart: async () => ({ stdout: 'done', stderr: '' }),
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
-		...overrides,
+		...rest,
+		execStart: async (...args: unknown[]) => {
+			if (producesOutput) {
+				await db.query(
+					`UPDATE heartbeat_runs SET produced_output = true WHERE task_id = $1 AND status = 'running'`,
+					[taskId],
+				);
+			}
+			return (innerExecStart as (...a: unknown[]) => unknown)(...args);
+		},
 	} as unknown as DockerClient;
 }
 
@@ -297,6 +312,57 @@ describe('runAgent', () => {
 		);
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Succeeded);
 		expect(run.rows[0].exit_code).toBe(0);
+	});
+
+	it('marks produced_output on a successful run', async () => {
+		const deps: RunnerDeps = {
+			db,
+			docker: createMockDocker(),
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		const run = await db.query<{ status: string; produced_output: boolean }>(
+			'SELECT status, produced_output FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Succeeded);
+		expect(run.rows[0].produced_output).toBe(true);
+	});
+
+	it('fails a clean exit that produced no output', async () => {
+		const deps: RunnerDeps = {
+			db,
+			docker: createMockDocker({
+				producesOutput: false,
+				execStart: async () => ({ stdout: 'here is my plan', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			}),
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		expect(result.success).toBe(false);
+		expect(result.exitCode).toBe(0);
+
+		const run = await db.query<{
+			status: string;
+			produced_output: boolean;
+			error: string | null;
+		}>('SELECT status, produced_output, error FROM heartbeat_runs WHERE id = $1', [
+			result.heartbeatRunId,
+		]);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+		expect(run.rows[0].produced_output).toBe(false);
+		expect(run.rows[0].error).toContain('produced no output');
 	});
 
 	it('records failure in heartbeat run on non-zero exit code', async () => {
@@ -1377,6 +1443,8 @@ describe('runAgent', () => {
 			expect(capturedCmd).toContain('--disallowedTools');
 			const idx = capturedCmd.indexOf('--disallowedTools');
 			expect(capturedCmd[idx + 1]).toBe('WebFetch');
+			// ExitPlanMode is disallowed so a model can't park in headless plan-mode approval.
+			expect(capturedCmd).toContain('ExitPlanMode');
 			expect(capturedCmd).not.toContain('WebSearch');
 		});
 
