@@ -123,6 +123,8 @@ test('link-existing flow links the repo and auto-designates the first repo', asy
 
 	await openRepoPicker(user);
 
+	await user.click(screen.getByTestId('repo-picker-tab-link'));
+
 	await user.click(
 		await screen.findByTestId(`repo-picker-row-${ghOwner}/billing-service`, undefined, {
 			timeout: 10_000,
@@ -163,8 +165,7 @@ test('create-new flow creates the repo on GitHub and auto-designates it', async 
 
 	await openRepoPicker(user);
 
-	await user.click(screen.getByTestId('repo-picker-tab-create'));
-
+	// "Create new" is the default tab, so the name input is visible immediately.
 	const modal = screen.getByTestId('repo-picker-modal');
 	const nameInput = modal.querySelector('input[placeholder="my-new-service"]') as HTMLInputElement;
 	await user.type(nameInput, 'fresh-service');
