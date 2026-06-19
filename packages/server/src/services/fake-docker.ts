@@ -1,3 +1,4 @@
+import type { PGlite } from '@electric-sql/pglite';
 import type { DockerClient, ExecLogChunk, ExecStartOpts } from './docker';
 
 const SYNTHETIC_EXEC_SCRIPT: Array<{
@@ -26,13 +27,22 @@ async function runSyntheticExec(opts: ExecStartOpts): Promise<{ stdout: string; 
 	return { stdout: stdoutAcc, stderr: stderrAcc };
 }
 
+const RUN_ID_ENV_PREFIX = 'HEZO_HEARTBEAT_RUN_ID=';
+
 /**
  * A happy-path Docker stub used by tests and any process started with
  * `HEZO_SKIP_DOCKER=1`. All operations succeed; agent execs emit a short
  * deterministic synthetic script so log streams behave like real runs.
+ *
+ * The synthetic exec stands in for an agent doing real work, so — like a real
+ * run that makes an MCP write — it marks its run as having produced output.
+ * Without this the completion path would treat every synthetic run as a no-op
+ * and fail it. Pass `db` to enable; omit it for pure docker-surface stubs.
  */
-export function createFakeDockerClient(): DockerClient {
+export function createFakeDockerClient(db?: PGlite): DockerClient {
 	const containers = new Map<string, { running: boolean }>();
+	const execRunIds = new Map<string, string | null>();
+	let execCounter = 0;
 
 	const stub = {
 		ping: async () => true,
@@ -70,13 +80,24 @@ export function createFakeDockerClient(): DockerClient {
 			};
 		},
 		containerLogs: async () => new Response(new Uint8Array()),
-		execCreate: async () => 'noop-exec',
+		execCreate: async (_id: string, config?: { Env?: string[] }) => {
+			const execId = `noop-exec-${++execCounter}`;
+			const runEntry = config?.Env?.find((e) => e.startsWith(RUN_ID_ENV_PREFIX));
+			execRunIds.set(execId, runEntry ? runEntry.slice(RUN_ID_ENV_PREFIX.length) : null);
+			return execId;
+		},
 		execStart: async (
-			_id: string,
+			execId: string,
 			opts?: ExecStartOpts,
 		): Promise<{ stdout: string; stderr: string }> => {
+			const runId = execRunIds.get(execId) ?? null;
+			execRunIds.delete(execId);
 			if (!opts?.onChunk) return { stdout: '', stderr: '' };
-			return runSyntheticExec(opts);
+			const result = await runSyntheticExec(opts);
+			if (db && runId) {
+				await db.query('UPDATE heartbeat_runs SET produced_output = true WHERE id = $1', [runId]);
+			}
+			return result;
 		},
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 	};

@@ -880,7 +880,11 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
  * disallow nothing.
  */
 export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string[]> = {
-	[AgentRuntime.ClaudeCode]: ['--disallowedTools', 'WebFetch'],
+	// ExitPlanMode is disallowed: under headless `-p` its approval prompt can't be
+	// answered, so a model that drifts into plan mode parks there and exits 0 with
+	// only a plan written — a false success. Removing the tool forces the agent to
+	// act on the work directly.
+	[AgentRuntime.ClaudeCode]: ['--disallowedTools', 'WebFetch', 'ExitPlanMode'],
 	[AgentRuntime.Codex]: [],
 	[AgentRuntime.Gemini]: [],
 	[AgentRuntime.OpenCode]: [],

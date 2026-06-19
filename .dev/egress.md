@@ -34,6 +34,8 @@ For a CONNECT, the proxy looks up (or builds) a **per-host `https.Server`** keye
 
 Per-host servers are keyed **by hostname → live server object**, not by a cached bare port. Before reuse the proxy checks the server still owns its recorded port (`server.listening && server.address().port === recordedPort`); a server that has died or lost its port is rebuilt on the next tunnel. This makes the historical failure mode — a hostname routed to an ephemeral port that has since died (ECONNREFUSED) or been recycled to another host's server (cross-host wrong-SAN cert) — structurally impossible: the hostname never routes through a port that isn't currently owned by that host's live server. Concurrent first-touches for the same host share one in-flight build so a run never spins up duplicate servers.
 
+The ownership check and the loopback dial must be **atomic**. The bridge (`bridgeConnect`) re-validates `serverOwnsPort` synchronously and rebuilds a stale record, then calls `net.connect` with **no further `await`** before the dial — so a per-host server that dies after lookup cannot have its freed ephemeral port recycled to another host's server between the check and the connect. Re-checking only at lookup time (with an `await` separating it from the dial) leaves a check→dial window that re-opens the cross-host wrong-SAN serving the per-host keying is meant to close.
+
 ## Container wiring
 
 At project provision the CA cert is bind-mounted into the container at `/usr/local/share/ca-certificates/hezo-egress.crt` and `update-ca-certificates` runs once so the system trust bundle (`/etc/ssl/certs/ca-certificates.crt`) includes it. That covers Python `ssl.create_default_context()`, Go's default cert pool, Ruby Net::HTTP, PHP cURL, etc.

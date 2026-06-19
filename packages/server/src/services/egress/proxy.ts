@@ -79,6 +79,9 @@ export interface AllocatedRunProxy {
 	proxyPort: number;
 }
 
+/** How many ports to try binding before giving up allocating a run's proxy. */
+const EGRESS_BIND_ATTEMPTS = 5;
+
 export class EgressProxy {
 	private readonly runs = new Map<string, RunProxyInstance>();
 	private readonly portAllocator: PortAllocator;
@@ -113,31 +116,60 @@ export class EgressProxy {
 		if (this.runs.has(runId)) {
 			throw new Error(`Egress proxy already allocated for run ${runId}`);
 		}
-		const port = await this.portAllocator.allocate(scope.agentId);
 
-		const instance = new RunProxyInstance({
-			runId,
-			scope,
-			port,
-			bindHost: this.proxyBindHost,
-			db: this.deps.db,
-			masterKeyManager: this.deps.masterKeyManager,
-			getMintCa: () => this.getMintCa(),
-			upstreamHttpsAgent: this.upstreamHttpsAgent,
-		});
-
+		// Allocate-and-bind with a few attempts. A candidate can pass the
+		// allocator's free-probe yet lose the race to bind — another run, a
+		// parallel test process, or an external listener grabs it in the window
+		// between probe and listen. Keep each failed port reserved so the next
+		// attempt lands on a different one, then release the losers once we've
+		// bound (or all of them if every attempt fails).
+		const reserved: number[] = [];
+		let lastReason = 'no bindable port in egress range';
 		try {
-			await instance.listen();
+			for (let attempt = 0; attempt < EGRESS_BIND_ATTEMPTS; attempt++) {
+				const port = await this.portAllocator.allocate(scope.agentId);
+				reserved.push(port);
+
+				const instance = new RunProxyInstance({
+					runId,
+					scope,
+					port,
+					bindHost: this.proxyBindHost,
+					db: this.deps.db,
+					masterKeyManager: this.deps.masterKeyManager,
+					getMintCa: () => this.getMintCa(),
+					upstreamHttpsAgent: this.upstreamHttpsAgent,
+				});
+
+				try {
+					await instance.listen();
+				} catch (e) {
+					lastReason = (e as Error).message;
+					log.warn('egress proxy bind lost a race; retrying on another port', {
+						run: ref(scope.label, runId),
+						port,
+						reason: lastReason,
+					});
+					continue;
+				}
+
+				this.runs.set(runId, instance);
+				for (const p of reserved) {
+					if (p !== port) this.portAllocator.release(p);
+				}
+				log.debug('egress proxy allocated', { run: ref(scope.label, runId), port });
+				return { proxyHost: this.proxyHost, proxyPort: port };
+			}
 		} catch (e) {
-			this.portAllocator.release(port);
-			const reason = (e as Error).message;
-			log.warn('egress proxy unavailable for run', { run: ref(scope.label, runId), reason });
-			throw new EgressProxyUnavailableError(reason);
+			lastReason = (e as Error).message;
 		}
 
-		this.runs.set(runId, instance);
-		log.debug('egress proxy allocated', { run: ref(scope.label, runId), port });
-		return { proxyHost: this.proxyHost, proxyPort: port };
+		for (const p of reserved) this.portAllocator.release(p);
+		log.warn('egress proxy unavailable for run', {
+			run: ref(scope.label, runId),
+			reason: lastReason,
+		});
+		throw new EgressProxyUnavailableError(lastReason);
 	}
 
 	async releaseRunProxy(runId: string): Promise<void> {
@@ -305,32 +337,42 @@ class RunProxyInstance {
 		client.on('error', () => client.destroy());
 		client.pause();
 
-		this.ensureHostServer(host)
-			.then((rec) => {
-				if (this.closed) {
-					client.destroy();
-					return;
-				}
-				const up = netConnect({ host: '127.0.0.1', port: rec.port }, () => {
-					this.trackSocket(up);
-					client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-					if (head?.length) up.write(head);
-					client.pipe(up);
-					up.pipe(client);
-					client.resume();
-				});
-				up.on('error', () => client.destroy());
-				up.on('close', () => client.destroy());
-				client.on('close', () => up.destroy());
-			})
-			.catch((e: Error) => {
-				log.warn('egress CONNECT setup failed', {
-					run: ref(this.cfg.scope.label, this.cfg.runId),
-					host,
-					error: e.message,
-				});
-				client.destroy();
+		this.bridgeConnect(host, client, head).catch((e: Error) => {
+			log.warn('egress CONNECT setup failed', {
+				run: ref(this.cfg.scope.label, this.cfg.runId),
+				host,
+				error: e.message,
 			});
+			client.destroy();
+		});
+	}
+
+	/** Bridge a CONNECT tunnel into the host's per-host TLS server. The dial
+	 * re-validates port ownership synchronously and rebuilds a stale server,
+	 * then connects with no further `await` — only synchronous code separates the
+	 * ownership check from the `netConnect`, so a concurrently-built server can
+	 * never recycle the freed ephemeral port in between and route the tunnel to
+	 * another host's leaf cert. */
+	private async bridgeConnect(host: string, client: Socket, head: Buffer): Promise<void> {
+		let rec = await this.ensureHostServer(host);
+		while (!this.closed && !serverOwnsPort(rec)) {
+			rec = await this.buildHostServer(host);
+		}
+		if (this.closed) {
+			client.destroy();
+			return;
+		}
+		const up = netConnect({ host: '127.0.0.1', port: rec.port }, () => {
+			this.trackSocket(up);
+			client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+			if (head?.length) up.write(head);
+			client.pipe(up);
+			up.pipe(client);
+			client.resume();
+		});
+		up.on('error', () => client.destroy());
+		up.on('close', () => client.destroy());
+		client.on('close', () => up.destroy());
 	}
 
 	/** Return a live per-host TLS server, rebuilding it if the cached one has

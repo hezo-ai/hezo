@@ -33,6 +33,7 @@ async function waitForRunStatus(
 	timeoutMs = 180_000,
 ) {
 	const headers = { Authorization: `Bearer ${token}` };
+	const terminalFailures = new Set(['failed', 'cancelled', 'timed_out']);
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
 		const res = await page.request.get(`/api/projects/${projectSlug}/tasks/${taskId}/latest-run`, {
@@ -44,6 +45,13 @@ async function waitForRunStatus(
 			(body.data.status === target || (target === 'running' && body.data.status === 'succeeded'))
 		) {
 			return body.data;
+		}
+		// When waiting for success, a terminal failure will never become success —
+		// surface it immediately instead of polling until the timeout.
+		if (body.data && target !== 'failed' && terminalFailures.has(body.data.status)) {
+			throw new Error(
+				`Latest run reached terminal status '${body.data.status}' while waiting for '${target}' (run ${body.data.id})`,
+			);
 		}
 		await new Promise((r) => setTimeout(r, 100));
 	}
