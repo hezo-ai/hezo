@@ -14,6 +14,7 @@ import { LogViewer } from '../log-viewer';
 import { TerminateRunButton } from '../terminate-run-button';
 import { Tooltip } from '../ui/tooltip';
 import type { CommentDataOf } from './comment-data';
+import { CommentTimestampLink } from './comment-timestamp-link';
 import { runStatusDotClass, runStatusLabel } from './helpers';
 
 interface Props {
@@ -44,6 +45,7 @@ export function RunComment({ comment, projectId, inline }: Props) {
 					agentSlug={agentSlug}
 					actorName={actorName}
 					createdAt={comment.created_at}
+					publicId={comment.public_id}
 					inline={inline}
 				/>
 			</LazyMount>
@@ -68,6 +70,7 @@ function RunCommentBody({
 	agentSlug,
 	actorName,
 	createdAt,
+	publicId,
 	inline,
 }: {
 	projectId: string;
@@ -77,6 +80,7 @@ function RunCommentBody({
 	agentSlug: string;
 	actorName: string | null;
 	createdAt: string;
+	publicId: string;
 	inline?: boolean;
 }) {
 	const runQuery = useHeartbeatRun(projectId, agentId, runId);
@@ -152,9 +156,11 @@ function RunCommentBody({
 					)}
 				</span>
 			)}
-			<span className="text-[11px] text-text-subtle truncate min-w-0">
-				{new Date(createdAt).toLocaleString()}
-			</span>
+			<CommentTimestampLink
+				publicId={publicId}
+				createdAt={createdAt}
+				className="truncate min-w-0"
+			/>
 		</span>
 	);
 

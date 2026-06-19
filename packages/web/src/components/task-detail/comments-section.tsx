@@ -11,23 +11,13 @@ import {
 	type CommentData,
 	CommentReactions,
 	CommentRenderer,
+	CommentTimestampLink,
 	commentText,
 	inlineEventIcon,
 	isInlineEventType,
+	jumpToComment,
 } from '../comment-renderers';
 import { Avatar, avatarColorFromString } from '../ui/avatar';
-
-/** Drive the page's hashchange handler from any anchor — Virtuoso may not
- * have the target row mounted yet, so the scroll has to flow through the
- * `useEffect` below. */
-export function jumpToComment(commentId: string) {
-	return (e: React.MouseEvent) => {
-		e.preventDefault();
-		const target = `#comment-${commentId}`;
-		window.history.pushState(null, '', target);
-		window.dispatchEvent(new HashChangeEvent('hashchange'));
-	};
-}
 
 /**
  * Copies a comment's markdown body to the clipboard, swapping its icon to a
@@ -438,15 +428,7 @@ export function CommentsSection({
 												{authorName}
 											</span>
 										)}
-										<a
-											href={`#comment-${c.public_id}`}
-											onClick={jumpToComment(c.public_id)}
-											className="text-[11px] text-text-subtle hover:text-text hover:underline"
-											title="Link to this comment"
-											data-testid="comment-timestamp-link"
-										>
-											{new Date(c.created_at).toLocaleString()}
-										</a>
+										<CommentTimestampLink publicId={c.public_id} createdAt={c.created_at} />
 										<div className="ml-auto flex items-center gap-2">
 											{c.parent_comment_id &&
 												(() => {

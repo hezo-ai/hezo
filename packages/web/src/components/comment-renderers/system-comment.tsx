@@ -12,6 +12,7 @@ import type {
 } from '../comment-content';
 import { Tooltip } from '../ui/tooltip';
 import type { CommentDataOf } from './comment-data';
+import { CommentTimestampLink } from './comment-timestamp-link';
 
 interface Props {
 	comment: CommentDataOf<'system'>;
@@ -37,9 +38,7 @@ export function SystemComment({ comment, projectId, taskId, retryableRunId }: Pr
 	const content: SystemContent | null =
 		comment.content && typeof comment.content === 'object' ? comment.content : null;
 	const timestamp = (
-		<span className="text-[11px] text-text-subtle">
-			{new Date(comment.created_at).toLocaleString()}
-		</span>
+		<CommentTimestampLink publicId={comment.public_id} createdAt={comment.created_at} />
 	);
 
 	if (content && isTaskLink(content) && projectId) {

@@ -2,11 +2,9 @@ import type { AgentEffort } from '@hezo/shared';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { ArrowDown } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { jumpToComment } from '../../../../components/comment-renderers';
 import { CommentComposer } from '../../../../components/task-detail/comment-composer';
-import {
-	CommentsSection,
-	jumpToComment,
-} from '../../../../components/task-detail/comments-section';
+import { CommentsSection } from '../../../../components/task-detail/comments-section';
 import { DependenciesSection } from '../../../../components/task-detail/dependencies-section';
 import { LastRunFailedBanner } from '../../../../components/task-detail/last-run-failed-banner';
 import { SubTasksSection } from '../../../../components/task-detail/sub-tasks-section';

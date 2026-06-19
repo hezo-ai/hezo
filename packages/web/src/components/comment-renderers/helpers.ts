@@ -7,11 +7,23 @@ import {
 	Terminal,
 	UserRoundCog,
 } from 'lucide-react';
-import type { ComponentType, SVGProps } from 'react';
+import type { ComponentType, MouseEvent, SVGProps } from 'react';
 import type { TextContent } from '../comment-content';
 import type { CommentData } from './comment-data';
 
 export type LucideIcon = ComponentType<SVGProps<SVGSVGElement>>;
+
+/** Drive the page's hashchange handler from any anchor — Virtuoso may not
+ * have the target row mounted yet, so the scroll has to flow through the
+ * `useEffect` in `comments-section.tsx`. */
+export function jumpToComment(commentId: string) {
+	return (e: MouseEvent) => {
+		e.preventDefault();
+		const target = `#comment-${commentId}`;
+		window.history.pushState(null, '', target);
+		window.dispatchEvent(new HashChangeEvent('hashchange'));
+	};
+}
 
 /**
  * Normalize a text comment's `content` to its body string. The composer sends a
