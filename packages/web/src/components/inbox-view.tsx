@@ -110,7 +110,7 @@ export function InboxView({ projectSlugs, scope }: InboxViewProps) {
 	}, [rows, readFilter, debouncedSearch]);
 
 	if (isLoading) {
-		return <div className="text-text-muted">Loading...</div>;
+		return <div className="text-text-2">Loading...</div>;
 	}
 
 	return (
@@ -131,14 +131,14 @@ export function InboxView({ projectSlugs, scope }: InboxViewProps) {
 			<div className="flex flex-col gap-2 mb-4 sm:flex-row sm:items-center sm:justify-between">
 				<FilterPills options={READ_OPTIONS} value={readFilter} onChange={setReadFilter} />
 				<div className="relative sm:w-64">
-					<Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-subtle" />
+					<Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-3" />
 					<input
 						type="text"
 						value={search}
 						onChange={(e) => setSearch(e.target.value)}
 						placeholder="Search inbox..."
 						aria-label="Search inbox"
-						className="w-full rounded-radius-md border border-border bg-bg pl-8 pr-2.5 py-1.5 text-xs text-text placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-primary"
+						className="w-full rounded-md border border-border bg-surface pl-8 pr-2.5 py-1.5 text-xs text-text-1 placeholder:text-text-3 focus:outline-none focus:ring-1 focus:ring-inverse"
 					/>
 				</div>
 			</div>

@@ -86,7 +86,7 @@ test('can add an Anthropic API key via the settings UI', async () => {
 
 	// Find the Anthropic card inside the gate modal (p-4 padding).
 	const modalCards = Array.from(
-		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-radius-md.p-4'),
+		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-md.p-4'),
 	);
 	const anthropicCard = modalCards.find((el) => el.textContent?.includes('Anthropic'));
 	expect(anthropicCard).toBeTruthy();
@@ -111,7 +111,7 @@ test('offers Claude Code subscription (setup-token) paste flow for Anthropic', a
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
 
 	const modalCards = Array.from(
-		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-radius-md.p-4'),
+		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-md.p-4'),
 	);
 	const anthropicCard = modalCards.find((el) => el.textContent?.includes('Anthropic'));
 	expect(anthropicCard).toBeTruthy();
@@ -139,7 +139,7 @@ test('offers Kimi Code subscription paste flow for Kimi', async () => {
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
 
 	const modalCards = Array.from(
-		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-radius-md.p-4'),
+		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-md.p-4'),
 	);
 	const kimiCard = modalCards.find((el) => el.textContent?.includes('Kimi'));
 	expect(kimiCard).toBeTruthy();
@@ -174,7 +174,7 @@ test('offers Codex subscription paste flow for OpenAI', async () => {
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
 
 	const modalCards = Array.from(
-		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-radius-md.p-4'),
+		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-md.p-4'),
 	);
 	const openaiCard = modalCards.find((el) => el.textContent?.includes('OpenAI'));
 	expect(openaiCard).toBeTruthy();
@@ -202,7 +202,7 @@ test('offers Gemini subscription paste flow for Google', async () => {
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
 
 	const modalCards = Array.from(
-		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-radius-md.p-4'),
+		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-md.p-4'),
 	);
 	const googleCard = modalCards.find((el) => el.textContent?.includes('Google'));
 	expect(googleCard).toBeTruthy();
@@ -252,7 +252,7 @@ test('renders API key + Subscription side-by-side and can flip the default', asy
 	await findByRole('heading', { name: 'AI providers' });
 
 	const settingCards = Array.from(
-		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-radius-md.p-3'),
+		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-md.p-3'),
 	);
 	const openaiCard = settingCards.find((el) => el.textContent?.includes('OpenAI'));
 	expect(openaiCard).toBeTruthy();
@@ -305,7 +305,7 @@ test('blocks the app when no provider is configured and drops once one is added'
 	expect(queryAllByRole('heading', { name: 'AI providers' }).length).toBe(0);
 
 	const modalCards = Array.from(
-		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-radius-md.p-4'),
+		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-md.p-4'),
 	);
 	const anthropicCard = modalCards.find((el) => el.textContent?.includes('Anthropic'));
 	expect(anthropicCard).toBeTruthy();

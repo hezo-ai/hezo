@@ -29,11 +29,11 @@ export function TaskSummary({ task, projectId, taskProjectSlug, updateTask }: Ta
 		<>
 			<div
 				data-testid="pinned-progress-summary"
-				className="bg-bg-subtle rounded-radius-md p-3 mb-3 text-[13px] text-text-muted leading-relaxed"
+				className="bg-surface-2 rounded-md p-3 mb-3 text-[13px] text-text-2 leading-relaxed"
 			>
 				<div className="flex items-center justify-between mb-1">
 					<div className="flex items-center gap-1">
-						<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
+						<span className="text-[11px] uppercase tracking-wider font-medium text-text-3">
 							Progress Summary
 						</span>
 						<InfoTooltip
@@ -49,7 +49,7 @@ export function TaskSummary({ task, projectId, taskProjectSlug, updateTask }: Ta
 								setSummaryText(task.progress_summary ?? '');
 								setEditingSummary(true);
 							}}
-							className="text-[11px] text-text-subtle hover:text-text"
+							className="text-[11px] text-text-3 hover:text-text-1"
 						>
 							Edit
 						</button>
@@ -92,11 +92,11 @@ export function TaskSummary({ task, projectId, taskProjectSlug, updateTask }: Ta
 
 			<div
 				data-testid="pinned-rules"
-				className="bg-bg-subtle rounded-radius-md p-3 mb-5 text-[13px] text-text-muted leading-relaxed border-l-2 border-accent-blue"
+				className="bg-surface-2 rounded-md p-3 mb-5 text-[13px] text-text-2 leading-relaxed border-l-2 border-info"
 			>
 				<div className="flex items-center justify-between mb-1">
 					<div className="flex items-center gap-1">
-						<span className="text-[11px] uppercase tracking-wider font-medium text-text-subtle">
+						<span className="text-[11px] uppercase tracking-wider font-medium text-text-3">
 							Rules
 						</span>
 						<InfoTooltip
@@ -112,7 +112,7 @@ export function TaskSummary({ task, projectId, taskProjectSlug, updateTask }: Ta
 								setRulesText(task.rules ?? '');
 								setEditingRules(true);
 							}}
-							className="text-[11px] text-text-subtle hover:text-text"
+							className="text-[11px] text-text-3 hover:text-text-1"
 						>
 							Edit
 						</button>

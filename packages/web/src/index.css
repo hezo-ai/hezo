@@ -1,48 +1,79 @@
 @import 'tailwindcss';
 @plugin "@tailwindcss/typography";
 
+/* ============================================================================
+   Hezo "Wire" design system — single source of truth for tokens.
+   Raw tokens live on :root (light) / html.dark (dark) under the spec's own
+   names; the @theme block maps them into Tailwind's color/shadow namespaces so
+   utilities (bg-surface, text-text-2, text-accent, shadow-xs, …) are generated.
+   Radii and fonts are theme-independent and declared directly in @theme.
+   ========================================================================== */
+
 :root {
-	--color-bg: #ffffff;
-	--color-bg-subtle: #f5f5f3;
-	--color-bg-muted: #ebebea;
-	--color-bg-elevated: #ffffff;
-	--color-border: #e5e5e3;
-	--color-border-hover: #d0d0ce;
-	--color-text: #1a1a1a;
-	--color-text-muted: #6b6b6b;
-	--color-text-subtle: #9a9a9a;
+	--bg: oklch(0.985 0.002 255);
+	--surface: oklch(1 0 0);
+	--surface-2: oklch(0.968 0.003 255);
+	--surface-3: oklch(0.945 0.004 255);
+	--border: oklch(0.92 0.005 255);
+	--border-strong: oklch(0.865 0.008 255);
 
-	--color-primary: #1a1a1a;
-	--color-primary-hover: #333333;
+	--text-1: oklch(0.21 0.018 265);
+	--text-2: oklch(0.46 0.016 262);
+	--text-3: oklch(0.60 0.012 260);
+	--inverse: oklch(0.21 0.018 265);
+	--inverse-fg: oklch(1 0 0);
 
-	--color-accent-blue: #185FA5;
-	--color-accent-blue-bg: #E6F1FB;
-	--color-accent-blue-text: #0C447C;
-	--color-accent-green: #0F6E56;
-	--color-accent-green-bg: #E1F5EE;
-	--color-accent-green-text: #085041;
-	--color-accent-amber: #854F0B;
-	--color-accent-amber-bg: #FAEEDA;
-	--color-accent-amber-text: #633806;
-	--color-accent-red: #A32D2D;
-	--color-accent-red-bg: #FCEBEB;
-	--color-accent-red-text: #791F1F;
-	--color-accent-purple: #534AB7;
-	--color-accent-purple-bg: #EEEDFE;
-	--color-accent-purple-text: #3C3489;
-	--color-accent-pink-bg: #FBEAF0;
-	--color-accent-pink-text: #993556;
+	--accent: oklch(0.55 0.205 31);
+	--accent-hover: oklch(0.50 0.195 31);
+	--accent-solid: oklch(0.585 0.21 31);
+	--accent-solid-fg: oklch(1 0 0);
+	--accent-soft: oklch(0.945 0.04 33);
+	--accent-soft-fg: oklch(0.47 0.175 31);
 
-	--color-success: #0F6E56;
-	--color-warning: #854F0B;
-	--color-danger: #A32D2D;
-	--color-info: #185FA5;
+	--success: oklch(0.55 0.13 155);
+	--success-solid-fg: oklch(1 0 0);
+	--success-soft: oklch(0.95 0.04 155);
+	--success-soft-fg: oklch(0.40 0.10 155);
 
-	--font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-	--font-mono: 'JetBrains Mono', ui-monospace, monospace;
+	--warning: oklch(0.66 0.13 70);
+	--warning-solid-fg: oklch(1 0 0);
+	--warning-soft: oklch(0.955 0.045 85);
+	--warning-soft-fg: oklch(0.46 0.11 65);
 
-	--radius-md: 8px;
-	--radius-lg: 12px;
+	--danger: oklch(0.52 0.205 12);
+	--danger-solid-fg: oklch(1 0 0);
+	--danger-soft: oklch(0.945 0.04 10);
+	--danger-soft-fg: oklch(0.46 0.18 12);
+
+	--info: oklch(0.55 0.14 250);
+	--info-solid-fg: oklch(1 0 0);
+	--info-soft: oklch(0.945 0.03 250);
+	--info-soft-fg: oklch(0.42 0.12 252);
+
+	--live: oklch(0.58 0.12 195);
+	--live-solid-fg: oklch(1 0 0);
+	--live-soft: oklch(0.94 0.045 195);
+	--live-soft-fg: oklch(0.38 0.09 200);
+
+	--neutral-soft: oklch(0.945 0.004 255);
+	--neutral-soft-fg: oklch(0.46 0.016 262);
+
+	/* Accent hues with no spec semantic — kept for avatar/badge variety + the
+	   inbox notification count (pink/magenta). */
+	--purple-soft: oklch(0.945 0.03 300);
+	--purple-soft-fg: oklch(0.45 0.17 300);
+	--pink: oklch(0.58 0.20 354);
+	--pink-fg: oklch(1 0 0);
+	--pink-soft: oklch(0.95 0.035 352);
+	--pink-soft-fg: oklch(0.50 0.18 352);
+
+	--focus-ring: oklch(0.55 0.205 31 / 0.20);
+	--overlay: oklch(0.2 0.02 262 / 0.5);
+
+	--elev-xs: 0 1px 2px oklch(0.2 0.02 262 / 0.05);
+	--elev-sm: 0 1px 3px oklch(0.2 0.02 262 / 0.07), 0 1px 2px oklch(0.2 0.02 262 / 0.05);
+	--elev-md: 0 4px 12px oklch(0.2 0.02 262 / 0.08), 0 1px 3px oklch(0.2 0.02 262 / 0.06);
+	--elev-lg: 0 12px 32px oklch(0.2 0.02 262 / 0.14), 0 2px 8px oklch(0.2 0.02 262 / 0.08);
 }
 
 /* `.log-surface-dark` opts a subtree into the dark palette regardless of the
@@ -50,79 +81,147 @@
    terminal-dark surface as the raw view even in light mode. */
 html.dark,
 .log-surface-dark {
-	--color-bg: #1a1a1a;
-	--color-bg-subtle: #2c2c2a;
-	--color-bg-muted: #3d3d3a;
-	--color-bg-elevated: #2c2c2a;
-	--color-border: #3d3d3a;
-	--color-border-hover: #5f5e5a;
-	--color-text: #e8e8e4;
-	--color-text-muted: #9a9a96;
-	--color-text-subtle: #6b6b67;
+	--bg: oklch(0.155 0.012 262);
+	--surface: oklch(0.19 0.013 262);
+	--surface-2: oklch(0.225 0.014 262);
+	--surface-3: oklch(0.265 0.015 262);
+	--border: oklch(0.275 0.014 262);
+	--border-strong: oklch(0.34 0.014 262);
 
-	--color-primary: #e8e8e4;
-	--color-primary-hover: #d0d0cc;
+	--text-1: oklch(0.93 0.006 260);
+	--text-2: oklch(0.70 0.012 260);
+	--text-3: oklch(0.53 0.012 260);
+	--inverse: oklch(0.93 0.006 260);
+	--inverse-fg: oklch(0.155 0.012 262);
 
-	--color-accent-blue-bg: #042C53;
-	--color-accent-blue-text: #85B7EB;
-	--color-accent-green-bg: #04342C;
-	--color-accent-green-text: #5DCAA5;
-	--color-accent-amber-bg: #412402;
-	--color-accent-amber-text: #FAC775;
-	--color-accent-red-bg: #501313;
-	--color-accent-red-text: #F09595;
-	--color-accent-purple-bg: #26215C;
-	--color-accent-purple-text: #AFA9EC;
-	--color-accent-pink-bg: #4B1528;
-	--color-accent-pink-text: #ED93B1;
+	--accent: oklch(0.71 0.175 33);
+	--accent-hover: oklch(0.76 0.155 33);
+	--accent-solid: oklch(0.585 0.21 31);
+	--accent-solid-fg: oklch(1 0 0);
+	--accent-soft: oklch(0.30 0.085 28);
+	--accent-soft-fg: oklch(0.80 0.13 33);
 
-	--color-success: #5DCAA5;
-	--color-warning: #FAC775;
-	--color-danger: #F09595;
-	--color-info: #85B7EB;
+	--success: oklch(0.72 0.13 155);
+	--success-solid-fg: oklch(0.16 0.04 155);
+	--success-soft: oklch(0.255 0.045 155);
+	--success-soft-fg: oklch(0.80 0.10 155);
+
+	--warning: oklch(0.78 0.13 80);
+	--warning-solid-fg: oklch(0.18 0.04 80);
+	--warning-soft: oklch(0.27 0.05 80);
+	--warning-soft-fg: oklch(0.84 0.10 85);
+
+	--danger: oklch(0.66 0.18 14);
+	--danger-solid-fg: oklch(0.16 0.04 14);
+	--danger-soft: oklch(0.27 0.08 12);
+	--danger-soft-fg: oklch(0.80 0.11 14);
+
+	--info: oklch(0.72 0.12 250);
+	--info-solid-fg: oklch(0.16 0.04 250);
+	--info-soft: oklch(0.26 0.045 252);
+	--info-soft-fg: oklch(0.80 0.08 250);
+
+	--live: oklch(0.76 0.11 195);
+	--live-solid-fg: oklch(0.15 0.04 200);
+	--live-soft: oklch(0.26 0.05 200);
+	--live-soft-fg: oklch(0.82 0.08 195);
+
+	--neutral-soft: oklch(0.265 0.015 262);
+	--neutral-soft-fg: oklch(0.70 0.012 260);
+
+	--purple-soft: oklch(0.31 0.07 300);
+	--purple-soft-fg: oklch(0.82 0.12 300);
+	--pink: oklch(0.62 0.19 354);
+	--pink-fg: oklch(0.16 0.04 354);
+	--pink-soft: oklch(0.30 0.08 352);
+	--pink-soft-fg: oklch(0.84 0.13 352);
+
+	--focus-ring: oklch(0.71 0.175 33 / 0.28);
+	--overlay: oklch(0 0 0 / 0.6);
+
+	--elev-xs: 0 1px 2px oklch(0 0 0 / 0.3);
+	--elev-sm: 0 1px 3px oklch(0 0 0 / 0.35);
+	--elev-md: 0 4px 14px oklch(0 0 0 / 0.4);
+	--elev-lg: 0 16px 40px oklch(0 0 0 / 0.5);
 }
 
 @theme {
-	--color-bg: var(--color-bg);
-	--color-bg-subtle: var(--color-bg-subtle);
-	--color-bg-muted: var(--color-bg-muted);
-	--color-bg-elevated: var(--color-bg-elevated);
-	--color-border: var(--color-border);
-	--color-border-hover: var(--color-border-hover);
-	--color-text: var(--color-text);
-	--color-text-muted: var(--color-text-muted);
-	--color-text-subtle: var(--color-text-subtle);
-	--color-primary: var(--color-primary);
-	--color-primary-hover: var(--color-primary-hover);
-	--color-success: var(--color-success);
-	--color-warning: var(--color-warning);
-	--color-danger: var(--color-danger);
-	--color-info: var(--color-info);
-	--color-accent-blue: var(--color-accent-blue);
-	--color-accent-blue-bg: var(--color-accent-blue-bg);
-	--color-accent-blue-text: var(--color-accent-blue-text);
-	--color-accent-green: var(--color-accent-green);
-	--color-accent-green-bg: var(--color-accent-green-bg);
-	--color-accent-green-text: var(--color-accent-green-text);
-	--color-accent-amber: var(--color-accent-amber);
-	--color-accent-amber-bg: var(--color-accent-amber-bg);
-	--color-accent-amber-text: var(--color-accent-amber-text);
-	--color-accent-red: var(--color-accent-red);
-	--color-accent-red-bg: var(--color-accent-red-bg);
-	--color-accent-red-text: var(--color-accent-red-text);
-	--color-accent-purple: var(--color-accent-purple);
-	--color-accent-purple-bg: var(--color-accent-purple-bg);
-	--color-accent-purple-text: var(--color-accent-purple-text);
-	--color-accent-pink-bg: var(--color-accent-pink-bg);
-	--color-accent-pink-text: var(--color-accent-pink-text);
-	--radius-md: var(--radius-md);
-	--radius-lg: var(--radius-lg);
+	--color-bg: var(--bg);
+	--color-surface: var(--surface);
+	--color-surface-2: var(--surface-2);
+	--color-surface-3: var(--surface-3);
+	--color-border: var(--border);
+	--color-border-strong: var(--border-strong);
+
+	--color-text-1: var(--text-1);
+	--color-text-2: var(--text-2);
+	--color-text-3: var(--text-3);
+	--color-inverse: var(--inverse);
+	--color-inverse-fg: var(--inverse-fg);
+
+	--color-accent: var(--accent);
+	--color-accent-hover: var(--accent-hover);
+	--color-accent-solid: var(--accent-solid);
+	--color-accent-solid-fg: var(--accent-solid-fg);
+	--color-accent-soft: var(--accent-soft);
+	--color-accent-soft-fg: var(--accent-soft-fg);
+
+	--color-success: var(--success);
+	--color-success-solid-fg: var(--success-solid-fg);
+	--color-success-soft: var(--success-soft);
+	--color-success-soft-fg: var(--success-soft-fg);
+
+	--color-warning: var(--warning);
+	--color-warning-solid-fg: var(--warning-solid-fg);
+	--color-warning-soft: var(--warning-soft);
+	--color-warning-soft-fg: var(--warning-soft-fg);
+
+	--color-danger: var(--danger);
+	--color-danger-solid-fg: var(--danger-solid-fg);
+	--color-danger-soft: var(--danger-soft);
+	--color-danger-soft-fg: var(--danger-soft-fg);
+
+	--color-info: var(--info);
+	--color-info-solid-fg: var(--info-solid-fg);
+	--color-info-soft: var(--info-soft);
+	--color-info-soft-fg: var(--info-soft-fg);
+
+	--color-live: var(--live);
+	--color-live-solid-fg: var(--live-solid-fg);
+	--color-live-soft: var(--live-soft);
+	--color-live-soft-fg: var(--live-soft-fg);
+
+	--color-neutral-soft: var(--neutral-soft);
+	--color-neutral-soft-fg: var(--neutral-soft-fg);
+
+	--color-purple-soft: var(--purple-soft);
+	--color-purple-soft-fg: var(--purple-soft-fg);
+	--color-pink: var(--pink);
+	--color-pink-fg: var(--pink-fg);
+	--color-pink-soft: var(--pink-soft);
+	--color-pink-soft-fg: var(--pink-soft-fg);
+
+	--color-ring: var(--focus-ring);
+	--color-overlay: var(--overlay);
+
+	--shadow-xs: var(--elev-xs);
+	--shadow-sm: var(--elev-sm);
+	--shadow-md: var(--elev-md);
+	--shadow-lg: var(--elev-lg);
+
+	--radius-sm: 6px;
+	--radius-md: 8px;
+	--radius-lg: 12px;
+	--radius-full: 999px;
+
+	--font-sans: 'Geist', 'Helvetica Neue', system-ui, sans-serif;
+	--font-mono: 'Geist Mono', 'SFMono-Regular', Menlo, monospace;
 }
 
 *,
 *::before,
 *::after {
-	border-color: var(--color-border);
+	border-color: var(--border);
 }
 
 html {
@@ -131,11 +230,20 @@ html {
 
 body {
 	margin: 0;
-	background: var(--color-bg);
-	color: var(--color-text);
+	background: var(--bg);
+	color: var(--text-1);
 	font-family: var(--font-sans);
-	font-size: 14px;
+	font-size: 13px;
 	line-height: 1.5;
 	-webkit-font-smoothing: antialiased;
 	-moz-osx-font-smoothing: grayscale;
+}
+
+/* The spec's "overline" eyebrow: 11px / 500 / +0.08em / uppercase, text-3. */
+@utility text-eyebrow {
+	font-size: 11px;
+	line-height: 14px;
+	font-weight: 500;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
 }

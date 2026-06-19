@@ -49,7 +49,7 @@ function InstanceConnectorsPage() {
 
 	const content =
 		me && !me.is_superuser ? (
-			<p className="text-[13px] text-text-muted">
+			<p className="text-[13px] text-text-2">
 				Instance connectors are managed by the Admin. You don't have access to this page.
 			</p>
 		) : (
@@ -64,7 +64,7 @@ function InstanceConnectorsPage() {
 								data-testid="connectors-info"
 							/>
 						</div>
-						<p className="text-[13px] text-text-muted mt-1 max-w-[680px]">
+						<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
 							Remote (SaaS) MCP servers shared with every team's agent runs. Authenticate headers
 							with a shared credential placeholder (
 							<span className="font-mono">__HEZO_SECRET_NAME__</span>).
@@ -98,7 +98,7 @@ function InstanceConnectorsPage() {
 							onChange={(e) => setUrl(e.target.value)}
 							required
 						/>
-						{error && <p className="text-[13px] text-accent-red">{error}</p>}
+						{error && <p className="text-[13px] text-danger">{error}</p>}
 						<div className="flex gap-2">
 							<Button type="submit" size="sm" disabled={createConnector.isPending}>
 								Add connector
@@ -119,7 +119,7 @@ function InstanceConnectorsPage() {
 				)}
 
 				{!connectors.length ? (
-					<p className="text-[13px] text-text-muted">
+					<p className="text-[13px] text-text-2">
 						No instance connectors yet. Add one above to share it across every team.
 					</p>
 				) : (
@@ -127,12 +127,12 @@ function InstanceConnectorsPage() {
 						{connectors.map((c) => (
 							<div
 								key={c.id}
-								className="flex items-center justify-between rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px]"
+								className="flex items-center justify-between rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
 							>
 								<div className="flex items-center gap-2 min-w-0 flex-1">
 									<span className="font-medium">{c.display_name || c.name}</span>
 									<Badge color="neutral">{c.kind}</Badge>
-									<span className="text-xs text-text-subtle font-mono truncate">
+									<span className="text-xs text-text-3 font-mono truncate">
 										{typeof c.config?.url === 'string' ? c.config.url : ''}
 									</span>
 								</div>
@@ -144,7 +144,7 @@ function InstanceConnectorsPage() {
 										}
 									}}
 									aria-label="Remove"
-									className="text-text-subtle hover:text-accent-red"
+									className="text-text-3 hover:text-danger"
 								>
 									<Trash2 className="w-3.5 h-3.5" />
 								</button>

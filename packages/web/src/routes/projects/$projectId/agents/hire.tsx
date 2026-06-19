@@ -88,13 +88,13 @@ function HireAgentPage() {
 				</div>
 
 				<div className="flex flex-col gap-1.5 max-w-[190px]">
-					<span className="text-xs font-medium uppercase tracking-wider text-text-muted">
+					<span className="text-xs font-medium uppercase tracking-wider text-text-2">
 						Heartbeat
 					</span>
 					<select
 						value={heartbeat}
 						onChange={(e) => setHeartbeat(e.target.value)}
-						className="rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-border-hover"
+						className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-1 outline-none focus:border-border-strong"
 					>
 						<option value="30">30m</option>
 						<option value="60">60m</option>
@@ -106,7 +106,7 @@ function HireAgentPage() {
 				</div>
 
 				<div className="flex flex-col gap-1.5 max-w-[500px]">
-					<span className="text-xs font-medium uppercase tracking-wider text-text-muted">
+					<span className="text-xs font-medium uppercase tracking-wider text-text-2">
 						Budget limits
 					</span>
 					<BudgetWindowsEditor value={budget} onChange={setBudget} />
@@ -120,8 +120,8 @@ function HireAgentPage() {
 						className="mt-0.5"
 					/>
 					<span className="flex flex-col gap-0.5">
-						<span className="text-[13px] text-text">Touches code</span>
-						<span className="text-xs text-text-subtle">
+						<span className="text-[13px] text-text-1">Touches code</span>
+						<span className="text-xs text-text-3">
 							Enable if this agent reads or writes repository code. Agents that touch code require a
 							designated repo on their project before they can run.
 						</span>
@@ -129,7 +129,7 @@ function HireAgentPage() {
 				</label>
 
 				<div>
-					<span className="text-xs font-medium uppercase tracking-wider text-text-muted block mb-1.5">
+					<span className="text-xs font-medium uppercase tracking-wider text-text-2 block mb-1.5">
 						System prompt
 					</span>
 					<div className="flex flex-wrap gap-1.5 mb-2">
@@ -138,7 +138,7 @@ function HireAgentPage() {
 								key={v}
 								type="button"
 								onClick={() => insertVar(v)}
-								className="text-[11px] px-2 py-0.5 rounded-radius-md bg-accent-blue-bg text-accent-blue-text cursor-pointer hover:opacity-80"
+								className="text-[11px] px-2 py-0.5 rounded-md bg-info-soft text-info-soft-fg cursor-pointer hover:opacity-80"
 							>
 								{v}
 							</button>
@@ -147,16 +147,16 @@ function HireAgentPage() {
 					<textarea
 						value={systemPrompt}
 						onChange={(e) => setSystemPrompt(e.target.value)}
-						className="w-full rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-border-hover min-h-[160px] resize-y font-mono leading-relaxed"
+						className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-1 outline-none focus:border-border-strong min-h-[160px] resize-y font-mono leading-relaxed"
 						placeholder="You are the {{agent_role}} at {{team_name}}..."
 					/>
-					<p className="text-xs text-text-subtle mt-1">
+					<p className="text-xs text-text-3 mt-1">
 						Insert variables using the chips above. Markdown supported.
 					</p>
 				</div>
 
 				{onboardAgent.error && (
-					<p className="text-[13px] text-accent-red">
+					<p className="text-[13px] text-danger">
 						{(onboardAgent.error as { message: string }).message}
 					</p>
 				)}

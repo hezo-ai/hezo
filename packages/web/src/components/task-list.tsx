@@ -96,7 +96,7 @@ function TaskListSection({ title, testId, tasks, columns, onRowClick }: TaskList
 
 	return (
 		<section data-testid={testId} className="mb-6 last:mb-0">
-			<h2 className="text-[11px] font-medium uppercase tracking-wider text-text-subtle mb-2 px-0.5">
+			<h2 className="text-[11px] font-medium uppercase tracking-wider text-text-3 mb-2 px-0.5">
 				{title}
 			</h2>
 			<DataTable
@@ -247,7 +247,7 @@ export function TaskList({ projectId }: TaskListProps) {
 			key: 'id',
 			header: 'ID',
 			width: '88px',
-			className: 'font-mono text-text-muted',
+			className: 'font-mono text-text-2',
 			render: (row) => {
 				const lastRunFailed =
 					!row.has_active_run &&
@@ -261,7 +261,7 @@ export function TaskList({ projectId }: TaskListProps) {
 									role="img"
 									aria-label="Last run failed"
 									data-testid="task-failed-warning"
-									className="inline-flex shrink-0 text-red-400"
+									className="inline-flex shrink-0 text-danger"
 								>
 									<AlertTriangle className="w-3 h-3" aria-hidden="true" />
 								</span>
@@ -273,7 +273,7 @@ export function TaskList({ projectId }: TaskListProps) {
 									role="img"
 									aria-label="Unread mention"
 									data-testid="task-mention-notice"
-									className="w-3 h-3 text-accent-blue shrink-0"
+									className="w-3 h-3 text-info shrink-0"
 								/>
 							</Tooltip>
 						)}
@@ -288,7 +288,7 @@ export function TaskList({ projectId }: TaskListProps) {
 			render: (row) => (
 				<span className="font-medium inline-flex items-center gap-1.5 min-w-0">
 					{row.depth > 0 && (
-						<span className="text-text-subtle shrink-0" aria-hidden="true">
+						<span className="text-text-3 shrink-0" aria-hidden="true">
 							↳
 						</span>
 					)}
@@ -308,7 +308,7 @@ export function TaskList({ projectId }: TaskListProps) {
 							row.project_name ? (
 								<Badge color="info">{row.project_name}</Badge>
 							) : (
-								<span className="text-text-subtle">—</span>
+								<span className="text-text-3">—</span>
 							),
 					},
 				]),
@@ -333,9 +333,7 @@ export function TaskList({ projectId }: TaskListProps) {
 			width: '120px',
 			hideOnMobile: true,
 			render: (row) => (
-				<span className="block max-w-[140px] truncate text-text-muted">
-					{row.assignee_name || '—'}
-				</span>
+				<span className="block max-w-[140px] truncate text-text-2">{row.assignee_name || '—'}</span>
 			),
 		},
 	];
@@ -355,7 +353,7 @@ export function TaskList({ projectId }: TaskListProps) {
 
 	const filterBar = (
 		<div className="relative flex-1 min-w-0 h-9" data-testid="task-filter-bar">
-			<div className="h-full rounded-md border border-border bg-bg-elevated">
+			<div className="h-full rounded-md border border-border bg-surface">
 				<button
 					type="button"
 					onClick={() => setExpanded((e) => !e)}
@@ -364,43 +362,41 @@ export function TaskList({ projectId }: TaskListProps) {
 					className="flex h-full items-center gap-2 w-full text-left cursor-pointer px-3"
 				>
 					<ChevronDown
-						className={`w-3.5 h-3.5 text-text-subtle shrink-0 transition-transform ${
+						className={`w-3.5 h-3.5 text-text-3 shrink-0 transition-transform ${
 							expanded ? '' : '-rotate-90'
 						}`}
 					/>
-					<span className="truncate text-xs text-text-muted">
-						Showing {summaryBits.join(' · ')}
-					</span>
+					<span className="truncate text-xs text-text-2">Showing {summaryBits.join(' · ')}</span>
 				</button>
 			</div>
 			{expanded && (
 				<div
 					data-testid="task-filter-panel"
-					className="absolute left-0 right-0 top-full z-20 mt-1 rounded-md border border-border bg-bg-elevated shadow-md px-3 py-3 flex flex-wrap items-end gap-3"
+					className="absolute left-0 right-0 top-full z-20 mt-1 rounded-md border border-border bg-surface shadow-md px-3 py-3 flex flex-wrap items-end gap-3"
 				>
 					<label className="flex flex-col gap-1 flex-1 min-w-0 sm:min-w-[180px]">
-						<span className="text-[11px] uppercase tracking-wider text-text-subtle">Search</span>
+						<span className="text-[11px] uppercase tracking-wider text-text-3">Search</span>
 						<div className="relative">
-							<Search className="w-3.5 h-3.5 text-text-subtle absolute left-2.5 top-1/2 -translate-y-1/2" />
+							<Search className="w-3.5 h-3.5 text-text-3 absolute left-2.5 top-1/2 -translate-y-1/2" />
 							<input
 								type="text"
 								value={search}
 								onChange={(e) => setSearch(e.target.value)}
 								placeholder="Filter by title..."
 								data-testid="task-filter-search"
-								className="w-full rounded-radius-md border border-border bg-bg pl-8 pr-2.5 py-1.5 text-xs text-text outline-none focus:border-border-hover"
+								className="w-full rounded-md border border-border bg-surface pl-8 pr-2.5 py-1.5 text-xs text-text-1 outline-none focus:border-border-strong"
 							/>
 						</div>
 					</label>
 
 					<label className="flex flex-col gap-1">
-						<span className="text-[11px] uppercase tracking-wider text-text-subtle">Sort</span>
+						<span className="text-[11px] uppercase tracking-wider text-text-3">Sort</span>
 						<div className="flex gap-1">
 							<select
 								value={sortField}
 								onChange={(e) => handleSortFieldChange(e.target.value as SortField)}
 								data-testid="task-filter-sort-field"
-								className="rounded-radius-md border border-border bg-bg px-2 py-1.5 text-xs text-text outline-none"
+								className="rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text-1 outline-none"
 							>
 								<option value="work_order">Work order</option>
 								<option value="created_at">Created</option>
@@ -411,7 +407,7 @@ export function TaskList({ projectId }: TaskListProps) {
 									value={sortDir}
 									onChange={(e) => handleSortDirChange(e.target.value as SortDir)}
 									data-testid="task-filter-sort-dir"
-									className="rounded-radius-md border border-border bg-bg px-2 py-1.5 text-xs text-text outline-none"
+									className="rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text-1 outline-none"
 								>
 									<option value="desc">desc</option>
 									<option value="asc">asc</option>
@@ -421,7 +417,7 @@ export function TaskList({ projectId }: TaskListProps) {
 					</label>
 
 					<div className="flex flex-col gap-1">
-						<span className="text-[11px] uppercase tracking-wider text-text-subtle">Status</span>
+						<span className="text-[11px] uppercase tracking-wider text-text-3">Status</span>
 						<MultiSelect
 							label="Status"
 							options={todoStatusOptions}
@@ -432,7 +428,7 @@ export function TaskList({ projectId }: TaskListProps) {
 					</div>
 
 					<div className="flex flex-col gap-1">
-						<span className="text-[11px] uppercase tracking-wider text-text-subtle">Owner</span>
+						<span className="text-[11px] uppercase tracking-wider text-text-3">Owner</span>
 						<MultiSelect
 							label="Owner"
 							options={ownerOptions}
@@ -471,7 +467,7 @@ export function TaskList({ projectId }: TaskListProps) {
 			{inProgressLoading ? (
 				<div
 					data-testid="task-list-in-progress-loading"
-					className="text-text-muted text-[13px] py-4 text-center mb-6"
+					className="text-text-2 text-[13px] py-4 text-center mb-6"
 				>
 					Loading in progress...
 				</div>
@@ -486,12 +482,12 @@ export function TaskList({ projectId }: TaskListProps) {
 			)}
 
 			<section data-testid="task-list-main" className="mb-6 last:mb-0">
-				<h2 className="text-[11px] font-medium uppercase tracking-wider text-text-subtle mb-2 px-0.5">
+				<h2 className="text-[11px] font-medium uppercase tracking-wider text-text-3 mb-2 px-0.5">
 					Backlog
 				</h2>
 
 				{mainLoading ? (
-					<div className="text-text-muted text-[13px] py-8 text-center">Loading...</div>
+					<div className="text-text-2 text-[13px] py-8 text-center">Loading...</div>
 				) : hasNoTasksAtAll ? (
 					<EmptyState
 						variant="hero"
@@ -520,7 +516,7 @@ export function TaskList({ projectId }: TaskListProps) {
 					/>
 				) : (
 					<p
-						className="text-text-muted text-[13px] py-6 text-center"
+						className="text-text-2 text-[13px] py-6 text-center"
 						data-testid="task-list-todo-empty"
 					>
 						No matching tasks
@@ -528,7 +524,7 @@ export function TaskList({ projectId }: TaskListProps) {
 				)}
 
 				{result?.meta && result.meta.total > result.meta.per_page && (
-					<div className="flex items-center justify-between mt-4 text-xs text-text-muted">
+					<div className="flex items-center justify-between mt-4 text-xs text-text-2">
 						<span>
 							Showing {tasks.length} of {result.meta.total}
 						</span>

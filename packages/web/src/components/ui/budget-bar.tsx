@@ -4,13 +4,14 @@ interface BudgetBarProps {
 	className?: string;
 }
 
+// Threshold fill: success < 70% · warning 70–90% · danger ≥ 90%.
 export function BudgetBar({ used, total, className = '' }: BudgetBarProps) {
 	const pct = total > 0 ? Math.min((used / total) * 100, 100) : 0;
-	const fillColor = pct >= 90 ? 'bg-accent-red' : pct >= 70 ? 'bg-accent-amber' : 'bg-accent-green';
+	const fill = pct >= 90 ? 'bg-danger' : pct >= 70 ? 'bg-warning' : 'bg-success';
 
 	return (
-		<div className={`h-[3px] bg-bg-subtle rounded-sm overflow-hidden ${className}`}>
-			<div className={`h-full rounded-sm ${fillColor}`} style={{ width: `${pct}%` }} />
+		<div className={`h-1.5 overflow-hidden rounded-full bg-surface-3 ${className}`}>
+			<div className={`h-full rounded-full ${fill}`} style={{ width: `${pct}%` }} />
 		</div>
 	);
 }

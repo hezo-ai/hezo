@@ -124,7 +124,7 @@ function InstanceCredentialsPage() {
 				if (r.allow_all_hosts) return <Badge color="warning">all hosts</Badge>;
 				if (!r.allowed_hosts.length) return <Badge color="danger">no hosts</Badge>;
 				return (
-					<span className="text-xs font-mono text-text-muted truncate">
+					<span className="text-xs font-mono text-text-2 truncate">
 						{r.allowed_hosts.join(', ')}
 					</span>
 				);
@@ -142,7 +142,7 @@ function InstanceCredentialsPage() {
 					) : (
 						<span>{formatRelative(r.last_used_at)}</span>
 					)}
-					{r.last_host && <span className="text-text-subtle ml-2 font-mono">{r.last_host}</span>}
+					{r.last_host && <span className="text-text-3 ml-2 font-mono">{r.last_host}</span>}
 				</span>
 			),
 		},
@@ -162,7 +162,7 @@ function InstanceCredentialsPage() {
 							type="button"
 							onClick={() => openEdit(r)}
 							aria-label={`Edit ${r.name}`}
-							className="text-text-subtle hover:text-text"
+							className="text-text-3 hover:text-text-1"
 						>
 							<Pencil className="w-3.5 h-3.5" />
 						</button>
@@ -180,7 +180,7 @@ function InstanceCredentialsPage() {
 								}
 							}}
 							aria-label={`Revoke ${r.name}`}
-							className="text-text-subtle hover:text-accent-red"
+							className="text-text-3 hover:text-danger"
 						>
 							<Trash2 className="w-3.5 h-3.5" />
 						</button>
@@ -192,7 +192,7 @@ function InstanceCredentialsPage() {
 
 	const content =
 		me && !me.is_superuser ? (
-			<p className="text-[13px] text-text-muted">
+			<p className="text-[13px] text-text-2">
 				Instance credentials are managed by the Admin. You don't have access to this page.
 			</p>
 		) : (
@@ -207,7 +207,7 @@ function InstanceCredentialsPage() {
 								data-testid="credentials-info"
 							/>
 						</div>
-						<p className="text-[13px] text-text-muted mt-1 max-w-[680px]">
+						<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
 							Secrets shared with every team's egress. Agents reference them by placeholder (
 							<span className="font-mono">__HEZO_SECRET_NAME__</span>); the egress proxy substitutes
 							the real value at request time, bounded by the allowed-hosts policy. A team-scoped
@@ -249,7 +249,7 @@ function InstanceCredentialsPage() {
 							onChange={(e) => setAllowedHosts(e.target.value)}
 							disabled={allowAllHosts}
 						/>
-						<label className="flex items-center gap-2 text-[13px] text-text-muted">
+						<label className="flex items-center gap-2 text-[13px] text-text-2">
 							<input
 								type="checkbox"
 								checked={allowAllHosts}
@@ -257,7 +257,7 @@ function InstanceCredentialsPage() {
 							/>
 							Allow this credential to reach any host (escape hatch — use sparingly)
 						</label>
-						{error && <p className="text-[13px] text-accent-red">{error}</p>}
+						{error && <p className="text-[13px] text-danger">{error}</p>}
 						<div className="flex gap-2">
 							<Button
 								type="submit"
@@ -274,7 +274,7 @@ function InstanceCredentialsPage() {
 				)}
 
 				{!rows.length ? (
-					<p className="text-[13px] text-text-muted">
+					<p className="text-[13px] text-text-2">
 						No instance credentials yet. Add one above to share it across every team.
 					</p>
 				) : (

@@ -20,19 +20,19 @@ function GlobalAgentsBox({ projectId }: { projectId: string }) {
 	return (
 		<aside
 			data-testid="global-agents-box"
-			className="rounded-lg border border-border-subtle bg-bg-subtle p-3"
+			className="rounded-lg border border-border-subtle bg-surface-2 p-3"
 		>
-			<div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-text-subtle font-medium mb-2">
+			<div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-text-3 font-medium mb-2">
 				<Globe className="w-3 h-3" /> Global agents
 			</div>
-			<p className="text-xs text-text-muted mb-3">Work across every project.</p>
+			<p className="text-xs text-text-2 mb-3">Work across every project.</p>
 			<div className="flex flex-col gap-1">
 				{instanceAgents.map((agent) => (
 					<Link
 						key={agent.id}
 						to="/projects/$projectId/agents/$agentId"
 						params={agentPageParams(projectId, agent.slug, agent.is_instance)}
-						className="text-[13px] text-text-muted hover:text-text hover:bg-bg-subtle rounded-radius-md px-2 py-1 transition-colors"
+						className="text-[13px] text-text-2 hover:text-text-1 hover:bg-surface-2 rounded-md px-2 py-1 transition-colors"
 					>
 						<AgentStatusLabel name={agent.title} runtimeStatus={agent.runtime_status} />
 					</Link>
@@ -47,8 +47,7 @@ function TeamPage() {
 	const { data: orgChart, isLoading } = useOrgChart(projectId);
 	const { data: team } = useTeam(projectId);
 
-	if (isLoading)
-		return <div className="text-text-muted text-[13px] py-8 text-center">Loading...</div>;
+	if (isLoading) return <div className="text-text-2 text-[13px] py-8 text-center">Loading...</div>;
 
 	const roots = orgChart?.admin.children ?? [];
 	const hasMembers = roots.length > 0;
@@ -66,16 +65,16 @@ function TeamPage() {
 
 				<div
 					data-testid="team-summary"
-					className="rounded-lg border border-border-subtle bg-bg-subtle p-4 text-sm leading-relaxed text-text mb-1"
+					className="rounded-lg border border-border-subtle bg-surface-2 p-4 text-sm leading-relaxed text-text-1 mb-1"
 				>
 					<ExpandableText
 						text={team?.summary ?? ''}
 						placeholder={
-							<span className="italic text-text-muted">Team description being generated…</span>
+							<span className="italic text-text-2">Team description being generated…</span>
 						}
 					/>
 				</div>
-				<p data-testid="team-summary-attribution" className="text-xs text-text-muted italic mb-6">
+				<p data-testid="team-summary-attribution" className="text-xs text-text-2 italic mb-6">
 					Auto-generated from the agents' system prompts.
 				</p>
 
@@ -92,7 +91,7 @@ function TeamPage() {
 							/>
 						</div>
 
-						<div className="flex items-center gap-4 mt-8 pt-4 border-t border-border text-xs text-text-muted">
+						<div className="flex items-center gap-4 mt-8 pt-4 border-t border-border text-xs text-text-2">
 							<div className="flex items-center gap-1.5">
 								<StatusDot status="active" /> Active
 							</div>

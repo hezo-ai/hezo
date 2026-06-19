@@ -35,7 +35,7 @@ interface ErrorChip {
 }
 
 function AssetIcon({ contentType }: { contentType: string }) {
-	const cls = 'h-8 w-8 text-text-subtle';
+	const cls = 'h-8 w-8 text-text-3';
 	if (contentType.startsWith('audio/')) return <FileAudio className={cls} />;
 	if (contentType.startsWith('video/')) return <FileVideo className={cls} />;
 	if (contentType === 'text/html') return <Code className={cls} />;
@@ -119,10 +119,10 @@ function ProjectAssetsPage() {
 		<div>
 			<div className="flex flex-wrap items-start justify-between gap-2 mb-4">
 				<div className="min-w-0">
-					<h1 className="text-base font-semibold text-text">Assets</h1>
-					<p className="text-[13px] text-text-muted">
+					<h1 className="text-base font-semibold text-text-1">Assets</h1>
+					<p className="text-[13px] text-text-2">
 						Mockups, wireframes, and other uploads. Reference one in a comment or doc as{' '}
-						<code className="text-accent-blue-text">assets/&lt;filename&gt;</code>.
+						<code className="text-info-soft-fg">assets/&lt;filename&gt;</code>.
 					</p>
 				</div>
 				<Button
@@ -157,7 +157,7 @@ function ProjectAssetsPage() {
 					{errors.map((e) => (
 						<span
 							key={e.id}
-							className="rounded-radius-sm border border-danger/40 bg-danger/10 px-2 py-1 text-[12px] text-danger"
+							className="rounded-sm border border-danger/40 bg-danger/10 px-2 py-1 text-[12px] text-danger"
 							data-testid="asset-upload-error"
 						>
 							{e.filename}: {e.message}
@@ -176,7 +176,7 @@ function ProjectAssetsPage() {
 				onDrop={onDrop}
 			>
 				{isLoading ? (
-					<div className="text-text-muted text-[13px] py-4">Loading...</div>
+					<div className="text-text-2 text-[13px] py-4">Loading...</div>
 				) : !assets || assets.length === 0 ? (
 					<EmptyState
 						icon={<ImageIcon className="w-10 h-10" />}
@@ -198,11 +198,11 @@ function ProjectAssetsPage() {
 
 				{isDragActive && (
 					<div
-						className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-radius-md border border-dashed border-border-hover bg-bg-elevated/95"
+						className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border-strong bg-surface/95"
 						data-testid="asset-drop-overlay"
 					>
-						<Upload className="h-5 w-5 text-text-subtle" />
-						<p className="text-[13px] text-text-subtle">Drop to upload</p>
+						<Upload className="h-5 w-5 text-text-3" />
+						<p className="text-[13px] text-text-3">Drop to upload</p>
 					</div>
 				)}
 			</div>
@@ -259,15 +259,15 @@ function AssetCard({
 			ref={ref}
 			data-testid="asset-card"
 			data-filename={asset.original_filename}
-			className={`flex flex-col overflow-hidden rounded-radius-md border bg-bg-subtle ${
-				highlighted ? 'border-accent-blue' : 'border-border'
+			className={`flex flex-col overflow-hidden rounded-md border bg-surface-2 ${
+				highlighted ? 'border-info' : 'border-border'
 			}`}
 		>
 			<a
 				href={asset.url}
 				target="_blank"
 				rel="noopener noreferrer"
-				className="flex h-28 items-center justify-center bg-bg-muted"
+				className="flex h-28 items-center justify-center bg-surface-3"
 				data-testid="asset-open-link"
 				aria-label={`Open ${asset.original_filename} in a new tab`}
 			>
@@ -282,7 +282,7 @@ function AssetCard({
 						src={asset.url}
 						title={asset.original_filename}
 						sandbox=""
-						className="pointer-events-none h-full w-full bg-white"
+						className="pointer-events-none h-full w-full bg-surface"
 					/>
 				) : (
 					<AssetIcon contentType={asset.content_type} />
@@ -291,19 +291,19 @@ function AssetCard({
 			<div className="flex items-start justify-between gap-1 p-2">
 				<div className="min-w-0">
 					<div
-						className="truncate text-[12px] font-medium text-text"
+						className="truncate text-[12px] font-medium text-text-1"
 						title={asset.original_filename}
 					>
 						{asset.original_filename}
 					</div>
-					<div className="text-[11px] text-text-subtle">{formatBytes(asset.byte_size)}</div>
+					<div className="text-[11px] text-text-3">{formatBytes(asset.byte_size)}</div>
 				</div>
 				<div className="flex shrink-0 items-center gap-0.5">
 					<a
 						href={asset.url}
 						target="_blank"
 						rel="noopener noreferrer"
-						className="p-1 text-text-subtle hover:text-text"
+						className="p-1 text-text-3 hover:text-text-1"
 						aria-label="Open in new tab"
 						data-testid="asset-popout"
 					>
@@ -311,7 +311,7 @@ function AssetCard({
 					</a>
 					<button
 						type="button"
-						className="p-1 text-text-subtle hover:text-accent-red"
+						className="p-1 text-text-3 hover:text-danger"
 						onClick={onDelete}
 						aria-label="Delete asset"
 						data-testid="asset-delete"

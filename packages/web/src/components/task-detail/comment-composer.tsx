@@ -116,7 +116,7 @@ export function CommentComposer({
 				</CommentAttachmentsDrop>
 				{replyTarget && (
 					<div
-						className="flex items-center gap-2 text-[13px] text-text-muted"
+						className="flex items-center gap-2 text-[13px] text-text-2"
 						data-testid="reply-indicator"
 					>
 						<CornerDownRight className="w-3.5 h-3.5 shrink-0" />
@@ -124,14 +124,14 @@ export function CommentComposer({
 						<a
 							href={`#comment-${replyTarget.public_id}`}
 							onClick={jumpToComment(replyTarget.public_id)}
-							className="truncate text-accent-blue hover:underline"
+							className="truncate text-info hover:underline"
 						>
 							{replyTarget.author_name}: {previewCommentText(replyTarget)}
 						</a>
 						<button
 							type="button"
 							onClick={() => setReplyTarget(null)}
-							className="text-text-subtle hover:text-text shrink-0"
+							className="text-text-3 hover:text-text-1 shrink-0"
 							aria-label="Clear reply target"
 							data-testid="clear-reply"
 						>
@@ -147,7 +147,7 @@ export function CommentComposer({
 						comments={comments}
 					/>
 					{task.assignee_id && !replyingToAgent && (
-						<label className="flex items-center gap-2 text-[13px] text-text-muted cursor-pointer select-none">
+						<label className="flex items-center gap-2 text-[13px] text-text-2 cursor-pointer select-none">
 							<input
 								type="checkbox"
 								checked={wakeAssignee}

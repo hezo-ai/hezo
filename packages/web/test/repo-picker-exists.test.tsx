@@ -114,7 +114,7 @@ test('GITHUB_REPO_EXISTS surfaces a link-existing affordance that flips the moda
 	expect(searchInput.value).toBe(collisionName);
 
 	const row = await screen.findByTestId(`repo-picker-row-${ghOwner}/${collisionName}`);
-	expect(row.className).toContain('bg-bg-subtle');
+	expect(row.className).toContain('bg-surface-2');
 
 	expect(screen.queryByTestId('repo-picker-exists-banner')).toBeNull();
 });

@@ -25,7 +25,7 @@ import { Tooltip } from './ui/tooltip';
 type RemarkPlugin = Parameters<typeof Markdown>[0]['remarkPlugins'];
 
 const PROSE_CLASSES =
-	'prose prose-sm max-w-none text-sm text-text [&_a]:text-accent-blue-text [&_h1]:text-text [&_h2]:text-text [&_h3]:text-text [&_h4]:text-text [&_strong]:text-text [&_code]:text-accent-blue-text [&_code]:bg-bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-bg-muted [&_pre]:border [&_pre]:border-border [&_blockquote]:text-text [&_blockquote]:border-l-border-hover [&_blockquote_p]:text-text [&_p:last-child]:mb-0 [&_p:first-child]:mt-0 [&_hr]:my-6';
+	'prose prose-sm max-w-none text-sm text-text-1 [&_a]:text-info-soft-fg [&_h1]:text-text-1 [&_h2]:text-text-1 [&_h3]:text-text-1 [&_h4]:text-text-1 [&_strong]:text-text-1 [&_code]:text-info-soft-fg [&_code]:bg-surface-3 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-surface-3 [&_pre]:border [&_pre]:border-border [&_blockquote]:text-text-1 [&_blockquote]:border-l-border-strong [&_blockquote_p]:text-text-1 [&_p:last-child]:mb-0 [&_p:first-child]:mt-0 [&_hr]:my-6';
 
 interface MarkdownProseProps {
 	children: string;
@@ -414,7 +414,7 @@ function DedicatedViewMention({
 				rel="noopener noreferrer"
 				aria-label={previewAriaLabel}
 				data-testid={previewTestId}
-				className="text-accent-blue-text hover:underline"
+				className="text-info-soft-fg hover:underline"
 			>
 				<ExternalLink className="w-3 h-3" />
 			</a>

@@ -84,7 +84,7 @@ export function SystemComment({ comment, projectId, taskId, retryableRunId }: Pr
 			: '';
 	return (
 		<div className="flex items-baseline gap-2 leading-[26px]">
-			<span className="text-xs text-text-muted">{text}</span>
+			<span className="text-xs text-text-2">{text}</span>
 			{timestamp}
 		</div>
 	);
@@ -119,17 +119,17 @@ function StatusChangeBody({
 						projectId: triggeredProjectSlug,
 						taskId: triggeredIdentifier.toLowerCase(),
 					}}
-					className="text-xs text-accent-blue-text hover:underline"
+					className="text-xs text-info-soft-fg hover:underline"
 					data-testid="cascade-trigger-task"
 				>
 					{triggeredIdentifier}
 				</Link>
 			) : (
-				<span className="text-xs text-text-muted">{triggeredIdentifier || 'a blocker'}</span>
+				<span className="text-xs text-text-2">{triggeredIdentifier || 'a blocker'}</span>
 			);
 		return (
 			<div className="flex items-baseline gap-2 leading-[26px]" data-testid="status-change-cascade">
-				<span className="text-xs text-text-muted">Auto-unblocked — {triggerNode} closed</span>
+				<span className="text-xs text-text-2">Auto-unblocked — {triggerNode} closed</span>
 				{timestamp}
 			</div>
 		);
@@ -137,7 +137,7 @@ function StatusChangeBody({
 	const actorName = comment.author_name ?? 'Admin';
 	return (
 		<div className="flex items-baseline gap-2 leading-[26px]">
-			<span className="text-xs text-text-muted">
+			<span className="text-xs text-text-2">
 				{actorName} changed status from <em className="italic">{formatTaskStatus(from)}</em> to{' '}
 				<em className="italic">{formatTaskStatus(to)}</em>
 			</span>
@@ -170,23 +170,23 @@ function RunFailedBody({
 			<Link
 				to="/projects/$projectId/agents/$agentId"
 				params={{ projectId, agentId: agentSlug }}
-				className="text-xs text-accent-blue-text hover:underline"
+				className="text-xs text-info-soft-fg hover:underline"
 				data-testid="run-failed-agent"
 			>
 				@{agentSlug}
 			</Link>
 		) : (
-			<span className="text-xs text-text-muted">agent</span>
+			<span className="text-xs text-text-2">agent</span>
 		);
 	return (
 		<div
 			className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]"
 			data-testid="run-failed-comment"
 		>
-			<span className="text-xs text-text-muted inline-flex items-baseline gap-1.5 flex-wrap">
+			<span className="text-xs text-text-2 inline-flex items-baseline gap-1.5 flex-wrap">
 				<span>
 					Run for {agentNode} {statusLabel}
-					{error ? <span className="text-text-subtle">: {error}</span> : null}.
+					{error ? <span className="text-text-3">: {error}</span> : null}.
 				</span>
 				{projectId && taskId && runId && runId === retryableRunId ? (
 					<RetryRunButton projectId={projectId} taskId={taskId} runId={runId} />
@@ -215,7 +215,7 @@ function RetryRunButton({
 				disabled={retry.isPending}
 				aria-label="Retry failed run"
 				data-testid="retry-failed-run"
-				className="inline-flex items-center gap-1 self-baseline rounded-radius-md border border-border-default px-1.5 py-0.5 text-[11px] font-medium text-text-muted hover:bg-bg-subtle hover:text-text disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+				className="inline-flex items-center gap-1 self-baseline rounded-md border border-border px-1.5 py-0.5 text-[11px] font-medium text-text-2 hover:bg-surface-2 hover:text-text-1 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
 			>
 				{retry.isPending ? (
 					<Loader2 className="w-3 h-3 animate-spin" />
@@ -243,19 +243,17 @@ function RepoDesignatedBody({
 			href={url}
 			target="_blank"
 			rel="noopener noreferrer"
-			className="text-xs text-accent-blue-text hover:underline"
+			className="text-xs text-info-soft-fg hover:underline"
 			data-testid="repo-designated-link"
 		>
 			{identifier}
 		</a>
 	) : (
-		<span className="text-xs text-text-muted">{identifier}</span>
+		<span className="text-xs text-text-2">{identifier}</span>
 	);
 	return (
 		<div className="flex items-baseline gap-2 leading-[26px]" data-testid="repo-designated-comment">
-			<span className="text-xs text-text-muted">
-				Repository {repoNode} set as the designated repo.
-			</span>
+			<span className="text-xs text-text-2">Repository {repoNode} set as the designated repo.</span>
 			{timestamp}
 		</div>
 	);
@@ -276,8 +274,8 @@ function TaskLinkSystemBody({
 	const actorKind = content.actor_kind ?? null;
 	const actorSlug = content.actor_slug ?? null;
 
-	const linkClass = 'text-xs text-accent-blue-text hover:underline';
-	const textClass = 'text-xs text-text-muted';
+	const linkClass = 'text-xs text-info-soft-fg hover:underline';
+	const textClass = 'text-xs text-text-2';
 
 	const sourceNode =
 		sourceIdentifier && sourceProjectSlug ? (

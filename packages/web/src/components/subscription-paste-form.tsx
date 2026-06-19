@@ -135,7 +135,7 @@ export function SubscriptionPasteForm({
 
 	if (!instructions) {
 		return (
-			<p className="text-[13px] text-accent-red mt-2">
+			<p className="text-[13px] text-danger mt-2">
 				Subscription paste flow is not available for this provider.
 			</p>
 		);
@@ -148,8 +148,8 @@ export function SubscriptionPasteForm({
 
 	return (
 		<form onSubmit={handleSubmit} className="mt-2 flex flex-col gap-3">
-			<div className="rounded-radius-md border border-border bg-bg-subtle p-3 text-[13px] text-text-muted">
-				<p className="font-medium text-text mb-2">{instructions.title}</p>
+			<div className="rounded-md border border-border bg-surface-2 p-3 text-[13px] text-text-2">
+				<p className="font-medium text-text-1 mb-2">{instructions.title}</p>
 				<ol className="list-decimal pl-5 space-y-1">
 					{instructions.steps.map((step, i) => (
 						// biome-ignore lint/suspicious/noArrayIndexKey: instruction list is static
@@ -166,7 +166,7 @@ export function SubscriptionPasteForm({
 				placeholder={instructions.placeholder}
 				rows={6}
 				spellCheck={false}
-				className="w-full rounded-radius-md border border-border bg-bg-subtle px-2 py-1.5 text-xs font-mono text-text outline-none focus:border-border-hover"
+				className="w-full rounded-md border border-border bg-surface-2 px-2 py-1.5 text-xs font-mono text-text-1 outline-none focus:border-border-strong"
 			/>
 
 			<div className="flex gap-2">

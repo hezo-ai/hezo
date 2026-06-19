@@ -14,11 +14,11 @@ export function Toggle({ checked, onChange, disabled = false, className = '' }: 
 			disabled={disabled}
 			onClick={() => onChange(!checked)}
 			className={`relative inline-flex w-8 h-[18px] rounded-full transition-colors duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-				checked ? 'bg-accent-blue' : 'bg-border-hover'
+				checked ? 'bg-accent' : 'bg-border-strong'
 			} ${className}`}
 		>
 			<span
-				className={`absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white transition-transform duration-200 ${
+				className={`absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-surface shadow-sm transition-transform duration-200 ${
 					checked ? 'translate-x-[14px]' : 'translate-x-0'
 				}`}
 			/>

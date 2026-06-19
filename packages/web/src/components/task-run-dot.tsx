@@ -23,7 +23,7 @@ export function TaskRunDot({ hasActiveRun, queuedWakeup }: TaskRunDotProps) {
 					role="img"
 					aria-label="Agent run in progress"
 					data-testid="task-running-dot"
-					className="inline-block w-2 h-2 rounded-full bg-accent-amber animate-pulse shrink-0"
+					className="inline-block w-2 h-2 rounded-full bg-warning animate-pulse shrink-0"
 				/>
 			</Tooltip>
 		);
@@ -39,7 +39,7 @@ export function TaskRunDot({ hasActiveRun, queuedWakeup }: TaskRunDotProps) {
 					role="img"
 					aria-label={label}
 					data-testid="task-queued-dot"
-					className="inline-block w-2 h-2 rounded-full bg-accent-blue shrink-0"
+					className="inline-block w-2 h-2 rounded-full bg-info shrink-0"
 				/>
 			</Tooltip>
 		);

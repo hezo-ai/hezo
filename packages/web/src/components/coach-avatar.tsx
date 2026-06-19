@@ -16,7 +16,7 @@ export function CoachAvatar({ size = 'md', className = '' }: CoachAvatarProps) {
 		<span
 			role="img"
 			aria-label="Coach"
-			className={`inline-block shrink-0 rounded-full overflow-hidden ring-1 ring-border bg-accent-green-bg ${sizeMap[size]} ${className}`}
+			className={`inline-block shrink-0 rounded-full overflow-hidden ring-1 ring-border bg-success-soft ${sizeMap[size]} ${className}`}
 		>
 			<svg viewBox="0 0 64 64" className="w-full h-full" aria-hidden>
 				<title>Coach</title>

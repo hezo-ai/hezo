@@ -20,13 +20,11 @@ export function SectionHeader({
 	return (
 		<div className="mb-3 flex items-start justify-between gap-3">
 			<div className="flex items-start gap-2">
-				<Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-subtle" aria-hidden />
+				<Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-3" aria-hidden />
 				<div>
-					<h2 className="text-sm font-medium text-text">{title}</h2>
+					<h2 className="text-sm font-medium text-text-1">{title}</h2>
 					{description && (
-						<p className="mt-1 max-w-prose text-xs leading-relaxed text-text-subtle">
-							{description}
-						</p>
+						<p className="mt-1 max-w-prose text-xs leading-relaxed text-text-3">{description}</p>
 					)}
 				</div>
 			</div>

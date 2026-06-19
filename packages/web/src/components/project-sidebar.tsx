@@ -96,7 +96,7 @@ export function ProjectSidebar() {
 								role="img"
 								data-testid="project-sidebar-container-error"
 								aria-label="Container failed"
-								className="inline-flex shrink-0 text-red-400"
+								className="inline-flex shrink-0 text-danger"
 							>
 								<AlertTriangle className="w-3 h-3" aria-hidden="true" />
 							</span>
@@ -162,7 +162,7 @@ export function ProjectSidebar() {
 					label: (
 						<span className="flex items-center gap-1.5 min-w-0">
 							<Globe
-								className="w-3 h-3 shrink-0 text-text-subtle"
+								className="w-3 h-3 shrink-0 text-text-3"
 								aria-label="Global agent — works across all projects"
 							/>
 							<AgentStatusLabel name={agent.title} runtimeStatus={agent.runtime_status} />
@@ -180,7 +180,7 @@ export function ProjectSidebar() {
 					to="/projects/$projectId"
 					params={projectParams}
 					data-testid="project-sidebar-name"
-					className="block text-[13px] font-semibold text-text truncate"
+					className="block text-[13px] font-semibold text-text-1 truncate"
 				>
 					{project ? (
 						isInternal ? (
@@ -201,7 +201,7 @@ export function ProjectSidebar() {
 							type="button"
 							aria-label="About this project"
 							data-testid="project-sidebar-info"
-							className="shrink-0 text-text-subtle hover:text-text transition-colors"
+							className="shrink-0 text-text-3 hover:text-text-1 transition-colors"
 						>
 							<Info className="w-3.5 h-3.5" aria-hidden="true" />
 						</button>

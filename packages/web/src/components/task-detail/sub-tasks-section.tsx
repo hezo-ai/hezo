@@ -67,7 +67,7 @@ export function SubTasksSection({
 			className="mb-5 rounded-md border border-border overflow-hidden"
 			data-testid="sub-tasks-card"
 		>
-			<div className="flex items-center px-3 py-2 bg-bg-muted">
+			<div className="flex items-center px-3 py-2 bg-surface-3">
 				<button
 					type="button"
 					onClick={() => setSubTasksOpen((o) => !o)}
@@ -76,12 +76,12 @@ export function SubTasksSection({
 					aria-expanded={subTasksOpen}
 				>
 					<ChevronDown
-						className={`w-3.5 h-3.5 text-text-subtle transition-transform ${
+						className={`w-3.5 h-3.5 text-text-3 transition-transform ${
 							subTasksOpen ? '' : '-rotate-90'
 						}`}
 					/>
-					<span className="text-xs font-medium text-text-muted">Sub-tasks</span>
-					<span className="bg-bg-subtle px-[7px] py-px rounded-full text-[11px] text-text-muted">
+					<span className="text-xs font-medium text-text-2">Sub-tasks</span>
+					<span className="bg-surface-2 px-[7px] py-px rounded-full text-[11px] text-text-2">
 						{subTasks?.data.length ?? 0}
 					</span>
 				</button>
@@ -91,7 +91,7 @@ export function SubTasksSection({
 						setSubTasksOpen(true);
 						setShowSubForm((s) => !s);
 					}}
-					className="text-[11px] text-text-subtle hover:text-text flex items-center gap-1 cursor-pointer"
+					className="text-[11px] text-text-3 hover:text-text-1 flex items-center gap-1 cursor-pointer"
 					data-testid="sub-tasks-add"
 				>
 					<Plus className="w-3 h-3" /> Add
@@ -109,7 +109,7 @@ export function SubTasksSection({
 									value={subTaskTitle}
 									onChange={(e) => setSubTaskTitle(e.target.value)}
 									placeholder="Sub-task title"
-									className="flex-1 rounded-radius-md border border-border bg-bg px-3 py-1.5 text-[13px] text-text outline-none focus:border-border-hover"
+									className="flex-1 rounded-md border border-border bg-surface px-3 py-1.5 text-[13px] text-text-1 outline-none focus:border-border-strong"
 									data-testid="sub-task-title-input"
 								/>
 								<Button type="submit" size="sm" disabled={!subTaskTitle.trim()}>
@@ -117,7 +117,7 @@ export function SubTasksSection({
 								</Button>
 							</form>
 							{createSubTask.error && (
-								<div className="text-[12px] text-red-500 mb-1" data-testid="sub-task-error">
+								<div className="text-[12px] text-danger mb-1" data-testid="sub-task-error">
 									{(createSubTask.error as { message?: string }).message ??
 										'Failed to create sub-task'}
 								</div>
@@ -125,7 +125,7 @@ export function SubTasksSection({
 						</>
 					)}
 					{(subTasks?.data.length ?? 0) === 0 && !showSubForm && (
-						<span className="text-[13px] text-text-muted">No sub-tasks.</span>
+						<span className="text-[13px] text-text-2">No sub-tasks.</span>
 					)}
 					{subTasks?.data.slice(0, subTasksShown).map((s) => (
 						<Link
@@ -135,12 +135,12 @@ export function SubTasksSection({
 								projectId: s.project_slug ?? taskProjectSlug,
 								taskId: s.identifier.toLowerCase(),
 							}}
-							className="flex items-center gap-2 text-[13px] hover:bg-bg-subtle rounded px-2 py-1"
+							className="flex items-center gap-2 text-[13px] hover:bg-surface-2 rounded px-2 py-1"
 							data-testid="sub-task-item"
 						>
 							<TaskStatusBadge status={s.status} className="shrink-0" />
 							<TaskRunDot hasActiveRun={s.has_active_run} queuedWakeup={s.queued_wakeup} />
-							<span className="font-mono text-xs text-text-muted shrink-0 whitespace-nowrap">
+							<span className="font-mono text-xs text-text-2 shrink-0 whitespace-nowrap">
 								{s.identifier}
 							</span>
 							<span className="truncate min-w-0">{s.title}</span>
@@ -156,14 +156,12 @@ export function SubTasksSection({
 										count: subTasksShown + subTaskPageSize,
 									})
 								}
-								className="inline-flex items-center gap-1.5 text-[12px] text-text-subtle hover:text-text px-3 py-1 rounded-radius-md hover:bg-bg-subtle transition-colors cursor-pointer"
+								className="inline-flex items-center gap-1.5 text-[12px] text-text-3 hover:text-text-1 px-3 py-1 rounded-md hover:bg-surface-2 transition-colors cursor-pointer"
 								data-testid="sub-tasks-show-more"
 							>
 								<ChevronDown className="w-3 h-3" />
 								Show more
-								<span className="text-text-subtle">
-									· {subTasks.data.length - subTasksShown} hidden
-								</span>
+								<span className="text-text-3">· {subTasks.data.length - subTasksShown} hidden</span>
 							</button>
 						</div>
 					)}

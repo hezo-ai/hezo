@@ -35,7 +35,7 @@ export function UpdateBanner() {
 	return (
 		<div
 			data-testid="update-banner"
-			className="flex flex-col sm:flex-row sm:items-center gap-2 px-4 py-2 text-[13px] bg-bg-elevated border-b border-border text-text"
+			className="flex flex-col sm:flex-row sm:items-center gap-2 px-4 py-2 text-[13px] bg-surface border-b border-border text-text-1"
 		>
 			<span className="flex-1">
 				Hezo <span className="font-medium">{data.latest}</span> is available — you're on{' '}
@@ -47,7 +47,7 @@ export function UpdateBanner() {
 						href={data.url}
 						target="_blank"
 						rel="noreferrer"
-						className="font-medium text-primary hover:underline"
+						className="font-medium text-text-1 hover:underline"
 					>
 						Download
 					</a>
@@ -56,7 +56,7 @@ export function UpdateBanner() {
 					type="button"
 					onClick={dismiss}
 					aria-label="Dismiss update notification"
-					className="text-text-muted hover:text-text"
+					className="text-text-2 hover:text-text-1"
 				>
 					<X className="w-4 h-4" />
 				</button>

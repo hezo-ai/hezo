@@ -42,7 +42,7 @@ export function PreferencesSection({ projectId }: { projectId: string }) {
 					<textarea
 						value={content}
 						onChange={(e) => setContent(e.target.value)}
-						className="w-full rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-border-hover min-h-[120px] resize-y font-mono leading-relaxed"
+						className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-1 outline-none focus:border-border-strong min-h-[120px] resize-y font-mono leading-relaxed"
 					/>
 					<div className="flex justify-end gap-2">
 						<Button variant="secondary" size="sm" onClick={() => setEditing(false)}>
@@ -56,7 +56,7 @@ export function PreferencesSection({ projectId }: { projectId: string }) {
 				</div>
 			) : (
 				<>
-					<p className="text-[13px] text-text-muted whitespace-pre-wrap">
+					<p className="text-[13px] text-text-2 whitespace-pre-wrap">
 						{prefs?.content || 'No preferences set.'}
 					</p>
 					{prefs && (

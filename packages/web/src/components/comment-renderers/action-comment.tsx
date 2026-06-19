@@ -14,14 +14,14 @@ export function ActionComment({ comment, projectId }: Props) {
 	const resolved = comment.chosen_option?.status === 'complete';
 
 	if (kind !== 'setup_repo') {
-		return <p className="text-xs text-text-subtle italic">Unknown action: {kind}</p>;
+		return <p className="text-xs text-text-3 italic">Unknown action: {kind}</p>;
 	}
 
 	if (resolved) {
 		const result = comment.chosen_option?.result;
 		return (
 			<div
-				className="flex items-center gap-2 text-sm text-accent-green-text"
+				className="flex items-center gap-2 text-sm text-success-soft-fg"
 				data-testid="action-complete"
 			>
 				<Check className="w-4 h-4" />
@@ -31,13 +31,13 @@ export function ActionComment({ comment, projectId }: Props) {
 	}
 
 	if (!projectId || !projectId) {
-		return <p className="text-xs text-text-subtle italic">Repo setup unavailable in this view.</p>;
+		return <p className="text-xs text-text-3 italic">Repo setup unavailable in this view.</p>;
 	}
 
 	return (
 		<div className="flex flex-col gap-2" data-testid="action-setup-repo">
 			<div className="flex items-center gap-2 text-sm">
-				<GitBranch className="w-4 h-4 text-accent-blue-text" />
+				<GitBranch className="w-4 h-4 text-info-soft-fg" />
 				<span>
 					This project has no designated repository yet. Add a repo URL in project settings, then
 					this ticket will resume.

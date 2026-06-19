@@ -36,7 +36,7 @@ export function TaskHeader({ task, projectId, taskId, taskProjectSlug }: TaskHea
 		<>
 			<nav
 				aria-label="Breadcrumb"
-				className="mb-1 flex flex-wrap items-center gap-x-1 text-[13px] font-mono text-text-muted"
+				className="mb-1 flex flex-wrap items-center gap-x-1 text-[13px] font-mono text-text-2"
 				data-testid="task-breadcrumb"
 			>
 				{ancestors?.map((ancestor) => (
@@ -44,13 +44,13 @@ export function TaskHeader({ task, projectId, taskId, taskProjectSlug }: TaskHea
 						<Link
 							to="/projects/$projectId/tasks/$taskId"
 							params={{ projectId: taskProjectSlug, taskId: ancestor.identifier.toLowerCase() }}
-							className="hover:text-text hover:underline transition-colors"
+							className="hover:text-text-1 hover:underline transition-colors"
 							title={ancestor.title}
 							data-testid="task-breadcrumb-ancestor"
 						>
 							{ancestor.identifier}
 						</Link>
-						<ChevronRight className="w-3 h-3 shrink-0 text-text-subtle" />
+						<ChevronRight className="w-3 h-3 shrink-0 text-text-3" />
 					</span>
 				))}
 				<span aria-current="page">{task.identifier}</span>
@@ -71,7 +71,7 @@ export function TaskHeader({ task, projectId, taskId, taskProjectSlug }: TaskHea
 				)}
 				{!task.has_active_run && task.queued_wakeup && (
 					<Badge color="blue" className="gap-1" data-testid="task-queued-badge">
-						<span className="inline-block w-1.5 h-1.5 rounded-full bg-accent-blue-text" />
+						<span className="inline-block w-1.5 h-1.5 rounded-full bg-info-soft-fg" />
 						{task.queued_wakeup.reason === 'project_at_capacity'
 							? 'Queued — project at capacity'
 							: 'Run queued'}
@@ -81,11 +81,11 @@ export function TaskHeader({ task, projectId, taskId, taskProjectSlug }: TaskHea
 
 			{task.description && (
 				<div
-					className="mb-5 rounded-md border border-border bg-bg-elevated overflow-hidden"
+					className="mb-5 rounded-md border border-border bg-surface overflow-hidden"
 					data-testid="task-description-card"
 				>
-					<div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-bg-muted">
-						<span className="text-xs font-medium text-text-muted">Description</span>
+					<div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-surface-3">
+						<span className="text-xs font-medium text-text-2">Description</span>
 					</div>
 					<div className="px-3 py-2.5">
 						<MarkdownProse

@@ -1,26 +1,22 @@
+// Avatars are monochrome (the spec: "monochrome, color = state"). Identity is
+// the initials; state (a running agent) is shown by a cyan `--live` ring.
 const sizeMap = {
 	sm: 'w-[26px] h-[26px] text-[10px]',
 	md: 'w-[36px] h-[36px] text-[13px]',
 	lg: 'w-[56px] h-[56px] text-[20px]',
 } as const;
 
-const colorMap = {
-	blue: 'bg-accent-blue-bg text-accent-blue-text',
-	green: 'bg-accent-green-bg text-accent-green-text',
-	amber: 'bg-accent-amber-bg text-accent-amber-text',
-	purple: 'bg-accent-purple-bg text-accent-purple-text',
-	red: 'bg-accent-red-bg text-accent-red-text',
-	neutral: 'bg-bg-subtle text-text-muted',
-} as const;
-
-const AVATAR_COLORS = Object.keys(colorMap).filter((c) => c !== 'neutral') as AvatarColor[];
-
-export type AvatarColor = keyof typeof colorMap;
+/** Retained for API compatibility; avatars no longer tint per colour. */
+export type AvatarColor = 'blue' | 'green' | 'amber' | 'purple' | 'red' | 'neutral';
+const AVATAR_COLORS: AvatarColor[] = ['blue', 'green', 'amber', 'purple', 'red'];
 
 interface AvatarProps {
 	initials: string;
 	size?: keyof typeof sizeMap;
+	/** Accepted for back-compat but no longer changes the (monochrome) fill. */
 	color?: AvatarColor;
+	/** Running agents get a cyan live ring. */
+	running?: boolean;
 	className?: string;
 }
 
@@ -39,10 +35,12 @@ export function avatarColorFromString(str: string): AvatarColor {
 	return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
-export function Avatar({ initials, size = 'md', color = 'blue', className = '' }: AvatarProps) {
+export function Avatar({ initials, size = 'md', running = false, className = '' }: AvatarProps) {
 	return (
 		<div
-			className={`inline-flex items-center justify-center rounded-full font-medium shrink-0 ${sizeMap[size]} ${colorMap[color]} ${className}`}
+			className={`inline-flex shrink-0 items-center justify-center rounded-full border border-border bg-surface-3 font-semibold text-text-2 ${
+				sizeMap[size]
+			} ${running ? 'ring-2 ring-live ring-offset-2 ring-offset-bg' : ''} ${className}`}
 		>
 			{initials.slice(0, 2).toUpperCase()}
 		</div>

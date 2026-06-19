@@ -30,8 +30,8 @@ export function ApiKeysSection({ projectId }: { projectId: string }) {
 				</Button>
 			</div>
 			{newKey && (
-				<div className="border border-accent-green rounded-radius-md bg-accent-green-bg p-3 mb-3">
-					<p className="text-xs text-accent-green-text font-medium mb-1">
+				<div className="border border-success rounded-md bg-success-soft p-3 mb-3">
+					<p className="text-xs text-success-soft-fg font-medium mb-1">
 						New API key created — copy it now, it won't be shown again:
 					</p>
 					<div className="flex items-center gap-2">
@@ -64,22 +64,22 @@ export function ApiKeysSection({ projectId }: { projectId: string }) {
 				</form>
 			)}
 			{apiKeys?.length === 0 ? (
-				<p className="text-[13px] text-text-subtle">No API keys.</p>
+				<p className="text-[13px] text-text-3">No API keys.</p>
 			) : (
 				<div className="flex flex-col gap-1">
 					{apiKeys?.map((k) => (
 						<div
 							key={k.id}
-							className="flex items-center justify-between rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px]"
+							className="flex items-center justify-between rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
 						>
 							<div className="flex items-center gap-2">
 								<span className="font-medium">{k.name}</span>
-								<span className="text-xs text-text-subtle font-mono">hezo_{k.prefix}...</span>
+								<span className="text-xs text-text-3 font-mono">hezo_{k.prefix}...</span>
 							</div>
 							<button
 								type="button"
 								onClick={() => deleteKey.mutate(k.id)}
-								className="text-text-subtle hover:text-accent-red"
+								className="text-text-3 hover:text-danger"
 							>
 								<Trash2 className="w-3.5 h-3.5" />
 							</button>

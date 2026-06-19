@@ -13,11 +13,7 @@ interface SidebarNavItem {
 
 function CountBadge({ value }: { value: number | undefined }) {
 	if (!value) return null;
-	return (
-		<span className="ml-1.5 bg-bg-muted px-[7px] py-px rounded-full text-[11px] font-normal">
-			{value}
-		</span>
-	);
+	return <span className="ml-auto pl-2 font-mono text-[11px] text-text-3">{value}</span>;
 }
 
 export interface SidebarNavSection {
@@ -37,7 +33,7 @@ interface SidebarNavProps {
 	sections: SidebarNavSection[];
 }
 
-const TITLE_TEXT_CLASSES = 'uppercase text-[11px] text-text-subtle font-medium tracking-wide';
+const TITLE_TEXT_CLASSES = 'uppercase text-[11px] text-text-3 font-medium tracking-wide';
 
 export function SidebarNav({ sections }: SidebarNavProps) {
 	const matchRoute = useMatchRoute();
@@ -57,10 +53,10 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 									to={item.to}
 									params={item.params ?? {}}
 									data-testid={item.testId}
-									className={`block text-left text-[12px] ${paddingClass} rounded-radius-md transition-colors ${
+									className={`flex items-center text-left text-[12px] ${paddingClass} rounded-md transition-colors ${
 										isActive
-											? 'text-text font-medium bg-bg-subtle'
-											: 'text-text-muted hover:text-text hover:bg-bg-subtle'
+											? 'text-text-1 font-medium bg-surface-2'
+											: 'text-text-2 hover:text-text-1 hover:bg-surface-2'
 									}`}
 								>
 									{item.label}
@@ -77,10 +73,10 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 									<Link
 										to={item.to}
 										params={item.params ?? {}}
-										className={`block text-left text-[12px] pl-4 pr-2 py-0.5 rounded-radius-md transition-colors ${
+										className={`flex items-center text-left text-[12px] pl-4 pr-2 py-0.5 rounded-md transition-colors ${
 											isActive
-												? 'text-text font-medium bg-bg-subtle'
-												: 'text-text-muted hover:text-text hover:bg-bg-subtle'
+												? 'text-text-1 font-medium bg-surface-2'
+												: 'text-text-2 hover:text-text-1 hover:bg-surface-2'
 										}`}
 									>
 										{item.label}
@@ -97,10 +93,10 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 													to={subItem.to}
 													params={subItem.params ?? {}}
 													data-testid={subItem.testId}
-													className={`block text-left text-[12px] pl-7 pr-2 py-0.5 rounded-radius-md transition-colors ${
+													className={`flex items-center text-left text-[12px] pl-7 pr-2 py-0.5 rounded-md transition-colors ${
 														isSubActive
-															? 'text-text font-medium bg-bg-subtle'
-															: 'text-text-muted hover:text-text hover:bg-bg-subtle'
+															? 'text-text-1 font-medium bg-surface-2'
+															: 'text-text-2 hover:text-text-1 hover:bg-surface-2'
 													}`}
 												>
 													{subItem.label}
@@ -138,7 +134,7 @@ function SectionHeader({ section }: { section: SidebarNavSection }) {
 			<button
 				type="button"
 				onClick={section.onAdd}
-				className="text-text-subtle hover:text-text transition-colors p-0.5 -m-0.5 cursor-pointer shrink-0"
+				className="text-text-3 hover:text-text-1 transition-colors p-0.5 -m-0.5 cursor-pointer shrink-0"
 				aria-label={section.addLabel ?? 'Add'}
 			>
 				<Plus className="w-3.5 h-3.5" />
@@ -150,7 +146,7 @@ function SectionHeader({ section }: { section: SidebarNavSection }) {
 		<Link
 			to={section.titleTo}
 			params={section.titleParams ?? {}}
-			className={`${TITLE_TEXT_CLASSES} flex-1 text-left hover:text-text transition-colors`}
+			className={`${TITLE_TEXT_CLASSES} flex-1 text-left hover:text-text-1 transition-colors`}
 		>
 			{section.title}
 		</Link>
@@ -158,7 +154,7 @@ function SectionHeader({ section }: { section: SidebarNavSection }) {
 		<button
 			type="button"
 			onClick={section.onToggle}
-			className={`${TITLE_TEXT_CLASSES} flex items-center justify-between flex-1 text-left hover:text-text transition-colors cursor-pointer gap-2`}
+			className={`${TITLE_TEXT_CLASSES} flex items-center justify-between flex-1 text-left hover:text-text-1 transition-colors cursor-pointer gap-2`}
 		>
 			<span>{section.title}</span>
 			{chevron}
@@ -171,7 +167,7 @@ function SectionHeader({ section }: { section: SidebarNavSection }) {
 		<button
 			type="button"
 			onClick={section.onToggle}
-			className="text-text-subtle hover:text-text transition-colors p-0.5 -m-0.5 cursor-pointer"
+			className="text-text-3 hover:text-text-1 transition-colors p-0.5 -m-0.5 cursor-pointer"
 			aria-label={section.collapsed ? 'Expand' : 'Collapse'}
 		>
 			{chevron}

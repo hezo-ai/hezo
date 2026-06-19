@@ -52,12 +52,10 @@ function ContainerPage() {
 	return (
 		<div className="flex flex-col gap-5">
 			{/* Controls */}
-			<div className="flex items-center gap-3 rounded-lg border border-border-subtle bg-bg px-4 py-3">
+			<div className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface px-4 py-3">
 				<ContainerStatusBadge status={project.container_status} />
 				{project.container_id && (
-					<span className="font-mono text-xs text-text-muted">
-						{project.container_id.slice(0, 12)}
-					</span>
+					<span className="font-mono text-xs text-text-2">{project.container_id.slice(0, 12)}</span>
 				)}
 				<div className="ml-auto flex items-center gap-2">
 					<Tooltip content="Start container">
@@ -110,11 +108,11 @@ function ContainerPage() {
 
 			{/* Error banner */}
 			{isError && project.container_error && (
-				<div className="flex gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">
-					<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+				<div className="flex gap-2 rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-sm">
+					<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
 					<div className="flex flex-col gap-1">
-						<span className="font-medium text-red-400">Container error</span>
-						<span className="whitespace-pre-wrap font-mono text-xs text-red-300">
+						<span className="font-medium text-danger">Container error</span>
+						<span className="whitespace-pre-wrap font-mono text-xs text-danger">
 							{project.container_error}
 						</span>
 					</div>
@@ -124,12 +122,12 @@ function ContainerPage() {
 			{/* Info */}
 			<div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
 				<div>
-					<span className="text-text-muted">Image</span>
+					<span className="text-text-2">Image</span>
 					<p className="font-mono text-xs mt-0.5">{project.docker_base_image ?? 'none'}</p>
 				</div>
 				{project.dev_ports?.length > 0 && (
 					<div>
-						<span className="text-text-muted">Dev Ports</span>
+						<span className="text-text-2">Dev Ports</span>
 						<div className="flex gap-2 flex-wrap mt-0.5">
 							{project.dev_ports.map((p) => (
 								<a
@@ -137,7 +135,7 @@ function ContainerPage() {
 									href={`http://localhost:${p.host}`}
 									target="_blank"
 									rel="noopener noreferrer"
-									className="inline-flex items-center gap-1 font-mono text-xs hover:text-primary"
+									className="inline-flex items-center gap-1 font-mono text-xs hover:text-text-1"
 								>
 									<ExternalLink className="w-3 h-3" />
 									{p.container}→{p.host}

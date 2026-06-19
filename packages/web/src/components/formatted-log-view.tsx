@@ -44,7 +44,7 @@ export function FormattedLogView({
 	const blocks = useMemo(() => parseAgentLog(lines), [lines]);
 
 	return (
-		<div data-testid={testId} className="space-y-3 text-sm leading-relaxed text-text">
+		<div data-testid={testId} className="space-y-3 text-sm leading-relaxed text-text-1">
 			{blocks.map((block) => (
 				<BlockView
 					key={block.id}
@@ -97,7 +97,7 @@ function BlockView({
 }
 
 function SystemView({ block }: { block: SystemBlock }) {
-	const color = block.stream === 'stderr' ? 'text-accent-red-text' : 'text-text-subtle';
+	const color = block.stream === 'stderr' ? 'text-danger-soft-fg' : 'text-text-3';
 	return (
 		<pre className={`whitespace-pre-wrap break-words font-mono text-xs ${color}`}>
 			{block.lines.join('\n')}
@@ -107,9 +107,9 @@ function SystemView({ block }: { block: SystemBlock }) {
 
 function SessionView({ block }: { block: SessionBlock }) {
 	return (
-		<div className="flex items-center gap-1.5 text-xs text-text-subtle">
+		<div className="flex items-center gap-1.5 text-xs text-text-3">
 			<Cpu className="w-3.5 h-3.5 shrink-0" />
-			<span className="font-medium text-text-muted">{block.model}</span>
+			<span className="font-medium text-text-2">{block.model}</span>
 			{block.toolCount != null && <span>· {block.toolCount} tools</span>}
 		</div>
 	);
@@ -128,7 +128,7 @@ function TextView({
 }) {
 	if (block.stream === 'stderr') {
 		return (
-			<pre className="whitespace-pre-wrap break-words font-mono text-xs text-accent-red-text">
+			<pre className="whitespace-pre-wrap break-words font-mono text-xs text-danger-soft-fg">
 				{block.text}
 			</pre>
 		);
@@ -180,7 +180,7 @@ const THINKING_COMPONENTS: Components = {
 // subtle) is preserved with explicit list styling rather than the full `prose` plugin,
 // which would impose its own font size and colours.
 const THINKING_PROSE =
-	'text-xs italic leading-relaxed [&_ol]:list-decimal [&_ul]:list-disc [&_ol]:pl-5 [&_ul]:pl-5 [&_li]:my-0.5 [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_li]:marker:text-text-subtle';
+	'text-xs italic leading-relaxed [&_ol]:list-decimal [&_ul]:list-disc [&_ol]:pl-5 [&_ul]:pl-5 [&_li]:my-0.5 [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_li]:marker:text-text-3';
 
 function ThinkingView({
 	block,
@@ -195,7 +195,7 @@ function ThinkingView({
 		[commentRefTask],
 	);
 	return (
-		<div className="border-l-2 border-border-subtle pl-3 text-text-subtle">
+		<div className="border-l-2 border-border-subtle pl-3 text-text-3">
 			<div className="mb-0.5 flex items-center gap-1 text-[10px] uppercase tracking-wider">
 				<Sparkles className="w-3 h-3 shrink-0" />
 				Thinking
@@ -216,16 +216,16 @@ function CommandView({ block }: { block: CommandBlock }) {
 	const [open, setOpen] = useState(false);
 	const isLong = block.text.length > 100;
 	return (
-		<div className="rounded-radius-md border border-border-subtle bg-bg-muted">
+		<div className="rounded-md border border-border-subtle bg-surface-3">
 			<button
 				type="button"
 				onClick={() => isLong && setOpen((o) => !o)}
-				className={`flex w-full items-start gap-2 px-3 py-1.5 text-left font-mono text-xs text-text-muted ${
+				className={`flex w-full items-start gap-2 px-3 py-1.5 text-left font-mono text-xs text-text-2 ${
 					isLong ? 'cursor-pointer' : 'cursor-default'
 				}`}
 				aria-expanded={isLong ? open : undefined}
 			>
-				<span className="select-none text-text-subtle">$</span>
+				<span className="select-none text-text-3">$</span>
 				<span className={`min-w-0 flex-1 ${open ? 'whitespace-pre-wrap break-all' : 'truncate'}`}>
 					{block.text}
 				</span>
@@ -252,9 +252,9 @@ function toolDisplay(name: string): { label: string; Icon: ComponentType<{ class
 }
 
 const STATUS_DOT: Record<ToolBlock['status'], string> = {
-	pending: 'bg-text-subtle',
-	success: 'bg-accent-green',
-	error: 'bg-accent-red',
+	pending: 'bg-text-3',
+	success: 'bg-success',
+	error: 'bg-danger',
 };
 
 function ToolView({ block }: { block: ToolBlock }) {
@@ -266,7 +266,7 @@ function ToolView({ block }: { block: ToolBlock }) {
 				type="button"
 				onClick={() => setOpen((o) => !o)}
 				aria-expanded={open}
-				className="flex w-full items-center gap-1.5 text-left text-xs text-text-muted hover:text-text"
+				className="flex w-full items-center gap-1.5 text-left text-xs text-text-2 hover:text-text-1"
 			>
 				{open ? (
 					<ChevronDown className="w-3 h-3 shrink-0" />
@@ -274,18 +274,16 @@ function ToolView({ block }: { block: ToolBlock }) {
 					<ChevronRight className="w-3 h-3 shrink-0" />
 				)}
 				<Icon className="w-3 h-3 shrink-0" />
-				<span className="font-mono font-medium text-text">{label}</span>
+				<span className="font-mono font-medium text-text-1">{label}</span>
 				<span className={`h-1.5 w-1.5 shrink-0 rounded-full ${STATUS_DOT[block.status]}`} />
 				{block.argsPreview && (
-					<span className="min-w-0 flex-1 truncate font-mono text-text-subtle">
-						{block.argsPreview}
-					</span>
+					<span className="min-w-0 flex-1 truncate font-mono text-text-3">{block.argsPreview}</span>
 				)}
 			</button>
 			{open && (
 				<div className="mt-1.5 space-y-1.5">
 					{block.argsPreview && (
-						<pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-bg-muted p-2 text-[11px] text-text-muted">
+						<pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-surface-3 p-2 text-[11px] text-text-2">
 							{block.argsPreview}
 						</pre>
 					)}
@@ -293,14 +291,14 @@ function ToolView({ block }: { block: ToolBlock }) {
 						<pre
 							className={`overflow-x-auto whitespace-pre-wrap break-all rounded p-2 text-[11px] ${
 								block.status === 'error'
-									? 'bg-accent-red-bg text-accent-red-text'
-									: 'bg-bg-muted text-text-muted'
+									? 'bg-danger-soft text-danger-soft-fg'
+									: 'bg-surface-3 text-text-2'
 							}`}
 						>
 							{block.result}
 						</pre>
 					) : (
-						<div className="text-[11px] italic text-text-subtle">No result captured.</div>
+						<div className="text-[11px] italic text-text-3">No result captured.</div>
 					)}
 				</div>
 			)}
@@ -312,7 +310,7 @@ function ResultView({ block }: { block: ResultBlock }) {
 	return (
 		<pre
 			className={`overflow-x-auto whitespace-pre-wrap break-all rounded p-2 text-[11px] ${
-				block.isError ? 'bg-accent-red-bg text-accent-red-text' : 'bg-bg-muted text-text-muted'
+				block.isError ? 'bg-danger-soft text-danger-soft-fg' : 'bg-surface-3 text-text-2'
 			}`}
 		>
 			{block.text}
@@ -332,21 +330,19 @@ function formatDuration(ms: number): string {
 function DoneView({ block }: { block: DoneBlock }) {
 	const isError = block.status === 'error' || block.status.startsWith('error');
 	return (
-		<div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-radius-md border border-border-subtle bg-bg-subtle px-3 py-2 text-xs">
+		<div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border-subtle bg-surface-2 px-3 py-2 text-xs">
 			<Badge color={isError ? 'red' : 'green'}>{block.status}</Badge>
-			{block.turns != null && <span className="text-text-muted">{block.turns} turns</span>}
+			{block.turns != null && <span className="text-text-2">{block.turns} turns</span>}
 			{block.durationMs != null && (
-				<span className="text-text-muted">{formatDuration(block.durationMs)}</span>
+				<span className="text-text-2">{formatDuration(block.durationMs)}</span>
 			)}
 			{(block.inputTokens != null || block.outputTokens != null) && (
-				<span className="text-text-muted">
+				<span className="text-text-2">
 					{(block.inputTokens ?? 0).toLocaleString()} in /{' '}
 					{(block.outputTokens ?? 0).toLocaleString()} out
 				</span>
 			)}
-			{block.costUsd != null && (
-				<span className="text-text-muted">${block.costUsd.toFixed(2)}</span>
-			)}
+			{block.costUsd != null && <span className="text-text-2">${block.costUsd.toFixed(2)}</span>}
 		</div>
 	);
 }

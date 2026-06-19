@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Tooltip } from './ui/tooltip';
 
 /** Shared styling for every entity mention/reference link. */
-export const MENTION_CLASSES = 'font-semibold text-[1.05em] text-accent-blue-text hover:underline';
+export const MENTION_CLASSES = 'font-semibold text-[1.05em] text-info-soft-fg hover:underline';
 
 /**
  * In-app link to a specific comment in a task, scrolling straight to it via the

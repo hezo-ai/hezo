@@ -17,7 +17,7 @@ export function ThemeSwitcher() {
 			<Popover.Trigger asChild>
 				<button
 					type="button"
-					className="inline-flex items-center justify-center w-8 h-8 rounded-radius-md text-text-muted hover:text-text hover:bg-bg-muted transition-colors cursor-pointer"
+					className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-2 hover:text-text-1 hover:bg-surface-3 transition-colors cursor-pointer"
 					aria-label="Toggle theme"
 				>
 					<CurrentIcon className="w-4 h-4" />
@@ -27,17 +27,17 @@ export function ThemeSwitcher() {
 				<Popover.Content
 					align="end"
 					sideOffset={4}
-					className="z-50 min-w-[140px] rounded-radius-md border bg-bg-elevated p-1 shadow-md"
+					className="z-50 min-w-[140px] rounded-md border bg-surface p-1 shadow-md"
 				>
 					{options.map(({ value, label, icon: Icon }) => (
 						<button
 							key={value}
 							type="button"
 							onClick={() => setPreference(value)}
-							className={`flex w-full items-center gap-3 rounded-radius-md px-3 py-1.5 text-[13px] transition-colors cursor-pointer ${
+							className={`flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-[13px] transition-colors cursor-pointer ${
 								preference === value
-									? 'text-accent-blue-text'
-									: 'text-text-muted hover:text-text hover:bg-bg-muted'
+									? 'bg-surface-3 text-text-1 font-medium'
+									: 'text-text-2 hover:text-text-1 hover:bg-surface-3'
 							}`}
 						>
 							<Icon className="w-4 h-4" />

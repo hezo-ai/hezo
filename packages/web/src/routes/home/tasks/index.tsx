@@ -10,16 +10,16 @@ function row(t: GlobalTask) {
 			<Link
 				to="/projects/$projectId/tasks/$taskId"
 				params={{ projectId: t.project_slug ?? '', taskId: t.identifier.toLowerCase() }}
-				className="block border border-border rounded-radius-md p-3 hover:border-border-hover transition-colors"
+				className="block border border-border rounded-md p-3 hover:border-border-strong transition-colors"
 			>
 				<div className="flex items-center justify-between gap-3">
 					<span className="text-[14px] truncate">
-						<span className="font-mono text-text-muted mr-1.5">{t.identifier}</span>
+						<span className="font-mono text-text-2 mr-1.5">{t.identifier}</span>
 						{t.title}
 					</span>
 					<TaskStatusBadge status={t.status} />
 				</div>
-				<div className="text-[12px] text-text-muted mt-1 truncate">
+				<div className="text-[12px] text-text-2 mt-1 truncate">
 					{t.team_name} · {t.project_name ?? 'No project'} · {t.assignee_name ?? 'Unassigned'}
 				</div>
 			</Link>
@@ -45,9 +45,9 @@ function AllTasksPage() {
 				/>
 			</div>
 			{isLoading ? (
-				<div className="text-text-muted text-[13px]">Loading tasks…</div>
+				<div className="text-text-2 text-[13px]">Loading tasks…</div>
 			) : (tasks ?? []).length === 0 ? (
-				<div className="text-text-muted text-[13px]" data-testid="all-tasks-empty">
+				<div className="text-text-2 text-[13px]" data-testid="all-tasks-empty">
 					No tasks across your teams yet.
 				</div>
 			) : (

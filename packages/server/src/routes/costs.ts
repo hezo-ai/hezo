@@ -194,6 +194,15 @@ costsRoutes.get('/projects/:projectId/budget-status', async (c) => {
 
 	const projectStatus = await getProjectBudgetStatus(db, projectId);
 
+	// Month-to-date run count (one cost entry ≈ one run) powers the Budget hero's
+	// "{N} runs · ≈ $/run" line. Same UTC month boundary the windowed sums use.
+	const runsRow = await db.query<{ runs: number }>(
+		`SELECT count(*)::int AS runs FROM cost_entries
+		 WHERE project_id = $1 AND created_at >= date_trunc('month', now() AT TIME ZONE 'UTC')`,
+		[projectId],
+	);
+	const runsThisMonth = runsRow.rows[0]?.runs ?? 0;
+
 	// One grouped query for all agents (per-window spend + limits) rather than N+1.
 	const agents = await db.query<{
 		id: string;
@@ -245,5 +254,5 @@ costsRoutes.get('/projects/:projectId/budget-status', async (c) => {
 		};
 	});
 
-	return ok(c, { project: projectStatus, agents: agentStatuses });
+	return ok(c, { project: projectStatus, agents: agentStatuses, runsThisMonth });
 });

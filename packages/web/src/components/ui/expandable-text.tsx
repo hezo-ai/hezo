@@ -63,7 +63,7 @@ export function ExpandableText({ text, placeholder, className = '' }: Expandable
 					aria-expanded={expanded}
 					aria-controls={contentId}
 					aria-label={expanded ? 'Collapse' : 'Expand'}
-					className="shrink-0 mt-0.5 text-text-muted hover:text-text"
+					className="shrink-0 mt-0.5 text-text-2 hover:text-text-1"
 				>
 					<ChevronDown className={`w-4 h-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
 				</button>

@@ -27,7 +27,7 @@ export function ProjectRail() {
 	return (
 		<>
 			<nav
-				className="w-[60px] shrink-0 h-full border-r border-border bg-bg-subtle flex flex-col items-center py-3"
+				className="w-[60px] shrink-0 h-full border-r border-border bg-surface-2 flex flex-col items-center py-3"
 				data-testid="project-rail"
 				aria-label="Projects"
 			>
@@ -42,7 +42,7 @@ export function ProjectRail() {
 									aria-label={p.name}
 									data-testid={`project-rail-avatar-${p.slug}`}
 									className={`rounded-full transition-shadow ${
-										isActive ? 'ring-2 ring-primary ring-offset-1 ring-offset-bg-subtle' : ''
+										isActive ? 'ring-2 ring-inverse ring-offset-1 ring-offset-surface-2' : ''
 									}`}
 								>
 									<Avatar initials={getInitials(p.name)} color={avatarColorFromString(p.name)} />
@@ -59,7 +59,7 @@ export function ProjectRail() {
 								onClick={() => setCreateOpen(true)}
 								aria-label="New project"
 								data-testid="project-rail-new"
-								className="w-9 h-9 rounded-radius-md flex items-center justify-center text-text-muted hover:text-text hover:bg-bg-elevated border border-dashed border-border transition-colors"
+								className="w-9 h-9 rounded-md flex items-center justify-center text-text-2 hover:text-text-1 hover:bg-surface border border-dashed border-border transition-colors"
 							>
 								<Plus className="w-4 h-4" />
 							</button>
@@ -74,8 +74,8 @@ export function ProjectRail() {
 								params={{ projectId: hq.slug }}
 								aria-label={hq.name}
 								data-testid="project-rail-hq"
-								className={`w-9 h-9 rounded-full flex items-center justify-center text-text-muted hover:text-text hover:bg-bg-elevated border border-border bg-bg transition-colors ${
-									hqActive ? 'ring-2 ring-primary ring-offset-1 ring-offset-bg-subtle' : ''
+								className={`w-9 h-9 rounded-full flex items-center justify-center text-text-2 hover:text-text-1 hover:bg-surface border border-border bg-surface transition-colors ${
+									hqActive ? 'ring-2 ring-inverse ring-offset-1 ring-offset-surface-2' : ''
 								}`}
 							>
 								<Building2 className="w-4 h-4" />

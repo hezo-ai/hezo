@@ -46,7 +46,7 @@ export function CeoChatWidget() {
 					onClick={() => setOpen(true)}
 					data-testid="ceo-chat-launcher"
 					aria-label="Chat with the CEO"
-					className="fixed bottom-4 right-4 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-white shadow-lg hover:opacity-90"
+					className="fixed bottom-4 right-4 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-inverse text-inverse-fg shadow-lg hover:opacity-90"
 				>
 					<MessageSquare className="h-5 w-5" />
 				</button>
@@ -57,19 +57,19 @@ export function CeoChatWidget() {
 	return (
 		<div
 			data-testid="ceo-chat-panel"
-			className="fixed z-50 flex flex-col border border-border bg-bg shadow-xl inset-x-2 bottom-2 top-16 rounded-radius-md md:inset-auto md:bottom-4 md:right-4 md:top-auto md:h-[560px] md:w-[380px]"
+			className="fixed z-50 flex flex-col border border-border bg-surface shadow-xl inset-x-2 bottom-2 top-16 rounded-md md:inset-auto md:bottom-4 md:right-4 md:top-auto md:h-[560px] md:w-[380px]"
 		>
 			<header className="flex items-center justify-between border-b border-border px-3 py-2.5">
 				<div className="flex flex-col">
-					<span className="text-sm font-semibold text-text">🧑‍💼 CEO</span>
-					<span className="text-[11px] text-text-muted">Ask about any project</span>
+					<span className="text-sm font-semibold text-text-1">🧑‍💼 CEO</span>
+					<span className="text-[11px] text-text-2">Ask about any project</span>
 				</div>
 				<button
 					type="button"
 					onClick={() => setOpen(false)}
 					aria-label="Close chat"
 					data-testid="ceo-chat-close"
-					className="flex h-9 w-9 items-center justify-center rounded-radius-md text-text-muted hover:text-text hover:bg-bg-subtle"
+					className="flex h-9 w-9 items-center justify-center rounded-md text-text-2 hover:text-text-1 hover:bg-surface-2"
 				>
 					<X className="h-4 w-4" />
 				</button>
@@ -81,13 +81,13 @@ export function CeoChatWidget() {
 				className="flex flex-1 flex-col gap-3 overflow-y-auto px-3 py-3 scroll-smooth"
 			>
 				{!loaded && (
-					<div className="flex items-center justify-center py-6 text-[13px] text-text-muted">
+					<div className="flex items-center justify-center py-6 text-[13px] text-text-2">
 						<Loader2 className="mr-2 h-4 w-4 animate-spin" />
 						Loading…
 					</div>
 				)}
 				{loaded && messages.length === 0 && (
-					<p className="px-1 py-6 text-center text-[13px] text-text-muted">
+					<p className="px-1 py-6 text-center text-[13px] text-text-2">
 						Say hello to the CEO. Ask about anything, including active projects, notifications, task
 						blockers, etc
 					</p>
@@ -111,7 +111,7 @@ export function CeoChatWidget() {
 						rows={1}
 						placeholder="Message the CEO…"
 						data-testid="ceo-chat-input"
-						className="max-h-32 min-h-[2.25rem] flex-1 resize-none rounded-radius-md border border-border bg-bg-subtle px-3 py-2 text-[13px] text-text outline-none focus:border-primary"
+						className="max-h-32 min-h-[2.25rem] flex-1 resize-none rounded-md border border-border bg-surface-2 px-3 py-2 text-[13px] text-text-1 outline-none focus:border-inverse"
 					/>
 					<button
 						type="button"
@@ -119,7 +119,7 @@ export function CeoChatWidget() {
 						disabled={!draft.trim()}
 						aria-label="Send message"
 						data-testid="ceo-chat-send"
-						className="flex h-9 w-9 shrink-0 items-center justify-center rounded-radius-md bg-primary text-white disabled:opacity-40 hover:opacity-90"
+						className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-inverse text-inverse-fg disabled:opacity-40 hover:opacity-90"
 					>
 						<Send className="h-4 w-4" />
 					</button>
@@ -147,7 +147,7 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 				data-testid="ceo-chat-message"
 				data-role="ceo"
 			>
-				<div className="rounded-radius-md rounded-bl-sm border border-border bg-bg-subtle px-3 py-2 text-text">
+				<div className="rounded-md rounded-bl-sm border border-border bg-surface-2 px-3 py-2 text-text-1">
 					{/* The CEO's replies are LLM-authored markdown. The global chat has
 					    no single project scope, so mentions resolve instance-wide:
 					    references that are unique across all projects (TO-1, prd.md,
@@ -160,14 +160,12 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 					) : failed ? (
 						<span className="text-[13px] leading-relaxed">Something went wrong.</span>
 					) : null}
-					{interrupted && (
-						<div className="mt-1 text-[11px] italic text-text-subtle">(interrupted)</div>
-					)}
+					{interrupted && <div className="mt-1 text-[11px] italic text-text-3">(interrupted)</div>}
 					{/* Reply has begun but the CEO is still working → dots pinned to
 					    the bottom of the same bubble. */}
 					{streaming && <StreamingDots />}
 				</div>
-				<span className="text-[10px] text-text-subtle">{formatTime(message.created_at)}</span>
+				<span className="text-[10px] text-text-3">{formatTime(message.created_at)}</span>
 			</div>
 		);
 	}
@@ -178,10 +176,10 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 			data-testid="ceo-chat-message"
 			data-role="user"
 		>
-			<div className="rounded-radius-md rounded-br-sm border border-accent-blue-text/20 bg-accent-blue-bg px-3 py-2 text-sm leading-relaxed text-text whitespace-pre-wrap">
+			<div className="rounded-md rounded-br-sm border border-info-soft-fg/20 bg-info-soft px-3 py-2 text-sm leading-relaxed text-text-1 whitespace-pre-wrap">
 				{message.content}
 			</div>
-			<span className="text-[10px] text-text-subtle">{formatTime(message.created_at)}</span>
+			<span className="text-[10px] text-text-3">{formatTime(message.created_at)}</span>
 		</div>
 	);
 }
@@ -196,14 +194,14 @@ function TypingIndicator() {
 		>
 			<span
 				aria-hidden
-				className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-bg-subtle text-base leading-none"
+				className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-2 text-base leading-none"
 			>
 				🧑‍💼
 			</span>
-			<div className="flex items-center gap-1.5 rounded-radius-md rounded-bl-sm border border-border bg-bg-subtle px-3 py-3">
-				<span className="h-2.5 w-2.5 rounded-full bg-text-subtle animate-pulse" />
-				<span className="h-2.5 w-2.5 rounded-full bg-text-subtle animate-pulse [animation-delay:150ms]" />
-				<span className="h-2.5 w-2.5 rounded-full bg-text-subtle animate-pulse [animation-delay:300ms]" />
+			<div className="flex items-center gap-1.5 rounded-md rounded-bl-sm border border-border bg-surface-2 px-3 py-3">
+				<span className="h-2.5 w-2.5 rounded-full bg-text-3 animate-pulse" />
+				<span className="h-2.5 w-2.5 rounded-full bg-text-3 animate-pulse [animation-delay:150ms]" />
+				<span className="h-2.5 w-2.5 rounded-full bg-text-3 animate-pulse [animation-delay:300ms]" />
 			</div>
 		</div>
 	);
@@ -222,9 +220,9 @@ function StreamingDots() {
 			role="status"
 			aria-label="CEO is still typing"
 		>
-			<span className="h-1.5 w-1.5 rounded-full bg-text-subtle animate-pulse" />
-			<span className="h-1.5 w-1.5 rounded-full bg-text-subtle animate-pulse [animation-delay:150ms]" />
-			<span className="h-1.5 w-1.5 rounded-full bg-text-subtle animate-pulse [animation-delay:300ms]" />
+			<span className="h-1.5 w-1.5 rounded-full bg-text-3 animate-pulse" />
+			<span className="h-1.5 w-1.5 rounded-full bg-text-3 animate-pulse [animation-delay:150ms]" />
+			<span className="h-1.5 w-1.5 rounded-full bg-text-3 animate-pulse [animation-delay:300ms]" />
 		</span>
 	);
 }

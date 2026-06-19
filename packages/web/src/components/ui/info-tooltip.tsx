@@ -23,7 +23,7 @@ export function InfoTooltip({
 				type="button"
 				aria-label={label}
 				data-testid={testId}
-				className={`shrink-0 text-text-subtle hover:text-text transition-colors ${className ?? ''}`}
+				className={`shrink-0 text-text-3 hover:text-text-1 transition-colors ${className ?? ''}`}
 			>
 				<Info className="w-3.5 h-3.5" />
 			</button>

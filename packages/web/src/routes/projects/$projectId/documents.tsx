@@ -142,9 +142,9 @@ function ProjectDocumentsPage() {
 				showChatMemoryBanner ? (
 					<div
 						data-testid="chat-memory-banner"
-						className="flex items-start gap-2 mb-4 rounded-radius-md border border-border bg-bg-subtle px-3 py-2.5 text-[13px] text-text-muted"
+						className="flex items-start gap-2 mb-4 rounded-md border border-border bg-surface-2 px-3 py-2.5 text-[13px] text-text-2"
 					>
-						<Info className="w-4 h-4 mt-0.5 shrink-0 text-text-subtle" aria-hidden="true" />
+						<Info className="w-4 h-4 mt-0.5 shrink-0 text-text-3" aria-hidden="true" />
 						<span>
 							This is the chatbox's persistent memory. Its full contents are injected into every
 							chat turn, so anything here is always in the assistant's context. The assistant keeps
@@ -226,7 +226,7 @@ function NewProjectDocForm({
 				onChange={(e) => setContent(e.target.value)}
 				className="min-h-[300px] font-mono text-xs"
 			/>
-			{error && <p className="text-sm text-accent-red">{error}</p>}
+			{error && <p className="text-sm text-danger">{error}</p>}
 			<div className="flex justify-end gap-2">
 				<Button type="button" variant="ghost" onClick={onCancel}>
 					Cancel

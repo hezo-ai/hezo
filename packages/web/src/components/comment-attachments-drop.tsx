@@ -165,7 +165,7 @@ export function CommentAttachmentsDrop({ projectId, taskId, value, onChange, chi
 		>
 			{!hasAnyChip && (
 				<div
-					className="mb-2 flex items-center gap-1.5 text-xs text-text-subtle"
+					className="mb-2 flex items-center gap-1.5 text-xs text-text-3"
 					data-testid="comment-attachment-hint"
 				>
 					<span>Drag and drop files to attach</span>
@@ -186,7 +186,7 @@ export function CommentAttachmentsDrop({ projectId, taskId, value, onChange, chi
 								<div>
 									<strong>Video:</strong> MP4, WEBM, MOV
 								</div>
-								<div className="pt-1 text-text-subtle">Max 10&nbsp;MB per file</div>
+								<div className="pt-1 text-text-3">Max 10&nbsp;MB per file</div>
 							</div>
 						}
 					/>
@@ -197,7 +197,7 @@ export function CommentAttachmentsDrop({ projectId, taskId, value, onChange, chi
 					{visibleAttachments.map((a) => (
 						<span
 							key={a.id}
-							className="flex items-center gap-1.5 rounded-radius-sm border border-border bg-bg-muted px-2 py-1 text-[12px] text-text"
+							className="flex items-center gap-1.5 rounded-sm border border-border bg-surface-3 px-2 py-1 text-[12px] text-text-1"
 							data-testid="comment-attachment-chip"
 						>
 							{iconFor(a.content_type)}
@@ -206,7 +206,7 @@ export function CommentAttachmentsDrop({ projectId, taskId, value, onChange, chi
 									href={a.url}
 									target="_blank"
 									rel="noopener noreferrer"
-									className="flex items-center gap-1 text-text hover:underline"
+									className="flex items-center gap-1 text-text-1 hover:underline"
 									data-testid="comment-attachment-preview"
 								>
 									<span className="max-w-[140px] truncate">{a.original_filename}</span>
@@ -216,7 +216,7 @@ export function CommentAttachmentsDrop({ projectId, taskId, value, onChange, chi
 							<button
 								type="button"
 								aria-label="Remove attachment"
-								className="text-text-subtle hover:text-text"
+								className="text-text-3 hover:text-text-1"
 								onClick={() => removeAttachment(a.id)}
 							>
 								<X className="h-3 w-3" />
@@ -226,7 +226,7 @@ export function CommentAttachmentsDrop({ projectId, taskId, value, onChange, chi
 					{uploading.map((u) => (
 						<span
 							key={u.tempId}
-							className="flex items-center gap-1.5 rounded-radius-sm border border-dashed border-border bg-bg-muted/50 px-2 py-1 text-[12px] text-text-subtle"
+							className="flex items-center gap-1.5 rounded-sm border border-dashed border-border bg-surface-3/50 px-2 py-1 text-[12px] text-text-3"
 						>
 							<Loader2 className="h-3 w-3 animate-spin" />
 							<span className="max-w-[140px] truncate">{u.filename}</span>
@@ -235,7 +235,7 @@ export function CommentAttachmentsDrop({ projectId, taskId, value, onChange, chi
 					{errors.map((e) => (
 						<span
 							key={e.id}
-							className="flex items-center gap-1.5 rounded-radius-sm border border-danger/40 bg-danger/10 px-2 py-1 text-[12px] text-danger"
+							className="flex items-center gap-1.5 rounded-sm border border-danger/40 bg-danger/10 px-2 py-1 text-[12px] text-danger"
 							data-testid="comment-attachment-error"
 						>
 							<span className="max-w-[200px] truncate">
@@ -248,11 +248,11 @@ export function CommentAttachmentsDrop({ projectId, taskId, value, onChange, chi
 			{children}
 			{isDragActive && (
 				<div
-					className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-radius-md border border-dashed border-border-hover bg-bg-elevated/95"
+					className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border-strong bg-surface/95"
 					data-testid="comment-attachment-drop-overlay"
 				>
-					<Upload className="h-5 w-5 text-text-subtle" />
-					<p className="text-[13px] text-text-subtle">Drop to attach</p>
+					<Upload className="h-5 w-5 text-text-3" />
+					<p className="text-[13px] text-text-3">Drop to attach</p>
 				</div>
 			)}
 		</div>

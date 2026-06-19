@@ -72,7 +72,7 @@ function TaskDetailPage() {
 	const { atBottom, scrollToBottom } = useScrollToBottom(scrollParent);
 
 	if (isLoading || !task)
-		return <div className="text-text-muted text-[13px] py-8 text-center">Loading...</div>;
+		return <div className="text-text-2 text-[13px] py-8 text-center">Loading...</div>;
 
 	function startReply(c: Comment) {
 		setReplyTarget(c);
@@ -114,8 +114,8 @@ function TaskDetailPage() {
 
 					<div className="border-t border-border pt-4">
 						<div className="flex items-center gap-1.5 mb-4">
-							<h3 className="text-[13px] text-text font-medium">Comments</h3>
-							<span className="bg-bg-subtle px-[7px] py-px rounded-full text-[11px] text-text-muted">
+							<h3 className="text-[13px] text-text-1 font-medium">Comments</h3>
+							<span className="bg-surface-2 px-[7px] py-px rounded-full text-[11px] text-text-2">
 								{comments?.length ?? 0}
 							</span>
 						</div>
@@ -172,7 +172,7 @@ function TaskDetailPage() {
 					data-testid="task-scroll-to-bottom"
 					aria-label="Scroll to bottom"
 					tabIndex={atBottom ? -1 : 0}
-					className={`w-9 h-9 rounded-full border border-border bg-bg-elevated text-text-muted hover:text-text shadow-md flex items-center justify-center ${atBottom ? 'invisible' : 'pointer-events-auto'}`}
+					className={`w-9 h-9 rounded-full border border-border bg-surface text-text-2 hover:text-text-1 shadow-md flex items-center justify-center ${atBottom ? 'invisible' : 'pointer-events-auto'}`}
 				>
 					<ArrowDown className="w-4 h-4" />
 				</button>

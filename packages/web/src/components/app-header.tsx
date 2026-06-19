@@ -1,11 +1,12 @@
 import { Link } from '@tanstack/react-router';
-import { BookOpen, FolderKanban, House, Inbox, Menu, Settings } from 'lucide-react';
+import { BookOpen, FolderKanban, Inbox, Menu, Settings } from 'lucide-react';
 import { useGlobalInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useMe } from '../hooks/use-me';
+import { Logo } from './ui/logo';
 import { ThemeSwitcher } from './ui/theme-switcher';
 
 const iconLinkClass =
-	'w-8 h-8 rounded-radius-md flex items-center justify-center text-text-muted hover:text-text hover:bg-bg-subtle transition-colors';
+	'w-8 h-8 rounded-md flex items-center justify-center text-text-2 hover:text-text-1 hover:bg-surface-2 transition-colors';
 
 /**
  * The global top header: instance-wide navigation. Only Home sits at the
@@ -20,7 +21,7 @@ export function AppHeader({ onOpenDrawer }: { onOpenDrawer: () => void }) {
 
 	return (
 		<header
-			className="h-10 shrink-0 border-b border-border bg-bg-muted flex items-center justify-between px-1.5 gap-1"
+			className="h-12 shrink-0 border-b border-border bg-surface flex items-center justify-between px-2 gap-1"
 			data-testid="app-header"
 		>
 			<div className="flex items-center gap-0.5">
@@ -38,9 +39,9 @@ export function AppHeader({ onOpenDrawer }: { onOpenDrawer: () => void }) {
 					aria-label="Home"
 					title="Home"
 					data-testid="app-header-home"
-					className={iconLinkClass}
+					className="flex items-center justify-center w-8 h-8"
 				>
-					<House className="w-4 h-4" />
+					<Logo size="sm" />
 				</Link>
 			</div>
 
@@ -57,7 +58,7 @@ export function AppHeader({ onOpenDrawer }: { onOpenDrawer: () => void }) {
 						{inboxUnread > 0 && (
 							<span
 								data-testid="app-header-inbox-badge"
-								className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] px-1 rounded-full bg-accent-red text-white text-[9px] leading-none font-medium flex items-center justify-center"
+								className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] px-1 rounded-full bg-pink text-pink-fg text-[9px] leading-none font-medium flex items-center justify-center"
 							>
 								{inboxUnread > 99 ? '99+' : inboxUnread}
 							</span>

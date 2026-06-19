@@ -227,5 +227,7 @@ describe('budget-status API', () => {
 		expect(engineer.daily.spentCents).toBe(150);
 		expect(engineer.daily.limitCents).toBe(100);
 		expect(engineer.agent_over_budget).toBe(true);
+		// One cost entry was recorded this month for the project → one "run".
+		expect(data.runsThisMonth).toBe(1);
 	});
 });

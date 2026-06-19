@@ -94,11 +94,11 @@ export function ProjectIntakeHomePanel({ intake }: ProjectIntakeHomePanelProps) 
 		<Card className="overflow-hidden" data-testid="home-project-intake">
 			<div className="flex flex-col gap-3 p-4 md:p-5">
 				<div className="flex items-center justify-between gap-2 border-b border-border pb-3">
-					<span className="text-[13px] font-medium text-text">{intake.ceo_title}</span>
+					<span className="text-[13px] font-medium text-text-1">{intake.ceo_title}</span>
 					<Link
 						to="/projects/$projectId/tasks/$taskId"
 						params={{ projectId, taskId }}
-						className="text-xs text-accent-blue hover:underline shrink-0"
+						className="text-xs text-info hover:underline shrink-0"
 					>
 						Open full thread
 					</Link>
@@ -149,7 +149,7 @@ export function ProjectIntakeHomePanel({ intake }: ProjectIntakeHomePanelProps) 
 						</Button>
 					</div>
 					{showSkip && skipQuestions.error && (
-						<p className="text-[12px] text-accent-red">
+						<p className="text-[12px] text-danger">
 							{(skipQuestions.error as { message?: string }).message ||
 								'Could not signal the CEO — try again.'}
 						</p>

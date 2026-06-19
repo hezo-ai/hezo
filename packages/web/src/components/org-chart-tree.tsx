@@ -51,8 +51,8 @@ function AgentRoleTooltipContent({ node }: { node: OrgNode }) {
 	const description = node.role_description?.trim();
 	return (
 		<div className="space-y-1.5">
-			<p className="text-[12px] font-semibold text-text leading-tight">{node.title}</p>
-			<p className="text-[11px] leading-relaxed text-text-muted">
+			<p className="text-[12px] font-semibold text-text-1 leading-tight">{node.title}</p>
+			<p className="text-[11px] leading-relaxed text-text-2">
 				{description || 'No role description yet.'}
 			</p>
 		</div>
@@ -84,7 +84,7 @@ export function OrgChartTree({ roots, projectId, mode, hint, testId }: OrgChartT
 				<Link
 					to="/projects/$projectId/agents/$agentId"
 					params={{ projectId, agentId: node.slug }}
-					className="relative inline-flex items-center gap-2 rounded-radius-md border border-border bg-bg px-3.5 py-2 text-[13px] font-medium transition-[border-color] duration-150 hover:border-border-hover"
+					className="relative inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3.5 py-2 text-[13px] font-medium transition-[border-color] duration-150 hover:border-border-strong"
 				>
 					{label}
 				</Link>
@@ -97,7 +97,7 @@ export function OrgChartTree({ roots, projectId, mode, hint, testId }: OrgChartT
 				>
 					<button
 						type="button"
-						className="inline-flex items-center gap-2 rounded-radius-md border border-border bg-bg px-3.5 py-2 text-[13px] font-medium transition-[border-color,background-color] duration-150 hover:border-border-hover hover:bg-surface-elevated cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+						className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3.5 py-2 text-[13px] font-medium transition-[border-color,background-color] duration-150 hover:border-border-strong hover:bg-surface-elevated cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inverse/40"
 						data-testid={`onboarding-org-node-${node.slug}`}
 						aria-label={`${node.title} — tap or hover for role description`}
 					>
@@ -136,7 +136,7 @@ export function OrgChartTree({ roots, projectId, mode, hint, testId }: OrgChartT
 					className="flex flex-col items-center"
 					style={{ transform: `scale(${scale})`, transformOrigin: 'top center' }}
 				>
-					<div className="inline-flex items-center gap-2 rounded-radius-md border-2 border-primary bg-accent-blue-bg px-4 py-2 text-[13px] font-medium text-accent-blue-text mb-2">
+					<div className="inline-flex items-center gap-2 rounded-md border-2 border-inverse bg-info-soft px-4 py-2 text-[13px] font-medium text-info-soft-fg mb-2">
 						You (Admin)
 					</div>
 					<div className="w-px h-4 bg-border" />
@@ -150,7 +150,7 @@ export function OrgChartTree({ roots, projectId, mode, hint, testId }: OrgChartT
 					</div>
 				</div>
 			</div>
-			{hint && <p className="text-[11px] text-text-subtle mt-3">{hint}</p>}
+			{hint && <p className="text-[11px] text-text-3 mt-3">{hint}</p>}
 		</div>
 	);
 }

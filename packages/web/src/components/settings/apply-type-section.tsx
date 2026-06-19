@@ -33,19 +33,19 @@ export function ApplyTypeSection({ projectId }: { projectId: string }) {
 	return (
 		<section data-testid="apply-type-section">
 			<h2 className="text-[15px] font-medium mb-1">Refresh from a type</h2>
-			<p className="text-[13px] text-text-muted mb-3">
+			<p className="text-[13px] text-text-2 mb-3">
 				Merge a team type into this team — adds any missing roles and refreshes built-in prompts.
 				Never removes agents or customizations you've added. To copy another team's setup, save it
 				as a type first, then apply it here.
 			</p>
 			<div className="flex flex-wrap items-end gap-2 max-w-md">
-				<label className="flex flex-col gap-1 text-[12px] font-medium text-text">
+				<label className="flex flex-col gap-1 text-[12px] font-medium text-text-1">
 					Team type
 					<select
 						value={templateId}
 						onChange={(e) => setTemplateId(e.target.value)}
 						data-testid="apply-type-select"
-						className="border border-border rounded-radius-md px-3 py-2 text-[13px] bg-bg text-text min-w-[200px]"
+						className="border border-border rounded-md px-3 py-2 text-[13px] bg-surface text-text-1 min-w-[200px]"
 					>
 						<option value="">Choose a type…</option>
 						{(templates ?? []).map((t) => (
@@ -65,12 +65,12 @@ export function ApplyTypeSection({ projectId }: { projectId: string }) {
 				</Button>
 			</div>
 			{apply.error && (
-				<p className="text-[13px] text-accent-red mt-2">
+				<p className="text-[13px] text-danger mt-2">
 					{(apply.error as { message?: string }).message || 'Failed to apply type'}
 				</p>
 			)}
 			{result && (
-				<p className="text-[13px] text-text-muted mt-2" data-testid="apply-type-result">
+				<p className="text-[13px] text-text-2 mt-2" data-testid="apply-type-result">
 					{result}
 				</p>
 			)}

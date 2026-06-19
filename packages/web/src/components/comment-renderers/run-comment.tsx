@@ -31,7 +31,7 @@ export function RunComment({ comment, projectId, inline }: Props) {
 	const actorName = comment.content?.actor_name ?? null;
 
 	if (!projectId || !runId || !agentId) {
-		return <p className="text-xs text-text-subtle italic">Run reference missing.</p>;
+		return <p className="text-xs text-text-3 italic">Run reference missing.</p>;
 	}
 
 	return (
@@ -115,13 +115,13 @@ function RunCommentBody({
 				to="/projects/$projectId/agents/$agentId"
 				params={agentLinkParams}
 				onClick={(e) => e.stopPropagation()}
-				className="text-xs text-text-muted shrink-0 whitespace-nowrap hover:text-text hover:underline"
+				className="text-xs text-text-2 shrink-0 whitespace-nowrap hover:text-text-1 hover:underline"
 			>
 				{agentTitle} run
 			</Link>
 			{actorName && (
 				<span
-					className="inline-flex items-center text-xs text-text-subtle shrink-0 whitespace-nowrap"
+					className="inline-flex items-center text-xs text-text-3 shrink-0 whitespace-nowrap"
 					data-testid="run-comment-actor"
 				>
 					<span aria-hidden="true">·</span>
@@ -130,7 +130,7 @@ function RunCommentBody({
 			)}
 			{completed && (
 				<span
-					className="inline-flex items-center gap-1.5 text-xs text-text-subtle shrink-0 whitespace-nowrap"
+					className="inline-flex items-center gap-1.5 text-xs text-text-3 shrink-0 whitespace-nowrap"
 					data-testid="run-comment-summary"
 				>
 					<span
@@ -174,12 +174,12 @@ function RunCommentBody({
 						aria-expanded={expanded}
 						aria-controls={logRegionId}
 						data-testid="run-comment-header"
-						className="flex items-center gap-2 min-h-[26px] min-w-0 text-left -mx-1 px-1 rounded-radius-md hover:bg-bg-muted cursor-pointer"
+						className="flex items-center gap-2 min-h-[26px] min-w-0 text-left -mx-1 px-1 rounded-md hover:bg-surface-3 cursor-pointer"
 					>
 						{summaryRow}
 						<svg
 							aria-hidden="true"
-							className={`w-3 h-3 shrink-0 text-text-subtle transition-transform ${expanded ? 'rotate-90' : ''}`}
+							className={`w-3 h-3 shrink-0 text-text-3 transition-transform ${expanded ? 'rotate-90' : ''}`}
 							viewBox="0 0 16 16"
 							fill="currentColor"
 						>
@@ -236,7 +236,7 @@ function RunCommentBody({
 									to="/projects/$projectId/agents/$agentId/executions/$runId"
 									params={{ ...agentLinkParams, runId }}
 									aria-label="View full run"
-									className="inline-flex items-center justify-center h-6 px-2 text-xs text-text-muted hover:text-text hover:bg-bg-muted rounded-radius-md transition-colors"
+									className="inline-flex items-center justify-center h-6 px-2 text-xs text-text-2 hover:text-text-1 hover:bg-surface-3 rounded-md transition-colors"
 								>
 									<DoorOpen className="w-3 h-3" />
 								</Link>
@@ -255,7 +255,7 @@ function RunCommentBody({
 								projectId: task.project_slug,
 								taskId: task.identifier.toLowerCase(),
 							}}
-							className="text-xs text-accent-blue-text hover:underline self-start"
+							className="text-xs text-info-soft-fg hover:underline self-start"
 						>
 							Created ticket {task.identifier} — {task.title}
 						</Link>
@@ -270,7 +270,7 @@ function RunCommentBody({
 							to="/projects/$projectId/documents"
 							params={{ projectId: doc.project_slug }}
 							search={{ file: doc.filename }}
-							className="text-xs text-accent-blue-text hover:underline self-start"
+							className="text-xs text-info-soft-fg hover:underline self-start"
 						>
 							Updated {doc.filename}
 						</Link>
@@ -281,14 +281,11 @@ function RunCommentBody({
 				<div className="flex flex-col gap-1 pt-1" data-testid="run-comment-created-skills">
 					{createdSkills.map((skill) => (
 						<span key={skill.slug} className="text-xs self-start">
-							<Link to="/settings/skills" className="text-accent-blue-text hover:underline">
+							<Link to="/settings/skills" className="text-info-soft-fg hover:underline">
 								{skill.created ? 'Added' : 'Updated'} skill {skill.name}
 							</Link>
 							{skill.source_url && (
-								<span className="text-text-subtle">
-									{' '}
-									· from {skillSourceLabel(skill.source_url)}
-								</span>
+								<span className="text-text-3"> · from {skillSourceLabel(skill.source_url)}</span>
 							)}
 						</span>
 					))}
@@ -301,7 +298,7 @@ function RunCommentBody({
 							key={skill.slug}
 							to="/projects/$projectId/inbox"
 							params={{ projectId }}
-							className="text-xs text-accent-blue-text hover:underline self-start"
+							className="text-xs text-info-soft-fg hover:underline self-start"
 						>
 							Proposed skill {skill.name}
 						</Link>

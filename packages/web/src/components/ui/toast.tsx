@@ -15,19 +15,19 @@ export function Toaster() {
 					onOpenChange={(open) => {
 						if (!open) toast.dismiss(t.id);
 					}}
-					className="border border-accent-red bg-bg-elevated text-text rounded-radius-md shadow-md px-3 py-2.5 flex items-start gap-3 data-[state=open]:animate-in data-[state=open]:slide-in-from-right-2 data-[state=closed]:animate-out data-[state=closed]:fade-out"
+					className="border border-danger bg-surface text-text-1 rounded-md shadow-md px-3 py-2.5 flex items-start gap-3 data-[state=open]:animate-in data-[state=open]:slide-in-from-right-2 data-[state=closed]:animate-out data-[state=closed]:fade-out"
 				>
 					<div className="flex-1 min-w-0">
-						<RadixToast.Title className="text-[13px] font-medium text-accent-red mb-0.5">
+						<RadixToast.Title className="text-[13px] font-medium text-danger mb-0.5">
 							Something went wrong
 						</RadixToast.Title>
-						<RadixToast.Description className="text-[13px] text-text-muted break-words">
+						<RadixToast.Description className="text-[13px] text-text-2 break-words">
 							{t.message}
 						</RadixToast.Description>
 					</div>
 					<RadixToast.Close
 						aria-label="Dismiss"
-						className="text-text-subtle hover:text-text shrink-0 mt-0.5"
+						className="text-text-3 hover:text-text-1 shrink-0 mt-0.5"
 					>
 						<X className="w-3.5 h-3.5" />
 					</RadixToast.Close>

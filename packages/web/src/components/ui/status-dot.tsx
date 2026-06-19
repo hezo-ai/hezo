@@ -1,8 +1,17 @@
+// Wire's `.hz-dot`: color = state. Running agents read as cyan "live"; paused as
+// amber; idle/disabled stay neutral. `pulse` adds a soft glow ring.
 const statusMap = {
-	active: 'bg-accent-green',
-	idle: 'bg-text',
-	paused: 'bg-accent-red',
-	disabled: 'bg-text-subtle',
+	active: 'bg-live',
+	idle: 'bg-text-3',
+	paused: 'bg-warning',
+	disabled: 'bg-border-strong',
+} as const;
+
+const glowMap = {
+	active: 'ring-live/40',
+	idle: 'ring-text-3/30',
+	paused: 'ring-warning/40',
+	disabled: 'ring-border-strong/30',
 } as const;
 
 interface StatusDotProps {
@@ -14,7 +23,9 @@ interface StatusDotProps {
 export function StatusDot({ status, pulse, className = '' }: StatusDotProps) {
 	return (
 		<span
-			className={`inline-block w-[5px] h-[5px] rounded-full shrink-0 ${statusMap[status]} ${pulse ? 'animate-pulse' : ''} ${className}`}
+			className={`inline-block h-[7px] w-[7px] shrink-0 rounded-full ${statusMap[status]} ${
+				pulse ? `animate-pulse ring-[3px] ${glowMap[status]}` : ''
+			} ${className}`}
 		/>
 	);
 }

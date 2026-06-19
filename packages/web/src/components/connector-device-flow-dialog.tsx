@@ -133,19 +133,19 @@ export function ConnectorDeviceFlowDialog({
 						<Plug className="size-4" />
 						Connect {providerLabel}
 					</Dialog.Title>
-					<Dialog.Description className="text-sm text-text-muted mb-4">
+					<Dialog.Description className="text-sm text-text-2 mb-4">
 						Authorize Hezo on {providerLabel} by entering the code below on the page that just
 						opened.
 					</Dialog.Description>
 
 					{errorMessage && (
-						<div className="rounded-radius-md border border-accent-red/40 bg-accent-red/10 px-3 py-2 text-sm text-accent-red mb-4">
+						<div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger mb-4">
 							{errorMessage}
 						</div>
 					)}
 
 					{!deviceFlow && !errorMessage && (
-						<div className="flex items-center gap-2 text-sm text-text-muted">
+						<div className="flex items-center gap-2 text-sm text-text-2">
 							<Loader2 className="size-4 animate-spin" />
 							{statusMessage || 'Starting…'}
 						</div>
@@ -193,7 +193,7 @@ export function ConnectorDeviceFlowDialog({
 									)}
 								</Button>
 							</div>
-							<p className="text-xs text-text-subtle">{statusMessage}</p>
+							<p className="text-xs text-text-3">{statusMessage}</p>
 						</div>
 					)}
 

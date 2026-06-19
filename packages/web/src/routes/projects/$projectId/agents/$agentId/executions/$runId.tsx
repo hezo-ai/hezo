@@ -74,17 +74,17 @@ function ExecutionDetailPage() {
 	const elapsed = useElapsedDuration(run?.started_at ?? '', run?.finished_at ?? null);
 	const elapsedDisplay = run?.started_at ? elapsed : '—';
 
-	if (isLoading) return <div className="text-text-muted text-sm">Loading...</div>;
-	if (!run) return <div className="text-text-muted text-sm">Run not found.</div>;
+	if (isLoading) return <div className="text-text-2 text-sm">Loading...</div>;
+	if (!run) return <div className="text-text-2 text-sm">Run not found.</div>;
 
 	const projectLabel = run.project_name ?? run.project_slug;
 	const taskLineInner = (
 		<>
 			<span>Task:</span>
-			<span className="font-mono text-text">{run.task_identifier}</span>
+			<span className="font-mono text-text-1">{run.task_identifier}</span>
 			{run.task_title && <span>{run.task_title}</span>}
 			{isInstanceAgent && projectLabel && (
-				<span data-testid="run-task-project" className="text-text-subtle">
+				<span data-testid="run-task-project" className="text-text-3">
 					· {projectLabel}
 				</span>
 			)}
@@ -96,7 +96,7 @@ function ExecutionDetailPage() {
 			<Link
 				to="/projects/$projectId/agents/$agentId/executions"
 				params={{ projectId, agentId }}
-				className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-text mb-4"
+				className="inline-flex items-center gap-1 text-xs text-text-2 hover:text-text-1 mb-4"
 			>
 				<ArrowLeft className="w-3 h-3" /> Executions
 			</Link>
@@ -110,17 +110,17 @@ function ExecutionDetailPage() {
 				const trigger = formatTriggerReason(run, projectId);
 				return (
 					<div className="mb-4 text-xs" data-testid="run-trigger-reason">
-						<span className="text-text-subtle uppercase tracking-wider mr-2">Triggered by</span>
+						<span className="text-text-3 uppercase tracking-wider mr-2">Triggered by</span>
 						{trigger.href ? (
 							<a
 								href={trigger.href}
-								className="text-text hover:underline"
+								className="text-text-1 hover:underline"
 								data-testid="run-trigger-link"
 							>
 								{trigger.text}
 							</a>
 						) : (
-							<span className="text-text">{trigger.text}</span>
+							<span className="text-text-1">{trigger.text}</span>
 						)}
 					</div>
 				);
@@ -130,38 +130,34 @@ function ExecutionDetailPage() {
 				const range = formatTimeRange(run.started_at, run.finished_at);
 				return (
 					<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
-						<div className="rounded-lg border border-border-subtle bg-bg p-3">
-							<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">
-								Timing
-							</div>
+						<div className="rounded-lg border border-border-subtle bg-surface p-3">
+							<div className="text-[11px] text-text-3 uppercase tracking-wider mb-1">Timing</div>
 							<div className="flex items-baseline gap-2 flex-wrap">
 								<span data-testid="run-duration" className="text-sm font-medium tabular-nums">
 									{elapsedDisplay}
 								</span>
 								{range ? (
 									<Tooltip content={range.full}>
-										<span className="text-xs text-text-subtle whitespace-nowrap tabular-nums">
+										<span className="text-xs text-text-3 whitespace-nowrap tabular-nums">
 											{range.compact}
 										</span>
 									</Tooltip>
 								) : (
-									<span className="text-xs text-text-subtle">Waiting to start…</span>
+									<span className="text-xs text-text-3">Waiting to start…</span>
 								)}
 							</div>
 						</div>
 
 						{!isActive && (
-							<div className="rounded-lg border border-border-subtle bg-bg p-3">
-								<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">
-									Usage
-								</div>
+							<div className="rounded-lg border border-border-subtle bg-surface p-3">
+								<div className="text-[11px] text-text-3 uppercase tracking-wider mb-1">Usage</div>
 								<div className="flex items-baseline gap-2 flex-wrap">
 									{run.cost_cents != null && run.cost_cents > 0 && (
 										<span className="text-sm font-medium tabular-nums">
 											${(run.cost_cents / 100).toFixed(2)}
 										</span>
 									)}
-									<span className="text-xs text-text-subtle whitespace-nowrap tabular-nums">
+									<span className="text-xs text-text-3 whitespace-nowrap tabular-nums">
 										{run.input_tokens.toLocaleString()} in · {run.output_tokens.toLocaleString()}{' '}
 										out tokens
 									</span>
@@ -181,12 +177,12 @@ function ExecutionDetailPage() {
 							taskId: run.task_identifier.toLowerCase(),
 						}}
 						{...(run.run_comment_public_id ? { hash: `comment-${run.run_comment_public_id}` } : {})}
-						className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-muted hover:text-text"
+						className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-2 hover:text-text-1"
 					>
 						{taskLineInner}
 					</Link>
 				) : (
-					<div className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-muted">
+					<div className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-2">
 						{taskLineInner}
 					</div>
 				))}
@@ -196,7 +192,7 @@ function ExecutionDetailPage() {
 					<button
 						type="button"
 						onClick={() => setInvocationExpanded(!invocationExpanded)}
-						className="flex items-center gap-1.5 text-[11px] text-text-subtle uppercase tracking-wider hover:text-text-muted mb-1"
+						className="flex items-center gap-1.5 text-[11px] text-text-3 uppercase tracking-wider hover:text-text-2 mb-1"
 					>
 						{invocationExpanded ? (
 							<ChevronDown className="w-3 h-3" />
@@ -209,12 +205,12 @@ function ExecutionDetailPage() {
 						<>
 							<pre
 								data-testid="run-invocation-body"
-								className="text-xs font-mono bg-bg-muted rounded-lg p-3 overflow-x-auto whitespace-pre-wrap text-text-muted"
+								className="text-xs font-mono bg-surface-3 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap text-text-2"
 							>
 								{displayedCommand}
 							</pre>
 							{run.working_dir && (
-								<div className="mt-1 text-[11px] text-text-subtle">
+								<div className="mt-1 text-[11px] text-text-3">
 									cwd: <span className="font-mono">{run.working_dir}</span>
 								</div>
 							)}
@@ -225,8 +221,8 @@ function ExecutionDetailPage() {
 
 			{run.error && (
 				<div className="mb-4">
-					<div className="text-[11px] text-text-subtle uppercase tracking-wider mb-1">Error</div>
-					<pre className="text-xs font-mono bg-accent-red-bg text-accent-red-text rounded-lg p-3 overflow-x-auto whitespace-pre-wrap">
+					<div className="text-[11px] text-text-3 uppercase tracking-wider mb-1">Error</div>
+					<pre className="text-xs font-mono bg-danger-soft text-danger-soft-fg rounded-lg p-3 overflow-x-auto whitespace-pre-wrap">
 						{run.error}
 					</pre>
 				</div>
@@ -250,7 +246,7 @@ function ExecutionDetailPage() {
 					emptyState={
 						isActive ? getRunWaitingMessage(run.status, run.queued_reason) : 'No output captured.'
 					}
-					liveLabel={isActive ? <span className="text-accent-amber">(live)</span> : null}
+					liveLabel={isActive ? <span className="text-warning">(live)</span> : null}
 					heightClassName="max-h-[60vh]"
 					testId="run-log"
 					headerActionLeading={

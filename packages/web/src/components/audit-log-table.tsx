@@ -18,7 +18,7 @@ export function AuditLogTable({
 	emptyText?: string;
 }) {
 	if (!entries?.length) {
-		return <p className="text-[13px] text-text-muted">{emptyText}</p>;
+		return <p className="text-[13px] text-text-2">{emptyText}</p>;
 	}
 	return <DataTable columns={buildColumns(showTeam)} data={entries} rowKey={(row) => row.id} />;
 }
@@ -30,7 +30,7 @@ function buildColumns(showTeam: boolean): Column<AuditEntry>[] {
 			header: 'Time',
 			hideOnMobile: true,
 			render: (e) => (
-				<span className="text-xs text-text-subtle">{new Date(e.created_at).toLocaleString()}</span>
+				<span className="text-xs text-text-3">{new Date(e.created_at).toLocaleString()}</span>
 			),
 		},
 		{
@@ -39,7 +39,7 @@ function buildColumns(showTeam: boolean): Column<AuditEntry>[] {
 			render: (e) => (
 				<span className="text-xs">
 					{e.actor_name || e.actor_type}
-					{e.actor_name ? <span className="text-text-subtle"> · {e.actor_type}</span> : null}
+					{e.actor_name ? <span className="text-text-3"> · {e.actor_type}</span> : null}
 				</span>
 			),
 		},
@@ -49,12 +49,12 @@ function buildColumns(showTeam: boolean): Column<AuditEntry>[] {
 			render: (e) => {
 				const text = describeAuditEntry(e);
 				const link = auditEntryLink(e);
-				if (!link) return <span className="text-[13px] text-text">{text}</span>;
+				if (!link) return <span className="text-[13px] text-text-1">{text}</span>;
 				return (
 					<Link
 						to={link.to}
 						params={'params' in link ? link.params : undefined}
-						className="text-[13px] text-text hover:text-accent hover:underline"
+						className="text-[13px] text-text-1 hover:text-accent hover:underline"
 					>
 						{text}
 					</Link>
@@ -68,7 +68,7 @@ function buildColumns(showTeam: boolean): Column<AuditEntry>[] {
 			header: 'Team',
 			hideOnMobile: true,
 			render: (e) => (
-				<span className="text-xs text-text-muted">{e.team_name ?? <em>instance</em>}</span>
+				<span className="text-xs text-text-2">{e.team_name ?? <em>instance</em>}</span>
 			),
 		});
 	}

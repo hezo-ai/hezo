@@ -18,10 +18,10 @@ function WelcomeCard({ onCreate }: { onCreate: () => void }) {
 				className="flex flex-col items-center gap-3 px-4 py-8 text-center"
 				data-testid="home-welcome"
 			>
-				<Building2 className="w-8 h-8 text-text-muted shrink-0" />
+				<Building2 className="w-8 h-8 text-text-2 shrink-0" />
 				<div>
-					<h1 className="text-base font-semibold text-text">Get started with Hezo</h1>
-					<p className="text-[13px] text-text-muted mt-1 max-w-md">
+					<h1 className="text-base font-semibold text-text-1">Get started with Hezo</h1>
+					<p className="text-[13px] text-text-2 mt-1 max-w-md">
 						Create your first project. Each one gets its own team — spin it up from a template, or
 						let the CEO scope it with you first.
 					</p>
@@ -50,10 +50,7 @@ function HomeProjectsSection({
 
 	if (isLoading) {
 		return (
-			<div
-				className="text-text-muted text-[13px] py-8 text-center"
-				data-testid="home-projects-loading"
-			>
+			<div className="text-text-2 text-[13px] py-8 text-center" data-testid="home-projects-loading">
 				Loading projects...
 			</div>
 		);
@@ -80,22 +77,22 @@ function HomeProjectsSection({
 								<Avatar initials={getInitials(p.name)} color={avatarColorFromString(p.name)} />
 								<div className="flex flex-col gap-1 min-w-0 flex-1">
 									<div className="flex items-center justify-between gap-2">
-										<h3 className="text-[15px] font-medium text-text truncate">{p.name}</h3>
+										<h3 className="text-[15px] font-medium text-text-1 truncate">{p.name}</h3>
 										{p.container_status && p.container_status !== 'running' && (
 											<Tooltip content={`Container ${p.container_status}`}>
 												<span
 													role="img"
 													aria-label={`Container ${p.container_status}`}
-													className="w-2 h-2 rounded-full bg-accent-red shrink-0"
+													className="w-2 h-2 rounded-full bg-danger shrink-0"
 												/>
 											</Tooltip>
 										)}
 									</div>
-									{showTeamName && <p className="text-xs text-text-muted truncate">{p.teamName}</p>}
+									{showTeamName && <p className="text-xs text-text-2 truncate">{p.teamName}</p>}
 									{p.description && (
-										<p className="text-xs text-text-muted line-clamp-2">{p.description}</p>
+										<p className="text-xs text-text-2 line-clamp-2">{p.description}</p>
 									)}
-									<div className="flex gap-3 text-xs text-text-muted mt-1">
+									<div className="flex gap-3 text-xs text-text-2 mt-1">
 										<span>{p.open_task_count} tasks</span>
 										<span>{p.repo_count} repos</span>
 									</div>
@@ -120,9 +117,7 @@ function HomePage() {
 	const { data: intake } = useProjectIntake(noProjectsYet);
 
 	if (teamsLoading) {
-		return (
-			<div className="px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6 text-text-muted">Loading...</div>
-		);
+		return <div className="px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6 text-text-2">Loading...</div>;
 	}
 
 	const hasProject = projects.length > 0;

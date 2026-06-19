@@ -56,8 +56,8 @@ export function CommentReactions({ comment, projectId, taskId }: Props) {
 						data-you-reacted={g.you_reacted ? 'true' : 'false'}
 						className={`inline-flex items-center gap-1 min-h-[28px] px-2 rounded-full border text-xs leading-none transition-colors ${
 							g.you_reacted
-								? 'border-accent-blue bg-accent-blue-bg text-accent-blue-text'
-								: 'border-border bg-bg-subtle text-text-muted hover:border-border-hover'
+								? 'border-info bg-info-soft text-info-soft-fg'
+								: 'border-border bg-surface-2 text-text-2 hover:border-border-strong'
 						} disabled:opacity-60`}
 					>
 						<span aria-hidden="true">{REACTION_GLYPH[g.kind] ?? g.kind}</span>
@@ -73,13 +73,13 @@ export function CommentReactions({ comment, projectId, taskId }: Props) {
 						disabled={busy}
 						aria-label="Add reaction"
 						data-testid="add-reaction-button"
-						className="inline-flex items-center justify-center min-w-[28px] min-h-[28px] px-1.5 rounded-full border border-border text-text-muted hover:text-text hover:border-border-hover disabled:opacity-60"
+						className="inline-flex items-center justify-center min-w-[28px] min-h-[28px] px-1.5 rounded-full border border-border text-text-2 hover:text-text-1 hover:border-border-strong disabled:opacity-60"
 					>
 						<Smile className="w-3.5 h-3.5" />
 					</button>
 					{pickerOpen && (
 						<div
-							className="absolute z-10 mt-1 flex gap-1 rounded-md border border-border bg-bg-elevated p-1 shadow-md"
+							className="absolute z-10 mt-1 flex gap-1 rounded-md border border-border bg-surface p-1 shadow-md"
 							role="menu"
 							data-testid="reaction-picker"
 						>
@@ -92,7 +92,7 @@ export function CommentReactions({ comment, projectId, taskId }: Props) {
 											toggle(kind, false);
 										}}
 										aria-label={REACTION_LABEL[kind] ?? kind}
-										className="inline-flex items-center justify-center min-w-[32px] min-h-[32px] px-2 rounded text-sm hover:bg-bg-subtle"
+										className="inline-flex items-center justify-center min-w-[32px] min-h-[32px] px-2 rounded text-sm hover:bg-surface-2"
 										data-reaction-kind={kind}
 									>
 										{REACTION_GLYPH[kind] ?? kind}

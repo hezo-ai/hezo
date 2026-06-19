@@ -15,7 +15,7 @@ function DocPreviewPage() {
 	}
 
 	return (
-		<div className="h-screen overflow-auto bg-bg">
+		<div className="h-screen overflow-auto bg-surface">
 			<div className="max-w-3xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
 				<MarkdownProse projectId={projectId} projectSlug={projectId}>
 					{doc.content || '_(empty)_'}
@@ -27,7 +27,7 @@ function DocPreviewPage() {
 
 function CenteredMessage({ children }: { children: React.ReactNode }) {
 	return (
-		<div className="flex items-center justify-center h-screen text-text-muted text-[13px]">
+		<div className="flex items-center justify-center h-screen text-text-2 text-[13px]">
 			{children}
 		</div>
 	);

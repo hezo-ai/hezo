@@ -17,11 +17,11 @@ function WizardShell({ currentStep, children }: WizardShellProps) {
 	const masterKeyStatus: StepStatus = currentStep === 'master-key' ? 'current' : 'complete';
 	const aiProviderStatus: StepStatus = currentStep === 'ai-provider' ? 'current' : 'pending';
 	return (
-		<div className="min-h-screen flex flex-col items-center px-4 py-8 sm:py-16 bg-bg">
+		<div className="min-h-screen flex flex-col items-center px-4 py-8 sm:py-16 bg-surface">
 			<div className="w-full max-w-2xl">
 				<div className="text-center mb-6 sm:mb-10">
 					<h1 className="text-xl sm:text-2xl font-semibold mb-2">Welcome to Hezo</h1>
-					<p className="text-[13px] text-text-muted">A quick setup before you get to work.</p>
+					<p className="text-[13px] text-text-2">A quick setup before you get to work.</p>
 				</div>
 				<Stepper
 					steps={[
@@ -29,7 +29,7 @@ function WizardShell({ currentStep, children }: WizardShellProps) {
 						{ label: 'AI provider', status: aiProviderStatus },
 					]}
 				/>
-				<div className="rounded-radius-lg border border-border bg-bg-elevated p-5 sm:p-8 shadow-sm">
+				<div className="rounded-lg border border-border bg-surface p-5 sm:p-8 shadow-sm">
 					{children}
 				</div>
 			</div>
@@ -42,7 +42,7 @@ export function MasterKeyStep({ state }: { state: MasterKeyState }) {
 		<WizardShell currentStep="master-key">
 			<div data-testid="setup-step-master-key">
 				<h2 className="text-base sm:text-lg font-semibold mb-1">Set Master Key</h2>
-				<p className="text-[13px] text-text-muted mb-5">
+				<p className="text-[13px] text-text-2 mb-5">
 					Your master key is 12 words that encrypt your data. Save them somewhere safe — you'll need
 					them to unlock Hezo on restart.
 				</p>
@@ -57,7 +57,7 @@ export function SetupWizard() {
 		<WizardShell currentStep="ai-provider">
 			<div data-testid="setup-step-ai-provider">
 				<h2 className="text-base sm:text-lg font-semibold mb-1">Set up an AI provider</h2>
-				<p className="text-[13px] text-text-muted mb-5">
+				<p className="text-[13px] text-text-2 mb-5">
 					Configure at least one provider so your agents can run. Shared across every team on this
 					instance — you can add more later in settings.
 				</p>
@@ -89,7 +89,7 @@ export function SetupGate({ children }: SetupGateProps) {
 	const step = useWizardStep();
 	if (step === 'loading') {
 		return (
-			<div className="flex items-center justify-center h-screen text-text-muted">
+			<div className="flex items-center justify-center h-screen text-text-2">
 				<Loader2 className="w-4 h-4 animate-spin" />
 			</div>
 		);

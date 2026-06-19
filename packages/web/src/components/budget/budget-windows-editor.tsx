@@ -193,7 +193,7 @@ export function BudgetWindowsEditor({
 							data-testid={`${row.testid}-toggle`}
 							aria-label={`Enable ${row.label.toLowerCase()} budget`}
 						/>
-						<span className="text-xs font-medium uppercase tracking-wider text-text-muted">
+						<span className="text-xs font-medium uppercase tracking-wider text-text-2">
 							{row.label} ($)
 						</span>
 					</label>
@@ -210,14 +210,14 @@ export function BudgetWindowsEditor({
 								aria-label={`${row.label} budget`}
 							/>
 							{row.floor > 0 && (
-								<span className="text-xs text-text-subtle" data-testid={`${row.testid}-hint`}>
+								<span className="text-xs text-text-3" data-testid={`${row.testid}-hint`}>
 									Minimum ${centsToDollars(row.floor)} based on the{' '}
 									{row.key === 'weekly' ? 'daily' : 'shorter'} budget
 								</span>
 							)}
 						</>
 					) : (
-						<span className="text-[13px] text-text-subtle py-2">Unlimited</span>
+						<span className="text-[13px] text-text-3 py-2">Unlimited</span>
 					)}
 				</div>
 			))}

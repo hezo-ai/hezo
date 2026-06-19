@@ -14,7 +14,7 @@ export function PreviewComment({ comment }: Props) {
 			href={url}
 			target="_blank"
 			rel="noopener noreferrer"
-			className="inline-flex items-center gap-1.5 text-sm text-accent-blue-text hover:underline"
+			className="inline-flex items-center gap-1.5 text-sm text-info-soft-fg hover:underline"
 		>
 			<ExternalLink className="w-3.5 h-3.5" />
 			{title}

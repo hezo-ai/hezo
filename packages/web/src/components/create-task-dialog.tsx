@@ -71,7 +71,7 @@ export function CreateTaskDialog({ projectId, open, onOpenChange }: CreateTaskDi
 						<Dialog.Close asChild>
 							<button
 								type="button"
-								className="text-text-muted hover:text-text p-2 -m-2"
+								className="text-text-2 hover:text-text-1 p-2 -m-2"
 								aria-label="Close"
 							>
 								<X className="w-4 h-4" />
@@ -96,12 +96,12 @@ export function CreateTaskDialog({ projectId, open, onOpenChange }: CreateTaskDi
 						/>
 
 						<label className="flex flex-col gap-1.5">
-							<span className="text-sm text-text-muted">Assignee *</span>
+							<span className="text-sm text-text-2">Assignee *</span>
 							<select
 								value={assigneeId}
 								onChange={(e) => setAssigneeId(e.target.value)}
 								required
-								className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
+								className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-1 outline-none focus:border-border-strong"
 							>
 								<option value="">Select assignee</option>
 								{selectableAgents.map((a) => (
@@ -118,10 +118,10 @@ export function CreateTaskDialog({ projectId, open, onOpenChange }: CreateTaskDi
 								onClick={() => setMoreOpen((o) => !o)}
 								aria-expanded={moreOpen}
 								data-testid="create-task-more-toggle"
-								className="flex items-center gap-2 self-start text-xs text-text-muted hover:text-text cursor-pointer"
+								className="flex items-center gap-2 self-start text-xs text-text-2 hover:text-text-1 cursor-pointer"
 							>
 								<ChevronDown
-									className={`w-3.5 h-3.5 text-text-subtle shrink-0 transition-transform ${
+									className={`w-3.5 h-3.5 text-text-3 shrink-0 transition-transform ${
 										moreOpen ? '' : '-rotate-90'
 									}`}
 								/>
@@ -130,11 +130,11 @@ export function CreateTaskDialog({ projectId, open, onOpenChange }: CreateTaskDi
 							{moreOpen && (
 								<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 									<label className="flex flex-col gap-1.5">
-										<span className="text-sm text-text-muted">Priority</span>
+										<span className="text-sm text-text-2">Priority</span>
 										<select
 											value={priority}
 											onChange={(e) => setPriority(e.target.value)}
-											className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
+											className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-1 outline-none focus:border-border-strong"
 										>
 											<option value="low">Low</option>
 											<option value="medium">Medium</option>
@@ -147,7 +147,7 @@ export function CreateTaskDialog({ projectId, open, onOpenChange }: CreateTaskDi
 						</div>
 
 						{createTask.error && (
-							<p className="text-sm text-accent-red">
+							<p className="text-sm text-danger">
 								{(createTask.error as { message: string }).message}
 							</p>
 						)}

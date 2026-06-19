@@ -46,10 +46,10 @@ function GlobalSettingsPage() {
 							key={item.id}
 							type="button"
 							onClick={() => scrollTo(item.id)}
-							className={`text-left text-[13px] px-3 py-1.5 rounded-radius-md transition-colors cursor-pointer ${
+							className={`text-left text-[13px] px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
 								activeSection === item.id
-									? 'text-text font-medium bg-bg-subtle'
-									: 'text-text-muted hover:text-text hover:bg-bg-subtle'
+									? 'text-text-1 font-medium bg-surface-2'
+									: 'text-text-2 hover:text-text-1 hover:bg-surface-2'
 							}`}
 						>
 							{item.label}
@@ -60,7 +60,7 @@ function GlobalSettingsPage() {
 							<Link
 								key={item.to}
 								to={item.to}
-								className={`text-left text-[13px] px-3 py-1.5 rounded-radius-md transition-colors text-text-muted hover:text-text hover:bg-bg-subtle ${
+								className={`text-left text-[13px] px-3 py-1.5 rounded-md transition-colors text-text-2 hover:text-text-1 hover:bg-surface-2 ${
 									idx === 0 ? 'mt-3' : ''
 								}`}
 							>

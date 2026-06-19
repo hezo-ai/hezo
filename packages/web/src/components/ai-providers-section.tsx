@@ -65,7 +65,7 @@ export function AiProvidersSection() {
 		<section>
 			<div className="mb-4">
 				<h2 className="text-base font-medium">AI providers</h2>
-				<p className="text-[13px] text-text-muted mt-1">
+				<p className="text-[13px] text-text-2 mt-1">
 					API keys for AI coding agents. Shared across every team in this Hezo instance.
 				</p>
 			</div>
@@ -84,11 +84,11 @@ export function AiProvidersSection() {
 					const showMultipleControls = providerConfigs.length > 1;
 
 					return (
-						<div key={provider} className="border border-border rounded-radius-md p-3 bg-bg">
+						<div key={provider} className="border border-border rounded-md p-3 bg-surface">
 							<div className="flex items-center justify-between">
 								<div className="flex items-center gap-2">
 									<span className="text-[13px] font-medium">{info.name}</span>
-									<span className="text-xs text-text-subtle">{info.runtimeLabel}</span>
+									<span className="text-xs text-text-3">{info.runtimeLabel}</span>
 								</div>
 							</div>
 
@@ -173,7 +173,7 @@ export function AiProvidersSection() {
 										</Button>
 									</div>
 									{createProvider.error && (
-										<p className="text-[13px] text-accent-red">
+										<p className="text-[13px] text-danger">
 											{(createProvider.error as { message: string }).message}
 										</p>
 									)}
@@ -226,7 +226,7 @@ function ConfigRow({
 					{config.status}
 				</Badge>
 				{showDefaultControls && config.is_default && <Badge color="neutral">Default</Badge>}
-				<span className="text-xs text-text-subtle truncate">{config.label}</span>
+				<span className="text-xs text-text-3 truncate">{config.label}</span>
 				<div className="flex-1" />
 				{showDefaultControls && !config.is_default && (
 					<Button variant="secondary" size="sm" onClick={onSetDefault} disabled={setDefaultPending}>
@@ -248,7 +248,7 @@ function ConfigRow({
 			<DefaultModelSelector config={config} />
 			{verify && (
 				<div
-					className={`mt-2 flex items-center gap-1.5 text-[13px] ${verify.valid ? 'text-accent-green-text' : 'text-accent-red'}`}
+					className={`mt-2 flex items-center gap-1.5 text-[13px] ${verify.valid ? 'text-success-soft-fg' : 'text-danger'}`}
 				>
 					{verify.valid ? (
 						<>
@@ -277,13 +277,13 @@ function DefaultModelSelector({ config }: { config: AiProviderConfig }) {
 	return (
 		<div className="mt-2 flex items-center gap-2 text-[13px]">
 			<label className="flex items-center gap-2">
-				<span className="text-text-muted text-xs">Default model</span>
+				<span className="text-text-2 text-xs">Default model</span>
 				<select
 					aria-label={`Default model for ${config.label}`}
 					value={config.default_model ?? ''}
 					onFocus={() => setOpen(true)}
 					onChange={(e) => handleChange(e.target.value)}
-					className="rounded-md border border-border bg-bg-subtle px-2 py-1 text-xs text-text outline-none focus:border-border-hover"
+					className="rounded-md border border-border bg-surface-2 px-2 py-1 text-xs text-text-1 outline-none focus:border-border-strong"
 					disabled={update.isPending}
 				>
 					<option value="">Use CLI default</option>
@@ -298,10 +298,10 @@ function DefaultModelSelector({ config }: { config: AiProviderConfig }) {
 				</select>
 			</label>
 			{(models.isFetching || update.isPending) && (
-				<Loader2 className="w-3 h-3 animate-spin text-text-subtle" />
+				<Loader2 className="w-3 h-3 animate-spin text-text-3" />
 			)}
 			{models.error && (
-				<span className="text-accent-red text-xs">
+				<span className="text-danger text-xs">
 					{(models.error as { message?: string }).message || 'Failed to load models'}
 				</span>
 			)}

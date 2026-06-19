@@ -18,7 +18,7 @@ export function TraceComment({ comment }: Props) {
 			<button
 				type="button"
 				onClick={() => setExpanded(!expanded)}
-				className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text"
+				className="flex items-center gap-1.5 text-xs text-text-2 hover:text-text-1"
 			>
 				{expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
 				<Terminal className="w-3 h-3" />
@@ -44,30 +44,30 @@ function ToolCallEntry({ toolCall }: { toolCall: ToolCall }) {
 			<button
 				type="button"
 				onClick={() => setShowDetails(!showDetails)}
-				className="flex items-center gap-1.5 text-text-muted hover:text-text"
+				className="flex items-center gap-1.5 text-text-2 hover:text-text-1"
 			>
 				{showDetails ? (
 					<ChevronDown className="w-2.5 h-2.5" />
 				) : (
 					<ChevronRight className="w-2.5 h-2.5" />
 				)}
-				<span className="font-mono font-medium text-text">{toolCall.tool_name}</span>
+				<span className="font-mono font-medium text-text-1">{toolCall.tool_name}</span>
 				<Badge color={toolCall.status === 'success' ? 'green' : 'red'} className="text-[9px]">
 					{toolCall.status}
 				</Badge>
 				{toolCall.duration_ms != null && (
-					<span className="text-text-subtle">{toolCall.duration_ms}ms</span>
+					<span className="text-text-3">{toolCall.duration_ms}ms</span>
 				)}
 			</button>
 			{showDetails && (
 				<div className="mt-1 ml-4 space-y-1">
 					{toolCall.input != null && toolCall.input !== '' && (
-						<pre className="text-[10px] bg-bg-muted p-1.5 rounded overflow-x-auto max-h-24 text-text-muted">
+						<pre className="text-[10px] bg-surface-3 p-1.5 rounded overflow-x-auto max-h-24 text-text-2">
 							{JSON.stringify(toolCall.input, null, 2)}
 						</pre>
 					)}
 					{toolCall.output != null && toolCall.output !== '' && (
-						<pre className="text-[10px] bg-bg-muted p-1.5 rounded overflow-x-auto max-h-24 text-text-muted">
+						<pre className="text-[10px] bg-surface-3 p-1.5 rounded overflow-x-auto max-h-24 text-text-2">
 							{typeof toolCall.output === 'string'
 								? toolCall.output.slice(0, 500)
 								: JSON.stringify(toolCall.output, null, 2).slice(0, 500)}

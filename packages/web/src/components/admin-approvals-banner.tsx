@@ -35,7 +35,7 @@ export function AdminApprovalsBanner({ projectId }: { projectId: string }) {
 			to="/projects/$projectId/inbox"
 			params={{ projectId }}
 			data-testid="admin-approvals-banner"
-			className="mb-4 flex items-center gap-2 rounded-md bg-primary/10 px-4 py-2 text-[13px] font-medium text-primary hover:bg-primary/15 transition-colors"
+			className="mb-4 flex items-center gap-2 rounded-md bg-inverse/10 px-4 py-2 text-[13px] font-medium text-text-1 hover:bg-inverse/15 transition-colors"
 		>
 			<Inbox className="w-3.5 h-3.5 shrink-0" />
 			<span className="min-w-0 truncate">{buildMessage(approvalCount, mentionCount)}</span>
