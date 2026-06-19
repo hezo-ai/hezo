@@ -247,16 +247,20 @@ mentionsRoutes.get('/projects/:projectId/mentions/search', async (c) => {
 		if (q === '' || ADMIN_MENTION_SLUG.startsWith(lq) || ADMIN_MENTION_SLUG.includes(lq)) {
 			results.push(BOARD_SUGGESTION);
 		}
+		// HQ instance agents (CEO/Coach) are virtual members of every project
+		// team — surface them alongside the team's own roster so they can be
+		// @-mentioned from any project (mirrors GET /projects/:projectId/agents).
+		// Own-team agents sort first; instance agents follow.
 		const r = await db.query<{ slug: string; title: string }>(
 			`SELECT ma.slug, ma.title
 			 FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1
+			 WHERE (m.team_id = $1 OR (m.team_id = $5 AND $1 <> $5))
 			   AND ma.admin_status = 'enabled'
 			   AND ($2 = '' OR ma.slug ILIKE $3 OR ma.title ILIKE $3)
-			 ORDER BY ma.title
+			 ORDER BY (m.team_id <> $1), ma.title
 			 LIMIT $4`,
-			[teamId, q, pattern, perKind],
+			[teamId, q, pattern, perKind, DEFAULT_TEAM_ID],
 		);
 		for (const row of r.rows) {
 			results.push({

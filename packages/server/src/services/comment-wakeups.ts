@@ -1,5 +1,11 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { ADMIN_MENTION_SLUG, CommentContentType, WakeupSource, wsRoom } from '@hezo/shared';
+import {
+	ADMIN_MENTION_SLUG,
+	CommentContentType,
+	DEFAULT_TEAM_ID,
+	WakeupSource,
+	wsRoom,
+} from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
 import { extractMentionSlugs } from '../lib/mentions';
 import { logger } from '../logger';
@@ -58,11 +64,19 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 			}).catch((e) => log.error('Failed to fan out @admin mention:', e));
 			continue;
 		}
+		// Resolve against the task's team plus the HQ instance agents
+		// (CEO/Coach), which act inside every team's projects. A same-team
+		// agent wins over an HQ namesake. The wakeup carries the task's team,
+		// so an instance agent runs scoped to this project — the run-team
+		// split realigns it (see agent-runner).
 		const mentioned = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
-			 WHERE ma.slug = $1 AND m.team_id = $2`,
-			[slug, teamId],
+			 WHERE ma.slug = $1
+			   AND (m.team_id = $2 OR (m.team_id = $3 AND $2 <> $3))
+			 ORDER BY (m.team_id <> $2)
+			 LIMIT 1`,
+			[slug, teamId, DEFAULT_TEAM_ID],
 		);
 		if (mentioned.rows.length === 0) continue;
 		const mentionedId = mentioned.rows[0].id;

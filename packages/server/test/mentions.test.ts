@@ -236,4 +236,39 @@ describe('GET /teams/:teamId/mentions/search', () => {
 		// Skills are instance-global, so the kb doc is searchable from every team.
 		expect(handles).toContain('onboarding-guide.md');
 	});
+
+	it('surfaces the HQ instance agents (CEO/Coach) from a non-HQ project', async () => {
+		const ceoRes = await app.request(
+			`/api/projects/${projectSlug}/mentions/search?q=ceo&kind=agent`,
+			{ headers: authHeader(token) },
+		);
+		expect(ceoRes.status).toBe(200);
+		const ceoHandles = ((await ceoRes.json()).data as Array<{ handle: string }>).map(
+			(row) => row.handle,
+		);
+		expect(ceoHandles).toContain('ceo');
+
+		const coachRes = await app.request(
+			`/api/projects/${projectSlug}/mentions/search?q=coach&kind=agent`,
+			{ headers: authHeader(token) },
+		);
+		expect(coachRes.status).toBe(200);
+		const coachHandles = ((await coachRes.json()).data as Array<{ handle: string }>).map(
+			(row) => row.handle,
+		);
+		expect(coachHandles).toContain('coach');
+	});
+
+	it('lists each HQ instance agent exactly once (no team/HQ duplication)', async () => {
+		const r = await app.request(
+			`/api/projects/${projectSlug}/mentions/search?q=&kind=agent&limit=50`,
+			{ headers: authHeader(token) },
+		);
+		expect(r.status).toBe(200);
+		const handles = ((await r.json()).data as Array<{ handle: string }>).map((row) => row.handle);
+		expect(handles.filter((h) => h === 'ceo')).toHaveLength(1);
+		expect(handles.filter((h) => h === 'coach')).toHaveLength(1);
+		// The team's own roster still appears alongside the instance agents.
+		expect(handles).toContain('picker-bot');
+	});
 });

@@ -5,7 +5,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, mintAgentToken } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	instanceCeoId,
+	mintAgentToken,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -269,6 +275,31 @@ describe('MCP create_comment fires mention-only wakeups', () => {
 			.map((w) => w.member_id);
 		expect(mentionTargets).toEqual([architectId]);
 		expect(wakeups.some((w) => w.member_id === productLeadId)).toBe(false);
+	});
+
+	it('wakes the HQ CEO when @ceo is mentioned, scoped to the task team', async () => {
+		const ceoId = await instanceCeoId(db);
+		const { taskId, agentToken } = await setup(captainId, engineerId, 'Escalate to CEO');
+		const commentId = await postMcpComment(
+			agentToken,
+			taskId,
+			'@ceo can you weigh in on priorities here?',
+		);
+
+		const wakeups = await wakeupsForComment(commentId);
+		const ceoWake = wakeups.find((w) => w.member_id === ceoId);
+		expect(ceoWake).toBeDefined();
+		if (!ceoWake) throw new Error('expected a CEO mention wakeup');
+		expect(ceoWake.source).toBe(WakeupSource.Mention);
+		expect(ceoWake.payload.task_id).toBe(taskId);
+
+		// The CEO lives in HQ, but the wakeup carries the task's (non-HQ) team so
+		// the run executes scoped to this project (the run-team split).
+		const teamCheck = await db.query<{ team_id: string }>(
+			'SELECT team_id FROM agent_wakeup_requests WHERE id = $1',
+			[ceoWake.id],
+		);
+		expect(teamCheck.rows[0]?.team_id).toBe(teamId);
 	});
 });
 
