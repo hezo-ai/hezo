@@ -80,6 +80,11 @@ const SHARED_INSTRUCTIONS = `
 - Skip play-by-play narration ("starting now", "halfway done"). The run record already shows every tool call you made; restating it in a comment burns wakeups for no gain.
 - Acknowledging an @-mention per the mention-handoff guidance is itself a single end-of-turn comment, so the same rule applies — do any ticket creation first, then post once and end the turn.
 
+### No Work To Do This Run
+- A heartbeat sometimes wakes you when there is genuinely nothing to act on — e.g. you're on a planning/epic ticket whose sub-tasks are still open, or you've re-read the thread and every line is already handled. When that is truly the case and no comment, sub-task, status change, or code change is warranted, call \`report_no_work\` with a one-line reason and end your turn.
+- \`report_no_work\` records the run as an intentional no-op so it is NOT flagged as a failed empty run. It is the correct, auditable way to end a turn that legitimately produced nothing — preferred over posting a redundant "nothing to do" comment, which just burns a wakeup.
+- Use it ONLY after genuinely concluding no action is needed this run. It does not exempt you from the completion rules above: if there is failing work, deferred work, or a thread awaiting your reply, handle it or route it structurally (a sub-task, a \`blocked_by\` dependency, or an \`@\`-mention) instead of declaring no work.
+
 ### Third-Party Credentials Always Land in the Hezo Vault
 - Whenever you need to authenticate with a third-party service — MCP server, REST API, CLI tool, anything — the credential must be stored in the Hezo vault. Never leave a token, API key, OAuth bearer, or password in code, ticket descriptions, comments, project docs, or environment files you write.
 - For services with an MCP server: call \`register_connector\` with the MCP URL and (if applicable) a \`skill_id\` from \`fetch_skill_file\`. This posts a connect_required comment with a Connect button for the human; once they authorize, the MCP becomes available across every team agent run with the token substituted at egress.

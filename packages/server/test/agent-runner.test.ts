@@ -125,7 +125,13 @@ afterAll(async () => {
 // MCP tool layer does mid-run — so exit-0 mocks read as genuine successes.
 // `producesOutput: false` simulates a no-op run (e.g. a plan-only termination).
 function createMockDocker(overrides: Record<string, any> = {}): DockerClient {
-	const { execStart: execStartOverride, producesOutput = true, ...rest } = overrides;
+	const {
+		execStart: execStartOverride,
+		producesOutput = true,
+		reportsNoWork = false,
+		noWorkReason = 'nothing to do this run',
+		...rest
+	} = overrides;
 	const innerExecStart = execStartOverride ?? (async () => ({ stdout: 'done', stderr: '' }));
 	return {
 		ping: async () => true,
@@ -149,6 +155,12 @@ function createMockDocker(overrides: Record<string, any> = {}): DockerClient {
 				await db.query(
 					`UPDATE heartbeat_runs SET produced_output = true WHERE task_id = $1 AND status = 'running'`,
 					[taskId],
+				);
+			}
+			if (reportsNoWork) {
+				await db.query(
+					`UPDATE heartbeat_runs SET reported_no_work = true, no_work_reason = $2 WHERE task_id = $1 AND status = 'running'`,
+					[taskId, noWorkReason],
 				);
 			}
 			return (innerExecStart as (...a: unknown[]) => unknown)(...args);
@@ -363,6 +375,42 @@ describe('runAgent', () => {
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
 		expect(run.rows[0].produced_output).toBe(false);
 		expect(run.rows[0].error).toContain('produced no output');
+	});
+
+	it('succeeds a clean exit that declared no work via report_no_work', async () => {
+		const deps: RunnerDeps = {
+			db,
+			docker: createMockDocker({
+				producesOutput: false,
+				reportsNoWork: true,
+				noWorkReason: 'planning ticket — sub-tasks still open',
+			}),
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		expect(result.success).toBe(true);
+		expect(result.exitCode).toBe(0);
+
+		const run = await db.query<{
+			status: string;
+			produced_output: boolean;
+			reported_no_work: boolean;
+			no_work_reason: string | null;
+			error: string | null;
+		}>(
+			'SELECT status, produced_output, reported_no_work, no_work_reason, error FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Succeeded);
+		expect(run.rows[0].produced_output).toBe(false);
+		expect(run.rows[0].reported_no_work).toBe(true);
+		expect(run.rows[0].no_work_reason).toBe('planning ticket — sub-tasks still open');
+		expect(run.rows[0].error).toBeNull();
 	});
 
 	it('records failure in heartbeat run on non-zero exit code', async () => {

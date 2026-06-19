@@ -866,6 +866,44 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 		expect(after.rows[0].produced_output).toBe(false);
 	});
 
+	it('report_no_work marks the run as a declared no-op without producing output', async () => {
+		const { token: agentToken, runId } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+		);
+
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: {
+					name: 'report_no_work',
+					arguments: { reason: 'planning ticket — sub-tasks still open' },
+				},
+				id: 1,
+			}),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
+		expect(JSON.parse(body.result.content[0].text)).toEqual({ ok: true });
+
+		const after = await db.query<{
+			produced_output: boolean;
+			reported_no_work: boolean;
+			no_work_reason: string | null;
+		}>(
+			'SELECT produced_output, reported_no_work, no_work_reason FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(after.rows[0].reported_no_work).toBe(true);
+		expect(after.rows[0].no_work_reason).toBe('planning ticket — sub-tasks still open');
+		expect(after.rows[0].produced_output).toBe(false);
+	});
+
 	it('list_comments query returns comments for task', async () => {
 		const r = await db.query(
 			'SELECT * FROM task_comments WHERE task_id = $1 ORDER BY created_at ASC',

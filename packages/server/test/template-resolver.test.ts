@@ -61,6 +61,12 @@ describe('template resolver', () => {
 		expect(result).toContain('Working for Template Co.');
 	});
 
+	it('appends the report_no_work guidance to every runtime prompt', async () => {
+		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
+		expect(result).toContain('No Work To Do This Run');
+		expect(result).toContain('report_no_work');
+	});
+
 	it('resolves {{team_mission}} to team description', async () => {
 		const result = await resolveSystemPrompt(db, 'Mission: {{team_mission}}', {
 			teamId,
