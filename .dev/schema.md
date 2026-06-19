@@ -686,6 +686,15 @@ Each row captures:
 - **Timing**: `started_at` (`NOT NULL DEFAULT now()`), `finished_at`, `status`
   (`queued` → `running` → `succeeded` / `failed` / `cancelled` / `timed_out`),
   `exit_code`.
+- **Output / success gate**: a clean exit (`exit_code = 0`) only counts as
+  `succeeded` if the run produced something. `produced_output` is set true
+  mid-run by the MCP tool layer on any write tool (and by a post-run worktree
+  diff) — it means the run wrote persisted data (comment, task, doc, blocker, …,
+  or a code change). `reported_no_work` is set by the `report_no_work` MCP tool
+  when the agent explicitly declares an idle wake had nothing to do (with a
+  one-line `no_work_reason`); such a run counts as `succeeded` too, kept distinct
+  from a productive run. A clean exit with neither flag set is a silent no-op and
+  is marked `failed` with the error "run produced no output …".
 - **Invocation**: `invocation_command` is the exact CLI that was passed to
   `docker exec` (with the agent JWT redacted to `Bearer ***`). `working_dir` is
   the container path the exec was rooted at (normally the designated repo's

@@ -144,6 +144,19 @@ async function markRunProducedOutput(db: PGlite, runId: string): Promise<void> {
 	);
 }
 
+/**
+ * Flag an agent run as an intentional no-op: the agent evaluated the task and
+ * concluded there was nothing to do. Kept distinct from `produced_output` (which
+ * means the run wrote persisted data) so the completion path can treat a clean
+ * no-op as a success without it masquerading as a productive run.
+ */
+async function markRunReportedNoWork(db: PGlite, runId: string, reason: string): Promise<void> {
+	await db.query(
+		'UPDATE heartbeat_runs SET reported_no_work = true, no_work_reason = $2 WHERE id = $1',
+		[runId, reason],
+	);
+}
+
 // Qualified-column variant of services/tasks.ts TASK_COLUMNS_BARE — prefixes
 // every column with the `i.` alias for SELECT ... FROM tasks i JOIN ...
 // patterns.
@@ -2274,6 +2287,28 @@ export function registerTools(
 			]);
 
 			return { updated: true };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'report_no_work',
+		'Declare that, after evaluating the current task this run, there is genuinely nothing to do — no comment, sub-task, status change, code change, or other action is warranted. Records the run as an intentional no-op so it is NOT flagged as a failed empty run, and is the correct, auditable way to end such a turn (preferred over posting a redundant "nothing to do" comment). Use ONLY when you have truly concluded no action is needed this turn — never to skip, defer, or avoid real work.',
+		{
+			reason: z
+				.string()
+				.min(1)
+				.describe('One-line explanation of why there is nothing to do this run.'),
+		},
+		async (args, db, auth) => {
+			if (auth.type !== AuthType.Agent || !auth.runId) {
+				return { error: 'report_no_work is only available within an agent run' };
+			}
+			const reason = String(args.reason ?? '').trim();
+			if (reason.length === 0) return { error: 'reason must be non-empty' };
+			await markRunReportedNoWork(db, auth.runId, reason);
+			return { ok: true };
 		},
 		db,
 	);

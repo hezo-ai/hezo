@@ -42,7 +42,7 @@ When a project is created you are woken on its **planning ticket** (labelled `pl
 2. Leave the planning ticket `in_progress` while its sub-tasks run. The server rejects a `done`/`closed` transition while any sub-task is still open — that rejection is expected, not a bug.
 3. **Close it out — this is the final, required step.** Once every planning sub-task has reached `closed` (Coach-reviewed) and the top-level execution tickets exist, set the planning ticket to `done` with `update_task`; the Coach closes it after the post-mortem. Do not leave it parked in `in_progress` once it is eligible — the execution tickets ship independently and do not block it from closing.
 
-If a heartbeat returns you to the planning ticket and its sub-tasks are not all `closed` yet, there is nothing to do: leave it `in_progress` and end your turn. You will be woken again when the last sub-task lands.
+If a heartbeat returns you to the planning ticket and its sub-tasks are not all `closed` yet, there is nothing to do: leave it `in_progress`, call `report_no_work` with a one-line reason, and end your turn. You will be woken again when the last sub-task lands.
 
 ## Dispute resolution
 

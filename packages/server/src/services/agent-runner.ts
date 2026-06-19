@@ -984,21 +984,36 @@ export async function runAgent(
 			// mode and only describes a plan — is a no-op, not a success, and is
 			// marked failed so it surfaces and is retried rather than silently
 			// counting as servicing the task.
+			//
+			// The exception is a run that explicitly declared it had nothing to do
+			// via the `report_no_work` MCP tool (reported_no_work). That is a
+			// legitimate idle wake (e.g. a planning ticket whose sub-tasks are still
+			// open), so it counts as a success even though it wrote nothing.
 			let producedOutput = false;
+			let reportedNoWork = false;
+			let noWorkReason: string | null = null;
 			if (exitedClean) {
-				const flagged = await deps.db.query<{ produced_output: boolean }>(
-					'SELECT produced_output FROM heartbeat_runs WHERE id = $1',
+				const flagged = await deps.db.query<{
+					produced_output: boolean;
+					reported_no_work: boolean;
+					no_work_reason: string | null;
+				}>(
+					'SELECT produced_output, reported_no_work, no_work_reason FROM heartbeat_runs WHERE id = $1',
 					[heartbeatRunId],
 				);
 				producedOutput =
 					(flagged.rows[0]?.produced_output ?? false) || (await anyWorktreeChanged(prep.worktrees));
+				reportedNoWork = flagged.rows[0]?.reported_no_work ?? false;
+				noWorkReason = flagged.rows[0]?.no_work_reason ?? null;
 			}
-			const success = exitedClean && producedOutput;
+			const success = exitedClean && (producedOutput || reportedNoWork);
 			const noOutputError =
-				exitedClean && !producedOutput
+				exitedClean && !producedOutput && !reportedNoWork
 					? 'run produced no output (no code changes, comments, tasks, documents, or other writes)'
 					: undefined;
 			if (noOutputError) emit('stderr', `\n[runner] ${noOutputError}\n`);
+			else if (reportedNoWork && !producedOutput)
+				emit('stdout', `\n[runner] no work to do${noWorkReason ? ` — ${noWorkReason}` : ''}\n`);
 
 			await deps.logs.end(streamId);
 			await updateHeartbeatRun(
