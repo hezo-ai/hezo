@@ -35,7 +35,7 @@ export function RepoPickerModal({
 	projectId,
 	oauthConnectionId,
 }: RepoPickerModalProps) {
-	const [mode, setMode] = useState<PickerMode>('link');
+	const [mode, setMode] = useState<PickerMode>('create');
 	const [owner, setOwner] = useState<string | null>(null);
 	const [search, setSearch] = useState('');
 	const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -50,7 +50,7 @@ export function RepoPickerModal({
 
 	useEffect(() => {
 		if (!open) {
-			setMode('link');
+			setMode('create');
 			setOwner(null);
 			setSearch('');
 			setDebouncedSearch('');
@@ -128,22 +128,10 @@ export function RepoPickerModal({
 						Set up GitHub repo
 					</Dialog.Title>
 					<Dialog.Description className="text-sm text-text-muted mb-4">
-						Pick an existing repository for this project, or create a new one in one of your orgs.
+						Create a new repository for this project in one of your orgs, or pick an existing one.
 					</Dialog.Description>
 
 					<div className="flex gap-1 border-b border-border mb-4">
-						<button
-							type="button"
-							className={`px-3 py-1.5 text-sm border-b-2 transition-colors ${
-								mode === 'link'
-									? 'text-text font-medium border-text'
-									: 'text-text-muted border-transparent hover:text-text'
-							}`}
-							onClick={() => setMode('link')}
-							data-testid="repo-picker-tab-link"
-						>
-							Link existing
-						</button>
 						<button
 							type="button"
 							className={`px-3 py-1.5 text-sm border-b-2 transition-colors ${
@@ -155,6 +143,18 @@ export function RepoPickerModal({
 							data-testid="repo-picker-tab-create"
 						>
 							Create new
+						</button>
+						<button
+							type="button"
+							className={`px-3 py-1.5 text-sm border-b-2 transition-colors ${
+								mode === 'link'
+									? 'text-text font-medium border-text'
+									: 'text-text-muted border-transparent hover:text-text'
+							}`}
+							onClick={() => setMode('link')}
+							data-testid="repo-picker-tab-link"
+						>
+							Link existing
 						</button>
 					</div>
 
