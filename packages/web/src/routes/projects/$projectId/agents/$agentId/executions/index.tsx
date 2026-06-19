@@ -43,7 +43,7 @@ function ExecutionRow({
 		<Link
 			to="/projects/$projectId/agents/$agentId/executions/$runId"
 			params={{ projectId, agentId, runId: run.id }}
-			className="flex items-center gap-2 rounded-md border border-border-subtle bg-bg px-3 py-2.5 text-xs hover:bg-bg-subtle transition-colors"
+			className="flex items-center gap-2 rounded-md border border-border-subtle bg-surface px-3 py-2.5 text-xs hover:bg-surface-2 transition-colors"
 		>
 			<Badge color={statusColor(run.status) as 'green'}>
 				{(run.status === 'running' || run.status === 'queued') && (
@@ -53,11 +53,11 @@ function ExecutionRow({
 			</Badge>
 
 			{run.task_identifier && (
-				<span className="text-text-muted font-mono">
+				<span className="text-text-2 font-mono">
 					{run.task_identifier}
-					{run.task_title && <span className="font-sans ml-1.5 text-text">{run.task_title}</span>}
+					{run.task_title && <span className="font-sans ml-1.5 text-text-1">{run.task_title}</span>}
 					{isInstanceAgent && projectLabel && (
-						<span data-testid="run-row-project" className="font-sans ml-1.5 text-text-subtle">
+						<span data-testid="run-row-project" className="font-sans ml-1.5 text-text-3">
 							· {projectLabel}
 						</span>
 					)}
@@ -65,23 +65,21 @@ function ExecutionRow({
 			)}
 
 			<Tooltip content={trigger.text}>
-				<span className="text-text-subtle truncate">{trigger.text}</span>
+				<span className="text-text-3 truncate">{trigger.text}</span>
 			</Tooltip>
 
-			<span className="text-text-muted ml-auto whitespace-nowrap">
+			<span className="text-text-2 ml-auto whitespace-nowrap">
 				{run.started_at ? new Date(run.started_at).toLocaleString() : 'queued'}
 			</span>
 
-			<span className="text-text-subtle whitespace-nowrap">{elapsed}</span>
+			<span className="text-text-3 whitespace-nowrap">{elapsed}</span>
 
 			{run.cost_cents != null && run.cost_cents > 0 && (
-				<span className="text-text-subtle whitespace-nowrap">
-					${(run.cost_cents / 100).toFixed(2)}
-				</span>
+				<span className="text-text-3 whitespace-nowrap">${(run.cost_cents / 100).toFixed(2)}</span>
 			)}
 
 			{run.exit_code !== null && run.exit_code !== 0 && (
-				<span className="text-accent-red whitespace-nowrap">exit: {run.exit_code}</span>
+				<span className="text-danger whitespace-nowrap">exit: {run.exit_code}</span>
 			)}
 		</Link>
 	);
@@ -97,10 +95,10 @@ function ExecutionListPage() {
 	const isInstanceAgent =
 		!!agent && (INSTANCE_AGENT_SLUGS as readonly string[]).includes(agent.slug);
 
-	if (isLoading) return <div className="text-text-muted text-sm">Loading executions...</div>;
+	if (isLoading) return <div className="text-text-2 text-sm">Loading executions...</div>;
 
 	if (!runs || runs.length === 0) {
-		return <div className="text-text-muted text-sm py-4">No executions yet.</div>;
+		return <div className="text-text-2 text-sm py-4">No executions yet.</div>;
 	}
 
 	return (

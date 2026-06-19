@@ -23,7 +23,7 @@ export function CommentTimestampLink({
 				e.stopPropagation();
 				jumpToComment(publicId)(e);
 			}}
-			className={`text-[11px] text-text-subtle hover:text-text hover:underline${className ? ` ${className}` : ''}`}
+			className={`text-[11px] text-text-3 hover:text-text-1 hover:underline${className ? ` ${className}` : ''}`}
 			title="Link to this comment"
 			data-testid="comment-timestamp-link"
 		>

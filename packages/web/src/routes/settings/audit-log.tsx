@@ -10,7 +10,7 @@ function InstanceAuditLogPage() {
 
 	const body =
 		me && !me.is_superuser ? (
-			<p className="text-[13px] text-text-muted">
+			<p className="text-[13px] text-text-2">
 				The instance activity log is managed by the Admin. You don't have access to this page.
 			</p>
 		) : (
@@ -24,7 +24,7 @@ function InstanceAuditLogPage() {
 							data-testid="activity-info"
 						/>
 					</div>
-					<p className="text-[13px] text-text-muted mt-1 max-w-[680px]">
+					<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
 						Every state-changing action across all teams, plus instance-level admin actions
 						(credentials, connectors, skills) that aren't tied to a team. The combined view for
 						reconstructing what happened.

@@ -48,7 +48,7 @@ export function AutomationsSection({
 				/>
 				<span>
 					<span className="font-medium block">Wake mentioner on reply</span>
-					<span className="text-text-muted block mt-0.5">
+					<span className="text-text-2 block mt-0.5">
 						When an agent replies to a comment that @-mentioned it, automatically wake the original
 						commenter so they see the response right away. Disable to have the original commenter
 						pick up accumulated replies on their next heartbeat instead — useful when a single
@@ -60,7 +60,7 @@ export function AutomationsSection({
 				<label htmlFor="subtask-page-size" className="block text-[13px] font-medium">
 					Sub-task page size
 				</label>
-				<p className="text-text-muted text-[13px] mt-0.5 mb-1.5">
+				<p className="text-text-2 text-[13px] mt-0.5 mb-1.5">
 					How many sub-tasks to show on an task page before a "Show more" link is offered.
 				</p>
 				<Input

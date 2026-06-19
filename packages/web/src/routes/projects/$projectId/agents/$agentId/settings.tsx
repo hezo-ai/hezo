@@ -88,7 +88,7 @@ function AgentSettingsPage() {
 	}, [promptDoc, agentId]);
 
 	if (isLoading || !agent || isPromptLoading)
-		return <div className="text-text-muted text-sm">Loading...</div>;
+		return <div className="text-text-2 text-sm">Loading...</div>;
 
 	const otherAgents =
 		agents?.filter((a) => a.id !== agentId && a.admin_status !== AgentAdminStatus.Disabled) ?? [];
@@ -116,8 +116,8 @@ function AgentSettingsPage() {
 		<div>
 			{/* Budget & Heartbeat */}
 			<div className="mb-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
-				<div className="rounded-lg border border-border-subtle bg-bg p-4">
-					<div className="text-xs text-text-muted mb-2">Monthly spend</div>
+				<div className="rounded-lg border border-border-subtle bg-surface p-4">
+					<div className="text-xs text-text-2 mb-2">Monthly spend</div>
 					{(() => {
 						const entry = budgetStatus?.agents.find((a) => a.agent_id === agent.id);
 						const spent = entry?.monthly.spentCents ?? 0;
@@ -126,9 +126,9 @@ function AgentSettingsPage() {
 						return (
 							<>
 								{limit > 0 && (
-									<div className="h-2 rounded-full bg-bg-muted overflow-hidden mb-1">
+									<div className="h-2 rounded-full bg-surface-3 overflow-hidden mb-1">
 										<div
-											className={`h-full rounded-full transition-all ${pct > 80 ? 'bg-accent-red' : pct > 60 ? 'bg-accent-amber' : 'bg-accent-blue'}`}
+											className={`h-full rounded-full transition-all ${pct > 80 ? 'bg-danger' : pct > 60 ? 'bg-warning' : 'bg-info'}`}
 											style={{ width: `${Math.min(pct, 100)}%` }}
 										/>
 									</div>
@@ -140,7 +140,7 @@ function AgentSettingsPage() {
 								<Link
 									to="/projects/$projectId/budget"
 									params={{ projectId }}
-									className="mt-1 inline-block text-xs text-accent-blue-text hover:underline"
+									className="mt-1 inline-block text-xs text-info-soft-fg hover:underline"
 								>
 									View budgets & charts
 								</Link>
@@ -148,11 +148,11 @@ function AgentSettingsPage() {
 						);
 					})()}
 				</div>
-				<div className="rounded-lg border border-border-subtle bg-bg p-4">
-					<div className="text-xs text-text-muted mb-2">Heartbeat</div>
+				<div className="rounded-lg border border-border-subtle bg-surface p-4">
+					<div className="text-xs text-text-2 mb-2">Heartbeat</div>
 					<div className="text-sm">Every {agent.heartbeat_interval_min} min</div>
 					{agent.last_heartbeat_at && (
-						<div className="text-xs text-text-subtle mt-1">
+						<div className="text-xs text-text-3 mt-1">
 							Last: {new Date(agent.last_heartbeat_at).toLocaleString()}
 						</div>
 					)}
@@ -168,11 +168,11 @@ function AgentSettingsPage() {
 				/>
 				<div>
 					<div className="flex items-center justify-between mb-1.5">
-						<span className="text-sm text-text-muted">System Prompt</span>
+						<span className="text-sm text-text-2">System Prompt</span>
 						<div
 							role="tablist"
 							aria-label="Prompt view mode"
-							className="inline-flex rounded-md border border-border-subtle bg-bg-subtle p-0.5 text-xs"
+							className="inline-flex rounded-md border border-border-subtle bg-surface-2 p-0.5 text-xs"
 						>
 							<button
 								type="button"
@@ -181,8 +181,8 @@ function AgentSettingsPage() {
 								onClick={() => setPromptMode('edit')}
 								className={`px-2.5 py-1 rounded ${
 									promptMode === 'edit'
-										? 'bg-bg text-text shadow-sm'
-										: 'text-text-muted hover:text-text'
+										? 'bg-surface text-text-1 shadow-sm'
+										: 'text-text-2 hover:text-text-1'
 								}`}
 							>
 								Edit
@@ -194,8 +194,8 @@ function AgentSettingsPage() {
 								onClick={() => setPromptMode('preview')}
 								className={`px-2.5 py-1 rounded ${
 									promptMode === 'preview'
-										? 'bg-bg text-text shadow-sm'
-										: 'text-text-muted hover:text-text'
+										? 'bg-surface text-text-1 shadow-sm'
+										: 'text-text-2 hover:text-text-1'
 								}`}
 							>
 								Preview
@@ -212,10 +212,10 @@ function AgentSettingsPage() {
 					) : (
 						<div
 							data-testid="system-prompt-preview"
-							className="min-h-[160px] rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+							className="min-h-[160px] rounded-md border border-border bg-surface-2 px-3 py-2 text-sm"
 						>
 							{isPreviewLoading ? (
-								<div className="text-text-muted text-xs">Resolving…</div>
+								<div className="text-text-2 text-xs">Resolving…</div>
 							) : (
 								<MarkdownProse>{previewData?.content ?? ''}</MarkdownProse>
 							)}
@@ -229,11 +229,11 @@ function AgentSettingsPage() {
 				</div>
 
 				<label className="flex flex-col gap-1.5">
-					<span className="text-sm text-text-muted">Reports To</span>
+					<span className="text-sm text-text-2">Reports To</span>
 					<select
 						value={reportsTo}
 						onChange={(e) => setReportsTo(e.target.value)}
-						className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
+						className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-1 outline-none focus:border-border-strong"
 					>
 						<option value="">None (Admin)</option>
 						{otherAgents.map((a) => (
@@ -245,29 +245,26 @@ function AgentSettingsPage() {
 				</label>
 
 				<div className="flex flex-col gap-1.5">
-					<span className="text-sm text-text-muted">Team Relationships</span>
+					<span className="text-sm text-text-2">Team Relationships</span>
 					<div
 						data-testid="agent-team-context"
-						className="rounded-md border border-border-subtle bg-bg-subtle p-3 text-sm leading-relaxed text-text"
+						className="rounded-md border border-border-subtle bg-surface-2 p-3 text-sm leading-relaxed text-text-1"
 					>
 						<ExpandableText
 							text={agent.team_context ?? ''}
 							placeholder={
-								<span className="italic text-text-muted">Team relationships being generated…</span>
+								<span className="italic text-text-2">Team relationships being generated…</span>
 							}
 						/>
 					</div>
-					<p
-						data-testid="agent-team-context-attribution"
-						className="text-xs text-text-muted italic"
-					>
+					<p data-testid="agent-team-context-attribution" className="text-xs text-text-2 italic">
 						Auto-generated by the Captain from the team's structure and system prompts. Injected
 						into this agent's system prompt at the start of every run.
 					</p>
 				</div>
 
 				<div className="flex flex-col gap-1.5">
-					<span className="text-sm text-text-muted">Budget limits</span>
+					<span className="text-sm text-text-2">Budget limits</span>
 					<BudgetWindowsEditor value={budget} onChange={setBudget} />
 				</div>
 
@@ -296,8 +293,8 @@ function AgentSettingsPage() {
 						className="mt-0.5"
 					/>
 					<span className="flex flex-col gap-0.5">
-						<span className="text-[13px] text-text">Touches code</span>
-						<span className="text-xs text-text-subtle">
+						<span className="text-[13px] text-text-1">Touches code</span>
+						<span className="text-xs text-text-3">
 							Enable if this agent reads or writes repository code. Agents that touch code require a
 							designated repo on their project before they can run.
 						</span>
@@ -324,7 +321,7 @@ function AgentSettingsPage() {
 
 			<div className="mt-8 pt-6 border-t border-border-subtle">
 				<div className="text-sm font-medium mb-1">Agent status</div>
-				<div className="text-xs text-text-muted mb-3">
+				<div className="text-xs text-text-2 mb-3">
 					{agent.admin_status === AgentAdminStatus.Enabled
 						? 'Disabling unassigns this agent from open tasks and stops it from being scheduled.'
 						: 'This agent is disabled and cannot be assigned new work. Enable to resume scheduling.'}
@@ -383,22 +380,22 @@ function ModelOverride({ provider, model, onProviderChange, onModelChange }: Mod
 	const availableProviders = Array.from(configByProvider.keys()) as AiProvider[];
 
 	return (
-		<div className="rounded-lg border border-border-subtle bg-bg p-4 flex flex-col gap-3">
+		<div className="rounded-lg border border-border-subtle bg-surface p-4 flex flex-col gap-3">
 			<div>
 				<div className="text-sm font-medium">Model override</div>
-				<div className="text-xs text-text-muted mt-0.5">
+				<div className="text-xs text-text-2 mt-0.5">
 					Override the model this agent runs on. When cleared, the agent uses the instance-default
 					provider and its configured default model.
 				</div>
 			</div>
 			<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
 				<label className="flex flex-col gap-1">
-					<span className="text-xs text-text-muted">Provider</span>
+					<span className="text-xs text-text-2">Provider</span>
 					<select
 						aria-label="Model override provider"
 						value={provider}
 						onChange={(e) => onProviderChange((e.target.value as AiProvider) || '')}
-						className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover"
+						className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-1 outline-none focus:border-border-strong"
 					>
 						<option value="">Use instance default</option>
 						{availableProviders.map((p) => (
@@ -409,13 +406,13 @@ function ModelOverride({ provider, model, onProviderChange, onModelChange }: Mod
 					</select>
 				</label>
 				<label className="flex flex-col gap-1">
-					<span className="text-xs text-text-muted">Model</span>
+					<span className="text-xs text-text-2">Model</span>
 					<select
 						aria-label="Model override model"
 						value={model}
 						onChange={(e) => onModelChange(e.target.value)}
 						disabled={!provider || models.isLoading}
-						className="rounded-md border border-border bg-bg-subtle px-3 py-2 text-sm text-text outline-none focus:border-border-hover disabled:opacity-60"
+						className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-1 outline-none focus:border-border-strong disabled:opacity-60"
 					>
 						<option value="">
 							{activeConfig?.default_model
@@ -432,7 +429,7 @@ function ModelOverride({ provider, model, onProviderChange, onModelChange }: Mod
 						))}
 					</select>
 					{models.error && (
-						<span className="text-xs text-accent-red">
+						<span className="text-xs text-danger">
 							{(models.error as { message?: string }).message || 'Failed to load models'}
 						</span>
 					)}

@@ -97,13 +97,13 @@ export function TaskSidebar({
 				/>
 
 				<div>
-					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
+					<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">
 						Priority
 					</span>
 					<select
 						value={task.priority}
 						onChange={(e) => updateTask.mutate({ priority: e.target.value })}
-						className="w-full rounded-radius-md border border-border bg-bg px-2.5 py-1.5 text-xs text-text outline-none"
+						className="w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-text-1 outline-none"
 					>
 						{['low', 'medium', 'high', 'urgent'].map((p) => (
 							<option key={p} value={p}>
@@ -114,16 +114,16 @@ export function TaskSidebar({
 				</div>
 
 				<div ref={assigneeRef} className="relative" data-testid="task-assignee">
-					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
+					<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">
 						Assignee
 					</span>
 					{task.has_active_run ? (
-						<div className="flex items-center gap-1 w-full text-[13px] text-text px-1 py-0.5">
+						<div className="flex items-center gap-1 w-full text-[13px] text-text-1 px-1 py-0.5">
 							{assignedAgent ? (
 								<AgentLink
 									projectId={projectId}
 									agentId={assignedAgent.slug}
-									className="flex flex-1 min-w-0 items-center hover:text-accent-blue-text transition-colors"
+									className="flex flex-1 min-w-0 items-center hover:text-info-soft-fg transition-colors"
 									testId="task-assignee-link"
 								>
 									<AgentStatusLabel
@@ -146,12 +146,12 @@ export function TaskSidebar({
 						</div>
 					) : (
 						<>
-							<div className="flex items-center gap-1 w-full text-[13px] text-text px-1 py-0.5">
+							<div className="flex items-center gap-1 w-full text-[13px] text-text-1 px-1 py-0.5">
 								{assignedAgent ? (
 									<AgentLink
 										projectId={projectId}
 										agentId={assignedAgent.slug}
-										className="flex flex-1 min-w-0 items-center hover:text-accent-blue-text transition-colors"
+										className="flex flex-1 min-w-0 items-center hover:text-info-soft-fg transition-colors"
 										testId="task-assignee-link"
 									>
 										<AgentStatusLabel
@@ -173,15 +173,15 @@ export function TaskSidebar({
 									type="button"
 									onClick={() => setAssigneeOpen((o) => !o)}
 									aria-label="Change assignee"
-									className="shrink-0 rounded-radius-md hover:bg-bg-subtle p-1 transition-colors"
+									className="shrink-0 rounded-md hover:bg-surface-2 p-1 transition-colors"
 								>
 									<ChevronDown
-										className={`w-3.5 h-3.5 text-text-subtle transition-transform ${assigneeOpen ? 'rotate-180' : ''}`}
+										className={`w-3.5 h-3.5 text-text-3 transition-transform ${assigneeOpen ? 'rotate-180' : ''}`}
 									/>
 								</button>
 							</div>
 							{assigneeOpen && (
-								<div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-radius-md border border-border bg-bg shadow-md max-h-48 overflow-y-auto">
+								<div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-md border border-border bg-surface shadow-md max-h-48 overflow-y-auto">
 									{assigneeOptions?.map((a) => (
 										<button
 											type="button"
@@ -190,8 +190,8 @@ export function TaskSidebar({
 												updateTask.mutate({ assignee_id: a.id });
 												setAssigneeOpen(false);
 											}}
-											className={`flex items-center w-full px-2.5 py-1.5 text-xs text-left hover:bg-bg-subtle transition-colors ${
-												a.id === task.assignee_id ? 'bg-bg-subtle font-medium' : ''
+											className={`flex items-center w-full px-2.5 py-1.5 text-xs text-left hover:bg-surface-2 transition-colors ${
+												a.id === task.assignee_id ? 'bg-surface-2 font-medium' : ''
 											}`}
 										>
 											<AgentStatusLabel name={a.title} runtimeStatus={AgentRuntimeStatus.Idle} />
@@ -204,39 +204,39 @@ export function TaskSidebar({
 				</div>
 
 				<div>
-					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
+					<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">
 						Project
 					</span>
 					{task.project_name && task.project_slug ? (
 						<Link
 							to="/projects/$projectId"
 							params={{ projectId: task.project_slug }}
-							className="text-[13px] text-text hover:text-accent-blue-text transition-colors"
+							className="text-[13px] text-text-1 hover:text-info-soft-fg transition-colors"
 						>
 							{task.project_name}
 						</Link>
 					) : (
-						<span className="text-[13px] text-text">—</span>
+						<span className="text-[13px] text-text-1">—</span>
 					)}
 				</div>
 
 				<div>
-					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
+					<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">
 						Created
 					</span>
-					<span className="text-[13px] text-text">
+					<span className="text-[13px] text-text-1">
 						{new Date(task.created_at).toLocaleDateString()}
 					</span>
 				</div>
 
 				<div>
-					<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
+					<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">
 						Effort
 					</span>
 					<select
 						value={commentEffort ?? effectiveDefaultEffort}
 						onChange={(e) => setCommentEffort(e.target.value as AgentEffort)}
-						className="w-full rounded-radius-md border border-border bg-bg px-2.5 py-1.5 text-xs text-text outline-none"
+						className="w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-text-1 outline-none"
 						aria-label="Reasoning effort for the agent run triggered by this comment"
 					>
 						{EFFORT_LEVELS.map(({ value, label }) => (

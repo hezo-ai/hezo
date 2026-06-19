@@ -142,7 +142,7 @@ function ModelPricingPage() {
 									}
 								}}
 								aria-label={`Remove override for ${r.model_id}`}
-								className="text-text-subtle hover:text-accent-red"
+								className="text-text-3 hover:text-danger"
 							>
 								<Trash2 className="w-3.5 h-3.5" />
 							</button>
@@ -154,7 +154,7 @@ function ModelPricingPage() {
 
 	const content =
 		me && !me.is_superuser ? (
-			<p className="text-[13px] text-text-muted">
+			<p className="text-[13px] text-text-2">
 				Model pricing is managed by the Admin. You don't have access to this page.
 			</p>
 		) : (
@@ -169,7 +169,7 @@ function ModelPricingPage() {
 								data-testid="model-pricing-info"
 							/>
 						</div>
-						<p className="text-[13px] text-text-muted mt-1 max-w-[680px]">
+						<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
 							Per-token rates that turn a run's token counts into a dollar cost, across every
 							runtime. Feed rows refresh from <span className="font-mono">LiteLLM</span>; a manual
 							override wins for that model — use it for ids the feed doesn't carry (e.g.{' '}
@@ -234,7 +234,7 @@ function ModelPricingPage() {
 								className="flex-1"
 							/>
 						</div>
-						{error && <p className="text-[13px] text-accent-red">{error}</p>}
+						{error && <p className="text-[13px] text-danger">{error}</p>}
 						<div className="flex gap-2">
 							<Button type="submit" size="sm" disabled={createOverride.isPending}>
 								Save override
@@ -247,7 +247,7 @@ function ModelPricingPage() {
 				)}
 
 				{!rows.length ? (
-					<p className="text-[13px] text-text-muted">
+					<p className="text-[13px] text-text-2">
 						No pricing rows yet. Refresh from the feed, or add a manual override above.
 					</p>
 				) : (

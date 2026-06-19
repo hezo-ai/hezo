@@ -50,7 +50,7 @@ function CopyCommentButton({ text }: { text: string }) {
 		<button
 			type="button"
 			onClick={handleCopy}
-			className="text-text-subtle hover:text-text shrink-0 p-1 -m-1"
+			className="text-text-3 hover:text-text-1 shrink-0 p-1 -m-1"
 			aria-label={copied ? 'Copied' : 'Copy comment'}
 			data-testid="comment-copy"
 		>
@@ -353,13 +353,13 @@ export function CommentsSection({
 							return (
 								<div
 									id={`comment-${c.public_id}`}
-									className={`flex items-start gap-2.5 scroll-mt-20 pb-4 ${isHighlighted ? 'rounded-md ring-2 ring-accent-blue/60 transition-shadow' : ''}`}
+									className={`flex items-start gap-2.5 scroll-mt-20 pb-4 ${isHighlighted ? 'rounded-md ring-2 ring-info/60 transition-shadow' : ''}`}
 									data-testid="comment-item"
 									data-comment-highlighted={isHighlighted ? 'true' : undefined}
 								>
 									<div
 										data-testid="inline-event-icon"
-										className="w-[26px] h-[26px] flex items-center justify-center shrink-0 text-text-subtle"
+										className="w-[26px] h-[26px] flex items-center justify-center shrink-0 text-text-3"
 									>
 										<Icon className="w-3.5 h-3.5" />
 									</div>
@@ -383,7 +383,7 @@ export function CommentsSection({
 						return (
 							<div
 								id={`comment-${c.public_id}`}
-								className={`flex gap-2.5 scroll-mt-20 pb-4 ${isHighlighted ? 'rounded-md ring-2 ring-accent-blue/60 transition-shadow' : ''}`}
+								className={`flex gap-2.5 scroll-mt-20 pb-4 ${isHighlighted ? 'rounded-md ring-2 ring-info/60 transition-shadow' : ''}`}
 								data-testid="comment-item"
 								data-comment-highlighted={isHighlighted ? 'true' : undefined}
 								{...(isPendingSetupRepo ? { 'data-setup-repo-anchor': '' } : {})}
@@ -409,20 +409,20 @@ export function CommentsSection({
 										color={avatarColorFromString(authorName)}
 									/>
 								)}
-								<div className="flex-1 min-w-0 rounded-md border border-border bg-bg-elevated overflow-hidden">
-									<div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-bg-muted">
+								<div className="flex-1 min-w-0 rounded-md border border-border bg-surface overflow-hidden">
+									<div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-surface-3">
 										{authorAgentSlug ? (
 											<AgentLink
 												projectId={projectId}
 												agentId={authorAgentSlug}
-												className="text-xs font-medium text-text hover:text-accent-blue-text transition-colors"
+												className="text-xs font-medium text-text-1 hover:text-info-soft-fg transition-colors"
 												testId="comment-author"
 											>
 												{authorName}
 											</AgentLink>
 										) : (
 											<span
-												className={`text-xs font-medium ${isAgent ? 'text-text' : 'text-text-muted'}`}
+												className={`text-xs font-medium ${isAgent ? 'text-text-1' : 'text-text-2'}`}
 												data-testid="comment-author"
 											>
 												{authorName}
@@ -438,7 +438,7 @@ export function CommentsSection({
 														<a
 															href={`#comment-${parent.public_id}`}
 															onClick={jumpToComment(parent.public_id)}
-															className="flex items-center gap-1 text-[11px] text-text-subtle hover:text-text"
+															className="flex items-center gap-1 text-[11px] text-text-3 hover:text-text-1"
 															data-testid="replying-to"
 														>
 															<CornerDownRight className="w-3 h-3" />
@@ -473,7 +473,7 @@ export function CommentsSection({
 											<button
 												type="button"
 												onClick={() => onStartReply(c)}
-												className="mt-2 flex items-center gap-1 text-[11px] text-text-subtle hover:text-text shrink-0 p-1 -m-1"
+												className="mt-2 flex items-center gap-1 text-[11px] text-text-3 hover:text-text-1 shrink-0 p-1 -m-1"
 												aria-label="Reply to comment"
 												data-testid="comment-reply"
 											>

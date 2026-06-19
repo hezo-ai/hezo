@@ -9,7 +9,7 @@ import { RepoSetupApprovalModal } from './repo-setup-approval-modal';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 
-const linkClass = 'font-medium text-accent-blue-text hover:underline';
+const linkClass = 'font-medium text-accent hover:underline';
 
 function EntityLink({
 	to,
@@ -73,9 +73,7 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 							</>
 						)}
 					</span>
-					{p.reason && (
-						<span className="block text-xs text-text-muted mt-1">{p.reason as string}</span>
-					)}
+					{p.reason && <span className="block text-xs text-text-2 mt-1">{p.reason as string}</span>}
 				</>
 			);
 		}
@@ -121,9 +119,7 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 					<span>
 						Proposing new skill: "<span className="font-medium">{skillName}</span>"
 					</span>
-					{p.reason && (
-						<span className="block text-xs text-text-muted mt-1">{p.reason as string}</span>
-					)}
+					{p.reason && <span className="block text-xs text-text-2 mt-1">{p.reason as string}</span>}
 				</>
 			);
 		}
@@ -131,9 +127,7 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 			return (
 				<>
 					<span>Requesting plan review</span>
-					{p.reason && (
-						<span className="block text-xs text-text-muted mt-1">{p.reason as string}</span>
-					)}
+					{p.reason && <span className="block text-xs text-text-2 mt-1">{p.reason as string}</span>}
 				</>
 			);
 		}
@@ -142,7 +136,7 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 			return (
 				<>
 					<span>Proposing strategy</span>
-					{plan && <span className="block text-xs text-text-muted mt-1">{plan}</span>}
+					{plan && <span className="block text-xs text-text-2 mt-1">{plan}</span>}
 				</>
 			);
 		}
@@ -153,9 +147,7 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 					<span>
 						Requesting deploy to <span className="font-medium">{target}</span>
 					</span>
-					{p.reason && (
-						<span className="block text-xs text-text-muted mt-1">{p.reason as string}</span>
-					)}
+					{p.reason && <span className="block text-xs text-text-2 mt-1">{p.reason as string}</span>}
 				</>
 			);
 		}
@@ -169,8 +161,8 @@ interface ApprovalCardProps {
 	showTeam?: boolean;
 }
 
-const baseCardClass = 'block p-4 border border-border rounded-radius-md';
-const linkCardClass = `${baseCardClass} hover:bg-bg-subtle transition-colors`;
+const baseCardClass = 'block p-4 border border-border rounded-md';
+const linkCardClass = `${baseCardClass} hover:bg-surface-2 transition-colors`;
 
 function CardBody({
 	approval,
@@ -189,27 +181,29 @@ function CardBody({
 					<span
 						role="img"
 						aria-label="Unread"
-						className="w-2 h-2 rounded-full bg-primary shrink-0"
+						className="w-2 h-2 rounded-full bg-inverse shrink-0"
 					/>
 				)}
-				<Badge color={approvalTypeColor(approval.type)}>{approval.type.replace('_', ' ')}</Badge>
+				<Badge variant="dot" color={approvalTypeColor(approval.type)}>
+					{approval.type.replace('_', ' ')}
+				</Badge>
 				{resolved && (
 					<Badge color={approval.status === ApprovalStatus.Approved ? 'green' : 'red'}>
 						{approval.status}
 					</Badge>
 				)}
 				{showTeam && approval.team_name && (
-					<span className="text-xs text-text-muted">{approval.team_name}</span>
+					<span className="text-xs text-text-2">{approval.team_name}</span>
 				)}
 			</div>
 			{approval.requested_by_name && (
-				<p className="text-xs text-text-muted mb-1">From: {approval.requested_by_name}</p>
+				<p className="text-xs text-text-2 mb-1">From: {approval.requested_by_name}</p>
 			)}
-			<div className="text-sm text-text-subtle break-words">
+			<div className="text-sm text-text-3 break-words">
 				<ApprovalMessage approval={approval} />
 			</div>
 			{resolved && approval.resolution_note && (
-				<p className="text-xs text-text-muted mt-2">Note: {approval.resolution_note}</p>
+				<p className="text-xs text-text-2 mt-2">Note: {approval.resolution_note}</p>
 			)}
 		</>
 	);
@@ -235,7 +229,7 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 	const resolveApproval = useResolveApproval();
 	const [modalOpen, setModalOpen] = useState(false);
 	const unread = approval.status === ApprovalStatus.Pending;
-	const highlight = unread ? ' border-l-2 border-l-primary bg-bg-subtle' : '';
+	const highlight = unread ? ' border-l-2 border-l-accent bg-surface-2' : '';
 
 	// Resolved approvals are inbox history: read-only, no actions or navigation.
 	if (!unread) {
@@ -310,7 +304,7 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 				<Button
 					size="sm"
 					variant="ghost"
-					className="text-accent-red"
+					className="text-danger"
 					disabled={resolveApproval.isPending}
 					onClick={() =>
 						resolveApproval.mutate({

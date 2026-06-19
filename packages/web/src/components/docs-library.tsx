@@ -129,9 +129,9 @@ export function DocsLibrary({
 					)}
 
 					{isLoadingList ? (
-						<div className="text-text-muted text-[13px] py-4">Loading...</div>
+						<div className="text-text-2 text-[13px] py-4">Loading...</div>
 					) : items.length === 0 ? (
-						<div className="text-text-muted text-[13px] py-4">No documents</div>
+						<div className="text-text-2 text-[13px] py-4">No documents</div>
 					) : (
 						<ul className="flex flex-col gap-0.5">
 							{items.map((item) => {
@@ -141,17 +141,15 @@ export function DocsLibrary({
 										<button
 											type="button"
 											onClick={() => onSelect(item.key)}
-											className={`w-full text-left px-2 py-1.5 rounded-radius-md transition-colors ${
+											className={`w-full text-left px-2 py-1.5 rounded-md transition-colors ${
 												isActive
-													? 'bg-bg-subtle text-text'
-													: 'text-text-muted hover:bg-bg-subtle hover:text-text'
+													? 'bg-surface-2 text-text-1'
+													: 'text-text-2 hover:bg-surface-2 hover:text-text-1'
 											}`}
 										>
 											<div className="text-[13px] font-medium truncate">{item.label}</div>
 											{item.meta && (
-												<div className="text-[11px] text-text-subtle mt-0.5 truncate">
-													{item.meta}
-												</div>
+												<div className="text-[11px] text-text-3 mt-0.5 truncate">{item.meta}</div>
 											)}
 										</button>
 									</li>
@@ -167,7 +165,7 @@ export function DocsLibrary({
 					<button
 						type="button"
 						onClick={() => onSelect(null)}
-						className="md:hidden inline-flex items-center gap-1 text-sm text-text-muted hover:text-text mb-3"
+						className="md:hidden inline-flex items-center gap-1 text-sm text-text-2 hover:text-text-1 mb-3"
 					>
 						<ArrowLeft className="w-3.5 h-3.5" /> Back
 					</button>
@@ -182,12 +180,12 @@ export function DocsLibrary({
 						description={emptyDescription}
 					/>
 				) : isLoadingDoc || docContent == null ? (
-					<div className="text-text-muted text-[13px] py-4">Loading...</div>
+					<div className="text-text-2 text-[13px] py-4">Loading...</div>
 				) : (
 					<div className="flex flex-col">
 						{viewerBanner}
 						<div className="flex items-center justify-between gap-2 mb-4 pb-3 border-b border-border-subtle">
-							<h2 className="text-base font-semibold text-text truncate">
+							<h2 className="text-base font-semibold text-text-1 truncate">
 								{docTitle ?? selectedItem?.label ?? selectedKey}
 							</h2>
 							<div className="flex items-center gap-2 shrink-0">
@@ -211,7 +209,7 @@ export function DocsLibrary({
 											<Button
 												variant="ghost"
 												size="sm"
-												className="text-accent-red"
+												className="text-danger"
 												onClick={() => setDeleteOpen(true)}
 												aria-label="Delete document"
 											>

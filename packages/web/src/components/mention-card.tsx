@@ -1,6 +1,5 @@
 import type { AdminMentionItem } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { MessageSquare } from 'lucide-react';
 import { useMarkMentionRead } from '../hooks/use-admin-mentions';
 import { Badge } from './ui/badge';
 
@@ -9,8 +8,8 @@ interface MentionCardProps {
 	showTeam?: boolean;
 }
 
-const baseCardClass = 'block p-4 border border-border rounded-radius-md text-left w-full';
-const linkCardClass = `${baseCardClass} hover:bg-bg-subtle transition-colors`;
+const baseCardClass = 'block p-4 border border-border rounded-md text-left w-full';
+const linkCardClass = `${baseCardClass} hover:bg-surface-2 transition-colors`;
 
 function relativeTime(iso: string): string {
 	const then = new Date(iso).getTime();
@@ -48,7 +47,7 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 		<button
 			type="button"
 			onClick={handleClick}
-			className={`${linkCardClass}${unread ? ' border-l-2 border-l-primary bg-bg-subtle' : ''}`}
+			className={`${linkCardClass}${unread ? ' border-l-2 border-l-accent bg-surface-2' : ''}`}
 			data-testid="mention-card"
 			data-unread={unread}
 		>
@@ -57,17 +56,16 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 					<span
 						role="img"
 						aria-label="Unread"
-						className="w-2 h-2 rounded-full bg-primary shrink-0"
+						className="w-2 h-2 rounded-full bg-inverse shrink-0"
 					/>
 				)}
-				<Badge color="blue">
-					<MessageSquare className="w-3 h-3 mr-1 inline" />
+				<Badge variant="dot" color="info">
 					mention
 				</Badge>
-				{showTeam && <span className="text-xs text-text-muted">{mention.team_slug}</span>}
-				<span className="text-xs text-text-muted">{relativeTime(mention.created_at)}</span>
+				{showTeam && <span className="text-xs text-text-2">{mention.team_slug}</span>}
+				<span className="text-xs text-text-2">{relativeTime(mention.created_at)}</span>
 			</div>
-			<p className="text-xs text-text-muted mb-1">
+			<p className="text-xs text-text-2 mb-1">
 				<span className="font-medium">{author}</span> asked you on{' '}
 				<Link
 					to={'/projects/$projectId/tasks/$taskId' as never}
@@ -77,14 +75,14 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 							taskId: mention.task_identifier.toLowerCase(),
 						} as never
 					}
-					className="font-medium text-accent-blue-text hover:underline"
+					className="font-medium text-accent hover:underline"
 					onClick={(e) => e.stopPropagation()}
 				>
 					{mention.task_identifier}
 				</Link>
 			</p>
 			{mention.snippet && (
-				<p className="text-sm text-text-subtle break-words line-clamp-3">{mention.snippet}</p>
+				<p className="text-sm text-text-3 break-words line-clamp-3">{mention.snippet}</p>
 			)}
 		</button>
 	);

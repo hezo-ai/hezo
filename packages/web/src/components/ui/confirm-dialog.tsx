@@ -16,8 +16,8 @@ interface ConfirmDialogProps {
 }
 
 const confirmVariantClass = {
-	default: 'bg-primary text-bg hover:opacity-85',
-	danger: 'bg-accent-red text-white hover:opacity-85',
+	default: 'bg-inverse text-inverse-fg hover:opacity-85',
+	danger: 'bg-danger text-danger-solid-fg hover:opacity-85',
 } as const;
 
 export function ConfirmDialog({
@@ -52,14 +52,14 @@ export function ConfirmDialog({
 				<AlertDialog.Content data-testid="confirm-dialog" className={dialogContentClassName.sm}>
 					<AlertDialog.Title className="text-base font-semibold mb-2">{title}</AlertDialog.Title>
 					{description && (
-						<AlertDialog.Description className="text-[13px] text-text-muted mb-5 leading-relaxed">
+						<AlertDialog.Description className="text-[13px] text-text-2 mb-5 leading-relaxed">
 							{description}
 						</AlertDialog.Description>
 					)}
 					<div className="flex justify-end gap-2">
 						<AlertDialog.Cancel
 							disabled={loading}
-							className="inline-flex items-center justify-center gap-2 font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none cursor-pointer bg-bg-subtle text-text-muted border border-border hover:text-text hover:bg-bg-muted px-2.5 py-1 text-xs rounded-radius-md"
+							className="inline-flex items-center justify-center gap-2 font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none cursor-pointer bg-surface-2 text-text-2 border border-border hover:text-text-1 hover:bg-surface-3 px-2.5 py-1 text-xs rounded-md"
 						>
 							{cancelLabel}
 						</AlertDialog.Cancel>
@@ -67,7 +67,7 @@ export function ConfirmDialog({
 							data-testid="confirm-dialog-confirm"
 							disabled={loading}
 							onClick={handleConfirm}
-							className={`inline-flex items-center justify-center gap-2 font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none cursor-pointer px-2.5 py-1 text-xs rounded-radius-md ${confirmVariantClass[variant]}`}
+							className={`inline-flex items-center justify-center gap-2 font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none cursor-pointer px-2.5 py-1 text-xs rounded-md ${confirmVariantClass[variant]}`}
 						>
 							{loading && <Loader2 className="w-3 h-3 animate-spin" />}
 							{confirmLabel}

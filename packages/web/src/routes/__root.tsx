@@ -34,7 +34,7 @@ function RootLayout() {
 function Spinner() {
 	return (
 		<div className="flex items-center justify-center h-screen">
-			<div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+			<div className="w-6 h-6 border-2 border-inverse border-t-transparent rounded-full animate-spin" />
 		</div>
 	);
 }
@@ -57,11 +57,11 @@ function AppShell() {
 			'Could not reach the server. If you just reset the database, wait a few seconds and retry.';
 		return (
 			<div className="flex flex-col items-center justify-center h-screen gap-4 px-4 text-center">
-				<p className="text-[13px] text-accent-red max-w-md">{message}</p>
+				<p className="text-[13px] text-danger max-w-md">{message}</p>
 				<button
 					type="button"
 					onClick={() => refetch()}
-					className="text-[13px] font-medium text-primary hover:underline"
+					className="text-[13px] font-medium text-text-1 hover:underline"
 				>
 					Retry
 				</button>
@@ -149,7 +149,7 @@ function ShellChrome() {
 						<ProjectRail />
 					</div>
 					{active && (
-						<div className="hidden lg:block w-[208px] shrink-0 h-full overflow-y-auto border-r border-border bg-bg py-2">
+						<div className="hidden lg:block w-[208px] shrink-0 h-full overflow-y-auto border-r border-border bg-surface py-2">
 							<ProjectSidebar />
 						</div>
 					)}
@@ -165,12 +165,12 @@ function ShellChrome() {
 						type="button"
 						aria-label="Close navigation"
 						onClick={() => setDrawerOpen(false)}
-						className="absolute inset-0 bg-black/50 cursor-default"
+						className="absolute inset-0 bg-[var(--overlay)] cursor-default"
 					/>
-					<div className="relative flex h-full bg-bg shadow-xl">
+					<div className="relative flex h-full bg-surface shadow-xl">
 						<ProjectRail />
 						{active && (
-							<div className="w-[208px] h-full overflow-y-auto py-2 border-r border-border bg-bg">
+							<div className="w-[208px] h-full overflow-y-auto py-2 border-r border-border bg-surface">
 								<ProjectSidebar />
 							</div>
 						)}
@@ -179,7 +179,7 @@ function ShellChrome() {
 							aria-label="Close navigation"
 							onClick={() => setDrawerOpen(false)}
 							data-testid="mobile-nav-close"
-							className="absolute top-2 -right-10 w-9 h-9 rounded-radius-md bg-bg-elevated border border-border flex items-center justify-center text-text-muted hover:text-text shadow-sm"
+							className="absolute top-2 -right-10 w-9 h-9 rounded-md bg-surface border border-border flex items-center justify-center text-text-2 hover:text-text-1 shadow-sm"
 						>
 							<X className="w-4 h-4" />
 						</button>

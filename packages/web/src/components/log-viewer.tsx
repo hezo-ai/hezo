@@ -112,16 +112,16 @@ export function LogViewer({
 	const isFormatted = formattable && viewMode === 'formatted';
 	const sizing = isExpanded ? 'flex-1 min-h-0' : heightClassName;
 	const bodyClassName = isFormatted
-		? `bg-[#0d1117] log-surface-dark text-text ${sizing} overflow-y-auto p-3 text-sm leading-relaxed`
+		? `bg-[#0d1117] log-surface-dark text-text-1 ${sizing} overflow-y-auto p-3 text-sm leading-relaxed`
 		: `bg-[#0d1117] ${sizing} overflow-y-auto p-3 font-mono text-xs leading-relaxed`;
 
 	const content = (
 		<>
-			<div className="flex items-center justify-between bg-bg-subtle px-3 py-1.5 border-b border-border-subtle">
-				<div className="flex items-center gap-2 text-xs text-text-muted font-medium">
+			<div className="flex items-center justify-between bg-surface-2 px-3 py-1.5 border-b border-border-subtle">
+				<div className="flex items-center gap-2 text-xs text-text-2 font-medium">
 					<span>Logs</span>
 					{liveLabel}
-					<span className="text-text-subtle font-normal">{lines.length} lines</span>
+					<span className="text-text-3 font-normal">{lines.length} lines</span>
 					{formattable && (
 						<div className="flex items-center gap-0.5">
 							<Tooltip content="Formatted view">
@@ -131,7 +131,7 @@ export function LogViewer({
 									onClick={() => setViewMode('formatted')}
 									aria-pressed={viewMode === 'formatted'}
 									aria-label="Formatted view"
-									className={`h-6 px-1.5 ${viewMode === 'formatted' ? 'bg-bg-muted text-text border border-border shadow-inner' : ''}`}
+									className={`h-6 px-1.5 ${viewMode === 'formatted' ? 'bg-surface-3 text-text-1 border border-border shadow-inner' : ''}`}
 								>
 									<AlignLeft className="w-3 h-3" />
 								</Button>
@@ -143,7 +143,7 @@ export function LogViewer({
 									onClick={() => setViewMode('raw')}
 									aria-pressed={viewMode === 'raw'}
 									aria-label="Raw logs"
-									className={`h-6 px-1.5 ${viewMode === 'raw' ? 'bg-bg-muted text-text border border-border shadow-inner' : ''}`}
+									className={`h-6 px-1.5 ${viewMode === 'raw' ? 'bg-surface-3 text-text-1 border border-border shadow-inner' : ''}`}
 								>
 									<Code className="w-3 h-3" />
 								</Button>
@@ -172,7 +172,7 @@ export function LogViewer({
 							onClick={() => setAutoScroll((v) => !v)}
 							aria-pressed={autoScroll}
 							aria-label="Toggle auto-scroll"
-							className={`text-xs h-6 px-2 ${autoScroll ? 'bg-bg-muted text-text border border-border shadow-inner' : ''}`}
+							className={`text-xs h-6 px-2 ${autoScroll ? 'bg-surface-3 text-text-1 border border-border shadow-inner' : ''}`}
 						>
 							<MoveVertical className="w-3 h-3" />
 						</Button>
@@ -193,7 +193,7 @@ export function LogViewer({
 			</div>
 			<div ref={attachScrollRef} data-testid={testId} className={bodyClassName}>
 				{lines.length === 0 ? (
-					<span className="text-text-subtle">{emptyState ?? 'No output.'}</span>
+					<span className="text-text-3">{emptyState ?? 'No output.'}</span>
 				) : isFormatted ? (
 					<FormattedLogView
 						lines={lines}
@@ -205,7 +205,7 @@ export function LogViewer({
 					lines.map((line) => (
 						<div
 							key={line.id}
-							className={`whitespace-pre-wrap ${line.stream === 'stderr' ? 'text-red-400' : 'text-gray-300'}`}
+							className={`whitespace-pre-wrap ${line.stream === 'stderr' ? 'text-danger' : 'text-text-2'}`}
 						>
 							{line.text}
 						</div>
@@ -226,7 +226,7 @@ export function LogViewer({
 				<Dialog.Portal>
 					<Dialog.Content
 						data-testid="log-viewer-fullscreen"
-						className="fixed inset-0 z-50 flex flex-col bg-bg outline-none"
+						className="fixed inset-0 z-50 flex flex-col bg-surface outline-none"
 					>
 						<Dialog.Title className="sr-only">Log viewer (expanded)</Dialog.Title>
 						{content}

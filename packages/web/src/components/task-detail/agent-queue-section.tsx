@@ -66,7 +66,7 @@ export function AgentQueueSection({
 
 	return (
 		<div data-testid="agent-queue-section">
-			<span className="text-text-subtle block mb-1 uppercase tracking-wider font-medium">
+			<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">
 				Agent Queue
 			</span>
 			<div className="flex flex-col gap-1">
@@ -126,21 +126,19 @@ function RunningAgentRow({
 	return (
 		<div
 			data-testid={`running-agent-${lock.member_id}`}
-			className="flex items-center justify-between gap-2 text-[13px] text-text"
+			className="flex items-center justify-between gap-2 text-[13px] text-text-1"
 		>
 			{agentSlug ? (
 				<AgentLink
 					projectId={projectId}
 					agentId={agentSlug}
-					className="text-accent-blue-text font-medium hover:underline truncate min-w-0"
+					className="text-info-soft-fg font-medium hover:underline truncate min-w-0"
 					testId={`running-agent-link-${lock.member_id}`}
 				>
 					{lock.member_name}
 				</AgentLink>
 			) : (
-				<span className="text-accent-blue-text font-medium truncate min-w-0">
-					{lock.member_name}
-				</span>
+				<span className="text-info-soft-fg font-medium truncate min-w-0">{lock.member_name}</span>
 			)}
 			<div className="flex items-center gap-1 shrink-0">
 				{run ? (
@@ -160,13 +158,13 @@ function RunningAgentRow({
 								window.dispatchEvent(new HashChangeEvent('hashchange'));
 							}}
 							aria-label="Jump to run"
-							className="inline-flex items-center justify-center h-6 w-6 rounded-radius-md hover:bg-bg-subtle transition-colors"
+							className="inline-flex items-center justify-center h-6 w-6 rounded-md hover:bg-surface-2 transition-colors"
 						>
-							<Loader2 className="w-3.5 h-3.5 animate-spin text-accent-blue" />
+							<Loader2 className="w-3.5 h-3.5 animate-spin text-info" />
 						</a>
 					</Tooltip>
 				) : (
-					<Loader2 className="w-3.5 h-3.5 animate-spin text-accent-blue" aria-label="Running" />
+					<Loader2 className="w-3.5 h-3.5 animate-spin text-info" aria-label="Running" />
 				)}
 				{run && (
 					<Tooltip content="Terminate run">
@@ -176,7 +174,7 @@ function RunningAgentRow({
 							aria-label="Terminate run"
 							data-testid={`terminate-running-agent-${lock.member_id}`}
 							disabled={terminateMutation.isPending}
-							className="inline-flex items-center justify-center h-6 w-6 text-accent-red hover:bg-accent-red/10 rounded-radius-md transition-colors"
+							className="inline-flex items-center justify-center h-6 w-6 text-danger hover:bg-danger/10 rounded-md transition-colors"
 						>
 							<Trash2 className="w-3.5 h-3.5" />
 						</button>
@@ -235,13 +233,13 @@ function QueuedAgentRow({
 	return (
 		<div
 			data-testid={`queued-agent-${wakeup.id}`}
-			className="flex items-center justify-between gap-2 text-[13px] text-text"
+			className="flex items-center justify-between gap-2 text-[13px] text-text-1"
 		>
 			{agentSlug ? (
 				<AgentLink
 					projectId={projectId}
 					agentId={agentSlug}
-					className="truncate min-w-0 hover:text-accent-blue-text transition-colors"
+					className="truncate min-w-0 hover:text-info-soft-fg transition-colors"
 					testId={`queued-agent-link-${wakeup.id}`}
 				>
 					{wakeup.member_name}
@@ -260,7 +258,7 @@ function QueuedAgentRow({
 							aria-label={`Run now unavailable: ${blockReason}`}
 							data-testid={`run-queued-wakeup-${wakeup.id}`}
 							onClick={(e) => e.preventDefault()}
-							className="inline-flex items-center justify-center h-6 w-6 text-accent-green opacity-40 cursor-not-allowed rounded-radius-md"
+							className="inline-flex items-center justify-center h-6 w-6 text-success opacity-40 cursor-not-allowed rounded-md"
 						>
 							<Play className="w-3.5 h-3.5" />
 						</button>
@@ -273,7 +271,7 @@ function QueuedAgentRow({
 							aria-label="Run queued agent now"
 							data-testid={`run-queued-wakeup-${wakeup.id}`}
 							disabled={runMutation.isPending}
-							className="inline-flex items-center justify-center h-6 w-6 text-accent-green hover:bg-accent-green/10 rounded-radius-md transition-colors"
+							className="inline-flex items-center justify-center h-6 w-6 text-success hover:bg-success/10 rounded-md transition-colors"
 						>
 							{runMutation.isPending ? (
 								<Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -290,7 +288,7 @@ function QueuedAgentRow({
 						aria-label="Cancel queued agent"
 						data-testid={`cancel-queued-wakeup-${wakeup.id}`}
 						disabled={cancelMutation.isPending}
-						className="inline-flex items-center justify-center h-6 w-6 text-accent-red hover:bg-accent-red/10 rounded-radius-md transition-colors"
+						className="inline-flex items-center justify-center h-6 w-6 text-danger hover:bg-danger/10 rounded-md transition-colors"
 					>
 						<Trash2 className="w-3.5 h-3.5" />
 					</button>

@@ -53,7 +53,7 @@ function ConnectorsPage() {
 					<Plug className="size-5" />
 					Connectors
 				</h1>
-				<p className="text-sm text-text-subtle mt-1">
+				<p className="text-sm text-text-3 mt-1">
 					Third-party services agents use — GitHub for git operations, MCP servers + skill files for
 					everything else. Tokens are stored in the Hezo vault and substituted at egress; agents
 					never see them.
@@ -76,9 +76,9 @@ function ConnectorsPage() {
 			</ul>
 
 			{isEmpty && (
-				<p className="text-xs text-text-subtle text-center">
+				<p className="text-xs text-text-3 text-center">
 					No third-party MCP servers yet. When an agent calls{' '}
-					<code className="px-1 py-0.5 rounded bg-bg-subtle text-xs">register_connector</code>, a
+					<code className="px-1 py-0.5 rounded bg-surface-2 text-xs">register_connector</code>, a
 					Connect button appears here and on the task that requested it.
 				</p>
 			)}
@@ -117,7 +117,7 @@ function GitHubRow({ projectId, connection }: GitHubRowProps) {
 
 	return (
 		<li
-			className="rounded-lg border p-4 border-border-default"
+			className="rounded-lg border p-4 border-border"
 			data-testid="connector-row"
 			data-connector-name="github"
 			data-status={status}
@@ -142,20 +142,20 @@ function GitHubRow({ projectId, connection }: GitHubRowProps) {
 					</div>
 					{connection ? (
 						<>
-							<p className="text-xs text-text-muted mt-1">
+							<p className="text-xs text-text-2 mt-1">
 								Connected as <span className="font-mono">{connection.provider_account_label}</span>
 							</p>
-							<p className="text-xs text-text-subtle mt-1 font-mono">
+							<p className="text-xs text-text-3 mt-1 font-mono">
 								scopes: {connection.scopes.join(' ')}
 							</p>
 						</>
 					) : (
-						<p className="text-xs text-text-muted mt-1">
+						<p className="text-xs text-text-2 mt-1">
 							One connection covers both git operations (clone, push, SSH-key registration) and the
 							official GitHub MCP server (agent-callable issue/PR/search tools).
 						</p>
 					)}
-					{error && <p className="text-xs text-accent-red-text mt-2">{error}</p>}
+					{error && <p className="text-xs text-danger-soft-fg mt-2">{error}</p>}
 				</div>
 
 				<div className="flex items-center gap-2 shrink-0">
@@ -249,7 +249,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 			ref={focusRef}
 			id={connector.id}
 			className={`rounded-lg border p-4 transition-colors ${
-				focused ? 'border-accent-blue bg-accent-blue-bg' : 'border-border-default'
+				focused ? 'border-info bg-info-soft' : 'border-border'
 			}`}
 			data-testid="connector-row"
 			data-connector-id={connector.id}
@@ -272,17 +272,17 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 						</h2>
 						<StatusBadge status={status} />
 					</div>
-					{url && <p className="text-xs text-text-muted mt-1 truncate font-mono">{url}</p>}
+					{url && <p className="text-xs text-text-2 mt-1 truncate font-mono">{url}</p>}
 					{connector.skill_id && (
-						<p className="text-xs text-text-muted mt-1 flex items-center gap-1">
+						<p className="text-xs text-text-2 mt-1 flex items-center gap-1">
 							<ExternalLink className="size-3" />
 							Skill file imported
 						</p>
 					)}
 					{connector.auth_error && status !== 'active' && (
-						<p className="text-xs text-accent-red-text mt-2">{connector.auth_error}</p>
+						<p className="text-xs text-danger-soft-fg mt-2">{connector.auth_error}</p>
 					)}
-					{error && <p className="text-xs text-accent-red-text mt-2">{error}</p>}
+					{error && <p className="text-xs text-danger-soft-fg mt-2">{error}</p>}
 				</div>
 
 				<div className="flex items-center gap-2 shrink-0">
@@ -311,12 +311,12 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 			</div>
 
 			{connector.created_by_task_id && (
-				<div className="mt-3 pt-3 border-t border-border-default text-xs text-text-muted">
+				<div className="mt-3 pt-3 border-t border-border text-xs text-text-2">
 					Requested by an agent.{' '}
 					<Link
 						to="/projects/$projectId/tasks/$taskId"
 						params={{ projectId, taskId: connector.created_by_task_id }}
-						className="underline hover:text-text"
+						className="underline hover:text-text-1"
 					>
 						View task
 					</Link>
@@ -329,7 +329,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 function StatusBadge({ status }: { status: 'pending' | 'active' | 'failed' | 'revoked' }) {
 	if (status === 'active') {
 		return (
-			<Badge className="bg-accent-green-bg text-accent-green-text border-accent-green">
+			<Badge className="bg-success-soft text-success-soft-fg border-success">
 				<Check className="size-3 mr-0.5 inline" />
 				Connected
 			</Badge>
@@ -337,7 +337,7 @@ function StatusBadge({ status }: { status: 'pending' | 'active' | 'failed' | 're
 	}
 	if (status === 'failed') {
 		return (
-			<Badge className="bg-accent-red-bg text-accent-red-text border-accent-red">
+			<Badge className="bg-danger-soft text-danger-soft-fg border-danger">
 				<X className="size-3 mr-0.5 inline" />
 				Failed
 			</Badge>
@@ -347,8 +347,6 @@ function StatusBadge({ status }: { status: 'pending' | 'active' | 'failed' | 're
 		return <Badge>Revoked</Badge>;
 	}
 	return (
-		<Badge className="bg-accent-amber-bg text-accent-amber-text border-accent-amber">
-			Pending connect
-		</Badge>
+		<Badge className="bg-warning-soft text-warning-soft-fg border-warning">Pending connect</Badge>
 	);
 }

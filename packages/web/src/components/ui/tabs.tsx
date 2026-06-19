@@ -13,11 +13,13 @@ interface TabsProps {
 	items: TabItem[];
 }
 
+// Wire's `.hz-tab`: underline tabs, neutral active (text-1 + bottom border),
+// counts rendered in Geist Mono.
 export function Tabs({ items }: TabsProps) {
 	const matchRoute = useMatchRoute();
 
 	return (
-		<nav className="flex border-b border-border mb-5">
+		<nav className="mb-5 flex gap-5 border-b border-border">
 			{items.map((item) => {
 				const isActive = matchRoute({ to: item.to, params: item.params, fuzzy: true });
 				return (
@@ -25,17 +27,15 @@ export function Tabs({ items }: TabsProps) {
 						key={item.to}
 						to={item.to}
 						params={item.params ?? {}}
-						className={`px-4 py-2 text-[13px] border-b-2 transition-colors ${
+						className={`-mb-px border-b-2 py-2 text-[13.5px] font-medium transition-colors ${
 							isActive
-								? 'text-text font-medium border-text'
-								: 'text-text-muted border-transparent hover:text-text'
+								? 'border-text-1 text-text-1'
+								: 'border-transparent text-text-2 hover:text-text-1'
 						}`}
 					>
 						{item.label}
 						{item.count != null && (
-							<span className="ml-1.5 bg-bg-subtle px-[7px] py-px rounded-full text-[11px] font-normal">
-								{item.count}
-							</span>
+							<span className="ml-1.5 font-mono text-[11px] text-text-3">{item.count}</span>
 						)}
 						{item.badge}
 					</Link>

@@ -22,7 +22,7 @@ export function CommentAttachmentThumb({ attachment }: { attachment: CommentAtta
 				aria-label={attachment.original_filename}
 				data-testid="comment-attachment-thumb"
 				data-filename={attachment.original_filename}
-				className="flex h-9 w-9 items-center justify-center rounded-radius-sm border border-border bg-bg-muted text-text-subtle hover:border-border-hover hover:text-text"
+				className="flex h-9 w-9 items-center justify-center rounded-sm border border-border bg-surface-3 text-text-3 hover:border-border-strong hover:text-text-1"
 			>
 				{iconFor(attachment.content_type)}
 			</a>

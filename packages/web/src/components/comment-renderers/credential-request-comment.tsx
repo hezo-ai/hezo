@@ -36,24 +36,22 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 
 	if (!projectId || !taskId) {
 		return (
-			<p className="text-xs text-text-subtle italic">
-				Credential request unavailable in this view.
-			</p>
+			<p className="text-xs text-text-3 italic">Credential request unavailable in this view.</p>
 		);
 	}
 
 	if (fulfilled) {
 		return (
 			<div
-				className="flex items-start gap-2 p-2.5 rounded-lg border border-accent-green bg-accent-green-bg"
+				className="flex items-start gap-2 p-2.5 rounded-lg border border-success bg-success-soft"
 				data-testid="credential-fulfilled"
 			>
-				<Check className="w-4 h-4 text-accent-green-text shrink-0 mt-0.5" />
+				<Check className="w-4 h-4 text-success-soft-fg shrink-0 mt-0.5" />
 				<div className="flex-1">
-					<p className="text-sm font-medium text-text">{name} provided</p>
-					<p className="text-xs text-text-muted mt-0.5">
+					<p className="text-sm font-medium text-text-1">{name} provided</p>
+					<p className="text-xs text-text-2 mt-0.5">
 						Stored as a secret. Agent will use the placeholder{' '}
-						<code className="px-1 py-0.5 rounded bg-bg-subtle">{placeholder}</code> in env vars and
+						<code className="px-1 py-0.5 rounded bg-surface-2">{placeholder}</code> in env vars and
 						HTTP headers; the egress proxy substitutes the real value at request time.
 					</p>
 				</div>
@@ -76,30 +74,30 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 
 	return (
 		<div
-			className="flex flex-col gap-2 p-2.5 rounded-lg border border-accent-amber bg-accent-amber-bg"
+			className="flex flex-col gap-2 p-2.5 rounded-lg border border-warning bg-warning-soft"
 			data-testid="credential-request"
 			data-credential-name={name}
 		>
 			<div className="flex items-start gap-2">
-				<KeyRound className="w-4 h-4 text-accent-amber-text shrink-0 mt-0.5" />
+				<KeyRound className="w-4 h-4 text-warning-soft-fg shrink-0 mt-0.5" />
 				<div className="flex-1">
-					<p className="text-sm font-medium text-text">
-						Agent needs credential: <code className="px-1 py-0.5 rounded bg-bg-subtle">{name}</code>{' '}
+					<p className="text-sm font-medium text-text-1">
+						Agent needs credential: <code className="px-1 py-0.5 rounded bg-surface-2">{name}</code>{' '}
 						<Badge className="ml-1">{kind}</Badge>
 					</p>
 					{instructions && (
-						<div className="mt-1.5 text-sm text-text">
+						<div className="mt-1.5 text-sm text-text-1">
 							<MarkdownProse>{instructions}</MarkdownProse>
 						</div>
 					)}
 					{allowedHosts.length > 0 ? (
-						<p className="text-xs text-text-muted mt-1">
+						<p className="text-xs text-text-2 mt-1">
 							Substituted only into requests to: {allowedHosts.join(', ')}
 						</p>
 					) : (
 						!confirmationText && (
 							<p
-								className="text-xs text-accent-amber-text mt-1"
+								className="text-xs text-warning-soft-fg mt-1"
 								data-testid="credential-no-hosts-warning"
 							>
 								⚠ Not scoped to any host — this credential won't be substituted into any request
@@ -112,7 +110,7 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 
 			{confirmationText ? (
 				<div className="flex flex-col gap-2">
-					<p className="text-sm text-text">{confirmationText}</p>
+					<p className="text-sm text-text-1">{confirmationText}</p>
 					<div>
 						<Button
 							size="sm"
@@ -132,7 +130,7 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 							onChange={(e) => setValue(e.target.value)}
 							placeholder="Paste value here"
 							rows={6}
-							className="w-full font-mono text-xs p-2 rounded border border-border bg-bg focus:outline-none focus:border-accent-blue"
+							className="w-full font-mono text-xs p-2 rounded border border-border bg-surface focus:outline-none focus:border-info"
 							data-testid="credential-input"
 						/>
 					) : inputType === 'file' ? (
@@ -153,12 +151,12 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 							onChange={(e) => setValue(e.target.value)}
 							placeholder="Paste value here"
 							autoComplete="off"
-							className="w-full text-sm p-2 rounded border border-border bg-bg focus:outline-none focus:border-accent-blue"
+							className="w-full text-sm p-2 rounded border border-border bg-surface focus:outline-none focus:border-info"
 							data-testid="credential-input"
 						/>
 					)}
 					<div className="flex flex-col gap-1">
-						<label htmlFor={`hosts-${comment.id}`} className="text-xs text-text-muted">
+						<label htmlFor={`hosts-${comment.id}`} className="text-xs text-text-2">
 							Allowed hosts — the API host(s) this value may be sent to (comma-separated). The
 							egress proxy substitutes it only for these hosts.
 						</label>
@@ -169,11 +167,11 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 							onChange={(e) => setHostsInput(e.target.value)}
 							placeholder="e.g. api.netlify.com, *.netlify.com"
 							autoComplete="off"
-							className="w-full text-sm p-2 rounded border border-border bg-bg focus:outline-none focus:border-accent-blue"
+							className="w-full text-sm p-2 rounded border border-border bg-surface focus:outline-none focus:border-info"
 							data-testid="credential-hosts-input"
 						/>
 					</div>
-					{error && <p className="text-xs text-accent-red-text">{error}</p>}
+					{error && <p className="text-xs text-danger-soft-fg">{error}</p>}
 					<div>
 						<Button
 							size="sm"

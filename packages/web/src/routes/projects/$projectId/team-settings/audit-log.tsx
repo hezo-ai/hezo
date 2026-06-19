@@ -23,7 +23,7 @@ const egressColumns: Column<AuditEntry>[] = [
 		header: 'Time',
 		hideOnMobile: true,
 		render: (e) => (
-			<span className="text-xs text-text-subtle">{new Date(e.created_at).toLocaleString()}</span>
+			<span className="text-xs text-text-3">{new Date(e.created_at).toLocaleString()}</span>
 		),
 	},
 	{
@@ -42,7 +42,7 @@ const egressColumns: Column<AuditEntry>[] = [
 			return (
 				<span className="text-xs font-mono">
 					<Badge color="neutral">{d.method ?? 'GET'}</Badge>{' '}
-					<span className="text-text-muted truncate">{d.url_path ?? '/'}</span>
+					<span className="text-text-2 truncate">{d.url_path ?? '/'}</span>
 				</span>
 			);
 		},
@@ -66,7 +66,7 @@ const egressColumns: Column<AuditEntry>[] = [
 		header: 'Secrets used',
 		render: (e) => {
 			const names = (e.details as { secret_names_used?: string[] }).secret_names_used ?? [];
-			if (!names.length) return <span className="text-xs text-text-subtle">—</span>;
+			if (!names.length) return <span className="text-xs text-text-3">—</span>;
 			return (
 				<span className="flex flex-wrap gap-1">
 					{names.map((n) => (
@@ -97,7 +97,7 @@ function AuditLogPage() {
 		<div>
 			<div className="mb-4">
 				<h2 className="text-base font-medium">Audit log</h2>
-				<p className="text-[13px] text-text-muted mt-1">{activeTab.description}</p>
+				<p className="text-[13px] text-text-2 mt-1">{activeTab.description}</p>
 			</div>
 			<div className="flex gap-1 mb-4 border-b border-border-subtle">
 				{tabs.map((t) => (
@@ -107,8 +107,8 @@ function AuditLogPage() {
 						onClick={() => setTab(t.key)}
 						className={`px-3 py-1.5 text-[13px] -mb-px border-b-2 cursor-pointer transition-colors ${
 							tab === t.key
-								? 'border-accent-blue text-text font-medium'
-								: 'border-transparent text-text-muted hover:text-text'
+								? 'border-info text-text-1 font-medium'
+								: 'border-transparent text-text-2 hover:text-text-1'
 						}`}
 					>
 						{t.label}
@@ -117,7 +117,7 @@ function AuditLogPage() {
 			</div>
 			{tab === 'egress' ? (
 				!entries?.length ? (
-					<p className="text-[13px] text-text-muted">No egress events yet.</p>
+					<p className="text-[13px] text-text-2">No egress events yet.</p>
 				) : (
 					<DataTable columns={egressColumns} data={entries} rowKey={(row) => row.id} />
 				)

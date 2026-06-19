@@ -107,7 +107,7 @@ function InstanceSkillsPage() {
 
 	const content_ =
 		me && !me.is_superuser ? (
-			<p className="text-[13px] text-text-muted">
+			<p className="text-[13px] text-text-2">
 				Instance skills are managed by the Admin. You don't have access to this page.
 			</p>
 		) : (
@@ -122,7 +122,7 @@ function InstanceSkillsPage() {
 								data-testid="skills-info"
 							/>
 						</div>
-						<p className="text-[13px] text-text-muted mt-1 max-w-[680px]">
+						<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
 							Reusable skill docs shared with every team's agents — author them here, search and add
 							them from skills.sh, or let an agent fetch one while it works.
 						</p>
@@ -171,11 +171,11 @@ function InstanceSkillsPage() {
 							onChange={(e) => setDescription(e.target.value)}
 						/>
 						<div className="flex items-center justify-between">
-							<span className="text-[13px] text-text-muted">Content (markdown)</span>
+							<span className="text-[13px] text-text-2">Content (markdown)</span>
 							<div
 								role="tablist"
 								aria-label="Content view mode"
-								className="inline-flex rounded-md border border-border-subtle bg-bg-subtle p-0.5 text-xs"
+								className="inline-flex rounded-md border border-border-subtle bg-surface-2 p-0.5 text-xs"
 							>
 								<button
 									type="button"
@@ -184,8 +184,8 @@ function InstanceSkillsPage() {
 									onClick={() => setContentMode('edit')}
 									className={`px-2.5 py-1 rounded ${
 										contentMode === 'edit'
-											? 'bg-bg text-text shadow-sm'
-											: 'text-text-muted hover:text-text'
+											? 'bg-surface text-text-1 shadow-sm'
+											: 'text-text-2 hover:text-text-1'
 									}`}
 								>
 									Edit
@@ -197,8 +197,8 @@ function InstanceSkillsPage() {
 									onClick={() => setContentMode('preview')}
 									className={`px-2.5 py-1 rounded ${
 										contentMode === 'preview'
-											? 'bg-bg text-text shadow-sm'
-											: 'text-text-muted hover:text-text'
+											? 'bg-surface text-text-1 shadow-sm'
+											: 'text-text-2 hover:text-text-1'
 									}`}
 								>
 									Preview
@@ -213,17 +213,17 @@ function InstanceSkillsPage() {
 								onChange={(e) => setContent(e.target.value)}
 								required
 								rows={10}
-								className="w-full rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px] font-mono focus:outline-none focus:ring-1 focus:ring-accent"
+								className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] font-mono focus:outline-none focus:ring-1 focus:ring-accent"
 							/>
 						) : (
 							<div
 								data-testid="skill-content-preview"
-								className="min-h-[200px] rounded-radius-md border border-border bg-bg-subtle px-3 py-2 text-sm"
+								className="min-h-[200px] rounded-md border border-border bg-surface-2 px-3 py-2 text-sm"
 							>
 								<MarkdownProse>{content || '_(nothing to preview)_'}</MarkdownProse>
 							</div>
 						)}
-						{error && <p className="text-[13px] text-accent-red">{error}</p>}
+						{error && <p className="text-[13px] text-danger">{error}</p>}
 						<div className="flex gap-2">
 							<Button
 								type="submit"
@@ -240,7 +240,7 @@ function InstanceSkillsPage() {
 				)}
 
 				{!skills.length ? (
-					<p className="text-[13px] text-text-muted">
+					<p className="text-[13px] text-text-2">
 						No instance skills yet. Add one above to share it across every team.
 					</p>
 				) : (
@@ -248,7 +248,7 @@ function InstanceSkillsPage() {
 						{skills.map((s) => (
 							<div
 								key={s.id}
-								className="flex items-center justify-between rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px]"
+								className="flex items-center justify-between rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
 							>
 								<div className="flex items-center gap-2 min-w-0 flex-1">
 									<span className="font-medium">{s.name}</span>
@@ -258,7 +258,7 @@ function InstanceSkillsPage() {
 										</Badge>
 									))}
 									{s.description && (
-										<span className="text-xs text-text-subtle truncate">{s.description}</span>
+										<span className="text-xs text-text-3 truncate">{s.description}</span>
 									)}
 								</div>
 								<span className="flex items-center gap-2 shrink-0">
@@ -266,7 +266,7 @@ function InstanceSkillsPage() {
 										type="button"
 										onClick={() => openEdit(s.slug)}
 										aria-label={`Edit ${s.name}`}
-										className="text-text-subtle hover:text-text"
+										className="text-text-3 hover:text-text-1"
 									>
 										<Pencil className="w-3.5 h-3.5" />
 									</button>
@@ -278,7 +278,7 @@ function InstanceSkillsPage() {
 											}
 										}}
 										aria-label={`Delete ${s.name}`}
-										className="text-text-subtle hover:text-accent-red"
+										className="text-text-3 hover:text-danger"
 									>
 										<Trash2 className="w-3.5 h-3.5" />
 									</button>
@@ -323,10 +323,10 @@ function RegistrySearch() {
 	}
 
 	return (
-		<div className="mb-4 rounded-radius-md border border-border bg-bg-subtle p-3">
+		<div className="mb-4 rounded-md border border-border bg-surface-2 p-3">
 			{!configured ? (
 				<div className="flex flex-col gap-2">
-					<p className="text-[13px] text-text-muted">
+					<p className="text-[13px] text-text-2">
 						Searching skills.sh needs a skills.sh API token. Paste one to enable search and add.
 						Agents discover skills without it (via the <code>npx skills</code> CLI).
 					</p>
@@ -381,24 +381,24 @@ function RegistrySearch() {
 					</form>
 
 					{search.isFetching && (
-						<div className="flex items-center gap-1.5 text-[13px] text-text-muted">
+						<div className="flex items-center gap-1.5 text-[13px] text-text-2">
 							<Loader2 className="w-3.5 h-3.5 animate-spin" /> Searching…
 						</div>
 					)}
 					{search.error && (
-						<p className="text-[13px] text-accent-red">
+						<p className="text-[13px] text-danger">
 							{(search.error as { message?: string }).message ?? 'Search failed'}
 						</p>
 					)}
 					{search.data?.length === 0 && !search.isFetching && submitted && (
-						<p className="text-[13px] text-text-muted">No results for “{submitted}”.</p>
+						<p className="text-[13px] text-text-2">No results for “{submitted}”.</p>
 					)}
 					{search.data && search.data.length > 0 && (
 						<div className="flex flex-col gap-1">
 							{search.data.map((r) => (
 								<div
 									key={r.id}
-									className="flex items-center justify-between gap-2 rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px]"
+									className="flex items-center justify-between gap-2 rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
 								>
 									<div className="min-w-0 flex-1">
 										<div className="flex items-center gap-2">
@@ -408,14 +408,14 @@ function RegistrySearch() {
 													href={r.url}
 													target="_blank"
 													rel="noopener noreferrer"
-													className="text-text-subtle hover:text-text"
+													className="text-text-3 hover:text-text-1"
 													aria-label={`Open ${r.name} on skills.sh`}
 												>
 													<ExternalLink className="w-3 h-3" />
 												</a>
 											)}
 										</div>
-										<div className="text-xs text-text-subtle truncate">
+										<div className="text-xs text-text-3 truncate">
 											{r.source}
 											{r.installs > 0 && ` · ${r.installs.toLocaleString()} installs`}
 										</div>

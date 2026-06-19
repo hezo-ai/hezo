@@ -1,20 +1,24 @@
 import type { ButtonHTMLAttributes } from 'react';
 
+// Mirrors the Wire spec's `.hz-btn`: neutral `primary` (inverse), red `accent`
+// CTA, quiet `secondary`/`ghost`/`outline`, and `danger` variants. Focus shows
+// the 3px accent ring (`--color-ring` + accent border).
 const variants = {
-	primary: 'bg-primary text-bg font-medium hover:opacity-85',
-	secondary: 'bg-bg-subtle text-text-muted border border-border hover:text-text hover:bg-bg-muted',
-	destructive: 'bg-accent-red text-white hover:opacity-85',
-	ghost: 'bg-transparent text-text-muted hover:bg-bg-muted hover:text-text',
-	outline: 'border border-border bg-transparent text-text hover:bg-bg-muted',
-	approve: 'bg-accent-green text-white font-medium hover:opacity-85',
-	'danger-text': 'bg-transparent text-accent-red hover:opacity-70',
-	link: 'bg-transparent text-accent-blue hover:underline p-0 border-none',
+	primary: 'bg-inverse text-inverse-fg border-transparent hover:opacity-90',
+	accent: 'bg-accent-solid text-accent-solid-fg border-transparent hover:bg-accent-hover',
+	secondary: 'bg-surface text-text-1 border-border-strong shadow-xs hover:bg-surface-2',
+	outline: 'bg-transparent text-text-1 border-border-strong hover:bg-surface-2',
+	ghost: 'bg-transparent text-text-2 border-transparent hover:bg-surface-3 hover:text-text-1',
+	destructive: 'bg-danger text-danger-solid-fg border-transparent hover:opacity-90',
+	approve: 'bg-success text-success-solid-fg border-transparent hover:opacity-90',
+	'danger-text': 'bg-transparent text-danger border-transparent hover:bg-danger-soft',
+	link: 'bg-transparent text-accent border-none hover:underline',
 } as const;
 
 const sizes = {
-	sm: 'px-2.5 py-1 text-xs rounded-radius-md',
-	md: 'px-4 py-[7px] text-[13px] rounded-radius-md',
-	lg: 'px-5 py-2.5 text-sm rounded-radius-md',
+	sm: 'h-[26px] px-2.5 text-[12.5px] rounded-sm gap-1.5',
+	md: 'h-[30px] px-3 text-[13px] rounded-md gap-1.5',
+	lg: 'h-[38px] px-4 text-sm rounded-md gap-2',
 } as const;
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -28,9 +32,10 @@ export function Button({
 	className = '',
 	...props
 }: ButtonProps) {
+	const sizeCls = variant === 'link' ? 'gap-1.5' : sizes[size];
 	return (
 		<button
-			className={`inline-flex items-center justify-center gap-2 font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none cursor-pointer ${variants[variant]} ${sizes[size]} ${className}`}
+			className={`inline-flex items-center justify-center whitespace-nowrap border font-medium transition-colors cursor-pointer outline-none focus-visible:ring-[3px] focus-visible:ring-ring focus-visible:border-accent disabled:opacity-45 disabled:pointer-events-none ${variants[variant]} ${sizeCls} ${className}`}
 			{...props}
 		/>
 	);

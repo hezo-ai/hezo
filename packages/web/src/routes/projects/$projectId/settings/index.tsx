@@ -51,7 +51,7 @@ function ProjectSettingsPage() {
 	return (
 		<div className="space-y-8">
 			<section>
-				<h2 className="text-sm font-medium text-text-muted mb-3">General</h2>
+				<h2 className="text-sm font-medium text-text-2 mb-3">General</h2>
 				{editing ? (
 					<form onSubmit={handleSave} className="space-y-3">
 						<Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required />
@@ -70,7 +70,7 @@ function ProjectSettingsPage() {
 							onChange={(e) => setMaxRuns(e.target.value)}
 							data-testid="max-concurrent-runs-input"
 						/>
-						<p className="text-xs text-text-subtle -mt-1">
+						<p className="text-xs text-text-3 -mt-1">
 							Agents that may run at once in this project. Different agents work different tickets
 							in parallel; one ticket still runs a single agent at a time.
 						</p>
@@ -83,7 +83,7 @@ function ProjectSettingsPage() {
 							onChange={(e) => setMemoryLimit(e.target.value)}
 							data-testid="memory-limit-gib-input"
 						/>
-						<p className="text-xs text-text-subtle -mt-1">
+						<p className="text-xs text-text-3 -mt-1">
 							The container is auto-stopped when it exceeds this RSS budget. Raise it on
 							memory-heavy projects; lower it to fail fast on runaway workloads.
 						</p>
@@ -99,19 +99,19 @@ function ProjectSettingsPage() {
 				) : (
 					<div className="space-y-1 text-sm">
 						<div>
-							<span className="text-text-muted">Name:</span> {project.name}
+							<span className="text-text-2">Name:</span> {project.name}
 						</div>
 						{project.description && (
 							<div>
-								<span className="text-text-muted">Description:</span> {project.description}
+								<span className="text-text-2">Description:</span> {project.description}
 							</div>
 						)}
 						<div data-testid="max-concurrent-runs-value">
-							<span className="text-text-muted">Max concurrent runs:</span>{' '}
+							<span className="text-text-2">Max concurrent runs:</span>{' '}
 							{project.max_concurrent_runs}
 						</div>
 						<div data-testid="memory-limit-gib-value">
-							<span className="text-text-muted">Container memory limit:</span>{' '}
+							<span className="text-text-2">Container memory limit:</span>{' '}
 							{project.memory_limit_gib} GiB
 						</div>
 						<Button variant="ghost" size="sm" onClick={startEditing} className="mt-2">
@@ -125,7 +125,7 @@ function ProjectSettingsPage() {
 
 			{project.container_status === 'running' && project.dev_ports?.length > 0 && (
 				<section>
-					<h2 className="text-sm font-medium text-text-muted mb-2">Dev Preview</h2>
+					<h2 className="text-sm font-medium text-text-2 mb-2">Dev Preview</h2>
 					<div className="flex gap-2 flex-wrap">
 						{project.dev_ports.map((p) => (
 							<a
@@ -133,7 +133,7 @@ function ProjectSettingsPage() {
 								href={`http://localhost:${p.host}`}
 								target="_blank"
 								rel="noopener noreferrer"
-								className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-bg px-3 py-1.5 text-sm hover:border-border-hover transition-colors"
+								className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-surface px-3 py-1.5 text-sm hover:border-border-strong transition-colors"
 							>
 								<ExternalLink className="w-3 h-3" />:{p.container} → :{p.host}
 							</a>

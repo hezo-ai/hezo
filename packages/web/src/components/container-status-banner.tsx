@@ -8,7 +8,7 @@ import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 import { Button } from './ui/button';
 
-const BANNER_OUTER = 'sticky top-0 z-40 bg-bg';
+const BANNER_OUTER = 'sticky top-0 z-40 bg-surface';
 const BANNER_INNER = 'flex items-center gap-2 px-4 py-2 text-[13px] font-medium';
 
 export function ContainerStatusBanner({ projectId }: { projectId: string }) {
@@ -47,7 +47,7 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 					params={{ projectId }}
 					data-testid="container-status-banner-provisioning"
 					aria-label={`${message} View container logs`}
-					className={`${BANNER_INNER} bg-blue-500/10 text-blue-400 transition-colors hover:bg-blue-500/20`}
+					className={`${BANNER_INNER} bg-info/10 text-info transition-colors hover:bg-info/20`}
 				>
 					<Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" />
 					<span data-testid="container-status-banner-message" className="min-w-0 truncate">
@@ -76,7 +76,7 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 		}
 	};
 
-	const tone = hasError ? 'bg-red-500/10 text-red-400' : 'bg-amber-500/10 text-amber-400';
+	const tone = hasError ? 'bg-danger/10 text-danger' : 'bg-warning/10 text-warning';
 
 	return (
 		<div ref={bannerRef} className={BANNER_OUTER}>

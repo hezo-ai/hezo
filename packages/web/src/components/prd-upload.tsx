@@ -26,25 +26,25 @@ export function PrdUpload({ value, filename, onChange }: PrdUploadProps) {
 
 	return (
 		<div className="flex flex-col gap-1.5">
-			<span className="text-xs font-medium uppercase tracking-wider text-text-muted">
+			<span className="text-xs font-medium uppercase tracking-wider text-text-2">
 				Requirements Document (optional)
 			</span>
 			{value ? (
-				<div className="rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px]">
+				<div className="rounded-md border border-border bg-surface px-3 py-2 text-[13px]">
 					<div className="flex items-center justify-between mb-2">
-						<span className="flex items-center gap-1.5 text-text-muted">
+						<span className="flex items-center gap-1.5 text-text-2">
 							<FileText className="w-3.5 h-3.5" />
 							{filename || 'Pasted content'}
 						</span>
 						<button
 							type="button"
 							onClick={() => onChange('', null)}
-							className="text-text-subtle hover:text-text p-0.5"
+							className="text-text-3 hover:text-text-1 p-0.5"
 						>
 							<X className="w-3.5 h-3.5" />
 						</button>
 					</div>
-					<p className="text-text-subtle text-xs truncate">
+					<p className="text-text-3 text-xs truncate">
 						{value.slice(0, 120)}
 						{value.length > 120 ? '…' : ''}
 					</p>
@@ -52,7 +52,7 @@ export function PrdUpload({ value, filename, onChange }: PrdUploadProps) {
 			) : (
 				<button
 					type="button"
-					className="rounded-radius-md border border-dashed border-border bg-bg px-3 py-4 text-[13px] text-center cursor-pointer hover:border-border-hover transition-colors w-full"
+					className="rounded-md border border-dashed border-border bg-surface px-3 py-4 text-[13px] text-center cursor-pointer hover:border-border-strong transition-colors w-full"
 					onClick={() => fileInputRef.current?.click()}
 					onDragOver={(e) => {
 						e.preventDefault();
@@ -65,9 +65,9 @@ export function PrdUpload({ value, filename, onChange }: PrdUploadProps) {
 						if (file) handleFileUpload(file);
 					}}
 				>
-					<Upload className="w-4 h-4 mx-auto mb-1 text-text-subtle" />
-					<p className="text-text-subtle">Drop a file here or click to upload</p>
-					<p className="text-text-subtle text-xs mt-1">.md or .txt</p>
+					<Upload className="w-4 h-4 mx-auto mb-1 text-text-3" />
+					<p className="text-text-3">Drop a file here or click to upload</p>
+					<p className="text-text-3 text-xs mt-1">.md or .txt</p>
 				</button>
 			)}
 			<input

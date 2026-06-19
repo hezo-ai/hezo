@@ -230,7 +230,7 @@ test('agent mentions render as bold anchor-colored links to agent page', async (
 		`/projects/${seeded.projectSlug}/agents/${seeded.agentSlug}`,
 	);
 	expect(mentionLink!.className).toMatch(/font-semibold/);
-	expect(mentionLink!.className).toMatch(/text-accent-blue-text/);
+	expect(mentionLink!.className).toMatch(/text-info-soft-fg/);
 
 	const allLinks = Array.from(container.querySelectorAll('a')) as HTMLAnchorElement[];
 	const fakeMatch = allLinks.find((a) => a.textContent === '@not-a-real-agent-xyz');

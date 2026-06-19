@@ -40,7 +40,7 @@ export function DataTable<T>({
 						{columns.map((col) => (
 							<th
 								key={col.key}
-								className={`text-left text-xs text-text-muted font-normal px-2 py-2 border-b border-border ${
+								className={`text-left text-xs text-text-2 font-normal px-2 py-2 border-b border-border ${
 									col.hideOnMobile ? 'hidden md:table-cell' : ''
 								}`}
 								style={col.width ? { width: col.width } : undefined}
@@ -58,7 +58,7 @@ export function DataTable<T>({
 								key={rowKey(row)}
 								data-depth={depth > 0 ? depth : undefined}
 								onClick={onRowClick ? () => onRowClick(row) : undefined}
-								className={onRowClick ? 'cursor-pointer hover:bg-bg-subtle' : ''}
+								className={onRowClick ? 'cursor-pointer hover:bg-surface-2' : ''}
 							>
 								{columns.map((col) => {
 									const indent =

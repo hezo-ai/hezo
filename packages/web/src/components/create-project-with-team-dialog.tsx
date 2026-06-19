@@ -111,7 +111,7 @@ export function CreateProjectWithTeamDialog({
 				<Dialog.Overlay className={dialogOverlayClassName} />
 				<Dialog.Content className={dialogContentClassName.lg}>
 					<Dialog.Title className="text-base font-medium mb-1">New project</Dialog.Title>
-					<Dialog.Description className="text-sm text-text-muted mb-4">
+					<Dialog.Description className="text-sm text-text-2 mb-4">
 						Each project gets its own team. Pick a team type to staff it, then create it now or let
 						the CEO scope it with you first.
 					</Dialog.Description>
@@ -138,9 +138,9 @@ export function CreateProjectWithTeamDialog({
 							placeholder="What is this project? Domain, users, and the core problem it solves."
 						/>
 						<div>
-							<span className="text-[13px] font-medium text-text">Team type</span>
+							<span className="text-[13px] font-medium text-text-1">Team type</span>
 							{isLoading ? (
-								<div className="flex items-center gap-2 text-text-muted text-[13px] py-4">
+								<div className="flex items-center gap-2 text-text-2 text-[13px] py-4">
 									<Loader2 className="w-4 h-4 animate-spin" /> Loading types…
 								</div>
 							) : (
@@ -158,16 +158,16 @@ export function CreateProjectWithTeamDialog({
 											>
 												<Card
 													className={`p-3 h-full transition-colors ${
-														selected ? 'border-primary' : 'hover:border-border-hover'
+														selected ? 'border-inverse' : 'hover:border-border-strong'
 													}`}
 												>
 													<h3 className="text-[14px] font-medium mb-1">{tpl.name}</h3>
 													{tpl.description && (
-														<p className="text-[12px] text-text-muted mb-2 line-clamp-2">
+														<p className="text-[12px] text-text-2 mb-2 line-clamp-2">
 															{tpl.description}
 														</p>
 													)}
-													<p className="text-[11px] text-text-muted">
+													<p className="text-[11px] text-text-2">
 														{tpl.agent_types.length === 0
 															? 'Captain only'
 															: `${tpl.agent_types.length} agent role${
@@ -183,8 +183,8 @@ export function CreateProjectWithTeamDialog({
 						</div>
 						{sourceTeams.length > 0 && (
 							<div>
-								<span className="text-[13px] font-medium text-text">Copy an existing team</span>
-								<p className="text-[12px] text-text-muted">
+								<span className="text-[13px] font-medium text-text-1">Copy an existing team</span>
+								<p className="text-[12px] text-text-2">
 									Start from another team's roster. A reusable team type is saved from its current
 									setup.
 								</p>
@@ -202,11 +202,11 @@ export function CreateProjectWithTeamDialog({
 											>
 												<Card
 													className={`p-3 h-full transition-colors ${
-														selected ? 'border-primary' : 'hover:border-border-hover'
+														selected ? 'border-inverse' : 'hover:border-border-strong'
 													}`}
 												>
 													<h3 className="text-[14px] font-medium mb-1">{team.name}</h3>
-													<p className="text-[11px] text-text-muted">
+													<p className="text-[11px] text-text-2">
 														{team.agent_count === 0
 															? 'No agents yet'
 															: `${team.agent_count} agent${team.agent_count === 1 ? '' : 's'}`}
@@ -219,7 +219,7 @@ export function CreateProjectWithTeamDialog({
 							</div>
 						)}
 						{error && (
-							<p className="text-[13px] text-accent-red">
+							<p className="text-[13px] text-danger">
 								{(error as { message?: string }).message || 'Failed to create project'}
 							</p>
 						)}

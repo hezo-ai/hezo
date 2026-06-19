@@ -3,7 +3,7 @@ import { useTaskProgressSummary } from '../hooks/use-task-progress-summary';
 import { ProjectStatusBadge } from './project-status-badge';
 
 const bannerClass =
-	'mb-4 rounded-md border border-border bg-bg-elevated px-3 py-2.5 sm:px-4 text-sm text-text';
+	'mb-4 rounded-md border border-border bg-surface px-3 py-2.5 sm:px-4 text-sm text-text-1';
 
 function OnboardingBanner() {
 	return (
@@ -27,19 +27,19 @@ function ProgressBar({ summary }: { summary: TaskProgressSummary }) {
 	return (
 		<div
 			data-testid="task-progress-bar"
-			className="mb-4 rounded-md border border-border bg-bg-elevated px-3 py-3 sm:px-4"
+			className="mb-4 rounded-md border border-border bg-surface px-3 py-3 sm:px-4"
 		>
 			<div className="flex flex-wrap items-center justify-between gap-2 mb-2">
 				<div className="flex flex-wrap items-center gap-2 min-w-0">
 					{project_status && <ProjectStatusBadge status={project_status} />}
-					<span className="text-sm font-medium text-text">{percent_complete}% complete</span>
+					<span className="text-sm font-medium text-text-1">{percent_complete}% complete</span>
 				</div>
-				<span className="text-xs text-text-muted shrink-0">
+				<span className="text-xs text-text-2 shrink-0">
 					{complete} of {total} tasks
 				</span>
 			</div>
 			<div
-				className="h-2 rounded-full bg-bg-muted overflow-hidden flex"
+				className="h-2 rounded-full bg-surface-3 overflow-hidden flex"
 				role="progressbar"
 				aria-valuenow={percent_complete}
 				aria-valuemin={0}
@@ -49,14 +49,14 @@ function ProgressBar({ summary }: { summary: TaskProgressSummary }) {
 				{completePct > 0 && (
 					<div
 						data-testid="task-progress-segment-complete"
-						className="h-full bg-accent-green shrink-0"
+						className="h-full bg-success shrink-0"
 						style={{ width: `${completePct}%` }}
 					/>
 				)}
 				{inProgressPct > 0 && (
 					<div
 						data-testid="task-progress-segment-in-progress"
-						className="h-full bg-accent-amber shrink-0"
+						className="h-full bg-warning shrink-0"
 						style={{ width: `${inProgressPct}%` }}
 					/>
 				)}
@@ -68,13 +68,13 @@ function ProgressBar({ summary }: { summary: TaskProgressSummary }) {
 					/>
 				)}
 			</div>
-			<div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[11px] text-text-muted">
+			<div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[11px] text-text-2">
 				<span className="inline-flex items-center gap-1.5">
-					<span className="w-2 h-2 rounded-full bg-accent-green shrink-0" />
+					<span className="w-2 h-2 rounded-full bg-success shrink-0" />
 					{complete} complete
 				</span>
 				<span className="inline-flex items-center gap-1.5">
-					<span className="w-2 h-2 rounded-full bg-accent-amber shrink-0" />
+					<span className="w-2 h-2 rounded-full bg-warning shrink-0" />
 					{in_progress} in progress
 				</span>
 				<span className="inline-flex items-center gap-1.5">

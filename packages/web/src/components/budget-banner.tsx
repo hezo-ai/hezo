@@ -2,7 +2,7 @@ import { Link } from '@tanstack/react-router';
 import { AlertTriangle } from 'lucide-react';
 import { useBudgetStatus } from '../hooks/use-costs';
 
-const BANNER_OUTER = 'sticky top-0 z-30 bg-bg';
+const BANNER_OUTER = 'sticky top-0 z-30 bg-surface';
 const BANNER_INNER = 'flex items-center gap-2 px-4 py-2 text-[13px] font-medium';
 
 /**
@@ -31,7 +31,7 @@ export function BudgetBanner({ projectId }: { projectId: string }) {
 				params={{ projectId }}
 				data-testid="budget-banner"
 				aria-label={`${message}. View budgets`}
-				className={`${BANNER_INNER} bg-red-500/10 text-red-400 transition-colors hover:bg-red-500/20`}
+				className={`${BANNER_INNER} bg-danger/10 text-danger transition-colors hover:bg-danger/20`}
 			>
 				<AlertTriangle className="h-3.5 w-3.5 shrink-0" />
 				<span data-testid="budget-banner-message" className="min-w-0 truncate">

@@ -28,7 +28,7 @@ export function RevisionsPanel({ revisions, onRestore, isRestoring }: RevisionsP
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
-				className="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted hover:text-text mb-3"
+				className="inline-flex items-center gap-1.5 text-xs font-medium text-text-2 hover:text-text-1 mb-3"
 			>
 				<Clock className="w-3.5 h-3.5" />
 				{open ? 'Hide' : 'Show'} revision history
@@ -38,14 +38,14 @@ export function RevisionsPanel({ revisions, onRestore, isRestoring }: RevisionsP
 			{open && (
 				<div className="space-y-2">
 					{!revisions?.length ? (
-						<p className="text-xs text-text-muted">No revisions yet.</p>
+						<p className="text-xs text-text-2">No revisions yet.</p>
 					) : (
 						revisions.map((rev) => (
 							<Card key={rev.id} className="p-3">
 								<div className="flex items-center gap-2 mb-1">
-									<span className="text-xs font-medium text-text">Rev {rev.revision_number}</span>
-									<span className="text-xs text-text-muted">{rev.author_name || 'Admin'}</span>
-									<span className="text-xs text-text-subtle ml-auto">
+									<span className="text-xs font-medium text-text-1">Rev {rev.revision_number}</span>
+									<span className="text-xs text-text-2">{rev.author_name || 'Admin'}</span>
+									<span className="text-xs text-text-3 ml-auto">
 										{new Date(rev.created_at).toLocaleString()}
 									</span>
 									<Button
@@ -58,9 +58,7 @@ export function RevisionsPanel({ revisions, onRestore, isRestoring }: RevisionsP
 										<RotateCcw className="w-3 h-3" /> Restore
 									</Button>
 								</div>
-								{rev.change_summary && (
-									<p className="text-xs text-text-muted">{rev.change_summary}</p>
-								)}
+								{rev.change_summary && <p className="text-xs text-text-2">{rev.change_summary}</p>}
 							</Card>
 						))
 					)}

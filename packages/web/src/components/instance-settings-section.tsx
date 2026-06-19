@@ -18,20 +18,20 @@ export function InstanceSettingsSection() {
 		<section>
 			<div className="mb-4">
 				<h2 className="text-base font-medium">Instance</h2>
-				<p className="text-[13px] text-text-muted mt-1">
+				<p className="text-[13px] text-text-2 mt-1">
 					Public base URL of this Hezo instance, used to build absolute links to tasks and documents
 					in external channels (e.g. Telegram). Captured automatically the first time the instance
 					is unlocked.
 				</p>
 			</div>
-			<div className="border border-border rounded-radius-md p-3 bg-bg">
+			<div className="border border-border rounded-md p-3 bg-surface">
 				<label className="block text-[13px] font-medium mb-1.5" htmlFor="instance-base-url-input">
 					Base URL
 				</label>
 				{settings === undefined ? null : me?.is_superuser ? (
 					<BaseUrlForm settings={settings} />
 				) : (
-					<p className="text-[13px] text-text-muted" data-testid="instance-base-url-readonly">
+					<p className="text-[13px] text-text-2" data-testid="instance-base-url-readonly">
 						{settings.base_url ?? 'Not configured'}
 					</p>
 				)}

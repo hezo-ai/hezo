@@ -12,6 +12,7 @@ import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 import { Button } from './ui/button';
 import { dialogContentClassName } from './ui/dialog';
+import { Logo } from './ui/logo';
 
 interface MasterKeyFormProps {
 	state: MasterKeyState;
@@ -63,17 +64,18 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 		<>
 			{!embedded && (
 				<div className="flex flex-col items-center gap-2 mb-6">
-					<div className="p-3 rounded-full bg-accent-blue-bg">
+					<Logo size="lg" wordmark className="mb-1" />
+					<div className="p-3 rounded-full bg-surface-2 border border-border">
 						{isUnset ? (
-							<KeyRound className="w-6 h-6 text-accent-blue-text" />
+							<KeyRound className="w-6 h-6 text-text-2" />
 						) : (
-							<ShieldCheck className="w-6 h-6 text-accent-blue-text" />
+							<ShieldCheck className="w-6 h-6 text-text-2" />
 						)}
 					</div>
-					<Dialog.Title className="text-lg font-semibold text-text">
+					<Dialog.Title className="text-lg font-semibold text-text-1">
 						{isUnset ? 'Set Master Key' : 'Unlock Hezo'}
 					</Dialog.Title>
-					<Dialog.Description className="text-sm text-text-muted text-center">
+					<Dialog.Description className="text-sm text-text-2 text-center">
 						{isUnset
 							? "Your master key is these 12 words. Save them somewhere safe — you'll need them to unlock Hezo on restart."
 							: 'Enter your 12-word master key to unlock the server.'}
@@ -100,12 +102,12 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 									// biome-ignore lint/suspicious/noArrayIndexKey: fixed-length, never-reordered list with possibly-repeating words; position is the stable identity
 									key={index}
 									data-testid="mnemonic-word"
-									className="flex items-center gap-1.5 rounded-md border border-border bg-bg px-2 py-1.5"
+									className="flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1.5"
 								>
-									<span className="w-4 text-right text-[10px] tabular-nums text-text-muted select-none">
+									<span className="w-4 text-right text-[10px] tabular-nums text-text-2 select-none">
 										{index + 1}
 									</span>
-									<span className="font-mono text-xs text-text">{word}</span>
+									<span className="font-mono text-xs text-text-1">{word}</span>
 								</li>
 							))}
 						</ol>
@@ -117,7 +119,7 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 
 				{!isUnset && (
 					<div className="flex flex-col gap-1.5">
-						<label htmlFor="mnemonic-entry" className="text-sm font-medium text-text">
+						<label htmlFor="mnemonic-entry" className="text-sm font-medium text-text-1">
 							Master Key
 						</label>
 						<textarea
@@ -129,12 +131,12 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 							autoComplete="off"
 							autoCapitalize="none"
 							spellCheck={false}
-							className="w-full resize-none rounded-md border border-border bg-bg p-2.5 font-mono text-xs text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent-blue-text"
+							className="w-full resize-none rounded-md border border-border bg-surface p-2.5 font-mono text-xs text-text-1 placeholder:text-text-2 focus:outline-none focus:ring-2 focus:ring-info-soft-fg"
 						/>
 					</div>
 				)}
 
-				{error && <p className="text-sm text-accent-red">{error}</p>}
+				{error && <p className="text-sm text-danger">{error}</p>}
 
 				<Button type="submit" disabled={loading || (isUnset ? !generatedKey : !key.trim())}>
 					{loading && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -154,7 +156,7 @@ export function MasterKeyGate({ state }: MasterKeyGateProps) {
 	return (
 		<Dialog.Root open>
 			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 bg-black/80 backdrop-blur-sm" />
+				<Dialog.Overlay className="fixed inset-0 bg-[var(--overlay)] backdrop-blur-sm" />
 				<Dialog.Content className={dialogContentClassName.md}>
 					<MasterKeyForm state={state} />
 				</Dialog.Content>

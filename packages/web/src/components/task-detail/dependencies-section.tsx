@@ -26,9 +26,7 @@ export function DependenciesSection({ projectId, taskId }: DependenciesSectionPr
 
 	return (
 		<div className="mb-5">
-			<h3 className="text-xs font-medium uppercase tracking-wider text-text-muted mb-2">
-				Blocked By
-			</h3>
+			<h3 className="text-xs font-medium uppercase tracking-wider text-text-2 mb-2">Blocked By</h3>
 			<div className="flex flex-col gap-1">
 				{deps.map((d: TaskDependency) => (
 					<div key={d.id} className="flex items-center gap-2">
@@ -38,7 +36,7 @@ export function DependenciesSection({ projectId, taskId }: DependenciesSectionPr
 								projectId: d.blocked_by_project_slug,
 								taskId: d.blocked_by_identifier.toLowerCase(),
 							}}
-							className="flex items-center gap-2 text-[13px] hover:bg-bg-subtle rounded px-2 py-1 flex-1 min-w-0"
+							className="flex items-center gap-2 text-[13px] hover:bg-surface-2 rounded px-2 py-1 flex-1 min-w-0"
 							data-testid="blocked-by-item"
 						>
 							<TaskStatusBadge status={d.blocked_by_status} />
@@ -46,13 +44,13 @@ export function DependenciesSection({ projectId, taskId }: DependenciesSectionPr
 								hasActiveRun={d.blocked_by_has_active_run}
 								queuedWakeup={d.blocked_by_queued_wakeup}
 							/>
-							<span className="font-mono text-xs text-text-muted">{d.blocked_by_identifier}</span>
+							<span className="font-mono text-xs text-text-2">{d.blocked_by_identifier}</span>
 							<span className="truncate">{d.blocked_by_title}</span>
 						</Link>
 						<button
 							type="button"
 							onClick={() => removeDep.mutate(d.id)}
-							className="text-text-subtle hover:text-accent-red"
+							className="text-text-3 hover:text-danger"
 						>
 							<Trash2 className="w-3 h-3" />
 						</button>

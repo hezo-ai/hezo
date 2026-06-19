@@ -25,7 +25,7 @@ function ChatboxSettingsPage() {
 
 	const content =
 		me && !me.is_superuser ? (
-			<p className="text-[13px] text-text-muted">
+			<p className="text-[13px] text-text-2">
 				Chatbox settings are managed by the Admin. You don't have access to this page.
 			</p>
 		) : (
@@ -39,17 +39,17 @@ function ChatboxSettingsPage() {
 							data-testid="chatbox-info"
 						/>
 					</div>
-					<p className="text-[13px] text-text-muted mt-1 max-w-[680px]">
+					<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
 						The chatbox is your direct line to the assistant. These settings control how much of the
 						conversation it keeps in working context each turn, and explain its persistent memory.
 					</p>
 				</div>
 
-				<section className="border border-border rounded-radius-md p-4 bg-bg mb-4">
+				<section className="border border-border rounded-md p-4 bg-surface mb-4">
 					<label className="block text-[13px] font-medium mb-1" htmlFor="chat-history-limit-input">
 						Conversation history window
 					</label>
-					<p className="text-[13px] text-text-muted mb-2.5 max-w-[680px]">
+					<p className="text-[13px] text-text-2 mb-2.5 max-w-[680px]">
 						How many of the most recent chatbox messages are replayed into the assistant's context
 						on each turn. A larger window keeps more of the recent conversation in view but costs
 						more tokens per reply; older messages beyond the window scroll out of context (durable
@@ -59,9 +59,9 @@ function ChatboxSettingsPage() {
 					{settings === undefined ? null : <HistoryLimitForm settings={settings} />}
 				</section>
 
-				<section className="border border-border rounded-radius-md p-4 bg-bg">
+				<section className="border border-border rounded-md p-4 bg-surface">
 					<h2 className="text-[13px] font-medium mb-1">Chatbox memory</h2>
-					<p className="text-[13px] text-text-muted max-w-[680px]">
+					<p className="text-[13px] text-text-2 max-w-[680px]">
 						The chatbox keeps a single persistent memory document,{' '}
 						<span className="font-mono">{CHAT_MEMORY_SLUG}</span>, whose full contents are injected
 						into every chat turn — so it survives even after older messages scroll out of the

@@ -71,7 +71,7 @@ export function CaptainIntakeChat({
 	if (isLoading) {
 		return (
 			<div
-				className="flex items-center justify-center py-10 text-text-muted text-[13px]"
+				className="flex items-center justify-center py-10 text-text-2 text-[13px]"
 				data-testid="home-captain-chat-loading"
 			>
 				<Loader2 className="w-4 h-4 animate-spin mr-2" />
@@ -99,20 +99,18 @@ export function CaptainIntakeChat({
 							data-testid="home-captain-chat-message"
 							data-role="captain"
 						>
-							<span
-								className={`text-[11px] font-medium text-text-muted ${captainChatMetaIndentClass}`}
-							>
+							<span className={`text-[11px] font-medium text-text-2 ${captainChatMetaIndentClass}`}>
 								{comment.author_name ?? captainTitle}
 							</span>
 							<div className="flex gap-2.5 items-center">
 								<CaptainAvatar size="chat" />
 								<div
-									className={`flex-1 min-w-0 rounded-radius-md rounded-bl-sm bg-bg-subtle border border-border px-3 py-2.5 ${captainChatBubbleMinHClass} text-[13px] md:text-sm text-text leading-relaxed whitespace-pre-wrap`}
+									className={`flex-1 min-w-0 rounded-md rounded-bl-sm bg-surface-2 border border-border px-3 py-2.5 ${captainChatBubbleMinHClass} text-[13px] md:text-sm text-text-1 leading-relaxed whitespace-pre-wrap`}
 								>
 									{text}
 								</div>
 							</div>
-							<span className={`text-[10px] text-text-subtle ${captainChatMetaIndentClass}`}>
+							<span className={`text-[10px] text-text-3 ${captainChatMetaIndentClass}`}>
 								{formatMessageTime(comment.created_at)}
 							</span>
 						</div>
@@ -126,11 +124,11 @@ export function CaptainIntakeChat({
 						data-testid="home-captain-chat-message"
 						data-role="admin"
 					>
-						<span className="text-[11px] font-medium text-text-muted pr-0.5">You</span>
-						<div className="max-w-[min(100%,42rem)] rounded-radius-md rounded-br-sm bg-accent-blue-bg border border-accent-blue-text/20 px-3 py-2.5 text-[13px] md:text-sm text-text leading-relaxed whitespace-pre-wrap">
+						<span className="text-[11px] font-medium text-text-2 pr-0.5">You</span>
+						<div className="max-w-[min(100%,42rem)] rounded-md rounded-br-sm bg-info-soft border border-info-soft-fg/20 px-3 py-2.5 text-[13px] md:text-sm text-text-1 leading-relaxed whitespace-pre-wrap">
 							{text}
 						</div>
-						<span className="text-[10px] text-text-subtle pr-0.5">
+						<span className="text-[10px] text-text-3 pr-0.5">
 							{formatMessageTime(comment.created_at)}
 						</span>
 					</div>
@@ -145,12 +143,12 @@ export function CaptainIntakeChat({
 				>
 					<CaptainAvatar size="chat" className="opacity-80" />
 					<div
-						className={`flex-1 min-w-0 rounded-radius-md rounded-bl-sm bg-bg-subtle border border-border px-3 py-2.5 ${captainChatBubbleMinHClass} flex items-center`}
+						className={`flex-1 min-w-0 rounded-md rounded-bl-sm bg-surface-2 border border-border px-3 py-2.5 ${captainChatBubbleMinHClass} flex items-center`}
 					>
-						<span className="inline-flex gap-1 items-center text-text-muted text-[13px]">
-							<span className="w-1.5 h-1.5 rounded-full bg-text-subtle animate-pulse" />
-							<span className="w-1.5 h-1.5 rounded-full bg-text-subtle animate-pulse [animation-delay:150ms]" />
-							<span className="w-1.5 h-1.5 rounded-full bg-text-subtle animate-pulse [animation-delay:300ms]" />
+						<span className="inline-flex gap-1 items-center text-text-2 text-[13px]">
+							<span className="w-1.5 h-1.5 rounded-full bg-text-3 animate-pulse" />
+							<span className="w-1.5 h-1.5 rounded-full bg-text-3 animate-pulse [animation-delay:150ms]" />
+							<span className="w-1.5 h-1.5 rounded-full bg-text-3 animate-pulse [animation-delay:300ms]" />
 						</span>
 					</div>
 				</div>

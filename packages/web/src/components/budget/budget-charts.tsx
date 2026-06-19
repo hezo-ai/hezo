@@ -51,13 +51,13 @@ export function BudgetCharts({
 	const chartData = toData(data?.summary);
 
 	return (
-		<div className="rounded-radius-md border border-border bg-bg p-4">
+		<div className="rounded-md border border-border bg-surface p-4">
 			<div className={`mb-3 flex items-center gap-2 ${title ? 'justify-between' : 'justify-end'}`}>
-				{title && <span className="text-[13px] font-medium text-text">{title}</span>}
+				{title && <span className="text-[13px] font-medium text-text-1">{title}</span>}
 				<div
 					role="tablist"
 					aria-label="Chart type"
-					className="inline-flex rounded-md border border-border-subtle bg-bg-subtle p-0.5 text-xs"
+					className="inline-flex rounded-md border border-border bg-surface-2 p-0.5 text-xs"
 				>
 					{(['bar', 'line'] as const).map((k) => (
 						<button
@@ -67,7 +67,7 @@ export function BudgetCharts({
 							aria-selected={kind === k}
 							onClick={() => setKind(k)}
 							className={`px-2.5 py-1 rounded capitalize ${
-								kind === k ? 'bg-bg text-text shadow-sm' : 'text-text-muted hover:text-text'
+								kind === k ? 'bg-surface text-text-1 shadow-sm' : 'text-text-2 hover:text-text-1'
 							}`}
 						>
 							{k}
@@ -77,11 +77,11 @@ export function BudgetCharts({
 			</div>
 
 			{isLoading ? (
-				<div className="h-[200px] flex items-center justify-center text-[13px] text-text-subtle">
+				<div className="h-[200px] flex items-center justify-center text-[13px] text-text-3">
 					Loading…
 				</div>
 			) : chartData.length === 0 ? (
-				<div className="h-[200px] flex items-center justify-center text-[13px] text-text-subtle">
+				<div className="h-[200px] flex items-center justify-center text-[13px] text-text-3">
 					No spend recorded.
 				</div>
 			) : (
@@ -90,19 +90,19 @@ export function BudgetCharts({
 						{kind === 'bar' ? (
 							<BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
 								<CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-								<XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-subtle)" />
-								<YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-subtle)" />
+								<XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-3)" />
+								<YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-3)" />
 								<Tooltip
 									formatter={(value) => dollars(Math.round(Number(value) * 100))}
 									contentStyle={{ fontSize: 12 }}
 								/>
-								<Bar dataKey="dollars" fill="var(--color-accent-blue)" radius={[2, 2, 0, 0]} />
+								<Bar dataKey="dollars" fill="var(--color-accent)" radius={[2, 2, 0, 0]} />
 							</BarChart>
 						) : (
 							<LineChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
 								<CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-								<XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-subtle)" />
-								<YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-subtle)" />
+								<XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-3)" />
+								<YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-3)" />
 								<Tooltip
 									formatter={(value) => dollars(Math.round(Number(value) * 100))}
 									contentStyle={{ fontSize: 12 }}
@@ -110,7 +110,7 @@ export function BudgetCharts({
 								<Line
 									type="monotone"
 									dataKey="dollars"
-									stroke="var(--color-accent-blue)"
+									stroke="var(--color-accent)"
 									strokeWidth={2}
 									dot={false}
 								/>

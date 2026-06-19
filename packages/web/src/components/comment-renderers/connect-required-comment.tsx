@@ -44,9 +44,7 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 	}, [projectId, queryClient]);
 
 	if (!projectId) {
-		return (
-			<p className="text-xs text-text-subtle italic">Connector setup unavailable in this view.</p>
-		);
+		return <p className="text-xs text-text-3 italic">Connector setup unavailable in this view.</p>;
 	}
 
 	const connector = connectorQuery.data;
@@ -86,11 +84,11 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 				data-testid="connect-required-active"
 				data-connector-id={connector_id}
 			>
-				<div className="flex items-start gap-2 p-2.5 rounded-lg border border-accent-green bg-accent-green-bg hover:bg-accent-green-bg/80 transition-colors">
-					<Check className="w-4 h-4 text-accent-green-text shrink-0 mt-0.5" />
+				<div className="flex items-start gap-2 p-2.5 rounded-lg border border-success bg-success-soft hover:bg-success-soft/80 transition-colors">
+					<Check className="w-4 h-4 text-success-soft-fg shrink-0 mt-0.5" />
 					<div className="flex-1">
-						<p className="text-sm font-medium text-text">{display_name} connected</p>
-						<p className="text-xs text-text-muted mt-0.5">
+						<p className="text-sm font-medium text-text-1">{display_name} connected</p>
+						<p className="text-xs text-text-2 mt-0.5">
 							Available to every agent run in this team. Click to manage in Connectors.
 						</p>
 					</div>
@@ -108,29 +106,29 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 
 	return (
 		<div
-			className="flex flex-col gap-2 p-2.5 rounded-lg border border-accent-amber bg-accent-amber-bg"
+			className="flex flex-col gap-2 p-2.5 rounded-lg border border-warning bg-warning-soft"
 			data-testid="connect-required"
 			data-connector-id={connector_id}
 			data-status={status}
 		>
 			<div className="flex items-start gap-2">
-				<Plug className="w-4 h-4 text-accent-amber-text shrink-0 mt-0.5" />
+				<Plug className="w-4 h-4 text-warning-soft-fg shrink-0 mt-0.5" />
 				<div className="flex-1">
-					<p className="text-sm font-medium text-text">
+					<p className="text-sm font-medium text-text-1">
 						Connect required: <span className="font-semibold">{display_name}</span>
 						{provider_id && (
-							<code className="ml-2 text-xs text-text-muted px-1 py-0.5 rounded bg-bg-subtle">
+							<code className="ml-2 text-xs text-text-2 px-1 py-0.5 rounded bg-surface-2">
 								{provider_id}
 							</code>
 						)}
 					</p>
-					<p className="text-xs text-text-muted mt-0.5">{statusLabel}</p>
+					<p className="text-xs text-text-2 mt-0.5">{statusLabel}</p>
 					{connector?.auth_error && (
-						<p className="text-xs text-accent-red-text mt-1">{connector.auth_error}</p>
+						<p className="text-xs text-danger-soft-fg mt-1">{connector.auth_error}</p>
 					)}
 				</div>
 			</div>
-			{error && <p className="text-xs text-accent-red-text">{error}</p>}
+			{error && <p className="text-xs text-danger-soft-fg">{error}</p>}
 			{usesDeviceFlow && deviceOpen && (
 				<ConnectorDeviceFlowDialog
 					open={deviceOpen}
@@ -154,7 +152,7 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 				</Button>
 				<a
 					href={focusedConnectorUrl}
-					className="text-xs text-text-muted hover:text-text underline"
+					className="text-xs text-text-2 hover:text-text-1 underline"
 					data-testid="connect-required-link"
 				>
 					Open in Connectors

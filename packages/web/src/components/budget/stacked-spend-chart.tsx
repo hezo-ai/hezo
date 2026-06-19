@@ -25,11 +25,11 @@ export interface SpendCell {
 
 // Ordered palette for stacked series; cycles if there are more series than colors.
 const SERIES_COLORS = [
-	'var(--color-accent-blue)',
-	'var(--color-accent-green)',
-	'var(--color-accent-amber)',
-	'var(--color-accent-purple)',
-	'var(--color-accent-red)',
+	'var(--color-accent)',
+	'var(--color-success)',
+	'var(--color-warning)',
+	'var(--color-purple-soft-fg)',
+	'var(--color-danger)',
 ];
 
 interface PivotedRow {
@@ -100,13 +100,13 @@ export function StackedSpendChart({
 	const { rows, series } = useMemo(() => pivot(cells ?? []), [cells]);
 
 	return (
-		<div className="rounded-radius-md border border-border bg-bg p-4">
+		<div className="rounded-md border border-border bg-surface p-4">
 			<div className={`mb-3 flex items-center gap-2 ${title ? 'justify-between' : 'justify-end'}`}>
-				{title && <span className="text-[13px] font-medium text-text">{title}</span>}
+				{title && <span className="text-[13px] font-medium text-text-1">{title}</span>}
 				<div
 					role="tablist"
 					aria-label="Chart type"
-					className="inline-flex rounded-md border border-border-subtle bg-bg-subtle p-0.5 text-xs"
+					className="inline-flex rounded-md border border-border-subtle bg-surface-2 p-0.5 text-xs"
 				>
 					{(['bar', 'line'] as const).map((k) => (
 						<button
@@ -116,7 +116,7 @@ export function StackedSpendChart({
 							aria-selected={kind === k}
 							onClick={() => setKind(k)}
 							className={`px-2.5 py-1 rounded capitalize ${
-								kind === k ? 'bg-bg text-text shadow-sm' : 'text-text-muted hover:text-text'
+								kind === k ? 'bg-surface text-text-1 shadow-sm' : 'text-text-2 hover:text-text-1'
 							}`}
 						>
 							{k}
@@ -126,11 +126,11 @@ export function StackedSpendChart({
 			</div>
 
 			{isLoading ? (
-				<div className="h-[200px] flex items-center justify-center text-[13px] text-text-subtle">
+				<div className="h-[200px] flex items-center justify-center text-[13px] text-text-3">
 					Loading…
 				</div>
 			) : rows.length === 0 ? (
-				<div className="h-[200px] flex items-center justify-center text-[13px] text-text-subtle">
+				<div className="h-[200px] flex items-center justify-center text-[13px] text-text-3">
 					No spend recorded.
 				</div>
 			) : (
@@ -139,8 +139,8 @@ export function StackedSpendChart({
 						{kind === 'bar' ? (
 							<BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
 								<CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-								<XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-subtle)" />
-								<YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-subtle)" />
+								<XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-3)" />
+								<YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-3)" />
 								<Tooltip
 									formatter={(value) => dollars(Math.round(Number(value) * 100))}
 									contentStyle={{ fontSize: 12 }}
@@ -153,8 +153,8 @@ export function StackedSpendChart({
 						) : (
 							<LineChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
 								<CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-								<XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-subtle)" />
-								<YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-subtle)" />
+								<XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-3)" />
+								<YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-3)" />
 								<Tooltip
 									formatter={(value) => dollars(Math.round(Number(value) * 100))}
 									contentStyle={{ fontSize: 12 }}

@@ -94,7 +94,7 @@ test('Budget page: editing limits inline updates the spend progress cards', asyn
 	let teamSlug = '';
 	let projectId = '';
 
-	const { findByText, findByTestId, findByRole, user, ctx, router } = await renderApp({
+	const { findByTestId, findByRole, user, ctx, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -114,9 +114,15 @@ test('Budget page: editing limits inline updates the spend progress cards', asyn
 	await user.type(daily, '20');
 	await user.click(await findByRole('button', { name: 'Save' }));
 
-	// The KPI card (driven by budget-status) reflects the new $20 daily limit — i.e.
-	// editing the limit refreshes the same progress display it lives in.
-	await findByText('0% of limit used', undefined, { timeout: 15_000 });
+	// The window column (driven by budget-status) reflects the new $20 daily cap — i.e.
+	// editing the cap refreshes the same progress display it lives in.
+	await waitFor(
+		() => {
+			const col = document.querySelector('[data-testid="budget-window-daily"]');
+			expect(col?.textContent ?? '').toContain('$20.00');
+		},
+		{ timeout: 15_000 },
+	);
 	await waitFor(async () => {
 		const row = await ctx.db.query<{ daily_budget_cents: number }>(
 			'SELECT daily_budget_cents FROM projects WHERE id = $1',

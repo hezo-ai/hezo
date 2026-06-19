@@ -51,7 +51,7 @@ function ProviderCard({ provider }: { provider: AiProvider }) {
 	}
 
 	return (
-		<div className="border border-border rounded-radius-md p-4">
+		<div className="border border-border rounded-md p-4">
 			<div className="flex items-center justify-between mb-2">
 				<div>
 					<span className="text-[13px] font-medium">{info.name}</span>
@@ -102,7 +102,7 @@ function ProviderCard({ provider }: { provider: AiProvider }) {
 			)}
 
 			{createProvider.error && (
-				<p className="text-[13px] text-accent-red mt-2">
+				<p className="text-[13px] text-danger mt-2">
 					{(createProvider.error as { message?: string }).message || 'Failed to save'}
 				</p>
 			)}

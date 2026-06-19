@@ -23,21 +23,21 @@ function AgentLayout() {
 	const matchRoute = useMatchRoute();
 	const params = { projectId, agentId };
 
-	if (isLoading || !agent) return <div className="text-text-muted">Loading...</div>;
+	if (isLoading || !agent) return <div className="text-text-2">Loading...</div>;
 
 	return (
 		<div className="max-w-3xl">
 			<Link
 				to="/projects/$projectId/agents"
 				params={{ projectId }}
-				className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-text mb-4"
+				className="inline-flex items-center gap-1 text-sm text-text-2 hover:text-text-1 mb-4"
 			>
 				<ArrowLeft className="w-3.5 h-3.5" /> Team
 			</Link>
 
 			<div className="flex items-center gap-3 mb-4">
 				<h1
-					className={`text-lg font-semibold${agent.admin_status === AgentAdminStatus.Disabled ? ' text-text-muted' : ''}`}
+					className={`text-lg font-semibold${agent.admin_status === AgentAdminStatus.Disabled ? ' text-text-2' : ''}`}
 				>
 					{agent.title}
 					{agent.admin_status === AgentAdminStatus.Disabled ? ' (disabled)' : ''}
@@ -49,11 +49,11 @@ function AgentLayout() {
 
 			<div
 				data-testid="agent-summary"
-				className="rounded-lg border border-border-subtle bg-bg-subtle p-4 text-sm leading-relaxed text-text mb-6"
+				className="rounded-lg border border-border-subtle bg-surface-2 p-4 text-sm leading-relaxed text-text-1 mb-6"
 			>
 				<ExpandableText
 					text={agent.summary ?? ''}
-					placeholder={<span className="italic text-text-muted">Description being generated…</span>}
+					placeholder={<span className="italic text-text-2">Description being generated…</span>}
 				/>
 			</div>
 
@@ -67,8 +67,8 @@ function AgentLayout() {
 							params={params}
 							className={`px-3 py-2 text-[13px] font-medium border-b-2 transition-colors -mb-px ${
 								isActive
-									? 'border-primary text-text'
-									: 'border-transparent text-text-muted hover:text-text hover:border-border-hover'
+									? 'border-inverse text-text-1'
+									: 'border-transparent text-text-2 hover:text-text-1 hover:border-border-strong'
 							}`}
 						>
 							{tab.label}

@@ -24,7 +24,7 @@ export function SkillFileSection() {
 					href="/skill.md"
 					target="_blank"
 					rel="noopener noreferrer"
-					className="inline-flex items-center gap-1 text-[13px] text-accent-blue-text hover:underline"
+					className="inline-flex items-center gap-1 text-[13px] text-info-soft-fg hover:underline"
 				>
 					<ExternalLink className="w-3.5 h-3.5" /> Open /skill.md
 				</a>
@@ -33,7 +33,7 @@ export function SkillFileSection() {
 				</Button>
 			</div>
 			{showPreview && content && (
-				<pre className="text-xs bg-bg-subtle border border-border rounded-radius-md p-3 overflow-auto max-h-64 text-text-muted whitespace-pre-wrap">
+				<pre className="text-xs bg-surface-2 border border-border rounded-md p-3 overflow-auto max-h-64 text-text-2 whitespace-pre-wrap">
 					{content}
 				</pre>
 			)}

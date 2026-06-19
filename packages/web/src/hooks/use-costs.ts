@@ -57,6 +57,8 @@ export interface AgentBudgetStatus extends EntityBudgetStatus {
 export interface BudgetStatus {
 	project: EntityBudgetStatus;
 	agents: AgentBudgetStatus[];
+	/** Month-to-date run count (≈ cost entries) — drives the Budget hero's runs line. */
+	runsThisMonth: number;
 }
 
 /** Project + per-agent budget status; powers the Budgets page and warning banner. */

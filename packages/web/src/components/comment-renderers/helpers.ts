@@ -48,10 +48,10 @@ export function runStatusLabel(status: string): string {
 }
 
 export function runStatusDotClass(status: string): string {
-	if (status === 'running' || status === 'queued') return 'bg-accent-amber animate-pulse';
-	if (status === 'succeeded') return 'bg-accent-green';
-	if (status === 'failed' || status === 'timed_out') return 'bg-accent-red';
-	return 'bg-text-subtle';
+	if (status === 'running' || status === 'queued') return 'bg-warning animate-pulse';
+	if (status === 'succeeded') return 'bg-success';
+	if (status === 'failed' || status === 'timed_out') return 'bg-danger';
+	return 'bg-text-3';
 }
 
 function systemEventIcon(kind: string | undefined): LucideIcon {

@@ -26,10 +26,10 @@ export function Stepper({ steps }: StepperProps) {
 								className={[
 									'w-7 h-7 rounded-full flex items-center justify-center text-[12px] font-semibold border',
 									step.status === 'complete'
-										? 'bg-primary text-primary-foreground border-primary'
+										? 'bg-inverse text-inverse-fg border-inverse'
 										: step.status === 'current'
-											? 'bg-accent-blue-bg text-accent-blue-text border-accent-blue-text'
-											: 'bg-bg-elevated text-text-muted border-border',
+											? 'bg-info-soft text-info-soft-fg border-info-soft-fg'
+											: 'bg-surface text-text-2 border-border',
 								].join(' ')}
 								data-testid={`stepper-circle-${idx + 1}`}
 								data-status={step.status}
@@ -40,7 +40,7 @@ export function Stepper({ steps }: StepperProps) {
 							<span
 								className={[
 									'text-[12px] sm:text-[13px] hidden sm:inline',
-									step.status === 'pending' ? 'text-text-muted' : 'text-text',
+									step.status === 'pending' ? 'text-text-2' : 'text-text-1',
 								].join(' ')}
 							>
 								{step.label}

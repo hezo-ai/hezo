@@ -37,7 +37,7 @@ test('agent detail page defaults to Executions tab and exposes Settings tab', as
 	const main = await findByRole('main');
 	await waitFor(() => {
 		const executionsLink = within(main).getByRole('link', { name: 'Executions' });
-		expect(executionsLink.className).toMatch(/border-primary/);
+		expect(executionsLink.className).toMatch(/border-inverse/);
 	});
 
 	const settingsLink = within(getByRole('main')).getByRole('link', { name: 'Settings' });

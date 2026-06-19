@@ -46,8 +46,8 @@ export function MentionPicker({
 
 	if (!loading && results.length === 0) {
 		return (
-			<div className="absolute left-0 right-0 top-full z-40 mt-1 rounded-radius-md border border-border bg-bg-elevated shadow-md">
-				<div className="px-3 py-2 text-xs text-text-muted">
+			<div className="absolute left-0 right-0 top-full z-40 mt-1 rounded-md border border-border bg-surface shadow-md">
+				<div className="px-3 py-2 text-xs text-text-2">
 					{query ? `No matches for @${query}` : 'Type to search'}
 				</div>
 			</div>
@@ -57,10 +57,10 @@ export function MentionPicker({
 	return (
 		<div
 			ref={listRef}
-			className="absolute left-0 right-0 top-full z-40 mt-1 max-h-64 overflow-y-auto rounded-radius-md border border-border bg-bg-elevated shadow-md"
+			className="absolute left-0 right-0 top-full z-40 mt-1 max-h-64 overflow-y-auto rounded-md border border-border bg-surface shadow-md"
 			data-testid="mention-picker"
 		>
-			{loading && <div className="px-3 py-2 text-xs text-text-muted">Searching…</div>}
+			{loading && <div className="px-3 py-2 text-xs text-text-2">Searching…</div>}
 			{grouped.map((r, idx) => {
 				const Icon = KIND_ICON[r.kind] ?? AtSign;
 				const isActive = idx === highlightedIndex;
@@ -76,18 +76,18 @@ export function MentionPicker({
 						}}
 						onMouseEnter={() => onHoverIndex(idx)}
 						className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] ${
-							isActive ? 'bg-bg-subtle' : ''
+							isActive ? 'bg-surface-2' : ''
 						}`}
 					>
-						<Icon className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+						<Icon className="h-3.5 w-3.5 shrink-0 text-text-2" />
 						<div className="flex min-w-0 flex-1 flex-col">
-							<span className="truncate text-text">{r.label}</span>
-							<span className="truncate text-[11px] text-text-subtle">
+							<span className="truncate text-text-1">{r.label}</span>
+							<span className="truncate text-[11px] text-text-3">
 								{r.kind === 'agent' ? `@${r.handle}` : r.handle}
 								{r.sublabel ? ` · ${r.sublabel}` : ''}
 							</span>
 						</div>
-						<span className="ml-2 shrink-0 text-[10px] uppercase tracking-wider text-text-subtle">
+						<span className="ml-2 shrink-0 text-[10px] uppercase tracking-wider text-text-3">
 							{KIND_LABEL[r.kind]}
 						</span>
 					</button>

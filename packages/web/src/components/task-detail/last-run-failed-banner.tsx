@@ -22,7 +22,7 @@ export function LastRunFailedBanner({ task, projectId, taskId }: Props) {
 				href={`#comment-${commentId}`}
 				onClick={jumpToComment(commentId)}
 				data-testid="last-run-failed-banner"
-				className="flex min-w-0 flex-1 items-center gap-2 rounded-md bg-accent-red/10 px-4 py-2 text-[13px] font-medium text-red-400 hover:bg-accent-red/15 transition-colors"
+				className="flex min-w-0 flex-1 items-center gap-2 rounded-md bg-danger/10 px-4 py-2 text-[13px] font-medium text-danger hover:bg-danger/15 transition-colors"
 			>
 				<AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
 				<span className="min-w-0 truncate">
@@ -64,7 +64,7 @@ function RetryButton({
 			disabled={retry.isPending}
 			aria-label="Retry failed run"
 			data-testid="retry-failed-run-banner"
-			className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent-red/10 px-3 text-[13px] font-medium text-red-400 hover:bg-accent-red/15 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+			className="inline-flex shrink-0 items-center gap-1 rounded-md bg-danger/10 px-3 text-[13px] font-medium text-danger hover:bg-danger/15 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
 		>
 			{retry.isPending ? (
 				<Loader2 className="w-3.5 h-3.5 animate-spin" />

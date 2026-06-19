@@ -7,13 +7,13 @@ export function BudgetSection({ projectId }: { projectId: string }) {
 		<section>
 			<SectionHeader title="Budget" desc="Spending overview across agents." />
 			{costs?.summary?.length === 0 ? (
-				<p className="text-[13px] text-text-subtle">No spend recorded.</p>
+				<p className="text-[13px] text-text-3">No spend recorded.</p>
 			) : (
 				<div className="flex flex-col gap-1">
 					{costs?.summary?.map((s) => (
 						<div
 							key={s.label}
-							className="flex items-center justify-between rounded-radius-md border border-border bg-bg px-3 py-2 text-[13px]"
+							className="flex items-center justify-between rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
 						>
 							<span>{s.label}</span>
 							<span className="font-mono">${(s.total_cents / 100).toFixed(2)}</span>

@@ -35,7 +35,7 @@ export function SaveAsTypeSection({ projectId }: { projectId: string }) {
 	return (
 		<section data-testid="save-as-type-section">
 			<h2 className="text-[15px] font-medium mb-1">Save as team type</h2>
-			<p className="text-[13px] text-text-muted mb-3">
+			<p className="text-[13px] text-text-2 mb-3">
 				Snapshot this team's current roster, prompts, skills, and preferences into a reusable team
 				type. New teams can then be created from it.
 			</p>
@@ -63,12 +63,12 @@ export function SaveAsTypeSection({ projectId }: { projectId: string }) {
 					</Button>
 				</div>
 				{save.error && (
-					<p className="text-[13px] text-accent-red">
+					<p className="text-[13px] text-danger">
 						{(save.error as { message?: string }).message || 'Failed to save team as a type'}
 					</p>
 				)}
 				{savedName && (
-					<p className="text-[13px] text-text-muted" data-testid="save-as-type-success">
+					<p className="text-[13px] text-text-2" data-testid="save-as-type-success">
 						Saved “{savedName}” as a team type.
 						{skipped.length > 0 &&
 							` Skipped ${skipped.length} custom agent(s) without a catalog type: ${skipped.join(', ')}.`}

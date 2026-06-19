@@ -20,7 +20,7 @@ export function CaptainAvatar({ size = 'md', className = '' }: CaptainAvatarProp
 		<span
 			role="img"
 			aria-label="Captain"
-			className={`inline-block shrink-0 rounded-full overflow-hidden ring-1 ring-border bg-accent-purple-bg ${sizeMap[size]} ${className}`}
+			className={`inline-block shrink-0 rounded-full overflow-hidden ring-1 ring-border bg-purple-soft ${sizeMap[size]} ${className}`}
 		>
 			<svg viewBox="0 0 64 64" className="w-full h-full" aria-hidden>
 				<title>Captain</title>
