@@ -33,6 +33,11 @@
 ## Layout
 
 - `agents/<template>/*.md` — single source of truth for agent system prompts. Each team template (e.g. `software-development/`, `blank/`) owns its own role docs. The seed in `packages/server/src/db/seed.ts` reads these at startup. Edit them directly. Hezo-specific tooling/file-paths/conventions belong here in AGENTS.md, not in role docs.
+- **Where guidance goes — pick by *reach*.** Agent prompts compose from three layers with different audiences:
+  - `SHARED_INSTRUCTIONS` (`packages/server/src/services/template-resolver.ts`) is resolved at **runtime** and appended to **every agent prompt on every run — all agents that exist now and all created in the future**, including agents hired at runtime via the Captain/hire workflow (which never pass through partial resolution). Guidance that must reach *every* agent belongs here — add it here, never by copying a directive into each role doc. It is also appended across **all team types** (software-development, marketing, research, blank, …), so its content must be domain-neutral — no software-specific role slugs or artifacts except as clearly-illustrative, generalized examples.
+  - `agents/_partials/*.md` are resolved at **build/load time only** (`resolve-partials.ts`, baked into `agents-bundle.json` by `bun run build:agents`) and so only compose the **built-in agents Hezo seeds** from templates. A partial **does not reach runtime-created agents**. Use one for role-scoped guidance shared by a *subset* of the seeded built-in roles (e.g. code-quality for engineer/qa, repo rules for execution roles, captain-only workflows). Changing a partial requires `bun run build:agents`.
+  - `agents/<template>/*.md` — a single seeded role's own prose.
+  - Decision rule: must every agent (incl. future runtime hires) have it → `SHARED_INSTRUCTIONS`; shared by a subset of seeded roles → a `_partial`; one role → that role's `.md`.
 - `.dev/` — specs, schema, API, implementation plans. Keep in sync with code: describe what the system **does**, not what changed. No backwards-compat concerns pre-v1.
 
 ## Project / team model (1:1)

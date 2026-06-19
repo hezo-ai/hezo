@@ -426,7 +426,7 @@ describe('agent-runner: mention handoff prompt', () => {
 		expect(prompt).toContain('AUT-12 — Review PRD (in_progress, medium)');
 		expect(prompt).toContain('AUT-15 — ADR: runtime (review, low)');
 		expect(prompt).toContain('parent_task_id = trig-uuid');
-		expect(prompt).toContain('## Handling @-mentions');
+		expect(prompt).toContain('Handling an @-mention');
 		// Ensure the normal Current Task block still follows.
 		expect(prompt).toContain('## Current Task: AUT-42');
 		// Handoff appears before the Current Task block.
@@ -447,7 +447,7 @@ describe('agent-runner: mention handoff prompt', () => {
 		});
 
 		expect(prompt).toContain('### Your open tickets\nnone');
-		expect(prompt).toContain('## Handling @-mentions');
+		expect(prompt).toContain('Handling an @-mention');
 	});
 
 	it('omits Mention Handoff when payload source is not mention', async () => {

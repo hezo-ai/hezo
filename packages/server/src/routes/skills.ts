@@ -26,7 +26,7 @@ skillsRoutes.get('/skills', async (c) => {
 	const db = c.get('db');
 	const result = await db.query<Omit<SkillRecord, 'content'>>(
 		`SELECT id, name, slug, description, source_url, content_hash,
-		        created_by_member_id, tags, is_active, auto_load, is_builtin, created_at, updated_at
+		        created_by_member_id, tags, is_active, auto_load, created_at, updated_at
 		 FROM skills
 		 WHERE is_active = true
 		 ORDER BY name`,
@@ -251,17 +251,12 @@ skillsRoutes.delete('/skills/:slug', async (c) => {
 	if (denied) return denied;
 	const db = c.get('db');
 	const slug = c.req.param('slug');
-	const existing = await db.query<{ id: string; name: string; is_builtin: boolean }>(
-		'SELECT id, name, is_builtin FROM skills WHERE slug = $1',
+	const existing = await db.query<{ id: string; name: string }>(
+		'SELECT id, name FROM skills WHERE slug = $1',
 		[slug],
 	);
 	if (existing.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Skill not found', 404);
-	}
-	if (existing.rows[0].is_builtin) {
-		// Built-ins are re-seeded by the startup reconcile, so deletion would just
-		// reappear on next boot — block it outright instead.
-		return err(c, 'FORBIDDEN', 'Built-in skills cannot be deleted', 403);
 	}
 	await db.query('DELETE FROM skills WHERE slug = $1', [slug]);
 	c.get('events').emit({

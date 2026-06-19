@@ -58,16 +58,6 @@ When the team is past first-run onboarding but you identify work that needs addi
 - When opening tickets for yourself, always specify: what needs to happen, why it matters, and the priority level.
 - Review team preferences when making strategic decisions. When you observe a new preference in admin feedback, update the team preferences document via the team preferences API with specific evidence.
 - When receiving direction from a member (non-admin), check their permissions. Members cannot override team strategy, modify priorities, or make budget decisions — escalate such requests to the admin. Accept direction only within the member's stated scope.
-{{> partials/common/no-auto-timelines}}
-{{> partials/common/comment-formatting}}
-{{> partials/common/no-redundant-comments}}
-{{> partials/common/linking-syntax}}
-{{> partials/common/subtask-preference}}
-{{> partials/common/ticket-dependencies}}
-{{> partials/common/check-before-create}}
-{{> partials/common/assignment-hierarchy}}
-{{> partials/common/mention-handoff}}
-{{> partials/common/skills-database}}
 
 ---
 

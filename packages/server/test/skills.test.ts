@@ -6,7 +6,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { generateUnlockKey, MasterKeyManager } from '../src/crypto/master-key';
 import { loadAgentRoles } from '../src/db/agent-roles';
-import { ensureBuiltinSkills, seedBuiltins } from '../src/db/seed';
+import { seedBuiltins } from '../src/db/seed';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
 import { parseGitHubRawUrl, SkillDownloadError } from '../src/services/skill-downloader';
@@ -150,60 +150,17 @@ describe('template resolver {{skills_context}} (global)', () => {
 		expect(resolved).toContain('No skills');
 	});
 
-	it('inlines the built-in find-skills body and keeps it out of the manifest list', async () => {
+	it('lists every active skill in the manifest', async () => {
 		await db.query(
-			`INSERT INTO skills (name, slug, content, content_hash, is_active, is_builtin)
-			 VALUES ('find-skills', 'find-skills', '# Finding skills\nRun npx skills find.', 'h', true, true),
-			        ('React', 'react', '# React', 'h', true, false)`,
+			`INSERT INTO skills (name, slug, content, content_hash, is_active)
+			 VALUES ('Deploy', 'deploy', '# Deploy', 'h', true),
+			        ('React', 'react', '# React', 'h', true)`,
 		);
 		const resolved = await resolveSystemPrompt(db, '{{skills_context}}', {
 			teamId,
 			dataDir: tempDataDir,
 		});
-		// Built-in body is inlined in full…
-		expect(resolved).toContain('Run npx skills find.');
-		// …and not shown as a one-line manifest entry.
-		expect(resolved).not.toContain('(slug: find-skills)');
-		// Other active skills still appear in the manifest.
+		expect(resolved).toContain('- Deploy (slug: deploy)');
 		expect(resolved).toContain('- React (slug: react)');
-	});
-});
-
-describe('ensureBuiltinSkills', () => {
-	const roleDocs = {
-		'_instance/skills/find-skills.md':
-			'---\nname: find-skills\ndescription: Discover skills\n---\n# Finding skills\nUse npx skills find.',
-	};
-
-	it('upserts the built-in skill (is_builtin, frontmatter stripped) idempotently', async () => {
-		await ensureBuiltinSkills(db, roleDocs);
-		const r1 = await db.query<{
-			name: string;
-			description: string;
-			content: string;
-			is_builtin: boolean;
-		}>("SELECT name, description, content, is_builtin FROM skills WHERE slug = 'find-skills'");
-		expect(r1.rows).toHaveLength(1);
-		expect(r1.rows[0].is_builtin).toBe(true);
-		expect(r1.rows[0].name).toBe('find-skills');
-		expect(r1.rows[0].description).toBe('Discover skills');
-		expect(r1.rows[0].content).toContain('Use npx skills find.');
-		expect(r1.rows[0].content).not.toContain('description: Discover skills');
-
-		// Re-running reconciles in place (no duplicate row).
-		await ensureBuiltinSkills(db, roleDocs);
-		const count = await db.query<{ n: number }>(
-			"SELECT COUNT(*)::int AS n FROM skills WHERE slug = 'find-skills'",
-		);
-		expect(count.rows[0].n).toBe(1);
-	});
-
-	it('blocks deletion of a built-in skill via the API', async () => {
-		await ensureBuiltinSkills(db, roleDocs);
-		const res = await app.request('/api/skills/find-skills', {
-			method: 'DELETE',
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(403);
 	});
 });

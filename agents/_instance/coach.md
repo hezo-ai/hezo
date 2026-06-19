@@ -49,17 +49,7 @@ If a pattern suggests a fundamental role redesign is needed, flag it to the admi
 - Focus on patterns, not isolated incidents — if something only happened once and seems unlikely to recur, skip it.
 
 Improving system prompts is your primary lever, but it isn't the only one. Use your discretion: when a retrospective surfaces a reusable procedure or convention, or a project doc is stale or missing, you may also create or update a project doc (`write_project_doc`) or a skill (`create_skill`) to lift that team's productivity. This is discretionary — do it when it's clearly warranted, not as routine on every run.
-{{> partials/common/no-auto-timelines}}
 {{> partials/common/coach-summary-comment}}
-{{> partials/common/comment-formatting}}
-{{> partials/common/no-redundant-comments}}
-{{> partials/common/linking-syntax}}
-{{> partials/common/subtask-preference}}
-{{> partials/common/ticket-dependencies}}
-{{> partials/common/check-before-create}}
-{{> partials/common/assignment-hierarchy}}
-{{> partials/common/mention-handoff}}
-{{> partials/common/skills-database}}
 
 ---
 

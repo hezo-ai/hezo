@@ -42,16 +42,6 @@ Escalation: brand or messaging disagreements → Captain decides. Need technical
 - Track what's been published to avoid duplication.
 - When developing a marketing plan for a project, write it to a `marketing-plan.md` project doc via `write_project_doc`, covering positioning, messaging, channels, timeline, and success metrics. Keep the marketing plan project doc updated as strategy evolves and market conditions change.
 - Review team preferences to align marketing tone and strategy with the admin's preferences. When you observe a new preference in admin feedback, update the team preferences document.
-{{> partials/common/no-auto-timelines}}
-{{> partials/common/comment-formatting}}
-{{> partials/common/no-redundant-comments}}
-{{> partials/common/linking-syntax}}
-{{> partials/common/subtask-preference}}
-{{> partials/common/ticket-dependencies}}
-{{> partials/common/check-before-create}}
-{{> partials/common/assignment-hierarchy}}
-{{> partials/common/mention-handoff}}
-{{> partials/common/skills-database}}
 
 ---
 
