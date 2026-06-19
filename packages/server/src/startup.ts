@@ -114,7 +114,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	let docker: DockerClient;
 	if (process.env.HEZO_SKIP_DOCKER) {
 		const { createFakeDockerClient } = await import('./services/fake-docker.js');
-		docker = createFakeDockerClient();
+		docker = createFakeDockerClient(db);
 	} else {
 		docker = new DockerClient();
 		try {

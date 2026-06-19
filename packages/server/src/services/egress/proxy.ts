@@ -79,6 +79,9 @@ export interface AllocatedRunProxy {
 	proxyPort: number;
 }
 
+/** How many ports to try binding before giving up allocating a run's proxy. */
+const EGRESS_BIND_ATTEMPTS = 5;
+
 export class EgressProxy {
 	private readonly runs = new Map<string, RunProxyInstance>();
 	private readonly portAllocator: PortAllocator;
@@ -113,31 +116,60 @@ export class EgressProxy {
 		if (this.runs.has(runId)) {
 			throw new Error(`Egress proxy already allocated for run ${runId}`);
 		}
-		const port = await this.portAllocator.allocate(scope.agentId);
 
-		const instance = new RunProxyInstance({
-			runId,
-			scope,
-			port,
-			bindHost: this.proxyBindHost,
-			db: this.deps.db,
-			masterKeyManager: this.deps.masterKeyManager,
-			getMintCa: () => this.getMintCa(),
-			upstreamHttpsAgent: this.upstreamHttpsAgent,
-		});
-
+		// Allocate-and-bind with a few attempts. A candidate can pass the
+		// allocator's free-probe yet lose the race to bind — another run, a
+		// parallel test process, or an external listener grabs it in the window
+		// between probe and listen. Keep each failed port reserved so the next
+		// attempt lands on a different one, then release the losers once we've
+		// bound (or all of them if every attempt fails).
+		const reserved: number[] = [];
+		let lastReason = 'no bindable port in egress range';
 		try {
-			await instance.listen();
+			for (let attempt = 0; attempt < EGRESS_BIND_ATTEMPTS; attempt++) {
+				const port = await this.portAllocator.allocate(scope.agentId);
+				reserved.push(port);
+
+				const instance = new RunProxyInstance({
+					runId,
+					scope,
+					port,
+					bindHost: this.proxyBindHost,
+					db: this.deps.db,
+					masterKeyManager: this.deps.masterKeyManager,
+					getMintCa: () => this.getMintCa(),
+					upstreamHttpsAgent: this.upstreamHttpsAgent,
+				});
+
+				try {
+					await instance.listen();
+				} catch (e) {
+					lastReason = (e as Error).message;
+					log.warn('egress proxy bind lost a race; retrying on another port', {
+						run: ref(scope.label, runId),
+						port,
+						reason: lastReason,
+					});
+					continue;
+				}
+
+				this.runs.set(runId, instance);
+				for (const p of reserved) {
+					if (p !== port) this.portAllocator.release(p);
+				}
+				log.debug('egress proxy allocated', { run: ref(scope.label, runId), port });
+				return { proxyHost: this.proxyHost, proxyPort: port };
+			}
 		} catch (e) {
-			this.portAllocator.release(port);
-			const reason = (e as Error).message;
-			log.warn('egress proxy unavailable for run', { run: ref(scope.label, runId), reason });
-			throw new EgressProxyUnavailableError(reason);
+			lastReason = (e as Error).message;
 		}
 
-		this.runs.set(runId, instance);
-		log.debug('egress proxy allocated', { run: ref(scope.label, runId), port });
-		return { proxyHost: this.proxyHost, proxyPort: port };
+		for (const p of reserved) this.portAllocator.release(p);
+		log.warn('egress proxy unavailable for run', {
+			run: ref(scope.label, runId),
+			reason: lastReason,
+		});
+		throw new EgressProxyUnavailableError(lastReason);
 	}
 
 	async releaseRunProxy(runId: string): Promise<void> {

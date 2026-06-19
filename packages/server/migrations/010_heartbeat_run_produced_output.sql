@@ -1,4 +1,4 @@
--- 009_heartbeat_run_produced_output.sql
+-- 010_heartbeat_run_produced_output.sql
 -- Record whether an agent run produced any persisted output. A run only counts
 -- as a useful success if it wrote something — code changes in the task worktree,
 -- or a Hezo write (comment, task, document, blocker, reaction, credential

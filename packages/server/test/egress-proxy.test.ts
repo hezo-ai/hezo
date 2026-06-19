@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { Server as HttpsServer } from 'node:https';
-import type { Socket } from 'node:net';
+import { createServer as createNetServer, type Server as NetServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import { type HezoCA, loadOrCreateCA } from '../src/services/egress/ca';
+import { PortAllocator } from '../src/services/egress/port-allocator';
 import { EgressProxy } from '../src/services/egress/proxy';
 import { safeClose } from './helpers';
 import { createTestApp, createTestProject } from './helpers/app';
@@ -507,4 +508,51 @@ describe('EgressProxy per-host cert routing', () => {
 			await httpsProxy.releaseRunProxy(runId);
 		}
 	}, 30_000);
+
+	// A candidate port can pass the allocator's free-probe yet lose the race to
+	// bind (a parallel process grabs it first). Allocation must try the next port
+	// rather than fail the whole run.
+	it('retries onto another port when a candidate loses the bind race', async () => {
+		const occupied = createNetServer();
+		const occupiedPort = await new Promise<number>((resolve, reject) => {
+			occupied.once('error', reject);
+			occupied.listen(0, '127.0.0.1', () => resolve((occupied.address() as { port: number }).port));
+		});
+		const freePort = await reserveFreePort();
+
+		class FixedAllocator extends PortAllocator {
+			private i = 0;
+			private readonly seq = [occupiedPort, freePort];
+			async allocate(): Promise<number> {
+				return this.seq[this.i++];
+			}
+			release(): void {}
+		}
+
+		const retryProxy = new EgressProxy({
+			db,
+			masterKeyManager,
+			ca,
+			portAllocator: new FixedAllocator(),
+		});
+		const runId = `run-${Date.now()}-bind-retry`;
+		try {
+			const allocated = await retryProxy.allocateRunProxy(runId, { teamId, agentId });
+			expect(allocated.proxyPort).toBe(freePort);
+		} finally {
+			await retryProxy.releaseRunProxy(runId);
+			await new Promise<void>((r) => occupied.close(() => r()));
+		}
+	});
 });
+
+function reserveFreePort(): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const s: NetServer = createNetServer();
+		s.once('error', reject);
+		s.listen(0, '127.0.0.1', () => {
+			const port = (s.address() as { port: number }).port;
+			s.close(() => resolve(port));
+		});
+	});
+}

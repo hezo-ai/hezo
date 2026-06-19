@@ -381,6 +381,7 @@ export async function buildRuntimeInvocation(
 		`HEZO_API_URL=http://host.docker.internal:${deps.serverPort}/agent-api`,
 		`HEZO_AGENT_TOKEN=${agentJwt}`,
 		`HEZO_AGENT_ID=${agentId}`,
+		`HEZO_HEARTBEAT_RUN_ID=${resourceId}`,
 		`HEZO_TEAM_ID=${runTeamId}`,
 		`HEZO_AGENT_EFFORT=${effort}`,
 		`HEZO_PROMPT_FILE=${promptContainerPath}`,
