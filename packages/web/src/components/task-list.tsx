@@ -487,7 +487,7 @@ export function TaskList({ projectId }: TaskListProps) {
 
 			<section data-testid="task-list-main" className="mb-6 last:mb-0">
 				<h2 className="text-[11px] font-medium uppercase tracking-wider text-text-subtle mb-2 px-0.5">
-					To do
+					Backlog
 				</h2>
 
 				{mainLoading ? (
