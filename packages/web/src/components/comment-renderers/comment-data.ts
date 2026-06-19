@@ -24,6 +24,7 @@ export interface ToolCall {
 export type CommentData = {
 	[K in CommentContentType]: {
 		id: string;
+		public_id: string;
 		content_type: K;
 		content: CommentContentByType[K];
 		chosen_option?: CommentChosenByType[K];

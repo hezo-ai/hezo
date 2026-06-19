@@ -1,7 +1,7 @@
 import { AlertTriangle, ChevronRight, Loader2, RotateCw } from 'lucide-react';
 import { useRetryFailedRun } from '../../hooks/use-retry-failed-run';
 import type { Task } from '../../hooks/use-tasks';
-import { jumpToComment } from './comments-section';
+import { jumpToComment } from '../comment-renderers';
 
 interface Props {
 	task: Task;

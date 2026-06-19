@@ -13,7 +13,8 @@ import { TraceComment } from './trace-comment';
 
 export type { CommentData } from './comment-data';
 export { CommentReactions } from './comment-reactions';
-export { commentText, inlineEventIcon, isInlineEventType } from './helpers';
+export { CommentTimestampLink } from './comment-timestamp-link';
+export { commentText, inlineEventIcon, isInlineEventType, jumpToComment } from './helpers';
 
 interface RenderProps {
 	comment: CommentData;
