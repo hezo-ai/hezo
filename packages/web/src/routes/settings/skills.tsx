@@ -252,7 +252,6 @@ function InstanceSkillsPage() {
 							>
 								<div className="flex items-center gap-2 min-w-0 flex-1">
 									<span className="font-medium">{s.name}</span>
-									{s.is_builtin && <Badge color="blue">built-in</Badge>}
 									{s.tags?.map((t) => (
 										<Badge key={t} color="neutral">
 											{t}
@@ -271,20 +270,18 @@ function InstanceSkillsPage() {
 									>
 										<Pencil className="w-3.5 h-3.5" />
 									</button>
-									{!s.is_builtin && (
-										<button
-											type="button"
-											onClick={() => {
-												if (confirm(`Delete instance skill "${s.name}"?`)) {
-													deleteSkill.mutate(s.slug);
-												}
-											}}
-											aria-label={`Delete ${s.name}`}
-											className="text-text-subtle hover:text-accent-red"
-										>
-											<Trash2 className="w-3.5 h-3.5" />
-										</button>
-									)}
+									<button
+										type="button"
+										onClick={() => {
+											if (confirm(`Delete instance skill "${s.name}"?`)) {
+												deleteSkill.mutate(s.slug);
+											}
+										}}
+										aria-label={`Delete ${s.name}`}
+										className="text-text-subtle hover:text-accent-red"
+									>
+										<Trash2 className="w-3.5 h-3.5" />
+									</button>
 								</span>
 							</div>
 						))}

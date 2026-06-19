@@ -71,9 +71,8 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 		expect(sdCeo).toContain('Every run you take is at **max effort**');
 		expect(sdCeo).toContain('## Hire workflow');
 		expect(sdCeo).toContain('Ask before you write.');
-		// the assignment-hierarchy fix (captain.md body + shared partial) must reach the prompt
+		// the captain.md fan-out body edit must reach the prompt
 		expect(sdCeo).toContain('Fan out only to your direct reports');
-		expect(sdCeo).toContain('## Planning a multi-step chain across levels');
 		expect(sdCeo).not.toContain('{{> partials/');
 
 		const blankCeo = docs['blank/captain.md'];
@@ -81,8 +80,6 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 		expect(blankCeo).toContain('Every run you take is at **max effort**');
 		expect(blankCeo).toContain('## Hire workflow');
 		expect(blankCeo).toContain('Ask before you write.');
-		// blank captain includes the shared partial (but not the captain.md fan-out body edit)
-		expect(blankCeo).toContain('## Planning a multi-step chain across levels');
 		expect(blankCeo).not.toContain('{{> partials/');
 
 		for (const slug of [
@@ -106,89 +103,8 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 		expect(architectDoc).not.toContain('No designated repo means no run.');
 		expect(architectDoc).toContain('You can run without a designated repo.');
 
-		// Every role doc picks up the no-auto-timelines guidance. Skill docs (e.g.
-		// `_instance/skills/find-skills.md`) are not agent prompts and don't carry
-		// these behavioral partials, so exclude them.
-		const allRoleKeys = Object.keys(docs).filter(
-			(k) => !k.startsWith('_partials/') && !k.includes('/skills/') && k.endsWith('.md'),
-		);
-		expect(allRoleKeys.length).toBeGreaterThan(0);
-		for (const key of allRoleKeys) {
-			expect(docs[key], `${key} should include the no-auto-timelines rule`).toContain(
-				'Do not invent timelines, deadlines, or weekly schedules.',
-			);
-		}
-
-		// Every role doc picks up the linking-syntax guidance.
-		for (const key of allRoleKeys) {
-			expect(docs[key], `${key} should include the linking-syntax rule`).toContain(
-				'## Linking to Hezo entities',
-			);
-			expect(docs[key], `${key} should include a project-doc example`).toContain('spec.md');
-			expect(docs[key], `${key} should include a skill example`).toContain('deploy-runbook');
-			expect(docs[key], `${key} should include an agent-mention example`).toContain('@engineer');
-			expect(docs[key], `${key} should require slug-not-title for teammate references`).toContain(
-				'Always use the slug form for teammates, never the title',
-			);
-			expect(docs[key], `${key} should reference the injected Teammates block`).toContain(
-				'Teammates block injected at the end of your prompt',
-			);
-			expect(docs[key], `${key} should make @@ the default for non-asks`).toContain(
-				'Passive is the default',
-			);
-			expect(docs[key], `${key} should include the review-recap antipattern example`).toContain(
-				'review recap',
-			);
-			expect(docs[key], `${key} should keep admin attribution passive in recaps`).toContain(
-				'@@admin approved',
-			);
-		}
-
-		// Every role doc picks up the subtask-preference guidance.
-		for (const key of allRoleKeys) {
-			expect(docs[key], `${key} should include the sub-task heading`).toContain(
-				'## Sub-tasks vs top-level tickets',
-			);
-			expect(docs[key], `${key} should mention the depth-2 cap`).toContain(
-				'capped at two levels deep',
-			);
-			expect(docs[key], `${key} should explain the parent-deliverable distinction`).toContain(
-				"## What counts as the parent's deliverable",
-			);
-			expect(docs[key], `${key} should include planning-ticket children rules`).toContain(
-				'## Draft execution plan tickets (`planning` label)',
-			);
-			expect(docs[key], `${key} should forbid nesting implementation under planning`).toContain(
-				'Implementation must **never** be a child of the draft execution plan ticket',
-			);
-			expect(docs[key], `${key} should call out the implementation/feature parent case`).toContain(
-				'**Implementation / feature / bug-fix parent**',
-			);
-		}
-
-		// Every role doc picks up the no-redundant-comments guidance so that re-runs
-		// without new substance do not re-wake every @-mentioned agent.
-		for (const key of allRoleKeys) {
-			expect(docs[key], `${key} should include the no-repost heading`).toContain(
-				"## Don't repost when nothing changed",
-			);
-			expect(docs[key], `${key} should reference list_comments for the check`).toContain(
-				'`list_comments`',
-			);
-			expect(docs[key], `${key} should warn about re-waking mentioned agents`).toContain(
-				're-wakes every agent you @-mention',
-			);
-		}
-
-		// Every role doc picks up the duplicate-check guidance before opening a new ticket.
-		for (const key of allRoleKeys) {
-			expect(docs[key], `${key} should include the duplicate-check heading`).toContain(
-				'## Check before you create',
-			);
-			expect(docs[key], `${key} should reference list_tasks for the duplicate check`).toContain(
-				'`list_tasks`',
-			);
-		}
+		// The planning-ticket-children partial still expands where it is used (Captain).
+		expect(sdCeo).toContain('## Draft execution plan tickets (`planning` label)');
 
 		// Partial files themselves are stripped from the returned map
 		expect(Object.keys(docs).some((k) => k.startsWith('_partials/'))).toBe(false);

@@ -10,6 +10,7 @@ import {
 	loadSpawnedFromTask,
 } from '../src/services/agent-runner';
 import { getAgentSystemPrompt } from '../src/services/documents';
+import { resolveSystemPrompt } from '../src/services/template-resolver';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, projectSlugFor } from './helpers/app';
 
@@ -18,7 +19,6 @@ let db: PGlite;
 let token: string;
 
 let teamId: string;
-let teamSlug: string;
 let projectId: string;
 let projectSlug: string;
 let captainMemberId: string;
@@ -57,7 +57,6 @@ beforeAll(async () => {
 	});
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	teamSlug = teamData.slug;
 
 	const agentsRes = await app.request(`/api/projects/${await projectSlugFor(db, teamId)}/agents`, {
 		headers: authHeader(token),
@@ -174,7 +173,7 @@ describe('mention handoff prompt (integration)', () => {
 		expect(prompt).toContain(specTicket.identifier);
 		expect(prompt).toContain(prdTicket.identifier);
 		expect(prompt).toContain('> @architect please bring the spec up to date');
-		expect(prompt).toContain('## Handling @-mentions');
+		expect(prompt).toContain('Handling an @-mention');
 		expect(prompt).toContain('parent_task_id');
 		expect(prompt).toContain(commentId);
 		expect(prompt).toContain(`add_reaction(comment_id='${commentId}', kind='ack')`);
@@ -261,7 +260,7 @@ describe('mention handoff prompt (integration)', () => {
 		expect(prompt).toContain('### Your open tickets\nnone');
 	});
 
-	it('keeps the sub-task / peer / top-level guidance in the architect system prompt via the shared partial', async () => {
+	it('keeps the sub-task / peer / top-level triage guidance in the resolved architect prompt via SHARED_INSTRUCTIONS', async () => {
 		const { triggeringTaskId, triggeringIdentifier, commentId } =
 			await createTriggeringTaskWithComment('@architect review please');
 		const wakeupPayload = {
@@ -271,10 +270,18 @@ describe('mention handoff prompt (integration)', () => {
 		};
 		const ctx = await loadMentionContext(db, architectMemberId, teamId, wakeupPayload);
 
+		// The triage guidance now lives in SHARED_INSTRUCTIONS, appended at resolve
+		// time rather than baked into the stored role template.
 		const architectSystemPrompt = await getAgentSystemPrompt(db, teamId, architectMemberId);
+		const resolvedSystemPrompt = await resolveSystemPrompt(db, architectSystemPrompt, {
+			teamId,
+			projectId,
+			taskId: triggeringTaskId,
+			agentId: architectMemberId,
+		});
 
 		const prompt = buildTaskPrompt(
-			architectSystemPrompt,
+			resolvedSystemPrompt,
 			{
 				...TRIGGERING_TASK,
 				id: triggeringTaskId,
@@ -285,11 +292,11 @@ describe('mention handoff prompt (integration)', () => {
 			{ mentionContext: ctx },
 		);
 		expect(prompt).not.toContain('"Tracking this on {your_ticket_identifier}."');
-		expect(prompt).toContain('## Handling @-mentions');
+		expect(prompt).toContain('Handling an @-mention');
 		expect(prompt).toContain('sub-task');
 		expect(prompt).toContain('peer');
 		expect(prompt).toContain('top-level');
-		expect(prompt).toContain('check-before-create');
+		expect(prompt).toContain('Check before you create');
 	});
 
 	it('injects the full comment verbatim — no truncation, no code stripping', async () => {

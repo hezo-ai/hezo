@@ -1463,7 +1463,7 @@ function renderMentionHandoff(task: TaskInfo, ctx: MentionContext): string[] {
 		ticketList,
 		'',
 		'### How to handle this mention',
-		`Follow the \`## Handling @-mentions\` rules defined in your system prompt. The triggering ticket referenced in those rules is ${task.identifier}; when creating a sub-task, use \`parent_task_id = ${task.id}\`.`,
+		`Follow the **Handling an @-mention** rules in the @-Mentions, Linking & Handoffs section of your system prompt. The triggering ticket referenced in those rules is ${task.identifier}; when creating a sub-task, use \`parent_task_id = ${task.id}\`.`,
 		`To acknowledge the handoff, call \`add_reaction(comment_id='${ctx.triggeringCommentId}', kind='ack')\`. That is the triggering comment's UUID — do not call \`list_comments\` to look it up.`,
 		'',
 		'---',

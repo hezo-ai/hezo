@@ -1,15 +1,20 @@
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 
-test('built-in skills show a badge and cannot be deleted (but can be edited)', async () => {
+test('a created skill is editable and deletable (no built-in concept)', async () => {
 	const r = await renderApp({ initialPath: '/settings/skills' });
 
-	// The seeded find-skills built-in appears in the list…
-	await r.findByText('find-skills');
-	expect(await r.findByText('built-in')).toBeTruthy();
-	// …with no delete affordance, but an edit one.
-	expect(r.queryByLabelText('Delete find-skills')).toBeNull();
-	expect(r.queryByLabelText('Edit find-skills')).not.toBeNull();
+	await r.user.click(await r.findByRole('button', { name: 'Add' }));
+	await r.user.type(await r.findByPlaceholderText(/^Name/), 'My Skill');
+	await r.user.type(await r.findByLabelText('Skill content'), '# Body');
+	await r.user.click(await r.findByRole('button', { name: 'Add skill' }));
+
+	// It appears in the list with both edit and delete affordances…
+	await r.findByText('My Skill');
+	expect(r.queryByLabelText('Edit My Skill')).not.toBeNull();
+	expect(r.queryByLabelText('Delete My Skill')).not.toBeNull();
+	// …and no skill is labelled built-in anymore.
+	expect(r.queryByText('built-in')).toBeNull();
 });
 
 test('the skill content editor previews markdown', async () => {

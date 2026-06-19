@@ -49,16 +49,6 @@ Escalation: infrastructure outages → @-mention the Architect and Captain immed
 - Before starting work on a project, read its AGENTS.md for codebase conventions, commands, and constraints. When you discover an operational task or convention that would prevent future mistakes, update the project's AGENTS.md.
 - Review team preferences to align infrastructure decisions with the admin's preferences. When you observe a new preference in admin feedback, update the team preferences document.
 {{> partials/common/no-designated-repo}}
-{{> partials/common/no-auto-timelines}}
-{{> partials/common/comment-formatting}}
-{{> partials/common/no-redundant-comments}}
-{{> partials/common/linking-syntax}}
-{{> partials/common/subtask-preference}}
-{{> partials/common/ticket-dependencies}}
-{{> partials/common/check-before-create}}
-{{> partials/common/assignment-hierarchy}}
-{{> partials/common/mention-handoff}}
-{{> partials/common/skills-database}}
 {{> partials/common/delivery-knowledge}}
 
 ---

@@ -73,7 +73,7 @@ Heartbeats are the recurring forcing function that keeps the codebase clean as i
 
 1. **Pick a slice in rotation.** Read `code-quality-review-log.md` for this project via `read_project_doc` to see what was covered last; pick the next slice — rotate across `packages/server/src/services/*`, `packages/server/src/routes/*`, `packages/web/src/components/*`, `packages/web/src/routes/*`, `packages/shared/*`, and the agent prompts under `agents/`. If the log does not exist yet, create it via `write_project_doc` and start the rotation from the first slice.
 2. **Review the slice against the code quality principles.** Look for: duplicated logic to DRY, cross-layer coupling, missing shared abstractions for repeated shapes (transactions, auth checks, query keys, mutation hooks), files that have outgrown cohesion, dead code, pattern deviations, hardcoded string or numeric literals that should be enum constants in `@hezo/shared`, performance footguns, and seams that block testability.
-3. **File one cleanup task per finding** via `create_task`, assigned to the Engineer. Severity `low` for nice-to-haves; `medium` when the duplication or coupling is actively a footgun (e.g. a misuse-prone pattern already replicated three times). Each task title pinpoints `file:line` and the recommended fix shape — never a vague *"refactor X"*. Follow the `check-before-create` partial to avoid filing duplicate cleanup tasks.
+3. **File one cleanup task per finding** via `create_task`, assigned to the Engineer. Severity `low` for nice-to-haves; `medium` when the duplication or coupling is actively a footgun (e.g. a misuse-prone pattern already replicated three times). Each task title pinpoints `file:line` and the recommended fix shape — never a vague *"refactor X"*. Run the duplicate check (see the **Creating Tickets** guidance) to avoid filing duplicate cleanup tasks.
 4. **Time-box the pass.** One slice per heartbeat, not the entire codebase. Future heartbeats cover the next slice — that is what the rotation is for.
 5. **Append to the review log.** Via `write_project_doc`, append the slice covered, today's date, and a one-line summary of findings (or `clean pass — nothing to flag` when applicable). The log is what makes the rotation actually rotate; without it, every heartbeat starts from scratch and ends up re-reviewing the same files.
 6. **Never drop a finding silently.** Every pass produces either a filed cleanup task or an explicit `clean pass` log entry. Silent skips defeat the entire mechanism.
@@ -92,16 +92,6 @@ Heartbeats are the recurring forcing function that keeps the codebase clean as i
 - Review team preferences to align quality standards with the admin's expectations. When you observe a new preference in admin feedback, update the team preferences document.
 {{> partials/common/code-quality-principles}}
 {{> partials/common/no-designated-repo}}
-{{> partials/common/no-auto-timelines}}
-{{> partials/common/comment-formatting}}
-{{> partials/common/no-redundant-comments}}
-{{> partials/common/linking-syntax}}
-{{> partials/common/subtask-preference}}
-{{> partials/common/ticket-dependencies}}
-{{> partials/common/check-before-create}}
-{{> partials/common/assignment-hierarchy}}
-{{> partials/common/mention-handoff}}
-{{> partials/common/skills-database}}
 {{> partials/common/delivery-knowledge}}
 
 ---

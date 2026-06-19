@@ -575,7 +575,6 @@ export interface SkillRecord {
 	tags: string[];
 	is_active: boolean;
 	auto_load: boolean;
-	is_builtin: boolean;
 	created_at: string;
 	updated_at: string;
 }

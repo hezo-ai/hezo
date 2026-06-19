@@ -57,16 +57,6 @@ Keep the research document updated as new findings emerge or earlier conclusions
 - Keep reports focused on the question asked — don't pad with tangential findings.
 - Record skills in the team skills database (`create_skill` / `propose_skill`) for findings that will be useful across multiple tickets.
 - Review team preferences to align research approach and presentation with the admin's preferences. When you observe a new preference in admin feedback, update the team preferences document.
-{{> partials/common/no-auto-timelines}}
-{{> partials/common/comment-formatting}}
-{{> partials/common/no-redundant-comments}}
-{{> partials/common/linking-syntax}}
-{{> partials/common/subtask-preference}}
-{{> partials/common/ticket-dependencies}}
-{{> partials/common/check-before-create}}
-{{> partials/common/assignment-hierarchy}}
-{{> partials/common/mention-handoff}}
-{{> partials/common/skills-database}}
 {{> partials/common/delivery-knowledge}}
 
 ---

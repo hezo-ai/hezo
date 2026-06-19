@@ -219,17 +219,40 @@ describe('template resolver', () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('## Working Guidelines');
 		expect(result).toContain('### Ticket Maintenance');
+		expect(result).toContain('### Creating Tickets');
+		expect(result).toContain('### Ticket Dependencies');
 		expect(result).toContain('### Completion Handoff');
+		expect(result).toContain('### @-Mentions, Linking & Handoffs');
 		expect(result).toContain('### Knowledge Maintenance');
 		expect(result).toContain('### Sub-Agents & Parallel Exploration');
-		expect(result).toContain('### Sub-Task Delegation');
+		expect(result).toContain('### Sub-Tasks & Delegation');
+		expect(result).toContain('### Assigning Work');
 		expect(result).toContain('### Fetching External URLs');
 		expect(result).toContain('curl');
-		expect(result).toContain('### Comment Timing');
+		expect(result).toContain('### Comments');
 		expect(result).toContain('update_task');
 		expect(result).toContain('write_project_doc');
 		expect(result).toContain('create_skill');
 		expect(result).toContain('create_task');
+	});
+
+	it('promotes the universal partials into the shared guidelines for every agent', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// check-before-create
+		expect(result).toContain('Check before you create');
+		expect(result).toContain('`list_tasks`');
+		// no-auto-timelines
+		expect(result).toContain("Don't invent timelines or deadlines");
+		// ticket-dependencies (gate upstream too)
+		expect(result).toContain('Gate upstream too');
+		// assignment-hierarchy
+		expect(result).toContain('You can assign only to yourself or a direct report');
+		// subtask-preference (deliverable-feed test) + skills discovery
+		expect(result).toContain('deliverable-feed test');
+		expect(result).toContain('npx skills find');
+		// comment hygiene (no-redundant-comments + comment-formatting)
+		expect(result).toContain("Don't repost when nothing changed");
+		expect(result).toContain('Format as proper markdown');
 	});
 
 	it('completion handoff guidance covers mark-done, auto-wake, and no-mention rules', async () => {
@@ -259,43 +282,41 @@ describe('template resolver', () => {
 		expect(result).toContain('many-to-many');
 	});
 
-	it('mention discipline names the three structural-routing channels and the handoff carve-out', async () => {
+	it('mention discipline names the structural-routing channels and the handoff carve-out', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
-		expect(result).toContain('### @-Mention Discipline');
-		// three structural channels that already wake the recipient
-		expect(result).toContain('`create_task` with `assignee_slug`');
-		expect(result).toContain('`blocked_by_task_ids`');
-		expect(result).toContain('cascade unblock');
-		// explicit handoff carve-out: use @@, not @
-		expect(result).toContain('Handoff comments specifically');
-		expect(result).toContain('reference the next role as `@@<slug>`, not `@<slug>`');
-		// rubric example shows the passive-handoff pattern
-		expect(result).toContain('@@architect — BE-4 and BE-5 unblock now');
+		expect(result).toContain('### @-Mentions, Linking & Handoffs');
+		// structural channels that already wake the recipient
+		expect(result).toContain('`create_task` with an `assignee_slug`');
+		expect(result).toContain('`blocked_by`');
+		expect(result).toContain('the cascade will release');
+		// explicit carve-out: structural routing already wakes them, so use @@
+		expect(result).toContain('Structural routing already wakes the recipient');
+		expect(result).toContain('Write `@@<slug>`');
 	});
 
 	it('mention discipline requires an active @ when no structural wake backs the handoff', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('A handoff with nothing structural behind it uses active');
 		// the approval-to-merge / hand-back case that stalls on a passive @@
-		expect(result).toContain('the mention is the **only** wake there is');
+		expect(result).toContain('the mention is the only wake there is');
 		expect(result).toContain('A passive `@@` there pings no one and the ticket stalls');
 		// a direct instruction to the assignee leads the section as a co-equal rule
 		expect(result).toContain('A direct instruction is the only wake there is');
 		// rubric carries the directive phrasing that misfired as passive
-		expect(result).toContain('you can proceed with the design');
+		expect(result).toContain('you can proceed');
 	});
 
 	it('mention discipline makes @@ the explicit default and flags the status-recap antipattern', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
-		// passive is the explicit presumption; the about-vs-to test leads the section
-		expect(result).toContain('Referring → `@@`; instructing → `@`');
-		expect(result).toContain('am I referring to them, or instructing them');
-		// the exact pattern that over-pinged the roster: crediting reviewers in a recap stays passive
-		expect(result).toContain('Status updates and review recaps credit people');
+		// passive is the explicit presumption; the to-vs-about test leads the section
+		expect(result).toContain('default to `@@`');
+		expect(result).toContain('am I instructing them, or referring to them');
+		// the exact pattern that over-pinged the roster: crediting people in a recap stays passive
+		expect(result).toContain('Status updates and recaps credit people');
 		expect(result).toContain('at most one');
 		// crediting the admin in a recap is also passive — active @admin lands an
 		// inbox row for every admin
-		expect(result).toContain('@@admin approved on first review');
+		expect(result).toContain('@@admin');
 	});
 
 	it('Run Context carries no project line when no project is set', async () => {
