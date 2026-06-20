@@ -145,6 +145,55 @@ html.dark,
 	--elev-lg: 0 16px 40px oklch(0 0 0 / 0.5);
 }
 
+/* Agent run logs keep their pre-Wire palette. The formatted run-log view is the
+   one always-dark surface in the app (terminal background #0d1117). The Wire dark
+   neutrals are cooler and their inner surfaces sit very close to that backdrop, so
+   the command / tool-result / done boxes lost their separation and the whole log
+   read as a flat, washed-out wall of text. Restore the earlier warmer, higher-
+   separation grays and the softer status accents (teal-green success, soft red
+   danger, blue refs) so the run log looks exactly as it did before. Scoped to
+   `.log-surface-dark`, which only wraps the formatted log body (see log-viewer.tsx),
+   so the rest of the app is untouched — and because it overrides the resolved
+   `--color-*` vars directly, the run log reads identically in light and dark mode.
+
+   NOTE: utilities consume the @theme `--color-*` vars, whose `var(--token)`
+   indirection is resolved once at :root / html.dark — so overriding the base
+   `--token` here would be a no-op. Override `--color-*` directly. `--border` is
+   the lone exception: the global `* { border-color: var(--border) }` fallback (hit
+   by the `border-subtle` classes, which have no generated utility) reads the base
+   token, so re-point it too. */
+.log-surface-dark {
+	--color-surface: #2c2c2a;
+	--color-surface-2: #2c2c2a;
+	--color-surface-3: #3d3d3a;
+	--color-border: #3d3d3a;
+	--color-border-strong: #5f5e5a;
+	--border: #3d3d3a;
+
+	--color-text-1: #e8e8e4;
+	--color-text-2: #9a9a96;
+	--color-text-3: #6b6b67;
+
+	--color-success: #5dcaa5;
+	--color-success-soft: #04342c;
+	--color-success-soft-fg: #5dcaa5;
+
+	--color-warning: #fac775;
+	--color-warning-soft: #412402;
+	--color-warning-soft-fg: #fac775;
+
+	--color-danger: #f09595;
+	--color-danger-soft: #501313;
+	--color-danger-soft-fg: #f09595;
+
+	--color-info: #85b7eb;
+	--color-info-soft: #042c53;
+	--color-info-soft-fg: #85b7eb;
+
+	--color-neutral-soft: #3d3d3a;
+	--color-neutral-soft-fg: #9a9a96;
+}
+
 @theme {
 	--color-bg: var(--bg);
 	--color-surface: var(--surface);
