@@ -4,7 +4,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, mintAgentToken, projectSlugFor } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestTeam,
+	mintAgentToken,
+	projectSlugFor,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -22,20 +28,12 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'UI State Co' }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'UI State Co' });
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
 	projectSlug = `${await projectSlugFor(db, team.id)}`;
 
-	const team2Res = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'UI State Co 2' }),
-	});
+	const team2Res = await createTestTeam(db, { name: 'UI State Co 2' });
 	const team2 = (await team2Res.json()).data;
 	team2Id = team2.id;
 	project2Slug = `${await projectSlugFor(db, team2.id)}`;
@@ -156,11 +154,7 @@ describe('UI state', () => {
 	});
 
 	it('rejects access to team user is not a member of', async () => {
-		const otherTeamRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'UI State Outsider Co' }),
-		});
+		const otherTeamRes = await createTestTeam(db, { name: 'UI State Outsider Co' });
 		const otherTeam = (await otherTeamRes.json()).data;
 		// Drop the creator's membership so the superuser can resolve the project
 		// (access check bypassed) but has no member_users row for its UI state.

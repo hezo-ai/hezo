@@ -9,6 +9,7 @@ import {
 	authHeader,
 	createTestApp,
 	createTestProject,
+	createTestTeam,
 	projectSlugForTeamSlug,
 } from './helpers/app';
 
@@ -24,14 +25,10 @@ beforeAll(async () => {
 	app = ctx.app;
 	token = ctx.token;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			name: 'Template Co',
+	const teamRes = await createTestTeam(db, {
+		name: 'Template Co',
 
-			description: 'Build amazing things',
-		}),
+		description: 'Build amazing things',
 	});
 	teamId = (await teamRes.json()).data.id;
 
@@ -101,10 +98,9 @@ describe('template resolver', () => {
 		// The team already owns its one project (created in beforeAll), and the 1:1
 		// invariant forbids a second on the same team — so the docless project lives
 		// on its own fresh team.
-		const doclessTeamRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Docless Co', description: 'No docs here' }),
+		const doclessTeamRes = await createTestTeam(db, {
+			name: 'Docless Co',
+			description: 'No docs here',
 		});
 		const doclessTeamId = (await doclessTeamRes.json()).data.id as string;
 		const bare = await db.query<{ id: string }>(
@@ -158,11 +154,7 @@ describe('template resolver', () => {
 	});
 
 	it('sorts the {{project_docs_context}} manifest by filename', async () => {
-		const teamRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Sort Co', description: '' }),
-		});
+		const teamRes = await createTestTeam(db, { name: 'Sort Co', description: '' });
 		const sortTeamId = (await teamRes.json()).data.id as string;
 		const proj = await db.query<{ id: string }>(
 			`INSERT INTO projects (team_id, name, slug, task_prefix, description, docker_base_image)
@@ -398,15 +390,11 @@ describe('template resolver with agents', () => {
 		const softDevType = types.data.find((t: any) => t.name === 'Startup');
 
 		// Create a team with the software dev team type to auto-create agents
-		const teamRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Agent Test Co',
+		const teamRes = await createTestTeam(db, {
+			name: 'Agent Test Co',
 
-				description: 'Test team for agent templates',
-				template_id: softDevType.id,
-			}),
+			description: 'Test team for agent templates',
+			template_id: softDevType.id,
 		});
 		const agentTeamData = ((await teamRes.json()) as any).data;
 		agentTeamId = agentTeamData.id;
@@ -623,14 +611,10 @@ describe('teammates block', () => {
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'Startup');
 
-		const teamRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Teammates Co',
-				description: 'Teammates block test team',
-				template_id: startup.id,
-			}),
+		const teamRes = await createTestTeam(db, {
+			name: 'Teammates Co',
+			description: 'Teammates block test team',
+			template_id: startup.id,
 		});
 		const tbTeamData = ((await teamRes.json()) as any).data;
 		tbTeamId = tbTeamData.id;
@@ -701,10 +685,9 @@ describe('teammates block', () => {
 	});
 
 	it('does not include agents from other teams', async () => {
-		const otherRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Isolated Co', description: 'builtin agents only' }),
+		const otherRes = await createTestTeam(db, {
+			name: 'Isolated Co',
+			description: 'builtin agents only',
 		});
 		const otherId = ((await otherRes.json()) as any).data.id;
 
@@ -739,14 +722,10 @@ describe('team context block', () => {
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'Startup');
 
-		const teamRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Team Context Co',
-				description: 'Team context block test team',
-				template_id: startup.id,
-			}),
+		const teamRes = await createTestTeam(db, {
+			name: 'Team Context Co',
+			description: 'Team context block test team',
+			template_id: startup.id,
 		});
 		const tcTeamData = ((await teamRes.json()) as any).data;
 		tcTeamId = tcTeamData.id;
@@ -840,14 +819,10 @@ describe('project state block', () => {
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const startup = ((await typesRes.json()) as any).data.find((t: any) => t.name === 'Startup');
 
-		const teamRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Project State Co',
-				description: 'PS test team',
-				template_id: startup.id,
-			}),
+		const teamRes = await createTestTeam(db, {
+			name: 'Project State Co',
+			description: 'PS test team',
+			template_id: startup.id,
 		});
 		const psTeamData = ((await teamRes.json()) as any).data;
 		psTeamId = psTeamData.id;
@@ -1010,10 +985,9 @@ describe('repository block', () => {
 	let repoProjectId: string;
 
 	beforeAll(async () => {
-		const teamRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Repo Co', description: 'Repository block test team' }),
+		const teamRes = await createTestTeam(db, {
+			name: 'Repo Co',
+			description: 'Repository block test team',
 		});
 		repoTeamId = ((await teamRes.json()) as any).data.id;
 		const projectRes = await createTestProject(db, repoTeamId, {

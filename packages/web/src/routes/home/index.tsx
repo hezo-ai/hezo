@@ -12,7 +12,6 @@ import { useAllAdminMentions } from '../../hooks/use-admin-mentions';
 import { type Approval, useAllApprovals } from '../../hooks/use-approvals';
 import { useProjectIntake } from '../../hooks/use-project-intake';
 import { type ProjectWithTeam, useAllVisibleProjects } from '../../hooks/use-projects';
-import { useTeams } from '../../hooks/use-teams';
 
 const RELATIVE_UNITS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
 	['day', 86400],
@@ -312,17 +311,15 @@ function OtherProjectRow({ project }: { project: ProjectWithTeam }) {
 }
 
 function ProjectsDashboard({
-	teams,
 	projects,
 	needsYouBySlug,
 	onCreate,
 }: {
-	teams: NonNullable<ReturnType<typeof useTeams>['data']>;
 	projects: ProjectWithTeam[];
 	needsYouBySlug: Map<string, number>;
 	onCreate: () => void;
 }) {
-	const showTeamName = teams.length > 1;
+	const showTeamName = projects.length > 1;
 	const isActive = (p: ProjectWithTeam) =>
 		p.running_agents_count > 0 || (needsYouBySlug.get(p.slug) ?? 0) > 0;
 	const active = projects.filter(isActive);
@@ -370,7 +367,6 @@ function ProjectsDashboard({
 }
 
 function HomePage() {
-	const { data: teams, isLoading: teamsLoading } = useTeams();
 	const { projects, isLoading: projectsLoading } = useAllVisibleProjects();
 	const [createOpen, setCreateOpen] = useState(false);
 
@@ -399,7 +395,7 @@ function HomePage() {
 	const noProjectsYet = !projectsLoading && projects.length === 0;
 	const { data: intake } = useProjectIntake(noProjectsYet);
 
-	if (teamsLoading) {
+	if (projectsLoading) {
 		return <div className="px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6 text-text-2">Loading...</div>;
 	}
 
@@ -446,7 +442,6 @@ function HomePage() {
 						</div>
 					) : (
 						<ProjectsDashboard
-							teams={teams ?? []}
 							projects={projects}
 							needsYouBySlug={needsYouBySlug}
 							onCreate={() => setCreateOpen(true)}

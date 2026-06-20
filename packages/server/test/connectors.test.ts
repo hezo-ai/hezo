@@ -18,7 +18,13 @@ import {
 	probeForProtectedResourceMetadata,
 } from '../src/services/oauth/prm-discovery';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, mintAgentToken } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+	mintAgentToken,
+} from './helpers/app';
 import { type FakeMcpServer, startFakeMcpServer } from './helpers/fake-mcp-server';
 
 let app: Hono<Env>;
@@ -45,11 +51,7 @@ beforeAll(async () => {
 		(t: Record<string, unknown>) => t.name === 'Startup',
 	).id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Connectors Test Co', template_id: typeId }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Connectors Test Co', template_id: typeId });
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;

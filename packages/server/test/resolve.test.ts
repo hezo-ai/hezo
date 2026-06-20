@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resolveAgentId, resolveProjectId, resolveTeamId } from '../src/lib/resolve';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -23,11 +23,7 @@ beforeAll(async () => {
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Resolve Test Co', template_id: typeId }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Resolve Test Co', template_id: typeId });
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;

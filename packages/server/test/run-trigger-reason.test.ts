@@ -5,7 +5,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, projectSlugFor } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+	projectSlugFor,
+} from './helpers/app';
 
 interface RunRow {
 	id: string;
@@ -46,11 +52,7 @@ beforeAll(async () => {
 		(t: Record<string, unknown>) => t.name === 'Startup',
 	).id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Trigger Reason Co', template_id: typeId }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Trigger Reason Co', template_id: typeId });
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 

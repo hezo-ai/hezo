@@ -11,7 +11,7 @@ import {
 	removeTaskWorktrees,
 } from '../src/services/repo-sync';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -29,11 +29,7 @@ beforeAll(async () => {
 	masterKeyManager = ctx.masterKeyManager;
 	dataDir = ctx.dataDir;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Repo Sync Co' }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Repo Sync Co' });
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
 

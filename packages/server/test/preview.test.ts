@@ -11,7 +11,7 @@ import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
 import { buildApp } from '../src/startup';
 import { safeClose } from './helpers';
-import { createStubDocker, createTestProject } from './helpers/app';
+import { createStubDocker, createTestProject, createTestTeam } from './helpers/app';
 import { createTestDbWithMigrations } from './helpers/db';
 
 let app: Hono<Env>;
@@ -36,11 +36,7 @@ beforeAll(async () => {
 	);
 	token = await signAdminJwt(masterKeyManager, userResult.rows[0].id);
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Preview Co' }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Preview Co' });
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
 

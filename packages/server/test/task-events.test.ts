@@ -10,6 +10,7 @@ import {
 	authHeader,
 	createTestApp,
 	createTestProject,
+	createTestTeam,
 	mintAgentToken,
 	projectSlugFor,
 } from './helpers/app';
@@ -79,11 +80,7 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Events Co' }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Events Co' });
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
@@ -418,11 +415,7 @@ describe('task link system events', () => {
 	it('does not cross team boundaries', async () => {
 		const targetA = await createTask('Cross-team target');
 
-		const otherTeamRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Other Co' }),
-		});
+		const otherTeamRes = await createTestTeam(db, { name: 'Other Co' });
 		const otherTeamData = (await otherTeamRes.json()).data;
 		const otherTeamId = otherTeamData.id;
 		const otherInternalSlug = `${await projectSlugFor(db, otherTeamData.id)}`;

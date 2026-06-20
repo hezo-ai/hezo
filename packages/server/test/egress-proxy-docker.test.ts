@@ -21,7 +21,7 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import { loadOrCreateCA } from '../src/services/egress/ca';
 import { EgressProxy } from '../src/services/egress/proxy';
 import { safeClose } from './helpers';
-import { createTestApp, projectSlugFor } from './helpers/app';
+import { createTestApp, createTestTeam, projectSlugFor } from './helpers/app';
 
 const dockerAvailable = await checkDocker();
 const skipReason =
@@ -61,11 +61,7 @@ beforeAll(async () => {
 	masterKeyManager = ctx.masterKeyManager;
 	dataDir = mkdtempSync(join(tmpdir(), 'hezo-egress-docker-'));
 
-	const teamRes = await ctx.app.request('/api/teams', {
-		method: 'POST',
-		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Egress Docker Co' }),
-	});
+	const teamRes = await createTestTeam(ctx.db, { name: 'Egress Docker Co' });
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
 	const agentRes = await ctx.app.request(

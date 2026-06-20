@@ -11,7 +11,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { detectOrphans, healStaleRunState } from '../src/services/orphan-detector';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, projectSlugFor } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+	projectSlugFor,
+} from './helpers/app';
 
 let db: PGlite;
 let app: Hono<Env>;
@@ -29,14 +35,10 @@ beforeAll(async () => {
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const teamTemplateId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			name: 'Orphan Test Co',
+	const teamRes = await createTestTeam(db, {
+		name: 'Orphan Test Co',
 
-			template_id: teamTemplateId,
-		}),
+		template_id: teamTemplateId,
 	});
 	const team = (await teamRes.json()).data as { id: string; slug: string };
 	teamId = team.id;

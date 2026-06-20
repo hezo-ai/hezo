@@ -4,9 +4,8 @@ import { Loader2, MessagesSquare, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import { setActiveTeamSlug } from '../hooks/use-active-team-slug';
 import { useStartProjectIntake } from '../hooks/use-project-intake';
-import { useCreateProjectWithTeam } from '../hooks/use-projects';
+import { useAllVisibleProjects, useCreateProjectWithTeam } from '../hooks/use-projects';
 import { useTeamTemplates } from '../hooks/use-team-templates';
-import { useTeams } from '../hooks/use-teams';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
@@ -34,7 +33,7 @@ export function CreateProjectWithTeamDialog({
 	onOpenChange,
 }: CreateProjectWithTeamDialogProps) {
 	const { data: templates, isLoading } = useTeamTemplates();
-	const { data: teams } = useTeams();
+	const { projects } = useAllVisibleProjects();
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
 	const [selection, setSelection] = useState<Selection>(null);
@@ -42,9 +41,15 @@ export function CreateProjectWithTeamDialog({
 	const startIntake = useStartProjectIntake();
 	const navigate = useNavigate();
 
-	// Existing teams the new project's team can be cloned from. HQ (the internal
-	// team) is excluded — snapshotting it would carry the CEO/Coach into the roster.
-	const sourceTeams = (teams ?? []).filter((t) => !t.is_internal);
+	// Existing teams the new project's team can be cloned from, reached through
+	// each project. HQ (the internal team) is already excluded by
+	// useAllVisibleProjects — snapshotting it would carry the CEO/Coach into the roster.
+	const sourceTeams = projects.map((p) => ({
+		id: p.team_id,
+		slug: p.team_slug,
+		name: p.team_name,
+		agent_count: p.agent_count,
+	}));
 
 	const pending = createProject.isPending || startIntake.isPending;
 	const canSubmit =

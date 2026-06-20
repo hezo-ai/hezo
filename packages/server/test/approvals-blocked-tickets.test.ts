@@ -3,7 +3,13 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, projectSlugFor } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+	projectSlugFor,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -68,18 +74,10 @@ beforeAll(async () => {
 		(t: { name: string }) => t.name === 'Startup',
 	).id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Blocked Co', template_id: typeId }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Blocked Co', template_id: typeId });
 	teamId = (await teamRes.json()).data.id;
 
-	const otherRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Other Co', template_id: typeId }),
-	});
+	const otherRes = await createTestTeam(db, { name: 'Other Co', template_id: typeId });
 	const otherTeam = (await otherRes.json()).data;
 	otherTeamId = otherTeam.id;
 	otherProjectSlug = `${await projectSlugFor(db, otherTeam.id)}`;

@@ -9,6 +9,7 @@ import {
 	authHeader,
 	createTestApp,
 	createTestProject,
+	createTestTeam,
 	instanceCeoId,
 	projectSlugFor,
 } from './helpers/app';
@@ -33,10 +34,9 @@ beforeAll(async () => {
 		(t: { name: string }) => t.name === 'Startup',
 	).id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Progress Summary Co', template_id: teamTemplateId }),
+	const teamRes = await createTestTeam(db, {
+		name: 'Progress Summary Co',
+		template_id: teamTemplateId,
 	});
 	teamId = (await teamRes.json()).data.id;
 	const internalProjectSlug = await projectSlugFor(db, teamId);

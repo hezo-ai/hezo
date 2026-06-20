@@ -9,6 +9,7 @@ import {
 	authHeader,
 	createTestApp,
 	createTestProject,
+	createTestTeam,
 	instanceCeoId,
 	instanceCoachId,
 	mintAgentToken,
@@ -45,13 +46,9 @@ beforeAll(async () => {
 	).id;
 
 	// Create Team A
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			name: 'MCP Tool Test Co',
-			template_id: typeId,
-		}),
+	const teamRes = await createTestTeam(db, {
+		name: 'MCP Tool Test Co',
+		template_id: typeId,
 	});
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
@@ -79,13 +76,9 @@ beforeAll(async () => {
 	taskId = (await taskRes.json()).data.id;
 
 	// Create Team B
-	const teamBRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			name: 'MCP Tool Test Co B',
-			template_id: typeId,
-		}),
+	const teamBRes = await createTestTeam(db, {
+		name: 'MCP Tool Test Co B',
+		template_id: typeId,
 	});
 	const teamBData = (await teamBRes.json()).data;
 	teamBId = teamBData.id;

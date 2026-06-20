@@ -28,6 +28,8 @@ export interface Project {
 	dev_ports: Array<{ container: number; host: number }>;
 	repo_count: number;
 	open_task_count: number;
+	/** Total Agent members on this project's team (the hired roster size). */
+	agent_count: number;
 	/** Agents currently running on this project's team (runtime_status = active). */
 	running_agents_count: number;
 	/** Spend on this project so far today (UTC), in cents. */
@@ -145,7 +147,6 @@ export function useCreateProjectWithTeam() {
 		}) => api.post<ProjectWithTeamResponse>('/api/projects', data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
-			queryClient.invalidateQueries({ queryKey: queryKeys.teams.all() });
 			// Cloning a team mints a new reusable template — refresh the catalog.
 			queryClient.invalidateQueries({ queryKey: queryKeys.teamTemplates() });
 		},

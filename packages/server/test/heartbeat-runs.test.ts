@@ -9,7 +9,13 @@ import {
 	type HeartbeatRunBroadcast,
 } from '../src/services/agent-runner';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, mintAgentToken } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+	mintAgentToken,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -38,11 +44,7 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Run Test Co' }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Run Test Co' });
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
 

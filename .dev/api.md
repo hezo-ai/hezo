@@ -118,45 +118,7 @@ Members (both agents and users) with role='member' are restricted by `project_id
 
 ### Teams
 
-#### `GET /teams`
-List all teams.
-
-Response:
-```json
-{
-  "data": [
-    {
-      "id": "uuid",
-      "name": "NoteGenius AI",
-      "description": "Build the #1 AI note-taking app",
-      "agent_count": 6,
-      "open_task_count": 14,
-      "total_budget_cents": 24000,
-      "total_used_cents": 12700,
-      "created_at": "...",
-      "updated_at": "..."
-    }
-  ]
-}
-```
-
-#### `POST /teams`
-Create a team. Optionally seed from a template.
-
-Request:
-```json
-{
-  "name": "NoteGenius AI",
-  "description": "Build the #1 AI note-taking app",
-  "template_id": "uuid"
-}
-```
-
-`template_id` is optional. When set, agents are provisioned from the selected template with their configurations (titles, prompts, org chart, runtimes, budgets). Task prefixes are configured per project, not at the team level.
-
-Response: full team object. On creation the server provisions the agent roster (Captain + template roles); it does **not** create a project. Under the 1:1 model a project is created together with its team via `POST /projects` (direct) or `POST /project-intakes` (CEO-assisted), and the project's container is provisioned at that point. A bare `POST /teams` is primarily an internal/test building block.
-
-The board lands on a team with 11 agents.
+Teams are never addressed directly — there are no bare `GET /teams` or `POST /teams` endpoints. A team is reached through its project (1:1) and is provisioned together with its project via `POST /projects` (direct) or `POST /project-intakes` (CEO-assisted). To enumerate teams, list projects (`GET /projects`): each row carries its backing `team_id`, `team_slug`, `team_name`, and `agent_count`.
 
 #### `GET /projects/:projectId/team`
 Get team detail. The team is resolved from the project handle.

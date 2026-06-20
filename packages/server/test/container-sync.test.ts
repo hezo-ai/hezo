@@ -18,7 +18,13 @@ import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import type { WebSocketManager } from '../src/services/ws';
 import { safeClose } from './helpers';
-import { authHeader, createStubDocker, createTestApp, createTestProject } from './helpers/app';
+import {
+	authHeader,
+	createStubDocker,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+} from './helpers/app';
 
 function deps(docker: DockerClient, wsManager?: WebSocketManager): ContainerDeps {
 	return { db, docker, dataDir: '/tmp/hezo-test-unused', wsManager };
@@ -38,14 +44,10 @@ beforeAll(async () => {
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const teamTemplateId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			name: 'Container Sync Co',
+	const teamRes = await createTestTeam(db, {
+		name: 'Container Sync Co',
 
-			template_id: teamTemplateId,
-		}),
+		template_id: teamTemplateId,
 	});
 	teamId = (await teamRes.json()).data.id;
 });

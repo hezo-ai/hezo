@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -34,16 +34,16 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('teams CRUD', () => {
+// Teams are provisioned by the createTeam service (reached via project creation,
+// `POST /api/projects`); there is no bare `POST /api/teams` route anymore. These
+// tests exercise that service via the `createTestTeam` helper and read the result
+// back through the project-addressed team routes.
+describe('team provisioning (createTeam service)', () => {
 	it('creates a team from built-in template with auto-created agents and KB docs', async () => {
-		const res = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'NoteGenius AI',
-				description: 'Build the #1 AI note-taking app',
-				template_id: builtinTypeId,
-			}),
+		const res = await createTestTeam(db, {
+			name: 'NoteGenius AI',
+			description: 'Build the #1 AI note-taking app',
+			template_id: builtinTypeId,
 		});
 		expect(res.status).toBe(201);
 		const body = await res.json();
@@ -63,13 +63,7 @@ describe('teams CRUD', () => {
 	});
 
 	it('creates a team without a type and includes built-in agents', async () => {
-		const res = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Solo Project',
-			}),
-		});
+		const res = await createTestTeam(db, { name: 'Solo Project' });
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.data.agent_count).toBe(1);
@@ -86,11 +80,10 @@ describe('teams CRUD', () => {
 		expect(slugs).toEqual(['captain']);
 	});
 
-	it('exposes the team type (primary template name) on reads', async () => {
-		const createRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Typed Team Co', template_id: builtinTypeId }),
+	it('exposes the team type (primary template name) on the project-addressed read', async () => {
+		const createRes = await createTestTeam(db, {
+			name: 'Typed Team Co',
+			template_id: builtinTypeId,
 		});
 		const created = (await createRes.json()).data;
 
@@ -100,16 +93,8 @@ describe('teams CRUD', () => {
 		});
 		expect((await getRes.json()).data.primary_template_name).toBe('Startup');
 
-		const listRes = await app.request('/api/teams', { headers: authHeader(token) });
-		const listed = (await listRes.json()).data.find((t: { id: string }) => t.id === created.id);
-		expect(listed.primary_template_name).toBe('Startup');
-
 		// A team created without a template has no type.
-		const blankRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Typeless Team Co' }),
-		});
+		const blankRes = await createTestTeam(db, { name: 'Typeless Team Co' });
 		const blank = (await blankRes.json()).data;
 		const blankSlug = await projectSlugFor(blank.id);
 		const blankGet = await app.request(`/api/projects/${blankSlug}/team`, {
@@ -118,23 +103,8 @@ describe('teams CRUD', () => {
 		expect((await blankGet.json()).data.primary_template_name).toBeNull();
 	});
 
-	it('lists teams with counts', async () => {
-		const res = await app.request('/api/teams', {
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.data.length).toBeGreaterThanOrEqual(2);
-		expect(body.data[0]).toHaveProperty('agent_count');
-		expect(body.data[0]).toHaveProperty('open_task_count');
-	});
-
 	it('gets a team by id', async () => {
-		const createRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Get By Id Co' }),
-		});
+		const createRes = await createTestTeam(db, { name: 'Get By Id Co' });
 		const team = (await createRes.json()).data;
 		const projectSlug = await projectSlugFor(team.id);
 
@@ -147,11 +117,7 @@ describe('teams CRUD', () => {
 	});
 
 	it('updates a team', async () => {
-		const createRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Update Me Co' }),
-		});
+		const createRes = await createTestTeam(db, { name: 'Update Me Co' });
 		const team = (await createRes.json()).data;
 		const projectSlug = await projectSlugFor(team.id);
 
@@ -167,11 +133,7 @@ describe('teams CRUD', () => {
 
 	it('deletes a team', async () => {
 		// Create a throwaway team
-		const createRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'To Delete' }),
-		});
+		const createRes = await createTestTeam(db, { name: 'To Delete' });
 		const created = (await createRes.json()).data;
 		const projectSlug = await projectSlugFor(created.id);
 
@@ -188,16 +150,8 @@ describe('teams CRUD', () => {
 	});
 
 	it('generates unique slugs for same-named teams', async () => {
-		const res1 = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Duplicate Name' }),
-		});
-		const res2 = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Duplicate Name' }),
-		});
+		const res1 = await createTestTeam(db, { name: 'Duplicate Name' });
+		const res2 = await createTestTeam(db, { name: 'Duplicate Name' });
 		expect(res1.status).toBe(201);
 		expect(res2.status).toBe(201);
 		const slug1 = (await res1.json()).data.slug;
@@ -231,15 +185,7 @@ describe('template-based team creation', () => {
 		expect(typeRes.status).toBe(201);
 		const templateId = (await typeRes.json()).data.id;
 
-		const res = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Research Co',
-
-				template_id: templateId,
-			}),
-		});
+		const res = await createTestTeam(db, { name: 'Research Co', template_id: templateId });
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.data.agent_count).toBe(2);
@@ -257,13 +203,7 @@ describe('template-based team creation', () => {
 	});
 
 	it('creates only built-in agents without a template', async () => {
-		const res = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Blank Co',
-			}),
-		});
+		const res = await createTestTeam(db, { name: 'Blank Co' });
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.data.agent_count).toBe(1);
@@ -286,15 +226,7 @@ describe('template-based team creation', () => {
 		});
 		const blankType = (await typesRes.json()).data.find((t: any) => t.name === 'Blank');
 
-		const res = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Blank Template Co',
-
-				template_id: blankType.id,
-			}),
-		});
+		const res = await createTestTeam(db, { name: 'Blank Template Co', template_id: blankType.id });
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.data.agent_count).toBe(1);
@@ -312,15 +244,7 @@ describe('template-based team creation', () => {
 	});
 
 	it('does not duplicate the Captain when the Startup template already includes it', async () => {
-		const res = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Full Template Co',
-
-				template_id: builtinTypeId,
-			}),
-		});
+		const res = await createTestTeam(db, { name: 'Full Template Co', template_id: builtinTypeId });
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.data.agent_count).toBe(10);
@@ -359,15 +283,7 @@ describe('template-based team creation', () => {
 		expect(typeRes.status).toBe(201);
 		const templateId = (await typeRes.json()).data.id;
 
-		const res = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Researcher Co',
-
-				template_id: templateId,
-			}),
-		});
+		const res = await createTestTeam(db, { name: 'Researcher Co', template_id: templateId });
 		expect(res.status).toBe(201);
 		const body = await res.json();
 		expect(body.data.agent_count).toBe(2);
@@ -385,15 +301,7 @@ describe('template-based team creation', () => {
 	});
 
 	it('populates team_template_assignments join table', async () => {
-		const res = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Join Table Co',
-
-				template_id: builtinTypeId,
-			}),
-		});
+		const res = await createTestTeam(db, { name: 'Join Table Co', template_id: builtinTypeId });
 		expect(res.status).toBe(201);
 		const teamId = (await res.json()).data.id;
 
@@ -423,14 +331,7 @@ describe('template-based team creation', () => {
 		expect(typeRes.status).toBe(201);
 		const templateId = (await typeRes.json()).data.id;
 
-		const res = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'Skills Co',
-				template_id: templateId,
-			}),
-		});
+		const res = await createTestTeam(db, { name: 'Skills Co', template_id: templateId });
 		expect(res.status).toBe(201);
 		expect((await res.json()).data.id).toBeTruthy();
 
@@ -446,11 +347,11 @@ describe('template-based team creation', () => {
 
 describe('slug-based access', () => {
 	it('gets a team by slug', async () => {
-		const listRes = await app.request('/api/teams', {
-			headers: authHeader(token),
-		});
-		const teams = (await listRes.json()).data;
-		const team = teams.find((c: any) => c.slug === 'notegenius-ai');
+		const team = (
+			await db.query<{ id: string; slug: string }>('SELECT id, slug FROM teams WHERE slug = $1', [
+				'notegenius-ai',
+			])
+		).rows[0];
 
 		const projectSlug = await projectSlugFor(team.id);
 		const res = await app.request(`/api/projects/${projectSlug}/team`, {
@@ -470,11 +371,11 @@ describe('slug-based access', () => {
 	});
 
 	it('accesses team sub-resources via slug', async () => {
-		const listRes = await app.request('/api/teams', {
-			headers: authHeader(token),
-		});
-		const teams = (await listRes.json()).data;
-		const team = teams.find((c: any) => c.slug === 'notegenius-ai');
+		const team = (
+			await db.query<{ id: string; slug: string }>('SELECT id, slug FROM teams WHERE slug = $1', [
+				'notegenius-ai',
+			])
+		).rows[0];
 
 		const projectSlug = await projectSlugFor(team.id);
 		const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
@@ -484,5 +385,21 @@ describe('slug-based access', () => {
 		const agentsBody = await agentsRes.json();
 		const own = agentsBody.data.filter((a: any) => !a.is_instance);
 		expect(own.length).toBe(10);
+	});
+});
+
+describe('removed bare team routes', () => {
+	it('GET /api/teams is no longer routed', async () => {
+		const res = await app.request('/api/teams', { headers: authHeader(token) });
+		expect(res.status).toBe(404);
+	});
+
+	it('POST /api/teams is no longer routed', async () => {
+		const res = await app.request('/api/teams', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Should Not Work' }),
+		});
+		expect(res.status).toBe(404);
 	});
 });

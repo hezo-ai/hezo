@@ -3,7 +3,13 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, projectSlugFor, projectSlugForTeamSlug } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestTeam,
+	projectSlugFor,
+	projectSlugForTeamSlug,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -22,13 +28,9 @@ beforeAll(async () => {
 	});
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			name: 'Cost Co',
-			template_id: typeId,
-		}),
+	const teamRes = await createTestTeam(db, {
+		name: 'Cost Co',
+		template_id: typeId,
 	});
 	teamSlug = (await teamRes.json()).data.slug;
 

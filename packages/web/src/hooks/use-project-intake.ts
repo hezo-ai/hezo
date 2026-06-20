@@ -50,7 +50,7 @@ export function useStartProjectIntake() {
 			api.post<StartProjectIntakeResult>('/api/project-intakes', input),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.projectIntakes() });
-			queryClient.invalidateQueries({ queryKey: queryKeys.teams.all() });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
 			// Cloning a team mints a new reusable template — refresh the catalog.
 			queryClient.invalidateQueries({ queryKey: queryKeys.teamTemplates() });
 		},

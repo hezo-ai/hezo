@@ -4,7 +4,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { enqueueTeamCoherenceReviewTask } from '../src/services/description-tasks';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, instanceCeoId } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+	instanceCeoId,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -23,11 +29,7 @@ beforeAll(async () => {
 		(t: Record<string, unknown>) => t.name === 'Startup',
 	).id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Description Tasks Co', template_id: typeId }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Description Tasks Co', template_id: typeId });
 	teamId = (await teamRes.json()).data.id;
 	// Coordination tasks live in the team's own project, owned by the instance CEO.
 	await createTestProject(db, teamId, { name: 'Description Tasks Project' });
@@ -127,11 +129,7 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 	});
 
 	it('returns null and does not create a task when the team has no project yet', async () => {
-		const blankRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'No Project Co' }),
-		});
+		const blankRes = await createTestTeam(db, { name: 'No Project Co' });
 		const blankTeamId = (await blankRes.json()).data.id;
 
 		const result = await enqueueTeamCoherenceReviewTask(db, blankTeamId, 'agent_hired');

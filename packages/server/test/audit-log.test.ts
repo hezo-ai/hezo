@@ -6,7 +6,7 @@ import { auditLog } from '../src/lib/audit';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -24,11 +24,7 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Audit Co' }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Audit Co' });
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;

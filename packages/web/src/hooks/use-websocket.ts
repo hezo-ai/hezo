@@ -21,7 +21,6 @@ const TABLE_TO_QUERY_KEY: Record<
 		queryKeys.projects.tasks(cid),
 		queryKeys.projects.tasksProgressSummary(cid),
 		queryKeys.projects.all(),
-		queryKeys.teams.all(),
 		// Prefix of `tasksAll(slugs)` — invalidates every cross-project task index.
 		['tasks', 'all'],
 		queryKeys.projectIntakes(),

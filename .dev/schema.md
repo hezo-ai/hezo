@@ -362,7 +362,7 @@ windowed budgets (see "Budget enforcement (windowed)").
 
 ### Team onboarding
 
-When a team is created via `POST /teams`, the server automatically:
+When a team is created (together with its project, via `POST /projects` or `POST /project-intakes`), the server automatically:
 1. Creates the `~/.hezo/teams/{slug}/` folder structure
 2. Creates the full 11-agent team (Captain, Product Lead, Architect, Engineer, QA Engineer,
    Security Engineer, UI Designer, DevOps Engineer, Marketing Lead, Researcher, Coach)
@@ -378,7 +378,7 @@ This ensures the user never lands on an empty team.
 
 ### Team type provisioning
 
-`POST /teams` accepts an optional `template_id` (a single team type UUID). The server provisions
+Team creation accepts an optional `template_id` (a single team type UUID). The server provisions
 agents from the selected team type via the `team_template_agent_types` join table:
 
 1. Queries `team_template_agent_types JOIN agent_types` for the selected template, ordered by `sort_order`

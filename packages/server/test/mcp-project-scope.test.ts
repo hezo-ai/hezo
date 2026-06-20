@@ -6,7 +6,13 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
 import { signCeoSessionJwt } from '../src/middleware/auth';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, mintAgentToken } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+	mintAgentToken,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -41,11 +47,7 @@ async function callMcp(token: string, toolName: string, args: Record<string, unk
 }
 
 async function makeTeam(name: string): Promise<{ teamId: string; captainId: string }> {
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name }),
-	});
+	const teamRes = await createTestTeam(db, { name });
 	const teamId = (await teamRes.json()).data.id as string;
 	const captain = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id

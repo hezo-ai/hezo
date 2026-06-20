@@ -6,7 +6,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, mintAgentToken } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+	mintAgentToken,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -87,11 +93,7 @@ beforeAll(async () => {
 	masterKeyManager = ctx.masterKeyManager;
 	dataDir = ctx.dataDir;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Assets Co' }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Assets Co' });
 	teamId = (await teamRes.json()).data.id;
 
 	const projectRes = await createTestProject(db, teamId, { name: 'Main', description: 'Assets.' });

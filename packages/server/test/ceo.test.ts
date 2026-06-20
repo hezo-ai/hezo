@@ -9,7 +9,7 @@ import {
 	linkTeamCaptainToInstanceCeo,
 } from '../src/services/team-template-apply';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, createTestTeam } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -77,11 +77,7 @@ describe('instance CEO agent type', () => {
 
 describe('instance CEO provisioning + Captain reporting line', () => {
 	async function createTeamViaApi(name: string): Promise<string> {
-		const res = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name }),
-		});
+		const res = await createTestTeam(db, { name });
 		expect(res.status).toBe(201);
 		return (await res.json()).data.id as string;
 	}
