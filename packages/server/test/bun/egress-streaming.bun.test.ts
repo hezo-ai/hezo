@@ -190,4 +190,92 @@ describe('EgressProxy streaming + teardown under Bun', () => {
 			await new Promise<void>((r) => upstream.close(() => r()));
 		}
 	}, 30_000);
+
+	// The single-stream case above is not the full shape a Streamable-HTTP MCP
+	// (api.githubcopilot.com) presents at teardown: it holds several connections
+	// to one host at once — concurrent long-lived SSE channels plus short
+	// JSON-RPC POSTs whose upstream sockets linger in the keep-alive pool. Every
+	// one of those must be severed when the run is released, or the per-host
+	// server's close parks on the 5s deadline (the production warning).
+	test('severs concurrent streams and idle keep-alive connections to one host on release', async () => {
+		const { cert, key } = await mintCertFromCA(ca, 'localhost');
+		let openUpstreamConns = 0;
+		let closedUpstreamConns = 0;
+		const timers = new Set<ReturnType<typeof setInterval>>();
+		const upstream: HttpsServer = createHttpsServer({ cert, key }, (req, res) => {
+			openUpstreamConns++;
+			req.on('close', () => {
+				closedUpstreamConns++;
+			});
+			if (req.url === '/sse') {
+				res.writeHead(200, { 'content-type': 'text/event-stream' });
+				res.write(': open\n\n');
+				const timer = setInterval(() => res.write(': ping\n\n'), 100);
+				timers.add(timer);
+				req.on('close', () => {
+					clearInterval(timer);
+					timers.delete(timer);
+				});
+			} else {
+				// Quick JSON-RPC-style reply; the connection stays alive afterward,
+				// so its upstream socket sits idle in the agent's keep-alive pool.
+				res.writeHead(200, { 'content-type': 'application/json' });
+				res.end('{"ok":true}');
+			}
+		});
+		await new Promise<void>((r) => upstream.listen(0, '127.0.0.1', () => r()));
+		const upstreamPort = (upstream.address() as { port: number }).port;
+		await insertSecret('STREAM_MULTI', 'tok', ['localhost']);
+		const runId = `stream-multi-${process.pid}`;
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+
+		const tunnels: TLSSocket[] = [];
+		try {
+			// Two concurrent long-lived SSE streams over separate tunnels.
+			for (let i = 0; i < 2; i++) {
+				const tls = await tunnelTo(allocated.proxyPort, 'localhost', upstreamPort);
+				tunnels.push(tls);
+				await new Promise<void>((resolve, reject) => {
+					tls.once('data', () => resolve());
+					tls.once('error', reject);
+					tls.setTimeout(10_000, () => reject(new Error('no SSE data')));
+					tls.write(
+						`GET /sse HTTP/1.1\r\nHost: localhost:${upstreamPort}\r\nAccept: text/event-stream\r\n` +
+							`Authorization: Bearer __HEZO_SECRET_STREAM_MULTI__\r\n\r\n`,
+					);
+				});
+			}
+			// A completed request whose connection lingers (keep-alive pool).
+			const idle = await tunnelTo(allocated.proxyPort, 'localhost', upstreamPort);
+			tunnels.push(idle);
+			await new Promise<void>((resolve, reject) => {
+				let acc = '';
+				idle.on('data', (c: Buffer) => {
+					acc += c.toString();
+					if (acc.includes('ok')) resolve();
+				});
+				idle.once('error', reject);
+				idle.setTimeout(10_000, () => reject(new Error('no RPC response')));
+				idle.write(
+					`POST /rpc HTTP/1.1\r\nHost: localhost:${upstreamPort}\r\nContent-Type: application/json\r\n` +
+						`Authorization: Bearer __HEZO_SECRET_STREAM_MULTI__\r\nContent-Length: 2\r\n\r\n{}`,
+				);
+			});
+
+			const started = Date.now();
+			await proxy.releaseRunProxy(runId);
+			const elapsed = Date.now() - started;
+			// Well under the 5_000ms close deadline — every connection severed, not waited on.
+			expect(elapsed).toBeLessThan(2_000);
+
+			// No leaked upstream connection: every upstream request the proxy opened
+			// is torn down. Give the FIN/RST a moment to land.
+			await new Promise<void>((r) => setTimeout(r, 250));
+			expect(closedUpstreamConns).toBe(openUpstreamConns);
+		} finally {
+			for (const t of tunnels) t.destroy();
+			for (const timer of timers) clearInterval(timer);
+			await new Promise<void>((r) => upstream.close(() => r()));
+		}
+	}, 30_000);
 });

@@ -283,7 +283,7 @@ class RunProxyInstance {
 		// connection list under Bun.
 		front.on('connection', (socket) => this.trackSocket(socket as Socket));
 		front.on('request', (req, res) => {
-			this.forward(false, null, req, res).catch((e: Error) => this.onForwardError(res, e));
+			this.forward(false, null, req, res).catch((e: Error) => this.onHandlerError(res, e));
 		});
 		front.on('connect', (req, socket, head) => this.onConnect(req, socket as Socket, head));
 		// A client that drops mid-handshake should not surface as an unhandled error.
@@ -403,7 +403,7 @@ class RunProxyInstance {
 		const ca = await this.cfg.getMintCa();
 		const leaf = await ca.generateCertificate(host);
 		const server = createHttpsServer({ key: leaf.key, cert: leaf.cert }, (req, res) => {
-			this.forward(true, host, req, res).catch((e: Error) => this.onForwardError(res, e));
+			this.forward(true, host, req, res).catch((e: Error) => this.onHandlerError(res, e));
 		});
 		server.on('connection', (socket) => this.trackSocket(socket as Socket));
 		server.on('clientError', (_err, socket) => socket.destroy());
@@ -548,15 +548,50 @@ class RunProxyInstance {
 			},
 		);
 		this.trackUpstream(upstream);
-		upstream.on('error', (err) => this.onForwardError(res, err));
+		upstream.on('error', (err) => this.onForwardError(res, err, { host, port, method, path }));
 		req.pipe(upstream);
 	}
 
-	private onForwardError(res: ServerResponse, err: Error): void {
-		log.warn('egress upstream request failed', {
+	/** A connection to the real upstream failed (refused, DNS, timeout, TLS).
+	 * Logs the target and the error's system-level fields so the cause is
+	 * diagnosable — `code` distinguishes ECONNREFUSED (upstream refused) from
+	 * ENOTFOUND (DNS) from ETIMEDOUT — then returns a 502 to the agent. */
+	private onForwardError(res: ServerResponse, err: Error, target?: UpstreamTarget): void {
+		log.warn('egress upstream request failed', this.failureMeta(err, target));
+		this.finishError(res, err);
+	}
+
+	/** An error thrown by the request handler itself (secret lookup, substitution,
+	 * target resolution) before any upstream connection — distinct from an
+	 * upstream connectivity failure so the two are not conflated in the logs. */
+	private onHandlerError(res: ServerResponse, err: Error): void {
+		log.warn('egress request handler failed', this.failureMeta(err));
+		this.finishError(res, err);
+	}
+
+	/** Structured failure context: the run, the upstream target (when known), and
+	 * the Node `SystemError` fields present on connection errors. Fields absent
+	 * under the runtime (Bun does not always populate `code`/`syscall`) are
+	 * omitted rather than logged as `undefined`. */
+	private failureMeta(err: Error, target?: UpstreamTarget): Record<string, unknown> {
+		const sysErr = err as NodeJS.ErrnoException;
+		const meta: Record<string, unknown> = {
 			run: ref(this.cfg.scope.label, this.cfg.runId),
 			error: err.message,
-		});
+		};
+		if (target) {
+			meta.host = target.host;
+			meta.port = target.port;
+			meta.method = target.method;
+			meta.path = target.path;
+		}
+		if (sysErr.code) meta.code = sysErr.code;
+		if (sysErr.syscall) meta.syscall = sysErr.syscall;
+		if (sysErr.errno !== undefined) meta.errno = sysErr.errno;
+		return meta;
+	}
+
+	private finishError(res: ServerResponse, err: Error): void {
 		if (!res.headersSent) {
 			respondEarly(res, 502, 'upstream_error', err.message);
 		} else {
@@ -592,6 +627,15 @@ class RunProxyInstance {
 interface TargetAddress {
 	host: string;
 	port: number;
+	path: string;
+}
+
+/** The upstream a forwarded request was aimed at, attached to failure logs so a
+ * connection error names the host it could not reach. */
+interface UpstreamTarget {
+	host: string;
+	port: number;
+	method: string;
 	path: string;
 }
 
