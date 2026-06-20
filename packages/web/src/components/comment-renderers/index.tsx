@@ -4,7 +4,6 @@ import { ActionComment } from './action-comment';
 import type { CommentData, CommentDataOf } from './comment-data';
 import { ConnectRequiredComment } from './connect-required-comment';
 import { CredentialRequestComment } from './credential-request-comment';
-import { OptionsComment } from './options-comment';
 import { PreviewComment } from './preview-comment';
 import { RunComment } from './run-comment';
 import { SystemComment } from './system-comment';
@@ -18,7 +17,6 @@ export { commentText, inlineEventIcon, isInlineEventType, jumpToComment } from '
 
 interface RenderProps {
 	comment: CommentData;
-	onChooseOption?: (commentId: string, chosenId: string) => void;
 	projectId?: string;
 	projectSlug?: string;
 	taskId?: string;
@@ -34,7 +32,6 @@ interface RenderProps {
  */
 type RendererComponent<K extends CommentContentType> = ComponentType<{
 	comment: CommentDataOf<K>;
-	onChooseOption?: RenderProps['onChooseOption'];
 	projectId?: string;
 	projectSlug?: string;
 	taskId?: string;
@@ -47,9 +44,6 @@ type RendererRegistry = { [K in CommentContentType]: RendererComponent<K> };
 const renderers: RendererRegistry = {
 	[CommentContentType.Text]: ({ comment, projectId, projectSlug }) => (
 		<TextComment comment={comment} projectId={projectId} projectSlug={projectSlug} />
-	),
-	[CommentContentType.Options]: ({ comment, onChooseOption }) => (
-		<OptionsComment comment={comment} onChoose={onChooseOption} />
 	),
 	[CommentContentType.Preview]: ({ comment }) => <PreviewComment comment={comment} />,
 	[CommentContentType.Trace]: ({ comment }) => <TraceComment comment={comment} />,
@@ -87,10 +81,6 @@ function dispatch(props: RenderProps) {
 	switch (comment.content_type) {
 		case CommentContentType.Text: {
 			const C = renderers[CommentContentType.Text];
-			return <C {...props} comment={comment} />;
-		}
-		case CommentContentType.Options: {
-			const C = renderers[CommentContentType.Options];
 			return <C {...props} comment={comment} />;
 		}
 		case CommentContentType.Preview: {

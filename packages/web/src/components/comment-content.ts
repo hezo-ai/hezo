@@ -16,11 +16,6 @@ import type { CommentContentType } from '@hezo/shared';
  */
 export type TextContent = string | { text?: string };
 
-export interface OptionsContent {
-	prompt?: string;
-	options?: Array<{ id: string; label: string; description?: string }>;
-}
-
 export interface PreviewContent {
 	url?: string;
 	preview_url?: string;
@@ -125,7 +120,6 @@ export interface ConnectRequiredContent {
  */
 export type CommentContentByType = {
 	[CommentContentType.Text]: TextContent;
-	[CommentContentType.Options]: OptionsContent;
 	[CommentContentType.Preview]: PreviewContent;
 	[CommentContentType.Trace]: TraceContent;
 	[CommentContentType.System]: SystemContent;
@@ -140,10 +134,6 @@ export type CommentContentByType = {
  * Set on `options` when the admin picks an option, on `credential_request`
  * when fulfilled, on `action` when the action completes. Null on all others.
  */
-export interface OptionsChosen {
-	chosen_id: string;
-}
-
 export interface CredentialRequestChosen {
 	secret_id: string;
 	fulfilled_at: string;
@@ -159,7 +149,6 @@ export interface ActionChosen {
 
 export type CommentChosenByType = {
 	[CommentContentType.Text]: null;
-	[CommentContentType.Options]: OptionsChosen | null;
 	[CommentContentType.Preview]: null;
 	[CommentContentType.Trace]: null;
 	[CommentContentType.System]: null;
