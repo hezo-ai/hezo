@@ -306,6 +306,42 @@ describe('EgressProxy under Bun', () => {
 			await proxy.releaseRunProxy(runId);
 		}
 	}, 30_000);
+
+	// Upstream connection policy: each run owns a keep-alive-OFF agent rather than
+	// sharing the process-global pool. Keep-alive off means no upstream socket is
+	// parked idle in a pool to outlive the run (idle pooled sockets can't be
+	// reliably closed under Bun), and per-run ownership keeps one run's upstream
+	// connections from being shared with another's. Asserted at the config level —
+	// deterministic, unlike socket-close timing under Bun.
+	test('gives each run its own keep-alive-off upstream agent', async () => {
+		const idA = `bun-agent-a-${process.pid}`;
+		const idB = `bun-agent-b-${process.pid}`;
+		const a = await proxy.allocateRunProxy(idA, { teamId, agentId });
+		const b = await proxy.allocateRunProxy(idB, { teamId, agentId });
+		try {
+			const runs = (
+				proxy as unknown as {
+					runs: Map<
+						string,
+						{ upstreamAgent: { keepAlive?: boolean; options?: { keepAlive?: boolean } } }
+					>;
+				}
+			).runs;
+			const agentA = runs.get(idA)?.upstreamAgent;
+			const agentB = runs.get(idB)?.upstreamAgent;
+			if (!agentA || !agentB) throw new Error('per-run upstream agent missing');
+			// Per-run isolation — not one shared/global agent.
+			expect(agentA).not.toBe(agentB);
+			// Keep-alive disabled (Node exposes it as `keepAlive`; the options bag
+			// carries what was passed) so upstream sockets are never pooled idle.
+			const keepAlive = agentA.keepAlive ?? agentA.options?.keepAlive;
+			expect(keepAlive).toBe(false);
+		} finally {
+			await proxy.releaseRunProxy(idA);
+			await proxy.releaseRunProxy(idB);
+		}
+		expect(a.proxyPort).not.toBe(b.proxyPort);
+	}, 30_000);
 });
 
 /** Reach into the proxy's per-run internal per-host server map for assertions. */

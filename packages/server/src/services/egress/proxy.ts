@@ -99,16 +99,12 @@ export class EgressProxy {
 	private readonly portAllocator: PortAllocator;
 	private readonly proxyHost: string;
 	private readonly proxyBindHost: string;
-	private readonly upstreamHttpsAgent?: HttpsAgent;
 	private mintCa: Promise<CA> | null = null;
 
 	constructor(private readonly deps: EgressProxyDeps) {
 		this.portAllocator = deps.portAllocator ?? new PortAllocator();
 		this.proxyHost = deps.proxyHost ?? PROXY_HOST;
 		this.proxyBindHost = deps.proxyBindHost ?? PROXY_BIND_HOST;
-		this.upstreamHttpsAgent = deps.extraUpstreamTrustedCAs
-			? new HttpsAgent({ keepAlive: true, ca: deps.extraUpstreamTrustedCAs })
-			: undefined;
 	}
 
 	get caCertPath(): string {
@@ -150,7 +146,7 @@ export class EgressProxy {
 					db: this.deps.db,
 					masterKeyManager: this.deps.masterKeyManager,
 					getMintCa: () => this.getMintCa(),
-					upstreamHttpsAgent: this.upstreamHttpsAgent,
+					upstreamTrustedCAs: this.deps.extraUpstreamTrustedCAs,
 				});
 
 				try {
@@ -208,7 +204,7 @@ interface RunProxyConfig {
 	db: PGlite;
 	masterKeyManager: MasterKeyManager;
 	getMintCa: () => Promise<CA>;
-	upstreamHttpsAgent?: HttpsAgent;
+	upstreamTrustedCAs?: string | string[];
 }
 
 /** A per-host internal TLS-terminating server. The agent's CONNECT socket is
@@ -250,8 +246,22 @@ class RunProxyInstance {
 	 * upstream connection (the SSE channel to api.githubcopilot.com) leaks unless
 	 * the request itself is aborted on teardown. */
 	private readonly liveUpstreams = new Set<ClientRequest>();
+	/** This run's own agent for proxy→upstream HTTPS, with keep-alive OFF and owned
+	 * per run rather than shared with the process-global agent. Keep-alive off means
+	 * an upstream socket is never parked idle in a pool — it closes when its
+	 * response ends — so only genuinely in-flight requests (aborted via
+	 * `liveUpstreams`) hold a socket at teardown. Idle pooled sockets can't be
+	 * reliably closed under Bun (a pooled socket's handle no longer maps to the live
+	 * connection), so not pooling them is what keeps them from outliving the run and
+	 * accumulating against a remote MCP host. */
+	private readonly upstreamAgent: HttpsAgent;
 
-	constructor(private readonly cfg: RunProxyConfig) {}
+	constructor(private readonly cfg: RunProxyConfig) {
+		this.upstreamAgent = new HttpsAgent({
+			keepAlive: false,
+			...(cfg.upstreamTrustedCAs ? { ca: cfg.upstreamTrustedCAs } : {}),
+		});
+	}
 
 	/** Debug-gated lifecycle logging. Enable with `HEZO_EGRESS_DEBUG=1` to trace
 	 * which connection leg dies and when. */
@@ -350,6 +360,8 @@ class RunProxyInstance {
 		this.liveSockets.clear();
 		for (const up of this.liveUpstreams) up.destroy();
 		this.liveUpstreams.clear();
+		// Tear down the run's upstream agent so nothing it holds outlives the run.
+		this.upstreamAgent.destroy();
 
 		const closables: Array<Promise<void>> = [];
 		for (const [host, { server }] of this.hostServers.entries()) {
@@ -614,7 +626,7 @@ class RunProxyInstance {
 				method,
 				path,
 				headers,
-				...(isSSL ? { servername: host, agent: this.cfg.upstreamHttpsAgent } : {}),
+				...(isSSL ? { servername: host, agent: this.upstreamAgent } : {}),
 			},
 			(upstreamRes) => {
 				res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
