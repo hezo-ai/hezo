@@ -1,4 +1,10 @@
-import { AgentRuntimeStatus, ApprovalType, formatTaskStatus, TaskStatus } from '@hezo/shared';
+import {
+	AgentRuntimeStatus,
+	ApprovalType,
+	formatTaskStatus,
+	TaskPriority,
+	TaskStatus,
+} from '@hezo/shared';
 import type { BadgeColor } from '../components/ui/badge';
 
 /**
@@ -36,6 +42,20 @@ export function taskStatusColor(status: string): BadgeColor {
 /** Color + label for a task status (label sourced from the shared label map). */
 export function taskStatusMeta(status: string): BadgeMeta {
 	return { color: taskStatusColor(status), label: formatTaskStatus(status) };
+}
+
+// Priority maps to the spec's semantic tints: urgent = danger, high = warning,
+// medium = info, low = neutral (the "Quiet tint" badge treatment).
+const TASK_PRIORITY_COLORS: Record<TaskPriority, BadgeColor> = {
+	[TaskPriority.Urgent]: 'danger',
+	[TaskPriority.High]: 'warning',
+	[TaskPriority.Medium]: 'info',
+	[TaskPriority.Low]: 'neutral',
+};
+
+/** Badge color for a task priority, defaulting to neutral for unknown values. */
+export function taskPriorityColor(priority: string): BadgeColor {
+	return TASK_PRIORITY_COLORS[priority as TaskPriority] ?? 'neutral';
 }
 
 export const AGENT_RUNTIME_STATUS_META: Record<AgentRuntimeStatus, BadgeMeta> = {
