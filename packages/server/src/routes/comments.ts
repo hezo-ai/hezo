@@ -2,7 +2,6 @@ import { AuthType, CommentContentType, WakeupSource, wsRoom } from '@hezo/shared
 import { Hono } from 'hono';
 import { encrypt } from '../crypto/encryption';
 import { signAssetUrl } from '../lib/asset-urls';
-import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { validateCredentialValue } from '../lib/credential-validator';
 import { resolveActor, resolveActorMemberId, resolveTaskId } from '../lib/resolve';
@@ -301,75 +300,6 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 		attachments: attachments.get(result.rows[0].id) ?? [],
 	};
 	return ok(c, created, 201);
-});
-
-commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments/:commentId/choose', async (c) => {
-	const teamId = c.get('teamId') as string;
-	const db = c.get('db');
-	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
-	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
-	const commentId = c.req.param('commentId');
-
-	const body = await c.req.json<{ chosen_id: string }>();
-	if (!body.chosen_id) {
-		return err(c, 'INVALID_REQUEST', 'chosen_id is required', 400);
-	}
-
-	// Verify comment belongs to the task
-	const existing = await db.query<{ content_type: string; task_id: string }>(
-		'SELECT content_type, task_id FROM task_comments WHERE id = $1 AND task_id = $2',
-		[commentId, taskId],
-	);
-	if (existing.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Comment not found', 404);
-	}
-	if (existing.rows[0].content_type !== CommentContentType.Options) {
-		return err(c, 'INVALID_REQUEST', 'Can only choose on options-type comments', 400);
-	}
-
-	const result = await withTransaction(db, async () => {
-		const updated = await db.query(
-			'UPDATE task_comments SET chosen_option = $1::jsonb WHERE id = $2 RETURNING *',
-			[JSON.stringify({ chosen_id: body.chosen_id }), commentId],
-		);
-
-		await db.query(
-			`INSERT INTO task_comments (task_id, content_type, content)
-         VALUES ($1, $2::comment_content_type, $3::jsonb)`,
-			[
-				existing.rows[0].task_id,
-				CommentContentType.System,
-				JSON.stringify({ text: `Admin selected option: ${body.chosen_id}` }),
-			],
-		);
-		return updated;
-	});
-
-	const task = await db.query<{ assignee_id: string | null }>(
-		'SELECT assignee_id FROM tasks WHERE id = $1',
-		[existing.rows[0].task_id],
-	);
-	const assigneeId = task.rows[0]?.assignee_id;
-	if (assigneeId) {
-		const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
-		if (isAgent.rows.length > 0) {
-			trackBackground(
-				createWakeup(db, assigneeId, teamId, WakeupSource.OptionChosen, {
-					task_id: existing.rows[0].task_id,
-					chosen_id: body.chosen_id,
-				}).catch((e) => log.error('Failed to create option_chosen wakeup:', e)),
-			);
-		}
-	}
-
-	broadcastChange(
-		c,
-		wsRoom.team(teamId),
-		'task_comments',
-		'UPDATE',
-		result.rows[0] as Record<string, unknown>,
-	);
-	return ok(c, result.rows[0]);
 });
 
 commentsRoutes.post(

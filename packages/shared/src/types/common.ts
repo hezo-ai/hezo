@@ -116,7 +116,6 @@ export type TaskPriority = (typeof TaskPriority)[keyof typeof TaskPriority];
 
 export const CommentContentType = {
 	Text: 'text',
-	Options: 'options',
 	Preview: 'preview',
 	Trace: 'trace',
 	System: 'system',
@@ -406,7 +405,6 @@ export const WakeupSource = {
 	OnDemand: 'on_demand',
 	Mention: 'mention',
 	Automation: 'automation',
-	OptionChosen: 'option_chosen',
 	CredentialProvided: 'credential_provided',
 	Comment: 'comment',
 	Reply: 'reply',

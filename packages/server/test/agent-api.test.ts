@@ -112,24 +112,6 @@ describe('agent API - comments', () => {
 		expect(body.data.content_type).toBe('text');
 		expect(body.data.author_member_id).toBe(agentId);
 	});
-
-	it('posts an options comment', async () => {
-		const res = await app.request(`/agent-api/tasks/${taskId}/comments`, {
-			method: 'POST',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				content_type: 'options',
-				content: {
-					prompt: 'Which approach?',
-					options: [
-						{ id: 'a', label: 'Option A', description: 'First approach' },
-						{ id: 'b', label: 'Option B', description: 'Second approach' },
-					],
-				},
-			}),
-		});
-		expect(res.status).toBe(201);
-	});
 });
 
 describe('agent API - tool calls', () => {

@@ -462,14 +462,14 @@ Each row also includes resolved trigger fields so the UI can render a
 - `wakeup_id` — FK to the `agent_wakeup_requests` row that started the run
   (nullable for legacy rows; production paths always populate it).
 - `trigger_source` — one of the `wakeup_source` enum values (`mention`,
-  `reply`, `assignment`, `option_chosen`, `comment`, `automation`,
+  `reply`, `assignment`, `comment`, `automation`,
   `heartbeat`, `timer`, `on_demand`).
 - `trigger_payload` — the wakeup's `payload` JSONB, opaque shape per source.
 - `trigger_comment_id`, `trigger_actor_member_id`, `trigger_actor_slug`,
   `trigger_actor_title`, `trigger_comment_task_id`,
   `trigger_comment_task_identifier`, `trigger_comment_project_slug` —
   resolved from `payload.comment_id` for sources that reference a comment
-  (`mention`, `reply`, `comment`, `option_chosen`). For `mention`, the actor
+  (`mention`, `reply`, `comment`). For `mention`, the actor
   is the agent who posted the mentioning comment; for `reply`, the actor is
   the agent who posted the replying comment. Null when the source has no
   comment context (e.g. `assignment`, `heartbeat`, `timer`).
@@ -1002,23 +1002,6 @@ Response:
       "author_type": "agent",
       "author_agent_id": "uuid",
       "author_agent_title": "Dev Engineer",
-      "content_type": "options",
-      "content": {
-        "prompt": "Which auth strategy should I implement?",
-        "options": [
-          { "id": "jwt", "label": "JWT tokens", "description": "Stateless, good for API-first" },
-          { "id": "session", "label": "Server sessions", "description": "Simpler, good for SSR" }
-        ]
-      },
-      "chosen_option": null,
-      "tool_calls": [],
-      "created_at": "..."
-    },
-    {
-      "id": "uuid",
-      "author_type": "agent",
-      "author_agent_id": "uuid",
-      "author_agent_title": "Dev Engineer",
       "content_type": "preview",
       "content": {
         "filename": "auth-flow-mockup.html",
@@ -1053,19 +1036,6 @@ the mentions trigger — useful for asking a mentioned agent to think harder
 about a tricky piece of feedback. If the comment contains no `@`-mentions,
 `effort` has no observable effect (no wakeup is fired). Invalid values are
 silently dropped. See [Reasoning effort](#reasoning-effort).
-
-#### `POST /projects/:projectId/tasks/:taskId/comments/:commentId/choose`
-Board picks an option on an options-type comment.
-
-Request:
-```json
-{
-  "chosen_id": "jwt"
-}
-```
-
-Sets `chosen_option` on the comment and posts a system comment recording the
-choice. Triggers the assigned agent.
 
 #### System events appended by the server
 
@@ -2306,20 +2276,6 @@ Request (text):
 {
   "content_type": "text",
   "content": { "text": "Starting on the WebSocket handler..." }
-}
-```
-
-Request (options):
-```json
-{
-  "content_type": "options",
-  "content": {
-    "prompt": "Which auth strategy should I implement?",
-    "options": [
-      { "id": "jwt", "label": "JWT tokens", "description": "Stateless" },
-      { "id": "session", "label": "Server sessions", "description": "Simpler" }
-    ]
-  }
 }
 ```
 

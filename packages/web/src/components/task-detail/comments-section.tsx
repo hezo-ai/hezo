@@ -4,7 +4,7 @@ import { Check, Copy, CornerDownRight, Reply } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useAgents } from '../../hooks/use-agents';
-import { type Comment, useChooseOption, useComments } from '../../hooks/use-comments';
+import { type Comment, useComments } from '../../hooks/use-comments';
 import type { Task } from '../../hooks/use-tasks';
 import { AgentLink } from '../agent-link';
 import {
@@ -122,7 +122,6 @@ export function CommentsSection({
 		for (const a of agents ?? []) m.set(a.id, a.slug);
 		return m;
 	}, [agents]);
-	const chooseOption = useChooseOption(projectId, taskId);
 	// The run_id whose run_failed comment may show a Retry button: the most
 	// recent run referenced in the thread, and only when no run is currently
 	// active. Run comments (any outcome) and run_failed comments both carry a
@@ -366,9 +365,6 @@ export function CommentsSection({
 									<div className="flex-1 min-w-0">
 										<CommentRenderer
 											comment={commentData}
-											onChooseOption={(commentId, chosenId) =>
-												chooseOption.mutate({ commentId, chosen_id: chosenId })
-											}
 											projectId={projectId}
 											projectSlug={taskProjectSlug}
 											taskId={taskId}
@@ -454,9 +450,6 @@ export function CommentsSection({
 									<div className="px-3 py-2.5">
 										<CommentRenderer
 											comment={commentData}
-											onChooseOption={(commentId, chosenId) =>
-												chooseOption.mutate({ commentId, chosen_id: chosenId })
-											}
 											projectId={projectId}
 											projectSlug={taskProjectSlug}
 											taskId={taskId}

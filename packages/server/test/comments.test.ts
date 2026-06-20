@@ -135,37 +135,6 @@ describe('comments CRUD', () => {
 		expect(agentComment.author_name).toBe('Comment Bot');
 		expect(adminComment.author_name).toBe('Admin');
 	});
-
-	it('creates an options comment and chooses an option', async () => {
-		const createRes = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				content_type: 'options',
-				content: {
-					prompt: 'Which approach?',
-					options: [
-						{ id: 'a', label: 'Option A' },
-						{ id: 'b', label: 'Option B' },
-					],
-				},
-			}),
-		});
-		expect(createRes.status).toBe(201);
-		const comment = (await createRes.json()).data;
-
-		const chooseRes = await app.request(
-			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${comment.id}/choose`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ chosen_id: 'a' }),
-			},
-		);
-		expect(chooseRes.status).toBe(200);
-		const chosenBody = await chooseRes.json();
-		expect(chosenBody.data.chosen_option.chosen_id).toBe('a');
-	});
 });
 
 describe('comment @mention wakeups', () => {
@@ -186,60 +155,6 @@ describe('comment @mention wakeups', () => {
 
 		const wakeups = await db.query(
 			"SELECT * FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'mention'",
-			[agentId],
-		);
-		expect(wakeups.rows.length).toBeGreaterThanOrEqual(1);
-	});
-
-	it('creates option_chosen wakeup when choosing option on task assigned to agent', async () => {
-		// Create a new task assigned to the agent
-		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				project_id: projectId,
-				title: 'Agent Assigned Task',
-				assignee_id: agentId,
-			}),
-		});
-		const assignedTaskId = (await taskRes.json()).data.id;
-
-		// Create an options comment
-		const commentRes = await app.request(
-			`/api/projects/${projectSlug}/tasks/${assignedTaskId}/comments`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					content_type: 'options',
-					content: {
-						prompt: 'Which?',
-						options: [
-							{ id: 'x', label: 'X' },
-							{ id: 'y', label: 'Y' },
-						],
-					},
-				}),
-			},
-		);
-		const optionsCommentId = (await commentRes.json()).data.id;
-
-		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
-
-		// Choose an option
-		await app.request(
-			`/api/projects/${projectSlug}/tasks/${assignedTaskId}/comments/${optionsCommentId}/choose`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ chosen_id: 'x' }),
-			},
-		);
-
-		await new Promise((r) => setTimeout(r, 100));
-
-		const wakeups = await db.query(
-			"SELECT * FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'option_chosen'",
 			[agentId],
 		);
 		expect(wakeups.rows.length).toBeGreaterThanOrEqual(1);

@@ -90,7 +90,6 @@ join-heavy queries for the most common operation (rendering an task thread).
 
 The `content_type` enum discriminates the shape:
 - `text` → `{ "text": "..." }`
-- `options` → `{ "prompt": "...", "options": [{ "id", "label", "description" }] }`
 - `preview` → `{ "filename": "...", "label": "...", "description": "..." }`
 - `trace` → `{ "summary": "4 tool calls" }` (detail lives in `tool_calls` table)
 - `system` → `{ "text": "...", "kind"?: "status_change" | "task_link" | <other>, ... }`. Auto-generated timeline entries. The renderer shows `text`; `kind` plus per-kind fields let the server dedup and tooling filter without re-parsing prose.
@@ -626,7 +625,6 @@ events.
 | `on_demand` | Admin/API explicit wake. Also created synthetically when `runAgent` is invoked without an explicit wakeup (e.g., direct test harness calls), so every run is anchored to a wakeup row. |
 | `mention` | A comment contains `@<agent-slug>` referencing this agent. |
 | `automation` | Server-side automation rule. |
-| `option_chosen` | Board user resolved an options comment. |
 | `comment` | Opt-in wake of the task assignee from a plain Board comment (`wake_assignee=true`). |
 | `reply` | An agent whose run was mention-triggered posts a comment in the triggering ticket. The original mentioner (when an agent) is woken so it can pick up the response. Gated by `teams.settings.wake_mentioner_on_reply` (default `true`). Payload: `{ source, task_id, comment_id, triggering_comment_id, responder_member_id }`. Idempotency key: `reply:<triggering_comment_id>:<reply_comment_id>`. |
 

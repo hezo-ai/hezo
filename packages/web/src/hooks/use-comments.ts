@@ -84,21 +84,6 @@ export function useCreateComment(projectId: string, taskId: string) {
 	});
 }
 
-export function useChooseOption(projectId: string, taskId: string) {
-	return useOptimisticMutation<{ commentId: string; chosen_id: string }, unknown, Comment[]>({
-		mutationFn: ({ commentId, chosen_id }) =>
-			api.post(`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/choose`, {
-				chosen_id,
-			}),
-		queryKey: queryKeys.projects.taskComments(projectId, taskId),
-		applyOptimistic: (current, { commentId, chosen_id }) => {
-			if (!current) return current;
-			return current.map((c) => (c.id === commentId ? { ...c, chosen_option: chosen_id } : c));
-		},
-		errorMessage: 'Failed to choose option',
-	});
-}
-
 export interface ReactionMutationResponse {
 	comment_id: string;
 	kind: string;

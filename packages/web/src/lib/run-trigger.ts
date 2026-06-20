@@ -64,16 +64,6 @@ export function formatTriggerReason(run: HeartbeatRun, teamSlug: string): Trigge
 			}
 			return { source, text: 'New comment on assigned task' };
 		}
-		case WakeupSource.OptionChosen: {
-			if (taskId) {
-				return {
-					source,
-					text: `Option chosen on ${taskId}`,
-					href: taskHref(run, teamSlug),
-				};
-			}
-			return { source, text: 'Option chosen on assigned task' };
-		}
 		case WakeupSource.Assignment: {
 			if (taskId) {
 				return { source, text: `Assigned to ${taskId}`, href: taskHref(run, teamSlug) };

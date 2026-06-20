@@ -528,7 +528,7 @@ Feature work uses a **single ticket** for both design and implementation. When a
 
 **Captain** — strategic direction, delegation, dispute resolution, escalation to board. Reports to board.
 
-**Product Lead** — owns product requirements. Writes PRDs with acceptance criteria. Posts clarifying ticket comments (and structured-option cards when helpful) to resolve ambiguous requirements with the board. Ensures development aligns with team goals. Reports to Captain.
+**Product Lead** — owns product requirements. Writes PRDs with acceptance criteria. Posts clarifying ticket comments to resolve ambiguous requirements with the board. Ensures development aligns with team goals. Reports to Captain.
 
 **Architect** — owns technical vision. Adds technical specs, architecture decisions, and implementation phases to tickets after the Product Lead's PRD. Reviews and approves the Engineer's implementation plans. Has technical authority — decides HOW to build things. Reports to Captain. Direct reports: Engineer, QA Engineer, UI Designer, DevOps Engineer.
 
@@ -727,7 +727,7 @@ This file evolves over time as agents propose updates through the KB approval fl
 ### Role-specific instructions (in system prompts)
 
 Role-specific instructions are embedded directly in each agent's system prompt template — not in separate files. Each role's system prompt includes the relevant rules and methodologies:
-- **Product Lead:** PRD writing methodology, acceptance criteria standards, requirements gathering via ticket comments and structured-option cards, scope management rules
+- **Product Lead:** PRD writing methodology, acceptance criteria standards, requirements gathering via ticket comments, scope management rules
 - **Architect:** Technical spec templates, architecture decision records, implementation phase planning, code review authority
 - **Engineer:** Parallelization rules, testing philosophy, template database patterns, port allocation, pre-push verification steps
 - **QA Engineer:** Audit checklist (security, performance, correctness, maintainability, coverage), Playwright E2E testing, severity classification, flaky test detection
@@ -1296,24 +1296,6 @@ OAuth tokens for connected platforms (GitHub, Gmail, Stripe, etc.) are stored as
 
 Three mechanisms for agents and the board to interact within task threads.
 
-### Structured options
-
-Agents emit a JSON block that the UI renders as clickable cards inline in the task thread.
-
-Agent emits:
-```json
-{
-  "type": "options",
-  "prompt": "Which auth strategy should I implement?",
-  "options": [
-    { "id": "jwt", "label": "JWT tokens", "description": "Stateless, good for API-first" },
-    { "id": "session", "label": "Server sessions", "description": "Simpler, good for SSR" }
-  ]
-}
-```
-
-The board clicks a choice. The selection is recorded immutably (`chosen_option` column). A system comment is posted with the choice. The assigned agent is triggered.
-
 ### HTML previews
 
 Agents can write temporary HTML files (mockups, prototypes, reports, visualizations) and present them as viewable links in the task thread.
@@ -1535,13 +1517,12 @@ Every agent has a heartbeat interval. Default is **60 minutes**. Configurable pe
 
 ### Event-based triggers (immediate wakeup)
 
-Sources: `mention`, `reply`, `assignment`, `option_chosen`, `comment` (opt-in assignee wake), `on_demand`, `automation`. See `.dev/schema.md` for the full table of wakeup sources and payloads.
+Sources: `mention`, `reply`, `assignment`, `comment` (opt-in assignee wake), `on_demand`, `automation`. See `.dev/schema.md` for the full table of wakeup sources and payloads.
 
 
 In addition to scheduled heartbeats, agents are triggered **immediately** by:
 - Task assignment — task assigned to them (on creation, update, or sub-task creation)
 - @-mention in an task comment
-- Option chosen by the board on one of their option cards
 - Approval resolved for one of their requests
 - Container start — when a project container starts, all enabled agents with non-terminal assigned tasks in that project are woken
 
@@ -1551,7 +1532,7 @@ Plain comments on an assigned ticket (with no `@`-mention targeting the assignee
 
 ### Wakeup queue and coalescing
 
-When multiple events fire for the same agent in quick succession (e.g. several @-mentions, or assignment + option_chosen), wakeups are coalesced into a single activation. The wakeup queue:
+When multiple events fire for the same agent in quick succession (e.g. several @-mentions, or assignment + mention), wakeups are coalesced into a single activation. The wakeup queue:
 
 - Batches events within a short coalescing window (default: 10 seconds)
 - Delivers all pending events in a single heartbeat response
