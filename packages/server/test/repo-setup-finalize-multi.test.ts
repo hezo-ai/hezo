@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	enqueueRepoSetupResumeWakeups,
 	finalizePendingRepoSetup,
+	markRepoSetupFailed,
 } from '../src/services/repo-setup';
 import { safeClose } from './helpers';
 import { createTestDbWithMigrations } from './helpers/db';
@@ -216,6 +217,97 @@ describe('finalizePendingRepoSetup + enqueueRepoSetupResumeWakeups (multi-agent)
 			expect(result.deferredWakeups).toEqual([]);
 			expect(result.approvalRow).toBeNull();
 			expect(result.updatedCommentRows).toEqual([]);
+			expect(result.systemCommentRows).toEqual([]);
+		} finally {
+			await safeClose(db);
+		}
+	});
+});
+
+describe('markRepoSetupFailed', () => {
+	it('posts a failure comment per gated task, leaves the approval pending and the action unresolved, and does not resume the deferred wakeup', async () => {
+		const db = await createTestDbWithMigrations();
+		try {
+			const { teamId, projectId } = await seedTeamProject(db);
+			const aliceId = await seedAgent(db, teamId, 'Alice');
+			const bobId = await seedAgent(db, teamId, 'Bob');
+			const taskA = await seedTask(db, teamId, projectId, 1, 'Alice work', aliceId);
+			const taskB = await seedTask(db, teamId, projectId, 2, 'Bob work', bobId);
+			const { approvalId, commentIds } = await seedApprovalAndComments(db, teamId, projectId, [
+				taskA,
+				taskB,
+			]);
+			await seedDeferredWakeup(db, teamId, aliceId, projectId, taskA);
+			await seedDeferredWakeup(db, teamId, bobId, projectId, taskB);
+
+			const result = await markRepoSetupFailed(db, {
+				teamId,
+				projectId,
+				repoIdentifier: 'octo/multi',
+				error: 'destination path already exists',
+			});
+
+			expect(result.approvalId).toBe(approvalId);
+			expect(result.systemCommentRows).toHaveLength(2);
+
+			// Approval stays pending so a fixed retry can resolve it.
+			const approval = await db.query<{ status: string }>(
+				`SELECT status FROM approvals WHERE id = $1`,
+				[approvalId],
+			);
+			expect(approval.rows[0].status).toBe('pending');
+
+			// The setup-repo action stays actionable.
+			for (const cId of commentIds) {
+				const c = await db.query<{ chosen_option: unknown }>(
+					`SELECT chosen_option FROM task_comments WHERE id = $1`,
+					[cId],
+				);
+				expect(c.rows[0].chosen_option).toBeNull();
+			}
+
+			// A visible failure comment lands on each gated task.
+			for (const taskId of [taskA, taskB]) {
+				const sys = await db.query<{ content: { kind?: string; error?: string } }>(
+					`SELECT content FROM task_comments
+					 WHERE task_id = $1 AND content_type = 'system'::comment_content_type`,
+					[taskId],
+				);
+				expect(sys.rows).toHaveLength(1);
+				expect(sys.rows[0].content.kind).toBe('repo_setup_failed');
+				expect(sys.rows[0].content.error).toBe('destination path already exists');
+			}
+
+			// Agents stay parked — no resume wakeup was created.
+			const resumed = await db.query<{ count: number }>(
+				`SELECT COUNT(*)::int AS count FROM agent_wakeup_requests
+				 WHERE team_id = $1 AND payload->>'reason' = 'repo_setup_complete'`,
+				[teamId],
+			);
+			expect(resumed.rows[0].count).toBe(0);
+
+			const stillDeferred = await db.query<{ count: number }>(
+				`SELECT COUNT(*)::int AS count FROM agent_wakeup_requests
+				 WHERE team_id = $1 AND status = 'deferred'::wakeup_status`,
+				[teamId],
+			);
+			expect(stillDeferred.rows[0].count).toBe(2);
+		} finally {
+			await safeClose(db);
+		}
+	});
+
+	it('is a no-op when no pending approval exists', async () => {
+		const db = await createTestDbWithMigrations();
+		try {
+			const { teamId, projectId } = await seedTeamProject(db);
+			const result = await markRepoSetupFailed(db, {
+				teamId,
+				projectId,
+				repoIdentifier: 'octo/none',
+				error: 'boom',
+			});
+			expect(result.approvalId).toBeNull();
 			expect(result.systemCommentRows).toEqual([]);
 		} finally {
 			await safeClose(db);

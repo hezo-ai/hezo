@@ -9,7 +9,11 @@ import { logger } from '../logger';
 import { provisionContainer } from '../services/containers';
 import { createGitHubRepo, parseGitHubUrl, validateRepoAccess } from '../services/github';
 import { getConnection } from '../services/oauth/connection-store';
-import { enqueueRepoSetupResumeWakeups, finalizePendingRepoSetup } from '../services/repo-setup';
+import {
+	enqueueRepoSetupResumeWakeups,
+	finalizePendingRepoSetup,
+	markRepoSetupFailed,
+} from '../services/repo-setup';
 import { ensureProjectRepos, removeRepoFromWorkspace } from '../services/repo-sync';
 
 const log = logger.child('routes');
@@ -149,6 +153,10 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 	let insertedRepo: InsertedRepo;
 	let becameDesignated = false;
 	let finalizeResult = emptyFinalize;
+	// Whether this repo would become the project's designated repo once its
+	// checkout is in place. Designation is deferred until the clone/init
+	// succeeds so a setup failure never leaves the gate half-open.
+	let wouldDesignate = false;
 
 	try {
 		const txResult = await withTransaction(db, async () => {
@@ -165,29 +173,10 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 				 RETURNING id, project_id, repo_identifier, host_type, oauth_connection_id, created_at`,
 				[projectId, repoIdentifier, conn.id],
 			);
-			const inserted = insertRes.rows[0];
-
-			let becameDesignated = false;
-			let finalize = emptyFinalize;
-			if (!projectRow.designated_repo_id) {
-				await db.query('UPDATE projects SET designated_repo_id = $1 WHERE id = $2', [
-					inserted.id,
-					projectId,
-				]);
-				becameDesignated = true;
-
-				finalize = await finalizePendingRepoSetup(db, {
-					teamId,
-					projectId,
-					repoId: inserted.id,
-					repoIdentifier,
-				});
-			}
-			return { inserted, becameDesignated, finalize };
+			return { inserted: insertRes.rows[0], wouldDesignate: !projectRow.designated_repo_id };
 		});
 		insertedRepo = txResult.inserted;
-		becameDesignated = txResult.becameDesignated;
-		finalizeResult = txResult.finalize;
+		wouldDesignate = txResult.wouldDesignate;
 	} catch (e) {
 		if (isUniqueViolation(e)) {
 			return err(
@@ -229,7 +218,43 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 		}
 	}
 
-	if (becameDesignated && cloneStatus !== 'failed') {
+	if (wouldDesignate) {
+		if (cloneStatus === 'failed') {
+			// Setup never produced a usable checkout. Don't designate or persist the
+			// repo; tell the operator on the gated task(s) and leave the approval
+			// pending so a fixed retry resolves it. Agents stay correctly parked.
+			const failure = await markRepoSetupFailed(db, {
+				teamId,
+				projectId,
+				repoIdentifier,
+				error: cloneError ?? 'unknown error',
+			});
+			await db.query('DELETE FROM repos WHERE id = $1', [insertedRepo.id]);
+			for (const row of failure.systemCommentRows) {
+				broadcastChange(c, wsRoom.team(teamId), 'task_comments', 'INSERT', row);
+			}
+			return err(
+				c,
+				'REPO_SETUP_FAILED',
+				`Failed to set up ${repoIdentifier}: ${cloneError ?? 'unknown error'}`,
+				500,
+			);
+		}
+
+		finalizeResult = await withTransaction(db, async () => {
+			await db.query('UPDATE projects SET designated_repo_id = $1 WHERE id = $2', [
+				insertedRepo.id,
+				projectId,
+			]);
+			return finalizePendingRepoSetup(db, {
+				teamId,
+				projectId,
+				repoId: insertedRepo.id,
+				repoIdentifier,
+			});
+		});
+		becameDesignated = true;
+
 		await ensureProjectContainerUp(c, projectId);
 		if (finalizeResult.resolvedApprovalId) {
 			await enqueueRepoSetupResumeWakeups(

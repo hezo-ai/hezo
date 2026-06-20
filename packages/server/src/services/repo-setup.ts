@@ -265,6 +265,67 @@ export async function finalizePendingRepoSetup(
 	};
 }
 
+export interface MarkFailedInput {
+	teamId: string;
+	projectId: string;
+	repoIdentifier: string;
+	error: string;
+}
+
+export interface MarkFailedResult {
+	approvalId: string | null;
+	systemCommentRows: Record<string, unknown>[];
+}
+
+/**
+ * Records a failed designated-repo setup on every task currently gated on it,
+ * without resolving the pending approval — so the operator can fix the cause and
+ * retry, and the agents stay correctly parked rather than running against a
+ * broken checkout. Posts one system comment per affected task and returns the
+ * inserted rows for broadcast.
+ */
+export async function markRepoSetupFailed(
+	db: PGlite,
+	input: MarkFailedInput,
+): Promise<MarkFailedResult> {
+	const approvalId = await findPendingApproval(db, input.teamId, input.projectId);
+	if (!approvalId) return { approvalId: null, systemCommentRows: [] };
+
+	const pendingTasks = await db.query<{ task_id: string }>(
+		`SELECT DISTINCT ic.task_id FROM task_comments ic
+		 JOIN tasks i ON i.id = ic.task_id
+		 WHERE ic.content_type = $1::comment_content_type
+		   AND ic.content->>'kind' = $2
+		   AND ic.content->>'approval_id' = $3
+		   AND ic.chosen_option IS NULL
+		   AND i.project_id = $4`,
+		[CommentContentType.Action, ActionCommentKind.SetupRepo, approvalId, input.projectId],
+	);
+
+	const systemCommentRows: Record<string, unknown>[] = [];
+	for (const row of pendingTasks.rows) {
+		const sys = await db.query<Record<string, unknown>>(
+			`INSERT INTO task_comments (task_id, content_type, content)
+			 VALUES ($1, $2::comment_content_type, $3::jsonb)
+			 RETURNING *`,
+			[
+				row.task_id,
+				CommentContentType.System,
+				JSON.stringify({
+					kind: 'repo_setup_failed',
+					repo_identifier: input.repoIdentifier,
+					host_type: 'github',
+					error: input.error,
+					text: `Could not set up repository ${input.repoIdentifier}: ${input.error}`,
+				}),
+			],
+		);
+		if (sys.rows[0]) systemCommentRows.push(sys.rows[0]);
+	}
+
+	return { approvalId, systemCommentRows };
+}
+
 /**
  * Re-enqueues each deferred wakeup as a fresh Automation wakeup pointing at the
  * previously-blocked task. The old Deferred rows are left for audit — they are
