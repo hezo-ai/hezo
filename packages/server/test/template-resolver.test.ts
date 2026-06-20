@@ -298,6 +298,18 @@ describe('template resolver', () => {
 		expect(result).toContain('you can proceed');
 	});
 
+	it('mention discipline makes routing/triage handoffs an active @, not a passive reference', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// handing work to someone to own — even tracked on a different ticket — wakes them
+		expect(result).toContain('Handing work *to* someone for them to own');
+		// the exact contradiction that orphaned the findings: "routed to @@<slug>"
+		expect(result).toContain('"routed to `@@<slug>`" is a contradiction');
+		// upward/peer handoff has no structural channel, so the active mention is it
+		expect(result).toContain('`create_task` assigns downward only');
+		// non-blocking follow-ups must be ticketed or actively handed off, never left as prose
+		expect(result).toContain("Follow-ups that *don't* block this ticket still need an owner");
+	});
+
 	it('mention discipline makes @@ the explicit default and flags the status-recap antipattern', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		// passive is the explicit presumption; the to-vs-about test leads the section
