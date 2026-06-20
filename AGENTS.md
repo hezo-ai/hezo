@@ -95,7 +95,7 @@ The server runs on **Bun** in dev/prod, but vitest runs on **Node** (`bunx vites
 
 - Read `packages/web/test/helpers/render.tsx` and `helpers/seed.ts` before writing a new spec — the harness API is `renderApp({initialPath, seed?})` returning `{ ctx, router, container, user, findByText, getByRole, ... }`. `getTestContext()` reaches the in-process app/db mid-test.
 - Use `seedWorkspace()` / `seedProject(ws, { name })` / `seedTask(ws, project, { title })` / `seedComment(ws, task, body)` for setup; they drive the real API.
-- Navigate via `router.navigate({ to: '/teams/$teamId/tasks', params: { teamId: ws.team.slug } })` — memory history, no real URL.
+- Navigate via `router.navigate({ to: '/projects/$projectId/tasks', params: { projectId: ws.internalSlug } })` — memory history, no real URL.
 - Each test gets a fresh PGlite + Hono in `beforeEach`. The harness clears the singleton react-query cache between tests, but cross-spec state still leaks via module-level singletons (`api`, the queryClient), so keep `beforeEach` setup contained.
 - Dialogs / Radix popovers render into a portal on `document.body`. Query selectors against `document.body` (not `container`) when the element is inside a Radix `Portal`.
 - Auto-wait via Testing Library's `findBy*` / `waitFor`. Don't use `expect(...).toBeDisabled()` (jest-dom matchers aren't loaded) — read `disabled` directly off the element.
@@ -140,19 +140,19 @@ import { renderApp } from './helpers/render';
 import { seedWorkspace, seedProject, seedTask } from './helpers/seed';
 
 test('<what changed>', async () => {
-  let ctx: { teamSlug: string; taskId: string };
+  let ctx: { projectSlug: string; taskIdentifier: string };
   const { findByText, user, router } = await renderApp({
     initialPath: '/',
     seed: async () => {
       const ws = await seedWorkspace();
       const project = await seedProject(ws, { name: 'Demo' });
       const task = await seedTask(ws, project, { title: 'Demo Task' });
-      ctx = { teamSlug: ws.team.slug, taskId: task.id };
+      ctx = { projectSlug: project.slug, taskIdentifier: task.identifier };
     },
   });
   await router.navigate({
-    to: '/teams/$teamId/tasks/$taskId',
-    params: { teamId: ctx!.teamSlug, taskId: ctx!.taskId },
+    to: '/projects/$projectId/tasks/$taskId',
+    params: { projectId: ctx!.projectSlug, taskId: ctx!.taskIdentifier.toLowerCase() },
   });
   // Drive the change: user.click / user.type / etc.
   // Assert: await findByText(...) auto-waits for refetches.
@@ -186,7 +186,7 @@ Wrap the awaited call in `try/catch` and `log.error(...)` to keep the "log and c
 
 The remaining Playwright suite is small but still subject to a 1 Hz agent wakeup cron and a dev-mode Vite. When a spec flakes:
 
-- **Scope every response matcher to the test's own IDs.** Use `taskMatcher` / `teamMatcher` / `agentMatcher` from `test/browser/helpers.ts`. A bare `/api/teams/[^/]+/tasks/[^/]+/` regex can match Captain's background planning-task PATCH and satisfy the matcher before your mutation has even left the browser. For tasks, `taskId` is the lowercase identifier, not the UUID.
+- **Scope every response matcher to the test's own IDs.** Use `taskMatcher` / `teamMatcher` / `agentMatcher` from `test/browser/helpers.ts` (all keyed by `projectSlug`). A bare `/api/projects/[^/]+/tasks/[^/]+/` regex can match Captain's background planning-task PATCH and satisfy the matcher before your mutation has even left the browser. For tasks, `taskId` is the lowercase identifier, not the UUID.
 - **For "click save → assert UI updated", use `saveAndWaitForRefetch(page, locator, { mutation, refetch })`.** Mutation landing ≠ UI rendering — React Query has to invalidate, refetch, and re-render before the new text is in the DOM.
 - **Scroll Virtuoso before asserting on a bottom-of-list item.** Virtuoso only mounts the viewport range. Scroll the container first: `await page.locator('main').first().evaluate((el) => el.scrollTo({ top: el.scrollHeight }))`.
 - **Sequence `page.request` after in-flight UI mutations.** `page.request.<method>` uses a separate APIRequestContext from the page's fetch; the two can land in either order. `await page.waitForResponse(...)` the UI mutation before firing the API mutation.
@@ -220,10 +220,10 @@ Errors-only toast: `toast.error(...)` from `packages/web/src/hooks/use-toast.ts`
 
 ## Slugs vs UUIDs
 
-Browser URLs use slugs (e.g. `/teams/test/projects/operations`). Internal IDs (DB keys, WebSocket rooms, server broadcasts) use UUIDs.
+Browser URLs use slugs (e.g. `/projects/operations`). Internal IDs (DB keys, WebSocket rooms, server broadcasts) use UUIDs.
 
 - Route params are slugs. TanStack Query keys must use the route-param slug (not a resolved UUID), so WebSocket-driven `invalidateQueries` matches.
-- When a component renders inside a route, pass the **route-param value** (`teamId` / `taskId` from `Route.useParams()`) to any child component or hook whose query key includes it — not `data?.id` from a resolved query (`<CommentReactions taskId={task?.id} />` is the antipattern). Mismatched keys cause optimistic mutations to write to a different cache entry than the query reads from, so the chip/row never appears even though the server processed the mutation correctly.
+- When a component renders inside a route, pass the **route-param value** (`projectId` / `taskId` from `Route.useParams()`) to any child component or hook whose query key includes it — not `data?.id` from a resolved query (`<CommentReactions taskId={task?.id} />` is the antipattern). Mismatched keys cause optimistic mutations to write to a different cache entry than the query reads from, so the chip/row never appears even though the server processed the mutation correctly.
 - WebSocket rooms use UUIDs (`team:${uuid}`). `useWebSocket` takes both: UUID for subscription, slug for query invalidation.
 - Server broadcasts use UUIDs.
 
@@ -266,9 +266,9 @@ The egress audit log records substitution events by **secret name** only, never 
 
 Every route enforces authorization — never trust URL params alone.
 
-- Routes with `:teamId` verify the authenticated user has access per request (board users can be in multiple teams; agent / API-key auth carries `teamId` and must match the route param).
-- Nested resources (`:taskId`, `:secretId`, `:commentId`, …) verify the resource belongs to the parent `:teamId` via WHERE/JOIN before any read or write.
-- Global endpoints (no `:teamId` in path) still verify the authenticated user has access to the resource's team.
+- Routes with `:projectId` resolve the project to its backing team and verify the authenticated user has access to that team per request (board users can be in multiple teams; agent / API-key auth carries `teamId` and must match the resolved team). Project resolution + access check run once in `requireProjectAccessMiddleware`, which exposes `c.var.projectId` and `c.var.teamId`.
+- Nested resources (`:taskId`, `:secretId`, `:commentId`, …) verify the resource belongs to the parent `:projectId` (and its team) via WHERE/JOIN before any read or write.
+- Global endpoints (no `:projectId` in path) still verify the authenticated user has access to the resource's team.
 - WebSocket subscriptions verify team membership matches the room.
 - MCP tool handlers enforce the same authorization as their REST equivalents — pass caller identity in and validate team access.
 
