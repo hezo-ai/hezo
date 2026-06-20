@@ -268,9 +268,9 @@ test('task detail shows assignee with status badge', async () => {
 	const sidebar = await findByTestId('task-sidebar');
 	expect(sidebar.textContent).toContain(seeded.agentTitle);
 
-	// Status badge should be one of Idle / Running / Paused. Scope the query
-	// to the assignee chip — the sidebar agent rail also surfaces "Idle" text
-	// for every agent in the team and would otherwise match first.
+	// Status badge should be one of Idle / Running / Paused. Scope the query to
+	// the assignee chip — the sidebar agent rail also surfaces status text (now
+	// lowercase "idle") for every agent in the team and would otherwise match.
 	const assignee = await findByTestId('task-assignee');
 	expect(assignee.textContent ?? '').toMatch(/Idle|Running|Paused/);
 });
@@ -455,14 +455,14 @@ test('project menu Team section shows agent status badges', async () => {
 		params: { projectId: seeded.projectSlug },
 	});
 
-	// The project menu's Team section lists each agent with an "Idle" badge once
-	// the agent runtime status finishes loading. Wait for at least one Idle
-	// to appear in the sidebar nav (the main pane also shows Idle after
-	// load, but that arrives later).
+	// The project menu's Team section lists each agent with its runtime status once
+	// it finishes loading. Per the Wire spec the sidebar renders the status as
+	// right-aligned lowercase mono ("idle"), not a capitalized pill — wait for at
+	// least one to appear in the sidebar nav.
 	await waitFor(
 		() => {
 			const nav = container.querySelector('nav[aria-label="Sidebar"]');
-			expect(nav?.textContent ?? '').toContain('Idle');
+			expect(nav?.textContent ?? '').toContain('idle');
 		},
 		{ timeout: 5000 },
 	);
