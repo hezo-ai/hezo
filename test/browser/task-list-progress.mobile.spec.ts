@@ -2,7 +2,10 @@ import { expect, test } from './fixtures';
 import { createProjectAndClearPlanning, uniqueName, waitForPageLoad } from './helpers';
 
 test.describe('Project task list — progress header (mobile)', () => {
-	test('shows the segmented progress bar after planning is closed', async ({
+	// Skipped while the project task-progress bar is disabled (see
+	// SHOW_TASK_PROGRESS_BAR in project-task-list-header.tsx). Restore alongside it.
+	// Playwright tier (rule 2): the bar is a mobile-viewport responsive check.
+	test.skip('shows the segmented progress bar after planning is closed', async ({
 		page,
 		sharedWorkspace,
 	}) => {

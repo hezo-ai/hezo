@@ -46,11 +46,14 @@ test('tasks page hides progress area while the planning ticket is open', async (
 	expect(queryByTestId('project-task-list-phase-banner-planning')).toBeNull();
 });
 
-test('tasks page shows segmented progress bar after the planning ticket is closed', async () => {
+// The progress bar is currently disabled via SHOW_TASK_PROGRESS_BAR in
+// project-task-list-header.tsx. It must stay hidden even once the planning
+// ticket is closed and execution tasks exist (the state that used to render it).
+test('tasks page keeps the progress bar hidden after the planning ticket is closed', async () => {
 	let projectSlug = '';
 	let ws!: SeededWorkspace;
 
-	const { findByTestId, findByText, router } = await renderApp({
+	const { findByTestId, queryByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			ws = await seedWorkspace();
@@ -80,11 +83,10 @@ test('tasks page shows segmented progress bar after the planning ticket is close
 		params: { projectId: projectSlug },
 	});
 
-	await findByTestId('task-progress-bar', undefined, { timeout: 10_000 });
-	await findByTestId('project-status-idle');
-	await findByText('50% complete');
+	// The task list itself renders, but the progress bar stays hidden.
+	await findByTestId('task-list-main', undefined, { timeout: 10_000 });
 	await waitFor(() => {
-		expect(document.querySelector('[data-testid="task-progress-segment-complete"]')).not.toBeNull();
-		expect(document.querySelector('[data-testid="task-progress-segment-not-done"]')).not.toBeNull();
+		expect(queryByTestId('task-progress-bar')).toBeNull();
 	});
+	expect(queryByTestId('project-status-idle')).toBeNull();
 });
