@@ -86,12 +86,16 @@ function ProgressBar({ summary }: { summary: TaskProgressSummary }) {
 	);
 }
 
+// The project task-progress bar is temporarily disabled. Flip this back to
+// `true` to restore it — the ProgressBar component above is kept intact.
+const SHOW_TASK_PROGRESS_BAR = false;
+
 export function ProjectTaskListHeader({ projectId }: { projectId: string }) {
 	const { data: summary, isLoading } = useTaskProgressSummary(projectId);
 
 	if (isLoading || !summary) return null;
 
-	const showProgressBar = summary.planning_complete && summary.total > 0;
+	const showProgressBar = SHOW_TASK_PROGRESS_BAR && summary.planning_complete && summary.total > 0;
 
 	if (!summary.phase_banner && !showProgressBar) return null;
 
