@@ -154,18 +154,28 @@ export function ProjectSidebar() {
 				...ownAgents.map((agent) => ({
 					to: '/projects/$projectId/agents/$agentId',
 					params: { projectId, agentId: agent.slug },
-					label: <AgentStatusLabel name={agent.title} runtimeStatus={agent.runtime_status} />,
+					label: (
+						<AgentStatusLabel
+							variant="sidebar"
+							name={agent.title}
+							runtimeStatus={agent.runtime_status}
+						/>
+					),
 				})),
 				...instanceAgents.map((agent) => ({
 					to: '/projects/$projectId/agents/$agentId',
 					params: agentPageParams(projectId, agent.slug, agent.is_instance),
 					label: (
-						<span className="flex items-center gap-1.5 min-w-0">
+						<span className="flex flex-1 items-center gap-1.5 min-w-0">
 							<Globe
 								className="w-3 h-3 shrink-0 text-text-3"
 								aria-label="Global agent — works across all projects"
 							/>
-							<AgentStatusLabel name={agent.title} runtimeStatus={agent.runtime_status} />
+							<AgentStatusLabel
+								variant="sidebar"
+								name={agent.title}
+								runtimeStatus={agent.runtime_status}
+							/>
 						</span>
 					),
 				})),

@@ -39,7 +39,9 @@ export function taskStatusMeta(status: string): BadgeMeta {
 }
 
 export const AGENT_RUNTIME_STATUS_META: Record<AgentRuntimeStatus, BadgeMeta> = {
-	[AgentRuntimeStatus.Active]: { color: 'green', label: 'Running' },
+	// "Running" is the design system's one cyan "live" signal — reserved strictly
+	// for active agent activity, never green.
+	[AgentRuntimeStatus.Active]: { color: 'live', label: 'Running' },
 	[AgentRuntimeStatus.Idle]: { color: 'neutral', label: 'Idle' },
 	[AgentRuntimeStatus.OutOfAgentBudget]: { color: 'red', label: 'Over agent budget' },
 	[AgentRuntimeStatus.OutOfProjectBudget]: { color: 'red', label: 'Over project budget' },

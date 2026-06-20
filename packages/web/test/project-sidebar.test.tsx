@@ -1,6 +1,6 @@
 import { waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { renderApp } from './helpers/render';
+import { getTestContext, renderApp } from './helpers/render';
 import { type SeededWorkspace, seedProject, seedWorkspace } from './helpers/seed';
 
 function getNav(container: HTMLElement): HTMLElement {
@@ -101,6 +101,47 @@ test('HQ agents appear in the Team section as global members linking to the HQ p
 	});
 	const link = within(nav).getByRole('link', { name: /CEO/ });
 	expect(link.getAttribute('href')).toBe('/projects/hq/agents/ceo');
+});
+
+test('Team agents use the spec status treatment — lowercase mono status, running in cyan + bold', async () => {
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+	let runningTitle = '';
+	const { container, findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Operations' });
+			projectSlug = project.slug;
+			// Drive Captain (an own agent, always present) into the running state.
+			const captain = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
+			runningTitle = captain.title;
+			await getTestContext().db.query(
+				`UPDATE member_agents SET runtime_status = 'active'::agent_runtime_status WHERE id = $1`,
+				[captain.id],
+			);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
+	});
+	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	const nav = getNav(container);
+
+	// Status renders as lowercase mono text, never the capitalized quiet-tint pill.
+	await waitFor(() => expect(within(nav).getAllByText('idle').length).toBeGreaterThan(0), {
+		timeout: 20_000,
+	});
+	expect(within(nav).queryByText('Idle')).toBeNull();
+	expect(within(nav).queryByText('Running')).toBeNull();
+
+	// The running agent shows the cyan "live" status and a bold name.
+	await waitFor(() => expect(within(nav).getByText('running')).toBeTruthy(), { timeout: 20_000 });
+	expect(within(nav).getByText('running').className).toContain('text-live');
+	const runningLink = within(nav).getByRole('link', { name: new RegExp(runningTitle) });
+	expect(within(runningLink).getByText(runningTitle).className).toContain('font-semibold');
 });
 
 test("the project menu persists across the project's team pages and disappears off-project", async () => {
