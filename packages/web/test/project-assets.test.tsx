@@ -51,9 +51,9 @@ test('an asset can be deleted from the library', async () => {
 	await waitFor(() => expect(queryByText('remove-me.png')).toBeNull());
 });
 
-test('an assets/<name> reference in a comment links to the asset and opens it in a new tab', async () => {
+test('an assets/<name> reference in a task comment opens the preview panel instead of a new tab', async () => {
 	let ctx!: { projectSlug: string; taskId: string };
-	const { findByTestId, router } = await renderApp({
+	const { container, findByTestId, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -70,15 +70,18 @@ test('an assets/<name> reference in a comment links to the asset and opens it in
 		params: { projectId: ctx.projectSlug, taskId: ctx.taskId },
 	});
 
-	await findByTestId('text-comment-body', undefined, { timeout: 15_000 });
+	// In a task comment the asset mention is a button (opens the panel) with no
+	// trailing new-tab suffix link.
 	const link = await findByTestId('asset-mention-link', undefined, { timeout: 15_000 });
+	expect(link.tagName).toBe('BUTTON');
 	expect(link.textContent).toContain('assets/login.png');
-	// Clicking the name now does the same as the icon: open the asset in a new tab.
-	expect(link.getAttribute('href')).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
-	expect(link.getAttribute('target')).toBe('_blank');
-	const preview = await findByTestId('asset-mention-preview-link', undefined, { timeout: 15_000 });
-	expect(preview.getAttribute('href')).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
-	expect(preview.getAttribute('target')).toBe('_blank');
+	expect(container.querySelector('[data-testid="asset-mention-preview-link"]')).toBeNull();
+
+	// The panel opens and exposes the signed-URL open-in-new-tab affordance.
+	await user.click(link);
+	const openTab = (await findByTestId('preview-open-tab')) as HTMLAnchorElement;
+	expect(openTab.getAttribute('href')).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
+	expect(openTab.getAttribute('target')).toBe('_blank');
 });
 
 test('uploading a file through the picker adds it to the library', async () => {

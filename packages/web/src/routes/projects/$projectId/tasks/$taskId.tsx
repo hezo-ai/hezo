@@ -7,6 +7,11 @@ import { CommentComposer } from '../../../../components/task-detail/comment-comp
 import { CommentsSection } from '../../../../components/task-detail/comments-section';
 import { DependenciesSection } from '../../../../components/task-detail/dependencies-section';
 import { LastRunFailedBanner } from '../../../../components/task-detail/last-run-failed-banner';
+import {
+	type PreviewItem,
+	PreviewProvider,
+} from '../../../../components/task-detail/preview-context';
+import { PreviewPanel } from '../../../../components/task-detail/preview-panel';
 import { SubTasksSection } from '../../../../components/task-detail/sub-tasks-section';
 import { TaskHeader } from '../../../../components/task-detail/task-header';
 import { TaskSidebar } from '../../../../components/task-detail/task-sidebar';
@@ -55,6 +60,9 @@ function TaskDetailPage() {
 	// leave effort unset on submit and let the server resolve the agent default.
 	const [commentEffort, setCommentEffort] = useState<AgentEffort | null>(null);
 	const [replyTarget, setReplyTarget] = useState<Comment | null>(null);
+	// A doc/asset clicked in a comment opens in the right-rail preview panel
+	// (replacing the metadata sidebar until closed).
+	const [preview, setPreview] = useState<PreviewItem | null>(null);
 	const commentFormRef = useRef<HTMLFormElement>(null);
 	const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -86,78 +94,86 @@ function TaskDetailPage() {
 
 	return (
 		<>
-			<div className="grid grid-cols-1 lg:grid-cols-[1fr_190px] gap-5">
-				<div className="min-w-0">
-					<LastRunFailedBanner task={task} projectId={projectId} taskId={taskId} />
-					<TaskHeader
-						task={task}
-						projectId={projectId}
-						taskId={taskId}
-						taskProjectSlug={taskProjectSlug}
-					/>
+			<div
+				className={`grid grid-cols-1 gap-5 ${preview ? 'lg:grid-cols-[1fr_360px]' : 'lg:grid-cols-[1fr_190px]'}`}
+			>
+				<PreviewProvider value={setPreview}>
+					<div className="min-w-0">
+						<LastRunFailedBanner task={task} projectId={projectId} taskId={taskId} />
+						<TaskHeader
+							task={task}
+							projectId={projectId}
+							taskId={taskId}
+							taskProjectSlug={taskProjectSlug}
+						/>
 
-					<TaskSummary
-						task={task}
-						projectId={projectId}
-						taskProjectSlug={taskProjectSlug}
-						updateTask={updateTask}
-					/>
+						<TaskSummary
+							task={task}
+							projectId={projectId}
+							taskProjectSlug={taskProjectSlug}
+							updateTask={updateTask}
+						/>
 
-					<SubTasksSection
-						projectId={projectId}
-						taskId={taskId}
-						parentTaskId={task.id}
-						taskProjectSlug={taskProjectSlug}
-					/>
+						<SubTasksSection
+							projectId={projectId}
+							taskId={taskId}
+							parentTaskId={task.id}
+							taskProjectSlug={taskProjectSlug}
+						/>
 
-					<DependenciesSection projectId={projectId} taskId={taskId} />
+						<DependenciesSection projectId={projectId} taskId={taskId} />
 
-					<div className="border-t border-border pt-4">
-						<div className="flex items-center gap-1.5 mb-4">
-							<h3 className="text-[13px] text-text-1 font-medium">Comments</h3>
-							<span className="bg-surface-2 px-[7px] py-px rounded-full text-[11px] text-text-2">
-								{comments?.length ?? 0}
-							</span>
+						<div className="border-t border-border pt-4">
+							<div className="flex items-center gap-1.5 mb-4">
+								<h3 className="text-[13px] text-text-1 font-medium">Comments</h3>
+								<span className="bg-surface-2 px-[7px] py-px rounded-full text-[11px] text-text-2">
+									{comments?.length ?? 0}
+								</span>
+							</div>
+
+							<CommentsSection
+								task={task}
+								projectId={projectId}
+								taskId={taskId}
+								taskProjectSlug={taskProjectSlug}
+								scrollParent={scrollParent}
+								onStartReply={startReply}
+							/>
+
+							<CommentComposer
+								task={task}
+								projectId={projectId}
+								taskId={taskId}
+								taskProjectSlug={taskProjectSlug}
+								comments={comments}
+								createComment={createComment}
+								commentEffort={commentEffort}
+								setCommentEffort={setCommentEffort}
+								replyTarget={replyTarget}
+								setReplyTarget={setReplyTarget}
+								jumpToComment={jumpToComment}
+								commentFormRef={commentFormRef}
+								commentTextareaRef={commentTextareaRef}
+							/>
 						</div>
-
-						<CommentsSection
-							task={task}
-							projectId={projectId}
-							taskId={taskId}
-							taskProjectSlug={taskProjectSlug}
-							scrollParent={scrollParent}
-							onStartReply={startReply}
-						/>
-
-						<CommentComposer
-							task={task}
-							projectId={projectId}
-							taskId={taskId}
-							taskProjectSlug={taskProjectSlug}
-							comments={comments}
-							createComment={createComment}
-							commentEffort={commentEffort}
-							setCommentEffort={setCommentEffort}
-							replyTarget={replyTarget}
-							setReplyTarget={setReplyTarget}
-							jumpToComment={jumpToComment}
-							commentFormRef={commentFormRef}
-							commentTextareaRef={commentTextareaRef}
-						/>
 					</div>
-				</div>
+				</PreviewProvider>
 
-				<TaskSidebar
-					task={task}
-					projectId={projectId}
-					agents={agents}
-					lock={lock}
-					comments={comments}
-					updateTask={updateTask}
-					commentEffort={commentEffort}
-					setCommentEffort={setCommentEffort}
-					scrollToBottom={scrollToBottom}
-				/>
+				{preview ? (
+					<PreviewPanel item={preview} onClose={() => setPreview(null)} />
+				) : (
+					<TaskSidebar
+						task={task}
+						projectId={projectId}
+						agents={agents}
+						lock={lock}
+						comments={comments}
+						updateTask={updateTask}
+						commentEffort={commentEffort}
+						setCommentEffort={setCommentEffort}
+						scrollToBottom={scrollToBottom}
+					/>
+				)}
 			</div>
 
 			{/* Sits above the persistent CEO chat launcher (fixed bottom-right) so

@@ -14,8 +14,8 @@ async function openNewProjectDialog() {
 			sessionStorage.setItem('hezo:activeTeamSlug', ws.team.slug);
 		},
 	});
-	const section = await utils.findByTestId('home-projects-list', undefined, { timeout: 15_000 });
-	await utils.user.click(within(section).getByRole('button', { name: 'New project' }));
+	const section = await utils.findByTestId('home-projects', undefined, { timeout: 15_000 });
+	await utils.user.click(within(section).getByTestId('home-new-project'));
 	await screen.findByTestId('create-project-submit');
 	return { ...utils, ws };
 }

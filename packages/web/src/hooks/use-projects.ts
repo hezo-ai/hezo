@@ -28,6 +28,12 @@ export interface Project {
 	dev_ports: Array<{ container: number; host: number }>;
 	repo_count: number;
 	open_task_count: number;
+	/** Agents currently running on this project's team (runtime_status = active). */
+	running_agents_count: number;
+	/** Spend on this project so far today (UTC), in cents. */
+	today_spend_cents: number;
+	/** Most recent task update, falling back to the project's creation time. */
+	last_activity_at: string;
 	created_at: string;
 	repos?: Repo[];
 	planning_task_id?: string;

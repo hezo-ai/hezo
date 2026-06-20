@@ -24,7 +24,7 @@ test('invalid team slug redirects to /home', async () => {
 		async () => {
 			const main = document.querySelector('main');
 			if (!main) throw new Error('main not mounted');
-			return within(main as HTMLElement).getByTestId('home-projects-list');
+			return within(main as HTMLElement).getByTestId('home-projects');
 		},
 		{ timeout: 10_000 },
 	);

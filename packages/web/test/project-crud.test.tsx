@@ -69,7 +69,7 @@ test('creates a project from Home (Create now) and lands on the Captain planning
 	await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/projects\/.+\/tasks\//));
 }, 60_000);
 
-test('Home lists a seeded project with task and repo counts', async () => {
+test('Home lists a seeded project with its task count and activity', async () => {
 	const name = uniqueName('Count Test');
 	const { router } = await renderApp({
 		initialPath: '/',
@@ -82,6 +82,8 @@ test('Home lists a seeded project with task and repo counts', async () => {
 
 	await router.navigate({ to: '/home' });
 
+	// An idle project (no running agents) lands in the dashboard's Other-projects
+	// list: task count + idle status + last-activity, not the old "N repos".
 	const card = await waitFor(
 		() => {
 			const main = document.querySelector('main');
@@ -91,7 +93,7 @@ test('Home lists a seeded project with task and repo counts', async () => {
 		{ timeout: 15_000 },
 	);
 	expect(card.textContent).toMatch(/tasks/);
-	expect(card.textContent).toMatch(/repos/);
+	expect(card.textContent).toMatch(/idle/);
 }, 60_000);
 
 test('Home project card links to the project detail', async () => {

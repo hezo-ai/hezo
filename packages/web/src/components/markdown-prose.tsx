@@ -20,6 +20,7 @@ import {
 	type TaskMentionData,
 } from '../lib/remark-mentions';
 import { CommentRefLink, MENTION_CLASSES } from './comment-ref-link';
+import { useOpenPreview } from './task-detail/preview-context';
 import { Tooltip } from './ui/tooltip';
 
 type RemarkPlugin = Parameters<typeof Markdown>[0]['remarkPlugins'];
@@ -66,6 +67,9 @@ export function MarkdownProse({
 	);
 	const { data: resolvedDocs } = useDocMentions(projectId ?? '', docCandidates);
 	const { data: instanceResolved } = useInstanceMentions(children, instance === true && !projectId);
+	// When the surface hosts a preview panel (task detail), doc/asset mentions open
+	// in it; otherwise they keep their new-tab links.
+	const openPreview = useOpenPreview();
 
 	const agentsMap = useMemo<Map<string, AgentMentionData>>(() => {
 		const m = new Map<string, AgentMentionData>();
@@ -226,19 +230,42 @@ export function MarkdownProse({
 				const docProject = attrs['data-mention-doc-project-slug'];
 				const docFilename = attrs['data-mention-doc-filename'];
 				if (docProject && docFilename && mentionsEnabled) {
+					const docTooltip = (
+						<DocTooltipContent
+							title={docFilename}
+							size={Number(attrs['data-mention-size'] ?? 0)}
+							updatedAt={attrs['data-mention-updated-at'] ?? ''}
+						/>
+					);
+					// In a comment thread (preview panel present) the mention opens the
+					// doc in the panel — no separate new-tab icon.
+					if (openPreview) {
+						return (
+							<PreviewMentionButton
+								tooltip={docTooltip}
+								testId="doc-mention-link"
+								onClick={() =>
+									openPreview({
+										kind: 'doc',
+										projectId: docProject,
+										projectSlug: docProject,
+										filename: docFilename,
+										size: Number(attrs['data-mention-size'] ?? 0) || undefined,
+										updatedAt: attrs['data-mention-updated-at'] || undefined,
+									})
+								}
+							>
+								{props.children}
+							</PreviewMentionButton>
+						);
+					}
 					return (
 						<DedicatedViewMention
 							href={docPreviewPath(docProject, docFilename)}
 							nameTestId="doc-mention-link"
 							previewTestId="doc-mention-preview-link"
 							previewAriaLabel="Open preview in new tab"
-							tooltip={
-								<DocTooltipContent
-									title={docFilename}
-									size={Number(attrs['data-mention-size'] ?? 0)}
-									updatedAt={attrs['data-mention-updated-at'] ?? ''}
-								/>
-							}
+							tooltip={docTooltip}
 						>
 							{props.children}
 						</DedicatedViewMention>
@@ -249,6 +276,27 @@ export function MarkdownProse({
 				const assetFilename = attrs['data-mention-asset-filename'];
 				const assetUrl = attrs['data-mention-asset-url'];
 				if (assetProject && assetFilename && mentionsEnabled) {
+					if (openPreview) {
+						return (
+							<PreviewMentionButton
+								testId="asset-mention-link"
+								onClick={() =>
+									openPreview({
+										kind: 'asset',
+										projectId: assetProject,
+										projectSlug: assetProject,
+										filename: assetFilename,
+										contentType: attrs['data-mention-asset-content-type'],
+										url: assetUrl,
+										size: Number(attrs['data-mention-size'] ?? 0) || undefined,
+										updatedAt: attrs['data-mention-updated-at'] || undefined,
+									})
+								}
+							>
+								{props.children}
+							</PreviewMentionButton>
+						);
+					}
 					if (assetUrl) {
 						return (
 							<DedicatedViewMention
@@ -359,7 +407,7 @@ export function MarkdownProse({
 				);
 			},
 		};
-	}, [projectId, instance]);
+	}, [projectId, instance, openPreview]);
 
 	return (
 		<div
@@ -420,6 +468,30 @@ function DedicatedViewMention({
 			</a>
 		</span>
 	);
+}
+
+/**
+ * A doc/asset mention that opens in the in-page preview panel rather than a new
+ * tab. No trailing external-link icon — the new-tab affordance lives on the panel
+ * itself. Used only when a surface provides the preview context.
+ */
+function PreviewMentionButton({
+	onClick,
+	tooltip,
+	testId,
+	children,
+}: {
+	onClick: () => void;
+	tooltip?: ReactNode;
+	testId: string;
+	children: ReactNode;
+}) {
+	const button = (
+		<button type="button" onClick={onClick} className={MENTION_CLASSES} data-testid={testId}>
+			{children}
+		</button>
+	);
+	return tooltip ? <Tooltip content={tooltip}>{button}</Tooltip> : button;
 }
 
 function DocTooltipContent({
