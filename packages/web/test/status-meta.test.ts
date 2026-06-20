@@ -36,7 +36,7 @@ describe('status-meta registry', () => {
 
 	test('agent runtime status meta matches the previous RUNTIME_BADGE', () => {
 		expect(agentRuntimeStatusMeta(AgentRuntimeStatus.Active)).toEqual({
-			color: 'green',
+			color: 'live',
 			label: 'Running',
 		});
 		expect(agentRuntimeStatusMeta(AgentRuntimeStatus.Idle)).toEqual({
