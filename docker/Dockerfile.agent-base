@@ -1,8 +1,9 @@
 FROM node:24-slim
 
-# Install common development tools
+# Install common development tools. `unzip` is required by the upstream bun.sh
+# installer and other `curl | bash` installers agents may run at runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl jq openssh-client ca-certificates python3 socat sudo \
+    curl jq unzip openssh-client ca-certificates python3 socat sudo \
     && rm -rf /var/lib/apt/lists/*
 
 # Build git from source. The host creates per-task worktrees with
@@ -48,6 +49,13 @@ RUN npm install -g @anthropic-ai/claude-code \
     && npm install -g @google/gemini-cli \
     && npm install -g opencode-ai \
     && npm install -g @moonshot-ai/kimi-code
+
+# Pre-install Bun (latest) for agent-authored JS/TS projects — the common case,
+# and the runtime Hezo itself uses. Installed globally via npm so `bun`/`bunx`
+# land on the shared PATH for both root and the `node` user (matching the AI CLIs
+# above). The trailing `bun --version` fails the build if the install is broken.
+RUN npm install -g bun \
+    && bun --version
 
 # SSH agent bridge: in-container Unix socket relayed to host TCP. Used so
 # the same wire-up runs on macOS Docker Desktop (which does not forward

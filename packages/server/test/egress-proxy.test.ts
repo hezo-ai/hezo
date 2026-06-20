@@ -450,6 +450,19 @@ async function killHostServer(proxy: EgressProxy, runId: string, host: string): 
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
+/** Reach into the proxy's per-run per-host server map for port assertions. */
+function hostServersOf(
+	proxy: EgressProxy,
+	runId: string,
+): Map<string, { server: HttpsServer; port: number }> {
+	const runs = (
+		proxy as unknown as {
+			runs: Map<string, { hostServers: Map<string, { server: HttpsServer; port: number }> }>;
+		}
+	).runs;
+	return runs.get(runId)?.hostServers ?? new Map();
+}
+
 describe('EgressProxy per-host cert routing', () => {
 	// Each upstream host the agent reaches over TLS gets its own minted leaf
 	// cert served from a dedicated internal server. A connection for one host
@@ -473,6 +486,48 @@ describe('EgressProxy per-host cert routing', () => {
 			}
 		} finally {
 			await httpsProxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
+	// Locks the root-cause fix: each per-host server must bind a port handed out
+	// by the host allocator, never one read back from `server.address()` (which
+	// lies under Bun, collapsing every host onto one port and serving the wrong
+	// leaf cert). Inject an allocator with a known sequence and assert each host's
+	// recorded port is exactly what was allocated — a revert to `listen(0)` +
+	// `address()` would record arbitrary ephemeral ports instead and fail here.
+	it('binds each per-host server to its allocated port, not an address()-derived one', async () => {
+		const portA = await reserveFreePort();
+		const portB = await reserveFreePort();
+		class SeqHostAllocator extends PortAllocator {
+			private readonly seq = [portA, portB];
+			private i = 0;
+			async allocate(): Promise<number> {
+				const p = this.seq[this.i++];
+				if (p === undefined) throw new Error('SeqHostAllocator exhausted');
+				return p;
+			}
+			release(): void {}
+		}
+		const hostProxy = new EgressProxy({
+			db,
+			masterKeyManager,
+			ca,
+			extraUpstreamTrustedCAs: ca.cert,
+			hostPortAllocator: new SeqHostAllocator(),
+		});
+		const runId = `run-${Date.now()}-hostports`;
+		const allocated = await hostProxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const a = await servedCertThroughProxy(allocated.proxyPort, 'hosta.egress-test', ca.cert);
+			const b = await servedCertThroughProxy(allocated.proxyPort, 'hostb.egress-test', ca.cert);
+			expect(a).toContain('hosta.egress-test');
+			expect(b).toContain('hostb.egress-test');
+			const map = hostServersOf(hostProxy, runId);
+			expect(map.get('hosta.egress-test')?.port).toBe(portA);
+			expect(map.get('hostb.egress-test')?.port).toBe(portB);
+			expect(portA).not.toBe(portB);
+		} finally {
+			await hostProxy.releaseRunProxy(runId);
 		}
 	}, 30_000);
 

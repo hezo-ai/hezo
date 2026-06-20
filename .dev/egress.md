@@ -20,7 +20,7 @@ The cert is world-readable so the unprivileged in-container `node` user can veri
 
 ## Proxy lifecycle
 
-The proxy is implemented in-house (`packages/server/src/services/egress/proxy.ts`) — no third-party MITM library. One instance per run, listening on `127.0.0.1` in the `[20000, 29999]` port range. The `PortAllocator` reuses the previous port for the same agent ID where possible (debugging-friendly) and probes for binding availability before claiming.
+The proxy is implemented in-house (`packages/server/src/services/egress/proxy.ts`) — no third-party MITM library. One instance per run, its front server listening on `127.0.0.1` in the `[20000, 29999]` port range. The `PortAllocator` reuses the previous port for the same agent ID where possible (debugging-friendly) and probes for binding availability before claiming. Per-host MITM servers use a **separate** allocator over `[30000, 39999]`, so per-host churn never contends with front-proxy binds.
 
 `EgressProxy.allocateRunProxy(runId, scope)` returns `{ proxyHost: 'host.docker.internal', proxyPort }`. `releaseRunProxy(runId)` shuts the instance down at run cleanup, closing the front server and every per-host server.
 
@@ -32,9 +32,9 @@ Each run's proxy is a single front `http.Server` on the allocated port. Plain pr
 
 For a CONNECT, the proxy looks up (or builds) a **per-host `https.Server`** keyed by the CONNECT hostname, minting that host's leaf cert from the CA via mockttp's `getCA`/`generateCertificate`. The agent's raw CONNECT socket is bridged into that per-host server over a loopback `net.connect`; TLS terminates there, the decrypted request runs through substitution, and a fresh upstream request carries the substituted values on.
 
-Per-host servers are keyed **by hostname → live server object**, not by a cached bare port. Before reuse the proxy checks the server still owns its recorded port (`server.listening && server.address().port === recordedPort`); a server that has died or lost its port is rebuilt on the next tunnel. This makes the historical failure mode — a hostname routed to an ephemeral port that has since died (ECONNREFUSED) or been recycled to another host's server (cross-host wrong-SAN cert) — structurally impossible: the hostname never routes through a port that isn't currently owned by that host's live server. Concurrent first-touches for the same host share one in-flight build so a run never spins up duplicate servers.
+Per-host servers are keyed **by hostname → live server object**. Each binds an **explicitly allocated** loopback port (from the dedicated `[30000, 39999]` allocator) and records that chosen port — it is **never** read back from `server.address()`, which is unreliable under Bun (it has reported one shared port for every per-host server in a run, collapsing all hosts onto one server so every host but one was served the wrong leaf cert). Reuse is gated on `server.listening` alone; a server that has died is rebuilt on the next tunnel. The cross-host wrong-SAN failure mode is structurally impossible because the allocator never hands two live servers the same port — a hostname's tunnel always dials the port that hostname's own server was bound to. Concurrent first-touches for the same host share one in-flight build so a run never spins up duplicate servers.
 
-The ownership check and the loopback dial must be **atomic**. The bridge (`bridgeConnect`) re-validates `serverOwnsPort` synchronously and rebuilds a stale record, then calls `net.connect` with **no further `await`** before the dial — so a per-host server that dies after lookup cannot have its freed ephemeral port recycled to another host's server between the check and the connect. Re-checking only at lookup time (with an `await` separating it from the dial) leaves a check→dial window that re-opens the cross-host wrong-SAN serving the per-host keying is meant to close.
+The liveness re-check and the loopback dial must be **atomic**. The bridge (`bridgeConnect`) re-checks `server.listening` synchronously and rebuilds a dead record, then calls `net.connect` with **no further `await`** before the dial — so a per-host server that dies after lookup is never dialed. The dialed port is the explicitly allocated one the server was bound to, so the tunnel always reaches that host's leaf cert.
 
 ## Container wiring
 
@@ -114,6 +114,8 @@ The proxy runs on Bun in dev/prod. Bun's TLS stack diverges from Node's in ways 
 
 So TLS can only be terminated by a genuinely-listening server reached over a socket, and a single SNI-multiplexed server can't serve per-host certs — hence one listening `https.Server` per host, bridged from the CONNECT socket over loopback. Do not re-attempt the broken approaches above to "simplify"; they pass under Node/vitest and fail only on the production Bun runtime, so a Node-only test gives false confidence (this is why the egress proxy has a `bun test` tier).
 
+Recovering a per-host server's port from `server.address().port` after `listen(0)` is **also unreliable under Bun**: it has returned a single shared port (e.g. `49621`) for *every* per-host server in a run, so all hosts' CONNECT tunnels dialed one server and were served the wrong host's leaf cert (`ERR_TLS_CERT_ALTNAME_INVALID` / "no alternative certificate subject name"). Per-host servers therefore bind an **explicitly allocated** port and treat it as authoritative — they never read it back from `address()`. (One-shot servers elsewhere — the front server, test upstreams — can still use `listen(0)`+`address()` safely; the hazard is specific to a keyed cache of servers dialed by recorded port.)
+
 Upstream cert verification under Bun checks the connection's Host header verbatim, which carries the port for non-default ports and fails against a bare-host SAN. The forwarder drops the client Host header on the TLS path so the runtime regenerates it from the connection target.
 
 Cert generation uses mockttp's CA (`@peculiar/x509`), the same path the tests trust.
@@ -128,5 +130,5 @@ Cert generation uses mockttp's CA (`@peculiar/x509`), the same path the tests tr
 - `egress-proxy-docker.test.ts` — real container exercising substitution through curl with the CA bind-mounted into the trust store
 
 `packages/server/test/bun/` (run under `bun test` on the production runtime — Node/vitest can't see the Bun TLS/connection divergences):
-- `egress-proxy.bun.test.ts` — HTTPS MITM termination + per-host cert routing under Bun
+- `egress-proxy.bun.test.ts` — HTTPS MITM termination + per-host cert routing under Bun, including the held-open-connection / distinct-per-host-port regression for the `address()` collapse
 - `egress-streaming.bun.test.ts` — long-lived SSE responses pipe through incrementally, and an open stream is severed (not leaked) on run teardown without parking the close deadline

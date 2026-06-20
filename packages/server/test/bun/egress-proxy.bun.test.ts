@@ -4,7 +4,7 @@ import { createServer as createHttpsServer, type Server as HttpsServer } from 'n
 import { connect as netConnect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { connect as tlsConnect } from 'node:tls';
+import { type TLSSocket, connect as tlsConnect } from 'node:tls';
 import type { PGlite } from '@electric-sql/pglite';
 import { encrypt } from '../../src/crypto/encryption';
 import type { MasterKeyManager } from '../../src/crypto/master-key';
@@ -204,7 +204,6 @@ describe('EgressProxy under Bun', () => {
 			const rec = before.get(host);
 			if (!rec) throw new Error('per-host server missing');
 			expect(rec.server.listening).toBe(true);
-			expect(rec.server.address()?.port).toBe(rec.port);
 
 			// The per-host server dies; its loopback port is now refused. A later
 			// CONNECT must rebuild and still pass strict verification — never dial
@@ -224,81 +223,57 @@ describe('EgressProxy under Bun', () => {
 		}
 	}, 30_000);
 
-	// The liveness check must not trust the `listening` flag alone — a server
-	// observed in production stayed listening=true after losing its port. The
-	// authoritative signal is `address().port === recordedPort`; a server that
-	// lost its port is dead and must be rebuilt even while its flag lies.
-	test('treats a server that lost its port as dead even when its listening flag lies', async () => {
-		const runId = `bun-zombie-${process.pid}`;
-		const host = 'zombie.hezo-egress-test';
+	// Reproduces the production collapse (run engineer/TO-6 cert-altname): a
+	// long-lived TLS connection to host A stayed open (the GitHub MCP SSE channel)
+	// while npm/curl first-touched other hosts. Under Bun, `server.listen(0)` +
+	// `server.address().port` handed every per-host server the SAME port, so the
+	// later hosts collapsed onto A's server and were served A's leaf cert —
+	// `ERR_TLS_CERT_ALTNAME_INVALID` / "no alternative certificate subject name".
+	// The existing multi-host test (above) closes each tunnel before the next host
+	// is built and never inspects ports, so it can't observe the collapse. This
+	// holds A open across the builds and asserts each host gets its own SAN AND a
+	// distinct recorded port (explicit allocation guarantees distinctness by
+	// construction; this also locks against any revert to `listen(0)`/`address()`).
+	test('builds distinct per-host servers while a long-lived connection is held open', async () => {
+		const runId = `bun-heldopen-${process.pid}`;
+		const hostA = 'held-open.hezo-egress-test';
+		const laterHosts = [
+			'bun.sh',
+			...Array.from({ length: 6 }, (_u, i) => `later-${i}.hezo-egress-test`),
+		];
 		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		let heldTls: TLSSocket | undefined;
 		try {
-			await servedSanThroughProxy(allocated.proxyPort, host, ca.cert);
-			const map = getHostServers(proxy, runId);
-			const rec = map.get(host);
-			if (!rec) throw new Error('per-host server missing');
-			const realServer = rec.server;
-			await new Promise<void>((resolve) => realServer.close(() => resolve()));
-
-			// Forge the desync: claim a listening server whose socket is gone.
-			map.set(host, {
-				port: rec.port,
-				server: {
-					listening: true,
-					address: () => null,
-					close: realServer.close.bind(realServer),
-				} as unknown as HttpsServer,
+			// 1. Open and KEEP OPEN a strict-verified TLS connection to host A.
+			const heldTunnel = await openConnectTunnel(allocated.proxyPort, hostA);
+			const heldSan = await new Promise<string>((resolve, reject) => {
+				heldTls = tlsConnect(
+					{ socket: heldTunnel, servername: hostA, ca: [ca.cert], rejectUnauthorized: true },
+					() => resolve(heldTls?.getPeerCertificate().subjectaltname ?? ''),
+				);
+				heldTls.on('error', reject);
+				heldTls.setTimeout(20_000, () => heldTls?.destroy(new Error('held handshake timed out')));
 			});
+			expect(heldSan).toContain(hostA);
 
-			const cert = await servedSanThroughProxy(allocated.proxyPort, host, ca.cert);
-			expect(cert).toContain(host);
-			expect(map.get(host)?.server.listening).toBe(true);
-		} finally {
-			await proxy.releaseRunProxy(runId);
-		}
-	}, 30_000);
+			// 2. While A is still open, first-touch B..N. Each must pass strict
+			//    verification (rejectUnauthorized) with its OWN SAN, never A's.
+			const sans = await Promise.all(
+				laterHosts.map((h) => strictHandshakeThroughProxy(allocated.proxyPort, h, ca.cert)),
+			);
+			for (let i = 0; i < laterHosts.length; i++) {
+				expect(sans[i]).toContain(laterHosts[i]);
+			}
 
-	// The cross-host leak (production: registry.npmjs.org served the SAN of
-	// api.githubcopilot.com): under Bun a stale entry can keep reporting a port
-	// that a *different* host's live server has since taken over, so two hosts map
-	// to one port and `serverOwnsPort` (which only checks the entry's own
-	// liveness) can't tell them apart — dialing the stale one serves the other
-	// host's cert. A port must belong to at most one host: a second claimant is
-	// rebuilt onto a fresh port rather than dialed.
-	test('never serves one host the cert of another that shares its recorded port', async () => {
-		const runId = `bun-crosshost-${process.pid}`;
-		const liveHost = 'live.hezo-egress-test';
-		const ghostHost = 'ghost.hezo-egress-test';
-		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
-		try {
-			// Stand up a real, live per-host server for liveHost.
-			const liveSan = await servedSanThroughProxy(allocated.proxyPort, liveHost, ca.cert);
-			expect(liveSan).toContain(liveHost);
+			// 3. Every recorded per-host port is distinct — the direct collapse signal.
 			const map = getHostServers(proxy, runId);
-			const liveRec = map.get(liveHost);
-			if (!liveRec) throw new Error('live per-host server missing');
-
-			// Forge the desync: a stale ghost entry that lies it still owns liveHost's
-			// (live) port. serverOwnsPort(ghost) passes; only port-uniqueness exposes it.
-			map.set(ghostHost, {
-				port: liveRec.port,
-				server: {
-					listening: true,
-					address: () => ({ port: liveRec.port }),
-					close: liveRec.server.close.bind(liveRec.server),
-				} as unknown as HttpsServer,
-			});
-
-			// ghostHost must get ITS OWN cert, never liveHost's leaf.
-			const ghostSan = await servedSanThroughProxy(allocated.proxyPort, ghostHost, ca.cert);
-			expect(ghostSan).toContain(ghostHost);
-			expect(ghostSan).not.toContain(liveHost);
-			// ghost was rebuilt onto a port distinct from liveHost's.
-			expect(map.get(ghostHost)?.port).not.toBe(liveRec.port);
-			// liveHost still serves its own cert afterward.
-			const liveAgain = await servedSanThroughProxy(allocated.proxyPort, liveHost, ca.cert);
-			expect(liveAgain).toContain(liveHost);
+			const ports = [hostA, ...laterHosts]
+				.map((h) => map.get(h)?.port)
+				.filter((p): p is number => p != null);
+			expect(ports.length).toBe(laterHosts.length + 1);
+			expect(new Set(ports).size).toBe(ports.length);
 		} finally {
+			heldTls?.destroy();
 			await proxy.releaseRunProxy(runId);
 		}
 	}, 30_000);
@@ -442,33 +417,6 @@ async function fetchHttpsThroughProxy(
 		});
 		tls.on('error', reject);
 		tls.setTimeout(20_000, () => tls.destroy(new Error('https fetch timed out')));
-	});
-}
-
-// Open a CONNECT tunnel for `targetHost` and return the served leaf's
-// subjectAltName. The SAN — not the CN — is what real clients (curl, OpenSSL,
-// Node with verification on) check, and mockttp sets CN=host unconditionally,
-// so asserting on the CN would pass even when the proxy serves another host's
-// cert. `rejectUnauthorized:false` so a wrong cert still completes the
-// handshake and the caller can inspect which SAN was actually served. No
-// upstream is contacted, so the target host need not resolve.
-async function servedSanThroughProxy(
-	proxyPort: number,
-	targetHost: string,
-	caCert: string,
-): Promise<string> {
-	const tunnel = await openConnectTunnel(proxyPort, targetHost);
-	return new Promise<string>((resolve, reject) => {
-		const tls = tlsConnect(
-			{ socket: tunnel, servername: targetHost, ca: [caCert], rejectUnauthorized: false },
-			() => {
-				const san = tls.getPeerCertificate().subjectaltname ?? '';
-				tls.end();
-				resolve(san);
-			},
-		);
-		tls.on('error', reject);
-		tls.setTimeout(20_000, () => tls.destroy(new Error('tls handshake timed out')));
 	});
 }
 

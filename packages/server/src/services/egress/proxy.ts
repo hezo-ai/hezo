@@ -22,7 +22,11 @@ import { closeServerWithDeadline } from '../../lib/net';
 import { logger } from '../../logger';
 import { type EgressAuditEvent, recordEgressEvent } from './audit';
 import type { HezoCA } from './ca';
-import { PortAllocator } from './port-allocator';
+import {
+	EGRESS_HOST_PORT_RANGE_END,
+	EGRESS_HOST_PORT_RANGE_START,
+	PortAllocator,
+} from './port-allocator';
 import {
 	loadAllSecrets,
 	PLACEHOLDER_PROBE_REGEX,
@@ -64,6 +68,10 @@ export interface EgressProxyDeps {
 	masterKeyManager: MasterKeyManager;
 	ca: HezoCA;
 	portAllocator?: PortAllocator;
+	/** Allocator for per-host MITM server loopback ports (range [30000,39999]).
+	 * Separate from `portAllocator` (front-proxy range [20000,29999]) so per-host
+	 * churn never contends with front-proxy binds. Injectable for tests. */
+	hostPortAllocator?: PortAllocator;
 	proxyHost?: string;
 	/** Interface the per-run proxy binds to. Defaults to `127.0.0.1`
 	 * (loopback-only — agent containers reach it via `host.docker.internal`,
@@ -94,15 +102,22 @@ export interface AllocatedRunProxy {
 /** How many ports to try binding before giving up allocating a run's proxy. */
 const EGRESS_BIND_ATTEMPTS = 5;
 
+/** How many ports to try binding before giving up on a per-host MITM server. */
+const HOST_BIND_ATTEMPTS = 5;
+
 export class EgressProxy {
 	private readonly runs = new Map<string, RunProxyInstance>();
 	private readonly portAllocator: PortAllocator;
+	private readonly hostPortAllocator: PortAllocator;
 	private readonly proxyHost: string;
 	private readonly proxyBindHost: string;
 	private mintCa: Promise<CA> | null = null;
 
 	constructor(private readonly deps: EgressProxyDeps) {
 		this.portAllocator = deps.portAllocator ?? new PortAllocator();
+		this.hostPortAllocator =
+			deps.hostPortAllocator ??
+			new PortAllocator(EGRESS_HOST_PORT_RANGE_START, EGRESS_HOST_PORT_RANGE_END);
 		this.proxyHost = deps.proxyHost ?? PROXY_HOST;
 		this.proxyBindHost = deps.proxyBindHost ?? PROXY_BIND_HOST;
 	}
@@ -147,6 +162,7 @@ export class EgressProxy {
 					masterKeyManager: this.deps.masterKeyManager,
 					getMintCa: () => this.getMintCa(),
 					upstreamTrustedCAs: this.deps.extraUpstreamTrustedCAs,
+					hostPortAllocator: this.hostPortAllocator,
 				});
 
 				try {
@@ -205,6 +221,7 @@ interface RunProxyConfig {
 	masterKeyManager: MasterKeyManager;
 	getMintCa: () => Promise<CA>;
 	upstreamTrustedCAs?: string | string[];
+	hostPortAllocator: PortAllocator;
 }
 
 /** A per-host internal TLS-terminating server. The agent's CONNECT socket is
@@ -364,7 +381,8 @@ class RunProxyInstance {
 		this.upstreamAgent.destroy();
 
 		const closables: Array<Promise<void>> = [];
-		for (const [host, { server }] of this.hostServers.entries()) {
+		for (const [host, { server, port }] of this.hostServers.entries()) {
+			this.cfg.hostPortAllocator.release(port);
 			closables.push(closeServer(server, `${this.cfg.scope.label}/${host}`));
 		}
 		this.hostServers.clear();
@@ -395,14 +413,14 @@ class RunProxyInstance {
 	}
 
 	/** Bridge a CONNECT tunnel into the host's per-host TLS server. The dial
-	 * re-validates port ownership synchronously and rebuilds a stale server,
-	 * then connects with no further `await` — only synchronous code separates the
-	 * ownership check from the `netConnect`, so a concurrently-built server can
-	 * never recycle the freed ephemeral port in between and route the tunnel to
-	 * another host's leaf cert. */
+	 * re-checks liveness synchronously and rebuilds a dead server, then connects
+	 * with no further `await` — so a server that died after lookup is never dialed.
+	 * The dialed port is the one this host's server was explicitly bound to (never
+	 * read back from `address()`), so the tunnel always reaches that host's leaf
+	 * cert. */
 	private async bridgeConnect(host: string, client: Socket, head: Buffer): Promise<void> {
 		let rec = await this.ensureHostServer(host);
-		while (!this.closed && !serverOwnsPort(rec)) {
+		if (!this.closed && !rec.server.listening) {
 			rec = await this.buildHostServer(host);
 		}
 		if (this.closed) {
@@ -432,17 +450,15 @@ class RunProxyInstance {
 	}
 
 	/** Return a live per-host TLS server, rebuilding it if the cached one has
-	 * stopped owning its port. Concurrent first-touches for the same host share
-	 * one in-flight build so the run never spins up duplicate servers. */
+	 * stopped listening. Concurrent first-touches for the same host share one
+	 * in-flight build so the run never spins up duplicate servers. */
 	private ensureHostServer(host: string): Promise<HostServer> {
 		const existing = this.hostServers.get(host);
-		// Reuse only a live entry that is the *sole* claimant of its port. Under Bun
-		// a stale entry can keep reporting a port that another host's live server has
-		// since taken over (`address()` lies), so `serverOwnsPort` alone can't tell a
-		// real owner from a zombie pointing at someone else's port — dialing it would
-		// serve the other host's leaf cert. Requiring unique ownership forces a
-		// rebuild onto a fresh, exclusive port instead.
-		if (existing && serverOwnsPort(existing) && this.portUniquelyOwnedBy(host, existing.port)) {
+		// Liveness is `server.listening` alone. Each per-host server owns an
+		// explicitly allocated port, so a live entry can never be a zombie pointing
+		// at another host's port (the `address()`-lies failure mode that needed the
+		// old uniqueness check). A closed server is rebuilt onto a fresh port.
+		if (existing?.server.listening) {
 			return Promise.resolve(existing);
 		}
 
@@ -461,59 +477,80 @@ class RunProxyInstance {
 		const stale = this.hostServers.get(host);
 		if (stale) {
 			this.hostServers.delete(host);
+			this.cfg.hostPortAllocator.release(stale.port);
 			void closeServer(stale.server, `${this.cfg.scope.label}/${host}`);
 		}
 
 		const ca = await this.cfg.getMintCa();
 		const leaf = await ca.generateCertificate(host);
-		const server = createHttpsServer({ key: leaf.key, cert: leaf.cert }, (req, res) => {
-			this.forward(true, host, req, res).catch((e: Error) => this.onHandlerError(res, e));
-		});
-		server.on('connection', (socket) => this.trackSocket(socket as Socket, `perhost:${host}`));
-		server.on('clientError', (_err, socket) => socket.destroy());
-		server.on('error', (err) => {
-			log.warn('egress per-host server error', {
-				run: ref(this.cfg.scope.label, this.cfg.runId),
-				host,
-				error: err.message,
-			});
-		});
 
-		await new Promise<void>((resolve, reject) => {
-			const onErr = (err: Error) => reject(err);
-			server.once('error', onErr);
-			server.listen(0, '127.0.0.1', () => {
-				server.removeListener('error', onErr);
-				resolve();
-			});
-		});
+		// Bind to an EXPLICITLY allocated loopback port and treat that port as
+		// authoritative. `server.listen(0)` + `server.address().port` is unreliable
+		// under Bun — it has reported the same port for every per-host server,
+		// collapsing all hosts onto one and serving the wrong leaf cert
+		// (ERR_TLS_CERT_ALTNAME_INVALID). The port must be one we chose, never read
+		// back from `address()`. Allocate-and-bind with retry since a probed-free
+		// port can still lose the bind race (mirrors the front-server allocation).
+		const reserved: number[] = [];
+		let lastReason = 'no bindable loopback port for per-host server';
+		try {
+			for (let attempt = 0; attempt < HOST_BIND_ATTEMPTS; attempt++) {
+				// No agentId: per-host ports need no per-agent stickiness, and passing
+				// it would pollute the front proxy's lastForAgent map.
+				const port = await this.cfg.hostPortAllocator.allocate();
+				reserved.push(port);
 
-		if (this.closed) {
-			await closeServer(server, `${this.cfg.scope.label}/${host}`);
-			throw new Error('proxy closed');
+				const server = createHttpsServer({ key: leaf.key, cert: leaf.cert }, (req, res) => {
+					this.forward(true, host, req, res).catch((e: Error) => this.onHandlerError(res, e));
+				});
+				server.on('connection', (socket) => this.trackSocket(socket as Socket, `perhost:${host}`));
+				server.on('clientError', (_err, socket) => socket.destroy());
+
+				try {
+					await new Promise<void>((resolve, reject) => {
+						const onErr = (err: Error) => reject(err);
+						server.once('error', onErr);
+						server.listen(port, '127.0.0.1', () => {
+							server.removeListener('error', onErr);
+							resolve();
+						});
+					});
+				} catch (e) {
+					// Lost the bind race; keep this port reserved so the next attempt
+					// lands elsewhere, and try another port.
+					lastReason = (e as Error).message;
+					server.close();
+					continue;
+				}
+
+				// Bound — attach the long-lived error logger now (a pre-bind error
+				// rejects the listen promise above instead of being logged here).
+				server.on('error', (err) => {
+					log.warn('egress per-host server error', {
+						run: ref(this.cfg.scope.label, this.cfg.runId),
+						host,
+						error: err.message,
+					});
+				});
+
+				if (this.closed) {
+					for (const p of reserved) this.cfg.hostPortAllocator.release(p);
+					await closeServer(server, `${this.cfg.scope.label}/${host}`);
+					throw new Error('proxy closed');
+				}
+
+				const rec: HostServer = { server, port };
+				this.hostServers.set(host, rec);
+				for (const p of reserved) {
+					if (p !== port) this.cfg.hostPortAllocator.release(p);
+				}
+				return rec;
+			}
+		} catch (e) {
+			lastReason = (e as Error).message;
 		}
-
-		const port = (server.address() as { port: number }).port;
-		// The OS just handed this port to the new server, so any other host entry
-		// still claiming it lost it and is stale — drop those entries so no two
-		// hosts ever map to one port (the cross-host wrong-cert invariant). The
-		// orphaned server is already off the port; let it be GC'd rather than
-		// risk closing a live server on a mis-reported port.
-		for (const [h, r] of this.hostServers) {
-			if (h !== host && r.port === port) this.hostServers.delete(h);
-		}
-		const rec: HostServer = { server, port };
-		this.hostServers.set(host, rec);
-		return rec;
-	}
-
-	/** Whether `host` is the only entry claiming `port`. A port belongs to exactly
-	 * one per-host server; a second claimant is a stale entry that lost the port. */
-	private portUniquelyOwnedBy(host: string, port: number): boolean {
-		for (const [h, r] of this.hostServers) {
-			if (h !== host && r.port === port) return false;
-		}
-		return true;
+		for (const p of reserved) this.cfg.hostPortAllocator.release(p);
+		throw new Error(`egress per-host server bind failed for ${host}: ${lastReason}`);
 	}
 
 	/** Scan the decrypted (or plain) request for secret placeholders, substitute
@@ -756,16 +793,6 @@ function resolveTarget(
 	} catch {
 		return { host: (req.headers.host ?? '').split(':')[0] ?? '', port: 80, path: rawUrl };
 	}
-}
-
-/** Whether the server still owns its recorded port. `address()` returns null
- * once a server closes and two sockets can never share one port, so this is the
- * authoritative liveness signal — a closed or recycled server fails it and is
- * rebuilt on the next request. */
-function serverOwnsPort(rec: HostServer): boolean {
-	if (!rec.server.listening) return false;
-	const addr = rec.server.address();
-	return typeof addr === 'object' && addr !== null && addr.port === rec.port;
 }
 
 function closeServer(server: HttpServer | HttpsServer, label: string): Promise<void> {

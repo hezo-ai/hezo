@@ -3,6 +3,12 @@ import { createServer } from 'node:net';
 export const EGRESS_PORT_RANGE_START = 20000;
 export const EGRESS_PORT_RANGE_END = 29999;
 
+// Per-host MITM servers get their own loopback range, separate from the
+// front-proxy range above, so per-host churn never contends with front-proxy
+// bind attempts and the two allocators never hand out the same port.
+export const EGRESS_HOST_PORT_RANGE_START = 30000;
+export const EGRESS_HOST_PORT_RANGE_END = 39999;
+
 /**
  * Hand out loopback TCP ports for per-run egress proxies. The allocator
  * remembers the last-used port per `agentId` so debugging sessions land on
