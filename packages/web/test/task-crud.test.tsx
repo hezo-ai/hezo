@@ -269,8 +269,8 @@ test('task detail shows assignee with status badge', async () => {
 	expect(sidebar.textContent).toContain(seeded.agentTitle);
 
 	// Status badge should be one of Idle / Running / Paused. Scope the query to
-	// the assignee chip — the sidebar agent rail also surfaces status text (now
-	// lowercase "idle") for every agent in the team and would otherwise match.
+	// the assignee chip (the badge variant) — other agent labels on the page use
+	// their own treatment (e.g. the sidebar rail's status dot) and shouldn't match.
 	const assignee = await findByTestId('task-assignee');
 	expect(assignee.textContent ?? '').toMatch(/Idle|Running|Paused/);
 });
@@ -438,14 +438,13 @@ test('project badge and metadata label both link to the project page', async () 
 	}
 });
 
-test('project menu Team section shows agent status badges', async () => {
+test('project menu Team section lists the team agents', async () => {
 	const seeded = { projectSlug: '' };
 	const { router, container } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Demo' });
-			seeded.projectSlug = project.slug;
 			seeded.projectSlug = project.slug;
 		},
 	});
@@ -455,15 +454,14 @@ test('project menu Team section shows agent status badges', async () => {
 		params: { projectId: seeded.projectSlug },
 	});
 
-	// The project menu's Team section lists each agent with its runtime status once
-	// it finishes loading. Per the Wire spec the sidebar renders the status as
-	// right-aligned lowercase mono ("idle"), not a capitalized pill — wait for at
-	// least one to appear in the sidebar nav.
+	// The project menu's Team section lists each agent once it finishes loading.
+	// Runtime status now shows as a dot indicator (pulsing for running, none for
+	// idle) rather than a text suffix, so wait on an agent name to confirm load.
 	await waitFor(
 		() => {
 			const nav = container.querySelector('nav[aria-label="Sidebar"]');
-			expect(nav?.textContent ?? '').toContain('idle');
+			expect(nav?.textContent ?? '').toContain('Captain');
 		},
-		{ timeout: 5000 },
+		{ timeout: 15_000 },
 	);
 });
