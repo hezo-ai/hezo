@@ -16,10 +16,11 @@ test('home "New project" opens the create-project-with-team dialog (type picker)
 		},
 	});
 
-	// The projects section renders once the team has a project. Scope to it — the
-	// team rail also exposes a "New project" affordance.
-	const section = await findByTestId('home-projects-list', undefined, { timeout: 15_000 });
-	await user.click(within(section).getByRole('button', { name: 'New project' }));
+	// The dashboard's projects section renders once the team has a project; its
+	// own "New project" button is testid-scoped so the team rail's affordance
+	// (same label) can't match.
+	const section = await findByTestId('home-projects', undefined, { timeout: 15_000 });
+	await user.click(within(section).getByTestId('home-new-project'));
 
 	// The project-with-team dialog (not the old team-scoped one) has a type picker.
 	await screen.findByTestId('create-project-submit');

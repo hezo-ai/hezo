@@ -143,7 +143,15 @@ projectsRoutes.get('/projects', async (c) => {
 	const params: unknown[] = [...ts.values];
 	const base = `SELECT p.*, t.slug AS team_slug, t.name AS team_name,
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
-       (SELECT count(*) FROM tasks i WHERE i.project_id = p.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count
+       (SELECT count(*) FROM tasks i WHERE i.project_id = p.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count,
+       (SELECT count(*) FROM member_agents ma JOIN members mm ON mm.id = ma.id
+          WHERE mm.team_id = p.team_id AND ma.runtime_status = 'active'::agent_runtime_status)::int
+          AS running_agents_count,
+       (SELECT COALESCE(sum(ce.amount_cents), 0) FROM cost_entries ce
+          WHERE ce.project_id = p.id AND ce.created_at >= date_trunc('day', now()))::int
+          AS today_spend_cents,
+       COALESCE((SELECT max(i3.updated_at) FROM tasks i3 WHERE i3.project_id = p.id), p.created_at)
+          AS last_activity_at
      FROM projects p
      JOIN teams t ON t.id = p.team_id`;
 
