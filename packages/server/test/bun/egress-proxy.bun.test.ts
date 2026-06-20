@@ -88,6 +88,44 @@ describe('EgressProxy under Bun', () => {
 		}
 	}, 30_000);
 
+	// A proxy must not relay hop-by-hop headers (RFC 7230 §6.1) to the upstream.
+	// Relaying the client's `connection: keep-alive` / `keep-alive` / `upgrade`
+	// lets the client dictate the upstream socket's lifetime against the proxy's
+	// own connection management — a contributor to upstream sockets lingering past
+	// the run. Normal end-to-end headers (and secret substitution) still pass.
+	test('does not relay hop-by-hop headers to the upstream', async () => {
+		const upstream = await startHttpsUpstream(ca);
+		const upstreamPort = (upstream.address() as { port: number }).port;
+		const runId = `bun-run-${process.pid}-hopbyhop`;
+		await insertSecret('BUN_HOPBYHOP', 'real-value', ['localhost']);
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const res = await fetchHttpsThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				targetHost: 'localhost',
+				targetPort: upstreamPort,
+				path: '/echo',
+				headers: {
+					authorization: 'Bearer __HEZO_SECRET_BUN_HOPBYHOP__',
+					'keep-alive': 'timeout=5, max=1000',
+				},
+				caCert: ca.cert,
+			});
+			expect(res.status).toBe(200);
+			const received = httpsHits.at(-1) ?? {};
+			// The client's hop-by-hop `keep-alive` header must not reach the upstream
+			// (the proxy's own client never adds this header, so its presence would
+			// mean the client's copy was relayed).
+			expect(received['keep-alive']).toBeUndefined();
+			// End-to-end headers still pass, and the secret is still substituted.
+			expect(received.authorization).toBe('Bearer real-value');
+		} finally {
+			await proxy.releaseRunProxy(runId);
+			await new Promise<void>((resolve) => upstream.close(() => resolve()));
+		}
+	}, 30_000);
+
 	test('handles concurrent run allocate/connect/release churn without hanging', async () => {
 		const upstream = await startHttpsUpstream(ca);
 		const upstreamPort = (upstream.address() as { port: number }).port;
@@ -222,6 +260,87 @@ describe('EgressProxy under Bun', () => {
 		} finally {
 			await proxy.releaseRunProxy(runId);
 		}
+	}, 30_000);
+
+	// The cross-host leak (production: registry.npmjs.org served the SAN of
+	// api.githubcopilot.com): under Bun a stale entry can keep reporting a port
+	// that a *different* host's live server has since taken over, so two hosts map
+	// to one port and `serverOwnsPort` (which only checks the entry's own
+	// liveness) can't tell them apart — dialing the stale one serves the other
+	// host's cert. A port must belong to at most one host: a second claimant is
+	// rebuilt onto a fresh port rather than dialed.
+	test('never serves one host the cert of another that shares its recorded port', async () => {
+		const runId = `bun-crosshost-${process.pid}`;
+		const liveHost = 'live.hezo-egress-test';
+		const ghostHost = 'ghost.hezo-egress-test';
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			// Stand up a real, live per-host server for liveHost.
+			const liveSan = await servedSanThroughProxy(allocated.proxyPort, liveHost, ca.cert);
+			expect(liveSan).toContain(liveHost);
+			const map = getHostServers(proxy, runId);
+			const liveRec = map.get(liveHost);
+			if (!liveRec) throw new Error('live per-host server missing');
+
+			// Forge the desync: a stale ghost entry that lies it still owns liveHost's
+			// (live) port. serverOwnsPort(ghost) passes; only port-uniqueness exposes it.
+			map.set(ghostHost, {
+				port: liveRec.port,
+				server: {
+					listening: true,
+					address: () => ({ port: liveRec.port }),
+					close: liveRec.server.close.bind(liveRec.server),
+				} as unknown as HttpsServer,
+			});
+
+			// ghostHost must get ITS OWN cert, never liveHost's leaf.
+			const ghostSan = await servedSanThroughProxy(allocated.proxyPort, ghostHost, ca.cert);
+			expect(ghostSan).toContain(ghostHost);
+			expect(ghostSan).not.toContain(liveHost);
+			// ghost was rebuilt onto a port distinct from liveHost's.
+			expect(map.get(ghostHost)?.port).not.toBe(liveRec.port);
+			// liveHost still serves its own cert afterward.
+			const liveAgain = await servedSanThroughProxy(allocated.proxyPort, liveHost, ca.cert);
+			expect(liveAgain).toContain(liveHost);
+		} finally {
+			await proxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
+	// Upstream connection policy: each run owns a keep-alive-OFF agent rather than
+	// sharing the process-global pool. Keep-alive off means no upstream socket is
+	// parked idle in a pool to outlive the run (idle pooled sockets can't be
+	// reliably closed under Bun), and per-run ownership keeps one run's upstream
+	// connections from being shared with another's. Asserted at the config level —
+	// deterministic, unlike socket-close timing under Bun.
+	test('gives each run its own keep-alive-off upstream agent', async () => {
+		const idA = `bun-agent-a-${process.pid}`;
+		const idB = `bun-agent-b-${process.pid}`;
+		const a = await proxy.allocateRunProxy(idA, { teamId, agentId });
+		const b = await proxy.allocateRunProxy(idB, { teamId, agentId });
+		try {
+			const runs = (
+				proxy as unknown as {
+					runs: Map<
+						string,
+						{ upstreamAgent: { keepAlive?: boolean; options?: { keepAlive?: boolean } } }
+					>;
+				}
+			).runs;
+			const agentA = runs.get(idA)?.upstreamAgent;
+			const agentB = runs.get(idB)?.upstreamAgent;
+			if (!agentA || !agentB) throw new Error('per-run upstream agent missing');
+			// Per-run isolation — not one shared/global agent.
+			expect(agentA).not.toBe(agentB);
+			// Keep-alive disabled (Node exposes it as `keepAlive`; the options bag
+			// carries what was passed) so upstream sockets are never pooled idle.
+			const keepAlive = agentA.keepAlive ?? agentA.options?.keepAlive;
+			expect(keepAlive).toBe(false);
+		} finally {
+			await proxy.releaseRunProxy(idA);
+			await proxy.releaseRunProxy(idB);
+		}
+		expect(a.proxyPort).not.toBe(b.proxyPort);
 	}, 30_000);
 });
 

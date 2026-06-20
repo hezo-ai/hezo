@@ -33,6 +33,18 @@ import {
 
 const log = logger.child('egress-proxy');
 
+/** When set, the proxy emits per-connection lifecycle traces (socket open/close/
+ * error/timeout per leg, plus the host→dialed-port→owner of each CONNECT). Off by
+ * default; the only reliable way to pin Bun's connection-accounting divergences,
+ * which Node/vitest never reproduce. Enable in a real run with `HEZO_EGRESS_DEBUG=1`. */
+const EGRESS_DEBUG = !!process.env.HEZO_EGRESS_DEBUG;
+
+/** Connection-management headers scoped to a single transport hop, which a proxy
+ * must not relay to the upstream (RFC 7230 §6.1). `proxy-*` are dropped
+ * separately. Transfer-encoding / content-length are intentionally not here — the
+ * runtime recomputes body framing for the re-issued request. */
+const HOP_BY_HOP_HEADERS = new Set(['connection', 'keep-alive', 'upgrade']);
+
 const PROXY_HOST = 'host.docker.internal';
 const PROXY_BIND_HOST = '127.0.0.1';
 
@@ -87,16 +99,12 @@ export class EgressProxy {
 	private readonly portAllocator: PortAllocator;
 	private readonly proxyHost: string;
 	private readonly proxyBindHost: string;
-	private readonly upstreamHttpsAgent?: HttpsAgent;
 	private mintCa: Promise<CA> | null = null;
 
 	constructor(private readonly deps: EgressProxyDeps) {
 		this.portAllocator = deps.portAllocator ?? new PortAllocator();
 		this.proxyHost = deps.proxyHost ?? PROXY_HOST;
 		this.proxyBindHost = deps.proxyBindHost ?? PROXY_BIND_HOST;
-		this.upstreamHttpsAgent = deps.extraUpstreamTrustedCAs
-			? new HttpsAgent({ keepAlive: true, ca: deps.extraUpstreamTrustedCAs })
-			: undefined;
 	}
 
 	get caCertPath(): string {
@@ -138,7 +146,7 @@ export class EgressProxy {
 					db: this.deps.db,
 					masterKeyManager: this.deps.masterKeyManager,
 					getMintCa: () => this.getMintCa(),
-					upstreamHttpsAgent: this.upstreamHttpsAgent,
+					upstreamTrustedCAs: this.deps.extraUpstreamTrustedCAs,
 				});
 
 				try {
@@ -196,7 +204,7 @@ interface RunProxyConfig {
 	db: PGlite;
 	masterKeyManager: MasterKeyManager;
 	getMintCa: () => Promise<CA>;
-	upstreamHttpsAgent?: HttpsAgent;
+	upstreamTrustedCAs?: string | string[];
 }
 
 /** A per-host internal TLS-terminating server. The agent's CONNECT socket is
@@ -238,17 +246,54 @@ class RunProxyInstance {
 	 * upstream connection (the SSE channel to api.githubcopilot.com) leaks unless
 	 * the request itself is aborted on teardown. */
 	private readonly liveUpstreams = new Set<ClientRequest>();
+	/** This run's own agent for proxy→upstream HTTPS, with keep-alive OFF and owned
+	 * per run rather than shared with the process-global agent. Keep-alive off means
+	 * an upstream socket is never parked idle in a pool — it closes when its
+	 * response ends — so only genuinely in-flight requests (aborted via
+	 * `liveUpstreams`) hold a socket at teardown. Idle pooled sockets can't be
+	 * reliably closed under Bun (a pooled socket's handle no longer maps to the live
+	 * connection), so not pooling them is what keeps them from outliving the run and
+	 * accumulating against a remote MCP host. */
+	private readonly upstreamAgent: HttpsAgent;
 
-	constructor(private readonly cfg: RunProxyConfig) {}
+	constructor(private readonly cfg: RunProxyConfig) {
+		this.upstreamAgent = new HttpsAgent({
+			keepAlive: false,
+			...(cfg.upstreamTrustedCAs ? { ca: cfg.upstreamTrustedCAs } : {}),
+		});
+	}
 
-	/** Register a socket for forced teardown; auto-untracks when it closes. */
-	private trackSocket(sock: Socket): void {
+	/** Debug-gated lifecycle logging. Enable with `HEZO_EGRESS_DEBUG=1` to trace
+	 * which connection leg dies and when. */
+	private dbg(msg: string, meta: Record<string, unknown> = {}): void {
+		if (!EGRESS_DEBUG) return;
+		log.info(`[egress-dbg] ${msg}`, {
+			run: ref(this.cfg.scope.label, this.cfg.runId),
+			...meta,
+		});
+	}
+
+	/** Register a socket for forced teardown; auto-untracks when it closes. The
+	 * optional `leg` names which hop it is (agent CONNECT, per-host accept, loopback
+	 * bridge, upstream) so debug traces can attribute a death to the right side. */
+	private trackSocket(sock: Socket, leg = 'socket'): void {
 		if (this.closed || sock.destroyed) {
 			sock.destroy();
 			return;
 		}
 		this.liveSockets.add(sock);
 		sock.once('close', () => this.liveSockets.delete(sock));
+		if (EGRESS_DEBUG) {
+			const at = Date.now();
+			this.dbg('socket open', { leg, local: sock.localPort, remote: sock.remotePort });
+			sock.on('timeout', () => this.dbg('socket timeout event', { leg, ageMs: Date.now() - at }));
+			sock.once('error', (e: Error) =>
+				this.dbg('socket error', { leg, ageMs: Date.now() - at, error: e.message }),
+			);
+			sock.once('close', (hadError: boolean) =>
+				this.dbg('socket close', { leg, ageMs: Date.now() - at, hadError }),
+			);
+		}
 	}
 
 	/** Register an upstream request for forced abort; auto-untracks on settle.
@@ -264,7 +309,7 @@ class RunProxyInstance {
 		const cleanup = () => this.liveUpstreams.delete(reqOut);
 		reqOut.once('close', cleanup);
 		reqOut.once('error', cleanup);
-		reqOut.on('socket', (sock) => this.trackSocket(sock));
+		reqOut.on('socket', (sock) => this.trackSocket(sock, 'upstream'));
 	}
 
 	get port(): number {
@@ -281,7 +326,7 @@ class RunProxyInstance {
 		// Track every accepted socket (plain-request and CONNECT alike) so close
 		// can sever it — a hijacked CONNECT socket leaves the server's own
 		// connection list under Bun.
-		front.on('connection', (socket) => this.trackSocket(socket as Socket));
+		front.on('connection', (socket) => this.trackSocket(socket as Socket, 'agent-front'));
 		front.on('request', (req, res) => {
 			this.forward(false, null, req, res).catch((e: Error) => this.onHandlerError(res, e));
 		});
@@ -315,6 +360,8 @@ class RunProxyInstance {
 		this.liveSockets.clear();
 		for (const up of this.liveUpstreams) up.destroy();
 		this.liveUpstreams.clear();
+		// Tear down the run's upstream agent so nothing it holds outlives the run.
+		this.upstreamAgent.destroy();
 
 		const closables: Array<Promise<void>> = [];
 		for (const [host, { server }] of this.hostServers.entries()) {
@@ -362,8 +409,17 @@ class RunProxyInstance {
 			client.destroy();
 			return;
 		}
+		if (EGRESS_DEBUG) {
+			// The cross-host cert leak (a host served another host's leaf cert) shows
+			// up here: the port about to be dialed must be owned by THIS host's server
+			// and no other. Log the owner(s) so a mis-route is caught red-handed.
+			const owners = [...this.hostServers.entries()]
+				.filter(([, r]) => r.port === rec.port)
+				.map(([h]) => h);
+			this.dbg('connect dial', { host, dialPort: rec.port, owners });
+		}
 		const up = netConnect({ host: '127.0.0.1', port: rec.port }, () => {
-			this.trackSocket(up);
+			this.trackSocket(up, `bridge:${host}`);
 			client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
 			if (head?.length) up.write(head);
 			client.pipe(up);
@@ -380,7 +436,15 @@ class RunProxyInstance {
 	 * one in-flight build so the run never spins up duplicate servers. */
 	private ensureHostServer(host: string): Promise<HostServer> {
 		const existing = this.hostServers.get(host);
-		if (existing && serverOwnsPort(existing)) return Promise.resolve(existing);
+		// Reuse only a live entry that is the *sole* claimant of its port. Under Bun
+		// a stale entry can keep reporting a port that another host's live server has
+		// since taken over (`address()` lies), so `serverOwnsPort` alone can't tell a
+		// real owner from a zombie pointing at someone else's port — dialing it would
+		// serve the other host's leaf cert. Requiring unique ownership forces a
+		// rebuild onto a fresh, exclusive port instead.
+		if (existing && serverOwnsPort(existing) && this.portUniquelyOwnedBy(host, existing.port)) {
+			return Promise.resolve(existing);
+		}
 
 		const pending = this.pendingHostServers.get(host);
 		if (pending) return pending;
@@ -405,7 +469,7 @@ class RunProxyInstance {
 		const server = createHttpsServer({ key: leaf.key, cert: leaf.cert }, (req, res) => {
 			this.forward(true, host, req, res).catch((e: Error) => this.onHandlerError(res, e));
 		});
-		server.on('connection', (socket) => this.trackSocket(socket as Socket));
+		server.on('connection', (socket) => this.trackSocket(socket as Socket, `perhost:${host}`));
 		server.on('clientError', (_err, socket) => socket.destroy());
 		server.on('error', (err) => {
 			log.warn('egress per-host server error', {
@@ -429,9 +493,27 @@ class RunProxyInstance {
 			throw new Error('proxy closed');
 		}
 
-		const rec: HostServer = { server, port: (server.address() as { port: number }).port };
+		const port = (server.address() as { port: number }).port;
+		// The OS just handed this port to the new server, so any other host entry
+		// still claiming it lost it and is stale — drop those entries so no two
+		// hosts ever map to one port (the cross-host wrong-cert invariant). The
+		// orphaned server is already off the port; let it be GC'd rather than
+		// risk closing a live server on a mis-reported port.
+		for (const [h, r] of this.hostServers) {
+			if (h !== host && r.port === port) this.hostServers.delete(h);
+		}
+		const rec: HostServer = { server, port };
 		this.hostServers.set(host, rec);
 		return rec;
+	}
+
+	/** Whether `host` is the only entry claiming `port`. A port belongs to exactly
+	 * one per-host server; a second claimant is a stale entry that lost the port. */
+	private portUniquelyOwnedBy(host: string, port: number): boolean {
+		for (const [h, r] of this.hostServers) {
+			if (h !== host && r.port === port) return false;
+		}
+		return true;
 	}
 
 	/** Scan the decrypted (or plain) request for secret placeholders, substitute
@@ -450,8 +532,12 @@ class RunProxyInstance {
 		const method = req.method ?? 'GET';
 		const headers: Record<string, string | string[] | undefined> = {};
 		for (const [name, value] of Object.entries(req.headers)) {
-			// Strip hop-by-hop proxy headers; they must not reach the upstream.
-			if (/^proxy-/i.test(name)) continue;
+			// Strip hop-by-hop headers (RFC 7230 §6.1) and all proxy-* headers: they
+			// describe the agent↔proxy hop, not the proxy↔upstream one, and a proxy
+			// must not relay them. Relaying the client's `connection: keep-alive` in
+			// particular tells the upstream to hold the socket open on the client's
+			// behalf, against the proxy's own connection management.
+			if (/^proxy-/i.test(name) || HOP_BY_HOP_HEADERS.has(name.toLowerCase())) continue;
 			headers[name] = value;
 		}
 
@@ -540,7 +626,7 @@ class RunProxyInstance {
 				method,
 				path,
 				headers,
-				...(isSSL ? { servername: host, agent: this.cfg.upstreamHttpsAgent } : {}),
+				...(isSSL ? { servername: host, agent: this.upstreamAgent } : {}),
 			},
 			(upstreamRes) => {
 				res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
