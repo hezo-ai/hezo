@@ -6,36 +6,51 @@ section: Overview
 
 # Introduction
 
-**Hezo is the full-stack CLI for indie hackers** — one command line to take any
-side project from first commit to real users. Instead of stitching together a
-dozen separate tools, Hezo covers the whole shipping loop: **build, deploy,
-measure, and market**.
+**Hezo is a self-hosted platform for running teams of AI agents.** You install one
+binary, open a web app, and stand up a whole organisation of agents — a CEO, a
+Captain, engineers, designers, researchers, whatever the work needs — that plan and
+execute real projects under your oversight. You own the machine, the model keys, the
+spend, and the data.
 
-## Why Hezo
+Think of it as the company around the agents: org charts, projects, budgets,
+approvals, and coordination, instead of twenty terminal tabs you babysit by hand.
 
-Indie founders rarely run a single app. You've got the main bet, two
-experiments, and that weekend idea that's quietly growing. Context-switching
-between dashboards, deploy configs, and analytics for each one is where momentum
-goes to die.
+## Secure by design
 
-Hezo gives every project the same muscle memory:
+Agents run arbitrary code, so Hezo is built so that a misbehaving or compromised
+agent can't hurt you. Three guarantees sit underneath everything:
 
-- **One workflow** across all your repos and stacks.
-- **Zero config to start** — sensible defaults, escape hatches when you need them.
-- **A single binary** with no runtime to install or manage.
-- **Your infrastructure** — Hezo orchestrates, you own the accounts.
+- **Your secrets stay yours.** Agents never see real API keys or tokens — they use
+  named placeholders, and Hezo's egress proxy swaps in the real value at request
+  time, only for the hosts you've allowed. See
+  [Secret protection & egress](/docs/security/secret-protection).
+- **Everything sensitive is encrypted at rest** behind a master key that only you
+  hold. See [Master key & encryption](/docs/security/master-key).
+- **Every agent runs in its own container.** A compromised agent is confined to its
+  project's sandbox — it can't reach your host or the rest of your system. See
+  [Container isolation](/docs/security/container-isolation).
 
-## The shipping loop
+## What you can do with it
 
-| Stage | What Hezo does |
-|---|---|
-| **Build** | Scaffold a project with a chosen stack and sensible conventions. |
-| **Deploy** | Build and ship the current project to production in one command. |
-| **Measure** | See health and traffic across all of your projects at a glance. |
-| **Market** | Run growth and launch actions without leaving the terminal. |
+- **Spin up a team per project** from a template, or reuse an existing team's setup
+  for a new project. See [Projects & teams](/docs/concepts/projects-and-teams).
+- **Chat with the CEO** to scope work, create projects, hire new agents, edit system
+  prompts, and adjust settings — all from one conversation. See
+  [Roles & the CEO](/docs/concepts/roles-and-coordination).
+- **Bring your own models.** Claude, ChatGPT, Gemini, DeepSeek, Z.ai, OpenRouter, and
+  Kimi are all supported, and you can give any individual agent its own model. See
+  [AI model support](/docs/ai-models).
+- **Keep spend under control** with per-agent and per-project budgets and live cost
+  reporting. See [Budgets & cost control](/docs/concepts/budgets-and-costs).
+- **Set the rules per task** and let agents keep a running progress summary so work
+  carries cleanly across runs. See [Tasks, rules & summaries](/docs/concepts/tasks).
+- **Connect it to your own tools** — Hezo even ships its own MCP server, so any
+  MCP-capable agent can drive your teams and tasks. See
+  [Hezo's MCP server](/docs/mcp/hezo-mcp-server).
 
 ## Where to next
 
-- [Installation](/docs/getting-started/installation) — get the `hezo` binary on your machine.
-- [Your first project](/docs/getting-started/first-project) — zero to deployed.
-- [Core concepts](/docs/core-concepts) — the mental model behind Hezo.
+- [Installation](/docs/getting-started/installation) — get Hezo running.
+- [First-run setup](/docs/getting-started/first-run) — your master key and first model.
+- [Your first project](/docs/getting-started/first-project) — from idea to a working team.
+- [How Hezo works](/docs/concepts/how-hezo-works) — the architecture at a glance.

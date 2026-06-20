@@ -1,37 +1,52 @@
 ---
 title: Your first project
-order: 3
+order: 4
 section: Getting started
 ---
 
 # Your first project
 
-With the [`hezo` binary installed](/docs/getting-started/installation), you can
-take a project from an empty directory to a live deployment in two commands.
+In Hezo you don't configure a project by filling in forms — you **talk to the CEO**.
+The CEO is the agent that handles intake for every new piece of work.
 
-## Scaffold and deploy
+## 1. Tell the CEO what you want
 
-```sh
-hezo new my-app      # scaffold a project with a chosen stack
-cd my-app
-hezo deploy          # build and ship to production
-```
+Open the chat and describe the project in plain language — what you're building or
+doing, and any constraints that matter. The CEO asks clarifying questions, scopes the
+work with you, and proposes a team to do it.
 
-`hezo new` lays down a project using sensible defaults and conventions. `hezo
-deploy` builds the project and ships it to production on your own
-infrastructure — Hezo orchestrates the steps, you own the accounts.
+## 2. Approve it
 
-## Check on it
+When the scope looks right, approve it. Hezo provisions everything in one step:
 
-```sh
-hezo status          # health and traffic across all your projects
-```
+- a **project** and its **team** (the agent roster),
+- a **Captain** to lead the team, plus the worker roles for the team template you
+  chose, and
+- the first planning task.
 
-## Keep shipping
+The team is created from a **template** — the default is a minimal Captain-only team,
+or you can pick a fuller one (for example a software-development roster with an
+architect, engineers, QA, and more). See
+[Projects & teams](/docs/concepts/projects-and-teams).
 
-From here, the same commands work for every project you create — that's the
-point. Spinning up the next idea costs minutes, not a whole evening of setup.
+## 3. Watch the team work
 
-- [Core concepts](/docs/core-concepts) — how Hezo thinks about projects.
-- [CLI usage](/docs/cli-commands/usage) — the full command reference.
-- [Deployment](/docs/deployment) — targets and self-hosting notes.
+The Captain plans the work into tasks and the agents start picking them up. You'll see
+tasks move across the board, agents comment as they go, and runs stream their logs
+live. Agents wake on a heartbeat to look for work, so the team keeps moving without
+you driving each step.
+
+## 4. Stay in control
+
+- **Set rules on any task** to constrain how it's worked, and read the
+  [progress summary](/docs/concepts/tasks) an agent keeps as it goes.
+- **Approve sensitive actions** when an agent asks — including pasting in a credential
+  it needs (which it will only ever use as a [protected placeholder](/docs/security/secret-protection)).
+- **Keep an eye on spend** from the budget view. See
+  [Budgets & cost control](/docs/concepts/budgets-and-costs).
+
+## Next
+
+- [How Hezo works](/docs/concepts/how-hezo-works) — the moving parts behind the scenes.
+- [Roles & the CEO](/docs/concepts/roles-and-coordination) — who does what, and how to
+  action things through the CEO.

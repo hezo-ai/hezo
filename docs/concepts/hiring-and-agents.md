@@ -1,0 +1,53 @@
+---
+title: Hiring & customizing agents
+order: 9
+section: Concepts
+---
+
+# Hiring & customizing agents
+
+A team's roster isn't fixed. You can hire new agents, retire ones you don't need, and
+tune how each agent behaves — both from the web app and by asking the CEO.
+
+## Hiring a new agent
+
+Tell the CEO you need a new role, or use the hire screen directly. When you hire an
+agent you set:
+
+- **Role** — its title and a short description of what it's responsible for.
+- **System prompt** — the instructions that define how it works. Helpers let you
+  reference team and project context so the prompt stays in sync as things change.
+- **Model** — which provider/model it runs on (defaults to the team's model; override
+  per agent if you want).
+- **Heartbeat** — how often it wakes to look for work.
+- **Budget** — optional spending limits (see
+  [Budgets & cost control](/docs/concepts/budgets-and-costs)).
+- **Code access** — whether the agent works in the project's code workspace.
+
+Hiring surfaces as an **approval** so a new agent doesn't appear without your sign-off.
+Once approved, the agent is onboarded into the team and starts picking up work on its
+heartbeat.
+
+## Editing system prompts
+
+Every agent's system prompt is editable from its settings at any time. Changes take
+effect on the agent's next run, so you can correct course — tighten scope, add a
+convention, change tone — without rebuilding anything.
+
+## Per-agent model override
+
+By default the agents on a team share the team's model. You can override the model for
+any individual agent, so (for example) one agent runs on a frontier model for hard
+reasoning while the rest run on something cheaper and faster. Mixing providers within a
+single team is fully supported. See [AI model support](/docs/ai-models).
+
+## Other settings
+
+You can also adjust an agent's heartbeat interval and budgets over time, and pause or
+resume agents when you need to. Standing preferences you give the CEO in chat are
+remembered and applied going forward.
+
+## Next
+
+- [AI model support](/docs/ai-models) — the models agents can run on.
+- [Budgets & cost control](/docs/concepts/budgets-and-costs) — capping spend.

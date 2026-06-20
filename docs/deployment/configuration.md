@@ -1,0 +1,48 @@
+---
+title: Configuration reference
+order: 20
+section: Deployment
+---
+
+# Configuration reference
+
+Every setting can be supplied as a **command-line flag** or an **environment variable**.
+When both are present, the **environment variable wins** — handy for baking defaults
+into a service definition while still overriding per run.
+
+## Options
+
+| Flag | Environment variable | Default | Description |
+|---|---|---|---|
+| `--port <port>` | `HEZO_PORT` | `3100` | Port the server and web app listen on (1–65535). |
+| `--data-dir <path>` | `HEZO_DATA_DIR` | `~/.hezo/` | Where Hezo stores its database, encrypted secrets, and assets. |
+| `--master-key <phrase>` | `HEZO_MASTER_KEY` | — | The twelve-word master key, to set up or unlock without the web gate. |
+| `--web-url <url>` | `HEZO_WEB_URL` | same origin | Public base URL, used so account sign-ins redirect back correctly. |
+| `--reset` | `HEZO_RESET` | off | Wipe the database and start fresh. |
+| `--open` | `HEZO_OPEN` | off | Open the web app in your browser on startup. |
+| `--log-level <level>` | `HEZO_LOG_LEVEL` | `info` | Logging verbosity: `debug`, `info`, `warn`, or `error`. |
+| `--keep-old-containers` | `HEZO_KEEP_OLD_CONTAINERS` | off | Keep old project containers instead of removing them — for debugging a crashed container. |
+
+## Examples
+
+Run on a custom port with a dedicated data directory:
+
+```sh
+hezo --port 8080 --data-dir /var/lib/hezo
+```
+
+Bring an instance up unattended (for example under a service manager), unlocking it via
+the environment:
+
+```sh
+HEZO_MASTER_KEY="your twelve word master key phrase here" \
+HEZO_DATA_DIR=/var/lib/hezo \
+HEZO_WEB_URL=https://hezo.example.com \
+  hezo
+```
+
+## See also
+
+- [CLI reference](/docs/reference/cli) — commands and usage.
+- [Backup & recovery](/docs/deployment/backup-and-recovery) — `--reset` and restoring.
+- [First-run setup](/docs/getting-started/first-run) — the master key.
