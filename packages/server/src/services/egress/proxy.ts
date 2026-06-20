@@ -39,6 +39,12 @@ const log = logger.child('egress-proxy');
  * which Node/vitest never reproduce. Enable in a real run with `HEZO_EGRESS_DEBUG=1`. */
 const EGRESS_DEBUG = !!process.env.HEZO_EGRESS_DEBUG;
 
+/** Connection-management headers scoped to a single transport hop, which a proxy
+ * must not relay to the upstream (RFC 7230 §6.1). `proxy-*` are dropped
+ * separately. Transfer-encoding / content-length are intentionally not here — the
+ * runtime recomputes body framing for the re-issued request. */
+const HOP_BY_HOP_HEADERS = new Set(['connection', 'keep-alive', 'upgrade']);
+
 const PROXY_HOST = 'host.docker.internal';
 const PROXY_BIND_HOST = '127.0.0.1';
 
@@ -488,8 +494,12 @@ class RunProxyInstance {
 		const method = req.method ?? 'GET';
 		const headers: Record<string, string | string[] | undefined> = {};
 		for (const [name, value] of Object.entries(req.headers)) {
-			// Strip hop-by-hop proxy headers; they must not reach the upstream.
-			if (/^proxy-/i.test(name)) continue;
+			// Strip hop-by-hop headers (RFC 7230 §6.1) and all proxy-* headers: they
+			// describe the agent↔proxy hop, not the proxy↔upstream one, and a proxy
+			// must not relay them. Relaying the client's `connection: keep-alive` in
+			// particular tells the upstream to hold the socket open on the client's
+			// behalf, against the proxy's own connection management.
+			if (/^proxy-/i.test(name) || HOP_BY_HOP_HEADERS.has(name.toLowerCase())) continue;
 			headers[name] = value;
 		}
 

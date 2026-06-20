@@ -88,6 +88,44 @@ describe('EgressProxy under Bun', () => {
 		}
 	}, 30_000);
 
+	// A proxy must not relay hop-by-hop headers (RFC 7230 §6.1) to the upstream.
+	// Relaying the client's `connection: keep-alive` / `keep-alive` / `upgrade`
+	// lets the client dictate the upstream socket's lifetime against the proxy's
+	// own connection management — a contributor to upstream sockets lingering past
+	// the run. Normal end-to-end headers (and secret substitution) still pass.
+	test('does not relay hop-by-hop headers to the upstream', async () => {
+		const upstream = await startHttpsUpstream(ca);
+		const upstreamPort = (upstream.address() as { port: number }).port;
+		const runId = `bun-run-${process.pid}-hopbyhop`;
+		await insertSecret('BUN_HOPBYHOP', 'real-value', ['localhost']);
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const res = await fetchHttpsThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				targetHost: 'localhost',
+				targetPort: upstreamPort,
+				path: '/echo',
+				headers: {
+					authorization: 'Bearer __HEZO_SECRET_BUN_HOPBYHOP__',
+					'keep-alive': 'timeout=5, max=1000',
+				},
+				caCert: ca.cert,
+			});
+			expect(res.status).toBe(200);
+			const received = httpsHits.at(-1) ?? {};
+			// The client's hop-by-hop `keep-alive` header must not reach the upstream
+			// (the proxy's own client never adds this header, so its presence would
+			// mean the client's copy was relayed).
+			expect(received['keep-alive']).toBeUndefined();
+			// End-to-end headers still pass, and the secret is still substituted.
+			expect(received.authorization).toBe('Bearer real-value');
+		} finally {
+			await proxy.releaseRunProxy(runId);
+			await new Promise<void>((resolve) => upstream.close(() => resolve()));
+		}
+	}, 30_000);
+
 	test('handles concurrent run allocate/connect/release churn without hanging', async () => {
 		const upstream = await startHttpsUpstream(ca);
 		const upstreamPort = (upstream.address() as { port: number }).port;
