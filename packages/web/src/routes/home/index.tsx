@@ -285,6 +285,8 @@ function ActiveProjectCard({
 
 function OtherProjectRow({ project }: { project: ProjectWithTeam }) {
 	const paused = project.container_status === 'stopped' || project.container_status === 'error';
+	const rel = relativeTime(project.last_activity_at);
+	const activity = rel === 'now' ? 'just now' : `last ${rel} ago`;
 	return (
 		<Link
 			to="/projects/$projectId"
@@ -302,7 +304,7 @@ function OtherProjectRow({ project }: { project: ProjectWithTeam }) {
 					{paused ? 'paused' : 'idle'}
 				</span>
 				<span className="shrink-0 font-mono text-[11px] text-text-3">
-					{project.open_task_count} tasks · {relativeTime(project.last_activity_at)} ago
+					{project.open_task_count} tasks · {activity}
 				</span>
 			</div>
 		</Link>
