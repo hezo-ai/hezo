@@ -106,9 +106,9 @@ test('standalone preview route renders a markdown doc without an iframe', async 
 	expect(queryByTestId('mobile-nav-toggle')).toBeNull();
 });
 
-test('a doc mention in a task comment gets a suffix link to the standalone preview', async () => {
+test('a doc mention in a task comment opens the preview panel instead of a new tab', async () => {
 	let ctx!: { projectSlug: string; taskId: string };
-	const { findByTestId, router } = await renderApp({
+	const { container, findByTestId, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -125,14 +125,15 @@ test('a doc mention in a task comment gets a suffix link to the standalone previ
 		params: { projectId: ctx.projectSlug, taskId: ctx.taskId },
 	});
 
-	// The mention resolves (doc-mention-link) and gains the new tab affordance.
-	await findByTestId('text-comment-body', undefined, { timeout: 15_000 });
-	const preview = await findByTestId('doc-mention-preview-link', undefined, { timeout: 15_000 });
-	expect(preview.getAttribute('href')).toBe(`/preview/${ctx.projectSlug}/ui-mockups.md`);
-	expect(preview.getAttribute('target')).toBe('_blank');
+	// In a task comment the mention is a button that opens the in-page panel —
+	// no trailing new-tab suffix link.
+	const name = await findByTestId('doc-mention-link', undefined, { timeout: 15_000 });
+	expect(name.tagName).toBe('BUTTON');
+	expect(container.querySelector('[data-testid="doc-mention-preview-link"]')).toBeNull();
 
-	// Clicking the name now does the same as the icon: open the preview in a new tab.
-	const name = await findByTestId('doc-mention-link');
-	expect(name.getAttribute('href')).toBe(`/preview/${ctx.projectSlug}/ui-mockups.md`);
-	expect(name.getAttribute('target')).toBe('_blank');
+	// The new-tab affordance now lives on the panel and points at the standalone preview.
+	await user.click(name);
+	const openTab = (await findByTestId('preview-open-tab')) as HTMLAnchorElement;
+	expect(openTab.getAttribute('href')).toBe(`/preview/${ctx.projectSlug}/ui-mockups.md`);
+	expect(openTab.getAttribute('target')).toBe('_blank');
 });
