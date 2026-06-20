@@ -424,7 +424,15 @@ class RunProxyInstance {
 	 * one in-flight build so the run never spins up duplicate servers. */
 	private ensureHostServer(host: string): Promise<HostServer> {
 		const existing = this.hostServers.get(host);
-		if (existing && serverOwnsPort(existing)) return Promise.resolve(existing);
+		// Reuse only a live entry that is the *sole* claimant of its port. Under Bun
+		// a stale entry can keep reporting a port that another host's live server has
+		// since taken over (`address()` lies), so `serverOwnsPort` alone can't tell a
+		// real owner from a zombie pointing at someone else's port — dialing it would
+		// serve the other host's leaf cert. Requiring unique ownership forces a
+		// rebuild onto a fresh, exclusive port instead.
+		if (existing && serverOwnsPort(existing) && this.portUniquelyOwnedBy(host, existing.port)) {
+			return Promise.resolve(existing);
+		}
 
 		const pending = this.pendingHostServers.get(host);
 		if (pending) return pending;
@@ -473,9 +481,27 @@ class RunProxyInstance {
 			throw new Error('proxy closed');
 		}
 
-		const rec: HostServer = { server, port: (server.address() as { port: number }).port };
+		const port = (server.address() as { port: number }).port;
+		// The OS just handed this port to the new server, so any other host entry
+		// still claiming it lost it and is stale — drop those entries so no two
+		// hosts ever map to one port (the cross-host wrong-cert invariant). The
+		// orphaned server is already off the port; let it be GC'd rather than
+		// risk closing a live server on a mis-reported port.
+		for (const [h, r] of this.hostServers) {
+			if (h !== host && r.port === port) this.hostServers.delete(h);
+		}
+		const rec: HostServer = { server, port };
 		this.hostServers.set(host, rec);
 		return rec;
+	}
+
+	/** Whether `host` is the only entry claiming `port`. A port belongs to exactly
+	 * one per-host server; a second claimant is a stale entry that lost the port. */
+	private portUniquelyOwnedBy(host: string, port: number): boolean {
+		for (const [h, r] of this.hostServers) {
+			if (h !== host && r.port === port) return false;
+		}
+		return true;
 	}
 
 	/** Scan the decrypted (or plain) request for secret placeholders, substitute
