@@ -4,7 +4,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { repoNameFromIdentifier } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { logger } from '../logger';
-import { cloneRepo, ensureGithubKnownHosts } from './git';
+import { cloneRepo, ensureGithubKnownHosts, initRepoInPlace } from './git';
 import { withHostAgentSocket } from './ssh-agent/host';
 import type { SshAgentServer } from './ssh-agent/server';
 import { getWorkspacePath, getWorktreesPath } from './workspace';
@@ -46,14 +46,18 @@ export async function ensureProjectRepos(
 	const workspacePath = getWorkspacePath(dataDir, project.team_id, project.id);
 	mkdirSync(workspacePath, { recursive: true });
 
-	const pending: RepoRow[] = [];
+	const pending: Array<{ repo: RepoRow; mode: 'clone' | 'init' }> = [];
 	for (const r of repos.rows) {
 		const name = repoNameFromIdentifier(r.repo_identifier);
 		const targetDir = join(workspacePath, name);
 		if (existsSync(join(targetDir, '.git'))) {
 			result.skipped.push(name);
+		} else if (existsSync(targetDir) && readdirSync(targetDir).length > 0) {
+			// An agent populated this directory before the repo was connected — a
+			// plain clone would refuse the non-empty target, so adopt it in place.
+			pending.push({ repo: r, mode: 'init' });
 		} else {
-			pending.push(r);
+			pending.push({ repo: r, mode: 'clone' });
 		}
 	}
 
@@ -61,7 +65,7 @@ export async function ensureProjectRepos(
 
 	if (!sshAgentServer) {
 		const msg = 'SshAgentServer not available — cannot clone over SSH';
-		for (const r of pending) {
+		for (const { repo: r } of pending) {
 			logEmit?.('stderr', `✗ ${msg}`);
 			result.failed.push({ name: repoNameFromIdentifier(r.repo_identifier), error: msg });
 		}
@@ -71,19 +75,23 @@ export async function ensureProjectRepos(
 	const knownHostsPath = await ensureGithubKnownHosts(dataDir);
 
 	await withHostAgentSocket(sshAgentServer, project.team_id, dataDir, async ({ sshAuthSock }) => {
-		for (const r of pending) {
+		for (const { repo: r, mode } of pending) {
 			const name = repoNameFromIdentifier(r.repo_identifier);
 			const targetDir = join(workspacePath, name);
-			logEmit?.('stdout', `→ Cloning ${r.repo_identifier} into ${name}/`);
-			const clone = await cloneRepo(r.repo_identifier, targetDir, sshAuthSock, knownHostsPath);
-			if (clone.success) {
-				logEmit?.('stdout', `✓ Cloned ${name}`);
+			const verb = mode === 'init' ? 'Initializing' : 'Cloning';
+			logEmit?.('stdout', `→ ${verb} ${r.repo_identifier} → ${name}/`);
+			const res =
+				mode === 'init'
+					? await initRepoInPlace(r.repo_identifier, targetDir, sshAuthSock, knownHostsPath)
+					: await cloneRepo(r.repo_identifier, targetDir, sshAuthSock, knownHostsPath);
+			if (res.success) {
+				logEmit?.('stdout', `✓ ${mode === 'init' ? 'Initialized' : 'Cloned'} ${name}`);
 				result.cloned.push(name);
 			} else {
-				const errMsg = clone.error ?? 'unknown error';
-				logEmit?.('stderr', `✗ Clone failed for ${name}: ${errMsg}`);
+				const errMsg = res.error ?? 'unknown error';
+				logEmit?.('stderr', `✗ ${verb} failed for ${name}: ${errMsg}`);
 				result.failed.push({ name, error: errMsg });
-				log.error(`Failed to clone ${r.repo_identifier}`, errMsg);
+				log.error(`Failed to set up ${r.repo_identifier}`, errMsg);
 			}
 		}
 	});

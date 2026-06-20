@@ -93,6 +93,95 @@ export async function cloneRepo(
 	return { success: true };
 }
 
+/**
+ * Connects an existing, already-populated directory to a remote — the path
+ * `cloneRepo` can't take because `git clone` refuses a non-empty destination.
+ * Used when an agent populated the workspace directory reserved for a repo
+ * before that repo was connected. When the remote already has commits its
+ * content is checked out (existing untracked files that would be overwritten
+ * abort rather than clobber either side); when the remote is empty the existing
+ * files are kept as the working tree to become the repo's initial content on the
+ * first commit/push. A `.git` created here is removed on failure so the
+ * directory stays eligible for a clean retry.
+ */
+export async function initRepoInPlace(
+	repoIdentifier: string,
+	targetDir: string,
+	sshAuthSock: string,
+	knownHostsPath: string,
+	hostType: RepoHostType = RepoHostType.GitHub,
+): Promise<{ success: boolean; error?: string }> {
+	return connectExistingRepo(
+		buildGitSshUrl(hostType, repoIdentifier),
+		targetDir,
+		sshEnv(sshAuthSock, knownHostsPath),
+	);
+}
+
+/**
+ * Transport-agnostic core of {@link initRepoInPlace}: connects `targetDir` to the
+ * repo at `url` (already protocol-qualified) using `env` for any network op.
+ * Exposed for tests that point at a local `file://` bare repo.
+ */
+export async function connectExistingRepo(
+	url: string,
+	targetDir: string,
+	env: Record<string, string>,
+): Promise<{ success: boolean; error?: string }> {
+	const hadGit = existsSync(join(targetDir, '.git'));
+	const fail = (error: string): { success: false; error: string } => {
+		if (!hadGit) rmSync(join(targetDir, '.git'), { recursive: true, force: true });
+		return { success: false, error };
+	};
+
+	const init = await spawn('git', ['init', '-b', 'main'], { cwd: targetDir, timeout: 30_000 });
+	if (init.exitCode !== 0) return fail(formatGitError(init.stderr));
+
+	const remote = await spawn('git', ['remote', 'add', 'origin', url], {
+		cwd: targetDir,
+		timeout: 30_000,
+	});
+	if (remote.exitCode !== 0) return fail(formatGitError(remote.stderr));
+
+	// A remote with no refs has no commits yet — keep the existing files as the
+	// initial working tree. `ls-remote --symref HEAD` can print a symref line even
+	// for an unborn HEAD, so emptiness is judged by the full ref listing.
+	const refs = await spawn('git', ['ls-remote', 'origin'], {
+		cwd: targetDir,
+		env,
+		timeout: 60_000,
+	});
+	if (refs.exitCode !== 0) return fail(formatGitError(refs.stderr));
+
+	if (refs.stdout.trim().length > 0) {
+		const head = await spawn('git', ['ls-remote', '--symref', 'origin', 'HEAD'], {
+			cwd: targetDir,
+			env,
+			timeout: 60_000,
+		});
+		if (head.exitCode !== 0) return fail(formatGitError(head.stderr));
+		const branch = head.stdout.match(/^ref:\s+refs\/heads\/(\S+)\s+HEAD/m)?.[1];
+		if (!branch) return fail('could not determine the remote default branch');
+
+		const fetch = await spawn('git', ['fetch', 'origin', branch], {
+			cwd: targetDir,
+			env,
+			timeout: 120_000,
+		});
+		if (fetch.exitCode !== 0) return fail(formatGitError(fetch.stderr));
+
+		// No `-f`: an existing untracked file that the checkout would overwrite
+		// aborts the operation rather than clobbering the agent's work.
+		const checkout = await spawn('git', ['checkout', '-B', branch, '--track', `origin/${branch}`], {
+			cwd: targetDir,
+			timeout: 60_000,
+		});
+		if (checkout.exitCode !== 0) return fail(formatGitError(checkout.stderr));
+	}
+
+	return { success: true };
+}
+
 export async function fetchRepo(
 	repoDir: string,
 	sshAuthSock: string,
