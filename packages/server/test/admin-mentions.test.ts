@@ -9,6 +9,7 @@ import {
 	authHeader,
 	createTestApp,
 	createTestProject,
+	createTestTeam,
 	mintAgentToken,
 	projectSlugFor,
 } from './helpers/app';
@@ -149,13 +150,9 @@ beforeAll(async () => {
 		(t: Record<string, unknown>) => t.name === 'Startup',
 	).id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			name: 'Admin Mentions Co',
-			template_id: typeId,
-		}),
+	const teamRes = await createTestTeam(db, {
+		name: 'Admin Mentions Co',
+		template_id: typeId,
 	});
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;

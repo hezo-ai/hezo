@@ -9,6 +9,7 @@ import {
 	authHeader,
 	createTestApp,
 	createTestProject,
+	createTestTeam,
 	mintAgentToken,
 	projectSlugForTeamSlug,
 } from './helpers/app';
@@ -49,21 +50,13 @@ beforeAll(async () => {
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
 	// Create Team A
-	const teamARes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(superuserToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Team Alpha', template_id: typeId }),
-	});
+	const teamARes = await createTestTeam(db, { name: 'Team Alpha', template_id: typeId });
 	const teamA = (await teamARes.json()).data;
 	teamAId = teamA.id;
 	teamASlug = teamA.slug;
 
 	// Create Team B
-	const teamBRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(superuserToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Team Beta', template_id: typeId }),
-	});
+	const teamBRes = await createTestTeam(db, { name: 'Team Beta', template_id: typeId });
 	const teamB = (await teamBRes.json()).data;
 	teamBId = teamB.id;
 	teamBSlug = teamB.slug;
@@ -251,19 +244,19 @@ describe('Admin user cross-team isolation', () => {
 		expect(res.status).toBe(200);
 	});
 
-	it('GET /teams lists only the teams the non-superuser belongs to', async () => {
-		const res = await app.request('/api/teams', { headers: authHeader(userAToken) });
+	it('GET /projects lists only the projects whose team the non-superuser belongs to', async () => {
+		const res = await app.request('/api/projects', { headers: authHeader(userAToken) });
 		expect(res.status).toBe(200);
-		const ids = ((await res.json()).data as { id: string }[]).map((t) => t.id);
-		expect(ids).toContain(teamAId);
-		expect(ids).not.toContain(teamBId);
+		const teamIds = ((await res.json()).data as { team_id: string }[]).map((p) => p.team_id);
+		expect(teamIds).toContain(teamAId);
+		expect(teamIds).not.toContain(teamBId);
 	});
 
-	it('GET /teams lists every team for the superuser', async () => {
-		const res = await app.request('/api/teams', { headers: authHeader(superuserToken) });
-		const ids = ((await res.json()).data as { id: string }[]).map((t) => t.id);
-		expect(ids).toContain(teamAId);
-		expect(ids).toContain(teamBId);
+	it('GET /projects lists every team’s project for the superuser', async () => {
+		const res = await app.request('/api/projects', { headers: authHeader(superuserToken) });
+		const teamIds = ((await res.json()).data as { team_id: string }[]).map((p) => p.team_id);
+		expect(teamIds).toContain(teamAId);
+		expect(teamIds).toContain(teamBId);
 	});
 });
 

@@ -10,7 +10,13 @@ import type { DockerClient } from '../src/services/docker';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { safeClose } from './helpers';
-import { authHeader, createStubDocker, createTestApp, createTestProject } from './helpers/app';
+import {
+	authHeader,
+	createStubDocker,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -68,11 +74,7 @@ beforeAll(async () => {
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Workflow Test Co', template_id: typeId }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Workflow Test Co', template_id: typeId });
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
 
@@ -2342,10 +2344,9 @@ describe('JobManager workflow methods', () => {
 			// need a real, separate project id whose capacity we can check independently.
 			const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 			const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
-			const teamBRes = await app.request('/api/teams', {
-				method: 'POST',
-				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ name: `Parallel Team ${Date.now()}`, template_id: typeId }),
+			const teamBRes = await createTestTeam(db, {
+				name: `Parallel Team ${Date.now()}`,
+				template_id: typeId,
 			});
 			const teamBId = (await teamBRes.json()).data.id;
 			const projectBRes = await createTestProject(db, teamBId, {

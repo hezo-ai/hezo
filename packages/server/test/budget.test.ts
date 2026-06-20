@@ -10,7 +10,7 @@ import {
 	recordRunCost,
 } from '../src/services/budget';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -30,11 +30,7 @@ beforeAll(async () => {
 	// biome-ignore lint/suspicious/noExplicitAny: test JSON
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Budget Co', template_id: typeId }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Budget Co', template_id: typeId });
 	const teamSlug = (await teamRes.json()).data.slug;
 
 	const teamRow = await db.query<{ id: string }>('SELECT id FROM teams WHERE slug = $1', [
@@ -42,7 +38,7 @@ beforeAll(async () => {
 	]);
 	teamId = teamRow.rows[0].id;
 
-	// POST /api/teams creates the team + roster; the project is provisioned here.
+	// createTestTeam stands up the team + roster; the project is provisioned here.
 	const projectRes = await createTestProject(db, teamId, { name: 'Budget Project' });
 	const project = (await projectRes.json()).data;
 	projectId = project.id;

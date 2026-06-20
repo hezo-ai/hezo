@@ -1,6 +1,6 @@
 import { ApprovalType, TaskStatus } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, createTestProject, instanceCoachId } from './helpers/app';
+import { authHeader, createTestProject, createTestTeam, instanceCoachId } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 let ctx: ServerTestContext;
@@ -24,15 +24,11 @@ beforeAll(async () => {
 	const softDevType = types.data.find((t: any) => t.name === 'Startup');
 
 	// Create a team with auto-created agents
-	const teamRes = await ctx.app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			name: 'Autonomy Test Co',
+	const teamRes = await createTestTeam(ctx.db, {
+		name: 'Autonomy Test Co',
 
-			description: 'Testing agent autonomy',
-			template_id: softDevType.id,
-		}),
+		description: 'Testing agent autonomy',
+		template_id: softDevType.id,
 	});
 	const teamData = ((await teamRes.json()) as any).data;
 	teamId = teamData.id;

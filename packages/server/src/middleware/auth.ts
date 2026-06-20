@@ -5,7 +5,7 @@ import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { sign, verify } from 'hono/jwt';
 import type { MasterKeyManager } from '../crypto/master-key';
-import { resolveProject, resolveTeamId } from '../lib/resolve';
+import { resolveProject } from '../lib/resolve';
 import type { AuthInfo, Env } from '../lib/types';
 
 const AGENT_JWT_TTL_SECONDS = 60 * 60 * 4;
@@ -286,48 +286,6 @@ async function assertTeamAccess(
 	}
 	return null;
 }
-
-export async function requireTeamAccess(c: Context<Env>): Promise<{ teamId: string } | Response> {
-	const raw = c.req.param('teamId');
-	if (!raw) {
-		return c.json({ error: { code: 'BAD_REQUEST', message: 'Missing teamId' } }, 400);
-	}
-
-	const db = c.get('db');
-	const teamId = await resolveTeamId(db, raw);
-	if (!teamId) {
-		return c.json({ error: { code: 'NOT_FOUND', message: 'Team not found' } }, 404);
-	}
-
-	const denied = await assertTeamAccess(db, c.get('auth'), c, teamId);
-	if (denied) return denied;
-	return { teamId };
-}
-
-/**
- * Hono middleware variant of {@link requireTeamAccess} for routes mounted under
- * `/api/teams/:teamId/*`. Resolves the `:teamId` URL param (slug or UUID),
- * runs the shared team-access check, and exposes the resolved UUID at
- * `c.var.teamId` for downstream handlers to read via `c.get('teamId')`.
- */
-export const requireTeamAccessMiddleware = createMiddleware<Env>(async (c, next) => {
-	const raw = c.req.param('teamId');
-	if (!raw) {
-		return c.json({ error: { code: 'BAD_REQUEST', message: 'Missing teamId' } }, 400);
-	}
-
-	const db = c.get('db');
-	const teamId = await resolveTeamId(db, raw);
-	if (!teamId) {
-		return c.json({ error: { code: 'NOT_FOUND', message: 'Team not found' } }, 404);
-	}
-
-	const denied = await assertTeamAccess(db, c.get('auth'), c, teamId);
-	if (denied) return denied;
-
-	c.set('teamId', teamId);
-	return next();
-});
 
 /**
  * Hono middleware for routes mounted under `/api/projects/:projectId/*`. The

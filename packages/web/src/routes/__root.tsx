@@ -7,7 +7,7 @@ import {
 	useNavigate,
 } from '@tanstack/react-router';
 import { X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppHeader } from '../components/app-header';
 import { CeoChatWidget } from '../components/ceo-chat/ceo-chat-widget';
 import { MasterKeyGate } from '../components/master-key-gate';
@@ -17,8 +17,8 @@ import { MasterKeyStep, SetupGate } from '../components/setup/setup-wizard';
 import { UpdateBanner } from '../components/update-banner';
 import { SocketProvider } from '../contexts/socket-context';
 import { useActiveProject } from '../hooks/use-active-project';
+import { useProjectsIndex } from '../hooks/use-projects';
 import { useStatus } from '../hooks/use-status';
-import { useTeams } from '../hooks/use-teams';
 import { useShellWebSockets } from '../hooks/use-websocket';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -90,8 +90,14 @@ function AppShell() {
 }
 
 function ShellLayout() {
-	const { data: teams } = useTeams();
-	useShellWebSockets(teams);
+	// Subscribe to every team room (incl. HQ) by deriving rooms from the project
+	// index — teams are reached through their projects.
+	const { data: projects } = useProjectsIndex();
+	const teamRooms = useMemo(
+		() => projects?.map((p) => ({ id: p.team_id, slug: p.team_slug })),
+		[projects],
+	);
+	useShellWebSockets(teamRooms);
 	const matches = useMatches();
 	const bare = matches.some((m) => m.staticData?.bare);
 

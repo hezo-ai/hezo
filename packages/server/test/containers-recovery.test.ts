@@ -17,6 +17,7 @@ import {
 	createStubDocker,
 	createTestApp,
 	createTestProject,
+	createTestTeam,
 	projectSlugFor,
 } from './helpers/app';
 
@@ -49,11 +50,7 @@ beforeAll(async () => {
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Recovery Test Co', template_id: typeId }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Recovery Test Co', template_id: typeId });
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
 	teamSlug = team.slug;

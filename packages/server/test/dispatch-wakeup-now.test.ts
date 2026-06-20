@@ -9,7 +9,13 @@ import type { DockerClient } from '../src/services/docker';
 import { JobManager } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, projectSlugFor } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+	projectSlugFor,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -73,11 +79,7 @@ beforeAll(async () => {
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), ...json },
-		body: JSON.stringify({ name: 'Dispatch Now Co', template_id: typeId }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Dispatch Now Co', template_id: typeId });
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
 	teamSlug = team.slug;

@@ -8,7 +8,7 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import { signAssetUrl } from '../src/lib/asset-urls';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -60,11 +60,7 @@ beforeAll(async () => {
 	masterKeyManager = ctx.masterKeyManager;
 	dataDir = ctx.dataDir;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Attach Co' }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Attach Co' });
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
@@ -100,11 +96,7 @@ beforeAll(async () => {
 
 	// A team owns exactly one project, so the cross-project isolation case needs a
 	// second team to host the "other" project.
-	const otherTeamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Other Attach Co' }),
-	});
+	const otherTeamRes = await createTestTeam(db, { name: 'Other Attach Co' });
 	const otherTeamId = (await otherTeamRes.json()).data.id;
 
 	const otherProjectRes = await createTestProject(db, otherTeamId, {

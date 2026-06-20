@@ -27,7 +27,7 @@ import type { DockerClient } from '../../src/services/docker';
 import { JobManager } from '../../src/services/job-manager';
 import { LogStreamBroker } from '../../src/services/log-stream-broker';
 import { createProjectWithPlanningTask } from '../../src/services/project-create';
-import { seedDefaultTeam } from '../../src/services/teams';
+import { type CreatedTeamRow, createTeam, seedDefaultTeam } from '../../src/services/teams';
 import { WebSocketManager } from '../../src/services/ws';
 import { buildApp } from '../../src/startup';
 import { createTestDbWithMigrations } from './db';
@@ -344,9 +344,9 @@ export interface CreatedTestProject {
 
 /**
  * Test-only helper: creates a user-facing project plus its planning task by
- * calling the project service directly. Bypasses the captain intake flow that
- * `POST /api/teams/:teamId/projects` now triggers (which opens an intake ticket
- * and a pending approval). Use in tests that need a ready-to-use project.
+ * calling the project service directly. Bypasses the CEO-assisted intake flow
+ * that project creation can trigger (an intake ticket and a pending approval).
+ * Use in tests that need a ready-to-use project.
  *
  * The return value is shaped like a `fetch` Response so existing tests that
  * call `.json()` followed by `.data.id` extraction keep working unchanged
@@ -447,6 +447,50 @@ export async function createTestProject(
 		status: 201,
 		json: async () => ({ data }),
 	};
+}
+
+/**
+ * Test-only: stand up a team (roster + optional template) by calling the
+ * `createTeam` service directly, the way `POST /api/teams` used to before that
+ * route was removed. Returns a `fetch`-Response-shaped object so existing
+ * `.json()` → `.data.slug` / `.data.id` extraction in call sites keeps working
+ * after swapping the `app.request('/api/teams', { method: 'POST' })` block.
+ *
+ * `createTeam` provisions no container (only the roster), so the stub docker is
+ * never exercised; the throwaway `dataDir` only matters for skill provisioning,
+ * which no-ops when no skills are installed (the default test state).
+ *
+ * Mirrors `POST /api/teams` called with the admin token: the creating admin
+ * becomes a member of the new team. Defaults `creatorUserId` to the seeded
+ * superuser so admin-authored actions (mentions, reactions, `created_by`,
+ * actor names, ui-state) resolve to a real member row, as they did when the
+ * route created the team. Pass `creatorUserId` explicitly to override.
+ */
+export async function createTestTeam(
+	db: PGlite,
+	input: { name: string; description?: string; template_id?: string; creatorUserId?: string },
+): Promise<{ status: 201; json: () => Promise<{ data: CreatedTeamRow }> }> {
+	let creatorUserId = input.creatorUserId;
+	if (creatorUserId === undefined) {
+		const admin = await db.query<{ id: string }>(
+			'SELECT id FROM users WHERE is_superuser = true ORDER BY created_at LIMIT 1',
+		);
+		creatorUserId = admin.rows[0]?.id;
+	}
+	const team = await createTeam(
+		{
+			db,
+			docker: createStubDocker(),
+			dataDir: mkdtempSync(join(tmpdir(), 'hezo-test-team-')),
+		},
+		{
+			name: input.name.trim(),
+			description: input.description,
+			templateId: input.template_id,
+			creatorUserId,
+		},
+	);
+	return { status: 201, json: async () => ({ data: team }) };
 }
 
 export async function finalizeAgentRun(

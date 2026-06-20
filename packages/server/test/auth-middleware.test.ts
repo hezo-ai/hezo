@@ -18,6 +18,7 @@ import {
 	createAgentRun,
 	createTestApp,
 	createTestProject,
+	createTestTeam,
 	finalizeAgentRun,
 	mintAgentToken,
 } from './helpers/app';
@@ -43,11 +44,7 @@ beforeAll(async () => {
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(adminToken) });
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Auth Test Co', template_id: typeId }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Auth Test Co', template_id: typeId });
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	teamSlug = teamData.slug;
@@ -329,19 +326,19 @@ describe('authMiddleware (via HTTP)', () => {
 	});
 
 	it('allows API requests without auth header (anonymous admin while unlocked)', async () => {
-		const res = await app.request('/api/teams');
+		const res = await app.request('/api/projects');
 		expect(res.status).toBe(200);
 	});
 
 	it('allows API requests with non-Bearer auth header (treated as anonymous)', async () => {
-		const res = await app.request('/api/teams', {
+		const res = await app.request('/api/projects', {
 			headers: { Authorization: 'Basic abc123' },
 		});
 		expect(res.status).toBe(200);
 	});
 
 	it('rejects API requests with invalid token', async () => {
-		const res = await app.request('/api/teams', {
+		const res = await app.request('/api/projects', {
 			headers: { Authorization: 'Bearer invalid.token.here' },
 		});
 		expect(res.status).toBe(401);
@@ -350,7 +347,7 @@ describe('authMiddleware (via HTTP)', () => {
 	});
 
 	it('allows API requests with valid admin token', async () => {
-		const res = await app.request('/api/teams', {
+		const res = await app.request('/api/projects', {
 			headers: authHeader(adminToken),
 		});
 		expect(res.status).toBe(200);
@@ -425,7 +422,7 @@ describe('authMiddleware on a locked server', () => {
 				createStubDocker(),
 			);
 
-			const res = await lockedApp.request('/api/teams');
+			const res = await lockedApp.request('/api/projects');
 			expect(res.status).toBe(401);
 		} finally {
 			await safeClose(lockedDb);
@@ -433,8 +430,8 @@ describe('authMiddleware on a locked server', () => {
 	});
 });
 
-describe('requireTeamAccess (via route)', () => {
-	it('rejects access to nonexistent team by slug', async () => {
+describe('requireProjectAccessMiddleware (via route)', () => {
+	it('rejects access to nonexistent project by slug', async () => {
 		const res = await app.request('/api/projects/nonexistent-slug/agents', {
 			headers: authHeader(adminToken),
 		});
@@ -453,12 +450,11 @@ describe('requireSuperuser (via route)', () => {
 
 		const normalToken = await signAdminJwt(masterKeyManager, userId);
 
-		// team-templates POST requires superuser (if such an endpoint exists)
-		// Instead, verify that the token works but user has limited access
-		const res = await app.request('/api/teams', {
+		// A non-superuser admin token still works for non-superuser-gated reads.
+		const res = await app.request('/api/projects', {
 			headers: authHeader(normalToken),
 		});
-		// Non-superuser should still be able to list teams they are members of
+		// Non-superuser should still be able to list projects they are members of.
 		expect(res.status).toBe(200);
 	});
 });

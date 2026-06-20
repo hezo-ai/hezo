@@ -14,7 +14,7 @@ import {
 import { SshAgentServer, sshPublicKeyToBlob } from '../src/services/ssh-agent/server';
 import { generateTeamSSHKey } from '../src/services/ssh-keys';
 import { safeClose } from './helpers';
-import { createTestApp } from './helpers/app';
+import { createTestApp, createTestTeam } from './helpers/app';
 
 let db: PGlite;
 let masterKeyManager: MasterKeyManager;
@@ -51,11 +51,7 @@ beforeAll(async () => {
 	db = ctx.db;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const teamRes = await ctx.app.request('/api/teams', {
-		method: 'POST',
-		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Host Agent Co' }),
-	});
+	const teamRes = await createTestTeam(ctx.db, { name: 'Host Agent Co' });
 	teamId = (await teamRes.json()).data.id;
 
 	const ssh = await generateTeamSSHKey(db, teamId, masterKeyManager);

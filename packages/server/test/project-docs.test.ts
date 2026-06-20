@@ -11,7 +11,7 @@ import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
 import { buildApp } from '../src/startup';
 import { safeClose } from './helpers';
-import { authHeader, createStubDocker, createTestProject } from './helpers/app';
+import { authHeader, createStubDocker, createTestProject, createTestTeam } from './helpers/app';
 import { createTestDbWithMigrations } from './helpers/db';
 
 let app: Hono<Env>;
@@ -36,11 +36,7 @@ beforeAll(async () => {
 	);
 	token = await signAdminJwt(masterKeyManager, userResult.rows[0].id);
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Doc Test Co' }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Doc Test Co' });
 	teamId = (await teamRes.json()).data.id;
 
 	const projectRes = await createTestProject(db, teamId, {
@@ -257,11 +253,7 @@ describe('AGENTS.md (filesystem-based)', () => {
 	let repoProjectId: string;
 
 	const makeTeam = async (name: string) => {
-		const r = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name }),
-		});
+		const r = await createTestTeam(db, { name });
 		return (await r.json()).data.id as string;
 	};
 

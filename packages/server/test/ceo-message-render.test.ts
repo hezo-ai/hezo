@@ -6,7 +6,7 @@ import { INSTANCE_BASE_URL_KEY, setSystemMeta } from '../src/lib/system-meta';
 import type { Env } from '../src/lib/types';
 import { renderCeoMessageForChannel } from '../src/services/ceo-message-render';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -27,11 +27,7 @@ beforeAll(async () => {
 	const typeId = (await typesRes.json()).data.find(
 		(t: Record<string, unknown>) => t.name === 'Startup',
 	).id;
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Render Co', template_id: typeId }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Render Co', template_id: typeId });
 	const teamId = (await teamRes.json()).data.id;
 	const projectRes = await createTestProject(db, teamId, { name: 'Render Project' });
 	const project = (await projectRes.json()).data;

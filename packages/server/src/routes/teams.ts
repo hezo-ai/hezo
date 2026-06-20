@@ -1,4 +1,4 @@
-import { AuthType, MemberType } from '@hezo/shared';
+import { MemberType } from '@hezo/shared';
 import { Hono } from 'hono';
 import { resolveTaskId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
@@ -9,84 +9,8 @@ import { requireSuperuser } from '../middleware/auth';
 import { postSkipQuestionsSignalForProjectIntake } from '../services/project-intake';
 import { applyTemplateToTeam } from '../services/team-template-apply';
 import { snapshotTeamAsTemplate } from '../services/team-template-snapshot';
-import { createTeam } from '../services/teams';
 
 export const teamsRoutes = new Hono<Env>();
-
-teamsRoutes.get('/teams', async (c) => {
-	const db = c.get('db');
-	const auth = c.get('auth');
-
-	const isSuperuser = auth.type === AuthType.Admin && auth.isSuperuser;
-	const isAdmin = auth.type === AuthType.Admin;
-
-	let query: string;
-	const params: unknown[] = [MemberType.Agent];
-	const ts = terminalStatusParams(2);
-	params.push(...ts.values);
-	const nextIdx = 2 + ts.values.length;
-
-	if (!isAdmin || isSuperuser) {
-		query = `SELECT c.*,
-       (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $1)::int AS agent_count,
-       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count,
-       (SELECT tt.name FROM team_template_assignments tta JOIN team_templates tt ON tt.id = tta.team_template_id WHERE tta.team_id = c.id ORDER BY tt.is_builtin DESC LIMIT 1) AS primary_template_name,
-       EXISTS (SELECT 1 FROM projects p WHERE p.team_id = c.id AND p.is_internal = true) AS is_internal
-     FROM teams c
-     ORDER BY c.created_at DESC`;
-	} else {
-		query = `SELECT c.*,
-       (SELECT count(*) FROM members m WHERE m.team_id = c.id AND m.member_type = $1)::int AS agent_count,
-       (SELECT count(*) FROM tasks i WHERE i.team_id = c.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count,
-       (SELECT tt.name FROM team_template_assignments tta JOIN team_templates tt ON tt.id = tta.team_template_id WHERE tta.team_id = c.id ORDER BY tt.is_builtin DESC LIMIT 1) AS primary_template_name,
-       EXISTS (SELECT 1 FROM projects p WHERE p.team_id = c.id AND p.is_internal = true) AS is_internal
-     FROM teams c
-     JOIN members m2 ON m2.team_id = c.id
-     JOIN member_users mu ON mu.id = m2.id
-     WHERE mu.user_id = $${nextIdx}
-     ORDER BY c.created_at DESC`;
-		params.push(auth.userId);
-	}
-
-	const result = await db.query(query, params);
-	return ok(c, result.rows);
-});
-
-teamsRoutes.post('/teams', async (c) => {
-	const denied = requireSuperuser(c);
-	if (denied) return denied;
-
-	const body = await c.req.json<{
-		name: string;
-		description?: string;
-		template_id?: string;
-	}>();
-
-	if (!body.name?.trim()) {
-		return err(c, 'INVALID_REQUEST', 'name is required', 400);
-	}
-
-	const auth = c.get('auth');
-	const team = await createTeam(
-		{
-			db: c.get('db'),
-			docker: c.get('docker'),
-			dataDir: c.get('dataDir'),
-			wsManager: c.get('wsManager'),
-			masterKeyManager: c.get('masterKeyManager'),
-			logs: c.get('logs'),
-			egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
-		},
-		{
-			name: body.name.trim(),
-			description: body.description,
-			templateId: body.template_id,
-			creatorUserId: auth.type === AuthType.Admin ? auth.userId : undefined,
-		},
-	);
-
-	return ok(c, team, 201);
-});
 
 teamsRoutes.post('/projects/:projectId/project-intake/:taskId/skip-questions', async (c) => {
 	const teamId = c.get('teamId') as string;

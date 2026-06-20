@@ -1,4 +1,4 @@
-import { createTestProject } from '@hezo/server/test/helpers/app';
+import { createTestProject, createTestTeam } from '@hezo/server/test/helpers/app';
 import { fireEvent, waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
@@ -16,16 +16,12 @@ interface CreatedTeam {
 }
 
 async function createTeam(): Promise<CreatedTeam> {
-	const { apiBase, token, db } = getTestContext();
+	const { db } = getTestContext();
 	const name = `Settings Corp ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-	const res = await apiBase('/api/teams', {
-		method: 'POST',
-		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			name,
-			description: 'Build great things',
-			template_id: await startupTemplateId(),
-		}),
+	const res = await createTestTeam(db, {
+		name,
+		description: 'Build great things',
+		template_id: await startupTemplateId(),
 	});
 	const data = (await res.json()) as { data: Omit<CreatedTeam, 'projectSlug'> };
 	const projectRes = await createTestProject(db, data.data.id, { name: 'Work Project' });

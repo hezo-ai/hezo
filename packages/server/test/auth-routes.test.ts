@@ -251,8 +251,8 @@ describe('login flow on an enrolled, unlocked server', () => {
 	it('the token grants access to protected endpoints', async () => {
 		const res = await loginViaAuthApi(app, mnemonic);
 		const { token } = (await res.json()).data;
-		const teamsRes = await app.request('/api/teams', { headers: authHeader(token) });
-		expect(teamsRes.status).toBe(200);
+		const projectsRes = await app.request('/api/projects', { headers: authHeader(token) });
+		expect(projectsRes.status).toBe(200);
 	});
 
 	it('rejects a replayed challenge', async () => {

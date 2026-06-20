@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DockerClient } from '../src/services/docker';
 import { installLocalMcpById, installPendingLocalMcps } from '../src/services/mcp-installer';
 import { safeClose } from './helpers';
-import { createTestApp } from './helpers/app';
+import { createTestApp, createTestTeam } from './helpers/app';
 
 let db: PGlite;
 let teamId: string;
@@ -43,11 +43,7 @@ beforeAll(async () => {
 	const ctx = await createTestApp();
 	db = ctx.db;
 
-	const co = await ctx.app.request('/api/teams', {
-		method: 'POST',
-		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Inst' }),
-	});
+	const co = await createTestTeam(ctx.db, { name: 'Inst' });
 	teamId = (await co.json()).data.id;
 	const proj = await db.query<{ id: string }>(
 		`INSERT INTO projects (team_id, name, slug, task_prefix, docker_base_image)

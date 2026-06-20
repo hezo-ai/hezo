@@ -20,7 +20,7 @@ import { formatChatMemoryBlock } from '../src/services/ceo-session-manager';
 import { ensureChatMemoryDoc } from '../src/services/teams';
 import { resolveSystemPrompt } from '../src/services/template-resolver';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, createTestTeam } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -146,11 +146,7 @@ describe('chat-memory delete guard', () => {
 	});
 
 	it('does not guard a same-named doc in a non-HQ project', async () => {
-		const teamRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Other Co' }),
-		});
+		const teamRes = await createTestTeam(db, { name: 'Other Co' });
 		const teamSlug = (await teamRes.json()).data.slug as string;
 		const projRes = await app.request('/api/projects', {
 			method: 'POST',

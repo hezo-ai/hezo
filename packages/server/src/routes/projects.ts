@@ -4,6 +4,7 @@ import {
 	AuthType,
 	CAPTAIN_AGENT_SLUG,
 	ContainerStatus,
+	MemberType,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
@@ -140,8 +141,10 @@ projectsRoutes.get('/projects', async (c) => {
 	const isAdmin = auth.type === AuthType.Admin;
 
 	const ts = terminalStatusParams(1);
-	const params: unknown[] = [...ts.values];
+	const agentTypeIdx = ts.values.length + 1;
+	const params: unknown[] = [...ts.values, MemberType.Agent];
 	const base = `SELECT p.*, t.slug AS team_slug, t.name AS team_name,
+       (SELECT count(*) FROM members m WHERE m.team_id = p.team_id AND m.member_type = $${agentTypeIdx})::int AS agent_count,
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
        (SELECT count(*) FROM tasks i WHERE i.project_id = p.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count,
        (SELECT count(*) FROM member_agents ma JOIN members mm ON mm.id = ma.id

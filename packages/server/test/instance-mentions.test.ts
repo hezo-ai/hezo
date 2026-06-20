@@ -6,7 +6,13 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, mintAgentToken, projectSlugFor } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestTeam,
+	mintAgentToken,
+	projectSlugFor,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -95,11 +101,7 @@ beforeAll(async () => {
 	).id;
 
 	for (const name of ['Mention Co Alpha', 'Mention Co Beta']) {
-		const teamRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name, template_id: typeId }),
-		});
+		const teamRes = await createTestTeam(db, { name, template_id: typeId });
 		const teamData = (await teamRes.json()).data;
 		if (name.endsWith('Alpha')) teamAId = teamData.id;
 		else teamBId = teamData.id;

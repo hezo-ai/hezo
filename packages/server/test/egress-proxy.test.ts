@@ -12,7 +12,7 @@ import { type HezoCA, loadOrCreateCA } from '../src/services/egress/ca';
 import { PortAllocator } from '../src/services/egress/port-allocator';
 import { EgressProxy } from '../src/services/egress/proxy';
 import { safeClose } from './helpers';
-import { createTestApp, createTestProject } from './helpers/app';
+import { createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
 let db: PGlite;
 let masterKeyManager: MasterKeyManager;
@@ -40,11 +40,7 @@ beforeAll(async () => {
 	masterKeyManager = ctx.masterKeyManager;
 	dataDir = mkdtempSync(join(tmpdir(), 'hezo-egress-proxy-'));
 
-	const teamRes = await ctx.app.request('/api/teams', {
-		method: 'POST',
-		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Egress Co' }),
-	});
+	const teamRes = await createTestTeam(ctx.db, { name: 'Egress Co' });
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
 	const projectSlug = (

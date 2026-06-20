@@ -6,7 +6,7 @@
 // workspace is therefore a team plus its single project; `seedProject` just
 // names that project (a team can never hold a second one).
 
-import { createTestProject } from '@hezo/server/test/helpers/app';
+import { createTestProject, createTestTeam } from '@hezo/server/test/helpers/app';
 import { getTestContext } from './render';
 
 type Auth = {
@@ -43,12 +43,8 @@ export async function seedWorkspace(): Promise<SeededWorkspace> {
 	).data.find((t) => t.name === 'Startup');
 	if (!startup) throw new Error('seedWorkspace: Startup template missing');
 
-	const teamRes = await apiBase('/api/teams', {
-		method: 'POST',
-		headers,
-		body: JSON.stringify({ name: 'Demo Team', template_id: startup.id }),
-	});
-	const team = ((await teamRes.json()) as { data: { id: string; slug: string } }).data;
+	const teamRes = await createTestTeam(db, { name: 'Demo Team', template_id: startup.id });
+	const team = (await teamRes.json()).data;
 
 	// The team's single project; everything project-scoped resolves through it.
 	const projectRes = await createTestProject(db, team.id, { name: 'Demo Project' });

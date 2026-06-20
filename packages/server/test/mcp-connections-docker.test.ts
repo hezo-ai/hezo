@@ -30,7 +30,7 @@ import { loadOrCreateCA } from '../src/services/egress/ca';
 import { EgressProxy } from '../src/services/egress/proxy';
 import { loadMcpConnectionDescriptors } from '../src/services/mcp-connections';
 import { safeClose } from './helpers';
-import { createTestApp, createTestProject } from './helpers/app';
+import { createTestApp, createTestProject, createTestTeam } from './helpers/app';
 import { mintCertFromCA } from './helpers/self-signed-cert';
 import { startTestMcpHttpServer, type TestMcpServer } from './helpers/test-mcp-http-server';
 
@@ -66,11 +66,7 @@ beforeAll(async () => {
 	masterKeyManager = ctx.masterKeyManager;
 	dataDir = mkdtempSync(join(tmpdir(), 'hezo-mcp-docker-'));
 
-	const co = await ctx.app.request('/api/teams', {
-		method: 'POST',
-		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'MCP Docker Co' }),
-	});
+	const co = await createTestTeam(ctx.db, { name: 'MCP Docker Co' });
 	const teamData = (await co.json()).data;
 	teamId = teamData.id;
 

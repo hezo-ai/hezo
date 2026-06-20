@@ -13,7 +13,7 @@ import { parseGitHubRawUrl, SkillDownloadError } from '../src/services/skill-dow
 import { resolveSystemPrompt } from '../src/services/template-resolver';
 import { buildApp } from '../src/startup';
 import { safeClose } from './helpers';
-import { authHeader, createStubDocker } from './helpers/app';
+import { authHeader, createStubDocker, createTestTeam } from './helpers/app';
 import { createTestDbWithMigrations } from './helpers/db';
 
 let app: Hono<Env>;
@@ -39,11 +39,7 @@ beforeAll(async () => {
 	);
 	token = await signAdminJwt(masterKeyManager, userResult.rows[0].id);
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Skills Co' }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Skills Co' });
 	teamId = (await teamRes.json()).data.id;
 });
 

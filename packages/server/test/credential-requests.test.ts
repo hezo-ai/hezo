@@ -9,6 +9,7 @@ import {
 	authHeader,
 	createTestApp,
 	createTestProject,
+	createTestTeam,
 	mintAgentToken,
 	projectSlugFor,
 } from './helpers/app';
@@ -32,11 +33,7 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Cred Co' }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Cred Co' });
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
 	teamSlug = team.slug;
@@ -159,11 +156,7 @@ describe('request_credential MCP tool', () => {
 	});
 
 	it('rejects access from a different team', async () => {
-		const otherTeamRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Other Co' }),
-		});
+		const otherTeamRes = await createTestTeam(db, { name: 'Other Co' });
 		const otherTeamId = (await otherTeamRes.json()).data.id;
 		const otherProject = (
 			await (await createTestProject(db, otherTeamId, { name: 'Other Main' })).json()

@@ -3,7 +3,13 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, projectSlugFor } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+	projectSlugFor,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -29,13 +35,9 @@ beforeAll(async () => {
 	});
 	const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			name: 'Extended Cost Co',
-			template_id: typeId,
-		}),
+	const teamRes = await createTestTeam(db, {
+		name: 'Extended Cost Co',
+		template_id: typeId,
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;
@@ -154,11 +156,7 @@ describe('costs – project scoping', () => {
 		// team. None of our cost entries belong to it, so it should read empty.
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const typeId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
-		const team2Res = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Other Cost Co', template_id: typeId }),
-		});
+		const team2Res = await createTestTeam(db, { name: 'Other Cost Co', template_id: typeId });
 		const team2Id = (await team2Res.json()).data.id;
 		const other = await createTestProject(db, team2Id, { name: 'Project Beta' });
 		const otherSlug = (await other.json()).data.slug;

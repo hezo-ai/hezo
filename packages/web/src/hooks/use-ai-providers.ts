@@ -27,7 +27,7 @@ const statusKey = ['ai-providers', 'status'] as const;
 function invalidateAll() {
 	queryClient.invalidateQueries({ queryKey: providersKey });
 	queryClient.invalidateQueries({ queryKey: statusKey });
-	queryClient.invalidateQueries({ queryKey: queryKeys.teams.all() });
+	queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
 }
 
 export function useAiProviders() {

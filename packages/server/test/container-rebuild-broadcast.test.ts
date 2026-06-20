@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { WebSocketManager, type WsEvent } from '../src/services/ws';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
 interface CapturedBroadcast {
 	room: string;
@@ -28,10 +28,9 @@ describe('container lifecycle broadcasts carry team_id', () => {
 			(t: { name: string }) => t.name === 'Blank',
 		).id;
 
-		const teamRes = await ctx.app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Container Broadcast Co', template_id: typeId }),
+		const teamRes = await createTestTeam(ctx.db, {
+			name: 'Container Broadcast Co',
+			template_id: typeId,
 		});
 		teamId = (await teamRes.json()).data.id;
 

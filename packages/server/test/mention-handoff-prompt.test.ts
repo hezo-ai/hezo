@@ -12,7 +12,13 @@ import {
 import { getAgentSystemPrompt } from '../src/services/documents';
 import { resolveSystemPrompt } from '../src/services/template-resolver';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, projectSlugFor } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+	projectSlugFor,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -47,13 +53,9 @@ beforeAll(async () => {
 		(t: Record<string, unknown>) => t.name === 'Startup',
 	).id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			name: 'Mention Handoff Prompt Co',
-			template_id: typeId,
-		}),
+	const teamRes = await createTestTeam(db, {
+		name: 'Mention Handoff Prompt Co',
+		template_id: typeId,
 	});
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
@@ -185,13 +187,9 @@ describe('mention handoff prompt (integration)', () => {
 		const typeId = (await typesRes.json()).data.find(
 			(t: Record<string, unknown>) => t.name === 'Startup',
 		).id;
-		const teamRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: 'No Tickets Co',
-				template_id: typeId,
-			}),
+		const teamRes = await createTestTeam(db, {
+			name: 'No Tickets Co',
+			template_id: typeId,
 		});
 		const soloTeam = (await teamRes.json()).data;
 		const soloTeamId = soloTeam.id;

@@ -9,6 +9,7 @@ import {
 	authHeader,
 	createTestApp,
 	createTestProject,
+	createTestTeam,
 	mintAgentToken,
 	projectSlugFor,
 	projectSlugForTeamSlug,
@@ -115,11 +116,7 @@ beforeAll(async () => {
 		(t: Record<string, unknown>) => t.name === 'Startup',
 	).id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Reactions Co', template_id: typeId }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Reactions Co', template_id: typeId });
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	const teamSlug = teamData.slug;
@@ -290,11 +287,7 @@ describe('REST reactions endpoints', () => {
 		const typeId = (await typesRes.json()).data.find(
 			(t: Record<string, unknown>) => t.name === 'Startup',
 		).id;
-		const otherTeam = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Other Co', template_id: typeId }),
-		});
+		const otherTeam = await createTestTeam(db, { name: 'Other Co', template_id: typeId });
 		const otherTeamData = (await otherTeam.json()).data;
 		const otherTeamId = otherTeamData.id;
 		const otherTeamSlug = otherTeamData.slug;

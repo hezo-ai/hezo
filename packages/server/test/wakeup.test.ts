@@ -9,7 +9,7 @@ import {
 	createWakeup,
 } from '../src/services/wakeup';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
 let db: PGlite;
 let app: Hono<Env>;
@@ -27,14 +27,10 @@ beforeAll(async () => {
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 	const teamTemplateId = (await typesRes.json()).data.find((t: any) => t.name === 'Startup').id;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			name: 'Wakeup Co',
+	const teamRes = await createTestTeam(db, {
+		name: 'Wakeup Co',
 
-			template_id: teamTemplateId,
-		}),
+		template_id: teamTemplateId,
 	});
 	const team = (await teamRes.json()).data;
 	teamId = team.id;

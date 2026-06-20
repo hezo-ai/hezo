@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 import { createGitHubSim, type GitHubSim } from './helpers/github-sim';
 
 let app: Hono<Env>;
@@ -76,11 +76,7 @@ beforeAll(async () => {
 	const typeId = (await typesRes.json()).data.find(
 		(t: { name: string }) => t.name === 'Startup',
 	).id;
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Repo Create Co', template_id: typeId }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Repo Create Co', template_id: typeId });
 	teamId = (await teamRes.json()).data.id;
 
 	const projectRes = await createTestProject(db, teamId, { name: 'Repo Create Project' });

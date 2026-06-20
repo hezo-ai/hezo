@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import { loadMcpConnectionDescriptors } from '../src/services/mcp-connections';
 import { safeClose } from './helpers';
-import { createTestApp, projectSlugFor } from './helpers/app';
+import { createTestApp, createTestTeam, projectSlugFor } from './helpers/app';
 
 let db: PGlite;
 let teamId: string;
@@ -16,11 +16,7 @@ beforeAll(async () => {
 	token = ctx.token;
 	masterKeyManager = ctx.masterKeyManager;
 
-	const teamRes = await ctx.app.request('/api/teams', {
-		method: 'POST',
-		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'MCP Co' }),
-	});
+	const teamRes = await createTestTeam(ctx.db, { name: 'MCP Co' });
 	teamId = (await teamRes.json()).data.id;
 
 	await db.query(
@@ -37,11 +33,7 @@ afterAll(async () => {
 describe('mcp_connections REST routes', () => {
 	it('rejects a saas connection without config.url', async () => {
 		const ctx = await createTestApp();
-		const co = await ctx.app.request('/api/teams', {
-			method: 'POST',
-			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'X' }),
-		});
+		const co = await createTestTeam(ctx.db, { name: 'X' });
 		const team = (await co.json()).data;
 		const res = await ctx.app.request(
 			`/api/projects/${await projectSlugFor(ctx.db, team.id)}/mcp-connections`,
@@ -57,11 +49,7 @@ describe('mcp_connections REST routes', () => {
 
 	it('inserts a saas connection (status=installed) and lists it', async () => {
 		const ctx = await createTestApp();
-		const co = await ctx.app.request('/api/teams', {
-			method: 'POST',
-			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Y' }),
-		});
+		const co = await createTestTeam(ctx.db, { name: 'Y' });
 		const team = (await co.json()).data;
 		const projectSlug = await projectSlugFor(ctx.db, team.id);
 		const insert = await ctx.app.request(`/api/projects/${projectSlug}/mcp-connections`, {
@@ -93,11 +81,7 @@ describe('mcp_connections REST routes', () => {
 
 	it('inserts a local connection with status=pending until the installer marks it', async () => {
 		const ctx = await createTestApp();
-		const co = await ctx.app.request('/api/teams', {
-			method: 'POST',
-			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Z' }),
-		});
+		const co = await createTestTeam(ctx.db, { name: 'Z' });
 		const team = (await co.json()).data;
 		const res = await ctx.app.request(
 			`/api/projects/${await projectSlugFor(ctx.db, team.id)}/mcp-connections`,
@@ -124,11 +108,7 @@ describe('mcp_connections REST routes', () => {
 describe('POST /teams/:teamId/connectors/ensure', () => {
 	it('creates a connector from the registry on first call, returns the same row on second', async () => {
 		const ctx = await createTestApp();
-		const co = await ctx.app.request('/api/teams', {
-			method: 'POST',
-			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Ensure Co' }),
-		});
+		const co = await createTestTeam(ctx.db, { name: 'Ensure Co' });
 		const team = (await co.json()).data;
 
 		const projectSlug = await projectSlugFor(ctx.db, team.id);
@@ -160,11 +140,7 @@ describe('POST /teams/:teamId/connectors/ensure', () => {
 
 	it('rejects unknown provider_id', async () => {
 		const ctx = await createTestApp();
-		const co = await ctx.app.request('/api/teams', {
-			method: 'POST',
-			headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Unknown Co' }),
-		});
+		const co = await createTestTeam(ctx.db, { name: 'Unknown Co' });
 		const team = (await co.json()).data;
 
 		const res = await ctx.app.request(

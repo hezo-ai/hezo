@@ -6,7 +6,7 @@ import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
 import { loadMcpConnectionsForRun } from '../src/services/mcp-connections';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp } from './helpers/app';
+import { authHeader, createTestApp, createTestTeam } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -24,11 +24,7 @@ async function makeProject(teamId: string, slug: string): Promise<string> {
 }
 
 async function makeTeam(name: string): Promise<string> {
-	const res = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name }),
-	});
+	const res = await createTestTeam(db, { name });
 	return (await res.json()).data.id;
 }
 

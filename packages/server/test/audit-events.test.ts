@@ -6,7 +6,7 @@ import { mapEventToAudit } from '../src/events/audit-observer';
 import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -21,11 +21,7 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Events Co' }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Events Co' });
 	teamId = (await teamRes.json()).data.id;
 
 	const project = await createTestProject(db, teamId, { name: 'Events Project' });

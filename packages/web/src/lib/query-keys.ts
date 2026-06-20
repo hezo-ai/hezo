@@ -31,7 +31,6 @@ export const queryKeys = {
 	ceoConversation: () => ['ceo', 'conversation'],
 
 	teams: {
-		all: () => ['teams'],
 		mcpConnections: (teamId: string) => ['teams', teamId, 'mcp-connections'],
 		oauthConnections: (teamId: string) => ['teams', teamId, 'oauth-connections'],
 	},

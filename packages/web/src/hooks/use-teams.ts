@@ -28,13 +28,6 @@ export interface Team {
 	created_at: string;
 }
 
-export function useTeams() {
-	return useQuery({
-		queryKey: queryKeys.teams.all(),
-		queryFn: () => api.get<Team[]>('/api/teams'),
-	});
-}
-
 /** The backing team for a project, addressed via the project slug. */
 export function useTeam(projectId: string, enabled = true) {
 	return useQuery({
@@ -64,7 +57,7 @@ export function useUpdateTeam(projectId: string) {
 			};
 		},
 		mergeResponse: (current, updated) => (current ? { ...current, ...updated } : current),
-		invalidateOnSettled: [queryKeys.teams.all(), queryKeys.projects.all()],
+		invalidateOnSettled: [queryKeys.projects.all()],
 		errorMessage: 'Failed to update team',
 	});
 }
@@ -98,9 +91,8 @@ export function useApplyTeamType(projectId: string) {
 		mutationFn: (vars: { template_id: string }) =>
 			api.post<ApplyTeamTypeResult>(`/api/projects/${projectId}/apply-type`, vars),
 		onSuccess: () => {
-			// A merge can add agents — refetch the roster and team views.
+			// A merge can add agents — refetch the roster and project views.
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
-			queryClient.invalidateQueries({ queryKey: queryKeys.teams.all() });
 		},
 	});
 }

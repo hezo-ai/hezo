@@ -10,7 +10,7 @@ import { encrypt } from '../../src/crypto/encryption';
 import type { MasterKeyManager } from '../../src/crypto/master-key';
 import { type HezoCA, loadOrCreateCA } from '../../src/services/egress/ca';
 import { EgressProxy } from '../../src/services/egress/proxy';
-import { createTestApp, createTestProject } from '../helpers/app';
+import { createTestApp, createTestProject, createTestTeam } from '../helpers/app';
 import { mintCertFromCA } from '../helpers/self-signed-cert';
 
 // Runtime tier: this spec runs under `bun test`, exercising the egress proxy on
@@ -36,11 +36,7 @@ beforeAll(async () => {
 	masterKeyManager = ctx.masterKeyManager;
 	dataDir = mkdtempSync(join(tmpdir(), 'hezo-egress-bun-'));
 
-	const teamRes = await ctx.app.request('/api/teams', {
-		method: 'POST',
-		headers: { Authorization: `Bearer ${ctx.token}`, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Egress Bun Co' }),
-	});
+	const teamRes = await createTestTeam(ctx.db, { name: 'Egress Bun Co' });
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
 	const projectSlug = (

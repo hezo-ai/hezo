@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, projectSlugFor } from './helpers/app';
+import { authHeader, createTestApp, createTestTeam, projectSlugFor } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -16,11 +16,7 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const teamRes = await app.request('/api/teams', {
-		method: 'POST',
-		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: 'Pref Test Co' }),
-	});
+	const teamRes = await createTestTeam(db, { name: 'Pref Test Co' });
 	const team = (await teamRes.json()).data as { slug: string };
 	projectSlug = `${await projectSlugFor(db, team.id)}`;
 });
@@ -87,11 +83,7 @@ describe('Team preferences', () => {
 	});
 
 	it('returns empty revisions when no preferences exist', async () => {
-		const coRes = await app.request('/api/teams', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Empty Prefs Co' }),
-		});
+		const coRes = await createTestTeam(db, { name: 'Empty Prefs Co' });
 		const emptyTeam = (await coRes.json()).data as { slug: string };
 
 		const res = await app.request(
