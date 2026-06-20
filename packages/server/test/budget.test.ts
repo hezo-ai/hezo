@@ -84,28 +84,39 @@ async function insertCost(amountCents: number, ageInterval: string): Promise<voi
 	);
 }
 
+/**
+ * Insert a cost_entry anchored to the start of the current UTC day. Use this for
+ * "current/today" spend: the timestamp equals the daily window floor and sits at
+ * or after the weekly/monthly floors, so the entry counts in every window no
+ * matter what time of day the suite runs. A `now() - '1 hour'` entry, by
+ * contrast, lands in *yesterday* (and possibly last week/month) when the suite
+ * runs in the first hour after UTC midnight — the source of past flakes.
+ */
+async function insertCostToday(amountCents: number): Promise<void> {
+	await db.query(
+		`INSERT INTO cost_entries (member_id, project_id, amount_cents, created_at)
+		 VALUES ($1, $2, $3, date_trunc('day', now() AT TIME ZONE 'UTC'))`,
+		[agentId, projectId, amountCents],
+	);
+}
+
 describe('budget service - windowed spend', () => {
 	it('sums spend per UTC window and excludes older entries', async () => {
-		await insertCost(100, '1 hour'); // today
-		await insertCost(200, '2 days'); // this week (not today) — but only if same week
-		await insertCost(400, '40 days'); // older than a month
+		await insertCostToday(100); // in daily, weekly, and monthly
+		await insertCost(400, '40 days'); // older than any month → excluded from every window
 
 		const spend = await getAgentSpend(db, agentId);
-		// Daily includes only the 1-hour-old entry.
+		// Today's entry is the only one inside any window; the 40-day-old entry is
+		// excluded from all three (40 days predates every window floor year-round).
 		expect(spend.daily).toBe(100);
-		// Monthly excludes the 40-day-old entry (older than start-of-month for most of
-		// the month; at minimum it is excluded once we're >40 days into enforcement —
-		// assert the floor that today's entry is always counted and the 40d one is not
-		// counted in daily/weekly).
-		expect(spend.weekly).toBeGreaterThanOrEqual(100);
-		expect(spend.monthly).toBeGreaterThanOrEqual(spend.weekly);
-		expect(spend.monthly).toBeLessThan(700);
+		expect(spend.weekly).toBe(100);
+		expect(spend.monthly).toBe(100);
 	});
 });
 
 describe('budget service - status & limits', () => {
 	it('treats a 0 limit as unlimited', async () => {
-		await insertCost(10_000, '1 hour');
+		await insertCostToday(10_000);
 		const status = await getAgentBudgetStatus(db, agentId);
 		expect(status.daily.limitCents).toBe(0);
 		expect(status.daily.overBudget).toBe(false);
@@ -114,7 +125,7 @@ describe('budget service - status & limits', () => {
 
 	it('flags over budget when spend meets or exceeds a positive limit', async () => {
 		await db.query('UPDATE member_agents SET daily_budget_cents = 500 WHERE id = $1', [agentId]);
-		await insertCost(500, '1 hour');
+		await insertCostToday(500);
 		const status = await getAgentBudgetStatus(db, agentId);
 		expect(status.daily.overBudget).toBe(true);
 		expect(status.overBudget).toBe(true);
@@ -122,7 +133,7 @@ describe('budget service - status & limits', () => {
 
 	it('stays under budget below a positive limit', async () => {
 		await db.query('UPDATE member_agents SET monthly_budget_cents = 500 WHERE id = $1', [agentId]);
-		await insertCost(499, '1 hour');
+		await insertCostToday(499);
 		const status = await getAgentBudgetStatus(db, agentId);
 		expect(status.monthly.overBudget).toBe(false);
 	});
@@ -131,13 +142,13 @@ describe('budget service - status & limits', () => {
 describe('budget service - checkOverBudget gate', () => {
 	it('returns null when within budget', async () => {
 		await db.query('UPDATE member_agents SET daily_budget_cents = 1000 WHERE id = $1', [agentId]);
-		await insertCost(100, '1 hour');
+		await insertCostToday(100);
 		expect(await checkOverBudget(db, agentId, projectId)).toBeNull();
 	});
 
 	it('blocks on the agent window', async () => {
 		await db.query('UPDATE member_agents SET weekly_budget_cents = 100 WHERE id = $1', [agentId]);
-		await insertCost(150, '1 hour');
+		await insertCostToday(150);
 		const block = await checkOverBudget(db, agentId, projectId);
 		expect(block).toEqual({ scope: 'agent', period: 'weekly' });
 	});
@@ -145,14 +156,14 @@ describe('budget service - checkOverBudget gate', () => {
 	it('blocks all agents when the project is over budget', async () => {
 		// Agent itself is unlimited; the project cap is what trips.
 		await db.query('UPDATE projects SET monthly_budget_cents = 100 WHERE id = $1', [projectId]);
-		await insertCost(200, '1 hour');
+		await insertCostToday(200);
 		const block = await checkOverBudget(db, agentId, projectId);
 		expect(block).toEqual({ scope: 'project', period: 'monthly' });
 	});
 
 	it('checks only the agent when projectId is null', async () => {
 		await db.query('UPDATE projects SET monthly_budget_cents = 100 WHERE id = $1', [projectId]);
-		await insertCost(200, '1 hour');
+		await insertCostToday(200);
 		// Project is over, but a null project scope skips it.
 		expect(await checkOverBudget(db, agentId, null)).toBeNull();
 	});
@@ -213,7 +224,7 @@ describe('budget service - recordRunCost', () => {
 describe('budget-status API', () => {
 	it('returns project + per-agent window status with over-budget flags', async () => {
 		await db.query('UPDATE member_agents SET daily_budget_cents = 100 WHERE id = $1', [agentId]);
-		await insertCost(150, '1 hour');
+		await insertCostToday(150);
 
 		const res = await app.request(`/api/projects/${projectSlug}/budget-status`, {
 			headers: authHeader(token),

@@ -72,6 +72,35 @@ test.describe('Task Comment Attachments', () => {
 		);
 	}
 
+	// Dispatch a drop and confirm it actually reached the handler by waiting for the
+	// upload POST to fire. A registered drop kicks off `upload.mutateAsync` (the
+	// POST) synchronously, so if no request appears within a few seconds the
+	// synthetic DragEvent was swallowed (handler not yet bound / lost under CI
+	// load) and we re-dispatch. We key off the *request*, never the response: a
+	// genuinely slow upload must not be mistaken for a lost drop, or the retry
+	// would fire a second upload and the composer (which does not dedupe) would
+	// render two chips.
+	async function dropFileAndAwaitUpload(
+		page: import('@playwright/test').Page,
+		taskId: string,
+		selector: string,
+		filename: string,
+		mime: string,
+		bytes: number[],
+	) {
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const uploadStarted = page
+				.waitForRequest(
+					(r) => r.method() === 'POST' && r.url().includes(`/tasks/${taskId}/assets`),
+					{ timeout: 5000 },
+				)
+				.catch(() => null);
+			await dropFile(page, selector, filename, mime, bytes);
+			if (await uploadStarted) return;
+		}
+		throw new Error(`drop on ${selector} never triggered an upload for task ${taskId}`);
+	}
+
 	test('drag-drop adds a chip, sends, renders an icon thumb, opens in new tab', async ({
 		sharedPage: page,
 		context,
@@ -83,8 +112,9 @@ test.describe('Task Comment Attachments', () => {
 		await waitForPageLoad(page);
 		await expect(page.getByPlaceholder('Add a comment...')).toBeVisible({ timeout: 20000 });
 
-		await dropFile(
+		await dropFileAndAwaitUpload(
 			page,
+			task.id,
 			'[data-testid="comment-attachments-drop"]',
 			'shot.png',
 			'image/png',
@@ -144,8 +174,9 @@ test.describe('Task Comment Attachments', () => {
 			expect(text).toContain('10');
 		}).toPass({ timeout: 15000 });
 
-		await dropFile(
+		await dropFileAndAwaitUpload(
 			page,
+			task.id,
 			'[data-testid="comment-attachments-drop"]',
 			'shot.png',
 			'image/png',
@@ -171,8 +202,9 @@ test.describe('Task Comment Attachments', () => {
 		await waitForPageLoad(page);
 		await expect(page.getByPlaceholder('Add a comment...')).toBeVisible({ timeout: 20000 });
 
-		await dropFile(
+		await dropFileAndAwaitUpload(
 			page,
+			task.id,
 			'[data-testid="comment-attachments-drop"]',
 			'preview.png',
 			'image/png',
@@ -228,8 +260,9 @@ test.describe('Task Comment Attachments', () => {
 		await expect(hint).toBeVisible();
 		await expect(hint).toContainText('Drag and drop files to attach');
 
-		await dropFile(
+		await dropFileAndAwaitUpload(
 			page,
+			task.id,
 			'[data-testid="comment-attachments-drop"]',
 			'mobile.png',
 			'image/png',
