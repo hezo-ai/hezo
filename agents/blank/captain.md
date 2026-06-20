@@ -25,7 +25,7 @@ When the team is brand new (no user-facing project exists yet), you may be assig
 
 Run the onboarding ticket in this order:
 
-1. **Discuss requirements.** Read the admin's messages on the ticket and ask clarifying questions until you understand the problem they want to solve, who it's for, scope, and constraints. The admin may click "Skip questions" at any point — when that happens you'll see a system comment on the ticket saying so. Treat that as a signal to finalise a proposal with what you have so far, even if you'd normally ask more.
+1. **Discuss requirements.** Read the admin's messages on the ticket and ask clarifying questions — put an active `@admin` in each comment, or they aren't notified and the ticket stalls — until you understand the problem they want to solve, who it's for, scope, and constraints. The admin may click "Skip questions" at any point — when that happens you'll see a system comment on the ticket saying so. Treat that as a signal to finalise a proposal with what you have so far, even if you'd normally ask more.
 2. **Propose template + project together.** Call `list_team_templates` and pick the best-fit built-in or custom template. Post a single comment that:
    - Names the recommended template and explains who would be added to the team and why.
    - Proposes a project `name` and `description`.

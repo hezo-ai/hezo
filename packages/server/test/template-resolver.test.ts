@@ -301,7 +301,7 @@ describe('template resolver', () => {
 		expect(result).toContain('the mention is the only wake there is');
 		expect(result).toContain('A passive `@@` there pings no one and the ticket stalls');
 		// a direct instruction to the assignee leads the section as a co-equal rule
-		expect(result).toContain('A direct instruction is the only wake there is');
+		expect(result).toContain('A direct instruction or request is the only wake there is');
 		// rubric carries the directive phrasing that misfired as passive
 		expect(result).toContain('you can proceed');
 	});
@@ -317,6 +317,19 @@ describe('template resolver', () => {
 		// crediting the admin in a recap is also passive — active @admin lands an
 		// inbox row for every admin
 		expect(result).toContain('@@admin');
+	});
+
+	it('makes asking for input an active mention and the admin ask mandatory', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// the general principle: when you are the one asking, the active mention IS the ask
+		expect(result).toContain('the active mention **is** the ask');
+		expect(result).toContain('A request written only as prose, or marked passive');
+		// the admin-ask application: @admin is mandatory, and the prose/passive form stalls
+		expect(result).toContain('the active `@admin` is **not optional — it is the ask**');
+		expect(result).toContain('put `@admin` in that same comment');
+		expect(result).toContain("lands in no admin's inbox");
+		// a worked example demonstrates the correct active admin approval-ask
+		expect(result).toContain('please review and approve the draft');
 	});
 
 	it('Run Context carries no project line when no project is set', async () => {
@@ -548,6 +561,25 @@ Current date: {{current_date}}
 		expect(prompt).toContain('Approved in <TASK-ID>#comment-<uuid>');
 		// The linked comment is the triggering (admin approval) comment, never a fabricated id.
 		expect(prompt).toContain('the comment that triggered this run');
+	});
+
+	it('Product Lead asks the admin with an active @admin and no longer cites option cards', async () => {
+		const agentsRes = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, agentTeamSlug)}/agents`,
+			{ headers: authHeader(token) },
+		);
+		const agents = ((await agentsRes.json()) as any).data;
+		const productLead = agents.find((a: any) => a.slug === 'product-lead');
+		const prompt = await getAgentPrompt(productLead.id);
+
+		// Steps 4 (clarify) and 6 (approval) now emit an active @admin — the mention is the
+		// ask that reaches the inbox, the exact step that previously stalled with no notification.
+		expect(prompt).toContain('put an active `@admin` in that same comment');
+		expect(prompt).toContain('with an active `@admin` in that comment');
+		// Option cards are not post-able by any agent tool (create_comment is text-only),
+		// so the dead guidance that told the PL to use them is gone.
+		expect(prompt).not.toContain('option card');
+		expect(prompt).not.toContain('structured-option');
 	});
 
 	it('Captain system prompt does not use {{reports_to}}', async () => {
