@@ -2,6 +2,8 @@ import { Link } from '@tanstack/react-router';
 import { ChevronRight } from 'lucide-react';
 import { type Task, useTaskAncestors } from '../../hooks/use-tasks';
 import { MarkdownProse } from '../markdown-prose';
+import { TaskPriorityBadge } from '../task-priority-badge';
+import { TaskStatusBadge } from '../task-status-badge';
 import { Badge } from '../ui/badge';
 
 /** Compact wall-clock duration ("35s", "7m 41s", "1h 4m") from a seconds total. */
@@ -61,23 +63,20 @@ export function TaskHeader({ task, projectId, taskId, taskProjectSlug }: TaskHea
 			</nav>
 			<h1 className="text-xl font-medium mb-3">{task.title}</h1>
 
-			{/* Wire spec — task header reads as inline mono metadata (status · priority ·
-			    assignee) with a runs / duration / cost summary pushed right; the
-			    quiet-tint pills move out of the header. */}
-			<div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 font-mono text-[13px]">
-				<span className="text-text-2" data-testid="task-status-inline">
-					{task.status}
-				</span>
-				<span className="text-text-2" data-testid="task-priority-inline">
-					{task.priority}
-				</span>
+			{/* Wire spec — status / priority / assignee render as quiet-tint badges
+			    (treatment A, the default), color-coding state at a glance the same way
+			    the task list does, with a mono runs / duration / cost summary pushed
+			    right. Assignee carries no semantic state, so it stays neutral. */}
+			<div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+				<TaskStatusBadge status={task.status} testId="task-status-inline" />
+				<TaskPriorityBadge priority={task.priority} testId="task-priority-inline" />
 				{task.assignee_id && (
-					<span className="min-w-0 truncate text-text-2" data-testid="task-assignee-inline">
-						{task.assignee_slug ?? task.assignee_name}
-					</span>
+					<Badge color="neutral" className="max-w-[12rem]" testId="task-assignee-inline">
+						<span className="truncate">{task.assignee_slug ?? task.assignee_name}</span>
+					</Badge>
 				)}
 				{!task.has_active_run && task.queued_wakeup && (
-					<Badge color="blue" className="gap-1" data-testid="task-queued-badge">
+					<Badge color="blue" className="gap-1" testId="task-queued-badge">
 						<span className="inline-block w-1.5 h-1.5 rounded-full bg-info-soft-fg" />
 						{task.queued_wakeup.reason === 'project_at_capacity'
 							? 'Queued — project at capacity'
@@ -85,7 +84,10 @@ export function TaskHeader({ task, projectId, taskId, taskProjectSlug }: TaskHea
 					</Badge>
 				)}
 				{task.run_count > 0 && (
-					<span className="text-text-3 sm:ml-auto" data-testid="task-run-summary">
+					<span
+						className="font-mono text-[13px] text-text-3 sm:ml-auto"
+						data-testid="task-run-summary"
+					>
 						{task.run_count} {task.run_count === 1 ? 'run' : 'runs'}
 						{task.total_duration_seconds > 0 && ` · ${formatDuration(task.total_duration_seconds)}`}
 						{task.total_cost_cents > 0 && ` · $${(task.total_cost_cents / 100).toFixed(2)}`}

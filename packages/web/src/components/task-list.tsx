@@ -9,6 +9,7 @@ import { nestTasksForDisplay } from '../lib/nest-tasks-for-display';
 import { AdminApprovalsBanner } from './admin-approvals-banner';
 import { CreateTaskDialog } from './create-task-dialog';
 import { ProjectTaskListHeader } from './project-task-list-header';
+import { TaskPriorityBadge } from './task-priority-badge';
 import { TaskRunDot } from './task-run-dot';
 import { TaskStatusBadge } from './task-status-badge';
 import { Badge } from './ui/badge';
@@ -17,13 +18,6 @@ import { type Column, DataTable } from './ui/data-table';
 import { EmptyState } from './ui/empty-state';
 import { MultiSelect, type MultiSelectOption } from './ui/multi-select';
 import { Tooltip } from './ui/tooltip';
-
-const priorityColors: Record<string, string> = {
-	urgent: 'danger',
-	high: 'warning',
-	medium: 'info',
-	low: 'neutral',
-};
 
 const ALL_STATUSES = Object.values(TaskStatus) as string[];
 const TERMINAL_STATUS_SET = new Set<string>(TERMINAL_TASK_STATUSES);
@@ -323,9 +317,7 @@ export function TaskList({ projectId }: TaskListProps) {
 			header: 'Priority',
 			width: '80px',
 			hideOnMobile: true,
-			render: (row) => (
-				<Badge color={priorityColors[row.priority] as 'neutral'}>{row.priority}</Badge>
-			),
+			render: (row) => <TaskPriorityBadge priority={row.priority} />,
 		},
 		{
 			key: 'assignee',

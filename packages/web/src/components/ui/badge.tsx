@@ -74,6 +74,8 @@ interface BadgeProps {
 	mono?: boolean;
 	children: ReactNode;
 	className?: string;
+	/** Rendered as `data-testid` so callers can target the pill in tests. */
+	testId?: string;
 }
 
 export function Badge({
@@ -82,6 +84,7 @@ export function Badge({
 	mono = false,
 	children,
 	className = '',
+	testId,
 }: BadgeProps) {
 	const tone = resolveTone(color);
 	const base =
@@ -90,7 +93,10 @@ export function Badge({
 
 	if (variant === 'dot') {
 		return (
-			<span className={`${base} bg-transparent px-0.5 text-text-2 ${fontCls} ${className}`}>
+			<span
+				className={`${base} bg-transparent px-0.5 text-text-2 ${fontCls} ${className}`}
+				data-testid={testId}
+			>
 				<span className={`h-[7px] w-[7px] shrink-0 rounded-full ${dotMap[tone]}`} />
 				{children}
 			</span>
@@ -100,11 +106,16 @@ export function Badge({
 		return (
 			<span
 				className={`${base} border border-border-strong bg-transparent text-text-2 ${fontCls} ${className}`}
+				data-testid={testId}
 			>
 				{children}
 			</span>
 		);
 	}
 	const toneCls = variant === 'solid' ? solidMap[tone] : tintMap[tone];
-	return <span className={`${base} ${toneCls} ${fontCls} ${className}`}>{children}</span>;
+	return (
+		<span className={`${base} ${toneCls} ${fontCls} ${className}`} data-testid={testId}>
+			{children}
+		</span>
+	);
 }
