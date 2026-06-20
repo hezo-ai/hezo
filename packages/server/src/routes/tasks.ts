@@ -291,9 +291,11 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
             p.name AS project_name, p.slug AS project_slug, p.description AS project_description,
             co.description AS team_description,
             COALESCE(ma.title, m.display_name) AS assignee_name,
+            ma.slug AS assignee_slug,
             m.member_type AS assignee_type,
             COALESCE(ma_ps.title, m_ps.display_name) AS progress_summary_updated_by_name,
             (SELECT count(*)::int FROM task_comments ic WHERE ic.task_id = i.id) AS comment_count,
+            ra.run_count, ra.total_duration_seconds, ca.total_cost_cents,
             EXISTS (
               SELECT 1 FROM heartbeat_runs hr
               WHERE hr.task_id = i.id AND hr.status IN ('running', 'queued')
@@ -342,6 +344,20 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
        ORDER BY hr.finished_at DESC NULLS LAST, hr.started_at DESC
        LIMIT 1
      ) lr ON true
+     LEFT JOIN LATERAL (
+       SELECT count(*) FILTER (WHERE hr.started_at IS NOT NULL)::int AS run_count,
+              COALESCE(sum(
+                EXTRACT(EPOCH FROM (hr.finished_at - hr.started_at))
+              ) FILTER (WHERE hr.started_at IS NOT NULL AND hr.finished_at IS NOT NULL), 0)::int
+                AS total_duration_seconds
+       FROM heartbeat_runs hr
+       WHERE hr.task_id = i.id
+     ) ra ON true
+     LEFT JOIN LATERAL (
+       SELECT COALESCE(sum(ce.amount_cents), 0)::int AS total_cost_cents
+       FROM cost_entries ce
+       WHERE ce.task_id = i.id
+     ) ca ON true
      WHERE i.id = $1 AND i.team_id = $2`,
 		[taskId, teamId],
 	);

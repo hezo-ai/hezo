@@ -2,15 +2,18 @@ import { Link } from '@tanstack/react-router';
 import { ChevronRight } from 'lucide-react';
 import { type Task, useTaskAncestors } from '../../hooks/use-tasks';
 import { MarkdownProse } from '../markdown-prose';
-import { TaskStatusBadge } from '../task-status-badge';
 import { Badge } from '../ui/badge';
 
-const priorityColors: Record<string, string> = {
-	urgent: 'danger',
-	high: 'warning',
-	medium: 'info',
-	low: 'neutral',
-};
+/** Compact wall-clock duration ("35s", "7m 41s", "1h 4m") from a seconds total. */
+function formatDuration(totalSeconds: number): string {
+	if (totalSeconds < 60) return `${totalSeconds}s`;
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+	if (minutes < 60) return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
+	const hours = Math.floor(minutes / 60);
+	const mins = minutes % 60;
+	return mins ? `${hours}h ${mins}m` : `${hours}h`;
+}
 
 interface TaskHeaderProps {
 	task: Task;
@@ -21,9 +24,10 @@ interface TaskHeaderProps {
 
 /**
  * Top-of-page header for a task: a breadcrumb of ancestor tasks ending in the
- * current identifier, then title, status / priority / project badges,
- * queued-wakeup chip, and the description card. Renders nothing status-mutating
- * — assignee / close / reopen live in the sidebar.
+ * current identifier, then title, an inline mono metadata row (status · priority ·
+ * assignee) with a runs · duration · cost summary, the queued-wakeup chip, and the
+ * description card. Renders nothing status-mutating — assignee / close / reopen
+ * live in the sidebar.
  */
 export function TaskHeader({ task, projectId, taskId, taskProjectSlug }: TaskHeaderProps) {
 	// Ancestors come back root-first, excluding the current task, so the
@@ -57,17 +61,20 @@ export function TaskHeader({ task, projectId, taskId, taskProjectSlug }: TaskHea
 			</nav>
 			<h1 className="text-xl font-medium mb-3">{task.title}</h1>
 
-			<div className="flex flex-wrap gap-1.5 mb-4">
-				<TaskStatusBadge status={task.status} />
-				<Badge color={priorityColors[task.priority] as 'neutral'}>{task.priority}</Badge>
-				{task.project_name && task.project_slug && (
-					<Link
-						to="/projects/$projectId"
-						params={{ projectId: task.project_slug }}
-						className="hover:opacity-80 transition-opacity"
-					>
-						<Badge color="info">{task.project_name}</Badge>
-					</Link>
+			{/* Wire spec — task header reads as inline mono metadata (status · priority ·
+			    assignee) with a runs / duration / cost summary pushed right; the
+			    quiet-tint pills move out of the header. */}
+			<div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 font-mono text-[13px]">
+				<span className="text-text-2" data-testid="task-status-inline">
+					{task.status}
+				</span>
+				<span className="text-text-2" data-testid="task-priority-inline">
+					{task.priority}
+				</span>
+				{task.assignee_id && (
+					<span className="min-w-0 truncate text-text-2" data-testid="task-assignee-inline">
+						{task.assignee_slug ?? task.assignee_name}
+					</span>
 				)}
 				{!task.has_active_run && task.queued_wakeup && (
 					<Badge color="blue" className="gap-1" data-testid="task-queued-badge">
@@ -76,6 +83,13 @@ export function TaskHeader({ task, projectId, taskId, taskProjectSlug }: TaskHea
 							? 'Queued — project at capacity'
 							: 'Run queued'}
 					</Badge>
+				)}
+				{task.run_count > 0 && (
+					<span className="text-text-3 sm:ml-auto" data-testid="task-run-summary">
+						{task.run_count} {task.run_count === 1 ? 'run' : 'runs'}
+						{task.total_duration_seconds > 0 && ` · ${formatDuration(task.total_duration_seconds)}`}
+						{task.total_cost_cents > 0 && ` · $${(task.total_cost_cents / 100).toFixed(2)}`}
+					</span>
 				)}
 			</div>
 

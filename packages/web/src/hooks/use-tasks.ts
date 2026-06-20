@@ -25,8 +25,16 @@ export interface Task {
 	priority: string;
 	assignee_id: string | null;
 	assignee_name: string | null;
+	/** Agent slug for an agent assignee (null for human assignees / unassigned). */
+	assignee_slug: string | null;
 	assignee_type: 'agent' | 'user' | null;
 	has_active_run: boolean;
+	/** Number of agent runs that have started on this task (excludes queued). */
+	run_count: number;
+	/** Summed wall-clock duration of finished runs, in seconds. */
+	total_duration_seconds: number;
+	/** Summed cost across the task's runs, in cents. */
+	total_cost_cents: number;
 	has_unread_admin_mention: boolean;
 	last_run_status: 'succeeded' | 'failed' | 'cancelled' | 'timed_out' | null;
 	/** Id of the last completed run — the target of a manual retry. */
