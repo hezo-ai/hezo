@@ -33,6 +33,12 @@ import {
 
 const log = logger.child('egress-proxy');
 
+/** When set, the proxy emits per-connection lifecycle traces (socket open/close/
+ * error/timeout per leg, plus the host→dialed-port→owner of each CONNECT). Off by
+ * default; the only reliable way to pin Bun's connection-accounting divergences,
+ * which Node/vitest never reproduce. Enable in a real run with `HEZO_EGRESS_DEBUG=1`. */
+const EGRESS_DEBUG = !!process.env.HEZO_EGRESS_DEBUG;
+
 const PROXY_HOST = 'host.docker.internal';
 const PROXY_BIND_HOST = '127.0.0.1';
 
@@ -241,14 +247,37 @@ class RunProxyInstance {
 
 	constructor(private readonly cfg: RunProxyConfig) {}
 
-	/** Register a socket for forced teardown; auto-untracks when it closes. */
-	private trackSocket(sock: Socket): void {
+	/** Debug-gated lifecycle logging. Enable with `HEZO_EGRESS_DEBUG=1` to trace
+	 * which connection leg dies and when. */
+	private dbg(msg: string, meta: Record<string, unknown> = {}): void {
+		if (!EGRESS_DEBUG) return;
+		log.info(`[egress-dbg] ${msg}`, {
+			run: ref(this.cfg.scope.label, this.cfg.runId),
+			...meta,
+		});
+	}
+
+	/** Register a socket for forced teardown; auto-untracks when it closes. The
+	 * optional `leg` names which hop it is (agent CONNECT, per-host accept, loopback
+	 * bridge, upstream) so debug traces can attribute a death to the right side. */
+	private trackSocket(sock: Socket, leg = 'socket'): void {
 		if (this.closed || sock.destroyed) {
 			sock.destroy();
 			return;
 		}
 		this.liveSockets.add(sock);
 		sock.once('close', () => this.liveSockets.delete(sock));
+		if (EGRESS_DEBUG) {
+			const at = Date.now();
+			this.dbg('socket open', { leg, local: sock.localPort, remote: sock.remotePort });
+			sock.on('timeout', () => this.dbg('socket timeout event', { leg, ageMs: Date.now() - at }));
+			sock.once('error', (e: Error) =>
+				this.dbg('socket error', { leg, ageMs: Date.now() - at, error: e.message }),
+			);
+			sock.once('close', (hadError: boolean) =>
+				this.dbg('socket close', { leg, ageMs: Date.now() - at, hadError }),
+			);
+		}
 	}
 
 	/** Register an upstream request for forced abort; auto-untracks on settle.
@@ -264,7 +293,7 @@ class RunProxyInstance {
 		const cleanup = () => this.liveUpstreams.delete(reqOut);
 		reqOut.once('close', cleanup);
 		reqOut.once('error', cleanup);
-		reqOut.on('socket', (sock) => this.trackSocket(sock));
+		reqOut.on('socket', (sock) => this.trackSocket(sock, 'upstream'));
 	}
 
 	get port(): number {
@@ -281,7 +310,7 @@ class RunProxyInstance {
 		// Track every accepted socket (plain-request and CONNECT alike) so close
 		// can sever it — a hijacked CONNECT socket leaves the server's own
 		// connection list under Bun.
-		front.on('connection', (socket) => this.trackSocket(socket as Socket));
+		front.on('connection', (socket) => this.trackSocket(socket as Socket, 'agent-front'));
 		front.on('request', (req, res) => {
 			this.forward(false, null, req, res).catch((e: Error) => this.onHandlerError(res, e));
 		});
@@ -362,8 +391,17 @@ class RunProxyInstance {
 			client.destroy();
 			return;
 		}
+		if (EGRESS_DEBUG) {
+			// The cross-host cert leak (a host served another host's leaf cert) shows
+			// up here: the port about to be dialed must be owned by THIS host's server
+			// and no other. Log the owner(s) so a mis-route is caught red-handed.
+			const owners = [...this.hostServers.entries()]
+				.filter(([, r]) => r.port === rec.port)
+				.map(([h]) => h);
+			this.dbg('connect dial', { host, dialPort: rec.port, owners });
+		}
 		const up = netConnect({ host: '127.0.0.1', port: rec.port }, () => {
-			this.trackSocket(up);
+			this.trackSocket(up, `bridge:${host}`);
 			client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
 			if (head?.length) up.write(head);
 			client.pipe(up);
@@ -405,7 +443,7 @@ class RunProxyInstance {
 		const server = createHttpsServer({ key: leaf.key, cert: leaf.cert }, (req, res) => {
 			this.forward(true, host, req, res).catch((e: Error) => this.onHandlerError(res, e));
 		});
-		server.on('connection', (socket) => this.trackSocket(socket as Socket));
+		server.on('connection', (socket) => this.trackSocket(socket as Socket, `perhost:${host}`));
 		server.on('clientError', (_err, socket) => socket.destroy());
 		server.on('error', (err) => {
 			log.warn('egress per-host server error', {

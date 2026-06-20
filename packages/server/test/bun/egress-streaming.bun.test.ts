@@ -81,6 +81,10 @@ async function tunnelTo(proxyPort: number, host: string, port: number): Promise<
 		const s = netConnect({ host: '127.0.0.1', port: proxyPort });
 		const onData = (chunk: Buffer) => {
 			s.removeListener('data', onData);
+			// The timeout only bounds the CONNECT handshake; clear it once the tunnel
+			// is up, or it would reap the idle socket mid-test and masquerade as a
+			// proxy-side idle reap.
+			s.setTimeout(0);
 			if (/^HTTP\/1\.[01] 200/.test(chunk.toString().split('\r\n')[0] ?? '')) resolve(s);
 			else reject(new Error(`CONNECT failed: ${chunk.toString().split('\r\n')[0]}`));
 		};
@@ -278,4 +282,50 @@ describe('EgressProxy streaming + teardown under Bun', () => {
 			await new Promise<void>((r) => upstream.close(() => r()));
 		}
 	}, 30_000);
+
+	// A remote Streamable-HTTP MCP (api.githubcopilot.com) holds its SSE channel
+	// open but quiet between tool calls — often for many minutes. The proxy must
+	// not impose an inactivity timeout of its own that would reap the channel and
+	// surface to the agent as "socket connection was closed unexpectedly". Every
+	// other test here keeps traffic flowing within ~2s, so this is the only one
+	// that would catch a regression that added an idle timeout to the tunnel.
+	const IDLE_GAP_MS = 15_000;
+
+	test('keeps a quiet SSE stream open across a long idle gap', async () => {
+		const { cert, key } = await mintCertFromCA(ca, 'localhost');
+		// Writes one event, then stays silent past the idle window, then one more.
+		// A reaped connection never delivers the second event.
+		const upstream: HttpsServer = createHttpsServer({ cert, key }, (_req, res) => {
+			res.writeHead(200, { 'content-type': 'text/event-stream' });
+			res.write('data: first\n\n');
+			setTimeout(() => res.write('data: second\n\n'), IDLE_GAP_MS);
+		});
+		await new Promise<void>((r) => upstream.listen(0, '127.0.0.1', () => r()));
+		const upstreamPort = (upstream.address() as { port: number }).port;
+		await insertSecret('IDLE_SSE', 'tok', ['localhost']);
+		const runId = `idle-sse-${process.pid}`;
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+
+		try {
+			const tls = await tunnelTo(allocated.proxyPort, 'localhost', upstreamPort);
+			let acc = '';
+			const sawSecond = new Promise<boolean>((resolve) => {
+				tls.on('data', (c: Buffer) => {
+					acc += c.toString();
+					if (acc.includes('second')) resolve(true);
+				});
+				tls.on('close', () => resolve(false));
+				tls.setTimeout(IDLE_GAP_MS + 10_000, () => resolve(false));
+			});
+			tls.write(
+				`GET /sse HTTP/1.1\r\nHost: localhost:${upstreamPort}\r\nAccept: text/event-stream\r\n` +
+					`Authorization: Bearer __HEZO_SECRET_IDLE_SSE__\r\n\r\n`,
+			);
+			expect(await sawSecond).toBe(true);
+			tls.destroy();
+		} finally {
+			await proxy.releaseRunProxy(runId);
+			await new Promise<void>((r) => upstream.close(() => r()));
+		}
+	}, 40_000);
 });
