@@ -103,7 +103,7 @@ test('HQ agents appear in the Team section as global members linking to the HQ p
 	expect(link.getAttribute('href')).toBe('/projects/hq/agents/ceo');
 });
 
-test('Team agents use the spec status treatment — lowercase mono status, running in cyan + bold', async () => {
+test('Team agents use a pulsing live dot for running and no dot when idle', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
 	let runningTitle = '';
@@ -130,16 +130,23 @@ test('Team agents use the spec status treatment — lowercase mono status, runni
 	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
 	const nav = getNav(container);
 
-	// Status renders as lowercase mono text, never the capitalized quiet-tint pill.
-	await waitFor(() => expect(within(nav).getAllByText('idle').length).toBeGreaterThan(0), {
+	// The "idle"/"running" text suffixes are gone — status is a dot now.
+	await waitFor(() => expect(within(nav).getByRole('link', { name: /Captain/ })).toBeTruthy(), {
 		timeout: 20_000,
 	});
-	expect(within(nav).queryByText('Idle')).toBeNull();
-	expect(within(nav).queryByText('Running')).toBeNull();
+	expect(within(nav).queryByText('idle')).toBeNull();
+	expect(within(nav).queryByText('running')).toBeNull();
 
-	// The running agent shows the cyan "live" status and a bold name.
-	await waitFor(() => expect(within(nav).getByText('running')).toBeTruthy(), { timeout: 20_000 });
-	expect(within(nav).getByText('running').className).toContain('text-live');
+	// The running agent shows a pulsing cyan "live" dot; idle agents show none.
+	await waitFor(() => expect(within(nav).getByRole('img', { name: 'Running' })).toBeTruthy(), {
+		timeout: 20_000,
+	});
+	const runningDot = within(nav).getByRole('img', { name: 'Running' });
+	expect(runningDot.className).toContain('bg-live');
+	expect(runningDot.className).toContain('animate-pulse');
+	expect(within(nav).queryByRole('img', { name: 'Idle' })).toBeNull();
+
+	// The running agent keeps the bold-name emphasis.
 	const runningLink = within(nav).getByRole('link', { name: new RegExp(runningTitle) });
 	expect(within(runningLink).getByText(runningTitle).className).toContain('font-semibold');
 });
