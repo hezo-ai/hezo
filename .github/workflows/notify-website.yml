@@ -1,0 +1,42 @@
+name: Notify website
+
+# When CI passes on main, tell the marketing website (hezo-ai/website) to bump its
+# vendor/hezo submodule to the new main commit. The website's docs are sourced from
+# this repo's docs/ folder via that submodule, and Cloudflare Pages redeploys the
+# site on the resulting push. Gated on CI success so the website never picks up a
+# commit that failed tests.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    # Only fire when the CI run actually succeeded (skip failed / cancelled runs).
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      # Mint a short-lived token for the website repo via the existing
+      # hezo-release-bot app (App ID 3938851). Requires repo secrets
+      # RELEASE_APP_ID and RELEASE_APP_PRIVATE_KEY, and the app installed on
+      # hezo-ai/website with Contents:write.
+      - name: Mint app token (website)
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: hezo-ai
+          repositories: website
+
+      - name: Dispatch submodule-update event to website
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh api repos/hezo-ai/website/dispatches \
+            -f event_type=hezo-main-updated \
+            -F "client_payload[sha]=${{ github.event.workflow_run.head_sha }}"
