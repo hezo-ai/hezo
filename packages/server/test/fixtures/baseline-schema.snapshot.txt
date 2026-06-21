@@ -142,6 +142,7 @@ assets.sha256 | text | text | nullable=NO | default=
 assets.team_id | uuid | uuid | nullable=NO | default=
 assets.uploaded_by_member_id | uuid | uuid | nullable=YES | default=
 audit_log.action | text | text | nullable=NO | default=
+audit_log.actor_connected_agent_id | uuid | uuid | nullable=YES | default=
 audit_log.actor_member_id | uuid | uuid | nullable=YES | default=
 audit_log.actor_type | USER-DEFINED | audit_actor_type | nullable=NO | default=
 audit_log.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
@@ -211,6 +212,7 @@ cost_entries.member_id | uuid | uuid | nullable=NO | default=
 cost_entries.project_id | uuid | uuid | nullable=YES | default=
 cost_entries.provider | USER-DEFINED | ai_provider | nullable=YES | default=
 cost_entries.task_id | uuid | uuid | nullable=YES | default=
+document_revisions.author_connected_agent_id | uuid | uuid | nullable=YES | default=
 document_revisions.author_member_id | uuid | uuid | nullable=YES | default=
 document_revisions.change_summary | text | text | nullable=NO | default=''::text
 document_revisions.content | text | text | nullable=NO | default=
@@ -448,6 +450,7 @@ task_attachments.asset_id | uuid | uuid | nullable=NO | default=
 task_attachments.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
 task_attachments.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
 task_attachments.task_id | uuid | uuid | nullable=NO | default=
+task_comments.author_connected_agent_id | uuid | uuid | nullable=YES | default=
 task_comments.author_member_id | uuid | uuid | nullable=YES | default=
 task_comments.chosen_option | jsonb | jsonb | nullable=YES | default=
 task_comments.content | jsonb | jsonb | nullable=NO | default=
@@ -553,7 +556,7 @@ ai_auth_method: api_key, subscription
 ai_provider: anthropic, openai, google, deepseek, z_ai, openrouter, kimi
 approval_status: pending, approved, denied
 approval_type: hire, project_creation, strategy, plan_review, deploy_production, designated_repo_request, skill_proposal
-audit_actor_type: admin, agent, system
+audit_actor_type: admin, agent, system, connected_agent
 ceo_channel: web, telegram, whatsapp
 ceo_message_role: user, assistant, system
 ceo_message_status: pending, streaming, complete, failed, interrupted
@@ -618,6 +621,7 @@ CREATE INDEX idx_api_keys_team ON public.api_keys USING btree (team_id)
 CREATE INDEX idx_approvals_status ON public.approvals USING btree (team_id, status)
 CREATE INDEX idx_approvals_team ON public.approvals USING btree (team_id)
 CREATE INDEX idx_assets_project ON public.assets USING btree (project_id)
+CREATE INDEX idx_audit_actor_connected_agent ON public.audit_log USING btree (actor_connected_agent_id) WHERE (actor_connected_agent_id IS NOT NULL)
 CREATE INDEX idx_audit_created ON public.audit_log USING btree (team_id, created_at)
 CREATE INDEX idx_audit_created_global ON public.audit_log USING btree (created_at)
 CREATE INDEX idx_audit_entity ON public.audit_log USING btree (entity_type, entity_id)
@@ -630,6 +634,7 @@ CREATE INDEX idx_ceo_sessions_status ON public.ceo_sessions USING btree (status)
 CREATE INDEX idx_comment_attachments_comment ON public.comment_attachments USING btree (comment_id)
 CREATE INDEX idx_comment_reactions_comment ON public.comment_reactions USING btree (comment_id)
 CREATE INDEX idx_comments_author ON public.task_comments USING btree (author_member_id)
+CREATE INDEX idx_comments_author_connected_agent ON public.task_comments USING btree (author_connected_agent_id) WHERE (author_connected_agent_id IS NOT NULL)
 CREATE INDEX idx_comments_embedding ON public.task_comments USING hnsw (embedding vector_cosine_ops)
 CREATE INDEX idx_comments_parent ON public.task_comments USING btree (parent_comment_id) WHERE (parent_comment_id IS NOT NULL)
 CREATE UNIQUE INDEX idx_comments_public_id ON public.task_comments USING btree (task_id, public_id)
@@ -781,6 +786,7 @@ assets | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
 assets | f | FOREIGN KEY (uploaded_by_member_id) REFERENCES members(id) ON DELETE SET NULL
 assets | p | PRIMARY KEY (id)
 assets | u | UNIQUE (project_id, original_filename)
+audit_log | f | FOREIGN KEY (actor_connected_agent_id) REFERENCES connected_agents(id) ON DELETE SET NULL
 audit_log | f | FOREIGN KEY (actor_member_id) REFERENCES members(id) ON DELETE SET NULL
 audit_log | f | FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
 audit_log | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
@@ -812,6 +818,7 @@ cost_entries | f | FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASC
 cost_entries | f | FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
 cost_entries | f | FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
 cost_entries | p | PRIMARY KEY (id)
+document_revisions | f | FOREIGN KEY (author_connected_agent_id) REFERENCES connected_agents(id) ON DELETE SET NULL
 document_revisions | f | FOREIGN KEY (author_member_id) REFERENCES members(id) ON DELETE SET NULL
 document_revisions | f | FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
 document_revisions | p | PRIMARY KEY (id)
@@ -900,6 +907,7 @@ task_attachments | f | FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CA
 task_attachments | f | FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
 task_attachments | p | PRIMARY KEY (id)
 task_attachments | u | UNIQUE (task_id, asset_id)
+task_comments | f | FOREIGN KEY (author_connected_agent_id) REFERENCES connected_agents(id) ON DELETE SET NULL
 task_comments | f | FOREIGN KEY (author_member_id) REFERENCES members(id) ON DELETE SET NULL
 task_comments | f | FOREIGN KEY (parent_comment_id) REFERENCES task_comments(id) ON DELETE SET NULL
 task_comments | f | FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE

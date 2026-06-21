@@ -52,7 +52,7 @@ CREATE TYPE comment_content_type AS ENUM ('text', 'preview', 'system', 'run', 'a
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
 CREATE TYPE approval_type AS ENUM ('hire', 'project_creation', 'strategy', 'plan_review', 'deploy_production', 'designated_repo_request', 'skill_proposal');
 CREATE TYPE approval_status AS ENUM ('pending', 'approved', 'denied');
-CREATE TYPE audit_actor_type AS ENUM ('admin', 'agent', 'system');
+CREATE TYPE audit_actor_type AS ENUM ('admin', 'agent', 'system', 'connected_agent');
 CREATE TYPE repo_host_type AS ENUM ('github');
 CREATE TYPE platform_type AS ENUM ('github', 'gmail', 'gitlab', 'stripe', 'posthog', 'railway', 'vercel', 'digitalocean', 'x', 'anthropic', 'openai', 'google');
 CREATE TYPE connection_status AS ENUM ('active', 'expired', 'disconnected');
@@ -1201,6 +1201,22 @@ CREATE TABLE connected_agents (
 );
 
 CREATE INDEX idx_connected_agents_status ON connected_agents(status);
+
+-- Connected-agent attribution: parallel nullable FKs alongside the member FKs on
+-- attributed tables (at most one of the two is set per row), so admin actions by an
+-- approved external MCP client can be flagged human-vs-agent in the UI. Added here
+-- (after connected_agents) because the attributed tables are defined earlier.
+ALTER TABLE audit_log
+    ADD COLUMN actor_connected_agent_id UUID REFERENCES connected_agents(id) ON DELETE SET NULL;
+ALTER TABLE task_comments
+    ADD COLUMN author_connected_agent_id UUID REFERENCES connected_agents(id) ON DELETE SET NULL;
+ALTER TABLE document_revisions
+    ADD COLUMN author_connected_agent_id UUID REFERENCES connected_agents(id) ON DELETE SET NULL;
+
+CREATE INDEX idx_audit_actor_connected_agent ON audit_log(actor_connected_agent_id)
+    WHERE actor_connected_agent_id IS NOT NULL;
+CREATE INDEX idx_comments_author_connected_agent ON task_comments(author_connected_agent_id)
+    WHERE author_connected_agent_id IS NOT NULL;
 
 -------------------------------------------------------------------------------
 -- TRIGGERS: auto-update updated_at
