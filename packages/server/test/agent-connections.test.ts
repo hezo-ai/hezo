@@ -145,17 +145,15 @@ describe('approval', () => {
 	it('rejects approval from a non-superuser principal', async () => {
 		const { id } = await registerViaRest('victim-bot');
 
-		// A team-scoped API key is a non-superuser principal.
-		const keyRes = await app.request(`/api/projects/${slugA}/api-keys`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'key' }),
-		});
-		const apiKey = (await keyRes.json()).data.key as string;
+		// An approved connected agent is admin-equivalent but explicitly may NOT
+		// manage connected agents — that stays human-superuser-only. (A team-scoped
+		// API key doesn't apply here: API keys are rejected on REST outright.)
+		const { id: otherId, token: otherToken } = await registerViaRest('other-bot');
+		expect((await approve(otherId)).status).toBe(200);
 
 		const res = await app.request(`/api/agent-connections/${id}/approve`, {
 			method: 'POST',
-			headers: authHeader(apiKey),
+			headers: authHeader(otherToken),
 		});
 		expect(res.status).toBe(403);
 	});

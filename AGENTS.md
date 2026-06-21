@@ -267,7 +267,8 @@ The egress audit log records substitution events by **secret name** only, never 
 
 Every route enforces authorization — never trust URL params alone.
 
-- Routes with `:projectId` resolve the project to its backing team and verify the authenticated user has access to that team per request (board users can be in multiple teams; agent / API-key auth carries `teamId` and must match the resolved team). Project resolution + access check run once in `requireProjectAccessMiddleware`, which exposes `c.var.projectId` and `c.var.teamId`.
+- Routes with `:projectId` resolve the project to its backing team and verify the authenticated user has access to that team per request (board users can be in multiple teams; an agent JWT carries `teamId` and must match the resolved team). Project resolution + access check run once in `requireProjectAccessMiddleware`, which exposes `c.var.projectId` and `c.var.teamId`.
+- **API keys authenticate the MCP surface only** — they are rejected on REST (and the WebSocket) in `authMiddleware`; their team scoping is enforced MCP-side by `authorizeScope`/`authorizeTeam` in `mcp/tools.ts`. The REST api-keys routes (key management) stay user-JWT.
 - Nested resources (`:taskId`, `:secretId`, `:commentId`, …) verify the resource belongs to the parent `:projectId` (and its team) via WHERE/JOIN before any read or write.
 - Global endpoints (no `:projectId` in path) still verify the authenticated user has access to the resource's team.
 - WebSocket subscriptions verify team membership matches the room.

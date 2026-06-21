@@ -282,9 +282,24 @@ describe('Superuser cross-team access', () => {
 	});
 });
 
-describe('API key cross-team isolation', () => {
+describe('API key cross-team isolation (MCP surface)', () => {
 	let apiKeyA: string;
 	let apiKeyB: string;
+
+	async function listAgentsViaMcp(authToken: string, projectSlug: string): Promise<unknown> {
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: { name: 'list_agents', arguments: { project: projectSlug } },
+				id: 1,
+			}),
+		});
+		const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
+		return JSON.parse(body.result.content[0].text);
+	}
 
 	beforeAll(async () => {
 		const resA = await app.request(
@@ -308,44 +323,30 @@ describe('API key cross-team isolation', () => {
 		apiKeyB = (await resB.json()).data.key;
 	});
 
-	it('API key A cannot access Team B', async () => {
-		const res = await app.request(
-			`/api/projects/${await projectSlugForTeamSlug(db, teamBSlug)}/agents`,
-			{
-				headers: authHeader(apiKeyA),
-			},
-		);
-		expect(res.status).toBe(403);
+	it('API key A cannot reach Team B via MCP', async () => {
+		const result = (await listAgentsViaMcp(
+			apiKeyA,
+			await projectSlugForTeamSlug(db, teamBSlug),
+		)) as { error?: string };
+		expect(result.error).toBeDefined();
 	});
 
-	it('API key B cannot access Team A', async () => {
-		const res = await app.request(
-			`/api/projects/${await projectSlugForTeamSlug(db, teamASlug)}/agents`,
-			{
-				headers: authHeader(apiKeyB),
-			},
-		);
-		expect(res.status).toBe(403);
+	it('API key B cannot reach Team A via MCP', async () => {
+		const result = (await listAgentsViaMcp(
+			apiKeyB,
+			await projectSlugForTeamSlug(db, teamASlug),
+		)) as { error?: string };
+		expect(result.error).toBeDefined();
 	});
 
-	it('API key A can access Team A', async () => {
-		const res = await app.request(
-			`/api/projects/${await projectSlugForTeamSlug(db, teamASlug)}/agents`,
-			{
-				headers: authHeader(apiKeyA),
-			},
-		);
-		expect(res.status).toBe(200);
+	it('API key A reaches Team A via MCP', async () => {
+		const result = await listAgentsViaMcp(apiKeyA, await projectSlugForTeamSlug(db, teamASlug));
+		expect(Array.isArray(result)).toBe(true);
 	});
 
-	it('API key B can access Team B', async () => {
-		const res = await app.request(
-			`/api/projects/${await projectSlugForTeamSlug(db, teamBSlug)}/agents`,
-			{
-				headers: authHeader(apiKeyB),
-			},
-		);
-		expect(res.status).toBe(200);
+	it('API key B reaches Team B via MCP', async () => {
+		const result = await listAgentsViaMcp(apiKeyB, await projectSlugForTeamSlug(db, teamBSlug));
+		expect(Array.isArray(result)).toBe(true);
 	});
 });
 

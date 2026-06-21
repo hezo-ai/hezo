@@ -36,6 +36,12 @@ export function generateSkillFile(tools: SkillTool[], opts: { baseUrl?: string }
 			'/api/agent-connections/status`) until it returns `{"status":"approved"}`.',
 		'5. Once approved, the same token grants full instance access on `POST /mcp`. Pass a `project` slug to project-scoped tools (use `list_projects` to discover them).',
 		'',
+		'## File uploads',
+		'',
+		'Binary files (images, PDFs, …) cannot be sent as a JSON-RPC tool call. Upload them with a `multipart/form-data` POST to `' +
+			base +
+			'/mcp/assets` (same Bearer auth) using a `file` field — add an optional `project` field to act across projects. The response returns the stored asset plus a signed read URL, and the file then shows up in `list_project_assets` / `read_project_asset`.',
+		'',
 		'## Available Tools',
 		'',
 	];

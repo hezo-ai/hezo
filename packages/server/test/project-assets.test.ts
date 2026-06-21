@@ -85,6 +85,23 @@ async function uploadTaskAsset(filename: string, mime: string, bytes: Uint8Array
 	return (await res.json()).data.id;
 }
 
+async function uploadAssetViaMcp(
+	authToken: string,
+	filename: string,
+	mime: string,
+	bytes: Uint8Array,
+): Promise<Response> {
+	const fd = new FormData();
+	const copy = new Uint8Array(bytes.byteLength);
+	copy.set(bytes);
+	fd.set('file', new File([copy.buffer], filename, { type: mime }));
+	return app.request('/mcp/assets', {
+		method: 'POST',
+		headers: { ...authHeader(authToken) },
+		body: fd,
+	});
+}
+
 beforeAll(async () => {
 	const ctx = await createTestApp();
 	app = ctx.app;
@@ -361,5 +378,81 @@ describe('asset mention resolution', () => {
 		expect(body.assets[0].filename).toBe('resolve-me.png');
 		expect(body.assets[0].content_type).toBe('image/png');
 		expect(body.assets[0].signed_url).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
+	});
+});
+
+describe('MCP asset upload (POST /mcp/assets)', () => {
+	it('an agent run uploads a binary asset, retrievable via the MCP read tools', async () => {
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+			{
+				projectId,
+			},
+		);
+		const res = await uploadAssetViaMcp(agentToken, 'diagram.png', 'image/png', buildPng(7));
+		expect(res.status).toBe(201);
+		const body = await res.json();
+		expect(body.data.original_filename).toBe('diagram.png');
+		expect(body.data.content_type).toBe('image/png');
+		expect(body.data.url).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
+
+		const onDisk = join(dataDir, 'teams', teamId, 'projects', projectId, 'assets', body.data.id);
+		expect(existsSync(onDisk)).toBe(true);
+
+		// Visible to the agent through the existing read tools.
+		const list = (await callToolViaMcp(agentToken, 'list_project_assets', {})) as {
+			files: Array<{ filename: string }>;
+		};
+		expect(list.files.some((f) => f.filename === 'diagram.png')).toBe(true);
+
+		const read = (await callToolViaMcp(agentToken, 'read_project_asset', {
+			filename: 'diagram.png',
+		})) as { binary?: boolean; path?: string };
+		expect(read.binary).toBe(true);
+		expect(read.path).toContain('/workspace/.hezo/assets/');
+	});
+
+	it('an external API key uploads via MCP', async () => {
+		const createRes = await app.request(`/api/projects/${projectId}/api-keys`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Upload Key' }),
+		});
+		const rawKey = (await createRes.json()).data.key;
+
+		const res = await uploadAssetViaMcp(rawKey, 'external.png', 'image/png', buildPng(8));
+		expect(res.status).toBe(201);
+		expect((await res.json()).data.original_filename).toBe('external.png');
+	});
+
+	it('rejects a disallowed file type', async () => {
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+			{
+				projectId,
+			},
+		);
+		const res = await uploadAssetViaMcp(
+			agentToken,
+			'evil.exe',
+			'application/x-msdownload',
+			buildPng(9),
+		);
+		expect(res.status).toBe(400);
+	});
+
+	it('requires authentication', async () => {
+		const fd = new FormData();
+		fd.set('file', new File([buildPng(10)], 'nope.png', { type: 'image/png' }));
+		const res = await app.request('/mcp/assets', { method: 'POST', body: fd });
+		expect(res.status).toBe(401);
 	});
 });

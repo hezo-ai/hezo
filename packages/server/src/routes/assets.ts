@@ -32,7 +32,7 @@ export const assetsRoutes = new Hono<Env>();
  * task-comment upload and the project Assets upload. Returns a `201` response
  * with the stored asset + a freshly-signed read URL, or an error response.
  */
-async function storeUploadedAsset(
+export async function storeUploadedAsset(
 	c: Context<Env>,
 	teamId: string,
 	projectId: string,
