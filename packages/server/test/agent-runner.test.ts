@@ -322,6 +322,47 @@ describe('runAgent', () => {
 		expect(run.rows[0].exit_code).toBe(0);
 	});
 
+	it('surfaces a provider billing rejection as the run error reason', async () => {
+		const errorEvent = JSON.stringify({
+			type: 'result',
+			is_error: true,
+			result: 'API Error: 402 Insufficient Balance',
+			usage: {},
+		});
+		const docker = createMockDocker({
+			producesOutput: false,
+			execInspect: async () => ({ ExitCode: 1, Running: false, Pid: 0 }),
+			execStart: async (
+				_execId: string,
+				opts: { onChunk?: (chunk: { stream: string; text: string }) => Promise<void> },
+			) => {
+				await opts.onChunk?.({ stream: 'stdout', text: `${errorEvent}\n` });
+				return { stdout: '', stderr: '' };
+			},
+		});
+
+		const deps: RunnerDeps = {
+			db,
+			docker,
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: '/tmp/test-data',
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(false);
+
+		const run = await db.query<{ status: string; error: string | null; log_text: string }>(
+			'SELECT status, error, log_text FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+		expect(run.rows[0].error).toContain('credit/quota');
+		expect(run.rows[0].error).toContain('402 Insufficient Balance');
+		expect(run.rows[0].log_text).toContain('[runner]');
+	});
+
 	it('marks produced_output on a successful run', async () => {
 		const deps: RunnerDeps = {
 			db,

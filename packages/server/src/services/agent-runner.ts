@@ -1011,9 +1011,14 @@ export async function runAgent(
 				exitedClean && !producedOutput && !reportedNoWork
 					? 'run produced no output (no code changes, comments, tasks, documents, or other writes)'
 					: undefined;
+			// A failed run's terminal error (e.g. a provider billing/auth rejection)
+			// otherwise lives only in the log; surface it on the run row so the board
+			// shows why the run failed instead of a bare "failed".
+			const terminalError = success ? null : parser.getTerminalError();
 			if (noOutputError) emit('stderr', `\n[runner] ${noOutputError}\n`);
 			else if (reportedNoWork && !producedOutput)
 				emit('stdout', `\n[runner] no work to do${noWorkReason ? ` — ${noWorkReason}` : ''}\n`);
+			else if (terminalError) emit('stderr', `\n[runner] ${terminalError}\n`);
 
 			await deps.logs.end(streamId);
 			await updateHeartbeatRun(
@@ -1023,7 +1028,7 @@ export async function runAgent(
 					status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
 					exitCode: execInfo.ExitCode,
 					durationMs,
-					error: noOutputError,
+					error: noOutputError ?? terminalError ?? undefined,
 					usage: parser.getUsage(),
 				},
 				runBroadcast,

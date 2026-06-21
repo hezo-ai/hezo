@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { decrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
+import { createConnection } from '../src/services/oauth/connection-store';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -441,5 +442,54 @@ describe('fulfill-credential endpoint', () => {
 			},
 		);
 		expect(res.status).toBe(200);
+	});
+});
+
+async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+	const res = await app.request('/mcp', {
+		method: 'POST',
+		headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			jsonrpc: '2.0',
+			method: 'tools/call',
+			params: { name, arguments: args },
+			id: 1,
+		}),
+	});
+	const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
+	return JSON.parse(body.result.content[0].text);
+}
+
+describe('list_mcp_connections rest_auth', () => {
+	it('exposes an active OAuth connector REST placeholder scoped to its allowed hosts', async () => {
+		const conn = await createConnection(
+			{ db, masterKeyManager },
+			{
+				provider: 'github',
+				providerAccountId: 'acct-1',
+				providerAccountLabel: 'octocat',
+				accessToken: 'gho_realsecret',
+				scopes: ['repo'],
+				allowedHosts: ['api.github.com', 'github.com'],
+			},
+		);
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, oauth_connection_id, activated_at, install_status)
+			 VALUES ('github', 'saas', '{}'::jsonb, $1, now(), 'installed')`,
+			[conn.id],
+		);
+
+		const rows = (await callTool('list_mcp_connections', { project: projectId })) as Array<{
+			name: string;
+			oauth_status: string;
+			rest_auth: { placeholder: string; allowed_hosts: string[]; scopes: string[] } | null;
+		}>;
+		const gh = rows.find((row) => row.name === 'github');
+		expect(gh?.oauth_status).toBe('active');
+		expect(gh?.rest_auth?.placeholder).toBe(`__HEZO_SECRET_${conn.accessTokenSecretName}__`);
+		expect(gh?.rest_auth?.allowed_hosts).toContain('api.github.com');
+		expect(gh?.rest_auth?.scopes).toContain('repo');
+		// The raw token value is never returned anywhere in the payload.
+		expect(JSON.stringify(rows)).not.toContain('gho_realsecret');
 	});
 });

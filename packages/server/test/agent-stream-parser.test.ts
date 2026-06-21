@@ -112,6 +112,43 @@ describe('agent-stream-parser', () => {
 		expect(usage?.costCents).toBe(24);
 	});
 
+	it('captures a provider billing rejection as the run terminal error', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		expect(parser.getTerminalError()).toBeNull();
+		parser.onStdout(
+			`${JSON.stringify({
+				type: 'result',
+				is_error: true,
+				result: 'API Error: 402 Insufficient Balance',
+				usage: {},
+			})}\n`,
+		);
+		const reason = parser.getTerminalError();
+		expect(reason).toContain('credit/quota');
+		expect(reason).toContain('API Error: 402 Insufficient Balance');
+	});
+
+	it('captures a provider auth rejection as the run terminal error', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		parser.onStdout(
+			`${JSON.stringify({
+				type: 'result',
+				is_error: true,
+				result: 'Not logged in · Please run /login',
+				usage: {},
+			})}\n`,
+		);
+		expect(parser.getTerminalError()).toContain('authentication failed');
+	});
+
+	it('leaves the terminal error null for a successful run', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		parser.onStdout(
+			`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, usage: {} })}\n`,
+		);
+		expect(parser.getTerminalError()).toBeNull();
+	});
+
 	it('passes through lines that fail to parse as JSON', () => {
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
 		const out = parser.onStdout('not json at all\n');

@@ -362,6 +362,24 @@ describe('template resolver', () => {
 		expect(result).not.toContain('Current ticket:');
 	});
 
+	it('Repository block steers GitHub work to the connected account before any PAT', async () => {
+		await db.query(
+			`INSERT INTO repos (project_id, repo_identifier, host_type)
+			 VALUES ($1, 'acme/widget', 'github')`,
+			[projectId],
+		);
+		await db.query(
+			`UPDATE projects SET designated_repo_id = (SELECT id FROM repos WHERE project_id = $1 LIMIT 1) WHERE id = $1`,
+			[projectId],
+		);
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId, projectId });
+		expect(result).toContain('GitHub auth is already provisioned by the project');
+		expect(result).toContain('list_mcp_connections');
+		expect(result).toContain('rest_auth.placeholder');
+		await db.query(`UPDATE projects SET designated_repo_id = NULL WHERE id = $1`, [projectId]);
+		await db.query(`DELETE FROM repos WHERE project_id = $1`, [projectId]);
+	});
+
 	it('Run Context names the current ticket by identifier when taskId is set', async () => {
 		const inserted = await db.query<{ id: string; identifier: string }>(
 			`INSERT INTO tasks (team_id, project_id, number, identifier, title, status, priority, labels)
