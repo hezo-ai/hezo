@@ -62,6 +62,9 @@ describe('template resolver', () => {
 		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
 		expect(result).toContain('No Work To Do This Run');
 		expect(result).toContain('report_no_work');
+		// Re-engagement guard: a re-woken agent must recognise an already-handed-off
+		// ticket and no-op rather than redo work that is now in a teammate's court.
+		expect(result).toContain('already handed this ticket off');
 	});
 
 	it('resolves {{team_mission}} to team description', async () => {
