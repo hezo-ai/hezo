@@ -2805,7 +2805,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_mcp_connections',
-		'List the MCP server connections available to agent runs (instance-global — the same catalog for every team). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`.',
+		'List the MCP server connections available to agent runs (instance-global — the same catalog for every team). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need — the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose).',
 		{
 			project: projectArg(),
 		},
@@ -2828,14 +2828,20 @@ export function registerTools(
 				auth_error: string | null;
 				created_at: string;
 				updated_at: string;
+				oauth_secret_name: string | null;
+				oauth_allowed_hosts: string[] | null;
+				oauth_scopes: string[] | null;
 			}>(
-				`SELECT id, name, display_name, kind::text AS kind,
-				        config, oauth_connection_id, install_status::text AS install_status, install_error,
-				        skill_id, created_by_task_id,
-				        activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
-				        created_at::text, updated_at::text
-				 FROM mcp_connections
-				 ORDER BY name ASC`,
+				`SELECT mc.id, mc.name, mc.display_name, mc.kind::text AS kind,
+				        mc.config, mc.oauth_connection_id, mc.install_status::text AS install_status, mc.install_error,
+				        mc.skill_id, mc.created_by_task_id,
+				        mc.activated_at::text AS activated_at, mc.revoked_at::text AS revoked_at, mc.auth_error,
+				        mc.created_at::text, mc.updated_at::text,
+				        s.name AS oauth_secret_name, s.allowed_hosts AS oauth_allowed_hosts, oc.scopes AS oauth_scopes
+				 FROM mcp_connections mc
+				 LEFT JOIN oauth_connections oc ON oc.id = mc.oauth_connection_id
+				 LEFT JOIN secrets s ON s.id = oc.access_token_secret_id
+				 ORDER BY mc.name ASC`,
 			);
 			// Derive a single oauth_status field that's the load-bearing signal
 			// for whether the connector is usable by agents on subsequent runs.
@@ -2851,7 +2857,23 @@ export function registerTools(
 				else if (row.oauth_connection_id && row.activated_at) oauth_status = 'active';
 				else if (cfg(row) || row.created_by_task_id) oauth_status = 'pending';
 				else oauth_status = 'none';
-				return { ...row, oauth_status };
+
+				// An active OAuth-backed connector can also authenticate raw REST calls
+				// to the provider's API: expose the secret's placeholder (never its
+				// value) plus the hosts the egress proxy will substitute it for, so an
+				// agent can hit endpoints the MCP server doesn't cover without ever
+				// requesting a PAT. Omitted unless the token is scoped to at least one
+				// host, since an unscoped secret can never be substituted.
+				const { oauth_secret_name, oauth_allowed_hosts, oauth_scopes, ...rest } = row;
+				const rest_auth =
+					oauth_status === 'active' && oauth_secret_name && (oauth_allowed_hosts?.length ?? 0) > 0
+						? {
+								placeholder: credentialPlaceholder(oauth_secret_name),
+								allowed_hosts: oauth_allowed_hosts ?? [],
+								scopes: oauth_scopes ?? [],
+							}
+						: null;
+				return { ...rest, oauth_status, rest_auth };
 			});
 		},
 		db,

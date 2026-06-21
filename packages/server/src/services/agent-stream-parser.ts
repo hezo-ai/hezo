@@ -40,6 +40,38 @@ export interface AgentStreamParser {
 	onStderr(chunk: string): string;
 	flush(): string;
 	getUsage(): AgentRunUsage | null;
+	/**
+	 * The run's terminal error reason, captured from the runtime's own error
+	 * event (e.g. a provider billing/auth rejection), or null when the run
+	 * carried no such failure. Lets the runner surface *why* a run failed on the
+	 * heartbeat_run row instead of leaving the reason buried in the log.
+	 */
+	getTerminalError(): string | null;
+}
+
+/**
+ * Maps a runtime's terminal error message to a concise, operator-actionable
+ * reason. Recognises the common provider failure modes — exhausted credit/quota
+ * and rejected authentication — so a failed run states the cause; falls back to
+ * the runtime's own message for anything else.
+ */
+export function classifyRuntimeError(raw: string | undefined | null): string | null {
+	const text = (raw ?? '').trim();
+	if (!text) return null;
+	const lower = text.toLowerCase();
+	if (
+		/402|insufficient\s+balance|insufficient\s+(funds|credit|quota)|payment\s+required|billing|exceeded your current quota/.test(
+			lower,
+		)
+	) {
+		return `AI provider rejected the request for lack of credit/quota — top up or switch the team's provider credential. (${text})`;
+	}
+	if (
+		/401|authentication|unauthorized|invalid api key|invalid x-api-key|not logged in/.test(lower)
+	) {
+		return `AI provider authentication failed — check the team's provider credential. (${text})`;
+	}
+	return text;
 }
 
 export function createAgentStreamParser(
@@ -74,6 +106,7 @@ function createPassthroughParser(): AgentStreamParser {
 		onStderr: (chunk) => chunk,
 		flush: () => '',
 		getUsage: () => null,
+		getTerminalError: () => null,
 	};
 }
 
@@ -89,6 +122,7 @@ const MAX_LINE_LEN = 500;
 function createJsonlParser(
 	renderEvent: (event: unknown) => string[],
 	getUsage: () => AgentRunUsage | null,
+	getTerminalError: () => string | null = () => null,
 ): AgentStreamParser {
 	let buffer = '';
 
@@ -123,6 +157,7 @@ function createJsonlParser(
 			return consumeLine(remainder);
 		},
 		getUsage,
+		getTerminalError,
 	};
 }
 
@@ -333,6 +368,7 @@ interface ClaudeStreamEvent {
 function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 	let usage: AgentRunUsage | null = null;
 	let modelId: string | undefined;
+	let terminalError: string | null = null;
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as ClaudeStreamEvent;
@@ -393,6 +429,7 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 			const duration = event.duration_ms ?? 0;
 			const turns = event.num_turns ?? 0;
 			const status = event.is_error ? 'error' : (event.subtype ?? 'success');
+			if (event.is_error) terminalError = classifyRuntimeError(event.result) ?? terminalError;
 			out.push(
 				`[done] ${status} turns=${turns} duration=${duration}ms tokens=${input}/${output} cost=$${costUsd.toFixed(4)}`,
 			);
@@ -402,7 +439,11 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 		return out;
 	};
 
-	return createJsonlParser(renderEvent, () => usage);
+	return createJsonlParser(
+		renderEvent,
+		() => usage,
+		() => terminalError,
+	);
 }
 
 // ---------------------------------------------------------------------------
