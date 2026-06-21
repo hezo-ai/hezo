@@ -1,5 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { HIGHLIGHT_SENTINEL } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { buildHighlightedSnippet, hasLiteralMatch } from '../src/lib/snippet';
 import {
 	EMBEDDING_DIMENSIONS,
 	embedAndStore,
@@ -280,6 +282,45 @@ describe('comment search with pre-populated embeddings', () => {
 			expect(row.content_type).toBe('text');
 			expect(row.text.trim().length).toBeGreaterThan(0);
 		}
+	});
+});
+
+describe('snippet shaping over real DB rows', () => {
+	// The seeded comment text is "We should retry failed Stripe webhooks" on a
+	// task titled "Payment flow" (see the comment-search beforeAll above).
+	async function fetchCommentRow() {
+		// Mirrors the production comment query's widened projection.
+		const r = await db.query<{ snippet: string; identifier: string; task_title: string }>(
+			`SELECT LEFT(c.content->>'text', 4000) AS snippet, t.identifier, t.title AS task_title
+			 FROM task_comments c
+			 JOIN tasks t ON t.id = c.task_id
+			 WHERE c.content_type = 'text' AND c.content->>'text' ILIKE '%Stripe%'
+			 LIMIT 1`,
+		);
+		expect(r.rows.length).toBe(1);
+		return r.rows[0];
+	}
+
+	it('builds a highlighted snippet from the widened select; not semantic-only', async () => {
+		const row = await fetchCommentRow();
+		const { snippet, matched } = buildHighlightedSnippet(row.snippet, 'stripe');
+		expect(matched).toBe(true);
+		// Case-insensitive match, original casing preserved inside the marker pair.
+		expect(snippet).toContain(`${HIGHLIGHT_SENTINEL}Stripe${HIGHLIGHT_SENTINEL}`);
+
+		const title = `${row.identifier} — ${row.task_title}`;
+		expect(!matched && !hasLiteralMatch(title, 'stripe')).toBe(false);
+	});
+
+	it('flags semantic-only when the term is in neither body nor title', async () => {
+		const row = await fetchCommentRow();
+		const query = 'kubernetes'; // absent from both the comment and the task title
+		const { snippet, matched } = buildHighlightedSnippet(row.snippet, query);
+		expect(matched).toBe(false);
+		expect(snippet).not.toContain(HIGHLIGHT_SENTINEL); // lead-text fallback, no marker
+
+		const title = `${row.identifier} — ${row.task_title}`;
+		expect(!matched && !hasLiteralMatch(title, query)).toBe(true);
 	});
 });
 

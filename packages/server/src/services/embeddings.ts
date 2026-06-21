@@ -1,5 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { SearchResult, SearchScope } from '@hezo/shared';
+import { buildHighlightedSnippet, hasLiteralMatch } from '../lib/snippet';
 import { logger } from '../logger';
 
 const log = logger.child('embeddings');
@@ -104,7 +105,7 @@ export async function semanticSearch(
 			project_slug: string;
 			score: number;
 		}>(
-			`SELECT d.id, d.title, d.slug, LEFT(d.content, 200) AS content,
+			`SELECT d.id, d.title, d.slug, LEFT(d.content, 4000) AS content,
 			        p.slug AS project_slug, 1 - (d.embedding <=> $1::vector) AS score
 			 FROM documents d
 			 JOIN projects p ON p.id = d.project_id
@@ -114,11 +115,14 @@ export async function semanticSearch(
 			[vectorStr, teamIds, limit],
 		);
 		for (const r of docResults.rows) {
+			const title = r.title || r.slug;
+			const { snippet, matched } = buildHighlightedSnippet(r.content, query);
 			results.push({
 				type: 'project_doc',
 				id: r.id,
-				title: r.title || r.slug,
-				snippet: r.content,
+				title,
+				snippet,
+				semanticOnly: !matched && !hasLiteralMatch(title, query),
 				score: r.score,
 				projectSlug: r.project_slug,
 				docSlug: r.slug,
@@ -135,7 +139,7 @@ export async function semanticSearch(
 			project_slug: string;
 			score: number;
 		}>(
-			`SELECT t.id, t.title, LEFT(t.description, 200) AS description, t.identifier,
+			`SELECT t.id, t.title, LEFT(t.description, 4000) AS description, t.identifier,
 			        p.slug AS project_slug, 1 - (t.embedding <=> $1::vector) AS score
 			 FROM tasks t
 			 JOIN projects p ON p.id = t.project_id
@@ -145,11 +149,14 @@ export async function semanticSearch(
 			[vectorStr, teamIds, limit],
 		);
 		for (const r of taskResults.rows) {
+			const title = `${r.identifier} — ${r.title}`;
+			const { snippet, matched } = buildHighlightedSnippet(r.description, query);
 			results.push({
 				type: 'task',
 				id: r.id,
-				title: `${r.identifier} — ${r.title}`,
-				snippet: r.description,
+				title,
+				snippet,
+				semanticOnly: !matched && !hasLiteralMatch(title, query),
 				score: r.score,
 				projectSlug: r.project_slug,
 				taskIdentifier: r.identifier,
@@ -168,7 +175,7 @@ export async function semanticSearch(
 			score: number;
 		}>(
 			`SELECT c.id, c.public_id, t.identifier, t.title AS task_title,
-			        p.slug AS project_slug, LEFT(c.content->>'text', 200) AS snippet,
+			        p.slug AS project_slug, LEFT(c.content->>'text', 4000) AS snippet,
 			        1 - (c.embedding <=> $1::vector) AS score
 			 FROM task_comments c
 			 JOIN tasks t ON t.id = c.task_id
@@ -179,11 +186,14 @@ export async function semanticSearch(
 			[vectorStr, teamIds, limit],
 		);
 		for (const r of commentResults.rows) {
+			const title = `${r.identifier} — ${r.task_title}`;
+			const { snippet, matched } = buildHighlightedSnippet(r.snippet, query);
 			results.push({
 				type: 'comment',
 				id: r.id,
-				title: `${r.identifier} — ${r.task_title}`,
-				snippet: r.snippet,
+				title,
+				snippet,
+				semanticOnly: !matched && !hasLiteralMatch(title, query),
 				score: r.score,
 				projectSlug: r.project_slug,
 				taskIdentifier: r.identifier,
@@ -199,7 +209,7 @@ export async function semanticSearch(
 			content: string;
 			score: number;
 		}>(
-			`SELECT id, name, LEFT(content, 200) AS content, 1 - (embedding <=> $1::vector) AS score
+			`SELECT id, name, LEFT(content, 4000) AS content, 1 - (embedding <=> $1::vector) AS score
 			 FROM skills
 			 WHERE embedding IS NOT NULL AND is_active = true
 			 ORDER BY embedding <=> $1::vector
@@ -207,7 +217,15 @@ export async function semanticSearch(
 			[vectorStr, limit],
 		);
 		for (const r of skillResults.rows) {
-			results.push({ type: 'skill', id: r.id, title: r.name, snippet: r.content, score: r.score });
+			const { snippet, matched } = buildHighlightedSnippet(r.content, query);
+			results.push({
+				type: 'skill',
+				id: r.id,
+				title: r.name,
+				snippet,
+				semanticOnly: !matched && !hasLiteralMatch(r.name, query),
+				score: r.score,
+			});
 		}
 	}
 
