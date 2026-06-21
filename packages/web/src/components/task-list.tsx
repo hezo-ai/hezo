@@ -1,11 +1,19 @@
 import { formatTaskStatus, TaskStatus, TERMINAL_TASK_STATUSES } from '@hezo/shared';
 import { useNavigate } from '@tanstack/react-router';
 import { AlertTriangle, AtSign, ChevronDown, ListPlus, Plus, Search } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { useProjectMeta } from '../hooks/use-projects';
 import { type Task, type TaskFilters, useTasks } from '../hooks/use-tasks';
 import { nestTasksForDisplay } from '../lib/nest-tasks-for-display';
+import {
+	clearStoredTaskFilters,
+	readStoredTaskFilters,
+	type TaskSortDir as SortDir,
+	type TaskSortField as SortField,
+	type StoredTaskFilters,
+	writeStoredTaskFilters,
+} from '../lib/task-filter-storage';
 import { AdminApprovalsBanner } from './admin-approvals-banner';
 import { CreateTaskDialog } from './create-task-dialog';
 import { ProjectTaskListHeader } from './project-task-list-header';
@@ -36,9 +44,6 @@ const todoStatusOptions: MultiSelectOption[] = ALL_STATUSES.filter(
 	value: s,
 	label: formatTaskStatus(s),
 }));
-
-type SortField = 'work_order' | 'created_at' | 'updated_at';
-type SortDir = 'asc' | 'desc';
 
 const sortLabels: Record<`${SortField}:${SortDir}`, string> = {
 	'work_order:asc': 'Work order',
@@ -111,12 +116,16 @@ export function TaskList({ projectId }: TaskListProps) {
 	const showProjectProgress = project != null && !project.is_internal;
 	const { data: agents } = useAgents(projectId);
 	const [expanded, setExpanded] = useState(false);
-	const [search, setSearch] = useState('');
-	const [debouncedSearch, setDebouncedSearch] = useState('');
-	const [statusValues, setStatusValues] = useState<string[]>(() => [...DEFAULT_TODO_STATUSES]);
-	const [ownerValues, setOwnerValues] = useState<string[]>([]);
-	const [sortField, setSortField] = useState<SortField>('work_order');
-	const [sortDir, setSortDir] = useState<SortDir>('asc');
+	// Hydrate the filter bar from this project's last-set selections (or defaults).
+	const [stored] = useState(() => readStoredTaskFilters(projectId));
+	const [search, setSearch] = useState(stored?.search ?? '');
+	const [debouncedSearch, setDebouncedSearch] = useState((stored?.search ?? '').trim());
+	const [statusValues, setStatusValues] = useState<string[]>(
+		stored?.statusValues ?? [...DEFAULT_TODO_STATUSES],
+	);
+	const [ownerValues, setOwnerValues] = useState<string[]>(stored?.ownerValues ?? []);
+	const [sortField, setSortField] = useState<SortField>(stored?.sortField ?? 'work_order');
+	const [sortDir, setSortDir] = useState<SortDir>(stored?.sortDir ?? 'asc');
 	const [page, setPage] = useState(1);
 	const [createOpen, setCreateOpen] = useState(false);
 
@@ -127,6 +136,41 @@ export function TaskList({ projectId }: TaskListProps) {
 		}, 250);
 		return () => clearTimeout(handle);
 	}, [search]);
+
+	// The route reuses this component across projects (param change, no remount),
+	// so re-hydrate the filter bar when the project changes. The initial project is
+	// already hydrated above; skip it to avoid clobbering the lazy-init values.
+	const hydratedProjectRef = useRef(projectId);
+	useEffect(() => {
+		if (hydratedProjectRef.current === projectId) return;
+		hydratedProjectRef.current = projectId;
+		const next = readStoredTaskFilters(projectId);
+		setSearch(next?.search ?? '');
+		setDebouncedSearch((next?.search ?? '').trim());
+		setStatusValues(next?.statusValues ?? [...DEFAULT_TODO_STATUSES]);
+		setOwnerValues(next?.ownerValues ?? []);
+		setSortField(next?.sortField ?? 'work_order');
+		setSortDir(next?.sortDir ?? 'asc');
+		setPage(1);
+	}, [projectId]);
+
+	// Persist the full filter set on every change, overriding the one field that
+	// changed (state setters above haven't flushed into this closure yet). Writing
+	// from the change handlers — rather than an effect watching the values — keeps
+	// the project-switch re-hydration from racing a stale write back to storage.
+	const persistFilters = useCallback(
+		(override: Partial<StoredTaskFilters>) => {
+			writeStoredTaskFilters(projectId, {
+				search,
+				statusValues,
+				ownerValues,
+				sortField,
+				sortDir,
+				...override,
+			});
+		},
+		[projectId, search, statusValues, ownerValues, sortField, sortDir],
+	);
 
 	const ownerOptions: MultiSelectOption[] = useMemo(
 		() =>
@@ -207,23 +251,32 @@ export function TaskList({ projectId }: TaskListProps) {
 		...(debouncedSearch ? [`Matching "${debouncedSearch}"`] : []),
 	];
 
+	function handleSearchChange(next: string) {
+		setSearch(next);
+		persistFilters({ search: next });
+	}
+
 	function handleStatusChange(next: string[]) {
 		setStatusValues(next);
+		persistFilters({ statusValues: next });
 		setPage(1);
 	}
 
 	function handleOwnerChange(next: string[]) {
 		setOwnerValues(next);
+		persistFilters({ ownerValues: next });
 		setPage(1);
 	}
 
 	function handleSortFieldChange(next: SortField) {
 		setSortField(next);
+		persistFilters({ sortField: next });
 		setPage(1);
 	}
 
 	function handleSortDirChange(next: SortDir) {
 		setSortDir(next);
+		persistFilters({ sortDir: next });
 		setPage(1);
 	}
 
@@ -234,6 +287,7 @@ export function TaskList({ projectId }: TaskListProps) {
 		setSortField('work_order');
 		setSortDir('asc');
 		setPage(1);
+		clearStoredTaskFilters(projectId);
 	}
 
 	const columns: Column<TaskRow>[] = [
@@ -373,7 +427,7 @@ export function TaskList({ projectId }: TaskListProps) {
 							<input
 								type="text"
 								value={search}
-								onChange={(e) => setSearch(e.target.value)}
+								onChange={(e) => handleSearchChange(e.target.value)}
 								placeholder="Filter by title..."
 								data-testid="task-filter-search"
 								className="w-full rounded-md border border-border bg-surface pl-8 pr-2.5 py-1.5 text-xs text-text-1 outline-none focus:border-border-strong"
