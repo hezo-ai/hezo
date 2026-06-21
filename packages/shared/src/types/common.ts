@@ -139,6 +139,34 @@ export const CommentContentType = {
 } as const;
 export type CommentContentType = (typeof CommentContentType)[keyof typeof CommentContentType];
 
+/**
+ * Semantic search (embeddings). `SEARCH_SCOPES` is the single source of truth
+ * shared by the server `semanticSearch` service, the REST/MCP search surfaces,
+ * and the web command palette. `SearchResult` carries navigation hints so a
+ * cross-project hit can be linked to its underlying page.
+ */
+export const SEARCH_SCOPES = ['all', 'tasks', 'skills', 'project_docs', 'comments'] as const;
+export type SearchScope = (typeof SEARCH_SCOPES)[number];
+
+export const SEARCH_RESULT_TYPES = ['task', 'skill', 'project_doc', 'comment'] as const;
+export type SearchResultType = (typeof SEARCH_RESULT_TYPES)[number];
+
+export interface SearchResult {
+	type: SearchResultType;
+	id: string;
+	title: string;
+	snippet: string;
+	score: number;
+	/** Project slug for the destination route (tasks, comments, project docs). */
+	projectSlug?: string;
+	/** Friendly task identifier, e.g. `TO-4` (tasks and comments). */
+	taskIdentifier?: string;
+	/** Comment `public_id` for the `#comment-<id>` deep-link hash (comments). */
+	commentPublicId?: string;
+	/** Document slug/filename for the documents route (project docs). */
+	docSlug?: string;
+}
+
 export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 export const ATTACHMENT_SIGNED_URL_TTL_SECONDS = 3600;
 

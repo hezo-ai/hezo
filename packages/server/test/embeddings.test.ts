@@ -94,12 +94,12 @@ describe('embedAndStore', () => {
 
 describe('semanticSearch', () => {
 	it('returns empty array when model is not loaded', async () => {
-		const results = await semanticSearch(db, teamId, 'test query');
+		const results = await semanticSearch(db, [teamId], 'test query');
 		expect(results).toEqual([]);
 	});
 
 	it('returns empty array with scope filter when model is not loaded', async () => {
-		const results = await semanticSearch(db, teamId, 'test', { scope: 'project_docs' });
+		const results = await semanticSearch(db, [teamId], 'test', { scope: 'project_docs' });
 		expect(results).toEqual([]);
 	});
 });
@@ -192,6 +192,94 @@ describe('semanticSearch with pre-populated embeddings', () => {
 			[vectorStr(queryVec), otherTeamId],
 		);
 		expect(r.rows.length).toBe(0);
+	});
+});
+
+describe('comment search with pre-populated embeddings', () => {
+	let commentTaskId: string;
+	const commentVec = fakeVector(0.42);
+
+	beforeAll(async () => {
+		const numRes = await db.query<{ number: number }>(
+			'SELECT next_project_task_number($1) AS number',
+			[projectId],
+		);
+		const num = numRes.rows[0].number;
+		const taskRes = await db.query<{ id: string }>(
+			`INSERT INTO tasks (team_id, project_id, number, identifier, title, description)
+			 VALUES ($1, $2, $3, $4, 'Payment flow', 'Stripe checkout') RETURNING id`,
+			[teamId, projectId, num, `EP-${num}`],
+		);
+		commentTaskId = taskRes.rows[0].id;
+
+		await db.query(
+			`INSERT INTO task_comments (task_id, content_type, content, embedding)
+			 VALUES ($1, 'text', $2::jsonb, $3::vector)`,
+			[
+				commentTaskId,
+				JSON.stringify({ text: 'We should retry failed Stripe webhooks' }),
+				vectorStr(commentVec),
+			],
+		);
+	});
+
+	it('comment query returns the text comment joined to its task + project', async () => {
+		const queryVec = fakeVector(0.421);
+		const r = await db.query<{
+			id: string;
+			identifier: string;
+			project_slug: string;
+			snippet: string;
+			score: number;
+		}>(
+			`SELECT c.id, t.identifier, p.slug AS project_slug, c.content->>'text' AS snippet,
+			        1 - (c.embedding <=> $1::vector) AS score
+			 FROM task_comments c
+			 JOIN tasks t ON t.id = c.task_id
+			 JOIN projects p ON p.id = t.project_id
+			 WHERE t.team_id = ANY($2::uuid[]) AND c.embedding IS NOT NULL AND c.content_type = 'text'
+			 ORDER BY c.embedding <=> $1::vector
+			 LIMIT 5`,
+			[vectorStr(queryVec), [teamId]],
+		);
+		expect(r.rows.length).toBeGreaterThanOrEqual(1);
+		expect(r.rows[0].project_slug).toBe('embed-project');
+		expect(r.rows[0].snippet).toContain('Stripe');
+	});
+
+	it('comment search is team-scoped (another team sees nothing)', async () => {
+		const other = await db.query<{ id: string }>(
+			"INSERT INTO teams (name, slug) VALUES ('Comment Other Co', 'comment-other-co') RETURNING id",
+		);
+		const queryVec = fakeVector(0.421);
+		const r = await db.query<{ id: string }>(
+			`SELECT c.id
+			 FROM task_comments c
+			 JOIN tasks t ON t.id = c.task_id
+			 WHERE t.team_id = ANY($2::uuid[]) AND c.embedding IS NOT NULL AND c.content_type = 'text'
+			 ORDER BY c.embedding <=> $1::vector
+			 LIMIT 5`,
+			[vectorStr(queryVec), [other.rows[0].id]],
+		);
+		expect(r.rows.length).toBe(0);
+	});
+
+	it('backfill selects only non-empty text comments (system + blank excluded)', async () => {
+		await db.query(
+			`INSERT INTO task_comments (task_id, content_type, content)
+			 VALUES ($1, 'system', $2::jsonb), ($1, 'text', $3::jsonb)`,
+			[commentTaskId, JSON.stringify({ kind: 'status_change' }), JSON.stringify({ text: '   ' })],
+		);
+		const r = await db.query<{ content_type: string; text: string }>(
+			`SELECT content_type, content->>'text' AS text
+			 FROM task_comments
+			 WHERE embedding IS NULL AND content_type = 'text'
+			   AND content->>'text' IS NOT NULL AND length(trim(content->>'text')) > 0`,
+		);
+		for (const row of r.rows) {
+			expect(row.content_type).toBe('text');
+			expect(row.text.trim().length).toBeGreaterThan(0);
+		}
 	});
 });
 

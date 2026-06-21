@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import type { SearchResult, SearchScope } from '@hezo/shared';
 import { logger } from '../logger';
 
 const log = logger.child('embeddings');
@@ -59,7 +60,7 @@ export async function generateEmbedding(
 
 export async function embedAndStore(
 	db: PGlite,
-	table: 'documents' | 'tasks' | 'skills',
+	table: 'documents' | 'tasks' | 'skills' | 'task_comments',
 	id: string,
 	text: string,
 ): Promise<void> {
@@ -70,19 +71,16 @@ export async function embedAndStore(
 	await db.query(`UPDATE ${table} SET embedding = $1::vector WHERE id = $2`, [vectorStr, id]);
 }
 
-export interface SearchResult {
-	type: 'task' | 'skill' | 'project_doc';
-	id: string;
-	title: string;
-	snippet: string;
-	score: number;
-}
-
-export type SearchScope = 'all' | 'tasks' | 'skills' | 'project_docs';
-
+/**
+ * Cross-team semantic search. `teamIds` scopes team-owned content (tasks, project
+ * docs, comments); skills are instance-global and returned regardless of team.
+ * `limit` applies **per type** — each branch caps at `limit` and the results are
+ * merged sorted by score with no cross-type truncation, so callers (the web
+ * palette) can group by type and show accurate per-type counts.
+ */
 export async function semanticSearch(
 	db: PGlite,
-	teamId: string,
+	teamIds: string[],
 	query: string,
 	options: {
 		scope?: SearchScope;
@@ -97,33 +95,33 @@ export async function semanticSearch(
 	const scope = options.scope ?? 'all';
 	const results: SearchResult[] = [];
 
-	const wantProjectDocs = scope === 'all' || scope === 'project_docs';
-	if (wantProjectDocs) {
-		const types: string[] = [];
-		if (wantProjectDocs) types.push('project_doc');
+	if (scope === 'all' || scope === 'project_docs') {
 		const docResults = await db.query<{
 			id: string;
-			type: 'project_doc';
 			title: string;
 			slug: string;
 			content: string;
+			project_slug: string;
 			score: number;
 		}>(
-			`SELECT id, type, title, slug, LEFT(content, 200) AS content,
-			        1 - (embedding <=> $1::vector) AS score
-			 FROM documents
-			 WHERE team_id = $2 AND embedding IS NOT NULL AND type = ANY($3::document_type[])
-			 ORDER BY embedding <=> $1::vector
-			 LIMIT $4`,
-			[vectorStr, teamId, types, limit],
+			`SELECT d.id, d.title, d.slug, LEFT(d.content, 200) AS content,
+			        p.slug AS project_slug, 1 - (d.embedding <=> $1::vector) AS score
+			 FROM documents d
+			 JOIN projects p ON p.id = d.project_id
+			 WHERE d.team_id = ANY($2::uuid[]) AND d.embedding IS NOT NULL AND d.type = 'project_doc'
+			 ORDER BY d.embedding <=> $1::vector
+			 LIMIT $3`,
+			[vectorStr, teamIds, limit],
 		);
 		for (const r of docResults.rows) {
 			results.push({
-				type: r.type,
+				type: 'project_doc',
 				id: r.id,
 				title: r.title || r.slug,
 				snippet: r.content,
 				score: r.score,
+				projectSlug: r.project_slug,
+				docSlug: r.slug,
 			});
 		}
 	}
@@ -134,14 +132,17 @@ export async function semanticSearch(
 			title: string;
 			description: string;
 			identifier: string;
+			project_slug: string;
 			score: number;
 		}>(
-			`SELECT id, title, LEFT(description, 200) AS description, identifier, 1 - (embedding <=> $1::vector) AS score
-			 FROM tasks
-			 WHERE team_id = $2 AND embedding IS NOT NULL
-			 ORDER BY embedding <=> $1::vector
+			`SELECT t.id, t.title, LEFT(t.description, 200) AS description, t.identifier,
+			        p.slug AS project_slug, 1 - (t.embedding <=> $1::vector) AS score
+			 FROM tasks t
+			 JOIN projects p ON p.id = t.project_id
+			 WHERE t.team_id = ANY($2::uuid[]) AND t.embedding IS NOT NULL
+			 ORDER BY t.embedding <=> $1::vector
 			 LIMIT $3`,
-			[vectorStr, teamId, limit],
+			[vectorStr, teamIds, limit],
 		);
 		for (const r of taskResults.rows) {
 			results.push({
@@ -150,6 +151,43 @@ export async function semanticSearch(
 				title: `${r.identifier} — ${r.title}`,
 				snippet: r.description,
 				score: r.score,
+				projectSlug: r.project_slug,
+				taskIdentifier: r.identifier,
+			});
+		}
+	}
+
+	if (scope === 'all' || scope === 'comments') {
+		const commentResults = await db.query<{
+			id: string;
+			public_id: string;
+			identifier: string;
+			task_title: string;
+			project_slug: string;
+			snippet: string;
+			score: number;
+		}>(
+			`SELECT c.id, c.public_id, t.identifier, t.title AS task_title,
+			        p.slug AS project_slug, LEFT(c.content->>'text', 200) AS snippet,
+			        1 - (c.embedding <=> $1::vector) AS score
+			 FROM task_comments c
+			 JOIN tasks t ON t.id = c.task_id
+			 JOIN projects p ON p.id = t.project_id
+			 WHERE t.team_id = ANY($2::uuid[]) AND c.embedding IS NOT NULL AND c.content_type = 'text'
+			 ORDER BY c.embedding <=> $1::vector
+			 LIMIT $3`,
+			[vectorStr, teamIds, limit],
+		);
+		for (const r of commentResults.rows) {
+			results.push({
+				type: 'comment',
+				id: r.id,
+				title: `${r.identifier} — ${r.task_title}`,
+				snippet: r.snippet,
+				score: r.score,
+				projectSlug: r.project_slug,
+				taskIdentifier: r.identifier,
+				commentPublicId: r.public_id,
 			});
 		}
 	}
@@ -174,7 +212,7 @@ export async function semanticSearch(
 	}
 
 	results.sort((a, b) => b.score - a.score);
-	return results.slice(0, limit);
+	return results;
 }
 
 export async function processPendingEmbeddings(db: PGlite): Promise<number> {
@@ -213,6 +251,20 @@ export async function processPendingEmbeddings(db: PGlite): Promise<number> {
 	);
 	for (const skill of skills.rows) {
 		await embedAndStore(db, 'skills', skill.id, `${skill.name}\n${skill.content}`);
+		processed++;
+	}
+
+	// Only human/agent prose (`text`) comments — system/run/action comments are
+	// auto-generated noise. Skip blank text so empties are never re-selected.
+	const comments = await db.query<{ id: string; text: string }>(
+		`SELECT id, content->>'text' AS text
+		 FROM task_comments
+		 WHERE embedding IS NULL AND content_type = 'text'
+		   AND content->>'text' IS NOT NULL AND length(trim(content->>'text')) > 0
+		 LIMIT 5`,
+	);
+	for (const comment of comments.rows) {
+		await embedAndStore(db, 'task_comments', comment.id, comment.text);
 		processed++;
 	}
 

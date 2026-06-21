@@ -1559,12 +1559,25 @@ Release all locks for the task.
 ### Semantic Search
 
 #### `GET /projects/:projectId/search`
-Natural language search across team content.
+Natural language search across one team's content (team resolved from the project).
 
 Query params:
 - `?q=query` — search query (required)
-- `?scope=all` — `all`, `tasks`, `skills`, or `project_docs` (default `all`)
-- `?limit=10` — max results (default 10)
+- `?scope=all` — `all`, `tasks`, `skills`, `project_docs`, or `comments` (default `all`)
+- `?limit=10` — max results **per type** (default 10)
+
+#### `GET /search`
+Global command-palette search (powers the web Cmd/Ctrl+K palette). Not
+project-scoped: results span every team the caller can access (superusers and the
+instance CEO session span all teams, **including HQ**; API keys / agents are bound
+to their one team; board users get their member teams). Same query params as above
+(default `limit` 20). Each result carries navigation hints (`projectSlug`,
+`taskIdentifier`, `commentPublicId`, `docSlug`) so a cross-project hit links to its
+page; comment hits deep-link to `…/tasks/<id>#comment-<public_id>`.
+
+Both endpoints return `{ results: [], message }` while the embedding model is still
+loading, and results are merged sorted by score with `limit` applied per type
+(tasks / comments / project docs / skills), so a tabbed UI can show per-type counts.
 
 ---
 
@@ -2784,7 +2797,7 @@ at `http://host.docker.internal:<serverPort>/mcp` and carries
 | `write_project_doc` | Write project doc (markdown only) | `team_id`, `project_id`, `filename`, `content` |
 | `list_project_assets` | List project assets (uploaded non-markdown files; reference as `assets/<filename>`) | `team_id`, `project_id` |
 | `propose_skill` | Create approval for new skill | `team_id`, `name`, `content`, `description?` |
-| `semantic_search` | Natural language search | `team_id`, `query`, `scope?` (`all`/`tasks`/`skills`/`project_docs`), `limit?` |
+| `semantic_search` | Natural language search | `team_id`, `query`, `scope?` (`all`/`tasks`/`skills`/`project_docs`/`comments`), `limit?` |
 | `list_skills` | List the skills manifest (name + slug + description) | `team_id`, `tags?` |
 | `get_skill` | Get a skill's full content by slug (load on demand) | `team_id`, `slug` |
 | `create_skill` | Create skill directly | `team_id`, `name`, `content`, `description?` |

@@ -10,6 +10,7 @@ import { X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppHeader } from '../components/app-header';
 import { CeoChatWidget } from '../components/ceo-chat/ceo-chat-widget';
+import { GlobalSearchDialog } from '../components/global-search-dialog';
 import { MasterKeyGate } from '../components/master-key-gate';
 import { ProjectRail } from '../components/project-rail';
 import { ProjectSidebar } from '../components/project-sidebar';
@@ -115,11 +116,24 @@ function ShellLayout() {
 
 function ShellChrome() {
 	const [drawerOpen, setDrawerOpen] = useState(false);
+	const [searchOpen, setSearchOpen] = useState(false);
 	const active = useActiveProject();
 	const mainRef = useRef<HTMLElement>(null);
 	const pathname = useLocation({ select: (l) => l.pathname });
 	const hash = useLocation({ select: (l) => l.hash });
 	const lastPathnameRef = useRef(pathname);
+
+	// Global Cmd/Ctrl+K toggles the search palette from any route.
+	useEffect(() => {
+		const onKeyDown = (e: KeyboardEvent) => {
+			if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+				e.preventDefault();
+				setSearchOpen((v) => !v);
+			}
+		};
+		window.addEventListener('keydown', onKeyDown);
+		return () => window.removeEventListener('keydown', onKeyDown);
+	}, []);
 
 	// Reset the main scroll container to the top on every page change. <main> is the
 	// only scroller here and it never unmounts across navigations (just the <Outlet>
@@ -143,7 +157,11 @@ function ShellChrome() {
 
 	return (
 		<div className="h-screen flex flex-col overflow-hidden">
-			<AppHeader onOpenDrawer={() => setDrawerOpen(true)} />
+			<AppHeader
+				onOpenDrawer={() => setDrawerOpen(true)}
+				onOpenSearch={() => setSearchOpen(true)}
+			/>
+			<GlobalSearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
 			<div className="flex flex-row flex-1 overflow-hidden w-full">
 				{/* Rail + project sidebar + scrollable main span the full viewport so
 				    the main-panel scrollbar sits on the browser edge, not mid-screen. */}

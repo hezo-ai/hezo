@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import { BookOpen, FolderKanban, Inbox, Menu, Settings } from 'lucide-react';
+import { BookOpen, FolderKanban, Inbox, Menu, Search, Settings } from 'lucide-react';
 import { useGlobalInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useMe } from '../hooks/use-me';
 import { Logo } from './ui/logo';
@@ -15,7 +15,13 @@ const iconLinkClass =
  * Connectors and Credentials are reached through the Settings sidebar.
  * On mobile a hamburger opens the project drawer.
  */
-export function AppHeader({ onOpenDrawer }: { onOpenDrawer: () => void }) {
+export function AppHeader({
+	onOpenDrawer,
+	onOpenSearch,
+}: {
+	onOpenDrawer: () => void;
+	onOpenSearch: () => void;
+}) {
 	const { data: me } = useMe();
 	const inboxUnread = useGlobalInboxUnreadCount();
 
@@ -46,6 +52,16 @@ export function AppHeader({ onOpenDrawer }: { onOpenDrawer: () => void }) {
 			</div>
 
 			<div className="flex items-center gap-0.5">
+				<button
+					type="button"
+					onClick={onOpenSearch}
+					aria-label="Search"
+					title="Search (⌘K)"
+					data-testid="app-header-search"
+					className={iconLinkClass}
+				>
+					<Search className="w-4 h-4" />
+				</button>
 				<Link
 					to="/home/inbox"
 					aria-label="Inbox"

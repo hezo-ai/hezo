@@ -1,15 +1,11 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { AuthType } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
+import { getAccessibleTeamIds } from '../src/middleware/auth';
 import { safeClose } from './helpers';
-import {
-	authHeader,
-	createTestApp,
-	createTestTeam,
-	projectSlugFor,
-	projectSlugForTeamSlug,
-} from './helpers/app';
+import { authHeader, createTestApp, createTestTeam, projectSlugForTeamSlug } from './helpers/app';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -94,5 +90,69 @@ describe('GET /projects/:projectId/search', () => {
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
+	});
+});
+
+describe('GET /api/search (global palette)', () => {
+	it('returns 400 when q is empty', async () => {
+		const res = await app.request('/api/search?q=', { headers: authHeader(token) });
+		expect(res.status).toBe(400);
+	});
+
+	it('returns empty results with loading message when the model is not ready', async () => {
+		const res = await app.request('/api/search?q=test+query', { headers: authHeader(token) });
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.results).toEqual([]);
+		expect(body.data.message).toContain('Embedding model is loading');
+	});
+});
+
+describe('getAccessibleTeamIds', () => {
+	it('binds an API-key principal to its single team', async () => {
+		const team = await db.query<{ id: string }>(
+			"INSERT INTO teams (name, slug) VALUES ('AK Co', 'ak-co') RETURNING id",
+		);
+		const ids = await getAccessibleTeamIds(db, { type: AuthType.ApiKey, teamId: team.rows[0].id });
+		expect(ids).toEqual([team.rows[0].id]);
+	});
+
+	it('gives a superuser every team (HQ included)', async () => {
+		const ids = await getAccessibleTeamIds(db, {
+			type: AuthType.Admin,
+			userId: '00000000-0000-0000-0000-000000000000',
+			isSuperuser: true,
+		});
+		const all = await db.query<{ id: string }>('SELECT id FROM teams');
+		expect(ids.length).toBe(all.rows.length);
+		expect(ids.length).toBeGreaterThanOrEqual(1);
+		expect([...ids].sort()).toEqual(all.rows.map((r) => r.id).sort());
+	});
+
+	it('limits a non-superuser board user to the teams they belong to', async () => {
+		const memberTeam = await db.query<{ id: string }>(
+			"INSERT INTO teams (name, slug) VALUES ('Member Team', 'member-team') RETURNING id",
+		);
+		const teamId = memberTeam.rows[0].id;
+		await db.query("INSERT INTO teams (name, slug) VALUES ('Unrelated Team', 'unrelated-team')");
+
+		const user = await db.query<{ id: string }>(
+			"INSERT INTO users (display_name) VALUES ('Board Member') RETURNING id",
+		);
+		const m = await db.query<{ id: string }>(
+			"INSERT INTO members (team_id, member_type, display_name) VALUES ($1, 'user', 'Board Member') RETURNING id",
+			[teamId],
+		);
+		await db.query('INSERT INTO member_users (id, user_id) VALUES ($1, $2)', [
+			m.rows[0].id,
+			user.rows[0].id,
+		]);
+
+		const ids = await getAccessibleTeamIds(db, {
+			type: AuthType.Admin,
+			userId: user.rows[0].id,
+			isSuperuser: false,
+		});
+		expect(ids).toEqual([teamId]);
 	});
 });
