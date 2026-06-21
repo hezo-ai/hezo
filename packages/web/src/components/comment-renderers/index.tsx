@@ -8,7 +8,6 @@ import { PreviewComment } from './preview-comment';
 import { RunComment } from './run-comment';
 import { SystemComment } from './system-comment';
 import { TextComment } from './text-comment';
-import { TraceComment } from './trace-comment';
 
 export type { CommentData } from './comment-data';
 export { CommentReactions } from './comment-reactions';
@@ -46,7 +45,6 @@ const renderers: RendererRegistry = {
 		<TextComment comment={comment} projectId={projectId} projectSlug={projectSlug} />
 	),
 	[CommentContentType.Preview]: ({ comment }) => <PreviewComment comment={comment} />,
-	[CommentContentType.Trace]: ({ comment }) => <TraceComment comment={comment} />,
 	[CommentContentType.System]: ({ comment, projectId, taskId, retryableRunId }) => (
 		<SystemComment
 			comment={comment}
@@ -85,10 +83,6 @@ function dispatch(props: RenderProps) {
 		}
 		case CommentContentType.Preview: {
 			const C = renderers[CommentContentType.Preview];
-			return <C {...props} comment={comment} />;
-		}
-		case CommentContentType.Trace: {
-			const C = renderers[CommentContentType.Trace];
 			return <C {...props} comment={comment} />;
 		}
 		case CommentContentType.System: {

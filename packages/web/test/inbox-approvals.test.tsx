@@ -99,8 +99,12 @@ test('can deny a pending approval', async () => {
 			const ws = await seedWorkspace();
 			seeded.projectSlug = ws.internalSlug;
 			await createApproval(ws, {
-				type: 'secret_access',
-				payload: { secret_name: 'DB_PASSWORD' },
+				type: 'hire',
+				payload: {
+					title: 'New Agent',
+					slug: `new-agent-${Date.now()}`,
+					system_prompt: 'You help.',
+				},
 			});
 		},
 	});
@@ -110,11 +114,11 @@ test('can deny a pending approval', async () => {
 		params: { projectId: seeded.projectSlug },
 	});
 
-	await findByText(/Requesting access to secret/, undefined, { timeout: 10_000 });
+	await findByText('Proposing to hire', undefined, { timeout: 10_000 });
 	await user.click(await findByRole('button', { name: 'Deny' }));
 	// Resolved approvals stay in the inbox as read history with a status badge.
 	await findByText('denied', undefined, { timeout: 15_000 });
-	await findByText(/Requesting access to secret/);
+	await findByText('Proposing to hire');
 });
 
 test('header has the global Inbox link', async () => {

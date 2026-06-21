@@ -130,7 +130,6 @@ export type TaskPriority = (typeof TaskPriority)[keyof typeof TaskPriority];
 export const CommentContentType = {
 	Text: 'text',
 	Preview: 'preview',
-	Trace: 'trace',
 	System: 'system',
 	Run: 'run',
 	Action: 'action',
@@ -385,7 +384,6 @@ export const SecretCategory = {
 export type SecretCategory = (typeof SecretCategory)[keyof typeof SecretCategory];
 
 export const ApprovalType = {
-	SecretAccess: 'secret_access',
 	Hire: 'hire',
 	ProjectCreation: 'project_creation',
 	Strategy: 'strategy',

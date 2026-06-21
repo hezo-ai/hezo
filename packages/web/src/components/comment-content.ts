@@ -22,10 +22,6 @@ export interface PreviewContent {
 	title?: string;
 }
 
-export interface TraceContent {
-	summary?: string;
-}
-
 export interface SystemStatusChangeContent {
 	kind: 'status_change';
 	from?: string;
@@ -121,7 +117,6 @@ export interface ConnectRequiredContent {
 export type CommentContentByType = {
 	[CommentContentType.Text]: TextContent;
 	[CommentContentType.Preview]: PreviewContent;
-	[CommentContentType.Trace]: TraceContent;
 	[CommentContentType.System]: SystemContent;
 	[CommentContentType.Run]: RunContent;
 	[CommentContentType.Action]: ActionContent;
@@ -150,14 +145,9 @@ export interface ActionChosen {
 export type CommentChosenByType = {
 	[CommentContentType.Text]: null;
 	[CommentContentType.Preview]: null;
-	[CommentContentType.Trace]: null;
 	[CommentContentType.System]: null;
 	[CommentContentType.Run]: null;
 	[CommentContentType.Action]: ActionChosen | null;
 	[CommentContentType.CredentialRequest]: CredentialRequestChosen | null;
 	[CommentContentType.ConnectRequired]: null;
 };
-
-/** Per-tool input/output shape — JSONB; renderers don't narrow further. */
-export type ToolCallInput = unknown;
-export type ToolCallOutput = unknown;

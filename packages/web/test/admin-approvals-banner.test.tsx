@@ -26,7 +26,7 @@ test('banner surfaces pending approvals on the task list and links to the inbox'
 			const project = await seedProject(ws, { name: 'Demo' });
 			await seedTask(ws, project, { title: 'Demo Task' });
 			await createApproval(ws, { type: 'strategy', payload: { plan: 'Launch' } });
-			await createApproval(ws, { type: 'secret_access', payload: { secret_name: 'DB_PASSWORD' } });
+			await createApproval(ws, { type: 'plan_review', payload: { summary: 'Review' } });
 			seeded.projectSlug = project.slug;
 		},
 	});
