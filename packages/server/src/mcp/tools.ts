@@ -347,7 +347,7 @@ export interface ToolScope {
  * chat session) names the project it wants to reach. `team_id` is never part of
  * the tool surface; it stays an internal key.
  */
-async function resolveScope(
+export async function resolveScope(
 	db: PGlite,
 	auth: AuthInfo,
 	args: Record<string, unknown>,

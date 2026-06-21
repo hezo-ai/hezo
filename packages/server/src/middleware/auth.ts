@@ -200,6 +200,21 @@ export const authMiddleware = createMiddleware<Env>(async (c, next) => {
 		return c.json({ error: { code: 'UNAUTHORIZED', message: 'Invalid or expired token' } }, 401);
 	}
 
+	// API keys authenticate the MCP endpoint (POST /mcp) only. REST is the
+	// human/browser surface (user JWT); external/programmatic access goes through MCP.
+	if (auth.type === AuthType.ApiKey) {
+		return c.json(
+			{
+				error: {
+					code: 'UNAUTHORIZED',
+					message:
+						'API keys authenticate the MCP endpoint only; use a session token for the REST API.',
+				},
+			},
+			401,
+		);
+	}
+
 	c.set('auth', auth);
 	return next();
 });

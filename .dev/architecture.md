@@ -465,8 +465,11 @@ domain-separated so signatures can't be replayed or cross-purposed; on unlock
 
 **Four principals.**
 - **User JWT** (HS256, secret derived from the unlock key) — `Authorization: Bearer <jwt>`.
-- **API key** — `Authorization: Bearer hezo_<key>`, bcrypt-hashed, team-scoped, board-level
-  access for external orchestrators; the `hezo_` prefix disambiguates from agent JWTs.
+- **API key** — `Authorization: Bearer hezo_<key>`, SHA-256-hashed, team-scoped. The
+  external **team-scoped** on-ramp: authenticates the **MCP endpoint (`POST /mcp`) only** —
+  rejected on REST and the WebSocket. Humans mint and revoke keys via the REST api-keys
+  routes (user JWT). The `hezo_` prefix disambiguates from agent JWTs (and `hezoc_`
+  connected-agent tokens).
 - **Agent JWT** — minted per run, carrying `{ member_id, team_id, run_id, exp }`. Validated
   on every call against the **`heartbeat_runs` row** (`id=run_id`, member/team match,
   status `running`); when the run finalizes the token is rejected on the next call —
@@ -479,6 +482,13 @@ domain-separated so signatures can't be replayed or cross-purposed; on unlock
   agents — that stays human-superuser-only. Pending registration + status polling go
   through the public onboarding surface (REST and the `/mcp` `register`/`connection_status`
   tools).
+
+By surface: **REST** is the human/browser API (user JWT), also reachable by an approved
+**connected-agent token** (admin-equivalent). **MCP** additionally accepts the **agent JWT**
+(internal per-run) and the **API key** (external, team-scoped). The API key is the one
+credential confined to MCP — an external caller can obtain neither a user JWT (needs the
+master-key seed) nor an agent JWT (minted only for a server-side run), so a team-scoped API
+key (or an admin-approved `hezoc_` token) is its only way in.
 
 **Authorization** (`AGENTS.md` › Route authorization is authoritative). Routes with
 `:projectId` resolve the project → its backing team and verify access **per request** in
@@ -587,8 +597,11 @@ One non-REST surface shares the port: the **MCP endpoint** (`POST /mcp`, Streama
 HTTP), whose tools mirror the REST surface and enforce the same authorization. It is the
 interface agents drive — tasks, comments, approvals, credentials — and external agents
 can drive it too, including **self-registering as a connected agent** (pending admin
-approval, then admin-equivalent across every project/team; § 10). `GET /SKILL.md` serves
-the manifest that teaches an external agent how to use it — including the connect/register
+approval, then admin-equivalent across every project/team; § 10). It also exposes
+`POST /mcp/assets` (multipart) for binary uploads, since JSON-RPC can't carry a file.
+**API keys authenticate the MCP surface only**; REST is the user-JWT (human/browser)
+surface (connected agents excepted — admin-equivalent on both). `GET /SKILL.md` serves the
+manifest that teaches an external agent how to use it — including the connect/register
 flow — and `GET /llms.txt` points to it. Authorization for both the REST and MCP surfaces
 is § 10.
 

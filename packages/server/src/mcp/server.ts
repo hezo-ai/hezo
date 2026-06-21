@@ -7,6 +7,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import type { DomainEventBus } from '../events/bus';
 import type { AuthInfo, Env } from '../lib/types';
 import { verifyToken } from '../middleware/auth';
+import { storeUploadedAsset } from '../routes/assets';
 import type { WebSocketManager } from '../services/ws';
 import {
 	handleConnectionStatusTool,
@@ -15,7 +16,7 @@ import {
 	ONBOARDING_TOOLS,
 	REGISTER_TOOL,
 } from './onboarding';
-import { authContext, registerTools, type ToolDef } from './tools';
+import { authContext, registerTools, resolveScope, type ToolDef } from './tools';
 
 let mcpServer: McpServer | null = null;
 let toolDefs: ToolDef[] = [];
@@ -160,4 +161,46 @@ export async function handleMcpRequest(c: Context<Env>): Promise<Response> {
 		await client.close();
 		await serverConnection;
 	}
+}
+
+/**
+ * Multipart binary upload for the MCP surface. JSON-RPC can't carry a file, so
+ * external callers (API key) and agent runs (run JWT) POST `multipart/form-data`
+ * here with a `file` field — plus an optional `project` field for an instance
+ * principal that must name the project it's acting in. The bytes are stored as a
+ * project asset through the same path as the REST upload, so the result is
+ * retrievable via the existing `list_project_assets` / `read_project_asset` tools
+ * (and the per-run `/workspace/.hezo/assets` mount).
+ */
+export async function handleMcpAssetUpload(c: Context<Env>): Promise<Response> {
+	const auth = await authenticateRequest(c);
+	if (!auth) {
+		return c.json({ error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } }, 401);
+	}
+
+	let form: Awaited<ReturnType<typeof c.req.parseBody>>;
+	try {
+		form = await c.req.parseBody({ all: false });
+	} catch {
+		return c.json({ error: { code: 'INVALID_REQUEST', message: 'Invalid multipart body' } }, 400);
+	}
+
+	const file = form.file;
+	if (!(file instanceof Blob) || !('name' in file) || typeof file.name !== 'string') {
+		return c.json({ error: { code: 'INVALID_REQUEST', message: 'Missing file field' } }, 400);
+	}
+	const project =
+		typeof form.project === 'string' && form.project.trim().length > 0
+			? form.project.trim()
+			: undefined;
+
+	const scope = await resolveScope(c.get('db'), auth, { project });
+	if ('error' in scope) {
+		return c.json({ error: { code: 'FORBIDDEN', message: scope.error } }, 403);
+	}
+
+	// storeUploadedAsset reads c.get('auth'); /mcp isn't under authMiddleware, so
+	// seed the context from the MCP-authenticated principal.
+	c.set('auth', auth);
+	return storeUploadedAsset(c, scope.teamId, scope.projectId, file as File);
 }

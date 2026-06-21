@@ -93,7 +93,11 @@ let containerLogStreamerRef: ContainerLogStreamer | null = null;
 
 async function validateToken(token: string): Promise<WsData['auth'] | null> {
 	if (!mkmRef || !dbRef) return null;
-	return verifyToken(token, dbRef, mkmRef);
+	const auth = await verifyToken(token, dbRef, mkmRef);
+	// API keys authenticate the MCP endpoint only — not the realtime WebSocket.
+	// The browser uses a user JWT here; external callers use MCP request/response.
+	if (auth?.type === AuthType.ApiKey) return null;
+	return auth;
 }
 
 async function validateAnonymous(): Promise<WsData['auth'] | null> {

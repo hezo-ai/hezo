@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
+import { ATTACHMENT_MAX_BYTES } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import type { HezoConfig } from './cli';
 import { logger } from './logger';
 
@@ -17,7 +19,7 @@ import { getInstanceBaseUrl } from './lib/system-meta';
 import type { Env } from './lib/types';
 import { generateLlmsTxt } from './mcp/llms-txt';
 import { ONBOARDING_TOOLS } from './mcp/onboarding';
-import { getToolDefs, handleMcpRequest, initMcpServer } from './mcp/server';
+import { getToolDefs, handleMcpAssetUpload, handleMcpRequest, initMcpServer } from './mcp/server';
 import { generateSkillFile } from './mcp/skill-file';
 import { authMiddleware, requireProjectAccessMiddleware } from './middleware/auth';
 import { agentConnectionsRoutes } from './routes/agent-connections';
@@ -326,6 +328,21 @@ export function buildApp(
 	// GET/DELETE return 405 per the MCP Streamable-HTTP transport spec.
 	app.post('/mcp', (c) => handleMcpRequest(c));
 	app.on(['GET', 'DELETE'], '/mcp', (c) => c.text('Method Not Allowed', 405, { Allow: 'POST' }));
+
+	// Binary file upload on the MCP surface (multipart/form-data). JSON-RPC can't
+	// carry a file, so external/agent callers POST here with the same bearer auth.
+	app.post(
+		'/mcp/assets',
+		bodyLimit({
+			maxSize: ATTACHMENT_MAX_BYTES,
+			onError: (c) =>
+				c.json({ error: { code: 'TOO_LARGE', message: 'Attachment exceeds 10 MB' } }, 413),
+		}),
+		(c) => handleMcpAssetUpload(c),
+	);
+	app.on(['GET', 'DELETE'], '/mcp/assets', (c) =>
+		c.text('Method Not Allowed', 405, { Allow: 'POST' }),
+	);
 
 	// Auth routes (token endpoint is public, handled before auth middleware)
 	app.route('/api', authRoutes);
