@@ -9,7 +9,12 @@ import {
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { resolveAgentsMdPath } from '../lib/docs';
-import { actorTypeFromAuth, resolveActorMemberId, resolveProjectId } from '../lib/resolve';
+import {
+	actorTypeFromAuth,
+	connectedAgentIdFromAuth,
+	resolveActorMemberId,
+	resolveProjectId,
+} from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { broadcastApprovalChange } from '../services/approval-broadcast';
@@ -118,7 +123,12 @@ projectDocsRoutes.put('/projects/:projectId/docs/:filename', async (c) => {
 		content: body.content,
 		changeSummary: body.change_summary,
 		authorMemberId: memberId,
-		audit: { events: c.get('events'), actorType: actorTypeFromAuth(auth) },
+		authorConnectedAgentId: connectedAgentIdFromAuth(auth),
+		audit: {
+			events: c.get('events'),
+			actorType: actorTypeFromAuth(auth),
+			actorConnectedAgentId: connectedAgentIdFromAuth(auth),
+		},
 	});
 
 	return ok(c, {
@@ -152,7 +162,12 @@ projectDocsRoutes.delete('/projects/:projectId/docs/:filename', async (c) => {
 			projectId,
 			slug: filename,
 		},
-		{ events: c.get('events'), actorType: actorTypeFromAuth(c.get('auth')), actorMemberId },
+		{
+			events: c.get('events'),
+			actorType: actorTypeFromAuth(c.get('auth')),
+			actorConnectedAgentId: connectedAgentIdFromAuth(c.get('auth')),
+			actorMemberId,
+		},
 	);
 	if (!removed) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
 
@@ -209,7 +224,12 @@ projectDocsRoutes.post('/projects/:projectId/docs/:filename/restore', async (c) 
 		documentId: doc.id,
 		revisionNumber: body.revision_number,
 		restoredByMemberId,
-		audit: { events: c.get('events'), actorType: actorTypeFromAuth(auth) },
+		restoredByConnectedAgentId: connectedAgentIdFromAuth(auth),
+		audit: {
+			events: c.get('events'),
+			actorType: actorTypeFromAuth(auth),
+			actorConnectedAgentId: connectedAgentIdFromAuth(auth),
+		},
 	});
 	if (!restored) return err(c, 'NOT_FOUND', 'Revision not found', 404);
 

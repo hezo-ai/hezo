@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import type { AuditEntry } from '../hooks/use-audit-log';
 import { auditEntryLink, describeAuditEntry } from '../lib/audit-format';
+import { ActorBadge } from './ui/actor-badge';
 import { type Column, DataTable } from './ui/data-table';
 
 /**
@@ -37,9 +38,12 @@ function buildColumns(showTeam: boolean): Column<AuditEntry>[] {
 			key: 'actor',
 			header: 'Actor',
 			render: (e) => (
-				<span className="text-xs">
-					{e.actor_name || e.actor_type}
-					{e.actor_name ? <span className="text-text-3"> · {e.actor_type}</span> : null}
+				<span className="inline-flex items-center gap-1 text-xs">
+					<span>
+						{e.actor_name || e.actor_type}
+						{e.actor_name ? <span className="text-text-3"> · {e.actor_type}</span> : null}
+					</span>
+					<ActorBadge actorType={e.actor_type} name={e.actor_name} />
 				</span>
 			),
 		},

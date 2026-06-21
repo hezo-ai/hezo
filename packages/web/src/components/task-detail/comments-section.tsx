@@ -17,6 +17,7 @@ import {
 	isInlineEventType,
 	jumpToComment,
 } from '../comment-renderers';
+import { ActorBadge } from '../ui/actor-badge';
 import { Avatar, avatarColorFromString } from '../ui/avatar';
 
 /**
@@ -424,6 +425,7 @@ export function CommentsSection({
 												{authorName}
 											</span>
 										)}
+										<ActorBadge actorType={c.author_type} name={authorName} />
 										<CommentTimestampLink publicId={c.public_id} createdAt={c.created_at} />
 										<div className="ml-auto flex items-center gap-2">
 											{c.parent_comment_id &&
