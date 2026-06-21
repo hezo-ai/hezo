@@ -1,4 +1,4 @@
--- 015_connected_agents.sql
+-- 016_connected_agents.sql
 -- External AI agents (MCP clients like Claude, openclaw, …) can self-register
 -- with the instance and, once a human admin approves them, act with
 -- admin-equivalent access across every project and team. A registration is

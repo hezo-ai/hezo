@@ -317,6 +317,7 @@ mcpConnectionsRoutes.post('/projects/:projectId/connectors/ensure', async (c) =>
 		displayName: capability.displayName,
 		mcpUrl: capability.mcpServer.url,
 		mcpTransport: capability.mcpServer.transport,
+		mcpHeaders: capability.mcpServer.headers,
 		providerId: capability.id,
 	});
 	if (!alreadyExisted) {

@@ -129,7 +129,10 @@ clash (**project > team > instance**). `team_ssh_keys` is the exception — one 
 **Runs, wakeups, sessions.** `agent_wakeup_requests` is the trigger queue, with
 idempotency keys and `coalesced_count` merging (§ 5). `heartbeat_runs` is one row per
 execution (status, timing, tokens, cost, captured logs, `wakeup_id` provenance, the
-success-gate flags `produced_output`/`reported_no_work`). `agent_task_sessions` persists
+success-gate flags `produced_output`/`reported_no_work`). Token usage is flushed to the
+row *during* the run (alongside the log), so a run the server kills mid-flight still
+reports the tokens/cost it burned instead of `0`; `usage_partial` flags such a snapshot
+until a clean completion supersedes it. `agent_task_sessions` persists
 per-task session state for compaction across heartbeats. `ceo_sessions` /
 `ceo_conversations` / `ceo_messages` back the live CEO chat (§ 4).
 
@@ -139,7 +142,10 @@ per-model token rates (a bundled LiteLLM snapshot refreshed from the public feed
 `source='manual'` operator overrides winning). Budgets are **windowed and computed on
 demand**: limits live as `daily_/weekly_/monthly_budget_cents` on `member_agents` and
 `projects` (0 = unlimited; there is **no team budget**), and spend is summed from
-`cost_entries` over rolling UTC windows — no counter, no reset event (§ 5).
+`cost_entries` over rolling UTC windows — no counter, no reset event (§ 5). A run killed
+mid-flight never reaches the run-completion cost record, so `reconcileOnStartup` charges
+its surviving partial `cost_cents` on reboot (shared `recordRunCostAndEnforce`) — an
+interrupted run still counts against budgets.
 
 **Docs, skills, assets.** `documents` is one table backing three Markdown kinds by
 `type` (`project_doc`, `team_preferences`, `agent_system_prompt`), each with partial
@@ -150,7 +156,8 @@ uploaded files (bytes on local disk, served over HMAC-signed URLs).
 
 **Governance & misc.** `approvals` (polymorphic board decisions), `audit_log`
 (append-only, instance/team/project scopes, never updated/deleted by the app),
-`api_keys` (bcrypt-hashed, `hezo_` prefix), `invites`, `admin_mentions` (board inbox),
+`api_keys` (bcrypt-hashed, `hezo_` prefix), `connected_agents` (external MCP clients —
+self-registered, admin-approved, `hezoc_` prefix), `invites`, `admin_mentions` (board inbox),
 `instance_user_roles`, `notification_preferences`. `plugins`/`plugin_state`/`plugin_jobs`
 are scaffolding for a future plugin runtime — present but not yet exercised.
 
@@ -456,7 +463,7 @@ domain-separated message (`hezo-auth-v1:login:<nonce>`). After a restart the ser
 domain-separated so signatures can't be replayed or cross-purposed; on unlock
 `MasterKeyManager` fires `onUnlock` callbacks that start the `JobManager`.
 
-**Three principals.**
+**Four principals.**
 - **User JWT** (HS256, secret derived from the unlock key) — `Authorization: Bearer <jwt>`.
 - **API key** — `Authorization: Bearer hezo_<key>`, bcrypt-hashed, team-scoped, board-level
   access for external orchestrators; the `hezo_` prefix disambiguates from agent JWTs.
@@ -464,6 +471,14 @@ domain-separated so signatures can't be replayed or cross-purposed; on unlock
   on every call against the **`heartbeat_runs` row** (`id=run_id`, member/team match,
   status `running`); when the run finalizes the token is rejected on the next call —
   revocation for free, no token store.
+- **Connected-agent token** — `Authorization: Bearer hezoc_<key>`, SHA-256-hashed, issued
+  by external-agent **self-registration** and **inert until an admin approves it**. Once
+  approved it resolves to an **admin-equivalent, cross-team principal** (every
+  project/team), revoked instantly by deleting the `connected_agents` row (no token store).
+  It is admin-equivalent for data and instance settings but **not** for managing connected
+  agents — that stays human-superuser-only. Pending registration + status polling go
+  through the public onboarding surface (REST and the `/mcp` `register`/`connection_status`
+  tools).
 
 **Authorization** (`AGENTS.md` › Route authorization is authoritative). Routes with
 `:projectId` resolve the project → its backing team and verify access **per request** in
@@ -568,12 +583,14 @@ shapes.
   (connectors: ensure / auth-start / device / callbacks), `skills`.
 - **Ops** — `health`, `updates`, `preview` (HMAC-signed file URLs), public assets.
 
-Two non-REST surfaces share the port: the **Agent API** (`/agent-api`, the run-scoped
-endpoints agents hit, e.g. tool-call reporting) and the **MCP endpoint** (`POST /mcp`,
-Streamable HTTP, tools mirroring the REST surface and enforcing the same authorization).
-`GET /SKILL.md` serves the manifest that teaches an external agent how to drive Hezo
-(plus how to self-register as a connected agent), and `GET /llms.txt` points to it.
-Authorization for all three is § 10.
+One non-REST surface shares the port: the **MCP endpoint** (`POST /mcp`, Streamable
+HTTP), whose tools mirror the REST surface and enforce the same authorization. It is the
+interface agents drive — tasks, comments, approvals, credentials — and external agents
+can drive it too, including **self-registering as a connected agent** (pending admin
+approval, then admin-equivalent across every project/team; § 10). `GET /SKILL.md` serves
+the manifest that teaches an external agent how to use it — including the connect/register
+flow — and `GET /llms.txt` points to it. Authorization for both the REST and MCP surfaces
+is § 10.
 
 ---
 

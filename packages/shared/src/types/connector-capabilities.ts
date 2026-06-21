@@ -37,6 +37,13 @@ export interface ConnectorCapability {
 		url?: string;
 		cmd?: string;
 		transport: McpTransport;
+		/**
+		 * Static headers baked into the stored connection config at connect time
+		 * (e.g. GitHub's `X-MCP-Toolsets` to widen the remote toolset selection).
+		 * Merged into the runtime descriptor headers; the OAuth `Authorization`
+		 * header is layered on top at descriptor-build time.
+		 */
+		headers?: Record<string, string>;
 	};
 	skillFile?: {
 		url: string;
@@ -72,7 +79,15 @@ export const CONNECTOR_CAPABILITIES: Record<string, ConnectorCapability> = {
 	github: {
 		id: 'github',
 		displayName: 'GitHub',
-		mcpServer: { url: 'https://api.githubcopilot.com/mcp/', transport: 'http' },
+		mcpServer: {
+			url: 'https://api.githubcopilot.com/mcp/',
+			transport: 'http',
+			// Widen the remote toolset selection to the default set + `actions`.
+			// X-MCP-Toolsets uses replace semantics, so the full set must be listed;
+			// `actions` is what exposes get_job_logs / list_workflow_runs, so agents
+			// read CI logs through the MCP instead of hand-rolling curl.
+			headers: { 'X-MCP-Toolsets': 'context,repos,issues,pull_requests,users,copilot,actions' },
+		},
 		allowedHosts: ['api.githubcopilot.com', 'api.github.com', 'github.com'],
 		scopes: ['repo', 'workflow', 'read:org', 'write:ssh_signing_key', 'write:public_key'],
 		deviceAuth: {

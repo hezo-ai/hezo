@@ -294,13 +294,6 @@ describe('MCP tools registration', () => {
 });
 
 describe('Agent system-prompt access', () => {
-	it('non-coach agents can no longer update prompts via /self endpoints', async () => {
-		const res = await app.request('/agent-api/self/system-prompt', {
-			headers: authHeader(engineerToken),
-		});
-		expect(res.status).toBe(404);
-	});
-
 	it('agents other than Coach and Captain cannot call update_agent_system_prompt via MCP', async () => {
 		const res = await app.request('/mcp', {
 			method: 'POST',

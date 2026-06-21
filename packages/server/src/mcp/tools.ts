@@ -15,6 +15,7 @@ import {
 	credentialKindRequiresAllowedHosts,
 	DocumentType,
 	extensionOf,
+	getConnectorCapability,
 	isAgentAuthorableAssetMime,
 	isMarkdownDocSlug,
 	normalizeAssetFilename,
@@ -1760,6 +1761,10 @@ export function registerTools(
 				displayName,
 				mcpUrl,
 				mcpTransport,
+				// A known provider (e.g. github) carries static headers like
+				// X-MCP-Toolsets in its capability — apply them so an agent-registered
+				// connector matches the UI "Connect" path.
+				mcpHeaders: providerId ? getConnectorCapability(providerId)?.mcpServer.headers : undefined,
 				skillId,
 				createdByTaskId: taskId,
 				providerId,

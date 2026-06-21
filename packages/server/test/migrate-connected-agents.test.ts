@@ -6,9 +6,9 @@ import { vector } from '@electric-sql/pglite/vector';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { safeClose } from './helpers';
 
-// 015_connected_agents.sql adds the `connected_agents` table + `connected_agent_status`
+// 016_connected_agents.sql adds the `connected_agents` table + `connected_agent_status`
 // enum that back external-agent self-registration. This drives the real migration files
-// in order (001 -> ... -> 014) against a populated `users` row, then applies 015 and
+// in order (001 -> ... -> 015) against a populated `users` row, then applies 016 and
 // asserts the table/enum/FK/unique land and the pre-existing data survives.
 
 function migrationsDir(): string {
@@ -43,9 +43,10 @@ const PRE_MIGRATIONS = [
 	'012_drop_skills_builtin.sql',
 	'013_remove_options_comment.sql',
 	'014_comments_embedding.sql',
+	'015_heartbeat_run_usage_partial.sql',
 ];
 
-describe('015_connected_agents migration', () => {
+describe('016_connected_agents migration', () => {
 	let db: PGlite;
 	let userId: string;
 
@@ -64,7 +65,7 @@ describe('015_connected_agents migration', () => {
 		);
 		userId = user.rows[0].id;
 
-		await db.exec(loadMigration('015_connected_agents.sql'));
+		await db.exec(loadMigration('016_connected_agents.sql'));
 	});
 
 	afterAll(async () => {
