@@ -80,9 +80,9 @@ function ExecutionDetailPage() {
 	const projectLabel = run.project_name ?? run.project_slug;
 	const taskLineInner = (
 		<>
-			<span>Task:</span>
-			<span className="font-mono text-text-1">{run.task_identifier}</span>
-			{run.task_title && <span>{run.task_title}</span>}
+			<span className="text-text-3">Task:</span>
+			<span className="font-mono font-semibold text-text-1">{run.task_identifier}</span>
+			{run.task_title && <span className="font-medium text-text-1">{run.task_title}</span>}
 			{isInstanceAgent && projectLabel && (
 				<span data-testid="run-task-project" className="text-text-3">
 					· {projectLabel}
@@ -90,6 +90,28 @@ function ExecutionDetailPage() {
 			)}
 		</>
 	);
+
+	const taskBlock = run.task_identifier ? (
+		<div className="mb-4" data-testid="run-task">
+			{run.task_id ? (
+				<Link
+					to="/projects/$projectId/tasks/$taskId"
+					params={{
+						projectId: run.project_slug ?? projectId,
+						taskId: run.task_identifier.toLowerCase(),
+					}}
+					{...(run.run_comment_public_id ? { hash: `comment-${run.run_comment_public_id}` } : {})}
+					className="inline-flex items-baseline gap-2 flex-wrap text-sm text-text-2 hover:underline"
+				>
+					{taskLineInner}
+				</Link>
+			) : (
+				<div className="inline-flex items-baseline gap-2 flex-wrap text-sm text-text-2">
+					{taskLineInner}
+				</div>
+			)}
+		</div>
+	) : null;
 
 	return (
 		<div>
@@ -105,6 +127,8 @@ function ExecutionDetailPage() {
 				<h2 className="text-sm font-medium">Run {run.id.slice(0, 8)}</h2>
 				<Badge color={statusColor(run.status) as 'green'}>{run.status}</Badge>
 			</div>
+
+			{taskBlock}
 
 			{(() => {
 				const trigger = formatTriggerReason(run, projectId);
@@ -167,25 +191,6 @@ function ExecutionDetailPage() {
 					</div>
 				);
 			})()}
-
-			{run.task_identifier &&
-				(run.task_id ? (
-					<Link
-						to="/projects/$projectId/tasks/$taskId"
-						params={{
-							projectId: run.project_slug ?? projectId,
-							taskId: run.task_identifier.toLowerCase(),
-						}}
-						{...(run.run_comment_public_id ? { hash: `comment-${run.run_comment_public_id}` } : {})}
-						className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-2 hover:text-text-1"
-					>
-						{taskLineInner}
-					</Link>
-				) : (
-					<div className="mb-4 inline-flex items-baseline gap-1 text-xs text-text-2">
-						{taskLineInner}
-					</div>
-				))}
 
 			{displayedCommand && (
 				<div className="mb-3">
