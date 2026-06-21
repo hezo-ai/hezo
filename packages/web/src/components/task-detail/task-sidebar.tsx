@@ -84,7 +84,11 @@ export function TaskSidebar({
 		<>
 			<div
 				data-testid="task-sidebar"
-				className="flex flex-col gap-4 text-xs lg:sticky lg:top-[var(--container-banner-h,0px)] lg:self-start"
+				// Sticky offset = container-banner height (clears the sticky status banner
+				// when present) + the project layout's lg:py-6 (1.5rem) padding. Mirroring
+				// the padding keeps the breathing room above the sidebar when it sticks;
+				// without it the sidebar slides flush against the app header on scroll.
+				className="flex flex-col gap-4 text-xs lg:sticky lg:top-[calc(var(--container-banner-h,0px)_+_1.5rem)] lg:self-start"
 			>
 				<AgentQueueSection
 					projectId={projectId}

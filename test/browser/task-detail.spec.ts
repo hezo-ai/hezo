@@ -87,6 +87,11 @@ test.describe('Task detail — right sidebar sticky positioning', () => {
 		expect(scrolled!.y).toBeLessThanOrEqual(initialY);
 		expect(scrolled!.y).toBeGreaterThanOrEqual(0);
 		expect(scrolled!.y + scrolled!.height).toBeLessThanOrEqual(720);
+		// Top spacing stays put: the sticky offset mirrors the project layout's
+		// vertical padding, so the sidebar keeps its breathing room below the app
+		// header instead of sliding flush against it. Without the padding in the
+		// sticky `top`, scrolled.y would drop by ~24px (the lg:py-6 gap).
+		expect(scrolled!.y).toBeGreaterThanOrEqual(initialY - 1);
 
 		const effort = sidebar.getByLabel(
 			'Reasoning effort for the agent run triggered by this comment',
