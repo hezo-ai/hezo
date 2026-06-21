@@ -96,6 +96,7 @@ export const hireHandler: ApprovalHandler = {
 						oldStatus,
 						TaskStatus.Done,
 						actorMemberId,
+						null,
 						wsManager,
 					);
 				}

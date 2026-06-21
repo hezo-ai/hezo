@@ -40,6 +40,7 @@ export interface Comment {
 	author_type: string;
 	author_name: string;
 	author_member_id: string | null;
+	author_connected_agent_id: string | null;
 	parent_comment_id: string | null;
 	reactions?: ReactionGroup[];
 	attachments?: CommentAttachment[];

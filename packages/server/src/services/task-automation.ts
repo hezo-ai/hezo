@@ -160,9 +160,19 @@ export async function triggerStatusAutomations(
 	oldStatus: string,
 	newStatus: string,
 	actorMemberId: string | null,
+	actorConnectedAgentId: string | null,
 	wsManager?: WebSocketManager,
 ): Promise<void> {
-	await recordStatusChange(db, teamId, taskId, oldStatus, newStatus, actorMemberId, wsManager);
+	await recordStatusChange(
+		db,
+		teamId,
+		taskId,
+		oldStatus,
+		newStatus,
+		actorMemberId,
+		actorConnectedAgentId,
+		wsManager,
+	);
 
 	// Downstream blocker state only flips when this task crosses the
 	// terminal boundary. Same-bucket transitions (e.g. done → closed

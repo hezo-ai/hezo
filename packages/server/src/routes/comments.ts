@@ -4,7 +4,12 @@ import { encrypt } from '../crypto/encryption';
 import { signAssetUrl } from '../lib/asset-urls';
 import { broadcastChange } from '../lib/broadcast';
 import { validateCredentialValue } from '../lib/credential-validator';
-import { resolveActor, resolveActorMemberId, resolveTaskId } from '../lib/resolve';
+import {
+	connectedAgentIdFromAuth,
+	resolveActor,
+	resolveActorMemberId,
+	resolveTaskId,
+} from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
@@ -31,13 +36,15 @@ commentsRoutes.get('/projects/:projectId/tasks/:taskId/comments', async (c) => {
 
 	const result = await db.query(
 		`SELECT ic.id, ic.public_id, ic.task_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
-            m.member_type AS author_type,
-            COALESCE(ma.title, m.display_name, 'Admin') AS author_name,
+            CASE WHEN ic.author_connected_agent_id IS NOT NULL THEN 'connected_agent' ELSE m.member_type::text END AS author_type,
+            COALESCE(ca.name, ma.title, m.display_name, 'Admin') AS author_name,
             ic.author_member_id,
+            ic.author_connected_agent_id,
             ic.parent_comment_id
      FROM task_comments ic
      LEFT JOIN members m ON m.id = ic.author_member_id
      LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
+     LEFT JOIN connected_agents ca ON ca.id = ic.author_connected_agent_id
      WHERE ic.task_id = $1
      ORDER BY ic.created_at ASC`,
 		[taskId],
@@ -210,6 +217,8 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 	} else if (auth.type === AuthType.Agent) {
 		authorMemberId = auth.memberId;
 	}
+	// A connected agent authors as its first-class identity, not a member.
+	const authorConnectedAgentId = connectedAgentIdFromAuth(auth);
 
 	// Only Admin (human) callers can opt into waking the assignee on a plain
 	// comment. Agent-authored comments (via the /mcp create_comment tool) keep
@@ -218,12 +227,13 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 
 	const result = await withTransaction(db, async () => {
 		const inserted = await db.query<{ id: string }>(
-			`INSERT INTO task_comments (task_id, author_member_id, parent_comment_id, content_type, content)
-     VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
+			`INSERT INTO task_comments (task_id, author_member_id, author_connected_agent_id, parent_comment_id, content_type, content)
+     VALUES ($1, $2, $3, $4, $5::comment_content_type, $6::jsonb)
      RETURNING *`,
 			[
 				taskId,
 				authorMemberId,
+				authorConnectedAgentId,
 				parentCommentId,
 				body.content_type ?? CommentContentType.Text,
 				JSON.stringify(body.content),
@@ -259,9 +269,15 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 
 	const commentText = typeof body.content?.text === 'string' ? body.content.text : '';
 	if (commentText) {
-		recordTaskLinks(db, teamId, taskId, commentText, authorMemberId, c.get('wsManager')).catch(
-			(e) => log.error('Failed to record task links from comment:', e),
-		);
+		recordTaskLinks(
+			db,
+			teamId,
+			taskId,
+			commentText,
+			authorMemberId,
+			authorConnectedAgentId,
+			c.get('wsManager'),
+		).catch((e) => log.error('Failed to record task links from comment:', e));
 	}
 
 	broadcastChange(
@@ -435,6 +451,7 @@ commentsRoutes.post(
 			projectId: null,
 			actorType: actor.actorType,
 			actorMemberId: actor.actorMemberId,
+			actorConnectedAgentId: actor.actorConnectedAgentId,
 			secretId,
 			name,
 			requestingAgentId,

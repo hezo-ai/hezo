@@ -9,6 +9,8 @@ import type { WebSocketManager } from './ws';
 export interface DocumentAuditContext {
 	events?: DomainEventBus;
 	actorType?: AuditActorType;
+	/** Set when the actor is a connected agent. */
+	actorConnectedAgentId?: string | null;
 }
 
 function emitDocumentEvent(
@@ -24,6 +26,7 @@ function emitDocumentEvent(
 		projectId: row.project_id,
 		actorType: ctx.actorType ?? 'admin',
 		actorMemberId,
+		actorConnectedAgentId: ctx.actorConnectedAgentId ?? null,
 		documentId: row.id,
 		documentType: row.type,
 		slug: row.slug,
@@ -62,6 +65,9 @@ export interface DocumentRevisionRow {
 
 export interface DocumentRevisionRowWithAuthor extends DocumentRevisionRow {
 	author_name: string | null;
+	author_connected_agent_id: string | null;
+	/** 'connected_agent' | 'agent' | 'admin' — drives the human/agent badge. */
+	author_type: string;
 }
 
 interface ScopeProjectDoc {
@@ -158,6 +164,8 @@ export interface UpsertDocumentInput {
 	content: string;
 	changeSummary?: string;
 	authorMemberId: string | null;
+	/** Set when the author is a connected agent. */
+	authorConnectedAgentId?: string | null;
 	/** Optional audit context — when present, a document event is emitted. */
 	audit?: DocumentAuditContext;
 }
@@ -187,6 +195,7 @@ export async function upsertDocument(
 				prior.content,
 				input.changeSummary ?? '',
 				input.authorMemberId,
+				input.authorConnectedAgentId ?? null,
 			);
 		}
 		const updateResult = await db.query<DocumentRow>(
@@ -252,6 +261,7 @@ async function recordRevision(
 	content: string,
 	changeSummary: string,
 	authorMemberId: string | null,
+	authorConnectedAgentId: string | null,
 ): Promise<number> {
 	const next = await db.query<{ rev: number }>(
 		'SELECT COALESCE(MAX(revision_number), 0)::int + 1 AS rev FROM document_revisions WHERE document_id = $1',
@@ -259,9 +269,9 @@ async function recordRevision(
 	);
 	const revisionNumber = next.rows[0].rev;
 	await db.query(
-		`INSERT INTO document_revisions (document_id, revision_number, content, change_summary, author_member_id)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		[documentId, revisionNumber, content, changeSummary, authorMemberId],
+		`INSERT INTO document_revisions (document_id, revision_number, content, change_summary, author_member_id, author_connected_agent_id)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		[documentId, revisionNumber, content, changeSummary, authorMemberId, authorConnectedAgentId],
 	);
 	return revisionNumber;
 }
@@ -295,10 +305,17 @@ export async function listRevisions(
 	documentId: string,
 ): Promise<DocumentRevisionRowWithAuthor[]> {
 	const result = await db.query<DocumentRevisionRowWithAuthor>(
-		`SELECT r.*, COALESCE(ma.title, m.display_name) AS author_name
+		`SELECT r.*,
+		        COALESCE(ma.title, m.display_name, ca.name) AS author_name,
+		        CASE
+		            WHEN r.author_connected_agent_id IS NOT NULL THEN 'connected_agent'
+		            WHEN ma.id IS NOT NULL THEN 'agent'
+		            ELSE 'admin'
+		        END AS author_type
 		 FROM document_revisions r
 		 LEFT JOIN members m ON m.id = r.author_member_id
 		 LEFT JOIN member_agents ma ON ma.id = r.author_member_id
+		 LEFT JOIN connected_agents ca ON ca.id = r.author_connected_agent_id
 		 WHERE r.document_id = $1
 		 ORDER BY r.revision_number DESC`,
 		[documentId],
@@ -310,6 +327,8 @@ export interface RestoreRevisionInput {
 	documentId: string;
 	revisionNumber: number;
 	restoredByMemberId: string | null;
+	/** Set when the restorer is a connected agent. */
+	restoredByConnectedAgentId?: string | null;
 	audit?: DocumentAuditContext;
 }
 
@@ -336,6 +355,7 @@ export async function restoreRevision(
 			doc.rows[0].content,
 			`Restored to revision ${input.revisionNumber}`,
 			input.restoredByMemberId,
+			input.restoredByConnectedAgentId ?? null,
 		);
 		const updated = await db.query<DocumentRow>(
 			`UPDATE documents

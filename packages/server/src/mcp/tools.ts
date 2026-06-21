@@ -43,6 +43,8 @@ import {
 	wouldCreateCycle,
 } from '../lib/dependencies';
 import {
+	actorTypeFromAuth,
+	connectedAgentIdFromAuth,
 	projectIdForTeam,
 	resolveActorMemberId,
 	resolveProject,
@@ -305,8 +307,9 @@ async function buildMcpCreateTaskCaller(
 ): Promise<CreateTaskCaller> {
 	const actorMemberId = await resolveActorMemberId(db, auth, teamId);
 	const caller: CreateTaskCaller = {
-		actorType: auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Admin,
+		actorType: actorTypeFromAuth(auth),
 		actorMemberId,
+		actorConnectedAgentId: connectedAgentIdFromAuth(auth),
 	};
 	if (auth.type === AuthType.Agent) {
 		caller.agentMemberId = auth.memberId;
@@ -925,6 +928,7 @@ export function registerTools(
 			if (!r.rows[0]) return null;
 
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const actorConnectedAgentId = connectedAgentIdFromAuth(auth);
 
 			if (args.description !== undefined) {
 				trackBackground(
@@ -934,6 +938,7 @@ export function registerTools(
 						taskId,
 						args.description as string,
 						actorMemberId,
+						actorConnectedAgentId,
 						wsManager,
 					).catch((e) => log.error('Failed to record task links from description:', e)),
 				);
@@ -948,6 +953,7 @@ export function registerTools(
 						currentStatus,
 						args.status as string,
 						actorMemberId,
+						actorConnectedAgentId,
 						wsManager,
 					);
 				} catch (e) {
@@ -1358,12 +1364,15 @@ export function registerTools(
 				);
 			}
 			const r = await db.query<Record<string, unknown>>(
-				`SELECT ic.id, ic.public_id, ic.task_id, ic.author_member_id, ic.parent_comment_id,
+				`SELECT ic.id, ic.public_id, ic.task_id, ic.author_member_id, ic.author_connected_agent_id,
+				        ic.parent_comment_id,
 				        ic.content_type, ic.content, ic.chosen_option, ic.created_at,
-				        COALESCE(ma.title, m.display_name, 'Admin') AS author_name
+				        CASE WHEN ic.author_connected_agent_id IS NOT NULL THEN 'connected_agent' ELSE m.member_type::text END AS author_type,
+				        COALESCE(ca.name, ma.title, m.display_name, 'Admin') AS author_name
 				 FROM task_comments ic
 				 LEFT JOIN members m ON m.id = ic.author_member_id
 				 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
+				 LEFT JOIN connected_agents ca ON ca.id = ic.author_connected_agent_id
 				 WHERE ${conditions.join(' AND ')}
 				 ORDER BY ic.created_at DESC, ic.id DESC LIMIT 50`,
 				params,
@@ -1523,12 +1532,20 @@ export function registerTools(
 				parentCommentId = args.parent_comment_id as string;
 			}
 			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const authorConnectedAgentId = connectedAgentIdFromAuth(auth);
 			const content = { text: args.content };
 			// RETURNING * includes public_id (the timestamp slug for comment links),
 			// so the agent gets it back without a follow-up list_comments.
 			const r = await db.query<{ id: string; public_id: string }>(
-				`INSERT INTO task_comments (task_id, author_member_id, parent_comment_id, content_type, content) VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
-				[taskId, authorMemberId, parentCommentId, CommentContentType.Text, JSON.stringify(content)],
+				`INSERT INTO task_comments (task_id, author_member_id, author_connected_agent_id, parent_comment_id, content_type, content) VALUES ($1, $2, $3, $4, $5::comment_content_type, $6::jsonb) RETURNING *`,
+				[
+					taskId,
+					authorMemberId,
+					authorConnectedAgentId,
+					parentCommentId,
+					CommentContentType.Text,
+					JSON.stringify(content),
+				],
 			);
 			await fireCommentWakeups({
 				db,
@@ -1550,6 +1567,7 @@ export function registerTools(
 					taskId,
 					args.content as string,
 					authorMemberId,
+					authorConnectedAgentId,
 					wsManager,
 				).catch((e) => log.error('Failed to record task links from comment:', e)),
 			);

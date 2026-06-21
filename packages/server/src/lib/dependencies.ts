@@ -216,6 +216,7 @@ export async function reconcileBlockedStatus(
 		current,
 		target,
 		actorMemberId,
+		null,
 		wsManager,
 		effectiveCascade,
 	);

@@ -15,7 +15,13 @@ import { bodyLimit } from 'hono/body-limit';
 import { insertAssetWithUniqueName } from '../lib/asset-name';
 import { signAssetUrl, verifyAssetUrl } from '../lib/asset-urls';
 import { ref } from '../lib/log-ref';
-import { resolveActorMemberId, resolveProjectId, resolveTaskId } from '../lib/resolve';
+import {
+	actorTypeFromAuth,
+	connectedAgentIdFromAuth,
+	resolveActorMemberId,
+	resolveProjectId,
+	resolveTaskId,
+} from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -84,8 +90,9 @@ export async function storeUploadedAsset(
 		type: 'asset.created',
 		teamId,
 		projectId,
-		actorType: isAgent ? 'agent' : 'admin',
+		actorType: actorTypeFromAuth(auth),
 		actorMemberId: uploadedBy,
+		actorConnectedAgentId: connectedAgentIdFromAuth(auth),
 		assetId: asset.id,
 		filename: asset.original_filename,
 		taskId: taskId ?? (isAgent ? auth.taskId : null),

@@ -20,24 +20,40 @@ export async function resolveActorMemberId(
 	return null;
 }
 
-/** Map an auth context to its audit actor type. Anything non-agent is an admin (board) actor. */
+/**
+ * Map an auth context to its audit actor type. An agent run is an `agent`; an
+ * approved external MCP client is a `connected_agent`; everything else (board
+ * user, superuser) is an `admin`.
+ */
 export function actorTypeFromAuth(auth: AuthInfo): AuditActorType {
-	return auth.type === AuthType.Agent ? 'agent' : 'admin';
+	if (auth.type === AuthType.Agent) return 'agent';
+	if (auth.type === AuthType.ConnectedAgent) return 'connected_agent';
+	return 'admin';
+}
+
+/** The connected-agent identity behind a request, or null for any other principal. */
+export function connectedAgentIdFromAuth(auth: AuthInfo): string | null {
+	return auth.type === AuthType.ConnectedAgent ? auth.connectedAgentId : null;
 }
 
 /**
- * Resolve both the audit actor type and the acting member id for a request.
- * `teamId` may be null for instance-level actions; the member id only resolves
- * within a team, so it is null at instance scope (the actor is still `admin`).
+ * Resolve the audit actor type, the acting member id, and the connected-agent id
+ * for a request. `teamId` may be null for instance-level actions; the member id
+ * only resolves within a team, so it is null at instance scope. A connected
+ * agent has no member row — it is attributed via `actorConnectedAgentId`.
  */
 export async function resolveActor(
 	db: PGlite,
 	auth: AuthInfo,
 	teamId: string | null,
-): Promise<{ actorType: AuditActorType; actorMemberId: string | null }> {
+): Promise<{
+	actorType: AuditActorType;
+	actorMemberId: string | null;
+	actorConnectedAgentId: string | null;
+}> {
 	const actorType = actorTypeFromAuth(auth);
 	const actorMemberId = teamId ? await resolveActorMemberId(db, auth, teamId) : null;
-	return { actorType, actorMemberId };
+	return { actorType, actorMemberId, actorConnectedAgentId: connectedAgentIdFromAuth(auth) };
 }
 
 export async function resolveTeamId(db: PGlite, raw: string): Promise<string | null> {
