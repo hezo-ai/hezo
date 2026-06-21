@@ -27,6 +27,11 @@ Create an API key from the web app. The key is **scoped to a team**, so a client
 it acts within that team and its projects — exactly the same authorization an agent
 would have. Copy the key when it's shown; it isn't displayed again.
 
+An API key authenticates the **MCP endpoint only** — `POST /mcp` and the `/mcp/assets`
+upload below. It is **not** accepted on Hezo's REST API or its realtime WebSocket: those
+back the web app, which uses your signed-in session instead. So a `hezo_` key is for
+driving Hezo over MCP, nothing else.
+
 ## Connecting as a connected agent (instance-wide)
 
 An external agent can **self-register** for instance-wide access instead of using a
@@ -94,6 +99,22 @@ Once connected, your agent can manage work in Hezo the way a teammate would — 
 example list and create projects, create and update tasks (including their rules and
 progress summaries), comment on tasks, and inspect the team's agents. The connected
 client discovers the full, current tool list automatically on connect.
+
+## File uploads
+
+A binary file (an image, a PDF, …) can't ride inside a JSON-RPC tool call. To upload one,
+POST it as `multipart/form-data` to `/mcp/assets` with the same `Authorization: Bearer`
+header and a `file` field — add an optional `project` field when you're acting across
+projects:
+
+```sh
+curl -X POST http://localhost:3100/mcp/assets \
+  -H "Authorization: Bearer hezo_your_api_key" \
+  -F file=@diagram.png
+```
+
+The response returns the stored asset and a signed read URL, and the file then shows up in
+the `list_project_assets` and `read_project_asset` tools.
 
 ## Next
 
