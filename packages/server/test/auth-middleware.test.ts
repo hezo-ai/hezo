@@ -4,8 +4,9 @@ import { AuthType, HeartbeatRunStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
-import type { Env } from '../src/lib/types';
+import type { AuthInfo, Env } from '../src/lib/types';
 import {
+	canAuthAccessTeam,
 	loadAdminAuth,
 	safeCompareHex,
 	signAdminJwt,
@@ -399,6 +400,83 @@ describe('loadAdminAuth', () => {
 		} finally {
 			await safeClose(freshDb);
 		}
+	});
+});
+
+describe('canAuthAccessTeam', () => {
+	const otherTeamId = '00000000-0000-0000-0000-0000000000ff';
+
+	it('lets an approved connected agent reach every team', async () => {
+		// Connected agents are admin-equivalent/cross-team (auth.ts), so they must
+		// reach realtime WS rooms too — the gap this shared predicate closes.
+		const auth: AuthInfo = {
+			type: AuthType.ConnectedAgent,
+			connectedAgentId: 'ca-1',
+			isSuperuser: true,
+			crossTeam: true,
+		};
+		expect(await canAuthAccessTeam(db, auth, teamId)).toBe(true);
+		expect(await canAuthAccessTeam(db, auth, otherTeamId)).toBe(true);
+	});
+
+	it('lets a human superuser reach every team', async () => {
+		const auth: AuthInfo = { type: AuthType.Admin, userId: 'irrelevant', isSuperuser: true };
+		expect(await canAuthAccessTeam(db, auth, teamId)).toBe(true);
+		expect(await canAuthAccessTeam(db, auth, otherTeamId)).toBe(true);
+	});
+
+	it('lets a board user reach only the teams they belong to', async () => {
+		const userId = (
+			await db.query<{ id: string }>(
+				"INSERT INTO users (display_name, is_superuser) VALUES ('Board Member', false) RETURNING id",
+			)
+		).rows[0].id;
+		const memberId = (
+			await db.query<{ id: string }>(
+				"INSERT INTO members (team_id, member_type, display_name) VALUES ($1, 'user', 'BM') RETURNING id",
+				[teamId],
+			)
+		).rows[0].id;
+		await db.query("INSERT INTO member_users (id, user_id, role) VALUES ($1, $2, 'member')", [
+			memberId,
+			userId,
+		]);
+
+		const auth: AuthInfo = { type: AuthType.Admin, userId, isSuperuser: false };
+		expect(await canAuthAccessTeam(db, auth, teamId)).toBe(true);
+		expect(await canAuthAccessTeam(db, auth, otherTeamId)).toBe(false);
+	});
+
+	it('binds an API key to its own team', async () => {
+		const auth: AuthInfo = { type: AuthType.ApiKey, teamId };
+		expect(await canAuthAccessTeam(db, auth, teamId)).toBe(true);
+		expect(await canAuthAccessTeam(db, auth, otherTeamId)).toBe(false);
+	});
+
+	it('binds an ordinary agent to its own team but lets a cross-team session span all', async () => {
+		const agent: AuthInfo = {
+			type: AuthType.Agent,
+			memberId: 'm',
+			teamId,
+			runId: 'r',
+			taskId: null,
+			projectId: 'p',
+			crossProject: false,
+		};
+		const crossTeamSession: AuthInfo = {
+			type: AuthType.Agent,
+			memberId: 'm',
+			teamId,
+			runId: null,
+			taskId: null,
+			projectId: 'p',
+			crossProject: true,
+			sessionId: 's',
+			crossTeam: true,
+		};
+		expect(await canAuthAccessTeam(db, agent, teamId)).toBe(true);
+		expect(await canAuthAccessTeam(db, agent, otherTeamId)).toBe(false);
+		expect(await canAuthAccessTeam(db, crossTeamSession, otherTeamId)).toBe(true);
 	});
 });
 

@@ -307,7 +307,37 @@ export function safeCompareHex(a: string, b: string): boolean {
 
 /**
  * Single source of truth for "does this auth principal have access to this team?".
- * Returns `null` on success, or a 403 `Response` to short-circuit the handler.
+ * Shared by the HTTP gate (`assertTeamAccess`) and the WebSocket room-access check
+ * (`canAccessTeam` in `index.ts`) so the two can't drift — a connected agent must
+ * reach its realtime rooms just as it reaches REST. Mirrors `getAccessibleTeamIds`:
+ * API keys and ordinary agents are bound to their single team; the instance CEO
+ * chat session (`crossTeam`) and approved connected agents span every team; a human
+ * superuser spans all teams; a board user gets the teams they belong to.
+ */
+export async function canAuthAccessTeam(
+	db: PGlite,
+	auth: AuthInfo,
+	teamId: string,
+): Promise<boolean> {
+	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
+		// The instance CEO chat session acts across every team (gated at mint time).
+		if (auth.type === AuthType.Agent && auth.crossTeam) return true;
+		return auth.teamId === teamId;
+	}
+	// An approved connected agent is admin-equivalent across every team.
+	if (auth.type === AuthType.ConnectedAgent) return true;
+	if (auth.isSuperuser) return true;
+
+	const result = await db.query(
+		'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.team_id = $2',
+		[auth.userId, teamId],
+	);
+	return result.rows.length > 0;
+}
+
+/**
+ * HTTP gate wrapping `canAuthAccessTeam`: returns `null` on success, or a 403
+ * `Response` to short-circuit the handler.
  */
 async function assertTeamAccess(
 	db: PGlite,
@@ -315,30 +345,8 @@ async function assertTeamAccess(
 	c: Context<Env>,
 	teamId: string,
 ): Promise<Response | null> {
-	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
-		// The instance CEO chat session acts across every team (gated at mint time).
-		if (auth.type === AuthType.Agent && auth.crossTeam) return null;
-		if (auth.teamId !== teamId) {
-			return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
-		}
-		return null;
-	}
-
-	// An approved connected agent is admin-equivalent across every team.
-	if (auth.type === AuthType.ConnectedAgent) return null;
-
-	if (auth.isSuperuser) {
-		return null;
-	}
-
-	const result = await db.query(
-		'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.team_id = $2',
-		[auth.userId, teamId],
-	);
-	if (result.rows.length === 0) {
-		return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
-	}
-	return null;
+	if (await canAuthAccessTeam(db, auth, teamId)) return null;
+	return c.json({ error: { code: 'FORBIDDEN', message: 'Access denied' } }, 403);
 }
 
 /**

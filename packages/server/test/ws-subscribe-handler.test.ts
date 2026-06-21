@@ -1,6 +1,8 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { AuthType, WsMessageType, wsRoom } from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AuthInfo } from '../src/lib/types';
+import { canAuthAccessTeam } from '../src/middleware/auth';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import type { DockerClient } from '../src/services/docker';
 import { ImageBuildTracker } from '../src/services/image-build-tracker';
@@ -55,20 +57,11 @@ async function seedTeamWithProject(
 }
 
 function canAccessTeamFactory(db: PGlite) {
-	return async (auth: WsData['auth'], teamId: string): Promise<boolean> => {
-		if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
-			return auth.teamId === teamId;
-		}
-		if (auth.type === AuthType.Admin) {
-			if (auth.isSuperuser) return true;
-			const result = await db.query(
-				'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.team_id = $2',
-				[auth.userId, teamId],
-			);
-			return result.rows.length > 0;
-		}
-		return false;
-	};
+	// Delegate to the production predicate instead of re-implementing it, so this
+	// mock can't drift from the real team-access rule. WsData widens AuthInfo to a
+	// loose bag (the production `canAccessTeam` re-narrows the same way).
+	return (auth: WsData['auth'], teamId: string): Promise<boolean> =>
+		canAuthAccessTeam(db, auth as AuthInfo, teamId);
 }
 
 describe('handleWsSubscribe', () => {
@@ -173,6 +166,23 @@ describe('handleWsSubscribe', () => {
 	it('subscribes a the admin to team room when canAccessTeam passes', async () => {
 		const { userId, teamId } = await seedTeamWithProject(db);
 		const ws = createMockWs({ type: AuthType.Admin, userId });
+
+		await handleWsSubscribe(ws, wsRoom.team(teamId), deps());
+
+		expect(wsManager.getRoomSize(wsRoom.team(teamId))).toBe(1);
+	});
+
+	it('subscribes an approved connected agent to a team room (admin-equivalent)', async () => {
+		const { teamId } = await seedTeamWithProject(db);
+		// A connected agent belongs to no team membership, but is admin-equivalent
+		// and cross-team — it must still reach realtime rooms.
+		const auth: AuthInfo = {
+			type: AuthType.ConnectedAgent,
+			connectedAgentId: 'ca-1',
+			isSuperuser: true,
+			crossTeam: true,
+		};
+		const ws = createMockWs(auth);
 
 		await handleWsSubscribe(ws, wsRoom.team(teamId), deps());
 
