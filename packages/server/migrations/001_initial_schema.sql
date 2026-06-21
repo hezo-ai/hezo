@@ -41,14 +41,14 @@ CREATE INDEX idx_auth_methods_user ON user_auth_methods(user_id);
 -------------------------------------------------------------------------------
 
 CREATE TYPE member_type AS ENUM ('agent', 'user');
-CREATE TYPE agent_runtime AS ENUM ('claude_code', 'codex', 'gemini');
+CREATE TYPE agent_runtime AS ENUM ('claude_code', 'codex', 'gemini', 'opencode', 'kimi');
 CREATE TYPE agent_effort AS ENUM ('minimal', 'low', 'medium', 'high', 'max');
-CREATE TYPE agent_runtime_status AS ENUM ('active', 'idle', 'paused');
+CREATE TYPE agent_runtime_status AS ENUM ('active', 'idle', 'out_of_agent_budget', 'out_of_project_budget');
 CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled');
 CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopping', 'stopped', 'error');
 CREATE TYPE task_status AS ENUM ('backlog', 'in_progress', 'review', 'blocked', 'done', 'closed', 'cancelled');
 CREATE TYPE task_priority AS ENUM ('urgent', 'high', 'medium', 'low');
-CREATE TYPE comment_content_type AS ENUM ('text', 'options', 'preview', 'trace', 'system', 'run', 'action', 'credential_request', 'connect_required');
+CREATE TYPE comment_content_type AS ENUM ('text', 'preview', 'trace', 'system', 'run', 'action', 'credential_request', 'connect_required');
 CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
 CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'project_creation', 'strategy', 'plan_review', 'deploy_production', 'designated_repo_request', 'skill_proposal');
@@ -57,7 +57,7 @@ CREATE TYPE audit_actor_type AS ENUM ('admin', 'agent', 'system');
 CREATE TYPE repo_host_type AS ENUM ('github');
 CREATE TYPE platform_type AS ENUM ('github', 'gmail', 'gitlab', 'stripe', 'posthog', 'railway', 'vercel', 'digitalocean', 'x', 'anthropic', 'openai', 'google');
 CREATE TYPE connection_status AS ENUM ('active', 'expired', 'disconnected');
-CREATE TYPE wakeup_source AS ENUM ('timer', 'assignment', 'on_demand', 'mention', 'automation', 'option_chosen', 'credential_provided', 'comment', 'reply', 'heartbeat');
+CREATE TYPE wakeup_source AS ENUM ('timer', 'assignment', 'on_demand', 'mention', 'automation', 'credential_provided', 'comment', 'reply', 'heartbeat');
 CREATE TYPE wakeup_status AS ENUM ('queued', 'claimed', 'completed', 'failed', 'skipped', 'coalesced', 'deferred', 'cancelled');
 CREATE TYPE heartbeat_run_status AS ENUM ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'timed_out');
 CREATE TYPE plugin_status AS ENUM ('installed', 'enabled', 'disabled', 'error');
@@ -65,7 +65,7 @@ CREATE TYPE membership_role AS ENUM ('admin', 'member');
 CREATE TYPE invite_status AS ENUM ('pending', 'accepted', 'expired', 'revoked');
 CREATE TYPE agent_type_source AS ENUM ('builtin', 'custom', 'remote');
 CREATE TYPE team_template_source AS ENUM ('builtin', 'custom', 'marketplace');
-CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'google', 'deepseek', 'z_ai');
+CREATE TYPE ai_provider AS ENUM ('anthropic', 'openai', 'google', 'deepseek', 'z_ai', 'openrouter', 'kimi');
 CREATE TYPE ai_auth_method AS ENUM ('api_key', 'subscription');
 CREATE TYPE ceo_channel AS ENUM ('web', 'telegram', 'whatsapp');
 CREATE TYPE ceo_message_role AS ENUM ('user', 'assistant', 'system');
@@ -133,6 +133,8 @@ CREATE TABLE team_template_agent_types (
     reports_to_slug             TEXT,
     heartbeat_interval_override INTEGER,
     monthly_budget_override     INTEGER,
+    daily_budget_override       INTEGER,
+    weekly_budget_override      INTEGER,
     sort_order                  INTEGER NOT NULL DEFAULT 0,
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (team_template_id, agent_type_id)
@@ -151,9 +153,6 @@ CREATE TABLE teams (
     slug                 TEXT NOT NULL UNIQUE,
     description          TEXT NOT NULL DEFAULT '',
     summary              TEXT NOT NULL DEFAULT '',
-    budget_monthly_cents INTEGER NOT NULL DEFAULT 50000,
-    budget_used_cents    INTEGER NOT NULL DEFAULT 0,
-    budget_reset_at      TIMESTAMPTZ NOT NULL DEFAULT date_trunc('month', now()),
     mcp_servers          JSONB NOT NULL DEFAULT '[]'::jsonb,
     mpp_config           JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
     settings             JSONB NOT NULL DEFAULT '{"wake_mentioner_on_reply": true}'::jsonb,
@@ -203,9 +202,9 @@ CREATE TABLE member_agents (
     heartbeat_interval_min  INTEGER NOT NULL DEFAULT 60,
     run_timeout_min         INTEGER NOT NULL DEFAULT 60,
     monthly_budget_cents    INTEGER NOT NULL DEFAULT 3000,
+    daily_budget_cents      INTEGER NOT NULL DEFAULT 0,
+    weekly_budget_cents     INTEGER NOT NULL DEFAULT 0,
     touches_code            BOOLEAN NOT NULL DEFAULT false,
-    budget_used_cents       INTEGER NOT NULL DEFAULT 0,
-    budget_reset_at         TIMESTAMPTZ NOT NULL DEFAULT date_trunc('month', now()),
     runtime_status          agent_runtime_status NOT NULL DEFAULT 'idle',
     admin_status            agent_admin_status NOT NULL DEFAULT 'enabled',
     mcp_servers             JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -298,6 +297,9 @@ CREATE TABLE projects (
     designated_repo_id  UUID,
     max_concurrent_runs INTEGER NOT NULL DEFAULT 3 CHECK (max_concurrent_runs >= 1),
     memory_limit_gib    INTEGER NOT NULL DEFAULT 16 CHECK (memory_limit_gib >= 1),
+    daily_budget_cents   INTEGER NOT NULL DEFAULT 0,
+    weekly_budget_cents  INTEGER NOT NULL DEFAULT 0,
+    monthly_budget_cents INTEGER NOT NULL DEFAULT 0,
     dev_ports               JSONB NOT NULL DEFAULT '[]'::jsonb,
     execution_started_at    TIMESTAMPTZ,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -548,6 +550,11 @@ CREATE TABLE task_comments (
     content_type      comment_content_type NOT NULL DEFAULT 'text',
     content           JSONB NOT NULL,
     chosen_option     JSONB,
+    -- Human-friendly, URL-safe per-task display slug (UTC YYYYMMDDHH24MISS, with a
+    -- -N suffix on same-second collisions); assigned by the trigger below. The UUID
+    -- `id` stays the PK and the target of every FK.
+    public_id         TEXT NOT NULL,
+    embedding         vector(384),
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -555,6 +562,41 @@ CREATE INDEX idx_comments_task ON task_comments(task_id);
 CREATE INDEX idx_comments_author ON task_comments(author_member_id);
 CREATE INDEX idx_comments_parent ON task_comments(parent_comment_id)
     WHERE parent_comment_id IS NOT NULL;
+-- A `<TASK-ID>#comment-<public_id>` link is addressed by (task, public_id).
+CREATE UNIQUE INDEX idx_comments_public_id ON task_comments(task_id, public_id);
+CREATE INDEX idx_comments_embedding ON task_comments USING hnsw (embedding vector_cosine_ops);
+
+-- Auto-assign public_id on insert for every code path so no insert site has to know
+-- the scheme. A BEFORE INSERT trigger fires after column defaults are applied, so
+-- NEW.created_at is already populated. The WHILE loop sees rows inserted earlier in
+-- the same transaction; the unique index above is the backstop.
+CREATE OR REPLACE FUNCTION set_task_comment_public_id()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_base      TEXT;
+    v_candidate TEXT;
+    v_n         INTEGER := 1;
+BEGIN
+    IF NEW.public_id IS NOT NULL THEN
+        RETURN NEW;
+    END IF;
+    v_base := to_char(COALESCE(NEW.created_at, now()) AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISS');
+    v_candidate := v_base;
+    WHILE EXISTS (
+        SELECT 1 FROM task_comments
+        WHERE task_id = NEW.task_id AND public_id = v_candidate
+    ) LOOP
+        v_n := v_n + 1;
+        v_candidate := v_base || '-' || v_n;
+    END LOOP;
+    NEW.public_id := v_candidate;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_task_comments_public_id
+    BEFORE INSERT ON task_comments
+    FOR EACH ROW EXECUTE FUNCTION set_task_comment_public_id();
 
 -------------------------------------------------------------------------------
 -- COMMENT REACTIONS
@@ -624,22 +666,31 @@ CREATE UNIQUE INDEX idx_one_pending_repo_setup
 -- COST ENTRIES
 -------------------------------------------------------------------------------
 
+-- Cost is project/agent/adapter-scoped, never team-scoped (budget enforcement keys
+-- off member_id + project_id). Each entry is attributed to the AI adapter config
+-- that produced it: ai_provider_config_id (FK, ON DELETE SET NULL so deleting a
+-- config doesn't erase history) plus a `provider` snapshot that survives deletion.
 CREATE TABLE cost_entries (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id      UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     member_id    UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
     task_id     UUID REFERENCES tasks(id) ON DELETE SET NULL,
     project_id   UUID REFERENCES projects(id) ON DELETE SET NULL,
+    -- FK added after ai_provider_configs is defined (forward reference).
+    ai_provider_config_id UUID,
+    provider     ai_provider,
     amount_cents INTEGER NOT NULL,
     description  TEXT NOT NULL DEFAULT '',
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_costs_team ON cost_entries(team_id);
 CREATE INDEX idx_costs_member ON cost_entries(member_id);
 CREATE INDEX idx_costs_task ON cost_entries(task_id);
 CREATE INDEX idx_costs_project ON cost_entries(project_id);
 CREATE INDEX idx_costs_created ON cost_entries(created_at);
+CREATE INDEX idx_costs_provider_config ON cost_entries(ai_provider_config_id);
+-- Windowed spend sums for budget enforcement scan by entity + created_at.
+CREATE INDEX idx_costs_member_created  ON cost_entries(member_id, created_at);
+CREATE INDEX idx_costs_project_created ON cost_entries(project_id, created_at);
 
 -------------------------------------------------------------------------------
 -- AUDIT LOG
@@ -751,6 +802,34 @@ CREATE TABLE ai_provider_configs (
 
 CREATE UNIQUE INDEX ai_provider_configs_default_per_provider
     ON ai_provider_configs(provider) WHERE is_default;
+
+-- Deferred FK: cost_entries.ai_provider_config_id → ai_provider_configs(id)
+-- (cost_entries is defined before this table).
+ALTER TABLE cost_entries
+    ADD CONSTRAINT cost_entries_ai_provider_config_id_fkey
+        FOREIGN KEY (ai_provider_config_id) REFERENCES ai_provider_configs(id) ON DELETE SET NULL;
+
+-------------------------------------------------------------------------------
+-- MODEL PRICING
+-------------------------------------------------------------------------------
+
+-- Per-model token rates → run cost (services/pricing). Two row sources share the
+-- table via `source`: 'litellm' (seeded on first boot, refreshed from the public
+-- feed) and 'manual' (operator overrides, which win at lookup and are never touched
+-- by the refresh). Rates are per-token; cache columns fall back to the input rate.
+CREATE TABLE model_pricing (
+    id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    model_id                 TEXT NOT NULL,
+    input_per_token          DOUBLE PRECISION NOT NULL,
+    output_per_token         DOUBLE PRECISION NOT NULL,
+    cache_read_per_token     DOUBLE PRECISION,
+    cache_creation_per_token DOUBLE PRECISION,
+    source                   TEXT NOT NULL DEFAULT 'litellm' CHECK (source IN ('litellm', 'manual')),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (model_id, source)
+);
+
+CREATE INDEX idx_model_pricing_model ON model_pricing(model_id);
 
 -------------------------------------------------------------------------------
 -- ASSETS & ATTACHMENTS
@@ -894,12 +973,21 @@ CREATE TABLE heartbeat_runs (
     input_tokens             BIGINT NOT NULL DEFAULT 0,
     output_tokens            BIGINT NOT NULL DEFAULT 0,
     cost_cents               INTEGER NOT NULL DEFAULT 0,
+    -- Resolved AI adapter config, carried from run start to the cost-recording step.
+    ai_provider_config_id    UUID REFERENCES ai_provider_configs(id) ON DELETE SET NULL,
+    provider                 ai_provider,
     invocation_command       TEXT,
     log_text                 TEXT NOT NULL DEFAULT '',
     working_dir              TEXT,
     process_pid              INTEGER,
     retry_of_run_id          UUID REFERENCES heartbeat_runs(id),
     process_loss_retry_count INTEGER NOT NULL DEFAULT 0,
+    -- Run-outcome flags: produced_output (wrote persisted data), reported_no_work
+    -- (explicitly declared nothing to do), usage_partial (mid-run usage snapshot).
+    produced_output          BOOLEAN NOT NULL DEFAULT false,
+    reported_no_work         BOOLEAN NOT NULL DEFAULT false,
+    no_work_reason           TEXT,
+    usage_partial            BOOLEAN NOT NULL DEFAULT false,
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -1109,6 +1197,33 @@ CREATE INDEX idx_admin_mentions_user_archived
     WHERE archived_at IS NOT NULL;
 
 -------------------------------------------------------------------------------
+-- CONNECTED AGENTS
+--
+-- External AI agents (MCP clients) self-register and, once a human admin approves
+-- them, act with admin-equivalent access across every project and team. A
+-- registration is inert (`pending`) until approved; "disconnect" is a row delete
+-- (instant total revocation — auth resolves the token against this table on every
+-- request). Token storage mirrors api_keys: only an 8-char prefix + sha256 hash.
+-------------------------------------------------------------------------------
+
+CREATE TYPE connected_agent_status AS ENUM ('pending', 'approved');
+
+CREATE TABLE connected_agents (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name                TEXT NOT NULL,
+    client_info         JSONB NOT NULL DEFAULT '{}',
+    prefix              TEXT NOT NULL UNIQUE,
+    token_hash          TEXT NOT NULL,
+    status              connected_agent_status NOT NULL DEFAULT 'pending',
+    approved_at         TIMESTAMPTZ,
+    approved_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    last_used_at        TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_connected_agents_status ON connected_agents(status);
+
+-------------------------------------------------------------------------------
 -- TRIGGERS: auto-update updated_at
 -------------------------------------------------------------------------------
 
@@ -1187,46 +1302,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION debit_agent_budget(
-    p_member_id UUID,
-    p_amount_cents INTEGER
-) RETURNS BOOLEAN AS $$
-DECLARE
-    v_agent_budget INTEGER;
-    v_agent_used INTEGER;
-    v_team_id UUID;
-    v_team_budget INTEGER;
-    v_team_used INTEGER;
-BEGIN
-    SELECT ma.monthly_budget_cents, ma.budget_used_cents, m.team_id
-    INTO v_agent_budget, v_agent_used, v_team_id
-    FROM member_agents ma
-    JOIN members m ON m.id = ma.id
-    WHERE ma.id = p_member_id
-    FOR UPDATE OF ma;
-
-    IF (v_agent_used + p_amount_cents) > v_agent_budget THEN
-        RETURN FALSE;
-    END IF;
-
-    SELECT budget_monthly_cents, budget_used_cents
-    INTO v_team_budget, v_team_used
-    FROM teams
-    WHERE id = v_team_id
-    FOR UPDATE;
-
-    IF (v_team_used + p_amount_cents) > v_team_budget THEN
-        RETURN FALSE;
-    END IF;
-
-    UPDATE member_agents
-    SET budget_used_cents = budget_used_cents + p_amount_cents
-    WHERE id = p_member_id;
-
-    UPDATE teams
-    SET budget_used_cents = budget_used_cents + p_amount_cents
-    WHERE id = v_team_id;
-
-    RETURN TRUE;
-END;
-$$ LANGUAGE plpgsql;
+-- Agent/project spend is derived on demand from cost_entries over rolling daily/
+-- weekly/monthly windows (services/budget.ts); there is no running-counter debit
+-- function or stored balance.

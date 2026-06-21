@@ -38,7 +38,7 @@
   - `agents/_partials/*.md` are resolved at **build/load time only** (`resolve-partials.ts`, baked into `agents-bundle.json` by `bun run build:agents`) and so only compose the **built-in agents Hezo seeds** from templates. A partial **does not reach runtime-created agents**. Use one for role-scoped guidance shared by a *subset* of the seeded built-in roles (e.g. code-quality for engineer/qa, repo rules for execution roles, captain-only workflows). Changing a partial requires `bun run build:agents`.
   - `agents/<template>/*.md` — a single seeded role's own prose.
   - Decision rule: must every agent (incl. future runtime hires) have it → `SHARED_INSTRUCTIONS`; shared by a subset of seeded roles → a `_partial`; one role → that role's `.md`.
-- `.dev/architecture.md` — the single consolidated architecture reference (data model, agent runtime, AI providers/runtimes, egress/credentials, ssh/git, OAuth/MCP connectors, auth, web frontend, build/release). Keep in sync with code: describe what the system **does**, not what changed. No backwards-compat concerns pre-v1. Any change that alters the architecture updates `.dev/architecture.md` in the **same PR**.
+- `.dev/architecture.md` — the single consolidated architecture reference (data model, agent runtime, AI providers/runtimes, egress/credentials, ssh/git, OAuth/MCP connectors, auth, web frontend, build/release). Keep in sync with code: describe what the system **does**, not what changed. Any change that alters the architecture updates `.dev/architecture.md` in the **same PR**.
 - `docs/` — the **user-facing** documentation (sourced from this repo and rendered on the website). It gives the high-level view and explains features the way a Hezo *user* needs to understand them, not implementation detail. Keep it current as features change: a change that adds, removes, or alters user-visible behaviour updates the relevant `docs/` page in the **same PR**. `docs/reference/` must stay an **accurate reference** to the CLI and the Hezo MCP server's tools/API — when you add, rename, or remove a CLI flag/subcommand or an MCP tool, update the matching reference page (`docs/reference/cli.md` and the MCP reference) so it never drifts from the code.
 
 ## Project / team model (1:1)
@@ -56,12 +56,52 @@ Project-teams get a **Captain** + the chosen template's worker roles; templates 
 
 ## Database migrations
 
-We ship **real, tracked, append-only migrations** that preserve user data across upgrades. `packages/server/migrations/001_initial_schema.sql` is the **frozen baseline** — never edit a migration that has shipped (each is checksummed and applied exactly once; editing it only logs a warning and is skipped on existing instances).
+We ship **real, tracked, append-only, data-preserving migrations** — hardened and safe to deploy to production. Real instances hold real user data, so a migration that drops or corrupts it is a production incident. `packages/server/migrations/001_initial_schema.sql` is the **frozen baseline** — never edit a migration that has shipped (each is checksummed and applied exactly once; editing it only logs a warning and is skipped on existing instances). *(The baseline was collapsed to a single fresh `001` at the v1.0 launch — a one-time reset done while all deployments were reset to fresh databases; from here the append-only rule holds and `001` stays frozen.)*
 
+- **Every new migration MUST preserve existing data.** Additive or reshaping DDL must carry data forward (backfill, re-encode, re-key) — never destroy rows a later version still needs. "No real data to preserve" is no longer true.
+- **Every new migration MUST ship a data-preservation test** — one file per migration, `packages/server/test/migrate-<NNN>-<slug>.test.ts`, using `createDataPreservationHarness()` (`packages/server/test/helpers/migrate.ts`). Seed representative rows at the prior schema, apply the migration through the real `runMigrations`, then assert **both** that the pre-existing data survived **and** that the migration's schema/data change took effect. Don't just assert "the migration ran".
 - **Schema change** → add a new `NNN_description.sql` (next free number) under `packages/server/migrations/`. Never edit `001` (or any released file) in place.
 - **Data transform SQL can't express** (parse/re-encode/re-encrypt with app-side logic) → add a **code migration** TS module under `packages/server/src/db/migrations/code/` and register it in that dir's `index.ts`. SQL and code migrations share one ordered `NNN_` sequence and run in the same per-migration transaction.
 - **How they apply:** on startup the runner migrates a *copy* of the database (`<dataDir>/.migrate-tmp`) and atomically swaps it in on success. On failure the live `pgdata` is left untouched, so downgrading to the previous binary just works. A data dir carrying migrations the binary doesn't recognize (a downgrade) makes the server **exit** and ask the operator to upgrade.
-- Migration tests live in `packages/server/test/migrate-*.test.ts` — exercise real refactors (FK/layout changes, code transforms) against populated data and assert preservation. Don't just assert "the migration ran".
+- The runner's generic guarantees (transactional BEGIN/COMMIT/ROLLBACK, sorted ordering, apply-once checksum, copy-migrate-swap) are covered by the synthetic `migrate-data-preservation.test.ts`, `migrate-runner.test.ts`, and `migrate-code-steps.test.ts`; the frozen baseline is guarded by `migrate-baseline-schema.test.ts`. Per-migration tests are additive on top.
+
+Data-preservation test starter template:
+
+```ts
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createDataPreservationHarness, type DataPreservationHarness } from './helpers/migrate';
+
+const TARGET = '017_example.sql'; // the migration under test
+
+describe('017_example migration', () => {
+  let h: DataPreservationHarness;
+  let seededId: string;
+
+  beforeAll(async () => {
+    h = await createDataPreservationHarness();
+    await h.applyUpToExclusive(TARGET);          // schema at N-1
+    const r = await h.db.query<{ id: string }>(  // seed representative data
+      `INSERT INTO teams (name, slug) VALUES ('Acme', 'acme') RETURNING id`,
+    );
+    seededId = r.rows[0].id;
+    await h.applyTarget(TARGET);                  // apply the migration under test
+  });
+  afterAll(() => h.close());
+
+  it('applies the change', async () => {
+    const c = await h.db.query<{ c: number }>(
+      `SELECT COUNT(*)::int AS c FROM information_schema.columns
+       WHERE table_name = 'teams' AND column_name = 'new_col'`,
+    );
+    expect(c.rows[0].c).toBe(1);
+  });
+
+  it('preserves pre-existing rows', async () => {
+    const kept = await h.db.query(`SELECT 1 FROM teams WHERE id = $1`, [seededId]);
+    expect(kept.rows.length).toBe(1);
+  });
+});
+```
 
 ## Testing
 
@@ -304,7 +344,6 @@ node test.mjs
 
 Stay in `/tmp/pw` (or wherever you ran `npm install`) for any follow-up `npx playwright …` calls — running from a sibling directory will warn about missing deps and may fail. Prefer `--with-deps` over a hand-curated apt list; Playwright tracks its own version-pinned requirements.
 
-## Pre-v1 notes
+## Known gaps / TODOs
 
-- No backwards-compatibility concerns. Change things cleanly.
 - No rate limiting yet.

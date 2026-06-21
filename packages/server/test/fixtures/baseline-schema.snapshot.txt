@@ -1,0 +1,1033 @@
+== TABLES ==
+admin_mentions
+agent_task_sessions
+agent_types
+agent_wakeup_requests
+ai_provider_configs
+api_keys
+approvals
+assets
+audit_log
+ceo_conversations
+ceo_messages
+ceo_sessions
+comment_attachments
+comment_reactions
+connected_agents
+cost_entries
+document_revisions
+documents
+execution_locks
+heartbeat_runs
+instance_user_roles
+invites
+mcp_connections
+member_agents
+member_users
+members
+model_pricing
+notification_preferences
+oauth_connections
+plugin_jobs
+plugin_state
+plugins
+project_task_counters
+projects
+repos
+secrets
+skill_revisions
+skills
+system_meta
+task_attachments
+task_comments
+task_dependencies
+tasks
+team_ssh_keys
+team_template_agent_types
+team_template_assignments
+team_templates
+teams
+tool_calls
+user_auth_methods
+users
+
+== COLUMNS ==
+admin_mentions.archived_at | timestamp with time zone | timestamptz | nullable=YES | default=
+admin_mentions.comment_id | uuid | uuid | nullable=NO | default=
+admin_mentions.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+admin_mentions.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+admin_mentions.read_at | timestamp with time zone | timestamptz | nullable=YES | default=
+admin_mentions.task_id | uuid | uuid | nullable=NO | default=
+admin_mentions.team_id | uuid | uuid | nullable=NO | default=
+admin_mentions.user_id | uuid | uuid | nullable=NO | default=
+agent_task_sessions.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+agent_task_sessions.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+agent_task_sessions.last_error | text | text | nullable=YES | default=
+agent_task_sessions.last_run_id | uuid | uuid | nullable=YES | default=
+agent_task_sessions.member_id | uuid | uuid | nullable=NO | default=
+agent_task_sessions.run_count | integer | int4 | nullable=NO | default=0
+agent_task_sessions.session_display_id | text | text | nullable=YES | default=
+agent_task_sessions.session_params | jsonb | jsonb | nullable=NO | default='{}'::jsonb
+agent_task_sessions.task_key | text | text | nullable=NO | default=
+agent_task_sessions.team_id | uuid | uuid | nullable=NO | default=
+agent_task_sessions.total_input_tokens | bigint | int8 | nullable=NO | default=0
+agent_task_sessions.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+agent_types.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+agent_types.default_effort | USER-DEFINED | agent_effort | nullable=NO | default='medium'::agent_effort
+agent_types.default_summary | text | text | nullable=NO | default=''::text
+agent_types.default_team_context | text | text | nullable=NO | default=''::text
+agent_types.description | text | text | nullable=NO | default=''::text
+agent_types.heartbeat_interval_min | integer | int4 | nullable=NO | default=60
+agent_types.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+agent_types.is_builtin | boolean | bool | nullable=NO | default=false
+agent_types.monthly_budget_cents | integer | int4 | nullable=NO | default=3000
+agent_types.name | text | text | nullable=NO | default=
+agent_types.role_description | text | text | nullable=NO | default=''::text
+agent_types.run_timeout_min | integer | int4 | nullable=NO | default=60
+agent_types.slug | text | text | nullable=NO | default=
+agent_types.source | USER-DEFINED | agent_type_source | nullable=NO | default='custom'::agent_type_source
+agent_types.source_url | text | text | nullable=YES | default=
+agent_types.source_version | text | text | nullable=YES | default=
+agent_types.system_prompt_template | text | text | nullable=NO | default=''::text
+agent_types.touches_code | boolean | bool | nullable=NO | default=false
+agent_types.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+agent_wakeup_requests.claimed_at | timestamp with time zone | timestamptz | nullable=YES | default=
+agent_wakeup_requests.coalesced_count | integer | int4 | nullable=NO | default=0
+agent_wakeup_requests.completed_at | timestamp with time zone | timestamptz | nullable=YES | default=
+agent_wakeup_requests.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+agent_wakeup_requests.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+agent_wakeup_requests.idempotency_key | text | text | nullable=YES | default=
+agent_wakeup_requests.last_skipped_at | timestamp with time zone | timestamptz | nullable=YES | default=
+agent_wakeup_requests.last_skipped_blocker_task_id | uuid | uuid | nullable=YES | default=
+agent_wakeup_requests.last_skipped_reason | text | text | nullable=YES | default=
+agent_wakeup_requests.member_id | uuid | uuid | nullable=NO | default=
+agent_wakeup_requests.payload | jsonb | jsonb | nullable=NO | default='{}'::jsonb
+agent_wakeup_requests.source | USER-DEFINED | wakeup_source | nullable=NO | default=
+agent_wakeup_requests.status | USER-DEFINED | wakeup_status | nullable=NO | default='queued'::wakeup_status
+agent_wakeup_requests.team_id | uuid | uuid | nullable=NO | default=
+ai_provider_configs.auth_method | USER-DEFINED | ai_auth_method | nullable=NO | default='api_key'::ai_auth_method
+ai_provider_configs.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+ai_provider_configs.default_model | text | text | nullable=YES | default=
+ai_provider_configs.encrypted_credential | text | text | nullable=NO | default=
+ai_provider_configs.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+ai_provider_configs.is_default | boolean | bool | nullable=NO | default=false
+ai_provider_configs.label | text | text | nullable=NO | default=
+ai_provider_configs.metadata | jsonb | jsonb | nullable=NO | default='{}'::jsonb
+ai_provider_configs.provider | USER-DEFINED | ai_provider | nullable=NO | default=
+ai_provider_configs.status | text | text | nullable=NO | default='active'::text
+ai_provider_configs.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+api_keys.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+api_keys.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+api_keys.key_hash | text | text | nullable=NO | default=
+api_keys.last_used_at | timestamp with time zone | timestamptz | nullable=YES | default=
+api_keys.name | text | text | nullable=NO | default=
+api_keys.prefix | text | text | nullable=NO | default=
+api_keys.team_id | uuid | uuid | nullable=NO | default=
+approvals.archived_at | timestamp with time zone | timestamptz | nullable=YES | default=
+approvals.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+approvals.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+approvals.payload | jsonb | jsonb | nullable=NO | default=
+approvals.requested_by_member_id | uuid | uuid | nullable=YES | default=
+approvals.resolution_note | text | text | nullable=YES | default=
+approvals.resolved_at | timestamp with time zone | timestamptz | nullable=YES | default=
+approvals.status | USER-DEFINED | approval_status | nullable=NO | default='pending'::approval_status
+approvals.team_id | uuid | uuid | nullable=NO | default=
+approvals.type | USER-DEFINED | approval_type | nullable=NO | default=
+assets.byte_size | bigint | int8 | nullable=NO | default=
+assets.content_type | text | text | nullable=NO | default=
+assets.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+assets.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+assets.original_filename | text | text | nullable=NO | default=
+assets.project_id | uuid | uuid | nullable=NO | default=
+assets.sha256 | text | text | nullable=NO | default=
+assets.team_id | uuid | uuid | nullable=NO | default=
+assets.uploaded_by_member_id | uuid | uuid | nullable=YES | default=
+audit_log.action | text | text | nullable=NO | default=
+audit_log.actor_member_id | uuid | uuid | nullable=YES | default=
+audit_log.actor_type | USER-DEFINED | audit_actor_type | nullable=NO | default=
+audit_log.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+audit_log.details | jsonb | jsonb | nullable=NO | default='{}'::jsonb
+audit_log.entity_id | uuid | uuid | nullable=YES | default=
+audit_log.entity_type | text | text | nullable=NO | default=
+audit_log.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+audit_log.project_id | uuid | uuid | nullable=YES | default=
+audit_log.team_id | uuid | uuid | nullable=YES | default=
+ceo_conversations.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+ceo_conversations.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+ceo_conversations.member_id | uuid | uuid | nullable=NO | default=
+ceo_conversations.team_id | uuid | uuid | nullable=NO | default=
+ceo_conversations.title | text | text | nullable=YES | default=
+ceo_conversations.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+ceo_messages.author_user_id | uuid | uuid | nullable=YES | default=
+ceo_messages.channel | USER-DEFINED | ceo_channel | nullable=NO | default='web'::ceo_channel
+ceo_messages.completed_at | timestamp with time zone | timestamptz | nullable=YES | default=
+ceo_messages.content | text | text | nullable=NO | default=''::text
+ceo_messages.conversation_id | uuid | uuid | nullable=NO | default=
+ceo_messages.cost_cents | integer | int4 | nullable=NO | default=0
+ceo_messages.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+ceo_messages.error | text | text | nullable=YES | default=
+ceo_messages.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+ceo_messages.input_tokens | bigint | int8 | nullable=NO | default=0
+ceo_messages.output_tokens | bigint | int8 | nullable=NO | default=0
+ceo_messages.role | USER-DEFINED | ceo_message_role | nullable=NO | default=
+ceo_messages.session_id | uuid | uuid | nullable=YES | default=
+ceo_messages.status | USER-DEFINED | ceo_message_status | nullable=NO | default='complete'::ceo_message_status
+ceo_sessions.container_id | text | text | nullable=YES | default=
+ceo_sessions.error | text | text | nullable=YES | default=
+ceo_sessions.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+ceo_sessions.last_activity_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+ceo_sessions.member_id | uuid | uuid | nullable=NO | default=
+ceo_sessions.project_id | uuid | uuid | nullable=NO | default=
+ceo_sessions.restart_count | integer | int4 | nullable=NO | default=0
+ceo_sessions.runtime_type | USER-DEFINED | agent_runtime | nullable=NO | default=
+ceo_sessions.started_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+ceo_sessions.status | USER-DEFINED | ceo_session_status | nullable=NO | default='starting'::ceo_session_status
+ceo_sessions.stopped_at | timestamp with time zone | timestamptz | nullable=YES | default=
+ceo_sessions.team_id | uuid | uuid | nullable=NO | default=
+comment_attachments.asset_id | uuid | uuid | nullable=NO | default=
+comment_attachments.comment_id | uuid | uuid | nullable=NO | default=
+comment_attachments.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+comment_attachments.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+comment_reactions.comment_id | uuid | uuid | nullable=NO | default=
+comment_reactions.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+comment_reactions.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+comment_reactions.kind | text | text | nullable=NO | default=
+comment_reactions.member_id | uuid | uuid | nullable=NO | default=
+connected_agents.approved_at | timestamp with time zone | timestamptz | nullable=YES | default=
+connected_agents.approved_by_user_id | uuid | uuid | nullable=YES | default=
+connected_agents.client_info | jsonb | jsonb | nullable=NO | default='{}'::jsonb
+connected_agents.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+connected_agents.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+connected_agents.last_used_at | timestamp with time zone | timestamptz | nullable=YES | default=
+connected_agents.name | text | text | nullable=NO | default=
+connected_agents.prefix | text | text | nullable=NO | default=
+connected_agents.status | USER-DEFINED | connected_agent_status | nullable=NO | default='pending'::connected_agent_status
+connected_agents.token_hash | text | text | nullable=NO | default=
+cost_entries.ai_provider_config_id | uuid | uuid | nullable=YES | default=
+cost_entries.amount_cents | integer | int4 | nullable=NO | default=
+cost_entries.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+cost_entries.description | text | text | nullable=NO | default=''::text
+cost_entries.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+cost_entries.member_id | uuid | uuid | nullable=NO | default=
+cost_entries.project_id | uuid | uuid | nullable=YES | default=
+cost_entries.provider | USER-DEFINED | ai_provider | nullable=YES | default=
+cost_entries.task_id | uuid | uuid | nullable=YES | default=
+document_revisions.author_member_id | uuid | uuid | nullable=YES | default=
+document_revisions.change_summary | text | text | nullable=NO | default=''::text
+document_revisions.content | text | text | nullable=NO | default=
+document_revisions.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+document_revisions.document_id | uuid | uuid | nullable=NO | default=
+document_revisions.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+document_revisions.revision_number | integer | int4 | nullable=NO | default=
+documents.content | text | text | nullable=NO | default=''::text
+documents.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+documents.embedding | USER-DEFINED | vector | nullable=YES | default=
+documents.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+documents.last_updated_by_member_id | uuid | uuid | nullable=YES | default=
+documents.member_agent_id | uuid | uuid | nullable=YES | default=
+documents.project_id | uuid | uuid | nullable=YES | default=
+documents.slug | text | text | nullable=NO | default=
+documents.team_id | uuid | uuid | nullable=NO | default=
+documents.title | text | text | nullable=NO | default=''::text
+documents.type | USER-DEFINED | document_type | nullable=NO | default=
+documents.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+execution_locks.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+execution_locks.lock_type | text | text | nullable=NO | default='write'::text
+execution_locks.locked_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+execution_locks.member_id | uuid | uuid | nullable=NO | default=
+execution_locks.released_at | timestamp with time zone | timestamptz | nullable=YES | default=
+execution_locks.task_id | uuid | uuid | nullable=NO | default=
+heartbeat_runs.ai_provider_config_id | uuid | uuid | nullable=YES | default=
+heartbeat_runs.cost_cents | integer | int4 | nullable=NO | default=0
+heartbeat_runs.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+heartbeat_runs.error | text | text | nullable=YES | default=
+heartbeat_runs.exit_code | integer | int4 | nullable=YES | default=
+heartbeat_runs.finished_at | timestamp with time zone | timestamptz | nullable=YES | default=
+heartbeat_runs.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+heartbeat_runs.input_tokens | bigint | int8 | nullable=NO | default=0
+heartbeat_runs.invocation_command | text | text | nullable=YES | default=
+heartbeat_runs.log_text | text | text | nullable=NO | default=''::text
+heartbeat_runs.member_id | uuid | uuid | nullable=NO | default=
+heartbeat_runs.no_work_reason | text | text | nullable=YES | default=
+heartbeat_runs.output_tokens | bigint | int8 | nullable=NO | default=0
+heartbeat_runs.process_loss_retry_count | integer | int4 | nullable=NO | default=0
+heartbeat_runs.process_pid | integer | int4 | nullable=YES | default=
+heartbeat_runs.produced_output | boolean | bool | nullable=NO | default=false
+heartbeat_runs.provider | USER-DEFINED | ai_provider | nullable=YES | default=
+heartbeat_runs.queued_reason | text | text | nullable=YES | default=
+heartbeat_runs.reported_no_work | boolean | bool | nullable=NO | default=false
+heartbeat_runs.retry_of_run_id | uuid | uuid | nullable=YES | default=
+heartbeat_runs.started_at | timestamp with time zone | timestamptz | nullable=YES | default=
+heartbeat_runs.status | USER-DEFINED | heartbeat_run_status | nullable=NO | default='queued'::heartbeat_run_status
+heartbeat_runs.task_id | uuid | uuid | nullable=YES | default=
+heartbeat_runs.team_id | uuid | uuid | nullable=NO | default=
+heartbeat_runs.usage_partial | boolean | bool | nullable=NO | default=false
+heartbeat_runs.wakeup_id | uuid | uuid | nullable=YES | default=
+heartbeat_runs.working_dir | text | text | nullable=YES | default=
+instance_user_roles.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+instance_user_roles.role | text | text | nullable=NO | default='instance_admin'::text
+instance_user_roles.user_id | uuid | uuid | nullable=NO | default=
+invites.accepted_at | timestamp with time zone | timestamptz | nullable=YES | default=
+invites.code | text | text | nullable=NO | default=
+invites.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+invites.email | text | text | nullable=NO | default=
+invites.expires_at | timestamp with time zone | timestamptz | nullable=NO | default=(now() + '7 days'::interval)
+invites.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+invites.invited_by | uuid | uuid | nullable=YES | default=
+invites.permissions_text | text | text | nullable=NO | default=''::text
+invites.project_ids | jsonb | jsonb | nullable=YES | default=
+invites.role | USER-DEFINED | membership_role | nullable=NO | default='member'::membership_role
+invites.role_title | text | text | nullable=YES | default=
+invites.status | USER-DEFINED | invite_status | nullable=NO | default='pending'::invite_status
+invites.team_id | uuid | uuid | nullable=NO | default=
+mcp_connections.activated_at | timestamp with time zone | timestamptz | nullable=YES | default=
+mcp_connections.auth_error | text | text | nullable=YES | default=
+mcp_connections.config | jsonb | jsonb | nullable=NO | default='{}'::jsonb
+mcp_connections.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+mcp_connections.created_by_task_id | uuid | uuid | nullable=YES | default=
+mcp_connections.display_name | text | text | nullable=YES | default=
+mcp_connections.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+mcp_connections.install_error | text | text | nullable=YES | default=
+mcp_connections.install_status | USER-DEFINED | mcp_install_status | nullable=NO | default='pending'::mcp_install_status
+mcp_connections.kind | USER-DEFINED | mcp_connection_kind | nullable=NO | default=
+mcp_connections.name | text | text | nullable=NO | default=
+mcp_connections.oauth_connection_id | uuid | uuid | nullable=YES | default=
+mcp_connections.revoked_at | timestamp with time zone | timestamptz | nullable=YES | default=
+mcp_connections.skill_id | uuid | uuid | nullable=YES | default=
+mcp_connections.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+member_agents.admin_status | USER-DEFINED | agent_admin_status | nullable=NO | default='enabled'::agent_admin_status
+member_agents.agent_type_id | uuid | uuid | nullable=YES | default=
+member_agents.daily_budget_cents | integer | int4 | nullable=NO | default=0
+member_agents.default_effort | USER-DEFINED | agent_effort | nullable=NO | default='medium'::agent_effort
+member_agents.heartbeat_interval_min | integer | int4 | nullable=NO | default=60
+member_agents.id | uuid | uuid | nullable=NO | default=
+member_agents.last_heartbeat_at | timestamp with time zone | timestamptz | nullable=YES | default=
+member_agents.mcp_servers | jsonb | jsonb | nullable=NO | default='[]'::jsonb
+member_agents.model_override_model | text | text | nullable=YES | default=
+member_agents.model_override_provider | USER-DEFINED | ai_provider | nullable=YES | default=
+member_agents.monthly_budget_cents | integer | int4 | nullable=NO | default=3000
+member_agents.reports_to | uuid | uuid | nullable=YES | default=
+member_agents.role_description | text | text | nullable=NO | default=''::text
+member_agents.run_timeout_min | integer | int4 | nullable=NO | default=60
+member_agents.runtime_status | USER-DEFINED | agent_runtime_status | nullable=NO | default='idle'::agent_runtime_status
+member_agents.slug | text | text | nullable=NO | default=
+member_agents.summary | text | text | nullable=NO | default=''::text
+member_agents.team_context | text | text | nullable=NO | default=''::text
+member_agents.title | text | text | nullable=NO | default=
+member_agents.touches_code | boolean | bool | nullable=NO | default=false
+member_agents.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+member_agents.weekly_budget_cents | integer | int4 | nullable=NO | default=0
+member_users.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+member_users.id | uuid | uuid | nullable=NO | default=
+member_users.permissions_text | text | text | nullable=NO | default=''::text
+member_users.project_ids | jsonb | jsonb | nullable=YES | default=
+member_users.role | USER-DEFINED | membership_role | nullable=NO | default='member'::membership_role
+member_users.role_title | text | text | nullable=YES | default=
+member_users.settings | jsonb | jsonb | nullable=NO | default='{}'::jsonb
+member_users.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+member_users.user_id | uuid | uuid | nullable=NO | default=
+members.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+members.display_name | text | text | nullable=NO | default=''::text
+members.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+members.member_type | USER-DEFINED | member_type | nullable=NO | default=
+members.team_id | uuid | uuid | nullable=NO | default=
+model_pricing.cache_creation_per_token | double precision | float8 | nullable=YES | default=
+model_pricing.cache_read_per_token | double precision | float8 | nullable=YES | default=
+model_pricing.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+model_pricing.input_per_token | double precision | float8 | nullable=NO | default=
+model_pricing.model_id | text | text | nullable=NO | default=
+model_pricing.output_per_token | double precision | float8 | nullable=NO | default=
+model_pricing.source | text | text | nullable=NO | default='litellm'::text
+model_pricing.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+notification_preferences.channel | text | text | nullable=NO | default=
+notification_preferences.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+notification_preferences.enabled | boolean | bool | nullable=NO | default=true
+notification_preferences.event_types | jsonb | jsonb | nullable=NO | default='[]'::jsonb
+notification_preferences.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+notification_preferences.telegram_chat_id | text | text | nullable=YES | default=
+notification_preferences.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+notification_preferences.user_id | uuid | uuid | nullable=NO | default=
+oauth_connections.access_token_secret_id | uuid | uuid | nullable=NO | default=
+oauth_connections.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+oauth_connections.expires_at | timestamp with time zone | timestamptz | nullable=YES | default=
+oauth_connections.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+oauth_connections.metadata | jsonb | jsonb | nullable=NO | default='{}'::jsonb
+oauth_connections.provider | text | text | nullable=NO | default=
+oauth_connections.provider_account_id | text | text | nullable=NO | default=
+oauth_connections.provider_account_label | text | text | nullable=NO | default=
+oauth_connections.refresh_token_secret_id | uuid | uuid | nullable=YES | default=
+oauth_connections.scopes | ARRAY | _text | nullable=NO | default='{}'::text[]
+oauth_connections.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+plugin_jobs.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+plugin_jobs.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+plugin_jobs.job_key | text | text | nullable=NO | default=
+plugin_jobs.last_run_at | timestamp with time zone | timestamptz | nullable=YES | default=
+plugin_jobs.next_run_at | timestamp with time zone | timestamptz | nullable=YES | default=
+plugin_jobs.plugin_id | uuid | uuid | nullable=NO | default=
+plugin_jobs.schedule | text | text | nullable=NO | default=
+plugin_jobs.status | text | text | nullable=NO | default='active'::text
+plugin_state.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+plugin_state.namespace | text | text | nullable=NO | default=''::text
+plugin_state.plugin_id | uuid | uuid | nullable=NO | default=
+plugin_state.state_key | text | text | nullable=NO | default=
+plugin_state.state_value | jsonb | jsonb | nullable=NO | default=
+plugin_state.team_id | uuid | uuid | nullable=NO | default=
+plugin_state.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+plugins.config | jsonb | jsonb | nullable=NO | default='{}'::jsonb
+plugins.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+plugins.installed_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+plugins.manifest | jsonb | jsonb | nullable=NO | default=
+plugins.name | text | text | nullable=NO | default=
+plugins.plugin_key | text | text | nullable=NO | default=
+plugins.status | USER-DEFINED | plugin_status | nullable=NO | default='installed'::plugin_status
+plugins.team_id | uuid | uuid | nullable=NO | default=
+plugins.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+plugins.version | text | text | nullable=NO | default=
+project_task_counters.next_number | integer | int4 | nullable=NO | default=1
+project_task_counters.project_id | uuid | uuid | nullable=NO | default=
+projects.container_error | text | text | nullable=YES | default=
+projects.container_id | text | text | nullable=YES | default=
+projects.container_last_logs | text | text | nullable=YES | default=
+projects.container_status | USER-DEFINED | container_status | nullable=YES | default=
+projects.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+projects.daily_budget_cents | integer | int4 | nullable=NO | default=0
+projects.description | text | text | nullable=NO | default=''::text
+projects.designated_repo_id | uuid | uuid | nullable=YES | default=
+projects.dev_ports | jsonb | jsonb | nullable=NO | default='[]'::jsonb
+projects.docker_base_image | text | text | nullable=NO | default='hezo/agent-base:latest'::text
+projects.execution_started_at | timestamp with time zone | timestamptz | nullable=YES | default=
+projects.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+projects.is_internal | boolean | bool | nullable=NO | default=false
+projects.max_concurrent_runs | integer | int4 | nullable=NO | default=3
+projects.memory_limit_gib | integer | int4 | nullable=NO | default=16
+projects.monthly_budget_cents | integer | int4 | nullable=NO | default=0
+projects.name | text | text | nullable=NO | default=
+projects.slug | text | text | nullable=NO | default=
+projects.task_prefix | text | text | nullable=NO | default=
+projects.team_id | uuid | uuid | nullable=NO | default=
+projects.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+projects.weekly_budget_cents | integer | int4 | nullable=NO | default=0
+repos.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+repos.host_type | USER-DEFINED | repo_host_type | nullable=NO | default=
+repos.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+repos.oauth_connection_id | uuid | uuid | nullable=YES | default=
+repos.project_id | uuid | uuid | nullable=NO | default=
+repos.repo_identifier | text | text | nullable=NO | default=
+secrets.allow_all_hosts | boolean | bool | nullable=NO | default=false
+secrets.allowed_hosts | ARRAY | _text | nullable=NO | default='{}'::text[]
+secrets.category | USER-DEFINED | secret_category | nullable=NO | default='other'::secret_category
+secrets.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+secrets.encrypted_value | text | text | nullable=NO | default=
+secrets.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+secrets.name | text | text | nullable=NO | default=
+secrets.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+skill_revisions.author_member_id | uuid | uuid | nullable=YES | default=
+skill_revisions.change_summary | text | text | nullable=NO | default=''::text
+skill_revisions.content | text | text | nullable=NO | default=
+skill_revisions.content_hash | text | text | nullable=NO | default=''::text
+skill_revisions.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+skill_revisions.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+skill_revisions.revision_number | integer | int4 | nullable=NO | default=
+skill_revisions.skill_id | uuid | uuid | nullable=NO | default=
+skills.auto_load | boolean | bool | nullable=NO | default=false
+skills.content | text | text | nullable=NO | default=''::text
+skills.content_hash | text | text | nullable=NO | default=''::text
+skills.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+skills.created_by_member_id | uuid | uuid | nullable=YES | default=
+skills.description | text | text | nullable=NO | default=''::text
+skills.embedding | USER-DEFINED | vector | nullable=YES | default=
+skills.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+skills.is_active | boolean | bool | nullable=NO | default=true
+skills.name | text | text | nullable=NO | default=
+skills.slug | text | text | nullable=NO | default=
+skills.source_url | text | text | nullable=YES | default=
+skills.tags | jsonb | jsonb | nullable=NO | default='[]'::jsonb
+skills.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+system_meta.key | text | text | nullable=NO | default=
+system_meta.value | text | text | nullable=NO | default=
+task_attachments.asset_id | uuid | uuid | nullable=NO | default=
+task_attachments.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+task_attachments.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+task_attachments.task_id | uuid | uuid | nullable=NO | default=
+task_comments.author_member_id | uuid | uuid | nullable=YES | default=
+task_comments.chosen_option | jsonb | jsonb | nullable=YES | default=
+task_comments.content | jsonb | jsonb | nullable=NO | default=
+task_comments.content_type | USER-DEFINED | comment_content_type | nullable=NO | default='text'::comment_content_type
+task_comments.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+task_comments.embedding | USER-DEFINED | vector | nullable=YES | default=
+task_comments.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+task_comments.parent_comment_id | uuid | uuid | nullable=YES | default=
+task_comments.public_id | text | text | nullable=NO | default=
+task_comments.task_id | uuid | uuid | nullable=NO | default=
+task_dependencies.blocked_by_task_id | uuid | uuid | nullable=NO | default=
+task_dependencies.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+task_dependencies.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+task_dependencies.task_id | uuid | uuid | nullable=NO | default=
+tasks.assignee_id | uuid | uuid | nullable=YES | default=
+tasks.branch_name | text | text | nullable=YES | default=
+tasks.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+tasks.created_by_member_id | uuid | uuid | nullable=YES | default=
+tasks.created_by_run_id | uuid | uuid | nullable=YES | default=
+tasks.description | text | text | nullable=NO | default=''::text
+tasks.embedding | USER-DEFINED | vector | nullable=YES | default=
+tasks.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+tasks.identifier | text | text | nullable=NO | default=
+tasks.labels | jsonb | jsonb | nullable=NO | default='[]'::jsonb
+tasks.number | integer | int4 | nullable=NO | default=
+tasks.parent_task_id | uuid | uuid | nullable=YES | default=
+tasks.priority | USER-DEFINED | task_priority | nullable=NO | default='medium'::task_priority
+tasks.progress_summary | text | text | nullable=YES | default=
+tasks.progress_summary_updated_at | timestamp with time zone | timestamptz | nullable=YES | default=
+tasks.progress_summary_updated_by | uuid | uuid | nullable=YES | default=
+tasks.project_id | uuid | uuid | nullable=NO | default=
+tasks.rules | text | text | nullable=YES | default=
+tasks.runtime_type | USER-DEFINED | agent_runtime | nullable=YES | default=
+tasks.status | USER-DEFINED | task_status | nullable=NO | default='backlog'::task_status
+tasks.team_id | uuid | uuid | nullable=NO | default=
+tasks.title | text | text | nullable=NO | default=
+tasks.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+team_ssh_keys.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+team_ssh_keys.fingerprint | text | text | nullable=YES | default=
+team_ssh_keys.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+team_ssh_keys.private_key_encrypted | text | text | nullable=NO | default=
+team_ssh_keys.public_key | text | text | nullable=NO | default=
+team_ssh_keys.team_id | uuid | uuid | nullable=NO | default=
+team_template_agent_types.agent_type_id | uuid | uuid | nullable=NO | default=
+team_template_agent_types.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+team_template_agent_types.daily_budget_override | integer | int4 | nullable=YES | default=
+team_template_agent_types.heartbeat_interval_override | integer | int4 | nullable=YES | default=
+team_template_agent_types.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+team_template_agent_types.monthly_budget_override | integer | int4 | nullable=YES | default=
+team_template_agent_types.reports_to_slug | text | text | nullable=YES | default=
+team_template_agent_types.sort_order | integer | int4 | nullable=NO | default=0
+team_template_agent_types.team_template_id | uuid | uuid | nullable=NO | default=
+team_template_agent_types.weekly_budget_override | integer | int4 | nullable=YES | default=
+team_template_assignments.team_id | uuid | uuid | nullable=NO | default=
+team_template_assignments.team_template_id | uuid | uuid | nullable=NO | default=
+team_templates.builtin_agent_prompts | jsonb | jsonb | nullable=NO | default='{}'::jsonb
+team_templates.builtin_agent_team_contexts | jsonb | jsonb | nullable=NO | default='{}'::jsonb
+team_templates.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+team_templates.default_summary | text | text | nullable=NO | default=''::text
+team_templates.description | text | text | nullable=NO | default=''::text
+team_templates.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+team_templates.is_builtin | boolean | bool | nullable=NO | default=false
+team_templates.mcp_servers | jsonb | jsonb | nullable=NO | default='[]'::jsonb
+team_templates.metadata | jsonb | jsonb | nullable=NO | default='{}'::jsonb
+team_templates.mpp_config | jsonb | jsonb | nullable=NO | default='{"enabled": false}'::jsonb
+team_templates.name | text | text | nullable=NO | default=
+team_templates.preferences_config | jsonb | jsonb | nullable=NO | default='{}'::jsonb
+team_templates.skills_config | jsonb | jsonb | nullable=NO | default='[]'::jsonb
+team_templates.source | USER-DEFINED | team_template_source | nullable=NO | default='custom'::team_template_source
+team_templates.source_url | text | text | nullable=YES | default=
+team_templates.source_version | text | text | nullable=YES | default=
+team_templates.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+teams.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+teams.description | text | text | nullable=NO | default=''::text
+teams.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+teams.mcp_servers | jsonb | jsonb | nullable=NO | default='[]'::jsonb
+teams.mpp_config | jsonb | jsonb | nullable=NO | default='{"enabled": false}'::jsonb
+teams.name | text | text | nullable=NO | default=
+teams.settings | jsonb | jsonb | nullable=NO | default='{"wake_mentioner_on_reply": true}'::jsonb
+teams.slug | text | text | nullable=NO | default=
+teams.summary | text | text | nullable=NO | default=''::text
+teams.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+tool_calls.comment_id | uuid | uuid | nullable=NO | default=
+tool_calls.cost_cents | integer | int4 | nullable=NO | default=0
+tool_calls.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+tool_calls.duration_ms | integer | int4 | nullable=YES | default=
+tool_calls.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+tool_calls.input | jsonb | jsonb | nullable=YES | default=
+tool_calls.member_id | uuid | uuid | nullable=NO | default=
+tool_calls.output | jsonb | jsonb | nullable=YES | default=
+tool_calls.status | USER-DEFINED | tool_call_status | nullable=NO | default='running'::tool_call_status
+tool_calls.tool_name | text | text | nullable=NO | default=
+user_auth_methods.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+user_auth_methods.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+user_auth_methods.provider | text | text | nullable=NO | default=
+user_auth_methods.provider_metadata | jsonb | jsonb | nullable=NO | default='{}'::jsonb
+user_auth_methods.provider_user_id | text | text | nullable=NO | default=
+user_auth_methods.user_id | uuid | uuid | nullable=NO | default=
+users.avatar_url | text | text | nullable=YES | default=
+users.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+users.display_name | text | text | nullable=NO | default=''::text
+users.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
+users.is_superuser | boolean | bool | nullable=NO | default=false
+users.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+
+== ENUMS ==
+agent_admin_status: enabled, disabled
+agent_effort: minimal, low, medium, high, max
+agent_runtime: claude_code, codex, gemini, opencode, kimi
+agent_runtime_status: active, idle, out_of_agent_budget, out_of_project_budget
+agent_type_source: builtin, custom, remote
+ai_auth_method: api_key, subscription
+ai_provider: anthropic, openai, google, deepseek, z_ai, openrouter, kimi
+approval_status: pending, approved, denied
+approval_type: secret_access, hire, project_creation, strategy, plan_review, deploy_production, designated_repo_request, skill_proposal
+audit_actor_type: admin, agent, system
+ceo_channel: web, telegram, whatsapp
+ceo_message_role: user, assistant, system
+ceo_message_status: pending, streaming, complete, failed, interrupted
+ceo_session_status: starting, running, crashed, stopped
+comment_content_type: text, preview, trace, system, run, action, credential_request, connect_required
+connected_agent_status: pending, approved
+connection_status: active, expired, disconnected
+container_status: creating, running, stopping, stopped, error
+document_type: project_doc, team_preferences, agent_system_prompt
+heartbeat_run_status: queued, running, succeeded, failed, cancelled, timed_out
+invite_status: pending, accepted, expired, revoked
+mcp_connection_kind: saas, local
+mcp_install_status: pending, installed, failed
+member_type: agent, user
+membership_role: admin, member
+platform_type: github, gmail, gitlab, stripe, posthog, railway, vercel, digitalocean, x, anthropic, openai, google
+plugin_status: installed, enabled, disabled, error
+repo_host_type: github
+secret_category: ssh_key, credential, api_token, certificate, other
+task_priority: urgent, high, medium, low
+task_status: backlog, in_progress, review, blocked, done, closed, cancelled
+team_template_source: builtin, custom, marketplace
+tool_call_status: running, success, error
+wakeup_source: timer, assignment, on_demand, mention, automation, credential_provided, comment, reply, heartbeat
+wakeup_status: queued, claimed, completed, failed, skipped, coalesced, deferred, cancelled
+
+== INDEXES ==
+CREATE UNIQUE INDEX admin_mentions_comment_id_user_id_key ON public.admin_mentions USING btree (comment_id, user_id)
+CREATE UNIQUE INDEX admin_mentions_pkey ON public.admin_mentions USING btree (id)
+CREATE UNIQUE INDEX agent_task_sessions_member_id_task_key_key ON public.agent_task_sessions USING btree (member_id, task_key)
+CREATE UNIQUE INDEX agent_task_sessions_pkey ON public.agent_task_sessions USING btree (id)
+CREATE UNIQUE INDEX agent_types_pkey ON public.agent_types USING btree (id)
+CREATE UNIQUE INDEX agent_types_slug_key ON public.agent_types USING btree (slug)
+CREATE UNIQUE INDEX agent_wakeup_requests_pkey ON public.agent_wakeup_requests USING btree (id)
+CREATE UNIQUE INDEX ai_provider_configs_default_per_provider ON public.ai_provider_configs USING btree (provider) WHERE is_default
+CREATE UNIQUE INDEX ai_provider_configs_pkey ON public.ai_provider_configs USING btree (id)
+CREATE UNIQUE INDEX ai_provider_configs_provider_label_key ON public.ai_provider_configs USING btree (provider, label)
+CREATE UNIQUE INDEX api_keys_pkey ON public.api_keys USING btree (id)
+CREATE UNIQUE INDEX approvals_pkey ON public.approvals USING btree (id)
+CREATE UNIQUE INDEX assets_pkey ON public.assets USING btree (id)
+CREATE UNIQUE INDEX assets_project_id_original_filename_key ON public.assets USING btree (project_id, original_filename)
+CREATE UNIQUE INDEX audit_log_pkey ON public.audit_log USING btree (id)
+CREATE UNIQUE INDEX ceo_conversations_pkey ON public.ceo_conversations USING btree (id)
+CREATE UNIQUE INDEX ceo_messages_pkey ON public.ceo_messages USING btree (id)
+CREATE UNIQUE INDEX ceo_sessions_pkey ON public.ceo_sessions USING btree (id)
+CREATE UNIQUE INDEX comment_attachments_comment_id_asset_id_key ON public.comment_attachments USING btree (comment_id, asset_id)
+CREATE UNIQUE INDEX comment_attachments_pkey ON public.comment_attachments USING btree (id)
+CREATE UNIQUE INDEX comment_reactions_comment_id_member_id_kind_key ON public.comment_reactions USING btree (comment_id, member_id, kind)
+CREATE UNIQUE INDEX comment_reactions_pkey ON public.comment_reactions USING btree (id)
+CREATE UNIQUE INDEX connected_agents_pkey ON public.connected_agents USING btree (id)
+CREATE UNIQUE INDEX connected_agents_prefix_key ON public.connected_agents USING btree (prefix)
+CREATE UNIQUE INDEX cost_entries_pkey ON public.cost_entries USING btree (id)
+CREATE UNIQUE INDEX document_revisions_document_id_revision_number_key ON public.document_revisions USING btree (document_id, revision_number)
+CREATE UNIQUE INDEX document_revisions_pkey ON public.document_revisions USING btree (id)
+CREATE UNIQUE INDEX documents_pkey ON public.documents USING btree (id)
+CREATE UNIQUE INDEX execution_locks_pkey ON public.execution_locks USING btree (id)
+CREATE UNIQUE INDEX heartbeat_runs_pkey ON public.heartbeat_runs USING btree (id)
+CREATE INDEX idx_admin_mentions_team_unread ON public.admin_mentions USING btree (team_id, created_at DESC) WHERE (read_at IS NULL)
+CREATE INDEX idx_admin_mentions_user_active ON public.admin_mentions USING btree (user_id, team_id, created_at DESC) WHERE (archived_at IS NULL)
+CREATE INDEX idx_admin_mentions_user_archived ON public.admin_mentions USING btree (user_id, team_id, created_at DESC) WHERE (archived_at IS NOT NULL)
+CREATE INDEX idx_admin_mentions_user_unread ON public.admin_mentions USING btree (user_id, team_id, created_at DESC) WHERE (read_at IS NULL)
+CREATE INDEX idx_api_keys_team ON public.api_keys USING btree (team_id)
+CREATE INDEX idx_approvals_status ON public.approvals USING btree (team_id, status)
+CREATE INDEX idx_approvals_team ON public.approvals USING btree (team_id)
+CREATE INDEX idx_assets_project ON public.assets USING btree (project_id)
+CREATE INDEX idx_audit_created ON public.audit_log USING btree (team_id, created_at)
+CREATE INDEX idx_audit_created_global ON public.audit_log USING btree (created_at)
+CREATE INDEX idx_audit_entity ON public.audit_log USING btree (entity_type, entity_id)
+CREATE INDEX idx_audit_project ON public.audit_log USING btree (project_id, created_at)
+CREATE INDEX idx_audit_team ON public.audit_log USING btree (team_id)
+CREATE INDEX idx_auth_methods_user ON public.user_auth_methods USING btree (user_id)
+CREATE INDEX idx_ceo_messages_conversation ON public.ceo_messages USING btree (conversation_id, created_at)
+CREATE UNIQUE INDEX idx_ceo_sessions_singleton ON public.ceo_sessions USING btree (member_id) WHERE (status = ANY (ARRAY['starting'::ceo_session_status, 'running'::ceo_session_status]))
+CREATE INDEX idx_ceo_sessions_status ON public.ceo_sessions USING btree (status)
+CREATE INDEX idx_comment_attachments_comment ON public.comment_attachments USING btree (comment_id)
+CREATE INDEX idx_comment_reactions_comment ON public.comment_reactions USING btree (comment_id)
+CREATE INDEX idx_comments_author ON public.task_comments USING btree (author_member_id)
+CREATE INDEX idx_comments_embedding ON public.task_comments USING hnsw (embedding vector_cosine_ops)
+CREATE INDEX idx_comments_parent ON public.task_comments USING btree (parent_comment_id) WHERE (parent_comment_id IS NOT NULL)
+CREATE UNIQUE INDEX idx_comments_public_id ON public.task_comments USING btree (task_id, public_id)
+CREATE INDEX idx_comments_task ON public.task_comments USING btree (task_id)
+CREATE INDEX idx_connected_agents_status ON public.connected_agents USING btree (status)
+CREATE INDEX idx_costs_created ON public.cost_entries USING btree (created_at)
+CREATE INDEX idx_costs_member ON public.cost_entries USING btree (member_id)
+CREATE INDEX idx_costs_member_created ON public.cost_entries USING btree (member_id, created_at)
+CREATE INDEX idx_costs_project ON public.cost_entries USING btree (project_id)
+CREATE INDEX idx_costs_project_created ON public.cost_entries USING btree (project_id, created_at)
+CREATE INDEX idx_costs_provider_config ON public.cost_entries USING btree (ai_provider_config_id)
+CREATE INDEX idx_costs_task ON public.cost_entries USING btree (task_id)
+CREATE INDEX idx_document_revisions_document ON public.document_revisions USING btree (document_id)
+CREATE UNIQUE INDEX idx_documents_agent_system_prompt ON public.documents USING btree (member_agent_id) WHERE (type = 'agent_system_prompt'::document_type)
+CREATE INDEX idx_documents_embedding ON public.documents USING hnsw (embedding vector_cosine_ops)
+CREATE INDEX idx_documents_member_agent ON public.documents USING btree (member_agent_id) WHERE (member_agent_id IS NOT NULL)
+CREATE INDEX idx_documents_project ON public.documents USING btree (project_id) WHERE (project_id IS NOT NULL)
+CREATE UNIQUE INDEX idx_documents_project_doc ON public.documents USING btree (project_id, slug) WHERE (type = 'project_doc'::document_type)
+CREATE INDEX idx_documents_team ON public.documents USING btree (team_id)
+CREATE UNIQUE INDEX idx_documents_team_preferences ON public.documents USING btree (team_id) WHERE (type = 'team_preferences'::document_type)
+CREATE INDEX idx_documents_type_team ON public.documents USING btree (type, team_id)
+CREATE INDEX idx_exec_locks_member ON public.execution_locks USING btree (member_id)
+CREATE INDEX idx_exec_locks_task ON public.execution_locks USING btree (task_id)
+CREATE INDEX idx_invites_code ON public.invites USING btree (code)
+CREATE INDEX idx_invites_team ON public.invites USING btree (team_id)
+CREATE INDEX idx_mcp_connections_created_by_task ON public.mcp_connections USING btree (created_by_task_id) WHERE (created_by_task_id IS NOT NULL)
+CREATE INDEX idx_mcp_connections_oauth ON public.mcp_connections USING btree (oauth_connection_id) WHERE (oauth_connection_id IS NOT NULL)
+CREATE INDEX idx_mcp_connections_pending_auth ON public.mcp_connections USING btree (name) WHERE ((oauth_connection_id IS NULL) AND (revoked_at IS NULL) AND (kind = 'saas'::mcp_connection_kind))
+CREATE INDEX idx_mcp_connections_skill ON public.mcp_connections USING btree (skill_id) WHERE (skill_id IS NOT NULL)
+CREATE INDEX idx_member_users_user ON public.member_users USING btree (user_id)
+CREATE INDEX idx_members_team ON public.members USING btree (team_id)
+CREATE INDEX idx_members_type ON public.members USING btree (team_id, member_type)
+CREATE INDEX idx_model_pricing_model ON public.model_pricing USING btree (model_id)
+CREATE INDEX idx_oauth_connections_provider ON public.oauth_connections USING btree (provider)
+CREATE UNIQUE INDEX idx_one_pending_repo_setup ON public.approvals USING btree (team_id, ((payload ->> 'project_id'::text))) WHERE ((type = 'designated_repo_request'::approval_type) AND (status = 'pending'::approval_status) AND ((payload ->> 'reason'::text) = 'designated_repo'::text))
+CREATE INDEX idx_plugin_jobs_next_run ON public.plugin_jobs USING btree (next_run_at)
+CREATE INDEX idx_plugin_jobs_plugin ON public.plugin_jobs USING btree (plugin_id)
+CREATE INDEX idx_plugin_state_plugin ON public.plugin_state USING btree (plugin_id)
+CREATE INDEX idx_plugins_team ON public.plugins USING btree (team_id)
+CREATE UNIQUE INDEX idx_projects_slug ON public.projects USING btree (slug)
+CREATE UNIQUE INDEX idx_projects_team ON public.projects USING btree (team_id)
+CREATE UNIQUE INDEX idx_projects_team_task_prefix ON public.projects USING btree (team_id, task_prefix)
+CREATE INDEX idx_repos_oauth_connection ON public.repos USING btree (oauth_connection_id) WHERE (oauth_connection_id IS NOT NULL)
+CREATE INDEX idx_repos_project ON public.repos USING btree (project_id)
+CREATE UNIQUE INDEX idx_repos_project_repo_name ON public.repos USING btree (project_id, split_part(repo_identifier, '/'::text, 2))
+CREATE INDEX idx_runs_member ON public.heartbeat_runs USING btree (member_id)
+CREATE INDEX idx_runs_status ON public.heartbeat_runs USING btree (status)
+CREATE INDEX idx_runs_task ON public.heartbeat_runs USING btree (task_id)
+CREATE INDEX idx_runs_team ON public.heartbeat_runs USING btree (team_id)
+CREATE INDEX idx_skill_revisions_skill ON public.skill_revisions USING btree (skill_id)
+CREATE INDEX idx_skills_embedding ON public.skills USING hnsw (embedding vector_cosine_ops)
+CREATE INDEX idx_task_attachments_task ON public.task_attachments USING btree (task_id)
+CREATE INDEX idx_task_deps_blocked ON public.task_dependencies USING btree (blocked_by_task_id)
+CREATE INDEX idx_task_deps_task ON public.task_dependencies USING btree (task_id)
+CREATE INDEX idx_task_sessions_member ON public.agent_task_sessions USING btree (member_id)
+CREATE INDEX idx_tasks_assignee ON public.tasks USING btree (assignee_id)
+CREATE INDEX idx_tasks_created_by_run ON public.tasks USING btree (created_by_run_id) WHERE (created_by_run_id IS NOT NULL)
+CREATE INDEX idx_tasks_embedding ON public.tasks USING hnsw (embedding vector_cosine_ops)
+CREATE INDEX idx_tasks_identifier ON public.tasks USING btree (team_id, identifier)
+CREATE INDEX idx_tasks_parent ON public.tasks USING btree (parent_task_id)
+CREATE INDEX idx_tasks_project ON public.tasks USING btree (project_id)
+CREATE INDEX idx_tasks_status ON public.tasks USING btree (team_id, status)
+CREATE INDEX idx_tasks_team ON public.tasks USING btree (team_id)
+CREATE INDEX idx_tool_calls_comment ON public.tool_calls USING btree (comment_id)
+CREATE INDEX idx_tool_calls_member ON public.tool_calls USING btree (member_id)
+CREATE INDEX idx_ttat_agent_type ON public.team_template_agent_types USING btree (agent_type_id)
+CREATE INDEX idx_ttat_team_template ON public.team_template_agent_types USING btree (team_template_id)
+CREATE INDEX idx_wakeups_idempotency ON public.agent_wakeup_requests USING btree (idempotency_key)
+CREATE INDEX idx_wakeups_member ON public.agent_wakeup_requests USING btree (member_id)
+CREATE INDEX idx_wakeups_status ON public.agent_wakeup_requests USING btree (status)
+CREATE UNIQUE INDEX instance_user_roles_pkey ON public.instance_user_roles USING btree (id)
+CREATE UNIQUE INDEX instance_user_roles_user_id_role_key ON public.instance_user_roles USING btree (user_id, role)
+CREATE UNIQUE INDEX invites_code_key ON public.invites USING btree (code)
+CREATE UNIQUE INDEX invites_pkey ON public.invites USING btree (id)
+CREATE UNIQUE INDEX mcp_connections_name_key ON public.mcp_connections USING btree (name)
+CREATE UNIQUE INDEX mcp_connections_pkey ON public.mcp_connections USING btree (id)
+CREATE UNIQUE INDEX member_agents_id_slug_key ON public.member_agents USING btree (id, slug)
+CREATE UNIQUE INDEX member_agents_pkey ON public.member_agents USING btree (id)
+CREATE UNIQUE INDEX member_users_pkey ON public.member_users USING btree (id)
+CREATE UNIQUE INDEX members_pkey ON public.members USING btree (id)
+CREATE UNIQUE INDEX model_pricing_model_id_source_key ON public.model_pricing USING btree (model_id, source)
+CREATE UNIQUE INDEX model_pricing_pkey ON public.model_pricing USING btree (id)
+CREATE UNIQUE INDEX notification_preferences_pkey ON public.notification_preferences USING btree (id)
+CREATE UNIQUE INDEX notification_preferences_user_id_channel_key ON public.notification_preferences USING btree (user_id, channel)
+CREATE UNIQUE INDEX oauth_connections_pkey ON public.oauth_connections USING btree (id)
+CREATE UNIQUE INDEX oauth_connections_provider_provider_account_id_key ON public.oauth_connections USING btree (provider, provider_account_id)
+CREATE UNIQUE INDEX plugin_jobs_pkey ON public.plugin_jobs USING btree (id)
+CREATE UNIQUE INDEX plugin_jobs_plugin_id_job_key_key ON public.plugin_jobs USING btree (plugin_id, job_key)
+CREATE UNIQUE INDEX plugin_state_pkey ON public.plugin_state USING btree (id)
+CREATE UNIQUE INDEX plugin_state_plugin_id_team_id_namespace_state_key_key ON public.plugin_state USING btree (plugin_id, team_id, namespace, state_key)
+CREATE UNIQUE INDEX plugins_pkey ON public.plugins USING btree (id)
+CREATE UNIQUE INDEX plugins_team_id_plugin_key_key ON public.plugins USING btree (team_id, plugin_key)
+CREATE UNIQUE INDEX project_task_counters_pkey ON public.project_task_counters USING btree (project_id)
+CREATE UNIQUE INDEX projects_pkey ON public.projects USING btree (id)
+CREATE UNIQUE INDEX repos_pkey ON public.repos USING btree (id)
+CREATE UNIQUE INDEX secrets_name_key ON public.secrets USING btree (name)
+CREATE UNIQUE INDEX secrets_pkey ON public.secrets USING btree (id)
+CREATE UNIQUE INDEX skill_revisions_pkey ON public.skill_revisions USING btree (id)
+CREATE UNIQUE INDEX skill_revisions_skill_id_revision_number_key ON public.skill_revisions USING btree (skill_id, revision_number)
+CREATE UNIQUE INDEX skills_pkey ON public.skills USING btree (id)
+CREATE UNIQUE INDEX skills_slug_key ON public.skills USING btree (slug)
+CREATE UNIQUE INDEX system_meta_pkey ON public.system_meta USING btree (key)
+CREATE UNIQUE INDEX task_attachments_pkey ON public.task_attachments USING btree (id)
+CREATE UNIQUE INDEX task_attachments_task_id_asset_id_key ON public.task_attachments USING btree (task_id, asset_id)
+CREATE UNIQUE INDEX task_comments_pkey ON public.task_comments USING btree (id)
+CREATE UNIQUE INDEX task_dependencies_pkey ON public.task_dependencies USING btree (id)
+CREATE UNIQUE INDEX task_dependencies_task_id_blocked_by_task_id_key ON public.task_dependencies USING btree (task_id, blocked_by_task_id)
+CREATE UNIQUE INDEX tasks_pkey ON public.tasks USING btree (id)
+CREATE UNIQUE INDEX tasks_project_id_number_key ON public.tasks USING btree (project_id, number)
+CREATE UNIQUE INDEX tasks_team_id_identifier_key ON public.tasks USING btree (team_id, identifier)
+CREATE UNIQUE INDEX team_ssh_keys_pkey ON public.team_ssh_keys USING btree (id)
+CREATE UNIQUE INDEX team_ssh_keys_team_id_key ON public.team_ssh_keys USING btree (team_id)
+CREATE UNIQUE INDEX team_template_agent_types_pkey ON public.team_template_agent_types USING btree (id)
+CREATE UNIQUE INDEX team_template_agent_types_team_template_id_agent_type_id_key ON public.team_template_agent_types USING btree (team_template_id, agent_type_id)
+CREATE UNIQUE INDEX team_template_assignments_pkey ON public.team_template_assignments USING btree (team_id, team_template_id)
+CREATE UNIQUE INDEX team_templates_name_key ON public.team_templates USING btree (name)
+CREATE UNIQUE INDEX team_templates_pkey ON public.team_templates USING btree (id)
+CREATE UNIQUE INDEX teams_pkey ON public.teams USING btree (id)
+CREATE UNIQUE INDEX teams_slug_key ON public.teams USING btree (slug)
+CREATE UNIQUE INDEX tool_calls_pkey ON public.tool_calls USING btree (id)
+CREATE UNIQUE INDEX user_auth_methods_pkey ON public.user_auth_methods USING btree (id)
+CREATE UNIQUE INDEX user_auth_methods_provider_provider_user_id_key ON public.user_auth_methods USING btree (provider, provider_user_id)
+CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)
+
+== CONSTRAINTS ==
+admin_mentions | f | FOREIGN KEY (comment_id) REFERENCES task_comments(id) ON DELETE CASCADE
+admin_mentions | f | FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+admin_mentions | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+admin_mentions | f | FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+admin_mentions | p | PRIMARY KEY (id)
+admin_mentions | u | UNIQUE (comment_id, user_id)
+agent_task_sessions | f | FOREIGN KEY (last_run_id) REFERENCES heartbeat_runs(id)
+agent_task_sessions | f | FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+agent_task_sessions | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+agent_task_sessions | p | PRIMARY KEY (id)
+agent_task_sessions | u | UNIQUE (member_id, task_key)
+agent_types | p | PRIMARY KEY (id)
+agent_types | u | UNIQUE (slug)
+agent_wakeup_requests | f | FOREIGN KEY (last_skipped_blocker_task_id) REFERENCES tasks(id) ON DELETE SET NULL
+agent_wakeup_requests | f | FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+agent_wakeup_requests | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+agent_wakeup_requests | p | PRIMARY KEY (id)
+ai_provider_configs | p | PRIMARY KEY (id)
+ai_provider_configs | u | UNIQUE (provider, label)
+api_keys | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+api_keys | p | PRIMARY KEY (id)
+approvals | f | FOREIGN KEY (requested_by_member_id) REFERENCES members(id) ON DELETE CASCADE
+approvals | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+approvals | p | PRIMARY KEY (id)
+assets | f | FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+assets | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+assets | f | FOREIGN KEY (uploaded_by_member_id) REFERENCES members(id) ON DELETE SET NULL
+assets | p | PRIMARY KEY (id)
+assets | u | UNIQUE (project_id, original_filename)
+audit_log | f | FOREIGN KEY (actor_member_id) REFERENCES members(id) ON DELETE SET NULL
+audit_log | f | FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+audit_log | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+audit_log | p | PRIMARY KEY (id)
+ceo_conversations | f | FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+ceo_conversations | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+ceo_conversations | p | PRIMARY KEY (id)
+ceo_messages | f | FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE SET NULL
+ceo_messages | f | FOREIGN KEY (conversation_id) REFERENCES ceo_conversations(id) ON DELETE CASCADE
+ceo_messages | f | FOREIGN KEY (session_id) REFERENCES ceo_sessions(id) ON DELETE SET NULL
+ceo_messages | p | PRIMARY KEY (id)
+ceo_sessions | f | FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+ceo_sessions | f | FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+ceo_sessions | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+ceo_sessions | p | PRIMARY KEY (id)
+comment_attachments | f | FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE
+comment_attachments | f | FOREIGN KEY (comment_id) REFERENCES task_comments(id) ON DELETE CASCADE
+comment_attachments | p | PRIMARY KEY (id)
+comment_attachments | u | UNIQUE (comment_id, asset_id)
+comment_reactions | f | FOREIGN KEY (comment_id) REFERENCES task_comments(id) ON DELETE CASCADE
+comment_reactions | f | FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+comment_reactions | p | PRIMARY KEY (id)
+comment_reactions | u | UNIQUE (comment_id, member_id, kind)
+connected_agents | f | FOREIGN KEY (approved_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+connected_agents | p | PRIMARY KEY (id)
+connected_agents | u | UNIQUE (prefix)
+cost_entries | f | FOREIGN KEY (ai_provider_config_id) REFERENCES ai_provider_configs(id) ON DELETE SET NULL
+cost_entries | f | FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+cost_entries | f | FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+cost_entries | f | FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+cost_entries | p | PRIMARY KEY (id)
+document_revisions | f | FOREIGN KEY (author_member_id) REFERENCES members(id) ON DELETE SET NULL
+document_revisions | f | FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+document_revisions | p | PRIMARY KEY (id)
+document_revisions | u | UNIQUE (document_id, revision_number)
+documents | c | CHECK (((type <> 'agent_system_prompt'::document_type) OR (member_agent_id IS NOT NULL)))
+documents | f | FOREIGN KEY (last_updated_by_member_id) REFERENCES members(id) ON DELETE SET NULL
+documents | f | FOREIGN KEY (member_agent_id) REFERENCES member_agents(id) ON DELETE CASCADE
+documents | f | FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+documents | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+documents | p | PRIMARY KEY (id)
+execution_locks | c | CHECK ((lock_type = ANY (ARRAY['read'::text, 'write'::text])))
+execution_locks | f | FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+execution_locks | f | FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+execution_locks | p | PRIMARY KEY (id)
+heartbeat_runs | f | FOREIGN KEY (ai_provider_config_id) REFERENCES ai_provider_configs(id) ON DELETE SET NULL
+heartbeat_runs | f | FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+heartbeat_runs | f | FOREIGN KEY (retry_of_run_id) REFERENCES heartbeat_runs(id)
+heartbeat_runs | f | FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+heartbeat_runs | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+heartbeat_runs | f | FOREIGN KEY (wakeup_id) REFERENCES agent_wakeup_requests(id) ON DELETE SET NULL
+heartbeat_runs | p | PRIMARY KEY (id)
+instance_user_roles | f | FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+instance_user_roles | p | PRIMARY KEY (id)
+instance_user_roles | u | UNIQUE (user_id, role)
+invites | f | FOREIGN KEY (invited_by) REFERENCES users(id) ON DELETE SET NULL
+invites | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+invites | p | PRIMARY KEY (id)
+invites | u | UNIQUE (code)
+mcp_connections | f | FOREIGN KEY (created_by_task_id) REFERENCES tasks(id) ON DELETE SET NULL
+mcp_connections | f | FOREIGN KEY (oauth_connection_id) REFERENCES oauth_connections(id) ON DELETE SET NULL
+mcp_connections | f | FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE SET NULL
+mcp_connections | p | PRIMARY KEY (id)
+mcp_connections | u | UNIQUE (name)
+member_agents | c | CHECK (((model_override_model IS NULL) OR (model_override_provider IS NOT NULL)))
+member_agents | f | FOREIGN KEY (agent_type_id) REFERENCES agent_types(id) ON DELETE SET NULL
+member_agents | f | FOREIGN KEY (id) REFERENCES members(id) ON DELETE CASCADE
+member_agents | f | FOREIGN KEY (reports_to) REFERENCES members(id) ON DELETE SET NULL
+member_agents | p | PRIMARY KEY (id)
+member_agents | u | UNIQUE (id, slug)
+member_users | f | FOREIGN KEY (id) REFERENCES members(id) ON DELETE CASCADE
+member_users | f | FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+member_users | p | PRIMARY KEY (id)
+members | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+members | p | PRIMARY KEY (id)
+model_pricing | c | CHECK ((source = ANY (ARRAY['litellm'::text, 'manual'::text])))
+model_pricing | p | PRIMARY KEY (id)
+model_pricing | u | UNIQUE (model_id, source)
+notification_preferences | f | FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+notification_preferences | p | PRIMARY KEY (id)
+notification_preferences | u | UNIQUE (user_id, channel)
+oauth_connections | f | FOREIGN KEY (access_token_secret_id) REFERENCES secrets(id) ON DELETE RESTRICT
+oauth_connections | f | FOREIGN KEY (refresh_token_secret_id) REFERENCES secrets(id) ON DELETE SET NULL
+oauth_connections | p | PRIMARY KEY (id)
+oauth_connections | u | UNIQUE (provider, provider_account_id)
+plugin_jobs | f | FOREIGN KEY (plugin_id) REFERENCES plugins(id) ON DELETE CASCADE
+plugin_jobs | p | PRIMARY KEY (id)
+plugin_jobs | u | UNIQUE (plugin_id, job_key)
+plugin_state | f | FOREIGN KEY (plugin_id) REFERENCES plugins(id) ON DELETE CASCADE
+plugin_state | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+plugin_state | p | PRIMARY KEY (id)
+plugin_state | u | UNIQUE (plugin_id, team_id, namespace, state_key)
+plugins | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+plugins | p | PRIMARY KEY (id)
+plugins | u | UNIQUE (team_id, plugin_key)
+project_task_counters | f | FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+project_task_counters | p | PRIMARY KEY (project_id)
+projects | c | CHECK ((max_concurrent_runs >= 1))
+projects | c | CHECK ((memory_limit_gib >= 1))
+projects | f | FOREIGN KEY (designated_repo_id) REFERENCES repos(id) ON DELETE RESTRICT
+projects | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+projects | p | PRIMARY KEY (id)
+repos | f | FOREIGN KEY (oauth_connection_id) REFERENCES oauth_connections(id) ON DELETE SET NULL
+repos | f | FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+repos | p | PRIMARY KEY (id)
+secrets | p | PRIMARY KEY (id)
+secrets | u | UNIQUE (name)
+skill_revisions | f | FOREIGN KEY (author_member_id) REFERENCES members(id) ON DELETE SET NULL
+skill_revisions | f | FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
+skill_revisions | p | PRIMARY KEY (id)
+skill_revisions | u | UNIQUE (skill_id, revision_number)
+skills | f | FOREIGN KEY (created_by_member_id) REFERENCES members(id) ON DELETE SET NULL
+skills | p | PRIMARY KEY (id)
+skills | u | UNIQUE (slug)
+system_meta | p | PRIMARY KEY (key)
+task_attachments | f | FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE
+task_attachments | f | FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+task_attachments | p | PRIMARY KEY (id)
+task_attachments | u | UNIQUE (task_id, asset_id)
+task_comments | f | FOREIGN KEY (author_member_id) REFERENCES members(id) ON DELETE SET NULL
+task_comments | f | FOREIGN KEY (parent_comment_id) REFERENCES task_comments(id) ON DELETE SET NULL
+task_comments | f | FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+task_comments | p | PRIMARY KEY (id)
+task_dependencies | f | FOREIGN KEY (blocked_by_task_id) REFERENCES tasks(id) ON DELETE CASCADE
+task_dependencies | f | FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+task_dependencies | p | PRIMARY KEY (id)
+task_dependencies | u | UNIQUE (task_id, blocked_by_task_id)
+tasks | f | FOREIGN KEY (assignee_id) REFERENCES members(id) ON DELETE SET NULL
+tasks | f | FOREIGN KEY (created_by_member_id) REFERENCES members(id) ON DELETE SET NULL
+tasks | f | FOREIGN KEY (created_by_run_id) REFERENCES heartbeat_runs(id) ON DELETE SET NULL
+tasks | f | FOREIGN KEY (parent_task_id) REFERENCES tasks(id) ON DELETE SET NULL
+tasks | f | FOREIGN KEY (progress_summary_updated_by) REFERENCES members(id) ON DELETE SET NULL
+tasks | f | FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+tasks | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+tasks | p | PRIMARY KEY (id)
+tasks | u | UNIQUE (project_id, number)
+tasks | u | UNIQUE (team_id, identifier)
+team_ssh_keys | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+team_ssh_keys | p | PRIMARY KEY (id)
+team_ssh_keys | u | UNIQUE (team_id)
+team_template_agent_types | f | FOREIGN KEY (agent_type_id) REFERENCES agent_types(id) ON DELETE CASCADE
+team_template_agent_types | f | FOREIGN KEY (team_template_id) REFERENCES team_templates(id) ON DELETE CASCADE
+team_template_agent_types | p | PRIMARY KEY (id)
+team_template_agent_types | u | UNIQUE (team_template_id, agent_type_id)
+team_template_assignments | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+team_template_assignments | f | FOREIGN KEY (team_template_id) REFERENCES team_templates(id) ON DELETE CASCADE
+team_template_assignments | p | PRIMARY KEY (team_id, team_template_id)
+team_templates | p | PRIMARY KEY (id)
+team_templates | u | UNIQUE (name)
+teams | p | PRIMARY KEY (id)
+teams | u | UNIQUE (slug)
+tool_calls | f | FOREIGN KEY (comment_id) REFERENCES task_comments(id) ON DELETE CASCADE
+tool_calls | f | FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+tool_calls | p | PRIMARY KEY (id)
+user_auth_methods | f | FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+user_auth_methods | p | PRIMARY KEY (id)
+user_auth_methods | u | UNIQUE (provider, provider_user_id)
+users | p | PRIMARY KEY (id)
+
+== FUNCTIONS ==
+--- next_project_task_number ---
+CREATE OR REPLACE FUNCTION public.next_project_task_number(p_project_id uuid)
+ RETURNS integer
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    v_number INTEGER;
+BEGIN
+    INSERT INTO project_task_counters (project_id, next_number)
+    VALUES (p_project_id, 2)
+    ON CONFLICT (project_id)
+    DO UPDATE SET next_number = project_task_counters.next_number + 1
+    RETURNING next_number - 1 INTO v_number;
+
+    RETURN v_number;
+END;
+$function$
+
+--- set_task_comment_public_id ---
+CREATE OR REPLACE FUNCTION public.set_task_comment_public_id()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    v_base      TEXT;
+    v_candidate TEXT;
+    v_n         INTEGER := 1;
+BEGIN
+    IF NEW.public_id IS NOT NULL THEN
+        RETURN NEW;
+    END IF;
+    v_base := to_char(COALESCE(NEW.created_at, now()) AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISS');
+    v_candidate := v_base;
+    WHILE EXISTS (
+        SELECT 1 FROM task_comments
+        WHERE task_id = NEW.task_id AND public_id = v_candidate
+    ) LOOP
+        v_n := v_n + 1;
+        v_candidate := v_base || '-' || v_n;
+    END LOOP;
+    NEW.public_id := v_candidate;
+    RETURN NEW;
+END;
+$function$
+
+--- update_updated_at ---
+CREATE OR REPLACE FUNCTION public.update_updated_at()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$function$
+
+
+== TRIGGERS ==
+CREATE TRIGGER trg_task_sessions_updated BEFORE UPDATE ON public.agent_task_sessions FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+CREATE TRIGGER trg_agent_types_updated BEFORE UPDATE ON public.agent_types FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+CREATE TRIGGER trg_documents_updated BEFORE UPDATE ON public.documents FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+CREATE TRIGGER trg_mcp_connections_updated BEFORE UPDATE ON public.mcp_connections FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+CREATE TRIGGER trg_member_agents_updated BEFORE UPDATE ON public.member_agents FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+CREATE TRIGGER trg_member_users_updated BEFORE UPDATE ON public.member_users FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+CREATE TRIGGER trg_notification_prefs_updated BEFORE UPDATE ON public.notification_preferences FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+CREATE TRIGGER trg_oauth_connections_updated BEFORE UPDATE ON public.oauth_connections FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+CREATE TRIGGER trg_plugin_state_updated BEFORE UPDATE ON public.plugin_state FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+CREATE TRIGGER trg_plugins_updated BEFORE UPDATE ON public.plugins FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+CREATE TRIGGER trg_projects_updated BEFORE UPDATE ON public.projects FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+CREATE TRIGGER trg_secrets_updated BEFORE UPDATE ON public.secrets FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+CREATE TRIGGER trg_task_comments_public_id BEFORE INSERT ON public.task_comments FOR EACH ROW EXECUTE FUNCTION set_task_comment_public_id()
+CREATE TRIGGER trg_tasks_updated BEFORE UPDATE ON public.tasks FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+CREATE TRIGGER trg_team_templates_updated BEFORE UPDATE ON public.team_templates FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+CREATE TRIGGER trg_teams_updated BEFORE UPDATE ON public.teams FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+CREATE TRIGGER trg_users_updated BEFORE UPDATE ON public.users FOR EACH ROW EXECUTE FUNCTION update_updated_at()

@@ -15,8 +15,8 @@ the code (`packages/shared/src/types/common.ts` for every enum, the route module
   `AGENTS.md` gives the *rules*. Where they overlap, `AGENTS.md` is authoritative for
   "how to write code here" and this doc cross-references it instead of duplicating.
 
-Pre-v1: no backwards-compatibility constraints. When the code changes, change this doc
-to match — describe the current state, never a changelog.
+When the code changes, change this doc to match — describe the current state, never a
+changelog.
 
 ---
 
