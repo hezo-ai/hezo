@@ -31,7 +31,6 @@ describe('approval handler registry', () => {
 	});
 
 	it('has no handler for pure status-flip approval types', () => {
-		expect(APPROVAL_HANDLERS[ApprovalType.SecretAccess]).toBeUndefined();
 		expect(APPROVAL_HANDLERS[ApprovalType.PlanReview]).toBeUndefined();
 		expect(APPROVAL_HANDLERS[ApprovalType.DeployProduction]).toBeUndefined();
 		expect(APPROVAL_HANDLERS[ApprovalType.DesignatedRepoRequest]).toBeUndefined();

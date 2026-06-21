@@ -60,7 +60,6 @@ describe('status-meta registry', () => {
 	test('approval type colors match the previous typeColors (project_creation now explicit)', () => {
 		expect(approvalTypeColor(ApprovalType.Strategy)).toBe('purple');
 		expect(approvalTypeColor(ApprovalType.DesignatedRepoRequest)).toBe('yellow');
-		expect(approvalTypeColor(ApprovalType.SecretAccess)).toBe('red');
 		expect(approvalTypeColor(ApprovalType.Hire)).toBe('green');
 		expect(approvalTypeColor(ApprovalType.PlanReview)).toBe('blue');
 		expect(approvalTypeColor(ApprovalType.DeployProduction)).toBe('red');

@@ -55,28 +55,6 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 				</span>
 			);
 		}
-		case ApprovalType.SecretAccess: {
-			const secretName = p.secret_name as string;
-			const projectName = approval.payload_project_name;
-			const projectSlug = approval.payload_project_slug;
-			return (
-				<>
-					<span>
-						Requesting access to secret "<span className="font-medium">{secretName}</span>"
-						{projectSlug && projectName && (
-							<>
-								{' '}
-								in project{' '}
-								<EntityLink to="/projects/$projectId" params={{ projectId: projectSlug }}>
-									{projectName}
-								</EntityLink>
-							</>
-						)}
-					</span>
-					{p.reason && <span className="block text-xs text-text-2 mt-1">{p.reason as string}</span>}
-				</>
-			);
-		}
 		case ApprovalType.Hire: {
 			const title = (p.title as string) ?? 'a new agent';
 			const taskId = approval.payload_task_identifier;

@@ -111,11 +111,10 @@ an agent-maintained `progress_summary`. Numbering is atomic via `project_task_co
 `task_dependencies` is the many-to-many blocking graph (`UNIQUE`, no self-blocks).
 `task_comments` is **polymorphic** over a `content_type` enum + `content` JSONB — `text`,
 `system` (timeline entries like `status_change`/`task_link`), `execution` (auto-written
-on run completion), `trace` (detail in `tool_calls`), `preview`, `action`,
+on run completion), `preview`, `action`,
 `connect_required`, `credential_request`. Each comment carries a `public_id` slug for
 `#comment-<id>` deep-links and a `vector(384)` embedding (text comments only) for
-semantic search. `comment_reactions` holds emoji reactions; `tool_calls` is the
-per-comment trace log.
+semantic search. `comment_reactions` holds emoji reactions.
 
 **Secrets, OAuth, MCP connectors.** `secrets` stores AES-256-GCM ciphertext gated by
 `allowed_hosts` (§ 7). `oauth_connections` records connected GitHub/SaaS accounts; their
