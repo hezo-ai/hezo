@@ -62,6 +62,9 @@ describe('template resolver', () => {
 		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
 		expect(result).toContain('No Work To Do This Run');
 		expect(result).toContain('report_no_work');
+		// Re-engagement guard: a re-woken agent must recognise an already-handed-off
+		// ticket and no-op rather than redo work that is now in a teammate's court.
+		expect(result).toContain('already handed this ticket off');
 	});
 
 	it('resolves {{team_mission}} to team description', async () => {
@@ -218,6 +221,9 @@ describe('template resolver', () => {
 		expect(result).toContain('### Knowledge Maintenance');
 		expect(result).toContain('### Sub-Agents & Parallel Exploration');
 		expect(result).toContain('### Sub-Tasks & Delegation');
+		// A defect in the agent's own in-flight deliverable must be fixed on the
+		// current ticket, not offloaded into a sub-task/peer ticket (PR-cascade fix).
+		expect(result).toContain('A defect in your own in-flight work is NOT a new ticket');
 		expect(result).toContain('### Assigning Work');
 		expect(result).toContain('### Fetching External URLs');
 		expect(result).toContain('curl');
