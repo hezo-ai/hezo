@@ -214,14 +214,28 @@ export function TaskList({ projectId }: TaskListProps) {
 		() => nestTasksForDisplay(inProgressResult?.data ?? []),
 		[inProgressResult?.data],
 	);
-	const tasks = useMemo(() => {
-		if (!todoListEnabled) return [];
+	// Split the filtered main list into "Backlog" (open work) and "Done" (terminal:
+	// done/closed/cancelled). Each group nests independently so a child whose parent
+	// sits in the other group surfaces at the top level of its own section — the same
+	// way the In-progress / Backlog split already behaves across separate queries.
+	const { backlogTasks, doneTasks } = useMemo<{
+		backlogTasks: TaskRow[];
+		doneTasks: TaskRow[];
+	}>(() => {
+		if (!todoListEnabled) return { backlogTasks: [], doneTasks: [] };
 		const rows = (result?.data ?? []).filter((t) => !PINNED_STATUS_SET.has(t.status));
-		return nestTasksForDisplay(rows);
+		return {
+			backlogTasks: nestTasksForDisplay(rows.filter((t) => !TERMINAL_STATUS_SET.has(t.status))),
+			doneTasks: nestTasksForDisplay(rows.filter((t) => TERMINAL_STATUS_SET.has(t.status))),
+		};
 	}, [result?.data, todoListEnabled]);
 
 	const hasNoTasksAtAll =
-		!inProgressLoading && !mainLoading && inProgressTasks.length === 0 && tasks.length === 0;
+		!inProgressLoading &&
+		!mainLoading &&
+		inProgressTasks.length === 0 &&
+		backlogTasks.length === 0 &&
+		doneTasks.length === 0;
 
 	const ownerLabelById = useMemo(() => {
 		const map = new Map<string, string>();
@@ -527,74 +541,85 @@ export function TaskList({ projectId }: TaskListProps) {
 				/>
 			)}
 
-			<section data-testid="task-list-main" className="mb-6 last:mb-0">
-				<h2 className="text-[11px] font-medium uppercase tracking-wider text-text-3 mb-2 px-0.5">
-					Backlog
-				</h2>
-
-				{mainLoading ? (
-					<div className="text-text-2 text-[13px] py-8 text-center">Loading...</div>
-				) : hasNoTasksAtAll ? (
-					<EmptyState
-						variant="hero"
-						icon={<ListPlus className="w-8 h-8" />}
-						title="No tasks yet"
-						description="Create a task to get the team moving."
-						action={
-							<Button
-								size="lg"
-								onClick={() => setCreateOpen(true)}
-								data-testid="task-list-empty-create"
-							>
-								<Plus className="w-4 h-4" />
-								Create a task
-							</Button>
-						}
-					/>
-				) : tasks.length > 0 ? (
-					<DataTable
+			{mainLoading ? (
+				<div
+					data-testid="task-list-loading"
+					className="text-text-2 text-[13px] py-8 text-center mb-6"
+				>
+					Loading...
+				</div>
+			) : hasNoTasksAtAll ? (
+				<EmptyState
+					variant="hero"
+					icon={<ListPlus className="w-8 h-8" />}
+					title="No tasks yet"
+					description="Create a task to get the team moving."
+					action={
+						<Button
+							size="lg"
+							onClick={() => setCreateOpen(true)}
+							data-testid="task-list-empty-create"
+						>
+							<Plus className="w-4 h-4" />
+							Create a task
+						</Button>
+					}
+				/>
+			) : (
+				<>
+					{/* Open work and finished work each get their own section; an empty one
+					    is omitted entirely (TaskListSection returns null). */}
+					<TaskListSection
+						title="Backlog"
+						testId="task-list-main"
+						tasks={backlogTasks}
 						columns={columns}
-						data={tasks}
-						rowKey={(row) => row.id}
 						onRowClick={handleRowClick}
-						getRowDepth={(row) => row.depth}
-						indentColumnKey="title"
 					/>
-				) : (
-					<p
-						className="text-text-2 text-[13px] py-6 text-center"
-						data-testid="task-list-todo-empty"
-					>
-						No matching tasks
-					</p>
-				)}
+					<TaskListSection
+						title="Done"
+						testId="task-list-done"
+						tasks={doneTasks}
+						columns={columns}
+						onRowClick={handleRowClick}
+					/>
 
-				{result?.meta && result.meta.total > result.meta.per_page && (
-					<div className="flex items-center justify-between mt-4 text-xs text-text-2">
-						<span>
-							Showing {tasks.length} of {result.meta.total}
-						</span>
-						<div className="flex gap-2">
-							<Button
-								variant="secondary"
-								size="sm"
-								disabled={result.meta.page <= 1}
-								onClick={() => setPage((p) => Math.max(1, p - 1))}
-							>
-								Previous
-							</Button>
-							<Button
-								variant="secondary"
-								size="sm"
-								disabled={result.meta.page * result.meta.per_page >= result.meta.total}
-								onClick={() => setPage((p) => p + 1)}
-							>
-								Next
-							</Button>
+					{backlogTasks.length === 0 && doneTasks.length === 0 && (
+						<p
+							className="text-text-2 text-[13px] py-6 text-center"
+							data-testid="task-list-todo-empty"
+						>
+							No matching tasks
+						</p>
+					)}
+
+					{result?.meta && result.meta.total > result.meta.per_page && (
+						<div className="flex items-center justify-between mt-4 text-xs text-text-2">
+							<span>
+								Showing {backlogTasks.length + doneTasks.length} of {result.meta.total}
+							</span>
+							<div className="flex gap-2">
+								<Button
+									variant="secondary"
+									size="sm"
+									disabled={result.meta.page <= 1}
+									onClick={() => setPage((p) => Math.max(1, p - 1))}
+								>
+									Previous
+								</Button>
+								<Button
+									variant="secondary"
+									size="sm"
+									disabled={result.meta.page * result.meta.per_page >= result.meta.total}
+									onClick={() => setPage((p) => p + 1)}
+								>
+									Next
+								</Button>
+							</div>
 						</div>
-					</div>
-				)}
-			</section>
+					)}
+				</>
+			)}
 
 			<CreateTaskDialog projectId={projectId} open={createOpen} onOpenChange={setCreateOpen} />
 		</div>

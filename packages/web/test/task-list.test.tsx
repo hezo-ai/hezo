@@ -164,6 +164,105 @@ test('multi-select status filter narrows results and reset restores defaults', a
 	);
 });
 
+test('terminal tasks render in a Done section split out from the Backlog', async () => {
+	let projectSlug = '';
+
+	const { findByTestId, findByText, findByRole, queryByTestId, queryByText, router, user } =
+		await renderApp({
+			initialPath: '/',
+			seed: async () => {
+				const ws = await seedWorkspace();
+				const project = await seedProject(ws, { name: 'Done Split Project' });
+				projectSlug = project.slug;
+				const agentId = ws.agents[0].id;
+				await seedTask(ws, project, { title: 'Backlog Task', assignee_id: agentId });
+				const done = await seedTask(ws, project, { title: 'Done Task', assignee_id: agentId });
+				const closed = await seedTask(ws, project, { title: 'Closed Task', assignee_id: agentId });
+				await patchStatus(ws, done.id, 'done');
+				await patchStatus(ws, closed.id, 'closed');
+			},
+		});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
+	});
+
+	// Default view excludes terminal statuses, so the Done section is absent.
+	await findByText('Backlog Task', undefined, { timeout: 10_000 });
+	expect(queryByTestId('task-list-done')).toBeNull();
+	expect(queryByText('Done Task')).toBeNull();
+	expect(queryByText('Closed Task')).toBeNull();
+
+	// Add the terminal statuses to the filter so the finished work is fetched.
+	const toggle = await findByTestId('task-filter-toggle');
+	await user.click(toggle);
+	const statusBtn = await findByTestId('task-filter-status');
+	await user.click(statusBtn);
+	const doneOption = await findByRole('button', { name: 'Done' });
+	await user.click(doneOption);
+	const closedOption = await findByRole('button', { name: 'Closed' });
+	await user.click(closedOption);
+	await user.click(statusBtn);
+
+	// Terminal tasks land under "Done"; the Backlog keeps only open work.
+	const doneSection = await findByTestId('task-list-done');
+	await waitFor(
+		() => {
+			expect(doneSection.textContent).toContain('Done Task');
+			expect(doneSection.textContent).toContain('Closed Task');
+		},
+		{ timeout: 10_000 },
+	);
+	expect(doneSection.querySelector('h2')?.textContent).toBe('Done');
+	expect(doneSection.textContent).not.toContain('Backlog Task');
+
+	const backlogSection = await findByTestId('task-list-main');
+	expect(backlogSection.querySelector('h2')?.textContent).toBe('Backlog');
+	expect(backlogSection.textContent).toContain('Backlog Task');
+	expect(backlogSection.textContent).not.toContain('Done Task');
+	expect(backlogSection.textContent).not.toContain('Closed Task');
+});
+
+test('Done section hides when only terminal tasks remain after filtering them out', async () => {
+	let projectSlug = '';
+
+	const { findByTestId, findByText, findByRole, queryByTestId, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Only Done Project' });
+			projectSlug = project.slug;
+			const agentId = ws.agents[0].id;
+			const done = await seedTask(ws, project, { title: 'Finished Task', assignee_id: agentId });
+			await patchStatus(ws, done.id, 'done');
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
+	});
+
+	// Filter to just "Done": only the Done section renders, no empty Backlog header.
+	const toggle = await findByTestId('task-filter-toggle');
+	await user.click(toggle);
+	const statusBtn = await findByTestId('task-filter-status');
+	await user.click(statusBtn);
+	const clear = await findByRole('button', { name: 'Clear selection' });
+	await user.click(clear);
+	const doneOption = await findByRole('button', { name: 'Done' });
+	await user.click(doneOption);
+	await user.click(statusBtn);
+
+	await findByText('Finished Task', undefined, { timeout: 10_000 });
+	await waitFor(() => {
+		expect(queryByTestId('task-list-done')).not.toBeNull();
+	});
+	// No open work matches, so the Backlog section is omitted entirely.
+	expect(queryByTestId('task-list-main')).toBeNull();
+});
+
 test('filter bar collapses/expands and applies search + sort', async () => {
 	let projectSlug = '';
 
