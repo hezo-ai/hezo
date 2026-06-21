@@ -129,7 +129,10 @@ clash (**project > team > instance**). `team_ssh_keys` is the exception — one 
 **Runs, wakeups, sessions.** `agent_wakeup_requests` is the trigger queue, with
 idempotency keys and `coalesced_count` merging (§ 5). `heartbeat_runs` is one row per
 execution (status, timing, tokens, cost, captured logs, `wakeup_id` provenance, the
-success-gate flags `produced_output`/`reported_no_work`). `agent_task_sessions` persists
+success-gate flags `produced_output`/`reported_no_work`). Token usage is flushed to the
+row *during* the run (alongside the log), so a run the server kills mid-flight still
+reports the tokens/cost it burned instead of `0`; `usage_partial` flags such a snapshot
+until a clean completion supersedes it. `agent_task_sessions` persists
 per-task session state for compaction across heartbeats. `ceo_sessions` /
 `ceo_conversations` / `ceo_messages` back the live CEO chat (§ 4).
 
@@ -139,7 +142,10 @@ per-model token rates (a bundled LiteLLM snapshot refreshed from the public feed
 `source='manual'` operator overrides winning). Budgets are **windowed and computed on
 demand**: limits live as `daily_/weekly_/monthly_budget_cents` on `member_agents` and
 `projects` (0 = unlimited; there is **no team budget**), and spend is summed from
-`cost_entries` over rolling UTC windows — no counter, no reset event (§ 5).
+`cost_entries` over rolling UTC windows — no counter, no reset event (§ 5). A run killed
+mid-flight never reaches the run-completion cost record, so `reconcileOnStartup` charges
+its surviving partial `cost_cents` on reboot (shared `recordRunCostAndEnforce`) — an
+interrupted run still counts against budgets.
 
 **Docs, skills, assets.** `documents` is one table backing three Markdown kinds by
 `type` (`project_doc`, `team_preferences`, `agent_system_prompt`), each with partial

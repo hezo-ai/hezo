@@ -73,7 +73,7 @@ const AGENT_BASE_COLUMNS = `m.id, m.team_id, m.display_name, m.created_at,
 
 const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr.task_id,
 	hr.status, hr.queued_reason, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
-	hr.input_tokens, hr.output_tokens, hr.cost_cents,
+	hr.input_tokens, hr.output_tokens, hr.cost_cents, hr.usage_partial,
 	hr.invocation_command, hr.log_text, hr.working_dir,
 	hr.process_pid, hr.retry_of_run_id, hr.process_loss_retry_count,
 	i.identifier AS task_identifier, i.title AS task_title,

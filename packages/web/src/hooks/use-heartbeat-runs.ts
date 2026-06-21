@@ -23,6 +23,8 @@ export interface HeartbeatRun {
 	input_tokens: number;
 	output_tokens: number;
 	cost_cents: number | null;
+	/** True when the usage above is a mid-run snapshot (the run was interrupted before it finished). */
+	usage_partial: boolean;
 	invocation_command: string | null;
 	log_text: string | null;
 	working_dir: string | null;

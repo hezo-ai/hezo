@@ -341,6 +341,7 @@ interface ClaudeContentBlock {
 interface ClaudeMessage {
 	role?: string;
 	content?: ClaudeContentBlock[] | string;
+	usage?: ClaudeUsage;
 }
 
 interface ClaudeUsage {
@@ -369,6 +370,14 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 	let usage: AgentRunUsage | null = null;
 	let modelId: string | undefined;
 	let terminalError: string | null = null;
+	// Running token totals, accumulated from each assistant turn's `message.usage`,
+	// so a run interrupted before its terminal `result` event (e.g. a server
+	// restart mid-run) still reports the tokens it burned. Each assistant message
+	// carries that API call's usage; Claude Code's final `result.usage` is the sum
+	// across turns, so the running total converges to it and is replaced by the
+	// authoritative figure once `result` lands.
+	const run = { input: 0, cacheCreation: 0, cacheRead: 0, output: 0 };
+	let sawResult = false;
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as ClaudeStreamEvent;
@@ -382,6 +391,23 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 		}
 
 		if (event.type === 'assistant' && event.message) {
+			const mu = event.message.usage;
+			if (mu && !sawResult) {
+				run.input += mu.input_tokens ?? 0;
+				run.cacheCreation += mu.cache_creation_input_tokens ?? 0;
+				run.cacheRead += mu.cache_read_input_tokens ?? 0;
+				run.output += mu.output_tokens ?? 0;
+				usage = {
+					inputTokens: run.input + run.cacheCreation + run.cacheRead,
+					outputTokens: run.output,
+					costCents: price(modelId, {
+						inputTokens: run.input,
+						cacheCreationTokens: run.cacheCreation,
+						cacheReadTokens: run.cacheRead,
+						outputTokens: run.output,
+					}),
+				};
+			}
 			const blocks = normalizeContent(event.message.content);
 			for (const block of blocks) {
 				if (block.type === 'thinking') {
@@ -407,6 +433,7 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 		}
 
 		if (event.type === 'result') {
+			sawResult = true;
 			const u = event.usage ?? {};
 			const regularInput = u.input_tokens ?? 0;
 			const cacheCreation = u.cache_creation_input_tokens ?? 0;
