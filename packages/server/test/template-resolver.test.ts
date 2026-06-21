@@ -1072,6 +1072,11 @@ describe('repository block', () => {
 		// PRs go through the github MCP, not raw curl to api.github.com.
 		expect(result).toContain('`github` MCP');
 		expect(result).toContain('api.github.com');
+		// CI failures: read logs via the github MCP's actions tools, never curl.
+		expect(result).toContain('get_job_logs');
+		expect(result).toContain('failed_only');
+		expect(result).toContain('list_workflow_runs');
+		expect(result).toContain('never by hand');
 		// The repo is named by owner/name, never by its internal UUID.
 		expect(result).not.toContain(repoIns.rows[0].id);
 	});

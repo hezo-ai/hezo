@@ -121,10 +121,14 @@ describe('POST /teams/:teamId/connectors/ensure', () => {
 		const firstRow = (await first.json()).data as {
 			id: string;
 			name: string;
-			config: { url: string };
+			config: { url: string; headers?: Record<string, string> };
 		};
 		expect(firstRow.name).toBe('github');
 		expect(firstRow.config.url).toBe('https://api.githubcopilot.com/mcp/');
+		// The github capability ships X-MCP-Toolsets (defaults + actions) so agents
+		// get get_job_logs; the ensure route must persist it into the stored config.
+		expect(firstRow.config.headers?.['X-MCP-Toolsets']).toContain('actions');
+		expect(firstRow.config.headers?.['X-MCP-Toolsets']).toContain('pull_requests');
 
 		const second = await ctx.app.request(`/api/projects/${projectSlug}/connectors/ensure`, {
 			method: 'POST',
@@ -170,6 +174,30 @@ describe('loadMcpConnectionDescriptors', () => {
 		if (a?.kind === 'http') {
 			expect(a.url).toBe('https://service-a.example/mcp');
 			expect(a.headers).toEqual({ 'x-key': 'v' });
+		}
+	});
+
+	it('carries the github X-MCP-Toolsets header (defaults + actions) on the descriptor', async () => {
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, install_status)
+			 VALUES ('github', 'saas', $1::jsonb, 'installed')`,
+			[
+				JSON.stringify({
+					url: 'https://api.githubcopilot.com/mcp/',
+					headers: { 'X-MCP-Toolsets': 'context,repos,issues,pull_requests,users,copilot,actions' },
+				}),
+			],
+		);
+		const descriptors = await loadMcpConnectionDescriptors(db, masterKeyManager);
+		const gh = descriptors.find((d) => d.name === 'github');
+		expect(gh?.kind).toBe('http');
+		if (gh?.kind === 'http') {
+			// Host unchanged → allowedHosts still match; `actions` is what exposes
+			// get_job_logs, and `pull_requests` must remain for PR operations.
+			expect(gh.url).toBe('https://api.githubcopilot.com/mcp/');
+			const toolsets = (gh.headers?.['X-MCP-Toolsets'] ?? '').split(',');
+			expect(toolsets).toContain('actions');
+			expect(toolsets).toContain('pull_requests');
 		}
 	});
 
