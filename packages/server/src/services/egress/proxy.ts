@@ -302,7 +302,13 @@ class RunProxyInstance {
 		sock.once('close', () => this.liveSockets.delete(sock));
 		if (EGRESS_DEBUG) {
 			const at = Date.now();
-			this.dbg('socket open', { leg, local: sock.localPort, remote: sock.remotePort });
+			// An upstream socket is still connecting when its request first emits it,
+			// so its ports aren't populated yet; defer the open log to `connect` so it
+			// reports the real local/remote ports instead of a placeholder.
+			const logOpen = () =>
+				this.dbg('socket open', { leg, local: sock.localPort, remote: sock.remotePort });
+			if (sock.connecting) sock.once('connect', logOpen);
+			else logOpen();
 			sock.on('timeout', () => this.dbg('socket timeout event', { leg, ageMs: Date.now() - at }));
 			sock.once('error', (e: Error) =>
 				this.dbg('socket error', { leg, ageMs: Date.now() - at, error: e.message }),
