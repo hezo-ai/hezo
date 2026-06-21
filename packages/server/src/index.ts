@@ -5,8 +5,9 @@ import { parseConfig, runRestore } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
 import { PgDataCorruptError } from './db/client';
 import { DbNewerThanAppError, MigrationFailedError } from './db/migrate-errors';
+import type { AuthInfo } from './lib/types';
 import { logger, setLogLevel } from './logger';
-import { loadAdminAuth, verifyToken } from './middleware/auth';
+import { canAuthAccessTeam, loadAdminAuth, verifyToken } from './middleware/auth';
 import type { ContainerLogStreamer } from './services/container-logs';
 import { setKeepOldContainers } from './services/containers';
 import { getSharedImageBuildTracker } from './services/image-build-tracker';
@@ -107,19 +108,12 @@ async function validateAnonymous(): Promise<WsData['auth'] | null> {
 }
 
 async function canAccessTeam(auth: WsData['auth'], teamId: string): Promise<boolean> {
-	if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
-		return auth.teamId === teamId;
-	}
-	if (auth.type === AuthType.Admin) {
-		if (auth.isSuperuser) return true;
-		if (!dbRef) return false;
-		const result = await dbRef.query(
-			'SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1 AND m.team_id = $2',
-			[auth.userId, teamId],
-		);
-		return result.rows.length > 0;
-	}
-	return false;
+	if (!dbRef) return false;
+	// By the time a socket subscribes, `open` has replaced the placeholder with a
+	// validated AuthInfo; WsData widens it to a loose bag, so re-narrow here. The
+	// team rule itself lives in one place — auth.ts:canAuthAccessTeam — shared with
+	// REST, so connected agents (and cross-team CEO sessions) reach realtime rooms too.
+	return canAuthAccessTeam(dbRef, auth as AuthInfo, teamId);
 }
 
 function startingResponse(): Response {
