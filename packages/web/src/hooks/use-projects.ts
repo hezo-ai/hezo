@@ -133,7 +133,7 @@ export interface ProjectWithTeamResponse {
  * POST /api/projects, which provisions a fresh team from the chosen team-type
  * template (default Blank) — or, when `source_team_id` is given, from a fresh
  * snapshot of an existing team — and directly creates the project + planning
- * task. See .dev/per-project-teams.md.
+ * task. See .dev/architecture.md.
  */
 export function useCreateProjectWithTeam() {
 	return useMutation({

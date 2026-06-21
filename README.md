@@ -212,7 +212,7 @@ over.
 ## Development
 
 Contributor setup, scripts, and the testing guide live in
-[`.dev/DEVELOPING.md`](./.dev/DEVELOPING.md) and [`AGENTS.md`](./AGENTS.md).
+[`.github/CONTRIBUTING.md`](./.github/CONTRIBUTING.md) and [`AGENTS.md`](./AGENTS.md).
 
 ```sh
 bun install
