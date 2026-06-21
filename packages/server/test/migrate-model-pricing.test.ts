@@ -12,7 +12,7 @@ afterEach(async () => {
 	await db.close();
 });
 
-describe('005_model_pricing migration', () => {
+describe('model_pricing baseline schema', () => {
 	it('creates the model_pricing table with the expected columns', async () => {
 		const r = await db.query<{ column_name: string }>(
 			`SELECT column_name FROM information_schema.columns WHERE table_name = 'model_pricing'`,
