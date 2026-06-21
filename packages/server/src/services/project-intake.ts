@@ -381,6 +381,7 @@ export async function completeProjectIntakeAfterProvisioning(
 			oldStatus,
 			TaskStatus.Done,
 			ctx.ceoMemberId,
+			null,
 			wsManager,
 		);
 		try {

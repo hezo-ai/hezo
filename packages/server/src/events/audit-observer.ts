@@ -196,6 +196,7 @@ type ScopedActor = {
 	projectId?: string | null;
 	actorType: AuditActorType;
 	actorMemberId: string | null;
+	actorConnectedAgentId?: string | null;
 };
 
 function row(
@@ -210,6 +211,7 @@ function row(
 		projectId: event.projectId ?? null,
 		actorType: event.actorType,
 		actorMemberId: event.actorMemberId,
+		actorConnectedAgentId: event.actorConnectedAgentId ?? null,
 		action,
 		entityType,
 		entityId,

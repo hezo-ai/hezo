@@ -324,6 +324,7 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 		teamId,
 		actorType: createActor.actorType,
 		actorMemberId: createActor.actorMemberId,
+		actorConnectedAgentId: createActor.actorConnectedAgentId,
 		agentMemberId: memberId,
 	});
 
@@ -938,6 +939,7 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 			teamId,
 			actorType: updateActor.actorType,
 			actorMemberId: updateActor.actorMemberId,
+			actorConnectedAgentId: updateActor.actorConnectedAgentId,
 			agentMemberId: agentId,
 			changes,
 		});
@@ -988,6 +990,7 @@ agentsRoutes.post('/projects/:projectId/agents/:agentId/disable', async (c) => {
 		teamId,
 		actorType: disableActor.actorType,
 		actorMemberId: disableActor.actorMemberId,
+		actorConnectedAgentId: disableActor.actorConnectedAgentId,
 		agentMemberId: agentId,
 	});
 
@@ -1030,6 +1033,7 @@ agentsRoutes.post('/projects/:projectId/agents/:agentId/enable', async (c) => {
 		teamId,
 		actorType: enableActor.actorType,
 		actorMemberId: enableActor.actorMemberId,
+		actorConnectedAgentId: enableActor.actorConnectedAgentId,
 		agentMemberId: agentId,
 	});
 

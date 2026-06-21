@@ -1753,6 +1753,7 @@ export class JobManager {
 						TaskStatus.Done,
 						TaskStatus.Closed,
 						memberId,
+						null,
 						this.deps.wsManager,
 					);
 				}

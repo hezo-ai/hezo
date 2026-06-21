@@ -561,7 +561,12 @@ export const DocumentType = {
 } as const;
 export type DocumentType = (typeof DocumentType)[keyof typeof DocumentType];
 
-export const AuditActorType = { Admin: 'admin', Agent: 'agent', System: 'system' } as const;
+export const AuditActorType = {
+	Admin: 'admin',
+	Agent: 'agent',
+	System: 'system',
+	ConnectedAgent: 'connected_agent',
+} as const;
 export type AuditActorType = (typeof AuditActorType)[keyof typeof AuditActorType];
 
 export const RepoHostType = { GitHub: 'github' } as const;
