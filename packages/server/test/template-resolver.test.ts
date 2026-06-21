@@ -234,6 +234,15 @@ describe('template resolver', () => {
 		expect(result).toContain('create_task');
 	});
 
+	it('teaches that a status-phrased handoff (e.g. "ready for review") is an active-`@` ask', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// A baton-passing line with no imperative verb still wakes the next actor —
+		// guards against the passive-mention misclassification that strands review handoffs.
+		expect(result).toContain('baton-passing handoff is an ask even when it reads as a status line');
+		expect(result).toContain('who is expected to act next on this ticket?');
+		expect(result).toContain('ready for review');
+	});
+
 	it('promotes the universal partials into the shared guidelines for every agent', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		// check-before-create
