@@ -15,12 +15,19 @@ const PNG_BYTES = Uint8Array.from([
 ]);
 
 // Attachment chips/previews only render after the dropped file's upload
-// round-trips to the server (handleFiles → upload.mutateAsync). Under CI load
-// (parallel workers + 1 Hz agent cron + dev-mode Vite) that can outrun
-// Playwright's default, so wait as generously as the composer's own load wait.
-const UPLOAD_WAIT_MS = 20_000;
+// round-trips to the server (handleFiles → upload.mutateAsync). The e2e server
+// runs on a single-connection PGlite, so every query from all four parallel
+// workers serialises through it; under a burst the upload's handful of queries
+// can queue for many seconds behind other workers' requests. That is genuine
+// saturation latency, not a stuck render, so wait generously rather than letting
+// a transient spike fail the run.
+const UPLOAD_WAIT_MS = 30_000;
 
 test.describe('Task Comment Attachments', () => {
+	// The task is assigned to the Captain because the API requires every task to
+	// carry an agent assignee. `waitForAgentIdle` then drains the Captain's
+	// assignment-triggered run before the test interacts, so a synthetic run
+	// comment can't land mid-assertion.
 	async function createTask(page: import('@playwright/test').Page, token: string) {
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -124,6 +131,12 @@ test.describe('Task Comment Attachments', () => {
 		const chip = page.locator('[data-testid="comment-attachment-chip"]', { hasText: 'shot.png' });
 		await expect(chip).toBeVisible({ timeout: UPLOAD_WAIT_MS });
 
+		// Don't wake the Captain on submit: its synthetic run would post a run
+		// comment and re-render the thread while we're waiting on the attachment
+		// thumb below, adding avoidable load and re-render races. The thumb is what
+		// this test asserts, not the agent run.
+		await page.getByRole('checkbox', { name: 'Wake assignee on submit' }).uncheck();
+
 		const send = page.getByRole('button', { name: 'Comment', exact: true });
 		await expect(send).toBeEnabled();
 		await send.click();
@@ -155,15 +168,17 @@ test.describe('Task Comment Attachments', () => {
 
 		const info = page.locator('[data-testid="comment-attachment-hint-info"]');
 		const tooltip = page.getByRole('tooltip');
-		// Radix opens this tooltip immediately on keyboard focus, but on hover only
-		// after a delay and only while the synthetic pointer stays put — in headless
-		// Chromium that hover open is unreliable and can be missed for the whole poll
-		// window. Drive it by focusing the trigger (deterministic), with a hover as a
-		// secondary nudge, and re-assert under toPass so a stray blur/re-render while
-		// the form settles self-heals.
+		// Radix opens this tooltip in its trigger's `onFocus` handler, which fires
+		// only on an actual focus *change* — and its hover-open is unreliable in
+		// headless Chromium (the pointer has to land and stay put through the delay).
+		// So drive it by focus, but blur first on every attempt: if a previous
+		// attempt left the trigger focused while a settle re-render closed the
+		// tooltip, re-focusing an already-focused element is a no-op that never
+		// re-opens it, and the poll would spin until timeout. Park the pointer away
+		// first so a stray hover open/close can't race the focus path.
+		await page.mouse.move(0, 0);
 		await expect(async () => {
-			await page.mouse.move(0, 0);
-			await info.hover();
+			await info.blur();
 			await info.focus();
 			await expect(tooltip).toBeVisible({ timeout: 2500 });
 			const text = (await tooltip.textContent()) ?? '';

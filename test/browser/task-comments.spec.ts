@@ -113,12 +113,20 @@ test.describe('Task Comments', () => {
 		await expect(page.getByTestId('reply-indicator')).toBeVisible();
 
 		await composer.fill('Mobile reply');
+		// Don't wake the Captain on submit: its synthetic run would post a run
+		// comment and re-render the thread while we wait for the reply below,
+		// adding avoidable load and re-render races. The reply is what we assert.
+		await page.getByRole('checkbox', { name: 'Wake assignee on submit' }).uncheck();
 		await page.getByRole('button', { name: 'Comment', exact: true }).click();
 
 		const followUp = page
 			.locator('[data-testid="comment-item"]')
 			.filter({ hasText: 'Mobile reply' });
-		await expect(followUp).toBeVisible({ timeout: 15_000 });
+		// The reply appears once the create-comment POST resolves (its onSuccess
+		// seeds the cache). On the single-connection e2e PGlite that POST can queue
+		// behind other parallel workers' requests, so allow the same generous window
+		// the rest of these specs use rather than letting a saturation spike flake.
+		await expect(followUp).toBeVisible({ timeout: 20_000 });
 		await expect(followUp.getByTestId('replying-to')).toBeVisible();
 	});
 });
