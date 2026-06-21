@@ -1975,6 +1975,11 @@ export class JobManager {
 	}
 
 	private async processEmbeddingQueue(): Promise<void> {
+		// Loading the local feature-extraction model and running inference is
+		// CPU-heavy; under the parallel browser-test runner it starves request
+		// handling (manifests as web-server ECONNRESET / upload timeouts). No e2e
+		// test asserts on semantic search, so skip the queue entirely in that mode.
+		if (process.env.HEZO_E2E_SKIP_EMBEDDINGS) return;
 		const { processPendingEmbeddings } = await import('./embeddings');
 		const count = await processPendingEmbeddings(this.deps.db);
 		if (count > 0) {
