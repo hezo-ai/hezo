@@ -56,6 +56,13 @@ describe('stop-hook rules require add_task_blocker for cross-ticket waits', () =
 		);
 	});
 
+	it("blocks offloading the ticket's own deliverable into a sub-task or separate ticket", () => {
+		// A defect in the work THIS ticket is producing is its own remaining work,
+		// not separable follow-up — it cannot be deferred via create_task.
+		expect(STOP_HOOK_RULES).toContain("part of THIS ticket's own deliverable");
+		expect(STOP_HOOK_RULES).toContain('never for fixing this ticket');
+	});
+
 	it('the Claude Code prompt hook embeds the rule', () => {
 		expect(STOP_HOOK_PROMPT).toContain('add_task_blocker');
 		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
