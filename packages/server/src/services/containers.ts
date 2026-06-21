@@ -269,7 +269,7 @@ export async function provisionContainer(
 		const containerLabels = { 'hezo.team': teamSlug, 'hezo.project': project.slug };
 		const extraHosts = ['host.docker.internal:host-gateway'];
 
-		const env = ['HEZO_API_URL=http://host.docker.internal:3100/agent-api'];
+		const env: string[] = [];
 
 		emit('stdout', `→ Resolving image ${project.docker_base_image}`);
 		// Docker writes its build trace to stderr even on success; surface it as

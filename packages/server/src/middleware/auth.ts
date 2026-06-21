@@ -129,7 +129,7 @@ export async function verifyToken(
 export const authMiddleware = createMiddleware<Env>(async (c, next) => {
 	const path = new URL(c.req.url).pathname;
 	if (PUBLIC_PATHS.includes(path)) return next();
-	if (!path.startsWith('/api') && !path.startsWith('/agent-api')) return next();
+	if (!path.startsWith('/api')) return next();
 
 	const masterKeyManager = c.get('masterKeyManager');
 	const db = c.get('db');

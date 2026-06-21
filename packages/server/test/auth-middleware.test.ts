@@ -362,7 +362,9 @@ describe('authMiddleware (via HTTP)', () => {
 			null,
 			{ projectId: internalProjectId },
 		);
-		const res = await app.request('/agent-api/secrets/mine', {
+		// Agents drive the MCP surface, but the shared auth layer still accepts a
+		// valid agent JWT on /api routes (the handler then applies its own authz).
+		const res = await app.request('/api/projects', {
 			headers: authHeader(agentToken),
 		});
 		expect(res.status).toBe(200);

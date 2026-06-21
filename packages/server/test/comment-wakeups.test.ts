@@ -4,6 +4,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
+import { fireCommentWakeups } from '../src/services/comment-wakeups';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -105,23 +106,6 @@ async function postMcpComment(
 	};
 	const inserted = JSON.parse(body.result.content[0].text) as { id: string };
 	return inserted.id;
-}
-
-async function postAgentApiComment(
-	agentToken: string,
-	taskId: string,
-	text: string,
-): Promise<string> {
-	const res = await app.request(`/agent-api/tasks/${taskId}/comments`, {
-		method: 'POST',
-		headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			content_type: CommentContentType.Text,
-			content: { text },
-		}),
-	});
-	expect(res.status).toBe(201);
-	return (await res.json()).data.id;
 }
 
 beforeAll(async () => {
@@ -300,48 +284,30 @@ describe('MCP create_comment fires mention-only wakeups', () => {
 	});
 });
 
-describe('agent-api POST comments fires mention-only wakeups', () => {
-	it('wakes a mentioned agent on an agent-api-posted comment', async () => {
-		const { taskId, agentToken } = await setup(
-			captainId,
-			productLeadId,
-			'Captain roadmap ticket 2',
+describe('non-text comments skip mention wakeups', () => {
+	// Server-created comments (run/system/trace/execution) can carry @-like text
+	// but must never fire mention wakeups. fireCommentWakeups is the single guard,
+	// so exercise it directly with a non-text content type.
+	it('does not fire mention wakeups for a trace-typed comment', async () => {
+		const taskId = await insertTask(productLeadId, 'Trace ticket');
+		const content = { text: '@architect tool output' };
+		const inserted = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, $2, 'trace'::comment_content_type, $3::jsonb)
+			 RETURNING id`,
+			[taskId, captainId, JSON.stringify(content)],
 		);
-		const commentId = await postAgentApiComment(
-			agentToken,
+		await fireCommentWakeups({
+			db,
 			taskId,
-			'@architect could you weigh in on §FR-20?',
-		);
-
-		const wakeups = await wakeupsForComment(commentId);
-		const mention = wakeups.find(
-			(w) => w.source === WakeupSource.Mention && w.member_id === architectId,
-		);
-		expect(mention).toBeDefined();
-	});
-
-	it('does not wake the assignee on a plain agent-api comment from a different agent', async () => {
-		const { taskId, agentToken } = await setup(architectId, productLeadId, 'Architecture task 2');
-		const commentId = await postAgentApiComment(agentToken, taskId, 'More context for you here.');
-
-		const wakeups = await wakeupsForComment(commentId);
-		expect(wakeups).toEqual([]);
-	});
-
-	it('skips non-text content types even when they contain @-mentions', async () => {
-		const { taskId, agentToken } = await setup(captainId, productLeadId, 'Trace ticket');
-		const res = await app.request(`/agent-api/tasks/${taskId}/comments`, {
-			method: 'POST',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				content_type: CommentContentType.Trace,
-				content: { text: '@architect tool output' },
-			}),
+			teamId,
+			commentId: inserted.rows[0].id,
+			content,
+			contentType: CommentContentType.Trace,
+			authorMemberId: captainId,
 		});
-		expect(res.status).toBe(201);
-		const commentId = (await res.json()).data.id;
 
-		const wakeups = await wakeupsForComment(commentId);
+		const wakeups = await wakeupsForComment(inserted.rows[0].id);
 		expect(wakeups).toEqual([]);
 	});
 });
@@ -408,24 +374,6 @@ describe('admin POST comments honors wake_assignee opt-in', () => {
 		expect(wakeups).toHaveLength(1);
 		expect(wakeups[0].source).toBe(WakeupSource.Mention);
 		expect(wakeups[0].member_id).toBe(architectId);
-	});
-
-	it('ignores wake_assignee when posted via the agent-api', async () => {
-		const { taskId, agentToken } = await setup(architectId, productLeadId, 'Agent flag ignored');
-		const res = await app.request(`/agent-api/tasks/${taskId}/comments`, {
-			method: 'POST',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				content_type: CommentContentType.Text,
-				content: { text: 'Plain agent comment.' },
-				wake_assignee: true,
-			}),
-		});
-		expect(res.status).toBe(201);
-		const commentId = (await res.json()).data.id;
-
-		const wakeups = await wakeupsForComment(commentId);
-		expect(wakeups).toEqual([]);
 	});
 });
 
@@ -510,35 +458,6 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 		expect(reply.payload.comment_id).toBe(replyId);
 		expect((reply.payload as Record<string, unknown>).triggering_comment_id).toBe(parentId);
 		expect((reply.payload as Record<string, unknown>).responder_member_id).toBe(architectId);
-	});
-
-	it('also fires when the reply is posted via the agent-api', async () => {
-		const taskId = await insertTask(captainId, 'Reply agent-api');
-		const parentId = await insertCommentBy(taskId, captainId, 'Thoughts?');
-		const { token: architectToken } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			architectId,
-			teamId,
-			taskId,
-		);
-
-		const res = await app.request(`/agent-api/tasks/${taskId}/comments`, {
-			method: 'POST',
-			headers: { ...authHeader(architectToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				content_type: CommentContentType.Text,
-				content: { text: 'Acknowledged.' },
-				parent_comment_id: parentId,
-			}),
-		});
-		expect(res.status).toBe(201);
-		const replyId = (await res.json()).data.id;
-
-		const wakeups = await wakeupsForComment(replyId);
-		expect(wakeups.some((w) => w.source === WakeupSource.Reply && w.member_id === captainId)).toBe(
-			true,
-		);
 	});
 
 	it('fires when a Admin (human) user posts the reply', async () => {
@@ -718,7 +637,7 @@ describe('mention wakeup idempotency by (task, mentioned, author)', () => {
 	it('collapses repeated @-mentions by the same author of the same agent on the same task', async () => {
 		const { taskId, agentToken } = await setup(captainId, productLeadId, 'Idempotent retry');
 
-		const firstCommentId = await postAgentApiComment(
+		const firstCommentId = await postMcpComment(
 			agentToken,
 			taskId,
 			'@architect please confirm scope.',
@@ -729,7 +648,7 @@ describe('mention wakeup idempotency by (task, mentioned, author)', () => {
 
 		await backdateWakeup(firstWakeups[0].id);
 
-		const secondCommentId = await postAgentApiComment(
+		const secondCommentId = await postMcpComment(
 			agentToken,
 			taskId,
 			'@architect bumping this — still need a confirm.',
@@ -759,12 +678,12 @@ describe('mention wakeup idempotency by (task, mentioned, author)', () => {
 			taskId,
 		);
 
-		await postAgentApiComment(productLeadToken, taskId, '@architect spec ready for review.');
+		await postMcpComment(productLeadToken, taskId, '@architect spec ready for review.');
 		const afterFirst = await queuedMentionsFor(taskId, architectId);
 		expect(afterFirst).toHaveLength(1);
 		await backdateWakeup(afterFirst[0].id);
 
-		await postAgentApiComment(engineerToken, taskId, '@architect peer-review note from engineer.');
+		await postMcpComment(engineerToken, taskId, '@architect peer-review note from engineer.');
 		const afterSecond = await queuedMentionsFor(taskId, architectId);
 		expect(afterSecond).toHaveLength(1);
 		expect(afterSecond[0].id).toBe(afterFirst[0].id);
@@ -773,7 +692,7 @@ describe('mention wakeup idempotency by (task, mentioned, author)', () => {
 	it('lets a new wakeup be created once the queued one transitions out of queued', async () => {
 		const { taskId, agentToken } = await setup(captainId, productLeadId, 'Drain and re-mention');
 
-		await postAgentApiComment(agentToken, taskId, '@architect please weigh in.');
+		await postMcpComment(agentToken, taskId, '@architect please weigh in.');
 		const queued = await queuedMentionsFor(taskId, architectId);
 		expect(queued).toHaveLength(1);
 
@@ -782,7 +701,7 @@ describe('mention wakeup idempotency by (task, mentioned, author)', () => {
 			[queued[0].id],
 		);
 
-		await postAgentApiComment(agentToken, taskId, '@architect new ask after drain.');
+		await postMcpComment(agentToken, taskId, '@architect new ask after drain.');
 		const afterDrain = await queuedMentionsFor(taskId, architectId);
 		expect(afterDrain).toHaveLength(1);
 		expect(afterDrain[0].id).not.toBe(queued[0].id);
@@ -825,7 +744,7 @@ describe('mention wakeup idempotency by (task, mentioned, author)', () => {
 			teamId,
 			taskId,
 		);
-		await postAgentApiComment(productLeadToken, taskId, '@architect agent-side ping.');
+		await postMcpComment(productLeadToken, taskId, '@architect agent-side ping.');
 		const afterAgent = await queuedMentionsFor(taskId, architectId);
 		expect(afterAgent).toHaveLength(1);
 		expect(afterAgent[0].id).toBe(afterSecondAdmin[0].id);

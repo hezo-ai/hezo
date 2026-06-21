@@ -378,7 +378,6 @@ export async function buildRuntimeInvocation(
 	}
 
 	const env: string[] = [
-		`HEZO_API_URL=http://host.docker.internal:${deps.serverPort}/agent-api`,
 		`HEZO_AGENT_TOKEN=${agentJwt}`,
 		`HEZO_AGENT_ID=${agentId}`,
 		`HEZO_HEARTBEAT_RUN_ID=${resourceId}`,
