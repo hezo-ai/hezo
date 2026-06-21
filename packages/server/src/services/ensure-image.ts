@@ -1,5 +1,6 @@
 import { logger } from '../logger';
 import type { DockerClient } from './docker';
+import { getSharedImageBuildTracker, type ImageBuildTracker } from './image-build-tracker';
 import { type BuildOnLine, type BuildOptions, buildImageViaCli } from './image-builder';
 import { BUNDLE_SHA_LABEL, type ResolvedLocalImage, resolveLocalImage } from './image-registry';
 
@@ -14,6 +15,8 @@ export interface EnsureImageDeps {
 		options?: BuildOptions,
 	) => Promise<void>;
 	onLine?: BuildOnLine;
+	/** Receives build start/progress/finish; defaults to the process singleton. */
+	tracker?: ImageBuildTracker | null;
 }
 
 interface InFlightBuild {
@@ -64,9 +67,11 @@ async function buildLocalImageOnce(
 		return;
 	}
 
+	const tracker = deps.tracker !== undefined ? deps.tracker : getSharedImageBuildTracker();
 	const listeners = new Set<BuildOnLine>();
 	if (deps.onLine) listeners.add(deps.onLine);
 	const fanout: BuildOnLine = (stream, text) => {
+		tracker?.observe(local.image, text);
 		for (const listener of listeners) listener(stream, text);
 	};
 
@@ -74,11 +79,13 @@ async function buildLocalImageOnce(
 	const entry: InFlightBuild = {
 		listeners,
 		promise: (async () => {
+			tracker?.start(local.image);
 			try {
 				await builder(local.image, local.context, local.dockerfile, {
 					onLine: fanout,
 					labels: { [BUNDLE_SHA_LABEL]: local.bundleSourceHash },
 				});
+				tracker?.finish(local.image);
 			} catch (err) {
 				// A build can report failure while the image is actually present —
 				// e.g. a racing build already exported identical content under the
@@ -89,8 +96,10 @@ async function buildLocalImageOnce(
 					log.warn(
 						`Build of ${local.image} reported failure but image is present; treating as success: ${msg}`,
 					);
+					tracker?.finish(local.image);
 					return;
 				}
+				tracker?.fail(local.image, err instanceof Error ? err.message : String(err));
 				throw err;
 			} finally {
 				inFlightBuilds.delete(local.image);

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DockerClient } from '../src/services/docker';
 import { ensureImage } from '../src/services/ensure-image';
+import { ImageBuildTracker } from '../src/services/image-build-tracker';
 
 describe('ensureImage', () => {
 	it('short-circuits when the image already exists locally', async () => {
@@ -221,5 +222,65 @@ describe('ensureImage', () => {
 			ensureImage(docker, 'hezo/benign:latest', { resolveLocal, build }),
 		).resolves.toBeUndefined();
 		expect(docker.pullImage).not.toHaveBeenCalled();
+	});
+
+	it('reports build start, progress, and finish to the tracker', async () => {
+		const docker = {
+			imageExists: vi.fn().mockResolvedValue(false),
+			pullImage: vi.fn(),
+		} as unknown as DockerClient;
+		const resolveLocal = vi.fn().mockReturnValue({
+			image: 'hezo/tracked:latest',
+			dockerfile: '/repo/docker/Dockerfile.agent-base',
+			context: '/repo/docker',
+			bundleSourceHash: 'a'.repeat(64),
+		});
+		const build = vi
+			.fn()
+			.mockImplementation(
+				async (
+					_image,
+					_ctx,
+					_dockerfile,
+					options?: { onLine?: (s: string, t: string) => void },
+				) => {
+					options?.onLine?.('stdout', 'Step 1/2 : FROM x');
+					options?.onLine?.('stdout', 'Step 2/2 : RUN y');
+				},
+			);
+		const tracker = new ImageBuildTracker();
+		const startSpy = vi.spyOn(tracker, 'start');
+		const observeSpy = vi.spyOn(tracker, 'observe');
+		const finishSpy = vi.spyOn(tracker, 'finish');
+
+		await ensureImage(docker, 'hezo/tracked:latest', { resolveLocal, build, tracker });
+
+		expect(startSpy).toHaveBeenCalledWith('hezo/tracked:latest');
+		expect(observeSpy).toHaveBeenCalledWith('hezo/tracked:latest', 'Step 1/2 : FROM x');
+		expect(finishSpy).toHaveBeenCalledWith('hezo/tracked:latest');
+	});
+
+	it('reports a build failure to the tracker and rethrows', async () => {
+		const docker = {
+			imageExists: vi.fn().mockResolvedValue(false),
+			pullImage: vi.fn(),
+		} as unknown as DockerClient;
+		const resolveLocal = vi.fn().mockReturnValue({
+			image: 'hezo/tracked-fail:latest',
+			dockerfile: '/repo/docker/Dockerfile.agent-base',
+			context: '/repo/docker',
+			bundleSourceHash: 'a'.repeat(64),
+		});
+		const build = vi.fn().mockRejectedValue(new Error('docker build exited with code 1'));
+		const tracker = new ImageBuildTracker();
+		const failSpy = vi.spyOn(tracker, 'fail');
+
+		await expect(
+			ensureImage(docker, 'hezo/tracked-fail:latest', { resolveLocal, build, tracker }),
+		).rejects.toThrow('exited with code 1');
+		expect(failSpy).toHaveBeenCalledWith(
+			'hezo/tracked-fail:latest',
+			expect.stringContaining('exited with code 1'),
+		);
 	});
 });

@@ -3,6 +3,7 @@ import { AuthType, WsMessageType, wsRoom } from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import type { DockerClient } from '../src/services/docker';
+import { ImageBuildTracker } from '../src/services/image-build-tracker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { WebSocketManager, type WsData, type WsSocket } from '../src/services/ws';
 import { handleWsSubscribe, handleWsUnsubscribe } from '../src/services/ws-subscribe-handler';
@@ -97,6 +98,7 @@ describe('handleWsSubscribe', () => {
 			docker: mockDocker,
 			containerLogStreamer,
 			logs,
+			imageBuildTracker: null,
 			canAccessTeam: canAccessTeamFactory(db),
 			sendToSocket: (_ws: WsSocket, _payload: unknown) => {},
 			...overrides,
@@ -175,6 +177,43 @@ describe('handleWsSubscribe', () => {
 		await handleWsSubscribe(ws, wsRoom.team(teamId), deps());
 
 		expect(wsManager.getRoomSize(wsRoom.team(teamId))).toBe(1);
+	});
+
+	it('subscribes to the global image-builds room and replays in-flight builds', async () => {
+		const user = await db.query<{ id: string }>(
+			"INSERT INTO users (display_name) VALUES ('U') RETURNING id",
+		);
+		const ws = createMockWs({ type: AuthType.Admin, userId: user.rows[0].id });
+		const imageBuildTracker = new ImageBuildTracker();
+		imageBuildTracker.setWsManager(wsManager);
+		imageBuildTracker.start('hezo/agent-base:latest');
+		imageBuildTracker.observe('hezo/agent-base:latest', 'Step 2/4 : RUN x');
+
+		// The current snapshot is delivered via sendToSocket on subscribe.
+		const replayed: unknown[] = [];
+		await handleWsSubscribe(
+			ws,
+			wsRoom.imageBuilds(),
+			deps({ imageBuildTracker, sendToSocket: (_ws, payload) => replayed.push(payload) }),
+		);
+
+		expect(wsManager.getRoomSize(wsRoom.imageBuilds())).toBe(1);
+		expect(replayed).toHaveLength(1);
+		expect(replayed[0]).toMatchObject({
+			type: WsMessageType.ImageBuild,
+			image: 'hezo/agent-base:latest',
+			status: 'building',
+			percent: 50,
+		});
+
+		// Subsequent live broadcasts reach the now-subscribed socket.
+		imageBuildTracker.finish('hezo/agent-base:latest');
+		const lastRaw = ws._sent[ws._sent.length - 1];
+		expect(JSON.parse(lastRaw)).toMatchObject({
+			type: WsMessageType.ImageBuild,
+			status: 'done',
+			percent: 100,
+		});
 	});
 
 	it('subscribes to container-logs and replays buffered logs for that room', async () => {

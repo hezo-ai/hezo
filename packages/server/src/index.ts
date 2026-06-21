@@ -9,6 +9,7 @@ import { logger, setLogLevel } from './logger';
 import { loadAdminAuth, verifyToken } from './middleware/auth';
 import type { ContainerLogStreamer } from './services/container-logs';
 import { setKeepOldContainers } from './services/containers';
+import { getSharedImageBuildTracker } from './services/image-build-tracker';
 import type { LogStreamBroker } from './services/log-stream-broker';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import { handleWsSubscribe, handleWsUnsubscribe } from './services/ws-subscribe-handler';
@@ -225,6 +226,7 @@ export default {
 						docker: dockerRef,
 						containerLogStreamer: containerLogStreamerRef,
 						logs: logsRef,
+						imageBuildTracker: getSharedImageBuildTracker(),
 						canAccessTeam,
 						sendToSocket: (_s, payload) => ws.send(JSON.stringify(payload)),
 					});

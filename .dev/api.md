@@ -2635,6 +2635,7 @@ After connecting, clients subscribe to rooms:
 { "action": "subscribe", "room": "team:<uuid>" }
 { "action": "subscribe", "room": "container-logs:<projectId>" }
 { "action": "subscribe", "room": "project-runs:<projectId>" }
+{ "action": "subscribe", "room": "image-builds" }
 { "action": "unsubscribe", "room": "team:<uuid>" }
 ```
 
@@ -2642,6 +2643,7 @@ Room types:
 - `team:<uuid>` — receives row changes and agent lifecycle events for the team. Access is verified (agents/API keys must match team; board users must be members or superusers).
 - `container-logs:<projectId>` — streams Docker container stdout/stderr for a project's main process. Access is verified: the caller's auth must grant access to the project's owning team.
 - `project-runs:<projectId>` — streams `run_log` messages from every agent `docker exec` on that project. Clients filter by `runId` to isolate a specific run. Access is verified: the caller's auth must grant access to the project's owning team.
+- `image-builds` — the single global base-image build room. Streams `image_build` progress for shared base images (e.g. `hezo/agent-base:latest`), which are built once and reused across every project. The build is independent of any single project's `container_status`, so progress is tracked centrally and keyed by image tag; clients filter by `image`. On subscribe, the current in-flight build state is replayed so a mid-build subscriber sees the bar immediately. Open to any authenticated socket (not team-scoped — a base-image build isn't sensitive).
 
 Room names always use UUIDs, never slugs. The frontend `useWebSocket` hook takes two params: the UUID for room subscription and the route-param slug for TanStack Query cache invalidation.
 
@@ -2655,6 +2657,7 @@ Defined in `@hezo/shared` as the `WsMessageType` enum:
 | `row_change` | Database row changed | `{ type, table, action, row }` where `action` is `INSERT`, `UPDATE`, or `DELETE` |
 | `agent_lifecycle` | Agent status change | `{ type, memberId, status }` |
 | `container_log` | Container stdout/stderr stream | `{ type, projectId, stream, text }` where `stream` is `stdout` or `stderr` |
+| `image_build` | Base-image build progress (broadcast to the `image-builds` room) | `{ type, image, status, percent, step, totalSteps, label }` where `status` is `building`, `done`, or `error`; `percent` is 0–100; `step`/`totalSteps`/`label` come from the build's step counter |
 | `run_log` | Agent run stdout/stderr (streaming `docker exec` output plus worktree-prep steps and the invocation line) | `{ type, projectId, runId, taskId, stream, text }` |
 | `error` | Error message | `{ type, code, message }` |
 
