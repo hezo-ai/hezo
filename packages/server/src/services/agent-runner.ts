@@ -1879,6 +1879,7 @@ export async function createHeartbeatRun(
 			TaskStatus.Backlog,
 			TaskStatus.InProgress,
 			agent.id,
+			null,
 			broadcast.wsManager,
 		);
 	}

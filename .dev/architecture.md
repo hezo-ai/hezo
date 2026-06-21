@@ -15,8 +15,8 @@ the code (`packages/shared/src/types/common.ts` for every enum, the route module
   `AGENTS.md` gives the *rules*. Where they overlap, `AGENTS.md` is authoritative for
   "how to write code here" and this doc cross-references it instead of duplicating.
 
-Pre-v1: no backwards-compatibility constraints. When the code changes, change this doc
-to match — describe the current state, never a changelog.
+When the code changes, change this doc to match — describe the current state, never a
+changelog.
 
 ---
 
@@ -159,6 +159,18 @@ uploaded files (bytes on local disk, served over HMAC-signed URLs).
 self-registered, admin-approved, `hezoc_` prefix), `invites`, `admin_mentions` (board inbox),
 `instance_user_roles`, `notification_preferences`. `plugins`/`plugin_state`/`plugin_jobs`
 are scaffolding for a future plugin runtime — present but not yet exercised.
+
+**Actor attribution (human vs connected agent).** Every recorded admin action carries who
+took it so the UI can flag human vs automated. `audit_actor_type` is
+`admin | agent | system | connected_agent`; alongside the existing `actor_member_id` /
+`author_member_id` foreign keys, `audit_log`, `task_comments`, and `document_revisions` each
+carry a parallel nullable `actor_connected_agent_id` / `author_connected_agent_id` FK (at
+most one of the two is set per row). `resolveActor` maps a `ConnectedAgent` principal to the
+`connected_agent` actor type + id, threaded through task events, the audit observer, and the
+document service. The web surfaces (task activity feed, audit-log table, document revision
+history) render a small badge via the shared `ActorBadge` — a person icon for a human admin,
+a bot icon for a connected agent (tooltip naming it). Roster agents and `system` actors are
+not badged; inline `@admin` mentions in comment bodies are rendered plainly (not an action).
 
 > The migrations are the source of truth for the live schema. Tables an older draft of
 > the docs mentioned — `connected_platforms`, `secret_grants`, `slack_connections` — do

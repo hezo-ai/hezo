@@ -1,5 +1,6 @@
 import { Clock, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
+import { ActorBadge } from './ui/actor-badge';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { ConfirmDialog } from './ui/confirm-dialog';
@@ -10,6 +11,8 @@ export interface DocumentRevision {
 	content: string;
 	change_summary: string;
 	author_name: string | null;
+	author_type?: string;
+	author_connected_agent_id?: string | null;
 	created_at: string;
 }
 
@@ -44,7 +47,10 @@ export function RevisionsPanel({ revisions, onRestore, isRestoring }: RevisionsP
 							<Card key={rev.id} className="p-3">
 								<div className="flex items-center gap-2 mb-1">
 									<span className="text-xs font-medium text-text-1">Rev {rev.revision_number}</span>
-									<span className="text-xs text-text-2">{rev.author_name || 'Admin'}</span>
+									<span className="inline-flex items-center gap-1 text-xs text-text-2">
+										{rev.author_name || 'Admin'}
+										<ActorBadge actorType={rev.author_type} name={rev.author_name} />
+									</span>
 									<span className="text-xs text-text-3 ml-auto">
 										{new Date(rev.created_at).toLocaleString()}
 									</span>

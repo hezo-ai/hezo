@@ -43,6 +43,8 @@ export interface CreateTaskInput {
 export interface CreateTaskCaller {
 	actorType: AuditActorType;
 	actorMemberId: string | null;
+	// Set when the caller is a connected agent; mutually exclusive with actorMemberId.
+	actorConnectedAgentId?: string | null;
 	// Set only when the caller is an agent run — drives the subordinate
 	// assignee check and is recorded as created_by_run_id on the new task.
 	agentMemberId?: string;
@@ -178,6 +180,7 @@ export async function createTask(
 		projectId: input.project_id,
 		actorType: caller.actorType,
 		actorMemberId: caller.actorMemberId,
+		actorConnectedAgentId: caller.actorConnectedAgentId ?? null,
 		taskId: task.id,
 		identifier: task.identifier,
 	});
@@ -190,6 +193,7 @@ export async function createTask(
 				task.id,
 				input.description,
 				caller.actorMemberId,
+				caller.actorConnectedAgentId ?? null,
 				wsManager,
 			).catch((e) => log.error('Failed to record task links from description:', e)),
 		);

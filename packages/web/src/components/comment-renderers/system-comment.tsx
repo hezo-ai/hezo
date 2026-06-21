@@ -10,6 +10,7 @@ import type {
 	SystemStatusChangeContent,
 	SystemTaskLinkContent,
 } from '../comment-content';
+import { ActorBadge } from '../ui/actor-badge';
 import { Tooltip } from '../ui/tooltip';
 import type { CommentDataOf } from './comment-data';
 import { CommentTimestampLink } from './comment-timestamp-link';
@@ -85,6 +86,7 @@ export function SystemComment({ comment, projectId, taskId, retryableRunId }: Pr
 	return (
 		<div className="flex items-baseline gap-2 leading-[26px]">
 			<span className="text-xs text-text-2">{text}</span>
+			<ActorBadge actorType={comment.author_type} name={comment.author_name} />
 			{timestamp}
 		</div>
 	);
@@ -141,6 +143,7 @@ function StatusChangeBody({
 				{actorName} changed status from <em className="italic">{formatTaskStatus(from)}</em> to{' '}
 				<em className="italic">{formatTaskStatus(to)}</em>
 			</span>
+			<ActorBadge actorType={comment.author_type} name={actorName} />
 			{timestamp}
 		</div>
 	);
@@ -311,6 +314,7 @@ function TaskLinkSystemBody({
 	return (
 		<span className={textClass}>
 			Linked from {sourceNode} by {actorNode}
+			<ActorBadge actorType={comment.author_type} name={actorName} className="ml-1" />
 		</span>
 	);
 }

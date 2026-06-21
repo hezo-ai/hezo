@@ -3,14 +3,14 @@ import { createMemoryDb } from '../src/db/client';
 import { runMigrations } from '../src/db/migrate';
 import { safeClose } from './helpers';
 
-// HID-188: end-to-end coverage for the production migration runner
-// (`runMigrations`) applying *sequences* of migrations that refactor table
-// layouts and foreign-key relationships against a *populated* database, while
-// preserving every existing row. Migrations are synthetic, defined inline as
-// `Record<string, string>` (pre-v1 policy keeps a single real schema file), and
-// driven through the same `runMigrations` the server runs at startup — so these
-// exercise the real BEGIN/COMMIT/ROLLBACK, sorted ordering, and checksum
-// tracking, not a hand-rolled `db.exec` loop.
+// End-to-end coverage for the production migration runner (`runMigrations`)
+// applying *sequences* of migrations that refactor table layouts and foreign-key
+// relationships against a *populated* database, while preserving every existing
+// row. Migrations here are synthetic by design (inline `Record<string, string>`):
+// this suite exercises the runner's *generic* guarantees — real BEGIN/COMMIT/
+// ROLLBACK, sorted ordering, apply-once checksum tracking — independent of any
+// specific schema. Per-migration data-preservation tests for the real migrations
+// live in `migrate-<NNN>-<slug>.test.ts` using `createDataPreservationHarness()`.
 
 describe('migration data preservation', () => {
 	it('A: extracts a normalized authors table + FK, preserving every author mapping', async () => {
