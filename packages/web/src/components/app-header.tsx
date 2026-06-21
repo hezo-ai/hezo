@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router';
 import { BookOpen, FolderKanban, Inbox, Menu, Search, Settings } from 'lucide-react';
 import { useGlobalInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useMe } from '../hooks/use-me';
+import { CountOverlayBadge } from './ui/count-overlay-badge';
 import { Logo } from './ui/logo';
 import { ThemeSwitcher } from './ui/theme-switcher';
 
@@ -71,14 +72,7 @@ export function AppHeader({
 				>
 					<span className="relative inline-flex">
 						<Inbox className="w-4 h-4" />
-						{inboxUnread > 0 && (
-							<span
-								data-testid="app-header-inbox-badge"
-								className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] px-1 rounded-full bg-pink text-pink-fg text-[9px] leading-none font-medium flex items-center justify-center"
-							>
-								{inboxUnread > 99 ? '99+' : inboxUnread}
-							</span>
-						)}
+						<CountOverlayBadge count={inboxUnread} testId="app-header-inbox-badge" />
 					</span>
 				</Link>
 				<Link
