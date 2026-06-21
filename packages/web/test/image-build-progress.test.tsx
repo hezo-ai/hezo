@@ -84,8 +84,10 @@ test('container page surfaces a Building image status and progress bar, overridi
 	expect(bar.getAttribute('aria-valuenow')).toBe('42');
 	expect(card.textContent ?? '').toContain('Step 3/7');
 	expect(card.textContent ?? '').toContain('RUN bun install');
-	// The build status wins over the stale container_status.
-	expect(container.textContent ?? '').toContain('Building image');
+	// The build status wins over the stale "running" container_status.
+	expect(container.textContent ?? '').toContain('Rebuilding');
+	// The build progress also streams into the container log panel.
+	expect(container.textContent ?? '').toContain('→ Step 3/7 RUN bun install');
 });
 
 test('project pages show a base-image build progress bar in the banner while provisioning', async () => {
@@ -148,6 +150,7 @@ test('project pages show a base-image build progress bar in the banner while pro
 	const banner = await findByTestId('container-status-banner-building', undefined, {
 		timeout: 20_000,
 	});
+	expect(banner.textContent ?? '').toContain('Rebuilding');
 	expect(banner.textContent ?? '').toContain('Building Banner');
 	expect(banner.textContent ?? '').toContain('67%');
 	expect(banner.getAttribute('href') ?? '').toContain(`/projects/${projectSlug}/container`);

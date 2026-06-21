@@ -35,27 +35,26 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 
 	const status = project.container_status;
 
-	// The shared base image is building and this project is waiting on it
-	// (provisioning, or recovering from an error). Surface a determinate progress
-	// bar. Gated to creating/error so a healthy running project isn't flagged
-	// while the same shared image rebuilds for some *other* project's provision.
-	const buildingForThisProject =
-		!!imageBuild?.building &&
-		(status === ContainerStatus.Creating || status === ContainerStatus.Error);
-	if (buildingForThisProject && imageBuild) {
+	// The shared base image is (re)building. Surface the rebuilding status with a
+	// determinate progress bar. Shown whenever a build is in flight unless the
+	// operator deliberately stopped the container — a "rebuilding" container can
+	// still read a stale `running`/`creating` status, and the build gates every
+	// container that needs the fresh image.
+	const rebuilding = !!imageBuild?.building && status !== ContainerStatus.Stopped;
+	if (rebuilding && imageBuild) {
 		return (
 			<div ref={bannerRef} className={BANNER_OUTER}>
 				<Link
 					to="/projects/$projectId/container"
 					params={{ projectId }}
 					data-testid="container-status-banner-building"
-					aria-label={`Building ${project.name}'s base image. View container logs`}
+					aria-label={`Rebuilding ${project.name}'s base image. View container logs`}
 					className="flex flex-col gap-1 px-4 py-2 bg-info/10 text-info transition-colors hover:bg-info/20"
 				>
 					<div className="flex items-center gap-2 text-[13px] font-medium">
 						<Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" />
 						<span data-testid="container-status-banner-message" className="min-w-0 truncate">
-							Building {project.name}'s base image…
+							Rebuilding {project.name}'s base image…
 						</span>
 						<span className="ml-auto shrink-0 tabular-nums">{imageBuild.percent}%</span>
 					</div>
