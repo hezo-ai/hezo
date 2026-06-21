@@ -27,6 +27,35 @@ Create an API key from the web app. The key is **scoped to a team**, so a client
 it acts within that team and its projects — exactly the same authorization an agent
 would have. Copy the key when it's shown; it isn't displayed again.
 
+## Connecting as a connected agent (instance-wide)
+
+An external agent can **self-register** for instance-wide access instead of using a
+team-scoped API key. A connected agent, once approved, acts with **full admin access** —
+every project and every team, just like the admin. Registration is **pending** and grants
+no access until a human admin approves it.
+
+The flow:
+
+1. **Register.** Call the `register` tool over MCP (no token required), or
+   `POST /api/agent-connections/register` with `{ "name": "<your agent>" }`. You receive a
+   token that starts with `hezoc_`, shown **once**.
+2. **Set the token** as your `Authorization: Bearer <token>` header.
+3. **Get approved.** A Hezo admin approves the connection under **Settings → Connected
+   agents**. Until then the token is inert.
+4. **Poll** the `connection_status` tool (or `GET /api/agent-connections/status` with the
+   token) until it returns `{ "status": "approved" }`.
+5. **Use it.** The same token now authorizes `POST /mcp`. Because a connected agent has no
+   single home project, pass a `project` slug to project-scoped tools — use `list_projects`
+   to discover them across the whole instance.
+
+A connected agent has every admin power **except** managing connected agents — only the
+human admin can approve or disconnect them. An admin can disconnect a connected agent at
+any time from the same page, which revokes its token immediately.
+
+> Hezo also serves a generated [`/SKILL.md`](http://localhost:3100/SKILL.md) (the full,
+> live tool list plus these connection instructions) and a minimal `/llms.txt` that points
+> to it — handy for agents that consume the [llmstxt.org](https://llmstxt.org) convention.
+
 ## Add it to an agent
 
 ### Claude Code

@@ -571,7 +571,8 @@ shapes.
 Two non-REST surfaces share the port: the **Agent API** (`/agent-api`, the run-scoped
 endpoints agents hit, e.g. tool-call reporting) and the **MCP endpoint** (`POST /mcp`,
 Streamable HTTP, tools mirroring the REST surface and enforcing the same authorization).
-`GET /skill.md` serves the manifest that teaches an external agent how to drive Hezo.
+`GET /SKILL.md` serves the manifest that teaches an external agent how to drive Hezo
+(plus how to self-register as a connected agent), and `GET /llms.txt` points to it.
 Authorization for all three is § 10.
 
 ---

@@ -167,7 +167,7 @@ describe('MCP endpoint: tool registration', () => {
 		expect(toolNames).toContain('propose_skill');
 	});
 
-	it('rejects unauthenticated MCP requests', async () => {
+	it('rejects unauthenticated MCP tool calls', async () => {
 		const res = await app.request('/mcp', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -178,7 +178,11 @@ describe('MCP endpoint: tool registration', () => {
 				id: 1,
 			}),
 		});
-		expect(res.status).toBe(401);
+		// Unauthenticated callers get the onboarding surface only — a real tool
+		// call is refused with a JSON-RPC "not connected" error.
+		const body = await res.json();
+		expect(body.error).toBeDefined();
+		expect(body.error.message).toContain('Not connected');
 	});
 });
 
@@ -352,8 +356,8 @@ describe('MCP tool handlers: data queries via DB', () => {
 });
 
 describe('MCP tool: skill file includes all tools', () => {
-	it('/skill.md contains tool names', async () => {
-		const res = await app.request('/skill.md');
+	it('/SKILL.md contains tool names', async () => {
+		const res = await app.request('/SKILL.md');
 		expect(res.status).toBe(200);
 		const text = await res.text();
 		expect(text).toContain('list_teams');

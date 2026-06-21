@@ -47,8 +47,8 @@ afterAll(async () => {
 });
 
 describe('skill file', () => {
-	it('returns markdown at /skill.md', async () => {
-		const res = await app.request('/skill.md');
+	it('returns markdown at /SKILL.md', async () => {
+		const res = await app.request('/SKILL.md');
 		expect(res.status).toBe(200);
 		const text = await res.text();
 		expect(text).toContain('# Hezo Skill File');
@@ -58,13 +58,41 @@ describe('skill file', () => {
 });
 
 describe('MCP endpoint', () => {
-	it('rejects unauthenticated requests', async () => {
-		const res = await app.request('/mcp', {
+	it('serves only the onboarding surface to unauthenticated callers', async () => {
+		// initialize is allowed without a token so an agent can begin onboarding.
+		const initRes = await app.request('/mcp', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ jsonrpc: '2.0', method: 'initialize', id: 1 }),
 		});
-		expect(res.status).toBe(401);
+		expect(initRes.status).toBe(200);
+
+		// tools/list returns only the onboarding tools, not the real surface.
+		const listRes = await app.request('/mcp', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 2 }),
+		});
+		const listBody = await listRes.json();
+		const names = listBody.result.tools.map((t: { name: string }) => t.name);
+		expect(names).toContain('register');
+		expect(names).toContain('connection_status');
+		expect(names).not.toContain('create_task');
+
+		// A non-onboarding tool call is refused with a "not connected" error.
+		const callRes = await app.request('/mcp', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: { name: 'list_teams', arguments: {} },
+				id: 3,
+			}),
+		});
+		const callBody = await callRes.json();
+		expect(callBody.error).toBeDefined();
+		expect(callBody.error.message).toContain('Not connected');
 	});
 
 	it('handles initialize', async () => {
@@ -214,6 +242,10 @@ describe('MCP endpoint', () => {
 				id: 6,
 			}),
 		});
-		expect(res.status).toBe(401);
+		// A finalized run's token is no longer a valid principal, so the MCP
+		// endpoint treats it as not-connected rather than granting tool access.
+		const body = await res.json();
+		expect(body.error).toBeDefined();
+		expect(body.error.message).toContain('Not connected');
 	});
 });

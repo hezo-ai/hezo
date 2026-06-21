@@ -3,7 +3,7 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import type { Env } from '../lib/types';
-import { requireSuperuser } from '../middleware/auth';
+import { requireAdminEquivalent } from '../middleware/auth';
 
 export const auditLogRoutes = new Hono<Env>();
 
@@ -111,7 +111,7 @@ auditLogRoutes.get('/projects/:projectId/audit-log', async (c) => {
 
 // Instance-level view — every team + instance-scoped rows. Superuser only.
 auditLogRoutes.get('/audit-log', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	return queryAuditLog(c, c.get('db'), { kind: 'instance' });
 });

@@ -9,7 +9,7 @@ import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireSuperuser } from '../middleware/auth';
+import { requireAdminEquivalent } from '../middleware/auth';
 import {
 	deleteAiProviderConfig,
 	getAiProviderStatus,
@@ -43,7 +43,7 @@ aiProvidersRoutes.get('/ai-providers/status', async (c) => {
 
 // Add an AI provider config (manual API key entry)
 aiProvidersRoutes.post('/ai-providers', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
 	const db = c.get('db');
@@ -150,7 +150,7 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 
 // Delete an AI provider config
 aiProvidersRoutes.delete('/ai-providers/:configId', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
 	const db = c.get('db');
@@ -166,7 +166,7 @@ aiProvidersRoutes.delete('/ai-providers/:configId', async (c) => {
 
 // Set an AI provider config as default for its provider
 aiProvidersRoutes.patch('/ai-providers/:configId/default', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
 	const db = c.get('db');
@@ -182,7 +182,7 @@ aiProvidersRoutes.patch('/ai-providers/:configId/default', async (c) => {
 
 // Verify an AI provider key by making a lightweight API call
 aiProvidersRoutes.post('/ai-providers/:configId/verify', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
 	const db = c.get('db');
@@ -215,7 +215,7 @@ aiProvidersRoutes.post('/ai-providers/:configId/verify', async (c) => {
 
 // Update a provider config — currently only `default_model`
 aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
 	const db = c.get('db');
@@ -243,7 +243,7 @@ aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 
 // List models available for this provider config, fetched live from the provider
 aiProvidersRoutes.get('/ai-providers/:configId/models', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
 	const db = c.get('db');

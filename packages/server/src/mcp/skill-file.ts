@@ -1,6 +1,15 @@
-import type { ToolDef } from './tools';
+interface SkillTool {
+	name: string;
+	description: string;
+}
 
-export function generateSkillFile(tools: ToolDef[]): string {
+/**
+ * The agent-facing manifest served at `GET /SKILL.md`: how to connect, how to
+ * self-register as a connected agent, and the full MCP tool list. `baseUrl`
+ * makes the endpoints concrete when known (falls back to relative paths).
+ */
+export function generateSkillFile(tools: SkillTool[], opts: { baseUrl?: string } = {}): string {
+	const base = opts.baseUrl ?? '';
 	const lines: string[] = [
 		'# Hezo Skill File',
 		'',
@@ -8,8 +17,24 @@ export function generateSkillFile(tools: ToolDef[]): string {
 		'',
 		'## Connection',
 		'',
-		'- **Endpoint:** `POST /mcp` (Streamable HTTP)',
-		'- **Authentication:** Bearer token (JWT or API key starting with `hezo_`)',
+		`- **Endpoint:** \`POST ${base}/mcp\` (JSON-RPC, Streamable HTTP)`,
+		'- **Authentication:** `Authorization: Bearer <token>`, where the token is one of:',
+		'  - a **team-scoped API key** (`hezo_…`) created in the Hezo web UI, or',
+		'  - an **instance-wide connected-agent token** (`hezoc_…`) obtained via the registration flow below.',
+		'',
+		'## Register as a connected agent',
+		'',
+		'An external agent can self-register for instance-wide access (every project and team). The registration stays inert until a Hezo admin approves it.',
+		'',
+		'1. Call the `register` tool over MCP (no token needed) — or `POST ' +
+			base +
+			'/api/agent-connections/register` with `{"name":"<your agent>"}`. You receive a `hezoc_…` token **once**.',
+		'2. Set that token as your `Authorization: Bearer` token.',
+		'3. Ask a Hezo admin to approve you at **Settings → Connected agents**.',
+		'4. Poll the `connection_status` tool (or `GET ' +
+			base +
+			'/api/agent-connections/status`) until it returns `{"status":"approved"}`.',
+		'5. Once approved, the same token grants full instance access on `POST /mcp`. Pass a `project` slug to project-scoped tools (use `list_projects` to discover them).',
 		'',
 		'## Available Tools',
 		'',

@@ -2,7 +2,7 @@ import { AuthType, CeoChannel, DEFAULT_TEAM_ID } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireSuperuser, requireTeamAccessForResource } from '../middleware/auth';
+import { requireAdminEquivalent, requireTeamAccessForResource } from '../middleware/auth';
 
 export const ceoChatRoutes = new Hono<Env>();
 
@@ -88,7 +88,7 @@ ceoChatRoutes.post('/ceo/messages', async (c) => {
 });
 
 ceoChatRoutes.post('/ceo/session/restart', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const manager = c.get('ceoSessionManager');
 	if (!manager) return err(c, 'UNAVAILABLE', 'CEO chat is not available', 503);

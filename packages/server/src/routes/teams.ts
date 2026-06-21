@@ -5,7 +5,7 @@ import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
-import { requireSuperuser } from '../middleware/auth';
+import { requireAdminEquivalent } from '../middleware/auth';
 import { postSkipQuestionsSignalForProjectIntake } from '../services/project-intake';
 import { applyTemplateToTeam } from '../services/team-template-apply';
 import { snapshotTeamAsTemplate } from '../services/team-template-snapshot';
@@ -52,7 +52,7 @@ teamsRoutes.get('/projects/:projectId/team', async (c) => {
 // team as a type"). Superuser-only: templates are a global catalog visible to
 // every team's New-team flow.
 teamsRoutes.post('/projects/:projectId/save-as-template', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
 	const teamId = c.get('teamId') as string;
@@ -73,7 +73,7 @@ teamsRoutes.post('/projects/:projectId/save-as-template', async (c) => {
 // "Refresh from type" and "Copy from another team" (save-as-template, then
 // apply the saved type here).
 teamsRoutes.post('/projects/:projectId/apply-type', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
 	const teamId = c.get('teamId') as string;
