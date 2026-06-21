@@ -106,8 +106,9 @@ test('Budget page: editing limits inline updates the spend progress cards', asyn
 
 	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
 
-	// The progress display and the editor are one section: edit limits in place.
-	await user.click(await findByTestId('edit-project-budget'));
+	// The progress display and the editor are one section: edit limits in place
+	// via the inline per-window pencil.
+	await user.click(await findByRole('button', { name: 'Edit Today cap' }));
 	await user.click(await findByTestId('budget-daily-toggle'));
 	const daily = (await findByTestId('budget-daily')) as HTMLInputElement;
 	await user.clear(daily);

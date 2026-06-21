@@ -271,18 +271,13 @@ export function ProjectBudgetPanel({
 		setEditing(false);
 	}
 
-	const description =
-		variant === 'spend'
-			? 'Spend across every agent in this project. Runs pause when a window cap is reached — the one place Hezo gates on cost.'
-			: 'Spend across all agents in this project. A run is blocked when any window is exceeded. Disable a window to leave it uncapped.';
-
 	return (
 		<section>
 			<SectionHeader
 				icon={Clock}
 				title="Project budget"
-				description={description}
 				action={
+					variant === 'limits' &&
 					!editing && (
 						<Button
 							variant="ghost"
