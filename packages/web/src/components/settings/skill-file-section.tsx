@@ -9,7 +9,7 @@ export function SkillFileSection() {
 
 	useEffect(() => {
 		if (showPreview && content === null) {
-			fetch('/skill.md')
+			fetch('/SKILL.md')
 				.then((r) => r.text())
 				.then(setContent)
 				.catch(() => setContent('Failed to load skill file.'));
@@ -21,12 +21,12 @@ export function SkillFileSection() {
 			<SectionHeader title="Skill file" />
 			<div className="flex gap-2 mb-2">
 				<a
-					href="/skill.md"
+					href="/SKILL.md"
 					target="_blank"
 					rel="noopener noreferrer"
 					className="inline-flex items-center gap-1 text-[13px] text-info-soft-fg hover:underline"
 				>
-					<ExternalLink className="w-3.5 h-3.5" /> Open /skill.md
+					<ExternalLink className="w-3.5 h-3.5" /> Open /SKILL.md
 				</a>
 				<Button variant="secondary" size="sm" onClick={() => setShowPreview(!showPreview)}>
 					{showPreview ? 'Hide' : 'Preview'}

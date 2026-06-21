@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { validateSecretName } from '../lib/credential-placeholder';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireSuperuser } from '../middleware/auth';
+import { requireAdminEquivalent } from '../middleware/auth';
 
 /** Trim, lowercase, and drop empties so the egress allowlist match (which
  * lowercases the request host) sees clean entries. Mirrors the normalization
@@ -23,7 +23,7 @@ export const secretsRoutes = new Hono<Env>();
 // ---------------------------------------------------------------------------
 
 secretsRoutes.get('/credentials', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
 
@@ -54,7 +54,7 @@ secretsRoutes.get('/credentials', async (c) => {
 });
 
 secretsRoutes.post('/secrets', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
@@ -117,7 +117,7 @@ secretsRoutes.post('/secrets', async (c) => {
 });
 
 secretsRoutes.patch('/secrets/:secretId', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
 	const secretId = c.req.param('secretId');
@@ -191,7 +191,7 @@ secretsRoutes.patch('/secrets/:secretId', async (c) => {
 });
 
 secretsRoutes.delete('/secrets/:secretId', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
 	const secretId = c.req.param('secretId');

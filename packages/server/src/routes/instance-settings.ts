@@ -11,7 +11,7 @@ import {
 	setSystemMeta,
 } from '../lib/system-meta';
 import type { Env } from '../lib/types';
-import { requireSuperuser } from '../middleware/auth';
+import { requireAdminEquivalent } from '../middleware/auth';
 
 export const instanceSettingsRoutes = new Hono<Env>();
 
@@ -25,7 +25,7 @@ instanceSettingsRoutes.get('/instance-settings', async (c) => {
 });
 
 instanceSettingsRoutes.patch('/instance-settings', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
 	const db = c.get('db');

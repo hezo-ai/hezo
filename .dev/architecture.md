@@ -156,7 +156,8 @@ uploaded files (bytes on local disk, served over HMAC-signed URLs).
 
 **Governance & misc.** `approvals` (polymorphic board decisions), `audit_log`
 (append-only, instance/team/project scopes, never updated/deleted by the app),
-`api_keys` (bcrypt-hashed, `hezo_` prefix), `invites`, `admin_mentions` (board inbox),
+`api_keys` (bcrypt-hashed, `hezo_` prefix), `connected_agents` (external MCP clients —
+self-registered, admin-approved, `hezoc_` prefix), `invites`, `admin_mentions` (board inbox),
 `instance_user_roles`, `notification_preferences`. `plugins`/`plugin_state`/`plugin_jobs`
 are scaffolding for a future plugin runtime — present but not yet exercised.
 
@@ -462,7 +463,7 @@ domain-separated message (`hezo-auth-v1:login:<nonce>`). After a restart the ser
 domain-separated so signatures can't be replayed or cross-purposed; on unlock
 `MasterKeyManager` fires `onUnlock` callbacks that start the `JobManager`.
 
-**Three principals.**
+**Four principals.**
 - **User JWT** (HS256, secret derived from the unlock key) — `Authorization: Bearer <jwt>`.
 - **API key** — `Authorization: Bearer hezo_<key>`, bcrypt-hashed, team-scoped, board-level
   access for external orchestrators; the `hezo_` prefix disambiguates from agent JWTs.
@@ -470,6 +471,14 @@ domain-separated so signatures can't be replayed or cross-purposed; on unlock
   on every call against the **`heartbeat_runs` row** (`id=run_id`, member/team match,
   status `running`); when the run finalizes the token is rejected on the next call —
   revocation for free, no token store.
+- **Connected-agent token** — `Authorization: Bearer hezoc_<key>`, SHA-256-hashed, issued
+  by external-agent **self-registration** and **inert until an admin approves it**. Once
+  approved it resolves to an **admin-equivalent, cross-team principal** (every
+  project/team), revoked instantly by deleting the `connected_agents` row (no token store).
+  It is admin-equivalent for data and instance settings but **not** for managing connected
+  agents — that stays human-superuser-only. Pending registration + status polling go
+  through the public onboarding surface (REST and the `/mcp` `register`/`connection_status`
+  tools).
 
 **Authorization** (`AGENTS.md` › Route authorization is authoritative). Routes with
 `:projectId` resolve the project → its backing team and verify access **per request** in
@@ -577,8 +586,11 @@ shapes.
 One non-REST surface shares the port: the **MCP endpoint** (`POST /mcp`, Streamable
 HTTP), whose tools mirror the REST surface and enforce the same authorization. It is the
 interface agents drive — tasks, comments, approvals, credentials — and external agents
-can drive it too. `GET /skill.md` serves the manifest that teaches an external agent how
-to use it. Authorization for both the REST and MCP surfaces is § 10.
+can drive it too, including **self-registering as a connected agent** (pending admin
+approval, then admin-equivalent across every project/team; § 10). `GET /SKILL.md` serves
+the manifest that teaches an external agent how to use it — including the connect/register
+flow — and `GET /llms.txt` points to it. Authorization for both the REST and MCP surfaces
+is § 10.
 
 ---
 

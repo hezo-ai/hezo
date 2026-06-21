@@ -391,6 +391,9 @@ async function authorizeScope(
 			return null;
 		case AuthType.ApiKey:
 			return auth.teamId === scope.teamId ? null : 'Access denied: project outside this API key';
+		case AuthType.ConnectedAgent:
+			// Admin-equivalent: every project across the instance.
+			return null;
 		case AuthType.Admin: {
 			if (auth.isSuperuser) return null;
 			const r = await db.query(
@@ -417,6 +420,9 @@ async function authorizeTeam(db: PGlite, auth: AuthInfo, teamId: string): Promis
 			return auth.teamId === teamId ? null : 'Access denied: team mismatch';
 		case AuthType.ApiKey:
 			return auth.teamId === teamId ? null : 'Access denied: team mismatch';
+		case AuthType.ConnectedAgent:
+			// Admin-equivalent: every team across the instance.
+			return null;
 		case AuthType.Admin: {
 			if (auth.isSuperuser) return null;
 			const r = await db.query(
@@ -483,8 +489,12 @@ export function registerTools(
 		{},
 		async (_args, db, auth) => {
 			// The instance CEO chat session acts across every team (cross-team gated
-			// at mint time), so it discovers the whole roster — not just HQ.
-			if (auth.type === AuthType.Agent && auth.crossTeam) {
+			// at mint time), so it discovers the whole roster — not just HQ. An
+			// approved connected agent is admin-equivalent and spans the instance too.
+			if (
+				auth.type === AuthType.ConnectedAgent ||
+				(auth.type === AuthType.Agent && auth.crossTeam)
+			) {
 				const r = await db.query('SELECT * FROM teams ORDER BY name');
 				return r.rows;
 			}
@@ -1274,7 +1284,8 @@ export function registerTools(
 
 			const instanceWide =
 				(auth.type === AuthType.Agent && auth.crossTeam) ||
-				(auth.type === AuthType.Admin && auth.isSuperuser);
+				(auth.type === AuthType.Admin && auth.isSuperuser) ||
+				auth.type === AuthType.ConnectedAgent;
 			if (instanceWide) {
 				const r = await db.query<Record<string, unknown>>(
 					`SELECT p.id, p.team_id,

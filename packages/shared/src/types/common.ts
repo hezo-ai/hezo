@@ -569,8 +569,21 @@ export type AuditActorType = (typeof AuditActorType)[keyof typeof AuditActorType
 export const RepoHostType = { GitHub: 'github' } as const;
 export type RepoHostType = (typeof RepoHostType)[keyof typeof RepoHostType];
 
-export const AuthType = { Admin: 'admin', ApiKey: 'api_key', Agent: 'agent' } as const;
+export const AuthType = {
+	Admin: 'admin',
+	ApiKey: 'api_key',
+	Agent: 'agent',
+	ConnectedAgent: 'connected_agent',
+} as const;
 export type AuthType = (typeof AuthType)[keyof typeof AuthType];
+
+/**
+ * A connected agent is an external MCP client that self-registered with the
+ * instance. It stays `pending` (inert — grants no access) until a human admin
+ * approves it, after which it is admin-equivalent across every project/team.
+ */
+export const ConnectedAgentStatus = { Pending: 'pending', Approved: 'approved' } as const;
+export type ConnectedAgentStatus = (typeof ConnectedAgentStatus)[keyof typeof ConnectedAgentStatus];
 
 export const AuditEntityType = {
 	Task: 'task',
@@ -585,6 +598,7 @@ export const AuditEntityType = {
 	McpConnection: 'mcp_connection',
 	Skill: 'skill',
 	EgressRequest: 'egress_request',
+	ConnectedAgent: 'connected_agent',
 } as const;
 export type AuditEntityType = (typeof AuditEntityType)[keyof typeof AuditEntityType];
 

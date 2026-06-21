@@ -5,7 +5,7 @@ import { err, ok } from '../lib/response';
 import { deriveSkillSummary } from '../lib/skill-summary';
 import { toSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
-import { requireSuperuser } from '../middleware/auth';
+import { requireAdminEquivalent } from '../middleware/auth';
 import {
 	getRegistryToken,
 	hasRegistryToken,
@@ -21,7 +21,7 @@ export const skillsRoutes = new Hono<Env>();
 // team's agents (admin-authored here, or agent-fetched via fetch_skill_file).
 // The Admin (superuser) manages them.
 skillsRoutes.get('/skills', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
 	const result = await db.query<Omit<SkillRecord, 'content'>>(
@@ -35,7 +35,7 @@ skillsRoutes.get('/skills', async (c) => {
 });
 
 skillsRoutes.post('/skills', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
 	const body = await c.req.json<{
@@ -85,13 +85,13 @@ skillsRoutes.post('/skills', async (c) => {
 // two-segment paths don't collide with the single-segment slug route. ---
 
 skillsRoutes.get('/skills/registry/token', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	return ok(c, { configured: await hasRegistryToken(c.get('db')) });
 });
 
 skillsRoutes.put('/skills/registry/token', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const key = c.get('masterKeyManager').getKey();
 	if (!key) return err(c, 'LOCKED', 'Server must be unlocked to manage the token', 401);
@@ -101,7 +101,7 @@ skillsRoutes.put('/skills/registry/token', async (c) => {
 });
 
 skillsRoutes.get('/skills/registry/search', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const key = c.get('masterKeyManager').getKey();
 	if (!key) return err(c, 'LOCKED', 'Server must be unlocked', 401);
@@ -126,7 +126,7 @@ skillsRoutes.get('/skills/registry/search', async (c) => {
 });
 
 skillsRoutes.post('/skills/registry/install', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const key = c.get('masterKeyManager').getKey();
 	if (!key) return err(c, 'LOCKED', 'Server must be unlocked', 401);
@@ -154,7 +154,7 @@ skillsRoutes.post('/skills/registry/install', async (c) => {
 });
 
 skillsRoutes.get('/skills/:slug', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
 	const slug = c.req.param('slug');
@@ -164,7 +164,7 @@ skillsRoutes.get('/skills/:slug', async (c) => {
 });
 
 skillsRoutes.patch('/skills/:slug', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
 	const slug = c.req.param('slug');
@@ -247,7 +247,7 @@ skillsRoutes.patch('/skills/:slug', async (c) => {
 });
 
 skillsRoutes.delete('/skills/:slug', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
 	const slug = c.req.param('slug');

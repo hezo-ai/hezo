@@ -18,7 +18,7 @@ import { toProjectTaskPrefix, toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireSuperuser } from '../middleware/auth';
+import { requireAdminEquivalent } from '../middleware/auth';
 import {
 	type ContainerDeps,
 	type ProjectRow,
@@ -182,7 +182,7 @@ projectsRoutes.get('/projects', async (c) => {
 // help shape the project first. See .dev/architecture.md.
 // Superuser-gated, like team creation (the Admin owns the instance roster).
 projectsRoutes.post('/projects', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
 	const db = c.get('db');
@@ -407,7 +407,7 @@ async function resolveCreationTemplate(
 // approve. The project itself is created on approval. Both the first-run welcome
 // and the ongoing "new project with the CEO" flow post here.
 projectsRoutes.post('/project-intakes', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
 	const db = c.get('db');
@@ -488,7 +488,7 @@ projectsRoutes.post('/project-intakes', async (c) => {
 
 // The single open project-intake conversation for the welcome/home view.
 projectsRoutes.get('/project-intakes', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const intake = await getOpenProjectIntakeForHome(c.get('db'));
 	return ok(c, intake);

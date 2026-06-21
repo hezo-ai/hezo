@@ -6,7 +6,7 @@
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { requireSuperuser } from '../middleware/auth';
+import { requireAdminEquivalent } from '../middleware/auth';
 import {
 	deleteManualRate,
 	listModelPricing,
@@ -37,7 +37,7 @@ modelPricingRoutes.get('/model-pricing', async (c) => {
 });
 
 modelPricingRoutes.post('/model-pricing', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
 	const db = c.get('db');
@@ -83,7 +83,7 @@ modelPricingRoutes.post('/model-pricing', async (c) => {
 });
 
 modelPricingRoutes.delete('/model-pricing/:id', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
 	const db = c.get('db');
@@ -96,7 +96,7 @@ modelPricingRoutes.delete('/model-pricing/:id', async (c) => {
 });
 
 modelPricingRoutes.post('/model-pricing/refresh', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
 	const db = c.get('db');

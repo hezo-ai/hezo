@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
-import { AuthType, CeoSessionStatus, HeartbeatRunStatus } from '@hezo/shared';
+import { AuthType, CeoSessionStatus, ConnectedAgentStatus, HeartbeatRunStatus } from '@hezo/shared';
 import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { sign, verify } from 'hono/jwt';
@@ -21,6 +21,10 @@ const PUBLIC_PATHS = [
 	'/api/auth/verify',
 	'/',
 	'/api/oauth/callback',
+	// External-agent self-registration + status polling are token-keyed and do
+	// their own lookup, so they bypass the bearer-token auth middleware.
+	'/api/agent-connections/register',
+	'/api/agent-connections/status',
 ];
 
 /**
@@ -51,6 +55,38 @@ export async function verifyToken(
 		await db.query('UPDATE api_keys SET last_used_at = now() WHERE id = $1', [result.rows[0].id]);
 
 		return { type: AuthType.ApiKey, teamId: result.rows[0].team_id };
+	}
+
+	// Connected-agent token: an approved external MCP client, admin-equivalent
+	// across every project/team. Validated against the connected_agents row
+	// (revoked structurally by deleting the row — instant, no token cache), and
+	// inert while still `pending`. Checked before the JWT path; `hezoc_` does not
+	// match the `hezo_` prefix above (5th char is `c`, not `_`).
+	if (token.startsWith('hezoc_')) {
+		const prefix = token.slice(6, 14);
+		const result = await db.query<{ id: string; token_hash: string; status: string }>(
+			'SELECT id, token_hash, status FROM connected_agents WHERE prefix = $1',
+			[prefix],
+		);
+		if (result.rows.length === 0) return null;
+
+		const tokenHash = createHash('sha256').update(token).digest('hex');
+		if (!safeCompareHex(tokenHash, result.rows[0].token_hash)) return null;
+
+		// A pending (not-yet-approved) token grants nothing here; the agent can
+		// only poll its own status via the public/onboarding surface.
+		if (result.rows[0].status !== ConnectedAgentStatus.Approved) return null;
+
+		await db.query('UPDATE connected_agents SET last_used_at = now() WHERE id = $1', [
+			result.rows[0].id,
+		]);
+
+		return {
+			type: AuthType.ConnectedAgent,
+			connectedAgentId: result.rows[0].id,
+			isSuperuser: true,
+			crossTeam: true,
+		};
 	}
 
 	// JWT auth
@@ -273,6 +309,9 @@ async function assertTeamAccess(
 		return null;
 	}
 
+	// An approved connected agent is admin-equivalent across every team.
+	if (auth.type === AuthType.ConnectedAgent) return null;
+
 	if (auth.isSuperuser) {
 		return null;
 	}
@@ -338,6 +377,8 @@ export async function getAccessibleTeamIds(db: PGlite, auth: AuthInfo): Promise<
 
 	if (auth.type === AuthType.ApiKey) return [auth.teamId];
 	if (auth.type === AuthType.Agent) return auth.crossTeam ? allTeams() : [auth.teamId];
+	// An approved connected agent spans the whole instance.
+	if (auth.type === AuthType.ConnectedAgent) return allTeams();
 	if (auth.isSuperuser) return allTeams();
 
 	const rows = await db.query<{ team_id: string }>(
@@ -347,10 +388,42 @@ export async function getAccessibleTeamIds(db: PGlite, auth: AuthInfo): Promise<
 	return rows.rows.map((r) => r.team_id);
 }
 
+/**
+ * Strict gate: only the human superuser passes. Used for routes that must stay
+ * exclusively human-controlled — notably connected-agent management, so a
+ * connected agent can never approve other agents or disconnect itself/peers.
+ */
 export function requireSuperuser(c: Context<Env>): Response | null {
 	const auth = c.get('auth');
 	if (auth.type !== AuthType.Admin || !auth.isSuperuser) {
 		return c.json({ error: { code: 'FORBIDDEN', message: 'Superuser access required' } }, 403);
+	}
+	return null;
+}
+
+/**
+ * True for principals that act with full admin authority: the human superuser
+ * and any approved connected agent (an external MCP client the admin approved,
+ * which is "virtually the admin"). Connected agents are intentionally excluded
+ * from `requireSuperuser` — they have every admin power EXCEPT managing
+ * connected agents.
+ */
+export function isAdminEquivalent(auth: AuthInfo): boolean {
+	return (
+		(auth.type === AuthType.Admin && auth.isSuperuser) || auth.type === AuthType.ConnectedAgent
+	);
+}
+
+/**
+ * Gate for instance-management routes a connected agent should reach (create
+ * projects, AI providers, secrets, connectors, skills, instance settings, …).
+ * Allows the human superuser and approved connected agents; still rejects
+ * board users, API keys, and ordinary agent runs.
+ */
+export function requireAdminEquivalent(c: Context<Env>): Response | null {
+	const auth = c.get('auth');
+	if (!isAdminEquivalent(auth)) {
+		return c.json({ error: { code: 'FORBIDDEN', message: 'Admin access required' } }, 403);
 	}
 	return null;
 }

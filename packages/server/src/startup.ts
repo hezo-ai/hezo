@@ -13,10 +13,14 @@ import type { Migration } from './db/migrate';
 import { BASE_SCHEMA } from './db/schema';
 import { registerAuditObserver } from './events/audit-observer';
 import { DomainEventBus } from './events/bus';
+import { getInstanceBaseUrl } from './lib/system-meta';
 import type { Env } from './lib/types';
+import { generateLlmsTxt } from './mcp/llms-txt';
+import { ONBOARDING_TOOLS } from './mcp/onboarding';
 import { getToolDefs, handleMcpRequest, initMcpServer } from './mcp/server';
 import { generateSkillFile } from './mcp/skill-file';
 import { authMiddleware, requireProjectAccessMiddleware } from './middleware/auth';
+import { agentConnectionsRoutes } from './routes/agent-connections';
 import { agentTypesRoutes } from './routes/agent-types';
 import { agentsRoutes } from './routes/agents';
 import { aiProvidersRoutes } from './routes/ai-providers';
@@ -301,10 +305,20 @@ export function buildApp(
 		c.json({ masterKeyState: masterKeyManager.getState(), version: HEZO_VERSION });
 	app.get('/api/status', statusHandler);
 
-	// Skill file (public)
-	app.get('/skill.md', (c) => {
-		const md = generateSkillFile(getToolDefs());
-		return c.text(md, 200, { 'Content-Type': 'text/markdown' });
+	// Agent manifest (public). Lists the onboarding tools first, then every MCP
+	// tool, and explains how to connect and self-register.
+	app.get('/SKILL.md', async (c) => {
+		const baseUrl = (await getInstanceBaseUrl(c.get('db'))) ?? new URL(c.req.url).origin;
+		const md = generateSkillFile([...ONBOARDING_TOOLS, ...getToolDefs()], { baseUrl });
+		return c.text(md, 200, { 'Content-Type': 'text/markdown; charset=utf-8' });
+	});
+
+	// llms.txt (public) — minimal pointer to SKILL.md for the MCP API.
+	app.get('/llms.txt', async (c) => {
+		const baseUrl = (await getInstanceBaseUrl(c.get('db'))) ?? new URL(c.req.url).origin;
+		return c.text(generateLlmsTxt({ baseUrl }), 200, {
+			'Content-Type': 'text/markdown; charset=utf-8',
+		});
 	});
 
 	// MCP endpoint (authenticated). Only JSON-RPC POST is supported; the
@@ -345,6 +359,7 @@ export function buildApp(
 	app.route('/api', inboxRoutes);
 	app.route('/api', costsRoutes);
 	app.route('/api', apiKeysRoutes);
+	app.route('/api', agentConnectionsRoutes);
 	app.route('/api', skillsRoutes);
 	app.route('/api', preferencesRoutes);
 	app.route('/api', uiStateRoutes);

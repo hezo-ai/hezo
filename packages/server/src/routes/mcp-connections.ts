@@ -6,7 +6,7 @@ import { resolveActor } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { requireSuperuser } from '../middleware/auth';
+import { requireAdminEquivalent } from '../middleware/auth';
 import { createOrFetchConnector } from '../services/connectors/lifecycle';
 import { installLocalMcpById } from '../services/mcp-installer';
 
@@ -32,7 +32,7 @@ mcpConnectionsRoutes.get('/projects/:projectId/mcp-connections', async (c) => {
 });
 
 mcpConnectionsRoutes.get('/mcp-connections', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
 	const result = await db.query(
@@ -42,7 +42,7 @@ mcpConnectionsRoutes.get('/mcp-connections', async (c) => {
 });
 
 mcpConnectionsRoutes.post('/mcp-connections', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
 
@@ -91,7 +91,7 @@ mcpConnectionsRoutes.post('/mcp-connections', async (c) => {
 });
 
 mcpConnectionsRoutes.delete('/mcp-connections/:id', async (c) => {
-	const denied = requireSuperuser(c);
+	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 	const db = c.get('db');
 	const id = c.req.param('id');
