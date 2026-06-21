@@ -227,8 +227,8 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 	}
 
 	// Only Admin (human) callers can opt into waking the assignee on a plain
-	// comment. Agent-authored paths (/agent-api, /mcp) keep mention-only behavior
-	// regardless of the body field.
+	// comment. Agent-authored comments (via the /mcp create_comment tool) keep
+	// mention-only behavior regardless of the body field.
 	const wakeAssignee = auth.type === AuthType.Admin && body.wake_assignee === true;
 
 	const result = await withTransaction(db, async () => {

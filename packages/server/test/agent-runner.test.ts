@@ -590,15 +590,10 @@ describe('runAgent', () => {
 
 		await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
-		expect(capturedEnv.some((e: string) => e.startsWith('HEZO_API_URL='))).toBe(true);
 		expect(capturedEnv.some((e: string) => e.startsWith('HEZO_AGENT_TOKEN='))).toBe(true);
 		expect(capturedEnv.some((e: string) => e.startsWith('HEZO_AGENT_ID='))).toBe(true);
 		expect(capturedEnv.some((e: string) => e.startsWith('HEZO_TEAM_ID='))).toBe(true);
 		expect(capturedEnv.some((e: string) => e.startsWith('HEZO_TASK_ID='))).toBe(true);
-
-		const apiUrl = capturedEnv.find((e: string) => e.startsWith('HEZO_API_URL='));
-		expect(apiUrl).toContain('3100');
-		expect(apiUrl).toContain('host.docker.internal');
 
 		expect(capturedUser).toBe('node');
 	});

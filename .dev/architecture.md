@@ -574,11 +574,11 @@ shapes.
   (connectors: ensure / auth-start / device / callbacks), `skills`.
 - **Ops** — `health`, `updates`, `preview` (HMAC-signed file URLs), public assets.
 
-Two non-REST surfaces share the port: the **Agent API** (`/agent-api`, the run-scoped
-endpoints agents hit, e.g. tool-call reporting) and the **MCP endpoint** (`POST /mcp`,
-Streamable HTTP, tools mirroring the REST surface and enforcing the same authorization).
-`GET /skill.md` serves the manifest that teaches an external agent how to drive Hezo.
-Authorization for all three is § 10.
+One non-REST surface shares the port: the **MCP endpoint** (`POST /mcp`, Streamable
+HTTP), whose tools mirror the REST surface and enforce the same authorization. It is the
+interface agents drive — tasks, comments, approvals, credentials — and external agents
+can drive it too. `GET /skill.md` serves the manifest that teaches an external agent how
+to use it. Authorization for both the REST and MCP surfaces is § 10.
 
 ---
 

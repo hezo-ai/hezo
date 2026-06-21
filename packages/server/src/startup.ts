@@ -17,7 +17,6 @@ import type { Env } from './lib/types';
 import { getToolDefs, handleMcpRequest, initMcpServer } from './mcp/server';
 import { generateSkillFile } from './mcp/skill-file';
 import { authMiddleware, requireProjectAccessMiddleware } from './middleware/auth';
-import { agentApiRoutes } from './routes/agent-api';
 import { agentTypesRoutes } from './routes/agent-types';
 import { agentsRoutes } from './routes/agents';
 import { aiProvidersRoutes } from './routes/ai-providers';
@@ -321,9 +320,8 @@ export function buildApp(
 	// must be reachable without a bearer token).
 	app.route('/', publicAssetsRoutes);
 
-	// Auth middleware for all /api/* and /agent-api/* routes
+	// Auth middleware for all /api/* routes
 	app.use('/api/*', authMiddleware);
-	app.use('/agent-api/*', authMiddleware);
 
 	// Project-scoped routes: resolve :projectId (slug/UUID) → its project and
 	// backing team, assert access once. Handlers read c.get('projectId') and
@@ -331,9 +329,6 @@ export function buildApp(
 	// project-addressed resource (tasks, agents, inbox, team settings, …); the
 	// team is resolved from the project rather than named in the URL.
 	app.use('/api/projects/:projectId/*', requireProjectAccessMiddleware);
-
-	// Agent API routes
-	app.route('/agent-api', agentApiRoutes);
 
 	// CRUD routes
 	app.route('/api', agentTypesRoutes);
@@ -388,7 +383,7 @@ export function buildApp(
 
 	app.get('*', async (c) => {
 		const urlPath = new URL(c.req.url).pathname;
-		if (urlPath.startsWith('/api/') || urlPath.startsWith('/agent-api/')) {
+		if (urlPath.startsWith('/api/')) {
 			return c.text('Not found', 404);
 		}
 		const filePath = urlPath === '/' ? '/index.html' : urlPath;
