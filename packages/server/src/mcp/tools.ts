@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { PGlite } from '@electric-sql/pglite';
+import type { SearchScope } from '@hezo/shared';
 import {
 	ApprovalStatus,
 	ApprovalType,
@@ -18,6 +19,7 @@ import {
 	isMarkdownDocSlug,
 	normalizeAssetFilename,
 	ReactionKind,
+	SEARCH_SCOPES,
 	TaskStatus,
 	WakeupSource,
 	wsRoom,
@@ -2659,15 +2661,15 @@ export function registerTools(
 	tool(
 		server,
 		'semantic_search',
-		'Search the team skills database, tasks, and project docs using natural language. Returns ranked results by relevance.',
+		'Search the team skills database, tasks, project docs, and task comments using natural language. Returns ranked results by relevance.',
 		{
 			project: projectArg(),
 			query: z.string().describe('Natural language search query'),
 			scope: z
-				.enum(['all', 'tasks', 'skills', 'project_docs'])
+				.enum(SEARCH_SCOPES)
 				.optional()
 				.describe('Limit search to specific content type (default: all)'),
-			limit: z.number().optional().describe('Max results (default: 10)'),
+			limit: z.number().optional().describe('Max results per type (default: 10)'),
 		},
 		async (args, db, auth) => {
 			const projectScope = await resolveScope(db, auth, args);
@@ -2681,8 +2683,8 @@ export function registerTools(
 				};
 			}
 
-			const results = await semanticSearch(db, projectScope.teamId, args.query as string, {
-				scope: (args.scope as 'all' | 'tasks' | 'skills' | 'project_docs') ?? 'all',
+			const results = await semanticSearch(db, [projectScope.teamId], args.query as string, {
+				scope: (args.scope as SearchScope) ?? 'all',
 				limit: (args.limit as number) ?? 10,
 			});
 

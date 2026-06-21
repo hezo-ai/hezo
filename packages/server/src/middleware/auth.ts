@@ -323,6 +323,30 @@ export async function requireTeamAccessForResource(
 	return { teamId: resourceTeamId };
 }
 
+/**
+ * Every team id the auth principal may read across, for global (non-project)
+ * endpoints like search. Mirrors `assertTeamAccess`: API keys and normal agents
+ * are bound to their single team; the instance CEO chat session (`crossTeam`) and
+ * superusers span all teams (HQ included); a board user gets the teams they belong
+ * to. Returns team ids — the caller decides how to use them.
+ */
+export async function getAccessibleTeamIds(db: PGlite, auth: AuthInfo): Promise<string[]> {
+	const allTeams = async (): Promise<string[]> => {
+		const rows = await db.query<{ id: string }>('SELECT id FROM teams');
+		return rows.rows.map((r) => r.id);
+	};
+
+	if (auth.type === AuthType.ApiKey) return [auth.teamId];
+	if (auth.type === AuthType.Agent) return auth.crossTeam ? allTeams() : [auth.teamId];
+	if (auth.isSuperuser) return allTeams();
+
+	const rows = await db.query<{ team_id: string }>(
+		'SELECT DISTINCT m.team_id FROM members m JOIN member_users mu ON mu.id = m.id WHERE mu.user_id = $1',
+		[auth.userId],
+	);
+	return rows.rows.map((r) => r.team_id);
+}
+
 export function requireSuperuser(c: Context<Env>): Response | null {
 	const auth = c.get('auth');
 	if (auth.type !== AuthType.Admin || !auth.isSuperuser) {
