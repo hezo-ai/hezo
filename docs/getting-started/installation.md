@@ -6,9 +6,10 @@ section: Getting started
 
 # Installation
 
-Hezo runs as a single self-contained binary on your own machine or server. It uses
-**Docker** to run each project's agents in an isolated container, so Docker is the
-one prerequisite to have in place first.
+Hezo ships as a **single self-contained binary** — there's no runtime, language
+toolchain, or dependencies to install. Download it, run it, and you're up in seconds.
+The one thing to have in place first is **Docker**, which Hezo uses to run each
+project's agents in an isolated container.
 
 ## Prerequisites
 
@@ -19,26 +20,34 @@ one prerequisite to have in place first.
 
 ## Install the binary
 
-The install script detects your OS and CPU architecture and downloads the matching
-build.
+The one-line installer detects your OS and CPU architecture and downloads the matching
+binary from the [latest release](https://github.com/hezo-ai/hezo/releases/latest).
 
-### macOS & Linux
-
-```sh
+```sh tab=macOS
 curl -fsSL https://hezo.ai/install.sh | sh
 ```
 
-### Windows (PowerShell)
+```sh tab=Linux
+curl -fsSL https://hezo.ai/install.sh | sh
+```
 
-```powershell
+```powershell tab=Windows
 irm https://hezo.ai/install.ps1 | iex
 ```
 
 ### Manual download
 
-Every build is published on
-[GitHub Releases](https://github.com/hezo-ai/hezo/releases). Download the asset for
-your platform, make it executable, and put it on your `PATH`.
+Prefer to grab the binary yourself? Every release is published on
+[GitHub Releases](https://github.com/hezo-ai/hezo/releases/latest). Download the asset for
+your platform, make it executable (`chmod +x`), and put it on your `PATH`.
+
+| Platform | Asset |
+|---|---|
+| macOS (Apple Silicon) | `hezo-darwin-arm64` |
+| macOS (Intel) | `hezo-darwin-x64` |
+| Linux (x86-64) | `hezo-linux-x64` |
+| Linux (ARM64) | `hezo-linux-arm64` |
+| Windows (x64) | `hezo-windows-x64.exe` |
 
 ## Start the server
 
