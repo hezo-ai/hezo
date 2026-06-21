@@ -48,8 +48,16 @@ test('resets shell scroll to the top when navigating between pages', async ({
 
 	const project = await createProjectViaApi(page, token, uniqueName('Scroll Reset'));
 
-	// Enough tasks that the task LIST overflows <main> — this is the navigation
-	// destination whose scroll must reset.
+	// The list/detail pages only need enough rows + comments to overflow <main>.
+	// Every task must carry an agent assignee (the API rejects an unassigned
+	// task), so the seeding below is collapsed into as few requests as possible:
+	// one source task, ONE batch call for all filler rows, and the comments
+	// posted concurrently. The previous shape — 1 + 24 + 24 serial round-trips —
+	// took ~a minute under CI load, and that long window on the shared e2e server
+	// is what starved the neighbouring specs and made this suite flake.
+
+	// The source task whose detail page we scroll; created on its own so we hold
+	// its id for the comment seeding below.
 	const sourceRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 		headers,
 		data: {
@@ -60,24 +68,36 @@ test('resets shell scroll to the top when navigating between pages', async ({
 	});
 	const sourceTask = ((await sourceRes.json()) as { data: { id: string; identifier: string } })
 		.data;
-	for (let i = 0; i < 24; i++) {
-		await page.request.post(`/api/projects/${project.slug}/tasks`, {
-			headers,
-			data: { project_id: project.id, title: `Filler task ${i}`, assignee_id: project.assigneeId },
-		});
+
+	// Enough filler rows that the task LIST overflows <main> — the navigation
+	// destination whose scroll must reset. One batch request, not 24.
+	const fillerRes = await page.request.post(`/api/projects/${project.slug}/tasks/batch`, {
+		headers,
+		data: {
+			items: Array.from({ length: 24 }, (_, i) => ({
+				project_id: project.id,
+				title: `Filler task ${i}`,
+				assignee_id: project.assigneeId,
+			})),
+		},
+	});
+	if (!fillerRes.ok()) {
+		throw new Error(`filler batch failed — ${fillerRes.status()} ${await fillerRes.text()}`);
 	}
 
-	// Enough comments that the source task's detail page overflows <main> — this
-	// is the page we scroll down before navigating away.
-	for (let i = 0; i < 24; i++) {
-		await page.request.post(`/api/projects/${project.slug}/tasks/${sourceTask.id}/comments`, {
-			headers,
-			data: {
-				content_type: 'text',
-				content: { text: `Source comment ${i}. ${'lorem '.repeat(30)}` },
-			},
-		});
-	}
+	// Enough comments that the source task's detail page overflows <main> — the
+	// page we scroll down before navigating away. Posted concurrently.
+	await Promise.all(
+		Array.from({ length: 24 }, (_, i) =>
+			page.request.post(`/api/projects/${project.slug}/tasks/${sourceTask.id}/comments`, {
+				headers,
+				data: {
+					content_type: 'text',
+					content: { text: `Source comment ${i}. ${'lorem '.repeat(30)}` },
+				},
+			}),
+		),
+	);
 
 	// Initial load warms the task-list React Query cache so the return navigation
 	// later renders the tall list synchronously (no loading-state self-clamp).
@@ -98,9 +118,19 @@ test('resets shell scroll to the top when navigating between pages', async ({
 		.poll(() => main.evaluate((el) => el.scrollHeight > el.clientHeight), { timeout: 10000 })
 		.toBe(true);
 
-	await main.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+	// Re-scroll to the bottom on every poll: the comment thread renders through
+	// Virtuoso, so its scrollHeight keeps growing as more rows mount. A single
+	// scrollTo() before polling can land while the page is only marginally taller
+	// than the viewport (scrollTop < 100) and never catch up; scrolling inside the
+	// poll keeps pace with the growing content until it's genuinely scrolled down.
 	await expect
-		.poll(() => main.evaluate((el) => el.scrollTop), { timeout: 10000 })
+		.poll(
+			async () => {
+				await main.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+				return main.evaluate((el) => el.scrollTop);
+			},
+			{ timeout: 10000 },
+		)
 		.toBeGreaterThan(100);
 
 	// SPA-navigate back to the (cached, tall) task list via the sidebar link.
