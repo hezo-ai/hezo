@@ -178,13 +178,21 @@ function ExecutionDetailPage() {
 								<div className="flex items-baseline gap-2 flex-wrap">
 									{run.cost_cents != null && run.cost_cents > 0 && (
 										<span className="text-sm font-medium tabular-nums">
-											${(run.cost_cents / 100).toFixed(2)}
+											{run.usage_partial ? '~' : ''}${(run.cost_cents / 100).toFixed(2)}
 										</span>
 									)}
 									<span className="text-xs text-text-3 whitespace-nowrap tabular-nums">
+										{run.usage_partial ? '~' : ''}
 										{run.input_tokens.toLocaleString()} in · {run.output_tokens.toLocaleString()}{' '}
 										out tokens
 									</span>
+									{run.usage_partial && (
+										<Tooltip content="The run was interrupted before it finished, so this usage is a partial snapshot of what it consumed.">
+											<span className="text-[11px] font-medium text-warning whitespace-nowrap">
+												interrupted
+											</span>
+										</Tooltip>
+									)}
 								</div>
 							</div>
 						)}

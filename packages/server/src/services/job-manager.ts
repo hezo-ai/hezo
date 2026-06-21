@@ -27,7 +27,7 @@ import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { ref } from '../lib/log-ref';
 import { assertChildrenAllClosed } from '../lib/task-relationships';
 import { logger } from '../logger';
-import { type RunnerDeps, type RunResult, runAgent } from './agent-runner';
+import { type RunnerDeps, type RunResult, recordRunCostAndEnforce, runAgent } from './agent-runner';
 import {
 	pauseAgentForBudget,
 	reconcileBudgetPause,
@@ -496,6 +496,9 @@ export class JobManager {
 			member_id: string;
 			team_id: string;
 			task_id: string | null;
+			cost_cents: number;
+			input_tokens: number;
+			output_tokens: number;
 		}>(
 			`UPDATE heartbeat_runs
 			 SET status = $1::heartbeat_run_status,
@@ -503,7 +506,7 @@ export class JobManager {
 			     error = COALESCE(error, $2),
 			     exit_code = COALESCE(exit_code, -1)
 			 WHERE status IN ($3::heartbeat_run_status, $4::heartbeat_run_status)
-			 RETURNING id, member_id, team_id, task_id`,
+			 RETURNING id, member_id, team_id, task_id, cost_cents, input_tokens, output_tokens`,
 			[
 				HeartbeatRunStatus.Failed,
 				'Server restarted while run in flight',
@@ -548,6 +551,38 @@ export class JobManager {
 				task_id: run.task_id,
 				previous_run_id: run.id,
 			}).catch((e) => log.error('Failed to enqueue startup recovery wakeup:', e));
+		}
+
+		// A run the server killed mid-flight still burned tokens; its surviving
+		// usage snapshot (flushed during the run, preserved by the UPDATE above) is
+		// real spend that never reached cost_entries. Charge it to the provider
+		// budget now so an interrupted run isn't free. recordRunCostAndEnforce is
+		// guarded on cost_cents > 0 and these runs never completed, so it can't
+		// double-insert. task_id-less runs (rare, non-task coordination) are skipped
+		// since cost attribution is task/project-scoped.
+		for (const run of stranded.rows) {
+			if (!run.task_id || run.cost_cents <= 0) continue;
+			const projectRow = await db.query<{ project_id: string | null }>(
+				`SELECT project_id FROM tasks WHERE id = $1`,
+				[run.task_id],
+			);
+			const projectId = projectRow.rows[0]?.project_id ?? undefined;
+			await recordRunCostAndEnforce(
+				db,
+				run.id,
+				{
+					inputTokens: run.input_tokens,
+					outputTokens: run.output_tokens,
+					costCents: run.cost_cents,
+				},
+				{
+					wsManager,
+					teamId: run.team_id,
+					projectId,
+					taskId: run.task_id,
+					memberId: run.member_id,
+				},
+			);
 		}
 
 		if (stranded.rows.length > 0 || resetAgents.rows.length > 0) {

@@ -112,6 +112,67 @@ describe('agent-stream-parser', () => {
 		expect(usage?.costCents).toBe(24);
 	});
 
+	it('accumulates running usage from assistant turns before the terminal result', () => {
+		// A run interrupted before its `result` event (e.g. a server restart) must
+		// still report the tokens it burned. The parser sums each assistant turn's
+		// usage so getUsage() is non-null mid-stream.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
+		parser.onStdout(
+			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-x', tools: [] })}\n`,
+		);
+		// No usage seen yet — nothing to report.
+		expect(parser.getUsage()).toBeNull();
+
+		const assistantTurn = {
+			type: 'assistant',
+			message: {
+				role: 'assistant',
+				usage: {
+					input_tokens: 100,
+					output_tokens: 20,
+					cache_creation_input_tokens: 10,
+					cache_read_input_tokens: 5,
+				},
+				content: [{ type: 'text', text: 'working' }],
+			},
+		};
+		parser.onStdout(`${JSON.stringify(assistantTurn)}\n`);
+		parser.onStdout(`${JSON.stringify(assistantTurn)}\n`);
+
+		const usage = parser.getUsage();
+		expect(usage).not.toBeNull();
+		// Aggregate keeps every input bucket: (100 + 10 + 5) summed across two turns.
+		expect(usage?.inputTokens).toBe(230);
+		expect(usage?.outputTokens).toBe(40);
+		expect(usage?.costCents).toBeGreaterThan(0);
+	});
+
+	it('the terminal result replaces the running usage with the authoritative total', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
+		parser.onStdout(
+			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-x', tools: [] })}\n`,
+		);
+		parser.onStdout(
+			`${JSON.stringify({
+				type: 'assistant',
+				message: { role: 'assistant', usage: { input_tokens: 100, output_tokens: 20 } },
+			})}\n`,
+		);
+		parser.onStdout(
+			`${JSON.stringify({
+				type: 'result',
+				subtype: 'success',
+				is_error: false,
+				total_cost_usd: 0.1,
+				usage: { input_tokens: 150, output_tokens: 50 },
+			})}\n`,
+		);
+		const usage = parser.getUsage();
+		// Authoritative cumulative figure from `result`, not the 100/20 running sum.
+		expect(usage?.inputTokens).toBe(150);
+		expect(usage?.outputTokens).toBe(50);
+	});
+
 	it('captures a provider billing rejection as the run terminal error', () => {
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
 		expect(parser.getTerminalError()).toBeNull();

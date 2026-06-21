@@ -650,6 +650,12 @@ export async function runAgent(
 	await emitRunStarted(deps, heartbeatRunId, agent, task, project, effectiveWakeupId);
 	const streamId = `run:${heartbeatRunId}`;
 
+	// Latest running token usage, refreshed from the parser on every exec chunk.
+	// Flushed to the row alongside log_text (below) so that whatever the run has
+	// burned so far survives a crash — reconcileOnStartup never overwrites these
+	// columns, so the last snapshot is what a restart-failed run reports.
+	let currentUsage: AgentRunUsage | null = null;
+
 	deps.logs.begin({
 		streamId,
 		room: `project-runs:${project.id}`,
@@ -671,10 +677,31 @@ export async function runAgent(
 			replace: true,
 		}),
 		onFlush: async (text) => {
-			await deps.db.query('UPDATE heartbeat_runs SET log_text = $1 WHERE id = $2', [
-				text,
-				heartbeatRunId,
-			]);
+			// Persist the running usage with the log so a crash mid-run still leaves a
+			// non-zero token/cost snapshot, flagged partial until a clean completion.
+			if (currentUsage) {
+				await deps.db.query(
+					`UPDATE heartbeat_runs
+					 SET log_text = $1,
+					     input_tokens = COALESCE($2, input_tokens),
+					     output_tokens = COALESCE($3, output_tokens),
+					     cost_cents = COALESCE($4, cost_cents),
+					     usage_partial = true
+					 WHERE id = $5`,
+					[
+						text,
+						currentUsage.inputTokens,
+						currentUsage.outputTokens,
+						currentUsage.costCents,
+						heartbeatRunId,
+					],
+				);
+			} else {
+				await deps.db.query('UPDATE heartbeat_runs SET log_text = $1 WHERE id = $2', [
+					text,
+					heartbeatRunId,
+				]);
+			}
 		},
 	});
 
@@ -968,6 +995,9 @@ export async function runAgent(
 				const rendered =
 					chunk.stream === 'stdout' ? parser.onStdout(chunk.text) : parser.onStderr(chunk.text);
 				if (rendered) emit(chunk.stream, rendered);
+				// Surface the latest running usage to the log flush so it's persisted
+				// crash-safely (see currentUsage / onFlush above).
+				currentUsage = parser.getUsage();
 			};
 
 			const { stdout, stderr } = await deps.docker.execStart(execId, { signal, onChunk });
@@ -1030,6 +1060,9 @@ export async function runAgent(
 					durationMs,
 					error: noOutputError ?? terminalError ?? undefined,
 					usage: parser.getUsage(),
+					// The stream ran to its terminal event, so this usage is final, not a
+					// mid-run snapshot — clear the partial flag any earlier flush set.
+					usagePartial: false,
 				},
 				runBroadcast,
 			);
@@ -1058,6 +1091,9 @@ export async function runAgent(
 					exitCode: -1,
 					durationMs,
 					error: errorMessage,
+					// Persist whatever the parser captured before the throw/abort; leave
+					// usage_partial as the last flush set it (true once any usage landed).
+					usage: parser.getUsage(),
 				},
 				runBroadcast,
 			);
@@ -1886,6 +1922,12 @@ async function updateHeartbeatRun(
 		durationMs: number;
 		error?: string;
 		usage?: AgentRunUsage | null;
+		/**
+		 * Whether the persisted usage is a mid-run snapshot. `false` on a clean
+		 * completion (terminal event seen → authoritative); omit to leave the flag
+		 * as the last periodic flush set it (true once any usage landed).
+		 */
+		usagePartial?: boolean | null;
 	},
 	broadcast: HeartbeatRunBroadcast,
 ): Promise<void> {
@@ -1898,8 +1940,9 @@ async function updateHeartbeatRun(
 		     error = COALESCE($3, error),
 		     input_tokens = COALESCE($4, input_tokens),
 		     output_tokens = COALESCE($5, output_tokens),
-		     cost_cents = COALESCE($6, cost_cents)
-		 WHERE id = $7`,
+		     cost_cents = COALESCE($6, cost_cents),
+		     usage_partial = COALESCE($7, usage_partial)
+		 WHERE id = $8`,
 		[
 			update.status,
 			update.exitCode,
@@ -1907,6 +1950,7 @@ async function updateHeartbeatRun(
 			update.usage?.inputTokens ?? null,
 			update.usage?.outputTokens ?? null,
 			update.usage?.costCents ?? null,
+			update.usagePartial ?? null,
 			runId,
 		],
 	);
@@ -1933,9 +1977,11 @@ async function updateHeartbeatRun(
 /**
  * Insert the run's cost into `cost_entries` and pause the agent if now over
  * budget. Best-effort: a failure here logs and continues — it must not turn a
- * completed run into a failed one.
+ * completed run into a failed one. Exported so startup reconciliation can charge
+ * the surviving cost of a run the server killed mid-flight (see
+ * `JobManager.reconcileOnStartup`).
  */
-async function recordRunCostAndEnforce(
+export async function recordRunCostAndEnforce(
 	db: PGlite,
 	runId: string,
 	usage: AgentRunUsage | null,

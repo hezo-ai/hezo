@@ -1894,6 +1894,54 @@ describe('JobManager workflow methods', () => {
 			manager.shutdown();
 		});
 
+		it('preserves a stranded run’s partial usage and charges its cost to the budget', async () => {
+			await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
+			await db.query('DELETE FROM cost_entries WHERE member_id = $1', [agentId]);
+
+			// A run the server killed mid-flight: its periodic flush left a non-zero
+			// usage snapshot flagged partial, but it never completed.
+			const inserted = await db.query<{ id: string }>(
+				`INSERT INTO heartbeat_runs
+				   (team_id, member_id, task_id, status, started_at,
+				    input_tokens, output_tokens, cost_cents, usage_partial)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now(), 1000, 200, 37, true)
+				 RETURNING id`,
+				[teamId, agentId, taskId, HeartbeatRunStatus.Running],
+			);
+			const runId = inserted.rows[0].id;
+
+			const manager = createJobManager();
+			await manager.reconcileOnStartup();
+
+			const run = await db.query<{
+				status: string;
+				error: string;
+				input_tokens: number;
+				output_tokens: number;
+				usage_partial: boolean;
+			}>(
+				`SELECT status, error, input_tokens, output_tokens, usage_partial
+				 FROM heartbeat_runs WHERE id = $1`,
+				[runId],
+			);
+			expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+			expect(run.rows[0].error).toContain('Server restarted');
+			// The token snapshot survives the restart, still flagged partial.
+			expect(Number(run.rows[0].input_tokens)).toBe(1000);
+			expect(Number(run.rows[0].output_tokens)).toBe(200);
+			expect(run.rows[0].usage_partial).toBe(true);
+
+			// …and the surviving cost reached cost_entries (so budgets count it).
+			const cost = await db.query<{ amount_cents: number }>(
+				`SELECT amount_cents FROM cost_entries WHERE member_id = $1 AND description = $2`,
+				[agentId, `Agent run ${runId}`],
+			);
+			expect(cost.rows.length).toBe(1);
+			expect(Number(cost.rows[0].amount_cents)).toBe(37);
+
+			manager.shutdown();
+		});
+
 		it('releases all open execution_locks on startup', async () => {
 			await db.query('UPDATE execution_locks SET released_at = now() WHERE released_at IS NULL');
 			await db.query(`INSERT INTO execution_locks (task_id, member_id) VALUES ($1, $2)`, [

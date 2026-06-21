@@ -115,7 +115,10 @@ skipped with `WakeupSkipReason.OverBudget`; (2) **run completion** (`agent-runne
 records the run's cost as one `cost_entries` row — attributed to the AI adapter config
 resolved for the run (stamped on `heartbeat_runs.ai_provider_config_id`/`provider` at
 start, read back when recording) — and reactively pauses the agent if it is now over;
-(3) the manual `POST /costs` path does the same reactive pause.
+(3) the manual `POST /costs` path does the same reactive pause. A run the server kills
+mid-flight never reaches (2), so `JobManager.reconcileOnStartup` charges its surviving
+`cost_cents` snapshot the same way (via the shared `recordRunCostAndEnforce`) — an
+interrupted run still counts against budgets instead of being free.
 
 Cost **reads** are project-scoped: `GET /projects/:projectId/costs` filters by
 `project_id`, and `group_by=day` (optionally `breakdown=agent|adapter`) powers the
@@ -704,7 +707,13 @@ Each row captures:
   broadcast live over the `project-runs:<projectId>` WebSocket room as each
   chunk arrives, so a run's detail page and the associated task page can
   render output in real time.
-- **Usage**: `input_tokens`, `output_tokens`, `cost_cents`.
+- **Usage**: `input_tokens`, `output_tokens`, `cost_cents`, `usage_partial`.
+  Usage is flushed to the row *during* the run alongside `log_text` (the parser
+  accumulates a running total from each turn's usage), so a run the server kills
+  mid-flight still reports the tokens/cost it burned instead of `0`.
+  `usage_partial` is `true` for such a mid-run snapshot and cleared on a clean
+  completion (terminal event seen → authoritative total); the run-detail Usage
+  panel renders a partial snapshot prefixed `~` and tagged "interrupted".
 - **Retry tracking**: `retry_of_run_id`, `process_loss_retry_count`,
   `process_pid` — the orphan detector uses these to recover runs whose process
   disappeared.
