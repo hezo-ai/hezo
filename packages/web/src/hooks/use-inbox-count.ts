@@ -12,11 +12,12 @@ export function useInboxUnreadCount(projectId: string, enabled = true) {
 }
 
 /**
- * Total unread inbox items across every project the user can see — the count for
- * the global inbox. Shares per-project query keys with useInboxUnreadCount so
- * WebSocket-driven invalidations keep it live.
+ * Per-project unread inbox counts keyed by project slug, for every visible
+ * project. Backs both the global inbox total and the per-avatar rail badges.
+ * Shares per-project query keys with useInboxUnreadCount so WebSocket-driven
+ * invalidations keep every consumer live.
  */
-export function useGlobalInboxUnreadCount(): number {
+export function useInboxUnreadCountsBySlug(): Record<string, number> {
 	const { projects } = useAllVisibleProjects();
 	const queries = useQueries({
 		queries: projects.map((p) => ({
@@ -25,5 +26,17 @@ export function useGlobalInboxUnreadCount(): number {
 			enabled: !!p.slug,
 		})),
 	});
-	return queries.reduce((sum, q) => sum + (q.data?.unread ?? 0), 0);
+	const bySlug: Record<string, number> = {};
+	projects.forEach((p, i) => {
+		bySlug[p.slug] = queries[i]?.data?.unread ?? 0;
+	});
+	return bySlug;
+}
+
+/**
+ * Total unread inbox items across every project the user can see — the count for
+ * the global inbox.
+ */
+export function useGlobalInboxUnreadCount(): number {
+	return Object.values(useInboxUnreadCountsBySlug()).reduce((sum, n) => sum + n, 0);
 }

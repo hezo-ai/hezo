@@ -2,10 +2,12 @@ import { Link } from '@tanstack/react-router';
 import { Building2, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
+import { useInboxUnreadCount, useInboxUnreadCountsBySlug } from '../hooks/use-inbox-count';
 import { useMe } from '../hooks/use-me';
 import { useAllVisibleProjects, useHqProject } from '../hooks/use-projects';
 import { CreateProjectWithTeamDialog } from './create-project-with-team-dialog';
 import { Avatar, avatarColorFromString, getInitials } from './ui/avatar';
+import { CountOverlayBadge } from './ui/count-overlay-badge';
 import { Tooltip } from './ui/tooltip';
 
 /**
@@ -21,6 +23,10 @@ export function ProjectRail() {
 	const { projects } = useAllVisibleProjects();
 	const hq = useHqProject();
 	const active = useActiveProject();
+	const inboxCounts = useInboxUnreadCountsBySlug();
+	// HQ is excluded from the visible-project map (it's internal), so fetch its
+	// outstanding count separately to badge the pinned HQ entry.
+	const { data: hqInbox } = useInboxUnreadCount(hq?.slug ?? '', !!hq);
 	const [createOpen, setCreateOpen] = useState(false);
 	const hqActive = !!hq && active?.slug === hq.slug;
 
@@ -41,11 +47,15 @@ export function ProjectRail() {
 									params={{ projectId: p.slug }}
 									aria-label={p.name}
 									data-testid={`project-rail-avatar-${p.slug}`}
-									className={`rounded-full transition-shadow ${
+									className={`relative rounded-full transition-shadow ${
 										isActive ? 'ring-2 ring-inverse ring-offset-1 ring-offset-surface-2' : ''
 									}`}
 								>
 									<Avatar initials={getInitials(p.name)} color={avatarColorFromString(p.name)} />
+									<CountOverlayBadge
+										count={inboxCounts[p.slug] ?? 0}
+										testId={`project-rail-inbox-badge-${p.slug}`}
+									/>
 								</Link>
 							</Tooltip>
 						);
@@ -74,11 +84,15 @@ export function ProjectRail() {
 								params={{ projectId: hq.slug }}
 								aria-label={hq.name}
 								data-testid="project-rail-hq"
-								className={`w-9 h-9 rounded-full flex items-center justify-center text-text-2 hover:text-text-1 hover:bg-surface border border-border bg-surface transition-colors ${
+								className={`relative w-9 h-9 rounded-full flex items-center justify-center text-text-2 hover:text-text-1 hover:bg-surface border border-border bg-surface transition-colors ${
 									hqActive ? 'ring-2 ring-inverse ring-offset-1 ring-offset-surface-2' : ''
 								}`}
 							>
 								<Building2 className="w-4 h-4" />
+								<CountOverlayBadge
+									count={hqInbox?.unread ?? 0}
+									testId="project-rail-hq-inbox-badge"
+								/>
 							</Link>
 						</Tooltip>
 					</div>
