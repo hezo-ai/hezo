@@ -298,6 +298,15 @@ describe('template resolver', () => {
 		expect(result).toContain('you can proceed');
 	});
 
+	it('mention discipline warns that a bold/plain teammate name with no @ prefix wakes no one', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// a name needs @/@@ to register; bare/bold is not a mention
+		expect(result).toContain('a bare name is not a mention');
+		// the exact bug shape: bold name + imperative reads as an address but pings nobody
+		expect(result).toContain('**devops-engineer**');
+		expect(result).toContain('emphasis is not a substitute for `@`');
+	});
+
 	it('mention discipline makes routing/triage handoffs an active @, not a passive reference', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		// handing work to someone to own — even tracked on a different ticket — wakes them

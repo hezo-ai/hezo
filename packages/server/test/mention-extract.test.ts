@@ -21,6 +21,10 @@ describe('extractMentionSlugs', () => {
 		expect(extractMentionSlugs('BE-2 is assigned to @@researcher')).toEqual([]);
 	});
 
+	it('ignores a bold/plain teammate name with no @ prefix', () => {
+		expect(extractMentionSlugs('**devops-engineer** — please update the PR')).toEqual([]);
+	});
+
 	it('treats @@ and @ in the same comment correctly — passive ignored, active extracted', () => {
 		const slugs = extractMentionSlugs(
 			'Plan: BE-2 → @@researcher, BE-3 → @@product-lead. @architect please weigh in.',
