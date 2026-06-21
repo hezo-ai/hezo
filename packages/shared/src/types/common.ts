@@ -151,12 +151,28 @@ export type SearchScope = (typeof SEARCH_SCOPES)[number];
 export const SEARCH_RESULT_TYPES = ['task', 'skill', 'project_doc', 'comment'] as const;
 export type SearchResultType = (typeof SEARCH_RESULT_TYPES)[number];
 
+/**
+ * Marks the start/end of a matched term inside `SearchResult.snippet`. The server
+ * wraps each highlighted span in this sentinel and the web palette splits on it to
+ * render `<mark>` (never via `dangerouslySetInnerHTML`). NUL is used because
+ * Postgres `text`/`jsonb` reject NUL bytes on insert, so the indexed corpus can
+ * never contain it — the marker is collision-free by construction, and it
+ * round-trips cleanly through JSON.
+ */
+export const HIGHLIGHT_SENTINEL = '\u0000';
+
 export interface SearchResult {
 	type: SearchResultType;
 	id: string;
 	title: string;
 	snippet: string;
 	score: number;
+	/**
+	 * True when the query term appears nowhere literally (neither title nor body)
+	 * and the result surfaced purely via embedding similarity. Drives the
+	 * "related" label so the absence of a highlight is explained.
+	 */
+	semanticOnly?: boolean;
 	/** Project slug for the destination route (tasks, comments, project docs). */
 	projectSlug?: string;
 	/** Friendly task identifier, e.g. `TO-4` (tasks and comments). */
