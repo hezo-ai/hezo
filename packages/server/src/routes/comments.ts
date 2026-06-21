@@ -28,7 +28,6 @@ commentsRoutes.get('/projects/:projectId/tasks/:taskId/comments', async (c) => {
 	const db = c.get('db');
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
-	const includeToolCalls = c.req.query('include_tool_calls') === 'true';
 
 	const result = await db.query(
 		`SELECT ic.id, ic.public_id, ic.task_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
@@ -58,20 +57,6 @@ commentsRoutes.get('/projects/:projectId/tasks/:taskId/comments', async (c) => {
 	);
 	for (const comment of result.rows as Record<string, unknown>[]) {
 		comment.attachments = attachmentsByComment.get(comment.id as string) ?? [];
-	}
-
-	if (includeToolCalls) {
-		for (const comment of result.rows as Record<string, unknown>[]) {
-			if (comment.content_type === CommentContentType.Trace) {
-				const toolCalls = await db.query(
-					'SELECT * FROM tool_calls WHERE comment_id = $1 ORDER BY created_at ASC',
-					[comment.id],
-				);
-				comment.tool_calls = toolCalls.rows;
-			} else {
-				comment.tool_calls = [];
-			}
-		}
 	}
 
 	return ok(c, result.rows);

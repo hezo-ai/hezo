@@ -68,11 +68,11 @@ describe('GET /teams/:teamId/approvals enriched fields', () => {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				type: ApprovalType.SecretAccess,
+				type: ApprovalType.PlanReview,
 				requested_by_member_id: agentId,
 				payload: {
 					member_id: agentId,
-					secret_name: 'ENRICH_TEST',
+					summary: 'ENRICH_TEST',
 					project_id: project.id,
 					reason: 'testing enriched fields',
 				},
@@ -86,7 +86,7 @@ describe('GET /teams/:teamId/approvals enriched fields', () => {
 		expect(listRes.status).toBe(200);
 		const rows = (await listRes.json()).data as any[];
 		const row = rows.find(
-			(r: any) => r.type === 'secret_access' && r.payload?.secret_name === 'ENRICH_TEST',
+			(r: any) => r.type === 'plan_review' && r.payload?.summary === 'ENRICH_TEST',
 		);
 		expect(row).toBeDefined();
 
@@ -150,7 +150,7 @@ describe('POST /teams/:teamId/approvals validation', () => {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				type: 'secret_access',
+				type: 'plan_review',
 				requested_by_member_id: agentId,
 			}),
 		});

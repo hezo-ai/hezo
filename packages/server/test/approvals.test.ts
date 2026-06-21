@@ -47,9 +47,9 @@ describe('approvals CRUD', () => {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				type: 'secret_access',
+				type: 'plan_review',
 				requested_by_member_id: agentId,
-				payload: { secret_name: 'DB_PASSWORD', reason: 'Need for migration' },
+				payload: { summary: 'Plan to review' },
 			}),
 		});
 		expect(createRes.status).toBe(201);

@@ -285,15 +285,15 @@ describe('MCP create_comment fires mention-only wakeups', () => {
 });
 
 describe('non-text comments skip mention wakeups', () => {
-	// Server-created comments (run/system/trace/execution) can carry @-like text
-	// but must never fire mention wakeups. fireCommentWakeups is the single guard,
-	// so exercise it directly with a non-text content type.
-	it('does not fire mention wakeups for a trace-typed comment', async () => {
-		const taskId = await insertTask(productLeadId, 'Trace ticket');
+	// Server-created comments (run/system/execution) can carry @-like text but
+	// must never fire mention wakeups. fireCommentWakeups is the single guard, so
+	// exercise it directly with a non-text content type.
+	it('does not fire mention wakeups for a system-typed comment', async () => {
+		const taskId = await insertTask(productLeadId, 'System ticket');
 		const content = { text: '@architect tool output' };
 		const inserted = await db.query<{ id: string }>(
 			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
-			 VALUES ($1, $2, 'trace'::comment_content_type, $3::jsonb)
+			 VALUES ($1, $2, 'system'::comment_content_type, $3::jsonb)
 			 RETURNING id`,
 			[taskId, captainId, JSON.stringify(content)],
 		);
@@ -303,7 +303,7 @@ describe('non-text comments skip mention wakeups', () => {
 			teamId,
 			commentId: inserted.rows[0].id,
 			content,
-			contentType: CommentContentType.Trace,
+			contentType: CommentContentType.System,
 			authorMemberId: captainId,
 		});
 

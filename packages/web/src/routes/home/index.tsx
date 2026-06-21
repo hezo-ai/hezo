@@ -43,8 +43,6 @@ function approvalText(a: Approval): string {
 	switch (a.type) {
 		case ApprovalType.DesignatedRepoRequest:
 			return `${who} needs GitHub access to set up the repo`;
-		case ApprovalType.SecretAccess:
-			return `${who} requests a credential`;
 		case ApprovalType.PlanReview:
 			return `${who} drafted a plan to review`;
 		case ApprovalType.Hire:
@@ -65,7 +63,7 @@ function approvalText(a: Approval): string {
 function approvalActionLabel(type: string): string {
 	if (type === ApprovalType.DesignatedRepoRequest) return 'Set up';
 	if (type === ApprovalType.PlanReview) return 'Open plan';
-	if (type === ApprovalType.SecretAccess || type === ApprovalType.SkillProposal) return 'Review';
+	if (type === ApprovalType.SkillProposal) return 'Review';
 	return 'Open';
 }
 

@@ -78,7 +78,6 @@ export function agentRuntimeStatusMeta(status: string): BadgeMeta {
 const APPROVAL_TYPE_COLORS: Record<ApprovalType, BadgeColor> = {
 	[ApprovalType.Strategy]: 'purple',
 	[ApprovalType.DesignatedRepoRequest]: 'yellow',
-	[ApprovalType.SecretAccess]: 'red',
 	[ApprovalType.Hire]: 'green',
 	[ApprovalType.PlanReview]: 'blue',
 	[ApprovalType.DeployProduction]: 'red',

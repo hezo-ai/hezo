@@ -41,7 +41,6 @@ export interface Comment {
 	author_name: string;
 	author_member_id: string | null;
 	parent_comment_id: string | null;
-	tool_calls?: unknown[];
 	reactions?: ReactionGroup[];
 	attachments?: CommentAttachment[];
 }
@@ -49,10 +48,7 @@ export interface Comment {
 export function useComments(projectId: string, taskId: string, options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: queryKeys.projects.taskComments(projectId, taskId),
-		queryFn: () =>
-			api.get<Comment[]>(`/api/projects/${projectId}/tasks/${taskId}/comments`, {
-				include_tool_calls: 'true',
-			}),
+		queryFn: () => api.get<Comment[]>(`/api/projects/${projectId}/tasks/${taskId}/comments`),
 		enabled: options?.enabled ?? true,
 		staleTime: 0,
 	});
