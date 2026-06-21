@@ -15,6 +15,7 @@ export interface CreateConnectorInput {
 	name: string;
 	displayName: string;
 	mcpUrl?: string;
+	mcpHeaders?: Record<string, string>;
 	mcpCmd?: string;
 	mcpTransport: McpTransport;
 	mcpEnv?: Record<string, string>;
@@ -92,7 +93,11 @@ export async function createOrFetchConnector(
 	}
 
 	const config: Record<string, unknown> = input.mcpUrl
-		? { url: input.mcpUrl, ...(input.mcpEnv ? { env: input.mcpEnv } : {}) }
+		? {
+				url: input.mcpUrl,
+				...(input.mcpHeaders ? { headers: input.mcpHeaders } : {}),
+				...(input.mcpEnv ? { env: input.mcpEnv } : {}),
+			}
 		: { command: input.mcpCmd, args: input.mcpArgs ?? [], env: input.mcpEnv ?? {} };
 	const kind = input.mcpUrl ? McpConnectionKind.Saas : McpConnectionKind.Local;
 
