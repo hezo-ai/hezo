@@ -48,10 +48,9 @@ CREATE TYPE agent_admin_status AS ENUM ('enabled', 'disabled');
 CREATE TYPE container_status AS ENUM ('creating', 'running', 'stopping', 'stopped', 'error');
 CREATE TYPE task_status AS ENUM ('backlog', 'in_progress', 'review', 'blocked', 'done', 'closed', 'cancelled');
 CREATE TYPE task_priority AS ENUM ('urgent', 'high', 'medium', 'low');
-CREATE TYPE comment_content_type AS ENUM ('text', 'preview', 'trace', 'system', 'run', 'action', 'credential_request', 'connect_required');
-CREATE TYPE tool_call_status AS ENUM ('running', 'success', 'error');
+CREATE TYPE comment_content_type AS ENUM ('text', 'preview', 'system', 'run', 'action', 'credential_request', 'connect_required');
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
-CREATE TYPE approval_type AS ENUM ('secret_access', 'hire', 'project_creation', 'strategy', 'plan_review', 'deploy_production', 'designated_repo_request', 'skill_proposal');
+CREATE TYPE approval_type AS ENUM ('hire', 'project_creation', 'strategy', 'plan_review', 'deploy_production', 'designated_repo_request', 'skill_proposal');
 CREATE TYPE approval_status AS ENUM ('pending', 'approved', 'denied');
 CREATE TYPE audit_actor_type AS ENUM ('admin', 'agent', 'system');
 CREATE TYPE repo_host_type AS ENUM ('github');
@@ -612,26 +611,6 @@ CREATE TABLE comment_reactions (
 );
 
 CREATE INDEX idx_comment_reactions_comment ON comment_reactions(comment_id);
-
--------------------------------------------------------------------------------
--- TOOL CALLS
--------------------------------------------------------------------------------
-
-CREATE TABLE tool_calls (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    comment_id  UUID NOT NULL REFERENCES task_comments(id) ON DELETE CASCADE,
-    member_id   UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
-    tool_name   TEXT NOT NULL,
-    input       JSONB,
-    output      JSONB,
-    status      tool_call_status NOT NULL DEFAULT 'running',
-    duration_ms INTEGER,
-    cost_cents  INTEGER NOT NULL DEFAULT 0,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX idx_tool_calls_comment ON tool_calls(comment_id);
-CREATE INDEX idx_tool_calls_member ON tool_calls(member_id);
 
 -------------------------------------------------------------------------------
 -- APPROVALS

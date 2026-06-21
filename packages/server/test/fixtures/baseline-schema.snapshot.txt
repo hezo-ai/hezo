@@ -47,7 +47,6 @@ team_template_agent_types
 team_template_assignments
 team_templates
 teams
-tool_calls
 user_auth_methods
 users
 
@@ -531,16 +530,6 @@ teams.settings | jsonb | jsonb | nullable=NO | default='{"wake_mentioner_on_repl
 teams.slug | text | text | nullable=NO | default=
 teams.summary | text | text | nullable=NO | default=''::text
 teams.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
-tool_calls.comment_id | uuid | uuid | nullable=NO | default=
-tool_calls.cost_cents | integer | int4 | nullable=NO | default=0
-tool_calls.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
-tool_calls.duration_ms | integer | int4 | nullable=YES | default=
-tool_calls.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
-tool_calls.input | jsonb | jsonb | nullable=YES | default=
-tool_calls.member_id | uuid | uuid | nullable=NO | default=
-tool_calls.output | jsonb | jsonb | nullable=YES | default=
-tool_calls.status | USER-DEFINED | tool_call_status | nullable=NO | default='running'::tool_call_status
-tool_calls.tool_name | text | text | nullable=NO | default=
 user_auth_methods.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
 user_auth_methods.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
 user_auth_methods.provider | text | text | nullable=NO | default=
@@ -563,13 +552,13 @@ agent_type_source: builtin, custom, remote
 ai_auth_method: api_key, subscription
 ai_provider: anthropic, openai, google, deepseek, z_ai, openrouter, kimi
 approval_status: pending, approved, denied
-approval_type: secret_access, hire, project_creation, strategy, plan_review, deploy_production, designated_repo_request, skill_proposal
+approval_type: hire, project_creation, strategy, plan_review, deploy_production, designated_repo_request, skill_proposal
 audit_actor_type: admin, agent, system
 ceo_channel: web, telegram, whatsapp
 ceo_message_role: user, assistant, system
 ceo_message_status: pending, streaming, complete, failed, interrupted
 ceo_session_status: starting, running, crashed, stopped
-comment_content_type: text, preview, trace, system, run, action, credential_request, connect_required
+comment_content_type: text, preview, system, run, action, credential_request, connect_required
 connected_agent_status: pending, approved
 connection_status: active, expired, disconnected
 container_status: creating, running, stopping, stopped, error
@@ -587,7 +576,6 @@ secret_category: ssh_key, credential, api_token, certificate, other
 task_priority: urgent, high, medium, low
 task_status: backlog, in_progress, review, blocked, done, closed, cancelled
 team_template_source: builtin, custom, marketplace
-tool_call_status: running, success, error
 wakeup_source: timer, assignment, on_demand, mention, automation, credential_provided, comment, reply, heartbeat
 wakeup_status: queued, claimed, completed, failed, skipped, coalesced, deferred, cancelled
 
@@ -705,8 +693,6 @@ CREATE INDEX idx_tasks_parent ON public.tasks USING btree (parent_task_id)
 CREATE INDEX idx_tasks_project ON public.tasks USING btree (project_id)
 CREATE INDEX idx_tasks_status ON public.tasks USING btree (team_id, status)
 CREATE INDEX idx_tasks_team ON public.tasks USING btree (team_id)
-CREATE INDEX idx_tool_calls_comment ON public.tool_calls USING btree (comment_id)
-CREATE INDEX idx_tool_calls_member ON public.tool_calls USING btree (member_id)
 CREATE INDEX idx_ttat_agent_type ON public.team_template_agent_types USING btree (agent_type_id)
 CREATE INDEX idx_ttat_team_template ON public.team_template_agent_types USING btree (team_template_id)
 CREATE INDEX idx_wakeups_idempotency ON public.agent_wakeup_requests USING btree (idempotency_key)
@@ -761,7 +747,6 @@ CREATE UNIQUE INDEX team_templates_name_key ON public.team_templates USING btree
 CREATE UNIQUE INDEX team_templates_pkey ON public.team_templates USING btree (id)
 CREATE UNIQUE INDEX teams_pkey ON public.teams USING btree (id)
 CREATE UNIQUE INDEX teams_slug_key ON public.teams USING btree (slug)
-CREATE UNIQUE INDEX tool_calls_pkey ON public.tool_calls USING btree (id)
 CREATE UNIQUE INDEX user_auth_methods_pkey ON public.user_auth_methods USING btree (id)
 CREATE UNIQUE INDEX user_auth_methods_provider_provider_user_id_key ON public.user_auth_methods USING btree (provider, provider_user_id)
 CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)
@@ -947,9 +932,6 @@ team_templates | p | PRIMARY KEY (id)
 team_templates | u | UNIQUE (name)
 teams | p | PRIMARY KEY (id)
 teams | u | UNIQUE (slug)
-tool_calls | f | FOREIGN KEY (comment_id) REFERENCES task_comments(id) ON DELETE CASCADE
-tool_calls | f | FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
-tool_calls | p | PRIMARY KEY (id)
 user_auth_methods | f | FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 user_auth_methods | p | PRIMARY KEY (id)
 user_auth_methods | u | UNIQUE (provider, provider_user_id)
