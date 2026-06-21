@@ -1,8 +1,9 @@
-# Developing Hezo
+# Contributing to Hezo
 
-Contributor setup for working on Hezo itself. For agent/runtime conventions, testing
-tiers, and architecture notes, see [`AGENTS.md`](../AGENTS.md) and the design docs in
-this `.dev/` directory.
+Contributor setup for working on Hezo itself. For the system architecture (data model,
+agent runtime, egress/credentials, OAuth, build/release), see
+[`../.dev/architecture.md`](../.dev/architecture.md). For agent/runtime conventions,
+testing tiers, and the rules every change must follow, see [`../AGENTS.md`](../AGENTS.md).
 
 ## Prerequisites
 
@@ -22,14 +23,10 @@ bun install
 bun run dev
 ```
 
-This starts:
-
-1. **Hezo Server** (port 3100) — main application with embedded PGlite database.
-2. **Hezo Connect** (port 4100) — OAuth gateway (e.g. GitHub).
-
-The server creates its database at `~/.hezo/pgdata` on first run, and the Vite dev
-server for the web UI runs on port 5173 (the production binary serves the UI itself
-from port 3100).
+This starts the **Hezo Server** (port 3100) — the main application with the embedded
+PGlite database — and the **Vite dev server** for the web UI (port 5173). The production
+binary serves the UI itself from port 3100. The server creates its database at
+`~/.hezo/pgdata` on first run.
 
 ### Server CLI flags
 
@@ -52,20 +49,19 @@ bun run test
 ```
 
 Tests use Vitest with in-memory PGlite instances — no external database needed. See
-[`AGENTS.md`](../AGENTS.md) for the full testing guide (the four tiers, how to run a
+[`../AGENTS.md`](../AGENTS.md) for the full testing guide (the four tiers, how to run a
 single file or test, and how to diagnose failures).
 
 ## Project structure
 
 ```
 packages/
-  server/    — Main application server (Hono + PGlite)
+  server/    — Main application server (Hono + PGlite), compiles to the binary
   web/       — React frontend (bundled into the server binary at build time)
-  shared/    — Shared TypeScript types and constants
-  connect/   — Hezo Connect OAuth gateway
+  shared/    — Shared TypeScript types, enums, and constants (@hezo/shared)
 agents/      — Agent system prompts (source of truth for seeded roles)
 docs/        — User-facing documentation (rendered by the website)
-.dev/        — Specs, schema, API, and implementation plans
+.dev/        — Architecture reference (architecture.md)
 ```
 
 ## Key URLs (dev)
@@ -93,9 +89,9 @@ docs/        — User-facing documentation (rendered by the website)
 | Component | Technology |
 |-----------|-----------|
 | Server | [Hono](https://hono.dev/) (TypeScript, on Bun) |
-| Database | [PGlite](https://electric-sql.com/docs/api/pglite) (embedded Postgres) |
+| Database | [PGlite](https://electric-sql.com/docs/api/pglite) (embedded Postgres) + pgvector |
 | Frontend | React (bundled into the server binary) |
 | Encryption | AES-256-GCM (master key in memory only) |
-| OAuth | Hezo Connect gateway (self-hosted) |
+| OAuth | In-instance device flow + Dynamic Client Registration (no external gateway) |
 | Monorepo | Bun workspaces + Turborepo |
 | Tests | Vitest + Playwright |

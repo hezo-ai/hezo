@@ -38,7 +38,7 @@
   - `agents/_partials/*.md` are resolved at **build/load time only** (`resolve-partials.ts`, baked into `agents-bundle.json` by `bun run build:agents`) and so only compose the **built-in agents Hezo seeds** from templates. A partial **does not reach runtime-created agents**. Use one for role-scoped guidance shared by a *subset* of the seeded built-in roles (e.g. code-quality for engineer/qa, repo rules for execution roles, captain-only workflows). Changing a partial requires `bun run build:agents`.
   - `agents/<template>/*.md` — a single seeded role's own prose.
   - Decision rule: must every agent (incl. future runtime hires) have it → `SHARED_INSTRUCTIONS`; shared by a subset of seeded roles → a `_partial`; one role → that role's `.md`.
-- `.dev/` — specs, schema, API, implementation plans, and `.dev/architecture.md` (the technical-architecture overview: data model, services, runtime/agent wiring, security model). Keep in sync with code: describe what the system **does**, not what changed. No backwards-compat concerns pre-v1. Any change that alters the architecture updates `.dev/architecture.md` in the **same PR**.
+- `.dev/architecture.md` — the single consolidated architecture reference (data model, agent runtime, AI providers/runtimes, egress/credentials, ssh/git, OAuth/MCP connectors, auth, web frontend, build/release). Keep in sync with code: describe what the system **does**, not what changed. No backwards-compat concerns pre-v1. Any change that alters the architecture updates `.dev/architecture.md` in the **same PR**.
 - `docs/` — the **user-facing** documentation (sourced from this repo and rendered on the website). It gives the high-level view and explains features the way a Hezo *user* needs to understand them, not implementation detail. Keep it current as features change: a change that adds, removes, or alters user-visible behaviour updates the relevant `docs/` page in the **same PR**. `docs/reference/` must stay an **accurate reference** to the CLI and the Hezo MCP server's tools/API — when you add, rename, or remove a CLI flag/subcommand or an MCP tool, update the matching reference page (`docs/reference/cli.md` and the MCP reference) so it never drifts from the code.
 
 ## Project / team model (1:1)
@@ -52,7 +52,7 @@ There is **no per-team "internal" project.** The only `is_internal` project inst
 
 Project-teams get a **Captain** + the chosen template's worker roles; templates never include the CEO/Coach. **Creating a project** (`POST /api/projects`, superuser) always provisions from a team-type template (default **Blank** = Captain only) and directly creates the team, project, planning task, and the initial CEO coherence task.
 
-**Cross-team execution (run-team split):** CEO/Coach are HQ members but act inside other teams' projects. A run is scoped to the **task's project team** (JWT, `HEZO_TEAM_ID`, MCP, skills, git, container) while the agent's **system prompt** loads from its **home** team (HQ). Instance agents also select tasks across all teams. Auth validates the `heartbeat_runs` row, not team membership, so this is legitimate. See `.dev/per-project-teams.md`.
+**Cross-team execution (run-team split):** CEO/Coach are HQ members but act inside other teams' projects. A run is scoped to the **task's project team** (JWT, `HEZO_TEAM_ID`, MCP, skills, git, container) while the agent's **system prompt** loads from its **home** team (HQ). Instance agents also select tasks across all teams. Auth validates the `heartbeat_runs` row, not team membership, so this is legitimate. See `.dev/architecture.md` (§ Project / team / agent model).
 
 ## Database migrations
 
@@ -252,13 +252,13 @@ Never expose raw secrets, private keys, or signing keys via endpoints or logs. U
 
 ### Credentials
 
-Agents reference secrets by **placeholder**, never by literal value. The pattern is `__HEZO_SECRET_<NAME>__` in any header or URL the agent emits; the egress proxy substitutes the real value at request time. Background and full lifecycle: `.dev/credentials.md`. Egress proxy details: `.dev/egress.md`.
+Agents reference secrets by **placeholder**, never by literal value. The pattern is `__HEZO_SECRET_<NAME>__` in any header or URL the agent emits; the egress proxy substitutes the real value at request time. Background and full lifecycle: `.dev/architecture.md` (§ Credentials, egress & secrets).
 
 When you wire a new agent integration that needs a credential:
 
 - Don't put the real value in the agent's container env. Put the placeholder there. The real value lives in the `secrets` table with `allowed_hosts` constraining which upstream hosts the substitution may fire for.
 - If the agent needs to obtain a raw secret at runtime (API key, webhook secret, …), it calls `request_credential` (MCP tool) and the human pastes the value via the task thread. HTTP-auth kinds (`api_key`, `oauth_token`, `github_pat`) MUST pass `allowed_hosts` — the tool rejects the request otherwise, since an unscoped secret either can't be substituted or leaks into every host. Agents should request the narrowest scope and shortest expiry the provider offers, and prefer a registered connector (`register_connector`) when one covers the provider.
-- For GitHub repo access, the human connects a GitHub OAuth account once via device flow on the project's Connections page; subsequent repos pick that connection. The OAuth token is used for REST API calls only (listing orgs/repos, creating repos). Repo clone/fetch/push runs over **SSH** (`git@github.com:owner/repo.git`) authenticated by the project's Ed25519 key — the same key used for commit signing. On first OAuth connect the public key is auto-registered on the connecting user's GitHub account as both a *signing* key (commits land as Verified) and an *authentication* key (so SSH git ops work). Both host-side and in-container git ops go through the existing `SshAgentServer` — host via its Unix socket directly, container via the per-run socat bridge. Full design: `.dev/oauth.md`. ssh-agent details: `.dev/ssh-signing.md`.
+- For GitHub repo access, the human connects a GitHub OAuth account once via device flow on the project's Connections page; subsequent repos pick that connection. The OAuth token is used for REST API calls only (listing orgs/repos, creating repos). Repo clone/fetch/push runs over **SSH** (`git@github.com:owner/repo.git`) authenticated by the project's Ed25519 key — the same key used for commit signing. On first OAuth connect the public key is auto-registered on the connecting user's GitHub account as both a *signing* key (commits land as Verified) and an *authentication* key (so SSH git ops work). Both host-side and in-container git ops go through the existing `SshAgentServer` — host via its Unix socket directly, container via the per-run socat bridge. Full design: `.dev/architecture.md` (§§ OAuth, GitHub & MCP connectors; SSH signing & git).
 - For SaaS MCPs requiring OAuth (DatoCMS, Linear, …), the operator starts the auth-code flow from the MCP-connection form. The resulting `oauth_connection_id` is linked to the `mcp_connections` row; the injector emits a placeholder Authorization header and the egress proxy substitutes at request time.
 
 The egress audit log records substitution events by **secret name** only, never the value. No-op requests (no placeholder anywhere) are not audited.
@@ -302,10 +302,6 @@ node test.mjs
 ```
 
 Stay in `/tmp/pw` (or wherever you ran `npm install`) for any follow-up `npx playwright …` calls — running from a sibling directory will warn about missing deps and may fail. Prefer `--with-deps` over a hand-curated apt list; Playwright tracks its own version-pinned requirements.
-
-## Implementation phases
-
-When you complete a phase, mark it done with a completion date at the top of the phase section in `.dev/implementation-phases.md`. Keep the phase content intact. Every phase that adds backend functionality ships with UI for manual browser testing.
 
 ## Pre-v1 notes
 

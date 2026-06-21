@@ -1,7 +1,7 @@
-import type { SearchResult, SearchResultType } from '@hezo/shared';
+import { HIGHLIGHT_SENTINEL, type SearchResult, type SearchResultType } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { BookOpen, CheckSquare, FileText, type LucideIcon, MessageSquare } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { Fragment, type ReactNode, useMemo, useState } from 'react';
 
 const TYPE_META: Record<SearchResultType, { label: string; Icon: LucideIcon }> = {
 	task: { label: 'Tasks', Icon: CheckSquare },
@@ -88,6 +88,27 @@ export function SearchResults({
 
 const ROW_CLASS = 'mx-1 flex items-start gap-2 rounded-md px-3 py-2 hover:bg-surface-2';
 
+/**
+ * Render a snippet whose matched terms the server wrapped in
+ * {@link HIGHLIGHT_SENTINEL}. Splitting on the sentinel and rendering each segment
+ * as a React text node keeps this XSS-safe — content is never interpreted as HTML
+ * (no `dangerouslySetInnerHTML`). Odd segments are the matched spans.
+ */
+function renderHighlighted(snippet: string): ReactNode {
+	if (!snippet.includes(HIGHLIGHT_SENTINEL)) return snippet;
+	return snippet.split(HIGHLIGHT_SENTINEL).map((segment, i) =>
+		i % 2 === 1 ? (
+			// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional and stable per render
+			<mark key={i} className="rounded-sm bg-accent/20 px-0.5 text-text-1">
+				{segment}
+			</mark>
+		) : (
+			// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional and stable per render
+			<Fragment key={i}>{segment}</Fragment>
+		),
+	);
+}
+
 function SearchResultRow({ result, onSelect }: { result: SearchResult; onSelect: () => void }) {
 	const { Icon } = TYPE_META[result.type];
 	const testId = `search-result-${result.type}`;
@@ -95,8 +116,22 @@ function SearchResultRow({ result, onSelect }: { result: SearchResult; onSelect:
 		<>
 			<Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-3" />
 			<span className="flex min-w-0 flex-col">
-				<span className="truncate text-[13px] text-text-1">{result.title}</span>
-				{result.snippet && <span className="truncate text-xs text-text-3">{result.snippet}</span>}
+				<span className="flex min-w-0 items-center gap-1.5">
+					<span className="truncate text-[13px] text-text-1">{result.title}</span>
+					{result.semanticOnly && (
+						<span
+							className="shrink-0 rounded bg-surface-2 px-1 text-[10px] uppercase tracking-wide text-text-3"
+							data-testid="search-result-related"
+						>
+							related
+						</span>
+					)}
+				</span>
+				{result.snippet && (
+					<span className="line-clamp-2 text-xs text-text-3">
+						{renderHighlighted(result.snippet)}
+					</span>
+				)}
 			</span>
 		</>
 	);

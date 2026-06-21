@@ -179,7 +179,7 @@ projectsRoutes.get('/projects', async (c) => {
 // then directly creates the project, its planning task, and an initial CEO
 // coherence/setup task that the planning task is blocked on. The separate
 // CEO-assisted flow (project intake) is used when the operator wants the CEO to
-// help shape the project first. See .dev/per-project-teams.md.
+// help shape the project first. See .dev/architecture.md.
 // Superuser-gated, like team creation (the Admin owns the instance roster).
 projectsRoutes.post('/projects', async (c) => {
 	const denied = requireSuperuser(c);
