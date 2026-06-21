@@ -1,10 +1,11 @@
-import type { CeoChannel, CeoMessageRole, CeoMessageStatus } from './common.js';
+import type { CeoChannel, CeoMessageRole, CeoMessageStatus, ImageBuildStatus } from './common.js';
 
 export enum WsMessageType {
 	Connected = 'connected',
 	RowChange = 'row_change',
 	AgentLifecycle = 'agent_lifecycle',
 	ContainerLog = 'container_log',
+	ImageBuild = 'image_build',
 	RunLog = 'run_log',
 	CeoMessageStart = 'ceo_message_start',
 	CeoMessageDelta = 'ceo_message_delta',
@@ -42,6 +43,23 @@ export interface WsContainerLogMessage {
 	stream: 'stdout' | 'stderr';
 	text: string;
 	replace?: boolean;
+}
+
+/**
+ * Progress of a base-image `docker build`, broadcast to the global
+ * `image-builds` room. Keyed by `image` (the build is shared, not per-project)
+ * so every project waiting on that image renders the same bar. `percent` is a
+ * best-effort estimate from the build's step counter; `label` is the current
+ * step's instruction. Terminal `done`/`error` clear the indicator.
+ */
+export interface WsImageBuildMessage {
+	type: WsMessageType.ImageBuild;
+	image: string;
+	status: ImageBuildStatus;
+	percent: number;
+	step: number | null;
+	totalSteps: number | null;
+	label: string | null;
 }
 
 export interface WsRunLogMessage {
@@ -96,6 +114,7 @@ export type WsServerMessage =
 	| WsRowChangeMessage
 	| WsAgentLifecycleMessage
 	| WsContainerLogMessage
+	| WsImageBuildMessage
 	| WsRunLogMessage
 	| WsCeoMessageStartMessage
 	| WsCeoMessageDeltaMessage

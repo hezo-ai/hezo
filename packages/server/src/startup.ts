@@ -57,6 +57,7 @@ import { CeoSessionManager } from './services/ceo-session-manager';
 import { ContainerLogStreamer } from './services/container-logs';
 import { DockerClient } from './services/docker';
 import { EgressProxy, loadOrCreateCA } from './services/egress';
+import { ImageBuildTracker, setSharedImageBuildTracker } from './services/image-build-tracker';
 import { pruneStaleBundledImages } from './services/image-registry';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
@@ -131,6 +132,12 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
+	// Tracks shared base-image builds and broadcasts progress to the global
+	// `image-builds` room. Registered process-wide so the deduplicated build in
+	// ensure-image.ts reaches it regardless of which project triggered it.
+	const imageBuildTracker = new ImageBuildTracker();
+	imageBuildTracker.setWsManager(wsManager);
+	setSharedImageBuildTracker(imageBuildTracker);
 	const containerLogStreamer = new ContainerLogStreamer();
 	const sshAgentServer = new SshAgentServer({ db, masterKeyManager });
 	await cleanupOrphanRunSockets(db, config.dataDir);

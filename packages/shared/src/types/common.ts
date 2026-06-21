@@ -81,6 +81,19 @@ export const ContainerStatus = {
 } as const;
 export type ContainerStatus = (typeof ContainerStatus)[keyof typeof ContainerStatus];
 
+/**
+ * Lifecycle of a base-image (`docker build`) job. The image is shared across
+ * every project, so its build is tracked globally — independent of any single
+ * project's `container_status` — and surfaced as a progress bar while a
+ * container waits on it. `Done`/`Error` are terminal and clear the indicator.
+ */
+export const ImageBuildStatus = {
+	Building: 'building',
+	Done: 'done',
+	Error: 'error',
+} as const;
+export type ImageBuildStatus = (typeof ImageBuildStatus)[keyof typeof ImageBuildStatus];
+
 export const TaskStatus = {
 	Backlog: 'backlog',
 	InProgress: 'in_progress',

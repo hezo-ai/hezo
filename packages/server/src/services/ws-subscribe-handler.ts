@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { DEFAULT_TEAM_ID, wsRoom } from '@hezo/shared';
 import type { ContainerLogStreamer } from './container-logs';
 import type { DockerClient } from './docker';
+import type { ImageBuildTracker } from './image-build-tracker';
 import type { LogStreamBroker } from './log-stream-broker';
 import type { WebSocketManager, WsData, WsSocket } from './ws';
 
@@ -11,6 +12,7 @@ export interface WsSubscribeDeps {
 	docker: DockerClient | null;
 	containerLogStreamer: ContainerLogStreamer;
 	logs: LogStreamBroker | null;
+	imageBuildTracker: ImageBuildTracker | null;
 	canAccessTeam: (auth: WsData['auth'], teamId: string) => Promise<boolean>;
 	sendToSocket: (ws: WsSocket, payload: unknown) => void;
 }
@@ -25,6 +27,15 @@ export async function handleWsSubscribe(
 		const allowed = await deps.canAccessTeam(ws.data.auth, DEFAULT_TEAM_ID);
 		if (!allowed) return;
 		deps.wsManager.subscribe(ws, room);
+		return;
+	}
+
+	// The single global base-image build room. Progress of a shared base image
+	// isn't team-scoped, so any authenticated socket may watch it; replay the
+	// current in-flight builds so a mid-build subscriber sees the bar at once.
+	if (room === wsRoom.imageBuilds()) {
+		deps.wsManager.subscribe(ws, room);
+		deps.imageBuildTracker?.replay((payload) => deps.sendToSocket(ws, payload));
 		return;
 	}
 
