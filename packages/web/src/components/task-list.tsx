@@ -1,11 +1,19 @@
 import { formatTaskStatus, TaskStatus, TERMINAL_TASK_STATUSES } from '@hezo/shared';
 import { useNavigate } from '@tanstack/react-router';
 import { AlertTriangle, AtSign, ChevronDown, ListPlus, Plus, Search } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { useProjectMeta } from '../hooks/use-projects';
 import { type Task, type TaskFilters, useTasks } from '../hooks/use-tasks';
 import { nestTasksForDisplay } from '../lib/nest-tasks-for-display';
+import {
+	clearStoredTaskFilters,
+	readStoredTaskFilters,
+	type TaskSortDir as SortDir,
+	type TaskSortField as SortField,
+	type StoredTaskFilters,
+	writeStoredTaskFilters,
+} from '../lib/task-filter-storage';
 import { AdminApprovalsBanner } from './admin-approvals-banner';
 import { CreateTaskDialog } from './create-task-dialog';
 import { ProjectTaskListHeader } from './project-task-list-header';
@@ -36,9 +44,6 @@ const todoStatusOptions: MultiSelectOption[] = ALL_STATUSES.filter(
 	value: s,
 	label: formatTaskStatus(s),
 }));
-
-type SortField = 'work_order' | 'created_at' | 'updated_at';
-type SortDir = 'asc' | 'desc';
 
 const sortLabels: Record<`${SortField}:${SortDir}`, string> = {
 	'work_order:asc': 'Work order',
@@ -111,12 +116,16 @@ export function TaskList({ projectId }: TaskListProps) {
 	const showProjectProgress = project != null && !project.is_internal;
 	const { data: agents } = useAgents(projectId);
 	const [expanded, setExpanded] = useState(false);
-	const [search, setSearch] = useState('');
-	const [debouncedSearch, setDebouncedSearch] = useState('');
-	const [statusValues, setStatusValues] = useState<string[]>(() => [...DEFAULT_TODO_STATUSES]);
-	const [ownerValues, setOwnerValues] = useState<string[]>([]);
-	const [sortField, setSortField] = useState<SortField>('work_order');
-	const [sortDir, setSortDir] = useState<SortDir>('asc');
+	// Hydrate the filter bar from this project's last-set selections (or defaults).
+	const [stored] = useState(() => readStoredTaskFilters(projectId));
+	const [search, setSearch] = useState(stored?.search ?? '');
+	const [debouncedSearch, setDebouncedSearch] = useState((stored?.search ?? '').trim());
+	const [statusValues, setStatusValues] = useState<string[]>(
+		stored?.statusValues ?? [...DEFAULT_TODO_STATUSES],
+	);
+	const [ownerValues, setOwnerValues] = useState<string[]>(stored?.ownerValues ?? []);
+	const [sortField, setSortField] = useState<SortField>(stored?.sortField ?? 'work_order');
+	const [sortDir, setSortDir] = useState<SortDir>(stored?.sortDir ?? 'asc');
 	const [page, setPage] = useState(1);
 	const [createOpen, setCreateOpen] = useState(false);
 
@@ -127,6 +136,41 @@ export function TaskList({ projectId }: TaskListProps) {
 		}, 250);
 		return () => clearTimeout(handle);
 	}, [search]);
+
+	// The route reuses this component across projects (param change, no remount),
+	// so re-hydrate the filter bar when the project changes. The initial project is
+	// already hydrated above; skip it to avoid clobbering the lazy-init values.
+	const hydratedProjectRef = useRef(projectId);
+	useEffect(() => {
+		if (hydratedProjectRef.current === projectId) return;
+		hydratedProjectRef.current = projectId;
+		const next = readStoredTaskFilters(projectId);
+		setSearch(next?.search ?? '');
+		setDebouncedSearch((next?.search ?? '').trim());
+		setStatusValues(next?.statusValues ?? [...DEFAULT_TODO_STATUSES]);
+		setOwnerValues(next?.ownerValues ?? []);
+		setSortField(next?.sortField ?? 'work_order');
+		setSortDir(next?.sortDir ?? 'asc');
+		setPage(1);
+	}, [projectId]);
+
+	// Persist the full filter set on every change, overriding the one field that
+	// changed (state setters above haven't flushed into this closure yet). Writing
+	// from the change handlers — rather than an effect watching the values — keeps
+	// the project-switch re-hydration from racing a stale write back to storage.
+	const persistFilters = useCallback(
+		(override: Partial<StoredTaskFilters>) => {
+			writeStoredTaskFilters(projectId, {
+				search,
+				statusValues,
+				ownerValues,
+				sortField,
+				sortDir,
+				...override,
+			});
+		},
+		[projectId, search, statusValues, ownerValues, sortField, sortDir],
+	);
 
 	const ownerOptions: MultiSelectOption[] = useMemo(
 		() =>
@@ -170,14 +214,28 @@ export function TaskList({ projectId }: TaskListProps) {
 		() => nestTasksForDisplay(inProgressResult?.data ?? []),
 		[inProgressResult?.data],
 	);
-	const tasks = useMemo(() => {
-		if (!todoListEnabled) return [];
+	// Split the filtered main list into "Backlog" (open work) and "Done" (terminal:
+	// done/closed/cancelled). Each group nests independently so a child whose parent
+	// sits in the other group surfaces at the top level of its own section — the same
+	// way the In-progress / Backlog split already behaves across separate queries.
+	const { backlogTasks, doneTasks } = useMemo<{
+		backlogTasks: TaskRow[];
+		doneTasks: TaskRow[];
+	}>(() => {
+		if (!todoListEnabled) return { backlogTasks: [], doneTasks: [] };
 		const rows = (result?.data ?? []).filter((t) => !PINNED_STATUS_SET.has(t.status));
-		return nestTasksForDisplay(rows);
+		return {
+			backlogTasks: nestTasksForDisplay(rows.filter((t) => !TERMINAL_STATUS_SET.has(t.status))),
+			doneTasks: nestTasksForDisplay(rows.filter((t) => TERMINAL_STATUS_SET.has(t.status))),
+		};
 	}, [result?.data, todoListEnabled]);
 
 	const hasNoTasksAtAll =
-		!inProgressLoading && !mainLoading && inProgressTasks.length === 0 && tasks.length === 0;
+		!inProgressLoading &&
+		!mainLoading &&
+		inProgressTasks.length === 0 &&
+		backlogTasks.length === 0 &&
+		doneTasks.length === 0;
 
 	const ownerLabelById = useMemo(() => {
 		const map = new Map<string, string>();
@@ -207,23 +265,32 @@ export function TaskList({ projectId }: TaskListProps) {
 		...(debouncedSearch ? [`Matching "${debouncedSearch}"`] : []),
 	];
 
+	function handleSearchChange(next: string) {
+		setSearch(next);
+		persistFilters({ search: next });
+	}
+
 	function handleStatusChange(next: string[]) {
 		setStatusValues(next);
+		persistFilters({ statusValues: next });
 		setPage(1);
 	}
 
 	function handleOwnerChange(next: string[]) {
 		setOwnerValues(next);
+		persistFilters({ ownerValues: next });
 		setPage(1);
 	}
 
 	function handleSortFieldChange(next: SortField) {
 		setSortField(next);
+		persistFilters({ sortField: next });
 		setPage(1);
 	}
 
 	function handleSortDirChange(next: SortDir) {
 		setSortDir(next);
+		persistFilters({ sortDir: next });
 		setPage(1);
 	}
 
@@ -234,6 +301,7 @@ export function TaskList({ projectId }: TaskListProps) {
 		setSortField('work_order');
 		setSortDir('asc');
 		setPage(1);
+		clearStoredTaskFilters(projectId);
 	}
 
 	const columns: Column<TaskRow>[] = [
@@ -373,7 +441,7 @@ export function TaskList({ projectId }: TaskListProps) {
 							<input
 								type="text"
 								value={search}
-								onChange={(e) => setSearch(e.target.value)}
+								onChange={(e) => handleSearchChange(e.target.value)}
 								placeholder="Filter by title..."
 								data-testid="task-filter-search"
 								className="w-full rounded-md border border-border bg-surface pl-8 pr-2.5 py-1.5 text-xs text-text-1 outline-none focus:border-border-strong"
@@ -473,74 +541,85 @@ export function TaskList({ projectId }: TaskListProps) {
 				/>
 			)}
 
-			<section data-testid="task-list-main" className="mb-6 last:mb-0">
-				<h2 className="text-[11px] font-medium uppercase tracking-wider text-text-3 mb-2 px-0.5">
-					Backlog
-				</h2>
-
-				{mainLoading ? (
-					<div className="text-text-2 text-[13px] py-8 text-center">Loading...</div>
-				) : hasNoTasksAtAll ? (
-					<EmptyState
-						variant="hero"
-						icon={<ListPlus className="w-8 h-8" />}
-						title="No tasks yet"
-						description="Create a task to get the team moving."
-						action={
-							<Button
-								size="lg"
-								onClick={() => setCreateOpen(true)}
-								data-testid="task-list-empty-create"
-							>
-								<Plus className="w-4 h-4" />
-								Create a task
-							</Button>
-						}
-					/>
-				) : tasks.length > 0 ? (
-					<DataTable
+			{mainLoading ? (
+				<div
+					data-testid="task-list-loading"
+					className="text-text-2 text-[13px] py-8 text-center mb-6"
+				>
+					Loading...
+				</div>
+			) : hasNoTasksAtAll ? (
+				<EmptyState
+					variant="hero"
+					icon={<ListPlus className="w-8 h-8" />}
+					title="No tasks yet"
+					description="Create a task to get the team moving."
+					action={
+						<Button
+							size="lg"
+							onClick={() => setCreateOpen(true)}
+							data-testid="task-list-empty-create"
+						>
+							<Plus className="w-4 h-4" />
+							Create a task
+						</Button>
+					}
+				/>
+			) : (
+				<>
+					{/* Open work and finished work each get their own section; an empty one
+					    is omitted entirely (TaskListSection returns null). */}
+					<TaskListSection
+						title="Backlog"
+						testId="task-list-main"
+						tasks={backlogTasks}
 						columns={columns}
-						data={tasks}
-						rowKey={(row) => row.id}
 						onRowClick={handleRowClick}
-						getRowDepth={(row) => row.depth}
-						indentColumnKey="title"
 					/>
-				) : (
-					<p
-						className="text-text-2 text-[13px] py-6 text-center"
-						data-testid="task-list-todo-empty"
-					>
-						No matching tasks
-					</p>
-				)}
+					<TaskListSection
+						title="Done"
+						testId="task-list-done"
+						tasks={doneTasks}
+						columns={columns}
+						onRowClick={handleRowClick}
+					/>
 
-				{result?.meta && result.meta.total > result.meta.per_page && (
-					<div className="flex items-center justify-between mt-4 text-xs text-text-2">
-						<span>
-							Showing {tasks.length} of {result.meta.total}
-						</span>
-						<div className="flex gap-2">
-							<Button
-								variant="secondary"
-								size="sm"
-								disabled={result.meta.page <= 1}
-								onClick={() => setPage((p) => Math.max(1, p - 1))}
-							>
-								Previous
-							</Button>
-							<Button
-								variant="secondary"
-								size="sm"
-								disabled={result.meta.page * result.meta.per_page >= result.meta.total}
-								onClick={() => setPage((p) => p + 1)}
-							>
-								Next
-							</Button>
+					{backlogTasks.length === 0 && doneTasks.length === 0 && (
+						<p
+							className="text-text-2 text-[13px] py-6 text-center"
+							data-testid="task-list-todo-empty"
+						>
+							No matching tasks
+						</p>
+					)}
+
+					{result?.meta && result.meta.total > result.meta.per_page && (
+						<div className="flex items-center justify-between mt-4 text-xs text-text-2">
+							<span>
+								Showing {backlogTasks.length + doneTasks.length} of {result.meta.total}
+							</span>
+							<div className="flex gap-2">
+								<Button
+									variant="secondary"
+									size="sm"
+									disabled={result.meta.page <= 1}
+									onClick={() => setPage((p) => Math.max(1, p - 1))}
+								>
+									Previous
+								</Button>
+								<Button
+									variant="secondary"
+									size="sm"
+									disabled={result.meta.page * result.meta.per_page >= result.meta.total}
+									onClick={() => setPage((p) => p + 1)}
+								>
+									Next
+								</Button>
+							</div>
 						</div>
-					</div>
-				)}
-			</section>
+					)}
+				</>
+			)}
 
 			<CreateTaskDialog projectId={projectId} open={createOpen} onOpenChange={setCreateOpen} />
 		</div>
