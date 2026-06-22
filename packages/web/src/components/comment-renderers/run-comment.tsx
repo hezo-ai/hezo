@@ -214,33 +214,44 @@ function RunCommentBody({
 		</span>
 	);
 
+	// The expand/collapse toggle. `flex-1` is added only when a sibling Retry
+	// button shares the row; without it the markup stays byte-identical to the
+	// pre-Retry header, so a non-retryable run's clickable geometry is unchanged.
+	const expandToggle = (
+		<button
+			type="button"
+			onClick={() => setExpanded((v) => !v)}
+			aria-expanded={expanded}
+			aria-controls={logRegionId}
+			data-testid="run-comment-header"
+			className={`flex items-center gap-2 min-h-[26px] min-w-0 text-left -mx-1 px-1 rounded-md hover:bg-surface-3 cursor-pointer${
+				canRetry && taskId ? ' flex-1' : ''
+			}`}
+		>
+			{summaryRow}
+			<svg
+				aria-hidden="true"
+				className={`w-3 h-3 shrink-0 text-text-3 transition-transform ${expanded ? 'rotate-90' : ''}`}
+				viewBox="0 0 16 16"
+				fill="currentColor"
+			>
+				<path d="M6 3l5 5-5 5V3z" />
+			</svg>
+		</button>
+	);
+
 	return (
 		<>
 			{inline &&
 				(completed ? (
-					<div className="flex items-center gap-1 min-w-0">
-						<button
-							type="button"
-							onClick={() => setExpanded((v) => !v)}
-							aria-expanded={expanded}
-							aria-controls={logRegionId}
-							data-testid="run-comment-header"
-							className="flex flex-1 items-center gap-2 min-h-[26px] min-w-0 text-left -mx-1 px-1 rounded-md hover:bg-surface-3 cursor-pointer"
-						>
-							{summaryRow}
-							<svg
-								aria-hidden="true"
-								className={`w-3 h-3 shrink-0 text-text-3 transition-transform ${expanded ? 'rotate-90' : ''}`}
-								viewBox="0 0 16 16"
-								fill="currentColor"
-							>
-								<path d="M6 3l5 5-5 5V3z" />
-							</svg>
-						</button>
-						{canRetry && taskId ? (
+					canRetry && taskId ? (
+						<div className="flex items-center gap-1 min-w-0">
+							{expandToggle}
 							<RunRetryButton projectId={projectId} taskId={taskId} runId={runId} />
-						) : null}
-					</div>
+						</div>
+					) : (
+						expandToggle
+					)
 				) : (
 					<div className="flex items-center min-h-[26px] min-w-0" data-testid="run-comment-header">
 						{summaryRow}
