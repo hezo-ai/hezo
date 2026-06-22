@@ -123,12 +123,13 @@ export function CommentsSection({
 		for (const a of agents ?? []) m.set(a.id, a.slug);
 		return m;
 	}, [agents]);
-	// The run_id whose run_failed comment may show a Retry button: the most
+	// The run_id whose failed run-entry comment may show a Retry button: the most
 	// recent run referenced in the thread, and only when no run is currently
-	// active. Run comments (any outcome) and run_failed comments both carry a
-	// run_id; comments arrive oldest-first, so the last match is the newest run.
-	// Older failed runs — superseded by a later run, or any run while one is
-	// active — resolve to a different id (or null) and hide their Retry button.
+	// active or queued. Run comments (any outcome) and run_failed comments both
+	// carry a run_id; comments arrive oldest-first, so the last match is the
+	// newest run. Older failed runs — superseded by a later run, or any run while
+	// one is active/queued — resolve to a different id (or null) and hide their
+	// Retry button.
 	const retryableRunId = useMemo<string | null>(() => {
 		if (task.has_active_run) return null;
 		let latest: string | null = null;

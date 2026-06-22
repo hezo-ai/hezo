@@ -3,7 +3,6 @@ import { renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 const FAILED_RUN_ID = 'bbbb0000-0000-0000-0000-000000000777';
-const LATER_RUN_ID = 'bbbb0000-0000-0000-0000-000000000888';
 
 type Seeded = {
 	teamId: string;
@@ -15,17 +14,10 @@ type Seeded = {
 
 type Comment = Record<string, unknown>;
 
-/**
- * Seed a team/project/task and stub the comments fetch with the given list.
- * `taskOverride` patches the live task-detail response (e.g. has_active_run)
- * by mutating the real seeded payload. `retryCalls` records run ids POSTed to
- * the retry endpoint.
- */
+/** Seed a team/project/task and stub the comments fetch with the given list. */
 async function setup(
 	seeded: Seeded,
-	retryCalls: string[],
 	buildComments: (ctx: { task: { id: string }; agent: { id: string; slug: string } }) => Comment[],
-	taskOverride?: Record<string, unknown>,
 ) {
 	return renderApp({
 		initialPath: '/',
@@ -52,29 +44,6 @@ async function setup(
 				const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
 				if (method === 'GET' && /\/api\/projects\/[^/]+\/tasks\/[^/]+\/comments/.test(url)) {
 					return new Response(JSON.stringify({ data: comments }), {
-						status: 200,
-						headers: { 'Content-Type': 'application/json' },
-					});
-				}
-				if (
-					taskOverride &&
-					method === 'GET' &&
-					/\/api\/projects\/[^/]+\/tasks\/[^/]+(\?|$)/.test(url) &&
-					!url.includes('/comments')
-				) {
-					const res = await originalFetch(input as RequestInfo, init);
-					const body = (await res.json()) as { data: Record<string, unknown> };
-					return new Response(JSON.stringify({ data: { ...body.data, ...taskOverride } }), {
-						status: 200,
-						headers: { 'Content-Type': 'application/json' },
-					});
-				}
-				const retryMatch = url.match(
-					/\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/runs\/([^/]+)\/retry/,
-				);
-				if (method === 'POST' && retryMatch) {
-					retryCalls.push(retryMatch[3]);
-					return new Response(JSON.stringify({ data: { dispatched: true } }), {
 						status: 200,
 						headers: { 'Content-Type': 'application/json' },
 					});
@@ -106,11 +75,13 @@ function runFailedComment(taskRowId: string, agentSlug: string, agentId: string)
 	};
 }
 
-test('run_failed comment shows retry when it is the latest run', async () => {
+test('run_failed comment shows the failure and agent link, without a Retry button', async () => {
+	// The Retry affordance lives on the run-entry comment now (always present,
+	// even once this alert ping is suppressed after repeated failures), so the
+	// run_failed ping itself is display-only — see run-comment-retry.test.tsx.
 	const seeded: Seeded = { teamId: '', projectSlug: '', taskId: '', agentId: '', agentSlug: '' };
-	const retryCalls: string[] = [];
 
-	const { findByTestId, router, user } = await setup(seeded, retryCalls, ({ task, agent }) => [
+	const { findByTestId, queryByTestId, router } = await setup(seeded, ({ task, agent }) => [
 		runFailedComment(task.id, agent.slug, agent.id),
 	]);
 
@@ -129,65 +100,5 @@ test('run_failed comment shows retry when it is the latest run', async () => {
 		new RegExp(`/projects/${seeded.projectSlug}/agents/${seeded.agentSlug}$`),
 	);
 
-	const retryButton = (await findByTestId('retry-failed-run')) as HTMLButtonElement;
-	expect(retryButton.textContent ?? '').toContain('Retry');
-	await user.click(retryButton);
-	expect(retryCalls).toEqual([FAILED_RUN_ID]);
-});
-
-test('run_failed comment hides retry when a later run exists', async () => {
-	const seeded: Seeded = { teamId: '', projectSlug: '', taskId: '', agentId: '', agentSlug: '' };
-	const retryCalls: string[] = [];
-
-	const { findByTestId, queryByTestId, router } = await setup(
-		seeded,
-		retryCalls,
-		({ task, agent }) => [
-			runFailedComment(task.id, agent.slug, agent.id),
-			{
-				id: 'aaaa0000-0000-0000-0000-000000000002',
-				task_id: task.id,
-				content_type: 'run',
-				content: {
-					run_id: LATER_RUN_ID,
-					agent_id: agent.id,
-					agent_slug: agent.slug,
-					agent_title: 'Captain',
-				},
-				chosen_option: null,
-				created_at: '2026-05-20T11:35:00Z',
-				author_type: 'agent',
-				author_name: 'Captain',
-				author_member_id: agent.id,
-			},
-		],
-	);
-
-	await router.navigate({
-		to: '/projects/$projectId/tasks/$taskId',
-		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
-	});
-
-	await findByTestId('run-failed-comment', undefined, { timeout: 20_000 });
-	expect(queryByTestId('retry-failed-run')).toBeNull();
-});
-
-test('run_failed comment hides retry while a run is active', async () => {
-	const seeded: Seeded = { teamId: '', projectSlug: '', taskId: '', agentId: '', agentSlug: '' };
-	const retryCalls: string[] = [];
-
-	const { findByTestId, queryByTestId, router } = await setup(
-		seeded,
-		retryCalls,
-		({ task, agent }) => [runFailedComment(task.id, agent.slug, agent.id)],
-		{ has_active_run: true },
-	);
-
-	await router.navigate({
-		to: '/projects/$projectId/tasks/$taskId',
-		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
-	});
-
-	await findByTestId('run-failed-comment', undefined, { timeout: 20_000 });
 	expect(queryByTestId('retry-failed-run')).toBeNull();
 });

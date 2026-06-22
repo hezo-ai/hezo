@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import { DoorOpen } from 'lucide-react';
+import { DoorOpen, Loader2, RotateCw } from 'lucide-react';
 import { useState } from 'react';
 import { formatElapsed } from '../../hooks/use-elapsed-duration';
 import {
@@ -7,6 +7,7 @@ import {
 	isActiveRunStatus,
 	useHeartbeatRun,
 } from '../../hooks/use-heartbeat-runs';
+import { useRetryFailedRun } from '../../hooks/use-retry-failed-run';
 import { useRunLogs } from '../../hooks/use-run-logs';
 import { agentPageParams } from '../agent-link';
 import { LazyMount } from '../lazy-mount';
@@ -21,10 +22,13 @@ import { runStatusDotClass, runStatusLabel } from './helpers';
 interface Props {
 	comment: CommentDataOf<'run'>;
 	projectId?: string;
+	taskId?: string;
+	/** The run_id eligible for a Retry button — the latest run, only when none is active/queued. */
+	retryableRunId?: string | null;
 	inline?: boolean;
 }
 
-export function RunComment({ comment, projectId, inline }: Props) {
+export function RunComment({ comment, projectId, taskId, retryableRunId, inline }: Props) {
 	const runId = comment.content?.run_id ?? '';
 	const agentId = comment.content?.agent_id ?? '';
 	const agentTitle = comment.content?.agent_title ?? 'Agent';
@@ -47,6 +51,8 @@ export function RunComment({ comment, projectId, inline }: Props) {
 					actorName={actorName}
 					createdAt={comment.created_at}
 					publicId={comment.public_id}
+					taskId={taskId}
+					retryableRunId={retryableRunId}
 					inline={inline}
 				/>
 			</LazyMount>
@@ -63,6 +69,37 @@ function skillSourceLabel(url: string): string {
 	}
 }
 
+function RunRetryButton({
+	projectId,
+	taskId,
+	runId,
+}: {
+	projectId: string;
+	taskId: string;
+	runId: string;
+}) {
+	const retry = useRetryFailedRun({ projectId, taskId });
+	return (
+		<Tooltip content="Retry this run">
+			<button
+				type="button"
+				onClick={() => retry.mutate(runId)}
+				disabled={retry.isPending}
+				aria-label="Retry failed run"
+				data-testid="retry-failed-run"
+				className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium text-text-2 hover:bg-surface-2 hover:text-text-1 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+			>
+				{retry.isPending ? (
+					<Loader2 className="w-3 h-3 animate-spin" />
+				) : (
+					<RotateCw className="w-3 h-3" />
+				)}
+				Retry
+			</button>
+		</Tooltip>
+	);
+}
+
 function RunCommentBody({
 	projectId,
 	runId,
@@ -72,6 +109,8 @@ function RunCommentBody({
 	actorName,
 	createdAt,
 	publicId,
+	taskId,
+	retryableRunId,
 	inline,
 }: {
 	projectId: string;
@@ -82,12 +121,19 @@ function RunCommentBody({
 	actorName: string | null;
 	createdAt: string;
 	publicId: string;
+	taskId?: string;
+	retryableRunId?: string | null;
 	inline?: boolean;
 }) {
 	const runQuery = useHeartbeatRun(projectId, agentId, runId);
 	const run = runQuery.data;
 	const status = run?.status ?? 'queued';
 	const isActive = isActiveRunStatus(status);
+	// Offer a manual retry on a failed/timed-out run, but only on the latest run
+	// and only when nothing is already running or queued for this task — that's
+	// exactly what `retryableRunId` resolves to (null otherwise).
+	const canRetry =
+		Boolean(taskId) && runId === retryableRunId && (status === 'failed' || status === 'timed_out');
 	const { lines } = useRunLogs(run?.project_id, runId, run?.log_text, isActive);
 	const createdTasks = run?.created_tasks ?? [];
 	const createdDocs = run?.created_docs ?? [];
@@ -168,28 +214,44 @@ function RunCommentBody({
 		</span>
 	);
 
+	// The expand/collapse toggle. `flex-1` is added only when a sibling Retry
+	// button shares the row; without it the markup stays byte-identical to the
+	// pre-Retry header, so a non-retryable run's clickable geometry is unchanged.
+	const expandToggle = (
+		<button
+			type="button"
+			onClick={() => setExpanded((v) => !v)}
+			aria-expanded={expanded}
+			aria-controls={logRegionId}
+			data-testid="run-comment-header"
+			className={`flex items-center gap-2 min-h-[26px] min-w-0 text-left -mx-1 px-1 rounded-md hover:bg-surface-3 cursor-pointer${
+				canRetry && taskId ? ' flex-1' : ''
+			}`}
+		>
+			{summaryRow}
+			<svg
+				aria-hidden="true"
+				className={`w-3 h-3 shrink-0 text-text-3 transition-transform ${expanded ? 'rotate-90' : ''}`}
+				viewBox="0 0 16 16"
+				fill="currentColor"
+			>
+				<path d="M6 3l5 5-5 5V3z" />
+			</svg>
+		</button>
+	);
+
 	return (
 		<>
 			{inline &&
 				(completed ? (
-					<button
-						type="button"
-						onClick={() => setExpanded((v) => !v)}
-						aria-expanded={expanded}
-						aria-controls={logRegionId}
-						data-testid="run-comment-header"
-						className="flex items-center gap-2 min-h-[26px] min-w-0 text-left -mx-1 px-1 rounded-md hover:bg-surface-3 cursor-pointer"
-					>
-						{summaryRow}
-						<svg
-							aria-hidden="true"
-							className={`w-3 h-3 shrink-0 text-text-3 transition-transform ${expanded ? 'rotate-90' : ''}`}
-							viewBox="0 0 16 16"
-							fill="currentColor"
-						>
-							<path d="M6 3l5 5-5 5V3z" />
-						</svg>
-					</button>
+					canRetry && taskId ? (
+						<div className="flex items-center gap-1 min-w-0">
+							{expandToggle}
+							<RunRetryButton projectId={projectId} taskId={taskId} runId={runId} />
+						</div>
+					) : (
+						expandToggle
+					)
 				) : (
 					<div className="flex items-center min-h-[26px] min-w-0" data-testid="run-comment-header">
 						{summaryRow}

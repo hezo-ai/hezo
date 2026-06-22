@@ -45,16 +45,17 @@ const renderers: RendererRegistry = {
 		<TextComment comment={comment} projectId={projectId} projectSlug={projectSlug} />
 	),
 	[CommentContentType.Preview]: ({ comment }) => <PreviewComment comment={comment} />,
-	[CommentContentType.System]: ({ comment, projectId, taskId, retryableRunId }) => (
-		<SystemComment
+	[CommentContentType.System]: ({ comment, projectId }) => (
+		<SystemComment comment={comment} projectId={projectId} />
+	),
+	[CommentContentType.Run]: ({ comment, projectId, taskId, retryableRunId, inline }) => (
+		<RunComment
 			comment={comment}
 			projectId={projectId}
 			taskId={taskId}
 			retryableRunId={retryableRunId}
+			inline={inline}
 		/>
-	),
-	[CommentContentType.Run]: ({ comment, projectId, inline }) => (
-		<RunComment comment={comment} projectId={projectId} inline={inline} />
 	),
 	[CommentContentType.Action]: ({ comment, projectId, taskId }) => (
 		<ActionComment comment={comment} projectId={projectId} taskId={taskId} />
