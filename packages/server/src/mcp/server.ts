@@ -8,6 +8,7 @@ import type { DomainEventBus } from '../events/bus';
 import type { AuthInfo, Env } from '../lib/types';
 import { verifyToken } from '../middleware/auth';
 import { storeUploadedAsset } from '../routes/assets';
+import type { ContainerDeps } from '../services/containers';
 import type { WebSocketManager } from '../services/ws';
 import {
 	handleConnectionStatusTool,
@@ -27,9 +28,18 @@ export function initMcpServer(
 	masterKeyManager: MasterKeyManager,
 	wsManager?: WebSocketManager,
 	events?: DomainEventBus,
+	containerDeps?: ContainerDeps,
 ): ToolDef[] {
 	mcpServer = new McpServer({ name: 'hezo', version: '0.1.0' });
-	toolDefs = registerTools(mcpServer, db, dataDir, masterKeyManager, wsManager, events);
+	toolDefs = registerTools(
+		mcpServer,
+		db,
+		dataDir,
+		masterKeyManager,
+		wsManager,
+		events,
+		containerDeps,
+	);
 	return toolDefs;
 }
 

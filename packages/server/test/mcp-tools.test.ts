@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AuthType } from '@hezo/shared';
+import { AuthType, DEFAULT_TEAM_ID } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -154,6 +154,8 @@ describe('MCP endpoint: tool registration', () => {
 		expect(toolNames).toContain('create_comment');
 		expect(toolNames).toContain('list_approvals');
 		expect(toolNames).toContain('resolve_approval');
+		expect(toolNames).toContain('create_project');
+		expect(toolNames).not.toContain('update_project_creation_proposal');
 		expect(toolNames).toContain('list_skills');
 		expect(toolNames).toContain('get_skill');
 		expect(toolNames).toContain('create_skill');
@@ -1147,6 +1149,150 @@ describe('MCP coordination: HQ agents act inside project teams', () => {
 		});
 		expect(result.error).toContain('Access denied');
 		expect(result.updated).toBeUndefined();
+	});
+});
+
+describe('MCP create_project (CEO creates a project + team on approval)', () => {
+	async function callToolAs(
+		tokenStr: string,
+		toolName: string,
+		args: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(tokenStr), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: { name: toolName, arguments: args },
+				id: 1,
+			}),
+		});
+		const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
+		return JSON.parse(body.result.content[0].text) as Record<string, unknown>;
+	}
+
+	async function startIntake(
+		name: string,
+	): Promise<{ intake_task_id: string; intake_task_identifier: string }> {
+		const res = await app.request('/api/project-intakes', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name, description: 'Build the thing.' }),
+		});
+		expect(res.status).toBe(201);
+		return (await res.json()).data;
+	}
+
+	async function startupTemplateId(): Promise<string> {
+		const res = await app.request('/api/team-templates', { headers: authHeader(token) });
+		return (await res.json()).data.find((t: { name: string }) => t.name === 'Startup').id;
+	}
+
+	it('creates the project + team + planning task and closes the intake', async () => {
+		const intake = await startIntake(`CEO Create ${Date.now()}`);
+		const ceoId = await instanceCeoId(db);
+		const { token: ceoToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			ceoId,
+			DEFAULT_TEAM_ID,
+			intake.intake_task_id,
+		);
+		const tplId = await startupTemplateId();
+
+		const result = await callToolAs(ceoToken, 'create_project', {
+			name: 'CEO Built Project',
+			description: 'A project the CEO created after approval.',
+			template_id: tplId,
+			intake_task_id: intake.intake_task_id,
+		});
+		expect(result.error).toBeUndefined();
+		expect(result.team_slug).toBeTruthy();
+		expect(result.planning_task_identifier).toBeTruthy();
+
+		const project = await db.query<{ id: string; team_id: string }>(
+			'SELECT id, team_id FROM projects WHERE slug = $1',
+			[result.slug as string],
+		);
+		expect(project.rows[0]).toBeDefined();
+
+		// The new team carries a Captain (from the Startup template) and a planning task.
+		const captain = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM member_agents ma JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.slug = 'captain'`,
+			[project.rows[0].team_id],
+		);
+		expect(captain.rows[0].n).toBe(1);
+		const planning = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM tasks WHERE project_id = $1 AND labels @> '["planning"]'::jsonb`,
+			[project.rows[0].id],
+		);
+		expect(planning.rows[0].n).toBe(1);
+
+		// The intake ticket is closed.
+		const intakeTask = await db.query<{ status: string }>(
+			'SELECT status::text AS status FROM tasks WHERE id = $1',
+			[intake.intake_task_id],
+		);
+		expect(intakeTask.rows[0].status).toBe('done');
+	});
+
+	it('is idempotent — a second call on a closed intake errors instead of duplicating', async () => {
+		const intake = await startIntake(`CEO Idem ${Date.now()}`);
+		const ceoId = await instanceCeoId(db);
+		const { token: ceoToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			ceoId,
+			DEFAULT_TEAM_ID,
+			intake.intake_task_id,
+		);
+
+		const first = await callToolAs(ceoToken, 'create_project', {
+			name: 'Idem Project',
+			description: 'First creation.',
+			intake_task_id: intake.intake_task_id,
+		});
+		expect(first.error).toBeUndefined();
+
+		const second = await callToolAs(ceoToken, 'create_project', {
+			name: 'Idem Project Dup',
+			description: 'Should not create a second.',
+			intake_task_id: intake.intake_task_id,
+		});
+		expect(second.error).toContain('already been completed');
+	});
+
+	it('rejects a non-CEO agent', async () => {
+		const intake = await startIntake(`CEO Guard ${Date.now()}`);
+		const { token: workerToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+		const result = await callToolAs(workerToken, 'create_project', {
+			name: 'Worker Project',
+			description: 'Should be rejected.',
+			intake_task_id: intake.intake_task_id,
+		});
+		expect(result.error).toContain('Only the CEO');
+	});
+
+	it('rejects a malformed task_prefix', async () => {
+		const intake = await startIntake(`CEO Prefix ${Date.now()}`);
+		const ceoId = await instanceCeoId(db);
+		const { token: ceoToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			ceoId,
+			DEFAULT_TEAM_ID,
+			intake.intake_task_id,
+		);
+		const result = await callToolAs(ceoToken, 'create_project', {
+			name: 'Prefix Project',
+			description: 'Bad prefix.',
+			task_prefix: 'lowercase-too-long',
+			intake_task_id: intake.intake_task_id,
+		});
+		expect(typeof result.error).toBe('string');
+		expect(result.error as string).toContain('task_prefix');
 	});
 });
 

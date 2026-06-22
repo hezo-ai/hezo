@@ -211,17 +211,27 @@ loads from its **home** team (HQ). For an ordinary agent the two coincide. Auth 
 membership check: the agent JWT is validated against the `heartbeat_runs` row
 `(run_id, member_id, team_id)`, so an HQ member legitimately operates run-team-scoped.
 
-**Creation flows (two, both superuser).**
-1. **Direct** — `POST /api/projects`: creates the team, its single project, the Captain,
-   the initial CEO coherence task, and the Captain's planning task (blocked on coherence)
-   in one step. No approval gate.
-2. **CEO-assisted** — `POST /api/project-intakes`: stands up the team and opens a CEO-run
-   intake conversation in HQ with a pending `project_creation` approval; the project is
-   created on approval.
+**Creation flows (two, both superuser).** Both share one service —
+`createProjectWithTeam` in `services/project-create.ts` — which resolves the team-type
+template, stands up the team + roster, creates the project, seeds the initial CEO
+coherence task (it takes the first identifier) ahead of the Captain's planning task
+(blocked on coherence), wakes the Captain, and provisions the container.
+1. **Direct** — `POST /api/projects`: runs `createProjectWithTeam` in one step. No
+   approval gate.
+2. **CEO-assisted** — `POST /api/project-intakes`: opens a CEO-run intake conversation
+   ticket in HQ (label `project-intake`) recording the form data and the admin's chosen
+   team type as the CEO's **baseline suggestion**. **Nothing is created up front — no
+   team, no project, no approval.** The CEO scopes the work with the admin; when the
+   admin approves in the thread (a plain reply — there is no inbox button), the CEO calls
+   the `create_project` MCP tool, which runs the same `createProjectWithTeam` and closes
+   the intake ticket. There is no longer a `project_creation` approval row (the enum value
+   is retained for historical rows only).
 
 Both accept a `source_team_id` (mutually exclusive with `template_id`): the chosen team
 is snapshotted into a fresh, permanent team-type template and the new team provisioned
-from it, so cloning a team also seeds a reusable type. HQ is rejected as a source.
+from it, so cloning a team also seeds a reusable type. HQ is rejected as a source. The
+CEO's `create_project` tool is wired with `ContainerDeps` (threaded through
+`initMcpServer`/`registerTools`) so a project it creates gets its container provisioned.
 
 Key source: `services/teams.ts` (`seedDefaultTeam`), `team-template-apply.ts`
 (`ensureInstanceCeo`/`ensureInstanceCoach`), `services/internal-intake.ts` (coordination

@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { ApprovalStatus, ApprovalType } from '@hezo/shared';
+import { ApprovalStatus } from '@hezo/shared';
 import type { DomainEventBus } from '../events/bus';
 import {
 	applyApprovalDeniedSideEffect,
@@ -32,8 +32,8 @@ export async function resolveApproval(
 	approvalId: string,
 	input: ResolveApprovalInput,
 ): Promise<ResolveApprovalResult> {
-	const existing = await db.query<{ status: string; team_id: string; type: string }>(
-		'SELECT status, team_id, type::text AS type FROM approvals WHERE id = $1',
+	const existing = await db.query<{ status: string; team_id: string }>(
+		'SELECT status, team_id FROM approvals WHERE id = $1',
 		[approvalId],
 	);
 	if (existing.rows.length === 0) {
@@ -61,7 +61,9 @@ export async function resolveApproval(
 			input.containerDeps,
 			input.events,
 		);
-	} else if (existing.rows[0].type === ApprovalType.ProjectCreation) {
+	} else {
+		// Denied: dispatch to any handler that defines a denied side effect (none
+		// today — kept as a generic extension point).
 		sideEffects = await applyApprovalDeniedSideEffect(db, row);
 	}
 

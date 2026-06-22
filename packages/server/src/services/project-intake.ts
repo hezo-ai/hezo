@@ -1,11 +1,8 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
-	ApprovalStatus,
-	ApprovalType,
 	CEO_AGENT_SLUG,
 	CommentContentType,
 	PROJECT_INTAKE_LABEL,
-	PROJECT_INTAKE_SKIP_SIGNAL_TEXT,
 	TaskPriority,
 	TaskStatus,
 	WakeupSource,
@@ -25,26 +22,23 @@ const log = logger.child('project-intake');
 
 export const PROJECT_INTAKE_MARKER = '<!-- project-intake -->';
 
-export interface ProjectIntakePayload {
-	name: string;
-	description: string;
-	task_prefix: string;
-	initial_prd: string | null;
-	intake_task_id?: string;
-}
-
 export interface CreateProjectIntakeInput {
 	name: string;
 	description: string;
-	taskPrefix: string;
 	initialPrd: string | null;
+	/** The team-type the admin picked in the dialog — the CEO's baseline suggestion. */
+	baselineTemplateId?: string;
+	/** Set instead of baselineTemplateId when the admin chose to clone an existing team. */
+	baselineSourceTeamId?: string;
+	/** Display name of the baseline team type, for the conversation. */
+	baselineTeamTypeName?: string;
 }
 
 export interface ProjectIntakeResult {
 	intakeTaskId: string;
 	intakeTaskIdentifier: string;
+	/** The HQ project slug — where the intake conversation lives. */
 	projectSlug: string;
-	approvalId: string;
 	ceoMemberId: string;
 }
 
@@ -57,11 +51,11 @@ function buildGreetingText(input: CreateProjectIntakeInput): string {
 		`Here's what you submitted:`,
 		'',
 		`**Name:** ${input.name}`,
-		`**Task prefix:** ${input.taskPrefix}`,
-		`**Description:**`,
-		'',
-		input.description,
 	];
+	if (input.baselineTeamTypeName) {
+		lines.push(`**Suggested team type:** ${input.baselineTeamTypeName}`);
+	}
+	lines.push('**Description:**', '', input.description);
 	if (input.initialPrd) {
 		lines.push(
 			'',
@@ -70,24 +64,32 @@ function buildGreetingText(input: CreateProjectIntakeInput): string {
 	}
 	lines.push(
 		'',
-		`Tell me anything you'd like me to know — users, constraints, deadlines, integrations. Once I'm satisfied we can deliver it, I'll ask the admin to approve creating the project and its team. If you'd rather move fast, click "Skip questions" and I'll finalise with what we have.`,
+		`Tell me anything you'd like me to know — users, constraints, deadlines, integrations — and whether the suggested team type fits. Once we're aligned and you give me the go-ahead, I'll create the project and its team.`,
 	);
 	return lines.join('\n');
 }
 
-function buildTaskDescription(input: CreateProjectIntakeInput, approvalId: string): string {
-	return `${PROJECT_INTAKE_MARKER}
+function buildBaselineLine(input: CreateProjectIntakeInput): string {
+	if (input.baselineSourceTeamId) {
+		return `- **Baseline team type:** clone of "${input.baselineTeamTypeName ?? 'an existing team'}" (source_team_id: \`${input.baselineSourceTeamId}\`)`;
+	}
+	if (input.baselineTemplateId) {
+		return `- **Baseline team type:** ${input.baselineTeamTypeName ?? 'template'} (template_id: \`${input.baselineTemplateId}\`)`;
+	}
+	return `- **Baseline team type:** Blank (Captain only)`;
+}
 
-Approval ID: \`${approvalId}\`
+function buildTaskDescription(input: CreateProjectIntakeInput): string {
+	return `${PROJECT_INTAKE_MARKER}
 
 ## Open a new project
 
-The admin submitted the Create Project form. Use this ticket as the single conversation thread to confirm scope, check team fit, and finalise the project shape before it's created.
+The admin submitted the Create Project form and chose to plan it with you. Use this ticket as the single conversation thread to confirm scope, check team fit, and finalise the project shape before you create it.
 
 ### Form data
 
 - **Name:** ${input.name}
-- **Task prefix:** ${input.taskPrefix}
+${buildBaselineLine(input)}
 - **Has requirements doc:** ${input.initialPrd ? 'yes — see comments below' : 'no'}
 
 **Description:**
@@ -96,45 +98,33 @@ ${input.description}
 
 ### Your task
 
-1. **Clarify scope.** Ask anything you need to understand the problem, the users, integrations, and constraints. The admin may click "Skip questions" — when they do, finalise with what you have.
-2. **Check team fit.** Use \`list_agents\` / \`get_agent_system_prompt\` to assess whether the current roster covers the work. If there are gaps, open a hire via the standard hire flow before finalising this approval.
-3. **Refine the proposal.** Use \`update_project_creation_proposal\` to update the payload as the conversation evolves (name, description, task_prefix, initial_prd).
-4. **Ask for admin approval.** Post a summary comment, @-mention the admin, and ask them to approve the pending \`project_creation\` approval in the inbox.
-5. **Wait.** On approval, the server creates the project and the planning task, wakes you on the planning task, and closes this ticket automatically.`;
+1. **Clarify scope.** Ask anything you need to understand the problem, the users, integrations, and constraints. Put an active \`@admin\` in any comment where you need them to answer — without it the question reaches no inbox and the ticket stalls.
+2. **Check team fit.** The admin's chosen team type above is your baseline. Call \`list_team_templates\` to review the built-in and saved team types, and recommend a different one if it fits the work better — the final call is the admin's.
+3. **Get the go-ahead.** Post a short summary of the agreed shape (name, description, team type), @-mention the admin, and ask them to confirm. A plain reply approving it is all you need — this is a normal conversation, not an inbox approval.
+4. **Create the project.** Once the admin approves in this thread, call \`create_project\` with the agreed \`name\`, \`description\`, and the chosen \`template_id\` (or \`source_team_id\`), passing this ticket's id as \`intake_task_id\`. That creates the project and its team, opens the Captain's planning ticket, and closes this ticket automatically. If the admin decides not to proceed, close this ticket as cancelled with a brief note.`;
 }
 
+/**
+ * Open a CEO-assisted project intake: a single conversation ticket in HQ,
+ * assigned to the CEO, recording the form data and the admin's chosen team type
+ * as a baseline. Nothing else is created up front — no team, no project, no
+ * approval. The CEO scopes the work with the admin and, on their in-thread
+ * go-ahead, creates the project + team itself via the `create_project` tool.
+ */
 export async function createProjectIntake(
 	db: PGlite,
-	teamId: string,
 	input: CreateProjectIntakeInput,
 	wsManager?: WebSocketManager,
 ): Promise<ProjectIntakeResult | null> {
 	const ctx = await loadCoordinationContext(db);
 	if (!ctx) {
-		log.warn(`Cannot create project intake for ${teamId}; missing CEO or HQ project`);
+		log.warn('Cannot create project intake; missing CEO or HQ project');
 		return null;
 	}
 
-	const payload: ProjectIntakePayload = {
-		name: input.name,
-		description: input.description,
-		task_prefix: input.taskPrefix,
-		initial_prd: input.initialPrd,
-	};
-
-	const { intakeTaskId, intakeTaskIdentifier, approvalId, projectSlug } = await withTransaction(
+	const { intakeTaskId, intakeTaskIdentifier, projectSlug } = await withTransaction(
 		db,
 		async () => {
-			// The approval is scoped to the project's own team; the intake conversation
-			// itself lives in HQ and is run by the CEO.
-			const approvalResult = await db.query<{ id: string }>(
-				`INSERT INTO approvals (team_id, type, status, payload)
-			 VALUES ($1, $2::approval_type, $3::approval_status, $4::jsonb)
-			 RETURNING id`,
-				[teamId, ApprovalType.ProjectCreation, ApprovalStatus.Pending, JSON.stringify(payload)],
-			);
-			const approvalId = approvalResult.rows[0].id;
-
 			const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, ctx.hqProjectId);
 
 			const taskResult = await db.query<{ id: string; identifier: string; project_slug: string }>(
@@ -153,7 +143,7 @@ export async function createProjectIntake(
 					taskNumber,
 					identifier,
 					`Open new project: ${input.name}`,
-					buildTaskDescription(input, approvalId),
+					buildTaskDescription(input),
 					TaskStatus.InProgress,
 					TaskPriority.High,
 					JSON.stringify([PROJECT_INTAKE_LABEL]),
@@ -162,13 +152,6 @@ export async function createProjectIntake(
 			const intakeTaskId = taskResult.rows[0].id;
 			const intakeTaskIdentifier = taskResult.rows[0].identifier;
 			const projectSlug = taskResult.rows[0].project_slug;
-
-			await db.query(
-				`UPDATE approvals
-			 SET payload = payload || $1::jsonb
-			 WHERE id = $2`,
-				[JSON.stringify({ intake_task_id: intakeTaskId }), approvalId],
-			);
 
 			await db.query(
 				`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
@@ -196,7 +179,7 @@ export async function createProjectIntake(
 				);
 			}
 
-			return { intakeTaskId, intakeTaskIdentifier, approvalId, projectSlug };
+			return { intakeTaskId, intakeTaskIdentifier, projectSlug };
 		},
 	);
 
@@ -221,7 +204,6 @@ export async function createProjectIntake(
 		intakeTaskId,
 		intakeTaskIdentifier,
 		projectSlug,
-		approvalId,
 		ceoMemberId: ctx.ceoMemberId,
 	};
 }
@@ -230,7 +212,6 @@ export interface OpenProjectIntake {
 	task_id: string;
 	task_identifier: string;
 	project_slug: string;
-	approval_id: string;
 }
 
 export interface OpenProjectIntakeForHome {
@@ -238,7 +219,6 @@ export interface OpenProjectIntakeForHome {
 	task_identifier: string;
 	/** The HQ project slug — where the intake conversation lives. */
 	project_slug: string;
-	approval_id: string;
 	greeting: string;
 	ceo_member_id: string;
 	ceo_title: string;
@@ -286,7 +266,6 @@ export async function getOpenProjectIntakeForHome(
 		task_id: first.task_id,
 		task_identifier: first.task_identifier,
 		project_slug: first.project_slug,
-		approval_id: first.approval_id,
 		greeting: extractCommentText(greetingRow.rows[0]?.content),
 		ceo_member_id: ceo.rows[0]?.id ?? '',
 		ceo_title: ceo.rows[0]?.title ?? 'CEO',
@@ -300,17 +279,12 @@ export async function getOpenProjectIntakeTasks(db: PGlite): Promise<OpenProject
 		task_id: string;
 		task_identifier: string;
 		project_slug: string;
-		approval_id: string;
 	}>(
 		`SELECT i.id AS task_id,
 		        i.identifier AS task_identifier,
-		        p.slug AS project_slug,
-		        a.id AS approval_id
+		        p.slug AS project_slug
 		 FROM tasks i
 		 JOIN projects p ON p.id = i.project_id
-		 JOIN approvals a ON a.type = 'project_creation'
-		                   AND a.status = 'pending'
-		                   AND a.payload->>'intake_task_id' = i.id::text
 		 WHERE i.labels @> $1::jsonb
 		   AND i.status NOT IN (${ts.placeholders})
 		 ORDER BY i.created_at ASC`,
@@ -323,6 +297,11 @@ function buildProvisioningCompleteText(projectName: string, projectSlug: string)
 	return `Setup complete. The **${projectName}** project has been created and a planning task is ready in [${projectSlug}](/projects/${projectSlug}). I'll start drafting the execution plan there.`;
 }
 
+/**
+ * Close an intake conversation once its project has been created: post a final
+ * "setup complete" comment and move the ticket to Done. Idempotent — a no-op if
+ * the ticket is already terminal. Called by the CEO's `create_project` tool.
+ */
 export async function completeProjectIntakeAfterProvisioning(
 	db: PGlite,
 	intakeTaskId: string,
@@ -398,99 +377,4 @@ export async function completeProjectIntakeAfterProvisioning(
 	}
 
 	return { summaryComment, task };
-}
-
-export async function postProjectCreationApprovedAck(
-	db: PGlite,
-	intakeTaskId: string,
-	projectName: string,
-): Promise<Record<string, unknown> | null> {
-	const ctx = await loadCoordinationContext(db);
-	if (!ctx) return null;
-
-	const task = await db.query<{ id: string }>(
-		`SELECT id FROM tasks WHERE id = $1 AND labels @> $2::jsonb LIMIT 1`,
-		[intakeTaskId, JSON.stringify([PROJECT_INTAKE_LABEL])],
-	);
-	if (!task.rows[0]) return null;
-
-	const commentResult = await db.query<Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
-		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
-		 RETURNING *`,
-		[
-			intakeTaskId,
-			ctx.ceoMemberId,
-			CommentContentType.Text,
-			JSON.stringify({
-				text: `Thanks for approving — the **${projectName}** project is being created and the container is spinning up. I'll post a final note here when it's ready.`,
-			}),
-		],
-	);
-	return commentResult.rows[0] ?? null;
-}
-
-export async function postProjectCreationDeniedNote(
-	db: PGlite,
-	intakeTaskId: string,
-	resolutionNote: string | null,
-): Promise<Record<string, unknown> | null> {
-	const ctx = await loadCoordinationContext(db);
-	if (!ctx) return null;
-
-	const task = await db.query<{ id: string }>(
-		`SELECT id FROM tasks WHERE id = $1 AND labels @> $2::jsonb LIMIT 1`,
-		[intakeTaskId, JSON.stringify([PROJECT_INTAKE_LABEL])],
-	);
-	if (!task.rows[0]) return null;
-
-	const note = resolutionNote?.trim();
-	const text = note
-		? `The admin declined the project creation approval (${note}). Reply here if you'd like me to revise the proposal.`
-		: `The admin declined the project creation approval. Reply here if you'd like me to revise the proposal.`;
-
-	const commentResult = await db.query<Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
-		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
-		 RETURNING *`,
-		[intakeTaskId, ctx.ceoMemberId, CommentContentType.Text, JSON.stringify({ text })],
-	);
-	return commentResult.rows[0] ?? null;
-}
-
-export async function postSkipQuestionsSignalForProjectIntake(
-	db: PGlite,
-	intakeTaskId: string,
-): Promise<Record<string, unknown> | null> {
-	const ctx = await loadCoordinationContext(db);
-	if (!ctx) return null;
-
-	const task = await db.query<{ id: string }>(
-		`SELECT id FROM tasks WHERE id = $1 AND labels @> $2::jsonb LIMIT 1`,
-		[intakeTaskId, JSON.stringify([PROJECT_INTAKE_LABEL])],
-	);
-	if (!task.rows[0]) return null;
-
-	const commentResult = await db.query<Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
-		 VALUES ($1, NULL, $2::comment_content_type, $3::jsonb)
-		 RETURNING *`,
-		[
-			intakeTaskId,
-			CommentContentType.System,
-			JSON.stringify({ text: PROJECT_INTAKE_SKIP_SIGNAL_TEXT }),
-		],
-	);
-	const comment = commentResult.rows[0] ?? null;
-
-	try {
-		await createWakeup(db, ctx.ceoMemberId, ctx.hqTeamId, WakeupSource.Reply, {
-			task_id: intakeTaskId,
-			comment_id: comment ? (comment.id as string) : undefined,
-		});
-	} catch (e) {
-		log.error('Failed to wake CEO for skip-questions signal:', e);
-	}
-
-	return comment;
 }

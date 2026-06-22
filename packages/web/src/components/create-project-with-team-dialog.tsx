@@ -97,10 +97,10 @@ export function CreateProjectWithTeamDialog({
 			description: description.trim(),
 			...sourceFields,
 		});
-		setActiveTeamSlug(res.team_slug);
 		onOpenChange(false);
 		reset();
-		// The conversation lives in HQ; land on the CEO's intake thread.
+		// No team or project is created yet — the conversation lives in HQ; land on
+		// the CEO's intake thread, where the project + team are created on approval.
 		navigate({
 			to: '/projects/$projectId/tasks/$taskId',
 			params: {

@@ -1,30 +1,13 @@
-import { CommentContentType, PROJECT_INTAKE_SKIP_SIGNAL_TEXT } from '@hezo/shared';
+import { CommentContentType } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
-import { FastForward, Loader2, Send } from 'lucide-react';
+import { Loader2, Send } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useComments, useCreateComment } from '../hooks/use-comments';
 import type { ProjectIntake } from '../hooks/use-project-intake';
-import { useSkipProjectIntakeQuestions } from '../hooks/use-project-intake';
 import { CaptainIntakeChat } from './captain-intake-chat';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Textarea } from './ui/textarea';
-
-function commentTextEquals(content: unknown, target: string): boolean {
-	if (typeof content === 'string') {
-		if (content === target) return true;
-		try {
-			const parsed = JSON.parse(content) as { text?: unknown };
-			return parsed?.text === target;
-		} catch {
-			return false;
-		}
-	}
-	if (typeof content === 'object' && content !== null && 'text' in content) {
-		return (content as { text?: unknown }).text === target;
-	}
-	return false;
-}
 
 interface ProjectIntakeHomePanelProps {
 	intake: ProjectIntake;
@@ -33,14 +16,14 @@ interface ProjectIntakeHomePanelProps {
 /**
  * The CEO-assisted project-intake conversation surfaced on the home view. The
  * thread itself lives in the HQ project; the admin chats with the CEO to scope
- * the project before it's created on approval.
+ * the project. The CEO creates the project and its team once the admin approves
+ * here in the conversation.
  */
 export function ProjectIntakeHomePanel({ intake }: ProjectIntakeHomePanelProps) {
 	const projectId = intake.project_slug;
 	const taskId = intake.task_identifier.toLowerCase();
 	const createComment = useCreateComment(projectId, taskId);
 	const { data: comments } = useComments(projectId, taskId);
-	const skipQuestions = useSkipProjectIntakeQuestions(projectId, taskId);
 	const [message, setMessage] = useState('');
 	const [awaitingReply, setAwaitingReply] = useState(false);
 
@@ -48,19 +31,6 @@ export function ProjectIntakeHomePanel({ intake }: ProjectIntakeHomePanelProps) 
 		const textComments = (comments ?? []).filter((c) => c.content_type === CommentContentType.Text);
 		return textComments[textComments.length - 1];
 	}, [comments]);
-
-	const skipSignaled = useMemo(
-		() =>
-			(comments ?? []).some(
-				(c) =>
-					c.content_type === CommentContentType.System &&
-					c.author_member_id === null &&
-					commentTextEquals(c.content, PROJECT_INTAKE_SKIP_SIGNAL_TEXT),
-			),
-		[comments],
-	);
-
-	const showSkip = !skipSignaled && !skipQuestions.isSuccess;
 
 	useEffect(() => {
 		if (lastChatMessage?.author_type === 'agent') {
@@ -76,15 +46,6 @@ export function ProjectIntakeHomePanel({ intake }: ProjectIntakeHomePanelProps) 
 		setAwaitingReply(true);
 		try {
 			await createComment.mutateAsync({ content: text, wake_assignee: true });
-		} catch {
-			setAwaitingReply(false);
-		}
-	}
-
-	async function handleSkip() {
-		setAwaitingReply(true);
-		try {
-			await skipQuestions.mutateAsync();
 		} catch {
 			setAwaitingReply(false);
 		}
@@ -121,24 +82,6 @@ export function ProjectIntakeHomePanel({ intake }: ProjectIntakeHomePanelProps) 
 						data-testid="home-project-intake-input"
 					/>
 					<div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-end">
-						{showSkip && (
-							<Button
-								type="button"
-								variant="ghost"
-								size="sm"
-								onClick={handleSkip}
-								disabled={skipQuestions.isPending}
-								className="sm:mr-auto"
-								data-testid="home-project-intake-skip"
-							>
-								{skipQuestions.isPending ? (
-									<Loader2 className="w-3 h-3 animate-spin" />
-								) : (
-									<FastForward className="w-3 h-3" />
-								)}
-								Skip questions — propose now
-							</Button>
-						)}
 						<Button type="submit" disabled={!message.trim() || createComment.isPending}>
 							{createComment.isPending ? (
 								<Loader2 className="w-4 h-4 animate-spin" />
@@ -148,12 +91,6 @@ export function ProjectIntakeHomePanel({ intake }: ProjectIntakeHomePanelProps) 
 							Send
 						</Button>
 					</div>
-					{showSkip && skipQuestions.error && (
-						<p className="text-[12px] text-danger">
-							{(skipQuestions.error as { message?: string }).message ||
-								'Could not signal the CEO — try again.'}
-						</p>
-					)}
 				</form>
 			</div>
 		</Card>

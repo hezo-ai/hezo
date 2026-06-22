@@ -52,8 +52,6 @@ When two agents disagree (e.g. Engineer thinks the Architect's plan is wrong):
 
 Escalate to the admin when: budget impact exceeds 20% of monthly, the decision changes strategic direction, or you are genuinely uncertain.
 
-{{> partials/captain/project-intake-workflow}}
-
 {{> partials/captain/hire-workflow}}
 
 {{> partials/captain/description-maintenance}}

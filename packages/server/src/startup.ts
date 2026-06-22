@@ -60,6 +60,7 @@ import { updatesRoutes } from './routes/updates';
 import { AuthChallengeStore } from './services/auth-challenges';
 import { CeoSessionManager } from './services/ceo-session-manager';
 import { ContainerLogStreamer } from './services/container-logs';
+import type { ContainerDeps } from './services/containers';
 import { DockerClient } from './services/docker';
 import { EgressProxy, loadOrCreateCA } from './services/egress';
 import { ImageBuildTracker, setSharedImageBuildTracker } from './services/image-build-tracker';
@@ -295,8 +296,21 @@ export function buildApp(
 		return next();
 	});
 
-	// Initialize MCP server
-	initMcpServer(db, config.dataDir, masterKeyManager, wsManager, events);
+	// Initialize MCP server. The container deps let the CEO's `create_project`
+	// tool provision a container for a project it creates (the same way the
+	// `POST /api/projects` route does).
+	const mcpContainerDeps: ContainerDeps = {
+		db,
+		docker,
+		dataDir: config.dataDir,
+		wsManager,
+		masterKeyManager,
+		logs,
+		containerLogStreamer,
+		sshAgentServer,
+		egressCAPath: egressProxy?.caCertPath ?? null,
+	};
+	initMcpServer(db, config.dataDir, masterKeyManager, wsManager, events, mcpContainerDeps);
 
 	// Public routes
 	app.route('/', healthRoutes);

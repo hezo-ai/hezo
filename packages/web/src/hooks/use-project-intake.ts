@@ -8,7 +8,6 @@ export interface ProjectIntake {
 	task_identifier: string;
 	/** The HQ project slug — where the intake conversation lives. */
 	project_slug: string;
-	approval_id: string;
 	greeting: string;
 	ceo_member_id: string;
 	ceo_title: string;
@@ -26,10 +25,8 @@ export interface StartProjectIntakeInput {
 export interface StartProjectIntakeResult {
 	intake_task_id: string;
 	intake_task_identifier: string;
-	approval_id: string;
+	/** The HQ project slug — where the intake conversation lives. */
 	project_slug: string;
-	team_id: string;
-	team_slug: string;
 }
 
 /** The single open CEO-assisted project intake, or null. Surfaced on the home view. */
@@ -53,23 +50,6 @@ export function useStartProjectIntake() {
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
 			// Cloning a team mints a new reusable template — refresh the catalog.
 			queryClient.invalidateQueries({ queryKey: queryKeys.teamTemplates() });
-		},
-	});
-}
-
-// `intakeTaskId` is the route-param slug — it must match the key used by
-// `useComments(projectId, taskId)` so the optimistic invalidation actually refetches.
-// The server route accepts both slugs and UUIDs (resolveTaskId).
-export function useSkipProjectIntakeQuestions(projectId: string, intakeTaskId: string) {
-	return useMutation({
-		mutationFn: () =>
-			api.post<{ task_id: string; comment_id: string }>(
-				`/api/projects/${projectId}/project-intake/${intakeTaskId}/skip-questions`,
-			),
-		onSuccess: () => {
-			queryClient.invalidateQueries({
-				queryKey: queryKeys.projects.taskComments(projectId, intakeTaskId),
-			});
 		},
 	});
 }

@@ -50,8 +50,6 @@ export const CHAT_HISTORY_LIMIT_MIN = 10;
 export const CHAT_HISTORY_LIMIT_MAX = 500;
 
 export const PROJECT_INTAKE_LABEL = 'project-intake';
-export const PROJECT_INTAKE_SKIP_SIGNAL_TEXT =
-	'Admin chose to skip further questions — finalise the project proposal with what we have so far.';
 
 export const wsRoom = {
 	team: (id: string) => `team:${id}`,

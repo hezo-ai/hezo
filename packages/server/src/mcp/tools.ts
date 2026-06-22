@@ -9,6 +9,7 @@ import {
 	AuditActorType,
 	AuthType,
 	CAPTAIN_AGENT_SLUG,
+	CEO_AGENT_SLUG,
 	CommentContentType,
 	CredentialInputType,
 	CredentialKind,
@@ -22,6 +23,7 @@ import {
 	ReactionKind,
 	SEARCH_SCOPES,
 	TaskStatus,
+	TERMINAL_TASK_STATUSES,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
@@ -55,7 +57,6 @@ import { deriveSkillSummary } from '../lib/skill-summary';
 import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/task-relationships';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
-import { resolveProjectTaskPrefix } from '../routes/projects';
 import { AGENT_ATTACHMENT_DIR, loadAgentAttachmentsForComments } from '../services/agent-runner';
 import {
 	AgentSystemPromptError,
@@ -66,6 +67,7 @@ import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
 import { deleteAsset, readAsset, writeAsset } from '../services/asset-storage';
 import { fireCommentWakeups } from '../services/comment-wakeups';
+import type { ContainerDeps } from '../services/containers';
 import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import {
 	getAgentSystemPrompt,
@@ -73,6 +75,8 @@ import {
 	listDocuments,
 	upsertDocument,
 } from '../services/documents';
+import { createProjectWithTeam } from '../services/project-create';
+import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
 import {
 	addCommentReaction,
 	loadReactionsForTask,
@@ -117,7 +121,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'add_task_blocker',
 	'remove_task_blocker',
 	'update_hire_proposal',
-	'update_project_creation_proposal',
+	'create_project',
 	'add_reaction',
 	'remove_reaction',
 	'create_comment',
@@ -481,6 +485,7 @@ export function registerTools(
 	masterKeyManager: MasterKeyManager,
 	wsManager?: WebSocketManager,
 	events?: DomainEventBus,
+	containerDeps?: ContainerDeps,
 ): ToolDef[] {
 	registeredTools.length = 0;
 
@@ -1141,98 +1146,127 @@ export function registerTools(
 
 	tool(
 		server,
-		'update_project_creation_proposal',
-		'Revise the draft of a pending project_creation approval. Captain-only. Use this to refine the name, description, task_prefix, or initial_prd as the intake conversation evolves. All fields are optional — pass only what you want to change.',
+		'create_project',
+		'Create a new project together with its dedicated team. CEO-only. Call this once the admin has approved a new project in the intake conversation — a plain reply in the thread is enough; there is no inbox button to wait on. Provisions the team from the chosen team-type template (pass template_id from list_team_templates, or source_team_id to clone an existing team; defaults to Blank), creates the project, its planning ticket, and the initial CEO coherence/setup ticket the planning ticket is blocked on, then provisions the container. When intake_task_id is given, the intake conversation is closed with a completion note. Returns the new project plus its planning ticket identifier.',
 		{
-			approval_id: z.string().describe('project_creation approval ID'),
-			name: z.string().optional().describe('Updated project name'),
-			description: z.string().optional().describe('Updated project description'),
-			task_prefix: z.string().optional().describe('Updated 2-4 char task prefix'),
+			name: z.string().describe('Project name'),
+			description: z.string().describe('Project description'),
+			task_prefix: z
+				.string()
+				.optional()
+				.describe('Optional 2-4 char uppercase ticket prefix; derived from the name when omitted'),
 			initial_prd: z
 				.string()
-				.nullable()
 				.optional()
-				.describe('Updated initial PRD markdown text. Pass null to clear.'),
+				.describe('Optional initial requirements document (markdown), seeded as initial-prd.md'),
+			template_id: z
+				.string()
+				.optional()
+				.describe(
+					'Team-type template id (from list_team_templates). Mutually exclusive with source_team_id; defaults to Blank when neither is given.',
+				),
+			source_team_id: z
+				.string()
+				.optional()
+				.describe(
+					'Existing team to clone into a fresh template. Mutually exclusive with template_id.',
+				),
+			intake_task_id: z
+				.string()
+				.optional()
+				.describe(
+					'The HQ project-intake ticket this fulfils; it is closed with a completion note on success.',
+				),
 		},
 		async (args, db, auth) => {
 			if (auth.type !== AuthType.Agent) {
-				return { error: 'update_project_creation_proposal is only callable by agents' };
+				return { error: 'create_project is only callable by agents' };
 			}
 			const caller = await db.query<{ slug: string }>(
 				'SELECT slug FROM member_agents WHERE id = $1',
 				[auth.memberId],
 			);
-			if (caller.rows[0]?.slug !== CAPTAIN_AGENT_SLUG) {
-				return { error: 'Only the Captain can revise project creation proposals' };
+			if (caller.rows[0]?.slug !== CEO_AGENT_SLUG) {
+				return { error: 'Only the CEO can create projects' };
 			}
 
-			const approval = await db.query<{
-				id: string;
-				team_id: string;
-				type: string;
-				status: string;
-				payload: Record<string, unknown>;
-			}>('SELECT id, team_id, type, status, payload FROM approvals WHERE id = $1', [
-				args.approval_id,
-			]);
-			if (approval.rows.length === 0) return { error: 'Approval not found' };
-
-			const row = approval.rows[0];
-			if (row.team_id !== auth.teamId) {
-				return { error: 'Access denied: team mismatch' };
-			}
-			if (row.type !== ApprovalType.ProjectCreation) {
-				return { error: 'Approval is not a project creation request' };
-			}
-			if (row.status !== ApprovalStatus.Pending) {
-				return { error: 'Project creation approval is already resolved' };
+			const name = typeof args.name === 'string' ? args.name.trim() : '';
+			const description = typeof args.description === 'string' ? args.description.trim() : '';
+			if (!name) return { error: 'name is required' };
+			if (!description) return { error: 'description is required' };
+			if (!containerDeps) {
+				return { error: 'Project creation is not available in this context' };
 			}
 
-			const patch: Record<string, unknown> = {};
-			if (args.name !== undefined) {
-				const trimmed = (args.name as string).trim();
-				if (!trimmed) return { error: 'name cannot be empty' };
-				patch.name = trimmed;
-			}
-			if (args.description !== undefined) {
-				const trimmed = (args.description as string).trim();
-				if (!trimmed) return { error: 'description cannot be empty' };
-				patch.description = trimmed;
-			}
-			if (args.task_prefix !== undefined) {
-				patch.task_prefix = (args.task_prefix as string).trim().toUpperCase();
-			}
-			if (args.initial_prd !== undefined) {
-				patch.initial_prd =
-					args.initial_prd === null ? null : (args.initial_prd as string).trim() || null;
-			}
-
-			if (Object.keys(patch).length === 0) {
-				return { error: 'no fields to update' };
-			}
-
-			if (patch.name !== undefined || patch.task_prefix !== undefined) {
-				const candidateName = (patch.name ?? row.payload.name) as string;
-				const candidatePrefix =
-					patch.task_prefix !== undefined ? (patch.task_prefix as string) : undefined;
-				const prefixResult = await resolveProjectTaskPrefix(
-					db,
-					row.team_id,
-					candidatePrefix,
-					candidateName,
+			// Idempotency: if this fulfils an intake ticket, that ticket must still be
+			// open — otherwise a re-run (e.g. after a timeout) would create a second
+			// project + team. Check before creating anything.
+			const intakeTaskId =
+				typeof args.intake_task_id === 'string' && args.intake_task_id.trim()
+					? args.intake_task_id.trim()
+					: undefined;
+			let intakeTeamId: string | undefined;
+			if (intakeTaskId) {
+				const intake = await db.query<{ status: string; team_id: string }>(
+					'SELECT status::text AS status, team_id FROM tasks WHERE id = $1',
+					[intakeTaskId],
 				);
-				if (!prefixResult.ok) {
-					return { error: prefixResult.message };
+				if (intake.rows.length === 0) return { error: 'Intake task not found' };
+				if ((TERMINAL_TASK_STATUSES as readonly string[]).includes(intake.rows[0].status)) {
+					return { error: 'This intake has already been completed' };
 				}
-				patch.task_prefix = prefixResult.prefix;
+				intakeTeamId = intake.rows[0].team_id;
 			}
 
-			const updated = await db.query<Record<string, unknown>>(
-				`UPDATE approvals SET payload = payload || $1::jsonb
-				 WHERE id = $2 RETURNING ${APPROVAL_COLUMNS}`,
-				[JSON.stringify(patch), args.approval_id],
+			const result = await createProjectWithTeam(
+				containerDeps,
+				{
+					name,
+					description,
+					templateId: typeof args.template_id === 'string' ? args.template_id : undefined,
+					sourceTeamId: typeof args.source_team_id === 'string' ? args.source_team_id : undefined,
+					taskPrefix: typeof args.task_prefix === 'string' ? args.task_prefix : undefined,
+					initialPrd: typeof args.initial_prd === 'string' ? args.initial_prd : null,
+					actorType: 'agent',
+					actorMemberId: auth.memberId,
+				},
+				{ events },
 			);
-			return updated.rows[0] ?? null;
+			if (!result.ok) return { error: result.message };
+
+			const { project, planningTask, team } = result;
+
+			if (intakeTaskId) {
+				const completed = await completeProjectIntakeAfterProvisioning(
+					db,
+					intakeTaskId,
+					name,
+					project.slug as string,
+					wsManager,
+				);
+				if (wsManager && intakeTeamId) {
+					const room = wsRoom.team(intakeTeamId);
+					if (completed.summaryComment) {
+						broadcastRowChange(
+							wsManager,
+							room,
+							'task_comments',
+							'INSERT',
+							completed.summaryComment,
+						);
+					}
+					if (completed.task) {
+						broadcastRowChange(wsManager, room, 'tasks', 'UPDATE', completed.task);
+					}
+				}
+			}
+
+			return {
+				...project,
+				team_slug: team.slug,
+				planning_task_id: planningTask.id,
+				planning_task_identifier: planningTask.identifier,
+			};
 		},
 		db,
 	);
