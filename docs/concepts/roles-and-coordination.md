@@ -10,8 +10,10 @@ Hezo organises agents like a company. A few roles coordinate; the rest do the wo
 
 ## The CEO
 
-The **CEO** is the instance-wide executive, and your main point of contact. You chat
-with the CEO to get things done across the whole instance:
+The **CEO** is the instance-wide executive, and your main point of contact. There is
+exactly one CEO, and it lives in [HQ](/docs/concepts/projects-and-teams#hq--the-home-team) —
+so it can see and act across every project. You chat with the CEO to get things done
+across the whole instance:
 
 - **Intake** — describe a new project and the CEO scopes it and provisions the team
   (see [Your first project](/docs/getting-started/first-project)).
@@ -28,8 +30,13 @@ Because the CEO can make consequential changes, significant actions surface as
 
 ## The Coach
 
-The **Coach** reviews completed work across every project, capturing what went well and
-what to improve so the teams get better over time.
+The **Coach** is the second instance-wide role that lives in HQ. Whenever a ticket is
+completed — in any project — the Coach automatically reviews how it went: it reads the
+whole thread, notices where an agent struggled, got pushback, or needed several attempts,
+and captures what went well and what to improve. It then writes those lessons back as
+durable **learned rules** on the agents that need them (and sometimes updates a project
+document or skill), so the same mistake doesn't happen twice. The teams get better the
+more they ship, without you having to tune prompts by hand.
 
 ## The Captain
 
@@ -43,12 +50,22 @@ The rest of the roster are **workers** — domain specialists such as engineers,
 designers, QA, or researchers, depending on the team template. They pick up tasks,
 do the work, and report up to the Captain.
 
-## Acting through the chat
+## Chatting with the CEO
 
-The chat is the control surface for the things that are awkward to click through:
-scoping work, reorganising a team, or changing how an agent behaves. State what you
-want in plain language; the CEO proposes the change and asks you to approve anything
-that matters. Standing preferences you ask it to remember persist in the CEO's
+The CEO is always one click away. A chat opens from any page in the app, and there's a
+single ongoing conversation — pick up where you left off rather than starting a new
+thread each time. As the CEO works, its reply **streams back in real time**, so you can
+follow its thinking instead of waiting for a finished block of text.
+
+Because the CEO works across the whole instance, you can ask about anything without
+opening a project first: "how's the marketing site coming along?", "what's the engineering
+team stuck on?", "spin up a team to research competitors". It answers with knowledge of
+every project, ticket, and roster.
+
+The chat is also the control surface for the things that are awkward to click through:
+scoping work, reorganising a team, or changing how an agent behaves. State what you want
+in plain language; the CEO proposes the change and asks you to approve anything that
+matters. Standing preferences you ask it to remember persist in the CEO's
 [chatbox memory](/docs/concepts/documents-and-memory#chatbox-memory), so you don't repeat
 yourself.
 
