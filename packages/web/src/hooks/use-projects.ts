@@ -142,7 +142,7 @@ export function useCreateProjectWithTeam() {
 			description: string;
 			template_id?: string;
 			source_team_id?: string;
-			initial_prd?: string;
+			initial_project_plan?: string;
 			task_prefix?: string;
 		}) => api.post<ProjectWithTeamResponse>('/api/projects', data),
 		onSuccess: () => {

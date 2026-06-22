@@ -1,13 +1,13 @@
 import { FileText, Upload, X } from 'lucide-react';
 import { useCallback, useRef } from 'react';
 
-interface PrdUploadProps {
+interface ProjectPlanUploadProps {
 	value: string;
 	filename: string | null;
 	onChange: (value: string, filename: string | null) => void;
 }
 
-export function PrdUpload({ value, filename, onChange }: PrdUploadProps) {
+export function ProjectPlanUpload({ value, filename, onChange }: ProjectPlanUploadProps) {
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	const handleFileUpload = useCallback(
@@ -26,9 +26,6 @@ export function PrdUpload({ value, filename, onChange }: PrdUploadProps) {
 
 	return (
 		<div className="flex flex-col gap-1.5">
-			<span className="text-xs font-medium uppercase tracking-wider text-text-2">
-				Requirements Document (optional)
-			</span>
 			{value ? (
 				<div className="rounded-md border border-border bg-surface px-3 py-2 text-[13px]">
 					<div className="flex items-center justify-between mb-2">
@@ -40,6 +37,7 @@ export function PrdUpload({ value, filename, onChange }: PrdUploadProps) {
 							type="button"
 							onClick={() => onChange('', null)}
 							className="text-text-3 hover:text-text-1 p-0.5"
+							aria-label="Remove project plan document"
 						>
 							<X className="w-3.5 h-3.5" />
 						</button>

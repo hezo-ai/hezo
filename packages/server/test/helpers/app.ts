@@ -361,7 +361,7 @@ export async function createTestProject(
 		name: string;
 		description?: string;
 		task_prefix?: string;
-		initial_prd?: string | null;
+		initial_project_plan?: string | null;
 		docker_base_image?: string;
 	},
 ): Promise<{
@@ -427,7 +427,7 @@ export async function createTestProject(
 		taskPrefix: prefixResult.prefix,
 		description: input.description ?? '',
 		dockerBaseImage: input.docker_base_image,
-		initialPrd: input.initial_prd ?? null,
+		initialProjectPlan: input.initial_project_plan ?? null,
 	});
 
 	const data: CreatedTestProject = {

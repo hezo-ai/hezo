@@ -28,6 +28,9 @@ across the whole instance:
 Because the CEO can make consequential changes, significant actions surface as
 **approvals** for you to confirm.
 
+The CEO's behaviour comes from its
+[system prompt](https://github.com/hezo-ai/hezo/blob/main/agents/_instance/ceo.md).
+
 ## The Coach
 
 The **Coach** is the second instance-wide role that lives in HQ. Whenever a ticket is
@@ -37,6 +40,13 @@ and captures what went well and what to improve. It then writes those lessons ba
 durable **learned rules** on the agents that need them (and sometimes updates a project
 document or skill), so the same mistake doesn't happen twice. The teams get better the
 more they ship, without you having to tune prompts by hand.
+
+The Coach's behaviour comes from its
+[system prompt](https://github.com/hezo-ai/hezo/blob/main/agents/_instance/coach.md).
+
+Both the CEO and the Coach are instance-wide singletons that live in
+[HQ](/docs/concepts/projects-and-teams#hq--the-home-team) — the one special team — and
+act across every project's team. They are never part of a project template.
 
 ## The Captain
 
@@ -48,7 +58,9 @@ escalates to the CEO when needed.
 
 The rest of the roster are **workers** — domain specialists such as engineers,
 designers, QA, or researchers, depending on the team template. They pick up tasks,
-do the work, and report up to the Captain.
+do the work, and report up to the Captain. For the full roster of each built-in
+template — and a link to every role's system prompt — see
+[Team templates](/docs/concepts/projects-and-teams#team-templates).
 
 ## Chatting with the CEO
 

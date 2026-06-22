@@ -225,7 +225,7 @@ export async function createProjectAndClearPlanning(
 	data: {
 		name: string;
 		description?: string;
-		initial_prd?: string;
+		initial_project_plan?: string;
 		task_prefix?: string;
 		template_id?: string;
 	},

@@ -6,9 +6,11 @@ import { setActiveTeamSlug } from '../hooks/use-active-team-slug';
 import { useStartProjectIntake } from '../hooks/use-project-intake';
 import { useAllVisibleProjects, useCreateProjectWithTeam } from '../hooks/use-projects';
 import { useTeamTemplates } from '../hooks/use-team-templates';
+import { ProjectPlanUpload } from './project-plan-upload';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
+import { InfoTooltip } from './ui/info-tooltip';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 
@@ -49,6 +51,8 @@ export function CreateProjectWithTeamDialog({
 	const { projects } = useAllVisibleProjects();
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
+	const [projectPlan, setProjectPlan] = useState('');
+	const [projectPlanFilename, setProjectPlanFilename] = useState<string | null>(null);
 	const [selection, setSelection] = useState<Selection>(null);
 	const createProject = useCreateProjectWithTeam();
 	const startIntake = useStartProjectIntake();
@@ -80,6 +84,8 @@ export function CreateProjectWithTeamDialog({
 	function reset() {
 		setName('');
 		setDescription('');
+		setProjectPlan('');
+		setProjectPlanFilename(null);
 		setSelection(null);
 	}
 
@@ -88,6 +94,7 @@ export function CreateProjectWithTeamDialog({
 		const res = await createProject.mutateAsync({
 			name: name.trim(),
 			description: description.trim(),
+			initial_project_plan: projectPlan.trim() || undefined,
 			...sourceFields,
 		});
 		setActiveTeamSlug(res.team_slug);
@@ -108,6 +115,7 @@ export function CreateProjectWithTeamDialog({
 		const res = await startIntake.mutateAsync({
 			name: name.trim(),
 			description: description.trim(),
+			initial_project_plan: projectPlan.trim() || undefined,
 			...sourceFields,
 		});
 		onOpenChange(false);
@@ -155,6 +163,24 @@ export function CreateProjectWithTeamDialog({
 							rows={4}
 							placeholder="What is this project? Domain, users, and the core problem it solves."
 						/>
+						<div className="flex flex-col gap-1.5">
+							<span className="flex items-center gap-1.5 text-[13px] font-medium text-text-1">
+								Project plan document (optional)
+								<InfoTooltip
+									label="What is a project plan document?"
+									data-testid="project-plan-help"
+									content="Attach a fuller document describing what this project is for when the description above isn't enough — goals, scope, context, constraints. For a software team the Captain uses it to write the formal PRD; for other teams it's used directly as the plan."
+								/>
+							</span>
+							<ProjectPlanUpload
+								value={projectPlan}
+								filename={projectPlanFilename}
+								onChange={(v, f) => {
+									setProjectPlan(v);
+									setProjectPlanFilename(f);
+								}}
+							/>
+						</div>
 						<div>
 							<span className="text-[13px] font-medium text-text-1">Team type</span>
 							{isLoading ? (
