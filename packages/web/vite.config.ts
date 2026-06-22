@@ -29,6 +29,7 @@ export default defineConfig({
 			'/health': serverUrl,
 			'/mcp': serverUrl,
 			'/SKILL.md': serverUrl,
+			'/llms.txt': serverUrl,
 			'/ws': {
 				target: serverUrl.replace('http', 'ws'),
 				ws: true,

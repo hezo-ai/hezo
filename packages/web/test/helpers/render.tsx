@@ -99,7 +99,7 @@ beforeEach(async () => {
 
 	// Reroute fetch through the in-process Hono app. Bypasses the real network
 	// entirely; matches the way the dev Vite proxy forwards /api, /oauth, /mcp,
-	// /health, and /SKILL.md to the server.
+	// /health, /SKILL.md, and /llms.txt to the server.
 	realFetch = globalThis.fetch;
 	// Close over the captured fetch rather than reading `realFetch` at call
 	// time: a debounced/in-flight request can land after afterEach nulls the
@@ -121,7 +121,8 @@ beforeEach(async () => {
 			path.startsWith('/oauth') ||
 			path.startsWith('/mcp') ||
 			path.startsWith('/health') ||
-			path === '/SKILL.md'
+			path === '/SKILL.md' ||
+			path === '/llms.txt'
 		) {
 			return test.app.fetch(req);
 		}
