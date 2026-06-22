@@ -131,7 +131,7 @@ export function LogViewer({
 									onClick={() => setViewMode('formatted')}
 									aria-pressed={viewMode === 'formatted'}
 									aria-label="Formatted view"
-									className={`h-6 px-1.5 ${viewMode === 'formatted' ? 'bg-surface-3 text-text-1 border border-border shadow-inner' : ''}`}
+									className={`h-6 px-1.5 ${viewMode === 'formatted' ? 'bg-surface-3 text-text-1 border border-border shadow-inner' : 'border-transparent!'}`}
 								>
 									<AlignLeft className="w-3 h-3" />
 								</Button>
@@ -143,7 +143,7 @@ export function LogViewer({
 									onClick={() => setViewMode('raw')}
 									aria-pressed={viewMode === 'raw'}
 									aria-label="Raw logs"
-									className={`h-6 px-1.5 ${viewMode === 'raw' ? 'bg-surface-3 text-text-1 border border-border shadow-inner' : ''}`}
+									className={`h-6 px-1.5 ${viewMode === 'raw' ? 'bg-surface-3 text-text-1 border border-border shadow-inner' : 'border-transparent!'}`}
 								>
 									<Code className="w-3 h-3" />
 								</Button>
@@ -159,7 +159,7 @@ export function LogViewer({
 							size="sm"
 							onClick={handleCopy}
 							disabled={lines.length === 0}
-							className="text-xs h-6 px-2"
+							className="text-xs h-6 px-2 border-transparent!"
 							aria-label="Copy logs to clipboard"
 						>
 							{copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
@@ -172,7 +172,7 @@ export function LogViewer({
 							onClick={() => setAutoScroll((v) => !v)}
 							aria-pressed={autoScroll}
 							aria-label="Toggle auto-scroll"
-							className={`text-xs h-6 px-2 ${autoScroll ? 'bg-surface-3 text-text-1 border border-border shadow-inner' : ''}`}
+							className={`text-xs h-6 px-2 ${autoScroll ? 'bg-surface-3 text-text-1 border border-border shadow-inner' : 'border-transparent!'}`}
 						>
 							<MoveVertical className="w-3 h-3" />
 						</Button>
@@ -183,7 +183,7 @@ export function LogViewer({
 							variant="ghost"
 							size="sm"
 							onClick={toggleExpanded}
-							className="text-xs h-6 px-2"
+							className="text-xs h-6 px-2 border-transparent!"
 							aria-label={isExpanded ? 'Collapse log viewer' : 'Expand log viewer'}
 						>
 							{isExpanded ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
