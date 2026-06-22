@@ -196,6 +196,39 @@ export async function fetchRepo(
 	return { success: true };
 }
 
+/**
+ * Resolves the remote's default branch name (e.g. `main`) for a clone, or null
+ * when none can be determined (an empty/unborn remote). Prefers the `origin/HEAD`
+ * symref recorded at clone time, then probes `origin/main` and `origin/master`
+ * so a repo connected in place — which sets no `origin/HEAD` — still resolves.
+ * Only ever returns a name whose remote-tracking ref actually exists, so callers
+ * can safely use `origin/<name>` as a commit-ish.
+ */
+export async function getRemoteDefaultBranch(repoDir: string): Promise<string | null> {
+	const candidates: string[] = [];
+	const symref = await spawn('git', ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], {
+		cwd: repoDir,
+		timeout: 30_000,
+	});
+	if (symref.exitCode === 0) {
+		const name = symref.stdout.trim().replace(/^origin\//, '');
+		if (name) candidates.push(name);
+	}
+	for (const fallback of ['main', 'master']) {
+		if (!candidates.includes(fallback)) candidates.push(fallback);
+	}
+
+	for (const name of candidates) {
+		const exists = await spawn(
+			'git',
+			['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${name}`],
+			{ cwd: repoDir, timeout: 30_000 },
+		);
+		if (exists.exitCode === 0) return name;
+	}
+	return null;
+}
+
 export async function createWorktree(
 	repoDir: string,
 	worktreePath: string,
@@ -290,7 +323,10 @@ async function releaseBranchFromWorktrees(repoDir: string, branchName: string): 
  * Adds a worktree for the task branch, choosing the checkout source by what
  * already exists: an existing local branch is checked out as-is (preserving its
  * commits — the case when rebuilding a worktree whose metadata was lost), an
- * existing remote branch is tracked, otherwise a new branch is created.
+ * existing remote branch is tracked, otherwise a **new** branch is created off the
+ * latest fetched remote default branch (`origin/<default>`) so every task starts
+ * from current trunk rather than the shared clone's drifted/detached HEAD. Only
+ * when no default branch resolves (an empty remote) does it fall back to HEAD.
  */
 async function addTaskWorktree(
 	repoDir: string,
@@ -324,7 +360,18 @@ async function addTaskWorktree(
 			`origin/${branchName}`,
 		];
 	} else {
-		args = ['worktree', 'add', '--relative-paths', '-b', branchName, worktreePath];
+		const defaultBranch = await getRemoteDefaultBranch(repoDir);
+		args = defaultBranch
+			? [
+					'worktree',
+					'add',
+					'--relative-paths',
+					'-b',
+					branchName,
+					worktreePath,
+					`origin/${defaultBranch}`,
+				]
+			: ['worktree', 'add', '--relative-paths', '-b', branchName, worktreePath];
 	}
 
 	const result = await spawn('git', args, { cwd: repoDir, timeout: 30_000 });
@@ -334,10 +381,53 @@ async function addTaskWorktree(
 	return { success: true, created: true };
 }
 
+/**
+ * Catches a worktree's branch up with current trunk by merging the remote default
+ * branch (`origin/<default>`) into it, so resumed work continues on top of the
+ * latest main instead of a stale base. A no-op when the branch already contains
+ * trunk, when the branch *is* the default, or when no default branch resolves.
+ * Conflicts abort cleanly — the branch is left at its prior tip for the agent to
+ * reconcile — and are returned as a non-fatal warning so the run still proceeds.
+ *
+ * `commitEnv` supplies the git author/committer identity (`GIT_CONFIG_*`) and the
+ * ssh-agent socket (`SSH_AUTH_SOCK`) so a 3-way merge commit is authored and
+ * signed exactly like the agent's in-container commits (lands Verified). A
+ * fast-forward needs no commit and so works without it.
+ */
+async function catchUpWithDefaultBranch(
+	repoDir: string,
+	worktreePath: string,
+	branchName: string,
+	commitEnv?: Record<string, string>,
+): Promise<string | undefined> {
+	const defaultBranch = await getRemoteDefaultBranch(repoDir);
+	if (!defaultBranch || branchName === defaultBranch) return undefined;
+
+	const target = `origin/${defaultBranch}`;
+	// Already contains trunk (a fresh branch is based on it) — nothing to merge.
+	const upToDate = await spawn('git', ['merge-base', '--is-ancestor', target, 'HEAD'], {
+		cwd: worktreePath,
+		timeout: 30_000,
+	});
+	if (upToDate.exitCode === 0) return undefined;
+
+	const merge = await spawn(
+		'git',
+		['merge', '--no-edit', '-m', `Merge ${target} into ${branchName}`, target],
+		{ cwd: worktreePath, env: commitEnv, timeout: 60_000 },
+	);
+	if (merge.exitCode === 0) return undefined;
+
+	// Conflict (or any failure): never leave a half-merged tree behind.
+	await spawn('git', ['merge', '--abort'], { cwd: worktreePath, timeout: 30_000 });
+	return `could not catch up with ${target}: ${formatGitError(merge.stderr || merge.stdout)}`;
+}
+
 export async function ensureTaskWorktree(
 	repoDir: string,
 	worktreePath: string,
 	branchName: string,
+	options: { commitEnv?: Record<string, string> } = {},
 ): Promise<{ success: boolean; created: boolean; error?: string }> {
 	if (existsSync(join(worktreePath, '.git'))) {
 		// Relativize the worktree's gitdir links. Worktrees created before this used
@@ -349,14 +439,29 @@ export async function ensureTaskWorktree(
 		});
 
 		if (await isWorktreeHealthy(worktreePath)) {
-			const ff = await spawn('git', ['merge', '--ff-only', `origin/${branchName}`], {
-				cwd: worktreePath,
-				timeout: 30_000,
-			});
-			if (ff.exitCode !== 0 && !ff.stderr.toLowerCase().includes("couldn't find remote ref")) {
-				return { success: true, created: false, error: formatGitError(ff.stderr) };
+			// Fast-forward to the task branch's own remote first, if it's been pushed.
+			const remoteRef = await spawn(
+				'git',
+				['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branchName}`],
+				{ cwd: worktreePath, timeout: 30_000 },
+			);
+			if (remoteRef.exitCode === 0) {
+				const ff = await spawn('git', ['merge', '--ff-only', `origin/${branchName}`], {
+					cwd: worktreePath,
+					timeout: 30_000,
+				});
+				if (ff.exitCode !== 0) {
+					return { success: true, created: false, error: formatGitError(ff.stderr) };
+				}
 			}
-			return { success: true, created: false };
+			// Then bring the resumed branch up to date with current trunk.
+			const error = await catchUpWithDefaultBranch(
+				repoDir,
+				worktreePath,
+				branchName,
+				options.commitEnv,
+			);
+			return { success: true, created: false, error };
 		}
 
 		// The tree exists but its git dir no longer resolves and repair can't rebuild
@@ -366,7 +471,18 @@ export async function ensureTaskWorktree(
 		await pruneWorktrees(repoDir);
 	}
 
-	return addTaskWorktree(repoDir, worktreePath, branchName);
+	const added = await addTaskWorktree(repoDir, worktreePath, branchName);
+	if (!added.success) return added;
+
+	// A brand-new branch is already based on origin/<default>, so this no-ops; a
+	// branch rebuilt from a pre-existing local/remote ref gets caught up with trunk.
+	const error = await catchUpWithDefaultBranch(
+		repoDir,
+		worktreePath,
+		branchName,
+		options.commitEnv,
+	);
+	return { ...added, error };
 }
 
 export async function removeWorktree(

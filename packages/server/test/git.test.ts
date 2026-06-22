@@ -273,3 +273,117 @@ describe('frees the task branch from stray worktree holders', () => {
 		expect(worktreeHead(repoDir)).toBe('HEAD');
 	});
 });
+
+// A new task branch must start from the *latest* remote default — not the shared
+// project clone's local HEAD, which never advances on fetch and can sit far behind
+// trunk (or be left detached by a prior run). Resuming an existing worktree must
+// also pull the latest main in, so work never continues on a stale base.
+describe('branches off and catches up with the latest remote default', () => {
+	const root = join(testDir, 'default-branch');
+	const bare = join(root, 'bare.git');
+	const repoDir = join(root, 'workspace', 'todos');
+	const pusher = join(root, 'pusher');
+
+	function sha(cwd: string, rev = 'HEAD'): string {
+		return execSync(`git rev-parse ${rev}`, { cwd }).toString().trim();
+	}
+	function configure(dir: string, name: string): void {
+		run(`git config user.name ${name}`, dir);
+		run(`git config user.email ${name}@test.com`, dir);
+		run('git config commit.gpgsign false', dir);
+	}
+	// Advance the remote default branch from a separate clone, then fetch it into
+	// the project clone — exactly what the runner does before building a worktree.
+	function advanceMain(file: string, content: string, message: string): void {
+		writeFileSync(join(pusher, file), content);
+		run('git add .', pusher);
+		run(`git commit -m ${message}`, pusher);
+		run('git push', pusher);
+		run('git fetch --all --prune', repoDir);
+	}
+
+	beforeAll(() => {
+		mkdirSync(join(root, 'workspace'), { recursive: true });
+		run(`git init --bare ${bare}`);
+		// Seed the bare repo's default branch with an initial commit.
+		run(`git clone ${bare} ${pusher}`);
+		configure(pusher, 'pusher');
+		writeFileSync(join(pusher, 'README.md'), 'init\n');
+		run('git add .', pusher);
+		run('git commit -m init', pusher);
+		run('git push', pusher);
+		// The long-lived project clone (its local HEAD stays at this initial commit).
+		run(`git clone ${bare} ${repoDir}`);
+		configure(repoDir, 'agent');
+	});
+
+	it('bases a brand-new task branch on the advanced remote default, not the stale clone HEAD', async () => {
+		const staleHead = sha(repoDir);
+		advanceMain('mainline.txt', 'advanced on main\n', 'advance-main');
+		const advancedTip = sha(repoDir, 'refs/remotes/origin/HEAD');
+		expect(advancedTip).not.toBe(staleHead);
+
+		const worktreePath = join(root, 'worktrees', 'DB-1', 'todos');
+		const res = await ensureTaskWorktree(repoDir, worktreePath, 'hezo/DB-1');
+		expect(res.success).toBe(true);
+		expect(res.created).toBe(true);
+
+		// The new branch starts at the advanced remote tip, not the stale local HEAD.
+		expect(sha(worktreePath)).toBe(advancedTip);
+		expect(sha(worktreePath)).not.toBe(staleHead);
+		expect(existsSync(join(worktreePath, 'mainline.txt'))).toBe(true);
+	});
+
+	it('merges the advanced main into a resumed worktree, preserving local work', async () => {
+		const worktreePath = join(root, 'worktrees', 'DB-2', 'todos');
+		const created = await ensureTaskWorktree(repoDir, worktreePath, 'hezo/DB-2');
+		expect(created.success).toBe(true);
+
+		// The agent does some work on the branch (worktree shares the clone's config).
+		writeFileSync(join(worktreePath, 'agent-work.txt'), 'agent change\n');
+		run('git add .', worktreePath);
+		run('git commit -m agent-work', worktreePath);
+		const agentTip = sha(worktreePath);
+
+		// Meanwhile trunk advances; resuming must merge it in.
+		advanceMain('mainline2.txt', 'more main\n', 'advance-main-again');
+
+		const resumed = await ensureTaskWorktree(repoDir, worktreePath, 'hezo/DB-2');
+		expect(resumed.success).toBe(true);
+		expect(resumed.created).toBe(false);
+		expect(resumed.error).toBeUndefined();
+
+		// Both the agent's work and the new trunk commit are reachable, via a merge.
+		expect(existsSync(join(worktreePath, 'agent-work.txt'))).toBe(true);
+		expect(existsSync(join(worktreePath, 'mainline2.txt'))).toBe(true);
+		expect(sha(worktreePath)).not.toBe(agentTip);
+		const parents = execSync('git rev-list --parents -n 1 HEAD', { cwd: worktreePath })
+			.toString()
+			.trim()
+			.split(/\s+/);
+		expect(parents.length).toBe(3); // <commit> <first-parent> <second-parent>
+	});
+
+	it('aborts a conflicting catch-up cleanly and reports it non-fatally', async () => {
+		const worktreePath = join(root, 'worktrees', 'DB-3', 'todos');
+		const created = await ensureTaskWorktree(repoDir, worktreePath, 'hezo/DB-3');
+		expect(created.success).toBe(true);
+
+		// Branch and trunk edit the same file divergently → an unmergeable conflict.
+		writeFileSync(join(worktreePath, 'README.md'), 'agent version\n');
+		run('git add .', worktreePath);
+		run('git commit -m agent-readme', worktreePath);
+		const agentTip = sha(worktreePath);
+
+		advanceMain('README.md', 'main version\n', 'main-readme');
+
+		const resumed = await ensureTaskWorktree(repoDir, worktreePath, 'hezo/DB-3');
+		// Non-fatal: the run proceeds, the agent reconciles the conflict itself.
+		expect(resumed.success).toBe(true);
+		expect(resumed.error).toContain('could not catch up');
+
+		// The branch is left at its prior tip with a clean tree — no conflict markers.
+		expect(sha(worktreePath)).toBe(agentTip);
+		expect(execSync('git status --porcelain', { cwd: worktreePath }).toString().trim()).toBe('');
+	});
+});

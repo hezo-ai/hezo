@@ -272,6 +272,19 @@ subdirectory per linked repo. For each task the runner creates a `git worktree` 
 across runs and torn down on terminal status. The working dir resolves to the designated
 repo's worktree (falling back to `/workspace`).
 
+Before building the worktree the runner fetches each clone (`fetch --all --prune`), then
+branches off **current trunk**: a brand-new `hezo/<task>` branch is created from the latest
+fetched `origin/<default>` (the remote's default branch, resolved via `origin/HEAD` →
+fallback `main`/`master`) rather than the shared clone's local HEAD, which never advances on
+fetch and may sit far behind or be left detached by a prior run. Resuming an existing
+worktree first fast-forwards the branch to its own pushed remote (if any), then **catches up
+with trunk** by merging `origin/<default>` in, so work never continues on a stale base. That
+catch-up merge runs host-side with the team's git identity + ssh-agent socket, so a 3-way
+merge commit is authored and signed like any in-container commit; a fast-forward needs no
+commit. Merge conflicts abort cleanly (the branch is left at its prior tip) and surface as a
+non-fatal warning for the agent to reconcile — they never block the run. The fetch and
+worktree build share one ssh-agent session (`services/git.ts`).
+
 **Success gate.** A clean exit (`exit_code = 0`) only counts as `succeeded` if the run
 **produced output** — `produced_output` is set by any write tool (and a post-run worktree
 diff), or the agent explicitly calls `report_no_work`. A clean exit with neither is a

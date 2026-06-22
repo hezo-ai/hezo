@@ -52,7 +52,7 @@ import {
 	getWorktreeHead,
 	worktreeHasChanges,
 } from './git';
-import { buildGitIdentityEnv } from './git-identity';
+import { buildGitIdentityEnv, buildGitIdentityEnvRecord } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
 import { loadMcpConnectionDescriptors } from './mcp-connections';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
@@ -1203,56 +1203,77 @@ async function prepareWorktrees(
 
 		const branchName = `hezo/${task.identifier}`;
 		const knownHostsPath = await ensureGithubKnownHosts(deps.dataDir);
+		// Author/committer identity for the catch-up merge commit — the ssh-agent
+		// socket (added per-run below) signs it like any in-container commit.
+		const identityEnv = await buildGitIdentityEnvRecord(
+			deps.db,
+			deps.masterKeyManager,
+			project.team_id,
+		);
 		const reposNeedingWorktree = repos.rows.filter(
 			(r) =>
 				!signal?.aborted &&
 				existsSync(join(workspaceRoot, repoNameFromIdentifier(r.repo_identifier), '.git')),
 		);
 
-		if (reposNeedingWorktree.length > 0 && deps.sshAgentServer) {
+		const worktreeErrors = new Map<string, string>();
+
+		// Fetch each clone (so origin/<default> and origin/<branch> are current) and
+		// build the task worktree in one ssh-agent session: the worktree's catch-up
+		// merge needs the same signing socket. `sshAuthSock` is null when no agent is
+		// available — worktrees are still created, just without fetch or a signed merge.
+		const setupWorktrees = async (sshAuthSock: string | null): Promise<void> => {
+			if (sshAuthSock) {
+				for (const repo of reposNeedingWorktree) {
+					if (signal?.aborted) break;
+					const repoName = repoNameFromIdentifier(repo.repo_identifier);
+					const repoDir = join(workspaceRoot, repoName);
+
+					emitSystem('stdout', `git fetch ${repoName}...`);
+					const fetchRes = await fetchRepo(repoDir, sshAuthSock, knownHostsPath);
+					if (fetchRes.success) {
+						emitSystem('stdout', `git fetch ${repoName} done`);
+					} else {
+						emitSystem('stderr', `git fetch ${repoName} failed: ${fetchRes.error ?? '?'}`);
+					}
+				}
+			}
+
+			const commitEnv = sshAuthSock ? { ...identityEnv, SSH_AUTH_SOCK: sshAuthSock } : undefined;
+			for (const repo of repos.rows) {
+				if (signal?.aborted) break;
+				const repoName = repoNameFromIdentifier(repo.repo_identifier);
+				const repoDir = join(workspaceRoot, repoName);
+				const worktreePath = join(taskWorktreeRoot, repoName);
+
+				if (!existsSync(join(repoDir, '.git'))) {
+					worktreeErrors.set(repo.id, 'repo is not cloned');
+					emitSystem('stderr', `(skipping worktree for ${repoName} — not cloned)`);
+					continue;
+				}
+
+				emitSystem('stdout', `git worktree ${repoName}...`);
+				const wt = await ensureTaskWorktree(repoDir, worktreePath, branchName, { commitEnv });
+				if (!wt.success) {
+					worktreeErrors.set(repo.id, wt.error ?? 'unknown');
+					emitSystem('stderr', `git worktree for ${repoName} failed: ${wt.error ?? 'unknown'}`);
+				} else {
+					if (wt.created) emitSystem('stdout', `git worktree add ${repoName} @ ${branchName}`);
+					// A non-fatal warning (e.g. a catch-up merge conflict the agent must resolve).
+					if (wt.error) emitSystem('stderr', `git worktree for ${repoName}: ${wt.error}`);
+				}
+			}
+		};
+
+		if (deps.sshAgentServer) {
 			await withHostAgentSocket(
 				deps.sshAgentServer,
 				project.team_id,
 				deps.dataDir,
-				async ({ sshAuthSock }) => {
-					for (const repo of reposNeedingWorktree) {
-						if (signal?.aborted) break;
-						const repoName = repoNameFromIdentifier(repo.repo_identifier);
-						const repoDir = join(workspaceRoot, repoName);
-
-						emitSystem('stdout', `git fetch ${repoName}...`);
-						const fetchRes = await fetchRepo(repoDir, sshAuthSock, knownHostsPath);
-						if (fetchRes.success) {
-							emitSystem('stdout', `git fetch ${repoName} done`);
-						} else {
-							emitSystem('stderr', `git fetch ${repoName} failed: ${fetchRes.error ?? '?'}`);
-						}
-					}
-				},
+				({ sshAuthSock }) => setupWorktrees(sshAuthSock),
 			);
-		}
-
-		const worktreeErrors = new Map<string, string>();
-		for (const repo of repos.rows) {
-			if (signal?.aborted) break;
-			const repoName = repoNameFromIdentifier(repo.repo_identifier);
-			const repoDir = join(workspaceRoot, repoName);
-			const worktreePath = join(taskWorktreeRoot, repoName);
-
-			if (!existsSync(join(repoDir, '.git'))) {
-				worktreeErrors.set(repo.id, 'repo is not cloned');
-				emitSystem('stderr', `(skipping worktree for ${repoName} — not cloned)`);
-				continue;
-			}
-
-			emitSystem('stdout', `git worktree ${repoName}...`);
-			const wt = await ensureTaskWorktree(repoDir, worktreePath, branchName);
-			if (!wt.success) {
-				worktreeErrors.set(repo.id, wt.error ?? 'unknown');
-				emitSystem('stderr', `git worktree for ${repoName} failed: ${wt.error ?? 'unknown'}`);
-			} else if (wt.created) {
-				emitSystem('stdout', `git worktree add ${repoName} @ ${branchName}`);
-			}
+		} else {
+			await setupWorktrees(null);
 		}
 
 		if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null, worktrees: [] };

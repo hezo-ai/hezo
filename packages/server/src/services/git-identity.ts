@@ -95,3 +95,21 @@ export async function buildGitIdentityEnv(
 ): Promise<string[]> {
 	return gitConfigEnv(await resolveGitIdentity(db, masterKeyManager, teamId));
 }
+
+/**
+ * Same `GIT_CONFIG_*` identity entries as {@link buildGitIdentityEnv}, but as a
+ * `Record` for `child_process` env — used by host-side git ops (e.g. the worktree
+ * catch-up merge) that need the author/committer identity to create a commit.
+ */
+export async function buildGitIdentityEnvRecord(
+	db: PGlite,
+	masterKeyManager: MasterKeyManager,
+	teamId: string,
+): Promise<Record<string, string>> {
+	const record: Record<string, string> = {};
+	for (const entry of await buildGitIdentityEnv(db, masterKeyManager, teamId)) {
+		const eq = entry.indexOf('=');
+		record[entry.slice(0, eq)] = entry.slice(eq + 1);
+	}
+	return record;
+}
