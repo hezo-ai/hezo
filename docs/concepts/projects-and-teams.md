@@ -42,11 +42,12 @@ the other.
 
 ## HQ — the home team
 
-**HQ** is the one special, instance-wide team. It hosts the two roles that work across
-every project — the **CEO** and the **Coach** — and it's where instance-level settings
-live (model providers, shared connections, and the like). When you chat to create a
-new project, you're talking to the CEO in HQ. See
-[Roles & the CEO](/docs/concepts/roles-and-coordination).
+**HQ** is the one special, instance-wide team. It's the permanent home of the two roles
+that work across every project — the **CEO** and the **Coach** — and it's where
+instance-level settings live (model providers, shared connections, and the like). HQ is
+also where you [chat with the CEO](/docs/concepts/roles-and-coordination#chatting-with-the-ceo):
+when you talk to it to create a new project or check in on any team, you're talking to the
+CEO in HQ. See [Roles & the CEO](/docs/concepts/roles-and-coordination).
 
 ## Next
 

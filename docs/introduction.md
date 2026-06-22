@@ -34,9 +34,9 @@ agent can't hurt you. Three guarantees sit underneath everything:
 
 - **Spin up a team per project** from a template, or reuse an existing team's setup
   for a new project. See [Projects & teams](/docs/concepts/projects-and-teams).
-- **Chat with the CEO** to scope work, create projects, hire new agents, edit system
-  prompts, and adjust settings — all from one conversation. See
-  [Roles & the CEO](/docs/concepts/roles-and-coordination).
+- **Chat with the CEO in real time** to scope work, create projects, hire new agents, edit
+  system prompts, and adjust settings — all from one conversation, with replies streaming
+  back as it works. See [Roles & the CEO](/docs/concepts/roles-and-coordination).
 - **Bring your own models.** Claude, ChatGPT, Gemini, DeepSeek, Z.ai, OpenRouter, and
   Kimi are all supported, and you can give any individual agent its own model. See
   [AI model support](/docs/ai-models).
