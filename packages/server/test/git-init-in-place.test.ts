@@ -4,8 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { connectExistingRepo } from '../src/services/git';
+import { HostGitExecutor } from '../src/services/git-executor';
 
 let root: string;
+
+// Git runs against host temp dirs here, so host and container paths coincide.
+const exec = new HostGitExecutor();
+const loc = (p: string) => ({ hostPath: p, containerPath: p });
 
 function git(cwd: string, ...args: string[]): void {
 	execFileSync('git', args, {
@@ -56,7 +61,7 @@ describe('connectExistingRepo', () => {
 		mkdirSync(target, { recursive: true });
 		writeFileSync(join(target, 'index.html'), '<html></html>');
 
-		const res = await connectExistingRepo(`file://${remote}`, target, {});
+		const res = await connectExistingRepo(exec, `file://${remote}`, loc(target), false);
 
 		expect(res.success).toBe(true);
 		expect(existsSync(join(target, '.git'))).toBe(true);
@@ -69,7 +74,7 @@ describe('connectExistingRepo', () => {
 		mkdirSync(target, { recursive: true });
 		writeFileSync(join(target, 'local-only.txt'), 'scaffold\n');
 
-		const res = await connectExistingRepo(`file://${remote}`, target, {});
+		const res = await connectExistingRepo(exec, `file://${remote}`, loc(target), false);
 
 		expect(res.success).toBe(true);
 		expect(readFileSync(join(target, 'README.md'), 'utf8')).toBe('from remote\n');
@@ -82,7 +87,7 @@ describe('connectExistingRepo', () => {
 		mkdirSync(target, { recursive: true });
 		writeFileSync(join(target, 'README.md'), 'local version\n');
 
-		const res = await connectExistingRepo(`file://${remote}`, target, {});
+		const res = await connectExistingRepo(exec, `file://${remote}`, loc(target), false);
 
 		expect(res.success).toBe(false);
 		expect(res.error).toBeTruthy();

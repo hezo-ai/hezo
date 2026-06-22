@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
+import { HostGitExecutor } from '../src/services/git-executor';
 import {
 	ensureProjectRepos,
 	removeRepoFromWorkspace,
@@ -16,7 +16,6 @@ import { authHeader, createTestApp, createTestProject, createTestTeam } from './
 let app: Hono<Env>;
 let db: PGlite;
 let token: string;
-let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let projectId: string;
 let dataDir: string;
@@ -26,7 +25,6 @@ beforeAll(async () => {
 	app = ctx.app;
 	db = ctx.db;
 	token = ctx.token;
-	masterKeyManager = ctx.masterKeyManager;
 	dataDir = ctx.dataDir;
 
 	const teamRes = await createTestTeam(db, { name: 'Repo Sync Co' });
@@ -45,15 +43,13 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
+// The clone path runs in-container; these cases (no repos, already-cloned) never
+// reach the executor, so a host executor suffices and no Docker is needed.
+const exec = new HostGitExecutor();
+
 describe('ensureProjectRepos', () => {
 	it('returns empty result when no repos are linked', async () => {
-		const result = await ensureProjectRepos(
-			db,
-			masterKeyManager,
-			{ id: projectId, team_id: teamId },
-			dataDir,
-			null,
-		);
+		const result = await ensureProjectRepos(db, { id: projectId, team_id: teamId }, dataDir, exec);
 		expect(result.cloned).toEqual([]);
 		expect(result.skipped).toEqual([]);
 		expect(result.failed).toEqual([]);
@@ -75,10 +71,9 @@ describe('ensureProjectRepos', () => {
 		const logs: Array<{ stream: string; text: string }> = [];
 		const result = await ensureProjectRepos(
 			db,
-			masterKeyManager,
 			{ id: projectId, team_id: teamId },
 			dataDir,
-			null,
+			exec,
 			(stream, text) => logs.push({ stream, text }),
 		);
 		expect(result.skipped).toContain('preexisting');

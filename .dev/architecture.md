@@ -279,6 +279,30 @@ subdirectory per linked repo. For each task the runner creates a `git worktree` 
 across runs and torn down on terminal status. The working dir resolves to the designated
 repo's worktree (falling back to `/workspace`).
 
+**All git runs in the container — the host runs none.** Hezo's only prerequisite is Docker;
+there is no host `git`. Every repo/worktree operation (clone, fetch, `worktree add`, …) runs
+via `docker exec` in the project container (which ships git 2.51), driven from TypeScript on
+the server through a `GitExecutor` seam (`services/git-executor.ts`): `ContainerGitExecutor`
+in production, `HostGitExecutor` (host `execFile`) in unit tests. `git.ts` functions take the
+executor plus a `{ hostPath, containerPath }` pair per location — `node:fs` checks use the
+host (bind-mounted) path; git commands use the container path. SSH-transport ops (clone /
+fetch) are wrapped with the per-run SSH bridge (`hezo-run-with-bridge`) so `git@github.com:`
+authenticates through the host ssh-agent; the container's baked-in `/etc/ssh/ssh_known_hosts`
+verifies the host key. Cloning outside a run (container provision, repo link) uses a
+short-lived `withProvisionBridge`.
+
+The system performs only **conflict-free** git. Before building a worktree the runner fetches
+each clone, then **fast-forwards the clone's local default branch** (the "main codebase") to
+`origin/<default>` (resolved via `origin/HEAD` → fallback `main`/`master`) — a clean
+fast-forward when it's checked out, else an `update-ref`, since the clone never holds local
+commits on its default. A brand-new `hezo/<task>` branch is then created **off
+`origin/<default>`**, so every task starts from current trunk rather than the clone's
+drifted/detached HEAD. Resuming an existing worktree leaves it exactly as the agent left it —
+the system does **not** merge trunk into the task branch (that can conflict). Reconciling a
+worktree with advanced trunk is the **agent's** job (it runs `git merge main` and resolves
+conflicts itself; the role prompts instruct it to), so the runtime only guarantees the local
+default is current.
+
 **Success gate.** A clean exit (`exit_code = 0`) only counts as `succeeded` if the run
 **produced output** — `produced_output` is set by any write tool (and a post-run worktree
 diff), or the agent explicitly calls `report_no_work`. A clean exit with neither is a
@@ -398,18 +422,22 @@ The encrypted private key lives on the project's backing team row (`team_ssh_key
 see it.
 
 **Per-run ssh-agent** (`services/ssh-agent/`). `SshAgentServer.allocateRunSocket` exposes
-the key over two listeners: a **host Unix socket** (host-side git ops, gated by filesystem
-perms) and a **loopback TCP** listener (in-container access, since Docker Desktop on macOS
-won't forward `AF_UNIX` bind-mounts). TCP connections must prefix a 16-byte per-run token
-(timing-safe compared). The protocol answers `MSG_REQUEST_IDENTITIES` (advertises the
-public key) and `MSG_SIGN_REQUEST` (signs with the lazily-decrypted private key).
+the key over two listeners: a **host Unix socket** and a **loopback TCP** listener
+(in-container access, since Docker Desktop on macOS won't forward `AF_UNIX` bind-mounts).
+TCP connections must prefix a 16-byte per-run token (timing-safe compared). The protocol
+answers `MSG_REQUEST_IDENTITIES` (advertises the public key) and `MSG_SIGN_REQUEST` (signs
+with the lazily-decrypted private key). Because **all git now runs in-container** (§ Agent
+runtime), every git transport — including repo prep (clone/fetch) — reaches the key through
+the TCP listener via the bridge; nothing on the host runs git.
 
 **Per-run socat bridge.** The agent base image ships `hezo-run-with-bridge` (the runner's
 `argv[0]`): it spawns a `socat UNIX-LISTEN…EXEC:hezo-ssh-bridge` that forwards each
 in-container connection (prefixing the token) to the host TCP listener, then execs the
 agent CLI. The container sees a normal `SSH_AUTH_SOCK` Unix socket and is unaware of the
 relay. The same socket serves both commit signing and `git@github.com:` clone/fetch/push.
-Host-side git ops connect to the same `SshAgentServer` directly via `withHostAgentSocket`.
+Repo/worktree prep wraps individual git commands with the same `hezo-run-with-bridge` runner;
+cloning outside a run (provision, repo link) allocates a short-lived bridge via
+`withProvisionBridge`.
 
 **Verified-on-GitHub bootstrap.** On every successful GitHub OAuth connect the project's
 public key is auto-registered on the connecting user's account as **both** a signing key

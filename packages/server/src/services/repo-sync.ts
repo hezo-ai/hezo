@@ -2,12 +2,10 @@ import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import { repoNameFromIdentifier } from '@hezo/shared';
-import type { MasterKeyManager } from '../crypto/master-key';
 import { logger } from '../logger';
-import { cloneRepo, ensureGithubKnownHosts, initRepoInPlace } from './git';
-import { withHostAgentSocket } from './ssh-agent/host';
-import type { SshAgentServer } from './ssh-agent/server';
-import { getWorkspacePath, getWorktreesPath } from './workspace';
+import { cloneRepo, initRepoInPlace, type RepoLoc } from './git';
+import type { GitExecutor } from './git-executor';
+import { CONTAINER_WORKSPACE_ROOT, getWorkspacePath, getWorktreesPath } from './workspace';
 
 const log = logger.child('repo-sync');
 
@@ -25,13 +23,21 @@ export interface ProjectIdentity {
 	team_id: string;
 }
 
+/**
+ * Clones (or, for a pre-populated dir, adopts in place) every repo linked to the
+ * project that isn't already on disk. Git runs in the project container via the
+ * passed `executor`; the host only does the `.git`-present / non-empty filesystem
+ * checks against the bind-mounted workspace. The container must be running and the
+ * executor's bridge must carry the project SSH key, or clone-over-SSH fails and is
+ * reported in `failed` (same outcome as a missing key today).
+ */
 export async function ensureProjectRepos(
 	db: PGlite,
-	_masterKeyManager: MasterKeyManager,
 	project: ProjectIdentity,
 	dataDir: string,
-	sshAgentServer: SshAgentServer | null | undefined,
+	executor: GitExecutor,
 	logEmit?: LogEmitter,
+	containerWorkspaceRoot: string = CONTAINER_WORKSPACE_ROOT,
 ): Promise<RepoSyncResult> {
 	const result: RepoSyncResult = { cloned: [], skipped: [], failed: [] };
 
@@ -46,55 +52,45 @@ export async function ensureProjectRepos(
 	const workspacePath = getWorkspacePath(dataDir, project.team_id, project.id);
 	mkdirSync(workspacePath, { recursive: true });
 
-	const pending: Array<{ repo: RepoRow; mode: 'clone' | 'init' }> = [];
+	const pending: Array<{ repo: RepoRow; mode: 'clone' | 'init'; loc: RepoLoc }> = [];
 	for (const r of repos.rows) {
 		const name = repoNameFromIdentifier(r.repo_identifier);
 		const targetDir = join(workspacePath, name);
+		const loc: RepoLoc = {
+			hostPath: targetDir,
+			containerPath: `${containerWorkspaceRoot}/${name}`,
+		};
 		if (existsSync(join(targetDir, '.git'))) {
 			result.skipped.push(name);
 		} else if (existsSync(targetDir) && readdirSync(targetDir).length > 0) {
 			// An agent populated this directory before the repo was connected — a
 			// plain clone would refuse the non-empty target, so adopt it in place.
-			pending.push({ repo: r, mode: 'init' });
+			pending.push({ repo: r, mode: 'init', loc });
 		} else {
-			pending.push({ repo: r, mode: 'clone' });
+			pending.push({ repo: r, mode: 'clone', loc });
 		}
 	}
 
 	if (pending.length === 0) return result;
 
-	if (!sshAgentServer) {
-		const msg = 'SshAgentServer not available — cannot clone over SSH';
-		for (const { repo: r } of pending) {
-			logEmit?.('stderr', `✗ ${msg}`);
-			result.failed.push({ name: repoNameFromIdentifier(r.repo_identifier), error: msg });
+	for (const { repo: r, mode, loc } of pending) {
+		const name = repoNameFromIdentifier(r.repo_identifier);
+		const verb = mode === 'init' ? 'Initializing' : 'Cloning';
+		logEmit?.('stdout', `→ ${verb} ${r.repo_identifier} → ${name}/`);
+		const res =
+			mode === 'init'
+				? await initRepoInPlace(executor, r.repo_identifier, loc)
+				: await cloneRepo(executor, r.repo_identifier, loc);
+		if (res.success) {
+			logEmit?.('stdout', `✓ ${mode === 'init' ? 'Initialized' : 'Cloned'} ${name}`);
+			result.cloned.push(name);
+		} else {
+			const errMsg = res.error ?? 'unknown error';
+			logEmit?.('stderr', `✗ ${verb} failed for ${name}: ${errMsg}`);
+			result.failed.push({ name, error: errMsg });
+			log.error(`Failed to set up ${r.repo_identifier}`, errMsg);
 		}
-		return result;
 	}
-
-	const knownHostsPath = await ensureGithubKnownHosts(dataDir);
-
-	await withHostAgentSocket(sshAgentServer, project.team_id, dataDir, async ({ sshAuthSock }) => {
-		for (const { repo: r, mode } of pending) {
-			const name = repoNameFromIdentifier(r.repo_identifier);
-			const targetDir = join(workspacePath, name);
-			const verb = mode === 'init' ? 'Initializing' : 'Cloning';
-			logEmit?.('stdout', `→ ${verb} ${r.repo_identifier} → ${name}/`);
-			const res =
-				mode === 'init'
-					? await initRepoInPlace(r.repo_identifier, targetDir, sshAuthSock, knownHostsPath)
-					: await cloneRepo(r.repo_identifier, targetDir, sshAuthSock, knownHostsPath);
-			if (res.success) {
-				logEmit?.('stdout', `✓ ${mode === 'init' ? 'Initialized' : 'Cloned'} ${name}`);
-				result.cloned.push(name);
-			} else {
-				const errMsg = res.error ?? 'unknown error';
-				logEmit?.('stderr', `✗ ${verb} failed for ${name}: ${errMsg}`);
-				result.failed.push({ name, error: errMsg });
-				log.error(`Failed to set up ${r.repo_identifier}`, errMsg);
-			}
-		}
-	});
 
 	return result;
 }

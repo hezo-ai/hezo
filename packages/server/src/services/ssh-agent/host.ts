@@ -1,29 +1,38 @@
 import { randomBytes } from 'node:crypto';
 import { getRunSocketPath } from '../workspace';
+import type { BridgeRunnerArgs } from './relay';
 import type { SshAgentServer } from './server';
 
 /**
- * Allocates a short-lived ssh-agent unix socket on the host bound to the
- * project's Ed25519 key, runs `fn` with `SSH_AUTH_SOCK=<socketPath>` in scope,
- * and releases the socket. The same SshAgentServer that signs commits also
- * signs SSH auth challenges, so this socket can authenticate `git@github.com:`
- * clones without ever exposing the private key to the child process.
+ * Yields the in-container SSH **bridge** descriptor for running git inside the
+ * project container outside of an agent run (container provisioning, repo link).
+ * Allocates the per-op host TCP listener the bridge runner connects back to —
+ * bound to the project's Ed25519 key so `git@github.com:` clones authenticate
+ * without ever exposing the private key — then releases it on exit. (Agent runs
+ * allocate their own longer-lived bridge.)
  */
-export async function withHostAgentSocket<T>(
+export async function withProvisionBridge<T>(
 	sshAgentServer: SshAgentServer,
 	teamId: string,
 	dataDir: string,
-	fn: (ctx: { sshAuthSock: string }) => Promise<T>,
+	fn: (ctx: { bridge: BridgeRunnerArgs }) => Promise<T>,
 ): Promise<T> {
-	const runId = `host-${randomBytes(8).toString('hex')}`;
+	const runId = `provision-${randomBytes(8).toString('hex')}`;
 	const socketHostPath = getRunSocketPath(dataDir, runId);
 	const allocated = await sshAgentServer.allocateRunSocket(
 		runId,
-		{ teamId, agentId: 'host', label: 'host-git' },
+		{ teamId, agentId: 'host', label: 'provision-git' },
 		socketHostPath,
 	);
 	try {
-		return await fn({ sshAuthSock: allocated.socketHostPath });
+		const bridge: BridgeRunnerArgs = {
+			socketPath: `/run/hezo/${runId}.sock`,
+			socketUser: 'node',
+			tokenHex: allocated.tokenHex,
+			hostName: 'host.docker.internal',
+			hostPort: allocated.tcpHostPort,
+		};
+		return await fn({ bridge });
 	} finally {
 		await sshAgentServer.releaseRunSocket(runId);
 	}

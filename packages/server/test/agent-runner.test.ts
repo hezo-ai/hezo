@@ -970,10 +970,13 @@ describe('runAgent', () => {
 			);
 			const repoId = repoRes.rows[0].id;
 
-			let execCreateCalled = false;
+			// Prep runs `git …` in the container; the agent CLI exec is anything else.
+			// The mock git execs "succeed" but produce no real checkout on disk, so the
+			// worktree can't be prepared and the run must fail before the agent runs.
+			let agentExecCreated = false;
 			const docker = createMockDocker({
-				execCreate: async () => {
-					execCreateCalled = true;
+				execCreate: async (_id: string, opts: { Cmd: string[] }) => {
+					if (opts.Cmd[0] !== 'git') agentExecCreated = true;
 					return 'exec-wt-fail';
 				},
 			});
@@ -987,13 +990,13 @@ describe('runAgent', () => {
 			};
 
 			try {
-				// No ssh agent is available, so the linked repo can't clone and the
-				// task worktree for the primary repo can't exist. The run must fail
-				// with the worktree error instead of exec'ing into a missing cwd.
+				// The linked repo can't clone (no bridge), so the primary repo worktree
+				// can't exist. The run must fail with the worktree error instead of
+				// exec'ing the agent CLI into a missing cwd.
 				const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 				expect(result.success).toBe(false);
-				expect(execCreateCalled).toBe(false);
+				expect(agentExecCreated).toBe(false);
 				expect(result.stderr).toContain('cannot prepare worktree for todos');
 
 				const row = await db.query<{ status: string; error: string | null }>(

@@ -1,37 +1,26 @@
-import { execFile } from 'node:child_process';
-import { existsSync, rmSync, writeFileSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
-import { dirname, isAbsolute, join } from 'node:path';
+import { existsSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { RepoHostType } from '@hezo/shared';
+import type { GitExecutor } from './git-executor';
 
-function spawn(
-	cmd: string,
-	args: string[],
-	opts: { cwd?: string; env?: Record<string, string | undefined>; timeout?: number } = {},
-): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-	return new Promise((resolve) => {
-		execFile(
-			cmd,
-			args,
-			{ cwd: opts.cwd, env: { ...process.env, ...opts.env }, timeout: opts.timeout },
-			(error, stdout, stderr) => {
-				const timedOut = error && 'killed' in error && error.killed;
-				resolve({
-					exitCode: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
-					stdout: stdout?.toString() ?? '',
-					stderr: timedOut
-						? `timed out after ${Math.round((opts.timeout ?? 0) / 1000)}s`
-						: (stderr?.toString() ?? ''),
-				});
-			},
-		);
-	});
+/**
+ * A repo clone, addressed by both its host path (for `node:fs` checks against the
+ * bind-mounted directory) and its in-container path (the cwd git runs in). In unit
+ * tests the two are the same temp dir.
+ */
+export interface RepoLoc {
+	hostPath: string;
+	containerPath: string;
+}
+
+/** A task worktree, addressed the same way as {@link RepoLoc}. */
+export interface WorktreeLoc {
+	hostPath: string;
+	containerPath: string;
 }
 
 function formatGitError(stderr: string): string {
-	const trimmed = stderr.trim();
-	if (trimmed.startsWith('timed out')) return trimmed;
-	return trimmed;
+	return stderr.trim();
 }
 
 const SSH_HOSTS: Record<RepoHostType, string> = {
@@ -44,49 +33,16 @@ export function buildGitSshUrl(hostType: RepoHostType, repoIdentifier: string): 
 	return `git@${host}:${repoIdentifier}.git`;
 }
 
-/**
- * Pinned public host keys for github.com, sourced from
- * https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints.
- * Used as the `UserKnownHostsFile` for every host-side git op so SSH refuses
- * to connect to anything that doesn't present one of these keys.
- */
-const GITHUB_KNOWN_HOSTS = `github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
-github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
-github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=
-`;
-
-/**
- * Writes the bundled known_hosts to a stable path under `<dataDir>/ssh/known_hosts`
- * and returns that path. Idempotent — overwrites only if the file is missing
- * or stale, so multiple concurrent callers converge on the same content.
- */
-export async function ensureGithubKnownHosts(dataDir: string): Promise<string> {
-	const path = join(dataDir, 'ssh', 'known_hosts');
-	if (!existsSync(path)) {
-		await mkdir(dirname(path), { recursive: true });
-		writeFileSync(path, GITHUB_KNOWN_HOSTS, { mode: 0o644 });
-	}
-	return path;
-}
-
-function sshEnv(sshAuthSock: string, knownHostsPath: string): Record<string, string> {
-	return {
-		GIT_TERMINAL_PROMPT: '0',
-		SSH_AUTH_SOCK: sshAuthSock,
-		GIT_SSH_COMMAND: `ssh -o UserKnownHostsFile=${knownHostsPath} -o StrictHostKeyChecking=yes -o IdentityAgent=${sshAuthSock} -o IdentitiesOnly=no`,
-	};
-}
-
 export async function cloneRepo(
+	executor: GitExecutor,
 	repoIdentifier: string,
-	targetDir: string,
-	sshAuthSock: string,
-	knownHostsPath: string,
+	target: RepoLoc,
 	hostType: RepoHostType = RepoHostType.GitHub,
 ): Promise<{ success: boolean; error?: string }> {
 	const url = buildGitSshUrl(hostType, repoIdentifier);
-	const { exitCode, stderr } = await spawn('git', ['clone', url, targetDir], {
-		env: sshEnv(sshAuthSock, knownHostsPath),
+	const { exitCode, stderr } = await executor.exec(['clone', url, target.containerPath], {
+		cwd: dirname(target.containerPath),
+		needsSsh: true,
 		timeout: 120_000,
 	});
 	if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
@@ -102,132 +58,190 @@ export async function cloneRepo(
  * abort rather than clobber either side); when the remote is empty the existing
  * files are kept as the working tree to become the repo's initial content on the
  * first commit/push. A `.git` created here is removed on failure so the
- * directory stays eligible for a clean retry.
- */
-export async function initRepoInPlace(
-	repoIdentifier: string,
-	targetDir: string,
-	sshAuthSock: string,
-	knownHostsPath: string,
-	hostType: RepoHostType = RepoHostType.GitHub,
-): Promise<{ success: boolean; error?: string }> {
-	return connectExistingRepo(
-		buildGitSshUrl(hostType, repoIdentifier),
-		targetDir,
-		sshEnv(sshAuthSock, knownHostsPath),
-	);
-}
-
-/**
- * Transport-agnostic core of {@link initRepoInPlace}: connects `targetDir` to the
- * repo at `url` (already protocol-qualified) using `env` for any network op.
- * Exposed for tests that point at a local `file://` bare repo.
+ * directory stays eligible for a clean retry. `needsSsh` gates the network ops
+ * (false for the `file://` repos used in tests).
  */
 export async function connectExistingRepo(
+	executor: GitExecutor,
 	url: string,
-	targetDir: string,
-	env: Record<string, string>,
+	target: RepoLoc,
+	needsSsh: boolean,
 ): Promise<{ success: boolean; error?: string }> {
-	const hadGit = existsSync(join(targetDir, '.git'));
+	const cwd = target.containerPath;
+	const hadGit = existsSync(join(target.hostPath, '.git'));
 	const fail = (error: string): { success: false; error: string } => {
-		if (!hadGit) rmSync(join(targetDir, '.git'), { recursive: true, force: true });
+		if (!hadGit) rmSync(join(target.hostPath, '.git'), { recursive: true, force: true });
 		return { success: false, error };
 	};
 
-	const init = await spawn('git', ['init', '-b', 'main'], { cwd: targetDir, timeout: 30_000 });
+	const init = await executor.exec(['init', '-b', 'main'], { cwd, timeout: 30_000 });
 	if (init.exitCode !== 0) return fail(formatGitError(init.stderr));
 
-	const remote = await spawn('git', ['remote', 'add', 'origin', url], {
-		cwd: targetDir,
-		timeout: 30_000,
-	});
+	const remote = await executor.exec(['remote', 'add', 'origin', url], { cwd, timeout: 30_000 });
 	if (remote.exitCode !== 0) return fail(formatGitError(remote.stderr));
 
 	// A remote with no refs has no commits yet — keep the existing files as the
 	// initial working tree. `ls-remote --symref HEAD` can print a symref line even
 	// for an unborn HEAD, so emptiness is judged by the full ref listing.
-	const refs = await spawn('git', ['ls-remote', 'origin'], {
-		cwd: targetDir,
-		env,
-		timeout: 60_000,
-	});
+	const refs = await executor.exec(['ls-remote', 'origin'], { cwd, needsSsh, timeout: 60_000 });
 	if (refs.exitCode !== 0) return fail(formatGitError(refs.stderr));
 
 	if (refs.stdout.trim().length > 0) {
-		const head = await spawn('git', ['ls-remote', '--symref', 'origin', 'HEAD'], {
-			cwd: targetDir,
-			env,
+		const head = await executor.exec(['ls-remote', '--symref', 'origin', 'HEAD'], {
+			cwd,
+			needsSsh,
 			timeout: 60_000,
 		});
 		if (head.exitCode !== 0) return fail(formatGitError(head.stderr));
 		const branch = head.stdout.match(/^ref:\s+refs\/heads\/(\S+)\s+HEAD/m)?.[1];
 		if (!branch) return fail('could not determine the remote default branch');
 
-		const fetch = await spawn('git', ['fetch', 'origin', branch], {
-			cwd: targetDir,
-			env,
+		const fetch = await executor.exec(['fetch', 'origin', branch], {
+			cwd,
+			needsSsh,
 			timeout: 120_000,
 		});
 		if (fetch.exitCode !== 0) return fail(formatGitError(fetch.stderr));
 
 		// No `-f`: an existing untracked file that the checkout would overwrite
 		// aborts the operation rather than clobbering the agent's work.
-		const checkout = await spawn('git', ['checkout', '-B', branch, '--track', `origin/${branch}`], {
-			cwd: targetDir,
-			timeout: 60_000,
-		});
+		const checkout = await executor.exec(
+			['checkout', '-B', branch, '--track', `origin/${branch}`],
+			{
+				cwd,
+				timeout: 60_000,
+			},
+		);
 		if (checkout.exitCode !== 0) return fail(formatGitError(checkout.stderr));
 	}
 
 	return { success: true };
 }
 
-export async function fetchRepo(
-	repoDir: string,
-	sshAuthSock: string,
-	knownHostsPath: string,
+export async function initRepoInPlace(
+	executor: GitExecutor,
+	repoIdentifier: string,
+	target: RepoLoc,
+	hostType: RepoHostType = RepoHostType.GitHub,
 ): Promise<{ success: boolean; error?: string }> {
-	const { exitCode, stderr } = await spawn('git', ['fetch', '--all', '--prune'], {
-		cwd: repoDir,
-		env: sshEnv(sshAuthSock, knownHostsPath),
+	return connectExistingRepo(executor, buildGitSshUrl(hostType, repoIdentifier), target, true);
+}
+
+export async function fetchRepo(
+	executor: GitExecutor,
+	repo: RepoLoc,
+): Promise<{ success: boolean; error?: string }> {
+	const { exitCode, stderr } = await executor.exec(['fetch', '--all', '--prune'], {
+		cwd: repo.containerPath,
+		needsSsh: true,
 		timeout: 60_000,
 	});
 	if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
 	return { success: true };
 }
 
-export async function createWorktree(
-	repoDir: string,
-	worktreePath: string,
-	branchName: string,
-): Promise<{ success: boolean; error?: string }> {
-	const { exitCode, stderr } = await spawn(
-		'git',
-		['worktree', 'add', '--relative-paths', '-b', branchName, worktreePath],
-		{ cwd: repoDir },
-	);
+/**
+ * Resolves the remote's default branch name (e.g. `main`) for a clone, or null
+ * when none can be determined (an empty/unborn remote). Prefers the `origin/HEAD`
+ * symref recorded at clone time, then probes `origin/main` and `origin/master`
+ * so a repo connected in place — which sets no `origin/HEAD` — still resolves.
+ * Only ever returns a name whose remote-tracking ref actually exists, so callers
+ * can safely use `origin/<name>` as a commit-ish.
+ */
+export async function getRemoteDefaultBranch(
+	executor: GitExecutor,
+	repo: RepoLoc,
+): Promise<string | null> {
+	const cwd = repo.containerPath;
+	const candidates: string[] = [];
+	const symref = await executor.exec(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], {
+		cwd,
+		timeout: 30_000,
+	});
+	if (symref.exitCode === 0) {
+		const name = symref.stdout.trim().replace(/^origin\//, '');
+		if (name) candidates.push(name);
+	}
+	for (const fallback of ['main', 'master']) {
+		if (!candidates.includes(fallback)) candidates.push(fallback);
+	}
 
-	if (exitCode !== 0) return { success: false, error: stderr.trim() };
-	return { success: true };
+	for (const name of candidates) {
+		const exists = await executor.exec(
+			['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${name}`],
+			{ cwd, timeout: 30_000 },
+		);
+		if (exists.exitCode === 0) return name;
+	}
+	return null;
 }
 
 /**
- * A linked worktree resolves only when its admin metadata still lives under the
- * clone's `.git/worktrees/<name>`. That entry can be lost — pruned/gc'd when an
- * older absolute-path link no longer resolved inside the container, or the clone
- * recreated — while the worktree tree itself survives on its separate mount,
- * leaving a `.git` file that points nowhere. Confirm the link still resolves to a
- * git dir that exists on disk.
+ * Brings the clone's local default branch up to the freshly-fetched
+ * `origin/<default>` — the "keep the main codebase current" step. Always
+ * conflict-free: the clone never has local commits on its default. When that
+ * branch is checked out, `merge --ff-only` advances it (and the working tree);
+ * otherwise `update-ref` advances the ref without touching any tree. New task
+ * worktrees then branch off current trunk. Non-fatal: a failure (incl. an
+ * unexpected local divergence) is returned as a warning and the run proceeds.
  */
-async function isWorktreeHealthy(worktreePath: string): Promise<boolean> {
-	const res = await spawn('git', ['-C', worktreePath, 'rev-parse', '--git-dir'], {
+export async function fastForwardLocalDefault(
+	executor: GitExecutor,
+	repo: RepoLoc,
+): Promise<string | undefined> {
+	const cwd = repo.containerPath;
+	const def = await getRemoteDefaultBranch(executor, repo);
+	if (!def) return undefined;
+	const local = `refs/heads/${def}`;
+	const remote = `refs/remotes/origin/${def}`;
+
+	const head = await executor.exec(['symbolic-ref', '--quiet', '--short', 'HEAD'], {
+		cwd,
 		timeout: 30_000,
 	});
-	if (res.exitCode !== 0) return false;
-	const gitDir = res.stdout.trim();
-	if (!gitDir) return false;
-	const resolved = isAbsolute(gitDir) ? gitDir : join(worktreePath, gitDir);
-	return existsSync(resolved);
+	if (head.exitCode === 0 && head.stdout.trim() === def) {
+		const ff = await executor.exec(['merge', '--ff-only', `origin/${def}`], {
+			cwd,
+			timeout: 30_000,
+		});
+		return ff.exitCode === 0
+			? undefined
+			: `could not fast-forward ${def}: ${formatGitError(ff.stderr)}`;
+	}
+
+	// Not checked out: move the ref to the remote tip. Guard against rewinding a
+	// local commit that shouldn't exist on the default branch.
+	const localExists = await executor.exec(['rev-parse', '--verify', '--quiet', local], {
+		cwd,
+		timeout: 30_000,
+	});
+	if (localExists.exitCode === 0) {
+		const isAncestor = await executor.exec(['merge-base', '--is-ancestor', local, remote], {
+			cwd,
+			timeout: 30_000,
+		});
+		if (isAncestor.exitCode !== 0) {
+			return `local ${def} has diverged from origin/${def}; not fast-forwarding`;
+		}
+	}
+	const upd = await executor.exec(['update-ref', local, remote], { cwd, timeout: 30_000 });
+	return upd.exitCode === 0
+		? undefined
+		: `could not fast-forward ${def}: ${formatGitError(upd.stderr)}`;
+}
+
+export async function createWorktree(
+	executor: GitExecutor,
+	repo: RepoLoc,
+	wt: WorktreeLoc,
+	branchName: string,
+): Promise<{ success: boolean; error?: string }> {
+	const { exitCode, stderr } = await executor.exec(
+		['worktree', 'add', '-b', branchName, wt.containerPath],
+		{ cwd: repo.containerPath, timeout: 30_000 },
+	);
+	if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
+	return { success: true };
 }
 
 interface WorktreeListEntry {
@@ -235,9 +249,9 @@ interface WorktreeListEntry {
 	branch?: string;
 }
 
-async function listWorktrees(repoDir: string): Promise<WorktreeListEntry[]> {
-	const res = await spawn('git', ['worktree', 'list', '--porcelain'], {
-		cwd: repoDir,
+async function listWorktrees(executor: GitExecutor, repo: RepoLoc): Promise<WorktreeListEntry[]> {
+	const res = await executor.exec(['worktree', 'list', '--porcelain'], {
+		cwd: repo.containerPath,
 		timeout: 30_000,
 	});
 	if (res.exitCode !== 0) return [];
@@ -258,28 +272,29 @@ async function listWorktrees(repoDir: string): Promise<WorktreeListEntry[]> {
 /**
  * A branch can be checked out in at most one worktree, so a stale checkout
  * anywhere in the clone blocks recreating the task worktree. Strays come from
- * runs that died mid-task — e.g. a worktree the agent created inside the clone,
- * registered under a container-absolute path that resolves nowhere on the host.
+ * runs that died mid-task — e.g. a worktree the agent created inside the clone.
  * Unregisters every holder of the branch: unresolvable registrations are
  * pruned, linked worktrees are force-removed, and a checkout in the main
  * worktree is detached. Committed work survives on the branch ref.
  */
-async function releaseBranchFromWorktrees(repoDir: string, branchName: string): Promise<void> {
-	await spawn('git', ['worktree', 'prune', '--expire', 'now'], {
-		cwd: repoDir,
-		timeout: 30_000,
-	});
+async function releaseBranchFromWorktrees(
+	executor: GitExecutor,
+	repo: RepoLoc,
+	branchName: string,
+): Promise<void> {
+	const cwd = repo.containerPath;
+	await executor.exec(['worktree', 'prune', '--expire', 'now'], { cwd, timeout: 30_000 });
 
-	const entries = await listWorktrees(repoDir);
+	const entries = await listWorktrees(executor, repo);
 	const ref = `refs/heads/${branchName}`;
 	for (const [i, entry] of entries.entries()) {
 		if (entry.branch !== ref) continue;
 		if (i === 0) {
 			// The main worktree holds the branch; detach HEAD to free it.
-			await spawn('git', ['checkout', '--detach'], { cwd: repoDir, timeout: 30_000 });
+			await executor.exec(['checkout', '--detach'], { cwd, timeout: 30_000 });
 		} else {
-			await spawn('git', ['worktree', 'remove', '--force', '--force', entry.path], {
-				cwd: repoDir,
+			await executor.exec(['worktree', 'remove', '--force', '--force', entry.path], {
+				cwd,
 				timeout: 30_000,
 			});
 		}
@@ -290,44 +305,50 @@ async function releaseBranchFromWorktrees(repoDir: string, branchName: string): 
  * Adds a worktree for the task branch, choosing the checkout source by what
  * already exists: an existing local branch is checked out as-is (preserving its
  * commits — the case when rebuilding a worktree whose metadata was lost), an
- * existing remote branch is tracked, otherwise a new branch is created.
+ * existing remote branch is tracked, otherwise a **new** branch is created off the
+ * latest fetched remote default branch (`origin/<default>`) so every task starts
+ * from current trunk. Only when no default branch resolves (an empty remote) does
+ * it fall back to HEAD.
  */
 async function addTaskWorktree(
-	repoDir: string,
-	worktreePath: string,
+	executor: GitExecutor,
+	repo: RepoLoc,
+	wt: WorktreeLoc,
 	branchName: string,
 ): Promise<{ success: boolean; created: boolean; error?: string }> {
-	await releaseBranchFromWorktrees(repoDir, branchName);
+	await releaseBranchFromWorktrees(executor, repo, branchName);
+	const cwd = repo.containerPath;
 
-	const localBranch = await spawn(
-		'git',
+	const localBranch = await executor.exec(
 		['show-ref', '--verify', '--quiet', `refs/heads/${branchName}`],
-		{ cwd: repoDir, timeout: 30_000 },
+		{ cwd, timeout: 30_000 },
 	);
-	const remoteBranch = await spawn('git', ['rev-parse', '--verify', `origin/${branchName}`], {
-		cwd: repoDir,
+	const remoteBranch = await executor.exec(['rev-parse', '--verify', `origin/${branchName}`], {
+		cwd,
 		timeout: 30_000,
 	});
 
 	let args: string[];
 	if (localBranch.exitCode === 0) {
-		args = ['worktree', 'add', '--relative-paths', worktreePath, branchName];
+		args = ['worktree', 'add', wt.containerPath, branchName];
 	} else if (remoteBranch.exitCode === 0) {
 		args = [
 			'worktree',
 			'add',
-			'--relative-paths',
 			'--track',
 			'-b',
 			branchName,
-			worktreePath,
+			wt.containerPath,
 			`origin/${branchName}`,
 		];
 	} else {
-		args = ['worktree', 'add', '--relative-paths', '-b', branchName, worktreePath];
+		const def = await getRemoteDefaultBranch(executor, repo);
+		args = def
+			? ['worktree', 'add', '-b', branchName, wt.containerPath, `origin/${def}`]
+			: ['worktree', 'add', '-b', branchName, wt.containerPath];
 	}
 
-	const result = await spawn('git', args, { cwd: repoDir, timeout: 30_000 });
+	const result = await executor.exec(args, { cwd, timeout: 30_000 });
 	if (result.exitCode !== 0) {
 		return { success: false, created: false, error: formatGitError(result.stderr) };
 	}
@@ -335,56 +356,35 @@ async function addTaskWorktree(
 }
 
 export async function ensureTaskWorktree(
-	repoDir: string,
-	worktreePath: string,
+	executor: GitExecutor,
+	repo: RepoLoc,
+	wt: WorktreeLoc,
 	branchName: string,
 ): Promise<{ success: boolean; created: boolean; error?: string }> {
-	if (existsSync(join(worktreePath, '.git'))) {
-		// Relativize the worktree's gitdir links. Worktrees created before this used
-		// absolute host paths that resolve on the host but not inside the container's
-		// bind mounts; repair rewrites them to portable relative form.
-		await spawn('git', ['worktree', 'repair', '--relative-paths', worktreePath], {
-			cwd: repoDir,
+	if (existsSync(join(wt.hostPath, '.git'))) {
+		// Reuse the existing worktree when its gitdir still resolves in the container.
+		const probe = await executor.exec(['rev-parse', '--git-dir'], {
+			cwd: wt.containerPath,
 			timeout: 30_000,
 		});
-
-		if (await isWorktreeHealthy(worktreePath)) {
-			const ff = await spawn('git', ['merge', '--ff-only', `origin/${branchName}`], {
-				cwd: worktreePath,
-				timeout: 30_000,
-			});
-			if (ff.exitCode !== 0 && !ff.stderr.toLowerCase().includes("couldn't find remote ref")) {
-				return { success: true, created: false, error: formatGitError(ff.stderr) };
-			}
+		if (probe.exitCode === 0) {
 			return { success: true, created: false };
 		}
-
-		// The tree exists but its git dir no longer resolves and repair can't rebuild
-		// a fully-lost admin entry. Discard the stale tree and recreate the worktree
-		// from the branch, which still lives in the clone.
-		rmSync(worktreePath, { recursive: true, force: true });
-		await pruneWorktrees(repoDir);
+		// The tree survived but its admin entry was lost (e.g. the clone was
+		// recreated). Discard the stale tree and rebuild from the branch ref, which
+		// still lives in the clone — committed work is preserved.
+		rmSync(wt.hostPath, { recursive: true, force: true });
+		await pruneWorktrees(executor, repo);
 	}
 
-	return addTaskWorktree(repoDir, worktreePath, branchName);
+	return addTaskWorktree(executor, repo, wt, branchName);
 }
 
-export async function removeWorktree(
-	repoDir: string,
-	worktreePath: string,
-): Promise<{ success: boolean; error?: string }> {
-	const { exitCode, stderr } = await spawn('git', ['worktree', 'remove', '--force', worktreePath], {
-		cwd: repoDir,
+export async function pruneWorktrees(executor: GitExecutor, repo: RepoLoc): Promise<void> {
+	await executor.exec(['worktree', 'prune', '--expire', 'now'], {
+		cwd: repo.containerPath,
+		timeout: 30_000,
 	});
-
-	if (exitCode !== 0) {
-		return { success: false, error: stderr.trim() };
-	}
-	return { success: true };
-}
-
-export async function pruneWorktrees(repoDir: string): Promise<void> {
-	await spawn('git', ['worktree', 'prune', '--expire', 'now'], { cwd: repoDir });
 }
 
 /**
@@ -392,10 +392,13 @@ export async function pruneWorktrees(repoDir: string): Promise<void> {
  * missing or has no commit (e.g. an unborn branch). Captured before a run so a
  * post-run comparison can tell whether the agent advanced the branch.
  */
-export async function getWorktreeHead(worktreePath: string): Promise<string | null> {
-	if (!existsSync(join(worktreePath, '.git'))) return null;
-	const { exitCode, stdout } = await spawn('git', ['rev-parse', 'HEAD'], {
-		cwd: worktreePath,
+export async function getWorktreeHead(
+	executor: GitExecutor,
+	wt: WorktreeLoc,
+): Promise<string | null> {
+	if (!existsSync(join(wt.hostPath, '.git'))) return null;
+	const { exitCode, stdout } = await executor.exec(['rev-parse', 'HEAD'], {
+		cwd: wt.containerPath,
 		timeout: 10_000,
 	});
 	return exitCode === 0 ? stdout.trim() || null : null;
@@ -407,15 +410,16 @@ export async function getWorktreeHead(worktreePath: string): Promise<string | nu
  * commit captured before the run.
  */
 export async function worktreeHasChanges(
-	worktreePath: string,
+	executor: GitExecutor,
+	wt: WorktreeLoc,
 	headBefore: string | null,
 ): Promise<boolean> {
-	if (!existsSync(join(worktreePath, '.git'))) return false;
-	const status = await spawn('git', ['status', '--porcelain'], {
-		cwd: worktreePath,
+	if (!existsSync(join(wt.hostPath, '.git'))) return false;
+	const status = await executor.exec(['status', '--porcelain'], {
+		cwd: wt.containerPath,
 		timeout: 10_000,
 	});
 	if (status.exitCode === 0 && status.stdout.trim().length > 0) return true;
-	const headAfter = await getWorktreeHead(worktreePath);
+	const headAfter = await getWorktreeHead(executor, wt);
 	return headAfter !== null && headBefore !== null && headAfter !== headBefore;
 }

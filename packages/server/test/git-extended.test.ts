@@ -1,55 +1,42 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { cloneRepo, ensureGithubKnownHosts } from '../src/services/git';
+import { cloneRepo } from '../src/services/git';
+import { HostGitExecutor } from '../src/services/git-executor';
 
 const testDir = mkdtempSync(join(tmpdir(), 'hezo-test-git-extended-'));
+
+// Force the SSH transport to fail immediately so the clone fails without touching
+// the network — mirrors an unreachable ssh-agent / bridge in production.
+const exec = new HostGitExecutor({ GIT_SSH_COMMAND: 'false', GIT_TERMINAL_PROMPT: '0' });
+const loc = (p: string) => ({ hostPath: p, containerPath: p });
+const MISSING = 'nonexistent-org-hezo-test/nonexistent-repo-xyz';
 
 afterAll(() => {
 	rmSync(testDir, { recursive: true, force: true });
 });
 
 describe('cloneRepo', { timeout: 30_000 }, () => {
-	it('returns { success: false, error } when ssh-agent is unreachable', async () => {
-		const knownHostsPath = await ensureGithubKnownHosts(testDir);
-		const targetDir = join(testDir, 'clone-fail');
-		const result = await cloneRepo(
-			'nonexistent-org-hezo-test/nonexistent-repo-xyz',
-			targetDir,
-			'/nonexistent-ssh-agent-socket',
-			knownHostsPath,
-		);
+	it('returns { success: false, error } when the transport is unreachable', async () => {
+		const result = await cloneRepo(exec, MISSING, loc(join(testDir, 'clone-fail')));
 
 		expect(result.success).toBe(false);
-		expect(result.error).toBeTruthy();
 		expect(typeof result.error).toBe('string');
+		expect(result.error).toBeTruthy();
 	});
 
 	it('does not throw on clone failure', async () => {
-		const knownHostsPath = await ensureGithubKnownHosts(testDir);
-		const targetDir = join(testDir, 'clone-no-throw');
 		await expect(
-			cloneRepo(
-				'nonexistent-org-hezo-test/nonexistent-repo-xyz',
-				targetDir,
-				'/nonexistent-ssh-agent-socket',
-				knownHostsPath,
-			),
+			cloneRepo(exec, MISSING, loc(join(testDir, 'clone-no-throw'))),
 		).resolves.not.toThrow();
 	});
 
-	it('does not create the target directory on failure', async () => {
-		const knownHostsPath = await ensureGithubKnownHosts(testDir);
+	it('does not leave a usable clone on failure', async () => {
 		const targetDir = join(testDir, 'clone-no-dir');
-		const result = await cloneRepo(
-			'nonexistent-org-hezo-test/nonexistent-repo-xyz',
-			targetDir,
-			'/nonexistent-ssh-agent-socket',
-			knownHostsPath,
-		);
+		const result = await cloneRepo(exec, MISSING, loc(targetDir));
 
 		expect(result.success).toBe(false);
-		expect(result.error).toBeTruthy();
+		expect(existsSync(join(targetDir, '.git'))).toBe(false);
 	});
 });

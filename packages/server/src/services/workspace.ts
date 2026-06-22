@@ -4,6 +4,12 @@ import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+// Where the project workspace + worktrees are bind-mounted inside the container
+// (see the `Binds` in containers.ts). Git runs in-container, so every git cwd /
+// path argument is addressed under these roots, not the host `<dataDir>` paths.
+export const CONTAINER_WORKSPACE_ROOT = '/workspace';
+export const CONTAINER_WORKTREES_ROOT = '/worktrees';
+
 export function forceRmRecursive(path: string): void {
 	if (!existsSync(path)) return;
 	try {
