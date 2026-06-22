@@ -181,6 +181,46 @@ describe('agents CRUD', () => {
 		expect(prompt).toMatch(/PRD gate/i);
 	});
 
+	it('seeds the architect with a deploy-ticket gate on the reviews', async () => {
+		const listRes = await app.request(`/api/projects/${projectSlug}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await listRes.json()).data;
+		const architect = agents.find((a: Record<string, unknown>) => a.slug === 'architect');
+
+		const promptRes = await app.request(
+			`/api/projects/${projectSlug}/agents/${architect.id}/system-prompt`,
+			{ headers: authHeader(token) },
+		);
+		const prompt = (await promptRes.json()).data.content as string;
+
+		// The architect pre-files the deploy ticket for DevOps, gated on the reviews,
+		// so DevOps is only woken once the codebase has passed QA + security review.
+		expect(prompt).toMatch(/devops-engineer/);
+		expect(prompt).toMatch(/blocked_by_task_ids/);
+		expect(prompt).toMatch(/deploy/i);
+		expect(prompt).toMatch(/security review/i);
+	});
+
+	it('seeds the marketing lead with a deployment publish gate', async () => {
+		const listRes = await app.request(`/api/projects/${projectSlug}/agents`, {
+			headers: authHeader(token),
+		});
+		const agents = (await listRes.json()).data;
+		const marketing = agents.find((a: Record<string, unknown>) => a.slug === 'marketing-lead');
+
+		const promptRes = await app.request(
+			`/api/projects/${projectSlug}/agents/${marketing.id}/system-prompt`,
+			{ headers: authHeader(token) },
+		);
+		const prompt = (await promptRes.json()).data.content as string;
+
+		// Launch comms are held (add_task_blocker on the deploy ticket) until deploy closes.
+		expect(prompt).toMatch(/deploy/i);
+		expect(prompt).toMatch(/add_task_blocker/);
+		expect(prompt).toMatch(/publish/i);
+	});
+
 	it('no agent system prompt references a .dev/ path for project docs', async () => {
 		const listRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
