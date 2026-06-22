@@ -29,7 +29,9 @@ hostname **without opening any inbound ports**. Pair it with an access policy
 
 ## SSH tunnel
 
-For quick, occasional access, forward the port over SSH from your machine:
+For quick, occasional access, forward the port over SSH from your machine. Hezo listens
+on **3100** by default — if you changed it with `--port`, use that port on the right-hand
+(server) side:
 
 ```sh
 ssh -L 3100:localhost:3100 user@your-server

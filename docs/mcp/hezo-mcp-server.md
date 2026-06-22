@@ -16,7 +16,11 @@ tools into.
 
 ## Connection details
 
-- **Endpoint:** `POST http://<host>:3100/mcp`
+- **Base URL:** your instance's address. Running locally with default settings that's
+  `http://localhost:3100`; a deployed instance is wherever it's hosted — its own domain
+  or `host:port`, not necessarily port 3100. (The port is set by `--port` / `HEZO_PORT`,
+  default `3100`.)
+- **Endpoint:** `POST <base-url>/mcp`
 - **Transport:** Streamable HTTP
 - **Authentication:** an `Authorization: Bearer <token>` header, where the token is a
   **Hezo API key** (it starts with `hezo_`).
@@ -89,7 +93,8 @@ it at the `/mcp` endpoint and pass your key in the `Authorization` header:
 }
 ```
 
-If your Hezo runs on a remote server, replace `localhost:3100` with its address — and
+If your Hezo runs on a remote server, replace `http://localhost:3100` with its base URL
+— a remote instance may be on a different host and port, or behind a domain on 443 — and
 make sure that address is reached over a secure channel, since the API key travels in
 the header. See [Secure remote access](/docs/deployment/secure-remote-access).
 
