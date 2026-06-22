@@ -99,7 +99,7 @@ function TaskDetailPage() {
 			>
 				<PreviewProvider value={setPreview}>
 					<div className="min-w-0">
-						<LastRunFailedBanner task={task} projectId={projectId} taskId={taskId} />
+						<LastRunFailedBanner task={task} />
 						<TaskHeader
 							task={task}
 							projectId={projectId}
