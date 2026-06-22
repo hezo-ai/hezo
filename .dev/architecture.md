@@ -242,6 +242,13 @@ instance-agent task selection).
 
 ## 5. Agent execution & run lifecycle
 
+**Startup Docker gate.** Every run executes in a per-project Docker container, so Docker
+is a hard prerequisite. Before `startup()` boots the server, `index.ts` runs a preflight
+(`services/docker-preflight.ts`): it pings the daemon and, on failure, checks for a
+`docker` binary on PATH to tell *not installed* from *installed-but-stopped*, prints the
+matching guidance (install link / start command), and **exits non-zero**. `HEZO_SKIP_DOCKER`
+(the same flag that swaps in the in-process fake docker for dev/tests) bypasses the gate.
+
 Work reaches an agent through the **wakeup → job-manager → agent-runner** pipeline.
 
 **Wakeups.** Every trigger is an `agent_wakeup_requests` row. Sources: `heartbeat`

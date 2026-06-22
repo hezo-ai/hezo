@@ -14,7 +14,10 @@ project's agents in an isolated container.
 ## Prerequisites
 
 - **Docker** — Docker Engine (Linux) or Docker Desktop (macOS/Windows), running and
-  reachable. Hezo launches a container per project through it.
+  reachable. Hezo launches a container per project through it. On startup Hezo checks
+  for a working Docker daemon and, if it's missing or stopped, prints how to install or
+  start it (with a link to [Docker's install page](https://docs.docker.com/get-docker/))
+  and exits — so install Docker first.
 - A machine you're happy to leave running while agents work (a laptop is fine to
   start; a small always-on server is better for long-running teams).
 

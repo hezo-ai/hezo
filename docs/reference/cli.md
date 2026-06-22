@@ -17,8 +17,11 @@ hezo [options]
 ```
 
 Boots the Hezo server and web app (default port 3100) against the data directory
-(default `~/.hezo/`). See the [Configuration reference](/docs/deployment/configuration)
-for the full table of flags and their environment-variable equivalents. The most common:
+(default `~/.hezo/`). Docker must be installed and running first — Hezo checks at startup
+and exits with install/start guidance if the daemon isn't reachable (see
+[Installation](/docs/getting-started/installation)). See the
+[Configuration reference](/docs/deployment/configuration) for the full table of flags and
+their environment-variable equivalents. The most common:
 
 ```sh
 hezo --port 8080                 # listen on a different port
