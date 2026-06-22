@@ -360,6 +360,22 @@ describe('template resolver', () => {
 		expect(result).toContain('please review and approve the draft');
 	});
 
+	it('mention discipline makes a completion report that hands off the next action an active @, and warns against inverting admin/teammate', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// a "review complete / findings below" recap that hands the next action to a named
+		// owner is a handoff — the exact screenshot failure where a passive @@ stranded it
+		expect(result).toContain(
+			'A completion report that hands the next action to a named owner is a handoff',
+		);
+		expect(result).toContain('must now act on your output');
+		expect(result).toContain('consolidate it, route it');
+		// the who-acts-next test is applied per name — admin isn't auto-active, teammate isn't auto-passive
+		expect(result).toContain('every name independently');
+		expect(result).toContain('the admin is not automatically active');
+		// worked example for the review/analysis completion handoff
+		expect(result).toContain('findings below for you to consolidate and route');
+	});
+
 	it('Run Context carries no project line when no project is set', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('## Run Context');
