@@ -21,7 +21,7 @@ async function createProject(opts: {
 	description?: string;
 	template_id?: string;
 	task_prefix?: string;
-	initial_prd?: string;
+	initial_project_plan?: string;
 	docker_base_image?: string;
 }): Promise<{ status: number; json: () => Promise<{ data: Record<string, unknown> }> }> {
 	const res = await app.request('/api/projects', {
@@ -222,31 +222,30 @@ describe('projects CRUD', () => {
 	});
 });
 
-describe('initial PRD upload', () => {
-	it('saves initial_prd as a project doc and references it in the planning task', async () => {
-		const prdContent = '# My Product\n\n## Overview\nA tool for managing widgets.';
+describe('initial project plan upload', () => {
+	it('saves initial_project_plan as a project doc and references it in the planning task', async () => {
+		const planContent = '# My Product\n\n## Overview\nA tool for managing widgets.';
 		const res = await createProject({
-			name: 'PRD Upload Project',
+			name: 'Project Plan Upload Project',
 			description: VALID_DESCRIPTION,
-			initial_prd: prdContent,
+			initial_project_plan: planContent,
 		});
 		expect(res.status).toBe(201);
 		const project = (await res.json()).data;
 
 		const docResult = await db.query<{ filename: string; content: string }>(
 			"SELECT slug AS filename, content FROM documents WHERE type = 'project_doc' AND project_id = $1 AND slug = $2",
-			[project.id, 'initial-prd.md'],
+			[project.id, 'project-plan.md'],
 		);
 		expect(docResult.rows.length).toBe(1);
-		expect(docResult.rows[0].content).toBe(prdContent);
+		expect(docResult.rows[0].content).toBe(planContent);
 
 		const taskResult = await db.query<{ description: string }>(
 			`SELECT description FROM tasks WHERE project_id = $1 AND labels @> '["planning"]'::jsonb`,
 			[project.id],
 		);
-		expect(taskResult.rows[0].description).toContain('initial-prd.md');
-		expect(taskResult.rows[0].description).toContain('Researcher');
-		expect(taskResult.rows[0].description).toContain('Product Lead');
+		expect(taskResult.rows[0].description).toContain('project-plan.md');
+		expect(taskResult.rows[0].description).toContain('starting point for planning');
 	});
 
 	it('creates the coherence review as the first ticket, blocking the planning task', async () => {
@@ -275,9 +274,9 @@ describe('initial PRD upload', () => {
 		expect(dep.rows.length).toBe(1);
 	});
 
-	it('does not create initial-prd.md when initial_prd is not provided', async () => {
+	it('does not create project-plan.md when initial_project_plan is not provided', async () => {
 		const res = await createProject({
-			name: 'No PRD Project',
+			name: 'No Plan Project',
 			description: VALID_DESCRIPTION,
 		});
 		expect(res.status).toBe(201);
@@ -285,7 +284,7 @@ describe('initial PRD upload', () => {
 
 		const docResult = await db.query(
 			"SELECT 1 FROM documents WHERE type = 'project_doc' AND project_id = $1 AND slug = $2",
-			[project.id, 'initial-prd.md'],
+			[project.id, 'project-plan.md'],
 		);
 		expect(docResult.rows.length).toBe(0);
 
@@ -293,21 +292,21 @@ describe('initial PRD upload', () => {
 			'SELECT description FROM tasks WHERE project_id = $1',
 			[project.id],
 		);
-		expect(taskResult.rows[0].description).not.toContain('initial-prd.md');
+		expect(taskResult.rows[0].description).not.toContain('project-plan.md');
 	});
 
-	it('ignores empty/whitespace-only initial_prd', async () => {
+	it('ignores empty/whitespace-only initial_project_plan', async () => {
 		const res = await createProject({
-			name: 'Empty PRD Project',
+			name: 'Empty Plan Project',
 			description: VALID_DESCRIPTION,
-			initial_prd: '   ',
+			initial_project_plan: '   ',
 		});
 		expect(res.status).toBe(201);
 		const project = (await res.json()).data;
 
 		const docResult = await db.query(
 			"SELECT 1 FROM documents WHERE type = 'project_doc' AND project_id = $1 AND slug = $2",
-			[project.id, 'initial-prd.md'],
+			[project.id, 'project-plan.md'],
 		);
 		expect(docResult.rows.length).toBe(0);
 	});
@@ -331,11 +330,11 @@ describe('default project docs', () => {
 		expect(docResult.rows[0].content.length).toBeGreaterThan(0);
 	});
 
-	it('seeds the architecture-guidelines.md default alongside an initial PRD', async () => {
+	it('seeds the architecture-guidelines.md default alongside an initial project plan', async () => {
 		const res = await createProject({
-			name: 'Defaults With PRD Project',
+			name: 'Defaults With Plan Project',
 			description: VALID_DESCRIPTION,
-			initial_prd: '# PRD\n\nSome requirements.',
+			initial_project_plan: '# Plan\n\nSome requirements.',
 		});
 		expect(res.status).toBe(201);
 		const project = (await res.json()).data;
@@ -346,7 +345,7 @@ describe('default project docs', () => {
 		);
 		const slugs = docResult.rows.map((d) => d.slug);
 		expect(slugs).toContain('architecture-guidelines.md');
-		expect(slugs).toContain('initial-prd.md');
+		expect(slugs).toContain('project-plan.md');
 	});
 });
 

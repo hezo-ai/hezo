@@ -19,7 +19,7 @@ export interface StartProjectIntakeInput {
 	template_id?: string;
 	source_team_id?: string;
 	task_prefix?: string;
-	initial_prd?: string;
+	initial_project_plan?: string;
 }
 
 export interface StartProjectIntakeResult {

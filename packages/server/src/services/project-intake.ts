@@ -25,7 +25,7 @@ export const PROJECT_INTAKE_MARKER = '<!-- project-intake -->';
 export interface CreateProjectIntakeInput {
 	name: string;
 	description: string;
-	initialPrd: string | null;
+	initialProjectPlan: string | null;
 	/** The team-type the admin picked in the dialog — the CEO's baseline suggestion. */
 	baselineTemplateId?: string;
 	/** Set instead of baselineTemplateId when the admin chose to clone an existing team. */
@@ -56,10 +56,10 @@ function buildGreetingText(input: CreateProjectIntakeInput): string {
 		lines.push(`**Suggested team type:** ${input.baselineTeamTypeName}`);
 	}
 	lines.push('**Description:**', '', input.description);
-	if (input.initialPrd) {
+	if (input.initialProjectPlan) {
 		lines.push(
 			'',
-			`I'll attach your requirements document as a separate comment below so I can refer back to it.`,
+			`I'll attach your project plan document as a separate comment below so I can refer back to it.`,
 		);
 	}
 	lines.push(
@@ -90,7 +90,7 @@ The admin submitted the Create Project form and chose to plan it with you. Use t
 
 - **Name:** ${input.name}
 ${buildBaselineLine(input)}
-- **Has requirements doc:** ${input.initialPrd ? 'yes — see comments below' : 'no'}
+- **Has project plan doc:** ${input.initialProjectPlan ? 'yes — see comments below' : 'no'}
 
 **Description:**
 
@@ -164,7 +164,7 @@ export async function createProjectIntake(
 				],
 			);
 
-			if (input.initialPrd) {
+			if (input.initialProjectPlan) {
 				await db.query(
 					`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 				 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)`,
@@ -173,7 +173,7 @@ export async function createProjectIntake(
 						ctx.ceoMemberId,
 						CommentContentType.Text,
 						JSON.stringify({
-							text: `**Requirements document attached to this intake:**\n\n${input.initialPrd}`,
+							text: `**Project plan attached to this intake:**\n\n${input.initialProjectPlan}`,
 						}),
 					],
 				);

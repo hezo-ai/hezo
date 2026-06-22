@@ -1335,10 +1335,10 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe('Optional 2-4 char uppercase ticket prefix; derived from the name when omitted'),
-			initial_prd: z
+			initial_project_plan: z
 				.string()
 				.optional()
-				.describe('Optional initial requirements document (markdown), seeded as initial-prd.md'),
+				.describe('Optional project plan document (markdown), seeded as project-plan.md'),
 			template_id: z
 				.string()
 				.optional()
@@ -1406,7 +1406,8 @@ export function registerTools(
 					templateId: typeof args.template_id === 'string' ? args.template_id : undefined,
 					sourceTeamId: typeof args.source_team_id === 'string' ? args.source_team_id : undefined,
 					taskPrefix: typeof args.task_prefix === 'string' ? args.task_prefix : undefined,
-					initialPrd: typeof args.initial_prd === 'string' ? args.initial_prd : null,
+					initialProjectPlan:
+						typeof args.initial_project_plan === 'string' ? args.initial_project_plan : null,
 					actorType: 'agent',
 					actorMemberId: auth.memberId,
 				},

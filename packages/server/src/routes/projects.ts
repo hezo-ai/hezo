@@ -121,7 +121,7 @@ projectsRoutes.post('/projects', async (c) => {
 		template_id?: string;
 		source_team_id?: string;
 		task_prefix?: string;
-		initial_prd?: string;
+		initial_project_plan?: string;
 		docker_base_image?: string;
 	}>();
 
@@ -137,7 +137,7 @@ projectsRoutes.post('/projects', async (c) => {
 			templateId: body.template_id,
 			sourceTeamId: body.source_team_id,
 			taskPrefix: body.task_prefix,
-			initialPrd: body.initial_prd?.trim() || null,
+			initialProjectPlan: body.initial_project_plan?.trim() || null,
 			dockerBaseImage: body.docker_base_image,
 			creatorUserId: auth.type === AuthType.Admin ? auth.userId : undefined,
 			actorType: 'admin',
@@ -177,7 +177,7 @@ projectsRoutes.post('/project-intakes', async (c) => {
 		description?: string;
 		template_id?: string;
 		source_team_id?: string;
-		initial_prd?: string;
+		initial_project_plan?: string;
 	}>();
 
 	if (!body.name?.trim()) return err(c, 'INVALID_REQUEST', 'name is required', 400);
@@ -225,7 +225,7 @@ projectsRoutes.post('/project-intakes', async (c) => {
 		{
 			name: body.name.trim(),
 			description: body.description.trim(),
-			initialPrd: body.initial_prd?.trim() || null,
+			initialProjectPlan: body.initial_project_plan?.trim() || null,
 			baselineTemplateId: templateId,
 			baselineSourceTeamId: sourceTeamId,
 			baselineTeamTypeName,

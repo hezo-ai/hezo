@@ -69,7 +69,7 @@ export interface CreateProjectWithPlanningInput {
 	taskPrefix: string;
 	description: string;
 	dockerBaseImage?: string;
-	initialPrd?: string | null;
+	initialProjectPlan?: string | null;
 	/** Optional audit context: who created the project and the bus to emit on. */
 	events?: DomainEventBus;
 	actorType?: AuditActorType;
@@ -87,8 +87,8 @@ export interface CreateProjectWithPlanningResult extends CreateProjectResult {
 }
 
 /**
- * Create the project row, its task counter, and seed docs (incl. any initial
- * PRD). The planning task is created separately by `createPlanningTask` so a
+ * Create the project row, its task counter, and seed docs (incl. any attached
+ * project plan). The planning task is created separately by `createPlanningTask` so a
  * caller can slot other tickets (e.g. the CEO coherence review) ahead of it and
  * control identifier ordering. Emits the project.created audit event.
  */
@@ -98,7 +98,7 @@ export async function createProject(
 ): Promise<CreateProjectResult> {
 	const projectName = input.name.trim();
 	const projectDescription = input.description.trim();
-	const initialPrd = input.initialPrd?.trim() || null;
+	const initialProjectPlan = input.initialProjectPlan?.trim() || null;
 
 	const result = await withTransaction(db, async () => {
 		await db.query('SELECT id FROM teams WHERE id = $1 FOR UPDATE', [input.teamId]);
@@ -128,11 +128,11 @@ export async function createProject(
 			project.id,
 		]);
 
-		if (initialPrd) {
+		if (initialProjectPlan) {
 			await db.query(
 				`INSERT INTO documents (project_id, team_id, type, slug, content)
-				 VALUES ($1, $2, 'project_doc', 'initial-prd.md', $3)`,
-				[project.id, input.teamId, initialPrd],
+				 VALUES ($1, $2, 'project_doc', 'project-plan.md', $3)`,
+				[project.id, input.teamId, initialProjectPlan],
 			);
 		}
 
@@ -173,18 +173,18 @@ export async function createPlanningTask(
 		captainMemberId: string;
 		name: string;
 		description: string;
-		initialPrd?: string | null;
+		initialProjectPlan?: string | null;
 	},
 ): Promise<{ planningTask: Record<string, unknown> }> {
 	const projectName = input.name.trim();
 	const projectDescription = input.description.trim();
-	const initialPrd = input.initialPrd?.trim() || null;
+	const initialProjectPlan = input.initialProjectPlan?.trim() || null;
 	const projectId = input.project.id as string;
 
 	const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, projectId);
 
-	const initialPrdNote = initialPrd
-		? `\n\n> **Note:** The admin has provided an initial requirements document saved as \`initial-prd.md\` in this project's docs. Direct the Researcher and Product Lead to consult this document as a starting point for research and the formal PRD.`
+	const initialProjectPlanNote = initialProjectPlan
+		? `\n\n> **Note:** The admin has provided a project plan document saved as \`project-plan.md\` in this project's docs. Use it as the starting point for planning — for a software team this is the brief the Product Lead turns into the formal PRD; otherwise consult it directly as the plan.`
 		: '';
 
 	const taskBody = `## Draft the execution plan for this new project
@@ -195,7 +195,7 @@ A new project has just been created. Please read the description below carefully
 
 **Description**
 
-${projectDescription}${initialPrdNote}
+${projectDescription}${initialProjectPlanNote}
 
 ### Your task
 
@@ -247,7 +247,7 @@ export async function createProjectWithPlanningTask(
 		captainMemberId: input.captainMemberId,
 		name: input.name,
 		description: input.description,
-		initialPrd: input.initialPrd,
+		initialProjectPlan: input.initialProjectPlan,
 	});
 	return { project, planningTask, deferCaptainPlanningWake };
 }
@@ -395,7 +395,7 @@ export interface CreateProjectWithTeamInput {
 	/** Existing team to clone (snapshotted into a fresh template); mutually exclusive with templateId. */
 	sourceTeamId?: string;
 	taskPrefix?: string;
-	initialPrd?: string | null;
+	initialProjectPlan?: string | null;
 	dockerBaseImage?: string;
 	/** Added as the new team's admin member (any human admin who creates it). */
 	creatorUserId?: string;
@@ -503,7 +503,7 @@ export async function createProjectWithTeam(
 		slug,
 		taskPrefix: prefixResult.prefix,
 		description,
-		initialPrd: input.initialPrd ?? null,
+		initialProjectPlan: input.initialProjectPlan ?? null,
 		dockerBaseImage: input.dockerBaseImage,
 		events: opts.events,
 		actorType: input.actorType ?? 'admin',
@@ -520,7 +520,7 @@ export async function createProjectWithTeam(
 		captainMemberId,
 		name,
 		description,
-		initialPrd: input.initialPrd ?? null,
+		initialProjectPlan: input.initialProjectPlan ?? null,
 	});
 
 	if (deps.wsManager) {
