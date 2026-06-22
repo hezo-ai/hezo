@@ -1,6 +1,6 @@
 ---
 title: Secret protection & egress
-order: 11
+order: 13
 section: Security
 ---
 

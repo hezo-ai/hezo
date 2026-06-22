@@ -1,6 +1,6 @@
 ---
 title: Budgets & cost control
-order: 10
+order: 12
 section: Concepts
 ---
 

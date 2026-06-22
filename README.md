@@ -124,6 +124,15 @@ agent its own model.
 - Heartbeat execution: agents wake on a schedule to pick up work, gated by budget.
 - Multiple projects, each an independent team in its own isolated container.
 
+**Knowledge & deliverables**
+- Long-term memory: durable project documents — PRDs, specs, plans, research — kept in Hezo
+  with full revision history and one-click restore.
+- A persistent chatbox memory, so the CEO remembers your standing preferences across every
+  conversation.
+- An assets library for uploads and agent-generated work — interactive HTML, SVG diagrams,
+  images, PDFs — referenced from any task.
+- Sandboxed HTML previews: click through an agent's mockup or dashboard right in the app.
+
 **Models & cost**
 - Bring your own providers; mix models freely, down to one per agent.
 - Hard daily / weekly / monthly budget caps per agent and per project.
@@ -199,6 +208,8 @@ bun run dev
 Full docs live in [`docs/`](./docs/introduction.md):
 
 - [Introduction](./docs/introduction.md) · [How Hezo works](./docs/concepts/how-hezo-works.md)
+- Concepts: [Documents & long-term memory](./docs/concepts/documents-and-memory.md) ·
+  [Assets & previews](./docs/concepts/assets.md)
 - Getting started: [Installation](./docs/getting-started/installation.md) ·
   [First-run setup](./docs/getting-started/first-run.md) ·
   [Your first project](./docs/getting-started/first-project.md)

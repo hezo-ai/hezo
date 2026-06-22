@@ -33,7 +33,9 @@ can the agents.
 Tasks have a comment thread for discussion and coordination. Mention an agent (or a
 teammate) to bring them in, hand work over, or ask a question. Agents post their
 reasoning and results to the thread as they go, and significant changes (status,
-assignee, and the like) are recorded there automatically.
+assignee, and the like) are recorded there automatically. You can attach files —
+screenshots, PDFs, or other references — to a task or a comment; see
+[Assets & previews](/docs/concepts/assets).
 
 ## Review on completion
 
@@ -43,5 +45,8 @@ capturing lessons that feed back into how the teams improve. See
 
 ## Next
 
+- [Documents & long-term memory](/docs/concepts/documents-and-memory) — the knowledge the
+  work draws on.
+- [Assets & previews](/docs/concepts/assets) — files and deliverables.
 - [Hiring & customizing agents](/docs/concepts/hiring-and-agents) — who works the tasks.
 - [Budgets & cost control](/docs/concepts/budgets-and-costs) — what the work costs.

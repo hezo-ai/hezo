@@ -44,6 +44,13 @@ agent can't hurt you. Three guarantees sit underneath everything:
   reporting. See [Budgets & cost control](/docs/concepts/budgets-and-costs).
 - **Set the rules per task** and let agents keep a running progress summary so work
   carries cleanly across runs. See [Tasks, rules & summaries](/docs/concepts/tasks).
+- **Give your agents long-term memory.** Keep durable project documents — PRDs, specs,
+  research — with full version history, and let the CEO remember your standing preferences
+  across every conversation. See
+  [Documents & long-term memory](/docs/concepts/documents-and-memory).
+- **Collect and generate assets.** Upload mockups, images, and PDFs; let agents produce
+  interactive HTML and SVG deliverables; and preview their work right in the app. See
+  [Assets & previews](/docs/concepts/assets).
 - **Connect it to your own tools** — Hezo even ships its own MCP server, so any
   MCP-capable agent can drive your teams and tasks. See
   [Hezo's MCP server](/docs/mcp/hezo-mcp-server).

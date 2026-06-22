@@ -1,6 +1,6 @@
 ---
 title: Hiring & customizing agents
-order: 9
+order: 11
 section: Concepts
 ---
 
