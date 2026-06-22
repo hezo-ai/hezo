@@ -222,6 +222,20 @@ describe('MCP tools warn when an existing entity is wrapped in backticks', () =>
 		expect(result.warning).toBeUndefined();
 	});
 
+	it('does not warn when a doc/asset does not exist in the project yet (deliverable stays in code syntax)', async () => {
+		// design.md and assets/wireframe.png are deliverables this task will *create* —
+		// they are not in the project yet, so backtick/code syntax is correct and must
+		// not be flagged. A reference links only once its target exists.
+		const result = await callTool(captainId, 'create_task', {
+			project: projectId,
+			title: 'Produce the design doc',
+			description: 'Deliverables: `design.md` and `assets/wireframe.png`.',
+			assignee_slug: 'architect',
+		});
+		expect(result.error).toBeUndefined();
+		expect(result.warning).toBeUndefined();
+	});
+
 	it('warns on update_task when a backticked doc is added to the description', async () => {
 		const task = await insertTask(architectId, 'Architect ticket');
 		const result = await callTool(
