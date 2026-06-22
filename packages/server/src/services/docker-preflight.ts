@@ -83,14 +83,14 @@ const SANDBOX_RATIONALE = [
 	"compromised agent can't reach your files, credentials, or wider network.",
 ];
 
-const SKIP_HINT =
-	'For development without Docker (agents run in a no-op stub) set HEZO_SKIP_DOCKER=1.';
-
 /**
  * Human-facing guidance for a non-`ok` preflight result, printed to the log
  * right before the server exits. Both variants explain *why* Docker is required
  * (host isolation / security), then give the relevant next step: the install
  * link when it's missing, start instructions when the daemon is just stopped.
+ *
+ * Never mention HEZO_SKIP_DOCKER here — it's a test-only escape hatch (swaps in
+ * the in-process fake docker) and must not be surfaced to users (see AGENTS.md).
  */
 export function formatDockerPreflightMessage(status: Exclude<DockerAvailability, 'ok'>): string {
 	if (status === 'not-installed') {
@@ -101,8 +101,6 @@ export function formatDockerPreflightMessage(status: Exclude<DockerAvailability,
 			'Docker is required to provide that isolation — install it, then start Hezo again:',
 			'',
 			`  ${DOCKER_INSTALL_URL}`,
-			'',
-			SKIP_HINT,
 		].join('\n');
 	}
 	return [
@@ -114,7 +112,5 @@ export function formatDockerPreflightMessage(status: Exclude<DockerAvailability,
 		'',
 		'If you just installed Docker, its docs cover starting it and post-install setup:',
 		`  ${DOCKER_INSTALL_URL}`,
-		'',
-		SKIP_HINT,
 	].join('\n');
 }

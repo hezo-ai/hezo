@@ -112,7 +112,6 @@ describe('formatDockerPreflightMessage', () => {
 		const msg = formatDockerPreflightMessage('not-installed');
 		expect(msg).toContain(DOCKER_INSTALL_URL);
 		expect(msg).toContain('not appear to be installed');
-		expect(msg).toContain('HEZO_SKIP_DOCKER');
 	});
 
 	it('explains how to start the daemon when not running', () => {
@@ -128,6 +127,12 @@ describe('formatDockerPreflightMessage', () => {
 			expect(msg).toContain('isolated Docker containers');
 			expect(msg).toContain('security boundary');
 			expect(msg).toContain('host');
+		}
+	});
+
+	it('never leaks the test-only HEZO_SKIP_DOCKER escape hatch to users', () => {
+		for (const status of ['not-installed', 'not-running'] as const) {
+			expect(formatDockerPreflightMessage(status)).not.toContain('HEZO_SKIP_DOCKER');
 		}
 	});
 });
