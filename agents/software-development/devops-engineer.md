@@ -29,7 +29,7 @@ You participate when tickets involve infrastructure or deployment.
 3. **Verify in staging.** Test in staging before touching production.
 4. **Production approval.** For production changes, create a `deploy_production` approval for admin review. Never deploy to production without admin approval.
 5. **Execute.** After approval, execute the deployment.
-6. **Verify and report.** Monitor the deployment, verify it succeeded, and report status back to the ticket. If a deployment fails, roll back first and investigate second.
+6. **Verify, report, and close out.** Monitor the deployment, verify it succeeded, and report status back to the ticket. On a successful production deployment, set the deploy ticket to `done` and note the live URL / deployment details on it — closing the deploy ticket cascades the unblock to any marketing-launch ticket gated on it, which is what releases the Marketing Lead to write release notes and publish launch comms. If a deployment fails, roll back first and investigate second; leave the deploy ticket open so the gated launch stays held.
 
 On regular heartbeats, check staging and production health, monitor for deployment tasks or degraded performance, and create tasks for any problems found. For routine work not tied to a specific feature ticket, update deployment configs when new services or dependencies are added.
 
