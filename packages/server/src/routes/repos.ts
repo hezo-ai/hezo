@@ -7,6 +7,7 @@ import { isUniqueViolation, withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { provisionContainer } from '../services/containers';
+import { ContainerGitExecutor } from '../services/git-executor';
 import { createGitHubRepo, parseGitHubUrl, validateRepoAccess } from '../services/github';
 import { getConnection } from '../services/oauth/connection-store';
 import {
@@ -15,6 +16,7 @@ import {
 	markRepoSetupFailed,
 } from '../services/repo-setup';
 import { ensureProjectRepos, removeRepoFromWorkspace } from '../services/repo-sync';
+import { type BridgeRunnerArgs, withProvisionBridge } from '../services/ssh-agent';
 
 const log = logger.child('routes');
 
@@ -191,29 +193,49 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 	}
 
 	const dataDir = c.get('dataDir');
+	const docker = c.get('docker');
 	let cloneStatus: 'skipped' | 'cloned' | 'failed' = 'skipped';
 	let cloneError: string | undefined;
 
-	if (dataDir) {
+	if (dataDir && docker) {
 		const locator = await getProjectLocator(db, projectId);
 		if (locator) {
-			const syncRes = await ensureProjectRepos(
-				db,
-				masterKeyManager,
-				{
-					id: projectId,
-					team_id: teamId,
-				},
-				dataDir,
-				c.get('sshAgentServer'),
-			);
-			const failed = syncRes.failed.find((f) => f.name === repoName);
-			if (failed) {
+			// Git runs inside the project container, so bring it up first (provisioning
+			// clones if it had to provision), then clone in-container. The host runs no git.
+			await ensureProjectContainerUp(c, projectId);
+			const containerRow = await db.query<{
+				container_id: string | null;
+				container_status: string | null;
+			}>('SELECT container_id, container_status FROM projects WHERE id = $1', [projectId]);
+			const containerId = containerRow.rows[0]?.container_id ?? null;
+			const running = containerRow.rows[0]?.container_status === 'running';
+			const sshAgentServer = c.get('sshAgentServer');
+
+			if (containerId && running) {
+				const syncRepos = (bridge: BridgeRunnerArgs | null) =>
+					ensureProjectRepos(
+						db,
+						{ id: projectId, team_id: teamId },
+						dataDir,
+						ContainerGitExecutor.forPrep(docker, containerId, bridge),
+					);
+				const syncRes = sshAgentServer
+					? await withProvisionBridge(sshAgentServer, teamId, dataDir, ({ bridge }) =>
+							syncRepos(bridge),
+						)
+					: await syncRepos(null);
+				const failed = syncRes.failed.find((f) => f.name === repoName);
+				if (failed) {
+					cloneStatus = 'failed';
+					cloneError = failed.error;
+					log.error(`Failed to clone ${repoIdentifier}:`, cloneError);
+				} else if (syncRes.cloned.includes(repoName)) {
+					cloneStatus = 'cloned';
+				}
+			} else {
 				cloneStatus = 'failed';
-				cloneError = failed.error;
-				log.error(`Failed to clone ${repoIdentifier}:`, cloneError);
-			} else if (syncRes.cloned.includes(repoName)) {
-				cloneStatus = 'cloned';
+				cloneError = 'project container is not running';
+				log.error(`Cannot clone ${repoIdentifier}: container not running`);
 			}
 		}
 	}
@@ -255,7 +277,6 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 		});
 		becameDesignated = true;
 
-		await ensureProjectContainerUp(c, projectId);
 		if (finalizeResult.resolvedApprovalId) {
 			await enqueueRepoSetupResumeWakeups(
 				db,

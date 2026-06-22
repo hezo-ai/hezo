@@ -1,11 +1,11 @@
-import { existsSync, mkdtempSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
-import { withHostAgentSocket } from '../src/services/ssh-agent/host';
+import { withProvisionBridge } from '../src/services/ssh-agent/host';
 import {
 	FrameReader,
 	MSG_IDENTITIES_ANSWER,
@@ -29,11 +29,16 @@ function frame(payload: Buffer): Buffer {
 	return Buffer.concat([len, payload]);
 }
 
-async function sendAndReceive(socketPath: string, payload: Buffer): Promise<Buffer> {
+/** Authenticate to the per-run TCP listener (16-byte token prefix), then ask for identities. */
+async function tcpRequestIdentities(port: number, tokenHex: string): Promise<Buffer> {
 	return new Promise((resolve, reject) => {
-		const sock = connect(socketPath);
+		const sock = connect({ host: '127.0.0.1', port });
 		const reader = new FrameReader();
 		sock.on('error', reject);
+		sock.on('connect', () => {
+			sock.write(Buffer.from(tokenHex, 'hex'));
+			sock.write(frame(Buffer.from([MSG_REQUEST_IDENTITIES])));
+		});
 		sock.on('data', (chunk: Buffer) => {
 			reader.push(chunk);
 			const next = reader.next();
@@ -42,7 +47,18 @@ async function sendAndReceive(socketPath: string, payload: Buffer): Promise<Buff
 				resolve(next);
 			}
 		});
-		sock.write(payload);
+	});
+}
+
+/** Whether connecting to the loopback port is refused (i.e. the listener is gone). */
+function connectRefused(port: number): Promise<boolean> {
+	return new Promise((resolve) => {
+		const sock = connect({ host: '127.0.0.1', port });
+		sock.on('error', () => resolve(true));
+		sock.on('connect', () => {
+			sock.destroy();
+			resolve(false);
+		});
 	});
 }
 
@@ -66,34 +82,35 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('withHostAgentSocket', () => {
-	it('allocates a socket that advertises the team key, then releases on exit', async () => {
-		let observedPath = '';
-		await withHostAgentSocket(server, teamId, dataDir, async ({ sshAuthSock }) => {
-			observedPath = sshAuthSock;
-			expect(existsSync(sshAuthSock)).toBe(true);
+describe('withProvisionBridge', () => {
+	it('allocates a bridge advertising the team key, then releases on exit', async () => {
+		let port = 0;
+		await withProvisionBridge(server, teamId, dataDir, async ({ bridge }) => {
+			port = bridge.hostPort;
+			expect(bridge.tokenHex).toMatch(/^[0-9a-f]{32}$/);
+			expect(bridge.hostPort).toBeGreaterThan(0);
+			expect(bridge.socketPath.startsWith('/run/hezo/')).toBe(true);
+			expect(bridge.hostName).toBe('host.docker.internal');
 
-			const reply = await sendAndReceive(sshAuthSock, frame(Buffer.from([MSG_REQUEST_IDENTITIES])));
+			const reply = await tcpRequestIdentities(bridge.hostPort, bridge.tokenHex);
 			expect(reply[0]).toBe(MSG_IDENTITIES_ANSWER);
-			const nkeys = reply.readUInt32BE(1);
-			expect(nkeys).toBe(1);
+			expect(reply.readUInt32BE(1)).toBe(1);
 			const keyLen = reply.readUInt32BE(5);
-			const keyBlob = reply.subarray(9, 9 + keyLen);
-			expect(keyBlob).toEqual(sshPublicKeyToBlob(publicKey));
+			expect(reply.subarray(9, 9 + keyLen)).toEqual(sshPublicKeyToBlob(publicKey));
 		});
 
-		expect(existsSync(observedPath)).toBe(false);
+		expect(await connectRefused(port)).toBe(true);
 	});
 
-	it('releases the socket even if fn throws', async () => {
-		let observedPath = '';
+	it('releases the bridge even if fn throws', async () => {
+		let port = 0;
 		await expect(
-			withHostAgentSocket(server, teamId, dataDir, async ({ sshAuthSock }) => {
-				observedPath = sshAuthSock;
+			withProvisionBridge(server, teamId, dataDir, async ({ bridge }) => {
+				port = bridge.hostPort;
 				throw new Error('boom');
 			}),
 		).rejects.toThrow('boom');
 
-		expect(existsSync(observedPath)).toBe(false);
+		expect(await connectRefused(port)).toBe(true);
 	});
 });

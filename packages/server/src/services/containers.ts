@@ -18,9 +18,10 @@ import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
 import type { ContainerLogStreamer } from './container-logs';
 import type { DockerClient } from './docker';
 import { ensureImage } from './ensure-image';
+import { ContainerGitExecutor } from './git-executor';
 import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
-import type { SshAgentServer } from './ssh-agent';
+import { type BridgeRunnerArgs, type SshAgentServer, withProvisionBridge } from './ssh-agent';
 import { createWakeup } from './wakeup';
 import { ensureProjectWorkspace, removeProjectWorkspace } from './workspace';
 import type { WebSocketManager } from './ws';
@@ -327,17 +328,23 @@ export async function provisionContainer(
 
 		if (masterKeyManager) {
 			emit('stdout', '→ Syncing project repos');
-			const syncRes = await ensureProjectRepos(
-				db,
-				masterKeyManager,
-				{
-					id: project.id,
-					team_id: teamId,
-				},
-				dataDir,
-				deps.sshAgentServer ?? null,
-				(stream, text) => emit(stream, text),
-			);
+			// Clone in-container (the host has no git). Repos clone over SSH, which
+			// needs a bridge back to the host ssh-agent — provisioning isn't a run, so
+			// allocate a short-lived one. No agent → no bridge → clone fails and is
+			// reported (same as a missing key today).
+			const syncRepos = (bridge: BridgeRunnerArgs | null) =>
+				ensureProjectRepos(
+					db,
+					{ id: project.id, team_id: teamId },
+					dataDir,
+					ContainerGitExecutor.forPrep(docker, Id, bridge),
+					(stream, text) => emit(stream, text),
+				);
+			const syncRes = deps.sshAgentServer
+				? await withProvisionBridge(deps.sshAgentServer, teamId, dataDir, ({ bridge }) =>
+						syncRepos(bridge),
+					)
+				: await syncRepos(null);
 			if (syncRes.failed.length > 0) {
 				emit(
 					'stderr',

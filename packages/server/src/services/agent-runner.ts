@@ -46,13 +46,16 @@ import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import type { EgressProxy } from './egress';
 import {
-	ensureGithubKnownHosts,
 	ensureTaskWorktree,
+	fastForwardLocalDefault,
 	fetchRepo,
 	getWorktreeHead,
+	type RepoLoc,
+	type WorktreeLoc,
 	worktreeHasChanges,
 } from './git';
-import { buildGitIdentityEnv, buildGitIdentityEnvRecord } from './git-identity';
+import { ContainerGitExecutor, type GitExecutor } from './git-executor';
+import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
 import { loadMcpConnectionDescriptors } from './mcp-connections';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
@@ -70,11 +73,16 @@ import {
 } from './runtime-home';
 import { resolveRuntimeForTask } from './runtime-resolver';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
-import { withHostAgentSocket } from './ssh-agent/host';
 import { validateSubscriptionBlob } from './subscription-auth';
 import { recordStatusChange } from './task-events';
 import { resolveSystemPrompt } from './template-resolver';
-import { getRunSocketPath, getWorkspacePath, getWorktreesPath } from './workspace';
+import {
+	CONTAINER_WORKSPACE_ROOT,
+	CONTAINER_WORKTREES_ROOT,
+	getRunSocketPath,
+	getWorkspacePath,
+	getWorktreesPath,
+} from './workspace';
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('agent-runner');
@@ -961,7 +969,7 @@ export async function runAgent(
 		try {
 			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
-			const prep = await prepareWorktrees(deps, project, task, emit, signal);
+			const prep = await prepareWorktrees(deps, project, task, bridge, emit, signal);
 
 			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
@@ -1031,7 +1039,8 @@ export async function runAgent(
 					[heartbeatRunId],
 				);
 				producedOutput =
-					(flagged.rows[0]?.produced_output ?? false) || (await anyWorktreeChanged(prep.worktrees));
+					(flagged.rows[0]?.produced_output ?? false) ||
+					(prep.executor !== null && (await anyWorktreeChanged(prep.executor, prep.worktrees)));
 				reportedNoWork = flagged.rows[0]?.reported_no_work ?? false;
 				noWorkReason = flagged.rows[0]?.no_work_reason ?? null;
 			}
@@ -1144,14 +1153,17 @@ function withProjectGitLock<T>(projectId: string, fn: () => Promise<T>): Promise
 }
 
 interface WorktreeRef {
-	path: string;
+	loc: WorktreeLoc;
 	headBefore: string | null;
 }
 
 /** Whether any of a run's worktrees has an uncommitted change or an advanced branch tip. */
-async function anyWorktreeChanged(worktrees: WorktreeRef[]): Promise<boolean> {
+async function anyWorktreeChanged(
+	executor: GitExecutor,
+	worktrees: WorktreeRef[],
+): Promise<boolean> {
 	for (const wt of worktrees) {
-		if (await worktreeHasChanges(wt.path, wt.headBefore)) return true;
+		if (await worktreeHasChanges(executor, wt.loc, wt.headBefore)) return true;
 	}
 	return false;
 }
@@ -1160,9 +1172,15 @@ async function prepareWorktrees(
 	deps: RunnerDeps,
 	project: ProjectInfo,
 	task: TaskInfo,
+	bridge: BridgeRunnerArgs | null,
 	emit: (stream: 'stdout' | 'stderr', text: string) => void,
 	signal?: AbortSignal,
-): Promise<{ workingDir: string; designatedRepo: RepoRow | null; worktrees: WorktreeRef[] }> {
+): Promise<{
+	workingDir: string;
+	designatedRepo: RepoRow | null;
+	worktrees: WorktreeRef[];
+	executor: GitExecutor | null;
+}> {
 	const emitSystem = (stream: 'stdout' | 'stderr', text: string) =>
 		emit(stream, `[system] ${text}\n`);
 
@@ -1174,27 +1192,29 @@ async function prepareWorktrees(
 
 	if (repos.rows.length === 0) {
 		emitSystem('stdout', '(no repos linked to project — running in /workspace)');
-		return { workingDir: '/workspace', designatedRepo: null, worktrees: [] };
+		return { workingDir: '/workspace', designatedRepo: null, worktrees: [], executor: null };
 	}
 
 	return withProjectGitLock(project.id, async () => {
+		// All git runs inside the project container; the host only does the bind-mount
+		// filesystem checks. SSH-transport ops authenticate through the run's bridge.
+		const executor = ContainerGitExecutor.forPrep(deps.docker, project.container_id, bridge);
+
 		emitSystem('stdout', '(syncing repos...)');
 		const syncRes = await ensureProjectRepos(
 			deps.db,
-			deps.masterKeyManager,
-			{
-				id: project.id,
-				team_id: project.team_id,
-			},
+			{ id: project.id, team_id: project.team_id },
 			deps.dataDir,
-			deps.sshAgentServer,
+			executor,
 			emitSystem,
 		);
 		if (syncRes.cloned.length > 0) {
 			emitSystem('stdout', `(cloned ${syncRes.cloned.length} repo(s) on demand)`);
 		}
 
-		if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null, worktrees: [] };
+		if (signal?.aborted) {
+			return { workingDir: '/workspace', designatedRepo: null, worktrees: [], executor };
+		}
 
 		const workspaceRoot = getWorkspacePath(deps.dataDir, project.team_id, project.id);
 		const worktreesRoot = getWorktreesPath(deps.dataDir, project.team_id, project.id);
@@ -1202,81 +1222,53 @@ async function prepareWorktrees(
 		mkdirSync(taskWorktreeRoot, { recursive: true });
 
 		const branchName = `hezo/${task.identifier}`;
-		const knownHostsPath = await ensureGithubKnownHosts(deps.dataDir);
-		// Author/committer identity for the catch-up merge commit — the ssh-agent
-		// socket (added per-run below) signs it like any in-container commit.
-		const identityEnv = await buildGitIdentityEnvRecord(
-			deps.db,
-			deps.masterKeyManager,
-			project.team_id,
-		);
-		const reposNeedingWorktree = repos.rows.filter(
-			(r) =>
-				!signal?.aborted &&
-				existsSync(join(workspaceRoot, repoNameFromIdentifier(r.repo_identifier), '.git')),
-		);
+		const repoLocOf = (name: string): RepoLoc => ({
+			hostPath: join(workspaceRoot, name),
+			containerPath: `${CONTAINER_WORKSPACE_ROOT}/${name}`,
+		});
+		const wtLocOf = (name: string): WorktreeLoc => ({
+			hostPath: join(taskWorktreeRoot, name),
+			containerPath: `${CONTAINER_WORKTREES_ROOT}/${task.identifier}/${name}`,
+		});
 
 		const worktreeErrors = new Map<string, string>();
+		for (const repo of repos.rows) {
+			if (signal?.aborted) break;
+			const repoName = repoNameFromIdentifier(repo.repo_identifier);
+			const repoLoc = repoLocOf(repoName);
 
-		// Fetch each clone (so origin/<default> and origin/<branch> are current) and
-		// build the task worktree in one ssh-agent session: the worktree's catch-up
-		// merge needs the same signing socket. `sshAuthSock` is null when no agent is
-		// available — worktrees are still created, just without fetch or a signed merge.
-		const setupWorktrees = async (sshAuthSock: string | null): Promise<void> => {
-			if (sshAuthSock) {
-				for (const repo of reposNeedingWorktree) {
-					if (signal?.aborted) break;
-					const repoName = repoNameFromIdentifier(repo.repo_identifier);
-					const repoDir = join(workspaceRoot, repoName);
-
-					emitSystem('stdout', `git fetch ${repoName}...`);
-					const fetchRes = await fetchRepo(repoDir, sshAuthSock, knownHostsPath);
-					if (fetchRes.success) {
-						emitSystem('stdout', `git fetch ${repoName} done`);
-					} else {
-						emitSystem('stderr', `git fetch ${repoName} failed: ${fetchRes.error ?? '?'}`);
-					}
-				}
+			if (!existsSync(join(repoLoc.hostPath, '.git'))) {
+				worktreeErrors.set(repo.id, 'repo is not cloned');
+				emitSystem('stderr', `(skipping worktree for ${repoName} — not cloned)`);
+				continue;
 			}
 
-			const commitEnv = sshAuthSock ? { ...identityEnv, SSH_AUTH_SOCK: sshAuthSock } : undefined;
-			for (const repo of repos.rows) {
-				if (signal?.aborted) break;
-				const repoName = repoNameFromIdentifier(repo.repo_identifier);
-				const repoDir = join(workspaceRoot, repoName);
-				const worktreePath = join(taskWorktreeRoot, repoName);
-
-				if (!existsSync(join(repoDir, '.git'))) {
-					worktreeErrors.set(repo.id, 'repo is not cloned');
-					emitSystem('stderr', `(skipping worktree for ${repoName} — not cloned)`);
-					continue;
-				}
-
-				emitSystem('stdout', `git worktree ${repoName}...`);
-				const wt = await ensureTaskWorktree(repoDir, worktreePath, branchName, { commitEnv });
-				if (!wt.success) {
-					worktreeErrors.set(repo.id, wt.error ?? 'unknown');
-					emitSystem('stderr', `git worktree for ${repoName} failed: ${wt.error ?? 'unknown'}`);
-				} else {
-					if (wt.created) emitSystem('stdout', `git worktree add ${repoName} @ ${branchName}`);
-					// A non-fatal warning (e.g. a catch-up merge conflict the agent must resolve).
-					if (wt.error) emitSystem('stderr', `git worktree for ${repoName}: ${wt.error}`);
-				}
+			emitSystem('stdout', `git fetch ${repoName}...`);
+			const fetchRes = await fetchRepo(executor, repoLoc);
+			if (fetchRes.success) {
+				emitSystem('stdout', `git fetch ${repoName} done`);
+			} else {
+				emitSystem('stderr', `git fetch ${repoName} failed: ${fetchRes.error ?? '?'}`);
 			}
-		};
 
-		if (deps.sshAgentServer) {
-			await withHostAgentSocket(
-				deps.sshAgentServer,
-				project.team_id,
-				deps.dataDir,
-				({ sshAuthSock }) => setupWorktrees(sshAuthSock),
-			);
-		} else {
-			await setupWorktrees(null);
+			// Keep the clone's local default branch (the "main codebase") current with
+			// the remote. Always conflict-free; the agent reconciles its own worktree.
+			const ffWarn = await fastForwardLocalDefault(executor, repoLoc);
+			if (ffWarn) emitSystem('stderr', `${repoName}: ${ffWarn}`);
+
+			emitSystem('stdout', `git worktree ${repoName}...`);
+			const wt = await ensureTaskWorktree(executor, repoLoc, wtLocOf(repoName), branchName);
+			if (!wt.success) {
+				worktreeErrors.set(repo.id, wt.error ?? 'unknown');
+				emitSystem('stderr', `git worktree for ${repoName} failed: ${wt.error ?? 'unknown'}`);
+			} else if (wt.created) {
+				emitSystem('stdout', `git worktree add ${repoName} @ ${branchName}`);
+			}
 		}
 
-		if (signal?.aborted) return { workingDir: '/workspace', designatedRepo: null, worktrees: [] };
+		if (signal?.aborted) {
+			return { workingDir: '/workspace', designatedRepo: null, worktrees: [], executor };
+		}
 
 		const designated = project.designated_repo_id
 			? repos.rows.find((r) => r.id === project.designated_repo_id)
@@ -1291,19 +1283,19 @@ async function prepareWorktrees(
 			throw new Error(`cannot prepare worktree for ${primaryName}: ${primaryError}`);
 		}
 
-		const workingDir = `/worktrees/${task.identifier}/${primaryName}`;
+		const workingDir = `${CONTAINER_WORKTREES_ROOT}/${task.identifier}/${primaryName}`;
 
-		// Capture each prepared worktree's host path and pre-run commit so the
-		// completion path can detect whether the run produced any code change.
+		// Capture each prepared worktree's location + pre-run commit so the completion
+		// path can detect whether the run produced any code change.
 		const worktrees: WorktreeRef[] = [];
 		for (const repo of repos.rows) {
 			if (worktreeErrors.has(repo.id)) continue;
-			const worktreePath = join(taskWorktreeRoot, repoNameFromIdentifier(repo.repo_identifier));
-			if (!existsSync(join(worktreePath, '.git'))) continue;
-			worktrees.push({ path: worktreePath, headBefore: await getWorktreeHead(worktreePath) });
+			const loc = wtLocOf(repoNameFromIdentifier(repo.repo_identifier));
+			if (!existsSync(join(loc.hostPath, '.git'))) continue;
+			worktrees.push({ loc, headBefore: await getWorktreeHead(executor, loc) });
 		}
 
-		return { workingDir, designatedRepo: primary ?? null, worktrees };
+		return { workingDir, designatedRepo: primary ?? null, worktrees, executor };
 	});
 }
 

@@ -3,7 +3,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import {
 	buildGitIdentityEnv,
-	buildGitIdentityEnvRecord,
 	deriveGitHubIdentity,
 	gitConfigEnv,
 } from '../src/services/git-identity';
@@ -125,23 +124,5 @@ describe('buildGitIdentityEnv', () => {
 		expect(cfg['user.name']).toBe('Hezo Agent');
 		expect(cfg['user.signingkey']).toBe(key.publicKey);
 		expect(cfg['commit.gpgsign']).toBe('true');
-	});
-});
-
-describe('buildGitIdentityEnvRecord', () => {
-	it('returns the same GIT_CONFIG_* entries as the array form, keyed for child env', async () => {
-		const teamId = await makeTeam('record-team');
-		const key = await generateTeamSSHKey(db, teamId, masterKeyManager);
-
-		const record = await buildGitIdentityEnvRecord(db, masterKeyManager, teamId);
-		// The record is the GIT_CONFIG_* array converted to a child_process env map.
-		const recordAsArray = Object.entries(record).map(([k, v]) => `${k}=${v}`);
-		const decoded = parseGitConfig(recordAsArray);
-		expect(decoded).toEqual(
-			parseGitConfig(await buildGitIdentityEnv(db, masterKeyManager, teamId)),
-		);
-		// And it carries the signing config a host-side merge commit needs.
-		expect(decoded['user.signingkey']).toBe(key.publicKey);
-		expect(decoded['commit.gpgsign']).toBe('true');
 	});
 });
