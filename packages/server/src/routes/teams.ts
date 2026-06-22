@@ -1,31 +1,14 @@
 import { MemberType } from '@hezo/shared';
 import { Hono } from 'hono';
-import { resolveTaskId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { requireAdminEquivalent } from '../middleware/auth';
-import { postSkipQuestionsSignalForProjectIntake } from '../services/project-intake';
 import { applyTemplateToTeam } from '../services/team-template-apply';
 import { snapshotTeamAsTemplate } from '../services/team-template-snapshot';
 
 export const teamsRoutes = new Hono<Env>();
-
-teamsRoutes.post('/projects/:projectId/project-intake/:taskId/skip-questions', async (c) => {
-	const teamId = c.get('teamId') as string;
-
-	const db = c.get('db');
-	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
-	if (!taskId) {
-		return err(c, 'NOT_FOUND', 'Task not found', 404);
-	}
-	const comment = await postSkipQuestionsSignalForProjectIntake(db, taskId);
-	if (!comment) {
-		return err(c, 'NOT_FOUND', 'No open project intake found for this task', 404);
-	}
-	return ok(c, { task_id: taskId, comment_id: comment.id });
-});
 
 teamsRoutes.get('/projects/:projectId/team', async (c) => {
 	const teamId = c.get('teamId') as string;

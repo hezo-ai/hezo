@@ -1,8 +1,27 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { type AuditActorType, TaskPriority, TaskStatus } from '@hezo/shared';
+import {
+	AgentAdminStatus,
+	type AuditActorType,
+	CAPTAIN_AGENT_SLUG,
+	TaskPriority,
+	TaskStatus,
+	WakeupSource,
+	wsRoom,
+} from '@hezo/shared';
 import type { DomainEventBus } from '../events/bus';
+import { trackBackground } from '../lib/background';
+import { broadcastRowChange } from '../lib/broadcast';
+import { toProjectTaskPrefix, toSlug, uniqueSlug } from '../lib/slug';
 import { withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
+import { logger } from '../logger';
+import { type ContainerDeps, type ProjectRow, provisionContainer } from './containers';
+import { enqueueTeamCoherenceReviewTask } from './description-tasks';
+import { snapshotTeamAsTemplate } from './team-template-snapshot';
+import { type CreatedTeamRow, createTeam } from './teams';
+import { createWakeup } from './wakeup';
+
+const log = logger.child('project-create');
 
 /**
  * Project documents seeded into every new project. These are starting-point
@@ -231,4 +250,308 @@ export async function createProjectWithPlanningTask(
 		initialPrd: input.initialPrd,
 	});
 	return { project, planningTask, deferCaptainPlanningWake };
+}
+
+export const TASK_PREFIX_SHAPE = /^[A-Z][A-Z0-9]{1,3}$/;
+
+export type TaskPrefixResult =
+	| { ok: true; prefix: string }
+	| { ok: false; code: 'INVALID_REQUEST' | 'CONFLICT'; message: string; status: 400 | 409 };
+
+export async function resolveProjectTaskPrefix(
+	db: PGlite,
+	teamId: string,
+	provided: string | undefined,
+	projectName: string,
+): Promise<TaskPrefixResult> {
+	if (provided?.trim()) {
+		const candidate = provided.trim().toUpperCase();
+		if (!TASK_PREFIX_SHAPE.test(candidate)) {
+			return {
+				ok: false,
+				code: 'INVALID_REQUEST',
+				message: 'task_prefix must be 2-4 uppercase alphanumeric characters starting with a letter',
+				status: 400,
+			};
+		}
+		const collision = await db.query(
+			'SELECT 1 FROM projects WHERE team_id = $1 AND task_prefix = $2',
+			[teamId, candidate],
+		);
+		if (collision.rows.length > 0) {
+			return {
+				ok: false,
+				code: 'CONFLICT',
+				message: `Task prefix '${candidate}' is already in use for this team`,
+				status: 409,
+			};
+		}
+		return { ok: true, prefix: candidate };
+	}
+
+	const base = toProjectTaskPrefix(projectName);
+	const existing = await db.query<{ task_prefix: string }>(
+		'SELECT task_prefix FROM projects WHERE team_id = $1 AND task_prefix LIKE $2',
+		[teamId, `${base}%`],
+	);
+	const taken = new Set(existing.rows.map((r) => r.task_prefix));
+	if (!taken.has(base)) return { ok: true, prefix: base };
+	for (let n = 2; n < 1000; n++) {
+		const candidate = `${base}${n}`;
+		if (!TASK_PREFIX_SHAPE.test(candidate)) break;
+		if (!taken.has(candidate)) return { ok: true, prefix: candidate };
+	}
+	return {
+		ok: false,
+		code: 'CONFLICT',
+		message: `Unable to derive a unique task_prefix from '${projectName}'; supply one explicitly`,
+		status: 409,
+	};
+}
+
+type ResolveTemplateResult =
+	| { ok: true; templateId: string | undefined }
+	| { ok: false; code: 'INVALID_REQUEST' | 'NOT_FOUND'; message: string; status: 400 | 404 };
+
+/**
+ * Generates a `team_templates.name` that doesn't clash with an existing one by
+ * appending " (2)", " (3)", … to the base. Mirrors `uniqueSlug` — each
+ * snapshot of a source team mints a fresh, distinctly-named template.
+ */
+async function uniqueTemplateName(db: PGlite, base: string): Promise<string> {
+	let candidate = base;
+	let n = 2;
+	while (
+		(await db.query('SELECT 1 FROM team_templates WHERE name = $1', [candidate])).rows.length
+	) {
+		candidate = `${base} (${n})`;
+		n++;
+	}
+	return candidate;
+}
+
+/**
+ * Resolves the team-type template a new project's team is provisioned from.
+ * A caller picks either an existing template (`templateId`) or an existing team
+ * to clone (`sourceTeamId`); cloning snapshots that team into a fresh permanent
+ * template (reusable from then on). With neither, defaults to the Blank template.
+ */
+export async function resolveCreationTemplate(
+	db: PGlite,
+	opts: { templateId?: string; sourceTeamId?: string; description?: string },
+): Promise<ResolveTemplateResult> {
+	const templateId = opts.templateId?.trim() || undefined;
+	const sourceTeamId = opts.sourceTeamId?.trim() || undefined;
+
+	if (templateId && sourceTeamId) {
+		return {
+			ok: false,
+			code: 'INVALID_REQUEST',
+			message: 'Provide either template_id or source_team_id, not both',
+			status: 400,
+		};
+	}
+
+	if (templateId) return { ok: true, templateId };
+
+	if (sourceTeamId) {
+		const team = await db.query<{ name: string; is_internal: boolean }>(
+			`SELECT t.name,
+			        EXISTS (SELECT 1 FROM projects p WHERE p.team_id = t.id AND p.is_internal = true) AS is_internal
+			 FROM teams t WHERE t.id = $1`,
+			[sourceTeamId],
+		);
+		const row = team.rows[0];
+		if (!row) {
+			return { ok: false, code: 'NOT_FOUND', message: 'Source team not found', status: 404 };
+		}
+		if (row.is_internal) {
+			return {
+				ok: false,
+				code: 'INVALID_REQUEST',
+				message: 'The HQ team cannot be used as a source team',
+				status: 400,
+			};
+		}
+		const name = await uniqueTemplateName(db, row.name);
+		const snapshot = await snapshotTeamAsTemplate(db, sourceTeamId, {
+			name,
+			description: opts.description?.trim() || `Snapshot of the "${row.name}" team`,
+		});
+		return { ok: true, templateId: snapshot.template_id };
+	}
+
+	const blank = await db.query<{ id: string }>('SELECT id FROM team_templates WHERE name = $1', [
+		'Blank',
+	]);
+	return { ok: true, templateId: blank.rows[0]?.id };
+}
+
+export interface CreateProjectWithTeamInput {
+	name: string;
+	description: string;
+	/** Team-type template to provision the roster from; mutually exclusive with sourceTeamId. */
+	templateId?: string;
+	/** Existing team to clone (snapshotted into a fresh template); mutually exclusive with templateId. */
+	sourceTeamId?: string;
+	taskPrefix?: string;
+	initialPrd?: string | null;
+	dockerBaseImage?: string;
+	/** Added as the new team's admin member (any human admin who creates it). */
+	creatorUserId?: string;
+	/** Audit actor type for the project.created event. Defaults to 'admin'. */
+	actorType?: AuditActorType;
+	/** When set, the audit actor is resolved to this user's member in the new team. */
+	actorUserId?: string;
+	/** Explicit audit actor member id (e.g. the CEO when created via the MCP tool). */
+	actorMemberId?: string | null;
+}
+
+export type CreateProjectWithTeamResult =
+	| {
+			ok: true;
+			project: Record<string, unknown>;
+			planningTask: Record<string, unknown>;
+			team: CreatedTeamRow;
+	  }
+	| {
+			ok: false;
+			code: 'INVALID_REQUEST' | 'NOT_FOUND' | 'CONFLICT' | 'INTERNAL';
+			message: string;
+			status: 400 | 404 | 409 | 500;
+	  };
+
+/**
+ * Create a project together with its dedicated team in one step — the single
+ * canonical "create a project" sequence: resolve the team-type template, stand
+ * up the team + roster, create the project, seed the CEO coherence-review ticket
+ * (it takes the first identifier) ahead of the Captain's planning ticket (blocked
+ * on coherence), wake the Captain, and provision the container in the background.
+ *
+ * Shared by the superuser "Create now" route (`POST /api/projects`) and the CEO's
+ * `create_project` MCP tool, which the CEO calls once the admin approves a project
+ * intake in-thread. `deps` is a `ContainerDeps` (a superset of `CreateTeamDeps`);
+ * container provisioning is skipped when `opts.provisionContainer === false`.
+ */
+export async function createProjectWithTeam(
+	deps: ContainerDeps,
+	input: CreateProjectWithTeamInput,
+	opts: { events?: DomainEventBus; provisionContainer?: boolean } = {},
+): Promise<CreateProjectWithTeamResult> {
+	const { db } = deps;
+	const name = input.name.trim();
+	const description = input.description.trim();
+
+	// Validate the task-prefix shape up front so a bad prefix doesn't leave an
+	// orphan team behind (a collision can't happen on a brand-new team).
+	if (input.taskPrefix?.trim() && !TASK_PREFIX_SHAPE.test(input.taskPrefix.trim().toUpperCase())) {
+		return {
+			ok: false,
+			code: 'INVALID_REQUEST',
+			message: 'task_prefix must be 2-4 uppercase alphanumeric characters starting with a letter',
+			status: 400,
+		};
+	}
+
+	const templateResult = await resolveCreationTemplate(db, {
+		templateId: input.templateId,
+		sourceTeamId: input.sourceTeamId,
+		description,
+	});
+	if (!templateResult.ok) return templateResult;
+
+	const team = await createTeam(deps, {
+		name,
+		description,
+		templateId: templateResult.templateId,
+		creatorUserId: input.creatorUserId,
+	});
+
+	const prefixResult = await resolveProjectTaskPrefix(db, team.id, input.taskPrefix, name);
+	if (!prefixResult.ok) return prefixResult;
+
+	const captain = await db.query<{ id: string }>(
+		`SELECT ma.id FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status`,
+		[team.id, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
+	);
+	const captainMemberId = captain.rows[0]?.id;
+	if (!captainMemberId) {
+		return { ok: false, code: 'INTERNAL', message: 'New team is missing its Captain', status: 500 };
+	}
+
+	let actorMemberId: string | null = input.actorMemberId ?? null;
+	if (!actorMemberId && input.actorUserId) {
+		const r = await db.query<{ id: string }>(
+			`SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id
+			 WHERE mu.user_id = $1 AND m.team_id = $2`,
+			[input.actorUserId, team.id],
+		);
+		actorMemberId = r.rows[0]?.id ?? null;
+	}
+
+	const slug = await uniqueSlug(toSlug(name), async (s) => {
+		const r = await db.query('SELECT 1 FROM projects WHERE slug = $1', [s]);
+		return r.rows.length > 0;
+	});
+
+	const { project } = await createProject(db, {
+		teamId: team.id,
+		captainMemberId,
+		name,
+		slug,
+		taskPrefix: prefixResult.prefix,
+		description,
+		initialPrd: input.initialPrd ?? null,
+		dockerBaseImage: input.dockerBaseImage,
+		events: opts.events,
+		actorType: input.actorType ?? 'admin',
+		actorMemberId,
+	});
+
+	// The CEO's initial coherence/setup pass is the project's first ticket and
+	// blocks planning, so it's created before the planning task to take TO-1.
+	const coherenceTaskId = await enqueueTeamCoherenceReviewTask(db, team.id, 'initial');
+
+	const { planningTask } = await createPlanningTask(db, {
+		teamId: team.id,
+		project,
+		captainMemberId,
+		name,
+		description,
+		initialPrd: input.initialPrd ?? null,
+	});
+
+	if (deps.wsManager) {
+		broadcastRowChange(deps.wsManager, wsRoom.team(team.id), 'projects', 'INSERT', project);
+		broadcastRowChange(deps.wsManager, wsRoom.team(team.id), 'tasks', 'INSERT', planningTask);
+	}
+
+	if (coherenceTaskId) {
+		await db.query(
+			`INSERT INTO task_dependencies (task_id, blocked_by_task_id)
+			 VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+			[planningTask.id, coherenceTaskId],
+		);
+	}
+
+	// The Captain is woken unconditionally for its planning ticket (the
+	// deferCaptainPlanningWake flag only applies to the instance bootstrap path,
+	// which does not go through this service).
+	trackBackground(
+		createWakeup(db, captainMemberId, team.id, WakeupSource.Assignment, {
+			task_id: planningTask.id as string,
+		}).catch((e) => log.error('Failed to wake Captain for planning:', e)),
+	);
+
+	if (opts.provisionContainer !== false) {
+		trackBackground(
+			provisionContainer(deps, project as unknown as ProjectRow, team.slug).catch((e) =>
+				log.error('Failed to provision container for new project:', e),
+			),
+		);
+	}
+
+	return { ok: true, project, planningTask, team };
 }

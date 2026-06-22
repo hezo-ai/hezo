@@ -143,9 +143,7 @@ function TaskDetailPage() {
 							<CommentComposer
 								task={task}
 								projectId={projectId}
-								taskId={taskId}
 								taskProjectSlug={taskProjectSlug}
-								comments={comments}
 								createComment={createComment}
 								commentEffort={commentEffort}
 								setCommentEffort={setCommentEffort}

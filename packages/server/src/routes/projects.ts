@@ -1,20 +1,12 @@
 import type { PGlite } from '@electric-sql/pglite';
-import {
-	AgentAdminStatus,
-	AuthType,
-	CAPTAIN_AGENT_SLUG,
-	ContainerStatus,
-	MemberType,
-	WakeupSource,
-	wsRoom,
-} from '@hezo/shared';
+import { AuthType, ContainerStatus, MemberType, wsRoom } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange, broadcastProjectUpdate } from '../lib/broadcast';
 import { budgetWindowsError } from '../lib/budget-validation';
 import { ref } from '../lib/log-ref';
 import { err, ok } from '../lib/response';
-import { toProjectTaskPrefix, toSlug, uniqueSlug } from '../lib/slug';
+import { toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -22,20 +14,15 @@ import { requireAdminEquivalent } from '../middleware/auth';
 import {
 	type ContainerDeps,
 	type ProjectRow,
-	provisionContainer,
 	rebuildContainer,
 	stopContainerGracefully,
 	teardownContainer,
 	wakeAgentsWithPendingWork,
 } from '../services/containers';
-import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import { loadCoordinationContext } from '../services/internal-intake';
 import type { JobManager } from '../services/job-manager';
-import { createPlanningTask, createProject } from '../services/project-create';
+import { createProjectWithTeam } from '../services/project-create';
 import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
-import { snapshotTeamAsTemplate } from '../services/team-template-snapshot';
-import { createTeam } from '../services/teams';
-import { createWakeup } from '../services/wakeup';
 
 function buildContainerDeps(c: Context<Env>): ContainerDeps {
 	return {
@@ -69,63 +56,6 @@ async function cancelRunningAgentTasks(
 	for (const row of running.rows) {
 		jobManager.cancelTask(wsRoom.agent(row.assignee_id));
 	}
-}
-
-export const TASK_PREFIX_SHAPE = /^[A-Z][A-Z0-9]{1,3}$/;
-
-export type TaskPrefixResult =
-	| { ok: true; prefix: string }
-	| { ok: false; code: 'INVALID_REQUEST' | 'CONFLICT'; message: string; status: 400 | 409 };
-
-export async function resolveProjectTaskPrefix(
-	db: PGlite,
-	teamId: string,
-	provided: string | undefined,
-	projectName: string,
-): Promise<TaskPrefixResult> {
-	if (provided?.trim()) {
-		const candidate = provided.trim().toUpperCase();
-		if (!TASK_PREFIX_SHAPE.test(candidate)) {
-			return {
-				ok: false,
-				code: 'INVALID_REQUEST',
-				message: 'task_prefix must be 2-4 uppercase alphanumeric characters starting with a letter',
-				status: 400,
-			};
-		}
-		const collision = await db.query(
-			'SELECT 1 FROM projects WHERE team_id = $1 AND task_prefix = $2',
-			[teamId, candidate],
-		);
-		if (collision.rows.length > 0) {
-			return {
-				ok: false,
-				code: 'CONFLICT',
-				message: `Task prefix '${candidate}' is already in use for this team`,
-				status: 409,
-			};
-		}
-		return { ok: true, prefix: candidate };
-	}
-
-	const base = toProjectTaskPrefix(projectName);
-	const existing = await db.query<{ task_prefix: string }>(
-		'SELECT task_prefix FROM projects WHERE team_id = $1 AND task_prefix LIKE $2',
-		[teamId, `${base}%`],
-	);
-	const taken = new Set(existing.rows.map((r) => r.task_prefix));
-	if (!taken.has(base)) return { ok: true, prefix: base };
-	for (let n = 2; n < 1000; n++) {
-		const candidate = `${base}${n}`;
-		if (!TASK_PREFIX_SHAPE.test(candidate)) break;
-		if (!taken.has(candidate)) return { ok: true, prefix: candidate };
-	}
-	return {
-		ok: false,
-		code: 'CONFLICT',
-		message: `Unable to derive a unique task_prefix from '${projectName}'; supply one explicitly`,
-		status: 409,
-	};
 }
 
 export const projectsRoutes = new Hono<Env>();
@@ -185,7 +115,6 @@ projectsRoutes.post('/projects', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
-	const db = c.get('db');
 	const body = await c.req.json<{
 		name: string;
 		description?: string;
@@ -199,119 +128,27 @@ projectsRoutes.post('/projects', async (c) => {
 	if (!body.name?.trim()) return err(c, 'INVALID_REQUEST', 'name is required', 400);
 	if (!body.description?.trim()) return err(c, 'INVALID_REQUEST', 'description is required', 400);
 
-	// A project is always created from a team-type template: an existing one, a
-	// fresh snapshot of an existing team (source_team_id), or the Blank template
-	// (Captain only) when the caller chooses neither.
-	const templateResult = await resolveCreationTemplate(db, {
-		templateId: body.template_id,
-		sourceTeamId: body.source_team_id,
-		description: body.description,
-	});
-	if (!templateResult.ok)
-		return err(c, templateResult.code, templateResult.message, templateResult.status);
-	const templateId = templateResult.templateId;
-
-	// 1. Create the project's dedicated team (its roster), named after the project.
 	const auth = c.get('auth');
-	const team = await createTeam(
-		{
-			db,
-			docker: c.get('docker'),
-			dataDir: c.get('dataDir'),
-			wsManager: c.get('wsManager'),
-			masterKeyManager: c.get('masterKeyManager'),
-			logs: c.get('logs'),
-			egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
-		},
+	const result = await createProjectWithTeam(
+		buildContainerDeps(c),
 		{
 			name: body.name.trim(),
 			description: body.description.trim(),
-			templateId,
+			templateId: body.template_id,
+			sourceTeamId: body.source_team_id,
+			taskPrefix: body.task_prefix,
+			initialPrd: body.initial_prd?.trim() || null,
+			dockerBaseImage: body.docker_base_image,
 			creatorUserId: auth.type === AuthType.Admin ? auth.userId : undefined,
+			actorType: 'admin',
+			// Non-superuser admins are audited as the actor; superusers/agents stay null.
+			actorUserId: auth.type === AuthType.Admin && !auth.isSuperuser ? auth.userId : undefined,
 		},
+		{ events: c.get('events') },
 	);
+	if (!result.ok) return err(c, result.code, result.message, result.status);
 
-	const prefixResult = await resolveProjectTaskPrefix(db, team.id, body.task_prefix, body.name);
-	if (!prefixResult.ok) return err(c, prefixResult.code, prefixResult.message, prefixResult.status);
-
-	const captain = await db.query<{ id: string }>(
-		`SELECT ma.id FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND ma.slug = $3 AND ma.admin_status = $2::agent_admin_status`,
-		[team.id, AgentAdminStatus.Enabled, CAPTAIN_AGENT_SLUG],
-	);
-	const captainMemberId = captain.rows[0]?.id;
-	if (!captainMemberId) return err(c, 'INTERNAL', 'New team is missing its Captain', 500);
-
-	const slug = await uniqueSlug(toSlug(body.name), async (s) => {
-		const r = await db.query('SELECT 1 FROM projects WHERE slug = $1', [s]);
-		return r.rows.length > 0;
-	});
-
-	const actorMemberId =
-		auth.type === AuthType.Admin && !auth.isSuperuser
-			? ((
-					await db.query<{ id: string }>(
-						`SELECT m.id FROM members m JOIN member_users mu ON mu.id = m.id
-						 WHERE mu.user_id = $1 AND m.team_id = $2`,
-						[auth.userId, team.id],
-					)
-				).rows[0]?.id ?? null)
-			: null;
-
-	const { project } = await createProject(db, {
-		teamId: team.id,
-		captainMemberId,
-		name: body.name.trim(),
-		slug,
-		taskPrefix: prefixResult.prefix,
-		description: body.description.trim(),
-		initialPrd: body.initial_prd?.trim() || null,
-		dockerBaseImage: body.docker_base_image,
-		events: c.get('events'),
-		actorType: 'admin',
-		actorMemberId,
-	});
-
-	// The CEO's initial coherence/setup pass is the project's first ticket and
-	// blocks planning, so it's created before the planning task to take TO-1.
-	const coherenceTaskId = await enqueueTeamCoherenceReviewTask(db, team.id, 'initial');
-
-	const { planningTask } = await createPlanningTask(db, {
-		teamId: team.id,
-		project,
-		captainMemberId,
-		name: body.name.trim(),
-		description: body.description.trim(),
-		initialPrd: body.initial_prd?.trim() || null,
-	});
-
-	const wsManager = c.get('wsManager');
-	if (wsManager) {
-		broadcastChange(c, wsRoom.team(team.id), 'projects', 'INSERT', project);
-		broadcastChange(c, wsRoom.team(team.id), 'tasks', 'INSERT', planningTask);
-	}
-
-	if (coherenceTaskId) {
-		await db.query(
-			`INSERT INTO task_dependencies (task_id, blocked_by_task_id)
-			 VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-			[planningTask.id, coherenceTaskId],
-		);
-	}
-
-	trackBackground(
-		createWakeup(db, captainMemberId, team.id, WakeupSource.Assignment, {
-			task_id: planningTask.id as string,
-		}).catch((e) => log.error('Failed to wake Captain for planning:', e)),
-	);
-
-	trackBackground(
-		provisionContainer(buildContainerDeps(c), project as unknown as ProjectRow, team.slug).catch(
-			(e) => log.error('Failed to provision container for new project:', e),
-		),
-	);
-
+	const { project, planningTask, team } = result;
 	return ok(
 		c,
 		{
@@ -324,88 +161,12 @@ projectsRoutes.post('/projects', async (c) => {
 	);
 });
 
-type ResolveTemplateResult =
-	| { ok: true; templateId: string | undefined }
-	| { ok: false; code: 'INVALID_REQUEST' | 'NOT_FOUND'; message: string; status: 400 | 404 };
-
-/**
- * Generates a `team_templates.name` that doesn't clash with an existing one by
- * appending " (2)", " (3)", … to the base. Mirrors `uniqueSlug` — each
- * snapshot of a source team mints a fresh, distinctly-named template.
- */
-async function uniqueTemplateName(db: PGlite, base: string): Promise<string> {
-	let candidate = base;
-	let n = 2;
-	while (
-		(await db.query('SELECT 1 FROM team_templates WHERE name = $1', [candidate])).rows.length
-	) {
-		candidate = `${base} (${n})`;
-		n++;
-	}
-	return candidate;
-}
-
-/**
- * Resolves the team-type template a new project's team is provisioned from.
- * A caller picks either an existing template (`templateId`) or an existing team
- * to clone (`sourceTeamId`); cloning snapshots that team into a fresh permanent
- * template (reusable from then on). With neither, defaults to the Blank template.
- */
-async function resolveCreationTemplate(
-	db: PGlite,
-	opts: { templateId?: string; sourceTeamId?: string; description?: string },
-): Promise<ResolveTemplateResult> {
-	const templateId = opts.templateId?.trim() || undefined;
-	const sourceTeamId = opts.sourceTeamId?.trim() || undefined;
-
-	if (templateId && sourceTeamId) {
-		return {
-			ok: false,
-			code: 'INVALID_REQUEST',
-			message: 'Provide either template_id or source_team_id, not both',
-			status: 400,
-		};
-	}
-
-	if (templateId) return { ok: true, templateId };
-
-	if (sourceTeamId) {
-		const team = await db.query<{ name: string; is_internal: boolean }>(
-			`SELECT t.name,
-			        EXISTS (SELECT 1 FROM projects p WHERE p.team_id = t.id AND p.is_internal = true) AS is_internal
-			 FROM teams t WHERE t.id = $1`,
-			[sourceTeamId],
-		);
-		const row = team.rows[0];
-		if (!row) {
-			return { ok: false, code: 'NOT_FOUND', message: 'Source team not found', status: 404 };
-		}
-		if (row.is_internal) {
-			return {
-				ok: false,
-				code: 'INVALID_REQUEST',
-				message: 'The HQ team cannot be used as a source team',
-				status: 400,
-			};
-		}
-		const name = await uniqueTemplateName(db, row.name);
-		const snapshot = await snapshotTeamAsTemplate(db, sourceTeamId, {
-			name,
-			description: opts.description?.trim() || `Snapshot of the "${row.name}" team`,
-		});
-		return { ok: true, templateId: snapshot.template_id };
-	}
-
-	const blank = await db.query<{ id: string }>('SELECT id FROM team_templates WHERE name = $1', [
-		'Blank',
-	]);
-	return { ok: true, templateId: blank.rows[0]?.id };
-}
-
-// CEO-assisted project creation: stand up the project's team up front, then open
-// a conversation in HQ where the CEO scopes the work and asks the admin to
-// approve. The project itself is created on approval. Both the first-run welcome
-// and the ongoing "new project with the CEO" flow post here.
+// CEO-assisted project creation: open a conversation in HQ where the CEO scopes
+// the work with the admin. Nothing is created up front — no team, no project, no
+// approval; the admin's chosen team type is recorded only as the CEO's baseline.
+// On the admin's in-thread go-ahead the CEO creates the project + team itself via
+// the create_project tool. Both the first-run welcome and the ongoing "new
+// project with the CEO" flow post here.
 projectsRoutes.post('/project-intakes', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
@@ -416,57 +177,58 @@ projectsRoutes.post('/project-intakes', async (c) => {
 		description?: string;
 		template_id?: string;
 		source_team_id?: string;
-		task_prefix?: string;
 		initial_prd?: string;
 	}>();
 
 	if (!body.name?.trim()) return err(c, 'INVALID_REQUEST', 'name is required', 400);
 	if (!body.description?.trim()) return err(c, 'INVALID_REQUEST', 'description is required', 400);
 
-	// The intake conversation requires the CEO + HQ project. Verify before standing
-	// up the team so a missing HQ doesn't leave an orphaned, projectless team behind.
+	// The intake conversation lives in HQ and is run by the CEO.
 	if (!(await loadCoordinationContext(db))) {
 		return err(c, 'INTERNAL', 'HQ coordination project is not available', 500);
 	}
 
-	const templateResult = await resolveCreationTemplate(db, {
-		templateId: body.template_id,
-		sourceTeamId: body.source_team_id,
-		description: body.description,
-	});
-	if (!templateResult.ok)
-		return err(c, templateResult.code, templateResult.message, templateResult.status);
-	const templateId = templateResult.templateId;
-	const auth = c.get('auth');
-	const team = await createTeam(
-		{
-			db,
-			docker: c.get('docker'),
-			dataDir: c.get('dataDir'),
-			wsManager: c.get('wsManager'),
-			masterKeyManager: c.get('masterKeyManager'),
-			logs: c.get('logs'),
-			egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
-		},
-		{
-			name: body.name.trim(),
-			description: body.description.trim(),
-			templateId,
-			creatorUserId: auth.type === AuthType.Admin ? auth.userId : undefined,
-		},
-	);
+	// Record the chosen team type as the CEO's baseline suggestion — without
+	// creating anything (no team, no snapshot). The team + project are created
+	// later by the CEO's create_project tool, once the admin approves in-thread.
+	const templateId = body.template_id?.trim() || undefined;
+	const sourceTeamId = body.source_team_id?.trim() || undefined;
+	if (templateId && sourceTeamId) {
+		return err(c, 'INVALID_REQUEST', 'Provide either template_id or source_team_id, not both', 400);
+	}
 
-	const prefixResult = await resolveProjectTaskPrefix(db, team.id, body.task_prefix, body.name);
-	if (!prefixResult.ok) return err(c, prefixResult.code, prefixResult.message, prefixResult.status);
+	let baselineTeamTypeName: string | undefined;
+	if (templateId) {
+		const tpl = await db.query<{ name: string }>('SELECT name FROM team_templates WHERE id = $1', [
+			templateId,
+		]);
+		if (tpl.rows.length === 0) return err(c, 'NOT_FOUND', 'Team template not found', 404);
+		baselineTeamTypeName = tpl.rows[0].name;
+	} else if (sourceTeamId) {
+		const t = await db.query<{ name: string; is_internal: boolean }>(
+			`SELECT t.name,
+			        EXISTS (SELECT 1 FROM projects p WHERE p.team_id = t.id AND p.is_internal = true) AS is_internal
+			 FROM teams t WHERE t.id = $1`,
+			[sourceTeamId],
+		);
+		if (t.rows.length === 0) return err(c, 'NOT_FOUND', 'Source team not found', 404);
+		if (t.rows[0].is_internal) {
+			return err(c, 'INVALID_REQUEST', 'The HQ team cannot be used as a source team', 400);
+		}
+		baselineTeamTypeName = t.rows[0].name;
+	} else {
+		baselineTeamTypeName = 'Blank';
+	}
 
 	const intake = await createProjectIntake(
 		db,
-		team.id,
 		{
 			name: body.name.trim(),
 			description: body.description.trim(),
-			taskPrefix: prefixResult.prefix,
 			initialPrd: body.initial_prd?.trim() || null,
+			baselineTemplateId: templateId,
+			baselineSourceTeamId: sourceTeamId,
+			baselineTeamTypeName,
 		},
 		c.get('wsManager'),
 	);
@@ -477,10 +239,7 @@ projectsRoutes.post('/project-intakes', async (c) => {
 		{
 			intake_task_id: intake.intakeTaskId,
 			intake_task_identifier: intake.intakeTaskIdentifier,
-			approval_id: intake.approvalId,
 			project_slug: intake.projectSlug,
-			team_id: team.id,
-			team_slug: team.slug,
 		},
 		201,
 	);

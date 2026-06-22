@@ -6,16 +6,13 @@ import type { Task } from '../../hooks/use-tasks';
 import { CommentAttachmentsDrop } from '../comment-attachments-drop';
 import { MentionTextarea } from '../mention-textarea';
 import { Button } from '../ui/button';
-import { ProjectIntakeBanner } from './project-intake-banner';
 
 type CreateCommentMutation = ReturnType<typeof useCreateComment>;
 
 interface CommentComposerProps {
 	task: Task;
 	projectId: string;
-	taskId: string;
 	taskProjectSlug: string;
-	comments: Comment[] | undefined;
 	createComment: CreateCommentMutation;
 	commentEffort: AgentEffort | null;
 	setCommentEffort: (value: AgentEffort | null) => void;
@@ -42,8 +39,8 @@ function previewCommentText(c: Comment): string {
 /**
  * The bottom-of-page comment-entry form: a MentionTextarea wrapped in a
  * drag-drop attachments target, a "wake assignee on submit" toggle (hidden when
- * replying to an agent's comment, since the reply already wakes that agent), the
- * project-intake skip affordance, and the submit button. The "Effort" select
+ * replying to an agent's comment, since the reply already wakes that agent), and
+ * the submit button. The "Effort" select
  * lives in the sidebar but writes into the same commentEffort state — owned
  * by the route component and passed in. `replyTarget` is similarly owned
  * upstream so the comments list can `Reply →` into the composer.
@@ -51,9 +48,7 @@ function previewCommentText(c: Comment): string {
 export function CommentComposer({
 	task,
 	projectId,
-	taskId,
 	taskProjectSlug,
-	comments,
 	createComment,
 	commentEffort,
 	setCommentEffort,
@@ -140,12 +135,6 @@ export function CommentComposer({
 					</div>
 				)}
 				<div className="flex items-center justify-end gap-2">
-					<ProjectIntakeBanner
-						task={task}
-						projectId={projectId}
-						taskId={taskId}
-						comments={comments}
-					/>
 					{task.assignee_id && !replyingToAgent && (
 						<label className="flex items-center gap-2 text-[13px] text-text-2 cursor-pointer select-none">
 							<input

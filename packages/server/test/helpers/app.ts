@@ -21,12 +21,14 @@ import { DomainEventBus } from '../../src/events/bus';
 import { toSlug, uniqueSlug } from '../../src/lib/slug';
 import type { Env } from '../../src/lib/types';
 import { signAdminJwt, signAgentJwt } from '../../src/middleware/auth';
-import { resolveProjectTaskPrefix } from '../../src/routes/projects';
 import { ContainerLogStreamer } from '../../src/services/container-logs';
 import type { DockerClient } from '../../src/services/docker';
 import { JobManager } from '../../src/services/job-manager';
 import { LogStreamBroker } from '../../src/services/log-stream-broker';
-import { createProjectWithPlanningTask } from '../../src/services/project-create';
+import {
+	createProjectWithPlanningTask,
+	resolveProjectTaskPrefix,
+} from '../../src/services/project-create';
 import { type CreatedTeamRow, createTeam, seedDefaultTeam } from '../../src/services/teams';
 import { WebSocketManager } from '../../src/services/ws';
 import { buildApp } from '../../src/startup';

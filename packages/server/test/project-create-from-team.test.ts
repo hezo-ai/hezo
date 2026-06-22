@@ -243,18 +243,20 @@ describe('POST /projects — clone an existing team (source_team_id)', () => {
 	});
 });
 
-describe('POST /project-intakes — clone an existing team', () => {
-	it('stands up the intake team from a snapshot of the source team', async () => {
+describe('POST /project-intakes — records the chosen team type as a baseline', () => {
+	it('records a source-team clone as the baseline without creating a team or snapshot', async () => {
 		const source = (
 			await (
 				await createProject({
 					name: 'Intake Source Co',
-					description: 'Source for intake clone.',
+					description: 'Source for intake baseline.',
 					template_id: startupTemplateId,
 				})
 			).json()
 		).data as CreatedProjectTeam;
-		const sourceRoster = await rosterSlugs(source.team_id);
+
+		const templatesBefore = await templateCount();
+		const teamsBefore = await db.query<{ n: number }>('SELECT count(*)::int AS n FROM teams');
 
 		const res = await app.request('/api/project-intakes', {
 			method: 'POST',
@@ -266,7 +268,20 @@ describe('POST /project-intakes — clone an existing team', () => {
 			}),
 		});
 		expect(res.status).toBe(201);
-		const intake = (await res.json()).data as { team_id: string };
-		expect(await rosterSlugs(intake.team_id)).toEqual(sourceRoster);
+		const intake = (await res.json()).data as { intake_task_id: string; project_slug: string };
+		// The conversation lives in HQ; nothing is materialised yet.
+		expect(intake.project_slug).toBe('hq');
+
+		const teamsAfter = await db.query<{ n: number }>('SELECT count(*)::int AS n FROM teams');
+		expect(teamsAfter.rows[0].n).toBe(teamsBefore.rows[0].n);
+		// No snapshot template is minted up front — only recorded as the baseline.
+		expect(await templateCount()).toBe(templatesBefore);
+
+		const task = await db.query<{ description: string }>(
+			'SELECT description FROM tasks WHERE id = $1',
+			[intake.intake_task_id],
+		);
+		expect(task.rows[0].description).toContain(source.team_id);
+		expect(task.rows[0].description).toContain('Intake Source Co');
 	});
 });

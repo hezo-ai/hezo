@@ -1,15 +1,10 @@
-import { CommentContentType, PROJECT_INTAKE_SKIP_SIGNAL_TEXT } from '@hezo/shared';
-import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 
 interface IntakeResult {
 	intake_task_id: string;
 	intake_task_identifier: string;
-	approval_id: string;
 	project_slug: string;
-	team_id: string;
-	team_slug: string;
 }
 
 async function startIntake(name: string): Promise<IntakeResult> {
@@ -44,45 +39,6 @@ test('renders the CEO intake panel once an open intake exists', async () => {
 
 	await findByTestId('home-project-intake-section', undefined, { timeout: 20_000 });
 	await findByTestId('home-project-intake', undefined, { timeout: 20_000 });
-	await findByTestId('home-project-intake-skip', undefined, { timeout: 20_000 });
+	// The conversation composer is present so the admin can reply (and approve) in-thread.
+	await findByTestId('home-project-intake-input', undefined, { timeout: 20_000 });
 });
-
-// Skip-questions posts a system signal comment on the HQ intake thread and
-// hides the skip button for the session; the panel itself stays mounted.
-test('skip-questions posts a system comment and hides the skip button', async () => {
-	let intake!: IntakeResult;
-	const { findByTestId, container, ctx, queryByTestId, user } = await renderApp({
-		initialPath: '/home',
-		seed: async () => {
-			intake = await startIntake(`Home Skip ${Date.now()}`);
-		},
-	});
-
-	const skipButton = await findByTestId('home-project-intake-skip', undefined, { timeout: 20_000 });
-	await user.click(skipButton);
-
-	await waitFor(
-		async () => {
-			const commentsRes = await ctx.apiBase(
-				`/api/projects/${intake.project_slug}/tasks/${intake.intake_task_identifier.toLowerCase()}/comments`,
-				{ headers: { Authorization: `Bearer ${ctx.token}` } },
-			);
-			const body = (await commentsRes.json()) as {
-				data: Array<{ content_type: string; content: { text?: string } }>;
-			};
-			const hasSkip = body.data.some(
-				(c) =>
-					c.content_type === CommentContentType.System &&
-					(c.content.text ?? '') === PROJECT_INTAKE_SKIP_SIGNAL_TEXT,
-			);
-			expect(hasSkip).toBe(true);
-		},
-		{ timeout: 15_000 },
-	);
-
-	await waitFor(() => expect(queryByTestId('home-project-intake-skip')).toBeNull(), {
-		timeout: 15_000,
-	});
-	// The panel itself is still mounted.
-	expect(container.querySelector('[data-testid="home-project-intake"]')).toBeTruthy();
-}, 30_000);
