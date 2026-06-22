@@ -37,7 +37,16 @@ export function ProjectRail() {
 				data-testid="project-rail"
 				aria-label="Projects"
 			>
-				<div className="flex-1 min-h-0 w-full overflow-y-auto flex flex-col items-center gap-2 py-1">
+				{/*
+				  `overflow-y-auto` clips to the padding box, so the count badge
+				  (`-top-1.5`, 6px above each avatar) on the topmost avatar would be
+				  cut off without enough top padding. `pt-2.5` (10px) clears the
+				  overhang plus the active ring.
+				*/}
+				<div
+					className="flex-1 min-h-0 w-full overflow-y-auto flex flex-col items-center gap-2 pt-2.5 pb-1"
+					data-testid="project-rail-scroll"
+				>
 					{projects.map((p) => {
 						const isActive = active?.slug === p.slug && active?.teamSlug === p.teamSlug;
 						return (
