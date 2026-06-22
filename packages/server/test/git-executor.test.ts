@@ -94,6 +94,25 @@ describe('ContainerGitExecutor', () => {
 		expect(calls[0].Env?.some((e) => e.startsWith('HEZO_PROMPT_FILE='))).toBe(false);
 	});
 
+	it('forPrep threads extraEnv (git identity) alongside the prep defaults', async () => {
+		const { docker, calls } = recordingDocker();
+		const exec = ContainerGitExecutor.forPrep(docker, 'cid', bridge, [
+			'GIT_CONFIG_COUNT=2',
+			'GIT_CONFIG_KEY_0=user.name',
+			'GIT_CONFIG_VALUE_0=octocat',
+		]);
+
+		// A merge (the catch-up that can create a commit) runs without needsSsh, so it
+		// inherits the executor's baseEnv: prep defaults + the git identity.
+		await exec.exec(['merge', '--no-edit', 'origin/main'], { cwd: '/worktrees/T-1/repo' });
+
+		expect(calls[0].Env).toContain('GIT_TERMINAL_PROMPT=0');
+		expect(calls[0].Env).toContain(`SSH_AUTH_SOCK=${bridge.socketPath}`);
+		expect(calls[0].Env).toContain('GIT_CONFIG_COUNT=2');
+		expect(calls[0].Env).toContain('GIT_CONFIG_KEY_0=user.name');
+		expect(calls[0].Env).toContain('GIT_CONFIG_VALUE_0=octocat');
+	});
+
 	it('surfaces a non-zero exit code from execInspect', async () => {
 		const { docker } = recordingDocker({ exitCode: 128 });
 		const exec = new ContainerGitExecutor(docker, 'cid', { baseEnv: [] });

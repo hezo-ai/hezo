@@ -10,6 +10,7 @@ import {
 	fastForwardLocalDefault,
 	fetchRepo,
 	getRemoteDefaultBranch,
+	mergeDefaultIntoWorktree,
 	pruneWorktrees,
 	type RepoLoc,
 	type WorktreeLoc,
@@ -231,8 +232,9 @@ describe('frees the task branch from stray worktree holders', () => {
 });
 
 // New task branches start from current trunk; the system keeps the clone's local
-// default fast-forwarded to the remote, but never merges trunk into a worktree —
-// that reconciliation is the agent's job.
+// default fast-forwarded to the remote. Building/reusing a worktree
+// (`ensureTaskWorktree`) never merges trunk in on its own — that catch-up is a
+// separate step (`mergeDefaultIntoWorktree`, exercised in its own describe below).
 describe('branches off and keeps the default branch current', () => {
 	const root = join(testDir, 'default-branch');
 	const bare = join(root, 'bare.git');
@@ -276,7 +278,7 @@ describe('branches off and keeps the default branch current', () => {
 		expect(existsSync(join(worktreePath, 'mainline.txt'))).toBe(true);
 	});
 
-	it('leaves a resumed worktree untouched when main advances (no auto-merge)', async () => {
+	it('reuses a resumed worktree as-is — ensureTaskWorktree alone does not merge trunk', async () => {
 		const worktreePath = join(root, 'worktrees', 'DB-2', 'todos');
 		const created = await ensureTaskWorktree(
 			exec,
@@ -301,7 +303,8 @@ describe('branches off and keeps the default branch current', () => {
 		);
 		expect(resumed.success).toBe(true);
 		expect(resumed.created).toBe(false);
-		// The system does NOT merge main in — the worktree is exactly where the agent left it.
+		// ensureTaskWorktree reuses the existing checkout verbatim; catching it up to
+		// advanced trunk is mergeDefaultIntoWorktree's job (tested below).
 		expect(sha(worktreePath)).toBe(agentTip);
 		expect(existsSync(join(worktreePath, 'mainline2.txt'))).toBe(false);
 	});
@@ -319,5 +322,131 @@ describe('branches off and keeps the default branch current', () => {
 		const warn = await fastForwardLocalDefault(exec, repoLoc(repoDir));
 		expect(warn).toBeUndefined();
 		expect(sha(repoDir, `refs/heads/${def}`)).toBe(remoteTip);
+	});
+});
+
+// On a resumed run the runtime catches the task worktree up to the freshly-fetched
+// trunk (mergeDefaultIntoWorktree) so the agent starts from current main without
+// merging by hand: a fast-forward when the branch is commitless, else a merge
+// commit; a dirty tree is skipped and a conflicting merge is aborted, leaving the
+// branch where the agent left it.
+describe('mergeDefaultIntoWorktree catches a resumed worktree up to trunk', () => {
+	const root = join(testDir, 'catch-up');
+	const bare = join(root, 'bare.git');
+	const repoDir = join(root, 'workspace', 'todos');
+	const pusher = join(root, 'pusher');
+
+	function advanceMain(file: string, content: string, message: string) {
+		writeFileSync(join(pusher, file), content);
+		run('git add .', pusher);
+		run(`git commit -m ${message}`, pusher);
+		run('git push', pusher);
+		run('git fetch --all --prune', repoDir);
+	}
+
+	// A worktree on its own task branch, cut from the current trunk tip — what a
+	// prior run leaves behind for this run to resume.
+	async function resumedWorktree(branch: string): Promise<string> {
+		const worktreePath = join(root, 'worktrees', branch.replace('/', '+'), 'todos');
+		const res = await ensureTaskWorktree(exec, repoLoc(repoDir), wtLoc(worktreePath), branch);
+		expect(res.success).toBe(true);
+		return worktreePath;
+	}
+
+	beforeAll(() => {
+		mkdirSync(join(root, 'workspace'), { recursive: true });
+		run(`git init --bare ${bare}`);
+		run(`git clone ${bare} ${pusher}`);
+		configure(pusher, 'pusher');
+		writeFileSync(join(pusher, 'README.md'), 'init\n');
+		run('git add .', pusher);
+		run('git commit -m init', pusher);
+		run('git push', pusher);
+		run(`git clone ${bare} ${repoDir}`);
+		configure(repoDir, 'agent');
+	});
+
+	it('fast-forwards a commitless branch to the advanced trunk', async () => {
+		const worktreePath = await resumedWorktree('hezo/CU-1');
+		advanceMain('ff.txt', 'fast forward\n', 'advance-ff');
+		const remoteTip = sha(repoDir, 'refs/remotes/origin/HEAD');
+
+		const res = await mergeDefaultIntoWorktree(exec, repoLoc(repoDir), wtLoc(worktreePath));
+		expect(res.merged).toBe(true);
+		expect(res.warning).toBeUndefined();
+		expect(sha(worktreePath)).toBe(remoteTip);
+		expect(existsSync(join(worktreePath, 'ff.txt'))).toBe(true);
+	});
+
+	it('records a merge commit when the branch carries its own commits', async () => {
+		const worktreePath = await resumedWorktree('hezo/CU-2');
+		writeFileSync(join(worktreePath, 'feature-a.txt'), 'agent A\n');
+		run('git add .', worktreePath);
+		run('git commit -m feature-a', worktreePath);
+		const agentTip = sha(worktreePath);
+
+		advanceMain('feature-b.txt', 'main B\n', 'advance-b');
+
+		const res = await mergeDefaultIntoWorktree(exec, repoLoc(repoDir), wtLoc(worktreePath));
+		expect(res.merged).toBe(true);
+		// Both the agent's file and the new trunk file land.
+		expect(existsSync(join(worktreePath, 'feature-a.txt'))).toBe(true);
+		expect(existsSync(join(worktreePath, 'feature-b.txt'))).toBe(true);
+		// HEAD is a merge commit (two parents) and the agent's commit is in history.
+		const parents = execSync('git rev-list --parents -n1 HEAD', { cwd: worktreePath })
+			.toString()
+			.trim()
+			.split(/\s+/);
+		expect(parents).toHaveLength(3);
+		expect(parents).toContain(agentTip);
+	});
+
+	it('is a no-op when the branch already contains trunk', async () => {
+		advanceMain('precreate.txt', 'pre\n', 'advance-pre');
+		// Cut off the just-advanced trunk → already current.
+		const worktreePath = await resumedWorktree('hezo/CU-3');
+		const before = sha(worktreePath);
+
+		const res = await mergeDefaultIntoWorktree(exec, repoLoc(repoDir), wtLoc(worktreePath));
+		expect(res.merged).toBe(false);
+		expect(res.warning).toBeUndefined();
+		expect(sha(worktreePath)).toBe(before);
+	});
+
+	it('skips (and warns) when the worktree has uncommitted changes', async () => {
+		const worktreePath = await resumedWorktree('hezo/CU-4');
+		const before = sha(worktreePath);
+		writeFileSync(join(worktreePath, 'dirty.txt'), 'uncommitted\n');
+
+		advanceMain('main-while-dirty.txt', 'main\n', 'advance-dirty');
+
+		const res = await mergeDefaultIntoWorktree(exec, repoLoc(repoDir), wtLoc(worktreePath));
+		expect(res.merged).toBe(false);
+		expect(res.warning).toMatch(/uncommitted/);
+		expect(sha(worktreePath)).toBe(before);
+		// The dirty file is untouched and still a pending change.
+		expect(existsSync(join(worktreePath, 'dirty.txt'))).toBe(true);
+		expect(execSync('git status --porcelain', { cwd: worktreePath }).toString()).toContain(
+			'dirty.txt',
+		);
+	});
+
+	it('aborts a conflicting merge and leaves the branch where the agent left it', async () => {
+		const worktreePath = await resumedWorktree('hezo/CU-5');
+		// Agent and trunk add the same file divergently → an add/add conflict.
+		writeFileSync(join(worktreePath, 'conflict.txt'), 'agent version\n');
+		run('git add .', worktreePath);
+		run('git commit -m agent-conflict', worktreePath);
+		const agentTip = sha(worktreePath);
+
+		advanceMain('conflict.txt', 'main version\n', 'advance-conflict');
+
+		const res = await mergeDefaultIntoWorktree(exec, repoLoc(repoDir), wtLoc(worktreePath));
+		expect(res.merged).toBe(false);
+		expect(res.warning).toMatch(/could not merge/);
+		// Aborted: HEAD back at the agent tip, clean tree, no conflict markers.
+		expect(sha(worktreePath)).toBe(agentTip);
+		expect(execSync('git status --porcelain', { cwd: worktreePath }).toString().trim()).toBe('');
+		expect(readFileSync(join(worktreePath, 'conflict.txt'), 'utf-8')).not.toContain('<<<<<<<');
 	});
 });

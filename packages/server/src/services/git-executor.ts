@@ -93,15 +93,18 @@ export class ContainerGitExecutor implements GitExecutor {
 	 * Build a container executor for repo/worktree prep. The bridge's in-container
 	 * socket is exported as `SSH_AUTH_SOCK` so wrapped clone/fetch can authenticate;
 	 * `GIT_TERMINAL_PROMPT=0` stops git from ever blocking on a credential prompt.
-	 * Prep creates no commits, so no author identity is needed here — the agent's
-	 * own in-container commits carry that separately.
+	 * Most prep ops create no commits, but the worktree catch-up
+	 * (`mergeDefaultIntoWorktree`) can record a merge commit — so worktree-building
+	 * callers pass the team's git identity (+ signing) via `extraEnv` (the
+	 * `GIT_CONFIG_*` entries from `buildGitIdentityEnv`); other callers omit it.
 	 */
 	static forPrep(
 		docker: DockerClient,
 		containerId: string,
 		bridge: BridgeRunnerArgs | null,
+		extraEnv: string[] = [],
 	): ContainerGitExecutor {
-		const baseEnv = ['GIT_TERMINAL_PROMPT=0'];
+		const baseEnv = ['GIT_TERMINAL_PROMPT=0', ...extraEnv];
 		if (bridge) baseEnv.push(`SSH_AUTH_SOCK=${bridge.socketPath}`);
 		return new ContainerGitExecutor(docker, containerId, { baseEnv, bridge });
 	}

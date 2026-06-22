@@ -50,6 +50,7 @@ import {
 	fastForwardLocalDefault,
 	fetchRepo,
 	getWorktreeHead,
+	mergeDefaultIntoWorktree,
 	type RepoLoc,
 	type WorktreeLoc,
 	worktreeHasChanges,
@@ -1198,7 +1199,20 @@ async function prepareWorktrees(
 	return withProjectGitLock(project.id, async () => {
 		// All git runs inside the project container; the host only does the bind-mount
 		// filesystem checks. SSH-transport ops authenticate through the run's bridge.
-		const executor = ContainerGitExecutor.forPrep(deps.docker, project.container_id, bridge);
+		// The team's git identity (+ signing) is passed so the worktree catch-up merge
+		// can record a (verified) merge commit; the run team owns this, matching the
+		// agent's own in-container commits.
+		const gitIdentityEnv = await buildGitIdentityEnv(
+			deps.db,
+			deps.masterKeyManager,
+			project.team_id,
+		);
+		const executor = ContainerGitExecutor.forPrep(
+			deps.docker,
+			project.container_id,
+			bridge,
+			gitIdentityEnv,
+		);
 
 		emitSystem('stdout', '(syncing repos...)');
 		const syncRes = await ensureProjectRepos(
@@ -1252,7 +1266,8 @@ async function prepareWorktrees(
 			}
 
 			// Keep the clone's local default branch (the "main codebase") current with
-			// the remote. Always conflict-free; the agent reconciles its own worktree.
+			// the remote — a clean fast-forward, since the clone holds no local commits
+			// on its default.
 			const ffWarn = await fastForwardLocalDefault(executor, repoLoc);
 			if (ffWarn) emitSystem('stderr', `${repoName}: ${ffWarn}`);
 
@@ -1261,8 +1276,20 @@ async function prepareWorktrees(
 			if (!wt.success) {
 				worktreeErrors.set(repo.id, wt.error ?? 'unknown');
 				emitSystem('stderr', `git worktree for ${repoName} failed: ${wt.error ?? 'unknown'}`);
-			} else if (wt.created) {
-				emitSystem('stdout', `git worktree add ${repoName} @ ${branchName}`);
+			} else {
+				if (wt.created) {
+					emitSystem('stdout', `git worktree add ${repoName} @ ${branchName}`);
+				}
+				// Catch the task branch up to the freshly-fetched trunk so a resumed run
+				// starts from current default instead of forcing the agent to merge by
+				// hand. A merge failure is non-fatal — the worktree is still usable and
+				// the agent reconciles — so it never enters worktreeErrors.
+				const caughtUp = await mergeDefaultIntoWorktree(executor, repoLoc, wtLocOf(repoName));
+				if (caughtUp.warning) {
+					emitSystem('stderr', `${repoName}: ${caughtUp.warning}`);
+				} else if (caughtUp.merged) {
+					emitSystem('stdout', `${repoName}: caught up ${branchName} to origin default`);
+				}
 			}
 		}
 
