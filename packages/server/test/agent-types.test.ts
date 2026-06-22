@@ -74,20 +74,19 @@ describe('agent types CRUD', () => {
 		expect(qa.system_prompt_template).toContain('Exclusive test-runner slot per ticket');
 	});
 
-	it('engineer prompt directs self-merging each phase and auto-proceeding, with final QA on the main ticket', async () => {
+	it('engineer prompt directs one-branch/one-PR phased work, auto-proceeding, with final QA on the main ticket', async () => {
 		const res = await app.request('/api/agent-types', {
 			headers: authHeader(token),
 		});
 		const types = (await res.json()).data;
 
 		const engineer = types.find((t: any) => t.slug === 'engineer');
-		// Each completed phase is merged by the Engineer itself...
+		// Every phase builds onto one branch + one PR — no per-phase merges to default...
+		expect(engineer.system_prompt_template).toContain('One branch, one PR');
+		// ...the Engineer auto-proceeds rather than waiting to be asked, and never hands off early...
+		expect(engineer.system_prompt_template).toContain('immediately proceed to the next phase');
 		expect(engineer.system_prompt_template).toContain(
-			'Merge each phase, then move straight to the next',
-		);
-		// ...it auto-proceeds rather than waiting to be asked, and never hands off early...
-		expect(engineer.system_prompt_template).toContain(
-			'never hand off to QA until every phase is merged',
+			'never hand off to QA until every phase is on the branch',
 		);
 		// ...but the whole feature still goes to QA once, via the main ticket.
 		expect(engineer.system_prompt_template).toContain('main ticket is the single QA handoff');

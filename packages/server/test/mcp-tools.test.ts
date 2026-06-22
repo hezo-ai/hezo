@@ -644,6 +644,7 @@ describe('MCP endpoint: tool call integration', () => {
 			status: 'in_progress',
 		});
 		expect(result.error).toMatch(/scoped to its own ticket/i);
+		expect(result.error).toMatch(/must not start doing its work/i);
 		expect(result.status).toBeUndefined();
 
 		const row = await db.query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [
