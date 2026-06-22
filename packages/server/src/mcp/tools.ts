@@ -18,6 +18,7 @@ import {
 	DEFAULT_TEAM_ID,
 	DocumentType,
 	extensionOf,
+	extractBacktickedMentionCandidates,
 	getConnectorCapability,
 	isAgentAuthorableAssetMime,
 	isMarkdownDocSlug,
@@ -177,6 +178,114 @@ async function buildUnlinkedMentionWarning(
 		`ticket, post a follow-up using an active mention (${fixes}); if you were only ` +
 		`referring to them, use the passive form (@@${offenders[0]}).`
 	);
+}
+
+/**
+ * Returns a warning when markdown wraps an *existing* Hezo reference in inline
+ * backticks — which renders it as inert code instead of a link — or null when
+ * nothing is amiss. Only references that would actually resolve (a real task in
+ * this team, a project doc/skill, an asset in this project, or a teammate in
+ * this team or HQ) are flagged, so genuine code spans — repo paths, package
+ * names, `UTF-8` — never trip it. This mirrors the renderer, which links a
+ * reference only when it resolves. Best-effort and non-blocking, exactly like
+ * buildUnlinkedMentionWarning.
+ */
+async function buildBacktickedEntityWarning(
+	db: PGlite,
+	teamId: string,
+	projectId: string,
+	content: string,
+): Promise<string | null> {
+	const candidates = extractBacktickedMentionCandidates(content);
+	if (
+		candidates.tasks.length === 0 &&
+		candidates.filenames.length === 0 &&
+		candidates.assets.length === 0 &&
+		candidates.agents.length === 0
+	) {
+		return null;
+	}
+
+	const refs: string[] = [];
+	let hasAgents = false;
+
+	if (candidates.agents.length > 0) {
+		const r = await db.query<{ slug: string }>(
+			`SELECT ma.slug FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE (m.team_id = $1 OR m.team_id = $2) AND LOWER(ma.slug) = ANY($3::text[])`,
+			[teamId, DEFAULT_TEAM_ID, candidates.agents],
+		);
+		for (const row of r.rows) {
+			refs.push(`@${row.slug}`);
+			hasAgents = true;
+		}
+	}
+
+	if (candidates.tasks.length > 0) {
+		const r = await db.query<{ identifier: string }>(
+			`SELECT identifier FROM tasks WHERE team_id = $1 AND LOWER(identifier) = ANY($2::text[])`,
+			[teamId, candidates.tasks],
+		);
+		for (const row of r.rows) refs.push(row.identifier);
+	}
+
+	if (candidates.filenames.length > 0) {
+		const docs = await db.query<{ slug: string }>(
+			`SELECT slug FROM documents
+			 WHERE type = 'project_doc' AND project_id = $1 AND slug = ANY($2::text[])`,
+			[projectId, candidates.filenames],
+		);
+		for (const row of docs.rows) refs.push(row.slug);
+		const kb = await db.query<{ slug: string }>(
+			`SELECT slug FROM skills WHERE LOWER(slug) = ANY($1::text[])`,
+			[candidates.filenames.map((f) => f.toLowerCase())],
+		);
+		for (const row of kb.rows) refs.push(row.slug);
+	}
+
+	if (candidates.assets.length > 0) {
+		const r = await db.query<{ original_filename: string }>(
+			`SELECT original_filename FROM assets
+			 WHERE project_id = $1 AND original_filename = ANY($2::text[])`,
+			[projectId, candidates.assets],
+		);
+		for (const row of r.rows) refs.push(`assets/${row.original_filename}`);
+	}
+
+	if (refs.length === 0) return null;
+	const deduped = Array.from(new Set(refs));
+	const wrapped = deduped.map((ref) => `\`${ref}\``).join(', ');
+	const bare = deduped.join(', ');
+	return (
+		`You wrapped existing Hezo reference(s) in backticks — ${wrapped} — so they render as ` +
+		`inert code instead of links. Re-post with each written bare (no backticks) so it becomes ` +
+		`a clickable link, exactly as in a comment: ${bare}.` +
+		(hasAgents
+			? ' For a teammate, @<slug> also wakes them on this ticket; use @@<slug> to refer without notifying.'
+			: '')
+	);
+}
+
+/**
+ * Attach a backticked-entity warning, computed over `content`, to a write
+ * result when the caller is an agent. The check is advisory: failures are
+ * swallowed and never block the already-persisted write.
+ */
+async function withBacktickWarning<T extends object>(
+	db: PGlite,
+	auth: AuthInfo,
+	teamId: string,
+	projectId: string,
+	content: string | undefined,
+	result: T,
+): Promise<T | (T & { warning: string })> {
+	if (auth.type !== AuthType.Agent || !content) return result;
+	const warning = await buildBacktickedEntityWarning(db, teamId, projectId, content).catch((e) => {
+		log.error('Failed to check for backticked entity references:', e);
+		return null;
+	});
+	return warning ? { ...result, warning } : result;
 }
 
 /** Flag an agent run as having produced output. Idempotent and self-contained. */
@@ -754,8 +863,9 @@ export function registerTools(
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const caller = await buildMcpCreateTaskCaller(db, auth, scope.teamId);
+			let created: Awaited<ReturnType<typeof createTask>>;
 			try {
-				return await createTask(
+				created = await createTask(
 					db,
 					scope.teamId,
 					mcpArgsToCreateTaskInput(args, scope.projectId),
@@ -767,6 +877,14 @@ export function registerTools(
 				if (e instanceof CreateTaskError) return { error: e.message };
 				throw e;
 			}
+			return withBacktickWarning(
+				db,
+				auth,
+				scope.teamId,
+				scope.projectId,
+				args.description as string | undefined,
+				created,
+			);
 		},
 		db,
 	);
@@ -819,13 +937,31 @@ export function registerTools(
 			const items = args.items as Array<Record<string, unknown>>;
 			const caller = await buildMcpCreateTaskCaller(db, auth, scope.teamId);
 
-			return createTaskBatch(
+			const results = await createTaskBatch(
 				db,
 				scope.teamId,
 				items.map((item) => mcpArgsToCreateTaskInput(item, scope.projectId)),
 				caller,
 				wsManager,
 				events,
+			);
+			if (auth.type !== AuthType.Agent) return results;
+			// Per-item advisory: flag a created task whose own description backticked
+			// a real entity. Keyed by the result index back to the source item.
+			return Promise.all(
+				results.map(async (r) => {
+					if (!r.ok) return r;
+					const description = items[r.index]?.description;
+					const task = await withBacktickWarning(
+						db,
+						auth,
+						scope.teamId,
+						scope.projectId,
+						typeof description === 'string' ? description : undefined,
+						r.task,
+					);
+					return { ...r, task };
+				}),
 			);
 		},
 		db,
@@ -1013,7 +1149,17 @@ export function registerTools(
 				}
 			}
 
-			return r.rows[0];
+			const updatedText = [args.description, args.progress_summary, args.rules]
+				.filter((v): v is string => typeof v === 'string')
+				.join('\n');
+			return withBacktickWarning(
+				db,
+				auth,
+				teamId,
+				scope.projectId,
+				updatedText || undefined,
+				r.rows[0],
+			);
 		},
 		db,
 	);
@@ -1644,15 +1790,20 @@ export function registerTools(
 			// author so they can re-post with the proper mention; never block the
 			// already-persisted comment on this check.
 			if (authorMemberId) {
-				const warning = await buildUnlinkedMentionWarning(
-					db,
-					teamId,
-					authorMemberId,
-					args.content as string,
-				).catch((e) => {
-					log.error('Failed to check comment for unlinked teammate references:', e);
-					return null;
-				});
+				const commentText = args.content as string;
+				const [teammateWarning, backtickWarning] = await Promise.all([
+					buildUnlinkedMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
+						log.error('Failed to check comment for unlinked teammate references:', e);
+						return null;
+					}),
+					buildBacktickedEntityWarning(db, teamId, scope.projectId, commentText).catch((e) => {
+						log.error('Failed to check comment for backticked entity references:', e);
+						return null;
+					}),
+				]);
+				const warning = [teammateWarning, backtickWarning]
+					.filter((w): w is string => Boolean(w))
+					.join(' ');
 				if (warning) return { ...r.rows[0], warning };
 			}
 			return r.rows[0];

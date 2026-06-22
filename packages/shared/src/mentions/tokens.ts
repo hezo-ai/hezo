@@ -123,6 +123,61 @@ export function extractMentionCandidates(value: string): MentionCandidates {
 	};
 }
 
+/**
+ * The inverse of {@link extractMentionCandidates}: pulls resolvable references
+ * that are wrapped in *inline code* (and therefore render inert) instead of from
+ * the surrounding prose. Fenced and indented code blocks are excluded — those
+ * are genuine code samples — so only single-backtick spans are scanned. Used to
+ * warn an author that an existing entity they backticked would have linked if
+ * written bare. Admin is excluded to match the {@link MentionCandidates}
+ * contract; bare names inside backticks (no `@`/`@@`) are not mentions and never
+ * surface, exactly as the renderer treats them.
+ */
+export function extractBacktickedMentionCandidates(value: string): MentionCandidates {
+	// Drop fenced blocks first (same shapes stripCode blanks), then walk only the
+	// inner text of inline code spans — the segments stripCode would erase.
+	const withoutFences = value.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, ' ');
+	const tasks = new Set<string>();
+	const filenames = new Set<string>();
+	const assets = new Set<string>();
+	const agents = new Set<string>();
+	const spanRe = /`([^`]+)`/g;
+	let span = spanRe.exec(withoutFences);
+	while (span !== null) {
+		const re = buildMentionRegex();
+		let m = re.exec(span[1]);
+		while (m !== null) {
+			const token = parseMentionMatch(m);
+			switch (token.kind) {
+				case 'task':
+					tasks.add(token.identifier);
+					break;
+				case 'comment':
+					tasks.add(token.taskIdentifier);
+					break;
+				case 'filename':
+					filenames.add(token.filename);
+					break;
+				case 'asset':
+					assets.add(token.filename);
+					break;
+				case 'agent':
+				case 'passive_agent':
+					if (token.slug !== ADMIN_MENTION_SLUG) agents.add(token.slug);
+					break;
+			}
+			m = re.exec(span[1]);
+		}
+		span = spanRe.exec(withoutFences);
+	}
+	return {
+		tasks: Array.from(tasks),
+		filenames: Array.from(filenames),
+		assets: Array.from(assets),
+		agents: Array.from(agents),
+	};
+}
+
 export function extractTaskCandidates(value: string): string[] {
 	const stripped = stripCode(value);
 	const re = new RegExp(TASK_RE_SRC, 'g');
