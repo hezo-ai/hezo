@@ -11,6 +11,7 @@ import { useRunLogs } from '../../hooks/use-run-logs';
 import { agentPageParams } from '../agent-link';
 import { LazyMount } from '../lazy-mount';
 import { LogViewer } from '../log-viewer';
+import { useOpenPreview } from '../task-detail/preview-context';
 import { TerminateRunButton } from '../terminate-run-button';
 import { Tooltip } from '../ui/tooltip';
 import type { CommentDataOf } from './comment-data';
@@ -99,6 +100,9 @@ function RunCommentBody({
 			: null;
 	const [expanded, setExpanded] = useState(false);
 	const logRegionId = `run-comment-log-${runId}`;
+	// On a surface that hosts the preview panel (task detail), an updated-doc link
+	// opens the doc in the panel; elsewhere it falls back to the documents page.
+	const openPreview = useOpenPreview();
 	// HQ agents link to their canonical page in the HQ project; others to this
 	// project. Falls back to the run's member id when an older comment lacks a slug.
 	const agentLinkParams = agentSlug
@@ -264,17 +268,37 @@ function RunCommentBody({
 			)}
 			{createdDocs.length > 0 && (
 				<div className="flex flex-col gap-1 pt-1" data-testid="run-comment-created-docs">
-					{createdDocs.map((doc) => (
-						<Link
-							key={doc.filename}
-							to="/projects/$projectId/documents"
-							params={{ projectId: doc.project_slug }}
-							search={{ file: doc.filename }}
-							className="text-xs text-info-soft-fg hover:underline self-start"
-						>
-							Updated {doc.filename}
-						</Link>
-					))}
+					{createdDocs.map((doc) =>
+						openPreview ? (
+							<button
+								key={doc.filename}
+								type="button"
+								onClick={() =>
+									openPreview({
+										kind: 'doc',
+										projectId: doc.project_slug,
+										projectSlug: doc.project_slug,
+										filename: doc.filename,
+									})
+								}
+								className="text-xs text-info-soft-fg hover:underline self-start text-left"
+								data-testid="run-comment-doc-link"
+							>
+								Updated {doc.filename}
+							</button>
+						) : (
+							<Link
+								key={doc.filename}
+								to="/projects/$projectId/documents"
+								params={{ projectId: doc.project_slug }}
+								search={{ file: doc.filename }}
+								className="text-xs text-info-soft-fg hover:underline self-start"
+								data-testid="run-comment-doc-link"
+							>
+								Updated {doc.filename}
+							</Link>
+						),
+					)}
 				</div>
 			)}
 			{createdSkills.length > 0 && (

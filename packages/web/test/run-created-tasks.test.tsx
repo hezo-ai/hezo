@@ -258,9 +258,9 @@ test('run comment header shows "started by …" chip when actor_name is set', as
 test('run comment links updated docs, skills, and proposed skills', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
 
-	const { findByTestId, router } = await renderApp({
+	const { findByTestId, findByText, user, router } = await renderApp({
 		initialPath: '/',
-		seed: async () => {
+		seed: async ({ apiBase, token }) => {
 			const ws = await seedWorkspace();
 			const captain = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
 			const project = await seedProject(ws, { name: 'Docs And Skills Project' });
@@ -268,6 +268,15 @@ test('run comment links updated docs, skills, and proposed skills', async () => 
 				title: 'Outputs Parent',
 				assignee_id: captain.id,
 			});
+
+			// Seed the real doc so the preview panel renders its body when opened.
+			const content = ['# Spec', '', 'An unmistakable spec body.'].join('\n');
+			const docRes = await apiBase(`/api/projects/${project.slug}/docs/spec.md`, {
+				method: 'PUT',
+				headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+				body: JSON.stringify({ content }),
+			});
+			if (!docRes.ok) throw new Error(`seed spec.md failed: ${docRes.status}`);
 
 			seeded.projectSlug = project.slug;
 			seeded.taskId = task.identifier.toLowerCase();
@@ -320,14 +329,20 @@ test('run comment links updated docs, skills, and proposed skills', async () => 
 
 	await findByTestId('run-comment', undefined, { timeout: 20_000 });
 
-	const docsSection = await findByTestId('run-comment-created-docs', undefined, {
+	// On the task-detail page (which hosts the preview panel) the updated-doc
+	// link is a button that opens the doc in the right-rail panel — not a link to
+	// the documents page.
+	const docLink = (await findByTestId('run-comment-doc-link', undefined, {
 		timeout: 20_000,
-	});
-	const docLink = docsSection.querySelector('a') as HTMLAnchorElement | null;
-	expect(docLink?.textContent).toBe('Updated spec.md');
-	expect(docLink?.getAttribute('href')).toBe(
-		`/projects/${seeded.projectSlug}/documents?file=spec.md`,
-	);
+	})) as HTMLButtonElement;
+	expect(docLink.tagName).toBe('BUTTON');
+	expect(docLink.textContent).toBe('Updated spec.md');
+
+	await user.click(docLink);
+
+	await findByTestId('preview-panel');
+	expect((await findByTestId('preview-panel-filename')).textContent).toBe('spec.md');
+	await findByText(/unmistakable spec body/i);
 
 	const skillsSection = await findByTestId('run-comment-created-skills');
 	const skillLinks = Array.from(skillsSection.querySelectorAll('a')) as HTMLAnchorElement[];
