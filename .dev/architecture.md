@@ -301,17 +301,20 @@ authenticates through the host ssh-agent; the container's baked-in `/etc/ssh/ssh
 verifies the host key. Cloning outside a run (container provision, repo link) uses a
 short-lived `withProvisionBridge`.
 
-The system performs only **conflict-free** git. Before building a worktree the runner fetches
-each clone, then **fast-forwards the clone's local default branch** (the "main codebase") to
-`origin/<default>` (resolved via `origin/HEAD` → fallback `main`/`master`) — a clean
-fast-forward when it's checked out, else an `update-ref`, since the clone never holds local
-commits on its default. A brand-new `hezo/<task>` branch is then created **off
-`origin/<default>`**, so every task starts from current trunk rather than the clone's
-drifted/detached HEAD. Resuming an existing worktree leaves it exactly as the agent left it —
-the system does **not** merge trunk into the task branch (that can conflict). Reconciling a
-worktree with advanced trunk is the **agent's** job (it runs `git merge main` and resolves
-conflicts itself; the role prompts instruct it to), so the runtime only guarantees the local
-default is current.
+Before building a worktree the runner fetches each clone, then **fast-forwards the clone's
+local default branch** (the "main codebase") to `origin/<default>` (resolved via `origin/HEAD`
+→ fallback `main`/`master`) — a clean fast-forward when it's checked out, else an `update-ref`,
+since the clone never holds local commits on its default. A brand-new `hezo/<task>` branch is
+created **off `origin/<default>`**, so every task starts from current trunk rather than the
+clone's drifted/detached HEAD. A **resumed** worktree is then **caught up to `origin/<default>`
+automatically** (`mergeDefaultIntoWorktree`): a fast-forward when the branch carries no commits
+of its own, otherwise a signed merge commit (the prep executor is given the team's git identity
+via `forPrep`'s `extraEnv` for this). The catch-up is conflict-safe — a worktree with
+uncommitted changes is skipped, and a conflicting merge is **aborted** (`git merge --abort`),
+leaving the branch exactly as the agent left it; both cases emit a `[system]` warning and never
+fail the run. Only that residual conflict/dirty case is the **agent's** job to reconcile (`git
+merge <default>`; the role prompts cover it). The catch-up runs before the run's pre-commit head
+is captured, so a pure catch-up with no agent work is not mistaken for produced output.
 
 **Success gate.** A clean exit (`exit_code = 0`) only counts as `succeeded` if the run
 **produced output** — `produced_output` is set by any write tool (and a post-run worktree

@@ -230,6 +230,72 @@ export async function fastForwardLocalDefault(
 		: `could not fast-forward ${def}: ${formatGitError(upd.stderr)}`;
 }
 
+/**
+ * Catches a task worktree up to the freshly-fetched `origin/<default>` so a
+ * resumed run starts from current trunk instead of forcing the agent to merge by
+ * hand. Fast-forwards when the branch carries no commits of its own; otherwise
+ * records a merge commit (which needs a git identity — supply it on the
+ * executor's env, e.g. `ContainerGitExecutor.forPrep`'s `extraEnv`). A brand-new
+ * branch already based on `origin/<default>` is a no-op.
+ *
+ * Safe by construction — never throws, every failure is a non-fatal warning:
+ * - returns early when no default branch resolves (empty remote) or when
+ *   `origin/<default>` is already an ancestor of HEAD (nothing to catch up);
+ * - skips a worktree with uncommitted/untracked changes, which a merge could
+ *   clobber, and warns instead;
+ * - on a conflicting (or otherwise failing) merge, runs `merge --abort` so the
+ *   branch is left exactly where the agent left it, and warns so the agent
+ *   reconciles by hand.
+ */
+export async function mergeDefaultIntoWorktree(
+	executor: GitExecutor,
+	repo: RepoLoc,
+	wt: WorktreeLoc,
+): Promise<{ merged: boolean; warning?: string }> {
+	const def = await getRemoteDefaultBranch(executor, repo);
+	if (!def) return { merged: false };
+	const cwd = wt.containerPath;
+
+	// Already contains origin/<default>: nothing to catch up. Exit 0 = ancestor
+	// (covers a brand-new branch just based on the advanced trunk); 1 = behind, so
+	// merge; anything else (e.g. 128 unresolvable rev) is an error — skip + warn.
+	const ancestor = await executor.exec(['merge-base', '--is-ancestor', `origin/${def}`, 'HEAD'], {
+		cwd,
+		timeout: 30_000,
+	});
+	if (ancestor.exitCode === 0) return { merged: false };
+	if (ancestor.exitCode !== 1) {
+		return {
+			merged: false,
+			warning: `could not compare with origin/${def}; skipping catch-up merge`,
+		};
+	}
+
+	// A merge refuses-or-clobbers against a dirty tree; leave the agent's
+	// uncommitted work untouched and let it reconcile.
+	const status = await executor.exec(['status', '--porcelain'], { cwd, timeout: 30_000 });
+	if (status.exitCode === 0 && status.stdout.trim().length > 0) {
+		return {
+			merged: false,
+			warning: `worktree has uncommitted changes; skipping catch-up merge of origin/${def}`,
+		};
+	}
+
+	const merge = await executor.exec(['merge', '--no-edit', `origin/${def}`], {
+		cwd,
+		timeout: 120_000,
+	});
+	if (merge.exitCode === 0) return { merged: true };
+
+	// Conflict or other failure: undo the half-applied merge so the branch is
+	// exactly where the agent left it (best-effort — proceed regardless).
+	await executor.exec(['merge', '--abort'], { cwd, timeout: 30_000 });
+	return {
+		merged: false,
+		warning: `could not merge origin/${def}: ${formatGitError(merge.stderr)}`,
+	};
+}
+
 export async function createWorktree(
 	executor: GitExecutor,
 	repo: RepoLoc,
