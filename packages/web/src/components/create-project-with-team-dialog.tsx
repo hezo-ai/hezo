@@ -24,6 +24,19 @@ interface CreateProjectWithTeamDialogProps {
 type Selection = { kind: 'template'; id: string } | { kind: 'team'; id: string } | null;
 
 /**
+ * Card highlight for the picked team type / source team. A selected card gets the
+ * app's "active" treatment — a bold inverse ring + filled tint (matching the
+ * project rail) — so the choice reads clearly at a glance; unselected cards keep
+ * the hairline border with a hover cue. The ring carries the signal regardless of
+ * hover, and `hover:border-inverse` stops a hovered selection from dimming.
+ */
+function cardStateClass(selected: boolean): string {
+	return selected
+		? 'border-inverse hover:border-inverse ring-2 ring-inverse bg-surface-2'
+		: 'hover:border-border-strong';
+}
+
+/**
  * Projects-primary "New project": each project owns its own team. Pick a team
  * type, name the project, describe it, then either create it straight away or
  * hand the brief to the CEO, who scopes it with you in HQ before it opens.
@@ -162,9 +175,7 @@ export function CreateProjectWithTeamDialog({
 												aria-pressed={selected}
 											>
 												<Card
-													className={`p-3 h-full transition-colors ${
-														selected ? 'border-inverse' : 'hover:border-border-strong'
-													}`}
+													className={`p-3 h-full transition-colors ${cardStateClass(selected)}`}
 												>
 													<h3 className="text-[14px] font-medium mb-1">{tpl.name}</h3>
 													{tpl.description && (
@@ -206,9 +217,7 @@ export function CreateProjectWithTeamDialog({
 												aria-pressed={selected}
 											>
 												<Card
-													className={`p-3 h-full transition-colors ${
-														selected ? 'border-inverse' : 'hover:border-border-strong'
-													}`}
+													className={`p-3 h-full transition-colors ${cardStateClass(selected)}`}
 												>
 													<h3 className="text-[14px] font-medium mb-1">{team.name}</h3>
 													<p className="text-[11px] text-text-2">
