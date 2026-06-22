@@ -123,6 +123,7 @@ All changes ship with tests that exercise functionality (not "code runs without 
 - Always `destroyTestContext()` in `afterAll` (resource leak otherwise).
 - Pure logic tests (crypto, parsing) can call functions directly.
 - GitHub OAuth/repo/SSH-key tests use the local simulator at `packages/server/test/helpers/github-sim.ts` — set `GITHUB_API_BASE_URL` and `GITHUB_OAUTH_BASE_URL` before the test context boots.
+- `HEZO_SKIP_DOCKER=1` swaps the real `DockerClient` for the in-process fake (`services/fake-docker.ts`) so suites (and the startup Docker preflight) run without a Docker daemon. It is wired into the test harnesses (`packages/web/vitest.config.ts`, the browser specs) and is **test/CI-only**. **Never expose it to users** — Docker is a hard prerequisite, so it must not appear in user-facing output (CLI/preflight messages, `docs/`, README, `--help`) or be documented as a supported way to run Hezo. Referencing it in code comments or `.dev/architecture.md` is fine; surfacing it to operators is not.
 
 ### Bun-native runtime rules
 

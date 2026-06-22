@@ -10,6 +10,8 @@ import { logger, setLogLevel } from './logger';
 import { canAuthAccessTeam, loadAdminAuth, verifyToken } from './middleware/auth';
 import type { ContainerLogStreamer } from './services/container-logs';
 import { setKeepOldContainers } from './services/containers';
+import { DockerClient } from './services/docker';
+import { evaluateDockerPreflight, formatDockerPreflightMessage } from './services/docker-preflight';
 import { getSharedImageBuildTracker } from './services/image-build-tracker';
 import type { LogStreamBroker } from './services/log-stream-broker';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
@@ -75,6 +77,19 @@ if (await runRestore()) {
 const config = parseConfig();
 setLogLevel(config.logLevel);
 setKeepOldContainers(config.keepOldContainers);
+
+// Docker is a hard prerequisite — every agent runs in a per-project container.
+// Detect a missing or unreachable daemon at launch and exit with actionable
+// guidance (install link / start instructions) rather than booting a server
+// that can't run a single agent. HEZO_SKIP_DOCKER swaps in the in-process fake
+// docker for UI/dev work and tests, so the gate is skipped when it is set.
+if (!process.env.HEZO_SKIP_DOCKER) {
+	const availability = await evaluateDockerPreflight(new DockerClient());
+	if (availability !== 'ok') {
+		log.error(`\n${formatDockerPreflightMessage(availability)}\n`);
+		process.exit(1);
+	}
+}
 
 /** Bumped on each module load so stale async startup completions are ignored after HMR. */
 let startupGeneration = 0;
