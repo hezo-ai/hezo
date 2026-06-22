@@ -69,21 +69,19 @@ export function ProjectSidebar() {
 			count: project?.open_task_count,
 			testId: 'project-sidebar-tasks',
 		},
-		// HQ (internal) exposes Documents for the chatbox memory doc, but not Assets.
+		// HQ (internal) exposes Documents (the chatbox memory doc) and Assets (where
+		// the CEO saves files it produces for the operator in chat); Budget and
+		// Settings stay hidden below.
 		{
 			to: '/projects/$projectId/documents',
 			params: projectParams,
 			label: 'Documents',
 		},
-		...(isInternal
-			? []
-			: [
-					{
-						to: '/projects/$projectId/assets',
-						params: projectParams,
-						label: 'Assets',
-					},
-				]),
+		{
+			to: '/projects/$projectId/assets',
+			params: projectParams,
+			label: 'Assets',
+		},
 		{
 			to: '/projects/$projectId/container',
 			params: projectParams,
