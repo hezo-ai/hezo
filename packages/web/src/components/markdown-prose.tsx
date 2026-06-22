@@ -67,8 +67,8 @@ export function MarkdownProse({
 	);
 	const { data: resolvedDocs } = useDocMentions(projectId ?? '', docCandidates);
 	const { data: instanceResolved } = useInstanceMentions(children, instance === true && !projectId);
-	// When the surface hosts a preview panel (task detail), doc/asset mentions open
-	// in it; otherwise they keep their new-tab links.
+	// When the surface hosts a preview panel (task detail), doc mentions open in it;
+	// asset mentions always open in a new tab regardless of surface.
 	const openPreview = useOpenPreview();
 
 	const agentsMap = useMemo<Map<string, AgentMentionData>>(() => {
@@ -127,7 +127,6 @@ export function MarkdownProse({
 		for (const a of source) {
 			m.set(a.filename, {
 				id: a.id,
-				contentType: a.content_type,
 				signedUrl: a.signed_url,
 				projectSlug: a.project_slug,
 			});
@@ -201,7 +200,6 @@ export function MarkdownProse({
 					'data-mention-doc-filename'?: string;
 					'data-mention-asset-project-slug'?: string;
 					'data-mention-asset-filename'?: string;
-					'data-mention-asset-content-type'?: string;
 					'data-mention-asset-url'?: string;
 					'data-mention-size'?: string;
 					'data-mention-updated-at'?: string;
@@ -246,7 +244,6 @@ export function MarkdownProse({
 								testId="doc-mention-link"
 								onClick={() =>
 									openPreview({
-										kind: 'doc',
 										projectId: docProject,
 										projectSlug: docProject,
 										filename: docFilename,
@@ -276,27 +273,6 @@ export function MarkdownProse({
 				const assetFilename = attrs['data-mention-asset-filename'];
 				const assetUrl = attrs['data-mention-asset-url'];
 				if (assetProject && assetFilename && mentionsEnabled) {
-					if (openPreview) {
-						return (
-							<PreviewMentionButton
-								testId="asset-mention-link"
-								onClick={() =>
-									openPreview({
-										kind: 'asset',
-										projectId: assetProject,
-										projectSlug: assetProject,
-										filename: assetFilename,
-										contentType: attrs['data-mention-asset-content-type'],
-										url: assetUrl,
-										size: Number(attrs['data-mention-size'] ?? 0) || undefined,
-										updatedAt: attrs['data-mention-updated-at'] || undefined,
-									})
-								}
-							>
-								{props.children}
-							</PreviewMentionButton>
-						);
-					}
 					if (assetUrl) {
 						return (
 							<DedicatedViewMention
@@ -471,9 +447,9 @@ function DedicatedViewMention({
 }
 
 /**
- * A doc/asset mention that opens in the in-page preview panel rather than a new
- * tab. No trailing external-link icon — the new-tab affordance lives on the panel
- * itself. Used only when a surface provides the preview context.
+ * A doc mention that opens in the in-page preview panel rather than a new tab. No
+ * trailing external-link icon — the new-tab affordance lives on the panel itself.
+ * Used only when a surface provides the preview context.
  */
 function PreviewMentionButton({
 	onClick,

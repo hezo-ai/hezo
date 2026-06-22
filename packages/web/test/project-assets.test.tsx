@@ -51,9 +51,9 @@ test('an asset can be deleted from the library', async () => {
 	await waitFor(() => expect(queryByText('remove-me.png')).toBeNull());
 });
 
-test('an assets/<name> reference in a task comment opens the preview panel instead of a new tab', async () => {
+test('an assets/<name> reference in a task comment opens in a new tab, not the preview panel', async () => {
 	let ctx!: { projectSlug: string; taskId: string };
-	const { container, findByTestId, user, router } = await renderApp({
+	const { container, findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -70,18 +70,22 @@ test('an assets/<name> reference in a task comment opens the preview panel inste
 		params: { projectId: ctx.projectSlug, taskId: ctx.taskId },
 	});
 
-	// In a task comment the asset mention is a button (opens the panel) with no
-	// trailing new-tab suffix link.
-	const link = await findByTestId('asset-mention-link', undefined, { timeout: 15_000 });
-	expect(link.tagName).toBe('BUTTON');
+	// The asset mention is an anchor that opens the signed URL in a new tab, with a
+	// trailing external-link icon — never the in-page preview panel.
+	const link = (await findByTestId('asset-mention-link', undefined, {
+		timeout: 15_000,
+	})) as HTMLAnchorElement;
+	expect(link.tagName).toBe('A');
 	expect(link.textContent).toContain('assets/login.png');
-	expect(container.querySelector('[data-testid="asset-mention-preview-link"]')).toBeNull();
+	expect(link.getAttribute('target')).toBe('_blank');
+	expect(link.getAttribute('href')).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
 
-	// The panel opens and exposes the signed-URL open-in-new-tab affordance.
-	await user.click(link);
-	const openTab = (await findByTestId('preview-open-tab')) as HTMLAnchorElement;
-	expect(openTab.getAttribute('href')).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
-	expect(openTab.getAttribute('target')).toBe('_blank');
+	// The trailing external-link icon points at the same signed URL.
+	const icon = (await findByTestId('asset-mention-preview-link')) as HTMLAnchorElement;
+	expect(icon.getAttribute('href')).toBe(link.getAttribute('href'));
+
+	// Assets no longer route through the in-page preview panel.
+	expect(container.querySelector('[data-testid="preview-panel"]')).toBeNull();
 });
 
 test('uploading a file through the picker adds it to the library', async () => {

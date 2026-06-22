@@ -17,16 +17,15 @@ interface PreviewPanelProps {
 }
 
 /**
- * Right-rail preview of a document or asset, opened by clicking its mention in a
- * task comment. Documents render their markdown inline; assets render by MIME
- * type (image / embeddable iframe), with a fallback for everything else. The
- * header carries an "open in new tab" affordance — the new-tab link that used to
- * sit on the mention itself moves here.
+ * Right-rail preview of a document, opened by clicking its mention in a task
+ * comment. The document's markdown renders inline. The header carries an "open in
+ * new tab" affordance — the new-tab link that used to sit on the mention itself
+ * moves here. (Asset mentions no longer open here — they link straight to a new
+ * tab.)
  */
 export function PreviewPanel({ item, onClose }: PreviewPanelProps) {
-	const isDoc = item.kind === 'doc';
-	const docQuery = useProjectDoc(item.projectId, isDoc ? item.filename : null);
-	const openUrl = isDoc ? docPreviewPath(item.projectSlug, item.filename) : (item.url ?? '');
+	const docQuery = useProjectDoc(item.projectId, item.filename);
+	const openUrl = docPreviewPath(item.projectSlug, item.filename);
 	const meta = formatBytes(item.size);
 
 	return (
@@ -42,18 +41,16 @@ export function PreviewPanel({ item, onClose }: PreviewPanelProps) {
 				>
 					{item.filename}
 				</span>
-				{openUrl && (
-					<a
-						href={openUrl}
-						target="_blank"
-						rel="noopener noreferrer"
-						className="inline-flex shrink-0 items-center gap-1 text-[11px] text-info-soft-fg hover:underline"
-						data-testid="preview-open-tab"
-					>
-						open in new tab
-						<ExternalLink className="h-3 w-3" />
-					</a>
-				)}
+				<a
+					href={openUrl}
+					target="_blank"
+					rel="noopener noreferrer"
+					className="inline-flex shrink-0 items-center gap-1 text-[11px] text-info-soft-fg hover:underline"
+					data-testid="preview-open-tab"
+				>
+					open in new tab
+					<ExternalLink className="h-3 w-3" />
+				</a>
 				<button
 					type="button"
 					onClick={onClose}
@@ -71,7 +68,7 @@ export function PreviewPanel({ item, onClose }: PreviewPanelProps) {
 				<PreviewBody
 					item={item}
 					docContent={docQuery.data?.content}
-					docLoading={isDoc && docQuery.isLoading}
+					docLoading={docQuery.isLoading}
 				/>
 			</div>
 		</aside>
@@ -87,41 +84,13 @@ function PreviewBody({
 	docContent?: string;
 	docLoading: boolean;
 }) {
-	if (item.kind === 'doc') {
-		if (docLoading) return <div className="p-3 text-[13px] text-text-3">Loading…</div>;
-		if (!docContent)
-			return <div className="p-3 text-[13px] text-text-3">No content to preview.</div>;
-		return (
-			<div className="p-3" data-testid="preview-doc-body">
-				<MarkdownProse projectId={item.projectId} projectSlug={item.projectSlug}>
-					{docContent}
-				</MarkdownProse>
-			</div>
-		);
-	}
-
-	const contentType = item.contentType ?? '';
-	if (!item.url) return <div className="p-3 text-[13px] text-text-3">No preview available.</div>;
-	if (contentType.startsWith('image/')) {
-		// biome-ignore lint/a11y/useAltText: filename is the best available description
-		return (
-			<img src={item.url} alt={item.filename} className="w-full" data-testid="preview-image" />
-		);
-	}
-	if (contentType === 'text/html' || contentType === 'application/pdf') {
-		return (
-			<iframe
-				src={item.url}
-				title={item.filename}
-				sandbox=""
-				className="h-[60vh] w-full bg-surface"
-				data-testid="preview-iframe"
-			/>
-		);
-	}
+	if (docLoading) return <div className="p-3 text-[13px] text-text-3">Loading…</div>;
+	if (!docContent) return <div className="p-3 text-[13px] text-text-3">No content to preview.</div>;
 	return (
-		<div className="p-3 text-[13px] text-text-3">
-			No inline preview for this file type — use “open in new tab”.
+		<div className="p-3" data-testid="preview-doc-body">
+			<MarkdownProse projectId={item.projectId} projectSlug={item.projectSlug}>
+				{docContent}
+			</MarkdownProse>
 		</div>
 	);
 }

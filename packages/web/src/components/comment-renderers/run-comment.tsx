@@ -337,7 +337,6 @@ function RunCommentBody({
 								type="button"
 								onClick={() =>
 									openPreview({
-										kind: 'doc',
 										projectId: doc.project_slug,
 										projectSlug: doc.project_slug,
 										filename: doc.filename,
