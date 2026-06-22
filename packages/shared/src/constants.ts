@@ -51,6 +51,13 @@ export const CHAT_HISTORY_LIMIT_MAX = 500;
 
 export const PROJECT_INTAKE_LABEL = 'project-intake';
 
+/**
+ * Canonical public documentation site entry point. The agent-facing manifest
+ * (`/SKILL.md`), `/llms.txt`, and the CEO prompt's docs pointer all reference
+ * this live URL rather than embedding the docs. Matches the link in README.md.
+ */
+export const HEZO_DOCS_URL = 'https://hezo.ai/docs/introduction';
+
 export const wsRoom = {
 	team: (id: string) => `team:${id}`,
 	agent: (id: string) => `agent:${id}`,

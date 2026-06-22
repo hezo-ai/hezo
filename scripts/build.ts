@@ -79,6 +79,7 @@ await Promise.all([
 		await run('packages/server', ['bun', 'run', 'build']);
 		await run('packages/server', ['bun', 'run', 'build:migrations']);
 		await run('packages/server', ['bun', 'run', 'build:agents']);
+		await run('packages/server', ['bun', 'run', 'build:docs']);
 	})(),
 	run('packages/web', ['bun', 'run', 'build']),
 ]);

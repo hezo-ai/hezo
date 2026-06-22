@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { HEZO_DOCS_URL } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
@@ -29,6 +30,8 @@ describe('GET /llms.txt', () => {
 		expect(text).toContain('> '); // blockquote summary
 		expect(text).toContain('/mcp');
 		expect(text).toContain('/SKILL.md');
+		// Docs section points at the live documentation site.
+		expect(text).toContain(HEZO_DOCS_URL);
 	});
 
 	it('uses the configured instance base URL when set', async () => {
@@ -57,5 +60,9 @@ describe('GET /SKILL.md', () => {
 		// Regular MCP tools still listed.
 		expect(text).toContain('list_teams');
 		expect(text).toContain('create_task');
+		// Points to the live docs site rather than inlining the docs.
+		expect(text).toContain(HEZO_DOCS_URL);
+		// The full docs are not embedded — SKILL.md stays the lean MCP manifest.
+		expect(text).not.toContain('# Hezo documentation');
 	});
 });

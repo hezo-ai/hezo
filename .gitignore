@@ -9,6 +9,7 @@ dist/
 .turbo/
 migrations-bundle.json
 agents-bundle.json
+docs-bundle.json
 static-bundle.json
 packages/server/src/generated/
 packages/server/static/

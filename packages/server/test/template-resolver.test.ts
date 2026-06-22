@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { DEFAULT_TEAM_ID } from '@hezo/shared';
+import { DEFAULT_TEAM_ID, HEZO_DOCS_URL } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
@@ -1251,5 +1251,31 @@ describe('cross-team chat resolution (crossTeam: true)', () => {
 		expect(result).toContain('## Project State');
 		expect(result).toContain('## Teammates');
 		expect(result).toContain(`- Project: \`${proj.rows[0].slug}\``);
+	});
+
+	// The CEO prompt's HEZO_DOCS marker: full docs in live chat, a pointer elsewhere.
+	const docsMarker = '<!-- HEZO_DOCS: docs injected here at runtime -->';
+
+	it('embeds the full bundled docs at the HEZO_DOCS marker when embedDocs is set', async () => {
+		const result = await resolveSystemPrompt(db, `Intro\n\n${docsMarker}\n\nOutro`, {
+			teamId,
+			embedDocs: true,
+		});
+		// Marker replaced by the organised docs block (header + real doc content).
+		expect(result).not.toContain('HEZO_DOCS');
+		expect(result).toContain('# Hezo documentation');
+		expect(result).toContain('### Installation');
+		expect(result).toContain(HEZO_DOCS_URL);
+	});
+
+	it('replaces the HEZO_DOCS marker with a live-docs pointer when embedDocs is not set', async () => {
+		const result = await resolveSystemPrompt(db, `Intro\n\n${docsMarker}\n\nOutro`, {
+			teamId,
+		});
+		expect(result).not.toContain('HEZO_DOCS');
+		expect(result).toContain(`Full Hezo product & API documentation: ${HEZO_DOCS_URL}`);
+		// The full docs are NOT inlined for headless runs.
+		expect(result).not.toContain('# Hezo documentation');
+		expect(result).not.toContain('### Installation');
 	});
 });
