@@ -225,6 +225,27 @@ describe('CeoSessionManager', () => {
 		await manager.stop();
 	});
 
+	test('the chat prompt steers file production, project scoping and off-project memory', async () => {
+		const chat = makeChatDocker(ctx.dataDir, projectId);
+		const { manager } = makeManager(ctx, chat.docker);
+
+		await manager.sendTurn({ text: 'whip up a quick demo for me' });
+		await poll(async () => chat.prompts.length >= 1);
+
+		const prompt = chat.prompts[0];
+		// Persist operator-facing deliverables to an assets library and link them,
+		// instead of dropping a loose /workspace file the operator can't reach.
+		expect(prompt).toContain('write_project_asset');
+		expect(prompt).toContain('assets/<filename>');
+		// Scope the deliverable to the relevant project, not HQ by default.
+		expect(prompt).toContain('the project the work belongs to');
+		// Off-project conversations get a rough summary in chat memory (they live
+		// nowhere else once the window scrolls).
+		expect(prompt).toContain('Summarize off-project conversations');
+
+		await manager.stop();
+	});
+
 	test('a new message interrupts the in-flight reply', async () => {
 		const chat = makeChatDocker(ctx.dataDir, projectId);
 		chat.scenario.mode = 'block';

@@ -199,6 +199,16 @@ project.
 - **Coach** — reviews completed tickets across **every** project to improve agent system
   prompts; woken on any task completion.
 
+HQ also exposes the standard **assets library** — the one internal-project surface that
+isn't hidden in the UI (Budget/Settings still are). Files the CEO produces for the operator
+in the live chat (a quick mockup, demo, or export) are saved via `write_project_asset` and
+linked back as `assets/<filename>`, so they are durable and openable over a signed URL rather
+than stranded as loose files in the container's `/workspace`. The CEO scopes such a
+deliverable (and any `write_project_doc` markdown) to **the project the work belongs to**,
+falling back to HQ only for work tied to no project; HQ's chat memory (`chat-memory.md`) also
+carries a rough running summary of those off-project conversations, since they live nowhere
+else once the chat window scrolls.
+
 **Project teams** are provisioned from a team-type template (default **Blank** = Captain
 only; `software-development` = Captain + 9 worker roles). Templates never include the
 CEO/Coach. The roster prose lives in `agents/<template>/`, the instance roles in

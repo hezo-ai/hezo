@@ -1,5 +1,4 @@
-import { HQ_PROJECT_SLUG } from '@hezo/shared';
-import { createFileRoute, redirect } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
 import {
 	Code,
 	ExternalLink,
@@ -328,14 +327,8 @@ export const Route = createFileRoute('/projects/$projectId/assets')({
 	validateSearch: (search: Record<string, unknown>): AssetsSearch => ({
 		file: typeof search.file === 'string' ? search.file : undefined,
 	}),
-	beforeLoad: ({ params }) => {
-		if (params.projectId === HQ_PROJECT_SLUG) {
-			throw redirect({
-				to: '/projects/$projectId/tasks',
-				params,
-				replace: true,
-			});
-		}
-	},
+	// HQ (the internal coordination project) exposes Assets too: it's where the
+	// CEO saves files it produces for the operator in chat (write_project_asset),
+	// so `assets/<filename>` references in the chat resolve to a real page.
 	component: ProjectAssetsPage,
 });

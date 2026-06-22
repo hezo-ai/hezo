@@ -28,6 +28,13 @@ place so references stay stable.
 Anywhere you write text in Hezo — a task, a comment, a document — you can point at an asset
 by writing `assets/<filename>` (for example `assets/login-mockup.png`).
 
+This is also how the **CEO** hands you files from the chat. When you ask the CEO to whip
+something up — a quick mockup, a diagram, a one-off HTML page — it saves the result to an
+assets library and links it back as `assets/<filename>`, so you can open it straight from the
+conversation rather than hunting for a file on a server you can't reach. The CEO files the
+deliverable with whichever **project** the conversation is about, falling back to HQ only when
+the work isn't tied to a project at all.
+
 ## HTML previews
 
 Assets aren't just stored — they're **previewable**. When an agent produces an HTML
