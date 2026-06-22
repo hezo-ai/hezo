@@ -121,4 +121,13 @@ describe('formatDockerPreflightMessage', () => {
 		expect(msg).toContain('Start Docker');
 		expect(msg).toContain(DOCKER_INSTALL_URL);
 	});
+
+	it('explains the security rationale (isolation / host protection) in both variants', () => {
+		for (const status of ['not-installed', 'not-running'] as const) {
+			const msg = formatDockerPreflightMessage(status);
+			expect(msg).toContain('isolated Docker containers');
+			expect(msg).toContain('security boundary');
+			expect(msg).toContain('host');
+		}
+	});
 });

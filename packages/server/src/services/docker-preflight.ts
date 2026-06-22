@@ -73,33 +73,48 @@ export async function evaluateDockerPreflight(
 }
 
 /**
+ * Why Docker is mandatory, shared by both failure messages: the container is a
+ * security sandbox, not just a packaging convenience. Agents run untrusted-ish
+ * code, so isolating them from the host is the whole point.
+ */
+const SANDBOX_RATIONALE = [
+	"Hezo runs each project's AI agents inside isolated Docker containers. That",
+	'sandbox is a security boundary: it keeps agents off your host so a buggy or',
+	"compromised agent can't reach your files, credentials, or wider network.",
+];
+
+const SKIP_HINT =
+	'For development without Docker (agents run in a no-op stub) set HEZO_SKIP_DOCKER=1.';
+
+/**
  * Human-facing guidance for a non-`ok` preflight result, printed to the log
- * right before the server exits. Includes the install link for the
- * not-installed case and start instructions for the not-running case.
+ * right before the server exits. Both variants explain *why* Docker is required
+ * (host isolation / security), then give the relevant next step: the install
+ * link when it's missing, start instructions when the daemon is just stopped.
  */
 export function formatDockerPreflightMessage(status: Exclude<DockerAvailability, 'ok'>): string {
 	if (status === 'not-installed') {
 		return [
 			'Docker is required to run Hezo, but it does not appear to be installed.',
 			'',
-			"Hezo runs each project's agents in an isolated Docker container, so a working",
-			'Docker installation is required. Install Docker, then start Hezo again:',
+			...SANDBOX_RATIONALE,
+			'Docker is required to provide that isolation — install it, then start Hezo again:',
 			'',
 			`  ${DOCKER_INSTALL_URL}`,
 			'',
-			'For development without Docker (agents run in a no-op stub) set HEZO_SKIP_DOCKER=1.',
+			SKIP_HINT,
 		].join('\n');
 	}
 	return [
 		'Docker is installed but the Docker daemon is not reachable.',
 		'',
-		"Hezo runs each project's agents in an isolated Docker container, so the Docker",
-		'daemon must be running. Start Docker Desktop, or on Linux run',
-		'`sudo systemctl start docker`, then start Hezo again.',
+		...SANDBOX_RATIONALE,
+		'The Docker daemon must be running to provide that isolation. Start Docker',
+		'Desktop, or on Linux run `sudo systemctl start docker`, then start Hezo again.',
 		'',
 		'If you just installed Docker, its docs cover starting it and post-install setup:',
 		`  ${DOCKER_INSTALL_URL}`,
 		'',
-		'For development without Docker (agents run in a no-op stub) set HEZO_SKIP_DOCKER=1.',
+		SKIP_HINT,
 	].join('\n');
 }
