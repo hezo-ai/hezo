@@ -48,7 +48,8 @@ do the work, and report up to the Captain.
 The chat is the control surface for the things that are awkward to click through:
 scoping work, reorganising a team, or changing how an agent behaves. State what you
 want in plain language; the CEO proposes the change and asks you to approve anything
-that matters. Standing preferences you ask it to remember persist, so you don't repeat
+that matters. Standing preferences you ask it to remember persist in the CEO's
+[chatbox memory](/docs/concepts/documents-and-memory#chatbox-memory), so you don't repeat
 yourself.
 
 ## Next

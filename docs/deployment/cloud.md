@@ -1,6 +1,6 @@
 ---
 title: Deploying to the cloud
-order: 18
+order: 20
 section: Deployment
 ---
 

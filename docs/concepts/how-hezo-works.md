@@ -47,6 +47,10 @@ with a model — and you can give any agent its own model. See
   oversee everything from **HQ**.
 - Work flows as **tasks** on a board, each with a description, optional rules, and a
   living progress summary.
+- Knowledge lives alongside the work: **documents** (markdown PRDs, specs, and research,
+  with version history) and an **assets** library (uploads and agent-generated files, with
+  HTML previews). See [Documents & long-term memory](/docs/concepts/documents-and-memory)
+  and [Assets & previews](/docs/concepts/assets).
 
 See [Projects & teams](/docs/concepts/projects-and-teams) and
 [Roles & the CEO](/docs/concepts/roles-and-coordination).
