@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { PGlite } from '@electric-sql/pglite';
 import type { SearchScope } from '@hezo/shared';
 import {
+	ADMIN_MENTION_SLUG,
 	ApprovalStatus,
 	ApprovalType,
 	ATTACHMENT_EXTENSIONS,
@@ -14,6 +15,7 @@ import {
 	CredentialInputType,
 	CredentialKind,
 	credentialKindRequiresAllowedHosts,
+	DEFAULT_TEAM_ID,
 	DocumentType,
 	extensionOf,
 	getConnectorCapability,
@@ -44,6 +46,7 @@ import {
 	wakeIfReady,
 	wouldCreateCycle,
 } from '../lib/dependencies';
+import { detectUnlinkedTeammateReferences } from '../lib/mentions';
 import {
 	actorTypeFromAuth,
 	connectedAgentIdFromAuth,
@@ -143,6 +146,37 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 /** A handler result that signals failure rather than a persisted write. */
 function isErrorResult(result: unknown): boolean {
 	return typeof result === 'object' && result !== null && 'error' in result;
+}
+
+/**
+ * Returns a warning string when a comment addresses a teammate by bold/bare name
+ * instead of a mention, or null when nothing is amiss. The author's own slug is
+ * excluded so a self-reference never warns; resolution mirrors the mention-wakeup
+ * scoping (the task's team plus the HQ instance agents) and includes @admin.
+ */
+async function buildUnlinkedMentionWarning(
+	db: PGlite,
+	teamId: string,
+	authorMemberId: string,
+	content: string,
+): Promise<string | null> {
+	const roster = await db.query<{ slug: string }>(
+		`SELECT ma.slug FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE (m.team_id = $1 OR m.team_id = $2) AND ma.id <> $3`,
+		[teamId, DEFAULT_TEAM_ID, authorMemberId],
+	);
+	const knownSlugs = [...roster.rows.map((r) => r.slug), ADMIN_MENTION_SLUG];
+	const offenders = detectUnlinkedTeammateReferences(content, knownSlugs);
+	if (offenders.length === 0) return null;
+	const named = offenders.map((s) => `**${s}**`).join(', ');
+	const fixes = offenders.map((s) => `@${s}`).join(', ');
+	return (
+		`You referenced teammate(s) ${named} by bold/plain name — that renders as text ` +
+		`and notifies no one, so no wakeup was created. If you need them to act on this ` +
+		`ticket, post a follow-up using an active mention (${fixes}); if you were only ` +
+		`referring to them, use the passive form (@@${offenders[0]}).`
+	);
 }
 
 /** Flag an agent run as having produced output. Idempotent and self-contained. */
@@ -1605,6 +1639,22 @@ export function registerTools(
 					wsManager,
 				).catch((e) => log.error('Failed to record task links from comment:', e)),
 			);
+			// An agent that addresses a teammate by bold/bare name (no @ prefix)
+			// notifies no one and the handoff silently stalls. Best-effort warn the
+			// author so they can re-post with the proper mention; never block the
+			// already-persisted comment on this check.
+			if (authorMemberId) {
+				const warning = await buildUnlinkedMentionWarning(
+					db,
+					teamId,
+					authorMemberId,
+					args.content as string,
+				).catch((e) => {
+					log.error('Failed to check comment for unlinked teammate references:', e);
+					return null;
+				});
+				if (warning) return { ...r.rows[0], warning };
+			}
 			return r.rows[0];
 		},
 		db,
