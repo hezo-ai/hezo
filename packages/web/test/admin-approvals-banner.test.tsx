@@ -37,7 +37,7 @@ test('banner surfaces pending approvals on the task list and links to the inbox'
 	});
 
 	const banner = await findByTestId('admin-approvals-banner', undefined, { timeout: 10_000 });
-	expect(banner.textContent).toContain('2 approvals need your review');
+	expect(banner.textContent).toContain('2 items need your attention');
 	expect(banner.getAttribute('href')).toContain(`/projects/${seeded.projectSlug}/inbox`);
 
 	await user.click(banner);
