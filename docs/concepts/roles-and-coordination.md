@@ -15,14 +15,16 @@ exactly one CEO, and it lives in [HQ](/docs/concepts/projects-and-teams#hq--the-
 so it can see and act across every project. You chat with the CEO to get things done
 across the whole instance:
 
-- **Intake** — describe a new project and the CEO scopes it and provisions the team
-  (see [Your first project](/docs/getting-started/first-project)).
+- **Intake** — describe a new project and the CEO scopes it with you, then provisions the
+  team once you've confirmed the plan (see
+  [Your first project](/docs/getting-started/first-project)). It won't create anything
+  until you give the go-ahead.
 - **Coordination** — ask about any project's status, tickets, or roster; the CEO
   works across every team.
 - **Setup review** — when a new team is created, the CEO runs a coherence check before
   the team starts planning, so the roster is aligned with the goal.
-- **Actioning changes** — hire new agents, adjust system prompts, and change settings,
-  all through the conversation. See
+- **Actioning changes** — hire new agents, retire ones a team no longer needs, adjust
+  system prompts, and change settings, all through the conversation. See
   [Hiring & customizing agents](/docs/concepts/hiring-and-agents).
 
 Because the CEO can make consequential changes, significant actions surface as
