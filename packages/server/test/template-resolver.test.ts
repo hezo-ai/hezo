@@ -234,6 +234,21 @@ describe('template resolver', () => {
 		expect(result).toContain('create_task');
 	});
 
+	it('tells every agent the run is headless and not to point the user at terminal/adapter commands', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		expect(result).toContain('### Your Run Is Headless');
+		// The execution model: the user cannot attach to or drive the adapter terminal.
+		expect(result).toContain('cannot attach to it');
+		expect(result).toContain('interactive/slash commands');
+		// Hezo (comments/chat/docs) is the only channel back to the operator.
+		expect(result).toContain('Hezo is the only channel to the user');
+		// The exact misfire from the live chat: telling the operator to watch progress via
+		// an adapter slash command they can't reach.
+		expect(result).toContain('Never tell the user to run a terminal or adapter command');
+		expect(result).toContain('watch it progress with `/workflows`');
+		expect(result).toContain('it does not control your run');
+	});
+
 	it('teaches that a status-phrased handoff (e.g. "ready for review") is an active-`@` ask', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		// A baton-passing line with no imperative verb still wakes the next actor —
