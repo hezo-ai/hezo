@@ -63,6 +63,21 @@ describe('invalidateQueriesForRowChange uses the queryKeys factory', () => {
 		expect(keys).toContainEqual(queryKeys.projects.skills(SLUG));
 	});
 
+	test('task_comments invalidates the task list (prefix-covers taskComments)', () => {
+		// task_comments maps to projects.tasks(cid); per the queryKeys factory that
+		// prefix also invalidates taskComments(cid, taskId) beneath it, so an
+		// incoming comment refetches the open thread.
+		const { client, keys } = recordingClient();
+		invalidateQueriesForRowChange(client, SLUG, 'task_comments', { task_id: 't1' });
+		expect(keys).toContainEqual(queryKeys.projects.tasks(SLUG));
+	});
+
+	test('comment_reactions invalidates the task list', () => {
+		const { client, keys } = recordingClient();
+		invalidateQueriesForRowChange(client, SLUG, 'comment_reactions', { task_id: 't1' });
+		expect(keys).toContainEqual(queryKeys.projects.tasks(SLUG));
+	});
+
 	test('unknown table is a no-op', () => {
 		const { client, keys } = recordingClient();
 		invalidateQueriesForRowChange(client, SLUG, 'nonexistent', {});

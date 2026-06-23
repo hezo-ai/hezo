@@ -108,6 +108,29 @@ export function invalidateQueriesForRowChange(
 	}
 }
 
+/**
+ * Resolve the project slug a row_change maps to, from the cached projects index.
+ *
+ * Prefers `row.project_id` — it resolves for *every* project, including the
+ * `is_internal` HQ project. Falls back to `row.team_id`, which maps a team-wide
+ * row to that team's user-facing (non-internal) project; that fallback can't
+ * resolve HQ. Comment-family rows (`task_comments` / `comment_reactions` /
+ * `comment_attachments`) have no `team_id` column, so they depend on the server
+ * setting `project_id` on the broadcast (see `broadcastCommentFamilyChange`).
+ */
+export function resolveProjectSlugForRow(
+	index: Project[],
+	row: Record<string, unknown>,
+): string | undefined {
+	const teamUuid = row.team_id as string | undefined;
+	const projectUuid = row.project_id as string | undefined;
+	const byProjectId = projectUuid ? index.find((p) => p.id === projectUuid) : undefined;
+	const teamUserProject = teamUuid
+		? index.find((p) => p.team_id === teamUuid && !p.is_internal)
+		: undefined;
+	return byProjectId?.slug ?? teamUserProject?.slug;
+}
+
 interface TeamRoom {
 	id: string;
 	slug: string;
@@ -163,16 +186,10 @@ export function useShellWebSockets(teams: TeamRoom[] | undefined): void {
 
 		const unsubscribe = subscribe(WsMessageType.RowChange, (msg) => {
 			const { table, row } = msg as WsRowChangeMessage;
-			const teamUuid = row.team_id as string | undefined;
-			const projectUuid = row.project_id as string | undefined;
 
 			// Resolve the project slug the change maps to from the cached index.
 			const index = queryClient.getQueryData<Project[]>(queryKeys.projects.all()) ?? [];
-			const byProjectId = projectUuid ? index.find((p) => p.id === projectUuid) : undefined;
-			const teamUserProject = teamUuid
-				? index.find((p) => p.team_id === teamUuid && !p.is_internal)
-				: undefined;
-			const cid = byProjectId?.slug ?? teamUserProject?.slug;
+			const cid = resolveProjectSlugForRow(index, row);
 
 			if (cid) {
 				invalidateQueriesForRowChange(queryClient, cid, table, row);
