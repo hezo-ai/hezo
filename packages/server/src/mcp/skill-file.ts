@@ -1,3 +1,5 @@
+import { HEZO_DOCS_URL } from '@hezo/shared';
+
 interface SkillTool {
 	name: string;
 	description: string;
@@ -41,6 +43,10 @@ export function generateSkillFile(tools: SkillTool[], opts: { baseUrl?: string }
 		'Binary files (images, PDFs, …) cannot be sent as a JSON-RPC tool call. Upload them with a `multipart/form-data` POST to `' +
 			base +
 			'/mcp/assets` (same Bearer auth) using a `file` field — add an optional `project` field to act across projects. The response returns the stored asset plus a signed read URL, and the file then shows up in `list_project_assets` / `read_project_asset`.',
+		'',
+		'## Documentation',
+		'',
+		`Full Hezo product & API documentation (concepts, setup, MCP, deployment) lives at ${HEZO_DOCS_URL}. This manifest covers the MCP surface; consult the docs site for everything else.`,
 		'',
 		'## Available Tools',
 		'',

@@ -503,6 +503,9 @@ export class CeoSessionManager {
 			dataDir: this.deps.dataDir,
 			mode: 'runtime',
 			crossTeam: true,
+			// Embed the full bundled docs so the CEO can answer setup/usage questions
+			// in live chat; headless CEO runs get only the live-docs pointer.
+			embedDocs: true,
 		});
 
 		const memoryDoc = await getDocument(this.deps.db, {

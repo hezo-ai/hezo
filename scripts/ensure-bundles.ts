@@ -17,6 +17,7 @@ const ROOT = resolve(import.meta.dir, '..');
 const BUNDLES = [
 	'packages/server/src/db/migrations-bundle.json',
 	'packages/server/src/db/agents-bundle.json',
+	'packages/server/src/services/docs-bundle.json',
 	'packages/server/src/static-bundle.json',
 ];
 

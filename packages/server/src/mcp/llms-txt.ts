@@ -4,6 +4,8 @@
  * the connect/register instructions. `baseUrl` makes the links absolute when
  * known (falls back to relative paths).
  */
+import { HEZO_DOCS_URL } from '@hezo/shared';
+
 export function generateLlmsTxt(opts: { baseUrl?: string } = {}): string {
 	const base = opts.baseUrl ?? '';
 	return [
@@ -19,8 +21,7 @@ export function generateLlmsTxt(opts: { baseUrl?: string } = {}): string {
 		'',
 		'## Docs',
 		'',
-		'- Human documentation lives in the Hezo repository under `docs/` — notably',
-		'  `docs/reference/cli.md` (CLI) and `docs/mcp/hezo-mcp-server.md` (MCP server).',
+		`- Full product & API documentation is published at [${HEZO_DOCS_URL}](${HEZO_DOCS_URL}).`,
 		'',
 	].join('\n');
 }

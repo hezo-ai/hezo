@@ -1,6 +1,14 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { CHAT_MEMORY_SLUG } from '@hezo/shared';
+import { CHAT_MEMORY_SLUG, HEZO_DOCS_URL } from '@hezo/shared';
 import { terminalStatusParams } from '../lib/sql';
+import { buildHezoDocsBlock } from './docs-bundle';
+
+/**
+ * The marker in `agents/_instance/ceo.md` where the product/API documentation is
+ * injected at runtime. The live CEO chat swaps in the full bundled docs; all
+ * other contexts get a one-line pointer to the live docs site.
+ */
+const HEZO_DOCS_MARKER = /<!--\s*HEZO_DOCS[\s\S]*?-->/;
 
 interface ResolveContext {
 	teamId: string;
@@ -16,6 +24,13 @@ interface ResolveContext {
 	 * pinning them to the home team (HQ) would misreport every other project.
 	 */
 	crossTeam?: boolean;
+	/**
+	 * Embed the full bundled documentation at the CEO prompt's `HEZO_DOCS` marker
+	 * (the live CEO chat). When false/omitted, the marker resolves to a short
+	 * pointer to the live docs site instead — used by headless CEO runs and
+	 * prompt previews, which don't need ~13k tokens of docs every turn.
+	 */
+	embedDocs?: boolean;
 }
 
 const SHARED_INSTRUCTIONS = `
@@ -294,6 +309,17 @@ export async function resolveSystemPrompt(
 	}
 
 	resolved = resolved.replace(/\{\{requester_context\}\}/g, '');
+
+	// Inject the docs at the CEO prompt's HEZO_DOCS marker. The live chat embeds
+	// the full bundled documentation so the CEO can answer setup/usage questions
+	// authoritatively; headless CEO runs and previews get a lightweight pointer to
+	// the live docs site instead of ~13k tokens of prose every turn.
+	if (HEZO_DOCS_MARKER.test(resolved)) {
+		const replacement = ctx.embedDocs
+			? await buildHezoDocsBlock()
+			: `Full Hezo product & API documentation: ${HEZO_DOCS_URL}`;
+		resolved = resolved.replace(HEZO_DOCS_MARKER, replacement);
+	}
 
 	if (ctx.mode === 'placeholders') {
 		return resolved;

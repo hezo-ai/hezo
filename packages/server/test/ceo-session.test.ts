@@ -246,6 +246,23 @@ describe('CeoSessionManager', () => {
 		await manager.stop();
 	});
 
+	test('the chat prompt embeds the full Hezo documentation at the HEZO_DOCS marker', async () => {
+		const chat = makeChatDocker(ctx.dataDir, projectId);
+		const { manager } = makeManager(ctx, chat.docker);
+
+		await manager.sendTurn({ text: 'how does Hezo work?' });
+		await poll(async () => chat.prompts.length >= 1);
+
+		const prompt = chat.prompts[0];
+		// The live chat resolves embedDocs:true, so the bundled docs are injected
+		// at the CEO prompt's HEZO_DOCS marker — not the inert marker comment.
+		expect(prompt).toContain('# Hezo documentation');
+		expect(prompt).toContain('### Installation');
+		expect(prompt).not.toContain('HEZO_DOCS:');
+
+		await manager.stop();
+	});
+
 	test('a new message interrupts the in-flight reply', async () => {
 		const chat = makeChatDocker(ctx.dataDir, projectId);
 		chat.scenario.mode = 'block';
