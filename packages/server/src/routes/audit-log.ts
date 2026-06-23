@@ -9,33 +9,21 @@ export const auditLogRoutes = new Hono<Env>();
 
 /**
  * Shared reader for the audit log. `scope` pins the base WHERE clause:
- * - team:     `team_id = :id` (with optional ?project_id= filter)
  * - project:  `project_id = :id`
- * - instance: no scope filter (every team + instance-level rows)
- * All three accept the same entity_type / action / from / to filters.
+ * - instance: no scope filter (every project + instance-level rows)
+ * Both accept the same entity_type / action / from / to filters.
  */
 async function queryAuditLog(
 	c: Context<Env>,
 	db: PGlite,
-	scope:
-		| { kind: 'team'; teamId: string }
-		| { kind: 'project'; projectId: string }
-		| { kind: 'instance' },
+	scope: { kind: 'project'; projectId: string } | { kind: 'instance' },
 ): Promise<Response> {
 	const { page, perPage, offset } = parsePagination(c);
 	const conditions: string[] = [];
 	const params: unknown[] = [];
 	let idx = 1;
 
-	if (scope.kind === 'team') {
-		conditions.push(`al.team_id = $${idx++}`);
-		params.push(scope.teamId);
-		const projectId = c.req.query('project_id');
-		if (projectId) {
-			conditions.push(`al.project_id = $${idx++}`);
-			params.push(projectId);
-		}
-	} else if (scope.kind === 'project') {
+	if (scope.kind === 'project') {
 		conditions.push(`al.project_id = $${idx++}`);
 		params.push(scope.projectId);
 	}
@@ -71,23 +59,19 @@ async function queryAuditLog(
 
 	const dataParams = [...params, perPage, offset];
 	const result = await db.query(
-		`SELECT al.id, al.team_id, al.project_id, al.actor_type, al.actor_member_id,
+		`SELECT al.id, al.project_id, al.actor_type, al.actor_member_id,
 		        al.actor_connected_agent_id,
 		        al.action, al.entity_type, al.entity_id, al.details, al.created_at,
 		        COALESCE(ma.title, m.display_name, ca.name) AS actor_name,
-		        t.name AS team_name,
-		        t.slug AS team_slug,
 		        p.slug AS project_slug,
-		        ip.slug AS team_internal_slug,
+		        p.name AS project_name,
 		        tk.identifier AS entity_identifier,
 		        tr.identifier AS ref_task_identifier
 		 FROM audit_log al
 		 LEFT JOIN members m ON m.id = al.actor_member_id
 		 LEFT JOIN member_agents ma ON ma.id = al.actor_member_id
 		 LEFT JOIN connected_agents ca ON ca.id = al.actor_connected_agent_id
-		 LEFT JOIN teams t ON t.id = al.team_id
 		 LEFT JOIN projects p ON p.id = al.project_id
-		 LEFT JOIN projects ip ON ip.team_id = al.team_id AND ip.is_internal = false
 		 LEFT JOIN tasks tk ON al.entity_type = 'task' AND tk.id = al.entity_id
 		 LEFT JOIN tasks tr ON tr.id = NULLIF(al.details->>'task_id', '')::uuid
 		 ${where}
@@ -99,19 +83,13 @@ async function queryAuditLog(
 	return c.json({ data: result.rows, meta: buildMeta(page, perPage, total) });
 }
 
-// Team-scoped view (the project's backing team). Optional ?project_id= narrows it.
-auditLogRoutes.get('/projects/:projectId/team-audit-log', async (c) => {
-	const teamId = c.get('teamId') as string;
-	return queryAuditLog(c, c.get('db'), { kind: 'team', teamId });
-});
-
 // Per-project view — a filtered slice of the instance log scoped to the project.
 auditLogRoutes.get('/projects/:projectId/audit-log', async (c) => {
 	const projectId = c.get('projectId') as string;
 	return queryAuditLog(c, c.get('db'), { kind: 'project', projectId });
 });
 
-// Instance-level view — every team + instance-scoped rows. Superuser only.
+// Instance-level view — every project + instance-scoped rows. Superuser only.
 auditLogRoutes.get('/audit-log', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;

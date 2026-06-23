@@ -5,16 +5,13 @@ import { auditEntryLink, describeAuditEntry } from '../src/lib/audit-format';
 function entry(overrides: Partial<AuditEntry>): AuditEntry {
 	return {
 		id: 'a1',
-		team_id: 't1',
 		project_id: 'p1',
 		actor_type: 'admin',
 		actor_member_id: null,
 		actor_connected_agent_id: null,
 		actor_name: 'Alice',
-		team_name: 'Acme',
-		team_slug: 'acme',
 		project_slug: 'ops',
-		team_internal_slug: 'internal-acme',
+		project_name: 'Ops',
 		action: 'created',
 		entity_type: 'task',
 		entity_id: 'e1',
@@ -100,18 +97,7 @@ test('links a task row to the task route with a lowercased identifier', () => {
 
 test('a secret row always links to the global Admin credentials page', () => {
 	// Credentials are instance-global, so every secret audit row anchors on the
-	// Admin page regardless of which team/project the run belonged to.
-	const teamContext = auditEntryLink(
-		entry({
-			entity_type: 'secret',
-			entity_identifier: null,
-			project_id: null,
-			project_slug: null,
-			team_internal_slug: 'internal-acme',
-		}),
-	);
-	expect(teamContext).toEqual({ to: '/settings/credentials' });
-
+	// Admin page regardless of which project the run belonged to.
 	const projectContext = auditEntryLink(
 		entry({ entity_type: 'secret', entity_identifier: null, project_slug: 'ops' }),
 	);
@@ -121,14 +107,31 @@ test('a secret row always links to the global Admin credentials page', () => {
 		entry({
 			entity_type: 'secret',
 			entity_identifier: null,
-			team_id: null,
-			team_slug: null,
 			project_id: null,
 			project_slug: null,
-			team_internal_slug: null,
 		}),
 	);
 	expect(noContext).toEqual({ to: '/settings/credentials' });
+});
+
+test('a connection row links into its project, or the Admin page when instance-scoped', () => {
+	const projectScoped = auditEntryLink(
+		entry({ entity_type: 'connection', entity_identifier: null, project_slug: 'ops' }),
+	);
+	expect(projectScoped).toEqual({
+		to: '/projects/$projectId/connectors',
+		params: { projectId: 'ops' },
+	});
+
+	const instanceScoped = auditEntryLink(
+		entry({
+			entity_type: 'connection',
+			entity_identifier: null,
+			project_id: null,
+			project_slug: null,
+		}),
+	);
+	expect(instanceScoped).toEqual({ to: '/settings/connectors' });
 });
 
 test('does not link a row that lacks the slugs it needs', () => {

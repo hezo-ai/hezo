@@ -115,17 +115,14 @@ export type AuditLink =
 
 /**
  * The navigation target for an audit row, or null when the row has no resource
- * page (or lacks the slugs needed to build one). Project-scoped rows deep-link
- * into the owning project. Team-level config (secrets, connectors, skills,
- * agents) lives under a project's team-settings, so those rows anchor on the
- * team's internal project; rows with no team fall back to the instance page.
+ * page (or lacks the slugs needed to build one). Project-scoped rows (incl. agent
+ * and per-project connector rows) deep-link into the owning project. Instance-global
+ * config (secrets, skills, and connectors/agents with no project) falls back to the
+ * Admin pages.
  */
 export function auditEntryLink(entry: AuditEntry): AuditLink | null {
 	const project = entry.project_slug;
 	const task = entry.entity_identifier ?? entry.ref_task_identifier;
-	// Team-level pages resolve their data through any project of the team; the
-	// internal project is the stable anchor when the row itself names no project.
-	const teamAnchor = entry.project_slug ?? entry.team_internal_slug;
 
 	switch (entry.entity_type) {
 		case 'task':
@@ -145,16 +142,14 @@ export function auditEntryLink(entry: AuditEntry): AuditLink | null {
 			return { to: '/settings/credentials' };
 		case 'connection':
 		case 'mcp_connection':
-			return teamAnchor
-				? { to: '/projects/$projectId/connectors', params: { projectId: teamAnchor } }
+			return project
+				? { to: '/projects/$projectId/connectors', params: { projectId: project } }
 				: { to: '/settings/connectors' };
 		case 'skill':
 			// Skills are instance-global — always the Admin page.
 			return { to: '/settings/skills' };
 		case 'agent':
-			return teamAnchor
-				? { to: '/projects/$projectId/agents', params: { projectId: teamAnchor } }
-				: null;
+			return project ? { to: '/projects/$projectId/agents', params: { projectId: project } } : null;
 		default:
 			return null;
 	}

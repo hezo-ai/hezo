@@ -13,7 +13,6 @@ let db: PGlite;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
-let teamSlug: string;
 let projectId: string;
 let projectSlug: string;
 
@@ -27,7 +26,6 @@ beforeAll(async () => {
 	const teamRes = await createTestTeam(db, { name: 'Audit Co' });
 	const teamData = (await teamRes.json()).data;
 	teamId = teamData.id;
-	teamSlug = teamData.slug;
 
 	const project = await createTestProject(db, teamId, { name: 'Audit Project' });
 	const projectData = (await project.json()).data;
@@ -40,9 +38,9 @@ afterAll(async () => {
 });
 
 describe('audit log', () => {
-	it('inserts an audit entry via helper', async () => {
+	it('inserts a project-scoped audit entry via helper', async () => {
 		await auditLog(db, {
-			teamId,
+			projectId,
 			actorType: 'admin',
 			actorMemberId: null,
 			action: 'created',
@@ -51,7 +49,7 @@ describe('audit log', () => {
 			details: { title: 'Test' },
 		});
 
-		const res = await app.request(`/api/projects/${projectSlug}/team-audit-log`, {
+		const res = await app.request(`/api/projects/${projectSlug}/audit-log`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -61,12 +59,13 @@ describe('audit log', () => {
 			(e: Record<string, unknown>) => e.action === 'created' && e.entity_type === 'task',
 		);
 		expect(entry).toBeDefined();
+		expect(entry.project_id).toBe(projectId);
 		expect(entry.details).toEqual({ title: 'Test' });
 	});
 
 	it('filters by entity_type', async () => {
 		await auditLog(db, {
-			teamId,
+			projectId,
 			actorType: 'system',
 			actorMemberId: null,
 			action: 'updated',
@@ -74,7 +73,7 @@ describe('audit log', () => {
 			entityId: null,
 		});
 
-		const res = await app.request(`/api/projects/${projectSlug}/team-audit-log?entity_type=agent`, {
+		const res = await app.request(`/api/projects/${projectSlug}/audit-log?entity_type=agent`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -84,7 +83,7 @@ describe('audit log', () => {
 
 	it('filters by action', async () => {
 		await auditLog(db, {
-			teamId,
+			projectId,
 			actorType: 'admin',
 			actorMemberId: null,
 			action: 'deleted',
@@ -92,7 +91,7 @@ describe('audit log', () => {
 			entityId: null,
 		});
 
-		const res = await app.request(`/api/projects/${projectSlug}/team-audit-log?action=deleted`, {
+		const res = await app.request(`/api/projects/${projectSlug}/audit-log?action=deleted`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -103,7 +102,7 @@ describe('audit log', () => {
 
 	it('filters by date range', async () => {
 		const future = new Date(Date.now() + 86400000).toISOString();
-		const res = await app.request(`/api/projects/${projectSlug}/team-audit-log?from=${future}`, {
+		const res = await app.request(`/api/projects/${projectSlug}/audit-log?from=${future}`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -114,7 +113,7 @@ describe('audit log', () => {
 	it('supports pagination', async () => {
 		for (let i = 0; i < 5; i++) {
 			await auditLog(db, {
-				teamId,
+				projectId,
 				actorType: 'system',
 				actorMemberId: null,
 				action: 'created',
@@ -124,7 +123,7 @@ describe('audit log', () => {
 			});
 		}
 
-		const res = await app.request(`/api/projects/${projectSlug}/team-audit-log?page=1&per_page=2`, {
+		const res = await app.request(`/api/projects/${projectSlug}/audit-log?page=1&per_page=2`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -136,41 +135,29 @@ describe('audit log', () => {
 		expect(body.meta.total).toBeGreaterThanOrEqual(5);
 	});
 
-	it('scopes the per-project view to its project, and ?project_id filters the team view', async () => {
+	it('scopes the per-project view to its project only', async () => {
+		// An instance-level row (no project) must not leak into the project view.
 		await auditLog(db, {
-			teamId,
-			projectId,
 			actorType: 'admin',
 			actorMemberId: null,
 			action: 'created',
-			entityType: 'document',
+			entityType: 'secret',
 			entityId: null,
-			details: { slug: 'scoped.md' },
+			details: { name: 'INSTANCE_ONLY' },
 		});
 
-		const projectRes = await app.request(`/api/projects/${projectSlug}/audit-log`, {
+		const res = await app.request(`/api/projects/${projectSlug}/audit-log`, {
 			headers: authHeader(token),
 		});
-		expect(projectRes.status).toBe(200);
-		const projectBody = await projectRes.json();
-		expect(projectBody.data.length).toBeGreaterThanOrEqual(1);
-		expect(projectBody.data.every((e: Record<string, unknown>) => e.project_id === projectId)).toBe(
-			true,
-		);
-
-		const filteredRes = await app.request(
-			`/api/projects/${projectSlug}/team-audit-log?project_id=${projectId}`,
-			{ headers: authHeader(token) },
-		);
-		const filteredBody = await filteredRes.json();
-		expect(
-			filteredBody.data.every((e: Record<string, unknown>) => e.project_id === projectId),
-		).toBe(true);
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.length).toBeGreaterThanOrEqual(1);
+		expect(body.data.every((e: Record<string, unknown>) => e.project_id === projectId)).toBe(true);
+		expect(body.data.some((e: Record<string, unknown>) => e.entity_type === 'secret')).toBe(false);
 	});
 
-	it('exposes the instance view to superusers with cross-team rows', async () => {
+	it('exposes the instance view to superusers with project + instance rows', async () => {
 		await auditLog(db, {
-			teamId: null,
 			actorType: 'admin',
 			actorMemberId: null,
 			action: 'created',
@@ -182,9 +169,13 @@ describe('audit log', () => {
 		const res = await app.request('/api/audit-log', { headers: authHeader(token) });
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		// Includes the instance-scoped (team_id NULL) row plus team-scoped rows.
-		expect(body.data.some((e: Record<string, unknown>) => e.team_id === null)).toBe(true);
-		expect(body.data.some((e: Record<string, unknown>) => e.team_id === teamId)).toBe(true);
+		// Includes the instance-scoped (project_id NULL) row plus project-scoped rows.
+		expect(body.data.some((e: Record<string, unknown>) => e.project_id === null)).toBe(true);
+		const projectRow = body.data.find((e: Record<string, unknown>) => e.project_id === projectId);
+		expect(projectRow).toBeDefined();
+		expect(projectRow.project_slug).toBe(projectSlug);
+		// The team dimension is gone.
+		expect('team_id' in body.data[0]).toBe(false);
 	});
 
 	it('denies the instance view to non-superusers', async () => {
