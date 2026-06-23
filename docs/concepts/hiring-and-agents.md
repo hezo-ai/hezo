@@ -41,6 +41,16 @@ any individual agent, so (for example) one agent runs on a frontier model for ha
 reasoning while the rest run on something cheaper and faster. Mixing providers within a
 single team is fully supported. See [AI model support](/docs/ai-models).
 
+## Retiring & reinstating agents
+
+When a team no longer needs a role, you can **retire** (disable) the agent — from its
+settings in the web app, or just by asking the CEO. Retiring stops the agent from being
+scheduled and unassigns it from any open tasks, but keeps all of its history, so it's
+fully reversible: reinstate (enable) it at any time and it picks work back up on its
+heartbeat. The CEO actions this directly once you confirm, which is handy after a
+project's direction changes and several roles no longer fit. (A team's Captain and the
+instance-wide CEO and Coach can't be retired this way.)
+
 ## Other settings
 
 You can also adjust an agent's heartbeat interval and budgets over time, and pause or

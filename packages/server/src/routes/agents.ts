@@ -8,7 +8,6 @@ import {
 	DEFAULT_EFFORT,
 	DEFAULT_TEAM_ID,
 	DocumentType,
-	HQ_PROJECT_SLUG,
 	isAgentEffort,
 	isReservedAgentSlug,
 	MemberType,
@@ -33,6 +32,7 @@ import { buildUpdateSet, isFkViolation, terminalStatusParams, withTransaction } 
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
+import { setAgentAdminStatus } from '../services/agent-admin';
 import {
 	AgentSystemPromptError,
 	fetchAgentSystemPromptForBatch,
@@ -954,45 +954,17 @@ agentsRoutes.post('/projects/:projectId/agents/:agentId/disable', async (c) => {
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
-	const existing = await db.query<{ admin_status: string }>(
-		'SELECT admin_status FROM member_agents WHERE id = $1',
-		[agentId],
+	const actor = await resolveActor(db, c.get('auth'), teamId);
+	const result = await setAgentAdminStatus(
+		{ db, wsManager: c.get('wsManager'), events: c.get('events') },
+		{ teamId, agentId, status: AgentAdminStatus.Disabled, ...actor },
 	);
-	if (existing.rows[0].admin_status === AgentAdminStatus.Disabled) {
+	if (!result.ok && result.reason === 'not_found') {
+		return err(c, 'NOT_FOUND', 'Agent not found', 404);
+	}
+	if (!result.ok && result.reason === 'already_in_state') {
 		return err(c, 'INVALID_STATE', 'Agent is already disabled', 409);
 	}
-
-	await db.query(`UPDATE member_agents SET admin_status = $1::agent_admin_status WHERE id = $2`, [
-		AgentAdminStatus.Disabled,
-		agentId,
-	]);
-
-	const ts = terminalStatusParams(2, false);
-	await db.query(
-		`UPDATE tasks SET assignee_id = NULL WHERE assignee_id = $1 AND status NOT IN (${ts.placeholders})`,
-		[agentId, ...ts.values],
-	);
-
-	broadcastChange(c, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
-		id: agentId,
-		admin_status: AgentAdminStatus.Disabled,
-	});
-
-	trackBackground(
-		enqueueTeamCoherenceReviewTask(db, teamId, 'agent_removed').catch((e) =>
-			log.error('Failed to enqueue team coherence review on disable:', e),
-		),
-	);
-
-	const disableActor = await resolveActor(db, c.get('auth'), teamId);
-	c.get('events').emit({
-		type: 'agent.disabled',
-		teamId,
-		actorType: disableActor.actorType,
-		actorMemberId: disableActor.actorMemberId,
-		actorConnectedAgentId: disableActor.actorConnectedAgentId,
-		agentMemberId: agentId,
-	});
 
 	return ok(c, { admin_status: AgentAdminStatus.Disabled });
 });
@@ -1003,39 +975,17 @@ agentsRoutes.post('/projects/:projectId/agents/:agentId/enable', async (c) => {
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
-	const existing = await db.query<{ admin_status: string }>(
-		'SELECT admin_status FROM member_agents WHERE id = $1',
-		[agentId],
+	const actor = await resolveActor(db, c.get('auth'), teamId);
+	const result = await setAgentAdminStatus(
+		{ db, wsManager: c.get('wsManager'), events: c.get('events') },
+		{ teamId, agentId, status: AgentAdminStatus.Enabled, ...actor },
 	);
-	if (existing.rows[0].admin_status === AgentAdminStatus.Enabled) {
+	if (!result.ok && result.reason === 'not_found') {
+		return err(c, 'NOT_FOUND', 'Agent not found', 404);
+	}
+	if (!result.ok && result.reason === 'already_in_state') {
 		return err(c, 'INVALID_STATE', 'Agent is already enabled', 409);
 	}
-
-	await db.query(`UPDATE member_agents SET admin_status = $1::agent_admin_status WHERE id = $2`, [
-		AgentAdminStatus.Enabled,
-		agentId,
-	]);
-
-	broadcastChange(c, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
-		id: agentId,
-		admin_status: AgentAdminStatus.Enabled,
-	});
-
-	trackBackground(
-		enqueueTeamCoherenceReviewTask(db, teamId, 'enabled_changed').catch((e) =>
-			log.error('Failed to enqueue team coherence review on enable:', e),
-		),
-	);
-
-	const enableActor = await resolveActor(db, c.get('auth'), teamId);
-	c.get('events').emit({
-		type: 'agent.enabled',
-		teamId,
-		actorType: enableActor.actorType,
-		actorMemberId: enableActor.actorMemberId,
-		actorConnectedAgentId: enableActor.actorConnectedAgentId,
-		agentMemberId: agentId,
-	});
 
 	return ok(c, { admin_status: AgentAdminStatus.Enabled });
 });

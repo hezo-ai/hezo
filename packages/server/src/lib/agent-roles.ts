@@ -27,3 +27,20 @@ export async function isVirtualHqMemberInTeam(
 	]);
 	return r.rows[0]?.team_id === DEFAULT_TEAM_ID;
 }
+
+/**
+ * True when the caller is an HQ instance agent (CEO/Coach) — regardless of which
+ * team its run is currently scoped to. Unlike {@link isVirtualHqMemberInTeam} this
+ * does not require `auth.teamId` to equal a particular team, so it recognises the
+ * cross-team CEO chat session (scoped to HQ, `crossTeam`) as well as a CEO/Coach
+ * task run scoped into another team. Use this for cross-team coordination actions
+ * the CEO can take from anywhere; pair it with a per-team check when the action is
+ * also open to that team's own Captain.
+ */
+export async function isHqInstanceAgent(db: PGlite, auth: AuthInfo): Promise<boolean> {
+	if (auth.type !== AuthType.Agent) return false;
+	const r = await db.query<{ team_id: string }>('SELECT team_id FROM members WHERE id = $1', [
+		auth.memberId,
+	]);
+	return r.rows[0]?.team_id === DEFAULT_TEAM_ID;
+}

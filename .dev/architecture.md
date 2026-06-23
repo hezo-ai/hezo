@@ -192,10 +192,13 @@ project.
 `default`), owns the only `is_internal` project. It hosts two instance-level singletons:
 
 - **CEO** — runs all coordination. **Project intake** and first-run **onboarding**
-  (pre-project) live in HQ. Per-team **setup/coherence review** and **hiring** concern a
-  specific project-team and live in *that team's own project*, CEO-actioned. On a new
-  team the CEO's initial coherence pass runs first and **blocks** the Captain's planning
-  task.
+  (pre-project) live in HQ. Per-team **setup/coherence review**, **hiring**, and
+  **retiring** concern a specific project-team and live in *that team's own project*,
+  CEO-actioned. Retiring/reinstating an agent is the `set_agent_status` MCP tool (gated to
+  the team's Captain or an HQ coordinator), which runs the same `setAgentAdminStatus`
+  service as the REST disable/enable routes — it can't disable a Captain or an instance
+  agent. On a new team the CEO's initial coherence pass runs first and **blocks** the
+  Captain's planning task.
 - **Coach** — reviews completed tickets across **every** project to improve agent system
   prompts; woken on any task completion.
 

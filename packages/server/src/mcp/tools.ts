@@ -3,6 +3,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { SearchScope } from '@hezo/shared';
 import {
 	ADMIN_MENTION_SLUG,
+	AgentAdminStatus,
 	ApprovalStatus,
 	ApprovalType,
 	ATTACHMENT_EXTENSIONS,
@@ -11,6 +12,7 @@ import {
 	AuthType,
 	CAPTAIN_AGENT_SLUG,
 	CEO_AGENT_SLUG,
+	COACH_AGENT_SLUG,
 	CommentContentType,
 	CredentialInputType,
 	CredentialKind,
@@ -35,7 +37,7 @@ import { z } from 'zod';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
-import { isCoach, isVirtualHqMemberInTeam } from '../lib/agent-roles';
+import { isCoach, isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
 import { upsertProjectAsset } from '../lib/asset-name';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { trackBackground } from '../lib/background';
@@ -61,6 +63,7 @@ import { deriveSkillSummary } from '../lib/skill-summary';
 import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/task-relationships';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
+import { setAgentAdminStatus } from '../services/agent-admin';
 import { AGENT_ATTACHMENT_DIR, loadAgentAttachmentsForComments } from '../services/agent-runner';
 import {
 	AgentSystemPromptError,
@@ -133,6 +136,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'register_connector',
 	'resolve_approval',
 	'update_agent_system_prompt',
+	'set_agent_status',
 	'set_agent_summary',
 	'set_team_summary',
 	'set_agent_team_context',
@@ -1327,7 +1331,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_project',
-		'Create a new project together with its dedicated team. CEO-only. Call this once the admin has approved a new project in the intake conversation — a plain reply in the thread is enough; there is no inbox button to wait on. Provisions the team from the chosen team-type template (pass template_id from list_team_templates, or source_team_id to clone an existing team; defaults to Blank), creates the project, its planning ticket, and the initial CEO coherence/setup ticket the planning ticket is blocked on, then provisions the container. When intake_task_id is given, the intake conversation is closed with a completion note. Returns the new project plus its planning ticket identifier.',
+		'Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in the intake conversation — a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen team-type template (pass template_id from list_team_templates, or source_team_id to clone an existing team; defaults to Blank), creates the project, its planning ticket, and the initial CEO coherence/setup ticket the planning ticket is blocked on, then provisions the container. When intake_task_id is given, the intake conversation is closed with a completion note. Returns the new project plus its planning ticket identifier.',
 		{
 			name: z.string().describe('Project name'),
 			description: z.string().describe('Project description'),
@@ -2692,6 +2696,87 @@ export function registerTools(
 			if (r.rows.length === 0) return { error: 'Agent not found in this team' };
 
 			return r.rows[0];
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'set_agent_status',
+		"Retire (disable) or reinstate (enable) an agent on a project's team. Callable by the team's Captain or by the CEO running in the team. Disabling stops the agent from being scheduled and unassigns it from every open task; enabling resumes scheduling. The change is fully reversible and preserves all of the agent's history, so this is the right way to remove a role the team no longer needs (e.g. after a coherence review). The Captain and the instance agents (CEO/Coach) cannot be disabled this way. Confirm with the admin before retiring an agent.",
+		{
+			project: projectArg(),
+			agent: z
+				.string()
+				.describe(
+					'Target agent — its slug (e.g. "engineer") or member ID. Must be a member of this project\'s team.',
+				),
+			status: z
+				.enum([AgentAdminStatus.Enabled, AgentAdminStatus.Disabled])
+				.describe('"disabled" retires the agent; "enabled" reinstates it.'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			if (auth.type !== AuthType.Agent) {
+				return { error: 'set_agent_status is only callable by agents' };
+			}
+			// The team's own Captain (running in-team) or an HQ instance agent — the
+			// CEO, whether acting from the cross-team chat session or a task run scoped
+			// into this team. canCoordinateTeam covers the Captain and the in-team HQ
+			// case; isHqInstanceAgent additionally covers the cross-team CEO session,
+			// whose run is scoped to HQ rather than this team.
+			const allowed =
+				(await canCoordinateTeam(db, auth, teamId)) || (await isHqInstanceAgent(db, auth));
+			if (!allowed) {
+				return {
+					error: "Access denied: only the Captain or the CEO can change an agent's status",
+				};
+			}
+
+			const ref = String(args.agent ?? '').trim();
+			if (!ref) return { error: 'agent is required' };
+			const target = await db.query<{ id: string; slug: string }>(
+				`SELECT ma.id, ma.slug FROM member_agents ma
+				 JOIN members m ON m.id = ma.id
+				 WHERE m.team_id = $1 AND (ma.id::text = $2 OR ma.slug = $2)
+				 LIMIT 1`,
+				[teamId, ref],
+			);
+			if (target.rows.length === 0) return { error: `Agent not found in this team: ${ref}` };
+			const { id: agentId, slug } = target.rows[0];
+
+			const status = args.status as AgentAdminStatus;
+			const protectedSlugs: readonly string[] = [
+				CAPTAIN_AGENT_SLUG,
+				CEO_AGENT_SLUG,
+				COACH_AGENT_SLUG,
+			];
+			if (status === AgentAdminStatus.Disabled && protectedSlugs.includes(slug)) {
+				return {
+					error: `The ${slug} role is essential and cannot be retired with this tool; the admin can disable it from the web UI if truly needed.`,
+				};
+			}
+
+			const result = await setAgentAdminStatus(
+				{ db, wsManager, events },
+				{
+					teamId,
+					agentId,
+					status,
+					actorType: AuditActorType.Agent,
+					actorMemberId: auth.memberId,
+				},
+			);
+			if (!result.ok && result.reason === 'not_found') {
+				return { error: `Agent not found in this team: ${ref}` };
+			}
+			if (!result.ok && result.reason === 'already_in_state') {
+				return { error: `Agent is already ${status}` };
+			}
+			return { updated: true, agent_id: agentId, slug, admin_status: status };
 		},
 		db,
 	);
