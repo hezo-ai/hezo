@@ -4,6 +4,10 @@ import { AiProvidersSection } from '../../components/ai-providers-section';
 import { InstanceSettingsSection } from '../../components/instance-settings-section';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { useMe } from '../../hooks/use-me';
+import { useUpdateCheck } from '../../hooks/use-update-check';
+
+/** Release tags are plain `MAJOR.MINOR.PATCH` (no `v` prefix) — only those have a GitHub tag page. */
+const RELEASE_TAG = /^\d+\.\d+\.\d+$/;
 
 const settingsNav = [
 	{ id: 'ai-providers', label: 'AI providers' },
@@ -23,6 +27,7 @@ const instanceNav = [
 
 function GlobalSettingsPage() {
 	const { data: me } = useMe();
+	const { data: update } = useUpdateCheck();
 	const [activeSection, setActiveSection] = useState('ai-providers');
 
 	function scrollTo(id: string) {
@@ -68,6 +73,25 @@ function GlobalSettingsPage() {
 								{item.label}
 							</Link>
 						))}
+					{update?.current && (
+						<div
+							data-testid="settings-version"
+							className="mt-3 pt-3 px-3 border-t border-border text-[12px] text-text-2"
+						>
+							{RELEASE_TAG.test(update.current) ? (
+								<a
+									href={`https://github.com/hezo-ai/hezo/releases/tag/${update.current}`}
+									target="_blank"
+									rel="noreferrer"
+									className="hover:underline hover:text-text-1 transition-colors"
+								>
+									Hezo v{update.current}
+								</a>
+							) : (
+								<span>Hezo v{update.current}</span>
+							)}
+						</div>
+					)}
 				</nav>
 				<div className="space-y-8">
 					<div id="settings-ai-providers">
