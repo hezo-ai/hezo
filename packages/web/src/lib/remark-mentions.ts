@@ -104,6 +104,18 @@ function walk(parent: ParentNode, opts: Options) {
 			next.push(...splitTextNode(child as TextNode, opts));
 			continue;
 		}
+		// Chat (instance) scope only: a backticked doc/asset reference still links —
+		// see linkifyInlineCodeDoc. Every other surface keeps inline code inert, so
+		// this runs before the SKIP_TYPES guard below.
+		if (
+			opts.instance &&
+			child.type === 'inlineCode' &&
+			typeof (child as TextNode).value === 'string'
+		) {
+			const link = linkifyInlineCodeDoc(child as TextNode, opts);
+			next.push(link ?? child);
+			continue;
+		}
 		if (SKIP_TYPES.has(child.type)) {
 			next.push(child);
 			continue;
@@ -144,8 +156,31 @@ function splitTextNode(node: TextNode, opts: Options): MdNode[] {
 	return parts;
 }
 
+/**
+ * Chat scope only: an inline-code span whose *entire* content is a project-doc
+ * filename or an `assets/<file>` reference is linkified exactly like the bare
+ * form (so docs/assets open in a new tab). CEO replies are LLM-authored and
+ * habitually wrap filenames in backticks, so the "write entities bare" rule the
+ * composer enforces for human authors can't apply to this surface — linking them
+ * anyway keeps the references clickable. Tasks, @-mentions, and anything that
+ * isn't a resolvable doc/asset stay inert code, preserving the convention
+ * everywhere it still matters; a span that merely *contains* a filename
+ * (`see prd.md below`) is left as code, since the whole span must be the
+ * reference. Returns null to keep the original inline-code node.
+ */
+function linkifyInlineCodeDoc(node: TextNode, opts: Options): LinkNode | null {
+	const value = node.value.trim();
+	if (!value) return null;
+	MENTION_RE.lastIndex = 0;
+	const match = MENTION_RE.exec(value);
+	if (!match || match.index !== 0 || match[0].length !== value.length) return null;
+	const token = parseMentionMatch(match);
+	if (token.kind !== 'filename' && token.kind !== 'asset') return null;
+	return buildLink(token, opts);
+}
+
 function buildLink(token: MentionToken, opts: Options): LinkNode | null {
-	const { projectId, projectSlug, agents, tasks, kbDocs, projectDocs, assets } = opts;
+	const { projectId, projectSlug, agents, tasks, kbDocs, assets } = opts;
 	const display = token.raw;
 
 	if (token.kind === 'asset') {

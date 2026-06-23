@@ -1,4 +1,4 @@
-import { extractMentionCandidates } from '@hezo/shared';
+import { extractBacktickedMentionCandidates, extractMentionCandidates } from '@hezo/shared';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { api } from '../lib/api';
@@ -108,10 +108,15 @@ export interface InstanceMentionsResponse {
 export function useInstanceMentions(content: string, enabled: boolean) {
 	const key = useMemo(() => {
 		const c = extractMentionCandidates(content);
+		// CEO replies are LLM-authored and routinely backtick filenames; the chat
+		// linkifies backticked doc/asset references (see remark-mentions), so resolve
+		// those too. Only docs/assets are merged — backticked tasks/@-mentions stay
+		// inert, so their candidates are deliberately left out.
+		const coded = extractBacktickedMentionCandidates(content);
 		return {
 			tasks: [...c.tasks].sort(),
-			filenames: [...c.filenames].sort(),
-			assets: [...c.assets].sort(),
+			filenames: [...new Set([...c.filenames, ...coded.filenames])].sort(),
+			assets: [...new Set([...c.assets, ...coded.assets])].sort(),
 			agents: [...c.agents].sort(),
 		};
 	}, [content]);

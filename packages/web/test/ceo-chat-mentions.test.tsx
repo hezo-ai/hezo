@@ -4,7 +4,7 @@ import { queryKeys } from '@hezo/web/lib/query-keys';
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
-import { seedComment, seedProject, seedTask, seedWorkspace } from './helpers/seed';
+import { seedAsset, seedComment, seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 // The CEO chat renders replies in instance scope: entity references resolve
 // through the real in-process backend (POST /api/mentions/resolve) and unique
@@ -34,6 +34,7 @@ interface SeededRefs {
 	projectSlug: string;
 	taskIdentifier: string;
 	commentId: string;
+	assetFilename: string;
 }
 
 async function seedEntities(): Promise<SeededRefs> {
@@ -47,12 +48,14 @@ async function seedEntities(): Promise<SeededRefs> {
 		headers: ws.headers,
 		body: JSON.stringify({ content: '# PRD' }),
 	});
+	const asset = await seedAsset(ws, project, { filename: 'login.png' });
 	// commentId carries the comment's public_id — the slug used in `#comment-…`
 	// deep-links and `<TASK-ID>#comment-…` mention references.
 	return {
 		projectSlug: project.slug,
 		taskIdentifier: task.identifier,
 		commentId: comment.public_id,
+		assetFilename: asset.original_filename,
 	};
 }
 
@@ -97,9 +100,44 @@ test('CEO replies render unique refs as links; unknown and backticked refs stay 
 	expect(linkTexts).not.toContain('ZZ-99');
 	expect(body.textContent).toContain('ZZ-99');
 
-	// Backticked references render as inert code, never links.
+	// Backticked *task* references stay inert code — only backticked doc/asset
+	// references linkify in chat (covered by the next test).
 	const codeTexts = Array.from(body.querySelectorAll('code')).map((el) => el.textContent);
 	expect(codeTexts).toContain(ident);
+});
+
+test('CEO replies linkify backticked doc and asset references, opening them in a new tab', async () => {
+	let refs!: SeededRefs;
+	const { findByTestId, getByTestId } = await renderApp({
+		initialPath: '/home',
+		seed: async () => {
+			refs = await seedEntities();
+		},
+	});
+
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+
+	// The exact shape that misfired in production: an LLM-authored reply that wraps
+	// the doc/asset filenames in backticks. They must still resolve to new-tab links
+	// instead of rendering as inert code the operator can't click.
+	seedCeoReply(`The report is at \`prd.md\` and the mockup is \`assets/${refs.assetFilename}\`.`);
+
+	const docLink = await findByTestId('doc-mention-link');
+	expect(docLink.textContent).toBe('prd.md');
+	expect(docLink.getAttribute('href')).toBe(`/preview/${refs.projectSlug}/prd.md`);
+	expect(docLink.getAttribute('target')).toBe('_blank');
+
+	const assetLink = getByTestId('asset-mention-link');
+	expect(assetLink.textContent).toContain(`assets/${refs.assetFilename}`);
+	expect(assetLink.getAttribute('href')).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
+	expect(assetLink.getAttribute('target')).toBe('_blank');
+
+	// The backticked refs are no longer rendered as inert <code>.
+	const body = getByTestId('ceo-chat-markdown');
+	const codeTexts = Array.from(body.querySelectorAll('code')).map((el) => el.textContent);
+	expect(codeTexts).not.toContain('prd.md');
+	expect(codeTexts).not.toContain(`assets/${refs.assetFilename}`);
 });
 
 test('clicking a chat comment link navigates client-side with the chat still open', async () => {
