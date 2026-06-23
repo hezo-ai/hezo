@@ -5,26 +5,26 @@ import { ActorBadge } from './ui/actor-badge';
 import { type Column, DataTable } from './ui/data-table';
 
 /**
- * Shared renderer for the activity (audit) log, used by the team, per-project,
- * and instance views. Pass `showTeam` to surface the originating team — only
- * useful in the cross-team instance view.
+ * Shared renderer for the activity (audit) log, used by the per-project and
+ * instance views. Pass `showProject` to surface the originating project — only
+ * useful in the cross-project instance view.
  */
 export function AuditLogTable({
 	entries,
-	showTeam = false,
+	showProject = false,
 	emptyText = 'No activity yet.',
 }: {
 	entries: AuditEntry[] | undefined;
-	showTeam?: boolean;
+	showProject?: boolean;
 	emptyText?: string;
 }) {
 	if (!entries?.length) {
 		return <p className="text-[13px] text-text-2">{emptyText}</p>;
 	}
-	return <DataTable columns={buildColumns(showTeam)} data={entries} rowKey={(row) => row.id} />;
+	return <DataTable columns={buildColumns(showProject)} data={entries} rowKey={(row) => row.id} />;
 }
 
-function buildColumns(showTeam: boolean): Column<AuditEntry>[] {
+function buildColumns(showProject: boolean): Column<AuditEntry>[] {
 	const columns: Column<AuditEntry>[] = [
 		{
 			key: 'time',
@@ -66,13 +66,13 @@ function buildColumns(showTeam: boolean): Column<AuditEntry>[] {
 			},
 		},
 	];
-	if (showTeam) {
+	if (showProject) {
 		columns.push({
-			key: 'team',
-			header: 'Team',
+			key: 'project',
+			header: 'Project',
 			hideOnMobile: true,
 			render: (e) => (
-				<span className="text-xs text-text-2">{e.team_name ?? <em>instance</em>}</span>
+				<span className="text-xs text-text-2">{e.project_name ?? <em>instance</em>}</span>
 			),
 		});
 	}

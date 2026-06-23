@@ -201,12 +201,6 @@ export const queryKeys = {
 		costs: (slug: string, params: KeyParam) => ['projects', slug, 'costs', params],
 		budgetStatus: (slug: string) => ['projects', slug, 'budget-status'],
 		auditLog: (slug: string, filters: KeyParam) => ['projects', slug, 'audit-log', filters],
-		teamAuditLog: (slug: string, filters: KeyParam) => [
-			'projects',
-			slug,
-			'team-audit-log',
-			filters,
-		],
 		githubOrgs: (slug: string) => ['projects', slug, 'github', 'orgs'],
 		githubRepos: (slug: string, owner: string | null, query: string) => [
 			'projects',

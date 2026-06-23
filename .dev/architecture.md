@@ -154,7 +154,8 @@ instance/team reference store (manifest-injected into runs, semantic-searchable)
 uploaded files (bytes on local disk, served over HMAC-signed URLs).
 
 **Governance & misc.** `approvals` (polymorphic board decisions), `audit_log`
-(append-only, instance/team/project scopes, never updated/deleted by the app),
+(append-only, project + instance scopes — `project_id` set scopes a row to one project,
+NULL marks an instance-level action; never updated/deleted by the app),
 `api_keys` (bcrypt-hashed, `hezo_` prefix), `connected_agents` (external MCP clients —
 self-registered, admin-approved, `hezoc_` prefix), `invites`, `admin_mentions` (board inbox),
 `instance_user_roles`, `notification_preferences`. `plugins`/`plugin_state`/`plugin_jobs`
@@ -418,7 +419,9 @@ forwards. Failures are explicit and audited: `unknown_secret` (400),
 
 **Audit.** Every substitution attempt writes one `audit_log` row
 (`entity_type='egress_request'`) recording run id, host, method, path, status, count, and
-the secret **names** used — never the values. Pure pass-through requests (no placeholder
+the secret **names** used — never the values. The row is project-scoped: `project_id` is
+resolved from the run's team (teams are 1:1 with projects), so it surfaces on the project
+Activity page's "Outbound traffic" tab. Pure pass-through requests (no placeholder
 anywhere) are not audited.
 
 **Bun & topology notes.** The proxy runs on Bun, whose TLS stack forces a

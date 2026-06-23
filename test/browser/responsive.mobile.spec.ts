@@ -79,8 +79,8 @@ test.describe('Responsive — mobile (390px)', () => {
 		lightWorkspace,
 	}) => {
 		const { projectSlug } = lightWorkspace;
-		await page.goto(`/projects/${projectSlug}/team-settings/audit-log`);
-		await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible({
+		await page.goto(`/projects/${projectSlug}/audit-log`);
+		await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible({
 			timeout: 20000,
 		});
 		await expectNoHorizontalOverflow(page);

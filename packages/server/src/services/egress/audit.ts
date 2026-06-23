@@ -19,11 +19,17 @@ export interface EgressAuditEvent {
 
 export async function recordEgressEvent(db: PGlite, event: EgressAuditEvent): Promise<void> {
 	try {
+		// Egress is scoped to the run's team, which backs exactly one project (1:1);
+		// attribute the row to that project so it shows on the project Activity log.
+		const project = await db.query<{ id: string }>(
+			`SELECT id FROM projects WHERE team_id = $1 LIMIT 1`,
+			[event.teamId],
+		);
 		await db.query(
-			`INSERT INTO audit_log (team_id, actor_type, actor_member_id, action, entity_type, entity_id, details)
+			`INSERT INTO audit_log (project_id, actor_type, actor_member_id, action, entity_type, entity_id, details)
 			 VALUES ($1, $2::audit_actor_type, $3, 'egress_request', $4, NULL, $5::jsonb)`,
 			[
-				event.teamId,
+				project.rows[0]?.id ?? null,
 				AuditActorType.Agent,
 				event.agentId,
 				AuditEntityType.EgressRequest,

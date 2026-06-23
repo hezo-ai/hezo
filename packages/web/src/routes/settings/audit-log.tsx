@@ -20,17 +20,17 @@ function InstanceAuditLogPage() {
 						<h1 className="text-[22px] font-medium">Activity</h1>
 						<InfoTooltip
 							label="About activity"
-							content="Audit log of every state-changing action across all teams, plus instance-level admin actions."
+							content="Audit log of every state-changing action across all projects, plus instance-level admin actions."
 							data-testid="activity-info"
 						/>
 					</div>
 					<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
-						Every state-changing action across all teams, plus instance-level admin actions
-						(credentials, connectors, skills) that aren't tied to a team. The combined view for
+						Every state-changing action across all projects, plus instance-level admin actions
+						(credentials, connectors, skills) that aren't tied to a project. The combined view for
 						reconstructing what happened.
 					</p>
 				</div>
-				<AuditLogTable entries={entries} showTeam emptyText="No activity recorded yet." />
+				<AuditLogTable entries={entries} showProject emptyText="No activity recorded yet." />
 			</>
 		);
 

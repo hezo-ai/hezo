@@ -2,10 +2,18 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { AuditAction, AuditActorType, AuditEntityType } from '@hezo/shared';
 
 export interface AuditLogInput {
-	/** NULL for instance-level actions not bound to any team. */
-	teamId: string | null;
-	/** NULL for team-level and instance-level events. */
+	/**
+	 * Scopes the event to a single project. NULL = an instance-level action not
+	 * bound to any project (e.g. an Admin managing an instance-global secret /
+	 * connector / skill) — visible only in the superuser instance view.
+	 */
 	projectId?: string | null;
+	/**
+	 * Transient resolution hint, NOT persisted. Team-only events (agent lifecycle,
+	 * team documents) carry the team so the audit observer can resolve the team's
+	 * single project (teams are 1:1 with projects) before writing the row.
+	 */
+	teamId?: string | null;
 	actorType: AuditActorType;
 	actorMemberId: string | null;
 	/** Set when the actor is a connected agent; mutually exclusive with actorMemberId. */
@@ -18,10 +26,9 @@ export interface AuditLogInput {
 
 export async function auditLog(db: PGlite, input: AuditLogInput): Promise<void> {
 	await db.query(
-		`INSERT INTO audit_log (team_id, project_id, actor_type, actor_member_id, actor_connected_agent_id, action, entity_type, entity_id, details)
-		 VALUES ($1, $2, $3::audit_actor_type, $4, $5, $6, $7, $8, $9::jsonb)`,
+		`INSERT INTO audit_log (project_id, actor_type, actor_member_id, actor_connected_agent_id, action, entity_type, entity_id, details)
+		 VALUES ($1, $2::audit_actor_type, $3, $4, $5, $6, $7, $8::jsonb)`,
 		[
-			input.teamId,
 			input.projectId ?? null,
 			input.actorType,
 			input.actorMemberId,

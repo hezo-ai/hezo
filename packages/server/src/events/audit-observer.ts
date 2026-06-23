@@ -178,15 +178,45 @@ export function mapEventToAudit(event: DomainEvent): AuditLogInput | null {
 	return mapper(event);
 }
 
+/**
+ * Entity types backed by instance-global catalogs (no project/team binding); their
+ * audit rows stay instance-scoped (project_id NULL) and surface only in the
+ * superuser instance view. Every other entity is project-attributable.
+ */
+const INSTANCE_GLOBAL_ENTITIES = new Set<AuditEntityType>([
+	AuditEntityType.Secret,
+	AuditEntityType.Connection,
+	AuditEntityType.McpConnection,
+	AuditEntityType.Skill,
+]);
+
+/** Resolve a team's single project (teams are 1:1 with projects). */
+async function resolveProjectIdForTeam(db: PGlite, teamId: string): Promise<string | null> {
+	const r = await db.query<{ id: string }>(`SELECT id FROM projects WHERE team_id = $1 LIMIT 1`, [
+		teamId,
+	]);
+	return r.rows[0]?.id ?? null;
+}
+
 /** Register the audit observer on a bus. The only consumer that persists audit rows. */
 export function registerAuditObserver(bus: DomainEventBus, db: PGlite): void {
 	bus.subscribe((event) => {
 		const input = mapEventToAudit(event);
 		if (!input) return;
 		trackBackground(
-			auditLog(db, input).catch((e) =>
-				log.error(`Failed to write audit row for ${event.type}:`, e),
-			),
+			(async () => {
+				// Team-only events (agent lifecycle, team documents) carry just a team;
+				// attribute them to the team's single project so they appear in its
+				// Activity. Instance-global catalogs stay instance-scoped.
+				if (
+					input.projectId == null &&
+					input.teamId &&
+					!INSTANCE_GLOBAL_ENTITIES.has(input.entityType)
+				) {
+					input.projectId = await resolveProjectIdForTeam(db, input.teamId);
+				}
+				await auditLog(db, input);
+			})().catch((e) => log.error(`Failed to write audit row for ${event.type}:`, e)),
 		);
 	});
 }

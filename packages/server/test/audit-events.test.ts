@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mapEventToAudit } from '../src/events/audit-observer';
 import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
+import { recordEgressEvent } from '../src/services/egress/audit';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
@@ -68,7 +69,7 @@ describe('audit observer (end-to-end)', () => {
 		expect(entry?.actor_type).toBe('admin');
 	});
 
-	it('records an instance secret creation with a null team', async () => {
+	it('records an instance secret creation with no project scope', async () => {
 		const res = await app.request('/api/secrets', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -79,7 +80,7 @@ describe('audit observer (end-to-end)', () => {
 		const rows = await auditRows({ entityType: 'secret', action: 'created' });
 		const entry = rows.find((e) => (e.details as Record<string, unknown>)?.name === 'OBSERVED_KEY');
 		expect(entry).toBeDefined();
-		expect(entry?.team_id).toBeNull();
+		expect(entry?.project_id).toBeNull();
 		expect(entry?.actor_type).toBe('admin');
 	});
 
@@ -112,7 +113,6 @@ describe('audit observer (end-to-end)', () => {
 		const entry = rows.find((e) => e.entity_id === created.id);
 		expect(entry).toBeDefined();
 		expect(entry?.entity_identifier).toBe(created.identifier);
-		expect(typeof entry?.team_slug).toBe('string');
 		expect(typeof entry?.project_slug).toBe('string');
 	});
 
@@ -144,6 +144,25 @@ describe('audit observer (end-to-end)', () => {
 		const details = entry?.details as Record<string, unknown>;
 		expect(details.to).toBe('in_progress');
 		expect(entry?.entity_identifier).toBe(created.identifier);
+	});
+
+	it('attributes an egress request to the run team’s project', async () => {
+		await recordEgressEvent(db, {
+			teamId,
+			agentId: null as unknown as string,
+			runId: 'run-1',
+			host: 'api.example.com',
+			method: 'GET',
+			urlPath: '/v1/ping',
+			statusCode: 200,
+			substitutionsCount: 1,
+			secretNamesUsed: ['EXAMPLE_KEY'],
+		});
+
+		const rows = await auditRows({ entityType: 'egress_request' });
+		const entry = rows.find((e) => (e.details as Record<string, unknown>)?.run_id === 'run-1');
+		expect(entry).toBeDefined();
+		expect(entry?.project_id).toBe(projectId);
 	});
 
 	it('folds resolved assignee display names into the audit details', () => {
