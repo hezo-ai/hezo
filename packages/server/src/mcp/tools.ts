@@ -39,7 +39,7 @@ import { isCoach, isVirtualHqMemberInTeam } from '../lib/agent-roles';
 import { upsertProjectAsset } from '../lib/asset-name';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { trackBackground } from '../lib/background';
-import { broadcastRowChange } from '../lib/broadcast';
+import { broadcastCommentFamilyChange, broadcastRowChange } from '../lib/broadcast';
 import { credentialPlaceholder, validateSecretName } from '../lib/credential-placeholder';
 import {
 	coerceTargetStatusForBlockers,
@@ -1654,12 +1654,19 @@ export function registerTools(
 				memberId,
 			});
 			if (!result.ok) return { error: result.message };
-			broadcastRowChange(wsManager, wsRoom.team(teamId), 'comment_reactions', 'INSERT', {
-				comment_id: args.comment_id,
-				task_id: taskId,
-				member_id: memberId,
-				kind: args.kind,
-			});
+			broadcastCommentFamilyChange(
+				wsManager,
+				teamId,
+				scope.projectId,
+				'comment_reactions',
+				'INSERT',
+				{
+					comment_id: args.comment_id,
+					task_id: taskId,
+					member_id: memberId,
+					kind: args.kind,
+				},
+			);
 			return {
 				comment_id: args.comment_id,
 				kind: args.kind,
@@ -1701,12 +1708,19 @@ export function registerTools(
 				memberId,
 			});
 			if (!result.ok) return { error: result.message };
-			broadcastRowChange(wsManager, wsRoom.team(teamId), 'comment_reactions', 'DELETE', {
-				comment_id: args.comment_id,
-				task_id: taskId,
-				member_id: memberId,
-				kind: args.kind,
-			});
+			broadcastCommentFamilyChange(
+				wsManager,
+				teamId,
+				scope.projectId,
+				'comment_reactions',
+				'DELETE',
+				{
+					comment_id: args.comment_id,
+					task_id: taskId,
+					member_id: memberId,
+					kind: args.kind,
+				},
+			);
 			return {
 				comment_id: args.comment_id,
 				kind: args.kind,
@@ -1761,6 +1775,18 @@ export function registerTools(
 					CommentContentType.Text,
 					JSON.stringify(content),
 				],
+			);
+			// Realtime: notify open task pages. Agent comments come through MCP,
+			// which (unlike the REST POST path) never broadcast — so they only
+			// appeared on refresh. task_comments has no project_id column, so the
+			// helper injects it for the web client's slug resolution.
+			broadcastCommentFamilyChange(
+				wsManager,
+				teamId,
+				scope.projectId,
+				'task_comments',
+				'INSERT',
+				r.rows[0],
 			);
 			await fireCommentWakeups({
 				db,
@@ -1928,8 +1954,16 @@ export function registerTools(
 			const inserted = await db.query<{ id: string }>(
 				`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 				 VALUES ($1, $2, 'credential_request'::comment_content_type, $3::jsonb)
-				 RETURNING id`,
+				 RETURNING *`,
 				[taskId, authorMemberId, JSON.stringify(content)],
+			);
+			broadcastCommentFamilyChange(
+				wsManager,
+				teamId,
+				scope.projectId,
+				'task_comments',
+				'INSERT',
+				inserted.rows[0],
 			);
 
 			events?.emit({
@@ -2073,10 +2107,18 @@ export function registerTools(
 				const inserted = await db.query<{ id: string }>(
 					`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 					 VALUES ($1, $2, 'connect_required'::comment_content_type, $3::jsonb)
-					 RETURNING id`,
+					 RETURNING *`,
 					[taskId, authorMemberId, JSON.stringify(content)],
 				);
 				commentId = inserted.rows[0].id;
+				broadcastCommentFamilyChange(
+					wsManager,
+					teamId,
+					scope.projectId,
+					'task_comments',
+					'INSERT',
+					inserted.rows[0],
+				);
 			}
 
 			return {

@@ -1,8 +1,8 @@
-import { AuthType, CommentContentType, WakeupSource, wsRoom } from '@hezo/shared';
+import { AuthType, CommentContentType, WakeupSource } from '@hezo/shared';
 import { Hono } from 'hono';
 import { encrypt } from '../crypto/encryption';
 import { signAssetUrl } from '../lib/asset-urls';
-import { broadcastChange } from '../lib/broadcast';
+import { broadcastCommentFamilyChange } from '../lib/broadcast';
 import { validateCredentialValue } from '../lib/credential-validator';
 import {
 	connectedAgentIdFromAuth,
@@ -90,12 +90,19 @@ commentsRoutes.put(
 			return err(c, result.code, result.message, status);
 		}
 
-		broadcastChange(c, wsRoom.team(teamId), 'comment_reactions', 'INSERT', {
-			comment_id: commentId,
-			task_id: taskId,
-			member_id: memberId,
-			kind,
-		});
+		broadcastCommentFamilyChange(
+			c.get('wsManager'),
+			teamId,
+			c.get('projectId') as string,
+			'comment_reactions',
+			'INSERT',
+			{
+				comment_id: commentId,
+				task_id: taskId,
+				member_id: memberId,
+				kind,
+			},
+		);
 		return ok(c, { comment_id: commentId, kind, reactions: result.reactions });
 	},
 );
@@ -128,12 +135,19 @@ commentsRoutes.delete(
 			return err(c, result.code, result.message, status);
 		}
 
-		broadcastChange(c, wsRoom.team(teamId), 'comment_reactions', 'DELETE', {
-			comment_id: commentId,
-			task_id: taskId,
-			member_id: memberId,
-			kind,
-		});
+		broadcastCommentFamilyChange(
+			c.get('wsManager'),
+			teamId,
+			c.get('projectId') as string,
+			'comment_reactions',
+			'DELETE',
+			{
+				comment_id: commentId,
+				task_id: taskId,
+				member_id: memberId,
+				kind,
+			},
+		);
 		return ok(c, { comment_id: commentId, kind, reactions: result.reactions });
 	},
 );
@@ -280,18 +294,26 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 		).catch((e) => log.error('Failed to record task links from comment:', e));
 	}
 
-	broadcastChange(
-		c,
-		wsRoom.team(teamId),
+	broadcastCommentFamilyChange(
+		c.get('wsManager'),
+		teamId,
+		c.get('projectId') as string,
 		'task_comments',
 		'INSERT',
 		result.rows[0] as Record<string, unknown>,
 	);
 	if (attachmentIds.length > 0) {
-		broadcastChange(c, wsRoom.team(teamId), 'comment_attachments', 'INSERT', {
-			comment_id: result.rows[0].id,
-			asset_ids: attachmentIds,
-		});
+		broadcastCommentFamilyChange(
+			c.get('wsManager'),
+			teamId,
+			c.get('projectId') as string,
+			'comment_attachments',
+			'INSERT',
+			{
+				comment_id: result.rows[0].id,
+				asset_ids: attachmentIds,
+			},
+		);
 	}
 
 	const masterKeyManager = c.get('masterKeyManager');
@@ -443,7 +465,14 @@ commentsRoutes.post(
 			}
 		}
 
-		broadcastChange(c, wsRoom.team(teamId), 'task_comments', 'UPDATE', updatedComment);
+		broadcastCommentFamilyChange(
+			c.get('wsManager'),
+			teamId,
+			c.get('projectId') as string,
+			'task_comments',
+			'UPDATE',
+			updatedComment,
+		);
 		const actor = await resolveActor(db, c.get('auth'), teamId);
 		c.get('events').emit({
 			type: 'credential.fulfilled',
