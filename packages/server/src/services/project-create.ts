@@ -405,6 +405,14 @@ export interface CreateProjectWithTeamInput {
 	actorUserId?: string;
 	/** Explicit audit actor member id (e.g. the CEO when created via the MCP tool). */
 	actorMemberId?: string | null;
+	/**
+	 * When set (the CEO's create_project path), the initial coherence/setup ticket
+	 * is created UNASSIGNED and is NOT auto-woken — the CEO drafts its description
+	 * with the concrete intake plan and then calls `start_team_setup` to begin the
+	 * run. The direct `POST /api/projects` path leaves this false so coherence
+	 * auto-runs as before.
+	 */
+	suppressCoherenceAutoStart?: boolean;
 }
 
 export type CreateProjectWithTeamResult =
@@ -413,6 +421,8 @@ export type CreateProjectWithTeamResult =
 			project: Record<string, unknown>;
 			planningTask: Record<string, unknown>;
 			team: CreatedTeamRow;
+			/** The initial coherence/setup ticket, or null when coherence review is skipped. */
+			coherenceTask: { id: string; identifier: string } | null;
 	  }
 	| {
 			ok: false;
@@ -511,8 +521,12 @@ export async function createProjectWithTeam(
 	});
 
 	// The CEO's initial coherence/setup pass is the project's first ticket and
-	// blocks planning, so it's created before the planning task to take TO-1.
-	const coherenceTaskId = await enqueueTeamCoherenceReviewTask(db, team.id, 'initial');
+	// blocks planning, so it's created before the planning task to take TO-1. On
+	// the CEO's create_project path it is created unassigned and not auto-woken —
+	// the CEO drafts it then kicks it off with `start_team_setup`.
+	const coherenceTaskId = await enqueueTeamCoherenceReviewTask(db, team.id, 'initial', {
+		autoStart: !input.suppressCoherenceAutoStart,
+	});
 
 	const { planningTask } = await createPlanningTask(db, {
 		teamId: team.id,
@@ -523,9 +537,28 @@ export async function createProjectWithTeam(
 		initialProjectPlan: input.initialProjectPlan ?? null,
 	});
 
+	// Resolve the coherence ticket row once: its identifier is surfaced to the
+	// caller (so the CEO can edit it on the create_project path) and the row is
+	// broadcast so a pending, unassigned setup ticket is visible in the UI rather
+	// than silently waiting (the auto-run path used to open it immediately).
+	let coherenceTask: { id: string; identifier: string } | null = null;
+	let coherenceRow: Record<string, unknown> | null = null;
+	if (coherenceTaskId) {
+		const r = await db.query<Record<string, unknown>>('SELECT * FROM tasks WHERE id = $1', [
+			coherenceTaskId,
+		]);
+		if (r.rows[0]) {
+			coherenceRow = r.rows[0];
+			coherenceTask = { id: coherenceTaskId, identifier: r.rows[0].identifier as string };
+		}
+	}
+
 	if (deps.wsManager) {
 		broadcastRowChange(deps.wsManager, wsRoom.team(team.id), 'projects', 'INSERT', project);
 		broadcastRowChange(deps.wsManager, wsRoom.team(team.id), 'tasks', 'INSERT', planningTask);
+		if (coherenceRow) {
+			broadcastRowChange(deps.wsManager, wsRoom.team(team.id), 'tasks', 'INSERT', coherenceRow);
+		}
 	}
 
 	if (coherenceTaskId) {
@@ -553,5 +586,5 @@ export async function createProjectWithTeam(
 		);
 	}
 
-	return { ok: true, project, planningTask, team };
+	return { ok: true, project, planningTask, team, coherenceTask };
 }

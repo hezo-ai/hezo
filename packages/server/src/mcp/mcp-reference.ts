@@ -84,8 +84,14 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	create_project: {
 		category: 'Projects',
 		returns:
-			'The new project row plus `team_slug`, `planning_task_id`, and `planning_task_identifier`. Returns `{ error }` if validation fails.',
+			'The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, and the initial coherence/setup ticket (`coherence_task_id`, `coherence_task_identifier`). The coherence ticket is created unassigned and does NOT auto-run on this path — draft its description then call `start_team_setup`. Returns `{ error }` if validation fails.',
 		auth: 'CEO only — call after the admin has explicitly approved the scope and team type in intake.',
+	},
+	start_team_setup: {
+		category: 'Projects',
+		returns:
+			'`{ started: true, task_id, task_identifier }` after assigning the project’s open coherence/setup ticket to the CEO and waking them to run it. Returns `{ error }` if there is no open setup ticket for the project or a run is already active on it.',
+		auth: 'CEO only — for a project the CEO created via `create_project`; author the coherence ticket description first.',
 	},
 	list_team_templates: {
 		category: 'Projects',

@@ -52,6 +52,7 @@ async function createLabeledInternalTask(
 	body: string,
 	label: string,
 	priority: TaskPriority,
+	autoStart = true,
 ): Promise<string | null> {
 	const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, ctx.teamProjectId);
 
@@ -63,7 +64,7 @@ async function createLabeledInternalTask(
 		[
 			ctx.teamId,
 			ctx.teamProjectId,
-			ctx.ceoMemberId,
+			autoStart ? ctx.ceoMemberId : null,
 			taskNumber,
 			identifier,
 			title,
@@ -76,19 +77,34 @@ async function createLabeledInternalTask(
 
 	const taskId = insertResult.rows[0].id;
 
-	try {
-		await createWakeup(db, ctx.ceoMemberId, ctx.teamId, WakeupSource.Assignment, {
-			task_id: taskId,
-		});
-	} catch (e) {
-		log.error(`Failed to wake CEO for ${label}:`, e);
+	// When not auto-starting (a CEO-created project), the ticket is left
+	// unassigned and no wakeup fires — the CEO drafts the concrete setup plan into
+	// it and then calls `start_team_setup` to assign it to itself and begin the run.
+	if (autoStart) {
+		try {
+			await createWakeup(db, ctx.ceoMemberId, ctx.teamId, WakeupSource.Assignment, {
+				task_id: taskId,
+			});
+		} catch (e) {
+			log.error(`Failed to wake CEO for ${label}:`, e);
+		}
 	}
 
 	return taskId;
 }
 
-function buildTeamCoherenceReviewBody(reason: TeamCoherenceReviewReason, teamSlug: string): string {
-	return `## Team coherence review
+function buildTeamCoherenceReviewBody(
+	reason: TeamCoherenceReviewReason,
+	teamSlug: string,
+	autoStart = true,
+): string {
+	const draftBanner = autoStart
+		? ''
+		: `> **Setup plan — fill this in before you start.**
+> You created this project from an intake conversation, so this setup ticket has **not** started yet and is currently unassigned. Replace the generic audit below with the concrete setup you settled with the operator: the specific roles to hire (and why), any system-prompt rewrites, and the reporting structure. Edit this description with \`update_task\`. When it reflects the agreed plan, call \`start_team_setup(project="${teamSlug}")\` to assign this ticket to yourself and begin the run. Until you do, the Captain's planning ticket stays blocked on it.
+
+`;
+	return `${draftBanner}## Team coherence review
 
 The **${teamSlug}** project-team changed (reason: ${reason}). Audit its roster, then rewrite the descriptive blobs that other agents read so they stay accurate. Use \`team_id\` = \`${teamSlug}\` for the tool calls below.
 
@@ -117,6 +133,7 @@ export async function enqueueTeamCoherenceReviewTask(
 	db: PGlite,
 	teamId: string,
 	reason: TeamCoherenceReviewReason,
+	opts: { autoStart?: boolean } = {},
 ): Promise<string | null> {
 	if (process.env.HEZO_E2E_SKIP_COHERENCE_REVIEW) return null;
 	const ctx = await loadTeamContext(db, teamId);
@@ -128,10 +145,14 @@ export async function enqueueTeamCoherenceReviewTask(
 		return existing;
 	}
 
+	// Reactive reviews (hire, template-apply, prompt/summary changes) auto-start by
+	// default. Only the CEO's create_project path passes autoStart=false, leaving the
+	// ticket unassigned for the CEO to draft then kick off via `start_team_setup`.
+	const autoStart = opts.autoStart ?? true;
 	const teamSlug = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
 		teamId,
 	]);
-	const body = buildTeamCoherenceReviewBody(reason, teamSlug.rows[0]?.slug ?? teamId);
+	const body = buildTeamCoherenceReviewBody(reason, teamSlug.rows[0]?.slug ?? teamId, autoStart);
 	return createLabeledInternalTask(
 		db,
 		ctx,
@@ -139,5 +160,6 @@ export async function enqueueTeamCoherenceReviewTask(
 		body,
 		COHERENCE_LABEL,
 		TaskPriority.High,
+		autoStart,
 	);
 }
