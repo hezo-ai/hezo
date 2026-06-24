@@ -73,8 +73,12 @@ export function useSetDefaultAiProvider() {
 
 export function useVerifyAiProvider() {
 	return useMutation({
+		// The server returns `{ valid, message }` on failure; `error` is kept for
+		// back-compat with any caller still reading it.
 		mutationFn: (configId: string) =>
-			api.post<{ valid: boolean; error?: string }>(`/api/ai-providers/${configId}/verify`),
+			api.post<{ valid: boolean; message?: string; error?: string }>(
+				`/api/ai-providers/${configId}/verify`,
+			),
 		onSuccess: invalidateAll,
 	});
 }

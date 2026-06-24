@@ -22,7 +22,7 @@ test('lists seeded instance skills and creates a new one via the form', async ()
 		},
 	});
 
-	await findByText('Skills');
+	await findByText('Skills', { selector: 'h1' });
 	await findByText('Seeded Skill');
 
 	await user.click(getByRole('button', { name: 'Add' }));

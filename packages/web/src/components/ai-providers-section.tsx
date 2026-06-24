@@ -1,267 +1,185 @@
-import { AI_PROVIDER_INFO, AiAuthMethod, AiProvider } from '@hezo/shared';
-import { Check, ClipboardPaste, Key, Loader2, ShieldCheck, Trash2, X } from 'lucide-react';
+import { AI_PROVIDER_INFO, AiAuthMethod, type AiProvider } from '@hezo/shared';
+import { Loader2, Plus, ShieldCheck, Star, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import {
 	type AiProviderConfig,
 	useAiProviderModels,
 	useAiProviders,
-	useCreateAiProvider,
 	useDeleteAiProvider,
 	useSetDefaultAiProvider,
 	useUpdateAiProviderConfig,
 	useVerifyAiProvider,
 } from '../hooks/use-ai-providers';
-import { SubscriptionPasteForm } from './subscription-paste-form';
+import { toast } from '../hooks/use-toast';
+import { AddAiProviderDialog } from './add-ai-provider-dialog';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { Input } from './ui/input';
-
-const AI_PROVIDERS_ORDER: AiProvider[] = [
-	AiProvider.DeepSeek,
-	AiProvider.ZAi,
-	AiProvider.Anthropic,
-	AiProvider.OpenAI,
-	AiProvider.Google,
-	AiProvider.OpenRouter,
-	AiProvider.Kimi,
-];
+import { type Column, DataTable } from './ui/data-table';
+import { Tooltip } from './ui/tooltip';
 
 export function AiProvidersSection() {
 	const { data: configs } = useAiProviders();
-	const createProvider = useCreateAiProvider();
 	const deleteProvider = useDeleteAiProvider();
 	const verifyProvider = useVerifyAiProvider();
 	const setDefaultProvider = useSetDefaultAiProvider();
-	const [addingProvider, setAddingProvider] = useState<AiProvider | null>(null);
-	const [pastingProvider, setPastingProvider] = useState<AiProvider | null>(null);
-	const [apiKey, setApiKey] = useState('');
-	const [label, setLabel] = useState('');
-	const [verifyResult, setVerifyResult] = useState<
-		Record<string, { valid: boolean; error?: string }>
-	>({});
+	const [addOpen, setAddOpen] = useState(false);
+	// Per-row transient "verified OK" marker — failures surface as a toast and a
+	// refetched `invalid` status badge, so only successes need an inline cue.
+	const [verifiedOk, setVerifiedOk] = useState<Record<string, boolean>>({});
+	const [verifyingId, setVerifyingId] = useState<string | null>(null);
 
-	async function handleSaveKey(provider: AiProvider) {
-		await createProvider.mutateAsync({ provider, api_key: apiKey, label: label || undefined });
-		setApiKey('');
-		setLabel('');
-		setAddingProvider(null);
-	}
+	const rows = configs ?? [];
 
-	async function handleSavePaste(provider: AiProvider, authJson: string) {
-		await createProvider.mutateAsync({
-			provider,
-			api_key: authJson,
-			auth_method: AiAuthMethod.Subscription,
-		});
-		setPastingProvider(null);
+	function providerCount(provider: string) {
+		return rows.filter((c) => c.provider === provider).length;
 	}
 
 	async function handleVerify(configId: string) {
-		const result = await verifyProvider.mutateAsync(configId);
-		setVerifyResult((prev) => ({ ...prev, [configId]: result }));
+		setVerifyingId(configId);
+		try {
+			const result = await verifyProvider.mutateAsync(configId);
+			setVerifiedOk((prev) => ({ ...prev, [configId]: result.valid }));
+			if (!result.valid) {
+				toast.error(result.message ?? result.error ?? 'Key is invalid or expired');
+			}
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not verify key');
+		} finally {
+			setVerifyingId(null);
+		}
 	}
+
+	const columns: Column<AiProviderConfig>[] = [
+		{
+			key: 'name',
+			header: 'Name',
+			render: (c) => (
+				<span className="flex items-center gap-2">
+					<span className="font-mono text-[13px]">{c.label}</span>
+					{c.is_default && providerCount(c.provider) > 1 && <Badge color="accent">Default</Badge>}
+				</span>
+			),
+		},
+		{
+			key: 'provider',
+			header: 'Provider',
+			render: (c) => {
+				const info = AI_PROVIDER_INFO[c.provider as AiProvider];
+				return (
+					<span className="flex items-center gap-2">
+						<span className="text-[13px]">{info?.name ?? c.provider}</span>
+						{info && <span className="text-xs text-text-3">{info.runtimeLabel}</span>}
+					</span>
+				);
+			},
+		},
+		{
+			key: 'auth',
+			header: 'Auth',
+			hideOnMobile: true,
+			render: (c) => (
+				<Badge color="neutral">
+					{c.auth_method === AiAuthMethod.Subscription ? 'Subscription' : 'API Key'}
+				</Badge>
+			),
+		},
+		{
+			key: 'status',
+			header: 'Status',
+			render: (c) => (
+				<Badge
+					color={c.status === 'active' ? 'success' : c.status === 'invalid' ? 'danger' : 'neutral'}
+				>
+					{c.status}
+				</Badge>
+			),
+		},
+		{
+			key: 'model',
+			header: 'Default model',
+			hideOnMobile: true,
+			render: (c) => <DefaultModelSelector config={c} />,
+		},
+		{
+			key: 'actions',
+			header: '',
+			render: (c) => {
+				const multiple = providerCount(c.provider) > 1;
+				return (
+					<span className="flex items-center gap-2 justify-end">
+						{verifiedOk[c.id] && (
+							<Tooltip content="Key is valid">
+								<ShieldCheck className="w-3.5 h-3.5 text-success-soft-fg" />
+							</Tooltip>
+						)}
+						{multiple && !c.is_default && (
+							<Tooltip content="Set as default">
+								<button
+									type="button"
+									onClick={() => setDefaultProvider.mutate(c.id)}
+									disabled={setDefaultProvider.isPending}
+									aria-label={`Set ${c.label} as default`}
+									className="text-text-3 hover:text-text-1 disabled:opacity-50"
+								>
+									<Star className="w-3.5 h-3.5" />
+								</button>
+							</Tooltip>
+						)}
+						<Tooltip content="Verify">
+							<button
+								type="button"
+								onClick={() => handleVerify(c.id)}
+								disabled={verifyingId === c.id}
+								aria-label={`Verify ${c.label}`}
+								className="text-text-3 hover:text-text-1 disabled:opacity-50"
+							>
+								{verifyingId === c.id ? (
+									<Loader2 className="w-3.5 h-3.5 animate-spin" />
+								) : (
+									<ShieldCheck className="w-3.5 h-3.5" />
+								)}
+							</button>
+						</Tooltip>
+						<Tooltip content="Remove">
+							<button
+								type="button"
+								onClick={() => deleteProvider.mutate(c.id)}
+								aria-label={`Remove ${c.label}`}
+								className="text-text-3 hover:text-danger"
+							>
+								<Trash2 className="w-3.5 h-3.5" />
+							</button>
+						</Tooltip>
+					</span>
+				);
+			},
+		},
+	];
 
 	return (
 		<section>
-			<div className="mb-4">
-				<h2 className="text-base font-medium">AI providers</h2>
-				<p className="text-[13px] text-text-2 mt-1">
-					API keys for AI coding agents. Shared across every team in this Hezo instance.
-				</p>
-			</div>
-			<div className="flex flex-col gap-2">
-				{AI_PROVIDERS_ORDER.map((provider) => {
-					const info = AI_PROVIDER_INFO[provider];
-					const providerConfigs = configs?.filter((c) => c.provider === provider) ?? [];
-					const hasApiKey = providerConfigs.some((c) => c.auth_method === AiAuthMethod.ApiKey);
-					const hasSubscription = providerConfigs.some(
-						(c) => c.auth_method === AiAuthMethod.Subscription,
-					);
-					const canAddSubscription = info.supportsSubscription && !hasSubscription;
-					const canAddApiKey = !hasApiKey;
-					const isAdding = addingProvider === provider;
-					const isPasting = pastingProvider === provider;
-					const showMultipleControls = providerConfigs.length > 1;
-
-					return (
-						<div key={provider} className="border border-border rounded-md p-3 bg-surface">
-							<div className="flex items-center justify-between">
-								<div className="flex items-center gap-2">
-									<span className="text-[13px] font-medium">{info.name}</span>
-									<span className="text-xs text-text-3">{info.runtimeLabel}</span>
-								</div>
-							</div>
-
-							{providerConfigs.map((config) => (
-								<ConfigRow
-									key={config.id}
-									config={config}
-									showDefaultControls={showMultipleControls}
-									verify={verifyResult[config.id]}
-									onVerify={() => handleVerify(config.id)}
-									onRemove={() => deleteProvider.mutate(config.id)}
-									onSetDefault={() => setDefaultProvider.mutate(config.id)}
-									verifyPending={verifyProvider.isPending}
-									setDefaultPending={setDefaultProvider.isPending}
-								/>
-							))}
-
-							{(canAddSubscription || canAddApiKey) && !isAdding && !isPasting && (
-								<div className="flex items-center gap-2 mt-2">
-									{canAddSubscription && (
-										<Button
-											variant="secondary"
-											size="sm"
-											onClick={() => setPastingProvider(provider)}
-										>
-											<ClipboardPaste className="w-3 h-3" /> Use {info.runtimeLabel} subscription
-										</Button>
-									)}
-									{canAddApiKey && (
-										<Button
-											variant="secondary"
-											size="sm"
-											onClick={() => setAddingProvider(provider)}
-										>
-											<Key className="w-3 h-3" /> Enter API key
-										</Button>
-									)}
-								</div>
-							)}
-
-							{isPasting && (
-								<SubscriptionPasteForm
-									provider={provider}
-									onSubmit={(authJson) => handleSavePaste(provider, authJson)}
-									onCancel={() => setPastingProvider(null)}
-									pending={createProvider.isPending}
-								/>
-							)}
-
-							{isAdding && (
-								<div className="flex flex-col gap-2 mt-2">
-									<Input
-										type="password"
-										placeholder={info.keyPlaceholder}
-										value={apiKey}
-										onChange={(e) => setApiKey(e.target.value)}
-									/>
-									<Input
-										placeholder="Label (optional)"
-										value={label}
-										onChange={(e) => setLabel(e.target.value)}
-									/>
-									<div className="flex gap-2">
-										<Button
-											size="sm"
-											onClick={() => handleSaveKey(provider)}
-											disabled={!apiKey.trim() || createProvider.isPending}
-										>
-											{createProvider.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
-											Save
-										</Button>
-										<Button
-											variant="secondary"
-											size="sm"
-											onClick={() => {
-												setAddingProvider(null);
-												setApiKey('');
-												setLabel('');
-											}}
-										>
-											Cancel
-										</Button>
-									</div>
-									{createProvider.error && (
-										<p className="text-[13px] text-danger">
-											{(createProvider.error as { message: string }).message}
-										</p>
-									)}
-								</div>
-							)}
-						</div>
-					);
-				})}
-			</div>
-		</section>
-	);
-}
-
-interface ConfigRowProps {
-	config: AiProviderConfig;
-	showDefaultControls: boolean;
-	verify: { valid: boolean; error?: string } | undefined;
-	onVerify: () => void;
-	onRemove: () => void;
-	onSetDefault: () => void;
-	verifyPending: boolean;
-	setDefaultPending: boolean;
-}
-
-function ConfigRow({
-	config,
-	showDefaultControls,
-	verify,
-	onVerify,
-	onRemove,
-	onSetDefault,
-	verifyPending,
-	setDefaultPending,
-}: ConfigRowProps) {
-	return (
-		<div className="mt-2 border-t border-border pt-2">
-			<div className="flex items-center gap-2 flex-wrap">
-				<Badge color="neutral">
-					{config.auth_method === AiAuthMethod.Subscription ? 'Subscription' : 'API Key'}
-				</Badge>
-				<Badge
-					color={
-						config.status === 'active'
-							? 'success'
-							: config.status === 'invalid'
-								? 'danger'
-								: 'neutral'
-					}
-				>
-					{config.status}
-				</Badge>
-				{showDefaultControls && config.is_default && <Badge color="neutral">Default</Badge>}
-				<span className="text-xs text-text-3 truncate">{config.label}</span>
-				<div className="flex-1" />
-				{showDefaultControls && !config.is_default && (
-					<Button variant="secondary" size="sm" onClick={onSetDefault} disabled={setDefaultPending}>
-						Set default
-					</Button>
-				)}
-				<Button variant="secondary" size="sm" onClick={onVerify} disabled={verifyPending}>
-					{verifyPending ? (
-						<Loader2 className="w-3 h-3 animate-spin" />
-					) : (
-						<ShieldCheck className="w-3 h-3" />
-					)}
-					Verify
-				</Button>
-				<Button variant="danger-text" size="sm" onClick={onRemove}>
-					<Trash2 className="w-3 h-3" /> Remove
-				</Button>
-			</div>
-			<DefaultModelSelector config={config} />
-			{verify && (
-				<div
-					className={`mt-2 flex items-center gap-1.5 text-[13px] ${verify.valid ? 'text-success-soft-fg' : 'text-danger'}`}
-				>
-					{verify.valid ? (
-						<>
-							<Check className="w-3.5 h-3.5" /> Key is valid
-						</>
-					) : (
-						<>
-							<X className="w-3.5 h-3.5" /> {verify.error || 'Key is invalid'}
-						</>
-					)}
+			<div className="flex items-start justify-between gap-3 mb-4">
+				<div>
+					<h2 className="text-base font-medium">AI providers</h2>
+					<p className="text-[13px] text-text-2 mt-1">
+						API keys for AI coding agents. Shared across every team in this Hezo instance.
+					</p>
 				</div>
+				<Button variant="secondary" size="sm" onClick={() => setAddOpen(true)}>
+					<Plus className="w-3 h-3" /> Add provider
+				</Button>
+			</div>
+
+			{rows.length === 0 ? (
+				<p className="text-[13px] text-text-2">
+					No AI providers configured yet. Add one to get started.
+				</p>
+			) : (
+				<DataTable columns={columns} data={rows} rowKey={(c) => c.id} />
 			)}
-		</div>
+
+			<AddAiProviderDialog open={addOpen} onOpenChange={setAddOpen} />
+		</section>
 	);
 }
 
@@ -275,28 +193,25 @@ function DefaultModelSelector({ config }: { config: AiProviderConfig }) {
 	}
 
 	return (
-		<div className="mt-2 flex items-center gap-2 text-[13px]">
-			<label className="flex items-center gap-2">
-				<span className="text-text-2 text-xs">Default model</span>
-				<select
-					aria-label={`Default model for ${config.label}`}
-					value={config.default_model ?? ''}
-					onFocus={() => setOpen(true)}
-					onChange={(e) => handleChange(e.target.value)}
-					className="rounded-md border border-border bg-surface-2 px-2 py-1 text-xs text-text-1 outline-none focus:border-border-strong"
-					disabled={update.isPending}
-				>
-					<option value="">Use CLI default</option>
-					{config.default_model && !models.data?.some((m) => m.id === config.default_model) && (
-						<option value={config.default_model}>{config.default_model}</option>
-					)}
-					{models.data?.map((m) => (
-						<option key={m.id} value={m.id}>
-							{m.label}
-						</option>
-					))}
-				</select>
-			</label>
+		<div className="flex items-center gap-2 text-[13px]">
+			<select
+				aria-label={`Default model for ${config.label}`}
+				value={config.default_model ?? ''}
+				onFocus={() => setOpen(true)}
+				onChange={(e) => handleChange(e.target.value)}
+				className="rounded-md border border-border bg-surface-2 px-2 py-1 text-xs text-text-1 outline-none focus:border-border-strong"
+				disabled={update.isPending}
+			>
+				<option value="">CLI default</option>
+				{config.default_model && !models.data?.some((m) => m.id === config.default_model) && (
+					<option value={config.default_model}>{config.default_model}</option>
+				)}
+				{models.data?.map((m) => (
+					<option key={m.id} value={m.id}>
+						{m.label}
+					</option>
+				))}
+			</select>
 			{(models.isFetching || update.isPending) && (
 				<Loader2 className="w-3 h-3 animate-spin text-text-3" />
 			)}

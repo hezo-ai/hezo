@@ -27,7 +27,7 @@ test('lists seeded instance credentials and creates a new one via the form', asy
 	});
 
 	// Heading + the seeded credential render.
-	await findByText('Credentials');
+	await findByText('Credentials', { selector: 'h1' });
 	await findByText('SEEDED_KEY');
 
 	// Open the create form and add a new credential.

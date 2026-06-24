@@ -33,17 +33,22 @@ async function postProvider(body: Record<string, unknown>) {
 	});
 }
 
-test('lists Anthropic / OpenAI / Google on /settings/ai-providers (no Moonshot, no OAuth)', async () => {
-	const { findByRole, findByText, queryAllByText, queryAllByRole } = await renderApp({
+test('Add provider modal lists Anthropic / OpenAI / Google (no Moonshot, no OAuth)', async () => {
+	const { findByRole, getByRole, queryAllByText, queryAllByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 	});
 
 	await findByRole('heading', { name: 'AI providers' });
-	await findByText('Anthropic');
-	await findByText('OpenAI');
-	await findByText('Google');
-	await findByText('OpenRouter');
-	await findByText('Kimi');
+	await user.click(getByRole('button', { name: 'Add provider' }));
+
+	const dialog = await findByRole('dialog');
+	const providerSelect = within(dialog).getByLabelText('Provider');
+	const optionText = Array.from(providerSelect.querySelectorAll('option')).map(
+		(o) => o.textContent ?? '',
+	);
+	for (const name of ['Anthropic', 'OpenAI', 'Google', 'OpenRouter', 'Kimi']) {
+		expect(optionText.some((t) => t.includes(name))).toBe(true);
+	}
 	expect(queryAllByText('Moonshot').length).toBe(0);
 	expect(queryAllByRole('button', { name: /OAuth/i }).length).toBe(0);
 });
@@ -227,8 +232,8 @@ test('offers Gemini subscription paste flow for Google', async () => {
 	await findByText('Subscription', undefined, { timeout: 15_000 });
 });
 
-test('renders API key + Subscription side-by-side and can flip the default', async () => {
-	const { container, findByRole, findByText, user, ctx } = await renderApp({
+test('lists API key + Subscription rows for a provider and flips the default', async () => {
+	const { findByRole, findByText, getByRole, queryAllByText, user, ctx } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {
 			await clearAiProviders();
@@ -251,26 +256,20 @@ test('renders API key + Subscription side-by-side and can flip the default', asy
 
 	await findByRole('heading', { name: 'AI providers' });
 
-	const settingCards = Array.from(
-		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-md.p-3'),
-	);
-	const openaiCard = settingCards.find((el) => el.textContent?.includes('OpenAI'));
-	expect(openaiCard).toBeTruthy();
-
-	// Wait for the config rows to render — useAiProviders is async even though
-	// we already POSTed the configs in seed.
+	// Both configs render as their own rows in the table.
+	await findByText('openai-mix-api');
+	await findByText('openai-mix-subscription');
 	await waitFor(
 		() => {
-			expect(within(openaiCard!).queryAllByText('Subscription').length).toBeGreaterThan(0);
-			expect(within(openaiCard!).queryAllByText('API Key').length).toBeGreaterThan(0);
+			expect(queryAllByText('Subscription').length).toBeGreaterThan(0);
+			expect(queryAllByText('API Key').length).toBeGreaterThan(0);
 		},
 		{ timeout: 15_000 },
 	);
-	expect(within(openaiCard!).queryByText('Default')).toBeTruthy();
-	expect(within(openaiCard!).queryByRole('button', { name: /Use Codex subscription/i })).toBeNull();
-	expect(within(openaiCard!).queryByRole('button', { name: 'Enter API key' })).toBeNull();
+	// The first-created config is the default; the badge only shows when >1 exist.
+	expect(queryAllByText('Default').length).toBeGreaterThan(0);
 
-	const setDefaultBtn = within(openaiCard!).getAllByRole('button', { name: 'Set default' })[0];
+	const setDefaultBtn = getByRole('button', { name: 'Set openai-mix-subscription as default' });
 	fireEvent.click(setDefaultBtn);
 
 	await waitFor(
@@ -291,6 +290,91 @@ test('renders API key + Subscription side-by-side and can flip the default', asy
 		},
 		{ timeout: 15_000 },
 	);
+});
+
+test('Add provider modal pre-fills a default name from the selected provider', async () => {
+	const { findByRole, getByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await user.click(getByRole('button', { name: 'Add provider' }));
+
+	const dialog = await findByRole('dialog');
+	const nameInput = within(dialog).getByLabelText('Name') as HTMLInputElement;
+	// Default seed only uses the label "test-default", so "Anthropic" is free.
+	await waitFor(() => expect(nameInput.value).toBe('Anthropic'));
+
+	await user.selectOptions(within(dialog).getByLabelText('Provider'), 'google');
+	await waitFor(() => expect(nameInput.value).toBe('Google'));
+});
+
+test('Add provider modal increments the default name when the label is taken', async () => {
+	const { findByRole, getByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+			const res = await postProvider({
+				provider: 'anthropic',
+				api_key: 'sk-ant-existing',
+				label: 'Anthropic',
+			});
+			expect(res.status).toBe(201);
+		},
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await user.click(getByRole('button', { name: 'Add provider' }));
+
+	const dialog = await findByRole('dialog');
+	const nameInput = within(dialog).getByLabelText('Name') as HTMLInputElement;
+	await waitFor(() => expect(nameInput.value).toBe('Anthropic 2'));
+});
+
+test('adds an API key provider via the Add modal', async () => {
+	const { findByRole, findByText, getByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await user.click(getByRole('button', { name: 'Add provider' }));
+
+	const dialog = await findByRole('dialog');
+	await user.selectOptions(within(dialog).getByLabelText('Provider'), 'google');
+
+	const nameInput = within(dialog).getByLabelText('Name') as HTMLInputElement;
+	fireEvent.change(nameInput, { target: { value: 'My Gemini' } });
+	const keyInput = within(dialog).getByLabelText('API key') as HTMLInputElement;
+	fireEvent.change(keyInput, { target: { value: 'gm-test-key-123' } });
+
+	await user.click(within(dialog).getByRole('button', { name: 'Add provider' }));
+
+	// Modal closes and the new row appears under its label.
+	await findByText('My Gemini', undefined, { timeout: 15_000 });
+});
+
+test('adds a subscription credential via the Add modal', async () => {
+	const { findByRole, findByText, getByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await user.click(getByRole('button', { name: 'Add provider' }));
+
+	const dialog = await findByRole('dialog');
+	await user.selectOptions(within(dialog).getByLabelText('Provider'), 'openai');
+	await user.click(within(dialog).getByRole('button', { name: /Codex subscription/i }));
+
+	// "codex login" appears in both a step and the footer, so match all.
+	await within(dialog).findAllByText(/codex login/i);
+	const textarea = within(dialog).getByLabelText('Subscription credential') as HTMLTextAreaElement;
+	fireEvent.change(textarea, {
+		target: { value: JSON.stringify({ tokens: { refresh_token: 'rt-modal' } }) },
+	});
+
+	await user.click(within(dialog).getByRole('button', { name: 'Add provider' }));
+
+	await findByText('Subscription', undefined, { timeout: 15_000 });
 });
 
 test('blocks the app when no provider is configured and drops once one is added', async () => {
