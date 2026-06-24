@@ -29,6 +29,16 @@ export function CeoChatWidget() {
 		el.scrollTop = el.scrollHeight;
 	}, [lastId, lastLen, streaming, open]);
 
+	// Escape closes the chat from any open state (anchored or the expanded modal).
+	useEffect(() => {
+		if (!open) return;
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') setOpen(false);
+		};
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
+	}, [open]);
+
 	const submit = () => {
 		const text = draft.trim();
 		if (!text) return;
@@ -62,93 +72,107 @@ export function CeoChatWidget() {
 		: 'inset-x-2 bottom-2 top-16 md:inset-auto md:bottom-4 md:right-4 md:top-auto md:h-[560px] md:w-[420px]';
 
 	return (
-		<div
-			data-testid="ceo-chat-panel"
-			data-expanded={expanded}
-			className={`fixed z-50 flex flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl ${sizeClass}`}
-		>
-			<header className="flex items-center justify-between border-b border-border px-4 py-3">
-				<div className="flex items-center gap-2">
-					<span className="text-sm font-semibold text-text-1">CEO</span>
-					<span className="rounded-sm border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-2">
-						{HQ_PROJECT_NAME}
-					</span>
-				</div>
-				<div className="flex items-center gap-1">
-					{/* Expand/collapse is desktop-only; the panel is already near-full-screen
-					    on mobile, where the toggle would be a no-op. */}
-					<button
-						type="button"
-						onClick={() => setExpanded((v) => !v)}
-						aria-label={expanded ? 'Collapse chat' : 'Expand chat'}
-						data-testid="ceo-chat-expand"
-						className="hidden h-9 w-9 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1 md:flex"
-					>
-						{expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-					</button>
-					<button
-						type="button"
-						onClick={() => setOpen(false)}
-						aria-label="Close chat"
-						data-testid="ceo-chat-close"
-						className="flex h-9 w-9 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1"
-					>
-						<X className="h-4 w-4" />
-					</button>
-				</div>
-			</header>
-
+		<>
+			{/* In expanded mode the chat is modal: a scrim dims and occludes the page
+			    content below the nav bar (the header stays clear and usable, matching
+			    the panel's own top-12 boundary). Clicking it dismisses the chat. */}
+			{expanded && (
+				<button
+					type="button"
+					aria-label="Close chat"
+					data-testid="ceo-chat-overlay"
+					onClick={() => setOpen(false)}
+					className="fixed inset-x-0 bottom-0 top-12 z-40 bg-[var(--overlay)] cursor-default"
+				/>
+			)}
 			<div
-				ref={scrollRef}
-				data-testid="ceo-chat-messages"
-				className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 scroll-smooth"
+				data-testid="ceo-chat-panel"
+				data-expanded={expanded}
+				className={`fixed z-50 flex flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl ${sizeClass}`}
 			>
-				{!loaded && (
-					<div className="flex items-center justify-center py-6 text-[13px] text-text-2">
-						<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-						Loading…
+				<header className="flex items-center justify-between border-b border-border px-4 py-3">
+					<div className="flex items-center gap-2">
+						<span className="text-sm font-semibold text-text-1">CEO</span>
+						<span className="rounded-sm border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-2">
+							{HQ_PROJECT_NAME}
+						</span>
 					</div>
-				)}
-				{loaded && messages.length === 0 && (
-					<p className="px-1 py-6 text-center text-[13px] text-text-2">
-						Say hello to the CEO. Ask about anything, including active projects, notifications, task
-						blockers, etc
-					</p>
-				)}
-				{messages.map((m) => (
-					<MessageBubble key={m.id} message={m} />
-				))}
-			</div>
+					<div className="flex items-center gap-1">
+						{/* Expand/collapse is desktop-only; the panel is already near-full-screen
+					    on mobile, where the toggle would be a no-op. */}
+						<button
+							type="button"
+							onClick={() => setExpanded((v) => !v)}
+							aria-label={expanded ? 'Collapse chat' : 'Expand chat'}
+							data-testid="ceo-chat-expand"
+							className="hidden h-9 w-9 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1 md:flex"
+						>
+							{expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+						</button>
+						<button
+							type="button"
+							onClick={() => setOpen(false)}
+							aria-label="Close chat"
+							data-testid="ceo-chat-close"
+							className="flex h-9 w-9 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1"
+						>
+							<X className="h-4 w-4" />
+						</button>
+					</div>
+				</header>
 
-			<div className="border-t border-border p-3">
-				<div className="flex items-end gap-2 rounded-2xl border border-border bg-surface px-2 py-1.5 transition-colors focus-within:border-border-strong">
-					<textarea
-						value={draft}
-						onChange={(e) => setDraft(e.target.value)}
-						onKeyDown={(e) => {
-							if (e.key === 'Enter' && !e.shiftKey) {
-								e.preventDefault();
-								submit();
-							}
-						}}
-						rows={1}
-						placeholder="Ask the CEO anything, across every project…"
-						data-testid="ceo-chat-input"
-						className="max-h-32 min-h-[2.25rem] flex-1 resize-none bg-transparent px-2 py-2 text-[13px] leading-5 text-text-1 outline-none placeholder:text-text-3"
-					/>
-					<button
-						type="button"
-						onClick={submit}
-						disabled={!draft.trim()}
-						aria-label="Send message"
-						data-testid="ceo-chat-send"
-						className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-solid text-accent-solid-fg transition-colors hover:bg-accent-hover disabled:opacity-40"
-					>
-						<ArrowRight className="h-4 w-4" />
-					</button>
+				<div
+					ref={scrollRef}
+					data-testid="ceo-chat-messages"
+					className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 scroll-smooth"
+				>
+					{!loaded && (
+						<div className="flex items-center justify-center py-6 text-[13px] text-text-2">
+							<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+							Loading…
+						</div>
+					)}
+					{loaded && messages.length === 0 && (
+						<p className="px-1 py-6 text-center text-[13px] text-text-2">
+							Say hello to the CEO. Ask about anything, including active projects, notifications,
+							task blockers, etc
+						</p>
+					)}
+					{messages.map((m) => (
+						<MessageBubble key={m.id} message={m} />
+					))}
+				</div>
+
+				<div className="border-t border-border p-3">
+					<div className="flex items-end gap-2 rounded-2xl border border-border bg-surface px-2 py-1.5 transition-colors focus-within:border-border-strong">
+						<textarea
+							value={draft}
+							onChange={(e) => setDraft(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === 'Enter' && !e.shiftKey) {
+									e.preventDefault();
+									submit();
+								}
+							}}
+							rows={1}
+							placeholder="Ask the CEO anything, across every project…"
+							data-testid="ceo-chat-input"
+							className="max-h-32 min-h-[2.25rem] flex-1 resize-none bg-transparent px-2 py-2 text-[13px] leading-5 text-text-1 outline-none placeholder:text-text-3"
+						/>
+						<button
+							type="button"
+							onClick={submit}
+							disabled={!draft.trim()}
+							aria-label="Send message"
+							data-testid="ceo-chat-send"
+							className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-solid text-accent-solid-fg transition-colors hover:bg-accent-hover disabled:opacity-40"
+						>
+							<ArrowRight className="h-4 w-4" />
+						</button>
+					</div>
 				</div>
 			</div>
-		</div>
+		</>
 	);
 }
 
