@@ -61,6 +61,37 @@ export function ProjectSidebar() {
 	const ownAgents = enabledAgents.filter((a) => !a.is_instance).sort(byCreatedAt);
 	const instanceAgents = enabledAgents.filter((a) => a.is_instance).sort(byCreatedAt);
 
+	// Container and Activity: top-level on HQ (which has no Settings page to nest
+	// under), but sub-items of Settings on a normal project — see below.
+	const containerPage = {
+		to: '/projects/$projectId/container',
+		params: projectParams,
+		testId: 'project-sidebar-container',
+		label: (
+			<span className="inline-flex items-center gap-1.5">
+				<span>Container</span>
+				{containerFailed && (
+					<Tooltip content="Container failed — click for details" side="right">
+						<span
+							role="img"
+							data-testid="project-sidebar-container-error"
+							aria-label="Container failed"
+							className="inline-flex shrink-0 text-danger"
+						>
+							<AlertTriangle className="w-3 h-3" aria-hidden="true" />
+						</span>
+					</Tooltip>
+				)}
+			</span>
+		),
+	};
+	const activityPage = {
+		to: '/projects/$projectId/audit-log',
+		params: projectParams,
+		label: 'Activity',
+		testId: 'project-sidebar-activity',
+	};
+
 	const projectPages = [
 		{
 			to: '/projects/$projectId/tasks',
@@ -82,34 +113,9 @@ export function ProjectSidebar() {
 			params: projectParams,
 			label: 'Assets',
 		},
-		{
-			to: '/projects/$projectId/container',
-			params: projectParams,
-			label: (
-				<span className="inline-flex items-center gap-1.5">
-					<span>Container</span>
-					{containerFailed && (
-						<Tooltip content="Container failed — click for details" side="right">
-							<span
-								role="img"
-								data-testid="project-sidebar-container-error"
-								aria-label="Container failed"
-								className="inline-flex shrink-0 text-danger"
-							>
-								<AlertTriangle className="w-3 h-3" aria-hidden="true" />
-							</span>
-						</Tooltip>
-					)}
-				</span>
-			),
-		},
-		{
-			to: '/projects/$projectId/audit-log',
-			params: projectParams,
-			label: 'Activity',
-		},
 		...(isInternal
-			? []
+			? // HQ has no Settings — keep Container and Activity at the top level.
+				[containerPage, activityPage]
 			: [
 					{
 						to: '/projects/$projectId/budget',
@@ -122,6 +128,9 @@ export function ProjectSidebar() {
 						params: projectParams,
 						label: 'Settings',
 						testId: 'project-sidebar-settings',
+						// Container and Activity disclose under Settings when it (or one of
+						// them) is the active route.
+						subItems: [containerPage, activityPage],
 					},
 				]),
 	];
