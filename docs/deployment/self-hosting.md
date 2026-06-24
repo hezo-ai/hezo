@@ -51,6 +51,28 @@ Only the server port needs to be reachable by the people using Hezo.
 
 ## Updating
 
-Upgrading is replacing the binary. On startup Hezo runs any required database
-migrations automatically, taking a snapshot first so an upgrade is safe to roll back.
-See [Backup & recovery](/docs/deployment/backup-and-recovery).
+### In-app auto-update
+
+Hezo checks GitHub Releases daily and, when a newer version is available,
+downloads and verifies the binary for your platform in the background. A bar
+then appears at the bottom of the web UI; a superuser clicks **Update &
+restart** and confirms. Hezo shuts down gracefully, swaps in the new binary, and
+restarts onto it — no manual file replacement.
+
+Because the restart re-locks the instance, **you'll need your 12-word master key
+to unlock Hezo again afterward** — unless you run Hezo with the master key set in
+the environment (`HEZO_MASTER_KEY`), in which case it unlocks itself on restart.
+The confirmation dialog tells you which case applies. In-flight agent runs are
+aborted and recovered automatically, and connected browsers reconnect on their
+own.
+
+Auto-update applies to the self-managed single binary. It is disabled when Hezo
+runs inside a container (update the image instead) and can be turned off with
+`HEZO_DISABLE_AUTO_UPDATE`. The daily check schedule is configurable via
+`HEZO_UPDATE_CHECK_CRON`. See [Configuration](/docs/deployment/configuration).
+
+### Updating manually
+
+You can always upgrade by replacing the binary yourself. On startup Hezo runs any
+required database migrations automatically, taking a snapshot first so an upgrade
+is safe to roll back. See [Backup & recovery](/docs/deployment/backup-and-recovery).

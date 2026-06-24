@@ -21,6 +21,7 @@ export const queryKeys = {
 	me: () => ['me'],
 	status: () => ['status'],
 	updateCheck: () => ['update-check'],
+	updateStatus: () => ['update-status'],
 	teamTemplates: () => ['team-templates'],
 	aiProviderModels: (configId: string) => ['ai-providers', configId, 'models'],
 	instanceAuditLog: (filters: KeyParam) => ['instance', 'audit-log', filters],

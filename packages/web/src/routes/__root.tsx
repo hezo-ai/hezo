@@ -178,8 +178,8 @@ function ShellChrome() {
 						</div>
 					)}
 					<main ref={mainRef} className="flex-1 min-w-0 overflow-auto relative">
-						<UpdateBanner />
 						<Outlet />
+						<UpdateBanner />
 					</main>
 				</div>
 			</div>

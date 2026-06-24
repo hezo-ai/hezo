@@ -13,6 +13,7 @@ import {
 	TaskPriority,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
+	UpdateState,
 	WakeupSkipReason,
 	WakeupSource,
 	WakeupStatus,
@@ -27,6 +28,7 @@ import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { ref } from '../lib/log-ref';
 import { assertChildrenAllClosed } from '../lib/task-relationships';
 import { logger } from '../logger';
+import { getLatestInfo } from '../routes/updates';
 import { type RunnerDeps, type RunResult, recordRunCostAndEnforce, runAgent } from './agent-runner';
 import {
 	pauseAgentForBudget,
@@ -56,6 +58,7 @@ import { ensureRepoSetupAction } from './repo-setup';
 import { getProjectConcurrency, isTaskBusyInDb } from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
 import { triggerStatusAutomations } from './task-automation';
+import { downloadAndStage, isAutoUpdateEnabled, readUpdateState } from './updater';
 import { absorbQueuedTaskWakeups, assignmentWakeupAlreadyServed, createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -137,6 +140,9 @@ const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_0
 const WAKEUP_CRON = process.env.HEZO_WAKEUP_CRON ?? '*/5 * * * * *';
 const HEARTBEAT_CRON = process.env.HEZO_HEARTBEAT_CRON ?? '*/5 * * * * *';
 const INBOX_ARCHIVE_CRON = process.env.HEZO_INBOX_ARCHIVE_CRON ?? '0 0 3 * * *';
+// Daily check for a newer release; when auto-update is enabled and one is found,
+// download+verify+stage it so an operator "Update & restart" is instant.
+const UPDATE_CHECK_CRON = process.env.HEZO_UPDATE_CHECK_CRON ?? '0 0 4 * * *';
 // How often to re-evaluate budget-paused agents. Spend is summed over rolling
 // UTC windows, so a daily/weekly/monthly window rolling over silently frees an
 // agent's budget with no event — this sweep notices and lifts the reactive
@@ -387,6 +393,11 @@ export class JobManager {
 			cron: BUDGET_RESUME_CRON,
 			log: cronLog,
 			onTick: () => this.guarded('budget-resume', () => this.processBudgetResumes()),
+		});
+		this.cron.createJob('update-check', {
+			cron: UPDATE_CHECK_CRON,
+			log: cronLog,
+			onTick: () => this.guarded('update-check', () => this.checkForUpdate()),
 		});
 		log.info('Job manager started.');
 	}
@@ -2021,5 +2032,21 @@ export class JobManager {
 		if (count > 0) {
 			log.debug(`Archived ${count} inbox item(s)`);
 		}
+	}
+
+	/**
+	 * Daily auto-update check. When the feature is enabled (supervised compiled
+	 * binary) and a newer release exists that isn't already staged/downloading,
+	 * download+verify+stage it so an operator "Update & restart" is instant.
+	 */
+	private async checkForUpdate(): Promise<void> {
+		if (!isAutoUpdateEnabled() || process.env.HEZO_WORKER !== '1') return;
+		const latest = await getLatestInfo();
+		if (!latest.updateAvailable || !latest.latest) return;
+		const state = await readUpdateState(this.deps.dataDir);
+		if (state.state === UpdateState.Downloading) return;
+		if (state.state === UpdateState.Staged && state.targetVersion === latest.latest) return;
+		log.info(`Auto-update: staging release ${latest.latest}`);
+		await downloadAndStage(latest.latest, this.deps.dataDir);
 	}
 }
