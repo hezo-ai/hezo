@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { UpdateState } from '@hezo/shared';
@@ -8,8 +8,24 @@ import { applyStagedUpdate } from '../../src/services/updater';
 
 // Runtime tier: the supervisor detects the restart sentinel via `Bun.spawn`'s
 // exit-code propagation, and `applyStagedUpdate` swaps the binary with node:fs
-// primitives. vitest runs under Node, so these contracts are pinned here on the
-// production Bun runtime where the supervisor actually runs.
+// primitives whose behaviour depends on the host OS. vitest runs under Node, so
+// these contracts are pinned here on the production Bun runtime.
+//
+// The swap test below is PLATFORM-ADAPTIVE: it builds a real, running executable
+// for whatever OS you run it on and replaces it in place, so running
+// `bun test test/bun/updater.bun.test.ts` on Windows exercises the Windows
+// rename-trick, and on macOS/Linux the atomic rename — each against the real
+// file-locking semantics that production hits. (Branch-level coverage of both
+// strategies on any OS lives in the fast vitest tier, test/updater.test.ts.)
+
+async function seedStaged(dataDir: string, content: string): Promise<void> {
+	await mkdir(join(dataDir, '.update'), { recursive: true });
+	await writeFile(join(dataDir, '.update', 'staged'), content);
+	await writeFile(
+		join(dataDir, '.update', 'state.json'),
+		JSON.stringify({ state: UpdateState.Staged, targetVersion: '9.9.9' }),
+	);
+}
 
 describe('Bun.spawn exit-code propagation (supervisor sentinel routing)', () => {
 	async function spawnExit(code: number): Promise<number> {
@@ -33,44 +49,46 @@ describe('Bun.spawn exit-code propagation (supervisor sentinel routing)', () => 
 	});
 });
 
-describe('applyStagedUpdate on the Bun runtime', () => {
-	async function seed(dataDir: string, content: string): Promise<void> {
-		await mkdir(join(dataDir, '.update'), { recursive: true });
-		await writeFile(join(dataDir, '.update', 'staged'), content);
-		await writeFile(
-			join(dataDir, '.update', 'state.json'),
-			JSON.stringify({ state: UpdateState.Staged, targetVersion: '9.9.9' }),
-		);
-	}
+describe('applyStagedUpdate replaces a live binary on this platform', () => {
+	// Runs the real swap strategy for `process.platform` against a genuine,
+	// currently-executing binary — the production condition the unit tests can't
+	// reproduce (Windows locks the running .exe; Unix holds the executing inode).
+	test(`swaps a running ${process.platform} executable in place`, async () => {
+		const dataDir = await mkdtemp(join(tmpdir(), 'hezo-live-data-'));
+		const binDir = await mkdtemp(join(tmpdir(), 'hezo-live-bin-'));
+		const isWindows = process.platform === 'win32';
+		const target = join(binDir, isWindows ? 'hezo.exe' : 'hezo');
+		let child: ReturnType<typeof Bun.spawn> | undefined;
 
-	test('Unix atomic rename replaces the target binary', async () => {
-		const dataDir = await mkdtemp(join(tmpdir(), 'hezo-bun-apply-'));
-		const binDir = await mkdtemp(join(tmpdir(), 'hezo-bun-bin-'));
-		const target = join(binDir, 'hezo');
 		try {
-			await writeFile(target, 'OLD');
-			await seed(dataDir, 'NEW');
+			// A real executable for THIS platform: a copy of the running runtime.
+			await copyFile(process.execPath, target);
+			if (!isWindows) await chmod(target, 0o755);
+
+			// Keep it running so the OS holds the file exactly as it would the live
+			// server binary (locked on Windows, an executing inode on Unix).
+			const sleeper = join(binDir, 'stay-alive.js');
+			await writeFile(sleeper, 'setTimeout(() => {}, 60_000);');
+			child = Bun.spawn([target, sleeper], { stdout: 'ignore', stderr: 'ignore' });
+			// Give it a moment to actually start executing the target file.
+			await new Promise((resolve) => setTimeout(resolve, 750));
+			expect(child.pid).toBeGreaterThan(0);
+			expect(child.exitCode).toBeNull(); // genuinely running
+
+			await seedStaged(dataDir, 'REPLACED BINARY');
+			// process.platform selects the right strategy for this OS.
 			await applyStagedUpdate(dataDir, target);
-			expect(await readFile(target, 'utf8')).toBe('NEW');
+
+			// The on-disk binary is the new one, and staging is cleared.
+			expect(await readFile(target, 'utf8')).toBe('REPLACED BINARY');
 			expect(existsSync(join(dataDir, '.update'))).toBe(false);
+			// The already-running process is untouched by the swap.
+			expect(child.exitCode).toBeNull();
 		} finally {
-			await rm(dataDir, { recursive: true, force: true });
-			await rm(binDir, { recursive: true, force: true });
-		}
-	});
-
-	test('Windows rename-trick branch replaces the .exe target', async () => {
-		const dataDir = await mkdtemp(join(tmpdir(), 'hezo-bun-applyw-'));
-		const binDir = await mkdtemp(join(tmpdir(), 'hezo-bun-binw-'));
-		const target = join(binDir, 'hezo.exe');
-		try {
-			await writeFile(target, 'OLD');
-			await seed(dataDir, 'NEW');
-			await applyStagedUpdate(dataDir, target);
-			expect(await readFile(target, 'utf8')).toBe('NEW');
-		} finally {
-			await rm(dataDir, { recursive: true, force: true });
-			await rm(binDir, { recursive: true, force: true });
+			child?.kill();
+			await child?.exited;
+			await rm(dataDir, { recursive: true, force: true }).catch(() => {});
+			await rm(binDir, { recursive: true, force: true }).catch(() => {});
 		}
 	});
 });
