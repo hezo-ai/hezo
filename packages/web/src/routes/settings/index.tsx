@@ -78,18 +78,32 @@ function GlobalSettingsPage() {
 							data-testid="settings-version"
 							className="mt-3 pt-3 px-3 border-t border-border text-[12px] text-text-2"
 						>
-							{RELEASE_TAG.test(update.current) ? (
+							<div className="italic">
+								version:{' '}
+								{RELEASE_TAG.test(update.current) ? (
+									<a
+										href={`https://github.com/hezo-ai/hezo/releases/tag/${update.current}`}
+										target="_blank"
+										rel="noreferrer"
+										className="hover:underline hover:text-text-1 transition-colors"
+									>
+										{update.current}
+									</a>
+								) : (
+									<span>{update.current}</span>
+								)}
+							</div>
+							<div className="mt-1.5">
+								Got feedback?{' '}
 								<a
-									href={`https://github.com/hezo-ai/hezo/releases/tag/${update.current}`}
+									href="https://x.com/taoofdev"
 									target="_blank"
 									rel="noreferrer"
 									className="hover:underline hover:text-text-1 transition-colors"
 								>
-									Hezo v{update.current}
+									@taoofdev
 								</a>
-							) : (
-								<span>Hezo v{update.current}</span>
-							)}
+							</div>
 						</div>
 					)}
 				</nav>
