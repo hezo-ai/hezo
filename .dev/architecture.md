@@ -155,22 +155,23 @@ uploaded files (bytes on local disk, served over HMAC-signed URLs).
 **Governance & misc.** `approvals` (polymorphic board decisions), `audit_log`
 (append-only, project + instance scopes — `project_id` set scopes a row to one project,
 NULL marks an instance-level action; never updated/deleted by the app),
-`api_keys` (bcrypt-hashed, `hezo_` prefix), `connected_agents` (external MCP clients —
-self-registered, admin-approved, `hezoc_` prefix), `invites`, `admin_mentions` (board inbox),
+`api_keys` (instance-scoped MCP credential, sha256-hashed `hezo_` prefix, `status`
+pending/approved — admin-minted keys are born approved, self-registered ones await admin
+approval), `invites`, `admin_mentions` (board inbox),
 `instance_user_roles`, `notification_preferences`. `plugins`/`plugin_state`/`plugin_jobs`
 are scaffolding for a future plugin runtime — present but not yet exercised.
 
-**Actor attribution (human vs connected agent).** Every recorded admin action carries who
-took it so the UI can flag human vs automated. `audit_actor_type` is
-`admin | agent | system | connected_agent`; alongside the existing `actor_member_id` /
-`author_member_id` foreign keys, `audit_log`, `task_comments`, and `document_revisions` each
-carry a parallel nullable `actor_connected_agent_id` / `author_connected_agent_id` FK (at
-most one of the two is set per row). `resolveActor` maps a `ConnectedAgent` principal to the
-`connected_agent` actor type + id, threaded through task events, the audit observer, and the
-document service. The web surfaces (task activity feed, audit-log table, document revision
-history) render a small badge via the shared `ActorBadge` — a person icon for a human admin,
-a bot icon for a connected agent (tooltip naming it). Roster agents and `system` actors are
-not badged; inline `@admin` mentions in comment bodies are rendered plainly (not an action).
+**Actor attribution (human vs API key).** Every recorded admin action carries who took it so
+the UI can flag human vs automated. `audit_actor_type` is `admin | agent | system | api_key`;
+alongside the existing `actor_member_id` / `author_member_id` foreign keys, `audit_log`,
+`task_comments`, and `document_revisions` each carry a parallel nullable `actor_api_key_id` /
+`author_api_key_id` FK (at most one of the two is set per row). `resolveActor` maps an
+`ApiKey` principal to the `api_key` actor type + id, threaded through task events, the audit
+observer, and the document service. The web surfaces (task activity feed, audit-log table,
+document revision history) render a small badge via the shared `ActorBadge` — a person icon
+for a human admin, a bot icon for an API key (tooltip naming it). Roster agents and `system`
+actors are not badged; inline `@admin` mentions in comment bodies are rendered plainly (not an
+action).
 
 > The migrations are the source of truth for the live schema. Tables an older draft of
 > the docs mentioned — `connected_platforms`, `secret_grants`, `slack_connections` — do
@@ -566,32 +567,33 @@ domain-separated message (`hezo-auth-v1:login:<nonce>`). After a restart the ser
 domain-separated so signatures can't be replayed or cross-purposed; on unlock
 `MasterKeyManager` fires `onUnlock` callbacks that start the `JobManager`.
 
-**Four principals.**
+**Three principals.**
 - **User JWT** (HS256, secret derived from the unlock key) — `Authorization: Bearer <jwt>`.
-- **API key** — `Authorization: Bearer hezo_<key>`, SHA-256-hashed, team-scoped. The
-  external **team-scoped** on-ramp: authenticates the **MCP endpoint (`POST /mcp`) only** —
-  rejected on REST and the WebSocket. Humans mint and revoke keys via the REST api-keys
-  routes (user JWT). The `hezo_` prefix disambiguates from agent JWTs (and `hezoc_`
-  connected-agent tokens).
+- **API key** — `Authorization: Bearer hezo_<key>`, SHA-256-hashed, **instance-scoped**. The
+  external on-ramp, confined to the **MCP endpoint (`POST /mcp`) only** — rejected on REST
+  and the WebSocket. One `api_keys` table with a `status` (pending/approved) backs **two
+  issuance paths**: (a) a human superuser **mints** a key in Global Settings (born
+  `approved`, active at once); (b) an external MCP client **self-registers** via the public
+  `register` tool / `POST /api/api-keys/register` (born `pending`, **inert until an admin
+  approves it** — pending registration + status polling use the public onboarding surface,
+  the `/mcp` `register`/`connection_status` tools and `GET /api/api-keys/status`). An
+  approved key resolves to an **admin-equivalent, cross-team principal** (every
+  project/team), revoked instantly by deleting the row (no token store). It is
+  admin-equivalent for data and instance settings but **not** for managing API keys
+  themselves — minting, approving, and revoking stay human-superuser-only. Having no home
+  project, a key must name the `project` on project-scoped tools.
 - **Agent JWT** — minted per run, carrying `{ member_id, team_id, run_id, exp }`. Validated
   on every call against the **`heartbeat_runs` row** (`id=run_id`, member/team match,
   status `running`); when the run finalizes the token is rejected on the next call —
   revocation for free, no token store.
-- **Connected-agent token** — `Authorization: Bearer hezoc_<key>`, SHA-256-hashed, issued
-  by external-agent **self-registration** and **inert until an admin approves it**. Once
-  approved it resolves to an **admin-equivalent, cross-team principal** (every
-  project/team), revoked instantly by deleting the `connected_agents` row (no token store).
-  It is admin-equivalent for data and instance settings but **not** for managing connected
-  agents — that stays human-superuser-only. Pending registration + status polling go
-  through the public onboarding surface (REST and the `/mcp` `register`/`connection_status`
-  tools).
 
-By surface: **REST** is the human/browser API (user JWT), also reachable by an approved
-**connected-agent token** (admin-equivalent). **MCP** additionally accepts the **agent JWT**
-(internal per-run) and the **API key** (external, team-scoped). The API key is the one
-credential confined to MCP — an external caller can obtain neither a user JWT (needs the
-master-key seed) nor an agent JWT (minted only for a server-side run), so a team-scoped API
-key (or an admin-approved `hezoc_` token) is its only way in.
+By surface: **REST** is the human/browser API (user JWT only). **MCP** accepts the **agent
+JWT** (internal per-run) and the **API key** (external, instance-scoped). The API key is the
+one credential confined to MCP — an external caller can obtain neither a user JWT (needs the
+master-key seed) nor an agent JWT (minted only for a server-side run), so an API key is its
+only way in. Although an approved key is admin-equivalent, it never reaches REST: the auth
+middleware rejects `hezo_` tokens on `/api`, so admin-equivalence applies only to its MCP
+surface (and the instance-management MCP tools).
 
 **Authorization** (`AGENTS.md` › Route authorization is authoritative). Routes with
 `:projectId` resolve the project → its backing team and verify access **per request** in
@@ -722,11 +724,11 @@ shapes.
 One non-REST surface shares the port: the **MCP endpoint** (`POST /mcp`, Streamable
 HTTP), whose tools mirror the REST surface and enforce the same authorization. It is the
 interface agents drive — tasks, comments, approvals, credentials — and external agents
-can drive it too, including **self-registering as a connected agent** (pending admin
-approval, then admin-equivalent across every project/team; § 10). It also exposes
-`POST /mcp/assets` (multipart) for binary uploads, since JSON-RPC can't carry a file.
-**API keys authenticate the MCP surface only**; REST is the user-JWT (human/browser)
-surface (connected agents excepted — admin-equivalent on both). `GET /SKILL.md` serves the
+can drive it too, with an **API key** (minted by an admin, or obtained by
+**self-registration** — pending admin approval, then admin-equivalent across every
+project/team; § 10). It also exposes `POST /mcp/assets` (multipart) for binary uploads,
+since JSON-RPC can't carry a file. **API keys authenticate the MCP surface only**; REST is
+the user-JWT (human/browser) surface. `GET /SKILL.md` serves the
 manifest that teaches an external agent how to use it — including the connect/register
 flow — and `GET /llms.txt` points to it. The matching **human** reference — a full
 tool-by-tool page with parameters and return shapes — is generated from the same registry

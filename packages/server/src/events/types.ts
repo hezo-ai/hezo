@@ -18,8 +18,8 @@ interface Scope {
 interface Actor {
 	actorType: AuditActorType;
 	actorMemberId: string | null;
-	/** Set when the actor is a connected agent; mutually exclusive with actorMemberId. */
-	actorConnectedAgentId?: string | null;
+	/** Set when the actor is an API key; mutually exclusive with actorMemberId. */
+	actorApiKeyId?: string | null;
 }
 
 export type TaskUpdateField = 'title' | 'status' | 'assignee';

@@ -160,7 +160,7 @@ export async function triggerStatusAutomations(
 	oldStatus: string,
 	newStatus: string,
 	actorMemberId: string | null,
-	actorConnectedAgentId: string | null,
+	actorApiKeyId: string | null,
 	wsManager?: WebSocketManager,
 ): Promise<void> {
 	await recordStatusChange(
@@ -170,7 +170,7 @@ export async function triggerStatusAutomations(
 		oldStatus,
 		newStatus,
 		actorMemberId,
-		actorConnectedAgentId,
+		actorApiKeyId,
 		wsManager,
 	);
 

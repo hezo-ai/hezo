@@ -52,8 +52,7 @@ import {
 import { detectUnlinkedTeammateReferences } from '../lib/mentions';
 import {
 	actorTypeFromAuth,
-	connectedAgentIdFromAuth,
-	projectIdForTeam,
+	apiKeyIdFromAuth,
 	resolveActorMemberId,
 	resolveProject,
 	resolveTaskId,
@@ -483,7 +482,7 @@ async function buildMcpCreateTaskCaller(
 	const caller: CreateTaskCaller = {
 		actorType: actorTypeFromAuth(auth),
 		actorMemberId,
-		actorConnectedAgentId: connectedAgentIdFromAuth(auth),
+		actorApiKeyId: apiKeyIdFromAuth(auth),
 	};
 	if (auth.type === AuthType.Agent) {
 		caller.agentMemberId = auth.memberId;
@@ -539,11 +538,9 @@ export async function resolveScope(
 		scope = { projectId: p.projectId, teamId: p.teamId };
 	} else if (auth.type === AuthType.Agent) {
 		scope = { projectId: auth.projectId, teamId: auth.teamId };
-	} else if (auth.type === AuthType.ApiKey) {
-		const projectId = await projectIdForTeam(db, auth.teamId);
-		if (!projectId) return { error: 'No project found for this API key' };
-		scope = { projectId, teamId: auth.teamId };
 	} else {
+		// Instance principals (an API key, the CEO chat session) have no home
+		// project — they must name the project they want to act in.
 		return { error: '`project` is required' };
 	}
 
@@ -567,8 +564,6 @@ async function authorizeScope(
 			}
 			return null;
 		case AuthType.ApiKey:
-			return auth.teamId === scope.teamId ? null : 'Access denied: project outside this API key';
-		case AuthType.ConnectedAgent:
 			// Admin-equivalent: every project across the instance.
 			return null;
 		case AuthType.Admin: {
@@ -596,8 +591,6 @@ async function authorizeTeam(db: PGlite, auth: AuthInfo, teamId: string): Promis
 			if (auth.crossTeam) return null;
 			return auth.teamId === teamId ? null : 'Access denied: team mismatch';
 		case AuthType.ApiKey:
-			return auth.teamId === teamId ? null : 'Access denied: team mismatch';
-		case AuthType.ConnectedAgent:
 			// Admin-equivalent: every team across the instance.
 			return null;
 		case AuthType.Admin: {
@@ -663,20 +656,17 @@ export function registerTools(
 	tool(
 		server,
 		'list_teams',
-		'List teams accessible to the caller. The instance CEO (cross-team session) gets every team in the instance; other agents get only their own team.',
+		'List teams accessible to the caller. An API key and the instance CEO (cross-team session) get every team in the instance; an ordinary agent run gets only its own team.',
 		{},
 		async (_args, db, auth) => {
 			// The instance CEO chat session acts across every team (cross-team gated
 			// at mint time), so it discovers the whole roster — not just HQ. An
-			// approved connected agent is admin-equivalent and spans the instance too.
-			if (
-				auth.type === AuthType.ConnectedAgent ||
-				(auth.type === AuthType.Agent && auth.crossTeam)
-			) {
+			// approved API key is admin-equivalent and spans the instance too.
+			if (auth.type === AuthType.ApiKey || (auth.type === AuthType.Agent && auth.crossTeam)) {
 				const r = await db.query('SELECT * FROM teams ORDER BY name');
 				return r.rows;
 			}
-			if (auth.type === AuthType.ApiKey || auth.type === AuthType.Agent) {
+			if (auth.type === AuthType.Agent) {
 				const r = await db.query('SELECT * FROM teams WHERE id = $1', [auth.teamId]);
 				return r.rows;
 			}
@@ -1130,7 +1120,7 @@ export function registerTools(
 			if (!r.rows[0]) return null;
 
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const actorConnectedAgentId = connectedAgentIdFromAuth(auth);
+			const actorApiKeyId = apiKeyIdFromAuth(auth);
 
 			if (args.description !== undefined) {
 				trackBackground(
@@ -1140,7 +1130,7 @@ export function registerTools(
 						taskId,
 						args.description as string,
 						actorMemberId,
-						actorConnectedAgentId,
+						actorApiKeyId,
 						wsManager,
 					).catch((e) => log.error('Failed to record task links from description:', e)),
 				);
@@ -1155,7 +1145,7 @@ export function registerTools(
 						currentStatus,
 						args.status as string,
 						actorMemberId,
-						actorConnectedAgentId,
+						actorApiKeyId,
 						wsManager,
 					);
 				} catch (e) {
@@ -1666,7 +1656,7 @@ export function registerTools(
 			const instanceWide =
 				(auth.type === AuthType.Agent && auth.crossTeam) ||
 				(auth.type === AuthType.Admin && auth.isSuperuser) ||
-				auth.type === AuthType.ConnectedAgent;
+				auth.type === AuthType.ApiKey;
 			if (instanceWide) {
 				const r = await db.query<Record<string, unknown>>(
 					`SELECT p.id, p.team_id,
@@ -1739,15 +1729,15 @@ export function registerTools(
 				);
 			}
 			const r = await db.query<Record<string, unknown>>(
-				`SELECT ic.id, ic.public_id, ic.task_id, ic.author_member_id, ic.author_connected_agent_id,
+				`SELECT ic.id, ic.public_id, ic.task_id, ic.author_member_id, ic.author_api_key_id,
 				        ic.parent_comment_id,
 				        ic.content_type, ic.content, ic.chosen_option, ic.created_at,
-				        CASE WHEN ic.author_connected_agent_id IS NOT NULL THEN 'connected_agent' ELSE m.member_type::text END AS author_type,
+				        CASE WHEN ic.author_api_key_id IS NOT NULL THEN 'api_key' ELSE m.member_type::text END AS author_type,
 				        COALESCE(ca.name, ma.title, m.display_name, 'Admin') AS author_name
 				 FROM task_comments ic
 				 LEFT JOIN members m ON m.id = ic.author_member_id
 				 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
-				 LEFT JOIN connected_agents ca ON ca.id = ic.author_connected_agent_id
+				 LEFT JOIN api_keys ca ON ca.id = ic.author_api_key_id
 				 WHERE ${conditions.join(' AND ')}
 				 ORDER BY ic.created_at DESC, ic.id DESC LIMIT 50`,
 				params,
@@ -1921,16 +1911,16 @@ export function registerTools(
 				parentCommentId = args.parent_comment_id as string;
 			}
 			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-			const authorConnectedAgentId = connectedAgentIdFromAuth(auth);
+			const authorApiKeyId = apiKeyIdFromAuth(auth);
 			const content = { text: args.content };
 			// RETURNING * includes public_id (the timestamp slug for comment links),
 			// so the agent gets it back without a follow-up list_comments.
 			const r = await db.query<{ id: string; public_id: string }>(
-				`INSERT INTO task_comments (task_id, author_member_id, author_connected_agent_id, parent_comment_id, content_type, content) VALUES ($1, $2, $3, $4, $5::comment_content_type, $6::jsonb) RETURNING *`,
+				`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, parent_comment_id, content_type, content) VALUES ($1, $2, $3, $4, $5::comment_content_type, $6::jsonb) RETURNING *`,
 				[
 					taskId,
 					authorMemberId,
-					authorConnectedAgentId,
+					authorApiKeyId,
 					parentCommentId,
 					CommentContentType.Text,
 					JSON.stringify(content),
@@ -1968,7 +1958,7 @@ export function registerTools(
 					taskId,
 					args.content as string,
 					authorMemberId,
-					authorConnectedAgentId,
+					authorApiKeyId,
 					wsManager,
 				).catch((e) => log.error('Failed to record task links from comment:', e)),
 			);
@@ -3149,6 +3139,7 @@ export function registerTools(
 				};
 			}
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const callerApiKeyId = apiKeyIdFromAuth(auth);
 			const doc = await upsertDocument(db, wsManager, {
 				scope: {
 					type: DocumentType.ProjectDoc,
@@ -3158,9 +3149,11 @@ export function registerTools(
 				},
 				content: args.content as string,
 				authorMemberId: callerMemberId,
+				authorApiKeyId: callerApiKeyId,
 				audit: {
 					events,
-					actorType: auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Admin,
+					actorType: actorTypeFromAuth(auth),
+					actorApiKeyId: callerApiKeyId,
 				},
 			});
 			return { written: true, id: doc.id, filename: doc.slug };

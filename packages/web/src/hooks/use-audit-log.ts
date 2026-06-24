@@ -7,7 +7,7 @@ export interface AuditEntry {
 	project_id: string | null;
 	actor_type: string;
 	actor_member_id: string | null;
-	actor_connected_agent_id: string | null;
+	actor_api_key_id: string | null;
 	actor_name: string | null;
 	project_slug: string | null;
 	project_name: string | null;

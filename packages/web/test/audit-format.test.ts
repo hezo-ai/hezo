@@ -8,7 +8,7 @@ function entry(overrides: Partial<AuditEntry>): AuditEntry {
 		project_id: 'p1',
 		actor_type: 'admin',
 		actor_member_id: null,
-		actor_connected_agent_id: null,
+		actor_api_key_id: null,
 		actor_name: 'Alice',
 		project_slug: 'ops',
 		project_name: 'Ops',

@@ -50,7 +50,7 @@ CREATE TYPE comment_content_type AS ENUM ('text', 'preview', 'system', 'run', 'a
 CREATE TYPE secret_category AS ENUM ('ssh_key', 'credential', 'api_token', 'certificate', 'other');
 CREATE TYPE approval_type AS ENUM ('hire', 'project_creation', 'strategy', 'plan_review', 'deploy_production', 'designated_repo_request', 'skill_proposal');
 CREATE TYPE approval_status AS ENUM ('pending', 'approved', 'denied');
-CREATE TYPE audit_actor_type AS ENUM ('admin', 'agent', 'system', 'connected_agent');
+CREATE TYPE audit_actor_type AS ENUM ('admin', 'agent', 'system', 'api_key');
 CREATE TYPE repo_host_type AS ENUM ('github');
 CREATE TYPE platform_type AS ENUM ('github', 'gmail', 'gitlab', 'stripe', 'posthog', 'railway', 'vercel', 'digitalocean', 'x', 'anthropic', 'openai', 'google');
 CREATE TYPE connection_status AS ENUM ('active', 'expired', 'disconnected');
@@ -260,19 +260,33 @@ CREATE INDEX idx_invites_code ON invites(code);
 
 -------------------------------------------------------------------------------
 -- API KEYS
+--
+-- Instance-scoped credential for the MCP endpoint (`POST /mcp`). A key is
+-- admin-equivalent across every project and team and is the only credential
+-- confined to MCP (rejected on REST and the WebSocket). Two issuance paths feed
+-- one table: an admin mints a key directly (inserted `approved`, active at once),
+-- or an external MCP client self-registers (inserted `pending`, inert until a
+-- human admin approves it). "Revoke" is a row delete (instant total revocation —
+-- auth resolves the token against this table on every request). Only an 8-char
+-- prefix + sha256 hash of the `hezo_` token is stored, never the token itself.
 -------------------------------------------------------------------------------
 
+CREATE TYPE api_key_status AS ENUM ('pending', 'approved');
+
 CREATE TABLE api_keys (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id      UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    name         TEXT NOT NULL,
-    prefix       TEXT NOT NULL,
-    key_hash     TEXT NOT NULL,
-    last_used_at TIMESTAMPTZ,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name                TEXT NOT NULL,
+    client_info         JSONB NOT NULL DEFAULT '{}',
+    prefix              TEXT NOT NULL UNIQUE,
+    key_hash            TEXT NOT NULL,
+    status              api_key_status NOT NULL DEFAULT 'pending',
+    approved_at         TIMESTAMPTZ,
+    approved_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    last_used_at        TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_api_keys_team ON api_keys(team_id);
+CREATE INDEX idx_api_keys_status ON api_keys(status);
 
 -------------------------------------------------------------------------------
 -- PROJECTS
@@ -1182,47 +1196,25 @@ CREATE INDEX idx_admin_mentions_user_archived
     WHERE archived_at IS NOT NULL;
 
 -------------------------------------------------------------------------------
--- CONNECTED AGENTS
+-- API KEY ATTRIBUTION
 --
--- External AI agents (MCP clients) self-register and, once a human admin approves
--- them, act with admin-equivalent access across every project and team. A
--- registration is inert (`pending`) until approved; "disconnect" is a row delete
--- (instant total revocation — auth resolves the token against this table on every
--- request). Token storage mirrors api_keys: only an 8-char prefix + sha256 hash.
+-- Parallel nullable FKs alongside the member FKs on attributed tables (at most one
+-- of the two is set per row), so actions taken over MCP with an API key can be
+-- flagged human-vs-agent in the UI. Declared here (not next to api_keys) because
+-- the attributed tables are defined later in the file.
 -------------------------------------------------------------------------------
 
-CREATE TYPE connected_agent_status AS ENUM ('pending', 'approved');
-
-CREATE TABLE connected_agents (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name                TEXT NOT NULL,
-    client_info         JSONB NOT NULL DEFAULT '{}',
-    prefix              TEXT NOT NULL UNIQUE,
-    token_hash          TEXT NOT NULL,
-    status              connected_agent_status NOT NULL DEFAULT 'pending',
-    approved_at         TIMESTAMPTZ,
-    approved_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-    last_used_at        TIMESTAMPTZ,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX idx_connected_agents_status ON connected_agents(status);
-
--- Connected-agent attribution: parallel nullable FKs alongside the member FKs on
--- attributed tables (at most one of the two is set per row), so admin actions by an
--- approved external MCP client can be flagged human-vs-agent in the UI. Added here
--- (after connected_agents) because the attributed tables are defined earlier.
 ALTER TABLE audit_log
-    ADD COLUMN actor_connected_agent_id UUID REFERENCES connected_agents(id) ON DELETE SET NULL;
+    ADD COLUMN actor_api_key_id UUID REFERENCES api_keys(id) ON DELETE SET NULL;
 ALTER TABLE task_comments
-    ADD COLUMN author_connected_agent_id UUID REFERENCES connected_agents(id) ON DELETE SET NULL;
+    ADD COLUMN author_api_key_id UUID REFERENCES api_keys(id) ON DELETE SET NULL;
 ALTER TABLE document_revisions
-    ADD COLUMN author_connected_agent_id UUID REFERENCES connected_agents(id) ON DELETE SET NULL;
+    ADD COLUMN author_api_key_id UUID REFERENCES api_keys(id) ON DELETE SET NULL;
 
-CREATE INDEX idx_audit_actor_connected_agent ON audit_log(actor_connected_agent_id)
-    WHERE actor_connected_agent_id IS NOT NULL;
-CREATE INDEX idx_comments_author_connected_agent ON task_comments(author_connected_agent_id)
-    WHERE author_connected_agent_id IS NOT NULL;
+CREATE INDEX idx_audit_actor_api_key ON audit_log(actor_api_key_id)
+    WHERE actor_api_key_id IS NOT NULL;
+CREATE INDEX idx_comments_author_api_key ON task_comments(author_api_key_id)
+    WHERE author_api_key_id IS NOT NULL;
 
 -------------------------------------------------------------------------------
 -- TRIGGERS: auto-update updated_at

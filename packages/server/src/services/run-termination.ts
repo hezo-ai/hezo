@@ -75,7 +75,7 @@ export async function terminateHeartbeatRun(
 	}
 
 	if (row.task_id) {
-		// The run-terminated note is a secondary system comment; connected-agent
+		// The run-terminated note is a secondary system comment; API-key
 		// attribution is not threaded this deep (the primary action is attributed
 		// at its source).
 		await recordRunTerminated(

@@ -2,7 +2,7 @@ import { WakeupSource, WakeupStatus, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
-import { connectedAgentIdFromAuth, resolveActorMemberId, resolveTaskId } from '../lib/resolve';
+import { apiKeyIdFromAuth, resolveActorMemberId, resolveTaskId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -140,7 +140,7 @@ queuedWakeupsRoutes.post(
 		);
 		const agentName = nameRes.rows[0]?.member_name ?? 'an agent';
 		const actorMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
-		const actorConnectedAgentId = connectedAgentIdFromAuth(c.get('auth'));
+		const actorApiKeyId = apiKeyIdFromAuth(c.get('auth'));
 		try {
 			await recordWakeupCancelled(
 				db,
@@ -149,7 +149,7 @@ queuedWakeupsRoutes.post(
 				wakeupId,
 				agentName,
 				actorMemberId,
-				actorConnectedAgentId,
+				actorApiKeyId,
 				c.get('wsManager'),
 			);
 		} catch (e) {

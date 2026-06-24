@@ -333,7 +333,7 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 		teamId,
 		actorType: createActor.actorType,
 		actorMemberId: createActor.actorMemberId,
-		actorConnectedAgentId: createActor.actorConnectedAgentId,
+		actorApiKeyId: createActor.actorApiKeyId,
 		agentMemberId: memberId,
 	});
 
@@ -883,7 +883,7 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 			teamId,
 			actorType: updateActor.actorType,
 			actorMemberId: updateActor.actorMemberId,
-			actorConnectedAgentId: updateActor.actorConnectedAgentId,
+			actorApiKeyId: updateActor.actorApiKeyId,
 			agentMemberId: agentId,
 			changes,
 		});

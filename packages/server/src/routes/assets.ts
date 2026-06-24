@@ -17,7 +17,7 @@ import { signAssetUrl, verifyAssetUrl } from '../lib/asset-urls';
 import { ref } from '../lib/log-ref';
 import {
 	actorTypeFromAuth,
-	connectedAgentIdFromAuth,
+	apiKeyIdFromAuth,
 	resolveActorMemberId,
 	resolveProjectId,
 	resolveTaskId,
@@ -92,7 +92,7 @@ export async function storeUploadedAsset(
 		projectId,
 		actorType: actorTypeFromAuth(auth),
 		actorMemberId: uploadedBy,
-		actorConnectedAgentId: connectedAgentIdFromAuth(auth),
+		actorApiKeyId: apiKeyIdFromAuth(auth),
 		assetId: asset.id,
 		filename: asset.original_filename,
 		taskId: taskId ?? (isAgent ? auth.taskId : null),

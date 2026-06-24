@@ -12,7 +12,7 @@ export interface DocumentRevision {
 	change_summary: string;
 	author_name: string | null;
 	author_type?: string;
-	author_connected_agent_id?: string | null;
+	author_api_key_id?: string | null;
 	created_at: string;
 }
 

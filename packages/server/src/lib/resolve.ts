@@ -22,25 +22,25 @@ export async function resolveActorMemberId(
 
 /**
  * Map an auth context to its audit actor type. An agent run is an `agent`; an
- * approved external MCP client is a `connected_agent`; everything else (board
- * user, superuser) is an `admin`.
+ * approved API key (the instance MCP credential) is an `api_key`; everything else
+ * (board user, superuser) is an `admin`.
  */
 export function actorTypeFromAuth(auth: AuthInfo): AuditActorType {
 	if (auth.type === AuthType.Agent) return 'agent';
-	if (auth.type === AuthType.ConnectedAgent) return 'connected_agent';
+	if (auth.type === AuthType.ApiKey) return 'api_key';
 	return 'admin';
 }
 
-/** The connected-agent identity behind a request, or null for any other principal. */
-export function connectedAgentIdFromAuth(auth: AuthInfo): string | null {
-	return auth.type === AuthType.ConnectedAgent ? auth.connectedAgentId : null;
+/** The API-key identity behind a request, or null for any other principal. */
+export function apiKeyIdFromAuth(auth: AuthInfo): string | null {
+	return auth.type === AuthType.ApiKey ? auth.apiKeyId : null;
 }
 
 /**
- * Resolve the audit actor type, the acting member id, and the connected-agent id
- * for a request. `teamId` may be null for instance-level actions; the member id
- * only resolves within a team, so it is null at instance scope. A connected
- * agent has no member row — it is attributed via `actorConnectedAgentId`.
+ * Resolve the audit actor type, the acting member id, and the API-key id for a
+ * request. `teamId` may be null for instance-level actions; the member id only
+ * resolves within a team, so it is null at instance scope. An API key has no
+ * member row — it is attributed via `actorApiKeyId`.
  */
 export async function resolveActor(
 	db: PGlite,
@@ -49,27 +49,16 @@ export async function resolveActor(
 ): Promise<{
 	actorType: AuditActorType;
 	actorMemberId: string | null;
-	actorConnectedAgentId: string | null;
+	actorApiKeyId: string | null;
 }> {
 	const actorType = actorTypeFromAuth(auth);
 	const actorMemberId = teamId ? await resolveActorMemberId(db, auth, teamId) : null;
-	return { actorType, actorMemberId, actorConnectedAgentId: connectedAgentIdFromAuth(auth) };
+	return { actorType, actorMemberId, actorApiKeyId: apiKeyIdFromAuth(auth) };
 }
 
 export async function resolveTeamId(db: PGlite, raw: string): Promise<string | null> {
 	if (UUID_RE.test(raw)) return raw;
 	const result = await db.query<{ id: string }>('SELECT id FROM teams WHERE slug = $1', [raw]);
-	return result.rows[0]?.id ?? null;
-}
-
-/**
- * The single project backing a team (1:1). Lets a team-scoped principal (API key)
- * reach its project without naming it.
- */
-export async function projectIdForTeam(db: PGlite, teamId: string): Promise<string | null> {
-	const result = await db.query<{ id: string }>('SELECT id FROM projects WHERE team_id = $1', [
-		teamId,
-	]);
 	return result.rows[0]?.id ?? null;
 }
 

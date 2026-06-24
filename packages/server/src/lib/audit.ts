@@ -16,8 +16,8 @@ export interface AuditLogInput {
 	teamId?: string | null;
 	actorType: AuditActorType;
 	actorMemberId: string | null;
-	/** Set when the actor is a connected agent; mutually exclusive with actorMemberId. */
-	actorConnectedAgentId?: string | null;
+	/** Set when the actor is an API key (the MCP credential); mutually exclusive with actorMemberId. */
+	actorApiKeyId?: string | null;
 	action: AuditAction;
 	entityType: AuditEntityType;
 	entityId: string | null;
@@ -26,13 +26,13 @@ export interface AuditLogInput {
 
 export async function auditLog(db: PGlite, input: AuditLogInput): Promise<void> {
 	await db.query(
-		`INSERT INTO audit_log (project_id, actor_type, actor_member_id, actor_connected_agent_id, action, entity_type, entity_id, details)
+		`INSERT INTO audit_log (project_id, actor_type, actor_member_id, actor_api_key_id, action, entity_type, entity_id, details)
 		 VALUES ($1, $2::audit_actor_type, $3, $4, $5, $6, $7, $8::jsonb)`,
 		[
 			input.projectId ?? null,
 			input.actorType,
 			input.actorMemberId,
-			input.actorConnectedAgentId ?? null,
+			input.actorApiKeyId ?? null,
 			input.action,
 			input.entityType,
 			input.entityId,

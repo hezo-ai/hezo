@@ -282,9 +282,8 @@ describe('Superuser cross-team access', () => {
 	});
 });
 
-describe('API key cross-team isolation (MCP surface)', () => {
-	let apiKeyA: string;
-	let apiKeyB: string;
+describe('API key is instance-wide (MCP surface)', () => {
+	let apiKey: string;
 
 	async function listAgentsViaMcp(authToken: string, projectSlug: string): Promise<unknown> {
 		const res = await app.request('/mcp', {
@@ -302,51 +301,30 @@ describe('API key cross-team isolation (MCP surface)', () => {
 	}
 
 	beforeAll(async () => {
-		const resA = await app.request(
-			`/api/projects/${await projectSlugForTeamSlug(db, teamASlug)}/api-keys`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(superuserToken), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ name: 'key-a' }),
-			},
-		);
-		apiKeyA = (await resA.json()).data.key;
-
-		const resB = await app.request(
-			`/api/projects/${await projectSlugForTeamSlug(db, teamBSlug)}/api-keys`,
-			{
-				method: 'POST',
-				headers: { ...authHeader(superuserToken), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ name: 'key-b' }),
-			},
-		);
-		apiKeyB = (await resB.json()).data.key;
+		// A single instance-scoped key (minted in Global Settings), not bound to a team.
+		const res = await app.request('/api/api-keys', {
+			method: 'POST',
+			headers: { ...authHeader(superuserToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'instance-key' }),
+		});
+		apiKey = (await res.json()).data.key;
 	});
 
-	it('API key A cannot reach Team B via MCP', async () => {
-		const result = (await listAgentsViaMcp(
-			apiKeyA,
-			await projectSlugForTeamSlug(db, teamBSlug),
-		)) as { error?: string };
-		expect(result.error).toBeDefined();
-	});
-
-	it('API key B cannot reach Team A via MCP', async () => {
-		const result = (await listAgentsViaMcp(
-			apiKeyB,
-			await projectSlugForTeamSlug(db, teamASlug),
-		)) as { error?: string };
-		expect(result.error).toBeDefined();
-	});
-
-	it('API key A reaches Team A via MCP', async () => {
-		const result = await listAgentsViaMcp(apiKeyA, await projectSlugForTeamSlug(db, teamASlug));
+	it('reaches Team A via MCP', async () => {
+		const result = await listAgentsViaMcp(apiKey, await projectSlugForTeamSlug(db, teamASlug));
 		expect(Array.isArray(result)).toBe(true);
 	});
 
-	it('API key B reaches Team B via MCP', async () => {
-		const result = await listAgentsViaMcp(apiKeyB, await projectSlugForTeamSlug(db, teamBSlug));
+	it('reaches Team B via MCP', async () => {
+		const result = await listAgentsViaMcp(apiKey, await projectSlugForTeamSlug(db, teamBSlug));
 		expect(Array.isArray(result)).toBe(true);
+	});
+
+	it('is rejected on the REST surface', async () => {
+		const res = await app.request(`/api/projects/${projectASlug}/tasks`, {
+			headers: { Authorization: `Bearer ${apiKey}` },
+		});
+		expect(res.status).toBe(401);
 	});
 });
 

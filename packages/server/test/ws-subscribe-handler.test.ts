@@ -172,13 +172,13 @@ describe('handleWsSubscribe', () => {
 		expect(wsManager.getRoomSize(wsRoom.team(teamId))).toBe(1);
 	});
 
-	it('subscribes an approved connected agent to a team room (admin-equivalent)', async () => {
+	it('subscribes an approved API key to a team room (admin-equivalent)', async () => {
 		const { teamId } = await seedTeamWithProject(db);
-		// A connected agent belongs to no team membership, but is admin-equivalent
-		// and cross-team — it must still reach realtime rooms.
+		// An API key belongs to no team membership, but is admin-equivalent and
+		// cross-team — it must still reach realtime rooms.
 		const auth: AuthInfo = {
-			type: AuthType.ConnectedAgent,
-			connectedAgentId: 'ca-1',
+			type: AuthType.ApiKey,
+			apiKeyId: 'ak-1',
 			isSuperuser: true,
 			crossTeam: true,
 		};

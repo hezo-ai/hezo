@@ -88,7 +88,6 @@ const TABLE_TO_QUERY_KEY: Record<
 		}
 		return keys;
 	},
-	api_keys: (cid) => [queryKeys.projects.apiKeys(cid)],
 	cost_entries: (cid) => [['projects', cid, 'costs']],
 	execution_locks: (cid) => [['projects', cid, 'execution-locks']],
 	repos: (cid) => [queryKeys.projects.repos(cid), queryKeys.projects.all()],

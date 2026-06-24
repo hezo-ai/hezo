@@ -20,7 +20,7 @@ const instanceNav = [
 	{ to: '/settings/skills', label: 'Skills' },
 	{ to: '/settings/connectors', label: 'Connectors' },
 	{ to: '/settings/credentials', label: 'Credentials' },
-	{ to: '/settings/connected-agents', label: 'Connected agents' },
+	{ to: '/settings/api-keys', label: 'API keys' },
 	{ to: '/settings/model-pricing', label: 'Model pricing' },
 	{ to: '/settings/audit-log', label: 'Activity' },
 ] as const;

@@ -5,7 +5,7 @@ import { signAssetUrl } from '../lib/asset-urls';
 import { broadcastCommentFamilyChange } from '../lib/broadcast';
 import { validateCredentialValue } from '../lib/credential-validator';
 import {
-	connectedAgentIdFromAuth,
+	apiKeyIdFromAuth,
 	resolveActor,
 	resolveActorMemberId,
 	resolveTaskId,
@@ -36,15 +36,15 @@ commentsRoutes.get('/projects/:projectId/tasks/:taskId/comments', async (c) => {
 
 	const result = await db.query(
 		`SELECT ic.id, ic.public_id, ic.task_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
-            CASE WHEN ic.author_connected_agent_id IS NOT NULL THEN 'connected_agent' ELSE m.member_type::text END AS author_type,
+            CASE WHEN ic.author_api_key_id IS NOT NULL THEN 'api_key' ELSE m.member_type::text END AS author_type,
             COALESCE(ca.name, ma.title, m.display_name, 'Admin') AS author_name,
             ic.author_member_id,
-            ic.author_connected_agent_id,
+            ic.author_api_key_id,
             ic.parent_comment_id
      FROM task_comments ic
      LEFT JOIN members m ON m.id = ic.author_member_id
      LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
-     LEFT JOIN connected_agents ca ON ca.id = ic.author_connected_agent_id
+     LEFT JOIN api_keys ca ON ca.id = ic.author_api_key_id
      WHERE ic.task_id = $1
      ORDER BY ic.created_at ASC`,
 		[taskId],
@@ -231,8 +231,8 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 	} else if (auth.type === AuthType.Agent) {
 		authorMemberId = auth.memberId;
 	}
-	// A connected agent authors as its first-class identity, not a member.
-	const authorConnectedAgentId = connectedAgentIdFromAuth(auth);
+	// An API key authors as its first-class identity, not a member.
+	const authorApiKeyId = apiKeyIdFromAuth(auth);
 
 	// Only Admin (human) callers can opt into waking the assignee on a plain
 	// comment. Agent-authored comments (via the /mcp create_comment tool) keep
@@ -241,13 +241,13 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 
 	const result = await withTransaction(db, async () => {
 		const inserted = await db.query<{ id: string }>(
-			`INSERT INTO task_comments (task_id, author_member_id, author_connected_agent_id, parent_comment_id, content_type, content)
+			`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, parent_comment_id, content_type, content)
      VALUES ($1, $2, $3, $4, $5::comment_content_type, $6::jsonb)
      RETURNING *`,
 			[
 				taskId,
 				authorMemberId,
-				authorConnectedAgentId,
+				authorApiKeyId,
 				parentCommentId,
 				body.content_type ?? CommentContentType.Text,
 				JSON.stringify(body.content),
@@ -289,7 +289,7 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 			taskId,
 			commentText,
 			authorMemberId,
-			authorConnectedAgentId,
+			authorApiKeyId,
 			c.get('wsManager'),
 		).catch((e) => log.error('Failed to record task links from comment:', e));
 	}
@@ -480,7 +480,7 @@ commentsRoutes.post(
 			projectId: null,
 			actorType: actor.actorType,
 			actorMemberId: actor.actorMemberId,
-			actorConnectedAgentId: actor.actorConnectedAgentId,
+			actorApiKeyId: actor.actorApiKeyId,
 			secretId,
 			name,
 			requestingAgentId,

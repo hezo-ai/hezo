@@ -15,7 +15,21 @@ import type { WebSocketManager } from '../services/ws';
 
 export type AuthInfo =
 	| { type: typeof AuthType.Admin; userId: string; isSuperuser: boolean }
-	| { type: typeof AuthType.ApiKey; teamId: string }
+	| {
+			/**
+			 * An approved API key (see `api_keys`) — the instance-scoped MCP credential.
+			 * It is admin-equivalent for data access: `isSuperuser`/`crossTeam` are literal
+			 * `true` so it flows through the existing superuser/cross-team branches in
+			 * `assertTeamAccess`/`getAccessibleTeamIds`/MCP tools — but it is deliberately
+			 * NOT an `Admin`, so `requireSuperuser` still excludes it from minting,
+			 * approving, or revoking keys. A `pending` key never reaches here (auth rejects
+			 * it), so any principal of this type is already approved.
+			 */
+			type: typeof AuthType.ApiKey;
+			apiKeyId: string;
+			isSuperuser: true;
+			crossTeam: true;
+	  }
 	| {
 			type: typeof AuthType.Agent;
 			memberId: string;
@@ -29,20 +43,6 @@ export type AuthInfo =
 			sessionId?: string;
 			/** Instance CEO session: may act across teams (the team-level analogue of crossProject). */
 			crossTeam?: boolean;
-	  }
-	| {
-			/**
-			 * An approved external MCP client (see `connected_agents`). It is
-			 * admin-equivalent for data access — `isSuperuser`/`crossTeam` are literal
-			 * `true` so it flows through the existing superuser/cross-team branches in
-			 * `assertTeamAccess`/`getAccessibleTeamIds`/MCP tools — but it is deliberately
-			 * NOT an `Admin`, so `requireSuperuser` still excludes it from managing
-			 * connected agents.
-			 */
-			type: typeof AuthType.ConnectedAgent;
-			connectedAgentId: string;
-			isSuperuser: true;
-			crossTeam: true;
 	  };
 
 export type Env = {

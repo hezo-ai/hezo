@@ -2,13 +2,9 @@ import { render } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { ActorBadge } from '../src/components/ui/actor-badge';
 
-test('renders a bot badge for a connected agent', () => {
-	const { getByTestId, queryByTestId } = render(
-		<ActorBadge actorType="connected_agent" name="CRM Bot" />,
-	);
-	expect(getByTestId('actor-badge-connected-agent').getAttribute('aria-label')).toBe(
-		'Connected agent',
-	);
+test('renders a bot badge for an API key', () => {
+	const { getByTestId, queryByTestId } = render(<ActorBadge actorType="api_key" name="CRM Bot" />);
+	expect(getByTestId('actor-badge-api-key').getAttribute('aria-label')).toBe('API key');
 	expect(queryByTestId('actor-badge-human')).toBeNull();
 });
 
