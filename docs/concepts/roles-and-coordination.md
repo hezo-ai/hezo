@@ -71,6 +71,12 @@ single ongoing conversation — pick up where you left off rather than starting 
 thread each time. As the CEO works, its reply **streams back in real time**, so you can
 follow its thinking instead of waiting for a finished block of text.
 
+Keep working alongside it: **minimize** the chat to the corner button and a badge appears
+there when a CEO reply lands while you're away — the same unread indicator the inbox uses
+— clearing the moment you reopen it. When you want more room, **expand** the chat to fill
+the screen below the top navigation bar, and collapse it back to the anchored panel when
+you're done.
+
 Because the CEO works across the whole instance, you can ask about anything without
 opening a project first: "how's the marketing site coming along?", "what's the engineering
 team stuck on?", "spin up a team to research competitors". It answers with knowledge of

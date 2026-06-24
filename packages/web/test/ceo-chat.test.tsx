@@ -206,6 +206,66 @@ test('a CEO reply renders its markdown as formatted HTML, not raw text', async (
 	expect(body.textContent ?? '').not.toContain('**');
 });
 
+// The unread badge is client-tracked in localStorage (the CEO conversation has
+// no server read state) and the WS-driven increment can't run here (sockets are
+// stubbed), so these drive the persisted path: a seeded count renders the
+// overlay, and opening the chat clears both the badge and the stored tally.
+test('the minimized launcher shows an unread overlay for unseen CEO replies', async () => {
+	localStorage.setItem('hezo_ceo_unread', '3');
+	const { findByTestId } = await renderApp({ initialPath: '/home' });
+
+	const badge = await findByTestId('ceo-chat-unread-badge');
+	expect(badge.textContent).toBe('3');
+	// The accessible name surfaces the count too, not just the visual dot.
+	const launcher = await findByTestId('ceo-chat-launcher');
+	expect(launcher.getAttribute('aria-label')).toBe('Chat with the CEO (3 unread)');
+});
+
+test('opening the chat clears the unread overlay and its persisted count', async () => {
+	localStorage.setItem('hezo_ceo_unread', '2');
+	const { findByTestId, queryByTestId } = await renderApp({ initialPath: '/home' });
+
+	// Visible on the closed launcher…
+	expect(await findByTestId('ceo-chat-unread-badge')).toBeTruthy();
+
+	// …open (reads it) then close again.
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+	(await findByTestId('ceo-chat-close')).click();
+
+	// Back on the launcher the badge is gone and the stored tally is wiped.
+	await findByTestId('ceo-chat-launcher');
+	await waitFor(() => expect(queryByTestId('ceo-chat-unread-badge')).toBeNull());
+	expect(localStorage.getItem('hezo_ceo_unread')).toBeNull();
+});
+
+test('the expand toggle fills the viewport below the nav, then restores the anchored panel', async () => {
+	const { findByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('ceo-chat-launcher')).click();
+	const panel = await findByTestId('ceo-chat-panel');
+
+	// Default: anchored desktop panel, clear of the 48px header (top-16).
+	expect(panel.getAttribute('data-expanded')).toBe('false');
+	expect(panel.className).toContain('md:w-[420px]');
+	expect(panel.className).toContain('top-16');
+
+	const expand = getByTestId('ceo-chat-expand');
+	expect(expand.getAttribute('aria-label')).toBe('Expand chat');
+	expand.click();
+
+	// Expanded: fills the viewport (no fixed desktop width) but still below the nav.
+	await waitFor(() => expect(panel.getAttribute('data-expanded')).toBe('true'));
+	expect(panel.className).toContain('md:inset-x-4');
+	expect(panel.className).not.toContain('md:w-[420px]');
+	expect(panel.className).toContain('top-16');
+	expect(getByTestId('ceo-chat-expand').getAttribute('aria-label')).toBe('Collapse chat');
+
+	// Collapse restores the anchored panel.
+	getByTestId('ceo-chat-expand').click();
+	await waitFor(() => expect(panel.getAttribute('data-expanded')).toBe('false'));
+	expect(panel.className).toContain('md:w-[420px]');
+});
+
 test('a user message is shown as typed, not parsed as markdown', async () => {
 	const { findByTestId, findByText } = await renderApp({ initialPath: '/home' });
 	(await findByTestId('ceo-chat-launcher')).click();
