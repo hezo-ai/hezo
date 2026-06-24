@@ -7,6 +7,7 @@
 <div align="center">
   
 [![Update hezo submodule](https://github.com/hezo-ai/hezo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hezo-ai/main/actions/workflows/main.yml)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](./LICENSE.md)
 
 </div>
 
@@ -194,5 +195,8 @@ bun run test       # the full test suite
 Questions and bug reports are welcome via
 [GitHub Issues](https://github.com/hezo-ai/hezo/issues).
 
-<!-- TODO(founder): add Discord / X links once they exist, and choose a license + add a
-     LICENSE file, then state it here (and a badge above). -->
+Copyright (C) 2026 [Ramesh Nair](https://hiddentao.com).
+
+Hezo is licensed under the [GNU Affero General Public License v3.0 or later](./LICENSE.md).
+
+<!-- TODO(founder): add Discord / X links once they exist. -->

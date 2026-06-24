@@ -55,6 +55,7 @@
 			"!**/dist",
 			"!.claude",
 			"!.hezo",
+			"!.hezo-dev",
 			"!.turbo",
 			"!**/migrations-bundle.json",
 			"!**/agents-bundle.json",

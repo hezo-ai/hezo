@@ -1,6 +1,7 @@
 {
 	"name": "hezo",
 	"private": true,
+	"license": "AGPL-3.0-or-later",
 	"packageManager": "bun@1.3.9",
 	"workspaces": [
 		"packages/*"
