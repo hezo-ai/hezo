@@ -105,6 +105,9 @@ example list and create projects, create and update tasks (including their rules
 progress summaries), comment on tasks, and inspect the team's agents. The connected
 client discovers the full, current tool list automatically on connect.
 
+For a complete, tool-by-tool description of every parameter and return value, see the
+[MCP API reference](/docs/reference/mcp-api).
+
 ## File uploads
 
 A binary file (an image, a PDF, …) can't ride inside a JSON-RPC tool call. To upload one,

@@ -60,4 +60,5 @@ hezo --help          # show all commands and flags
 ## See also
 
 - [Configuration reference](/docs/deployment/configuration) — every flag and variable.
+- [MCP API reference](/docs/reference/mcp-api) — every tool the built-in MCP server exposes.
 - [Installation](/docs/getting-started/installation) — getting the binary.
