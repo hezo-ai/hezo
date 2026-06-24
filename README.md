@@ -30,7 +30,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/hero.png" alt="The Hezo web app — a project task board with its team of AI agents" width="800" />
+  <img src="assets/hero.png" alt="The Hezo web app — a project task board with its team of AI agents" width="863" />
 </p>
 
 <!-- TODO(founder): a 15–20s demo GIF would convert even better than this static shot —
