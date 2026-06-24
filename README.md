@@ -29,8 +29,12 @@
   <!-- TODO(founder): add Discord / X links here once they exist. -->
 </p>
 
-<!-- TODO(founder): a 15–20s demo GIF here is the single highest-converting thing you can add.
-     Record the CEO chat → a team spins up → a task runs live, and drop it at .github/assets/demo.gif. -->
+<p align="center">
+  <img src="assets/hero.png" alt="The Hezo web app — a project task board with its team of AI agents" width="800" />
+</p>
+
+<!-- TODO(founder): a 15–20s demo GIF would convert even better than this static shot —
+     record the CEO chat → a team spins up → a task runs live, and drop it at .github/assets/demo.gif. -->
 
 ## What is Hezo?
 
