@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.0 - 2026-06-24
+
+### Features
+
+- replace embedding search with Postgres full-text search ([#367](https://github.com/hezo-ai/hezo/pull/367))
+- **server:** suggest --port when the configured port is already in use ([#366](https://github.com/hezo-ai/hezo/pull/366))
+
+### Bug Fixes
+
+- **dev:** use a project-local data dir for the dev server ([#365](https://github.com/hezo-ai/hezo/pull/365))
+
+### Other
+
+- Update README with CI badge and remove diagram
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.3.0...0.4.0
+
 ## 0.3.0 - 2026-06-24
 
 ### Features
