@@ -47,6 +47,52 @@ the spend, and the data.
 New here? Start with the [Introduction](./docs/introduction.md) and
 [How Hezo works](./docs/concepts/how-hezo-works.md).
 
+## Quickstart
+
+Hezo ships as a **single self-contained binary** — nothing to compile, no runtime or
+dependencies to install, so you're up in seconds. The fastest way to get it is the
+one-line installer, which detects your OS and CPU architecture and downloads the
+matching [release binary](https://github.com/hezo-ai/hezo/releases/latest). Docker is
+the only prerequisite (agents run in isolated containers).
+
+**macOS / Linux**
+
+```sh
+curl -fsSL https://hezo.ai/install.sh | sh
+```
+
+**Windows** (PowerShell)
+
+```powershell
+irm https://hezo.ai/install.ps1 | iex
+```
+
+Then start the server:
+
+```sh
+hezo
+```
+
+Open **http://localhost:3100** and follow the [first-run setup](./docs/getting-started/first-run.md)
+to create your master key and connect a model. From there, see
+[Your first project](./docs/getting-started/first-project.md).
+
+Prefer a manual download? Grab the binary for your platform straight from
+[GitHub Releases](https://github.com/hezo-ai/hezo/releases/latest). Full steps and the
+per-platform asset names are in [Installation](./docs/getting-started/installation.md).
+
+### Build from source
+
+Want to hack on Hezo or run an unreleased build? You'll need [Bun](https://bun.sh/)
+v1.3.14+ and Docker.
+
+```sh
+git clone https://github.com/hezo-ai/hezo.git
+cd hezo
+bun install
+bun run dev
+```
+
 ## How it works
 
 1. **Create a project.** Describe the work to the [CEO](./docs/concepts/roles-and-coordination.md)
@@ -156,52 +202,6 @@ Each feature links to its documentation.
 | Many agents | Tabs and willpower | Varies | You build it | **An org chart, built in** |
 | Spend control | Watch the meter | Vendor billing | Do it yourself | **Hard budget caps** |
 | You provide | Prompts, by hand | Vendor config | Code | **Goals and rules** |
-
-## Quickstart
-
-Hezo ships as a **single self-contained binary** — nothing to compile, no runtime or
-dependencies to install, so you're up in seconds. The fastest way to get it is the
-one-line installer, which detects your OS and CPU architecture and downloads the
-matching [release binary](https://github.com/hezo-ai/hezo/releases/latest). Docker is
-the only prerequisite (agents run in isolated containers).
-
-**macOS / Linux**
-
-```sh
-curl -fsSL https://hezo.ai/install.sh | sh
-```
-
-**Windows** (PowerShell)
-
-```powershell
-irm https://hezo.ai/install.ps1 | iex
-```
-
-Then start the server:
-
-```sh
-hezo
-```
-
-Open **http://localhost:3100** and follow the [first-run setup](./docs/getting-started/first-run.md)
-to create your master key and connect a model. From there, see
-[Your first project](./docs/getting-started/first-project.md).
-
-Prefer a manual download? Grab the binary for your platform straight from
-[GitHub Releases](https://github.com/hezo-ai/hezo/releases/latest). Full steps and the
-per-platform asset names are in [Installation](./docs/getting-started/installation.md).
-
-### Build from source
-
-Want to hack on Hezo or run an unreleased build? You'll need [Bun](https://bun.sh/)
-v1.3.14+ and Docker.
-
-```sh
-git clone https://github.com/hezo-ai/hezo.git
-cd hezo
-bun install
-bun run dev
-```
 
 ## Development
 
