@@ -681,8 +681,11 @@ approval, then admin-equivalent across every project/team; § 10). It also expos
 **API keys authenticate the MCP surface only**; REST is the user-JWT (human/browser)
 surface (connected agents excepted — admin-equivalent on both). `GET /SKILL.md` serves the
 manifest that teaches an external agent how to use it — including the connect/register
-flow — and `GET /llms.txt` points to it. Authorization for both the REST and MCP surfaces
-is § 10.
+flow — and `GET /llms.txt` points to it. The matching **human** reference — a full
+tool-by-tool page with parameters and return shapes — is generated from the same registry
+by `scripts/build-mcp-reference.ts` (run under `bun run build:docs`, guarded by
+`mcp-reference.test.ts`) and committed as `docs/reference/mcp-api.md`. Authorization for
+both the REST and MCP surfaces is § 10.
 
 ---
 

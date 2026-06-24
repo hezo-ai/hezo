@@ -111,6 +111,18 @@ export interface ToolDef {
 	name: string;
 	description: string;
 	schema: Record<string, unknown>;
+	/**
+	 * JSON Schema of the tool's input parameters, derived from the Zod shape at
+	 * registration. Consumed by the docs generator (`mcp-reference.ts`) to render
+	 * the per-tool parameter tables; the live MCP `tools/list` schema is produced
+	 * independently by the SDK.
+	 */
+	params: Record<string, unknown>;
+	/**
+	 * True when the tool persists data (it is in `MCP_WRITE_TOOLS`): a successful
+	 * call from an agent run marks the run as having produced output.
+	 */
+	write: boolean;
 }
 
 const registeredTools: ToolDef[] = [];
@@ -406,6 +418,8 @@ function tool(
 		name,
 		description,
 		schema: Object.fromEntries(Object.entries(schema).map(([k, v]) => [k, v.description ?? k])),
+		params: z.toJSONSchema(z.object(schema)) as Record<string, unknown>,
+		write: MCP_WRITE_TOOLS.has(name),
 	});
 	server.tool(name, description, schema, async (args: Record<string, unknown>) => {
 		const auth = authContext.getStore();
