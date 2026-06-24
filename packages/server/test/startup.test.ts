@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { type HezoConfig, startup } from '../src/startup';
 import { HEZO_VERSION } from '../src/version';
 
@@ -22,6 +22,22 @@ function baseConfig(overrides: Partial<HezoConfig> = {}): HezoConfig {
 
 describe('startup', () => {
 	const tempDirs: string[] = [];
+
+	// Run the production startup() path against the in-process fake Docker so
+	// seeding HQ doesn't try (and fail) to reach a real Docker socket — which
+	// would otherwise log a swallowed "Failed to provision container" error.
+	// These tests assert master-key state / status / --reset / data-dir only,
+	// none of which exercise containers. Save+restore so the flag can't leak to
+	// the real-Docker integration files if vitest reuses this worker process.
+	let prevSkipDocker: string | undefined;
+	beforeAll(() => {
+		prevSkipDocker = process.env.HEZO_SKIP_DOCKER;
+		process.env.HEZO_SKIP_DOCKER = '1';
+	});
+	afterAll(() => {
+		if (prevSkipDocker === undefined) delete process.env.HEZO_SKIP_DOCKER;
+		else process.env.HEZO_SKIP_DOCKER = prevSkipDocker;
+	});
 
 	afterEach(() => {
 		for (const dir of tempDirs) {

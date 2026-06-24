@@ -116,6 +116,32 @@ beforeEach(async () => {
 			req = new Request(absolute, init);
 		}
 		const path = new URL(req.url).pathname;
+		// Short-circuit the update-check endpoints so no component test reaches the
+		// real GitHub Releases API. Otherwise every mounted <UpdateBanner> fires a
+		// fetch that 403-rate-limits and is aborted at teardown — spamming
+		// `<updates> update check failed` warnings and "Response is not defined"
+		// route errors. Both routes return their payload raw (api.request passes it
+		// through), so a static "no update available" body keeps the banner inert.
+		// Tests that need a specific version/update seed the query cache directly
+		// (see settings-version.test.tsx), so `current` here is cosmetic.
+		if (path === '/api/updates/latest' || path === '/api/updates/status') {
+			const base = { current: '0.0.0-test', latest: null, updateAvailable: false, url: null };
+			const body =
+				path === '/api/updates/status'
+					? {
+							...base,
+							state: 'idle',
+							targetVersion: null,
+							error: null,
+							autoUnlock: false,
+							canApply: false,
+						}
+					: base;
+			return new Response(JSON.stringify(body), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
 		if (
 			path.startsWith('/api') ||
 			path.startsWith('/oauth') ||
