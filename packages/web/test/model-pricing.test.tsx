@@ -27,7 +27,7 @@ test('lists a seeded override and creates a new one via the form', async () => {
 	});
 
 	// Heading + the seeded override (and its $/Mtok rendering) show.
-	await findByText('Model pricing');
+	await findByText('Model pricing', { selector: 'h1' });
 	await findByText('seeded-model');
 	await findByText('$3.00');
 

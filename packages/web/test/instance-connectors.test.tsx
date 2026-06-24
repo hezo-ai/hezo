@@ -27,7 +27,7 @@ test('lists seeded instance connectors and creates a new one via the form', asyn
 		},
 	});
 
-	await findByText('Connectors');
+	await findByText('Connectors', { selector: 'h1' });
 	await findByText('Seeded Docs');
 
 	await user.click(getByRole('button', { name: 'Add' }));
