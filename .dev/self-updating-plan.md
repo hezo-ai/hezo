@@ -163,10 +163,19 @@ once unlocked.
 
 ### Docs & architecture
 
+- `README.md` — add self-updating to the feature list / highlights: Hezo can
+  check GitHub Releases, download the new binary, and update + restart in place
+  from the web UI, so operators no longer have to swap the binary by hand. Link
+  to the self-hosting "Updating" section.
 - `docs/deployment/self-hosting.md` "Updating" — describe the in-app auto-update,
-  supervisor, "Update & restart", and the relock-on-restart caveat. Do **not**
-  surface `HEZO_WORKER` (internal); document `HEZO_DISABLE_AUTO_UPDATE` /
+  supervisor, "Update & restart", the apply-time confirmation + master-key
+  re-unlock warning, and the relock-on-restart caveat. Do **not** surface
+  `HEZO_WORKER` (internal); document `HEZO_DISABLE_AUTO_UPDATE` /
   `HEZO_UPDATE_CHECK_CRON` in `docs/deployment/configuration`.
+- Surface self-updating wherever the user-facing docs introduce features (e.g.
+  the docs overview/landing page), not only the deployment reference — it is a
+  user-visible capability, and the full `docs/` tree is bundled into the binary
+  and injected into the CEO chat, so the CEO can answer "how do I update Hezo?".
 - `.dev/architecture.md` — add a "Self-update & supervisor" section (process model,
   swap-per-platform, exit sentinel, state recovery).
 
