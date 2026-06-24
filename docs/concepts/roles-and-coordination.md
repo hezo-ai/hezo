@@ -21,8 +21,10 @@ across the whole instance:
   until you give the go-ahead.
 - **Coordination** — ask about any project's status, tickets, or roster; the CEO
   works across every team.
-- **Setup review** — when a new team is created, the CEO runs a coherence check before
-  the team starts planning, so the roster is aligned with the goal.
+- **Setup review** — before a new team starts planning, the CEO aligns its roster with the
+  goal. When the CEO creates a project with you, it sets the team up according to the plan
+  you agreed — the roles to hire and how they fit together — then starts it; a project
+  created directly from the form gets an automatic coherence check instead.
 - **Actioning changes** — hire new agents, retire ones a team no longer needs, adjust
   system prompts, and change settings, all through the conversation. See
   [Hiring & customizing agents](/docs/concepts/hiring-and-agents).

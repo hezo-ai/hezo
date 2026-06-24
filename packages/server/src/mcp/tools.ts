@@ -141,6 +141,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'remove_task_blocker',
 	'update_hire_proposal',
 	'create_project',
+	'start_team_setup',
 	'add_reaction',
 	'remove_reaction',
 	'create_comment',
@@ -1345,7 +1346,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_project',
-		'Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in the intake conversation — a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen team-type template (pass template_id from list_team_templates, or source_team_id to clone an existing team; defaults to Blank), creates the project, its planning ticket, and the initial CEO coherence/setup ticket the planning ticket is blocked on, then provisions the container. When intake_task_id is given, the intake conversation is closed with a completion note. Returns the new project plus its planning ticket identifier.',
+		'Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in the intake conversation — a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen team-type template (pass template_id from list_team_templates, or source_team_id to clone an existing team; defaults to Blank), creates the project, its planning ticket, and the initial CEO coherence/setup ticket the planning ticket is blocked on, then provisions the container. The coherence/setup ticket is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned coherence_task_identifier) to capture the concrete setup you agreed in intake — the exact roles to hire, any system-prompt rewrites, and the reporting structure — then call start_team_setup(project) to begin the run. When intake_task_id is given, the intake conversation is closed with a completion note. Returns the new project plus its planning and coherence ticket identifiers.',
 		{
 			name: z.string().describe('Project name'),
 			description: z.string().describe('Project description'),
@@ -1428,12 +1429,16 @@ export function registerTools(
 						typeof args.initial_project_plan === 'string' ? args.initial_project_plan : null,
 					actorType: 'agent',
 					actorMemberId: auth.memberId,
+					// CEO-created: the coherence/setup ticket is created unassigned and
+					// does NOT auto-run. The CEO drafts its description with the intake
+					// plan, then calls start_team_setup to begin the run.
+					suppressCoherenceAutoStart: true,
 				},
 				{ events },
 			);
 			if (!result.ok) return { error: result.message };
 
-			const { project, planningTask, team } = result;
+			const { project, planningTask, team, coherenceTask } = result;
 
 			if (intakeTaskId) {
 				const completed = await completeProjectIntakeAfterProvisioning(
@@ -1465,7 +1470,81 @@ export function registerTools(
 				team_slug: team.slug,
 				planning_task_id: planningTask.id,
 				planning_task_identifier: planningTask.identifier,
+				coherence_task_id: coherenceTask?.id ?? null,
+				coherence_task_identifier: coherenceTask?.identifier ?? null,
 			};
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'start_team_setup',
+		'Kick off the initial team-coherence/setup run for a project you created via create_project. ' +
+			'CEO-only. Projects created directly from the admin form start their coherence pass automatically; ' +
+			'projects you create do NOT. First author the coherence ticket with update_task — replace its ' +
+			'description with the concrete plan you agreed in intake (the exact roles to hire and why, any ' +
+			'system-prompt rewrites, and the reporting structure) — then call this to assign the ticket to ' +
+			'yourself and start the run. Returns the started ticket; errors if there is no open setup ticket ' +
+			'for the project or a run is already active on it.',
+		{ project: projectArg() },
+		async (args, db, auth) => {
+			if (auth.type !== AuthType.Agent) {
+				return { error: 'start_team_setup is only callable by agents' };
+			}
+			const caller = await db.query<{ slug: string }>(
+				'SELECT slug FROM member_agents WHERE id = $1',
+				[auth.memberId],
+			);
+			if (caller.rows[0]?.slug !== CEO_AGENT_SLUG) {
+				return { error: 'Only the CEO can start team setup' };
+			}
+
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+
+			const placeholders = TERMINAL_TASK_STATUSES.map((_, i) => `$${i + 2}::task_status`).join(
+				', ',
+			);
+			const ticket = await db.query<{
+				id: string;
+				identifier: string;
+				assignee_id: string | null;
+			}>(
+				`SELECT id, identifier, assignee_id FROM tasks
+				 WHERE team_id = $1
+				   AND labels @> '["team-coherence-review"]'::jsonb
+				   AND status NOT IN (${placeholders})
+				 LIMIT 1`,
+				[scope.teamId, ...TERMINAL_TASK_STATUSES],
+			);
+			const row = ticket.rows[0];
+			if (!row) return { error: 'No open team-setup ticket for this project' };
+
+			const active = await assertNoActiveRun(db, row.id);
+			if (!active.ok) return { error: active.message };
+
+			if (row.assignee_id !== auth.memberId) {
+				const updated = await db.query<Record<string, unknown>>(
+					`UPDATE tasks SET assignee_id = $1, updated_at = now() WHERE id = $2 RETURNING ${TASK_COLUMNS_BARE}`,
+					[auth.memberId, row.id],
+				);
+				if (wsManager && updated.rows[0]) {
+					broadcastRowChange(
+						wsManager,
+						wsRoom.team(scope.teamId),
+						'tasks',
+						'UPDATE',
+						updated.rows[0],
+					);
+				}
+			}
+
+			await createWakeup(db, auth.memberId, scope.teamId, WakeupSource.Assignment, {
+				task_id: row.id,
+			});
+
+			return { started: true, task_id: row.id, task_identifier: row.identifier };
 		},
 		db,
 	);
