@@ -6,9 +6,10 @@ section: Deployment
 
 # Configuration reference
 
-Every setting can be supplied as a **command-line flag** or an **environment variable**.
-When both are present, the **environment variable wins** — handy for baking defaults
-into a service definition while still overriding per run.
+Most settings can be supplied as a **command-line flag** or an **environment variable**;
+a few are environment-variable only (shown with `—` in the **Flag** column below).
+When a setting supports both and both are present, the **environment variable wins** —
+handy for baking defaults into a service definition while still overriding per run.
 
 ## Options
 
