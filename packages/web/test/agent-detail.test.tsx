@@ -184,6 +184,58 @@ test('agent settings tab edits the title and persists across reload', async () =
 	);
 });
 
+test('agent header shows a live next-heartbeat countdown', async () => {
+	let teamSlug = '';
+	let agentId = '';
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			teamSlug = ws.internalSlug;
+			agentId = ws.agents[0].id;
+			// Stamp a recent heartbeat so next_heartbeat_at is ~an hour out and the
+			// countdown renders a stable, non-due value.
+			const { db } = getTestContext();
+			await db.query(`UPDATE member_agents SET last_heartbeat_at = now() WHERE id = $1`, [agentId]);
+		},
+	});
+	await router.navigate({
+		to: '/projects/$projectId/agents/$agentId',
+		params: { projectId: teamSlug, agentId },
+	});
+
+	const indicator = await findByTestId('next-heartbeat');
+	expect(indicator.textContent).toMatch(/Next heartbeat in/);
+});
+
+test('agent header hides the countdown for a disabled (off-schedule) agent', async () => {
+	let teamSlug = '';
+	let agentId = '';
+	const { queryByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			teamSlug = ws.internalSlug;
+			agentId = ws.agents[0].id;
+			const { db } = getTestContext();
+			await db.query(
+				`UPDATE member_agents SET admin_status = 'disabled'::agent_admin_status WHERE id = $1`,
+				[agentId],
+			);
+		},
+	});
+	await router.navigate({
+		to: '/projects/$projectId/agents/$agentId',
+		params: { projectId: teamSlug, agentId },
+	});
+
+	// Wait for the (disabled) header to render, then assert there's no countdown.
+	await waitFor(() => {
+		expect(document.querySelector('h1')?.textContent).toMatch(/\(disabled\)/);
+	});
+	expect(queryByTestId('next-heartbeat')).toBeNull();
+});
+
 test('agent disable and enable lifecycle reflects in detail view', async () => {
 	let teamSlug = '';
 	let teamId = '';

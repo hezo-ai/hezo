@@ -1,6 +1,7 @@
 import { AgentAdminStatus } from '@hezo/shared';
 import { createFileRoute, Link, Outlet, useMatchRoute } from '@tanstack/react-router';
 import { ArrowLeft } from 'lucide-react';
+import { NextHeartbeatIndicator } from '../../../../../components/next-heartbeat-indicator';
 import { Badge } from '../../../../../components/ui/badge';
 import { ExpandableText } from '../../../../../components/ui/expandable-text';
 import { useAgent } from '../../../../../hooks/use-agents';
@@ -35,7 +36,7 @@ function AgentLayout() {
 				<ArrowLeft className="w-3.5 h-3.5" /> Team
 			</Link>
 
-			<div className="flex items-center gap-3 mb-4">
+			<div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mb-4">
 				<h1
 					className={`text-lg font-semibold${agent.admin_status === AgentAdminStatus.Disabled ? ' text-text-2' : ''}`}
 				>
@@ -45,6 +46,10 @@ function AgentLayout() {
 				<Badge color={agentRuntimeStatusMeta(agent.runtime_status).color}>
 					{agentRuntimeStatusMeta(agent.runtime_status).label}
 				</Badge>
+				<NextHeartbeatIndicator
+					nextHeartbeatAt={agent.next_heartbeat_at}
+					className="w-full sm:w-auto sm:ml-auto"
+				/>
 			</div>
 
 			<div

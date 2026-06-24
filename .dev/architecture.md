@@ -270,7 +270,11 @@ Work reaches an agent through the **wakeup → job-manager → agent-runner** pi
 `mention`, `reply`, `comment` (opt-in assignee wake), `on_demand`, `automation`.
 Event-based triggers wake agents immediately; scheduled heartbeats are the idle-agent
 fallback. Duplicate wakeups for the same agent dedupe via `idempotency_key` and **coalesce**
-(`coalesced_count`), merging context instead of spawning redundant runs.
+(`coalesced_count`), merging context instead of spawning redundant runs. The agents API
+derives (does not store) each agent's `next_heartbeat_at` as
+`last_heartbeat_at + max(heartbeat_interval_min, floor)` — null when the agent is off the
+schedule (disabled or budget-paused) — sharing the floor constant with the scheduler
+(`services/heartbeat-schedule.ts`) so the web UI's live countdown matches the enforced cadence.
 
 **Dispatch.** `JobManager` runs a ~1 Hz cron that also does container sync, container
 health, and orphan recovery. Per project-concurrency-limited, it: loads queued wakeups →

@@ -48,6 +48,7 @@ import {
 } from './containers';
 import type { DockerClient } from './docker';
 import type { EgressProxy } from './egress';
+import { HEARTBEAT_INTERVAL_FLOOR_MIN } from './heartbeat-schedule';
 import type { LogStreamBroker } from './log-stream-broker';
 import { detectOrphans, healStaleRunState, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
 import type { PricingService } from './pricing';
@@ -147,10 +148,9 @@ const BUDGET_RESUME_CRON = process.env.HEZO_BUDGET_RESUME_CRON ?? '*/30 * * * * 
 // literal for the `<> ALL(...)` / `= ANY(...)` enum-array params.
 const BUDGET_PAUSE_STATUSES_PG = `{${BUDGET_PAUSE_STATUSES.join(',')}}`;
 const INBOX_RETENTION_DAYS = Number(process.env.HEZO_INBOX_RETENTION_DAYS ?? 30);
-// Lower bound on how often a heartbeat can fire, regardless of an agent's
-// configured `heartbeat_interval_min`. Defends against misconfigured low/zero
-// intervals producing a tight 5-second-cron loop on the same agent.
-const HEARTBEAT_INTERVAL_FLOOR_MIN = Number(process.env.HEZO_HEARTBEAT_FLOOR_MIN ?? 60);
+// Lower bound on how often a heartbeat can fire (`HEARTBEAT_INTERVAL_FLOOR_MIN`,
+// from ./heartbeat-schedule) is shared with the agents API's computed
+// `next_heartbeat_at` so the UI countdown matches the cadence enforced here.
 // Quiet window after a run completes before that agent is eligible for another
 // heartbeat. Prevents back-to-back runs when the configured interval is shorter
 // than the run itself.
