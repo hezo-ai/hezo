@@ -134,116 +134,34 @@ Full details — subscriptions vs. API keys, mixing providers, per-agent overrid
 
 ## Features
 
-Every feature below links to its documentation.
+Each feature links to its documentation.
 
-### Orchestration & coordination
-
-- **[An org chart of roles](./docs/concepts/roles-and-coordination.md)** — an instance-wide
-  CEO and Coach in HQ, plus a Captain and worker agents on each team, that coordinate like
-  a company.
-- **[Real-time CEO chat](./docs/concepts/roles-and-coordination.md#chatting-with-the-ceo)** —
-  one always-on conversation to scope projects, check status across every team, hire,
-  retire, and change settings, with replies streaming back live.
-- **[A Coach that makes teams improve every ship](./docs/concepts/roles-and-coordination.md#the-coach)** —
-  it reviews each completed ticket and writes durable *learned rules* back onto the agents,
-  so the same mistake doesn't happen twice — no prompt-tuning by hand.
-- **[A task board with rules & progress summaries](./docs/concepts/tasks.md)** — each task
-  carries a description, optional per-task rules enforced on every run, and an
-  agent-maintained progress summary so work hands off cleanly across runs.
-- **[Heartbeat execution](./docs/getting-started/first-project.md#3-watch-the-team-work)** —
-  agents wake on a schedule to pick up work and keep moving without you driving each step.
-- **[Approvals for sensitive actions](./docs/getting-started/first-project.md#4-stay-in-control)** —
-  consequential changes (hiring an agent, pasting a credential, and the like) surface as
-  approvals you confirm.
-- **[Multiple projects, one team each](./docs/concepts/projects-and-teams.md)** — every
-  project owns exactly one team, with its own roster, tasks, budget, and isolated
-  container; nothing leaks between them.
-
-### Team building
-
-- **[Team templates](./docs/concepts/projects-and-teams.md#team-templates)** — start from a
-  minimal **Blank** team (just a Captain) or a full **Software development** roster
-  (architect, product lead, engineers, QA, security, design, DevOps, marketing, research).
-- **[Save & reuse a team setup](./docs/concepts/projects-and-teams.md#reusing-a-team-setup)** —
-  save a tuned team as a template, or start a new project directly from an existing team's
-  roster.
-- **[Hire, retire & customize agents](./docs/concepts/hiring-and-agents.md)** — add roles,
-  edit any agent's system prompt (changes take effect next run), retire and reinstate
-  roles, and tune each agent's heartbeat, budget, and code access.
-- **[Per-agent model override](./docs/ai-models.md#give-an-agent-its-own-model)** — run one
-  agent on a frontier model for hard reasoning while the rest run on something cheaper;
-  mixing providers within a team is fully supported.
-- **[Attach a project plan](./docs/concepts/projects-and-teams.md#the-project-plan-document)** —
-  hand the team a fuller brief (goals, scope, constraints) that the Captain or Product Lead
-  turns into the plan or PRD.
-
-### Security & control
-
-- **[Secret substitution at the egress proxy](./docs/security/secret-protection.md)** —
-  placeholders in, real keys swapped in only for allowed hosts.
-- **[Encrypted at rest](./docs/security/master-key.md)** (AES-256-GCM) behind one
-  twelve-word master key only you hold.
-- **[Per-project Docker isolation](./docs/security/container-isolation.md)**, with all agent
-  traffic forced through the proxy.
-- **[Verified git commits](./docs/security/container-isolation.md#keys-never-enter-the-container)**,
-  signed host-side with your project key — the key never enters the container.
-- **[Activity log & audit trail](./docs/security/activity-log.md)** — an append-only,
-  attributed record of every action and every secret use, per project and instance-wide.
-
-### Knowledge & deliverables
-
-- **[Documents & long-term memory](./docs/concepts/documents-and-memory.md)** — durable
-  markdown project docs (PRDs, specs, plans, research) that agents and you read and write,
-  kept out of the source repo.
-- **[Version history & one-click restore](./docs/concepts/documents-and-memory.md#version-history)** —
-  every document edit is versioned, so the history doubles as an audit trail you can roll
-  back.
-- **[Chatbox memory](./docs/concepts/documents-and-memory.md#chatbox-memory)** — the CEO
-  remembers your standing preferences across every conversation, so you don't repeat
-  yourself.
-- **[Assets library](./docs/concepts/assets.md)** — upload mockups, images, and PDFs, and
-  let agents produce interactive **HTML** and **SVG** deliverables referenced from any
-  task.
-- **[Sandboxed HTML previews](./docs/concepts/assets.md#html-previews)** — click through an
-  agent's mockup or dashboard live in the app, isolated from your data.
-
-### Models & cost
-
-- **[Bring your own providers](./docs/ai-models.md)** — connect Claude, ChatGPT, Gemini,
-  Kimi, DeepSeek, Z.ai, or OpenRouter; mix models freely, down to one per agent.
-- **[Hard budget caps](./docs/concepts/budgets-and-costs.md)** — daily, weekly, and monthly
-  limits per agent and per project; runs pause when a window is exhausted and resume when
-  it rolls over.
-- **[Cost tracking](./docs/concepts/budgets-and-costs.md#cost-tracking)** — every run's cost
-  is recorded and rolled up per agent and per project from the budget view.
-
-### Integrate & extend
-
-- **[A built-in MCP server](./docs/mcp/hezo-mcp-server.md)** — drive your teams and tasks
-  from any MCP client (Claude Code, Cursor, Claude Desktop, your own scripts) with a
-  team-scoped API key.
-- **[Connect external MCP servers](./docs/mcp/connecting-mcp-servers.md)** — give Hezo's own
-  agents the tools you already use (web search, trackers, a CMS), scoped per instance, team,
-  or project.
-- **[Connected agents](./docs/mcp/hezo-mcp-server.md#connecting-as-a-connected-agent-instance-wide)** —
-  let an external agent self-register for instance-wide access, gated behind admin approval.
-- **A mobile-first web app** — oversee, chat, and approve from any device.
-
-### Run it your way
-
-- **[A single self-contained binary](./docs/getting-started/installation.md)** — no runtime,
-  toolchain, or external database to install; Docker is the only prerequisite.
-- **[Self-host anywhere Docker runs](./docs/deployment/self-hosting.md)** — your laptop, a
-  home server, or a cloud VPS, with everything in one data directory.
-- **[Deploy to the cloud](./docs/deployment/cloud.md)** — run always-on and unlock
-  unattended via `HEZO_MASTER_KEY`.
-- **[Secure remote access](./docs/deployment/secure-remote-access.md)** — reach a hosted
-  instance over Tailscale/WireGuard, a Cloudflare Tunnel, or an SSH tunnel, without
-  exposing the port.
-- **[Backup & safe rollback](./docs/deployment/backup-and-recovery.md)** — back up one
-  directory; upgrades snapshot first, so they roll back cleanly.
-- **[Configuration & CLI](./docs/deployment/configuration.md)** — every setting as a flag or
-  environment variable; see the [CLI reference](./docs/reference/cli.md).
+- **[Org chart of agents](./docs/concepts/roles-and-coordination.md)** — instance-wide CEO and Coach, plus a Captain and workers per team.
+- **[Real-time CEO chat](./docs/concepts/roles-and-coordination.md#chatting-with-the-ceo)** — one always-on conversation to scope work, hire, and check status, streaming live.
+- **[Self-improving teams](./docs/concepts/roles-and-coordination.md#the-coach)** — the Coach reviews finished tickets and writes durable learned rules back onto the agents.
+- **[Task board](./docs/concepts/tasks.md)** — tasks with descriptions, per-task rules, and agent-maintained progress summaries.
+- **[Heartbeat execution](./docs/getting-started/first-project.md#3-watch-the-team-work)** — agents wake on a schedule to pick up work on their own.
+- **[Approvals](./docs/getting-started/first-project.md#4-stay-in-control)** — consequential actions surface for you to confirm.
+- **[One team per project](./docs/concepts/projects-and-teams.md)** — independent roster, tasks, budget, and container per project.
+- **[Team templates](./docs/concepts/projects-and-teams.md#team-templates)** — start Blank (just a Captain) or with a full software-development roster.
+- **[Save & reuse teams](./docs/concepts/projects-and-teams.md#reusing-a-team-setup)** — snapshot a tuned team as the starting point for new projects.
+- **[Hire & customize agents](./docs/concepts/hiring-and-agents.md)** — add, retire, and reinstate roles; edit prompts, heartbeats, budgets, and code access.
+- **[Per-agent model](./docs/ai-models.md#give-an-agent-its-own-model)** — give any agent its own model; mix providers within one team.
+- **[Bring your own models](./docs/ai-models.md)** — Claude, ChatGPT, Gemini, Kimi, DeepSeek, Z.ai, or OpenRouter, each via its native runtime.
+- **[Budget caps & cost tracking](./docs/concepts/budgets-and-costs.md)** — daily/weekly/monthly limits per agent and project; runs pause and auto-resume.
+- **[Secret substitution](./docs/security/secret-protection.md)** — agents see placeholders; real keys are swapped in at the egress proxy only for allowed hosts.
+- **[Encrypted at rest](./docs/security/master-key.md)** — AES-256-GCM behind one twelve-word master key only you hold.
+- **[Container isolation](./docs/security/container-isolation.md)** — every agent runs sandboxed, with all traffic forced through the proxy.
+- **[Verified git commits](./docs/security/container-isolation.md#keys-never-enter-the-container)** — signed host-side; the signing key never enters the container.
+- **[Activity log & audit trail](./docs/security/activity-log.md)** — append-only, attributed record of every action and secret use.
+- **[Documents & long-term memory](./docs/concepts/documents-and-memory.md)** — durable markdown PRDs, specs, and research with version history and one-click restore.
+- **[Chatbox memory](./docs/concepts/documents-and-memory.md#chatbox-memory)** — the CEO remembers your standing preferences across conversations.
+- **[Assets & previews](./docs/concepts/assets.md)** — upload references; agents produce HTML/SVG deliverables you preview in-app, sandboxed.
+- **[Built-in MCP server](./docs/mcp/hezo-mcp-server.md)** — drive your teams and tasks from any MCP client.
+- **[External MCP servers](./docs/mcp/connecting-mcp-servers.md)** — give your agents the tools you already use, scoped per instance, team, or project.
+- **[Self-hosted single binary](./docs/getting-started/installation.md)** — no runtime or external database; Docker is the only prerequisite. [Configurable](./docs/deployment/configuration.md) by flag or env, with a small [CLI](./docs/reference/cli.md).
+- **[Deploy anywhere Docker runs](./docs/deployment/self-hosting.md)** — laptop, home server, or [cloud VPS](./docs/deployment/cloud.md), with [secure remote access](./docs/deployment/secure-remote-access.md) and [safe-rollback backups](./docs/deployment/backup-and-recovery.md).
+- **Mobile-first web app** — oversee, chat, and approve from any device.
 
 ## How Hezo compares
 
@@ -300,76 +218,6 @@ cd hezo
 bun install
 bun run dev
 ```
-
-## Documentation
-
-Full docs live in [`docs/`](./docs/introduction.md) and are rendered at
-[hezo.ai/docs](https://hezo.ai/docs).
-
-**Overview**
-- [Introduction](./docs/introduction.md)
-- [How Hezo works](./docs/concepts/how-hezo-works.md)
-
-**Getting started**
-- [Installation](./docs/getting-started/installation.md)
-- [First-run setup](./docs/getting-started/first-run.md)
-- [Your first project](./docs/getting-started/first-project.md)
-
-**Concepts**
-- [Projects & teams](./docs/concepts/projects-and-teams.md)
-- [Roles & the CEO](./docs/concepts/roles-and-coordination.md)
-- [Tasks, rules & summaries](./docs/concepts/tasks.md)
-- [Documents & long-term memory](./docs/concepts/documents-and-memory.md)
-- [Assets & previews](./docs/concepts/assets.md)
-- [Hiring & customizing agents](./docs/concepts/hiring-and-agents.md)
-- [Budgets & cost control](./docs/concepts/budgets-and-costs.md)
-
-**Security**
-- [Secret protection & egress](./docs/security/secret-protection.md)
-- [Master key & encryption](./docs/security/master-key.md)
-- [Container isolation](./docs/security/container-isolation.md)
-- [Activity log & audit trail](./docs/security/activity-log.md)
-
-**AI models & MCP**
-- [AI model support](./docs/ai-models.md)
-- [Hezo's MCP server](./docs/mcp/hezo-mcp-server.md)
-- [Connecting MCP servers](./docs/mcp/connecting-mcp-servers.md)
-
-**Deployment**
-- [Self-hosting](./docs/deployment/self-hosting.md)
-- [Deploying to the cloud](./docs/deployment/cloud.md)
-- [Secure remote access](./docs/deployment/secure-remote-access.md)
-- [Backup & recovery](./docs/deployment/backup-and-recovery.md)
-- [Configuration reference](./docs/deployment/configuration.md)
-
-**Reference**
-- [CLI reference](./docs/reference/cli.md)
-
-## FAQ
-
-**Do I need to host my own models?** No — you bring API keys or subscriptions for the
-providers you want. Hezo runs the agents; the models stay with their providers. See
-[AI model support](./docs/ai-models.md).
-
-**Can agents see my API keys?** No. Agents only ever use placeholders; the real value is
-substituted at the network edge, and only for hosts you've allowed. See
-[Secret protection & egress](./docs/security/secret-protection.md).
-
-**Is my data sent anywhere?** Hezo is [self-hosted](./docs/deployment/self-hosting.md). Your
-data stays in your instance; agents reach your chosen model providers and any hosts you
-allow, and nothing else.
-
-**Can I run multiple projects?** Yes — each gets its own
-[team](./docs/concepts/projects-and-teams.md) and its own
-[isolated container](./docs/security/container-isolation.md).
-
-**How are agents kept from running up a huge bill?** Set daily, weekly, or monthly
-[budgets](./docs/concepts/budgets-and-costs.md) per agent and per project; agents pause when
-a window is exhausted and resume when it rolls over.
-
-**Can other tools drive Hezo?** Yes — Hezo ships a [built-in MCP server](./docs/mcp/hezo-mcp-server.md),
-so any MCP client can manage your teams and tasks, and your agents can use
-[external MCP servers](./docs/mcp/connecting-mcp-servers.md) too.
 
 ## Development
 
