@@ -1,4 +1,4 @@
-import { CEO_AGENT_SLUG } from '@hezo/shared';
+import { CEO_AGENT_SLUG, DEFAULT_HEARTBEAT_INTERVAL_MIN } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import { toSlug } from '../lib/slug';
@@ -62,7 +62,7 @@ agentTypesRoutes.post('/agent-types', async (c) => {
 			body.description ?? '',
 			body.role_description ?? '',
 			body.system_prompt_template ?? '',
-			body.heartbeat_interval_min ?? 60,
+			body.heartbeat_interval_min ?? DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			body.run_timeout_min ?? 60,
 			body.monthly_budget_cents ?? 3000,
 			body.touches_code ?? false,

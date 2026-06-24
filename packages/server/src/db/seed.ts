@@ -1,5 +1,10 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AgentEffort, CEO_AGENT_SLUG, INSTANCE_AGENT_SLUGS } from '@hezo/shared';
+import {
+	AgentEffort,
+	CEO_AGENT_SLUG,
+	DEFAULT_HEARTBEAT_INTERVAL_MIN,
+	INSTANCE_AGENT_SLUGS,
+} from '@hezo/shared';
 import agentSummaries from './agent-summaries.json' with { type: 'json' };
 
 const summaries: {
@@ -30,7 +35,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			sort_order: 0,
 			// Strategy + delegation requires deep reasoning — default to max (ultrathink).
 			default_effort: AgentEffort.Max,
-			heartbeat_interval_min: 60,
+			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			run_timeout_min: 60,
 			monthly_budget_cents: 2000,
 			touches_code: false,
@@ -44,7 +49,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			sort_order: 1,
 			// Planning is the core job — always ultrathink.
 			default_effort: AgentEffort.Max,
-			heartbeat_interval_min: 60,
+			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			run_timeout_min: 60,
 			monthly_budget_cents: 4000,
 			touches_code: false,
@@ -58,7 +63,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			sort_order: 2,
 			// Scoping/PRD work is planning-heavy.
 			default_effort: AgentEffort.High,
-			heartbeat_interval_min: 60,
+			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			run_timeout_min: 60,
 			monthly_budget_cents: 3000,
 			touches_code: false,
@@ -72,7 +77,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			sort_order: 3,
 			// Implementation default — callers/comments can bump to high for tricky work.
 			default_effort: AgentEffort.Medium,
-			heartbeat_interval_min: 60,
+			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			run_timeout_min: 60,
 			monthly_budget_cents: 5000,
 			touches_code: true,
@@ -86,7 +91,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			sort_order: 4,
 			// Review needs careful thought about correctness and coverage.
 			default_effort: AgentEffort.High,
-			heartbeat_interval_min: 60,
+			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			run_timeout_min: 60,
 			monthly_budget_cents: 4000,
 			touches_code: true,
@@ -99,7 +104,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			reports_to_slug: 'architect',
 			sort_order: 5,
 			default_effort: AgentEffort.High,
-			heartbeat_interval_min: 60,
+			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			run_timeout_min: 60,
 			monthly_budget_cents: 3000,
 			touches_code: true,
@@ -112,7 +117,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			reports_to_slug: 'architect',
 			sort_order: 6,
 			default_effort: AgentEffort.Medium,
-			heartbeat_interval_min: 60,
+			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			run_timeout_min: 60,
 			monthly_budget_cents: 3000,
 			touches_code: true,
@@ -125,7 +130,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			reports_to_slug: 'architect',
 			sort_order: 7,
 			default_effort: AgentEffort.Medium,
-			heartbeat_interval_min: 60,
+			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			run_timeout_min: 60,
 			monthly_budget_cents: 3000,
 			touches_code: true,
@@ -138,7 +143,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			reports_to_slug: 'captain',
 			sort_order: 8,
 			default_effort: AgentEffort.Medium,
-			heartbeat_interval_min: 60,
+			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			run_timeout_min: 60,
 			monthly_budget_cents: 2000,
 			touches_code: false,
@@ -152,7 +157,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			sort_order: 9,
 			// Research benefits from deep thinking.
 			default_effort: AgentEffort.High,
-			heartbeat_interval_min: 60,
+			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			run_timeout_min: 60,
 			monthly_budget_cents: 3000,
 			touches_code: false,
@@ -165,7 +170,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			reports_to_slug: null,
 			sort_order: 10,
 			default_effort: AgentEffort.Medium,
-			heartbeat_interval_min: 60,
+			heartbeat_interval_min: DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			run_timeout_min: 60,
 			monthly_budget_cents: 3000,
 			touches_code: false,
@@ -256,7 +261,7 @@ export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>)
 			summaries.team_contexts.builtin?.ceo ?? '',
 			roleDocs['_instance/ceo.md'] ?? '',
 			AgentEffort.Max,
-			240,
+			DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			60,
 			3000,
 			false,

@@ -1,3 +1,4 @@
+import { DEFAULT_HEARTBEAT_INTERVAL_MIN } from '@hezo/shared';
 import { fireEvent, waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { queryClient } from '../src/lib/query-client';
@@ -61,7 +62,7 @@ test('agent settings tab shows budget, heartbeat, title, and save controls', asy
 	});
 
 	await findByText('Monthly spend');
-	await findByText('Every 60 min');
+	await findByText(`Every ${DEFAULT_HEARTBEAT_INTERVAL_MIN} min`);
 	await findByLabelText('Title');
 	await findByLabelText('Run timeout (min)');
 	await findByRole('button', { name: 'Save Changes' });

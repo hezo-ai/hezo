@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { DEFAULT_HEARTBEAT_INTERVAL_MIN } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
@@ -160,6 +161,43 @@ describe('agent types CRUD', () => {
 		expect(body.data.is_builtin).toBe(false);
 		expect(body.data.source).toBe('custom');
 		expect(body.data.monthly_budget_cents).toBe(5000);
+		// No heartbeat supplied → falls back to the 12-hour default.
+		expect(body.data.heartbeat_interval_min).toBe(DEFAULT_HEARTBEAT_INTERVAL_MIN);
+	});
+
+	it('defaults a custom agent type to the 12-hour heartbeat, honouring an explicit override', async () => {
+		const defaultedRes = await app.request('/api/agent-types', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Heartbeat Default Agent' }),
+		});
+		expect(defaultedRes.status).toBe(201);
+		expect((await defaultedRes.json()).data.heartbeat_interval_min).toBe(
+			DEFAULT_HEARTBEAT_INTERVAL_MIN,
+		);
+		expect(DEFAULT_HEARTBEAT_INTERVAL_MIN).toBe(720);
+
+		const overriddenRes = await app.request('/api/agent-types', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Heartbeat Override Agent', heartbeat_interval_min: 30 }),
+		});
+		expect(overriddenRes.status).toBe(201);
+		expect((await overriddenRes.json()).data.heartbeat_interval_min).toBe(30);
+	});
+
+	it('seeds built-in agent types at the 12-hour heartbeat default', async () => {
+		const res = await app.request('/api/agent-types', {
+			headers: authHeader(token),
+		});
+		const types = (await res.json()).data;
+		for (const slug of ['captain', 'engineer', 'qa-engineer', 'coach']) {
+			const t = types.find((a: any) => a.slug === slug);
+			expect(t, `${slug} should be seeded`).toBeDefined();
+			expect(t.heartbeat_interval_min, `${slug} heartbeat default`).toBe(
+				DEFAULT_HEARTBEAT_INTERVAL_MIN,
+			);
+		}
 	});
 
 	it('gets an agent type by id', async () => {
