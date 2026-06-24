@@ -1,6 +1,13 @@
+import { quietTestLogs } from '@hezo/server/test/helpers/log-level';
 import { cleanup, configure } from '@testing-library/react';
 import * as React from 'react';
 import { afterEach, vi } from 'vitest';
+
+// Web component tests boot the server in-process (createTestApp via render.tsx),
+// so the server logger drives all the `[info]` chatter (seeded teams,
+// provisioned stub containers, …). Raise the floor to `warn` so it doesn't bury
+// real signal; `[warn]`/`[error]` stay visible. Honour HEZO_LOG_LEVEL to opt back in.
+quietTestLogs();
 
 // Testing Library's default `findBy*` / `waitFor` timeout of 1s races CI's
 // fork-pool concurrency on smaller runners. With 10 worker forks each

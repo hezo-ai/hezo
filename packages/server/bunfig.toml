@@ -1,0 +1,5 @@
+# Bun-native test tier (`bun test test/bun/`). The preload quiets the app logger
+# to `warn` so expected `[info]` chatter doesn't bury real signal. Scoped to
+# `[test]`, so the production binary is unaffected.
+[test]
+preload = ["./test/bun/setup.ts"]

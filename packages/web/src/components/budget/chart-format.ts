@@ -17,7 +17,7 @@ export function formatDay(day: string): string {
 	const datePart = (day ?? '').slice(0, 10);
 	const d = new Date(`${datePart}T00:00:00Z`);
 	if (Number.isNaN(d.getTime())) return day ?? '';
-	return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+	return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
 export function dollars(cents: number): string {
