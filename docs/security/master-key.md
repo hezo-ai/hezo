@@ -1,6 +1,6 @@
 ---
 title: Master key & encryption
-order: 14
+order: 15
 section: Security
 ---
 
