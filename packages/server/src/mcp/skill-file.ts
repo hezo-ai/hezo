@@ -7,8 +7,8 @@ interface SkillTool {
 
 /**
  * The agent-facing manifest served at `GET /SKILL.md`: how to connect, how to
- * self-register as a connected agent, and the full MCP tool list. `baseUrl`
- * makes the endpoints concrete when known (falls back to relative paths).
+ * self-register for access, and the full MCP tool list. `baseUrl` makes the
+ * endpoints concrete when known (falls back to relative paths).
  */
 export function generateSkillFile(tools: SkillTool[], opts: { baseUrl?: string } = {}): string {
 	const base = opts.baseUrl ?? '';
@@ -20,22 +20,20 @@ export function generateSkillFile(tools: SkillTool[], opts: { baseUrl?: string }
 		'## Connection',
 		'',
 		`- **Endpoint:** \`POST ${base}/mcp\` (JSON-RPC, Streamable HTTP)`,
-		'- **Authentication:** `Authorization: Bearer <token>`, where the token is one of:',
-		'  - a **team-scoped API key** (`hezo_…`) created in the Hezo web UI, or',
-		'  - an **instance-wide connected-agent token** (`hezoc_…`) obtained via the registration flow below.',
+		'- **Authentication:** `Authorization: Bearer <token>`, where the token is a Hezo **API key** (`hezo_…`). Create one in the Hezo web UI, or self-register for one (below). An API key has instance-wide access (every project and team) over MCP.',
 		'',
-		'## Register as a connected agent',
+		'## Register for access',
 		'',
-		'An external agent can self-register for instance-wide access (every project and team). The registration stays inert until a Hezo admin approves it.',
+		'An external agent can self-register for instance access. The registration stays inert until a Hezo admin approves it.',
 		'',
 		'1. Call the `register` tool over MCP (no token needed) — or `POST ' +
 			base +
-			'/api/agent-connections/register` with `{"name":"<your agent>"}`. You receive a `hezoc_…` token **once**.',
+			'/api/api-keys/register` with `{"name":"<your agent>"}`. You receive a token **once**.',
 		'2. Set that token as your `Authorization: Bearer` token.',
-		'3. Ask a Hezo admin to approve you at **Settings → Connected agents**.',
+		'3. Ask a Hezo admin to approve you at **Settings → API keys**.',
 		'4. Poll the `connection_status` tool (or `GET ' +
 			base +
-			'/api/agent-connections/status`) until it returns `{"status":"approved"}`.',
+			'/api/api-keys/status`) until it returns `{"status":"approved"}`.',
 		'5. Once approved, the same token grants full instance access on `POST /mcp`. Pass a `project` slug to project-scoped tools (use `list_projects` to discover them).',
 		'',
 		'## File uploads',

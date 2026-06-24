@@ -1,6 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useState } from 'react';
-import { ApiKeysSection } from '../../../../components/settings/api-keys-section';
 import { ApplyTypeSection } from '../../../../components/settings/apply-type-section';
 import { AutomationsSection } from '../../../../components/settings/automations-section';
 import { BudgetSection } from '../../../../components/settings/budget-section';
@@ -14,7 +13,6 @@ import { useTeam } from '../../../../hooks/use-teams';
 const settingsNav = [
 	{ id: 'general', label: 'General' },
 	{ id: 'automations', label: 'Automations' },
-	{ id: 'api-keys', label: 'API keys' },
 	{ id: 'budget', label: 'Budget' },
 	{ id: 'preferences', label: 'Preferences' },
 	{ id: 'skill-file', label: 'Skill file' },
@@ -61,9 +59,6 @@ function SettingsPage() {
 				</div>
 				<div id="settings-automations">
 					<AutomationsSection projectId={projectId} team={team} />
-				</div>
-				<div id="settings-api-keys">
-					<ApiKeysSection projectId={projectId} />
 				</div>
 				<div id="settings-budget">
 					<BudgetSection projectId={projectId} />

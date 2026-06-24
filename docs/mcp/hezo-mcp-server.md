@@ -27,39 +27,35 @@ tools into.
 
 ### Get an API key
 
-Create an API key from the web app. The key is **scoped to a team**, so a client using
-it acts within that team and its projects — exactly the same authorization an agent
-would have. Copy the key when it's shown; it isn't displayed again.
+Create an API key under **Settings → API keys** in the web app. Copy the key when it's
+shown — it isn't displayed again. It starts with `hezo_` and goes in the
+`Authorization: Bearer` header on every request. An API key has instance-wide access:
+pass a `project` slug to project-scoped tools (use `list_projects` to discover them).
 
-An API key authenticates the **MCP endpoint only** — `POST /mcp` and the `/mcp/assets`
-upload below. It is **not** accepted on Hezo's REST API or its realtime WebSocket: those
-back the web app, which uses your signed-in session instead. So a `hezo_` key is for
-driving Hezo over MCP, nothing else.
+Revoke a key at any time from the same page, which disables it immediately.
 
-## Connecting as a connected agent (instance-wide)
+## Connecting an external agent (self-registration)
 
-An external agent can **self-register** for instance-wide access instead of using a
-team-scoped API key. A connected agent, once approved, acts with **full admin access** —
-every project and every team, just like the admin. Registration is **pending** and grants
-no access until a human admin approves it.
+Instead of pasting a key, an external agent can **self-register** and have an admin
+approve it — useful for agents that connect on their own initiative. Registration is
+**pending** and grants no access until a human admin approves it.
 
 The flow:
 
 1. **Register.** Call the `register` tool over MCP (no token required), or
-   `POST /api/agent-connections/register` with `{ "name": "<your agent>" }`. You receive a
-   token that starts with `hezoc_`, shown **once**.
+   `POST /api/api-keys/register` with `{ "name": "<your agent>" }`. You receive a token,
+   shown **once**.
 2. **Set the token** as your `Authorization: Bearer <token>` header.
-3. **Get approved.** A Hezo admin approves the connection under **Settings → Connected
-   agents**. Until then the token is inert.
-4. **Poll** the `connection_status` tool (or `GET /api/agent-connections/status` with the
-   token) until it returns `{ "status": "approved" }`.
-5. **Use it.** The same token now authorizes `POST /mcp`. Because a connected agent has no
-   single home project, pass a `project` slug to project-scoped tools — use `list_projects`
-   to discover them across the whole instance.
+3. **Get approved.** A Hezo admin approves the request under **Settings → API keys**.
+   Until then the token is inert.
+4. **Poll** the `connection_status` tool (or `GET /api/api-keys/status` with the token)
+   until it returns `{ "status": "approved" }`.
+5. **Use it.** The same token now authorizes `POST /mcp` with instance-wide access. Pass a
+   `project` slug to project-scoped tools — use `list_projects` to discover them across the
+   whole instance.
 
-A connected agent has every admin power **except** managing connected agents — only the
-human admin can approve or disconnect them. An admin can disconnect a connected agent at
-any time from the same page, which revokes its token immediately.
+An admin can revoke an agent's access at any time from the same page, which disables its
+token immediately.
 
 > Hezo also serves a generated [`/SKILL.md`](http://localhost:3100/SKILL.md) (the full,
 > live tool list plus these connection instructions) and a minimal `/llms.txt` that points

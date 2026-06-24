@@ -21,7 +21,7 @@ import {
 import { buildMeta, parsePagination } from '../lib/pagination';
 import {
 	actorTypeFromAuth,
-	connectedAgentIdFromAuth,
+	apiKeyIdFromAuth,
 	getProjectLocator,
 	resolveActorMemberId as resolveAuthActorMemberId,
 	resolveTaskId,
@@ -56,7 +56,7 @@ async function buildCreateTaskCaller(c: Context<Env>, teamId: string): Promise<C
 	const caller: CreateTaskCaller = {
 		actorType: actorTypeFromAuth(auth),
 		actorMemberId,
-		actorConnectedAgentId: connectedAgentIdFromAuth(auth),
+		actorApiKeyId: apiKeyIdFromAuth(auth),
 	};
 	if (auth.type === AuthType.Agent) {
 		caller.agentMemberId = auth.memberId;
@@ -593,7 +593,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 	}
 
 	const actorMemberId = await resolveActorMemberId(c, teamId);
-	const actorConnectedAgentId = connectedAgentIdFromAuth(c.get('auth'));
+	const actorApiKeyId = apiKeyIdFromAuth(c.get('auth'));
 	const events = c.get('events');
 	const actorType = actorTypeFromAuth(c.get('auth'));
 	const projectId = existing.rows[0].project_id;
@@ -606,7 +606,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 				taskId,
 				body.description,
 				actorMemberId,
-				actorConnectedAgentId,
+				actorApiKeyId,
 				c.get('wsManager'),
 			).catch((e) => log.error('Failed to record task links from description:', e)),
 		);
@@ -621,7 +621,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 				existing.rows[0].title,
 				body.title.trim(),
 				actorMemberId,
-				actorConnectedAgentId,
+				actorApiKeyId,
 				c.get('wsManager'),
 			);
 			events?.emit({
@@ -630,7 +630,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 				projectId,
 				actorType,
 				actorMemberId,
-				actorConnectedAgentId,
+				actorApiKeyId,
 				taskId,
 				field: 'title',
 				from: existing.rows[0].title,
@@ -650,7 +650,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 				existing.rows[0].assignee_id,
 				body.assignee_id,
 				actorMemberId,
-				actorConnectedAgentId,
+				actorApiKeyId,
 				c.get('wsManager'),
 			);
 			events?.emit({
@@ -659,7 +659,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 				projectId,
 				actorType,
 				actorMemberId,
-				actorConnectedAgentId,
+				actorApiKeyId,
 				taskId,
 				field: 'assignee',
 				from: existing.rows[0].assignee_id,
@@ -681,7 +681,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 				existing.rows[0].status,
 				body.status,
 				actorMemberId,
-				actorConnectedAgentId,
+				actorApiKeyId,
 				c.get('wsManager'),
 			);
 		} catch (e) {
@@ -697,7 +697,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 					projectId,
 					actorType,
 					actorMemberId,
-					actorConnectedAgentId,
+					actorApiKeyId,
 					taskId,
 					field: 'status',
 					from: existing.rows[0].status,

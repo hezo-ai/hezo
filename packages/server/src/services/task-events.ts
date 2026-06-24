@@ -21,20 +21,19 @@ export function extractTaskIdentifiers(text: string | null | undefined): string[
 }
 
 /**
- * Human-readable name for an action's actor. A connected agent (approved
- * external MCP client) is named from `connected_agents`; a member from its
+ * Human-readable name for an action's actor. An API key (approved
+ * external MCP client) is named from `api_keys`; a member from its
  * agent title / display name; everything else is "Admin".
  */
 export async function resolveActorName(
 	db: PGlite,
 	actorMemberId: string | null,
-	actorConnectedAgentId: string | null = null,
+	actorApiKeyId: string | null = null,
 ): Promise<string> {
-	if (actorConnectedAgentId) {
-		const r = await db.query<{ name: string | null }>(
-			'SELECT name FROM connected_agents WHERE id = $1',
-			[actorConnectedAgentId],
-		);
+	if (actorApiKeyId) {
+		const r = await db.query<{ name: string | null }>('SELECT name FROM api_keys WHERE id = $1', [
+			actorApiKeyId,
+		]);
 		return r.rows[0]?.name ?? 'Admin';
 	}
 	if (!actorMemberId) return 'Admin';
@@ -49,21 +48,20 @@ export async function resolveActorName(
 
 interface ActorInfo {
 	name: string;
-	kind: 'agent' | 'user' | 'admin' | 'connected_agent';
+	kind: 'agent' | 'user' | 'admin' | 'api_key';
 	slug: string | null;
 }
 
 async function resolveActor(
 	db: PGlite,
 	actorMemberId: string | null,
-	actorConnectedAgentId: string | null = null,
+	actorApiKeyId: string | null = null,
 ): Promise<ActorInfo> {
-	if (actorConnectedAgentId) {
-		const r = await db.query<{ name: string | null }>(
-			'SELECT name FROM connected_agents WHERE id = $1',
-			[actorConnectedAgentId],
-		);
-		return { name: r.rows[0]?.name ?? 'Admin', kind: 'connected_agent', slug: null };
+	if (actorApiKeyId) {
+		const r = await db.query<{ name: string | null }>('SELECT name FROM api_keys WHERE id = $1', [
+			actorApiKeyId,
+		]);
+		return { name: r.rows[0]?.name ?? 'Admin', kind: 'api_key', slug: null };
 	}
 	if (!actorMemberId) return { name: 'Admin', kind: 'admin', slug: null };
 	const r = await db.query<{
@@ -99,14 +97,14 @@ export async function recordStatusChange(
 	oldStatus: string,
 	newStatus: string,
 	actorMemberId: string | null,
-	actorConnectedAgentId: string | null,
+	actorApiKeyId: string | null,
 	wsManager: WebSocketManager | undefined,
 	cascade?: CascadeContext,
 ): Promise<void> {
 	if (oldStatus === newStatus) return;
 	const isCascade = cascade !== undefined;
 	const authorId = isCascade ? null : actorMemberId;
-	const authorConnectedId = isCascade ? null : actorConnectedAgentId;
+	const authorApiKeyId = isCascade ? null : actorApiKeyId;
 	const content: Record<string, unknown> = {
 		kind: 'status_change',
 		from: oldStatus,
@@ -121,9 +119,9 @@ export async function recordStatusChange(
 		content.triggered_by_actor_id = actorMemberId;
 	}
 	const r = await db.query<Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, author_connected_agent_id, content_type, content)
+		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
 		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
-		[taskId, authorId, authorConnectedId, CommentContentType.System, JSON.stringify(content)],
+		[taskId, authorId, authorApiKeyId, CommentContentType.System, JSON.stringify(content)],
 	);
 	if (r.rows[0] && wsManager) {
 		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
@@ -137,18 +135,18 @@ export async function recordRunTerminated(
 	runId: string,
 	reason: string,
 	actorMemberId: string | null,
-	actorConnectedAgentId: string | null,
+	actorApiKeyId: string | null,
 	wsManager: WebSocketManager | undefined,
 ): Promise<void> {
-	const actorName = await resolveActorName(db, actorMemberId, actorConnectedAgentId);
+	const actorName = await resolveActorName(db, actorMemberId, actorApiKeyId);
 	const text = `${actorName} terminated agent run — ${reason}`;
 	const r = await db.query<Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, author_connected_agent_id, content_type, content)
+		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
 		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
 		[
 			taskId,
 			actorMemberId,
-			actorConnectedAgentId,
+			actorApiKeyId,
 			CommentContentType.System,
 			JSON.stringify({
 				kind: 'run_terminated',
@@ -172,18 +170,18 @@ export async function recordWakeupCancelled(
 	wakeupId: string,
 	agentName: string,
 	actorMemberId: string | null,
-	actorConnectedAgentId: string | null,
+	actorApiKeyId: string | null,
 	wsManager: WebSocketManager | undefined,
 ): Promise<void> {
-	const actorName = await resolveActorName(db, actorMemberId, actorConnectedAgentId);
+	const actorName = await resolveActorName(db, actorMemberId, actorApiKeyId);
 	const text = `${actorName} cancelled queued run for ${agentName}`;
 	const r = await db.query<Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, author_connected_agent_id, content_type, content)
+		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
 		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
 		[
 			taskId,
 			actorMemberId,
-			actorConnectedAgentId,
+			actorApiKeyId,
 			CommentContentType.System,
 			JSON.stringify({
 				kind: 'wakeup_cancelled',
@@ -207,19 +205,19 @@ export async function recordTitleChange(
 	oldTitle: string,
 	newTitle: string,
 	actorMemberId: string | null,
-	actorConnectedAgentId: string | null,
+	actorApiKeyId: string | null,
 	wsManager: WebSocketManager | undefined,
 ): Promise<void> {
 	if (oldTitle === newTitle) return;
-	const actorName = await resolveActorName(db, actorMemberId, actorConnectedAgentId);
+	const actorName = await resolveActorName(db, actorMemberId, actorApiKeyId);
 	const text = `${actorName} renamed from "${oldTitle}" to "${newTitle}"`;
 	const r = await db.query<Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, author_connected_agent_id, content_type, content)
+		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
 		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
 		[
 			taskId,
 			actorMemberId,
-			actorConnectedAgentId,
+			actorApiKeyId,
 			CommentContentType.System,
 			JSON.stringify({
 				kind: 'title_change',
@@ -242,23 +240,23 @@ export async function recordAssigneeChange(
 	oldAssigneeId: string | null,
 	newAssigneeId: string | null,
 	actorMemberId: string | null,
-	actorConnectedAgentId: string | null,
+	actorApiKeyId: string | null,
 	wsManager: WebSocketManager | undefined,
 ): Promise<{ fromName: string; toName: string } | null> {
 	if (oldAssigneeId === newAssigneeId) return null;
 	const [fromName, toName, actorName] = await Promise.all([
 		resolveActorName(db, oldAssigneeId),
 		resolveActorName(db, newAssigneeId),
-		resolveActorName(db, actorMemberId, actorConnectedAgentId),
+		resolveActorName(db, actorMemberId, actorApiKeyId),
 	]);
 	const text = `${actorName} reassigned from ${fromName} to ${toName}`;
 	const r = await db.query<Record<string, unknown>>(
-		`INSERT INTO task_comments (task_id, author_member_id, author_connected_agent_id, content_type, content)
+		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
 		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
 		[
 			taskId,
 			actorMemberId,
-			actorConnectedAgentId,
+			actorApiKeyId,
 			CommentContentType.System,
 			JSON.stringify({
 				kind: 'assignee_change',
@@ -283,7 +281,7 @@ export async function recordTaskLinks(
 	sourceTaskId: string,
 	text: string | null | undefined,
 	actorMemberId: string | null,
-	actorConnectedAgentId: string | null,
+	actorApiKeyId: string | null,
 	wsManager: WebSocketManager | undefined,
 ): Promise<void> {
 	const ids = extractTaskIdentifiers(text);
@@ -305,7 +303,7 @@ export async function recordTaskLinks(
 	);
 	const sourceIdentifier = source.rows[0]?.identifier ?? '';
 	const sourceProjectSlug = source.rows[0]?.project_slug ?? '';
-	const actor = await resolveActor(db, actorMemberId, actorConnectedAgentId);
+	const actor = await resolveActor(db, actorMemberId, actorApiKeyId);
 
 	for (const target of targets.rows) {
 		const exists = await db.query(
@@ -321,12 +319,12 @@ export async function recordTaskLinks(
 
 		const linkText = `Linked from ${sourceIdentifier} by ${actor.name}`;
 		const r = await db.query<Record<string, unknown>>(
-			`INSERT INTO task_comments (task_id, author_member_id, author_connected_agent_id, content_type, content)
+			`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
 			 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
 			[
 				target.id,
 				actorMemberId,
-				actorConnectedAgentId,
+				actorApiKeyId,
 				CommentContentType.System,
 				JSON.stringify({
 					kind: 'task_link',

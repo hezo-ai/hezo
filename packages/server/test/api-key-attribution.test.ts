@@ -9,9 +9,8 @@ import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
-// A connected agent (approved external MCP client) is admin-equivalent. Its
-// actions — primarily via the MCP endpoint — must be attributed to its identity
-// so the UI can flag them with a bot badge instead of a bare "admin".
+// An approved API key is admin-equivalent over MCP. Its actions must be attributed
+// to its identity so the UI can flag them with a bot badge instead of a bare "admin".
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -19,29 +18,29 @@ let token: string; // superuser admin
 let projectSlug: string;
 
 async function registerAndApprove(name: string): Promise<string> {
-	const reg = await app.request('/api/agent-connections/register', {
+	const reg = await app.request('/api/api-keys/register', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name }),
 	});
 	expect(reg.status).toBe(201);
-	const { id, token: agentToken } = (await reg.json()).data;
-	const approveRes = await app.request(`/api/agent-connections/${id}/approve`, {
+	const { id, token: keyToken } = (await reg.json()).data;
+	const approveRes = await app.request(`/api/api-keys/${id}/approve`, {
 		method: 'POST',
 		headers: authHeader(token),
 	});
 	expect(approveRes.status).toBe(200);
-	return agentToken as string;
+	return keyToken as string;
 }
 
 async function mcpTool(
-	agentToken: string,
+	keyToken: string,
 	name: string,
 	args: Record<string, unknown>,
 ): Promise<Json> {
 	const res = await app.request('/mcp', {
 		method: 'POST',
-		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${agentToken}` },
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${keyToken}` },
 		body: JSON.stringify({
 			jsonrpc: '2.0',
 			method: 'tools/call',
@@ -85,36 +84,35 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('connected-agent action attribution', () => {
-	it('attributes a task created via MCP to the connected agent in the audit log', async () => {
-		const agentToken = await registerAndApprove('Audit Bot');
-		const created = await mcpTool(agentToken, 'create_task', {
+describe('API-key action attribution', () => {
+	it('attributes a task created via MCP to the API key in the audit log', async () => {
+		const keyToken = await registerAndApprove('Audit Bot');
+		const created = await mcpTool(keyToken, 'create_task', {
 			project: projectSlug,
-			title: 'Filed by the connected agent',
+			title: 'Filed by the API key',
 			assignee_slug: 'captain',
 		});
 		expect(created.id ?? created.identifier).toBeTruthy();
 
 		const auditRow = await waitFor(async () => {
-			const r = await db.query<{ actor_type: string; actor_connected_agent_id: string | null }>(
-				`SELECT actor_type, actor_connected_agent_id FROM audit_log
-				 WHERE entity_type = 'task' AND action = 'created' AND actor_type = 'connected_agent'
+			const r = await db.query<{ actor_type: string; actor_api_key_id: string | null }>(
+				`SELECT actor_type, actor_api_key_id FROM audit_log
+				 WHERE entity_type = 'task' AND action = 'created' AND actor_type = 'api_key'
 				 ORDER BY created_at DESC LIMIT 1`,
 			);
 			return r.rows[0] ?? null;
 		});
-		expect(auditRow.actor_connected_agent_id).not.toBeNull();
+		expect(auditRow.actor_api_key_id).not.toBeNull();
 
-		// The connected agent's identity name resolves from connected_agents.
-		const named = await db.query<{ name: string }>(
-			'SELECT name FROM connected_agents WHERE id = $1',
-			[auditRow.actor_connected_agent_id],
-		);
+		// The API key's identity name resolves from api_keys.
+		const named = await db.query<{ name: string }>('SELECT name FROM api_keys WHERE id = $1', [
+			auditRow.actor_api_key_id,
+		]);
 		expect(named.rows[0].name).toBe('Audit Bot');
 	});
 
-	it('attributes a comment and a status change made via MCP to the connected agent', async () => {
-		const agentToken = await registerAndApprove('Comment Bot');
+	it('attributes a comment and a status change made via MCP to the API key', async () => {
+		const keyToken = await registerAndApprove('Comment Bot');
 
 		// Create a task to act on (as the admin).
 		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
@@ -124,46 +122,45 @@ describe('connected-agent action attribution', () => {
 		});
 		const task = (await taskRes.json()).data;
 
-		await mcpTool(agentToken, 'create_comment', {
+		await mcpTool(keyToken, 'create_comment', {
 			project: projectSlug,
 			task_id: task.identifier,
-			content: 'handled by the connected agent',
+			content: 'handled by the API key',
 		});
-		await mcpTool(agentToken, 'update_task', {
+		await mcpTool(keyToken, 'update_task', {
 			project: projectSlug,
 			task_id: task.identifier,
 			status: 'in_progress',
 		});
 
 		const comments = await getComments(task.id);
-		const authored = comments.find((c) => c.content?.text === 'handled by the connected agent');
-		expect(authored?.author_type).toBe('connected_agent');
+		const authored = comments.find((c) => c.content?.text === 'handled by the API key');
+		expect(authored?.author_type).toBe('api_key');
 		expect(authored?.author_name).toBe('Comment Bot');
-		expect(authored?.author_connected_agent_id).not.toBeNull();
+		expect(authored?.author_api_key_id).not.toBeNull();
 
 		const statusComment = comments.find(
 			(c) => c.content_type === 'system' && c.content?.kind === 'status_change',
 		);
-		expect(statusComment?.author_type).toBe('connected_agent');
-		expect(statusComment?.author_connected_agent_id).not.toBeNull();
+		expect(statusComment?.author_type).toBe('api_key');
+		expect(statusComment?.author_api_key_id).not.toBeNull();
 	});
 
-	it('attributes a project-doc revision (REST) to the connected agent', async () => {
-		const agentToken = await registerAndApprove('Doc Bot');
+	it('attributes a project-doc revision (via MCP) to the API key', async () => {
+		const keyToken = await registerAndApprove('Doc Bot');
 		for (const content of ['v1', 'v2']) {
-			const res = await app.request(`/api/projects/${projectSlug}/docs/notes.md`, {
-				method: 'PUT',
-				headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-				body: JSON.stringify({ content }),
+			await mcpTool(keyToken, 'write_project_doc', {
+				project: projectSlug,
+				filename: 'notes.md',
+				content,
 			});
-			expect(res.status).toBe(200);
 		}
 		const revRes = await app.request(`/api/projects/${projectSlug}/docs/notes.md/revisions`, {
 			headers: authHeader(token),
 		});
 		const revisions = (await revRes.json()).data as Json[];
-		expect(revisions[0].author_type).toBe('connected_agent');
+		expect(revisions[0].author_type).toBe('api_key');
 		expect(revisions[0].author_name).toBe('Doc Bot');
-		expect(revisions[0].author_connected_agent_id).not.toBeNull();
+		expect(revisions[0].author_api_key_id).not.toBeNull();
 	});
 });

@@ -127,12 +127,15 @@ describe('GET /api/search (global palette)', () => {
 });
 
 describe('getAccessibleTeamIds', () => {
-	it('binds an API-key principal to its single team', async () => {
-		const team = await db.query<{ id: string }>(
-			"INSERT INTO teams (name, slug) VALUES ('AK Co', 'ak-co') RETURNING id",
-		);
-		const ids = await getAccessibleTeamIds(db, { type: AuthType.ApiKey, teamId: team.rows[0].id });
-		expect(ids).toEqual([team.rows[0].id]);
+	it('gives an approved API key every team (instance-scoped)', async () => {
+		const before = await db.query<{ count: string }>('SELECT COUNT(*)::text AS count FROM teams');
+		const ids = await getAccessibleTeamIds(db, {
+			type: AuthType.ApiKey,
+			apiKeyId: 'ak-1',
+			isSuperuser: true,
+			crossTeam: true,
+		});
+		expect(ids).toHaveLength(Number(before.rows[0].count));
 	});
 
 	it('gives a superuser every team (HQ included)', async () => {

@@ -11,14 +11,14 @@ section: Reference
 # MCP API reference
 
 Complete reference for every tool exposed by Hezo's built-in MCP server. For how to
-connect, authenticate, and self-register as a connected agent, see
+connect, authenticate, and register for access, see
 [Hezo's MCP server](/docs/mcp/hezo-mcp-server).
 
 ## Connecting
 
 - **Endpoint:** `POST /mcp` — JSON-RPC 2.0 over Streamable HTTP.
-- **Authentication:** `Authorization: Bearer <token>`, where the token is a team-scoped
-  API key (`hezo_…`) or an instance-wide connected-agent token (`hezoc_…`).
+- **Authentication:** `Authorization: Bearer <token>`, where the token is an
+  instance-scoped API key (`hezo_…`).
 - **Discovery:** call `tools/list` for the live machine-readable schemas, then invoke a
   tool with `tools/call`.
 - **File uploads:** binary files cannot ride a JSON-RPC call — `POST` them to
@@ -28,8 +28,8 @@ connect, authenticate, and self-register as a connected agent, see
 ## Conventions
 
 - **Project scope (`project`):** most tools take an optional `project` (slug or ID).
-  Omit it to act in the project your run is already in; instance agents (CEO/Coach) and
-  connected agents must name the project they are acting in.
+  Omit it to act in the project your run is already in; an API key and instance agents
+  (CEO/Coach) must name the project they are acting in.
 - **Authorization:** every call is scoped to the resolved project's team and the caller
   must have access to it. Tools that restrict callers further note it under
   **Authorization** below.
@@ -53,11 +53,11 @@ connect, authenticate, and self-register as a connected agent, see
 
 _Read-only._
 
-List teams accessible to the caller. The instance CEO (cross-team session) gets every team in the instance; other agents get only their own team.
+List teams accessible to the caller. An API key and the instance CEO (cross-team session) get every team in the instance; an ordinary agent run gets only its own team.
 
 **Parameters:** none.
 
-**Returns:** An array of team rows (`id`, `name`, `slug`, `description`, …). The instance CEO, an agent run with cross-team scope, and connected agents get every team; an API key or ordinary agent run gets only its own team; a board user gets the teams they belong to (all teams for a superuser).
+**Returns:** An array of team rows (`id`, `name`, `slug`, `description`, …). An API key, the instance CEO, and an agent run with cross-team scope get every team; an ordinary agent run gets only its own team; a board user gets the teams they belong to (all teams for a superuser).
 
 ### `get_team`
 
@@ -154,7 +154,7 @@ List projects. With CEO cross-team access (or as superuser) returns every projec
 
 **Returns:** An array of project rows (`id`, `team_id`, `name`, `slug`, `task_prefix`, `description`, `is_internal`, `created_at`, `updated_at`). With `excerpt_chars`, `description` is truncated and `description_truncated`/`description_length` companions are added.
 
-**Authorization:** CEO cross-team access (or superuser, or a connected agent) returns every project; a board user gets the projects on their teams; an agent run gets its own project.
+**Authorization:** An API key, CEO cross-team access, or a superuser returns every project; a board user gets the projects on their teams; an agent run gets its own project.
 
 ## Tasks
 
@@ -307,7 +307,7 @@ List comments for an task. Returns up to 50 most-recent comments (newest first).
 | `before` | `string` | No | Comment ID — return only comments created before this one |
 | `excerpt_chars` | `integer` | No | When set, truncates content.text on text-typed comments to this many characters and adds text_truncated/text_length |
 
-**Returns:** Up to 50 comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_connected_agent_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. Pass `before` to walk older; `excerpt_chars` truncates text comments (adds `text_truncated`/`text_length`).
+**Returns:** Up to 50 comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_api_key_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. Pass `before` to walk older; `excerpt_chars` truncates text comments (adds `text_truncated`/`text_length`).
 
 ### `add_reaction`
 
@@ -943,7 +943,7 @@ Get the cost summary for a project
 
 _Read-only._
 
-Register this agent as a Hezo connected agent. Returns a `hezoc_…` token (shown once) — set it as your `Authorization: Bearer` token. The registration is inert until a Hezo admin approves it at Settings → Connected agents; once approved you have full instance access (every project and team). Poll `connection_status` to learn when you are approved.
+Register this agent with Hezo. Returns an access token (shown once) — set it as your `Authorization: Bearer` token. The registration is inert until a Hezo admin approves it under Settings → API keys; once approved you have full instance access (every project and team). Poll `connection_status` to learn when you are approved.
 
 **Parameters:**
 
@@ -952,7 +952,7 @@ Register this agent as a Hezo connected agent. Returns a `hezoc_…` token (show
 | `name` | `string` | Yes | A human-readable name for this agent, shown to the admin who approves it. |
 | `client_info` | `object` | No | Optional MCP client info (e.g. {"name":"claude","version":"…"}). |
 
-**Returns:** `{ id, token, status, message }` — the `hezoc_…` token is shown once. Returns `{ error }` if `name` is missing.
+**Returns:** `{ id, token, status, message }` — the `hezo_…` token is shown once. Returns `{ error }` if `name` is missing.
 
 **Authorization:** No token required — this is how an external agent self-registers. The registration stays inert until a Hezo admin approves it.
 
@@ -960,13 +960,13 @@ Register this agent as a Hezo connected agent. Returns a `hezoc_…` token (show
 
 _Read-only._
 
-Check whether this agent has been approved yet. Send your `hezoc_…` token as the `Authorization: Bearer` token. Returns {"status":"pending"} or {"status":"approved"}.
+Check whether this agent has been approved yet. Send your token as the `Authorization: Bearer` token. Returns {"status":"pending"} or {"status":"approved"}.
 
 **Parameters:** none.
 
 **Returns:** `{ status: "pending" | "approved" }`, or `{ error }` if no/unknown token is sent.
 
-**Authorization:** Keyed by the `hezoc_…` bearer token from `register`; no approved principal required.
+**Authorization:** Keyed by the bearer token from `register`; no approved principal required.
 
 ---
 

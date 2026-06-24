@@ -1,7 +1,7 @@
 /**
  * The `GET /llms.txt` body (llmstxt.org convention). Intentionally minimal: it
  * points at the served `/SKILL.md`, which carries the full MCP tool list plus
- * the connect/register instructions. `baseUrl` makes the links absolute when
+ * the connect/registration instructions. `baseUrl` makes the links absolute when
  * known (falls back to relative paths).
  */
 import { HEZO_DOCS_URL } from '@hezo/shared';
@@ -17,7 +17,7 @@ export function generateLlmsTxt(opts: { baseUrl?: string } = {}): string {
 		'## MCP API',
 		'',
 		`- MCP endpoint: \`POST ${base}/mcp\` (JSON-RPC, Streamable HTTP, \`Authorization: Bearer <token>\`).`,
-		`- [SKILL.md](${base}/SKILL.md): the full agent manifest — every MCP tool, how to connect, and how to self-register as a connected agent (pending admin approval).`,
+		`- [SKILL.md](${base}/SKILL.md): the full agent manifest — every MCP tool, how to connect, and how to self-register for access (pending admin approval).`,
 		'',
 		'## Docs',
 		'',

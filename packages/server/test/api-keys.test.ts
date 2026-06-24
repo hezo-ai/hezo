@@ -3,12 +3,16 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestTeam, projectSlugFor } from './helpers/app';
+import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+
+// biome-ignore lint/suspicious/noExplicitAny: tests parse unpredictable JSON-RPC payloads
+type Json = any;
 
 let app: Hono<Env>;
 let db: PGlite;
-let token: string;
-let projectSlug: string;
+let token: string; // superuser admin
+let slugA: string;
+let slugB: string;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -16,103 +20,117 @@ beforeAll(async () => {
 	db = ctx.db;
 	token = ctx.token;
 
-	const teamRes = await createTestTeam(db, { name: 'API Key Co' });
-	const team = (await teamRes.json()).data;
-	projectSlug = `${await projectSlugFor(db, team.id)}`;
+	const teamA = (await (await createTestTeam(db, { name: 'Alpha Co' })).json()).data;
+	const teamB = (await (await createTestTeam(db, { name: 'Beta Co' })).json()).data;
+	slugA = (await (await createTestProject(db, teamA.id, { name: 'Alpha Project' })).json()).data
+		.slug;
+	slugB = (await (await createTestProject(db, teamB.id, { name: 'Beta Project' })).json()).data
+		.slug;
 });
 
 afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('API keys CRUD', () => {
-	it('creates an API key and returns raw key once', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/api-keys`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Test Key' }),
-		});
-		expect(res.status).toBe(201);
-		const body = await res.json();
-		expect(body.data.key).toMatch(/^hezo_/);
-		expect(body.data.name).toBe('Test Key');
-		expect(body.data.prefix).toHaveLength(8);
+async function mint(name: string): Promise<Json> {
+	const res = await app.request('/api/api-keys', {
+		method: 'POST',
+		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+		body: JSON.stringify({ name }),
+	});
+	expect(res.status).toBe(201);
+	return (await res.json()).data;
+}
+
+async function mcp(key: string | null, method: string, params?: unknown): Promise<Json> {
+	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+	if (key) headers.Authorization = `Bearer ${key}`;
+	const res = await app.request('/mcp', {
+		method: 'POST',
+		headers,
+		body: JSON.stringify({ jsonrpc: '2.0', method, params, id: 1 }),
+	});
+	return res.json();
+}
+
+function toolPayload(body: Json): Json {
+	return JSON.parse(body.result.content[0].text);
+}
+
+describe('API keys (admin-minted)', () => {
+	it('mints an active key and returns the raw key once', async () => {
+		const key = await mint('Test Key');
+		expect(key.key).toMatch(/^hezo_/);
+		expect(key.name).toBe('Test Key');
+		expect(key.prefix).toHaveLength(8);
+		expect(key.status).toBe('approved');
 	});
 
-	it('lists API keys (without raw key)', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/api-keys`, {
-			headers: authHeader(token),
-		});
+	it('lists keys without secrets', async () => {
+		await mint('Listed Key');
+		const res = await app.request('/api/api-keys', { headers: authHeader(token) });
 		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.data.length).toBeGreaterThanOrEqual(1);
-		// Raw key should NOT be in list
-		expect(body.data[0]).not.toHaveProperty('key');
-		expect(body.data[0]).not.toHaveProperty('key_hash');
+		const rows = (await res.json()).data as Json[];
+		expect(rows.length).toBeGreaterThanOrEqual(1);
+		expect(rows[0]).not.toHaveProperty('key');
+		expect(rows[0]).not.toHaveProperty('key_hash');
 	});
 
-	it('is rejected on REST but authenticates the MCP endpoint', async () => {
-		const createRes = await app.request(`/api/projects/${projectSlug}/api-keys`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'Auth Test Key' }),
-		});
-		const rawKey = (await createRes.json()).data.key;
+	it('is rejected on REST but authenticates MCP with instance-wide access', async () => {
+		const { key } = await mint('Auth Test Key');
 
 		// REST is the human/browser surface — API keys are not accepted there.
-		const restRes = await app.request(`/api/projects/${projectSlug}/api-keys`, {
-			headers: { Authorization: `Bearer ${rawKey}` },
-		});
-		expect(restRes.status).toBe(401);
+		const rest = await app.request('/api/api-keys', { headers: authHeader(key) });
+		expect(rest.status).toBe(401);
 
-		// The same key authenticates the MCP endpoint (the external on-ramp).
-		const mcpRes = await app.request('/mcp', {
-			method: 'POST',
-			headers: { Authorization: `Bearer ${rawKey}`, 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				jsonrpc: '2.0',
-				method: 'tools/call',
-				params: { name: 'list_tasks', arguments: {} },
-				id: 1,
-			}),
-		});
-		expect(mcpRes.status).toBe(200);
-		const text = (await mcpRes.json()).result.content[0].text;
-		// A real tool result (a JSON array of tasks), not an auth/scope error.
-		expect(text).not.toContain('Access denied');
-		expect(Array.isArray(JSON.parse(text))).toBe(true);
+		// The same key reaches the MCP endpoint and spans every project (instance-wide):
+		// it must name the project on a project-scoped tool.
+		for (const slug of [slugA, slugB]) {
+			const body = await mcp(key, 'tools/call', {
+				name: 'list_tasks',
+				arguments: { project: slug },
+			});
+			const text = body.result.content[0].text;
+			expect(text).not.toContain('Access denied');
+			expect(Array.isArray(JSON.parse(text))).toBe(true);
+		}
+
+		// list_projects returns every project across the instance.
+		const projects = toolPayload(
+			await mcp(key, 'tools/call', { name: 'list_projects', arguments: {} }),
+		) as Json[];
+		const slugs = projects.map((p) => p.slug);
+		expect(slugs).toContain(slugA);
+		expect(slugs).toContain(slugB);
 	});
 
-	it('revokes an API key (MCP access removed)', async () => {
-		const createRes = await app.request(`/api/projects/${projectSlug}/api-keys`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name: 'To Revoke' }),
-		});
-		const apiKey = (await createRes.json()).data;
+	it('revokes a key, removing MCP access immediately', async () => {
+		const apiKey = await mint('To Revoke');
 		const rawKey = apiKey.key;
 
 		const toolNames = async (): Promise<string[]> => {
-			const res = await app.request('/mcp', {
-				method: 'POST',
-				headers: { Authorization: `Bearer ${rawKey}`, 'Content-Type': 'application/json' },
-				body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
-			});
-			const body = await res.json();
+			const body = await mcp(rawKey, 'tools/list');
 			return (body.result.tools as Array<{ name: string }>).map((t) => t.name);
 		};
-
-		// A valid key is a full principal — it sees the real project tools.
 		expect(await toolNames()).toContain('list_tasks');
 
-		const res = await app.request(`/api/projects/${projectSlug}/api-keys/${apiKey.id}`, {
+		const del = await app.request(`/api/api-keys/${apiKey.id}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
-		expect(res.status).toBe(200);
+		expect(del.status).toBe(200);
 
 		// After revocation the token is unrecognized, so it drops to the
-		// unauthenticated onboarding surface (connect/register tools only).
+		// unauthenticated onboarding surface (register/connection_status only).
 		expect(await toolNames()).not.toContain('list_tasks');
+	});
+
+	it('requires a name', async () => {
+		const res = await app.request('/api/api-keys', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({}),
+		});
+		expect(res.status).toBe(400);
 	});
 });

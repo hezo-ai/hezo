@@ -120,58 +120,6 @@ test('automations section exposes the wake-mentioner toggle and persists the cha
 	await waitFor(() => expect(toggle.checked).toBe(true), { timeout: 15_000 });
 });
 
-test('can create and delete an api key', async () => {
-	let team!: CreatedTeam;
-	const { container, user, findByText, router } = await renderApp({
-		initialPath: '/',
-		seed: async () => {
-			team = await createTeam();
-		},
-	});
-
-	await router.navigate({
-		to: '/projects/$projectId/team-settings/general',
-		params: { projectId: team.projectSlug },
-	});
-
-	const apiKeys = await waitFor(
-		() => {
-			const el = container.querySelector('#settings-api-keys') as HTMLElement;
-			expect(el).toBeTruthy();
-			return el;
-		},
-		{ timeout: 15_000 },
-	);
-
-	await within(apiKeys).findByRole('heading', { name: 'API keys' });
-
-	await user.click(within(apiKeys).getByRole('button', { name: 'Create' }));
-
-	const nameInput = within(apiKeys).getByPlaceholderText('Key name') as HTMLInputElement;
-	fireEvent.change(nameInput, { target: { value: 'Test Key' } });
-
-	const form = nameInput.closest('form') as HTMLFormElement;
-	fireEvent.submit(form);
-
-	await findByText("New API key created — copy it now, it won't be shown again:", undefined, {
-		timeout: 15_000,
-	});
-
-	const code = container.querySelector('code');
-	expect(code?.textContent ?? '').toMatch(/hezo_/);
-
-	await user.click(within(apiKeys).getByRole('button', { name: 'Dismiss' }));
-	await within(apiKeys).findByText('Test Key', undefined, { timeout: 15_000 });
-
-	const trashBtn = Array.from(apiKeys.querySelectorAll('button')).find((b) =>
-		b.querySelector('svg.lucide-trash-2'),
-	);
-	expect(trashBtn).toBeTruthy();
-	fireEvent.click(trashBtn!);
-
-	await within(apiKeys).findByText('No API keys.', undefined, { timeout: 15_000 });
-});
-
 test('can edit and save preferences', async () => {
 	let team!: CreatedTeam;
 	const { container, user, router } = await renderApp({

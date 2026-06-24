@@ -1,47 +1,53 @@
+import type { ApiKeyStatus } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
-import { queryKeys } from '../lib/query-keys';
+
+export const INSTANCE_API_KEYS_KEY = ['instance', 'api-keys'] as const;
 
 export interface ApiKey {
 	id: string;
-	team_id: string;
 	name: string;
+	client_info: Record<string, unknown>;
 	prefix: string;
-	key?: string;
+	status: ApiKeyStatus;
+	approved_at: string | null;
 	last_used_at: string | null;
 	created_at: string;
+	/** Present only in the response that creates a key; shown once, never stored. */
+	key?: string;
 }
 
-export function useApiKeys(projectId: string) {
+export function useApiKeys() {
 	return useQuery({
-		queryKey: queryKeys.projects.apiKeys(projectId),
-		queryFn: () => api.get<ApiKey[]>(`/api/projects/${projectId}/api-keys`),
+		queryKey: INSTANCE_API_KEYS_KEY,
+		queryFn: () => api.get<ApiKey[]>('/api/api-keys'),
 	});
 }
 
-export function useCreateApiKey(projectId: string) {
+export function useCreateApiKey() {
 	return useMutation({
-		mutationFn: (data: { name: string }) =>
-			api.post<ApiKey>(`/api/projects/${projectId}/api-keys`, data),
-		onSuccess: (created) => {
-			const { key: _key, ...row } = created;
-			queryClient.setQueryData<ApiKey[]>(queryKeys.projects.apiKeys(projectId), (prev) =>
-				prev ? [...prev.filter((k) => k.id !== row.id), row as ApiKey] : [row as ApiKey],
-			);
-			queryClient.invalidateQueries({ queryKey: queryKeys.projects.apiKeys(projectId) });
+		mutationFn: (data: { name: string }) => api.post<ApiKey>('/api/api-keys', data),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: INSTANCE_API_KEYS_KEY });
 		},
 	});
 }
 
-export function useDeleteApiKey(projectId: string) {
+export function useApproveApiKey() {
 	return useMutation({
-		mutationFn: (apiKeyId: string) => api.delete(`/api/projects/${projectId}/api-keys/${apiKeyId}`),
-		onSuccess: (_, apiKeyId) => {
-			queryClient.setQueryData<ApiKey[]>(queryKeys.projects.apiKeys(projectId), (prev) =>
-				prev ? prev.filter((k) => k.id !== apiKeyId) : prev,
-			);
-			queryClient.invalidateQueries({ queryKey: queryKeys.projects.apiKeys(projectId) });
+		mutationFn: (id: string) => api.post<ApiKey>(`/api/api-keys/${id}/approve`),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: INSTANCE_API_KEYS_KEY });
+		},
+	});
+}
+
+export function useDeleteApiKey() {
+	return useMutation({
+		mutationFn: (id: string) => api.delete(`/api/api-keys/${id}`),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: INSTANCE_API_KEYS_KEY });
 		},
 	});
 }

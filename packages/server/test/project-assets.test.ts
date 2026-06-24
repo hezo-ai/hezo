@@ -416,15 +416,26 @@ describe('MCP asset upload (POST /mcp/assets)', () => {
 		expect(read.path).toContain('/workspace/.hezo/assets/');
 	});
 
-	it('an external API key uploads via MCP', async () => {
-		const createRes = await app.request(`/api/projects/${projectId}/api-keys`, {
+	it('an external API key uploads via MCP (naming the project)', async () => {
+		const createRes = await app.request('/api/api-keys', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'Upload Key' }),
 		});
 		const rawKey = (await createRes.json()).data.key;
 
-		const res = await uploadAssetViaMcp(rawKey, 'external.png', 'image/png', buildPng(8));
+		// An instance-scoped key has no home project — it names the project in the form.
+		const fd = new FormData();
+		const png = buildPng(8);
+		const copy = new Uint8Array(png.byteLength);
+		copy.set(png);
+		fd.set('file', new File([copy.buffer], 'external.png', { type: 'image/png' }));
+		fd.set('project', projectId);
+		const res = await app.request('/mcp/assets', {
+			method: 'POST',
+			headers: { ...authHeader(rawKey) },
+			body: fd,
+		});
 		expect(res.status).toBe(201);
 		expect((await res.json()).data.original_filename).toBe('external.png');
 	});

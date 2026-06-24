@@ -56,7 +56,7 @@ describe('GET /SKILL.md', () => {
 		// Onboarding tools + registration flow.
 		expect(text).toContain('register');
 		expect(text).toContain('connection_status');
-		expect(text).toContain('/api/agent-connections/register');
+		expect(text).toContain('/api/api-keys/register');
 		// Regular MCP tools still listed.
 		expect(text).toContain('list_teams');
 		expect(text).toContain('create_task');

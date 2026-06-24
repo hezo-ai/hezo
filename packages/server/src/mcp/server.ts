@@ -85,7 +85,7 @@ export async function handleMcpRequest(c: Context<Env>): Promise<Response> {
 	}
 
 	// `auth` is null for callers that are not yet an approved principal (no token,
-	// an invalid token, or a still-`pending` connected-agent token). Such callers
+	// an invalid token, or a still-`pending` registration token). Such callers
 	// get the onboarding surface only; everything else requires a principal.
 	const auth = await authenticateRequest(c);
 	const db = c.get('db');
@@ -137,7 +137,7 @@ export async function handleMcpRequest(c: Context<Env>): Promise<Response> {
 				error: {
 					code: -32000,
 					message:
-						'Not connected. Call the `register` tool, then have a Hezo admin approve you at Settings → Connected agents.',
+						'Not connected. Call the `register` tool, then have a Hezo admin approve you at Settings → API keys.',
 				},
 			});
 		}

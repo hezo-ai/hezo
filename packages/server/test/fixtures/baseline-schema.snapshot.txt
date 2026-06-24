@@ -13,7 +13,6 @@ ceo_messages
 ceo_sessions
 comment_attachments
 comment_reactions
-connected_agents
 cost_entries
 document_revisions
 documents
@@ -115,13 +114,16 @@ ai_provider_configs.metadata | jsonb | jsonb | nullable=NO | default='{}'::jsonb
 ai_provider_configs.provider | USER-DEFINED | ai_provider | nullable=NO | default=
 ai_provider_configs.status | text | text | nullable=NO | default='active'::text
 ai_provider_configs.updated_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
+api_keys.approved_at | timestamp with time zone | timestamptz | nullable=YES | default=
+api_keys.approved_by_user_id | uuid | uuid | nullable=YES | default=
+api_keys.client_info | jsonb | jsonb | nullable=NO | default='{}'::jsonb
 api_keys.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
 api_keys.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
 api_keys.key_hash | text | text | nullable=NO | default=
 api_keys.last_used_at | timestamp with time zone | timestamptz | nullable=YES | default=
 api_keys.name | text | text | nullable=NO | default=
 api_keys.prefix | text | text | nullable=NO | default=
-api_keys.team_id | uuid | uuid | nullable=NO | default=
+api_keys.status | USER-DEFINED | api_key_status | nullable=NO | default='pending'::api_key_status
 approvals.archived_at | timestamp with time zone | timestamptz | nullable=YES | default=
 approvals.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
 approvals.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
@@ -142,7 +144,7 @@ assets.sha256 | text | text | nullable=NO | default=
 assets.team_id | uuid | uuid | nullable=NO | default=
 assets.uploaded_by_member_id | uuid | uuid | nullable=YES | default=
 audit_log.action | text | text | nullable=NO | default=
-audit_log.actor_connected_agent_id | uuid | uuid | nullable=YES | default=
+audit_log.actor_api_key_id | uuid | uuid | nullable=YES | default=
 audit_log.actor_member_id | uuid | uuid | nullable=YES | default=
 audit_log.actor_type | USER-DEFINED | audit_actor_type | nullable=NO | default=
 audit_log.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
@@ -192,16 +194,6 @@ comment_reactions.created_at | timestamp with time zone | timestamptz | nullable
 comment_reactions.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
 comment_reactions.kind | text | text | nullable=NO | default=
 comment_reactions.member_id | uuid | uuid | nullable=NO | default=
-connected_agents.approved_at | timestamp with time zone | timestamptz | nullable=YES | default=
-connected_agents.approved_by_user_id | uuid | uuid | nullable=YES | default=
-connected_agents.client_info | jsonb | jsonb | nullable=NO | default='{}'::jsonb
-connected_agents.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
-connected_agents.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
-connected_agents.last_used_at | timestamp with time zone | timestamptz | nullable=YES | default=
-connected_agents.name | text | text | nullable=NO | default=
-connected_agents.prefix | text | text | nullable=NO | default=
-connected_agents.status | USER-DEFINED | connected_agent_status | nullable=NO | default='pending'::connected_agent_status
-connected_agents.token_hash | text | text | nullable=NO | default=
 cost_entries.ai_provider_config_id | uuid | uuid | nullable=YES | default=
 cost_entries.amount_cents | integer | int4 | nullable=NO | default=
 cost_entries.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
@@ -211,7 +203,7 @@ cost_entries.member_id | uuid | uuid | nullable=NO | default=
 cost_entries.project_id | uuid | uuid | nullable=YES | default=
 cost_entries.provider | USER-DEFINED | ai_provider | nullable=YES | default=
 cost_entries.task_id | uuid | uuid | nullable=YES | default=
-document_revisions.author_connected_agent_id | uuid | uuid | nullable=YES | default=
+document_revisions.author_api_key_id | uuid | uuid | nullable=YES | default=
 document_revisions.author_member_id | uuid | uuid | nullable=YES | default=
 document_revisions.change_summary | text | text | nullable=NO | default=''::text
 document_revisions.content | text | text | nullable=NO | default=
@@ -449,7 +441,7 @@ task_attachments.asset_id | uuid | uuid | nullable=NO | default=
 task_attachments.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
 task_attachments.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
 task_attachments.task_id | uuid | uuid | nullable=NO | default=
-task_comments.author_connected_agent_id | uuid | uuid | nullable=YES | default=
+task_comments.author_api_key_id | uuid | uuid | nullable=YES | default=
 task_comments.author_member_id | uuid | uuid | nullable=YES | default=
 task_comments.chosen_option | jsonb | jsonb | nullable=YES | default=
 task_comments.content | jsonb | jsonb | nullable=NO | default=
@@ -553,15 +545,15 @@ agent_runtime_status: active, idle, out_of_agent_budget, out_of_project_budget
 agent_type_source: builtin, custom, remote
 ai_auth_method: api_key, subscription
 ai_provider: anthropic, openai, google, deepseek, z_ai, openrouter, kimi
+api_key_status: pending, approved
 approval_status: pending, approved, denied
 approval_type: hire, project_creation, strategy, plan_review, deploy_production, designated_repo_request, skill_proposal
-audit_actor_type: admin, agent, system, connected_agent
+audit_actor_type: admin, agent, system, api_key
 ceo_channel: web, telegram, whatsapp
 ceo_message_role: user, assistant, system
 ceo_message_status: pending, streaming, complete, failed, interrupted
 ceo_session_status: starting, running, crashed, stopped
 comment_content_type: text, preview, system, run, action, credential_request, connect_required
-connected_agent_status: pending, approved
 connection_status: active, expired, disconnected
 container_status: creating, running, stopping, stopped, error
 document_type: project_doc, team_preferences, agent_system_prompt
@@ -593,6 +585,7 @@ CREATE UNIQUE INDEX ai_provider_configs_default_per_provider ON public.ai_provid
 CREATE UNIQUE INDEX ai_provider_configs_pkey ON public.ai_provider_configs USING btree (id)
 CREATE UNIQUE INDEX ai_provider_configs_provider_label_key ON public.ai_provider_configs USING btree (provider, label)
 CREATE UNIQUE INDEX api_keys_pkey ON public.api_keys USING btree (id)
+CREATE UNIQUE INDEX api_keys_prefix_key ON public.api_keys USING btree (prefix)
 CREATE UNIQUE INDEX approvals_pkey ON public.approvals USING btree (id)
 CREATE UNIQUE INDEX assets_pkey ON public.assets USING btree (id)
 CREATE UNIQUE INDEX assets_project_id_original_filename_key ON public.assets USING btree (project_id, original_filename)
@@ -604,8 +597,6 @@ CREATE UNIQUE INDEX comment_attachments_comment_id_asset_id_key ON public.commen
 CREATE UNIQUE INDEX comment_attachments_pkey ON public.comment_attachments USING btree (id)
 CREATE UNIQUE INDEX comment_reactions_comment_id_member_id_kind_key ON public.comment_reactions USING btree (comment_id, member_id, kind)
 CREATE UNIQUE INDEX comment_reactions_pkey ON public.comment_reactions USING btree (id)
-CREATE UNIQUE INDEX connected_agents_pkey ON public.connected_agents USING btree (id)
-CREATE UNIQUE INDEX connected_agents_prefix_key ON public.connected_agents USING btree (prefix)
 CREATE UNIQUE INDEX cost_entries_pkey ON public.cost_entries USING btree (id)
 CREATE UNIQUE INDEX document_revisions_document_id_revision_number_key ON public.document_revisions USING btree (document_id, revision_number)
 CREATE UNIQUE INDEX document_revisions_pkey ON public.document_revisions USING btree (id)
@@ -616,11 +607,11 @@ CREATE INDEX idx_admin_mentions_team_unread ON public.admin_mentions USING btree
 CREATE INDEX idx_admin_mentions_user_active ON public.admin_mentions USING btree (user_id, team_id, created_at DESC) WHERE (archived_at IS NULL)
 CREATE INDEX idx_admin_mentions_user_archived ON public.admin_mentions USING btree (user_id, team_id, created_at DESC) WHERE (archived_at IS NOT NULL)
 CREATE INDEX idx_admin_mentions_user_unread ON public.admin_mentions USING btree (user_id, team_id, created_at DESC) WHERE (read_at IS NULL)
-CREATE INDEX idx_api_keys_team ON public.api_keys USING btree (team_id)
+CREATE INDEX idx_api_keys_status ON public.api_keys USING btree (status)
 CREATE INDEX idx_approvals_status ON public.approvals USING btree (team_id, status)
 CREATE INDEX idx_approvals_team ON public.approvals USING btree (team_id)
 CREATE INDEX idx_assets_project ON public.assets USING btree (project_id)
-CREATE INDEX idx_audit_actor_connected_agent ON public.audit_log USING btree (actor_connected_agent_id) WHERE (actor_connected_agent_id IS NOT NULL)
+CREATE INDEX idx_audit_actor_api_key ON public.audit_log USING btree (actor_api_key_id) WHERE (actor_api_key_id IS NOT NULL)
 CREATE INDEX idx_audit_created_global ON public.audit_log USING btree (created_at)
 CREATE INDEX idx_audit_entity ON public.audit_log USING btree (entity_type, entity_id)
 CREATE INDEX idx_audit_project ON public.audit_log USING btree (project_id, created_at)
@@ -631,12 +622,11 @@ CREATE INDEX idx_ceo_sessions_status ON public.ceo_sessions USING btree (status)
 CREATE INDEX idx_comment_attachments_comment ON public.comment_attachments USING btree (comment_id)
 CREATE INDEX idx_comment_reactions_comment ON public.comment_reactions USING btree (comment_id)
 CREATE INDEX idx_comments_author ON public.task_comments USING btree (author_member_id)
-CREATE INDEX idx_comments_author_connected_agent ON public.task_comments USING btree (author_connected_agent_id) WHERE (author_connected_agent_id IS NOT NULL)
+CREATE INDEX idx_comments_author_api_key ON public.task_comments USING btree (author_api_key_id) WHERE (author_api_key_id IS NOT NULL)
 CREATE INDEX idx_comments_parent ON public.task_comments USING btree (parent_comment_id) WHERE (parent_comment_id IS NOT NULL)
 CREATE UNIQUE INDEX idx_comments_public_id ON public.task_comments USING btree (task_id, public_id)
 CREATE INDEX idx_comments_search_tsv ON public.task_comments USING gin (search_tsv) WHERE (content_type = 'text'::comment_content_type)
 CREATE INDEX idx_comments_task ON public.task_comments USING btree (task_id)
-CREATE INDEX idx_connected_agents_status ON public.connected_agents USING btree (status)
 CREATE INDEX idx_costs_created ON public.cost_entries USING btree (created_at)
 CREATE INDEX idx_costs_member ON public.cost_entries USING btree (member_id)
 CREATE INDEX idx_costs_member_created ON public.cost_entries USING btree (member_id, created_at)
@@ -773,8 +763,9 @@ agent_wakeup_requests | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE
 agent_wakeup_requests | p | PRIMARY KEY (id)
 ai_provider_configs | p | PRIMARY KEY (id)
 ai_provider_configs | u | UNIQUE (provider, label)
-api_keys | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+api_keys | f | FOREIGN KEY (approved_by_user_id) REFERENCES users(id) ON DELETE SET NULL
 api_keys | p | PRIMARY KEY (id)
+api_keys | u | UNIQUE (prefix)
 approvals | f | FOREIGN KEY (requested_by_member_id) REFERENCES members(id) ON DELETE CASCADE
 approvals | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
 approvals | p | PRIMARY KEY (id)
@@ -783,7 +774,7 @@ assets | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
 assets | f | FOREIGN KEY (uploaded_by_member_id) REFERENCES members(id) ON DELETE SET NULL
 assets | p | PRIMARY KEY (id)
 assets | u | UNIQUE (project_id, original_filename)
-audit_log | f | FOREIGN KEY (actor_connected_agent_id) REFERENCES connected_agents(id) ON DELETE SET NULL
+audit_log | f | FOREIGN KEY (actor_api_key_id) REFERENCES api_keys(id) ON DELETE SET NULL
 audit_log | f | FOREIGN KEY (actor_member_id) REFERENCES members(id) ON DELETE SET NULL
 audit_log | f | FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
 audit_log | p | PRIMARY KEY (id)
@@ -806,15 +797,12 @@ comment_reactions | f | FOREIGN KEY (comment_id) REFERENCES task_comments(id) ON
 comment_reactions | f | FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
 comment_reactions | p | PRIMARY KEY (id)
 comment_reactions | u | UNIQUE (comment_id, member_id, kind)
-connected_agents | f | FOREIGN KEY (approved_by_user_id) REFERENCES users(id) ON DELETE SET NULL
-connected_agents | p | PRIMARY KEY (id)
-connected_agents | u | UNIQUE (prefix)
 cost_entries | f | FOREIGN KEY (ai_provider_config_id) REFERENCES ai_provider_configs(id) ON DELETE SET NULL
 cost_entries | f | FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
 cost_entries | f | FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
 cost_entries | f | FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
 cost_entries | p | PRIMARY KEY (id)
-document_revisions | f | FOREIGN KEY (author_connected_agent_id) REFERENCES connected_agents(id) ON DELETE SET NULL
+document_revisions | f | FOREIGN KEY (author_api_key_id) REFERENCES api_keys(id) ON DELETE SET NULL
 document_revisions | f | FOREIGN KEY (author_member_id) REFERENCES members(id) ON DELETE SET NULL
 document_revisions | f | FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
 document_revisions | p | PRIMARY KEY (id)
@@ -903,7 +891,7 @@ task_attachments | f | FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CA
 task_attachments | f | FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
 task_attachments | p | PRIMARY KEY (id)
 task_attachments | u | UNIQUE (task_id, asset_id)
-task_comments | f | FOREIGN KEY (author_connected_agent_id) REFERENCES connected_agents(id) ON DELETE SET NULL
+task_comments | f | FOREIGN KEY (author_api_key_id) REFERENCES api_keys(id) ON DELETE SET NULL
 task_comments | f | FOREIGN KEY (author_member_id) REFERENCES members(id) ON DELETE SET NULL
 task_comments | f | FOREIGN KEY (parent_comment_id) REFERENCES task_comments(id) ON DELETE SET NULL
 task_comments | f | FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE

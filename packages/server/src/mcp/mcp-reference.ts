@@ -62,7 +62,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_teams: {
 		category: 'Teams',
 		returns:
-			'An array of team rows (`id`, `name`, `slug`, `description`, …). The instance CEO, an agent run with cross-team scope, and connected agents get every team; an API key or ordinary agent run gets only its own team; a board user gets the teams they belong to (all teams for a superuser).',
+			'An array of team rows (`id`, `name`, `slug`, `description`, …). An API key, the instance CEO, and an agent run with cross-team scope get every team; an ordinary agent run gets only its own team; a board user gets the teams they belong to (all teams for a superuser).',
 	},
 	get_team: {
 		category: 'Teams',
@@ -79,7 +79,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		category: 'Projects',
 		returns:
 			'An array of project rows (`id`, `team_id`, `name`, `slug`, `task_prefix`, `description`, `is_internal`, `created_at`, `updated_at`). With `excerpt_chars`, `description` is truncated and `description_truncated`/`description_length` companions are added.',
-		auth: 'CEO cross-team access (or superuser, or a connected agent) returns every project; a board user gets the projects on their teams; an agent run gets its own project.',
+		auth: 'An API key, CEO cross-team access, or a superuser returns every project; a board user gets the projects on their teams; an agent run gets its own project.',
 	},
 	create_project: {
 		category: 'Projects',
@@ -143,7 +143,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_comments: {
 		category: 'Comments & reactions',
 		returns:
-			'Up to 50 comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_connected_agent_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. Pass `before` to walk older; `excerpt_chars` truncates text comments (adds `text_truncated`/`text_length`).',
+			'Up to 50 comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_api_key_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. Pass `before` to walk older; `excerpt_chars` truncates text comments (adds `text_truncated`/`text_length`).',
 	},
 	create_comment: {
 		category: 'Comments & reactions',
@@ -350,13 +350,13 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	register: {
 		category: 'Onboarding',
 		returns:
-			'`{ id, token, status, message }` — the `hezoc_…` token is shown once. Returns `{ error }` if `name` is missing.',
+			'`{ id, token, status, message }` — the `hezo_…` token is shown once. Returns `{ error }` if `name` is missing.',
 		auth: 'No token required — this is how an external agent self-registers. The registration stays inert until a Hezo admin approves it.',
 	},
 	connection_status: {
 		category: 'Onboarding',
 		returns: '`{ status: "pending" | "approved" }`, or `{ error }` if no/unknown token is sent.',
-		auth: 'Keyed by the `hezoc_…` bearer token from `register`; no approved principal required.',
+		auth: 'Keyed by the bearer token from `register`; no approved principal required.',
 	},
 };
 
@@ -458,14 +458,14 @@ export function generateMcpReference(
 		'# MCP API reference',
 		'',
 		"Complete reference for every tool exposed by Hezo's built-in MCP server. For how to",
-		'connect, authenticate, and self-register as a connected agent, see',
+		'connect, authenticate, and register for access, see',
 		"[Hezo's MCP server](/docs/mcp/hezo-mcp-server).",
 		'',
 		'## Connecting',
 		'',
 		'- **Endpoint:** `POST /mcp` — JSON-RPC 2.0 over Streamable HTTP.',
-		'- **Authentication:** `Authorization: Bearer <token>`, where the token is a team-scoped',
-		'  API key (`hezo_…`) or an instance-wide connected-agent token (`hezoc_…`).',
+		'- **Authentication:** `Authorization: Bearer <token>`, where the token is an',
+		'  instance-scoped API key (`hezo_…`).',
 		'- **Discovery:** call `tools/list` for the live machine-readable schemas, then invoke a',
 		'  tool with `tools/call`.',
 		'- **File uploads:** binary files cannot ride a JSON-RPC call — `POST` them to',
@@ -475,8 +475,8 @@ export function generateMcpReference(
 		'## Conventions',
 		'',
 		'- **Project scope (`project`):** most tools take an optional `project` (slug or ID).',
-		'  Omit it to act in the project your run is already in; instance agents (CEO/Coach) and',
-		'  connected agents must name the project they are acting in.',
+		'  Omit it to act in the project your run is already in; an API key and instance agents',
+		'  (CEO/Coach) must name the project they are acting in.',
 		"- **Authorization:** every call is scoped to the resolved project's team and the caller",
 		'  must have access to it. Tools that restrict callers further note it under',
 		'  **Authorization** below.',

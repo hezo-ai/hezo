@@ -5,7 +5,6 @@ type Json = any;
 
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import {
@@ -19,7 +18,6 @@ import {
 let app: Hono<Env>;
 let db: PGlite;
 let token: string; // superuser admin
-let masterKeyManager: MasterKeyManager;
 let dataDir: string;
 let slugA: string;
 let slugB: string;
@@ -29,7 +27,6 @@ beforeAll(async () => {
 	app = ctx.app;
 	db = ctx.db;
 	token = ctx.token;
-	masterKeyManager = ctx.masterKeyManager;
 	dataDir = ctx.dataDir;
 
 	const teamA = (await (await createTestTeam(db, { name: 'Alpha Co' })).json()).data;
@@ -45,7 +42,7 @@ afterAll(async () => {
 });
 
 async function registerViaRest(name: string): Promise<{ id: string; token: string }> {
-	const res = await app.request('/api/agent-connections/register', {
+	const res = await app.request('/api/api-keys/register', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name }),
@@ -56,20 +53,20 @@ async function registerViaRest(name: string): Promise<{ id: string; token: strin
 }
 
 async function approve(id: string): Promise<Response> {
-	return app.request(`/api/agent-connections/${id}/approve`, {
+	return app.request(`/api/api-keys/${id}/approve`, {
 		method: 'POST',
 		headers: authHeader(token),
 	});
 }
 
 async function mcp(
-	agentToken: string | null,
+	key: string | null,
 	method: string,
 	params?: unknown,
 	targetApp: Hono<Env> = app,
 ): Promise<Json> {
 	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-	if (agentToken) headers.Authorization = `Bearer ${agentToken}`;
+	if (key) headers.Authorization = `Bearer ${key}`;
 	const res = await targetApp.request('/mcp', {
 		method: 'POST',
 		headers,
@@ -82,12 +79,12 @@ function toolPayload(body: Json): Json {
 	return JSON.parse(body.result.content[0].text);
 }
 
-describe('connected-agent registration', () => {
-	it('returns a one-time hezoc_ token and lists without secrets', async () => {
-		const { id, token: agentToken } = await registerViaRest('crm-bot');
-		expect(agentToken).toMatch(/^hezoc_/);
+describe('API-key self-registration', () => {
+	it('returns a one-time token and lists the pending key without secrets', async () => {
+		const { id, token: keyToken } = await registerViaRest('crm-bot');
+		expect(keyToken).toMatch(/^hezo_/);
 
-		const list = await app.request('/api/agent-connections', { headers: authHeader(token) });
+		const list = await app.request('/api/api-keys', { headers: authHeader(token) });
 		expect(list.status).toBe(200);
 		const rows = (await list.json()).data as Json[];
 		const row = rows.find((r) => r.id === id);
@@ -95,11 +92,12 @@ describe('connected-agent registration', () => {
 		expect(row.status).toBe('pending');
 		expect(row.prefix).toHaveLength(8);
 		expect(row).not.toHaveProperty('token');
-		expect(row).not.toHaveProperty('token_hash');
+		expect(row).not.toHaveProperty('key');
+		expect(row).not.toHaveProperty('key_hash');
 	});
 
 	it('requires a name', async () => {
-		const res = await app.request('/api/agent-connections/register', {
+		const res = await app.request('/api/api-keys/register', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({}),
@@ -108,25 +106,25 @@ describe('connected-agent registration', () => {
 	});
 });
 
-describe('a pending token is inert', () => {
+describe('a pending key is inert', () => {
 	it('grants no access but can poll its status', async () => {
-		const { token: agentToken } = await registerViaRest('pending-bot');
+		const { token: keyToken } = await registerViaRest('pending-bot');
 
 		// Status polling works (REST + MCP) while pending.
-		const statusRes = await app.request('/api/agent-connections/status', {
-			headers: authHeader(agentToken),
+		const statusRes = await app.request('/api/api-keys/status', {
+			headers: authHeader(keyToken),
 		});
 		expect(statusRes.status).toBe(200);
 		expect((await statusRes.json()).data.status).toBe('pending');
 
-		const mcpStatus = await mcp(agentToken, 'tools/call', {
+		const mcpStatus = await mcp(keyToken, 'tools/call', {
 			name: 'connection_status',
 			arguments: {},
 		});
 		expect(toolPayload(mcpStatus).status).toBe('pending');
 
 		// But no real tool works...
-		const listProjects = await mcp(agentToken, 'tools/call', {
+		const listProjects = await mcp(keyToken, 'tools/call', {
 			name: 'list_projects',
 			arguments: {},
 		});
@@ -135,7 +133,7 @@ describe('a pending token is inert', () => {
 
 		// ...and no REST route works either.
 		const rest = await app.request(`/api/projects/${slugA}/tasks`, {
-			headers: authHeader(agentToken),
+			headers: authHeader(keyToken),
 		});
 		expect(rest.status).toBe(401);
 	});
@@ -145,26 +143,25 @@ describe('approval', () => {
 	it('rejects approval from a non-superuser principal', async () => {
 		const { id } = await registerViaRest('victim-bot');
 
-		// An approved connected agent is admin-equivalent but explicitly may NOT
-		// manage connected agents — that stays human-superuser-only. (A team-scoped
-		// API key doesn't apply here: API keys are rejected on REST outright.)
+		// An approved API key is admin-equivalent over MCP, but it is rejected on REST
+		// outright — so it can never reach the (superuser-only) approve route.
 		const { id: otherId, token: otherToken } = await registerViaRest('other-bot');
 		expect((await approve(otherId)).status).toBe(200);
 
-		const res = await app.request(`/api/agent-connections/${id}/approve`, {
+		const res = await app.request(`/api/api-keys/${id}/approve`, {
 			method: 'POST',
 			headers: authHeader(otherToken),
 		});
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 	});
 
-	it('approving grants full instance-wide access', async () => {
-		const { id, token: agentToken } = await registerViaRest('admin-bot');
+	it('approving grants full instance-wide MCP access', async () => {
+		const { id, token: keyToken } = await registerViaRest('admin-bot');
 		expect((await approve(id)).status).toBe(200);
 
 		// list_projects spans every project across the instance.
 		const projects = toolPayload(
-			await mcp(agentToken, 'tools/call', { name: 'list_projects', arguments: {} }),
+			await mcp(keyToken, 'tools/call', { name: 'list_projects', arguments: {} }),
 		) as Json[];
 		const slugs = projects.map((p) => p.slug);
 		expect(slugs).toContain(slugA);
@@ -172,56 +169,51 @@ describe('approval', () => {
 
 		// Can create a task in a project it was never "assigned" to.
 		const created = toolPayload(
-			await mcp(agentToken, 'tools/call', {
+			await mcp(keyToken, 'tools/call', {
 				name: 'create_task',
-				arguments: { project: slugB, title: 'Filed by connected agent', assignee_slug: 'captain' },
+				arguments: { project: slugB, title: 'Filed by API key', assignee_slug: 'captain' },
 			}),
 		);
 		expect(created).not.toHaveProperty('error');
 		expect(created.identifier ?? created.id).toBeTruthy();
-
-		// REST works across any team too.
-		const rest = await app.request(`/api/projects/${slugB}/tasks`, {
-			headers: authHeader(agentToken),
-		});
-		expect(rest.status).toBe(200);
 	});
 
-	it('is admin-equivalent for instance settings but cannot manage agents', async () => {
-		const { id, token: agentToken } = await registerViaRest('powerful-bot');
+	it('stays MCP-only after approval (rejected on REST)', async () => {
+		const { id, token: keyToken } = await registerViaRest('rest-probe-bot');
 		await approve(id);
 
-		// Instance admin route (credentials list) — allowed.
-		const creds = await app.request('/api/credentials', { headers: authHeader(agentToken) });
-		expect(creds.status).toBe(200);
+		// Even approved + admin-equivalent, an API key never reaches REST.
+		const rest = await app.request(`/api/projects/${slugB}/tasks`, {
+			headers: authHeader(keyToken),
+		});
+		expect(rest.status).toBe(401);
 
-		// Managing connected agents stays human-only.
-		const manage = await app.request('/api/agent-connections', { headers: authHeader(agentToken) });
-		expect(manage.status).toBe(403);
+		const manage = await app.request('/api/api-keys', { headers: authHeader(keyToken) });
+		expect(manage.status).toBe(401);
 	});
 });
 
-describe('disconnect', () => {
+describe('revocation', () => {
 	it('revokes the token immediately', async () => {
-		const { id, token: agentToken } = await registerViaRest('temp-bot');
+		const { id, token: keyToken } = await registerViaRest('temp-bot');
 		await approve(id);
-		// Sanity: works before disconnect.
+		// Sanity: works before revoke.
 		expect(
-			toolPayload(await mcp(agentToken, 'tools/call', { name: 'list_projects', arguments: {} })),
+			toolPayload(await mcp(keyToken, 'tools/call', { name: 'list_projects', arguments: {} })),
 		).toBeInstanceOf(Array);
 
-		const del = await app.request(`/api/agent-connections/${id}`, {
+		const del = await app.request(`/api/api-keys/${id}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
 		expect(del.status).toBe(200);
 
 		// Immediately rejected on the next request — no token cache.
-		const after = await mcp(agentToken, 'tools/call', { name: 'list_projects', arguments: {} });
+		const after = await mcp(keyToken, 'tools/call', { name: 'list_projects', arguments: {} });
 		expect(after.error.message).toContain('Not connected');
 
-		const status = await app.request('/api/agent-connections/status', {
-			headers: authHeader(agentToken),
+		const status = await app.request('/api/api-keys/status', {
+			headers: authHeader(keyToken),
 		});
 		expect(status.status).toBe(404);
 	});
@@ -238,7 +230,7 @@ describe('MCP-native onboarding', () => {
 		const registered = toolPayload(
 			await mcp(null, 'tools/call', { name: 'register', arguments: { name: 'mcp-onboard' } }),
 		);
-		expect(registered.token).toMatch(/^hezoc_/);
+		expect(registered.token).toMatch(/^hezo_/);
 		expect(registered.status).toBe('pending');
 
 		const status = toolPayload(
@@ -249,8 +241,8 @@ describe('MCP-native onboarding', () => {
 });
 
 describe('locked instance', () => {
-	it('denies an approved connected-agent token while locked', async () => {
-		const { id, token: agentToken } = await registerViaRest('locked-bot');
+	it('denies an approved key while locked', async () => {
+		const { id, token: keyToken } = await registerViaRest('locked-bot');
 		await approve(id);
 
 		// A fresh manager over the same DB starts locked (no key material).
@@ -258,7 +250,7 @@ describe('locked instance', () => {
 		expect(locked.masterKeyManager.getState()).toBe('locked');
 
 		const res = await mcp(
-			agentToken,
+			keyToken,
 			'tools/call',
 			{ name: 'list_projects', arguments: {} },
 			locked.app,
@@ -266,7 +258,7 @@ describe('locked instance', () => {
 		expect(res.error).toBeDefined();
 
 		const rest = await locked.app.request(`/api/projects/${slugA}/tasks`, {
-			headers: authHeader(agentToken),
+			headers: authHeader(keyToken),
 		});
 		expect(rest.status).toBe(401);
 	});

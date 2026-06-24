@@ -22,7 +22,7 @@ export interface SetAgentAdminStatusParams {
 	status: AgentAdminStatus;
 	actorType: AuditActorType;
 	actorMemberId: string | null;
-	actorConnectedAgentId?: string | null;
+	actorApiKeyId?: string | null;
 }
 
 export type SetAgentAdminStatusResult =
@@ -92,7 +92,7 @@ export async function setAgentAdminStatus(
 		teamId,
 		actorType: params.actorType,
 		actorMemberId: params.actorMemberId,
-		actorConnectedAgentId: params.actorConnectedAgentId ?? null,
+		actorApiKeyId: params.actorApiKeyId ?? null,
 		agentMemberId: agentId,
 	});
 

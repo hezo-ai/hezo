@@ -16,7 +16,7 @@ import { Route as SettingsSkillsRouteImport } from './routes/settings/skills'
 import { Route as SettingsModelPricingRouteImport } from './routes/settings/model-pricing'
 import { Route as SettingsCredentialsRouteImport } from './routes/settings/credentials'
 import { Route as SettingsConnectorsRouteImport } from './routes/settings/connectors'
-import { Route as SettingsConnectedAgentsRouteImport } from './routes/settings/connected-agents'
+import { Route as SettingsApiKeysRouteImport } from './routes/settings/api-keys'
 import { Route as SettingsChatboxRouteImport } from './routes/settings/chatbox'
 import { Route as SettingsAuditLogRouteImport } from './routes/settings/audit-log'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
@@ -79,9 +79,9 @@ const SettingsConnectorsRoute = SettingsConnectorsRouteImport.update({
   path: '/settings/connectors',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SettingsConnectedAgentsRoute = SettingsConnectedAgentsRouteImport.update({
-  id: '/settings/connected-agents',
-  path: '/settings/connected-agents',
+const SettingsApiKeysRoute = SettingsApiKeysRouteImport.update({
+  id: '/settings/api-keys',
+  path: '/settings/api-keys',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsChatboxRoute = SettingsChatboxRouteImport.update({
@@ -238,7 +238,7 @@ export interface FileRoutesByFullPath {
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
   '/settings/chatbox': typeof SettingsChatboxRoute
-  '/settings/connected-agents': typeof SettingsConnectedAgentsRoute
+  '/settings/api-keys': typeof SettingsApiKeysRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/model-pricing': typeof SettingsModelPricingRoute
@@ -273,7 +273,7 @@ export interface FileRoutesByTo {
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
   '/settings/chatbox': typeof SettingsChatboxRoute
-  '/settings/connected-agents': typeof SettingsConnectedAgentsRoute
+  '/settings/api-keys': typeof SettingsApiKeysRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/model-pricing': typeof SettingsModelPricingRoute
@@ -309,7 +309,7 @@ export interface FileRoutesById {
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
   '/settings/chatbox': typeof SettingsChatboxRoute
-  '/settings/connected-agents': typeof SettingsConnectedAgentsRoute
+  '/settings/api-keys': typeof SettingsApiKeysRoute
   '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/credentials': typeof SettingsCredentialsRoute
   '/settings/model-pricing': typeof SettingsModelPricingRoute
@@ -347,7 +347,7 @@ export interface FileRouteTypes {
     | '/settings/ai-providers'
     | '/settings/audit-log'
     | '/settings/chatbox'
-    | '/settings/connected-agents'
+    | '/settings/api-keys'
     | '/settings/connectors'
     | '/settings/credentials'
     | '/settings/model-pricing'
@@ -382,7 +382,7 @@ export interface FileRouteTypes {
     | '/settings/ai-providers'
     | '/settings/audit-log'
     | '/settings/chatbox'
-    | '/settings/connected-agents'
+    | '/settings/api-keys'
     | '/settings/connectors'
     | '/settings/credentials'
     | '/settings/model-pricing'
@@ -417,7 +417,7 @@ export interface FileRouteTypes {
     | '/settings/ai-providers'
     | '/settings/audit-log'
     | '/settings/chatbox'
-    | '/settings/connected-agents'
+    | '/settings/api-keys'
     | '/settings/connectors'
     | '/settings/credentials'
     | '/settings/model-pricing'
@@ -454,7 +454,7 @@ export interface RootRouteChildren {
   SettingsAiProvidersRoute: typeof SettingsAiProvidersRoute
   SettingsAuditLogRoute: typeof SettingsAuditLogRoute
   SettingsChatboxRoute: typeof SettingsChatboxRoute
-  SettingsConnectedAgentsRoute: typeof SettingsConnectedAgentsRoute
+  SettingsApiKeysRoute: typeof SettingsApiKeysRoute
   SettingsConnectorsRoute: typeof SettingsConnectorsRoute
   SettingsCredentialsRoute: typeof SettingsCredentialsRoute
   SettingsModelPricingRoute: typeof SettingsModelPricingRoute
@@ -517,11 +517,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsConnectorsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/settings/connected-agents': {
-      id: '/settings/connected-agents'
-      path: '/settings/connected-agents'
-      fullPath: '/settings/connected-agents'
-      preLoaderRoute: typeof SettingsConnectedAgentsRouteImport
+    '/settings/api-keys': {
+      id: '/settings/api-keys'
+      path: '/settings/api-keys'
+      fullPath: '/settings/api-keys'
+      preLoaderRoute: typeof SettingsApiKeysRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/chatbox': {
@@ -783,7 +783,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsAiProvidersRoute: SettingsAiProvidersRoute,
   SettingsAuditLogRoute: SettingsAuditLogRoute,
   SettingsChatboxRoute: SettingsChatboxRoute,
-  SettingsConnectedAgentsRoute: SettingsConnectedAgentsRoute,
+  SettingsApiKeysRoute: SettingsApiKeysRoute,
   SettingsConnectorsRoute: SettingsConnectorsRoute,
   SettingsCredentialsRoute: SettingsCredentialsRoute,
   SettingsModelPricingRoute: SettingsModelPricingRoute,

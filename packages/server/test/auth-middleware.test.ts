@@ -267,7 +267,7 @@ describe('verifyToken with API key', () => {
 	let apiKey: string;
 
 	beforeAll(async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/api-keys`, {
+		const res = await app.request('/api/api-keys', {
 			method: 'POST',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name: 'test-key' }),
@@ -281,7 +281,8 @@ describe('verifyToken with API key', () => {
 		expect(auth).not.toBeNull();
 		expect(auth!.type).toBe(AuthType.ApiKey);
 		if (auth!.type === AuthType.ApiKey) {
-			expect(auth!.teamId).toBe(teamId);
+			expect(auth!.apiKeyId).toBeTruthy();
+			expect(auth!.crossTeam).toBe(true);
 		}
 	});
 
@@ -406,12 +407,12 @@ describe('loadAdminAuth', () => {
 describe('canAuthAccessTeam', () => {
 	const otherTeamId = '00000000-0000-0000-0000-0000000000ff';
 
-	it('lets an approved connected agent reach every team', async () => {
-		// Connected agents are admin-equivalent/cross-team (auth.ts), so they must
-		// reach realtime WS rooms too — the gap this shared predicate closes.
+	it('lets an approved API key reach every team', async () => {
+		// API keys are admin-equivalent/cross-team (auth.ts), so they must reach
+		// realtime WS rooms too — the gap this shared predicate closes.
 		const auth: AuthInfo = {
-			type: AuthType.ConnectedAgent,
-			connectedAgentId: 'ca-1',
+			type: AuthType.ApiKey,
+			apiKeyId: 'ak-1',
 			isSuperuser: true,
 			crossTeam: true,
 		};
@@ -447,10 +448,15 @@ describe('canAuthAccessTeam', () => {
 		expect(await canAuthAccessTeam(db, auth, otherTeamId)).toBe(false);
 	});
 
-	it('binds an API key to its own team', async () => {
-		const auth: AuthInfo = { type: AuthType.ApiKey, teamId };
+	it('lets an approved API key reach every team (instance-scoped)', async () => {
+		const auth: AuthInfo = {
+			type: AuthType.ApiKey,
+			apiKeyId: 'ak-1',
+			isSuperuser: true,
+			crossTeam: true,
+		};
 		expect(await canAuthAccessTeam(db, auth, teamId)).toBe(true);
-		expect(await canAuthAccessTeam(db, auth, otherTeamId)).toBe(false);
+		expect(await canAuthAccessTeam(db, auth, otherTeamId)).toBe(true);
 	});
 
 	it('binds an ordinary agent to its own team but lets a cross-team session span all', async () => {

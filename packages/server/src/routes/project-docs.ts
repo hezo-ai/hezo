@@ -11,7 +11,7 @@ import { Hono } from 'hono';
 import { resolveAgentsMdPath } from '../lib/docs';
 import {
 	actorTypeFromAuth,
-	connectedAgentIdFromAuth,
+	apiKeyIdFromAuth,
 	resolveActorMemberId,
 	resolveProjectId,
 } from '../lib/resolve';
@@ -123,11 +123,11 @@ projectDocsRoutes.put('/projects/:projectId/docs/:filename', async (c) => {
 		content: body.content,
 		changeSummary: body.change_summary,
 		authorMemberId: memberId,
-		authorConnectedAgentId: connectedAgentIdFromAuth(auth),
+		authorApiKeyId: apiKeyIdFromAuth(auth),
 		audit: {
 			events: c.get('events'),
 			actorType: actorTypeFromAuth(auth),
-			actorConnectedAgentId: connectedAgentIdFromAuth(auth),
+			actorApiKeyId: apiKeyIdFromAuth(auth),
 		},
 	});
 
@@ -165,7 +165,7 @@ projectDocsRoutes.delete('/projects/:projectId/docs/:filename', async (c) => {
 		{
 			events: c.get('events'),
 			actorType: actorTypeFromAuth(c.get('auth')),
-			actorConnectedAgentId: connectedAgentIdFromAuth(c.get('auth')),
+			actorApiKeyId: apiKeyIdFromAuth(c.get('auth')),
 			actorMemberId,
 		},
 	);
@@ -224,11 +224,11 @@ projectDocsRoutes.post('/projects/:projectId/docs/:filename/restore', async (c) 
 		documentId: doc.id,
 		revisionNumber: body.revision_number,
 		restoredByMemberId,
-		restoredByConnectedAgentId: connectedAgentIdFromAuth(auth),
+		restoredByApiKeyId: apiKeyIdFromAuth(auth),
 		audit: {
 			events: c.get('events'),
 			actorType: actorTypeFromAuth(auth),
-			actorConnectedAgentId: connectedAgentIdFromAuth(auth),
+			actorApiKeyId: apiKeyIdFromAuth(auth),
 		},
 	});
 	if (!restored) return err(c, 'NOT_FOUND', 'Revision not found', 404);

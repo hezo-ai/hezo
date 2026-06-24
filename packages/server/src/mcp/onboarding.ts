@@ -1,12 +1,12 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { getConnectionStatusByToken, registerConnectedAgent } from '../services/connected-agents';
+import { getApiKeyStatusByToken, registerApiKey } from '../services/api-keys';
 
 /**
  * The onboarding tools served on `/mcp` to callers that are NOT yet an approved
- * principal (no token, an invalid token, or a still-`pending` connected-agent
- * token). They let an external agent self-register and poll for approval without
- * any prior credential. They live outside the normal tool registry/authContext,
- * so they never touch tool authorization.
+ * principal (no token, an invalid token, or a still-`pending` registration token).
+ * They let an external agent self-register and poll for approval without any prior
+ * credential. They live outside the normal tool registry/authContext, so they
+ * never touch tool authorization.
  */
 export const REGISTER_TOOL = 'register';
 export const CONNECTION_STATUS_TOOL = 'connection_status';
@@ -27,7 +27,7 @@ export const ONBOARDING_TOOLS: McpToolShape[] = [
 	{
 		name: REGISTER_TOOL,
 		description:
-			'Register this agent as a Hezo connected agent. Returns a `hezoc_…` token (shown once) — set it as your `Authorization: Bearer` token. The registration is inert until a Hezo admin approves it at Settings → Connected agents; once approved you have full instance access (every project and team). Poll `connection_status` to learn when you are approved.',
+			'Register this agent with Hezo. Returns an access token (shown once) — set it as your `Authorization: Bearer` token. The registration is inert until a Hezo admin approves it under Settings → API keys; once approved you have full instance access (every project and team). Poll `connection_status` to learn when you are approved.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -46,7 +46,7 @@ export const ONBOARDING_TOOLS: McpToolShape[] = [
 	{
 		name: CONNECTION_STATUS_TOOL,
 		description:
-			'Check whether this agent has been approved yet. Send your `hezoc_…` token as the `Authorization: Bearer` token. Returns {"status":"pending"} or {"status":"approved"}.',
+			'Check whether this agent has been approved yet. Send your token as the `Authorization: Bearer` token. Returns {"status":"pending"} or {"status":"approved"}.',
 		inputSchema: { type: 'object', properties: {} },
 	},
 ];
@@ -63,13 +63,13 @@ export async function handleRegisterTool(
 			? (args.client_info as Record<string, unknown>)
 			: undefined;
 
-	const result = await registerConnectedAgent(db, { name, clientInfo });
+	const result = await registerApiKey(db, { name, clientInfo });
 	return {
 		id: result.id,
 		token: result.token,
 		status: result.status,
 		message:
-			'Registered. Set this token as your `Authorization: Bearer <token>`. A Hezo admin must approve you at Settings → Connected agents before you gain access; poll `connection_status` to check.',
+			'Registered. Set this token as your `Authorization: Bearer <token>`. A Hezo admin must approve you under Settings → API keys before you gain access; poll `connection_status` to check.',
 	};
 }
 
@@ -81,10 +81,10 @@ export async function handleConnectionStatusTool(
 	if (!token) {
 		return {
 			error:
-				'No bearer token. Call `register` first, then send the returned hezoc_ token as your Authorization: Bearer.',
+				'No bearer token. Call `register` first, then send the returned token as your Authorization: Bearer.',
 		};
 	}
-	const status = await getConnectionStatusByToken(db, token);
-	if (!status) return { error: 'Unknown token — not a registered connected agent.' };
+	const status = await getApiKeyStatusByToken(db, token);
+	if (!status) return { error: 'Unknown token — not a registered agent.' };
 	return { status: status.status };
 }
