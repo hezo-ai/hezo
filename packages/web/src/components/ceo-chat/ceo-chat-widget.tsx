@@ -1,8 +1,9 @@
 import { HQ_PROJECT_NAME } from '@hezo/shared';
-import { ArrowRight, Loader2, MessageSquare, X } from 'lucide-react';
+import { ArrowRight, Loader2, Maximize2, MessageSquare, Minimize2, X } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { type CeoMessage, useCeoChat } from '../../hooks/use-ceo-chat';
 import { MarkdownProse } from '../markdown-prose';
+import { CountOverlayBadge } from '../ui/count-overlay-badge';
 import { Tooltip } from '../ui/tooltip';
 
 /**
@@ -14,7 +15,8 @@ import { Tooltip } from '../ui/tooltip';
  */
 export function CeoChatWidget() {
 	const [open, setOpen] = useState(false);
-	const { messages, send, streaming, loaded } = useCeoChat(open);
+	const [expanded, setExpanded] = useState(false);
+	const { messages, send, streaming, loaded, unread } = useCeoChat(open);
 	const [draft, setDraft] = useState('');
 	const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -41,19 +43,29 @@ export function CeoChatWidget() {
 					type="button"
 					onClick={() => setOpen(true)}
 					data-testid="ceo-chat-launcher"
-					aria-label="Chat with the CEO"
+					aria-label={unread > 0 ? `Chat with the CEO (${unread} unread)` : 'Chat with the CEO'}
 					className="fixed bottom-4 right-4 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-inverse text-inverse-fg shadow-lg hover:opacity-90"
 				>
 					<MessageSquare className="h-5 w-5" />
+					{/* Unread CEO replies overlay the launcher, mirroring the inbox icon. */}
+					<CountOverlayBadge count={unread} testId="ceo-chat-unread-badge" />
 				</button>
 			</Tooltip>
 		);
 	}
 
+	// `top-16` (64px) keeps both layouts clear of the 48px app header. The default
+	// is an anchored corner panel on desktop; expanded fills the viewport below the
+	// nav bar (full-width with a small margin), never covering the header.
+	const sizeClass = expanded
+		? 'inset-x-2 bottom-2 top-16 md:inset-x-4 md:bottom-4 md:top-16'
+		: 'inset-x-2 bottom-2 top-16 md:inset-auto md:bottom-4 md:right-4 md:top-auto md:h-[560px] md:w-[420px]';
+
 	return (
 		<div
 			data-testid="ceo-chat-panel"
-			className="fixed z-50 flex flex-col overflow-hidden border border-border bg-surface shadow-xl inset-x-2 bottom-2 top-16 rounded-2xl md:inset-auto md:bottom-4 md:right-4 md:top-auto md:h-[560px] md:w-[420px]"
+			data-expanded={expanded}
+			className={`fixed z-50 flex flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-xl ${sizeClass}`}
 		>
 			<header className="flex items-center justify-between border-b border-border px-4 py-3">
 				<div className="flex items-center gap-2">
@@ -62,15 +74,28 @@ export function CeoChatWidget() {
 						{HQ_PROJECT_NAME}
 					</span>
 				</div>
-				<button
-					type="button"
-					onClick={() => setOpen(false)}
-					aria-label="Close chat"
-					data-testid="ceo-chat-close"
-					className="flex h-9 w-9 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1"
-				>
-					<X className="h-4 w-4" />
-				</button>
+				<div className="flex items-center gap-1">
+					{/* Expand/collapse is desktop-only; the panel is already near-full-screen
+					    on mobile, where the toggle would be a no-op. */}
+					<button
+						type="button"
+						onClick={() => setExpanded((v) => !v)}
+						aria-label={expanded ? 'Collapse chat' : 'Expand chat'}
+						data-testid="ceo-chat-expand"
+						className="hidden h-9 w-9 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1 md:flex"
+					>
+						{expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+					</button>
+					<button
+						type="button"
+						onClick={() => setOpen(false)}
+						aria-label="Close chat"
+						data-testid="ceo-chat-close"
+						className="flex h-9 w-9 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1"
+					>
+						<X className="h-4 w-4" />
+					</button>
+				</div>
 			</header>
 
 			<div
