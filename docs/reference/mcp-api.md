@@ -602,18 +602,18 @@ Propose a new skill for the team's skills database (reusable team know-how: MCP 
 
 _Read-only._
 
-Search the team skills database, tasks, project docs, and task comments using natural language. Returns ranked results by relevance.
+Full-text keyword search across the team skills database, tasks, project docs, and task comments. Returns results ranked by relevance (keyword + stemming match).
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `query` | `string` | Yes | Natural language search query |
+| `query` | `string` | Yes | Search query (keywords) |
 | `scope` | `all` \| `tasks` \| `skills` \| `project_docs` \| `comments` | No | Limit search to specific content type (default: all) |
 | `limit` | `number` | No | Max results per type (default: 10) |
 
-**Returns:** `{ results, count }` ranked by relevance across skills, tasks, project docs, and comments. Returns `{ error }` if the embedding model is not loaded yet.
+**Returns:** `{ results, count }` — full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, and comments.
 
 ### `list_skills`
 

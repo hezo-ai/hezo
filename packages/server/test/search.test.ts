@@ -28,6 +28,24 @@ beforeAll(async () => {
 	const teamRes = await createTestTeam(db, { name: 'Search Test Co', template_id: typeId });
 	const teamSlug = (await teamRes.json()).data.slug;
 	projectSlug = `${await projectSlugForTeamSlug(db, teamSlug)}`;
+
+	// Seed a task with a distinctive term so the routes have something to find.
+	const proj = await db.query<{ id: string; team_id: string }>(
+		'SELECT id, team_id FROM projects WHERE slug = $1',
+		[projectSlug],
+	);
+	const { id: projectId, team_id: teamId } = proj.rows[0];
+	const num = (
+		await db.query<{ n: number }>(
+			'SELECT COALESCE(MAX(number), 0) + 1 AS n FROM tasks WHERE project_id = $1',
+			[projectId],
+		)
+	).rows[0].n;
+	await db.query(
+		`INSERT INTO tasks (team_id, project_id, number, identifier, title, description)
+		 VALUES ($1, $2, $3, $4, 'Zebra onboarding flow', 'Track the zebra rollout')`,
+		[teamId, projectId, num, `ZEB-${num}`],
+	);
 });
 
 afterAll(async () => {
@@ -58,18 +76,18 @@ describe('GET /projects/:projectId/search', () => {
 		expect(res.status).toBe(400);
 	});
 
-	it('returns empty results with loading message when model is not ready', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/search?q=test+query`, {
+	it('returns matching results immediately, with no loading message', async () => {
+		const res = await app.request(`/api/projects/${projectSlug}/search?q=zebra`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.results).toEqual([]);
-		expect(body.data.message).toContain('Embedding model is loading');
+		expect(body.data.message).toBeUndefined();
+		expect(body.data.results.some((r: { title: string }) => r.title.includes('Zebra'))).toBe(true);
 	});
 
-	it('passes scope parameter through', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/search?q=hello&scope=kb_docs`, {
+	it('passes scope parameter through (skills scope excludes the task)', async () => {
+		const res = await app.request(`/api/projects/${projectSlug}/search?q=zebra&scope=skills`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -78,7 +96,7 @@ describe('GET /projects/:projectId/search', () => {
 	});
 
 	it('passes limit parameter through', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/search?q=hello&limit=5`, {
+		const res = await app.request(`/api/projects/${projectSlug}/search?q=zebra&limit=5`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
@@ -99,12 +117,12 @@ describe('GET /api/search (global palette)', () => {
 		expect(res.status).toBe(400);
 	});
 
-	it('returns empty results with loading message when the model is not ready', async () => {
-		const res = await app.request('/api/search?q=test+query', { headers: authHeader(token) });
+	it('returns matching results immediately, with no loading message', async () => {
+		const res = await app.request('/api/search?q=zebra', { headers: authHeader(token) });
 		expect(res.status).toBe(200);
 		const body = await res.json();
-		expect(body.data.results).toEqual([]);
-		expect(body.data.message).toContain('Embedding model is loading');
+		expect(body.data.message).toBeUndefined();
+		expect(body.data.results.some((r: { title: string }) => r.title.includes('Zebra'))).toBe(true);
 	});
 });
 

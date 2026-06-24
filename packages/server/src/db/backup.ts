@@ -71,7 +71,6 @@ async function pruneBackups(backupsDir: string): Promise<void> {
  */
 export async function restoreDataDir(dataDir: string, backupFile: string): Promise<void> {
 	const { PGlite } = await import('@electric-sql/pglite');
-	const { vector } = await import('@electric-sql/pglite/vector');
 	const { NodeFS } = await import('@electric-sql/pglite/nodefs');
 	const { loadPgliteAssets } = await import('./pglite-assets');
 
@@ -81,18 +80,17 @@ export async function restoreDataDir(dataDir: string, backupFile: string): Promi
 
 	// In the compiled binary PGlite's WASM/data come from the embedded assets;
 	// in dev they resolve from node_modules.
-	const assets = await loadPgliteAssets(dataDir);
+	const assets = await loadPgliteAssets();
 
 	await rm(pgDataPath, { recursive: true, force: true });
 	const db = assets
 		? new PGlite({
 				fs: new NodeFS(pgDataPath),
-				extensions: { vector: assets.vectorExtension },
 				wasmModule: assets.wasmModule,
 				fsBundle: assets.fsBundle,
 				loadDataDir: blob,
 			})
-		: new PGlite({ fs: new NodeFS(pgDataPath), extensions: { vector }, loadDataDir: blob });
+		: new PGlite({ fs: new NodeFS(pgDataPath), loadDataDir: blob });
 	await db.query('SELECT 1');
 	await db.close();
 	log.info(`Restored pgdata from ${backupFile}`);

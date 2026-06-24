@@ -151,7 +151,6 @@ audit_log.entity_id | uuid | uuid | nullable=YES | default=
 audit_log.entity_type | text | text | nullable=NO | default=
 audit_log.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
 audit_log.project_id | uuid | uuid | nullable=YES | default=
-audit_log.team_id | uuid | uuid | nullable=YES | default=
 ceo_conversations.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
 ceo_conversations.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
 ceo_conversations.member_id | uuid | uuid | nullable=NO | default=
@@ -222,11 +221,11 @@ document_revisions.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
 document_revisions.revision_number | integer | int4 | nullable=NO | default=
 documents.content | text | text | nullable=NO | default=''::text
 documents.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
-documents.embedding | USER-DEFINED | vector | nullable=YES | default=
 documents.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
 documents.last_updated_by_member_id | uuid | uuid | nullable=YES | default=
 documents.member_agent_id | uuid | uuid | nullable=YES | default=
 documents.project_id | uuid | uuid | nullable=YES | default=
+documents.search_tsv | tsvector | tsvector | nullable=YES | default=
 documents.slug | text | text | nullable=NO | default=
 documents.team_id | uuid | uuid | nullable=NO | default=
 documents.title | text | text | nullable=NO | default=''::text
@@ -436,10 +435,10 @@ skills.content_hash | text | text | nullable=NO | default=''::text
 skills.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
 skills.created_by_member_id | uuid | uuid | nullable=YES | default=
 skills.description | text | text | nullable=NO | default=''::text
-skills.embedding | USER-DEFINED | vector | nullable=YES | default=
 skills.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
 skills.is_active | boolean | bool | nullable=NO | default=true
 skills.name | text | text | nullable=NO | default=
+skills.search_tsv | tsvector | tsvector | nullable=YES | default=
 skills.slug | text | text | nullable=NO | default=
 skills.source_url | text | text | nullable=YES | default=
 skills.tags | jsonb | jsonb | nullable=NO | default='[]'::jsonb
@@ -456,10 +455,10 @@ task_comments.chosen_option | jsonb | jsonb | nullable=YES | default=
 task_comments.content | jsonb | jsonb | nullable=NO | default=
 task_comments.content_type | USER-DEFINED | comment_content_type | nullable=NO | default='text'::comment_content_type
 task_comments.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
-task_comments.embedding | USER-DEFINED | vector | nullable=YES | default=
 task_comments.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
 task_comments.parent_comment_id | uuid | uuid | nullable=YES | default=
 task_comments.public_id | text | text | nullable=NO | default=
+task_comments.search_tsv | tsvector | tsvector | nullable=YES | default=
 task_comments.task_id | uuid | uuid | nullable=NO | default=
 task_dependencies.blocked_by_task_id | uuid | uuid | nullable=NO | default=
 task_dependencies.created_at | timestamp with time zone | timestamptz | nullable=NO | default=now()
@@ -471,7 +470,6 @@ tasks.created_at | timestamp with time zone | timestamptz | nullable=NO | defaul
 tasks.created_by_member_id | uuid | uuid | nullable=YES | default=
 tasks.created_by_run_id | uuid | uuid | nullable=YES | default=
 tasks.description | text | text | nullable=NO | default=''::text
-tasks.embedding | USER-DEFINED | vector | nullable=YES | default=
 tasks.id | uuid | uuid | nullable=NO | default=gen_random_uuid()
 tasks.identifier | text | text | nullable=NO | default=
 tasks.labels | jsonb | jsonb | nullable=NO | default='[]'::jsonb
@@ -484,6 +482,7 @@ tasks.progress_summary_updated_by | uuid | uuid | nullable=YES | default=
 tasks.project_id | uuid | uuid | nullable=NO | default=
 tasks.rules | text | text | nullable=YES | default=
 tasks.runtime_type | USER-DEFINED | agent_runtime | nullable=YES | default=
+tasks.search_tsv | tsvector | tsvector | nullable=YES | default=
 tasks.status | USER-DEFINED | task_status | nullable=NO | default='backlog'::task_status
 tasks.team_id | uuid | uuid | nullable=NO | default=
 tasks.title | text | text | nullable=NO | default=
@@ -622,11 +621,9 @@ CREATE INDEX idx_approvals_status ON public.approvals USING btree (team_id, stat
 CREATE INDEX idx_approvals_team ON public.approvals USING btree (team_id)
 CREATE INDEX idx_assets_project ON public.assets USING btree (project_id)
 CREATE INDEX idx_audit_actor_connected_agent ON public.audit_log USING btree (actor_connected_agent_id) WHERE (actor_connected_agent_id IS NOT NULL)
-CREATE INDEX idx_audit_created ON public.audit_log USING btree (team_id, created_at)
 CREATE INDEX idx_audit_created_global ON public.audit_log USING btree (created_at)
 CREATE INDEX idx_audit_entity ON public.audit_log USING btree (entity_type, entity_id)
 CREATE INDEX idx_audit_project ON public.audit_log USING btree (project_id, created_at)
-CREATE INDEX idx_audit_team ON public.audit_log USING btree (team_id)
 CREATE INDEX idx_auth_methods_user ON public.user_auth_methods USING btree (user_id)
 CREATE INDEX idx_ceo_messages_conversation ON public.ceo_messages USING btree (conversation_id, created_at)
 CREATE UNIQUE INDEX idx_ceo_sessions_singleton ON public.ceo_sessions USING btree (member_id) WHERE (status = ANY (ARRAY['starting'::ceo_session_status, 'running'::ceo_session_status]))
@@ -635,9 +632,9 @@ CREATE INDEX idx_comment_attachments_comment ON public.comment_attachments USING
 CREATE INDEX idx_comment_reactions_comment ON public.comment_reactions USING btree (comment_id)
 CREATE INDEX idx_comments_author ON public.task_comments USING btree (author_member_id)
 CREATE INDEX idx_comments_author_connected_agent ON public.task_comments USING btree (author_connected_agent_id) WHERE (author_connected_agent_id IS NOT NULL)
-CREATE INDEX idx_comments_embedding ON public.task_comments USING hnsw (embedding vector_cosine_ops)
 CREATE INDEX idx_comments_parent ON public.task_comments USING btree (parent_comment_id) WHERE (parent_comment_id IS NOT NULL)
 CREATE UNIQUE INDEX idx_comments_public_id ON public.task_comments USING btree (task_id, public_id)
+CREATE INDEX idx_comments_search_tsv ON public.task_comments USING gin (search_tsv) WHERE (content_type = 'text'::comment_content_type)
 CREATE INDEX idx_comments_task ON public.task_comments USING btree (task_id)
 CREATE INDEX idx_connected_agents_status ON public.connected_agents USING btree (status)
 CREATE INDEX idx_costs_created ON public.cost_entries USING btree (created_at)
@@ -649,10 +646,10 @@ CREATE INDEX idx_costs_provider_config ON public.cost_entries USING btree (ai_pr
 CREATE INDEX idx_costs_task ON public.cost_entries USING btree (task_id)
 CREATE INDEX idx_document_revisions_document ON public.document_revisions USING btree (document_id)
 CREATE UNIQUE INDEX idx_documents_agent_system_prompt ON public.documents USING btree (member_agent_id) WHERE (type = 'agent_system_prompt'::document_type)
-CREATE INDEX idx_documents_embedding ON public.documents USING hnsw (embedding vector_cosine_ops)
 CREATE INDEX idx_documents_member_agent ON public.documents USING btree (member_agent_id) WHERE (member_agent_id IS NOT NULL)
 CREATE INDEX idx_documents_project ON public.documents USING btree (project_id) WHERE (project_id IS NOT NULL)
 CREATE UNIQUE INDEX idx_documents_project_doc ON public.documents USING btree (project_id, slug) WHERE (type = 'project_doc'::document_type)
+CREATE INDEX idx_documents_search_tsv ON public.documents USING gin (search_tsv)
 CREATE INDEX idx_documents_team ON public.documents USING btree (team_id)
 CREATE UNIQUE INDEX idx_documents_team_preferences ON public.documents USING btree (team_id) WHERE (type = 'team_preferences'::document_type)
 CREATE INDEX idx_documents_type_team ON public.documents USING btree (type, team_id)
@@ -685,17 +682,17 @@ CREATE INDEX idx_runs_status ON public.heartbeat_runs USING btree (status)
 CREATE INDEX idx_runs_task ON public.heartbeat_runs USING btree (task_id)
 CREATE INDEX idx_runs_team ON public.heartbeat_runs USING btree (team_id)
 CREATE INDEX idx_skill_revisions_skill ON public.skill_revisions USING btree (skill_id)
-CREATE INDEX idx_skills_embedding ON public.skills USING hnsw (embedding vector_cosine_ops)
+CREATE INDEX idx_skills_search_tsv ON public.skills USING gin (search_tsv)
 CREATE INDEX idx_task_attachments_task ON public.task_attachments USING btree (task_id)
 CREATE INDEX idx_task_deps_blocked ON public.task_dependencies USING btree (blocked_by_task_id)
 CREATE INDEX idx_task_deps_task ON public.task_dependencies USING btree (task_id)
 CREATE INDEX idx_task_sessions_member ON public.agent_task_sessions USING btree (member_id)
 CREATE INDEX idx_tasks_assignee ON public.tasks USING btree (assignee_id)
 CREATE INDEX idx_tasks_created_by_run ON public.tasks USING btree (created_by_run_id) WHERE (created_by_run_id IS NOT NULL)
-CREATE INDEX idx_tasks_embedding ON public.tasks USING hnsw (embedding vector_cosine_ops)
 CREATE INDEX idx_tasks_identifier ON public.tasks USING btree (team_id, identifier)
 CREATE INDEX idx_tasks_parent ON public.tasks USING btree (parent_task_id)
 CREATE INDEX idx_tasks_project ON public.tasks USING btree (project_id)
+CREATE INDEX idx_tasks_search_tsv ON public.tasks USING gin (search_tsv)
 CREATE INDEX idx_tasks_status ON public.tasks USING btree (team_id, status)
 CREATE INDEX idx_tasks_team ON public.tasks USING btree (team_id)
 CREATE INDEX idx_ttat_agent_type ON public.team_template_agent_types USING btree (agent_type_id)
@@ -789,7 +786,6 @@ assets | u | UNIQUE (project_id, original_filename)
 audit_log | f | FOREIGN KEY (actor_connected_agent_id) REFERENCES connected_agents(id) ON DELETE SET NULL
 audit_log | f | FOREIGN KEY (actor_member_id) REFERENCES members(id) ON DELETE SET NULL
 audit_log | f | FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
-audit_log | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
 audit_log | p | PRIMARY KEY (id)
 ceo_conversations | f | FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
 ceo_conversations | f | FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE

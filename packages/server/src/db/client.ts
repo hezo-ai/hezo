@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
-import { vector } from '@electric-sql/pglite/vector';
 import { logger } from '../logger';
 
 const log = logger.child('db');
@@ -73,17 +72,16 @@ export async function openPersistentDb(
 
 	// In the compiled binary, PGlite's WASM/data assets are embedded and injected
 	// from memory; in dev this is null and PGlite resolves them from node_modules.
-	const assets = await loadPgliteAssets(dataDir);
+	const assets = await loadPgliteAssets();
 
 	try {
 		const db = assets
 			? new PGlite({
 					fs: new NodeFS(pgDataPath),
-					extensions: { vector: assets.vectorExtension },
 					wasmModule: assets.wasmModule,
 					fsBundle: assets.fsBundle,
 				})
-			: new PGlite({ fs: new NodeFS(pgDataPath), extensions: { vector } });
+			: new PGlite({ fs: new NodeFS(pgDataPath) });
 		await db.query('SELECT 1');
 		return db;
 	} catch (err) {
@@ -107,5 +105,5 @@ export async function createDb(dataDir: string): Promise<PGlite> {
 }
 
 export async function createMemoryDb(): Promise<PGlite> {
-	return new PGlite({ extensions: { vector } });
+	return new PGlite();
 }

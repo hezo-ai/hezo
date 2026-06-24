@@ -1,15 +1,15 @@
 import { HIGHLIGHT_SENTINEL } from '@hezo/shared';
 
 /**
- * Builds the gray preview line for a search result. Search ranks by embedding
- * similarity, so the typed term often isn't in the text at all (a semantic hit) —
- * when it *is*, we centre a window on it and wrap each occurrence in
- * {@link HIGHLIGHT_SENTINEL} so the web palette can render `<mark>`; when it
- * isn't, we fall back to the lead text (today's behaviour) with no markers.
+ * Builds the gray preview line for a search result. Full-text search matches by
+ * keyword + stemming, so the typed term (or its stem) is usually present in the
+ * text — we centre a window on the first occurrence and wrap each one in
+ * {@link HIGHLIGHT_SENTINEL} so the web palette can render `<mark>`. When the
+ * stemmer can't line the term up with the stored text we fall back to the lead
+ * text with no markers.
  *
- * Pure (no DB / model) so it runs identically under Node (vitest), Bun (prod),
- * and is unit-testable in isolation. Generalises `buildSnippet` in
- * `routes/inbox.ts`.
+ * Pure (no DB) so it runs identically under Node (vitest) and Bun (prod), and is
+ * unit-testable in isolation. Generalises `buildSnippet` in `routes/inbox.ts`.
  */
 
 const SNIPPET_MAX_LEN = 200;
@@ -160,14 +160,4 @@ export function buildHighlightedSnippet(
 	const prefix = start > 0 ? '…' : '';
 	const suffix = end < text.length ? '…' : '';
 	return { snippet: `${prefix}${windowed}${suffix}`, matched: true };
-}
-
-/**
- * Whether any query term occurs (literally or by stem) in `text`. Used to check a
- * result's title so a title-only match isn't mislabeled a semantic-only hit.
- */
-export function hasLiteralMatch(text: string | null | undefined, query: string): boolean {
-	const normalized = normalize(text);
-	if (!normalized) return false;
-	return findRanges(normalized, queryTerms(query)).length > 0;
 }

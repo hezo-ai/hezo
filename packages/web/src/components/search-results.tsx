@@ -118,14 +118,6 @@ function SearchResultRow({ result, onSelect }: { result: SearchResult; onSelect:
 			<span className="flex min-w-0 flex-col">
 				<span className="flex min-w-0 items-center gap-1.5">
 					<span className="truncate text-[13px] text-text-1">{result.title}</span>
-					{result.semanticOnly && (
-						<span
-							className="shrink-0 rounded bg-surface-2 px-1 text-[10px] uppercase tracking-wide text-text-3"
-							data-testid="search-result-related"
-						>
-							related
-						</span>
-					)}
 				</span>
 				{result.snippet && (
 					<span className="line-clamp-2 text-xs text-text-3">

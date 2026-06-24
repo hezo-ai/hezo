@@ -207,13 +207,6 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			.reconcileOnStartup()
 			.catch((err) => log.error('CEO session reconciliation failed:', err))
 			.finally(() => ceoSessionManager.start());
-		// Initialize embedding model in background (downloads on first use)
-		import('./services/embeddings').then(({ initializeEmbeddingModel }) => {
-			const { join } = require('node:path') as typeof import('node:path');
-			initializeEmbeddingModel(join(config.dataDir, 'models')).catch((err) =>
-				log.error('Embedding model init failed:', err),
-			);
-		});
 	});
 
 	const app = buildApp(

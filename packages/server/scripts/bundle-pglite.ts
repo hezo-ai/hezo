@@ -1,12 +1,12 @@
 import { cp, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-// PGlite loads its runtime assets (the Postgres WASM, the initdb WASM, the
-// packed filesystem, and the pgvector bundle) via `new URL(..., import.meta.url)`,
-// which `bun build --compile` does NOT embed. Copy them into the source tree so
-// `db/pglite-assets.ts` can embed them with `import ... with { type: 'file' }`
-// and feed them to PGlite from memory in the compiled binary.
-const ASSETS = ['postgres.wasm', 'postgres.data', 'vector.tar.gz'];
+// PGlite loads its runtime assets (the Postgres WASM and the packed filesystem)
+// via `new URL(..., import.meta.url)`, which `bun build --compile` does NOT embed.
+// Copy them into the source tree so `db/pglite-assets.ts` can embed them with
+// `import ... with { type: 'file' }` and feed them to PGlite from memory in the
+// compiled binary.
+const ASSETS = ['postgres.wasm', 'postgres.data'];
 
 const pgliteEntry = Bun.resolveSync('@electric-sql/pglite', import.meta.dir);
 const distDir = dirname(pgliteEntry);

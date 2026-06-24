@@ -113,8 +113,8 @@ function scopeWhere(scope: DocumentScope, alias = ''): { sql: string; params: un
 	};
 }
 
-// Explicit column list — `embedding` (vector(384)) is server-internal and
-// adds ~4KB of float noise per row in JSON responses for zero downstream value.
+// Explicit column list — the generated search_tsv column (full-text index) is
+// server-internal and never serialized to API responses.
 const SELECT_WITH_AUTHOR = `SELECT d.id, d.team_id, d.project_id, d.member_agent_id,
 	        d.type, d.slug, d.title, d.content,
 	        d.last_updated_by_member_id, d.created_at, d.updated_at,

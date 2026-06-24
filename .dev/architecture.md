@@ -48,7 +48,7 @@ manager (agents bring their own models and runtimes).
 |---|---|
 | Server | Hono (TypeScript) on the **Bun** runtime |
 | Binary | `bun build --compile` → one cross-platform executable |
-| Database | **PGlite** (embedded Postgres, in-process) + **pgvector**, persisted to `~/.hezo/pgdata` |
+| Database | **PGlite** (embedded Postgres, in-process), persisted to `~/.hezo/pgdata` |
 | Frontend | React 19 + TanStack Router + TanStack Query, Tailwind + Radix UI; bundled into the binary |
 | Realtime | WebSocket row-change events → client invalidates React Query keys |
 | Agent interface | MCP (Streamable HTTP) at `POST /mcp` via `@modelcontextprotocol/sdk` |
@@ -113,8 +113,7 @@ an agent-maintained `progress_summary`. Numbering is atomic via `project_task_co
 `system` (timeline entries like `status_change`/`task_link`), `execution` (auto-written
 on run completion), `preview`, `action`,
 `connect_required`, `credential_request`. Each comment carries a `public_id` slug for
-`#comment-<id>` deep-links and a `vector(384)` embedding (text comments only) for
-semantic search. `comment_reactions` holds emoji reactions.
+`#comment-<id>` deep-links. `comment_reactions` holds emoji reactions.
 
 **Secrets, OAuth, MCP connectors.** `secrets` stores AES-256-GCM ciphertext gated by
 `allowed_hosts` (§ 7). `oauth_connections` records connected GitHub/SaaS accounts; their
@@ -149,7 +148,7 @@ interrupted run still counts against budgets.
 **Docs, skills, assets.** `documents` is one table backing three Markdown kinds by
 `type` (`project_doc`, `team_preferences`, `agent_system_prompt`), each with partial
 unique scoping and full revision history in `document_revisions`. `skills` is the
-instance/team reference store (manifest-injected into runs, semantic-searchable) with
+instance/team reference store (manifest-injected into runs, full-text-searchable) with
 `skill_revisions` history. `assets` + `task_attachments`/`comment_attachments` handle
 uploaded files (bytes on local disk, served over HMAC-signed URLs).
 
@@ -620,9 +619,8 @@ platform (linux/darwin/windows × x64/arm64) plus a `SHA256SUMS` manifest;
 what's reachable through the **module graph** (not runtime `readFile`/`new URL`), every
 asset is pulled in as a static import and served **from memory**: migrations
 (`migrations-bundle.json`), agent roles (`agents-bundle.json`), the React frontend
-(`static-bundle.json`, base64), and the PGlite runtime (`postgres.wasm`/`.data` embedded;
-the lone exception is the ~330 KB pgvector tarball, extracted once to
-`<dataDir>/.pglite/`). In dev (`bun run`) the bundles don't exist and every loader falls
+(`static-bundle.json`, base64), and the PGlite runtime (`postgres.wasm`/`.data`
+embedded). In dev (`bun run`) the bundles don't exist and every loader falls
 back to the filesystem. The version is injected at compile time
 (`--define process.env.HEZO_VERSION`) and surfaced at `/api/status`.
 
@@ -649,9 +647,7 @@ version from Conventional Commits and opens a `release/<version>` PR; merging fi
 running instance polls `GET /api/updates/latest` (cached ~1 h, fails soft) and shows a
 dismissible banner.
 
-**Known limits.** Semantic search is unavailable in the standalone binary (the embedding
-model is a native addon marked `--external`; it fails soft — running from source keeps it).
-macOS binaries are unsigned (built on Linux; clear quarantine with `xattr -d`).
+**Known limits.** macOS binaries are unsigned (built on Linux; clear quarantine with `xattr -d`).
 
 ---
 
@@ -671,7 +667,7 @@ shapes.
 - **Agents & runs** — `agents` (hire/fire/pause/resume, system-prompt revisions),
   `execution-locks`, `queued-wakeups`, `ceo-chat` (live CEO session).
 - **Tasks & collaboration** — `tasks`, `comments`, `mentions`, `assets`, `inbox`,
-  `search` (semantic).
+  `search` (full-text).
 - **Money & governance** — `costs` (project-scoped, `group_by=day` for charts),
   `model-pricing`, `approvals`, `audit-log`.
 - **Integrations & secrets** — `ai-providers`, `secrets`, `mcp-connections`, `oauth`

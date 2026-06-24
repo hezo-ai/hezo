@@ -29,7 +29,7 @@ export const queryKeys = {
 	instanceMentionsResolve: (key: KeyParam) => ['instance', 'mentions', 'resolve', key],
 	/** The single global CEO chat conversation (history + streamed messages). */
 	ceoConversation: () => ['ceo', 'conversation'],
-	/** Global semantic search (Cmd/Ctrl+K palette), keyed by query + scope. */
+	/** Global full-text search (Cmd/Ctrl+K palette), keyed by query + scope. */
 	search: (q: string, scope: string) => ['search', q, scope],
 
 	teams: {

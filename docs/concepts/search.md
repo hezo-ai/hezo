@@ -37,19 +37,17 @@ like any other team. Skills are instance-wide, so they turn up wherever you sear
 Scoping is enforced on the server: content from a team you can't see never appears in
 your results.
 
-## Finds by meaning, not just keywords
+## Keyword search, with highlighting
 
-Hezo ranks results by **meaning**, not only matching words — so a search for "auth bug"
-can surface a task titled "login returns 401" even with no words in common. Where your
-literal words do appear they're **highlighted** in the snippet; a result matched only by
-meaning is tagged **related** so you know why it's there. Type at least two characters to
-begin, and results refine as you type.
+Hezo runs a **full-text** search over your content: it matches the words you type — and
+their grammatical variants, so "logins" finds "login" — and ranks the strongest matches
+first, with titles weighted above body text. Where your words appear they're
+**highlighted** in the snippet. Type at least two characters to begin, and results refine
+as you type.
 
 ## Indexed on your own server
 
-Search is powered by an embedding index that Hezo builds and queries **entirely on your
-own server** — your tasks, comments, and documents are never handed to an outside search
-service, in keeping with the rest of Hezo. The model loads in the background a moment
-after the server starts (search will say it's loading until it's ready), and new or
-edited content is indexed automatically just after you save it, so a brand-new task can
-take a few seconds to become findable.
+Search runs **entirely on your own server** — your tasks, comments, and documents are
+never handed to an outside search service, in keeping with the rest of Hezo. The index is
+built right into your database and kept in sync automatically, so new or edited content is
+findable the instant you save it: there's no model to download and nothing to wait for.
