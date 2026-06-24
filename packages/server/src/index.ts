@@ -8,6 +8,7 @@ import { DbNewerThanAppError, MigrationFailedError } from './db/migrate-errors';
 import type { AuthInfo } from './lib/types';
 import { logger, setLogLevel } from './logger';
 import { canAuthAccessTeam, loadAdminAuth, verifyToken } from './middleware/auth';
+import { getActiveRuntime, setActiveRuntime, shutdownRuntime } from './runtime-control';
 import type { ContainerLogStreamer } from './services/container-logs';
 import { setKeepOldContainers } from './services/containers';
 import { DockerClient } from './services/docker';
@@ -15,9 +16,11 @@ import { evaluateDockerPreflight, formatDockerPreflightMessage } from './service
 import { getSharedImageBuildTracker } from './services/image-build-tracker';
 import type { LogStreamBroker } from './services/log-stream-broker';
 import { formatPortInUseMessage, probePort } from './services/port-preflight';
+import { isAutoUpdateEnabled } from './services/updater';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import { handleWsSubscribe, handleWsUnsubscribe } from './services/ws-subscribe-handler';
 import { type StartupResult, startup } from './startup';
+import { runSupervisor } from './supervisor';
 
 const log = logger.child('server');
 
@@ -48,14 +51,11 @@ async function shutdownPreviousRuntime(): Promise<void> {
 }
 
 function registerRuntime(result: StartupResult): void {
+	setActiveRuntime(result);
 	globalThis.__hezoDevRuntime = {
 		shutdown: async () => {
 			serverReady = false;
-			result.jobManager.shutdown();
-			await result.ceoSessionManager.stop();
-			await result.egressProxy.releaseAll();
-			await result.sshAgentServer.releaseAll();
-			await result.db.close();
+			await shutdownRuntime(result);
 		},
 	};
 }
@@ -84,7 +84,38 @@ if (await runRestore()) {
 
 const config = parseConfig();
 setLogLevel(config.logLevel);
+
+// Self-update supervisor. A compiled binary with auto-update enabled runs as a
+// thin supervisor that spawns the real server as a worker (HEZO_WORKER=1),
+// applies staged updates between restarts, and otherwise propagates the worker's
+// exit code. The worker re-enters this file with HEZO_WORKER set and skips this
+// branch, running the server below. Dev (`bun run`, non-compiled) and the
+// `restore` subcommand never reach here, so they never supervise. runSupervisor
+// never returns.
+if (!process.env.HEZO_WORKER && isAutoUpdateEnabled()) {
+	await runSupervisor(config.dataDir);
+}
+
 setKeepOldContainers(config.keepOldContainers);
+
+// Graceful shutdown on termination signals (the supervisor forwards these to the
+// worker). Close the runtime cleanly, then exit 0 so the supervisor sees a
+// normal — non-sentinel — code and exits too rather than relaunching.
+for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+	process.on(sig, () => {
+		void (async () => {
+			const runtime = getActiveRuntime();
+			if (runtime) {
+				try {
+					await shutdownRuntime(runtime);
+				} catch (err) {
+					log.error('Graceful shutdown error:', err);
+				}
+			}
+			process.exit(0);
+		})();
+	});
+}
 
 // Port preflight: Bun binds the port itself from the default export below, so an
 // already-taken port would otherwise surface as a bare `EADDRINUSE` crash. Probe

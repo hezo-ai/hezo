@@ -56,7 +56,7 @@ import { tasksRoutes } from './routes/tasks';
 import { teamTemplatesRoutes } from './routes/team-templates';
 import { teamsRoutes } from './routes/teams';
 import { uiStateRoutes } from './routes/ui-state';
-import { updatesRoutes } from './routes/updates';
+import { buildUpdatesRoutes } from './routes/updates';
 import { AuthChallengeStore } from './services/auth-challenges';
 import { CeoSessionManager } from './services/ceo-session-manager';
 import { ContainerLogStreamer } from './services/container-logs';
@@ -80,6 +80,8 @@ export type MasterKeyState = 'unset' | 'locked' | 'unlocked';
 export interface AppConfig {
 	dataDir: string;
 	webUrl: string;
+	/** A master key was configured at startup (env/CLI), so the instance auto-unlocks after a restart. */
+	autoUnlock?: boolean;
 }
 
 export interface StartupResult {
@@ -215,6 +217,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		{
 			dataDir: config.dataDir,
 			webUrl: config.webUrl,
+			autoUnlock: config.masterKey !== undefined,
 		},
 		docker,
 		wsManager,
@@ -400,7 +403,7 @@ export function buildApp(
 	app.route('/api', oauthRoutes);
 	app.route('/api', previewRoutes);
 	app.route('/api', searchRoutes);
-	app.route('/api', updatesRoutes);
+	app.route('/api', buildUpdatesRoutes({ autoUnlock: config.autoUnlock ?? false }));
 	app.route('/api', ceoChatRoutes);
 
 	// Frontend (SPA) serving. The compiled binary serves from the in-memory

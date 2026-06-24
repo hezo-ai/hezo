@@ -195,6 +195,7 @@ Each feature links to its documentation.
 - **[External MCP servers](./docs/mcp/connecting-mcp-servers.md)** — give your agents the tools you already use, scoped per instance, team, or project.
 - **[Self-hosted single binary](./docs/getting-started/installation.md)** — no runtime or external database; Docker is the only prerequisite. [Configurable](./docs/deployment/configuration.md) by flag or env, with a small [CLI](./docs/reference/cli.md).
 - **[Deploy anywhere Docker runs](./docs/deployment/self-hosting.md)** — laptop, home server, or [cloud VPS](./docs/deployment/cloud.md), with [secure remote access](./docs/deployment/secure-remote-access.md) and [safe-rollback backups](./docs/deployment/backup-and-recovery.md).
+- **[In-app self-update](./docs/deployment/self-hosting.md#updating)** — Hezo checks for new releases, downloads and verifies the binary, then swaps it in and restarts from the web UI — no manual binary replacement.
 - **Mobile-first web app** — oversee, chat, and approve from any device.
 
 ## How Hezo compares

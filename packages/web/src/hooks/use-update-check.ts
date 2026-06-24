@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
+import type { UpdateState } from '@hezo/shared';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryKeys } from '../lib/query-keys';
 
@@ -7,6 +8,17 @@ export interface UpdateInfo {
 	latest: string | null;
 	updateAvailable: boolean;
 	url: string | null;
+}
+
+export interface UpdateStatusInfo extends UpdateInfo {
+	/** Lifecycle of any staged update on the server. */
+	state: UpdateState;
+	targetVersion: string | null;
+	error: string | null;
+	/** A master key is configured, so the instance auto-unlocks after a restart. */
+	autoUnlock: boolean;
+	/** The server can actually apply-and-restart (supervised compiled binary). */
+	canApply: boolean;
 }
 
 /**
@@ -20,5 +32,41 @@ export function useUpdateCheck() {
 		staleTime: 60 * 60 * 1000,
 		gcTime: 60 * 60 * 1000,
 		retry: false,
+	});
+}
+
+/**
+ * Latest-release info plus the staged-update lifecycle and whether this instance
+ * can apply-and-restart. Drives the "Update & restart" affordance.
+ */
+export function useUpdateStatus() {
+	return useQuery({
+		queryKey: queryKeys.updateStatus(),
+		queryFn: () => api.get<UpdateStatusInfo>('/api/updates/status'),
+		staleTime: 60 * 60 * 1000,
+		gcTime: 60 * 60 * 1000,
+		retry: false,
+	});
+}
+
+/** Kick a background download+verify+stage of the latest release (superuser). */
+export function useDownloadUpdate() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: () =>
+			api.post<{ state: UpdateState; targetVersion: string }>('/api/updates/download'),
+		onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.updateStatus() }),
+	});
+}
+
+/**
+ * Apply the staged update: the server shuts down and exits with the restart
+ * sentinel, the supervisor swaps the binary and relaunches. The response lands
+ * before the process exits; the caller then shows the restart overlay.
+ */
+export function useApplyUpdate() {
+	return useMutation({
+		mutationFn: () =>
+			api.post<{ state: UpdateState; targetVersion: string | null }>('/api/updates/apply'),
 	});
 }

@@ -22,6 +22,8 @@ into a service definition while still overriding per run.
 | `--open` | `HEZO_OPEN` | off | Open the web app in your browser on startup. |
 | `--log-level <level>` | `HEZO_LOG_LEVEL` | `info` | Logging verbosity: `debug`, `info`, `warn`, or `error`. |
 | `--keep-old-containers` | `HEZO_KEEP_OLD_CONTAINERS` | off | Keep old project containers instead of removing them — for debugging a crashed container. |
+| — | `HEZO_DISABLE_AUTO_UPDATE` | off | Disable the in-app auto-update (release check, download, and "Update & restart"). |
+| — | `HEZO_UPDATE_CHECK_CRON` | `0 0 4 * * *` | Cron schedule (seconds-precision) for the daily check that downloads and stages a newer release. |
 
 ## Examples
 
