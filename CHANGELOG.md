@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.4.0 - 2026-06-24
+
+### Features
+
+- in-app self-update via supervisor process ([#378](https://github.com/hezo-ai/hezo/pull/378))
+- redesign AI providers settings list + add modal, settings breadcrumbs ([#377](https://github.com/hezo-ai/hezo/pull/377))
+- **web:** restyle settings version line and add feedback link ([#376](https://github.com/hezo-ai/hezo/pull/376))
+- let the Captain create hire proposals via MCP ([#373](https://github.com/hezo-ai/hezo/pull/373))
+- **projects:** gate coherence auto-run to direct project creation ([#371](https://github.com/hezo-ai/hezo/pull/371))
+- modal backdrop for the expanded CEO chat + Escape to close ([#370](https://github.com/hezo-ai/hezo/pull/370))
+- expand-to-fullscreen and unread indicator for the CEO chat ([#369](https://github.com/hezo-ai/hezo/pull/369))
+- replace embedding search with Postgres full-text search ([#367](https://github.com/hezo-ai/hezo/pull/367))
+- **server:** suggest --port when the configured port is already in use ([#366](https://github.com/hezo-ai/hezo/pull/366))
+
+### Bug Fixes
+
+- **dev:** use a project-local data dir for the dev server ([#365](https://github.com/hezo-ai/hezo/pull/365))
+
+### Documentation
+
+- trim README intro and add X social links
+- condense README features and clarify how it works
+- correct config reference claim that every setting has a CLI flag ([#379](https://github.com/hezo-ai/hezo/pull/379))
+- explain the Hezo name in the introduction ([#375](https://github.com/hezo-ai/hezo/pull/375))
+- **readme:** add product screenshot to README splash ([#374](https://github.com/hezo-ai/hezo/pull/374))
+- move Quickstart section near the top of README ([#372](https://github.com/hezo-ai/hezo/pull/372))
+
+### Tests
+
+- fix chart-format locale failure and quiet test log output ([#382](https://github.com/hezo-ai/hezo/pull/382))
+
+### Chores
+
+- update tagline to 'A whole AI workforce. And you're the boss.'
+- add AGPL-3.0 license
+
+### Other
+
+- Add quiet-test-output principle for engineer and qa ([#381](https://github.com/hezo-ai/hezo/pull/381))
+- Unify API keys + connected agents into one instance-scoped credential ([#380](https://github.com/hezo-ai/hezo/pull/380))
+- Update README with CI badge and remove diagram
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.3.0...0.4.0
+
 ## 0.3.0 - 2026-06-24
 
 ### Features
