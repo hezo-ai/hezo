@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { deriveAuthKeyPair, deriveUnlockKey } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
-import { parseConfig } from '../src/cli';
+import { parseConfig, resolveDevDataDir } from '../src/cli';
 
 // Canonical BIP39 vector — parseMasterKey only accepts a valid mnemonic.
 const PHRASE =
@@ -148,5 +148,46 @@ describe('parseConfig', () => {
 			const config = parseConfig(argv('--port', '8080'), { HEZO_PORT: '' });
 			expect(config.port).toBe(8080);
 		});
+	});
+});
+
+describe('resolveDevDataDir', () => {
+	// `bun run dev` passes an absolute project-local default here.
+	const DEFAULT = '/repo/.hezo-dev';
+
+	it('uses the project-local default when neither env nor flag is set', () => {
+		const r = resolveDevDataDir(DEFAULT, undefined, EMPTY_ENV);
+		expect(r.dataDir).toBe(resolve(DEFAULT));
+		expect(r.usedDefault).toBe(true);
+	});
+
+	it('honors --data-dir over the default', () => {
+		const r = resolveDevDataDir(DEFAULT, '/cli/path', EMPTY_ENV);
+		expect(r.dataDir).toBe('/cli/path');
+		expect(r.usedDefault).toBe(false);
+	});
+
+	it('HEZO_DATA_DIR wins over --data-dir', () => {
+		const r = resolveDevDataDir(DEFAULT, '/cli/path', { HEZO_DATA_DIR: '/env/path' });
+		expect(r.dataDir).toBe('/env/path');
+		expect(r.usedDefault).toBe(false);
+	});
+
+	it('expands a leading ~ in HEZO_DATA_DIR like the server does', () => {
+		const r = resolveDevDataDir(DEFAULT, undefined, { HEZO_DATA_DIR: '~/custom' });
+		expect(r.dataDir).toBe(resolve(homedir(), 'custom'));
+		expect(r.usedDefault).toBe(false);
+	});
+
+	it('expands a leading ~ in --data-dir', () => {
+		const r = resolveDevDataDir(DEFAULT, '~/custom', EMPTY_ENV);
+		expect(r.dataDir).toBe(resolve(homedir(), 'custom'));
+		expect(r.usedDefault).toBe(false);
+	});
+
+	it('ignores an empty HEZO_DATA_DIR and falls back to the default', () => {
+		const r = resolveDevDataDir(DEFAULT, undefined, { HEZO_DATA_DIR: '' });
+		expect(r.dataDir).toBe(resolve(DEFAULT));
+		expect(r.usedDefault).toBe(true);
 	});
 });

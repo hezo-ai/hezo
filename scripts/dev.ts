@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import { existsSync, rmSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { Command } from 'commander';
+import { resolveDevDataDir } from '../packages/server/src/cli';
 import { clearAllProjectWorkspaces } from '../packages/server/src/services/workspace';
 
 const ROOT = resolve(import.meta.dir, '..');
@@ -38,7 +38,14 @@ const program = new Command()
 
 const opts = program.opts();
 
-const dataDir = opts.dataDir ? resolve(opts.dataDir) : resolve(homedir(), '.hezo');
+// Default to a project-local, gitignored dir (<repo>/.hezo-dev) so local dev
+// never shares the production database at ~/.hezo. An explicit --data-dir or
+// HEZO_DATA_DIR still wins (and is then already visible to the spawned server).
+const { dataDir, usedDefault } = resolveDevDataDir(
+	resolve(ROOT, '.hezo-dev'),
+	opts.dataDir,
+	process.env,
+);
 
 if (opts.reset) {
 	const pgDataPath = resolve(dataDir, 'pgdata');
@@ -61,6 +68,9 @@ const webPort = process.env.HEZO_WEB_PORT ?? '5173';
 const hasWebUrl = forwardedArgs.some((a) => a === '--web-url' || a.startsWith('--web-url='));
 const serverArgs: string[] = [
 	...(hasWebUrl ? [] : ['--web-url', `http://localhost:${webPort}`]),
+	// Only inject when we fell back to the dev default — otherwise the server
+	// already sees the user's choice via inherited env or forwardedArgs.
+	...(usedDefault ? ['--data-dir', dataDir] : []),
 	...forwardedArgs,
 ];
 
