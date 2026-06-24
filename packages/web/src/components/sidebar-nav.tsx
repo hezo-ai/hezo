@@ -1,5 +1,6 @@
 import { Link, useMatchRoute } from '@tanstack/react-router';
 import { Plus } from 'lucide-react';
+import { Fragment } from 'react';
 import { Tooltip } from './ui/tooltip';
 
 interface SidebarNavItem {
@@ -14,6 +15,43 @@ interface SidebarNavItem {
 function CountBadge({ value }: { value: number | undefined }) {
 	if (!value) return null;
 	return <span className="ml-auto pl-2 font-mono text-[11px] text-text-3">{value}</span>;
+}
+
+/**
+ * Renders an item's nested sub-items, indented a level beyond the parent. The
+ * caller decides whether to mount this (a sub-item disclosure opens when the
+ * parent — or one of these sub-items — is the active route).
+ */
+function SubItemList({
+	subItems,
+	matchRoute,
+}: {
+	subItems: SidebarNavItem[];
+	matchRoute: ReturnType<typeof useMatchRoute>;
+}) {
+	return (
+		<>
+			{subItems.map((subItem) => {
+				const isSubActive = matchRoute({ to: subItem.to, params: subItem.params });
+				return (
+					<Link
+						key={`${subItem.to}-${JSON.stringify(subItem.params)}`}
+						to={subItem.to}
+						params={subItem.params ?? {}}
+						data-testid={subItem.testId}
+						className={`flex items-center text-left text-[12px] pl-7 pr-2 py-0.5 rounded-md transition-colors ${
+							isSubActive
+								? 'text-text-1 font-medium bg-surface-2'
+								: 'text-text-2 hover:text-text-1 hover:bg-surface-2'
+						}`}
+					>
+						{subItem.label}
+						<CountBadge value={subItem.count} />
+					</Link>
+				);
+			})}
+		</>
+	);
 }
 
 export interface SidebarNavSection {
@@ -46,10 +84,16 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 					{(!section.collapsible || !section.collapsed) &&
 						section.items.map((item) => {
 							const isActive = matchRoute({ to: item.to, params: item.params, fuzzy: true });
+							// A sub-item disclosure also stays open while the user is on one of the
+							// sub-item routes (which don't fuzzy-match the parent's own route).
+							const subActive =
+								item.subItems?.some((s) =>
+									matchRoute({ to: s.to, params: s.params, fuzzy: true }),
+								) ?? false;
 							const paddingClass = section.title ? 'pl-4 pr-2 py-0.5' : 'px-2.5 py-1';
-							return (
+							const key = `${item.to}-${JSON.stringify(item.params)}`;
+							const link = (
 								<Link
-									key={`${item.to}-${JSON.stringify(item.params)}`}
 									to={item.to}
 									params={item.params ?? {}}
 									data-testid={item.testId}
@@ -62,6 +106,17 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 									{item.label}
 									<CountBadge value={item.count} />
 								</Link>
+							);
+							// Plain items render exactly as before (no wrapper). Items with
+							// sub-items wrap so the disclosure can sit beneath the parent.
+							if (!item.subItems?.length) return <Fragment key={key}>{link}</Fragment>;
+							return (
+								<div key={key}>
+									{link}
+									{(isActive || subActive) && (
+										<SubItemList subItems={item.subItems} matchRoute={matchRoute} />
+									)}
+								</div>
 							);
 						})}
 					{section.collapsible &&
@@ -81,29 +136,9 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 									>
 										{item.label}
 									</Link>
-									{isActive &&
-										item.subItems?.map((subItem) => {
-											const isSubActive = matchRoute({
-												to: subItem.to,
-												params: subItem.params,
-											});
-											return (
-												<Link
-													key={`${subItem.to}-${JSON.stringify(subItem.params)}`}
-													to={subItem.to}
-													params={subItem.params ?? {}}
-													data-testid={subItem.testId}
-													className={`flex items-center text-left text-[12px] pl-7 pr-2 py-0.5 rounded-md transition-colors ${
-														isSubActive
-															? 'text-text-1 font-medium bg-surface-2'
-															: 'text-text-2 hover:text-text-1 hover:bg-surface-2'
-													}`}
-												>
-													{subItem.label}
-													<CountBadge value={subItem.count} />
-												</Link>
-											);
-										})}
+									{isActive && item.subItems && (
+										<SubItemList subItems={item.subItems} matchRoute={matchRoute} />
+									)}
 								</div>
 							);
 						})}
