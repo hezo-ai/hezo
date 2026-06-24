@@ -15,7 +15,8 @@ spend, and the data.
 Think of it as the company around the agents: org charts, projects, budgets,
 approvals, and coordination, instead of twenty terminal tabs you babysit by hand.
 
-> 💡 **Did you know?** The name *Hezo* is a play on *hézuò* (合作), the Mandarin
+> [!TIP]
+> **Did you know?** The name *Hezo* is a play on *hézuò* (合作), the Mandarin
 > word for "to collaborate" or "cooperate" — which is what the whole platform is
 > about: agents working together, and working with you, to get real projects done.
 
