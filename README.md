@@ -255,14 +255,6 @@ Every feature below links to its documentation.
 | Spend control | Watch the meter | Vendor billing | Do it yourself | **Hard budget caps** |
 | You provide | Prompts, by hand | Vendor config | Code | **Goals and rules** |
 
-## Hezo is not…
-
-- **…a chatbot.** Agents have jobs, projects, and reporting lines.
-- **…an agent framework or SDK.** It's the company *around* the agents, not a library to
-  build one.
-- **…a hosted SaaS.** You run it yourself, on your own hardware.
-- **…a no-code workflow builder.** Agents reason and act; you set the goals and the rules.
-
 ## Quickstart
 
 Hezo ships as a **single self-contained binary** — nothing to compile, no runtime or
