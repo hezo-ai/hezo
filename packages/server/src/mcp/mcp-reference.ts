@@ -170,7 +170,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		category: 'Agents & hiring',
 		returns:
 			'`{ approval_id, status, payload }` for the new pending hire approval, or `{ error }` if the spec is rejected (missing title, invalid effort/budget, reserved or duplicate slug, or an unknown `task_id`).',
-		auth: "A team Captain (for its own team) or the CEO (for any team — pass `project`, including HQ). The proposal surfaces as a pending approval for the admin.",
+		auth: 'A team Captain (for its own team) or the CEO (for any team — pass `project`, including HQ). The proposal surfaces as a pending approval for the admin.',
 	},
 	update_hire_proposal: {
 		category: 'Agents & hiring',

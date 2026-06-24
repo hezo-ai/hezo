@@ -163,10 +163,9 @@ describe('MCP tool create_hire_proposal', () => {
 			system_prompt: 'You drive growth experiments.',
 		});
 		expect(result.error).toBeUndefined();
-		const row = await db.query<{ team_id: string }>(
-			'SELECT team_id FROM approvals WHERE id = $1',
-			[result.approval_id],
-		);
+		const row = await db.query<{ team_id: string }>('SELECT team_id FROM approvals WHERE id = $1', [
+			result.approval_id,
+		]);
 		expect(row.rows[0].team_id).toBe(teamId);
 	});
 
@@ -181,10 +180,9 @@ describe('MCP tool create_hire_proposal', () => {
 			system_prompt: 'You support instance-wide operations.',
 		});
 		expect(result.error).toBeUndefined();
-		const row = await db.query<{ team_id: string }>(
-			'SELECT team_id FROM approvals WHERE id = $1',
-			[result.approval_id],
-		);
+		const row = await db.query<{ team_id: string }>('SELECT team_id FROM approvals WHERE id = $1', [
+			result.approval_id,
+		]);
 		expect(row.rows[0].team_id).toBe(DEFAULT_TEAM_ID);
 	});
 
