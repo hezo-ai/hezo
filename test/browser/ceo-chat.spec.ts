@@ -29,7 +29,7 @@ test.describe('CEO chat widget — responsive layout', () => {
 		expect(mobileBox).not.toBeNull();
 		expect(mobileBox?.width ?? 0).toBeGreaterThan(340);
 
-		// Desktop: the same open panel re-lays out to the anchored ~380px width.
+		// Desktop: the same open panel re-lays out to the anchored ~420px width.
 		await page.setViewportSize({ width: 1280, height: 800 });
 		await expect(panel).toBeVisible();
 		const desktopBox = await panel.boundingBox();
