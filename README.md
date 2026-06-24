@@ -16,26 +16,18 @@
 </p>
 
 <p align="center">
-  A coding agent is a contractor. Hezo is the company that hires it, gives it a role and a<br/>
-  budget, hands it the keys without letting it keep them, and ships its work —<br/>
-  all on hardware you own.
-</p>
-
-<p align="center">
   <a href="#quickstart">Quickstart</a>
   · <a href="#features">Features</a>
   · <a href="./docs/introduction.md">Docs</a>
   · <a href="https://hezo.ai">Website</a>
   · <a href="https://github.com/hezo-ai/hezo">GitHub</a>
-  <!-- TODO(founder): add Discord / X links here once they exist. -->
+  · <a href="https://x.com/taoofdev">X</a>
 </p>
 
 <p align="center">
   <img src="assets/hero.png" alt="The Hezo web app — a project task board with its team of AI agents" width="863" />
 </p>
 
-<!-- TODO(founder): a 15–20s demo GIF would convert even better than this static shot —
-     record the CEO chat → a team spins up → a task runs live, and drop it at .github/assets/demo.gif. -->
 
 ## What is Hezo?
 
@@ -199,4 +191,4 @@ Copyright (C) 2026 [Ramesh Nair](https://hiddentao.com).
 
 Hezo is licensed under the [GNU Affero General Public License v3.0 or later](./LICENSE.md).
 
-<!-- TODO(founder): add Discord / X links once they exist. -->
+X: [@taoofdev](https://x.com/taoofdev)
