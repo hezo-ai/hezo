@@ -94,9 +94,7 @@ export const CONNECTOR_CAPABILITIES: Record<string, ConnectorCapability> = {
 			deviceCodeUrl: 'https://github.com/login/device/code',
 			tokenUrl: 'https://github.com/login/oauth/access_token',
 			clientIdEnv: 'GITHUB_OAUTH_CLIENT_ID',
-			// Public OAuth-App client_id with device flow enabled; safe to commit.
-			// Production overrides via GITHUB_OAUTH_CLIENT_ID.
-			clientIdDefault: 'Ov23liSH5q35gMqGTKH9',
+			clientIdDefault: 'Ov23liauGSJTHUoWbslf',
 			baseUrlEnv: 'GITHUB_OAUTH_BASE_URL',
 		},
 	},
