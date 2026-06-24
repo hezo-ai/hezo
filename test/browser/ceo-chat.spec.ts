@@ -72,11 +72,37 @@ test.describe('CEO chat widget — responsive layout', () => {
 		expect(headerBottom).toBeGreaterThan(0);
 		expect(expandedBox?.y ?? 0).toBeGreaterThanOrEqual(headerBottom - 1);
 
-		// Collapse restores the anchored corner panel.
+		// A modal scrim now occludes the page content below the nav: full viewport
+		// width, starting at the header's bottom (the nav itself stays uncovered).
+		const overlay = page.getByTestId('ceo-chat-overlay');
+		await expect(overlay).toBeVisible();
+		const overlayBox = await overlay.boundingBox();
+		expect(overlayBox?.width ?? 0).toBeGreaterThan(1200);
+		expect(overlayBox?.y ?? 0).toBeGreaterThanOrEqual(headerBottom - 1);
+
+		// Collapse restores the anchored corner panel and removes the scrim.
 		await page.getByTestId('ceo-chat-expand').click();
 		await expect(panel).toHaveAttribute('data-expanded', 'false');
+		await expect(overlay).toBeHidden();
 		const restored = await panel.boundingBox();
 		expect(restored?.width ?? 0).toBeLessThan(440);
+	});
+
+	test('Escape closes the chat', async ({ sharedPage, sharedWorkspace }) => {
+		const page = sharedPage;
+
+		await page.setViewportSize({ width: 1280, height: 800 });
+		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
+		await waitForPageLoad(page);
+
+		const launcher = page.getByTestId('ceo-chat-launcher');
+		await expect(launcher).toBeVisible({ timeout: 15000 });
+		await launcher.click();
+		await expect(page.getByTestId('ceo-chat-panel')).toBeVisible();
+
+		await page.keyboard.press('Escape');
+		await expect(page.getByTestId('ceo-chat-panel')).toBeHidden();
+		await expect(launcher).toBeVisible();
 	});
 
 	test('the expand toggle is desktop-only — hidden on mobile', async ({
