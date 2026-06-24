@@ -6,8 +6,6 @@ import { queryKeys } from '../lib/query-keys';
 
 interface SearchResponse {
 	results: SearchResult[];
-	/** Present (with empty results) while the embedding model is still loading. */
-	message?: string;
 }
 
 const MIN_QUERY_LENGTH = 2;

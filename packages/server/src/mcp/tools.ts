@@ -3068,14 +3068,14 @@ export function registerTools(
 		db,
 	);
 
-	// Semantic search
+	// Full-text search
 	tool(
 		server,
 		'semantic_search',
-		'Search the team skills database, tasks, project docs, and task comments using natural language. Returns ranked results by relevance.',
+		'Full-text keyword search across the team skills database, tasks, project docs, and task comments. Returns results ranked by relevance (keyword + stemming match).',
 		{
 			project: projectArg(),
-			query: z.string().describe('Natural language search query'),
+			query: z.string().describe('Search query (keywords)'),
 			scope: z
 				.enum(SEARCH_SCOPES)
 				.optional()
@@ -3086,15 +3086,8 @@ export function registerTools(
 			const projectScope = await resolveScope(db, auth, args);
 			if ('error' in projectScope) return projectScope;
 
-			const { isModelReady, semanticSearch } = await import('../services/embeddings');
-			if (!isModelReady()) {
-				return {
-					error:
-						'Embedding model not loaded yet. Search will be available shortly after server start.',
-				};
-			}
-
-			const results = await semanticSearch(db, [projectScope.teamId], args.query as string, {
+			const { fullTextSearch } = await import('../services/search');
+			const results = await fullTextSearch(db, [projectScope.teamId], args.query as string, {
 				scope: (args.scope as SearchScope) ?? 'all',
 				limit: (args.limit as number) ?? 10,
 			});

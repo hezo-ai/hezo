@@ -48,18 +48,10 @@ function readVersion(): string {
 	return pkg.version;
 }
 
-// Native addons can't be embedded in a Bun binary, and their platform-specific
-// `require`s break cross-compilation. The embedding model (@huggingface/
-// transformers → onnxruntime-node) is loaded via a guarded dynamic import that
-// fails soft, so we mark it external: the binary builds for every platform and
-// semantic search is simply unavailable in the standalone build.
-const EXTERNALS = ['@huggingface/transformers', 'onnxruntime-node'];
-
 async function compile(version: string, target: string | null, outfile: string) {
 	const cmd = ['bun', 'build', '--compile'];
 	if (target) cmd.push(`--target=${target}`);
 	cmd.push('--define', `process.env.HEZO_VERSION="${version}"`);
-	for (const ext of EXTERNALS) cmd.push('--external', ext);
 	cmd.push('packages/server/src/index.ts', '--outfile', outfile);
 	await run('.', cmd);
 }

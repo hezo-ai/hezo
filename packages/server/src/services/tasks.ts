@@ -16,9 +16,9 @@ import type { WebSocketManager } from './ws';
 
 const log = logger.child('tasks-service');
 
-// Bare projection of the tasks table — excludes the 384-dim embedding vector
-// that would otherwise inflate every response by ~4 KB of JSON noise the
-// caller can't use. Shared by REST handlers, MCP tools, and this service.
+// Bare projection of the tasks table — excludes the generated search_tsv column
+// (the full-text index) that the caller can't use. Shared by REST handlers, MCP
+// tools, and this service.
 export const TASK_COLUMNS_BARE = `id, team_id, project_id, assignee_id, parent_task_id,
 	created_by_member_id, created_by_run_id,
 	number, identifier, title, description, rules,

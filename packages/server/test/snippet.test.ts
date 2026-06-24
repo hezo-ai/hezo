@@ -1,6 +1,6 @@
 import { HIGHLIGHT_SENTINEL } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
-import { buildHighlightedSnippet, hasLiteralMatch } from '../src/lib/snippet';
+import { buildHighlightedSnippet } from '../src/lib/snippet';
 
 const S = HIGHLIGHT_SENTINEL;
 
@@ -123,24 +123,5 @@ describe('buildHighlightedSnippet', () => {
 	it('never emits a stray sentinel from sentinel-bearing source (defensive)', () => {
 		const { snippet } = buildHighlightedSnippet(`a${S}b nothing here`, 'zzz');
 		expect(snippet).not.toContain(S);
-	});
-});
-
-describe('hasLiteralMatch', () => {
-	it('is true when a term appears in the text', () => {
-		expect(hasLiteralMatch('EP-3 — Fix login bug', 'login')).toBe(true);
-	});
-
-	it('is true via stemming', () => {
-		expect(hasLiteralMatch('EP-3 — Fix marked items', 'marking')).toBe(true);
-	});
-
-	it('is false when no term appears', () => {
-		expect(hasLiteralMatch('EP-3 — Fix login bug', 'logout')).toBe(false);
-	});
-
-	it('is false for null/blank input', () => {
-		expect(hasLiteralMatch(null, 'x')).toBe(false);
-		expect(hasLiteralMatch('   ', 'x')).toBe(false);
 	});
 });

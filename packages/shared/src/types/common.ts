@@ -139,10 +139,10 @@ export const CommentContentType = {
 export type CommentContentType = (typeof CommentContentType)[keyof typeof CommentContentType];
 
 /**
- * Semantic search (embeddings). `SEARCH_SCOPES` is the single source of truth
- * shared by the server `semanticSearch` service, the REST/MCP search surfaces,
- * and the web command palette. `SearchResult` carries navigation hints so a
- * cross-project hit can be linked to its underlying page.
+ * Full-text search. `SEARCH_SCOPES` is the single source of truth shared by the
+ * server `fullTextSearch` service, the REST/MCP search surfaces, and the web
+ * command palette. `SearchResult` carries navigation hints so a cross-project hit
+ * can be linked to its underlying page.
  */
 export const SEARCH_SCOPES = ['all', 'tasks', 'skills', 'project_docs', 'comments'] as const;
 export type SearchScope = (typeof SEARCH_SCOPES)[number];
@@ -166,12 +166,6 @@ export interface SearchResult {
 	title: string;
 	snippet: string;
 	score: number;
-	/**
-	 * True when the query term appears nowhere literally (neither title nor body)
-	 * and the result surfaced purely via embedding similarity. Drives the
-	 * "related" label so the absence of a highlight is explained.
-	 */
-	semanticOnly?: boolean;
 	/** Project slug for the destination route (tasks, comments, project docs). */
 	projectSlug?: string;
 	/** Friendly task identifier, e.g. `TO-4` (tasks and comments). */

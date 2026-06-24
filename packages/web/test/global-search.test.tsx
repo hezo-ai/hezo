@@ -1,6 +1,6 @@
 import { HIGHLIGHT_SENTINEL, type SearchResult } from '@hezo/shared';
 import { api } from '@hezo/web/lib/api';
-import { screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
@@ -27,15 +27,6 @@ test('the header search button opens the palette', async () => {
 	const { user } = await renderApp({ initialPath: '/home' });
 	await user.click(await screen.findByTestId('app-header-search'));
 	expect(await screen.findByTestId('global-search-dialog')).toBeTruthy();
-});
-
-test('shows the model-loading message while embeddings are unavailable', async () => {
-	const { user } = await renderApp({ initialPath: '/home' });
-	await user.click(await screen.findByTestId('app-header-search'));
-	// The transformers model is never loaded in component tests, so the real
-	// backend answers with the loading message rather than results.
-	await user.type(await screen.findByTestId('global-search-input'), 'login');
-	expect(await screen.findByTestId('search-model-loading')).toBeTruthy();
 });
 
 test('renders per-type tabs with counts, deep-links comments, and closes on select', async () => {
@@ -131,7 +122,7 @@ test('renders per-type tabs with counts, deep-links comments, and closes on sele
 	await dialogGone();
 });
 
-test('highlights matched terms, labels semantic-only hits, and escapes HTML', async () => {
+test('highlights matched terms and escapes HTML', async () => {
 	let projectSlug = '';
 	let identifier = '';
 	const { user } = await renderApp({
@@ -161,7 +152,6 @@ test('highlights matched terms, labels semantic-only hits, and escapes HTML', as
 			id: 't2',
 			title: `${identifier} — Related task`,
 			snippet: 'matched purely by meaning',
-			semanticOnly: true,
 			score: 0.7,
 			projectSlug,
 			taskIdentifier: identifier,
@@ -197,11 +187,9 @@ test('highlights matched terms, labels semantic-only hits, and escapes HTML', as
 	expect(rows[0].querySelector('mark')?.textContent).toBe('login');
 	expect(rows[0].textContent).toContain('before login after');
 	expect(rows[0].textContent).not.toContain(S);
-	expect(within(rows[0]).queryByTestId('search-result-related')).toBeNull();
 
-	// 2. A semantic-only hit shows the "related" label and no highlight.
+	// 2. A snippet with no highlight sentinel renders no <mark>.
 	expect(rows[1].querySelector('mark')).toBeNull();
-	expect(within(rows[1]).getByTestId('search-result-related').textContent).toBe('related');
 
 	// 3. HTML inside a highlighted span is escaped (rendered as text, not an element).
 	expect(rows[2].querySelector('b')).toBeNull();

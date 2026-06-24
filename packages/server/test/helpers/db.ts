@@ -2,19 +2,18 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
-import { vector } from '@electric-sql/pglite/vector';
 import { BASE_SCHEMA } from '../../src/db/schema';
 
 /** Creates a fresh in-memory PGlite instance with base tables for testing. */
 export async function createTestDb(): Promise<PGlite> {
-	const db = new PGlite({ extensions: { vector } });
+	const db = new PGlite();
 	await db.exec(BASE_SCHEMA);
 	return db;
 }
 
 /** Creates a test DB with full migrations applied. */
 export async function createTestDbWithMigrations(): Promise<PGlite> {
-	const db = new PGlite({ extensions: { vector } });
+	const db = new PGlite();
 
 	// Ensure _migrations table exists (uses IF NOT EXISTS, safe to run before migration)
 	await db.exec(`
@@ -56,7 +55,7 @@ export async function createTestDbWithMigrations(): Promise<PGlite> {
 
 		for (const file of files) {
 			let sql = readFileSync(join(migrationsDir, file), 'utf-8');
-			// PGlite loads pgcrypto built-in, strip only that; keep vector (loaded via config + SQL)
+			// PGlite loads pgcrypto built-in; strip only that.
 			sql = sql.replace(/CREATE EXTENSION IF NOT EXISTS "pgcrypto";/g, '');
 			try {
 				await db.exec(sql);

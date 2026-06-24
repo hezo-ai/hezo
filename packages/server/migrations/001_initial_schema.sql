@@ -1,7 +1,5 @@
 -- Initial schema for the team orchestration platform
 
-CREATE EXTENSION IF NOT EXISTS vector;
-
 -------------------------------------------------------------------------------
 -- SYSTEM META
 -------------------------------------------------------------------------------
@@ -490,7 +488,10 @@ CREATE TABLE tasks (
     rules                TEXT,
     branch_name          TEXT,
     runtime_type         agent_runtime,
-    embedding            vector(384),
+    search_tsv           tsvector GENERATED ALWAYS AS (
+        setweight(to_tsvector('english', coalesce(identifier, '') || ' ' || coalesce(title, '')), 'A') ||
+        setweight(to_tsvector('english', coalesce(description, '')), 'B')
+    ) STORED,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -504,7 +505,7 @@ CREATE INDEX idx_tasks_assignee ON tasks(assignee_id);
 CREATE INDEX idx_tasks_status ON tasks(team_id, status);
 CREATE INDEX idx_tasks_parent ON tasks(parent_task_id);
 CREATE INDEX idx_tasks_identifier ON tasks(team_id, identifier);
-CREATE INDEX idx_tasks_embedding ON tasks USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX idx_tasks_search_tsv ON tasks USING gin (search_tsv);
 
 -------------------------------------------------------------------------------
 -- TASK DEPENDENCIES
@@ -553,7 +554,9 @@ CREATE TABLE task_comments (
     -- -N suffix on same-second collisions); assigned by the trigger below. The UUID
     -- `id` stays the PK and the target of every FK.
     public_id         TEXT NOT NULL,
-    embedding         vector(384),
+    search_tsv        tsvector GENERATED ALWAYS AS (
+        to_tsvector('english', coalesce(content->>'text', ''))
+    ) STORED,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -563,7 +566,7 @@ CREATE INDEX idx_comments_parent ON task_comments(parent_comment_id)
     WHERE parent_comment_id IS NOT NULL;
 -- A `<TASK-ID>#comment-<public_id>` link is addressed by (task, public_id).
 CREATE UNIQUE INDEX idx_comments_public_id ON task_comments(task_id, public_id);
-CREATE INDEX idx_comments_embedding ON task_comments USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX idx_comments_search_tsv ON task_comments USING gin (search_tsv) WHERE content_type = 'text';
 
 -- Auto-assign public_id on insert for every code path so no insert site has to know
 -- the scheme. A BEFORE INSERT trigger fires after column defaults are applied, so
@@ -677,11 +680,10 @@ CREATE INDEX idx_costs_project_created ON cost_entries(project_id, created_at);
 
 CREATE TABLE audit_log (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    -- team_id NULL = an instance-level action (e.g. an Admin managing an
-    -- instance secret / connector / skill that is not bound to any team).
-    team_id         UUID REFERENCES teams(id) ON DELETE CASCADE,
-    -- project_id scopes the event to a single project when applicable. NULL for
-    -- team-level (e.g. agent system prompt, team secrets) and instance-level events.
+    -- Every audit row is either project-scoped (project_id set) or instance-scoped
+    -- (project_id NULL — instance-global credential/connector/skill actions visible
+    -- only in the superuser view). Teams are 1:1 with projects, so there is no
+    -- separate team dimension.
     project_id      UUID REFERENCES projects(id) ON DELETE SET NULL,
     actor_type      audit_actor_type NOT NULL,
     actor_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
@@ -692,8 +694,6 @@ CREATE TABLE audit_log (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_audit_team ON audit_log(team_id);
-CREATE INDEX idx_audit_created ON audit_log(team_id, created_at);
 CREATE INDEX idx_audit_project ON audit_log(project_id, created_at);
 CREATE INDEX idx_audit_created_global ON audit_log(created_at);
 CREATE INDEX idx_audit_entity ON audit_log(entity_type, entity_id);
@@ -714,7 +714,10 @@ CREATE TABLE documents (
     title                     TEXT NOT NULL DEFAULT '',
     content                   TEXT NOT NULL DEFAULT '',
     last_updated_by_member_id UUID REFERENCES members(id) ON DELETE SET NULL,
-    embedding                 vector(384),
+    search_tsv                tsvector GENERATED ALWAYS AS (
+        setweight(to_tsvector('english', coalesce(title, '') || ' ' || coalesce(slug, '')), 'A') ||
+        setweight(to_tsvector('english', coalesce(content, '')), 'B')
+    ) STORED,
     created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT documents_agent_system_prompt_requires_member_agent
@@ -735,7 +738,7 @@ CREATE INDEX idx_documents_team ON documents (team_id);
 CREATE INDEX idx_documents_type_team ON documents (type, team_id);
 CREATE INDEX idx_documents_project ON documents (project_id) WHERE project_id IS NOT NULL;
 CREATE INDEX idx_documents_member_agent ON documents (member_agent_id) WHERE member_agent_id IS NOT NULL;
-CREATE INDEX idx_documents_embedding ON documents USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX idx_documents_search_tsv ON documents USING gin (search_tsv);
 
 -- Deferred FK on mcp_connections (forward reference resolved here). The skill_id
 -- FK is added after the skills table is defined (see below).
@@ -875,12 +878,15 @@ CREATE TABLE skills (
     tags                  JSONB NOT NULL DEFAULT '[]'::jsonb,
     is_active             BOOLEAN NOT NULL DEFAULT true,
     auto_load             BOOLEAN NOT NULL DEFAULT false,
-    embedding             vector(384),
+    search_tsv            tsvector GENERATED ALWAYS AS (
+        setweight(to_tsvector('english', coalesce(name, '')), 'A') ||
+        setweight(to_tsvector('english', coalesce(description, '') || ' ' || coalesce(content, '')), 'B')
+    ) STORED,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_skills_embedding ON skills USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX idx_skills_search_tsv ON skills USING gin (search_tsv);
 
 -- Deferred FK: a connector may bundle a provider skill file (now a skills row).
 ALTER TABLE mcp_connections

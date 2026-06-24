@@ -103,11 +103,6 @@ export default defineConfig({
 				// Pricing still seeds from the bundled snapshot (offline); skip the
 				// boot-time refresh so e2e doesn't make an outbound feed fetch.
 				HEZO_SKIP_PRICING_REFRESH: '1',
-				// The embeddings cron loads a local ONNX model and runs CPU-heavy
-				// inference on new content (comments included). Under the parallel
-				// browser runner that contends with request handling and surfaces as
-				// web-server ECONNRESET / upload timeouts. No e2e asserts on search.
-				HEZO_E2E_SKIP_EMBEDDINGS: '1',
 			},
 		},
 		{

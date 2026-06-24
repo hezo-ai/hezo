@@ -28,7 +28,6 @@ export function GlobalSearchDialog({
 	}, [open]);
 
 	const results = data?.results ?? [];
-	const modelLoading = Boolean(data?.message);
 
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -54,18 +53,10 @@ export function GlobalSearchDialog({
 								Type at least 2 characters to search.
 							</p>
 						)}
-						{enabled && modelLoading && (
-							<p
-								className="px-1 py-6 text-center text-[13px] text-text-3"
-								data-testid="search-model-loading"
-							>
-								{data?.message}
-							</p>
-						)}
-						{enabled && !modelLoading && isFetching && results.length === 0 && (
+						{enabled && isFetching && results.length === 0 && (
 							<p className="px-1 py-6 text-center text-[13px] text-text-3">Searching…</p>
 						)}
-						{enabled && !modelLoading && !isFetching && results.length === 0 && (
+						{enabled && !isFetching && results.length === 0 && (
 							<p
 								className="px-1 py-6 text-center text-[13px] text-text-3"
 								data-testid="search-empty"

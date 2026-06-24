@@ -378,11 +378,6 @@ export class JobManager {
 			log: cronLog,
 			onTick: () => this.guarded('container-sync', () => this.syncContainerStatuses()),
 		});
-		this.cron.createJob('embeddings', {
-			cron: '*/30 * * * * *',
-			log: cronLog,
-			onTick: () => this.guarded('embeddings', () => this.processEmbeddingQueue()),
-		});
 		this.cron.createJob('inbox-archive', {
 			cron: INBOX_ARCHIVE_CRON,
 			log: cronLog,
@@ -2017,19 +2012,6 @@ export class JobManager {
 				newStatus === ContainerStatus.Error ? 'container_error' : 'container_stopped';
 			this.cancelLiveRunsForProject(projectId, reason);
 			await failProjectRuns(this.buildContainerDeps(), projectId, projectSlug, teamId, reason);
-		}
-	}
-
-	private async processEmbeddingQueue(): Promise<void> {
-		// Loading the local feature-extraction model and running inference is
-		// CPU-heavy; under the parallel browser-test runner it starves request
-		// handling (manifests as web-server ECONNRESET / upload timeouts). No e2e
-		// test asserts on semantic search, so skip the queue entirely in that mode.
-		if (process.env.HEZO_E2E_SKIP_EMBEDDINGS) return;
-		const { processPendingEmbeddings } = await import('./embeddings');
-		const count = await processPendingEmbeddings(this.deps.db);
-		if (count > 0) {
-			log.debug(`Processed ${count} embedding(s)`);
 		}
 	}
 

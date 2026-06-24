@@ -256,7 +256,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	semantic_search: {
 		category: 'Skills & search',
 		returns:
-			'`{ results, count }` ranked by relevance across skills, tasks, project docs, and comments. Returns `{ error }` if the embedding model is not loaded yet.',
+			'`{ results, count }` — full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, and comments.',
 	},
 
 	// Credentials & connectors
