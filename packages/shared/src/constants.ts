@@ -49,6 +49,16 @@ export const DEFAULT_CHAT_HISTORY_LIMIT = 80;
 export const CHAT_HISTORY_LIMIT_MIN = 10;
 export const CHAT_HISTORY_LIMIT_MAX = 500;
 
+/**
+ * Default heartbeat interval for newly created agents and agent types, in
+ * minutes (12 hours). Idle agents wake on this cadence to look for work; the
+ * value is editable per agent and overridable per team-template role. The DB
+ * column default (`member_agents`/`agent_types.heartbeat_interval_min`) is a
+ * non-load-bearing fallback — every insert path supplies this value
+ * explicitly — so this constant is the single source of truth for the default.
+ */
+export const DEFAULT_HEARTBEAT_INTERVAL_MIN = 720;
+
 export const PROJECT_INTAKE_LABEL = 'project-intake';
 
 /**

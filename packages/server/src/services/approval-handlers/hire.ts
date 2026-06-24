@@ -1,4 +1,10 @@
-import { AgentAdminStatus, DocumentType, MemberType, TaskStatus } from '@hezo/shared';
+import {
+	AgentAdminStatus,
+	DEFAULT_HEARTBEAT_INTERVAL_MIN,
+	DocumentType,
+	MemberType,
+	TaskStatus,
+} from '@hezo/shared';
 import { trackBackground } from '../../lib/background';
 import { logger } from '../../logger';
 import { enqueueTeamCoherenceReviewTask } from '../description-tasks';
@@ -50,7 +56,7 @@ export const hireHandler: ApprovalHandler = {
 				slug,
 				(payload.role_description as string) ?? '',
 				(payload.default_effort as string) ?? 'medium',
-				(payload.heartbeat_interval_min as number) ?? 60,
+				(payload.heartbeat_interval_min as number) ?? DEFAULT_HEARTBEAT_INTERVAL_MIN,
 				(payload.daily_budget_cents as number) ?? 0,
 				(payload.weekly_budget_cents as number) ?? 0,
 				(payload.monthly_budget_cents as number) ?? 3000,

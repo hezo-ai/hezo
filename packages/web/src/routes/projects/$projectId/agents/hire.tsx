@@ -1,4 +1,4 @@
-import type { BudgetWindowsCents } from '@hezo/shared';
+import { type BudgetWindowsCents, DEFAULT_HEARTBEAT_INTERVAL_MIN } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
@@ -31,7 +31,7 @@ function HireAgentPage() {
 		weekly_budget_cents: 0,
 		monthly_budget_cents: 2000,
 	});
-	const [heartbeat, setHeartbeat] = useState('60');
+	const [heartbeat, setHeartbeat] = useState(String(DEFAULT_HEARTBEAT_INTERVAL_MIN));
 	const [touchesCode, setTouchesCode] = useState(false);
 
 	async function handleSubmit(e: React.FormEvent) {
