@@ -28,13 +28,20 @@ export async function assertChildDepthAllowed(
 	return { ok: true };
 }
 
+// Sub-task statuses that still block the parent from being marked done/closed.
+// A parent can only close once every sub-task has reached a *resolved* terminal
+// state — `closed` (Coach-reviewed) or `cancelled` (abandoned). `done` still
+// blocks because it's awaiting Coach review. `cancelled` is intentionally absent:
+// a cancelled sub-task counts the same as a closed one — it's terminal and will
+// never be Coach-reviewed, so gating on it would strand the parent permanently.
+// This mirrors `hasOpenBlockers` in dependencies.ts, where a `cancelled` upstream
+// likewise satisfies a dependency.
 const OPEN_CHILD_STATUSES = [
 	TaskStatus.Backlog,
 	TaskStatus.InProgress,
 	TaskStatus.Review,
 	TaskStatus.Blocked,
 	TaskStatus.Done,
-	TaskStatus.Cancelled,
 ];
 
 export async function assertChildrenAllClosed(
