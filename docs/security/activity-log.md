@@ -69,9 +69,3 @@ The activity log makes Hezo's autonomy accountable. Agents act on their own, but
 action they take — and every secret they use — is on the record, attributed, and impossible
 to rewrite. When something looks off, you can trace exactly what happened and roll back from
 a position of knowledge.
-
-## Next
-
-- [Secret protection & egress](/docs/security/secret-protection) — how the outbound audit is produced.
-- [Container isolation](/docs/security/container-isolation) — why agents can't bypass the proxy.
-- [Master key & encryption](/docs/security/master-key) — how the vault is protected.

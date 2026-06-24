@@ -38,8 +38,3 @@ Google (Gemini), DeepSeek, Z.ai, OpenRouter, or Kimi.
 
 You can add more than one provider and switch between them later, including giving an
 individual agent its own model. See [AI model support](/docs/ai-models).
-
-## Next
-
-You're ready to put a team to work. Continue to
-[Your first project](/docs/getting-started/first-project).

@@ -51,8 +51,3 @@ hezo --reset
 
 This **wipes the database** and starts fresh. There's no other recovery path for a lost
 master key, so treat `--reset` as the last resort it is.
-
-## Next
-
-- [Configuration reference](/docs/deployment/configuration)
-- [Self-hosting](/docs/deployment/self-hosting)

@@ -50,8 +50,3 @@ should never sit on a public address without protection. The simplest and safest
 approach is to keep it on a **private network** and not expose the port publicly at all —
 see [Secure remote access](/docs/deployment/secure-remote-access) for the recommended
 options (Tailscale, Cloudflare Tunnel, and others).
-
-## Next
-
-- [Secure remote access](/docs/deployment/secure-remote-access)
-- [Backup & recovery](/docs/deployment/backup-and-recovery)

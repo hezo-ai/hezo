@@ -67,8 +67,3 @@ You're always the one who provides a secret:
 The net effect: a buggy, jailbroken, or outright malicious agent **cannot exfiltrate
 your secrets.** It never sees them, it can only use them against hosts you allowed, and
 every use is on the record.
-
-## Next
-
-- [Master key & encryption](/docs/security/master-key) — how the vault is protected.
-- [Container isolation](/docs/security/container-isolation) — why egress can't be bypassed.

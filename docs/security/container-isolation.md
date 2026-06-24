@@ -47,8 +47,3 @@ and container isolation — a compromised agent is boxed in on every side: it ca
 your secrets, can't reach your host, can't escape its project, and can't smuggle data
 out. You get the upside of autonomous agents running real code without betting your
 system on every line of it being safe.
-
-## Next
-
-- [Secret protection & egress](/docs/security/secret-protection)
-- [Master key & encryption](/docs/security/master-key)

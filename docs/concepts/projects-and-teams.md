@@ -100,9 +100,3 @@ instance-level settings live (model providers, shared connections, and the like)
 also where you [chat with the CEO](/docs/concepts/roles-and-coordination#chatting-with-the-ceo):
 when you talk to it to create a new project or check in on any team, you're talking to the
 CEO in HQ. See [Roles & the CEO](/docs/concepts/roles-and-coordination).
-
-## Next
-
-- [Roles & the CEO](/docs/concepts/roles-and-coordination) — who does what.
-- [Hiring & customizing agents](/docs/concepts/hiring-and-agents) — change a team's
-  roster and behaviour.

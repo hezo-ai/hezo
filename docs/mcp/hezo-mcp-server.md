@@ -120,8 +120,3 @@ curl -X POST http://localhost:3100/mcp/assets \
 
 The response returns the stored asset and a signed read URL, and the file then shows up in
 the `list_project_assets` and `read_project_asset` tools.
-
-## Next
-
-- [Connecting MCP servers](/docs/mcp/connecting-mcp-servers) — the other direction:
-  giving Hezo's own agents access to external MCP servers.

@@ -52,8 +52,3 @@ raw Hezo port directly.
 Prefer a private network (Tailscale/WireGuard) or an authenticated tunnel. Treat a
 public, internet-facing Hezo as something that always needs both TLS and an auth layer
 in front of it.
-
-## Next
-
-- [Deploying to the cloud](/docs/deployment/cloud)
-- [Configuration reference](/docs/deployment/configuration)
