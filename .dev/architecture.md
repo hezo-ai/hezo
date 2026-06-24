@@ -662,11 +662,37 @@ master key) → run the previous binary.
 
 **Releases & updates.** A PR flow (`.github/workflows/`): `release.yml` computes the next
 version from Conventional Commits and opens a `release/<version>` PR; merging fires
-`release-publish.yml`, which tags, cross-compiles, and publishes a GitHub Release. The
-running instance polls `GET /api/updates/latest` (cached ~1 h, fails soft) and shows a
-dismissible banner.
+`release-publish.yml`, which tags, cross-compiles, and publishes a GitHub Release (assets
+`hezo-{os}-{arch}[.exe]` + `SHA256SUMS`). The running instance polls
+`GET /api/updates/latest` (cached ~1 h, fails soft) and shows a bottom banner.
 
-**Known limits.** macOS binaries are unsigned (built on Linux; clear quarantine with `xattr -d`).
+**Self-update & supervisor.** A compiled binary with auto-update enabled
+(`isAutoUpdateEnabled()` — compiled, not `HEZO_DISABLE_AUTO_UPDATE`, not in a container)
+runs as a thin **supervisor** (`supervisor.ts`): it spawns the real server as a **worker**
+(`Bun.spawn` of `[execPath, ...argv]` with `HEZO_WORKER=1`), forwards `SIGTERM`/`SIGINT`,
+and on the worker's exit either propagates the code (normal exit/crash → external restart
+policies behave as before) or, on the **restart sentinel** `UPDATE_RESTART_EXIT_CODE` (75),
+applies the staged binary and relaunches. The supervisor branch sits in `index.ts` right
+after the `restore` subcommand and before preflights, so dev (`bun run`) and `hezo restore`
+never supervise. The `updater.ts` service handles the rest: a daily `update-check` cron
+(`HEZO_UPDATE_CHECK_CRON`) and `POST /api/updates/download` download the platform asset +
+`SHA256SUMS`, verify the hash, and stage to `<dataDir>/.update/staged[.exe]` (recording
+lifecycle in `state.json`); `POST /api/updates/apply` (superuser) gracefully shuts the
+worker down (`shutdownRuntime` in `runtime-control.ts`, also wired to signals) and exits
+with the sentinel. `applyStagedUpdate()` does the swap *while the worker is down*: copy
+staged → a temp file adjacent to the target (avoids `EXDEV`), then **Unix** atomic `rename`
+over the binary, or **Windows** rename-trick (rename the locked `.exe` aside, move the new
+one in, verify, roll back on failure; stale `-old-` files swept on next supervisor start).
+State survives the restart via the normal recovery path (`reconcileOnStartup`), and the
+instance returns **locked** unless `HEZO_MASTER_KEY` is set (the web restart overlay polls
+`/api/status` and reloads onto the master-key gate). `GET /api/updates/status` surfaces the
+staged-update state plus an `autoUnlock` hint so the UI's confirmation can warn about the
+master-key re-unlock.
+
+**Known limits.** macOS binaries are unsigned (built on Linux; clear quarantine with `xattr -d`);
+on Apple Silicon an unsigned replacement may still be Gatekeeper-blocked. Windows self-update
+relies on the rename-trick and is not exercised by CI (manual validation). The supervisor keeps
+running its own old code until a full process restart — only the worker is refreshed.
 
 ---
 

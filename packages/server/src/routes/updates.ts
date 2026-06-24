@@ -1,5 +1,12 @@
+import { UPDATE_RESTART_EXIT_CODE, UpdateState } from '@hezo/shared';
 import { Hono } from 'hono';
+import { trackBackground } from '../lib/background';
+import { err, ok } from '../lib/response';
+import type { Env } from '../lib/types';
 import { logger } from '../logger';
+import { requireSuperuser } from '../middleware/auth';
+import { getActiveRuntime, shutdownRuntime } from '../runtime-control';
+import { downloadAndStage, isAutoUpdateEnabled, readUpdateState } from '../services/updater';
 import { HEZO_VERSION } from '../version';
 
 const log = logger.child('updates');
@@ -63,11 +70,91 @@ async function fetchLatest(): Promise<UpdateInfo> {
 	}
 }
 
-export const updatesRoutes = new Hono();
-
-updatesRoutes.get('/updates/latest', async (c) => {
+/** Cached latest-release info (1h TTL), shared by the route and the update-check cron. */
+export async function getLatestInfo(): Promise<UpdateInfo> {
 	if (!cache || Date.now() - cache.at >= TTL_MS) {
 		cache = { at: Date.now(), data: await fetchLatest() };
 	}
-	return c.json(cache.data);
-});
+	return cache.data;
+}
+
+/** True only in a supervised worker that can actually restart-with-swap. */
+function isSupervisedWorker(): boolean {
+	return isAutoUpdateEnabled() && process.env.HEZO_WORKER === '1';
+}
+
+/**
+ * Build the updates router. `autoUnlock` reflects whether a master key is
+ * configured at startup (env/CLI) — when true the instance auto-unlocks after a
+ * restart, so the UI can soften the "you'll need your master key" warning.
+ */
+export function buildUpdatesRoutes(opts: { autoUnlock: boolean }): Hono<Env> {
+	const routes = new Hono<Env>();
+
+	// Any authed user: passive "is an update available" check (banner + settings).
+	routes.get('/updates/latest', async (c) => c.json(await getLatestInfo()));
+
+	// Any authed user: latest info + staged-update lifecycle + auto-unlock hint.
+	routes.get('/updates/status', async (c) => {
+		const dataDir = c.get('dataDir');
+		const [latest, state] = await Promise.all([getLatestInfo(), readUpdateState(dataDir)]);
+		return c.json({
+			...latest,
+			state: state.state,
+			targetVersion: state.targetVersion ?? null,
+			error: state.error ?? null,
+			autoUnlock: opts.autoUnlock,
+			canApply: isSupervisedWorker(),
+		});
+	});
+
+	// Superuser: kick a background download+verify+stage of the latest release.
+	routes.post('/updates/download', async (c) => {
+		const denied = requireSuperuser(c);
+		if (denied) return denied;
+		if (!isSupervisedWorker()) {
+			return err(c, 'UPDATE_UNAVAILABLE', 'Auto-update is not available in this environment', 409);
+		}
+		const latest = await getLatestInfo();
+		if (!latest.updateAvailable || !latest.latest) {
+			return err(c, 'NO_UPDATE', 'No newer release is available', 409);
+		}
+		const dataDir = c.get('dataDir');
+		const version = latest.latest;
+		trackBackground(
+			downloadAndStage(version, dataDir).catch((e) => log.error('download/stage failed', e)),
+		);
+		return c.json({ data: { state: UpdateState.Downloading, targetVersion: version } }, 202);
+	});
+
+	// Superuser: shut down gracefully and exit with the restart sentinel so the
+	// supervisor applies the staged binary and relaunches. Responds *before*
+	// exiting so the HTTP response flushes.
+	routes.post('/updates/apply', async (c) => {
+		const denied = requireSuperuser(c);
+		if (denied) return denied;
+		if (!isSupervisedWorker()) {
+			return err(c, 'UPDATE_UNAVAILABLE', 'Auto-update is not available in this environment', 409);
+		}
+		const dataDir = c.get('dataDir');
+		const state = await readUpdateState(dataDir);
+		if (state.state !== UpdateState.Staged) {
+			return err(c, 'NO_STAGED_UPDATE', 'No staged update to apply', 409);
+		}
+		setTimeout(() => {
+			void (async () => {
+				const runtime = getActiveRuntime();
+				try {
+					if (runtime) await shutdownRuntime(runtime);
+				} catch (e) {
+					log.error('shutdown before update-apply failed', e);
+				}
+				log.info('Exiting with restart sentinel to apply staged update');
+				process.exit(UPDATE_RESTART_EXIT_CODE);
+			})();
+		}, 100);
+		return ok(c, { state: UpdateState.Applying, targetVersion: state.targetVersion ?? null });
+	});
+
+	return routes;
+}

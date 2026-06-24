@@ -176,6 +176,25 @@ export interface SearchResult {
 	docSlug?: string;
 }
 
+/**
+ * Exit code the server (worker) uses to tell its supervisor "swap in the staged
+ * binary and relaunch me" rather than exit for good. Any other exit code is
+ * propagated by the supervisor so existing restart policies behave as before.
+ * 75 = EX_TEMPFAIL in sysexits(3), chosen to avoid clashing with 0/1/2.
+ */
+export const UPDATE_RESTART_EXIT_CODE = 75;
+
+/** Lifecycle of a staged self-update, surfaced by `GET /updates/status`. */
+export const UpdateState = {
+	Idle: 'idle',
+	Checking: 'checking',
+	Downloading: 'downloading',
+	Staged: 'staged',
+	Applying: 'applying',
+	Error: 'error',
+} as const;
+export type UpdateState = (typeof UpdateState)[keyof typeof UpdateState];
+
 export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 export const ATTACHMENT_SIGNED_URL_TTL_SECONDS = 3600;
 
