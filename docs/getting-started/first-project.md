@@ -44,9 +44,3 @@ you driving each step.
   it needs (which it will only ever use as a [protected placeholder](/docs/security/secret-protection)).
 - **Keep an eye on spend** from the budget view. See
   [Budgets & cost control](/docs/concepts/budgets-and-costs).
-
-## Next
-
-- [How Hezo works](/docs/concepts/how-hezo-works) — the moving parts behind the scenes.
-- [Roles & the CEO](/docs/concepts/roles-and-coordination) — who does what, and how to
-  action things through the CEO.

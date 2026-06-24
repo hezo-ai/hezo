@@ -50,9 +50,3 @@ Both are memory, at different scopes:
   stands right now. See [Tasks, rules & summaries](/docs/concepts/tasks).
 - **Documents** are *project-wide* knowledge that many tasks and agents draw on — the spec,
   the plan, the research.
-
-## Next
-
-- [Assets & previews](/docs/concepts/assets) — files and deliverables that aren't markdown.
-- [Hezo's MCP server](/docs/mcp/hezo-mcp-server) — the tools agents use to read and write
-  documents.

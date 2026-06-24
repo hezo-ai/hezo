@@ -54,9 +54,3 @@ Only the server port needs to be reachable by the people using Hezo.
 Upgrading is replacing the binary. On startup Hezo runs any required database
 migrations automatically, taking a snapshot first so an upgrade is safe to roll back.
 See [Backup & recovery](/docs/deployment/backup-and-recovery).
-
-## Next
-
-- [Deploying to the cloud](/docs/deployment/cloud) — run it on a server.
-- [Secure remote access](/docs/deployment/secure-remote-access) — reach it safely.
-- [Configuration reference](/docs/deployment/configuration) — every flag and variable.

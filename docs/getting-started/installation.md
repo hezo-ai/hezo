@@ -75,8 +75,3 @@ environment variable.
 ```sh
 hezo --version
 ```
-
-## Next
-
-The first time you open the web app, Hezo walks you through creating a **master key**
-and connecting a model. Continue to [First-run setup](/docs/getting-started/first-run).

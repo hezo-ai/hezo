@@ -82,8 +82,3 @@ in plain language; the CEO proposes the change and asks you to approve anything 
 matters. Standing preferences you ask it to remember persist in the CEO's
 [chatbox memory](/docs/concepts/documents-and-memory#chatbox-memory), so you don't repeat
 yourself.
-
-## Next
-
-- [Tasks, rules & summaries](/docs/concepts/tasks) — how work is tracked.
-- [Hiring & customizing agents](/docs/concepts/hiring-and-agents) — shape your roster.

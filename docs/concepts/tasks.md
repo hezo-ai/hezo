@@ -42,11 +42,3 @@ screenshots, PDFs, or other references — to a task or a comment; see
 When work finishes, the **Coach** reviews completed tickets across your projects,
 capturing lessons that feed back into how the teams improve. See
 [Roles & the CEO](/docs/concepts/roles-and-coordination).
-
-## Next
-
-- [Documents & long-term memory](/docs/concepts/documents-and-memory) — the knowledge the
-  work draws on.
-- [Assets & previews](/docs/concepts/assets) — files and deliverables.
-- [Hiring & customizing agents](/docs/concepts/hiring-and-agents) — who works the tasks.
-- [Budgets & cost control](/docs/concepts/budgets-and-costs) — what the work costs.

@@ -53,9 +53,3 @@ There is intentionally **no backdoor.** If you lose the master key, the encrypte
 can't be recovered — your only path forward is to reset the instance and start over
 (`hezo --reset`, see [Backup & recovery](/docs/deployment/backup-and-recovery)). Keep
 the phrase somewhere you trust.
-
-## Next
-
-- [Secret protection & egress](/docs/security/secret-protection) — how secrets are used
-  without exposing them.
-- [Container isolation](/docs/security/container-isolation) — the third pillar.

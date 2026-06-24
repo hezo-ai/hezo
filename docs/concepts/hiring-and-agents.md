@@ -56,8 +56,3 @@ instance-wide CEO and Coach can't be retired this way.)
 You can also adjust an agent's heartbeat interval and budgets over time, and pause or
 resume agents when you need to. Standing preferences you give the CEO in chat are
 remembered and applied going forward.
-
-## Next
-
-- [AI model support](/docs/ai-models) — the models agents can run on.
-- [Budgets & cost control](/docs/concepts/budgets-and-costs) — capping spend.

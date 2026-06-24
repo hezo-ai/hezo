@@ -42,9 +42,3 @@ deliverable — a mockup, a dashboard, a report — you can open it and click th
 Hezo, rendered live, without checking anything out or running it yourself. HTML previews run
 in a **sandbox**, isolated from your instance and your data, so viewing an agent's output is
 safe by default.
-
-## Next
-
-- [Documents & long-term memory](/docs/concepts/documents-and-memory) — the markdown
-  knowledge layer.
-- [Tasks, rules & summaries](/docs/concepts/tasks) — where assets get attached and discussed.

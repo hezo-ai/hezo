@@ -46,8 +46,3 @@ for any individual agent.** One agent can run on Claude while another on the sam
 runs on Gemini or a model from OpenRouter — whatever fits its job. Set it when you hire
 the agent or any time afterward from its settings. See
 [Hiring & customizing agents](/docs/concepts/hiring-and-agents).
-
-## Next
-
-- [Hezo's MCP server](/docs/mcp/hezo-mcp-server) — let any agent drive Hezo.
-- [Connecting MCP servers](/docs/mcp/connecting-mcp-servers) — give your agents more tools.

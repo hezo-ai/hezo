@@ -48,9 +48,3 @@ project while everything else uses the shared one.
 Register connections from the web app, or let an agent add one itself when it needs a
 tool (subject to your approval). Either way the connection is scoped, stored, and made
 available to the relevant runs.
-
-## Next
-
-- [Hezo's MCP server](/docs/mcp/hezo-mcp-server) — let external agents drive Hezo.
-- [Secret protection & egress](/docs/security/secret-protection) — how connection
-  secrets are kept safe.

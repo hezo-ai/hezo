@@ -37,8 +37,3 @@ its runs are **paused**. The agent automatically resumes when that window rolls 
 to babysit it: set a daily cap and a runaway agent simply stops until tomorrow.
 
 You can also pause and resume agents yourself at any time, independently of budgets.
-
-## Next
-
-- [AI model support](/docs/ai-models) — choosing models (and their cost).
-- [Hiring & customizing agents](/docs/concepts/hiring-and-agents) — set budgets per agent.
