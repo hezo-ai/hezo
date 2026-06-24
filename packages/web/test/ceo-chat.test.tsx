@@ -266,6 +266,62 @@ test('the expand toggle fills the viewport below the nav, then restores the anch
 	expect(panel.className).toContain('md:w-[420px]');
 });
 
+test('expanded mode lays a modal backdrop that dismisses the chat when clicked', async () => {
+	const { findByTestId, queryByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+
+	// Anchored: no backdrop — the rest of the page stays interactive.
+	expect(queryByTestId('ceo-chat-overlay')).toBeNull();
+
+	// Expanding makes it modal: a scrim appears behind the panel.
+	getByTestId('ceo-chat-expand').click();
+	const overlay = await findByTestId('ceo-chat-overlay');
+	expect(overlay).toBeTruthy();
+
+	// Clicking the backdrop dismisses the chat entirely.
+	overlay.click();
+	await findByTestId('ceo-chat-launcher');
+	expect(queryByTestId('ceo-chat-panel')).toBeNull();
+	expect(queryByTestId('ceo-chat-overlay')).toBeNull();
+});
+
+test('collapsing out of expanded removes the backdrop but keeps the chat open', async () => {
+	const { findByTestId, queryByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+
+	getByTestId('ceo-chat-expand').click();
+	await findByTestId('ceo-chat-overlay');
+
+	// The collapse toggle exits modal mode: backdrop gone, panel still open.
+	getByTestId('ceo-chat-expand').click();
+	await waitFor(() => expect(queryByTestId('ceo-chat-overlay')).toBeNull());
+	expect(getByTestId('ceo-chat-panel')).toBeTruthy();
+});
+
+test('Escape closes the chat from both the anchored and the expanded view', async () => {
+	const { findByTestId, queryByTestId, user } = await renderApp({
+		initialPath: '/home',
+	});
+
+	// Anchored → Escape closes back to the launcher.
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+	await user.keyboard('{Escape}');
+	await findByTestId('ceo-chat-launcher');
+	expect(queryByTestId('ceo-chat-panel')).toBeNull();
+
+	// Expanded (modal) → Escape closes it too, scrim and all.
+	(await findByTestId('ceo-chat-launcher')).click();
+	(await findByTestId('ceo-chat-expand')).click();
+	await findByTestId('ceo-chat-overlay');
+	await user.keyboard('{Escape}');
+	await findByTestId('ceo-chat-launcher');
+	expect(queryByTestId('ceo-chat-panel')).toBeNull();
+	expect(queryByTestId('ceo-chat-overlay')).toBeNull();
+});
+
 test('a user message is shown as typed, not parsed as markdown', async () => {
 	const { findByTestId, findByText } = await renderApp({ initialPath: '/home' });
 	(await findByTestId('ceo-chat-launcher')).click();

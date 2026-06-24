@@ -205,8 +205,10 @@ project.
   handler. Retiring/reinstating an agent is the `set_agent_status` MCP tool (gated to
   the team's Captain or an HQ coordinator), which runs the same `setAgentAdminStatus`
   service as the REST disable/enable routes — it can't disable a Captain or an instance
-  agent. On a new team the CEO's initial coherence pass runs first and **blocks** the
-  Captain's planning task.
+  agent. On a new team the CEO's initial coherence/setup pass **blocks** the Captain's
+  planning task. It **auto-runs** on the direct (form) creation path; on the CEO-assisted
+  path the CEO authors the concrete setup plan into it and then starts it with
+  `start_team_setup` (see Creation flows).
 - **Coach** — reviews completed tickets across **every** project to improve agent system
   prompts; woken on any task completion.
 
@@ -235,18 +237,26 @@ membership check: the agent JWT is validated against the `heartbeat_runs` row
 **Creation flows (two, both superuser).** Both share one service —
 `createProjectWithTeam` in `services/project-create.ts` — which resolves the team-type
 template, stands up the team + roster, creates the project, seeds the initial CEO
-coherence task (it takes the first identifier) ahead of the Captain's planning task
-(blocked on coherence), wakes the Captain, and provisions the container.
+coherence/setup task (it takes the first identifier) ahead of the Captain's planning task
+(blocked on coherence), wakes the Captain, and provisions the container. Whether that
+coherence task **auto-runs** is the one behavioural difference between the two paths
+(`suppressCoherenceAutoStart`): the direct path assigns it to the CEO and wakes them
+immediately; the CEO-assisted path leaves it **unassigned and un-woken**.
 1. **Direct** — `POST /api/projects`: runs `createProjectWithTeam` in one step. No
-   approval gate.
+   approval gate. The coherence/setup task **auto-runs** (assigned to the CEO and woken).
 2. **CEO-assisted** — `POST /api/project-intakes`: opens a CEO-run intake conversation
    ticket in HQ (label `project-intake`) recording the form data and the admin's chosen
    team type as the CEO's **baseline suggestion**. **Nothing is created up front — no
    team, no project, no approval.** The CEO scopes the work with the admin; when the
    admin approves in the thread (a plain reply — there is no inbox button), the CEO calls
    the `create_project` MCP tool, which runs the same `createProjectWithTeam` and closes
-   the intake ticket. There is no longer a `project_creation` approval row (the enum value
-   is retained for historical rows only).
+   the intake ticket. On this path the coherence/setup task does **not** auto-run: it is
+   created unassigned, `create_project` returns its `coherence_task_identifier`, and the
+   CEO authors the concrete setup (the specific hires, prompt rewrites, reporting
+   structure agreed in intake) into it with `update_task`, then calls the
+   **`start_team_setup`** MCP tool to assign it to itself and begin the run. There is no
+   longer a `project_creation` approval row (the enum value is retained for historical
+   rows only).
 
 Both accept a `source_team_id` (mutually exclusive with `template_id`): the chosen team
 is snapshotted into a fresh, permanent team-type template and the new team provisioned

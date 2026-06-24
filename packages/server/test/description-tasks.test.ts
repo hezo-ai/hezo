@@ -104,6 +104,36 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		expect(wakeups.rows[0].source).toBe('assignment');
 	});
 
+	it('with { autoStart: false } leaves the ticket unassigned, creates no wakeup, and adds a draft-then-start banner', async () => {
+		const taskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'initial', {
+			autoStart: false,
+		});
+		expect(taskId).toBeTruthy();
+
+		const task = await db.query<{
+			assignee_id: string | null;
+			description: string;
+			labels: string[];
+			priority: string;
+		}>(`SELECT assignee_id, description, labels, priority FROM tasks WHERE id = $1`, [taskId]);
+		const row = task.rows[0];
+		// Unassigned — the CEO drafts the plan then kicks it off via start_team_setup.
+		expect(row.assignee_id).toBeNull();
+		expect(row.labels).toEqual(expect.arrayContaining(['internal', 'team-coherence-review']));
+		expect(row.priority).toBe('high');
+		// Banner instructs the CEO to draft then start; generic audit steps remain.
+		expect(row.description).toContain('Setup plan');
+		expect(row.description).toContain('start_team_setup');
+		expect(row.description).toContain('list_agents');
+
+		// No wakeup was created for anyone on this task — it does not auto-run.
+		const wakeups = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM agent_wakeup_requests WHERE payload->>'task_id' = $1`,
+			[taskId],
+		);
+		expect(wakeups.rows[0].n).toBe(0);
+	});
+
 	it('dedupes: a second call while the first task is open returns the same task id and creates no new task', async () => {
 		const first = await enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired');
 		const second = await enqueueTeamCoherenceReviewTask(db, teamId, 'reports_to_changed');
@@ -175,5 +205,38 @@ describe('project creation', () => {
 			[newTeamId],
 		);
 		expect(oldDescriptionTasks.rows[0].n).toBe(0);
+	});
+
+	it('direct POST /api/projects auto-runs coherence: the ticket is assigned to the CEO with a wakeup', async () => {
+		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
+		const typeId = (await typesRes.json()).data.find(
+			(t: Record<string, unknown>) => t.name === 'Startup',
+		).id;
+
+		const projectRes = await app.request('/api/projects', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				name: 'Direct Auto Co',
+				description: 'The direct-create path keeps auto-running coherence.',
+				template_id: typeId,
+			}),
+		});
+		const newTeamId = (await projectRes.json()).data.team_id;
+
+		const coherence = await db.query<{ id: string; assignee_id: string | null }>(
+			`SELECT id, assignee_id FROM tasks
+			 WHERE team_id = $1 AND labels @> '["team-coherence-review"]'::jsonb LIMIT 1`,
+			[newTeamId],
+		);
+		// Direct path: assigned to the CEO and immediately woken (unchanged behaviour).
+		expect(coherence.rows[0].assignee_id).toBe(ceoMemberId);
+
+		const wakeups = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND payload->>'task_id' = $2 AND source = 'assignment'`,
+			[ceoMemberId, coherence.rows[0].id],
+		);
+		expect(wakeups.rows[0].n).toBe(1);
 	});
 });

@@ -365,6 +365,8 @@ describe('MCP tool: skill file includes all tools', () => {
 		expect(text).toContain('list_teams');
 		expect(text).toContain('create_task');
 		expect(text).toContain('list_agents');
+		expect(text).toContain('create_project');
+		expect(text).toContain('start_team_setup');
 		expect(text).toContain('resolve_approval');
 		expect(text).toContain('get_agent_system_prompt');
 		expect(text).toContain('update_agent_system_prompt');
@@ -1294,6 +1296,116 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 		});
 		expect(typeof result.error).toBe('string');
 		expect(result.error as string).toContain('task_prefix');
+	});
+
+	// Create a project as the CEO (the chat/intake path) and return the CEO token +
+	// the create_project result so a follow-up start_team_setup test can drive it.
+	async function createProjectAsCeo(
+		label: string,
+	): Promise<{ ceoToken: string; ceoId: string; result: Record<string, unknown> }> {
+		const intake = await startIntake(`${label} ${Date.now()}`);
+		const ceoId = await instanceCeoId(db);
+		const { token: ceoToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			ceoId,
+			DEFAULT_TEAM_ID,
+			intake.intake_task_id,
+		);
+		const tplId = await startupTemplateId();
+		const result = await callToolAs(ceoToken, 'create_project', {
+			name: `${label} ${Date.now()}`,
+			description: `${label} description.`,
+			template_id: tplId,
+			intake_task_id: intake.intake_task_id,
+		});
+		expect(result.error).toBeUndefined();
+		return { ceoToken, ceoId, result };
+	}
+
+	it('does NOT auto-run coherence: the setup ticket is created unassigned, with no wakeup, and planning stays blocked on it', async () => {
+		const { result } = await createProjectAsCeo('No Auto Coherence');
+		expect(result.coherence_task_id).toBeTruthy();
+		expect(result.coherence_task_identifier).toBeTruthy();
+		const coherenceId = result.coherence_task_id as string;
+
+		// Created unassigned with the draft-then-start banner — the CEO drafts then kicks off.
+		const ticket = await db.query<{ assignee_id: string | null; description: string }>(
+			'SELECT assignee_id, description FROM tasks WHERE id = $1',
+			[coherenceId],
+		);
+		expect(ticket.rows[0].assignee_id).toBeNull();
+		expect(ticket.rows[0].description).toContain('start_team_setup');
+
+		// No wakeup fired for the coherence ticket — it does not auto-run.
+		const wakeups = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM agent_wakeup_requests WHERE payload->>'task_id' = $1`,
+			[coherenceId],
+		);
+		expect(wakeups.rows[0].n).toBe(0);
+
+		// The planning ticket is still blocked by the coherence ticket (gate unchanged).
+		const dep = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM task_dependencies WHERE task_id = $1 AND blocked_by_task_id = $2`,
+			[result.planning_task_id as string, coherenceId],
+		);
+		expect(dep.rows[0].n).toBe(1);
+	});
+
+	it('start_team_setup assigns the coherence ticket to the CEO and wakes them', async () => {
+		const { ceoToken, ceoId, result } = await createProjectAsCeo('Setup Happy');
+		const coherenceId = result.coherence_task_id as string;
+
+		const started = await callToolAs(ceoToken, 'start_team_setup', { project: result.slug });
+		expect(started.error).toBeUndefined();
+		expect(started.started).toBe(true);
+		expect(started.task_id).toBe(coherenceId);
+
+		const ticket = await db.query<{ assignee_id: string | null }>(
+			'SELECT assignee_id FROM tasks WHERE id = $1',
+			[coherenceId],
+		);
+		expect(ticket.rows[0].assignee_id).toBe(ceoId);
+
+		const wakeups = await db.query<{ source: string }>(
+			`SELECT source FROM agent_wakeup_requests WHERE member_id = $1 AND payload->>'task_id' = $2`,
+			[ceoId, coherenceId],
+		);
+		expect(wakeups.rows.length).toBe(1);
+		expect(wakeups.rows[0].source).toBe('assignment');
+	});
+
+	it('start_team_setup errors when there is no open setup ticket', async () => {
+		const { ceoToken, result } = await createProjectAsCeo('Setup Done');
+		await db.query(`UPDATE tasks SET status = 'done'::task_status WHERE id = $1`, [
+			result.coherence_task_id as string,
+		]);
+		const started = await callToolAs(ceoToken, 'start_team_setup', { project: result.slug });
+		expect(started.error).toContain('No open team-setup ticket');
+	});
+
+	it('start_team_setup rejects a non-CEO agent', async () => {
+		const { result } = await createProjectAsCeo('Setup Guard');
+		const { token: workerToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
+		const started = await callToolAs(workerToken, 'start_team_setup', { project: result.slug });
+		expect(started.error).toContain('Only the CEO');
+	});
+
+	it('start_team_setup is idempotent — a second call coalesces to a single queued wakeup', async () => {
+		const { ceoToken, ceoId, result } = await createProjectAsCeo('Setup Idem');
+		const coherenceId = result.coherence_task_id as string;
+
+		const first = await callToolAs(ceoToken, 'start_team_setup', { project: result.slug });
+		expect(first.started).toBe(true);
+		const second = await callToolAs(ceoToken, 'start_team_setup', { project: result.slug });
+		expect(second.started).toBe(true);
+
+		const wakeups = await db.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND payload->>'task_id' = $2 AND status = 'queued'`,
+			[ceoId, coherenceId],
+		);
+		expect(wakeups.rows[0].n).toBe(1);
 	});
 });
 

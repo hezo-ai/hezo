@@ -21,8 +21,10 @@ across the whole instance:
   until you give the go-ahead.
 - **Coordination** — ask about any project's status, tickets, or roster; the CEO
   works across every team.
-- **Setup review** — when a new team is created, the CEO runs a coherence check before
-  the team starts planning, so the roster is aligned with the goal.
+- **Setup review** — before a new team starts planning, the CEO aligns its roster with the
+  goal. When the CEO creates a project with you, it sets the team up according to the plan
+  you agreed — the roles to hire and how they fit together — then starts it; a project
+  created directly from the form gets an automatic coherence check instead.
 - **Actioning changes** — hire new agents, retire ones a team no longer needs, adjust
   system prompts, and change settings, all through the conversation. See
   [Hiring & customizing agents](/docs/concepts/hiring-and-agents).
@@ -74,8 +76,9 @@ follow its thinking instead of waiting for a finished block of text.
 Keep working alongside it: **minimize** the chat to the corner button and a badge appears
 there when a CEO reply lands while you're away — the same unread indicator the inbox uses
 — clearing the moment you reopen it. When you want more room, **expand** the chat to fill
-the screen below the top navigation bar, and collapse it back to the anchored panel when
-you're done.
+the screen below the top navigation bar; expanding dims the rest of the page into a focused,
+modal view. Collapse it back to the anchored panel when you're done, or press **Escape**
+(or click the dimmed area) to close the chat.
 
 Because the CEO works across the whole instance, you can ask about anything without
 opening a project first: "how's the marketing site coming along?", "what's the engineering

@@ -96,7 +96,7 @@ Create a new team (superuser only)
 
 _Write tool._
 
-Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in the intake conversation — a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen team-type template (pass template_id from list_team_templates, or source_team_id to clone an existing team; defaults to Blank), creates the project, its planning ticket, and the initial CEO coherence/setup ticket the planning ticket is blocked on, then provisions the container. When intake_task_id is given, the intake conversation is closed with a completion note. Returns the new project plus its planning ticket identifier.
+Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in the intake conversation — a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen team-type template (pass template_id from list_team_templates, or source_team_id to clone an existing team; defaults to Blank), creates the project, its planning ticket, and the initial CEO coherence/setup ticket the planning ticket is blocked on, then provisions the container. The coherence/setup ticket is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned coherence_task_identifier) to capture the concrete setup you agreed in intake — the exact roles to hire, any system-prompt rewrites, and the reporting structure — then call start_team_setup(project) to begin the run. When intake_task_id is given, the intake conversation is closed with a completion note. Returns the new project plus its planning and coherence ticket identifiers.
 
 **Parameters:**
 
@@ -110,9 +110,25 @@ Create a new project together with its dedicated team. CEO-only. Call this ONLY 
 | `source_team_id` | `string` | No | Existing team to clone into a fresh template. Mutually exclusive with template_id. |
 | `intake_task_id` | `string` | No | The HQ project-intake ticket this fulfils; it is closed with a completion note on success. |
 
-**Returns:** The new project row plus `team_slug`, `planning_task_id`, and `planning_task_identifier`. Returns `{ error }` if validation fails.
+**Returns:** The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, and the initial coherence/setup ticket (`coherence_task_id`, `coherence_task_identifier`). The coherence ticket is created unassigned and does NOT auto-run on this path — draft its description then call `start_team_setup`. Returns `{ error }` if validation fails.
 
 **Authorization:** CEO only — call after the admin has explicitly approved the scope and team type in intake.
+
+### `start_team_setup`
+
+_Write tool._
+
+Kick off the initial team-coherence/setup run for a project you created via create_project. CEO-only. Projects created directly from the admin form start their coherence pass automatically; projects you create do NOT. First author the coherence ticket with update_task — replace its description with the concrete plan you agreed in intake (the exact roles to hire and why, any system-prompt rewrites, and the reporting structure) — then call this to assign the ticket to yourself and start the run. Returns the started ticket; errors if there is no open setup ticket for the project or a run is already active on it.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+
+**Returns:** `{ started: true, task_id, task_identifier }` after assigning the project’s open coherence/setup ticket to the CEO and waking them to run it. Returns `{ error }` if there is no open setup ticket for the project or a run is already active on it.
+
+**Authorization:** CEO only — for a project the CEO created via `create_project`; author the coherence ticket description first.
 
 ### `list_team_templates`
 
