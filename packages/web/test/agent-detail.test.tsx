@@ -3,7 +3,7 @@ import { fireEvent, waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { queryClient } from '../src/lib/query-client';
 import { getTestContext, renderApp } from './helpers/render';
-import { seedWorkspace } from './helpers/seed';
+import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 test('team org chart renders with status legend', async () => {
 	let teamSlug = '';
@@ -184,15 +184,19 @@ test('agent settings tab edits the title and persists across reload', async () =
 	);
 });
 
-test('agent header shows a live next-heartbeat countdown', async () => {
-	let teamSlug = '';
+test('agent header shows a live next-heartbeat countdown when the agent has work', async () => {
+	let projectSlug = '';
 	let agentId = '';
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			teamSlug = ws.internalSlug;
 			agentId = ws.agents[0].id;
+			// Give the agent an actionable task; without one the indicator shows a
+			// dash (the next heartbeat would no-op) rather than a countdown.
+			const project = await seedProject(ws, { name: 'Demo' });
+			await seedTask(ws, project, { title: 'Do work', assignee_id: agentId });
+			projectSlug = ws.internalSlug; // seedProject reslugs the project
 			// Stamp a recent heartbeat so next_heartbeat_at is ~an hour out and the
 			// countdown renders a stable, non-due value.
 			const { db } = getTestContext();
@@ -201,11 +205,38 @@ test('agent header shows a live next-heartbeat countdown', async () => {
 	});
 	await router.navigate({
 		to: '/projects/$projectId/agents/$agentId',
-		params: { projectId: teamSlug, agentId },
+		params: { projectId: projectSlug, agentId },
 	});
 
 	const indicator = await findByTestId('next-heartbeat');
 	expect(indicator.textContent).toMatch(/Next heartbeat in/);
+});
+
+test('agent header shows a dash when the agent has no work to do', async () => {
+	let teamSlug = '';
+	let agentId = '';
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			teamSlug = ws.internalSlug;
+			agentId = ws.agents[0].id;
+			// Detach any seeded task so the agent has nothing actionable. Its next
+			// heartbeat would fire but no-op, so the indicator must render a dash
+			// instead of a misleading "due now".
+			const { db } = getTestContext();
+			await db.query('UPDATE tasks SET assignee_id = NULL WHERE assignee_id = $1', [agentId]);
+		},
+	});
+	await router.navigate({
+		to: '/projects/$projectId/agents/$agentId',
+		params: { projectId: teamSlug, agentId },
+	});
+
+	const indicator = await findByTestId('next-heartbeat');
+	expect(indicator.textContent).toContain('Next heartbeat');
+	expect(indicator.textContent).toContain('—');
+	expect(indicator.textContent).not.toMatch(/due now|in \d/);
 });
 
 test('agent header hides the countdown for a disabled (off-schedule) agent', async () => {

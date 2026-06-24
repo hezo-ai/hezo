@@ -1,4 +1,4 @@
-import { AgentAdminStatus, BUDGET_PAUSE_STATUSES } from '@hezo/shared';
+import { AgentAdminStatus, BUDGET_PAUSE_STATUSES, TERMINAL_TASK_STATUSES } from '@hezo/shared';
 
 /**
  * Lower bound on how often a heartbeat can fire, regardless of an agent's
@@ -16,6 +16,7 @@ export const HEARTBEAT_INTERVAL_FLOOR_MIN = Number.isFinite(rawFloorMin) ? rawFl
 // Fixed enum values from `@hezo/shared` — safe to interpolate as a Postgres
 // array literal.
 const BUDGET_PAUSE_ARRAY_PG = `{${BUDGET_PAUSE_STATUSES.join(',')}}`;
+const TERMINAL_TASK_STATUSES_PG = `{${TERMINAL_TASK_STATUSES.join(',')}}`;
 
 /**
  * SQL expression yielding an agent's next scheduled heartbeat as a TIMESTAMPTZ,
@@ -38,3 +39,29 @@ export const NEXT_HEARTBEAT_AT_SQL = `CASE
 	WHEN ma.last_heartbeat_at IS NULL THEN now()
 	ELSE ma.last_heartbeat_at + (GREATEST(ma.heartbeat_interval_min, ${HEARTBEAT_INTERVAL_FLOOR_MIN}) || ' minutes')::interval
 END`;
+
+/**
+ * SQL boolean — does this agent have an actionable task *right now*? Mirrors the
+ * task selection in `JobManager.activateAgent`: a non-terminal task assigned to
+ * the agent whose blockers are all closed. When false, a scheduled heartbeat
+ * fires but finds nothing to do (a no-op), so the UI shows a dash instead of a
+ * countdown — a "next heartbeat" that will not actually run anything would only
+ * mislead.
+ *
+ * Keyed on `ma.id` alone, so it composes into any projection joining
+ * `member_agents AS ma`. Like the scheduler's own selection it carries no team
+ * filter — keying on the specific agent (`assignee_id = ma.id`) keeps it correct
+ * for both team-scoped agents and the cross-team instance agents (CEO/Coach).
+ * Interpolates fixed enum constants only (no user input).
+ */
+export const HAS_ACTIONABLE_WORK_SQL = `EXISTS (
+	SELECT 1 FROM tasks i
+	WHERE i.assignee_id = ma.id
+	  AND i.status <> ALL('${TERMINAL_TASK_STATUSES_PG}'::task_status[])
+	  AND NOT EXISTS (
+	    SELECT 1 FROM task_dependencies d
+	    JOIN tasks b ON b.id = d.blocked_by_task_id
+	    WHERE d.task_id = i.id
+	      AND b.status <> ALL('${TERMINAL_TASK_STATUSES_PG}'::task_status[])
+	  )
+)`;

@@ -414,7 +414,7 @@ describe('JobManager workflow methods', () => {
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
 		});
 
-		it('marks wakeup as completed when agent has no assigned tasks', async () => {
+		it('marks wakeup completed and advances last_heartbeat_at when agent has no assigned tasks', async () => {
 			const manager = createJobManager();
 
 			// Ensure agent has no open tasks assigned to it
@@ -422,6 +422,9 @@ describe('JobManager workflow methods', () => {
 				"UPDATE tasks SET assignee_id = NULL WHERE assignee_id = $1 AND status NOT IN ('done', 'closed', 'cancelled')",
 				[agentId],
 			);
+			// A never-heartbeated agent is perpetually "due"; the no-op scan must stamp
+			// last_heartbeat_at so the scheduler throttles instead of re-firing each tick.
+			await db.query('UPDATE member_agents SET last_heartbeat_at = NULL WHERE id = $1', [agentId]);
 
 			const wakeupRes = await db.query<{ id: string }>(
 				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, created_at)
@@ -439,6 +442,12 @@ describe('JobManager workflow methods', () => {
 			);
 			expect(result.rows[0].status).toBe(WakeupStatus.Completed);
 			expect(result.rows[0].completed_at).not.toBeNull();
+
+			const agentRow = await db.query<{ last_heartbeat_at: string | null }>(
+				'SELECT last_heartbeat_at FROM member_agents WHERE id = $1',
+				[agentId],
+			);
+			expect(agentRow.rows[0].last_heartbeat_at).not.toBeNull();
 
 			manager.shutdown();
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);

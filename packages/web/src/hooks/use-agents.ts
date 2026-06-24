@@ -27,6 +27,10 @@ export interface Agent {
 	/** Computed: when the next scheduled heartbeat is due. Null when the agent is
 	 *  off the schedule (disabled or budget-paused). */
 	next_heartbeat_at: string | null;
+	/** Computed: whether the agent has an actionable task right now. False when its
+	 *  next heartbeat would fire but find nothing to do (so the UI shows a dash
+	 *  instead of a countdown). */
+	has_actionable_work: boolean;
 	reports_to: string | null;
 	reports_to_title: string | null;
 	assigned_task_count: number;
