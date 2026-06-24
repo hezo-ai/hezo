@@ -11,8 +11,15 @@ tune how each agent behaves — both from the web app and by asking the CEO.
 
 ## Hiring a new agent
 
-Tell the CEO you need a new role, or use the hire screen directly. When you hire an
-agent you set:
+There are two ways a hire gets started: you fill in the hire screen directly, or you
+tell the CEO you need a new role and let the team draft it for you. In the second case
+the CEO writes the full role spec and files it as a hire proposal (or directs the
+team's Captain to) — so the agents do the drafting work, and the proposal lands in your
+inbox ready to review. Either way you stay in control: a hire always surfaces as an
+**approval**, and you can **modify** the proposed role, system prompt, budget, heartbeat,
+and code access before approving it. Nothing is added to the roster without your sign-off.
+
+When you hire an agent you set:
 
 - **Role** — its title and a short description of what it's responsible for.
 - **System prompt** — the instructions that define how it works. Helpers let you
@@ -25,7 +32,6 @@ agent you set:
   [Budgets & cost control](/docs/concepts/budgets-and-costs)).
 - **Code access** — whether the agent works in the project's code workspace.
 
-Hiring surfaces as an **approval** so a new agent doesn't appear without your sign-off.
 Once approved, the agent is onboarded into the team and starts picking up work on its
 heartbeat.
 

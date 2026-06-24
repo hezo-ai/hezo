@@ -166,6 +166,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		returns:
 			'An array of agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `runtime_status`, `admin_status`).',
 	},
+	create_hire_proposal: {
+		category: 'Agents & hiring',
+		returns:
+			'`{ approval_id, status, payload }` for the new pending hire approval, or `{ error }` if the spec is rejected (missing title, invalid effort/budget, reserved or duplicate slug, or an unknown `task_id`).',
+		auth: 'A team Captain (for its own team) or the CEO (for any team — pass `project`, including HQ). The proposal surfaces as a pending approval for the admin.',
+	},
 	update_hire_proposal: {
 		category: 'Agents & hiring',
 		returns:

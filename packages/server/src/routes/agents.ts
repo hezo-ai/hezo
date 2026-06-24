@@ -2,8 +2,6 @@ import {
 	AgentAdminStatus,
 	type AiProvider,
 	ALL_AI_PROVIDERS,
-	ApprovalStatus,
-	ApprovalType,
 	AuthType,
 	DEFAULT_EFFORT,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
@@ -48,6 +46,11 @@ import {
 	upsertDocument,
 } from '../services/documents';
 import { HAS_ACTIONABLE_WORK_SQL, NEXT_HEARTBEAT_AT_SQL } from '../services/heartbeat-schedule';
+import {
+	type HireProposalInput,
+	insertHireApproval,
+	prepareHireProposal,
+} from '../services/hire-proposal';
 import { loadTeamCoordinationContext } from '../services/internal-intake';
 import { terminateHeartbeatRun } from '../services/run-termination';
 import { resolveSystemPrompt } from '../services/template-resolver';
@@ -341,77 +344,23 @@ agentsRoutes.post('/projects/:projectId/agents/onboard', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
-	const body = await c.req.json<{
-		title: string;
-		role_description?: string;
-		system_prompt?: string;
-		default_effort?: string;
-		heartbeat_interval_min?: number;
-		daily_budget_cents?: number;
-		weekly_budget_cents?: number;
-		monthly_budget_cents?: number;
-		touches_code?: boolean;
-	}>();
+	const body = await c.req.json<HireProposalInput>();
 
-	if (!body.title?.trim()) {
-		return err(c, 'INVALID_REQUEST', 'title is required', 400);
+	const prepared = await prepareHireProposal(db, teamId, body);
+	if ('error' in prepared) {
+		return err(
+			c,
+			prepared.conflict ? 'CONFLICT' : 'INVALID_REQUEST',
+			prepared.error,
+			prepared.conflict ? 409 : 400,
+		);
 	}
-
-	if (body.default_effort !== undefined && !isAgentEffort(body.default_effort)) {
-		return err(c, 'INVALID_REQUEST', `Invalid default_effort: ${body.default_effort}`, 400);
-	}
-
-	const budgetError = budgetWindowsError({
-		daily_budget_cents: body.daily_budget_cents ?? 0,
-		weekly_budget_cents: body.weekly_budget_cents ?? 0,
-		monthly_budget_cents: body.monthly_budget_cents ?? 3000,
-	});
-	if (budgetError) {
-		return err(c, 'INVALID_REQUEST', budgetError, 400);
-	}
-
-	const slug = toSlug(body.title);
-
-	if (isReservedAgentSlug(slug)) {
-		return err(c, 'INVALID_REQUEST', `Agent slug '${slug}' is reserved`, 400);
-	}
-
-	const slugCheck = await db.query(
-		`SELECT ma.id FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE m.team_id = $1 AND ma.slug = $2`,
-		[teamId, slug],
-	);
-	if (slugCheck.rows.length > 0) {
-		return err(c, 'CONFLICT', `Agent with slug '${slug}' already exists in this team`, 409);
-	}
-
-	const pendingCheck = await db.query(
-		`SELECT id FROM approvals
-		 WHERE team_id = $1 AND type = $2::approval_type AND status = $3::approval_status
-		   AND payload->>'slug' = $4`,
-		[teamId, ApprovalType.Hire, ApprovalStatus.Pending, slug],
-	);
-	if (pendingCheck.rows.length > 0) {
-		return err(c, 'CONFLICT', `A pending hire proposal for slug '${slug}' already exists`, 409);
-	}
+	const proposal = prepared.payload;
+	const slug = proposal.slug;
 
 	// Hiring is per-team coordination: the hire ticket lives in the team's own
 	// project and is actioned by the instance CEO (which runs cross-team there).
 	const coord = await loadTeamCoordinationContext(db, teamId);
-
-	const proposal = {
-		title: body.title.trim(),
-		slug,
-		role_description: body.role_description ?? '',
-		system_prompt: body.system_prompt ?? '',
-		default_effort: body.default_effort ?? DEFAULT_EFFORT,
-		heartbeat_interval_min: body.heartbeat_interval_min ?? DEFAULT_HEARTBEAT_INTERVAL_MIN,
-		daily_budget_cents: body.daily_budget_cents ?? 0,
-		weekly_budget_cents: body.weekly_budget_cents ?? 0,
-		monthly_budget_cents: body.monthly_budget_cents ?? 3000,
-		touches_code: body.touches_code ?? false,
-	};
 
 	if (!coord) {
 		await withTransaction(db, async () => {
@@ -480,19 +429,8 @@ agentsRoutes.post('/projects/:projectId/agents/onboard', async (c) => {
 	}
 
 	const { task, finalApproval } = await withTransaction(db, async () => {
-		const approvalResult = await db.query<Record<string, unknown>>(
-			`INSERT INTO approvals (team_id, type, requested_by_member_id, payload, status)
-			 VALUES ($1, $2::approval_type, $3, $4::jsonb, $5::approval_status)
-			 RETURNING *`,
-			[
-				teamId,
-				ApprovalType.Hire,
-				requestedByMemberId,
-				JSON.stringify(proposal),
-				ApprovalStatus.Pending,
-			],
-		);
-		const approvalId = approvalResult.rows[0].id as string;
+		const approvalRow = await insertHireApproval(db, teamId, proposal, requestedByMemberId);
+		const approvalId = approvalRow.id as string;
 
 		const existingAgents = await db.query<{ title: string; role_description: string }>(
 			`SELECT ma.title, ma.role_description

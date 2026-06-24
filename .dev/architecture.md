@@ -194,7 +194,16 @@ project.
 - **CEO** — runs all coordination. **Project intake** and first-run **onboarding**
   (pre-project) live in HQ. Per-team **setup/coherence review**, **hiring**, and
   **retiring** concern a specific project-team and live in *that team's own project*,
-  CEO-actioned. Retiring/reinstating an agent is the `set_agent_status` MCP tool (gated to
+  CEO-actioned. **Hiring** has two entry points, both ending as a pending `hire` approval
+  the admin approves (and may modify first via `PATCH /approvals/:id`, which reuses the
+  hire form pre-filled from the proposal): the admin's hire form
+  (`POST /projects/:projectId/agents/onboard`, which also opens a CEO-assigned onboarding
+  ticket), or a Captain/CEO filing one directly with the `create_hire_proposal` MCP
+  tool — the Captain for its own team, the CEO for any team (it passes `project`,
+  including HQ). The Captain refines an admin-started draft
+  with `update_hire_proposal`; both tools share the validation/insert helpers in
+  `services/hire-proposal.ts`. Approval materialises the agent via the hire approval
+  handler. Retiring/reinstating an agent is the `set_agent_status` MCP tool (gated to
   the team's Captain or an HQ coordinator), which runs the same `setAgentAdminStatus`
   service as the REST disable/enable routes — it can't disable a Captain or an instance
   agent. On a new team the CEO's initial coherence/setup pass **blocks** the Captain's
