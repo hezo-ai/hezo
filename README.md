@@ -12,7 +12,7 @@
 </div>
 
 <p align="center">
-  <strong>A company for your AI agents — self-hosted, and secure by design.</strong>
+  <strong>A whole AI workforce. And you're the boss.</strong>
 </p>
 
 <p align="center">
