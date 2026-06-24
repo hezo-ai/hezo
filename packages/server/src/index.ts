@@ -14,6 +14,7 @@ import { DockerClient } from './services/docker';
 import { evaluateDockerPreflight, formatDockerPreflightMessage } from './services/docker-preflight';
 import { getSharedImageBuildTracker } from './services/image-build-tracker';
 import type { LogStreamBroker } from './services/log-stream-broker';
+import { formatPortInUseMessage, probePort } from './services/port-preflight';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import { handleWsSubscribe, handleWsUnsubscribe } from './services/ws-subscribe-handler';
 import { type StartupResult, startup } from './startup';
@@ -26,6 +27,13 @@ interface HezoDevRuntime {
 
 declare global {
 	var __hezoDevRuntime: HezoDevRuntime | undefined;
+	/**
+	 * Set once the cold-start port preflight has run. Persists across `bun --hot`
+	 * reloads (Bun preserves the global scope), so a reload — where our own
+	 * already-running server legitimately holds the port — skips the re-probe
+	 * instead of mistaking it for a conflict and exiting.
+	 */
+	var __hezoPortProbed: boolean | undefined;
 }
 
 async function shutdownPreviousRuntime(): Promise<void> {
@@ -77,6 +85,20 @@ if (await runRestore()) {
 const config = parseConfig();
 setLogLevel(config.logLevel);
 setKeepOldContainers(config.keepOldContainers);
+
+// Port preflight: Bun binds the port itself from the default export below, so an
+// already-taken port would otherwise surface as a bare `EADDRINUSE` crash. Probe
+// it first and exit with guidance pointing at `--port`/`HEZO_PORT`. Guarded so it
+// runs only on a cold start, never on a `bun --hot` reload (where the dev server
+// keeps the port bound across reloads and a re-probe would falsely see a conflict).
+if (!globalThis.__hezoPortProbed) {
+	globalThis.__hezoPortProbed = true;
+	const probe = await probePort(config.port);
+	if (!probe.available && probe.code === 'EADDRINUSE') {
+		log.error(`\n${formatPortInUseMessage(config.port)}\n`);
+		process.exit(1);
+	}
+}
 
 // Docker is a hard prerequisite — every agent runs in a per-project container.
 // Detect a missing or unreachable daemon at launch and exit with actionable
