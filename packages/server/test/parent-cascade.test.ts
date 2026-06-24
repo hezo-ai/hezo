@@ -201,7 +201,7 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 		expect(after).toBeDefined();
 	});
 
-	it('cancelled sub-task does not wake parent — parent stays gated on Closed', async () => {
+	it('cancelled sub-task wakes parent — cancelled counts the same as Closed', async () => {
 		const parent = await createTask('parent cancel', architectId);
 		const child = await createTask('to be cancelled', uiDesignerId, parent.id);
 		await clearWakeups(architectId);
@@ -211,6 +211,30 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 			db,
 			teamId,
 			child.id,
+			TaskStatus.Backlog,
+			TaskStatus.Cancelled,
+			null,
+			undefined,
+		);
+
+		const wakeups = await listWakeups(architectId, parent.id);
+		const childrenClosed = wakeups.find((w) => w.payload.reason === 'children_closed');
+		expect(childrenClosed).toBeDefined();
+		expect(childrenClosed?.source).toBe('assignment');
+		expect(childrenClosed?.idempotency_key).toBe(`children-closed:${parent.id}`);
+	});
+
+	it('does not wake parent while a sibling is open even though one sub-task is cancelled', async () => {
+		const parent = await createTask('parent cancel + open sibling', architectId);
+		const cancelled = await createTask('cancelled child', uiDesignerId, parent.id);
+		await createTask('still open child', engineerId, parent.id);
+		await clearWakeups(architectId);
+
+		await setStatusDirect(cancelled.id, TaskStatus.Cancelled);
+		await triggerStatusAutomations(
+			db,
+			teamId,
+			cancelled.id,
 			TaskStatus.Backlog,
 			TaskStatus.Cancelled,
 			null,

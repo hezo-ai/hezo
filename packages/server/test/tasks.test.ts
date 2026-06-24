@@ -1031,6 +1031,43 @@ describe('closure rules — sub-tasks must be closed before parent', () => {
 		expect((await res.json()).data.status).toBe('done');
 	});
 
+	it('allows done when the only sub-task is cancelled (cancelled counts as closed)', async () => {
+		const parent = await createParent();
+		const child = await createChild(parent.id);
+		await forceStatus(child.id, 'cancelled');
+
+		const res = await setStatus(parent.id, 'done');
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.status).toBe('done');
+	});
+
+	it('allows done when sub-tasks are a mix of closed and cancelled', async () => {
+		const parent = await createParent();
+		const closedChild = await createChild(parent.id);
+		const cancelledChild = await createChild(parent.id);
+		await forceStatus(closedChild.id, 'closed');
+		await forceStatus(cancelledChild.id, 'cancelled');
+
+		const res = await setStatus(parent.id, 'done');
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.status).toBe('done');
+	});
+
+	it('still rejects done when a cancelled sub-task sits beside an open one', async () => {
+		const parent = await createParent();
+		const cancelledChild = await createChild(parent.id);
+		const openChild = await createChild(parent.id);
+		await forceStatus(cancelledChild.id, 'cancelled');
+		await forceStatus(openChild.id, 'in_progress');
+
+		const res = await setStatus(parent.id, 'done');
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		// The open sibling is named as the blocker; the cancelled one is not.
+		expect(body.error.message).toContain(openChild.identifier);
+		expect(body.error.message).not.toContain(cancelledChild.identifier);
+	});
+
 	it('allows done on a parent with no sub-tasks', async () => {
 		const parent = await createParent();
 		const res = await setStatus(parent.id, 'done');
