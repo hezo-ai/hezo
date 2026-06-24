@@ -15,6 +15,7 @@ packages/server/src/generated/
 packages/server/static/
 *.db
 .hezo/
+.hezo-dev/
 .claude/
 .plans/
 test-results/

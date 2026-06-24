@@ -26,6 +26,39 @@ function resolveDataDir(raw: string): string {
 	return raw.startsWith('~') ? resolve(homedir(), raw.slice(2)) : resolve(raw);
 }
 
+export interface DevDataDir {
+	dataDir: string;
+	/**
+	 * True only when neither HEZO_DATA_DIR nor --data-dir was set — `bun run dev`
+	 * must then forward the project-local default to the server it spawns, which
+	 * would otherwise fall back to the production default (~/.hezo).
+	 */
+	usedDefault: boolean;
+}
+
+/**
+ * Resolve the data dir for `bun run dev`. Mirrors parseConfig's precedence
+ * (env HEZO_DATA_DIR > --data-dir > default) but swaps the production default
+ * (~/.hezo) for a project-local dir so local dev never shares the production
+ * database. Both env and CLI values flow through resolveDataDir, so a leading
+ * `~` expands exactly as the server does. An empty env value is treated as
+ * unset, matching parseConfig's `pick`.
+ */
+export function resolveDevDataDir(
+	defaultDir: string,
+	cliDataDir: string | undefined,
+	env: NodeJS.ProcessEnv = process.env,
+): DevDataDir {
+	const envValue = env.HEZO_DATA_DIR;
+	if (envValue !== undefined && envValue !== '') {
+		return { dataDir: resolveDataDir(envValue), usedDefault: false };
+	}
+	if (cliDataDir !== undefined && cliDataDir !== '') {
+		return { dataDir: resolveDataDir(cliDataDir), usedDefault: false };
+	}
+	return { dataDir: resolve(defaultDir), usedDefault: true };
+}
+
 function parsePort(raw: string): number {
 	const n = Number.parseInt(raw, 10);
 	if (Number.isNaN(n) || n < 1 || n > 65535) {

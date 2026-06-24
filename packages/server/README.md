@@ -22,7 +22,7 @@ bun install
 bun run dev
 ```
 
-Starts the server on port 3100 with hot reload. PGlite data persists at `~/.hezo/pgdata` between restarts.
+Starts the server on port 3100 with hot reload. In dev, PGlite data persists at `.hezo-dev/pgdata` in the repo root (gitignored) between restarts, isolated from a production instance; the production binary uses `~/.hezo`. Override with `--data-dir` or `HEZO_DATA_DIR`.
 
 ## CLI Flags
 
