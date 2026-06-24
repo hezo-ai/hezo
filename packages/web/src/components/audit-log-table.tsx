@@ -71,9 +71,20 @@ function buildColumns(showProject: boolean): Column<AuditEntry>[] {
 			key: 'project',
 			header: 'Project',
 			hideOnMobile: true,
-			render: (e) => (
-				<span className="text-xs text-text-2">{e.project_name ?? <em>instance</em>}</span>
-			),
+			render: (e) => {
+				const slug = e.project_slug;
+				// Instance-scoped rows (no owning project) render a plain dash.
+				if (!slug) return <span className="text-xs text-text-2">-</span>;
+				return (
+					<Link
+						to="/projects/$projectId"
+						params={{ projectId: slug }}
+						className="text-xs text-text-2 hover:text-accent hover:underline"
+					>
+						{e.project_name ?? slug}
+					</Link>
+				);
+			},
 		});
 	}
 	return columns;
