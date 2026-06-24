@@ -58,6 +58,47 @@ test('shows the empty state once history loads', async () => {
 	expect(await findByText(/Say hello to the CEO/i)).toBeTruthy();
 });
 
+test('the header identifies the CEO with the HQ badge and the composer invites cross-project questions', async () => {
+	const { findByTestId, getByTestId, getByText } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+
+	// Header reads "CEO" alongside the HQ team badge (the CEO lives in HQ).
+	expect(getByText('CEO')).toBeTruthy();
+	expect(getByText('HQ')).toBeTruthy();
+	// The placeholder reflects the global, every-project scope of the chat.
+	const input = getByTestId('ceo-chat-input') as HTMLTextAreaElement;
+	expect(input.placeholder).toBe('Ask the CEO anything, across every project…');
+});
+
+test('each message carries its role eyebrow — "You" for the operator, "CEO · HQ" for the CEO', async () => {
+	const { findByTestId, findByText } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+
+	seedConversation([
+		{
+			id: 'u1',
+			role: 'user',
+			channel: 'web',
+			status: 'complete',
+			content: 'Hi',
+			created_at: now(),
+		},
+		{
+			id: 'a1',
+			role: 'assistant',
+			channel: 'web',
+			status: 'complete',
+			content: 'Hello',
+			created_at: now(),
+		},
+	]);
+
+	expect(await findByText('You')).toBeTruthy();
+	expect(await findByText('CEO · HQ')).toBeTruthy();
+});
+
 test('the closed launcher button exposes a "Chat with CEO" tooltip on hover', async () => {
 	const { findByTestId, getAllByText, user } = await renderApp({ initialPath: '/home' });
 	const launcher = await findByTestId('ceo-chat-launcher');
@@ -87,7 +128,7 @@ test('streaming with no text yet shows the typing indicator, not an empty bubble
 	expect(queryByTestId('ceo-chat-streaming-dots')).toBeNull();
 });
 
-test('streaming with text shows the reply plus in-bubble dots, not the standalone indicator', async () => {
+test('streaming with text shows the reply plus trailing dots, not the standalone indicator', async () => {
 	const { findByTestId, findByText, getByTestId, queryByTestId } = await renderApp({
 		initialPath: '/home',
 	});
@@ -106,7 +147,7 @@ test('streaming with text shows the reply plus in-bubble dots, not the standalon
 	]);
 
 	expect(await findByText('Working on it')).toBeTruthy();
-	// Dots move into the bottom of the reply bubble; the standalone "thinking"
+	// Dots sit just below the reply bubble; the standalone "thinking"
 	// indicator is gone now that the answer has started.
 	expect(await findByTestId('ceo-chat-streaming-dots')).toBeTruthy();
 	expect(getByTestId('ceo-chat-message')).toBeTruthy();
