@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { CAPTAIN_AGENT_SLUG } from '@hezo/shared';
+import { CAPTAIN_AGENT_SLUG, DEFAULT_TEAM_ID } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -10,6 +10,7 @@ import {
 	createTestApp,
 	createTestProject,
 	createTestTeam,
+	instanceCeoId,
 	mintAgentToken,
 } from './helpers/app';
 
@@ -47,6 +48,14 @@ async function callTool(
 async function captainToken(): Promise<string> {
 	const { token: t } = await mintAgentToken(db, masterKeyManager, captainId, teamId, null, {
 		projectId: internalProjectId,
+	});
+	return t;
+}
+
+async function ceoToken(): Promise<string> {
+	const ceoId = await instanceCeoId(db);
+	const { token: t } = await mintAgentToken(db, masterKeyManager, ceoId, DEFAULT_TEAM_ID, null, {
+		crossProject: true,
 	});
 	return t;
 }
@@ -144,7 +153,39 @@ describe('MCP tool create_hire_proposal', () => {
 			title: 'Rogue Role',
 			system_prompt: 'unauthorized',
 		});
-		expect(result.error).toBe('Only the Captain can create hire proposals');
+		expect(result.error).toBe('Only the Captain or CEO can create hire proposals');
+	});
+
+	it('lets the CEO file a proposal for any team via project', async () => {
+		const result = await callTool(await ceoToken(), 'create_hire_proposal', {
+			project: projectSlug,
+			title: 'Growth Lead',
+			system_prompt: 'You drive growth experiments.',
+		});
+		expect(result.error).toBeUndefined();
+		const row = await db.query<{ team_id: string }>(
+			'SELECT team_id FROM approvals WHERE id = $1',
+			[result.approval_id],
+		);
+		expect(row.rows[0].team_id).toBe(teamId);
+	});
+
+	it('lets the CEO file a proposal for HQ', async () => {
+		const hq = await db.query<{ slug: string }>(
+			'SELECT slug FROM projects WHERE team_id = $1 AND is_internal = true LIMIT 1',
+			[DEFAULT_TEAM_ID],
+		);
+		const result = await callTool(await ceoToken(), 'create_hire_proposal', {
+			project: hq.rows[0].slug,
+			title: 'HQ Ops Analyst',
+			system_prompt: 'You support instance-wide operations.',
+		});
+		expect(result.error).toBeUndefined();
+		const row = await db.query<{ team_id: string }>(
+			'SELECT team_id FROM approvals WHERE id = $1',
+			[result.approval_id],
+		);
+		expect(row.rows[0].team_id).toBe(DEFAULT_TEAM_ID);
 	});
 
 	it('rejects a duplicate of an existing agent slug', async () => {

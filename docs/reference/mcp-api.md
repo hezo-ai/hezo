@@ -403,12 +403,13 @@ Revise the draft of a pending hire approval. Captain-only. Use this to expand or
 
 _Write tool._
 
-File a new hire proposal for your team. Captain-only. Use this when directed (e.g. by the CEO, or a team-provisioning ticket) to staff or expand the team: author the full role spec — title, role description, and a complete system prompt — and submit it. The proposal surfaces as a pending approval in the admin inbox; the admin reviews, may modify it, and approves, at which point the agent is created automatically. Pass task_id to link the proposal back to the ticket that prompted it.
+File a new hire proposal. Callable by a team Captain (for its own team) or the CEO (for any team — pass `project` to target it, including HQ). Use this when directed or deciding to staff or expand a team: author the full role spec — title, role description, and a complete system prompt — and submit it. The proposal surfaces as a pending approval in the admin inbox; the admin reviews, may modify it, and approves, at which point the agent is created automatically. Pass task_id to link the proposal back to the ticket that prompted it.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `title` | `string` | Yes | Role title (the slug is derived from it) |
 | `role_description` | `string` | No | Short role description |
 | `system_prompt` | `string` | No | Full system prompt for the new agent |
@@ -422,7 +423,7 @@ File a new hire proposal for your team. Captain-only. Use this when directed (e.
 
 **Returns:** `{ approval_id, status, payload }` for the new pending hire approval, or `{ error }` if the spec is rejected (missing title, invalid effort/budget, reserved or duplicate slug, or an unknown `task_id`).
 
-**Authorization:** Captain only; the proposal is filed on the Captain's team and surfaces as a pending approval for the admin.
+**Authorization:** A team Captain (for its own team) or the CEO (for any team — pass `project`, including HQ). The proposal surfaces as a pending approval for the admin.
 
 ### `report_no_work`
 

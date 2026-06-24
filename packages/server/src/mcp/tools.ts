@@ -1345,8 +1345,9 @@ export function registerTools(
 	tool(
 		server,
 		'create_hire_proposal',
-		'File a new hire proposal for your team. Captain-only. Use this when directed (e.g. by the CEO, or a team-provisioning ticket) to staff or expand the team: author the full role spec — title, role description, and a complete system prompt — and submit it. The proposal surfaces as a pending approval in the admin inbox; the admin reviews, may modify it, and approves, at which point the agent is created automatically. Pass task_id to link the proposal back to the ticket that prompted it.',
+		'File a new hire proposal. Callable by a team Captain (for its own team) or the CEO (for any team — pass `project` to target it, including HQ). Use this when directed or deciding to staff or expand a team: author the full role spec — title, role description, and a complete system prompt — and submit it. The proposal surfaces as a pending approval in the admin inbox; the admin reviews, may modify it, and approves, at which point the agent is created automatically. Pass task_id to link the proposal back to the ticket that prompted it.',
 		{
+			project: projectArg(),
 			title: z.string().describe('Role title (the slug is derived from it)'),
 			role_description: z.string().optional().describe('Short role description'),
 			system_prompt: z.string().optional().describe('Full system prompt for the new agent'),
@@ -1372,11 +1373,16 @@ export function registerTools(
 				'SELECT slug FROM member_agents WHERE id = $1',
 				[auth.memberId],
 			);
-			if (caller.rows[0]?.slug !== CAPTAIN_AGENT_SLUG) {
-				return { error: 'Only the Captain can create hire proposals' };
+			const callerSlug = caller.rows[0]?.slug;
+			if (callerSlug !== CAPTAIN_AGENT_SLUG && callerSlug !== CEO_AGENT_SLUG) {
+				return { error: 'Only the Captain or CEO can create hire proposals' };
 			}
-			const teamId = auth.teamId;
-			if (!teamId) return { error: 'No team in scope' };
+
+			// The team is derived from scope: the Captain operates on its own team,
+			// the CEO targets any team by passing `project`.
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const teamId = scope.teamId;
 
 			let taskId: string | null = null;
 			if (args.task_id !== undefined) {

@@ -198,8 +198,9 @@ project.
   the admin approves (and may modify first via `PATCH /approvals/:id`, which reuses the
   hire form pre-filled from the proposal): the admin's hire form
   (`POST /projects/:projectId/agents/onboard`, which also opens a CEO-assigned onboarding
-  ticket), or the team's Captain filing one directly with the `create_hire_proposal` MCP
-  tool (Captain-only) when the CEO directs it. The Captain refines an admin-started draft
+  ticket), or a Captain/CEO filing one directly with the `create_hire_proposal` MCP
+  tool — the Captain for its own team, the CEO for any team (it passes `project`,
+  including HQ). The Captain refines an admin-started draft
   with `update_hire_proposal`; both tools share the validation/insert helpers in
   `services/hire-proposal.ts`. Approval materialises the agent via the hire approval
   handler. Retiring/reinstating an agent is the `set_agent_status` MCP tool (gated to

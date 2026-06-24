@@ -13,9 +13,9 @@ tune how each agent behaves — both from the web app and by asking the CEO.
 
 There are two ways a hire gets started: you fill in the hire screen directly, or you
 tell the CEO you need a new role and let the team draft it for you. In the second case
-the CEO directs the team's Captain to write the full role spec and file it as a hire
-proposal — so the agents do the drafting work, and the proposal lands in your inbox
-ready to review. Either way you stay in control: a hire always surfaces as an
+the CEO writes the full role spec and files it as a hire proposal (or directs the
+team's Captain to) — so the agents do the drafting work, and the proposal lands in your
+inbox ready to review. Either way you stay in control: a hire always surfaces as an
 **approval**, and you can **modify** the proposed role, system prompt, budget, heartbeat,
 and code access before approving it. Nothing is added to the roster without your sign-off.
 

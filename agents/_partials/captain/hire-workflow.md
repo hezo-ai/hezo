@@ -23,4 +23,4 @@ When the admin starts a hire from the hire form, the system files the pending ap
 5. Post a short comment summarising the revised draft, @-mention the admin, and ask them to review the approval. If they leave feedback or deny with notes, revise via `update_hire_proposal` and re-request review. Iterate until they approve.
 6. On approval the agent is created and the ticket closes automatically. If the admin denies, close the onboarding ticket as cancelled with a brief note.
 
-Both `create_hire_proposal` and `update_hire_proposal` are Captain-only. Do not create agents through any other path — the direct create endpoint is reserved for seeding new teams from templates.
+You can file proposals with `create_hire_proposal` for your own team (the CEO can also file them, for any team); `update_hire_proposal` is Captain-only. Do not create agents through any other path — the direct create endpoint is reserved for seeding new teams from templates.
