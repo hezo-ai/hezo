@@ -4,6 +4,12 @@
 
 <h1 align="center">Hezo</h1>
 
+<div align="center">
+  
+[![Update hezo submodule](https://github.com/hezo-ai/hezo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hezo-ai/main/actions/workflows/main.yml)
+
+</div>
+
 <p align="center">
   <strong>A company for your AI agents — self-hosted, and secure by design.</strong>
 </p>
@@ -52,29 +58,6 @@ New here? Start with the [Introduction](./docs/introduction.md) and
 3. **Approve and run.** Agents pick up [tasks](./docs/concepts/tasks.md) and work
    autonomously on a heartbeat. You set the rules, watch progress live, approve sensitive
    actions, and [cap the spend](./docs/concepts/budgets-and-costs.md).
-
-```
-                 ┌──────────────────────────────────────────────────┐
-   you ──▶ web ──│                   Hezo server                     │
-                 │            (one self-contained binary)            │
-                 │                                                   │
-                 │   Web app · API + realtime · MCP server           │
-                 │   Embedded database · Encrypted vault             │
-                 │   Egress proxy · Git signing · Orchestration      │
-                 └───────────────────────┬──────────────────────────┘
-                            provisions &  │  manages
-                 ┌─────────────────────┐  │  ┌─────────────────────┐
-                 │  Project A (Docker) │◀─┴─▶│  Project N (Docker) │
-                 │   agents + tools    │     │   agents + tools    │
-                 └──────────┬──────────┘     └──────────┬──────────┘
-                            │                            │
-                            └──────▶ egress proxy ◀──────┘
-                                secrets substituted,
-                                 allowed hosts only
-                                        │
-                                        ▼
-                             your models & the internet
-```
 
 See [How Hezo works](./docs/concepts/how-hezo-works.md) for the full tour of the moving
 parts.
