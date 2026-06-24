@@ -82,6 +82,28 @@ export function useBlockedTickets(
 	});
 }
 
+// Approval mutations touch the same caches: the cross-project aggregated lists,
+// and (per project) the approvals list, inbox count, and agent caches.
+function invalidateApprovalCaches(projectSlug?: string) {
+	queryClient.invalidateQueries({ queryKey: queryKeys.approvals.root() });
+	if (projectSlug) {
+		queryClient.invalidateQueries({ queryKey: queryKeys.projects.approvals(projectSlug) });
+		queryClient.invalidateQueries({ queryKey: queryKeys.projects.inboxCount(projectSlug) });
+		invalidateTeamAgentCaches(queryClient, projectSlug);
+	} else {
+		// No project scope — match any project's approvals list and inbox count,
+		// keyed `['projects', <slug>, 'approvals' | 'inbox-count']`.
+		queryClient.invalidateQueries({
+			predicate: (query) =>
+				Array.isArray(query.queryKey) &&
+				query.queryKey[0] === 'projects' &&
+				typeof query.queryKey[1] === 'string' &&
+				(query.queryKey[2] === 'approvals' || query.queryKey[2] === 'inbox-count'),
+		});
+		invalidateAllTeamAgentCaches(queryClient);
+	}
+}
+
 export function useResolveApproval() {
 	return useMutation({
 		mutationFn: ({
@@ -94,29 +116,32 @@ export function useResolveApproval() {
 			resolution_note?: string;
 			projectSlug?: string;
 		}) => api.post(`/api/approvals/${approvalId}/resolve`, { status, resolution_note }),
-		onSuccess: (_data, variables) => {
-			// Always invalidate the cross-project aggregated lists — they have no project scope.
-			queryClient.invalidateQueries({ queryKey: queryKeys.approvals.root() });
-			if (variables.projectSlug) {
-				queryClient.invalidateQueries({
-					queryKey: queryKeys.projects.approvals(variables.projectSlug),
-				});
-				queryClient.invalidateQueries({
-					queryKey: queryKeys.projects.inboxCount(variables.projectSlug),
-				});
-				invalidateTeamAgentCaches(queryClient, variables.projectSlug);
-			} else {
-				// No project scope provided — fall back to a predicate that matches any project's
-				// approvals list and inbox count, keyed `['projects', <slug>, 'approvals' | 'inbox-count']`.
-				queryClient.invalidateQueries({
-					predicate: (query) =>
-						Array.isArray(query.queryKey) &&
-						query.queryKey[0] === 'projects' &&
-						typeof query.queryKey[1] === 'string' &&
-						(query.queryKey[2] === 'approvals' || query.queryKey[2] === 'inbox-count'),
-				});
-				invalidateAllTeamAgentCaches(queryClient);
-			}
-		},
+		onSuccess: (_data, variables) => invalidateApprovalCaches(variables.projectSlug),
+	});
+}
+
+export interface HireProposalEdits {
+	title?: string;
+	role_description?: string;
+	system_prompt?: string;
+	heartbeat_interval_min?: number;
+	daily_budget_cents?: number;
+	weekly_budget_cents?: number;
+	monthly_budget_cents?: number;
+	touches_code?: boolean;
+}
+
+/** Admin edits to a pending hire proposal's spec before approving it. */
+export function useUpdateHireProposal() {
+	return useMutation({
+		mutationFn: ({
+			approvalId,
+			edits,
+		}: {
+			approvalId: string;
+			edits: HireProposalEdits;
+			projectSlug?: string;
+		}) => api.patch<Approval>(`/api/approvals/${approvalId}`, edits),
+		onSuccess: (_data, variables) => invalidateApprovalCaches(variables.projectSlug),
 	});
 }

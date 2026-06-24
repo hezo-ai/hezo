@@ -1,0 +1,168 @@
+import type { PGlite } from '@electric-sql/pglite';
+import {
+	ApprovalStatus,
+	ApprovalType,
+	DEFAULT_EFFORT,
+	DEFAULT_HEARTBEAT_INTERVAL_MIN,
+	isAgentEffort,
+	isReservedAgentSlug,
+} from '@hezo/shared';
+import { budgetWindowsError } from '../lib/budget-validation';
+import { toSlug } from '../lib/slug';
+
+const DEFAULT_MONTHLY_BUDGET_CENTS = 3000;
+
+/** Raw hire spec as supplied by the admin form or an agent tool. */
+export interface HireProposalInput {
+	title: string;
+	role_description?: string;
+	system_prompt?: string;
+	default_effort?: string;
+	heartbeat_interval_min?: number;
+	daily_budget_cents?: number;
+	weekly_budget_cents?: number;
+	monthly_budget_cents?: number;
+	touches_code?: boolean;
+}
+
+/** Normalized hire spec stored in the approval payload. */
+export interface HireProposalPayload {
+	title: string;
+	slug: string;
+	role_description: string;
+	system_prompt: string;
+	default_effort: string;
+	heartbeat_interval_min: number;
+	daily_budget_cents: number;
+	weekly_budget_cents: number;
+	monthly_budget_cents: number;
+	touches_code: boolean;
+}
+
+/**
+ * Validate a hire spec against the team and produce the normalized payload.
+ * Returns an error string when the spec is rejected (missing title, invalid
+ * effort/budget, reserved slug, slug already taken, or a pending hire already
+ * proposing the same slug).
+ */
+export async function prepareHireProposal(
+	db: PGlite,
+	teamId: string,
+	input: HireProposalInput,
+): Promise<{ error: string; conflict?: boolean } | { payload: HireProposalPayload }> {
+	const title = input.title?.trim();
+	if (!title) return { error: 'title is required' };
+
+	if (input.default_effort !== undefined && !isAgentEffort(input.default_effort)) {
+		return { error: `Invalid default_effort: ${input.default_effort}` };
+	}
+
+	const budgetError = budgetWindowsError({
+		daily_budget_cents: input.daily_budget_cents ?? 0,
+		weekly_budget_cents: input.weekly_budget_cents ?? 0,
+		monthly_budget_cents: input.monthly_budget_cents ?? DEFAULT_MONTHLY_BUDGET_CENTS,
+	});
+	if (budgetError) return { error: budgetError };
+
+	const slug = toSlug(title);
+	if (isReservedAgentSlug(slug)) {
+		return { error: `Agent slug '${slug}' is reserved` };
+	}
+
+	const slugCheck = await db.query(
+		`SELECT ma.id FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE m.team_id = $1 AND ma.slug = $2`,
+		[teamId, slug],
+	);
+	if (slugCheck.rows.length > 0) {
+		return { error: `Agent with slug '${slug}' already exists in this team`, conflict: true };
+	}
+
+	const pendingCheck = await db.query(
+		`SELECT id FROM approvals
+		 WHERE team_id = $1 AND type = $2::approval_type AND status = $3::approval_status
+		   AND payload->>'slug' = $4`,
+		[teamId, ApprovalType.Hire, ApprovalStatus.Pending, slug],
+	);
+	if (pendingCheck.rows.length > 0) {
+		return { error: `A pending hire proposal for slug '${slug}' already exists`, conflict: true };
+	}
+
+	return {
+		payload: {
+			title,
+			slug,
+			role_description: input.role_description ?? '',
+			system_prompt: input.system_prompt ?? '',
+			default_effort: input.default_effort ?? DEFAULT_EFFORT,
+			heartbeat_interval_min: input.heartbeat_interval_min ?? DEFAULT_HEARTBEAT_INTERVAL_MIN,
+			daily_budget_cents: input.daily_budget_cents ?? 0,
+			weekly_budget_cents: input.weekly_budget_cents ?? 0,
+			monthly_budget_cents: input.monthly_budget_cents ?? DEFAULT_MONTHLY_BUDGET_CENTS,
+			touches_code: input.touches_code ?? false,
+		},
+	};
+}
+
+/**
+ * Insert a pending hire approval holding the normalized spec. When a taskId is
+ * given it is merged into the payload so the approval links back to the
+ * originating ticket.
+ */
+export async function insertHireApproval(
+	db: PGlite,
+	teamId: string,
+	payload: HireProposalPayload,
+	requestedByMemberId: string | null,
+	taskId?: string | null,
+): Promise<Record<string, unknown>> {
+	const fullPayload = taskId ? { ...payload, task_id: taskId } : payload;
+	const result = await db.query<Record<string, unknown>>(
+		`INSERT INTO approvals (team_id, type, requested_by_member_id, payload, status)
+		 VALUES ($1, $2::approval_type, $3, $4::jsonb, $5::approval_status)
+		 RETURNING *`,
+		[
+			teamId,
+			ApprovalType.Hire,
+			requestedByMemberId,
+			JSON.stringify(fullPayload),
+			ApprovalStatus.Pending,
+		],
+	);
+	return result.rows[0];
+}
+
+/** Fields an agent or admin may revise on a pending hire proposal. */
+export interface HirePayloadPatchInput {
+	title?: string;
+	role_description?: string;
+	system_prompt?: string;
+	default_effort?: string;
+	heartbeat_interval_min?: number;
+	daily_budget_cents?: number;
+	weekly_budget_cents?: number;
+	monthly_budget_cents?: number;
+	touches_code?: boolean;
+}
+
+/**
+ * Build the JSONB patch for revising a pending hire payload. Only fields that
+ * were supplied are included; the slug is intentionally fixed once derived.
+ */
+export function buildHirePayloadPatch(input: HirePayloadPatchInput): Record<string, unknown> {
+	const patch: Record<string, unknown> = {};
+	if (input.title !== undefined) patch.title = input.title.trim();
+	if (input.role_description !== undefined) patch.role_description = input.role_description;
+	if (input.system_prompt !== undefined) patch.system_prompt = input.system_prompt;
+	if (input.default_effort !== undefined) patch.default_effort = input.default_effort;
+	if (input.heartbeat_interval_min !== undefined)
+		patch.heartbeat_interval_min = input.heartbeat_interval_min;
+	if (input.daily_budget_cents !== undefined) patch.daily_budget_cents = input.daily_budget_cents;
+	if (input.weekly_budget_cents !== undefined)
+		patch.weekly_budget_cents = input.weekly_budget_cents;
+	if (input.monthly_budget_cents !== undefined)
+		patch.monthly_budget_cents = input.monthly_budget_cents;
+	if (input.touches_code !== undefined) patch.touches_code = input.touches_code;
+	return patch;
+}

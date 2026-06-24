@@ -1,6 +1,6 @@
 import { ApprovalStatus, ApprovalType, OAuthRequestReason } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
-import { Check, Loader2, X } from 'lucide-react';
+import { Check, Loader2, Pencil, X } from 'lucide-react';
 import { useState } from 'react';
 import type { Approval } from '../hooks/use-approvals';
 import { useResolveApproval } from '../hooks/use-approvals';
@@ -259,7 +259,18 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 	return (
 		<div className={`${baseCardClass}${highlight}`} data-testid="approval-card" data-unread={true}>
 			<CardBody approval={approval} showTeam={showTeam} unread />
-			<div className="flex gap-2 mt-3">
+			<div className="flex gap-2 mt-3 flex-wrap">
+				{approval.type === ApprovalType.Hire && (
+					<Link
+						to="/projects/$projectId/agents/hire"
+						params={{ projectId: approval.payload_project_slug ?? approval.team_slug }}
+						search={{ approvalId: approval.id }}
+					>
+						<Button size="sm" variant="secondary" data-testid="approval-edit">
+							<Pencil className="w-3 h-3" /> Edit & review
+						</Button>
+					</Link>
+				)}
 				<Button
 					size="sm"
 					variant="secondary"

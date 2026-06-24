@@ -82,6 +82,13 @@ import {
 	listDocuments,
 	upsertDocument,
 } from '../services/documents';
+import {
+	buildHirePayloadPatch,
+	type HirePayloadPatchInput,
+	type HireProposalInput,
+	insertHireApproval,
+	prepareHireProposal,
+} from '../services/hire-proposal';
 import { createProjectWithTeam } from '../services/project-create';
 import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
 import {
@@ -140,6 +147,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'add_task_blocker',
 	'remove_task_blocker',
 	'update_hire_proposal',
+	'create_hire_proposal',
 	'create_project',
 	'add_reaction',
 	'remove_reaction',
@@ -1317,16 +1325,7 @@ export function registerTools(
 				return { error: 'Hire approval is already resolved' };
 			}
 
-			const patch: Record<string, unknown> = {};
-			if (args.title !== undefined) patch.title = (args.title as string).trim();
-			if (args.role_description !== undefined) patch.role_description = args.role_description;
-			if (args.system_prompt !== undefined) patch.system_prompt = args.system_prompt;
-			if (args.default_effort !== undefined) patch.default_effort = args.default_effort;
-			if (args.heartbeat_interval_min !== undefined)
-				patch.heartbeat_interval_min = args.heartbeat_interval_min;
-			if (args.monthly_budget_cents !== undefined)
-				patch.monthly_budget_cents = args.monthly_budget_cents;
-			if (args.touches_code !== undefined) patch.touches_code = args.touches_code;
+			const patch = buildHirePayloadPatch(args as HirePayloadPatchInput);
 
 			if (Object.keys(patch).length === 0) {
 				return { error: 'no fields to update' };
@@ -1338,6 +1337,64 @@ export function registerTools(
 				[JSON.stringify(patch), args.approval_id],
 			);
 			return updated.rows[0] ?? null;
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'create_hire_proposal',
+		'File a new hire proposal for your team. Captain-only. Use this when directed (e.g. by the CEO, or a team-provisioning ticket) to staff or expand the team: author the full role spec — title, role description, and a complete system prompt — and submit it. The proposal surfaces as a pending approval in the admin inbox; the admin reviews, may modify it, and approves, at which point the agent is created automatically. Pass task_id to link the proposal back to the ticket that prompted it.',
+		{
+			title: z.string().describe('Role title (the slug is derived from it)'),
+			role_description: z.string().optional().describe('Short role description'),
+			system_prompt: z.string().optional().describe('Full system prompt for the new agent'),
+			default_effort: z
+				.string()
+				.optional()
+				.describe('Default reasoning effort: minimal, low, medium, high, max'),
+			heartbeat_interval_min: z.number().optional().describe('Heartbeat interval (min)'),
+			daily_budget_cents: z.number().optional().describe('Daily budget in cents'),
+			weekly_budget_cents: z.number().optional().describe('Weekly budget in cents'),
+			monthly_budget_cents: z.number().optional().describe('Monthly budget in cents'),
+			touches_code: z.boolean().optional().describe('Whether this agent reads/writes repo code'),
+			task_id: z
+				.string()
+				.optional()
+				.describe('Optional originating ticket id to link the proposal to'),
+		},
+		async (args, db, auth) => {
+			if (auth.type !== AuthType.Agent) {
+				return { error: 'create_hire_proposal is only callable by agents' };
+			}
+			const caller = await db.query<{ slug: string }>(
+				'SELECT slug FROM member_agents WHERE id = $1',
+				[auth.memberId],
+			);
+			if (caller.rows[0]?.slug !== CAPTAIN_AGENT_SLUG) {
+				return { error: 'Only the Captain can create hire proposals' };
+			}
+			const teamId = auth.teamId;
+			if (!teamId) return { error: 'No team in scope' };
+
+			let taskId: string | null = null;
+			if (args.task_id !== undefined) {
+				const taskCheck = await db.query<{ id: string }>(
+					'SELECT id FROM tasks WHERE id = $1 AND team_id = $2',
+					[args.task_id, teamId],
+				);
+				if (taskCheck.rows.length === 0) {
+					return { error: 'task_id not found on this team' };
+				}
+				taskId = args.task_id as string;
+			}
+
+			const prepared = await prepareHireProposal(db, teamId, args as unknown as HireProposalInput);
+			if ('error' in prepared) return { error: prepared.error };
+
+			const row = await insertHireApproval(db, teamId, prepared.payload, auth.memberId, taskId);
+			broadcastApprovalChange(wsManager, teamId, 'INSERT', row);
+			return { approval_id: row.id, status: row.status, payload: row.payload };
 		},
 		db,
 	);

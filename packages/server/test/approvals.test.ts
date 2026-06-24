@@ -78,6 +78,79 @@ describe('approvals CRUD', () => {
 		expect(resolved.resolved_at).not.toBeNull();
 	});
 
+	it('lets the admin modify a pending hire proposal before approving', async () => {
+		const createRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				type: 'hire',
+				requested_by_member_id: agentId,
+				payload: { title: 'Analyst', slug: 'analyst', system_prompt: 'Draft.' },
+			}),
+		});
+		const approval = (await createRes.json()).data;
+
+		const patchRes = await app.request(`/api/approvals/${approval.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				system_prompt: 'You are the Analyst. Own all reporting.',
+				monthly_budget_cents: 7000,
+			}),
+		});
+		expect(patchRes.status).toBe(200);
+		const patched = (await patchRes.json()).data;
+		expect(patched.payload.system_prompt).toContain('Own all reporting');
+		expect(patched.payload.monthly_budget_cents).toBe(7000);
+		// Untouched fields and the fixed slug are preserved.
+		expect(patched.payload.slug).toBe('analyst');
+		expect(patched.payload.title).toBe('Analyst');
+	});
+
+	it('rejects modifying a non-hire approval', async () => {
+		const createRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				type: 'plan_review',
+				requested_by_member_id: agentId,
+				payload: { summary: 'x' },
+			}),
+		});
+		const approval = (await createRes.json()).data;
+		const res = await app.request(`/api/approvals/${approval.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ system_prompt: 'nope' }),
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it('rejects modifying an already-resolved hire proposal', async () => {
+		const createRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				type: 'hire',
+				requested_by_member_id: agentId,
+				payload: { title: 'Late Role', slug: 'late-role' },
+			}),
+		});
+		const approval = (await createRes.json()).data;
+		await app.request(`/api/approvals/${approval.id}/resolve`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'denied' }),
+		});
+
+		const res = await app.request(`/api/approvals/${approval.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ system_prompt: 'too late' }),
+		});
+		expect(res.status).toBe(409);
+	});
+
 	it('rejects resolving an already-resolved approval', async () => {
 		// Create and resolve
 		const createRes = await app.request(`/api/projects/${projectSlug}/approvals`, {

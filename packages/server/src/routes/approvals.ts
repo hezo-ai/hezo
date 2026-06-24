@@ -5,6 +5,7 @@ import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireTeamAccessForResource } from '../middleware/auth';
 import { resolveApproval } from '../services/approval-resolve';
+import { buildHirePayloadPatch, type HirePayloadPatchInput } from '../services/hire-proposal';
 
 export const approvalsRoutes = new Hono<Env>();
 
@@ -161,6 +162,44 @@ approvalsRoutes.post('/projects/:projectId/approvals', async (c) => {
 		result.rows[0] as Record<string, unknown>,
 	);
 	return ok(c, result.rows[0], 201);
+});
+
+approvalsRoutes.patch('/approvals/:approvalId', async (c) => {
+	const db = c.get('db');
+	const approvalId = c.req.param('approvalId');
+
+	const existing = await db.query<{ status: string; team_id: string; type: string }>(
+		'SELECT status, team_id, type FROM approvals WHERE id = $1',
+		[approvalId],
+	);
+	if (existing.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Approval not found', 404);
+	}
+	const approval = existing.rows[0];
+
+	const resourceAccess = await requireTeamAccessForResource(db, c, approval.team_id);
+	if (resourceAccess instanceof Response) return resourceAccess;
+
+	if (approval.type !== ApprovalType.Hire) {
+		return err(c, 'INVALID_REQUEST', 'Only hire proposals can be edited', 400);
+	}
+	if (approval.status !== ApprovalStatus.Pending) {
+		return err(c, 'INVALID_STATE', 'Approval is already resolved', 409);
+	}
+
+	const body = await c.req.json<HirePayloadPatchInput>();
+	const patch = buildHirePayloadPatch(body);
+	if (Object.keys(patch).length === 0) {
+		return err(c, 'INVALID_REQUEST', 'No fields to update', 400);
+	}
+
+	const updated = await db.query<Record<string, unknown>>(
+		`UPDATE approvals SET payload = payload || $1::jsonb WHERE id = $2 RETURNING *`,
+		[JSON.stringify(patch), approvalId],
+	);
+	const row = updated.rows[0];
+	broadcastChange(c, wsRoom.team(approval.team_id), 'approvals', 'UPDATE', row);
+	return ok(c, row);
 });
 
 approvalsRoutes.post('/approvals/:approvalId/resolve', async (c) => {

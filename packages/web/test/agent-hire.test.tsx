@@ -57,6 +57,80 @@ test('can hire an agent with minimal fields', async () => {
 	await findByText(`Onboard new agent: ${role}`, undefined, { timeout: 20_000 });
 }, 60_000);
 
+async function seedHireApproval(
+	ws: SeededWorkspace,
+	payload: Record<string, unknown>,
+): Promise<string> {
+	const { apiBase, token } = getTestContext();
+	const res = await apiBase(`/api/projects/${ws.internalSlug}/approvals`, {
+		method: 'POST',
+		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+		body: JSON.stringify({ type: 'hire', requested_by_member_id: null, payload }),
+	});
+	return ((await res.json()) as { data: { id: string } }).data.id;
+}
+
+test('admin modifies a pending hire proposal then approves it', async () => {
+	let ws!: SeededWorkspace;
+	let approvalId!: string;
+	const { findByLabelText, findByRole, container, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+			approvalId = await seedHireApproval(ws, {
+				title: 'Analyst',
+				slug: 'analyst',
+				role_description: 'Reporting',
+				system_prompt: 'Draft prompt.',
+				heartbeat_interval_min: 60,
+				daily_budget_cents: 0,
+				weekly_budget_cents: 0,
+				monthly_budget_cents: 2000,
+				touches_code: false,
+			});
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/agents/hire',
+		params: { projectId: ws.internalSlug },
+		search: { approvalId },
+	});
+
+	// The form pre-fills from the proposal payload.
+	const titleInput = (await findByLabelText('Role title')) as HTMLInputElement;
+	await waitFor(() => expect(titleInput.value).toBe('Analyst'));
+
+	// Edit the system prompt — this makes the proposal dirty and enables Save.
+	const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+	await user.type(textarea, ' Own all reporting.');
+
+	const saveBtn = await findByRole('button', { name: /save changes/i });
+	await user.click(saveBtn);
+
+	const { apiBase, token } = getTestContext();
+	await waitFor(async () => {
+		const res = await apiBase(`/api/projects/${ws.internalSlug}/approvals`, {
+			headers: { Authorization: `Bearer ${token}` },
+		});
+		const list = (
+			(await res.json()) as { data: Array<{ id: string; payload: { system_prompt: string } }> }
+		).data;
+		const row = list.find((a) => a.id === approvalId);
+		expect(row?.payload.system_prompt).toContain('Own all reporting');
+	});
+
+	// Approving materializes the agent on the team roster.
+	await user.click(await findByRole('button', { name: /approve hire/i }));
+	await waitFor(async () => {
+		const res = await apiBase(`/api/projects/${ws.internalSlug}/agents`, {
+			headers: { Authorization: `Bearer ${token}` },
+		});
+		const agents = ((await res.json()) as { data: Array<{ slug: string }> }).data;
+		expect(agents.some((a) => a.slug === 'analyst')).toBe(true);
+	});
+}, 60_000);
+
 test('template variable chips insert into system prompt', async () => {
 	let ws!: SeededWorkspace;
 	const { findByRole, container, user, router } = await renderApp({
