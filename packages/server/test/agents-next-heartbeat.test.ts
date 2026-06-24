@@ -9,6 +9,8 @@ let app: Hono<Env>;
 let db: PGlite;
 let token: string;
 let projectSlug: string;
+let projectId: string;
+let teamId: string;
 let agentId: string;
 
 async function fetchAgent(): Promise<Record<string, unknown>> {
@@ -17,6 +19,22 @@ async function fetchAgent(): Promise<Record<string, unknown>> {
 	});
 	expect(res.status).toBe(200);
 	return (await res.json()).data as Record<string, unknown>;
+}
+
+async function insertTask(assigneeId: string | null, status = 'backlog'): Promise<string> {
+	const meta = await db.query<{ task_prefix: string; number: number }>(
+		`SELECT p.task_prefix, next_project_task_number(p.id) AS number
+		 FROM projects p WHERE p.id = $1`,
+		[projectId],
+	);
+	const n = meta.rows[0].number;
+	const res = await db.query<{ id: string }>(
+		`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
+		 VALUES ($1, $2, $3, $4, $5, 'Work', $6::task_status, 'medium'::task_priority, '[]'::jsonb)
+		 RETURNING id`,
+		[teamId, projectId, assigneeId, n, `${meta.rows[0].task_prefix}-${n}`, status],
+	);
+	return res.rows[0].id;
 }
 
 beforeAll(async () => {
@@ -31,7 +49,12 @@ beforeAll(async () => {
 	).id;
 	const teamRes = await createTestTeam(db, { name: 'Heartbeat Co', template_id: typeId });
 	const team = (await teamRes.json()).data;
+	teamId = team.id;
 	projectSlug = await projectSlugFor(db, team.id);
+	const projectRow = await db.query<{ id: string }>('SELECT id FROM projects WHERE slug = $1', [
+		projectSlug,
+	]);
+	projectId = projectRow.rows[0].id;
 
 	const listRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(token),
@@ -98,5 +121,51 @@ describe('agents API next_heartbeat_at', () => {
 		);
 		const agent = await fetchAgent();
 		expect(agent.next_heartbeat_at).toBeNull();
+	});
+});
+
+describe('agents API has_actionable_work', () => {
+	beforeAll(async () => {
+		// Detach any tasks the template seeded onto this agent so each case below
+		// controls its own actionable-work state.
+		await db.query('UPDATE tasks SET assignee_id = NULL WHERE assignee_id = $1', [agentId]);
+	});
+
+	it('is false when the agent has no assigned task', async () => {
+		const agent = await fetchAgent();
+		expect(agent.has_actionable_work).toBe(false);
+	});
+
+	it('is true for an open task assigned to the agent', async () => {
+		const taskId = await insertTask(agentId, 'backlog');
+		const agent = await fetchAgent();
+		expect(agent.has_actionable_work).toBe(true);
+		await db.query('DELETE FROM tasks WHERE id = $1', [taskId]);
+	});
+
+	it('is false when the only assigned task is terminal (done/closed/cancelled)', async () => {
+		const taskId = await insertTask(agentId, 'done');
+		const agent = await fetchAgent();
+		expect(agent.has_actionable_work).toBe(false);
+		await db.query('DELETE FROM tasks WHERE id = $1', [taskId]);
+	});
+
+	it('is false when the assigned task is blocked by an open task, true once the blocker closes', async () => {
+		const taskId = await insertTask(agentId, 'backlog');
+		const blockerId = await insertTask(null, 'in_progress');
+		await db.query('INSERT INTO task_dependencies (task_id, blocked_by_task_id) VALUES ($1, $2)', [
+			taskId,
+			blockerId,
+		]);
+
+		const blocked = await fetchAgent();
+		expect(blocked.has_actionable_work).toBe(false);
+
+		await db.query(`UPDATE tasks SET status = 'done'::task_status WHERE id = $1`, [blockerId]);
+		const unblocked = await fetchAgent();
+		expect(unblocked.has_actionable_work).toBe(true);
+
+		await db.query('DELETE FROM task_dependencies WHERE task_id = $1', [taskId]);
+		await db.query('DELETE FROM tasks WHERE id = ANY($1::uuid[])', [[taskId, blockerId]]);
 	});
 });

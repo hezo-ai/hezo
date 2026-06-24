@@ -1306,6 +1306,16 @@ export class JobManager {
 			);
 			if (tasks.rows.length === 0) {
 				log.debug(`No actionable tasks for agent ${ref(agent.rows[0].slug, memberId)}`);
+				// The agent woke (heartbeat / task-less nudge) and found nothing to do.
+				// Stamp the check so the scheduler throttles the next heartbeat to a
+				// full interval out instead of re-selecting this agent every cron tick
+				// (`last_heartbeat_at IS NULL` is perpetually "due"), which would also
+				// leave the UI countdown stuck on "due now" and churn throwaway wakeup
+				// rows. A real run advances this via setAgentIdleIfNoActiveRuns; a no-op
+				// scan has no run to hang it on, so we advance it here.
+				await db.query('UPDATE member_agents SET last_heartbeat_at = now() WHERE id = $1', [
+					memberId,
+				]);
 				if (wakeupId) {
 					await db.query(
 						`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,

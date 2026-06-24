@@ -48,6 +48,7 @@ function AgentLayout() {
 				</Badge>
 				<NextHeartbeatIndicator
 					nextHeartbeatAt={agent.next_heartbeat_at}
+					hasActionableWork={agent.has_actionable_work}
 					className="w-full sm:w-auto sm:ml-auto"
 				/>
 			</div>

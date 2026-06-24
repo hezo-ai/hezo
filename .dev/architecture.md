@@ -269,12 +269,18 @@ Work reaches an agent through the **wakeup → job-manager → agent-runner** pi
 (scheduled fallback tick), `timer` (recovery: orphan detector, retry), `assignment`,
 `mention`, `reply`, `comment` (opt-in assignee wake), `on_demand`, `automation`.
 Event-based triggers wake agents immediately; scheduled heartbeats are the idle-agent
-fallback. Duplicate wakeups for the same agent dedupe via `idempotency_key` and **coalesce**
-(`coalesced_count`), merging context instead of spawning redundant runs. The agents API
-derives (does not store) each agent's `next_heartbeat_at` as
-`last_heartbeat_at + max(heartbeat_interval_min, floor)` — null when the agent is off the
-schedule (disabled or budget-paused) — sharing the floor constant with the scheduler
-(`services/heartbeat-schedule.ts`) so the web UI's live countdown matches the enforced cadence.
+fallback. A scheduled heartbeat that fires but finds no actionable task is a no-op that
+still **advances `last_heartbeat_at`** (the same field a completed run stamps), so the
+scheduler throttles the next tick a full interval out instead of re-selecting the agent
+every cron tick — a `NULL` `last_heartbeat_at` is perpetually "due". Duplicate wakeups for
+the same agent dedupe via `idempotency_key` and **coalesce** (`coalesced_count`), merging
+context instead of spawning redundant runs. The agents API derives (does not store) each
+agent's `next_heartbeat_at` as `last_heartbeat_at + max(heartbeat_interval_min, floor)` —
+null when the agent is off the schedule (disabled or budget-paused) — sharing the floor
+constant with the scheduler (`services/heartbeat-schedule.ts`) so the web UI's live
+countdown matches the enforced cadence. Alongside it the API derives `has_actionable_work`
+(mirrors the scheduler's task selection: a non-terminal, unblocked assigned task); when
+false the next heartbeat would no-op, so the UI shows a dash rather than a countdown.
 
 **Dispatch.** `JobManager` runs a ~1 Hz cron that also does container sync, container
 health, and orphan recovery. Per project-concurrency-limited, it: loads queued wakeups →

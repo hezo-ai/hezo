@@ -47,7 +47,7 @@ import {
 	restoreRevision,
 	upsertDocument,
 } from '../services/documents';
-import { NEXT_HEARTBEAT_AT_SQL } from '../services/heartbeat-schedule';
+import { HAS_ACTIONABLE_WORK_SQL, NEXT_HEARTBEAT_AT_SQL } from '../services/heartbeat-schedule';
 import { loadTeamCoordinationContext } from '../services/internal-intake';
 import { terminateHeartbeatRun } from '../services/run-termination';
 import { resolveSystemPrompt } from '../services/template-resolver';
@@ -64,6 +64,7 @@ export const agentsRoutes = new Hono<Env>();
  * Common projection for agent rows. JOIN against `members m` and `member_agents ma`.
  * `assigned_task_count` requires the caller to bind terminal statuses via `terminalStatusParams`.
  * `next_heartbeat_at` is computed (not stored) — NULL when the agent is off the schedule.
+ * `has_actionable_work` is computed — false when the agent's next heartbeat would no-op.
  */
 const AGENT_BASE_COLUMNS = `m.id, m.team_id, m.display_name, m.created_at,
 	ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary, ma.team_context,
@@ -73,7 +74,8 @@ const AGENT_BASE_COLUMNS = `m.id, m.team_id, m.display_name, m.created_at,
 	ma.touches_code,
 	ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.reports_to,
 	ma.mcp_servers, ma.model_override_provider, ma.model_override_model, ma.updated_at,
-	${NEXT_HEARTBEAT_AT_SQL} AS next_heartbeat_at`;
+	${NEXT_HEARTBEAT_AT_SQL} AS next_heartbeat_at,
+	${HAS_ACTIONABLE_WORK_SQL} AS has_actionable_work`;
 
 const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr.task_id,
 	hr.status, hr.queued_reason, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
