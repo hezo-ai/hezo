@@ -24,6 +24,9 @@ export interface Agent {
 	runtime_status: string;
 	admin_status: string;
 	last_heartbeat_at: string | null;
+	/** Computed: when the next scheduled heartbeat is due. Null when the agent is
+	 *  off the schedule (disabled or budget-paused). */
+	next_heartbeat_at: string | null;
 	reports_to: string | null;
 	reports_to_title: string | null;
 	assigned_task_count: number;

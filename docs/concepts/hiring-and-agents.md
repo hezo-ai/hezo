@@ -19,7 +19,8 @@ agent you set:
   reference team and project context so the prompt stays in sync as things change.
 - **Model** — which provider/model it runs on (defaults to the team's model; override
   per agent if you want).
-- **Heartbeat** — how often it wakes to look for work.
+- **Heartbeat** — how often it wakes to look for work. The agent's page shows a live
+  countdown to its next heartbeat (hidden while the agent is disabled or paused).
 - **Budget** — optional spending limits (see
   [Budgets & cost control](/docs/concepts/budgets-and-costs)).
 - **Code access** — whether the agent works in the project's code workspace.
