@@ -1,6 +1,6 @@
 ---
 title: CLI reference
-order: 25
+order: 26
 section: Reference
 ---
 

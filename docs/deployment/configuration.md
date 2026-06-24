@@ -1,6 +1,6 @@
 ---
 title: Configuration reference
-order: 23
+order: 24
 section: Deployment
 ---
 

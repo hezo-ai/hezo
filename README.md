@@ -157,6 +157,7 @@ Each feature links to its documentation.
 - **[Documents & long-term memory](./docs/concepts/documents-and-memory.md)** — durable markdown PRDs, specs, and research with version history and one-click restore.
 - **[Chatbox memory](./docs/concepts/documents-and-memory.md#chatbox-memory)** — the CEO remembers your standing preferences across conversations.
 - **[Assets & previews](./docs/concepts/assets.md)** — upload references; agents produce HTML/SVG deliverables you preview in-app, sandboxed.
+- **[Search across everything](./docs/concepts/search.md)** — one ⌘K palette finds tasks, comments, docs, and skills across every team, ranked by meaning and indexed on your own server.
 - **[Built-in MCP server](./docs/mcp/hezo-mcp-server.md)** — drive your teams and tasks from any MCP client.
 - **[External MCP servers](./docs/mcp/connecting-mcp-servers.md)** — give your agents the tools you already use, scoped per instance, team, or project.
 - **[Self-hosted single binary](./docs/getting-started/installation.md)** — no runtime or external database; Docker is the only prerequisite. [Configurable](./docs/deployment/configuration.md) by flag or env, with a small [CLI](./docs/reference/cli.md).

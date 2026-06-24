@@ -1,6 +1,6 @@
 ---
 title: Self-hosting
-order: 20
+order: 21
 section: Deployment
 ---
 
