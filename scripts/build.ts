@@ -76,11 +76,13 @@ await Promise.all([
 	run('packages/web', ['bun', 'run', 'build']),
 ]);
 
-// Binary-only embedding steps: the static bundle (reads packages/web/dist) and
-// the PGlite runtime assets, both needed for a self-contained executable.
+// Binary-only embedding steps: the static bundle (reads packages/web/dist), the
+// PGlite runtime assets, and the agent-base Docker build context — all needed
+// for a self-contained executable (a binary has no repo checkout to read from).
 if (wantBinary) {
 	await run('packages/server', ['bun', 'run', 'build:static']);
 	await run('packages/server', ['bun', 'run', 'build:pglite']);
+	await run('packages/server', ['bun', 'run', 'build:docker']);
 }
 
 console.log('Build complete.');

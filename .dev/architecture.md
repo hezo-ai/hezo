@@ -641,8 +641,13 @@ what's reachable through the **module graph** (not runtime `readFile`/`new URL`)
 asset is pulled in as a static import and served **from memory**: migrations
 (`migrations-bundle.json`), agent roles (`agents-bundle.json`), the React frontend
 (`static-bundle.json`, base64), and the PGlite runtime (`postgres.wasm`/`.data`
-embedded). In dev (`bun run`) the bundles don't exist and every loader falls
-back to the filesystem. The version is injected at compile time
+embedded). The **agent-base Docker build context** (`docker/`) is embedded the same
+way (`docker-bundle.json`, base64) because the `hezo/agent-base` image is published to
+no registry — at startup the binary extracts it to `<dataDir>/agent-base-context` and
+points the image resolver (`setDockerBaseDir`) at it, so the first container provision
+**builds the image locally** instead of failing to pull. In dev (`bun run`) the bundles
+don't exist and every loader falls back to the filesystem (the docker context to the
+repo's `docker/` dir). The version is injected at compile time
 (`--define process.env.HEZO_VERSION`) and surfaced at `/api/status`.
 
 **Migrations.** Real, tracked, **append-only** SQL under `packages/server/migrations/`

@@ -11,7 +11,8 @@
 		"build:agents": "bun run scripts/bundle-agents.ts",
 		"build:docs": "bun run scripts/build-mcp-reference.ts && bun run scripts/bundle-docs.ts",
 		"build:static": "bun run scripts/bundle-static.ts",
-		"build:pglite": "bun run scripts/bundle-pglite.ts"
+		"build:pglite": "bun run scripts/bundle-pglite.ts",
+		"build:docker": "bun run scripts/bundle-docker.ts"
 	},
 	"dependencies": {
 		"@electric-sql/pglite": "^0.2",
