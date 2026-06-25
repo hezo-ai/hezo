@@ -11,6 +11,14 @@ separate effort.
 - **Threat model:** untrusted / open signup. Anyone can sign up and run
   arbitrary agent code. The isolation boundary must hold against a malicious
   tenant.
+- **Availability:** every tenant instance is **always-on**. A signed-up user
+  expects their Hezo to keep doing background work (agents picking up tasks,
+  heartbeat wakeups) whether or not they are attending to it. Instances are
+  **not** transient and must not scale to zero. This is Hezo's natural mode — it
+  is designed to run as a persistent server with a recurring heartbeat — so
+  always-on *removes* the snapshot/resume recovery risk that a suspend-based
+  model would introduce. The cost question is therefore "run 100 always-on
+  instances cheaply," not "minimize idle footprint by suspending."
 
 ## The question
 
@@ -96,7 +104,7 @@ ports) — **no core changes required**.
 
 ```
             ┌────────────── Control plane (new, thin) ──────────────┐
- signup ──▶ │  auth/identity · provisioner · router · idle-suspend · │
+ signup ──▶ │  auth/identity · provisioner · router · lifecycle ·    │
             │  versioning · quota/billing · secret custody           │
             └───────────┬───────────────────────────────────────────┘
                         │ provisions / routes (subdomain → instance)
@@ -116,17 +124,48 @@ lifecycle-manages VMs.
 
 ## Infrastructure options (target infra undecided)
 
-| Option | Isolation | Effort to 100 users | Density / cost | Notes |
-|---|---|---|---|---|
-| **Fly.io Machines (recommended)** | Firecracker micro-VM per tenant | **Lowest** — built-in auto stop/start (scale-to-zero), fast snapshot/resume, per-machine volumes, subdomain routing | Excellent (idle tenants suspend) | Closest match to "click → instance." Hezo runs Docker *inside* the Machine. Least control-plane code to write. |
-| AWS/GCP VMs or self-managed Firecracker/Kata | Hardware VM per tenant | Medium–high (build provisioning, snapshot, routing yourself) | Good with custom idle-suspend | Most control; most orchestration to own. |
-| Kubernetes + gVisor/Kata | Sandboxed pod per tenant | Medium, with sharp edges | Good | Nested Docker is awkward; **plain pods are NOT enough** for untrusted code — needs Kata/gVisor. Only if k8s is already the platform. |
+Every option below runs each tenant VM **always-on** (no auto-stop). Auto-stop /
+scale-to-zero is explicitly out of scope per the availability requirement.
 
-At ~100 users the scale is small. The cost lever is **idle suspension**: most
-tenants idle most of the time, so suspend/snapshot idle VMs and resume on
-request (native on Fly Machines; build it elsewhere). Caveat: Hezo runs a ~1 Hz
-heartbeat cron and long-lived per-project containers, so suspend must be
-VM-level snapshot/resume, not a graceful in-app shutdown.
+| Option | Isolation | Effort to 100 users | Always-on cost posture | Notes |
+|---|---|---|---|---|
+| **Fly.io Machines (recommended to start)** | Firecracker micro-VM per tenant | **Lowest** — per-machine volumes, subdomain routing, simple provisioning API | Pay per running Machine, billed continuously. Fine at 100; right-size each Machine small (see cost model). Do **not** enable auto-stop. | Closest match to "click → always-on instance." Hezo runs Docker *inside* the Machine. Least control-plane code to write. |
+| AWS/GCP VMs or self-managed Firecracker/Kata | Hardware VM per tenant | Medium–high (build provisioning, routing, packing yourself) | **Cheapest at scale** — pack many always-on micro-VMs per large host with CPU/RAM oversubscription. | Most control; most orchestration to own. The path once per-tenant unit economics on Fly stop making sense. |
+| Kubernetes + gVisor/Kata | Sandboxed pod per tenant | Medium, with sharp edges | Always-on pods; bin-packed by the scheduler. | Nested Docker is awkward; **plain pods are NOT enough** for untrusted code — needs Kata/gVisor. Only if k8s is already the platform. |
+
+### Cost model under always-on
+
+Always-on does not mean always-busy. Hezo's background work is **periodic and
+bursty**, not continuous: the scheduler ticks ~1 Hz but agent wakeups default to
+720 min (12 h) intervals, and a run is a transient `docker exec` inside the
+project's long-lived (`sleep infinity`, near-zero idle cost) container. So a
+resident instance spends most wall-clock time idle, consuming only its baseline
+(the Bun server + embedded PGlite + an idle container — modest), and spikes
+CPU/RAM only while a run is active.
+
+The cost levers, in order of impact:
+
+1. **Right-size the guest.** The 16 GiB `projects.memory_limit_gib` default is a
+   per-project *cap*, not a baseline — set a much smaller per-tenant floor (e.g.
+   1–2 GiB) and let it burst. Baseline RAM, not the cap, is what you pay for
+   100× over.
+2. **Oversubscribe shared hosts.** Because instances are idle-but-resident most
+   of the time, pack many always-on micro-VMs onto large hosts and oversubscribe
+   CPU and RAM (KSM / memory ballooning help). Concurrent *active* runs, not
+   instance count, set the true ceiling. This is why self-managed Firecracker on
+   big hosts is the cheapest at scale; Fly does the packing for you but you pay
+   for it.
+3. **Cap concurrency & budgets.** `projects.max_concurrent_runs` (default 1) and
+   the existing per-agent / per-project budget caps bound the worst-case
+   resource and spend per tenant — essential when 100 instances share
+   oversubscribed hosts.
+
+> Optional, only if a tenant's work is *purely* scheduled (no event-driven
+> wakeups): the platform could suspend a VM between known wakeups and resume it
+> just before (Fly suspend resumes in sub-second). This reintroduces
+> snapshot/resume recovery risk and contradicts the "always doing work"
+> expectation, so it is **not** the default — noted only as a future lever for
+> provably-idle tenants.
 
 ## What the control plane must own (the only real new work)
 
@@ -172,10 +211,11 @@ Three feasibility spikes confirm the path works with an unmodified core:
   micro-VM (e.g. a Fly Machine) with Docker available; confirm a project
   container launches and an agent run completes end-to-end with no Hezo code
   changes.
-- **Density / suspend spike:** snapshot an idle tenant VM, resume it, and
-  confirm the heartbeat cron and long-lived project container recover cleanly
-  (no orphaned `/tmp/hezo-*` sockets, no PGlite corruption). Validates the cost
-  model.
+- **Always-on density spike:** run many right-sized, always-on tenant VMs on
+  one oversubscribed host and measure idle baseline RAM/CPU per instance plus
+  the host's ceiling under N concurrent *active* runs. This is what sets
+  per-tenant unit economics — validate the baseline is small enough to pack 100
+  cheaply.
 - **Provisioning spike:** script "signup event → provision VM → inject
   `HEZO_DATA_DIR` / `HEZO_PORT` / `HEZO_WEB_URL` → route subdomain → reach the
   master-key gate," to size control-plane effort.
