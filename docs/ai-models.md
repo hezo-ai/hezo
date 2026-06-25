@@ -26,6 +26,14 @@ Each provider is driven through its **native command-line runtime** inside the a
 container — so you get each model's first-party agentic tooling, not a lowest-common-
 denominator wrapper.
 
+## Local models (on the roadmap)
+
+The **OpenCode** runtime that powers OpenRouter can also drive **local, self-hosted
+models** (for example via Ollama or any OpenAI-compatible endpoint), so you could run
+agents entirely on your own hardware with no per-token cost. **This isn't available in
+Hezo yet** — today OpenCode is wired to OpenRouter only. First-class local-model support
+is planned; this page will be updated when it ships.
+
 ## API key or subscription
 
 Most providers accept either a plain **API key** or, where supported, a **subscription
