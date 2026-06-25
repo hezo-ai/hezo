@@ -19,6 +19,9 @@ packages/server/static/
 .claude/
 .plans/
 test-results/
+coverage/
+**/coverage/
+**/coverage-bun/
 
 # TSC build artifacts in src (output goes to dist/)
 packages/*/src/**/*.js

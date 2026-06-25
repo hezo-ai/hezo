@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Command } from 'commander';
 import { ensureBundles } from './ensure-bundles';
@@ -18,6 +18,7 @@ const program = new Command()
 	.option('--skip-browser', 'Skip Playwright browser tests')
 	.option('--browser', 'Run only Playwright browser tests')
 	.option('--shard <value>', 'Vitest shard, form <index>/<count> (e.g. 1/3)')
+	.option('--coverage', 'Collect coverage and write lcov/json per tier')
 	.parse();
 
 const opts = program.opts();
@@ -29,6 +30,7 @@ const skipBrowser = opts.skipBrowser as boolean;
 const browserFlag = opts.browser as boolean;
 const shard = opts.shard as string | undefined;
 const shardIndex = shard ? Number.parseInt(shard.split('/')[0], 10) : undefined;
+const coverage = opts.coverage as boolean;
 
 const TEST_PACKAGES = ['packages/server', 'packages/web'];
 
@@ -60,6 +62,22 @@ async function buildAgentBundle() {
 	}
 }
 
+// coverage-v8 (vitest) and `bun test --coverage` both write lcov `SF:` paths
+// relative to the spawn cwd (the package dir), e.g. `SF:src/logger.ts`. Coveralls
+// resolves lcov paths from the repo root, so they must be repo-root-relative
+// (`packages/server/src/logger.ts`) to map across the monorepo — otherwise the
+// per-package `src/...` paths collide. Rewrite in place so the uploaded lcov is
+// correct at the source. Idempotent: lines already rooted at `/` (absolute) or
+// `packages/` are left untouched.
+function rewriteLcovToRepoRoot(lcovPath: string, pkg: string): void {
+	if (!existsSync(lcovPath)) return;
+	const fixed = readFileSync(lcovPath, 'utf8').replace(
+		/^SF:(?!\/|packages\/)(.+)$/gm,
+		(_m, rest) => `SF:${pkg}/${rest}`,
+	);
+	writeFileSync(lcovPath, fixed);
+}
+
 async function runVitestForPackage(pkg: string): Promise<boolean> {
 	const args = [
 		'vitest',
@@ -73,6 +91,10 @@ async function runVitestForPackage(pkg: string): Promise<boolean> {
 	// --passWithNoTests guards an empty selection (a pattern matching nothing, or
 	// a shard that lands zero files); add it once if either is in play.
 	if (pattern || shard) args.push('--passWithNoTests');
+	// Overrides the config's enabled:false default. reportsDirectory ('./coverage')
+	// is package-relative and cwd is the package dir below, so server/web reports
+	// land in their own packages/<pkg>/coverage/ — no collision.
+	if (coverage) args.push('--coverage.enabled', '--coverage.provider=v8');
 	if (pattern) args.push(pattern);
 
 	console.log(`\n── Running ${pkg} tests (pool=forks, workers=${concurrency}) ──`);
@@ -86,6 +108,8 @@ async function runVitestForPackage(pkg: string): Promise<boolean> {
 	const exitCode = await proc.exited;
 	const duration = Date.now() - start;
 	const passed = exitCode === 0;
+	// reportOnFailure:true means an lcov exists even on failure — rewrite either way.
+	if (coverage) rewriteLcovToRepoRoot(resolve(ROOT, pkg, 'coverage/lcov.info'), pkg);
 	console.log(`\n${pkg}: ${passed ? 'passed' : 'FAILED'} (${(duration / 1000).toFixed(1)}s)`);
 	return passed;
 }
@@ -96,7 +120,14 @@ async function runBunNativeForPackage(pkg: string): Promise<boolean> {
 
 	console.log(`\n── Running ${pkg} Bun-native tier (bun test test/bun/) ──`);
 	const start = Date.now();
-	const proc = Bun.spawn(['bun', 'test', 'test/bun/'], {
+	const bunArgs = ['test', 'test/bun/'];
+	// Separate dir from the vitest tier's './coverage' — both write lcov.info, so
+	// a shared dir would clobber. Paths are made repo-root-relative below via
+	// rewriteLcovToRepoRoot (same as the vitest tier).
+	if (coverage) {
+		bunArgs.push('--coverage', '--coverage-reporter=lcov', '--coverage-dir=coverage-bun');
+	}
+	const proc = Bun.spawn(['bun', ...bunArgs], {
 		cwd: resolve(ROOT, pkg),
 		stdout: 'inherit',
 		stderr: 'inherit',
@@ -105,6 +136,7 @@ async function runBunNativeForPackage(pkg: string): Promise<boolean> {
 	const exitCode = await proc.exited;
 	const duration = Date.now() - start;
 	const passed = exitCode === 0;
+	if (coverage) rewriteLcovToRepoRoot(resolve(ROOT, pkg, 'coverage-bun/lcov.info'), pkg);
 	console.log(
 		`\n${pkg} (Bun-native): ${passed ? 'passed' : 'FAILED'} (${(duration / 1000).toFixed(1)}s)`,
 	);

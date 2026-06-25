@@ -59,5 +59,28 @@ export default defineConfig({
 			HEZO_SKIP_DOCKER: '1',
 			SKIP_AI_KEY_VALIDATION: '1',
 		},
+		// Off by default so normal runs stay uninstrumented; scripts/test.ts
+		// flips `enabled` on with --coverage. coverage-v8 remaps through the same
+		// vite transform sourcemaps the suite already runs under, so React/JSX +
+		// the path aliases above resolve back to src/** correctly.
+		coverage: {
+			provider: 'v8',
+			enabled: false,
+			reporter: ['text-summary', 'json', 'lcov'],
+			reportsDirectory: './coverage',
+			reportOnFailure: true,
+			// See the server config for why all:false is mandatory under sharding.
+			all: false,
+			include: ['src/**/*.{ts,tsx}'],
+			exclude: [
+				'src/**/*.d.ts',
+				'src/routeTree.gen.ts',
+				'src/main.tsx',
+				'src/vite-env.d.ts',
+				'src/**/*.test.{ts,tsx}',
+				'test/**',
+				'dist/**',
+			],
+		},
 	},
 });
