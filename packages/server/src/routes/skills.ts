@@ -7,6 +7,11 @@ import { toSlug } from '../lib/slug';
 import type { Env } from '../lib/types';
 import { requireAdminEquivalent } from '../middleware/auth';
 import {
+	listSkillRevisions,
+	recordSkillRevisionIfChanged,
+	restoreSkillRevision,
+} from '../services/skill-revisions';
+import {
 	getRegistryToken,
 	hasRegistryToken,
 	installRegistrySkill,
@@ -54,6 +59,12 @@ skillsRoutes.post('/skills', async (c) => {
 	const hash = createHash('sha256').update(content).digest('hex');
 	const description = body.description?.trim() || deriveSkillSummary(content);
 
+	// Snapshot the prior content (if any) once we've written, so editing an
+	// existing skill through the form records a revision (none on first create).
+	const prior = await db.query<{ content: string }>('SELECT content FROM skills WHERE slug = $1', [
+		slug,
+	]);
+
 	const result = await db.query<SkillRecord>(
 		`INSERT INTO skills (name, slug, description, content, source_url, content_hash, tags)
 		 VALUES ($1, $2, $3, $4, NULL, $5, $6::jsonb)
@@ -68,6 +79,14 @@ skillsRoutes.post('/skills', async (c) => {
 		[body.name.trim(), slug, description, content, hash, JSON.stringify(body.tags ?? [])],
 	);
 	const skill = result.rows[0];
+	await recordSkillRevisionIfChanged(
+		db,
+		skill.id,
+		prior.rows[0]?.content ?? null,
+		content,
+		'Content updated',
+		null,
+	);
 	c.get('events').emit({
 		type: 'skill.created',
 		teamId: null,
@@ -163,6 +182,45 @@ skillsRoutes.get('/skills/:slug', async (c) => {
 	return ok(c, result.rows[0]);
 });
 
+// Revision history + restore — mirrors document/agent-prompt revisions
+// (project-docs / agents routes). Admin-only, like the rest of /skills.
+skillsRoutes.get('/skills/:slug/revisions', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+	const db = c.get('db');
+	const skill = await db.query<{ id: string }>('SELECT id FROM skills WHERE slug = $1', [
+		c.req.param('slug'),
+	]);
+	if (skill.rows.length === 0) return err(c, 'NOT_FOUND', 'Skill not found', 404);
+	return ok(c, await listSkillRevisions(db, skill.rows[0].id));
+});
+
+skillsRoutes.post('/skills/:slug/restore', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+	const db = c.get('db');
+	const body = await c.req.json<{ revision_number?: number }>();
+	if (typeof body.revision_number !== 'number') {
+		return err(c, 'INVALID_REQUEST', 'revision_number is required', 400);
+	}
+	const skill = await db.query<{ id: string }>('SELECT id FROM skills WHERE slug = $1', [
+		c.req.param('slug'),
+	]);
+	if (skill.rows.length === 0) return err(c, 'NOT_FOUND', 'Skill not found', 404);
+	const restored = await restoreSkillRevision(db, skill.rows[0].id, body.revision_number, null);
+	if (!restored) return err(c, 'NOT_FOUND', 'Revision not found', 404);
+	c.get('events').emit({
+		type: 'skill.updated',
+		teamId: null,
+		actorType: 'admin',
+		actorMemberId: null,
+		skillId: restored.id,
+		slug: restored.slug,
+		name: restored.name,
+	});
+	return ok(c, restored);
+});
+
 skillsRoutes.patch('/skills/:slug', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
@@ -211,6 +269,13 @@ skillsRoutes.patch('/skills/:slug', async (c) => {
 	}
 	sets.push('updated_at = now()');
 
+	// Capture the prior content before overwriting so the change is recorded as a
+	// revision (only when the content field is actually part of this update).
+	const prior =
+		body.content !== undefined
+			? await db.query<{ content: string }>('SELECT content FROM skills WHERE slug = $1', [slug])
+			: null;
+
 	const result = await db.query<SkillRecord>(
 		`UPDATE skills SET ${sets.join(', ')}
 		 WHERE slug = $1
@@ -223,15 +288,13 @@ skillsRoutes.patch('/skills/:slug', async (c) => {
 	const skill = result.rows[0];
 
 	if (body.content !== undefined) {
-		const revCount = await db.query<{ cnt: string }>(
-			'SELECT COUNT(*)::text AS cnt FROM skill_revisions WHERE skill_id = $1',
-			[skill.id],
-		);
-		const nextRev = Number.parseInt(revCount.rows[0].cnt, 10) + 1;
-		await db.query(
-			`INSERT INTO skill_revisions (skill_id, revision_number, content, content_hash, change_summary)
-			 VALUES ($1, $2, $3, $4, 'Content updated')`,
-			[skill.id, nextRev, body.content, skill.content_hash],
+		await recordSkillRevisionIfChanged(
+			db,
+			skill.id,
+			prior?.rows[0]?.content ?? null,
+			body.content,
+			'Content updated',
+			null,
 		);
 	}
 	c.get('events').emit({

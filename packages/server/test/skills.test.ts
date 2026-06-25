@@ -121,6 +121,87 @@ describe('global skills CRUD (/api/skills)', () => {
 	});
 });
 
+describe('skill revisions (/api/skills/:slug/revisions, /restore)', () => {
+	async function create(body: Record<string, unknown>): Promise<Response> {
+		return app.request('/api/skills', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+		});
+	}
+	async function patch(slug: string, content: string): Promise<Response> {
+		return app.request(`/api/skills/${slug}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content }),
+		});
+	}
+	async function revisions(
+		slug: string,
+	): Promise<{ revision_number: number; content: string; change_summary: string }[]> {
+		const res = await app.request(`/api/skills/${slug}/revisions`, { headers: authHeader(token) });
+		return (await res.json()).data;
+	}
+
+	it('records a revision of the prior content on each content change (none on create)', async () => {
+		await create({ name: 'Rev', slug: 'rev', content: 'v1' });
+		// First create snapshots nothing — the history is empty until an edit.
+		expect(await revisions('rev')).toHaveLength(0);
+
+		await patch('rev', 'v2');
+		await patch('rev', 'v3');
+
+		const history = await revisions('rev');
+		expect(history.map((r) => r.content)).toEqual(['v2', 'v1']); // newest-first, prior content
+		expect(history.map((r) => r.revision_number)).toEqual([2, 1]);
+	});
+
+	it('does not record a revision when content is unchanged', async () => {
+		await create({ name: 'Same', slug: 'same', content: 'body' });
+		await patch('same', 'body');
+		expect(await revisions('same')).toHaveLength(0);
+	});
+
+	it('restores a prior revision and snapshots the replaced content', async () => {
+		await create({ name: 'Restore', slug: 'restore', content: 'v1' });
+		await patch('restore', 'v2');
+		await patch('restore', 'v3'); // revisions: rev2=v2, rev1=v1
+
+		const restored = await app.request('/api/skills/restore/restore', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ revision_number: 1 }),
+		});
+		expect(restored.status).toBe(200);
+		expect((await restored.json()).data.content).toBe('v1');
+
+		const read = await app.request('/api/skills/restore', { headers: authHeader(token) });
+		expect((await read.json()).data.content).toBe('v1');
+
+		const history = await revisions('restore');
+		// The replaced 'v3' is snapshotted as the newest revision.
+		expect(history[0].content).toBe('v3');
+		expect(history[0].change_summary).toBe('Restored to revision 1');
+	});
+
+	it('400s without a revision_number and 404s for a missing revision', async () => {
+		await create({ name: 'Bad', slug: 'bad', content: 'v1' });
+		const noBody = await app.request('/api/skills/bad/restore', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({}),
+		});
+		expect(noBody.status).toBe(400);
+
+		const missing = await app.request('/api/skills/bad/restore', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ revision_number: 99 }),
+		});
+		expect(missing.status).toBe(404);
+	});
+});
+
 describe('template resolver {{skills_context}} (global)', () => {
 	it('injects the skill manifest (name + slug) from the global skills table', async () => {
 		await db.query(

@@ -57,6 +57,39 @@ test('edits an instance skill via the row edit affordance', async () => {
 	await findByText('new desc');
 });
 
+test('shows skill revision history and restores a prior version', async () => {
+	const { findByText, findByRole, findByLabelText, findByTestId, getByLabelText, user } =
+		await renderApp({
+			initialPath: '/settings/skills',
+			seed: async (ctx) => {
+				await seedInstanceSkill(ctx, { name: 'Versioned Skill', content: 'Original body v1' });
+			},
+		});
+
+	await findByText('Versioned Skill');
+
+	// Edit once so the prior content is snapshotted as a revision.
+	await user.click(await findByRole('button', { name: 'Edit Versioned Skill' }));
+	const content = (await findByLabelText('Skill content')) as HTMLTextAreaElement;
+	await waitFor(() => expect(content.value).toBe('Original body v1'));
+	await user.clear(content);
+	await user.type(content, 'Updated body v2');
+	await user.click(await findByRole('button', { name: 'Save changes' }));
+	await findByText('Versioned Skill');
+
+	// Re-open the editor and reveal the history.
+	await user.click(await findByRole('button', { name: 'Edit Versioned Skill' }));
+	await user.click(await findByRole('button', { name: /revision history/i }));
+	await findByText('Rev 1');
+
+	// Restore revision 1 → confirm → the editor content reverts to the original.
+	await user.click(await findByRole('button', { name: /restore/i }));
+	await user.click(await findByTestId('confirm-dialog-confirm'));
+	await waitFor(() =>
+		expect((getByLabelText('Skill content') as HTMLTextAreaElement).value).toBe('Original body v1'),
+	);
+});
+
 test('settings page sidebar links to skills', async () => {
 	const { findByRole, getAllByRole, user, router } = await renderApp({ initialPath: '/settings' });
 

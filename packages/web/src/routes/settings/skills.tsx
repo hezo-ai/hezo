@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { ExternalLink, Loader2, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { MarkdownProse } from '../../components/markdown-prose';
+import { RevisionsPanel } from '../../components/revisions-panel';
 import { SettingsBreadcrumb } from '../../components/settings-breadcrumb';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -12,8 +13,10 @@ import {
 	useDeleteInstanceSkill,
 	useInstallRegistrySkill,
 	useInstanceSkill,
+	useInstanceSkillRevisions,
 	useInstanceSkills,
 	useRegistryTokenStatus,
+	useRestoreInstanceSkill,
 	useSearchRegistrySkills,
 	useSetRegistryToken,
 	useUpdateInstanceSkill,
@@ -41,6 +44,8 @@ function InstanceSkillsPage() {
 	// Editing needs the full row (content is omitted from the list endpoint), so
 	// fetch it by slug and populate the form once it arrives.
 	const { data: editingSkill } = useInstanceSkill(editingSlug);
+	const { data: revisions } = useInstanceSkillRevisions(editingSlug);
+	const restoreSkill = useRestoreInstanceSkill(editingSlug);
 	useEffect(() => {
 		if (editingSkill && editingSkill.slug === editingSlug) {
 			setName(editingSkill.name);
@@ -238,6 +243,15 @@ function InstanceSkillsPage() {
 							</Button>
 						</div>
 					</form>
+				)}
+
+				{/* Outside the <form> so the panel's buttons never submit the editor. */}
+				{showForm && editingSlug && (
+					<RevisionsPanel
+						revisions={revisions}
+						onRestore={(revisionNumber) => restoreSkill.mutateAsync(revisionNumber)}
+						isRestoring={restoreSkill.isPending}
+					/>
 				)}
 
 				{!skills.length ? (

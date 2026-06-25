@@ -447,7 +447,7 @@ export function generateMcpReference(
 	const lines: string[] = [
 		'---',
 		'title: MCP API reference',
-		'order: 27',
+		'order: 31',
 		'section: Reference',
 		'---',
 		'',

@@ -1,6 +1,6 @@
 ---
 title: The Coach & self-improving teams
-order: 14
+order: 10
 section: Concepts
 ---
 

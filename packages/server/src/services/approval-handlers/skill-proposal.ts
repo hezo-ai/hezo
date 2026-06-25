@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
+import { recordSkillRevisionIfChanged } from '../skill-revisions';
 import type { ApprovalHandler, ApprovalSideEffectCtx, SideEffectBroadcast } from './types';
 
-/** Persist an approved skill proposal into `skills` + a new `skill_revisions` row. */
+/** Persist an approved skill proposal into `skills`, snapshotting any prior content. */
 export const skillProposalHandler: ApprovalHandler = {
 	async applyApproved(ctx: ApprovalSideEffectCtx): Promise<SideEffectBroadcast[]> {
 		const { db, approval, payload } = ctx;
@@ -14,6 +15,10 @@ export const skillProposalHandler: ApprovalHandler = {
 			(payload.requested_by as string) ?? (approval.requested_by_member_id as string) ?? null;
 
 		// Skills are global. Write to DB (source of truth).
+		const prior = await db.query<{ content: string }>(
+			'SELECT content FROM skills WHERE slug = $1',
+			[slug],
+		);
 		const skillResult = await db.query<{ id: string }>(
 			`INSERT INTO skills (name, slug, description, content, content_hash, created_by_member_id)
 			 VALUES ($1, $2, $3, $4, $5, $6)
@@ -26,10 +31,13 @@ export const skillProposalHandler: ApprovalHandler = {
 		);
 
 		if (skillResult.rows[0]) {
-			await db.query(
-				`INSERT INTO skill_revisions (skill_id, revision_number, content, content_hash, change_summary, author_member_id)
-				 VALUES ($1, (SELECT COALESCE(MAX(revision_number), 0) + 1 FROM skill_revisions WHERE skill_id = $1), $2, $3, 'Created via approval', $4)`,
-				[skillResult.rows[0].id, content, contentHash, requestedBy],
+			await recordSkillRevisionIfChanged(
+				db,
+				skillResult.rows[0].id,
+				prior.rows[0]?.content ?? null,
+				content,
+				'Updated via approval',
+				requestedBy,
 			);
 		}
 

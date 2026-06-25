@@ -1,6 +1,6 @@
 ---
 title: Container isolation
-order: 16
+order: 19
 section: Security
 ---
 
@@ -42,7 +42,8 @@ them:
   container, at the proxy.
 - **Git signing and SSH keys** stay on the host. When an agent commits or pushes, the
   signing happens host-side on its behalf — the private key is never exposed to the
-  agent. Commits land **verified**, signed by your project's key.
+  agent. Commits land **verified**, signed by your project's key. See
+  [Git & verified commits](/docs/security/git-and-verified-commits).
 
 ## What this gives you
 
