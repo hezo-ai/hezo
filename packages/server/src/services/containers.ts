@@ -403,6 +403,50 @@ export async function provisionContainer(
 	}
 }
 
+/**
+ * Bring a project's container up on demand and return its running container id.
+ * A container that exists but is stopped is started in place (cheaper, preserves
+ * state); one that is missing or was never created is provisioned from scratch.
+ * Trusts the DB only when Docker agrees the container is actually running, so a
+ * stale `running` row that no longer maps to a live container is repaired.
+ */
+export async function ensureProjectContainerRunning(
+	deps: ContainerDeps,
+	projectId: string,
+): Promise<string> {
+	const { db, docker } = deps;
+	const res = await db.query<ProjectRow & { team_slug: string }>(
+		`SELECT p.id, p.team_id, p.slug, p.docker_base_image, p.container_id, p.container_status,
+		        p.dev_ports, c.slug AS team_slug
+		 FROM projects p JOIN teams c ON c.id = p.team_id
+		 WHERE p.id = $1`,
+		[projectId],
+	);
+	const proj = res.rows[0];
+	if (!proj) throw new Error('Project not found');
+
+	if (proj.container_id) {
+		const info = await docker.inspectContainer(proj.container_id);
+		if (info?.State.Running) return proj.container_id;
+		if (info) {
+			// Container exists but is stopped — start it in place.
+			await docker.startContainer(proj.container_id);
+			await db.query(
+				'UPDATE projects SET container_status = $1::container_status, container_error = NULL WHERE id = $2',
+				[ContainerStatus.Running, proj.id],
+			);
+			if (deps.containerLogStreamer && deps.logs) {
+				deps.containerLogStreamer.subscribe(proj.id, proj.container_id, deps.logs, docker);
+			}
+			await broadcastProjectUpdate(db, deps.wsManager, proj.team_id, proj.id);
+			return proj.container_id;
+		}
+	}
+
+	// No container id, or the stored id no longer exists in Docker — provision.
+	return provisionContainer(deps, proj, proj.team_slug);
+}
+
 export async function teardownContainer(
 	deps: ContainerDeps,
 	projectId: string,

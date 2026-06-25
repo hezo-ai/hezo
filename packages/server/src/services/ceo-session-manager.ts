@@ -33,6 +33,8 @@ import {
 	createAgentChatParser,
 } from './agent-stream-parser';
 import { getProviderCredentialAndModel } from './ai-provider-keys';
+import type { ContainerLogStreamer } from './container-logs';
+import { type ContainerDeps, ensureProjectContainerRunning } from './containers';
 import { getAgentSystemPrompt, getDocument } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication } from './effort';
 import { resolveRuntimeForTask } from './runtime-resolver';
@@ -89,6 +91,7 @@ export function formatChatMemoryBlock(content: string): string {
 
 export interface CeoSessionDeps extends RunnerDeps {
 	wsManager: WebSocketManager;
+	containerLogStreamer?: ContainerLogStreamer;
 }
 
 interface LiveSession {
@@ -240,6 +243,20 @@ export class CeoSessionManager {
 		return this.ensuring;
 	}
 
+	private buildContainerDeps(): ContainerDeps {
+		return {
+			db: this.deps.db,
+			docker: this.deps.docker,
+			dataDir: this.deps.dataDir,
+			wsManager: this.deps.wsManager,
+			masterKeyManager: this.deps.masterKeyManager,
+			logs: this.deps.logs,
+			containerLogStreamer: this.deps.containerLogStreamer,
+			sshAgentServer: this.deps.sshAgentServer,
+			egressCAPath: this.deps.egressCAPath ?? null,
+		};
+	}
+
 	private async startSession(): Promise<LiveSession> {
 		const { db } = this.deps;
 
@@ -263,9 +280,13 @@ export class CeoSessionManager {
 		);
 		const project = proj.rows[0];
 		if (!project) throw new Error('HQ project not found');
-		if (project.container_status !== 'running' || !project.container_id) {
-			throw new Error('HQ container is not running');
-		}
+		// The CEO chat is available app-wide from first load, before any project is
+		// created, so the HQ container may never have been provisioned. Bring it up
+		// on demand rather than failing the turn.
+		const containerId =
+			project.container_status === 'running' && project.container_id
+				? project.container_id
+				: await ensureProjectContainerRunning(this.buildContainerDeps(), project.id);
 
 		const override = await db.query<{ provider: AiProvider | null; model: string | null }>(
 			`SELECT model_override_provider AS provider, model_override_model AS model
@@ -309,7 +330,7 @@ export class CeoSessionManager {
 				ceoMemberId,
 				DEFAULT_TEAM_ID,
 				project.id,
-				project.container_id,
+				containerId,
 				runtimeType,
 				CeoSessionStatus.Starting,
 			],
@@ -404,7 +425,7 @@ export class CeoSessionManager {
 				conversationId,
 				ceoMemberId,
 				projectId: project.id,
-				containerId: project.container_id,
+				containerId,
 				runtimeType,
 				env: invocation.env,
 				execCmd: invocation.execCmd,
