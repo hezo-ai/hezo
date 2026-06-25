@@ -19,16 +19,28 @@ const BASE: UpdateStatusInfo = {
 	canApply: true,
 };
 
+function today(): string {
+	return new Date().toLocaleDateString('en-CA');
+}
+
 function renderBanner(status: Partial<UpdateStatusInfo> = {}, isSuperuser = true) {
-	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	// staleTime: Infinity stops the seeded queries (incl. `me`) from refetching on
+	// mount — otherwise a mocked api.get feeds `useMe` the wrong shape and the
+	// canApply button unmounts mid-click.
+	const qc = new QueryClient({
+		defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+	});
 	// Seed both caches so the component renders without hitting the network.
 	qc.setQueryData(['update-status'], { ...BASE, ...status });
 	qc.setQueryData(['me'], { type: 'admin', is_superuser: isSuperuser });
-	return render(
-		<QueryClientProvider client={qc}>
-			<UpdateBanner />
-		</QueryClientProvider>,
-	);
+	return {
+		qc,
+		...render(
+			<QueryClientProvider client={qc}>
+				<UpdateBanner />
+			</QueryClientProvider>,
+		),
+	};
 }
 
 afterEach(() => {
@@ -49,6 +61,42 @@ test('non-superuser / non-supervised falls back to a release download link', () 
 	expect(link.getAttribute('href')).toBe('https://github.com/hezo-ai/hezo/releases/0.2.0');
 });
 
+test('supervised + superuser shows a single "Download & Restart" button', () => {
+	const { getByTestId } = renderBanner({ state: UpdateState.Idle });
+	const button = getByTestId('update-restart-button');
+	expect(button.textContent).toContain('Download & Restart');
+});
+
+test('Download & Restart stages the binary before any confirmation', async () => {
+	const user = userEvent.setup();
+	// Refetch after the mutation invalidates the query — keep it inert/idle.
+	vi.spyOn(api, 'get').mockResolvedValue({ ...BASE, state: UpdateState.Idle });
+	const postSpy = vi
+		.spyOn(api, 'post')
+		.mockResolvedValue({ state: UpdateState.Downloading, targetVersion: '0.2.0' });
+
+	const { getByTestId, queryByTestId } = renderBanner({ state: UpdateState.Idle });
+
+	await user.click(getByTestId('update-restart-button'));
+	await waitFor(() => expect(postSpy).toHaveBeenCalledWith('/api/updates/download'));
+	// Not staged yet → no confirmation shown.
+	expect(queryByTestId('confirm-dialog')).toBeNull();
+});
+
+test('Download & Restart auto-opens the confirmation once staging finishes', async () => {
+	const user = userEvent.setup();
+	// The post kicks staging; the status refetch it triggers reports it staged.
+	vi.spyOn(api, 'get').mockResolvedValue({ ...BASE, state: UpdateState.Staged });
+	vi.spyOn(api, 'post').mockResolvedValue({
+		state: UpdateState.Downloading,
+		targetVersion: '0.2.0',
+	});
+
+	const { getByTestId, findByTestId } = renderBanner({ state: UpdateState.Idle });
+	await user.click(getByTestId('update-restart-button'));
+	expect(await findByTestId('confirm-dialog')).toBeTruthy();
+});
+
 test('Update & restart asks for confirmation (with master-key warning) before applying', async () => {
 	const user = userEvent.setup();
 	const postSpy = vi
@@ -57,7 +105,7 @@ test('Update & restart asks for confirmation (with master-key warning) before ap
 
 	const { getByTestId, findByTestId, queryByTestId } = renderBanner();
 
-	// Clicking the action opens the dialog — it does NOT apply yet.
+	// Already staged: clicking the action opens the dialog — it does NOT apply yet.
 	await user.click(getByTestId('update-restart-button'));
 	const dialog = await findByTestId('confirm-dialog');
 	expect(dialog.textContent).toContain('master key');
@@ -79,11 +127,39 @@ test('confirmation omits the master-key warning when the instance auto-unlocks',
 	expect(dialog.textContent).not.toContain('master key');
 });
 
-test('dismiss hides the banner and remembers the version', async () => {
+test('dismiss hides the banner for the rest of the day and records version + day', async () => {
 	const user = userEvent.setup();
 	const { getByTestId, queryByTestId, getByLabelText } = renderBanner();
 	expect(getByTestId('update-banner')).toBeTruthy();
 	await user.click(getByLabelText('Dismiss update notification'));
 	expect(queryByTestId('update-banner')).toBeNull();
-	expect(localStorage.getItem('hezo:update-dismissed')).toBe('0.2.0');
+	const stored = JSON.parse(localStorage.getItem('hezo:update-dismissed') ?? 'null');
+	expect(stored).toEqual({ version: '0.2.0', day: today() });
+});
+
+test("today's dismissal of the current version keeps it hidden", () => {
+	localStorage.setItem('hezo:update-dismissed', JSON.stringify({ version: '0.2.0', day: today() }));
+	const { queryByTestId } = renderBanner();
+	expect(queryByTestId('update-banner')).toBeNull();
+});
+
+test('a dismissal from a previous day no longer suppresses the banner', () => {
+	localStorage.setItem(
+		'hezo:update-dismissed',
+		JSON.stringify({ version: '0.2.0', day: '2000-01-01' }),
+	);
+	const { getByTestId } = renderBanner();
+	expect(getByTestId('update-banner')).toBeTruthy();
+});
+
+test("today's dismissal of an older version does not suppress a newer one", () => {
+	localStorage.setItem('hezo:update-dismissed', JSON.stringify({ version: '0.1.9', day: today() }));
+	const { getByTestId } = renderBanner(); // latest is 0.2.0
+	expect(getByTestId('update-banner')).toBeTruthy();
+});
+
+test('a legacy bare-version dismissal is ignored (banner shows)', () => {
+	localStorage.setItem('hezo:update-dismissed', '0.2.0');
+	const { getByTestId } = renderBanner();
+	expect(getByTestId('update-banner')).toBeTruthy();
 });
