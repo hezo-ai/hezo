@@ -61,9 +61,10 @@ import { CeoSessionManager } from './services/ceo-session-manager';
 import { ContainerLogStreamer } from './services/container-logs';
 import type { ContainerDeps } from './services/containers';
 import { DockerClient } from './services/docker';
+import { extractBundledDockerContext } from './services/docker-assets';
 import { EgressProxy, loadOrCreateCA } from './services/egress';
 import { ImageBuildTracker, setSharedImageBuildTracker } from './services/image-build-tracker';
-import { pruneStaleBundledImages } from './services/image-registry';
+import { pruneStaleBundledImages, setDockerBaseDir } from './services/image-registry';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
 import { PricingService } from './services/pricing';
@@ -101,6 +102,7 @@ export interface StartupResult {
 
 export async function startup(config: HezoConfig): Promise<StartupResult> {
 	mkdirSync(config.dataDir, { recursive: true });
+	log.info(`Using data directory: ${config.dataDir}`);
 
 	// `db` may be replaced by a fresh handle if migrations run against a copy and
 	// swap it in, so it's a `let` — every consumer below uses the post-migration handle.
@@ -125,6 +127,17 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		docker = createFakeDockerClient(db);
 	} else {
 		docker = new DockerClient();
+		// A compiled binary has no repo checkout, so the agent-base image can't be
+		// built from disk (and is published to no registry to pull). Extract the
+		// embedded build context to the data dir and point the image resolver at it,
+		// so provisioning builds the image locally. No-op in dev/source (returns
+		// null — the resolver falls back to the repo's docker/ dir).
+		try {
+			const contextDir = await extractBundledDockerContext(config.dataDir);
+			if (contextDir) setDockerBaseDir(contextDir);
+		} catch (err) {
+			log.error('Failed to extract bundled agent-base build context (continuing):', err);
+		}
 		try {
 			const outcome = await pruneStaleBundledImages(docker);
 			if (outcome.removed.length > 0 || outcome.skipped.length > 0) {

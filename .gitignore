@@ -11,6 +11,7 @@ migrations-bundle.json
 agents-bundle.json
 docs-bundle.json
 static-bundle.json
+docker-bundle.json
 packages/server/src/generated/
 packages/server/static/
 *.db

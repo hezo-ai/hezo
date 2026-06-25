@@ -19,6 +19,7 @@ const BUNDLES = [
 	'packages/server/src/db/agents-bundle.json',
 	'packages/server/src/services/docs-bundle.json',
 	'packages/server/src/static-bundle.json',
+	'packages/server/src/docker-bundle.json',
 ];
 
 export function ensureBundles(): void {

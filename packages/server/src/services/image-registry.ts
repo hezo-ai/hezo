@@ -35,6 +35,24 @@ export interface ResolvedLocalImage {
 	bundleSourceHash: string;
 }
 
+/**
+ * Base dir the `LOCAL_IMAGES` paths resolve against when set. The compiled
+ * binary has no repo checkout, so `findRepoRoot` finds nothing and the
+ * agent-base image could neither be pulled (published to no registry) nor built.
+ * At startup the binary extracts the embedded `docker/` context to the data dir
+ * and points us at it here, so `resolveLocalImage` finds the Dockerfile and the
+ * image builds locally. Unset (`null`) in dev/source, where `findRepoRoot` walks
+ * to the repo's `docker/` dir.
+ */
+let dockerBaseDirOverride: string | null = null;
+
+/** Override (or, with `null`, clear) the base dir `resolveLocalImage` resolves
+ *  the bundled Dockerfile/context against. Set once at startup in the compiled
+ *  binary after the embedded context is extracted to the data dir. */
+export function setDockerBaseDir(dir: string | null): void {
+	dockerBaseDirOverride = dir;
+}
+
 export function findRepoRoot(startDir?: string): string | null {
 	let dir = startDir ?? dirname(fileURLToPath(import.meta.url));
 	while (true) {
@@ -57,7 +75,7 @@ export function resolveLocalImage(image: string): ResolvedLocalImage | null {
 	const spec = LOCAL_IMAGES[image];
 	if (!spec) return null;
 
-	const root = findRepoRoot();
+	const root = dockerBaseDirOverride ?? findRepoRoot();
 	if (!root) return null;
 
 	const dockerfile = isAbsolute(spec.dockerfile) ? spec.dockerfile : resolve(root, spec.dockerfile);
