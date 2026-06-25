@@ -43,7 +43,9 @@ whole thread, notices where an agent struggled, got pushback, or needed several 
 and captures what went well and what to improve. It then writes those lessons back as
 durable **learned rules** on the agents that need them (and sometimes updates a project
 document or skill), so the same mistake doesn't happen twice. The teams get better the
-more they ship, without you having to tune prompts by hand.
+more they ship, without you having to tune prompts by hand. For the full picture of how
+this loop works, see
+[The Coach & self-improving teams](/docs/concepts/coach-and-self-improving-teams).
 
 The Coach's behaviour comes from its
 [system prompt](https://github.com/hezo-ai/hezo/blob/main/agents/_instance/coach.md).

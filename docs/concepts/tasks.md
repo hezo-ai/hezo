@@ -41,4 +41,4 @@ screenshots, PDFs, or other references — to a task or a comment; see
 
 When work finishes, the **Coach** reviews completed tickets across your projects,
 capturing lessons that feed back into how the teams improve. See
-[Roles & the CEO](/docs/concepts/roles-and-coordination).
+[The Coach & self-improving teams](/docs/concepts/coach-and-self-improving-teams).
