@@ -1,10 +1,50 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join, sep } from 'node:path';
 import { AiAuthMethod, AiProvider } from '@hezo/shared';
 import type { AiProviderCredential } from './ai-provider-keys';
 import { getWorkspacePath } from './workspace';
 
 export const CONTAINER_SUBSCRIPTION_DIR = '/workspace/.hezo/subscription';
+
+/** Host-path segment marking the subscription root. Everything at or below
+ *  `.../.hezo/subscription` is Hezo-created and must stay traversable by the
+ *  non-root container run-user. */
+const SUBSCRIPTION_PATH_MARKER = `${sep}.hezo${sep}subscription`;
+
+/**
+ * Create `dir` (recursively) and force every Hezo-created component from the
+ * subscription root down to `dir` to mode 0o711 (rwx--x--x).
+ *
+ * Why this exists instead of `mkdirSync(dir, { mode: 0o711 })`: `mkdirSync`'s mode is
+ * masked by the **process umask**. On a hardened production host (umask 0o027/0o077 —
+ * common under systemd `UMask=`), the intended world-traversable 0o711 is silently
+ * stripped to 0o710/0o700, dropping the *other-execute* bit. The non-root container
+ * run-user (`node`) then can't **traverse** the intermediate `subscription/<provider>/`
+ * dirs to reach its per-run config leaf, so the agent CLI fails with `EACCES` opening
+ * `<leaf>/settings.json` — even though the leaf and its files were chowned to that user
+ * (see `chownToRunUser`). `chmodSync` is not subject to umask and needs only ownership
+ * (the server created these dirs), so it restores the traversal bit uniformly across
+ * root-prod, non-root-server, and macOS-dev. Best-effort per component: a host where we
+ * can't chmod a dir must not abort the run over a permission tweak.
+ */
+export function mkdirTraversable(dir: string): void {
+	mkdirSync(dir, { recursive: true });
+	const idx = dir.indexOf(SUBSCRIPTION_PATH_MARKER);
+	if (idx === -1) return;
+	const stopAt = dir.slice(0, idx + SUBSCRIPTION_PATH_MARKER.length);
+	let cur = dir;
+	for (;;) {
+		try {
+			chmodSync(cur, 0o711);
+		} catch {
+			// Best-effort — see doc comment.
+		}
+		if (cur === stopAt) break;
+		const parent = dirname(cur);
+		if (parent === cur) break;
+		cur = parent;
+	}
+}
 
 export interface SubscriptionLayout {
 	dirName: string;
@@ -147,9 +187,10 @@ export function buildSubscriptionMount(
 
 	// 0o711 (not 0o700) so the non-root container run-user can *traverse* these
 	// intermediate dirs to reach the per-run leaf — which the runner chowns to that
-	// user (see chownToRunUser). The credential file itself stays 0o600 (and is
-	// chowned to the run-user), never world-readable.
-	mkdirSync(dirname(hostAuthFile), { recursive: true, mode: 0o711 });
+	// user (see chownToRunUser). mkdirTraversable (not a bare mkdir mode) so a strict
+	// process umask can't strip the traversal bit. The credential file itself stays
+	// 0o600 (and is chowned to the run-user), never world-readable.
+	mkdirTraversable(dirname(hostAuthFile));
 	writeFileSync(hostAuthFile, credential.value, { mode: 0o600 });
 
 	return {
@@ -203,8 +244,9 @@ export function ensureRuntimeHomeDir(
 	const containerDir = getContainerSubscriptionRoot(provider, heartbeatRunId) as string;
 
 	// 0o711 so the non-root container run-user can traverse the intermediate dirs to
-	// its per-run config dir (which the runner then chowns to that user).
-	mkdirSync(hostDir, { recursive: true, mode: 0o711 });
+	// its per-run config dir (which the runner then chowns to that user). Via
+	// mkdirTraversable so a strict process umask can't strip the traversal bit.
+	mkdirTraversable(hostDir);
 
 	return {
 		hostDir,

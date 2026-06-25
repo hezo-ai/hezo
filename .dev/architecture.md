@@ -361,7 +361,13 @@ write — the per-run config dir, `/workspace`, `/worktrees`, `/workspace/.previ
 container needs no host privilege, so it works identically on a root server, a non-root
 `User=hezo` server, and macOS (where Docker Desktop's bind-mount uid-remapping otherwise hides
 the mismatch — the reason this class of bug only surfaced on a native-Linux production host). It
-is a no-op when the run-user is root.
+is a no-op when the run-user is root. The chown fixes *ownership* of the leaf, but the run-user
+must also *traverse* the shared intermediate dirs (`.hezo/subscription/<provider>/`) that the
+chown never touches. Those are created world-traversable (`0o711`) via `mkdirTraversable`
+(`services/runtime-home.ts`), which `chmod`s each component **after** `mkdir` rather than relying
+on `mkdirSync`'s `mode` — that mode is masked by the **process umask**, so a hardened host (umask
+`0o027`/`0o077` under systemd `UMask=`) would silently strip the other-execute bit and the agent
+CLI would die with `EACCES` opening its `settings.json` (again only on native-Linux production).
 
 Before building a worktree the runner fetches each clone, then **fast-forwards the clone's
 local default branch** (the "main codebase") to `origin/<default>` (resolved via `origin/HEAD`
