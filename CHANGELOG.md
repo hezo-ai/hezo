@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.6 - 2026-06-25
+
+### Bug Fixes
+
+- verify container liveness before agent exec; gate Retry on health ([#418](https://github.com/hezo-ai/hezo/pull/418))
+- **runtime:** force per-run config dirs traversable past a strict umask ([#416](https://github.com/hezo-ai/hezo/pull/416))
+
+### Documentation
+
+- merge meta-harness into "How Hezo works"; drop "Where to next" ([#415](https://github.com/hezo-ai/hezo/pull/415))
+
+### Tests
+
+- de-flake task-comment-attachments browser specs ([#417](https://github.com/hezo-ai/hezo/pull/417))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.6.5...0.6.6
+
 ## 0.6.5 - 2026-06-25
 
 ### Bug Fixes
