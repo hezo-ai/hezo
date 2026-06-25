@@ -6,6 +6,7 @@ import { err, ok } from '../lib/response';
 import { isUniqueViolation, withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
+import { resolveContainerRunUser } from '../services/container-user';
 import { ensureProjectContainerRunning } from '../services/containers';
 import { ContainerGitExecutor } from '../services/git-executor';
 import { createGitHubRepo, parseGitHubUrl, validateRepoAccess } from '../services/github';
@@ -212,15 +213,16 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 			const sshAgentServer = c.get('sshAgentServer');
 
 			if (containerId && running) {
+				const runUser = await resolveContainerRunUser(docker, containerId);
 				const syncRepos = (bridge: BridgeRunnerArgs | null) =>
 					ensureProjectRepos(
 						db,
 						{ id: projectId, team_id: teamId },
 						dataDir,
-						ContainerGitExecutor.forPrep(docker, containerId, bridge),
+						ContainerGitExecutor.forPrep(docker, containerId, bridge, runUser),
 					);
 				const syncRes = sshAgentServer
-					? await withProvisionBridge(sshAgentServer, teamId, dataDir, ({ bridge }) =>
+					? await withProvisionBridge(sshAgentServer, teamId, dataDir, runUser.name, ({ bridge }) =>
 							syncRepos(bridge),
 						)
 					: await syncRepos(null);

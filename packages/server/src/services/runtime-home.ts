@@ -145,7 +145,11 @@ export function buildSubscriptionMount(
 	const containerDir = getContainerSubscriptionRoot(provider, heartbeatRunId) as string;
 	const hostAuthFile = join(hostDir, authFileRelative);
 
-	mkdirSync(dirname(hostAuthFile), { recursive: true, mode: 0o700 });
+	// 0o711 (not 0o700) so the non-root container run-user can *traverse* these
+	// intermediate dirs to reach the per-run leaf — which the runner chowns to that
+	// user (see chownToRunUser). The credential file itself stays 0o600 (and is
+	// chowned to the run-user), never world-readable.
+	mkdirSync(dirname(hostAuthFile), { recursive: true, mode: 0o711 });
 	writeFileSync(hostAuthFile, credential.value, { mode: 0o600 });
 
 	return {
@@ -198,7 +202,9 @@ export function ensureRuntimeHomeDir(
 	) as string;
 	const containerDir = getContainerSubscriptionRoot(provider, heartbeatRunId) as string;
 
-	mkdirSync(hostDir, { recursive: true, mode: 0o700 });
+	// 0o711 so the non-root container run-user can traverse the intermediate dirs to
+	// its per-run config dir (which the runner then chowns to that user).
+	mkdirSync(hostDir, { recursive: true, mode: 0o711 });
 
 	return {
 		hostDir,

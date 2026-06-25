@@ -41,6 +41,7 @@ import {
 	updateAiProviderCredential,
 } from './ai-provider-keys';
 import { checkOverBudget, recordRunCost } from './budget';
+import { type ContainerRunUser, chownToRunUser, resolveContainerRunUser } from './container-user';
 import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
@@ -295,6 +296,11 @@ export interface RuntimeInvocationInput {
 	agentId: string;
 	/** Keys the per-resource home/subscription/config dirs — heartbeatRunId or sessionId. */
 	resourceId: string;
+	/** The project container the run executes in (target of the run-user chown). */
+	containerId: string;
+	/** Detected container run-user; the per-run config dir is chowned to it so the
+	 *  non-root agent CLI can read the host-written settings/credentials. */
+	runUser: ContainerRunUser;
 	/** Container path the prompt is read from on stdin. */
 	promptContainerPath: string;
 	effort: string;
@@ -328,6 +334,8 @@ export async function buildRuntimeInvocation(
 		agentJwt,
 		agentId,
 		resourceId,
+		containerId,
+		runUser,
 		promptContainerPath,
 		effort,
 		effortApplication,
@@ -382,8 +390,19 @@ export async function buildRuntimeInvocation(
 	validateInjection(adapter, mcpInjection);
 
 	for (const file of mcpInjection.files) {
-		mkdirSync(dirname(file.hostPath), { recursive: true, mode: 0o700 });
+		mkdirSync(dirname(file.hostPath), { recursive: true, mode: 0o711 });
 		writeFileSync(file.hostPath, file.contents, { mode: file.mode });
+	}
+
+	// The host (root in production) just wrote the per-run config dir + files at
+	// restrictive modes; give the container's non-root run-user ownership so the
+	// agent CLI can read them (settings/MCP config, judge script) and rewrite any
+	// rotating subscription credential. Runs in-container as root (needs no host
+	// privilege); a no-op when the run-user is root.
+	if (homeMount) {
+		await chownToRunUser(deps.docker, containerId, runUser, [homeMount.containerDir], {
+			recursive: true,
+		});
 	}
 
 	const env: string[] = [
@@ -478,6 +497,7 @@ async function buildRunContext(
 	sshSocketContainerPath: string | null,
 	bridge: BridgeRunnerArgs | null,
 	egress: EgressEnvDescriptor | null,
+	runUser: ContainerRunUser,
 ): Promise<RunContext> {
 	// The run is scoped to the project's team (the "run team"). For normal agents
 	// this equals the agent's home team; for instance agents (CEO/Coach) that
@@ -560,6 +580,8 @@ async function buildRunContext(
 		agentJwt,
 		agentId: agent.id,
 		resourceId: heartbeatRunId,
+		containerId: project.container_id,
+		runUser,
 		promptContainerPath: promptFilePath,
 		effort,
 		effortApplication,
@@ -827,6 +849,12 @@ export async function runAgent(
 		// since a run has no friendly identifier of its own.
 		const runLabel = `${agent.slug}/${task.identifier}`;
 
+		// Detect the container's run-user once (cached). Drives every --user exec, the
+		// ssh socket owner, and the chowns that give the run-user ownership of the
+		// host-written config/worktree dirs. Defaults to root for an image with no
+		// `node` user, which makes those chowns a harmless no-op.
+		const runUser = await resolveContainerRunUser(deps.docker, project.container_id);
+
 		let sshSocketContainerPath: string | null = null;
 		let sshSocketHostPath: string | null = null;
 		let bridge: BridgeRunnerArgs | null = null;
@@ -840,7 +868,7 @@ export async function runAgent(
 			sshSocketContainerPath = `/run/hezo/${heartbeatRunId}.sock`;
 			bridge = {
 				socketPath: sshSocketContainerPath,
-				socketUser: 'node',
+				socketUser: runUser.name,
 				tokenHex: allocated.tokenHex,
 				hostName: 'host.docker.internal',
 				hostPort: allocated.tcpHostPort,
@@ -881,6 +909,7 @@ export async function runAgent(
 			sshSocketContainerPath,
 			bridge,
 			egressEnv,
+			runUser,
 		);
 
 		const hostPromptPath = getHostPromptPath(
@@ -970,7 +999,7 @@ export async function runAgent(
 		try {
 			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
-			const prep = await prepareWorktrees(deps, project, task, bridge, emit, signal);
+			const prep = await prepareWorktrees(deps, project, task, bridge, runUser, emit, signal);
 
 			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
@@ -994,7 +1023,7 @@ export async function runAgent(
 				Cmd: context.execCmd,
 				Env: context.env,
 				WorkingDir: prep.workingDir,
-				User: 'node',
+				User: runUser.name,
 				AttachStdout: true,
 				AttachStderr: true,
 			});
@@ -1174,6 +1203,7 @@ async function prepareWorktrees(
 	project: ProjectInfo,
 	task: TaskInfo,
 	bridge: BridgeRunnerArgs | null,
+	runUser: ContainerRunUser,
 	emit: (stream: 'stdout' | 'stderr', text: string) => void,
 	signal?: AbortSignal,
 ): Promise<{
@@ -1211,6 +1241,7 @@ async function prepareWorktrees(
 			deps.docker,
 			project.container_id,
 			bridge,
+			runUser,
 			gitIdentityEnv,
 		);
 
@@ -1234,6 +1265,12 @@ async function prepareWorktrees(
 		const worktreesRoot = getWorktreesPath(deps.dataDir, project.team_id, project.id);
 		const taskWorktreeRoot = join(worktreesRoot, task.identifier);
 		mkdirSync(taskWorktreeRoot, { recursive: true });
+		// The host just created this task's worktree root (root-owned); give the
+		// run-user ownership so the in-container `git worktree add` (run as the
+		// run-user) can populate it. No-op when the run-user is root.
+		await chownToRunUser(deps.docker, project.container_id, runUser, [
+			`${CONTAINER_WORKTREES_ROOT}/${task.identifier}`,
+		]);
 
 		const branchName = `hezo/${task.identifier}`;
 		const repoLocOf = (name: string): RepoLoc => ({

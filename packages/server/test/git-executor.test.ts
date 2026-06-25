@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ContainerRunUser } from '../src/services/container-user';
 import { ContainerGitExecutor } from '../src/services/git-executor';
 import {
 	BRIDGE_RUNNER_BINARY,
@@ -6,6 +7,8 @@ import {
 	buildBridgeRunnerArgv,
 } from '../src/services/ssh-agent';
 import { createStubDocker } from './helpers/app';
+
+const runUser: ContainerRunUser = { name: 'node', uid: 1000, gid: 1000 };
 
 const bridge: BridgeRunnerArgs = {
 	socketPath: '/run/hezo/test.sock',
@@ -39,9 +42,12 @@ function recordingDocker(opts: { exitCode?: number; throwOnStart?: boolean } = {
 }
 
 describe('ContainerGitExecutor', () => {
-	it('runs a plain git command in the container as the node user', async () => {
+	it('runs a plain git command in the container as the run-user', async () => {
 		const { docker, calls } = recordingDocker();
-		const exec = new ContainerGitExecutor(docker, 'cid', { baseEnv: ['GIT_CONFIG_COUNT=0'] });
+		const exec = new ContainerGitExecutor(docker, 'cid', {
+			baseEnv: ['GIT_CONFIG_COUNT=0'],
+			runUser,
+		});
 
 		const res = await exec.exec(['status', '--porcelain'], { cwd: '/worktrees/T-1/repo' });
 
@@ -52,9 +58,21 @@ describe('ContainerGitExecutor', () => {
 		expect(calls[0].User).toBe('node');
 	});
 
+	it('runs as the detected run-user, not a hardcoded node (custom image)', async () => {
+		const { docker, calls } = recordingDocker();
+		const exec = new ContainerGitExecutor(docker, 'cid', {
+			baseEnv: [],
+			runUser: { name: 'appuser', uid: 1001, gid: 1001 },
+		});
+
+		await exec.exec(['status'], { cwd: '/w' });
+
+		expect(calls[0].User).toBe('appuser');
+	});
+
 	it('wraps SSH-transport ops with the bridge runner', async () => {
 		const { docker, calls } = recordingDocker();
-		const exec = new ContainerGitExecutor(docker, 'cid', { baseEnv: [], bridge });
+		const exec = new ContainerGitExecutor(docker, 'cid', { baseEnv: [], bridge, runUser });
 
 		await exec.exec(['fetch', '--all', '--prune'], { cwd: '/workspace/repo', needsSsh: true });
 
@@ -70,7 +88,7 @@ describe('ContainerGitExecutor', () => {
 
 	it('does not wrap when needsSsh but no bridge is available', async () => {
 		const { docker, calls } = recordingDocker();
-		const exec = new ContainerGitExecutor(docker, 'cid', { baseEnv: [], bridge: null });
+		const exec = new ContainerGitExecutor(docker, 'cid', { baseEnv: [], bridge: null, runUser });
 
 		await exec.exec(['fetch'], { cwd: '/workspace/repo', needsSsh: true });
 
@@ -85,6 +103,7 @@ describe('ContainerGitExecutor', () => {
 				'SSH_AUTH_SOCK=/run/hezo/run.sock',
 				'HEZO_PROMPT_FILE=/tmp/prompt.txt',
 			],
+			runUser,
 		});
 
 		await exec.exec(['status'], { cwd: '/w' });
@@ -94,9 +113,9 @@ describe('ContainerGitExecutor', () => {
 		expect(calls[0].Env?.some((e) => e.startsWith('HEZO_PROMPT_FILE='))).toBe(false);
 	});
 
-	it('forPrep threads extraEnv (git identity) alongside the prep defaults', async () => {
+	it('forPrep threads the run-user + extraEnv (git identity) alongside the prep defaults', async () => {
 		const { docker, calls } = recordingDocker();
-		const exec = ContainerGitExecutor.forPrep(docker, 'cid', bridge, [
+		const exec = ContainerGitExecutor.forPrep(docker, 'cid', bridge, runUser, [
 			'GIT_CONFIG_COUNT=2',
 			'GIT_CONFIG_KEY_0=user.name',
 			'GIT_CONFIG_VALUE_0=octocat',
@@ -106,6 +125,7 @@ describe('ContainerGitExecutor', () => {
 		// inherits the executor's baseEnv: prep defaults + the git identity.
 		await exec.exec(['merge', '--no-edit', 'origin/main'], { cwd: '/worktrees/T-1/repo' });
 
+		expect(calls[0].User).toBe('node');
 		expect(calls[0].Env).toContain('GIT_TERMINAL_PROMPT=0');
 		expect(calls[0].Env).toContain(`SSH_AUTH_SOCK=${bridge.socketPath}`);
 		expect(calls[0].Env).toContain('GIT_CONFIG_COUNT=2');
@@ -115,7 +135,7 @@ describe('ContainerGitExecutor', () => {
 
 	it('surfaces a non-zero exit code from execInspect', async () => {
 		const { docker } = recordingDocker({ exitCode: 128 });
-		const exec = new ContainerGitExecutor(docker, 'cid', { baseEnv: [] });
+		const exec = new ContainerGitExecutor(docker, 'cid', { baseEnv: [], runUser });
 
 		const res = await exec.exec(['rev-parse', '--git-dir'], { cwd: '/w' });
 
@@ -124,7 +144,7 @@ describe('ContainerGitExecutor', () => {
 
 	it('returns exitCode 1 instead of throwing when docker fails', async () => {
 		const { docker } = recordingDocker({ throwOnStart: true });
-		const exec = new ContainerGitExecutor(docker, 'cid', { baseEnv: [] });
+		const exec = new ContainerGitExecutor(docker, 'cid', { baseEnv: [], runUser });
 
 		const res = await exec.exec(['status'], { cwd: '/w' });
 

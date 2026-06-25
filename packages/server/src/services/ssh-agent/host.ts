@@ -15,6 +15,7 @@ export async function withProvisionBridge<T>(
 	sshAgentServer: SshAgentServer,
 	teamId: string,
 	dataDir: string,
+	socketUser: string,
 	fn: (ctx: { bridge: BridgeRunnerArgs }) => Promise<T>,
 ): Promise<T> {
 	const runId = `provision-${randomBytes(8).toString('hex')}`;
@@ -27,7 +28,7 @@ export async function withProvisionBridge<T>(
 	try {
 		const bridge: BridgeRunnerArgs = {
 			socketPath: `/run/hezo/${runId}.sock`,
-			socketUser: 'node',
+			socketUser,
 			tokenHex: allocated.tokenHex,
 			hostName: 'host.docker.internal',
 			hostPort: allocated.tcpHostPort,

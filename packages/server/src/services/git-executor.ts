@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import type { ContainerRunUser } from './container-user';
 import type { DockerClient } from './docker';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv } from './ssh-agent';
 
@@ -62,6 +63,8 @@ export interface ContainerGitExecutorOptions {
 	baseEnv: string[];
 	/** The run's SSH bridge; required for `needsSsh` ops. Null disables SSH wrapping. */
 	bridge?: BridgeRunnerArgs | null;
+	/** The container user every git exec runs as (detected, not assumed `node`). */
+	runUser: ContainerRunUser;
 }
 
 /**
@@ -77,6 +80,7 @@ export interface ContainerGitExecutorOptions {
 export class ContainerGitExecutor implements GitExecutor {
 	private readonly bridge: BridgeRunnerArgs | null;
 	private readonly baseEnv: string[];
+	private readonly runUser: ContainerRunUser;
 
 	constructor(
 		private readonly docker: DockerClient,
@@ -84,6 +88,7 @@ export class ContainerGitExecutor implements GitExecutor {
 		opts: ContainerGitExecutorOptions,
 	) {
 		this.bridge = opts.bridge ?? null;
+		this.runUser = opts.runUser;
 		// The bridge wrapper appends/redirects HEZO_PROMPT_FILE into the command it
 		// runs; it must never leak into a git invocation. Strip it defensively.
 		this.baseEnv = opts.baseEnv.filter((e) => !e.startsWith('HEZO_PROMPT_FILE='));
@@ -102,11 +107,12 @@ export class ContainerGitExecutor implements GitExecutor {
 		docker: DockerClient,
 		containerId: string,
 		bridge: BridgeRunnerArgs | null,
+		runUser: ContainerRunUser,
 		extraEnv: string[] = [],
 	): ContainerGitExecutor {
 		const baseEnv = ['GIT_TERMINAL_PROMPT=0', ...extraEnv];
 		if (bridge) baseEnv.push(`SSH_AUTH_SOCK=${bridge.socketPath}`);
-		return new ContainerGitExecutor(docker, containerId, { baseEnv, bridge });
+		return new ContainerGitExecutor(docker, containerId, { baseEnv, bridge, runUser });
 	}
 
 	async exec(args: string[], opts: GitExecOpts): Promise<GitExecResult> {
@@ -120,7 +126,7 @@ export class ContainerGitExecutor implements GitExecutor {
 				Cmd: cmd,
 				Env: this.baseEnv,
 				WorkingDir: opts.cwd,
-				User: 'node',
+				User: this.runUser.name,
 				AttachStdout: true,
 				AttachStderr: true,
 			});

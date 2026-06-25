@@ -124,7 +124,17 @@ service.
 **Running as a non-root user instead.** Add `User=hezo` (and `Group=hezo`) to the
 `[Service]` section, make that user a member of the `docker` group
 (`sudo usermod -aG docker hezo`), and give it ownership of the data directory
-(`sudo chown -R hezo:hezo /var/lib/hezo`).
+(`sudo chown -R hezo:hezo /var/lib/hezo`). This is fully supported: Hezo fixes
+container file ownership from *inside* each container, so it needs no host
+privilege either way.
+
+**Custom agent images.** Inside each project container Hezo runs the agent (and its
+git operations) as a non-root **run-user** — the stock agent image's `node` — so the
+files the agent writes stay non-root-owned, and it automatically gives that user
+ownership of the bind-mounted workspace and per-run config. A custom
+`docker_base_image` with no `node` user simply runs the agent as the image's default
+user (root for most images), which also works; include a non-root user named `node`
+if you want agent-created files owned by a non-root uid on the host.
 
 ## Ports
 

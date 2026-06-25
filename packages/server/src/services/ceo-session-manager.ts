@@ -34,6 +34,7 @@ import {
 } from './agent-stream-parser';
 import { getProviderCredentialAndModel } from './ai-provider-keys';
 import type { ContainerLogStreamer } from './container-logs';
+import { type ContainerRunUser, resolveContainerRunUser } from './container-user';
 import { type ContainerDeps, ensureProjectContainerRunning } from './containers';
 import { getAgentSystemPrompt, getDocument } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication } from './effort';
@@ -100,6 +101,7 @@ interface LiveSession {
 	ceoMemberId: string;
 	projectId: string;
 	containerId: string;
+	runUser: ContainerRunUser;
 	runtimeType: AgentRuntime;
 	env: string[];
 	execCmd: string[];
@@ -288,6 +290,10 @@ export class CeoSessionManager {
 				? project.container_id
 				: await ensureProjectContainerRunning(this.buildContainerDeps(), project.id);
 
+		// Detect the HQ container's run-user once for this session; reused on every
+		// turn's exec, the ssh socket owner, and the per-turn config-dir chown.
+		const runUser = await resolveContainerRunUser(this.deps.docker, containerId);
+
 		const override = await db.query<{ provider: AiProvider | null; model: string | null }>(
 			`SELECT model_override_provider AS provider, model_override_model AS model
 			 FROM member_agents WHERE id = $1`,
@@ -356,7 +362,7 @@ export class CeoSessionManager {
 				sshSocketContainerPath = `/run/hezo/${sessionId}.sock`;
 				bridge = {
 					socketPath: sshSocketContainerPath,
-					socketUser: 'node',
+					socketUser: runUser.name,
 					tokenHex: allocated.tokenHex,
 					hostName: 'host.docker.internal',
 					hostPort: allocated.tcpHostPort,
@@ -406,6 +412,8 @@ export class CeoSessionManager {
 				agentJwt,
 				agentId: ceoMemberId,
 				resourceId: sessionId,
+				containerId,
+				runUser,
 				promptContainerPath: getContainerPromptPath(sessionId),
 				effort: AgentEffort.Max,
 				effortApplication,
@@ -426,6 +434,7 @@ export class CeoSessionManager {
 				ceoMemberId,
 				projectId: project.id,
 				containerId,
+				runUser,
 				runtimeType,
 				env: invocation.env,
 				execCmd: invocation.execCmd,
@@ -490,7 +499,7 @@ export class CeoSessionManager {
 				Cmd: session.execCmd,
 				Env: session.env,
 				WorkingDir: CHAT_WORKING_DIR,
-				User: 'node',
+				User: session.runUser.name,
 				AttachStdout: true,
 				AttachStderr: true,
 			});
