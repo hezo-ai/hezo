@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.4 - 2026-06-25
+
+### Bug Fixes
+
+- **startup:** serve web UI during boot; stop agent-base pull blocking readiness ([#407](https://github.com/hezo-ai/hezo/pull/407))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.6.3...0.6.4
+
 ## 0.6.3 - 2026-06-25
 
 ### Features
