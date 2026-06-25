@@ -1,4 +1,5 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from 'react';
+import { readStored, writeStored } from './safe-storage';
 
 export type ThemePreference = 'system' | 'light' | 'dark';
 export type ResolvedTheme = 'light' | 'dark';
@@ -32,7 +33,7 @@ function applyTheme(theme: ResolvedTheme) {
 export function ThemeProvider({ children }: { children: ReactNode }) {
 	const [preference, setPreferenceState] = useState<ThemePreference>(() => {
 		if (typeof window === 'undefined') return 'system';
-		const stored = localStorage.getItem(STORAGE_KEY);
+		const stored = readStored(STORAGE_KEY);
 		if (stored === 'light' || stored === 'dark' || stored === 'system') return stored;
 		return 'system';
 	});
@@ -41,7 +42,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
 	const setPreference = useCallback((newPreference: ThemePreference) => {
 		setPreferenceState(newPreference);
-		localStorage.setItem(STORAGE_KEY, newPreference);
+		writeStored(STORAGE_KEY, newPreference);
 	}, []);
 
 	useEffect(() => {

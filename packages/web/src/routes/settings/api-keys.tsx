@@ -17,6 +17,7 @@ import {
 	useDeleteApiKey,
 } from '../../hooks/use-api-keys';
 import { useMe } from '../../hooks/use-me';
+import { copyToClipboard } from '../../lib/clipboard';
 
 function formatRelative(iso: string | null): string {
 	if (!iso) return 'never';
@@ -198,11 +199,7 @@ function ApiKeysPage() {
 						</p>
 						<div className="flex items-center gap-2">
 							<code className="text-xs font-mono break-all flex-1">{newKey}</code>
-							<Button
-								variant="secondary"
-								size="sm"
-								onClick={() => navigator.clipboard.writeText(newKey)}
-							>
+							<Button variant="secondary" size="sm" onClick={() => copyToClipboard(newKey)}>
 								<Copy className="w-3 h-3" />
 							</Button>
 						</div>

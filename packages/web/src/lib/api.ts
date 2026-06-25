@@ -1,3 +1,5 @@
+import { readStored, removeStored, writeStored } from './safe-storage';
+
 const TOKEN_KEY = 'hezo_token';
 
 export interface ApiError {
@@ -13,7 +15,7 @@ export interface PaginationMeta {
 }
 
 class ApiClient {
-	private token: string | null = localStorage.getItem(TOKEN_KEY);
+	private token: string | null = readStored(TOKEN_KEY);
 
 	getToken(): string | null {
 		return this.token;
@@ -21,12 +23,12 @@ class ApiClient {
 
 	setToken(token: string) {
 		this.token = token;
-		localStorage.setItem(TOKEN_KEY, token);
+		writeStored(TOKEN_KEY, token);
 	}
 
 	clearToken() {
 		this.token = null;
-		localStorage.removeItem(TOKEN_KEY);
+		removeStored(TOKEN_KEY);
 	}
 
 	private authHeaders(contentType = 'application/json'): Record<string, string> {
