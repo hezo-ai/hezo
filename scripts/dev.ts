@@ -66,7 +66,13 @@ const webPort = process.env.HEZO_WEB_PORT ?? '5173';
 // Default the web URL for redirects unless the caller set their own, then
 // forward every flag through untouched.
 const hasWebUrl = forwardedArgs.some((a) => a === '--web-url' || a.startsWith('--web-url='));
+// Auto-open is the server's default, but dev is restarted constantly — spawning
+// a browser tab each time is noise. Suppress it by default; HEZO_OPEN=1 in the
+// inherited env still wins (the env var takes precedence over this flag), and we
+// don't double-pass if the caller already forwarded --no-open.
+const hasNoOpen = forwardedArgs.includes('--no-open');
 const serverArgs: string[] = [
+	...(hasNoOpen ? [] : ['--no-open']),
 	...(hasWebUrl ? [] : ['--web-url', `http://localhost:${webPort}`]),
 	// Only inject when we fell back to the dev default — otherwise the server
 	// already sees the user's choice via inherited env or forwardedArgs.

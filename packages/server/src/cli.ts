@@ -143,7 +143,7 @@ export function parseConfig(
 		)
 		.option('--web-url <url>', 'Web UI base URL for redirects (env: HEZO_WEB_URL)', '')
 		.option('--reset', 'Reset database and start fresh (env: HEZO_RESET)')
-		.option('--open', 'Auto-open the browser (env: HEZO_OPEN)')
+		.option('--no-open', 'Do not auto-open the browser on startup (env: HEZO_OPEN=0)')
 		.option(
 			'--log-level <level>',
 			'Log level: debug | info | warn | error (env: HEZO_LOG_LEVEL)',
@@ -171,6 +171,14 @@ export function parseConfig(
 		if (e !== undefined) return parseBool(e);
 		return cliValue === true;
 	};
+	// Like pickBool but defaults to ON. Commander's `--no-open` sets cli.open to
+	// false when passed and true otherwise, so the only way to disable via CLI is
+	// `--no-open`; the env var still wins when set.
+	const pickOpen = (envName: string, cliValue: unknown): boolean => {
+		const e = env[envName];
+		if (e !== undefined && e !== '') return parseBool(e);
+		return cliValue !== false;
+	};
 
 	const masterKeyRaw = pick('HEZO_MASTER_KEY', cli.masterKey);
 
@@ -180,7 +188,10 @@ export function parseConfig(
 		masterKey: masterKeyRaw ? parseMasterKey(masterKeyRaw) : undefined,
 		webUrl: pick('HEZO_WEB_URL', cli.webUrl) ?? '',
 		reset: pickBool('HEZO_RESET', cli.reset),
-		open: pickBool('HEZO_OPEN', cli.open),
+		// Auto-open is on by default; headless detection at startup decides whether
+		// a browser actually launches. HEZO_OPEN=0 / --no-open disables it. With
+		// `--no-open` commander sets cli.open=false; absent, it defaults to true.
+		open: pickOpen('HEZO_OPEN', cli.open),
 		logLevel: parseLogLevel(pick('HEZO_LOG_LEVEL', cli.logLevel) ?? 'info'),
 		keepOldContainers: pickBool('HEZO_KEEP_OLD_CONTAINERS', cli.keepOldContainers),
 	};

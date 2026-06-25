@@ -22,7 +22,7 @@ describe('parseConfig', () => {
 		expect(config.dataDir).toBe(resolve(homedir(), '.hezo'));
 		expect(config.masterKey).toBeUndefined();
 		expect(config.reset).toBe(false);
-		expect(config.open).toBe(false);
+		expect(config.open).toBe(true);
 		expect(config.logLevel).toBe('info');
 		expect(config.keepOldContainers).toBe(false);
 	});
@@ -78,9 +78,18 @@ describe('parseConfig', () => {
 		expect(config.reset).toBe(true);
 	});
 
-	it('parses --open', () => {
-		const config = parseConfig(argv('--open'), EMPTY_ENV);
-		expect(config.open).toBe(true);
+	it('defaults open to true and disables it with --no-open', () => {
+		expect(parseConfig(argv(), EMPTY_ENV).open).toBe(true);
+		expect(parseConfig(argv('--no-open'), EMPTY_ENV).open).toBe(false);
+	});
+
+	it('lets HEZO_OPEN override the default and --no-open', () => {
+		// Env wins over both the default and the CLI flag.
+		expect(parseConfig(argv(), { HEZO_OPEN: '0' }).open).toBe(false);
+		expect(parseConfig(argv(), { HEZO_OPEN: 'false' }).open).toBe(false);
+		expect(parseConfig(argv('--no-open'), { HEZO_OPEN: '1' }).open).toBe(true);
+		// An empty env value falls through to the CLI/default.
+		expect(parseConfig(argv(), { HEZO_OPEN: '' }).open).toBe(true);
 	});
 
 	it('parses --log-level', () => {
@@ -107,7 +116,7 @@ describe('parseConfig', () => {
 				'--master-key',
 				PHRASE,
 				'--reset',
-				'--open',
+				'--no-open',
 			),
 			EMPTY_ENV,
 		);
@@ -115,7 +124,7 @@ describe('parseConfig', () => {
 		expect(config.dataDir).toBe('/tmp/hezo');
 		expect(config.masterKey?.unlockKeyHex).toBe(deriveUnlockKey(PHRASE));
 		expect(config.reset).toBe(true);
-		expect(config.open).toBe(true);
+		expect(config.open).toBe(false);
 	});
 
 	describe('env vars take precedence over CLI args', () => {

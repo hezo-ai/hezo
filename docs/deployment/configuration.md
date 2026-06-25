@@ -20,7 +20,7 @@ handy for baking defaults into a service definition while still overriding per r
 | `--master-key <phrase>` | `HEZO_MASTER_KEY` | — | The twelve-word master key, to set up or unlock without the web gate. |
 | `--web-url <url>` | `HEZO_WEB_URL` | same origin | Public base URL, used so account sign-ins redirect back correctly. |
 | `--reset` | `HEZO_RESET` | off | Start fresh with an empty database (the existing `pgdata` is renamed aside, not deleted). |
-| `--open` | `HEZO_OPEN` | off | Open the web app in your browser on startup. |
+| `--no-open` | `HEZO_OPEN` | on | Auto-open the web app in your browser on startup. On by default; automatically skipped in environments without a browser (CI, containers, SSH, headless Linux). Pass `--no-open` or set `HEZO_OPEN=0` to disable. |
 | `--log-level <level>` | `HEZO_LOG_LEVEL` | `info` | Logging verbosity: `debug`, `info`, `warn`, or `error`. |
 | `--keep-old-containers` | `HEZO_KEEP_OLD_CONTAINERS` | off | Keep old project containers instead of removing them — for debugging a crashed container. |
 | — | `HEZO_DISABLE_AUTO_UPDATE` | off | Disable the in-app auto-update (release check, download, and the "Download & Restart" banner). |
