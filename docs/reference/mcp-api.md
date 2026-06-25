@@ -1,6 +1,6 @@
 ---
 title: MCP API reference
-order: 31
+order: 32
 section: Reference
 ---
 

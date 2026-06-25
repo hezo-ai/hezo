@@ -1,6 +1,6 @@
 ---
 title: Skills
-order: 12
+order: 13
 section: Concepts
 ---
 

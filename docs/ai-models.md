@@ -1,6 +1,6 @@
 ---
 title: AI model support
-order: 22
+order: 23
 section: AI models & MCP
 ---
 

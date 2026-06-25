@@ -74,6 +74,8 @@ agent can't hurt you. A few guarantees sit underneath everything:
 
 ## Where to next
 
+- [Meta-harness](/docs/meta-harness) — the meta-harness approach and how it gets quality
+  results from any model.
 - [Installation](/docs/getting-started/installation) — get Hezo running.
 - [First-run setup](/docs/getting-started/first-run) — your master key and first model.
 - [Your first project](/docs/getting-started/first-project) — from idea to a working team.

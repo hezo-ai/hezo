@@ -1,6 +1,6 @@
 ---
 title: Connecting MCP servers
-order: 24
+order: 25
 section: AI models & MCP
 ---
 
