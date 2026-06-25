@@ -42,6 +42,90 @@ after a restart — either unlock it from the web app or pass the master key via
 `HEZO_MASTER_KEY` so it can come up unattended (see
 [Deploying to the cloud](/docs/deployment/cloud)).
 
+### Run as a systemd service (Linux)
+
+On a Linux host, a `systemd` unit gives you **auto-restart** (on crash and on
+boot) and **unattended unlock**. The unit below runs Hezo **as root** — the
+default when no `User=` is set — so the process reaches the Docker socket
+directly, with no need to add a user to the `docker` group.
+
+**1. Install the prerequisites.** Make sure Docker is enabled and the `hezo`
+binary is on disk (see [Installation](/docs/getting-started/installation)):
+
+```sh
+sudo systemctl enable --now docker     # Docker must be running first
+command -v hezo                        # note the absolute path, e.g. /usr/local/bin/hezo
+sudo mkdir -p /var/lib/hezo            # a stable data directory
+```
+
+**2. Store the master key in a locked-down env file.** Pass the master key
+through the environment, never the `--master-key` flag — a flag is visible in
+`ps` and `systemctl cat`. Create a root-only env file:
+
+```sh
+sudo install -d -m 700 /etc/hezo
+sudo install -m 600 /dev/null /etc/hezo/hezo.env
+```
+
+Then add your settings to it (the twelve words come from
+[first-run setup](/docs/getting-started/first-run)):
+
+```sh
+# /etc/hezo/hezo.env
+HEZO_MASTER_KEY=word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12
+HEZO_DATA_DIR=/var/lib/hezo
+# HEZO_WEB_URL=https://hezo.example.com   # only if reached via a public URL
+```
+
+**3. Create the unit** at `/etc/systemd/system/hezo.service`:
+
+```ini
+[Unit]
+Description=Hezo
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hezo
+EnvironmentFile=/etc/hezo/hezo.env
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`Requires=`/`After=docker.service` start Docker first; `Restart=always` brings
+Hezo back after a crash; `WantedBy=multi-user.target` starts it on boot. Hezo
+handles `SIGTERM` and exits cleanly, so `systemctl stop` won't trigger a restart
+and in-flight agent runs recover on the next start.
+
+**4. Enable and start it:**
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now hezo
+systemctl status hezo
+journalctl -u hezo -f          # follow the logs
+```
+
+> **First run.** Until the master key is in `hezo.env`, Hezo comes up **locked** —
+> open it in the browser to create the key and finish setup, then add the twelve
+> words to the env file and `sudo systemctl restart hezo` so every future restart
+> unlocks unattended.
+
+In-app auto-update continues to work under systemd: Hezo swaps in the new binary
+and relaunches itself internally, so systemd sees one continuously running
+service.
+
+**Running as a non-root user instead.** Add `User=hezo` (and `Group=hezo`) to the
+`[Service]` section, make that user a member of the `docker` group
+(`sudo usermod -aG docker hezo`), and give it ownership of the data directory
+(`sudo chown -R hezo:hezo /var/lib/hezo`).
+
 ## Ports
 
 - **3100** — the Hezo server and web app (configurable with `--port`).
