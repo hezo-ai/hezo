@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.5 - 2026-06-25
+
+### Bug Fixes
+
+- **containers:** chown bind-mounted files to the detected container run-user ([#409](https://github.com/hezo-ai/hezo/pull/409))
+
+### Documentation
+
+- add "Meta-harness" Overview page; frame coding harnesses as general-purpose ([#413](https://github.com/hezo-ai/hezo/pull/413))
+- surface Hezo's selling points (+ skill revision history feature) ([#411](https://github.com/hezo-ai/hezo/pull/411))
+- note local-model support via OpenCode is on the roadmap ([#412](https://github.com/hezo-ai/hezo/pull/412))
+- guide CEO and Captain to design output verification into rosters ([#410](https://github.com/hezo-ai/hezo/pull/410))
+
+### Tests
+
+- drive line coverage from ~86% toward ≥92% ([#404](https://github.com/hezo-ai/hezo/pull/404))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.6.4...0.6.5
+
 ## 0.6.4 - 2026-06-25
 
 ### Bug Fixes
