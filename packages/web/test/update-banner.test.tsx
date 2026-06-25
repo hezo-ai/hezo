@@ -61,43 +61,30 @@ test('non-superuser / non-supervised falls back to a release download link', () 
 	expect(link.getAttribute('href')).toBe('https://github.com/hezo-ai/hezo/releases/0.2.0');
 });
 
-test('supervised + superuser shows a single "Download & Restart" button', () => {
-	const { getByTestId } = renderBanner({ state: UpdateState.Idle });
+test('supervised + superuser shows an "Install & restart" button when staged', () => {
+	const { getByTestId } = renderBanner({ state: UpdateState.Staged });
 	const button = getByTestId('update-restart-button');
-	expect(button.textContent).toContain('Download & Restart');
+	expect(button.textContent).toContain('Install & restart');
 });
 
-test('Download & Restart stages the binary before any confirmation', async () => {
-	const user = userEvent.setup();
-	// Refetch after the mutation invalidates the query — keep it inert/idle.
-	vi.spyOn(api, 'get').mockResolvedValue({ ...BASE, state: UpdateState.Idle });
-	const postSpy = vi
-		.spyOn(api, 'post')
-		.mockResolvedValue({ state: UpdateState.Downloading, targetVersion: '0.2.0' });
-
-	const { getByTestId, queryByTestId } = renderBanner({ state: UpdateState.Idle });
-
-	await user.click(getByTestId('update-restart-button'));
-	await waitFor(() => expect(postSpy).toHaveBeenCalledWith('/api/updates/download'));
-	// Not staged yet → no confirmation shown.
-	expect(queryByTestId('confirm-dialog')).toBeNull();
+test('banner stays hidden while the background download is in flight', () => {
+	for (const state of [UpdateState.Idle, UpdateState.Checking, UpdateState.Downloading] as const) {
+		const { queryByTestId, unmount } = renderBanner({ state });
+		expect(queryByTestId('update-banner')).toBeNull();
+		unmount();
+	}
 });
 
-test('Download & Restart auto-opens the confirmation once staging finishes', async () => {
-	const user = userEvent.setup();
-	// The post kicks staging; the status refetch it triggers reports it staged.
-	vi.spyOn(api, 'get').mockResolvedValue({ ...BASE, state: UpdateState.Staged });
-	vi.spyOn(api, 'post').mockResolvedValue({
-		state: UpdateState.Downloading,
-		targetVersion: '0.2.0',
-	});
-
-	const { getByTestId, findByTestId } = renderBanner({ state: UpdateState.Idle });
-	await user.click(getByTestId('update-restart-button'));
-	expect(await findByTestId('confirm-dialog')).toBeTruthy();
+test('a download error falls back to the release-page download link', () => {
+	const { getByTestId, getByText, queryByTestId } = renderBanner({ state: UpdateState.Error });
+	expect(getByTestId('update-banner')).toBeTruthy();
+	// No instant-restart button — the staged binary never landed.
+	expect(queryByTestId('update-restart-button')).toBeNull();
+	const link = getByText('Download') as HTMLAnchorElement;
+	expect(link.getAttribute('href')).toBe('https://github.com/hezo-ai/hezo/releases/0.2.0');
 });
 
-test('Update & restart asks for confirmation (with master-key warning) before applying', async () => {
+test('Install & restart asks for confirmation (with master-key warning) before applying', async () => {
 	const user = userEvent.setup();
 	const postSpy = vi
 		.spyOn(api, 'post')

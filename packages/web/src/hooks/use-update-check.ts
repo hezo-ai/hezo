@@ -1,5 +1,5 @@
 import type { UpdateState } from '@hezo/shared';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryKeys } from '../lib/query-keys';
 
@@ -37,7 +37,7 @@ export function useUpdateCheck() {
 
 /**
  * Latest-release info plus the staged-update lifecycle and whether this instance
- * can apply-and-restart. Drives the "Update & restart" affordance.
+ * can apply-and-restart. Drives the "Install & restart" affordance.
  */
 export function useUpdateStatus() {
 	return useQuery({
@@ -46,16 +46,6 @@ export function useUpdateStatus() {
 		staleTime: 60 * 60 * 1000,
 		gcTime: 60 * 60 * 1000,
 		retry: false,
-	});
-}
-
-/** Kick a background download+verify+stage of the latest release (superuser). */
-export function useDownloadUpdate() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: () =>
-			api.post<{ state: UpdateState; targetVersion: string }>('/api/updates/download'),
-		onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.updateStatus() }),
 	});
 }
 

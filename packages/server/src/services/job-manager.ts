@@ -13,7 +13,6 @@ import {
 	TaskPriority,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
-	UpdateState,
 	WakeupSkipReason,
 	WakeupSource,
 	WakeupStatus,
@@ -58,7 +57,7 @@ import { ensureRepoSetupAction } from './repo-setup';
 import { getProjectConcurrency, isTaskBusyInDb } from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
 import { triggerStatusAutomations } from './task-automation';
-import { downloadAndStage, isAutoUpdateEnabled, readUpdateState } from './updater';
+import { ensureUpdateStaged, isSupervisedWorker } from './updater';
 import { absorbQueuedTaskWakeups, assignmentWakeupAlreadyServed, createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -2037,16 +2036,12 @@ export class JobManager {
 	/**
 	 * Daily auto-update check. When the feature is enabled (supervised compiled
 	 * binary) and a newer release exists that isn't already staged/downloading,
-	 * download+verify+stage it so an operator "Update & restart" is instant.
+	 * download+verify+stage it so an operator "Install & restart" is instant. The
+	 * status poll triggers the same idempotent helper, so a running instance
+	 * usually stages well before this daily run.
 	 */
 	private async checkForUpdate(): Promise<void> {
-		if (!isAutoUpdateEnabled() || process.env.HEZO_WORKER !== '1') return;
-		const latest = await getLatestInfo();
-		if (!latest.updateAvailable || !latest.latest) return;
-		const state = await readUpdateState(this.deps.dataDir);
-		if (state.state === UpdateState.Downloading) return;
-		if (state.state === UpdateState.Staged && state.targetVersion === latest.latest) return;
-		log.info(`Auto-update: staging release ${latest.latest}`);
-		await downloadAndStage(latest.latest, this.deps.dataDir);
+		if (!isSupervisedWorker()) return;
+		await ensureUpdateStaged(this.deps.dataDir, getLatestInfo);
 	}
 }
