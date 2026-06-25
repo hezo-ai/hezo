@@ -1,6 +1,6 @@
 ---
 title: Installation
-order: 2
+order: 3
 section: Getting started
 ---
 

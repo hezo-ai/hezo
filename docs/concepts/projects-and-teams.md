@@ -1,6 +1,6 @@
 ---
 title: Projects & teams
-order: 6
+order: 7
 section: Concepts
 ---
 

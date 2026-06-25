@@ -79,6 +79,6 @@ describe('MCP API reference (docs/reference/mcp-api.md)', () => {
 		const doc = parseDoc(readFileSync(REFERENCE_PATH, 'utf-8'));
 		expect(doc.title).toBe('MCP API reference');
 		expect(doc.section).toBe('Reference');
-		expect(doc.order).toBe(31);
+		expect(doc.order).toBe(32);
 	});
 });

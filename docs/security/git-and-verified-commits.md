@@ -1,6 +1,6 @@
 ---
 title: Git & verified commits
-order: 20
+order: 21
 section: Security
 ---
 

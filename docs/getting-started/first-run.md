@@ -1,6 +1,6 @@
 ---
 title: First-run setup
-order: 3
+order: 4
 section: Getting started
 ---
 

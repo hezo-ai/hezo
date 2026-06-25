@@ -1,6 +1,6 @@
 ---
 title: Documents & long-term memory
-order: 11
+order: 12
 section: Concepts
 ---
 
