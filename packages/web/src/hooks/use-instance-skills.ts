@@ -1,4 +1,4 @@
-import type { RegistrySkillSearchResult, SkillRecord } from '@hezo/shared';
+import type { RegistrySkillSearchResult, SkillRecord, SkillRevisionRecord } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -64,6 +64,27 @@ export function useDeleteInstanceSkill() {
 		mutationFn: (slug: string) => api.delete(`/api/skills/${slug}`),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: INSTANCE_SKILLS_KEY });
+		},
+	});
+}
+
+// Revision history + restore — mirrors the agent system-prompt revision hooks.
+export function useInstanceSkillRevisions(slug: string | null) {
+	return useQuery({
+		queryKey: [...INSTANCE_SKILLS_KEY, slug, 'revisions'],
+		queryFn: () => api.get<SkillRevisionRecord[]>(`/api/skills/${slug}/revisions`),
+		enabled: !!slug,
+	});
+}
+
+export function useRestoreInstanceSkill(slug: string | null) {
+	return useMutation({
+		mutationFn: (revisionNumber: number) =>
+			api.post(`/api/skills/${slug}/restore`, { revision_number: revisionNumber }),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: INSTANCE_SKILLS_KEY });
+			queryClient.invalidateQueries({ queryKey: [...INSTANCE_SKILLS_KEY, slug] });
+			queryClient.invalidateQueries({ queryKey: [...INSTANCE_SKILLS_KEY, slug, 'revisions'] });
 		},
 	});
 }

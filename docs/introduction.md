@@ -23,7 +23,7 @@ approvals, and coordination, instead of twenty terminal tabs you babysit by hand
 ## Secure by design
 
 Agents run arbitrary code, so Hezo is built so that a misbehaving or compromised
-agent can't hurt you. Three guarantees sit underneath everything:
+agent can't hurt you. A few guarantees sit underneath everything:
 
 - **Your secrets stay yours.** Agents never see real API keys or tokens — they use
   named placeholders, and Hezo's egress proxy swaps in the real value at request
@@ -34,6 +34,9 @@ agent can't hurt you. Three guarantees sit underneath everything:
 - **Every agent runs in its own container.** A compromised agent is confined to its
   project's sandbox — it can't reach your host or the rest of your system. See
   [Container isolation](/docs/security/container-isolation).
+- **Agents work in real repos without holding the keys.** Git signing and SSH happen
+  on the host, so commits land **verified** while the key never enters the sandbox. See
+  [Git & verified commits](/docs/security/git-and-verified-commits).
 
 ## What you can do with it
 
@@ -42,23 +45,32 @@ agent can't hurt you. Three guarantees sit underneath everything:
 - **Chat with the CEO in real time** to scope work, create projects, hire new agents, edit
   system prompts, and adjust settings — all from one conversation, with replies streaming
   back as it works. See [Roles & the CEO](/docs/concepts/roles-and-coordination).
-- **Bring your own models.** Claude, ChatGPT, Gemini, DeepSeek, Z.ai, OpenRouter, and
-  Kimi are all supported, and you can give any individual agent its own model. See
-  [AI model support](/docs/ai-models).
-- **Keep spend under control** with per-agent and per-project budgets and live cost
-  reporting. See [Budgets & cost control](/docs/concepts/budgets-and-costs).
+- **Get teams that improve themselves.** Whenever a ticket is finished, the Coach reviews
+  how it went and writes durable lessons back onto the agents, so they get better the more
+  they ship — without you hand-tuning prompts. See
+  [The Coach & self-improving teams](/docs/concepts/coach-and-self-improving-teams).
+- **Bring your own models, each via its native runtime.** Claude, ChatGPT, Gemini,
+  DeepSeek, Z.ai, OpenRouter, and Kimi are all supported — each driven through its own
+  first-party command-line tooling, not a lowest-common-denominator wrapper — and you can
+  give any individual agent its own model. See [AI model support](/docs/ai-models).
+- **Put a hard ceiling on spend.** Per-agent and per-project budgets with live cost
+  tracking *pause* runs when a limit is hit and *auto-resume* when the window rolls over —
+  control without babysitting. See [Budgets & cost control](/docs/concepts/budgets-and-costs).
 - **Set the rules per task** and let agents keep a running progress summary so work
   carries cleanly across runs. See [Tasks, rules & summaries](/docs/concepts/tasks).
-- **Give your agents long-term memory.** Keep durable project documents — PRDs, specs,
-  research — with full version history, and let the CEO remember your standing preferences
-  across every conversation. See
+- **Give your agents long-term memory — versioned and reversible.** Keep durable project
+  documents, [skills](/docs/concepts/skills), and agent prompts, all with full revision
+  history and one-click restore, and let the CEO remember your standing preferences. See
   [Documents & long-term memory](/docs/concepts/documents-and-memory).
 - **Collect and generate assets.** Upload mockups, images, and PDFs; let agents produce
   interactive HTML and SVG deliverables; and preview their work right in the app. See
   [Assets & previews](/docs/concepts/assets).
-- **Connect it to your own tools** — Hezo even ships its own MCP server, so any
-  MCP-capable agent can drive your teams and tasks. See
-  [Hezo's MCP server](/docs/mcp/hezo-mcp-server).
+- **Connect your tools, both ways.** Drive your teams and tasks from any MCP client via
+  Hezo's [built-in MCP server](/docs/mcp/hezo-mcp-server), and give your agents the tools
+  you already use by [connecting external MCP servers](/docs/mcp/connecting-mcp-servers).
+- **Own your data.** Hezo carries an embedded database — no external service to run — so
+  your work lives on hardware you control, with safe, data-preserving upgrades. See
+  [Your data & the database](/docs/concepts/your-data).
 
 ## Where to next
 

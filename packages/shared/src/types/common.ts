@@ -664,6 +664,22 @@ export interface SkillRecord {
 	updated_at: string;
 }
 
+/**
+ * A point-in-time snapshot of a skill's content. Recorded automatically when a
+ * skill's content changes; the admin can list these and restore any one. Mirrors
+ * the document/agent-prompt revision shape so the same UI renders it.
+ */
+export interface SkillRevisionRecord {
+	id: string;
+	revision_number: number;
+	content: string;
+	change_summary: string;
+	author_name: string | null;
+	/** 'agent' | 'admin' — drives the human/agent badge. */
+	author_type: string;
+	created_at: string;
+}
+
 /** A search hit from the skills.sh registry (the UI "search and add" panel). */
 export interface RegistrySkillSearchResult {
 	/** Registry id, "owner/repo/skill". */

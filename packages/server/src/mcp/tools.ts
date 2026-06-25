@@ -95,6 +95,7 @@ import {
 	loadReactionsForTask,
 	removeCommentReaction,
 } from '../services/reactions';
+import { recordSkillRevisionIfChanged } from '../services/skill-revisions';
 import { triggerStatusAutomations } from '../services/task-automation';
 import { recordTaskLinks } from '../services/task-events';
 import {
@@ -3310,6 +3311,11 @@ export function registerTools(
 			const description =
 				(args.description as string)?.trim() || deriveSkillSummary(args.content as string);
 
+			const priorSkill = await db.query<{ content: string }>(
+				'SELECT content FROM skills WHERE slug = $1',
+				[args.slug],
+			);
+
 			const result = await db.query<{ id: string; slug: string }>(
 				`INSERT INTO skills (name, slug, description, content, content_hash, created_by_member_id, tags)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
@@ -3332,10 +3338,13 @@ export function registerTools(
 			);
 
 			const skillId = result.rows[0].id;
-			await db.query(
-				`INSERT INTO skill_revisions (skill_id, revision_number, content, content_hash, change_summary, author_member_id)
-				 VALUES ($1, (SELECT COALESCE(MAX(revision_number), 0) + 1 FROM skill_revisions WHERE skill_id = $1), $2, $3, 'Created via MCP', $4)`,
-				[skillId, args.content, contentHash, callerMemberId],
+			await recordSkillRevisionIfChanged(
+				db,
+				skillId,
+				priorSkill.rows[0]?.content ?? null,
+				args.content as string,
+				'Updated via MCP',
+				callerMemberId,
 			);
 
 			return { skill_id: skillId, slug: result.rows[0].slug, created: true };

@@ -6,6 +6,7 @@ import { deriveSkillSummary } from '../lib/skill-summary';
 import { toSlug } from '../lib/slug';
 import { deleteSystemMeta, getSystemMeta, setSystemMeta } from '../lib/system-meta';
 import { downloadSkillContent, SkillDownloadError } from './skill-downloader';
+import { recordSkillRevisionIfChanged } from './skill-revisions';
 
 // The skills.sh registry (https://skills.sh) is a public, GitHub-backed catalog
 // of agent skills. Its REST API requires a bearer token, so the admin-facing
@@ -198,7 +199,10 @@ export async function installRegistrySkill(
 	const description = data.description?.trim() || deriveSkillSummary(content);
 	const hash = createHash('sha256').update(content).digest('hex');
 
-	const existing = await db.query<{ id: string }>('SELECT id FROM skills WHERE slug = $1', [slug]);
+	const existing = await db.query<{ id: string; content: string }>(
+		'SELECT id, content FROM skills WHERE slug = $1',
+		[slug],
+	);
 	const upserted = await db.query<{ id: string; slug: string; name: string }>(
 		`INSERT INTO skills (name, slug, description, content, source_url, content_hash, created_by_member_id, tags)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, '[]'::jsonb)
@@ -211,6 +215,14 @@ export async function installRegistrySkill(
 		     updated_at = now()
 		 RETURNING id, slug, name`,
 		[name, slug, description, content, sourceUrl, hash, actorMemberId],
+	);
+	await recordSkillRevisionIfChanged(
+		db,
+		upserted.rows[0].id,
+		existing.rows[0]?.content ?? null,
+		content,
+		'Updated from registry',
+		actorMemberId,
 	);
 	return { ...upserted.rows[0], reused: existing.rows.length > 0 };
 }

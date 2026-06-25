@@ -1,6 +1,6 @@
 ---
 title: Assets & previews
-order: 10
+order: 13
 section: Concepts
 ---
 

@@ -1,6 +1,6 @@
 ---
 title: Documents & long-term memory
-order: 9
+order: 11
 section: Concepts
 ---
 
@@ -33,6 +33,13 @@ Every change to a document is versioned. The Documents page shows the full **rev
 history**, and you can **restore** any earlier version with a click. Because you and the
 agents write to the same documents, that history doubles as an audit trail — you can see how
 a spec evolved and roll back a bad edit without losing the thread.
+
+This **versioned-and-reversible** guarantee isn't limited to project documents. The same
+applies to **agent system prompts** — every edit, including the
+[learned rules the Coach adds](/docs/concepts/coach-and-self-improving-teams#every-change-is-reversible),
+is snapshotted and restorable from the agent's settings — and to
+[**skills**](/docs/concepts/skills#version-history--restore), your reusable cross-team
+know-how. Whatever your agents change, you can see what changed and put it back.
 
 ## Chatbox memory
 
