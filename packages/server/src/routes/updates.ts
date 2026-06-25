@@ -6,7 +6,12 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireSuperuser } from '../middleware/auth';
 import { getActiveRuntime, shutdownRuntime } from '../runtime-control';
-import { downloadAndStage, isAutoUpdateEnabled, readUpdateState } from '../services/updater';
+import {
+	downloadAndStage,
+	ensureUpdateStaged,
+	isSupervisedWorker,
+	readUpdateState,
+} from '../services/updater';
 import { HEZO_VERSION } from '../version';
 
 const log = logger.child('updates');
@@ -78,11 +83,6 @@ export async function getLatestInfo(): Promise<UpdateInfo> {
 	return cache.data;
 }
 
-/** True only in a supervised worker that can actually restart-with-swap. */
-function isSupervisedWorker(): boolean {
-	return isAutoUpdateEnabled() && process.env.HEZO_WORKER === '1';
-}
-
 /**
  * Build the updates router. `autoUnlock` reflects whether a master key is
  * configured at startup (env/CLI) — when true the instance auto-unlocks after a
@@ -98,6 +98,15 @@ export function buildUpdatesRoutes(opts: { autoUnlock: boolean }): Hono<Env> {
 	routes.get('/updates/status', async (c) => {
 		const dataDir = c.get('dataDir');
 		const [latest, state] = await Promise.all([getLatestInfo(), readUpdateState(dataDir)]);
+		// Kick a background download as soon as the UI knows an update exists, so the
+		// banner's "Install & restart" is instant. Idempotent — repeated polls no-op.
+		if (isSupervisedWorker()) {
+			trackBackground(
+				ensureUpdateStaged(dataDir, getLatestInfo).catch((e) =>
+					log.error('auto-stage trigger failed', e),
+				),
+			);
+		}
 		return c.json({
 			...latest,
 			state: state.state,

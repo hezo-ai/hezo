@@ -9,6 +9,7 @@ import {
 	applyStagedUpdate,
 	currentAssetName,
 	downloadAndStage,
+	ensureUpdateStaged,
 	readUpdateState,
 } from '../src/services/updater';
 
@@ -76,6 +77,121 @@ describe('downloadAndStage', () => {
 			expect(existsSync(join(dir, '.update', 'staged'))).toBe(false);
 			const state = await readUpdateState(dir);
 			expect(state.state).toBe(UpdateState.Error);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe('ensureUpdateStaged', () => {
+	afterEach(() => vi.restoreAllMocks());
+
+	/** A stubbed latest-release lookup (no network). */
+	const latest =
+		(updateAvailable = true, version: string | null = '9.9.9') =>
+		async () => ({ updateAvailable, latest: version });
+
+	async function seedState(dir: string, s: Record<string, unknown>): Promise<void> {
+		await mkdir(join(dir, '.update'), { recursive: true });
+		await writeFile(join(dir, '.update', 'state.json'), JSON.stringify(s));
+	}
+
+	/** Mock a healthy release; `onAsset` lets a test fail specific attempts. */
+	function mockRelease(bytes: Buffer, onAsset?: () => Response | null) {
+		const sha = createHash('sha256').update(bytes).digest('hex');
+		return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+			const url = String(input);
+			if (url.endsWith('/SHA256SUMS')) {
+				return new Response(`${sha}  ${currentAssetName()}\n`, { status: 200 });
+			}
+			return onAsset?.() ?? new Response(bytes, { status: 200 });
+		});
+	}
+
+	it('stages when idle and an update is available', async () => {
+		const dir = await tmp('hezo-ensure-idle-');
+		try {
+			const fetchSpy = mockRelease(Buffer.from('new binary'));
+			await ensureUpdateStaged(dir, latest());
+			expect(fetchSpy).toHaveBeenCalled();
+			const state = await readUpdateState(dir);
+			expect(state.state).toBe(UpdateState.Staged);
+			expect(state.targetVersion).toBe('9.9.9');
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('no-ops when no newer release is available', async () => {
+		const dir = await tmp('hezo-ensure-none-');
+		try {
+			const fetchSpy = vi.spyOn(globalThis, 'fetch');
+			await ensureUpdateStaged(dir, latest(false, null));
+			expect(fetchSpy).not.toHaveBeenCalled();
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('no-ops when already staged for the same version', async () => {
+		const dir = await tmp('hezo-ensure-staged-');
+		try {
+			await seedState(dir, { state: UpdateState.Staged, targetVersion: '9.9.9' });
+			const fetchSpy = vi.spyOn(globalThis, 'fetch');
+			await ensureUpdateStaged(dir, latest());
+			expect(fetchSpy).not.toHaveBeenCalled();
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('no-ops while a download is in flight', async () => {
+		const dir = await tmp('hezo-ensure-downloading-');
+		try {
+			await seedState(dir, { state: UpdateState.Downloading, targetVersion: '9.9.9' });
+			const fetchSpy = vi.spyOn(globalThis, 'fetch');
+			await ensureUpdateStaged(dir, latest());
+			expect(fetchSpy).not.toHaveBeenCalled();
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('does not re-download once it has errored for that version (retry exhausted)', async () => {
+		const dir = await tmp('hezo-ensure-errored-');
+		try {
+			await seedState(dir, { state: UpdateState.Error, targetVersion: '9.9.9' });
+			const fetchSpy = vi.spyOn(globalThis, 'fetch');
+			await ensureUpdateStaged(dir, latest());
+			expect(fetchSpy).not.toHaveBeenCalled();
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('retries the download once before succeeding', async () => {
+		const dir = await tmp('hezo-ensure-retry-ok-');
+		try {
+			let assetCalls = 0;
+			mockRelease(Buffer.from('new binary'), () => {
+				assetCalls++;
+				return assetCalls === 1 ? new Response('boom', { status: 500 }) : null;
+			});
+			await ensureUpdateStaged(dir, latest());
+			expect(assetCalls).toBe(2); // first attempt failed, retry succeeded
+			expect((await readUpdateState(dir)).state).toBe(UpdateState.Staged);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('records an error (and swallows it) after the retry also fails', async () => {
+		const dir = await tmp('hezo-ensure-retry-fail-');
+		try {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('nope', { status: 500 }));
+			// Must not throw — it's fire-and-forget from the status poll/cron.
+			await expect(ensureUpdateStaged(dir, latest())).resolves.toBeUndefined();
+			expect((await readUpdateState(dir)).state).toBe(UpdateState.Error);
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}

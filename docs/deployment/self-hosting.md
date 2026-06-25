@@ -138,11 +138,13 @@ server brokers itself — there is no separate gateway service or port.
 
 ### In-app auto-update
 
-Hezo checks GitHub Releases daily and, when a newer version is available,
-downloads and verifies the binary for your platform in the background. A bar
-then appears at the bottom of the web UI; a superuser clicks **Update &
-restart** and confirms. Hezo shuts down gracefully, swaps in the new binary, and
-restarts onto it — no manual file replacement.
+Hezo checks GitHub Releases and, when a newer version is available, downloads and
+verifies the binary for your platform in the background. Once it's staged, a bar
+appears in the web UI; a superuser clicks **Install & restart** and confirms.
+Because the download already happened, the restart is instant — Hezo shuts down
+gracefully, swaps in the new binary, and restarts onto it, with no manual file
+replacement. (If the background download is disabled or can't run — for example
+inside a container — the bar instead links to the GitHub release page.)
 
 Because the restart re-locks the instance, **you'll need your 12-word master key
 to unlock Hezo again afterward** — unless you run Hezo with the master key set in

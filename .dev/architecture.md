@@ -684,12 +684,17 @@ and on the worker's exit either propagates the code (normal exit/crash → exter
 policies behave as before) or, on the **restart sentinel** `UPDATE_RESTART_EXIT_CODE` (75),
 applies the staged binary and relaunches. The supervisor branch sits in `index.ts` right
 after the `restore` subcommand and before preflights, so dev (`bun run`) and `hezo restore`
-never supervise. The `updater.ts` service handles the rest: a daily `update-check` cron
-(`HEZO_UPDATE_CHECK_CRON`) and `POST /api/updates/download` download the platform asset +
-`SHA256SUMS`, verify the hash, and stage to `<dataDir>/.update/staged[.exe]` (recording
-lifecycle in `state.json`); `POST /api/updates/apply` (superuser) gracefully shuts the
-worker down (`shutdownRuntime` in `runtime-control.ts`, also wired to signals) and exits
-with the sentinel. `applyStagedUpdate()` does the swap *while the worker is down*: copy
+never supervise. The `updater.ts` service handles the rest. Staging is **proactive**: the
+idempotent `ensureUpdateStaged()` downloads the platform asset + `SHA256SUMS`, verifies the
+hash, and stages to `<dataDir>/.update/staged[.exe]` (recording lifecycle in `state.json`),
+retrying once on failure (a second failure leaves `state.json` in `Error` for that version,
+honored as "retry exhausted" so polls don't re-download). It runs from `GET /api/updates/status`
+(fire-and-forget on every banner poll, gated on `isSupervisedWorker()`) and the daily
+`update-check` cron (`HEZO_UPDATE_CHECK_CRON`), so a running instance usually stages a new
+release within seconds. `POST /api/updates/download` (superuser) is the same download path on
+demand; `POST /api/updates/apply` (superuser) gracefully shuts the worker down (`shutdownRuntime`
+in `runtime-control.ts`, also wired to signals) and exits with the sentinel.
+`applyStagedUpdate()` does the swap *while the worker is down*: copy
 staged → a temp file adjacent to the target (avoids `EXDEV`), then **Unix** atomic `rename`
 over the binary, or **Windows** rename-trick (rename the locked `.exe` aside, move the new
 one in, verify, roll back on failure; stale `-old-` files swept on next supervisor start).
@@ -697,7 +702,10 @@ State survives the restart via the normal recovery path (`reconcileOnStartup`), 
 instance returns **locked** unless `HEZO_MASTER_KEY` is set (the web restart overlay polls
 `/api/status` and reloads onto the master-key gate). `GET /api/updates/status` surfaces the
 staged-update state plus an `autoUnlock` hint so the UI's confirmation can warn about the
-master-key re-unlock.
+master-key re-unlock. The web banner shows an **"Install & restart"** button only once the
+binary is `Staged` (so the restart is instant); while the background download is in flight it
+stays hidden, and on a download `Error` (or for any instance that can't self-apply) it falls
+back to a **"Download"** link to the GitHub release page.
 
 **Known limits.** macOS binaries are unsigned (built on Linux; clear quarantine with `xattr -d`);
 on Apple Silicon an unsigned replacement may still be Gatekeeper-blocked. Windows self-update

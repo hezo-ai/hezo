@@ -1,8 +1,8 @@
 import { UpdateState } from '@hezo/shared';
 import { X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useMe } from '../hooks/use-me';
-import { useApplyUpdate, useDownloadUpdate, useUpdateStatus } from '../hooks/use-update-check';
+import { useApplyUpdate, useUpdateStatus } from '../hooks/use-update-check';
 import { Button } from './ui/button';
 import { ConfirmDialog } from './ui/confirm-dialog';
 import { UpdateRestartOverlay } from './update-restart-overlay';
@@ -36,34 +36,26 @@ function readDismissed(): Dismissal | null {
 
 /**
  * Full-width "update available" banner pinned at the top of the shell, below the
- * nav and above content. When this instance can apply-and-restart (a supervised
- * compiled binary) and the caller is a superuser, a single "Download & Restart"
- * button stages the new binary then — after a confirmation that warns about the
- * master-key re-unlock — restarts onto it. Otherwise it falls back to a link to
- * the GitHub Release. Dismissal lasts until the next calendar day (or until a
- * newer version ships).
+ * nav and above content. The server downloads and stages the new binary in the
+ * background; when this instance can apply-and-restart (a supervised compiled
+ * binary), the caller is a superuser, and the binary is staged, an "Install &
+ * restart" button — after a confirmation that warns about the master-key
+ * re-unlock — restarts onto it instantly. While the background download is still
+ * in flight the banner stays hidden; on a download error (and for any instance
+ * that can't self-apply) it falls back to a link to the GitHub Release.
+ * Dismissal lasts until the next calendar day (or until a newer version ships).
  */
 export function UpdateBanner() {
 	const { data } = useUpdateStatus();
 	const { data: me } = useMe();
-	const download = useDownloadUpdate();
 	const apply = useApplyUpdate();
 	const [applying, setApplying] = useState(false);
 	const [confirmOpen, setConfirmOpen] = useState(false);
-	// Set when the user clicks "Download & Restart" before the binary is staged, so
-	// the confirmation opens automatically once staging finishes — one click, not two.
-	const [restartIntent, setRestartIntent] = useState(false);
 	const [dismissed, setDismissed] = useState<Dismissal | null>(readDismissed);
 
 	const latest = data?.latest ?? null;
 	const staged = data?.state === UpdateState.Staged;
-
-	useEffect(() => {
-		if (restartIntent && staged) {
-			setConfirmOpen(true);
-			setRestartIntent(false);
-		}
-	}, [restartIntent, staged]);
+	const errored = data?.state === UpdateState.Error;
 
 	if (applying) {
 		return <UpdateRestartOverlay targetVersion={data?.targetVersion ?? data?.latest ?? null} />;
@@ -72,6 +64,12 @@ export function UpdateBanner() {
 	const isDismissed =
 		dismissed !== null && dismissed.version === latest && dismissed.day === todayKey();
 	if (!data?.updateAvailable || !latest || isDismissed) return null;
+
+	const canApply = data.canApply && me?.is_superuser === true;
+	// While the server is still downloading/staging in the background there's
+	// nothing actionable yet — stay hidden until it's staged (or has errored, in
+	// which case we surface the release-page link below).
+	if (canApply && !staged && !errored) return null;
 
 	const dismiss = () => {
 		const record: Dismissal = { version: latest, day: todayKey() };
@@ -83,19 +81,9 @@ export function UpdateBanner() {
 		setDismissed(record);
 	};
 
-	const canApply = data.canApply && me?.is_superuser === true;
-	const downloading = data.state === UpdateState.Downloading || download.isPending;
-
-	// One-click "Download & Restart": stage the binary if needed, then surface the
-	// restart confirmation. If it's already staged, jump straight to the confirm.
-	const onDownloadAndRestart = () => {
-		if (staged) {
-			setConfirmOpen(true);
-			return;
-		}
-		setRestartIntent(true);
-		download.mutate();
-	};
+	// Instant restart only once the binary is staged; otherwise (download errored,
+	// or this instance can't self-apply) fall back to the release-page download.
+	const showInstall = canApply && staged;
 
 	const confirmDescription = (
 		<>
@@ -122,16 +110,15 @@ export function UpdateBanner() {
 				.
 			</span>
 			<div className="flex items-center gap-2 sm:gap-3">
-				{canApply ? (
+				{showInstall ? (
 					<Button
 						type="button"
 						variant="primary"
 						size="sm"
 						data-testid="update-restart-button"
-						onClick={onDownloadAndRestart}
-						disabled={downloading}
+						onClick={() => setConfirmOpen(true)}
 					>
-						{downloading ? 'Preparing…' : 'Download & Restart'}
+						Install & restart
 					</Button>
 				) : (
 					data.url && (
@@ -159,9 +146,9 @@ export function UpdateBanner() {
 			<ConfirmDialog
 				open={confirmOpen}
 				onOpenChange={setConfirmOpen}
-				title="Update & restart Hezo?"
+				title="Install & restart Hezo?"
 				description={confirmDescription}
-				confirmLabel="Update & restart"
+				confirmLabel="Install & restart"
 				onConfirm={async () => {
 					await apply.mutateAsync();
 					setApplying(true);

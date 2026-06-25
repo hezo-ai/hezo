@@ -71,6 +71,16 @@ export function isAutoUpdateEnabled(): boolean {
 }
 
 /**
+ * True only in a supervised worker that can actually restart-with-swap: the
+ * feature is enabled *and* we're the worker process (`HEZO_WORKER=1`) that the
+ * supervisor relaunches. The status route, download/apply routes, and the cron
+ * all gate on this before kicking any background staging.
+ */
+export function isSupervisedWorker(): boolean {
+	return isAutoUpdateEnabled() && process.env.HEZO_WORKER === '1';
+}
+
+/**
  * Release asset name for the current platform, matching the `TARGETS` mapping in
  * `scripts/build.ts` (`hezo-{os}-{arch}[.exe]`). Throws on an unsupported combo
  * (e.g. windows/arm64, for which we ship no binary).
@@ -199,6 +209,46 @@ export async function downloadAndStage(version: string, dataDir: string): Promis
 		});
 		await rm(stagedPath(dataDir), { force: true }).catch(() => {});
 		throw err;
+	}
+}
+
+/**
+ * Idempotent "make sure the latest release is staged" entry point, safe to call
+ * fire-and-forget from the status poll, the daily cron, and startup. Downloads in
+ * the background so an operator's "Install & restart" is instant. Callers gate on
+ * `isSupervisedWorker()` first; this helper assumes the feature is available.
+ *
+ * Retries the download once on failure; a second failure leaves `state.json` in
+ * `Error` for that version, which is then honored as "retry exhausted" so we
+ * don't re-download on every subsequent status poll. The web banner falls back
+ * to a release-page link in that case.
+ *
+ * `latestInfo` is injectable so the route/cron can reuse their cached lookup and
+ * tests can stub it without network.
+ */
+export async function ensureUpdateStaged(
+	dataDir: string,
+	latestInfo: () => Promise<{ latest: string | null; updateAvailable: boolean }>,
+): Promise<void> {
+	const latest = await latestInfo();
+	if (!latest.updateAvailable || !latest.latest) return;
+	const version = latest.latest;
+
+	const state = await readUpdateState(dataDir);
+	if (state.state === UpdateState.Downloading) return;
+	if (state.state === UpdateState.Staged && state.targetVersion === version) return;
+	if (state.state === UpdateState.Error && state.targetVersion === version) return;
+
+	try {
+		await downloadAndStage(version, dataDir);
+	} catch {
+		// One retry — `downloadAndStage` has already recorded the Error state and
+		// cleared the partial binary; a second throw leaves it Error (retry done).
+		try {
+			await downloadAndStage(version, dataDir);
+		} catch (err) {
+			log.error('auto-stage failed after retry', err);
+		}
 	}
 }
 
