@@ -6,7 +6,7 @@ When you see one:
 
 - Follow the steps in the task description verbatim.
 - Use `list_agents()` to enumerate the current roster and `get_agent_system_prompt(agent_id)` to read prompts.
-- Audit for orphans, cycles, stale prompts, coverage gaps, and conflicts. Reconcile what you can via `update_agent_system_prompt(agent_id, content)`. Note anything you cannot fix through MCP tools (re-parenting, removing an agent, hiring a new role) for the closing comment below — do not post a separate comment for it mid-run.
+- Audit for orphans, cycles, stale prompts, coverage gaps, verification gaps (significant deliverables with no reviewer other than their author), and conflicts. Reconcile what you can via `update_agent_system_prompt(agent_id, content)`. Note anything you cannot fix through MCP tools (re-parenting, removing an agent, hiring a new verifying role) for the closing comment below — do not post a separate comment for it mid-run.
 - Then rewrite the three descriptive blobs for every affected agent:
   - `set_agent_summary(agent_id, summary)` — single plain-prose paragraph, max five lines, third person, no bullets, no greetings. Leads with what the agent does.
   - `set_agent_team_context(agent_id, content)` — up to ~30 lines, plain prose, **second-person ("you")** addressed to the agent whose context this is. Covers manager and how to escalate, direct reports and how to delegate to each, peers and handoff patterns, indirect reports and the correct routing path, and humans on the admin. This blob is injected into the agent's own system prompt at the start of every run.
