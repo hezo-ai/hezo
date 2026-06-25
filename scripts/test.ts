@@ -32,7 +32,7 @@ const shard = opts.shard as string | undefined;
 const shardIndex = shard ? Number.parseInt(shard.split('/')[0], 10) : undefined;
 const coverage = opts.coverage as boolean;
 
-const TEST_PACKAGES = ['packages/server', 'packages/web'];
+const TEST_PACKAGES = ['packages/server', 'packages/web', 'packages/shared'];
 
 async function buildShared() {
 	console.log('Building shared...');
