@@ -125,13 +125,17 @@ lifecycle-manages VMs.
 ## Infrastructure options (target infra undecided)
 
 Every option below runs each tenant VM **always-on** (no auto-stop). Auto-stop /
-scale-to-zero is explicitly out of scope per the availability requirement.
+scale-to-zero is explicitly out of scope per the availability requirement. Two
+substrate families, by isolation pattern (full cost numbers in **Cost analysis**
+below):
 
 | Option | Isolation | Effort to 100 users | Always-on cost posture | Notes |
 |---|---|---|---|---|
-| **Fly.io Machines (recommended to start)** | Firecracker micro-VM per tenant | **Lowest** — per-machine volumes, subdomain routing, simple provisioning API | Pay per running Machine, billed continuously. Fine at 100; right-size each Machine small (see cost model). Do **not** enable auto-stop. | Closest match to "click → always-on instance." Hezo runs Docker *inside* the Machine. Least control-plane code to write. |
-| AWS/GCP VMs or self-managed Firecracker/Kata | Hardware VM per tenant | Medium–high (build provisioning, routing, packing yourself) | **Cheapest at scale** — pack many always-on micro-VMs per large host with CPU/RAM oversubscription. | Most control; most orchestration to own. The path once per-tenant unit economics on Fly stop making sense. |
-| Kubernetes + gVisor/Kata | Sandboxed pod per tenant | Medium, with sharp edges | Always-on pods; bin-packed by the scheduler. | Nested Docker is awkward; **plain pods are NOT enough** for untrusted code — needs Kata/gVisor. Only if k8s is already the platform. |
+| **Hetzner Cloud — one VM per tenant (recommended to start)** | The cloud VM (KVM); Docker single-level inside | **Low–med** — provision via Cloud API, no hypervisor | ~€5.5/tenant; 20 TB egress incl. | No nested virt needed. Cheapest low-ops option. |
+| **Hetzner dedicated — packed micro-VMs (cheapest at scale)** | Firecracker/Kata microVM | High — run your own hypervisor + HA + off-box backups | **~€2.3/tenant**; unmetered egress | Overcommit idle tenants; the cost floor. |
+| Fly.io Machines — one micro-VM per tenant | Firecracker micro-VM | **Lowest** — per-machine volumes, routing, API built-in | ~$9/tenant; metered egress | Boundary built-in; nested Docker needs privileged `dind`. |
+| GCP N2 — packed micro-VMs (nested virt) | Kata/Firecracker | High | ~$2.5–5.7/tenant | Only major cloud allowing nested virt on normal VMs. |
+| ✗ DigitalOcean DOKS + Kata/Firecracker | — | — | **infeasible** | No nested virt on DO; only gVisor, which can't cleanly host nested Docker. DO works only as Droplet-per-tenant (~$12). |
 
 ### Cost model under always-on
 
@@ -167,39 +171,88 @@ The cost levers, in order of impact:
 > expectation, so it is **not** the default — noted only as a future lever for
 > provably-idle tenants.
 
-### Recommended provider & phased path
+## Cost analysis (always-on, ~100 tenants)
 
-The architecture (per-tenant microVM) is constant; the substrate it runs on
-should change as tenant count grows.
+Pricing researched June 2026 (per-tenant assumes ~1.5 GiB RAM baseline, ~20–30
+GiB state). The architecture (a hardware-isolated VM per tenant) is constant;
+only the *substrate* and the *packing* change — and those swing per-tenant cost
+by ~5×.
 
-- **Phase 1 — launch on Fly.io Machines.** Each Machine is a Firecracker
-  microVM (correct hardware-virt boundary for untrusted code), runs always-on
-  (just don't enable auto-stop), takes a per-Machine Volume for `HEZO_DATA_DIR`,
-  and gets wildcard subdomain routing via Fly's Anycast proxy. The Machines REST
-  API *is* the provisioning primitive the control plane calls on signup
-  (create → start → never stop), so you ship without operating a hypervisor.
-  Lowest time-to-launch.
-- **Phase 2 — self-managed Firecracker on bare metal when unit economics
-  demand it.** Hetzner is the cost sweet spot (AWS `.metal` if AWS is required).
-  Pack many always-on microVMs per large host and **oversubscribe CPU/RAM** —
-  which works precisely because the workload is always-on but bursty-idle. This
-  flattens the cost curve; the price is building/adopting an orchestrator
-  (firecracker-containerd / Cloud Hypervisor / Kata) plus your own routing and
-  volume management.
-- **Avoid as a steady state:** one managed hyperscaler VM per tenant
-  (e.g. a small EC2/GCE instance each). Isolation is correct, but you pay
-  reserved capacity 100× with no packing — the worst always-on economics. Fine
-  only as a throwaway prototype.
+### The two reframes that decide cost
 
-**Validate first:** nested Docker inside the chosen microVM. Hezo needs a real
-`dockerd` and `/var/run/docker.sock`; this works in any true VM guest, but
-confirm it on Fly Machines specifically (it is the one genuine unknown).
+1. **You only need nested virtualization if you *pack* micro-VMs onto a shared
+   host.** There are two ways to give each tenant a hardware-virt boundary:
+   - **Pattern A — pack micro-VMs (Firecracker/Kata) on one host.** Cheapest,
+     because idle tenants share RAM via overcommit. Requires the host to expose
+     KVM/nested-virt → **bare metal**, or a cloud that allows nesting (GCP N2).
+   - **Pattern B — one managed cloud VM per tenant.** The cloud VM *is* the KVM
+     boundary, and Hezo runs `dockerd` **single-level inside it — no nesting at
+     all**. Simplest and sidesteps every nested-virt blocker; the cost is you
+     pay each VM's full RAM with no overcommit.
+2. **Nested-virt support is a hard gate, and most clouds fail it.** Confirmed:
+   **Hetzner Cloud — no** nested virt (any tier); **DigitalOcean (Droplets/DOKS)
+   — no**; **AWS EC2 — no** except `.metal`; **GCP — yes** on N2 (Intel; not
+   E2/N2D, ~10% I/O penalty); **Fly Machines — already Firecracker** (boundary
+   built-in, but no in-VM `dockerd`, so nested Docker needs privileged `dind`).
+   → **DOKS + Kata/Firecracker is not viable** (the DigitalOcean-Kubernetes idea
+   is a dead end for hardware isolation; only gVisor remains, and Docker-inside-
+   gVisor is degraded — broken `--expose`, iptables off). On DO the only real
+   boundary is a Droplet per tenant.
 
-**Sizing intuition (100 tenants):** right-size each tenant to ~1–2 GiB baseline
-and let it burst. Unpacked, that is ~100–200 GiB committed RAM; with
-oversubscription (most idle at any instant) one or two large hosts (128–256 GiB
-RAM) cover the fleet — concurrent *active* runs, not tenant count, set the
-ceiling.
+### Cost per tenant (100 tenants)
+
+| Pattern | Host / provider | Isolation | ~Cost/tenant/mo | Egress | Ops burden |
+|---|---|---|---|---|---|
+| **A — pack micro-VMs (bare metal)** | **Hetzner AX162-R** (256 GB ECC, 48-core EPYC, ~€229/mo FI) — all 100 fit on one box at ~1.6× commit | Firecracker/Kata microVM | **~€2.3** (~€4.6 with HA 2nd box) | **unmetered/free** | High |
+| A — pack micro-VMs (nested-virt cloud) | GCP `n2-standard-16` (64 GB), nested virt on | Kata/Firecracker | ~$2.5 (3-yr) – $5.7 | $0.12/GB | High + ~10% nested I/O hit |
+| A — pack micro-VMs (bare metal) | AWS `m7g.metal` (256 GB, ~$1,906/mo) | Firecracker | ~$8.6 (3-yr) – $19 | $0.09/GB | High; ~$1.9k min chunk |
+| **B — one managed VM/tenant** | **Hetzner Cloud CX23** (2 vCPU/4 GB, €5.49) | the cloud VM (KVM); Docker single-level | **~€5.5** | 20 TB incl. | **Low–med** (provision via Cloud API; no hypervisor) |
+| B — one micro-VM/tenant | Fly.io Machine (~1.5 GB + 20 GB vol) | Firecracker microVM | ~$8.5–11.5 | $0.02/GB | **Lowest** (API + routing built-in; `dind` wrinkle) |
+| B — one managed VM/tenant | DigitalOcean Droplet (2 GB, 50 GB incl.) | the Droplet (KVM); Docker single-level | ~$12 | generous incl. | Low |
+| ✗ rejected | DOKS + Kata/Firecracker | — | **infeasible** (no nested virt) | — | — |
+
+**Ranking:** Hetzner dedicated packing (~€2.3) < GCP N2 nested (~$2.5–5.7) ≈
+Hetzner Cloud VM/tenant (~€5.5) < AWS `.metal` (~$8.6+) ≈ Fly (~$9) < DO Droplet
+(~$12).
+
+### Recommendation (cheapest-first, accepting more ops)
+
+- **Cheapest — Hetzner dedicated + micro-VM packing.** A single **AX162-R**
+  (256 GB, ~€229/mo Finland) holds all ~100 tenants at a safe ~1.6× RAM commit;
+  **~€2.3/tenant**, unmetered egress, local NVMe. Run Firecracker/Kata via a
+  thin orchestrator (firecracker-containerd / Cloud Hypervisor / Kata +
+  containerd). This is 3–5× cheaper than any managed option. **The hidden costs
+  to budget for:** you operate the hypervisor; local NVMe means a dead box loses
+  tenant state, so you **must replicate `HEZO_DATA_DIR` off-box** (periodic
+  snapshots to object storage); and you need a **second box for HA** + your own
+  routing/load-balancing.
+- **Best cost/ops balance — Hetzner Cloud, one VM per tenant.** **~€5.5/tenant**
+  with *no hypervisor to operate*: the Cloud VM is the boundary, Hezo runs
+  Docker single-level inside (no nested virt needed), 20 TB egress included,
+  provisioned through the simple Hetzner Cloud API. Roughly half the price of
+  Fly/DO and a fraction of the ops of bare metal. **Recommended starting point.**
+- **Lowest ops to launch — Fly.io Machines** (~$9/tenant). Firecracker boundary,
+  per-machine volumes, built-in wildcard routing, Machines API as the signup
+  provisioning primitive — if you'd rather not manage VMs at all early on. The
+  one wrinkle: nested Docker needs privileged `dind` inside the Machine.
+
+**Sensible path:** start on **Hetzner Cloud VM-per-tenant** (cheap + minimal
+ops, no exotic infra), and graduate to **Hetzner dedicated micro-VM packing**
+once tenant count makes the overcommit savings worth the orchestration + backup
+work. Both keep you on one vendor with free/large egress.
+
+> **The bigger cost is probably not infrastructure.** At 100 always-on tenants
+> doing background agent work, **LLM API token spend likely dwarfs the
+> €2–12/tenant of compute.** Optimising servers below ~€5/tenant saves
+> ~€100s/mo; the AI bill can be €1,000s/mo. Put at least as much design effort
+> into the **credential/billing model** (pooled platform key with per-tenant
+> metering vs. bring-your-own-key) and the per-agent/per-project budget caps as
+> into squeezing the host.
+
+**Validate first:** nested Docker inside the chosen substrate. Hezo needs a real
+`dockerd` + `/var/run/docker.sock`. Single-level (Pattern B managed VM) is
+trivial; inside a packed Firecracker/Kata microVM it works (real VM kernel);
+on Fly it requires privileged `dind` — confirm before committing.
 
 ## What the control plane must own (the only real new work)
 
