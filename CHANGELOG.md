@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0 - 2026-06-25
+
+### Bug Fixes
+
+- **binary:** build agent-base image locally when it can't be pulled ([#389](https://github.com/hezo-ai/hezo/pull/389))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.5.0...0.6.0
+
 ## 0.5.0 - 2026-06-25
 
 ### Features
