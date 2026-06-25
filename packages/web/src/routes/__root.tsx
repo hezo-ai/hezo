@@ -162,6 +162,7 @@ function ShellChrome() {
 				onOpenSearch={() => setSearchOpen(true)}
 			/>
 			<GlobalSearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
+			<UpdateBanner />
 			<div className="flex flex-row flex-1 overflow-hidden w-full">
 				{/* Rail + project sidebar + scrollable main span the full viewport so
 				    the main-panel scrollbar sits on the browser edge, not mid-screen. */}
@@ -179,7 +180,6 @@ function ShellChrome() {
 					)}
 					<main ref={mainRef} className="flex-1 min-w-0 overflow-auto relative">
 						<Outlet />
-						<UpdateBanner />
 					</main>
 				</div>
 			</div>
