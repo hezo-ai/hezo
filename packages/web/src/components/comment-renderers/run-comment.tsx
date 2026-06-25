@@ -1,12 +1,14 @@
 import { Link } from '@tanstack/react-router';
 import { DoorOpen, Loader2, RotateCw } from 'lucide-react';
 import { useState } from 'react';
+import { type ContainerHealth, useContainerHealth } from '../../hooks/use-container-health';
 import { formatElapsed } from '../../hooks/use-elapsed-duration';
 import {
 	getRunWaitingMessage,
 	isActiveRunStatus,
 	useHeartbeatRun,
 } from '../../hooks/use-heartbeat-runs';
+import { useProjectMeta } from '../../hooks/use-projects';
 import { useRetryFailedRun } from '../../hooks/use-retry-failed-run';
 import { useRunLogs } from '../../hooks/use-run-logs';
 import { agentPageParams } from '../agent-link';
@@ -69,6 +71,19 @@ function skillSourceLabel(url: string): string {
 	}
 }
 
+/** Why a retry is currently blocked — keyed off the same health the banner reads. */
+function containerNotReadyReason(health: ContainerHealth | null): string {
+	switch (health?.kind) {
+		case 'rebuilding':
+			return 'Container is rebuilding — retry will be available once it finishes';
+		case 'provisioning':
+			return 'Container is starting up — retry will be available once it is running';
+		default:
+			// stopped, error, or the project index has not loaded yet.
+			return 'Container is not running — start it from the Container page to retry';
+	}
+}
+
 function RunRetryButton({
 	projectId,
 	taskId,
@@ -79,12 +94,18 @@ function RunRetryButton({
 	runId: string;
 }) {
 	const retry = useRetryFailedRun({ projectId, taskId });
+	const project = useProjectMeta(projectId);
+	const health = useContainerHealth(project);
+	// A run can only be dispatched into a healthy container (running, and not mid
+	// base-image rebuild). Mirror the runtime gate so a click can't queue a retry
+	// that would immediately fail on a missing/stopped container.
+	const containerReady = health?.kind === 'healthy';
 	return (
-		<Tooltip content="Retry this run">
+		<Tooltip content={containerReady ? 'Retry this run' : containerNotReadyReason(health)}>
 			<button
 				type="button"
 				onClick={() => retry.mutate(runId)}
-				disabled={retry.isPending}
+				disabled={retry.isPending || !containerReady}
 				aria-label="Retry failed run"
 				data-testid="retry-failed-run"
 				className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium text-text-2 hover:bg-surface-2 hover:text-text-1 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"

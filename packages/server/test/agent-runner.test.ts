@@ -6,6 +6,7 @@ import {
 	AiProvider,
 	ContainerStatus,
 	HeartbeatRunStatus,
+	WsMessageType,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -264,6 +265,74 @@ describe('runAgent', () => {
 
 		const logBroadcasts = broadcasts.filter((b) => b.event.type === 'run_log');
 		expect(logBroadcasts.some((b) => b.event.text.includes('not running'))).toBe(true);
+	});
+
+	it('reconciles and fails the run when a cached-running container has vanished from Docker', async () => {
+		// The DB still says running, but Docker 404s on inspect — the exact stale
+		// state after an external `docker rm` or a Docker daemon restart. The runner
+		// must catch this before execCreate, flip the row to error, null the id, and
+		// broadcast so the UI corrects — rather than trip over a raw 404 mid-run.
+		const broadcasts: Array<{ room: string; event: any }> = [];
+		const wsManager = {
+			broadcast: (room: string, event: any) => {
+				broadcasts.push({ room, event });
+			},
+			subscribe: () => {},
+			unsubscribe: () => {},
+			unsubscribeAll: () => {},
+			getRoomSize: () => 0,
+			getTotalConnections: () => 0,
+		} as any;
+
+		// The cached state the runner reads: running, with a container id Docker no
+		// longer knows about.
+		await db.query(
+			`UPDATE projects SET container_status = $1::container_status, container_id = $2,
+			     container_error = NULL WHERE id = $3`,
+			[ContainerStatus.Running, 'gone-1', projectId],
+		);
+
+		const deps: RunnerDeps = {
+			db,
+			docker: createMockDocker({ inspectContainer: async () => null }),
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: '/tmp/test-data',
+			wsManager,
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject({ container_status: ContainerStatus.Running, container_id: 'gone-1' }),
+		);
+
+		expect(result.success).toBe(false);
+		expect(result.stderr).toContain('not running');
+
+		const run = await db.query<{ status: string; log_text: string }>(
+			'SELECT status, log_text FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+		expect(run.rows[0].log_text).toContain('not running');
+
+		// The stale row was reconciled against Docker reality.
+		const proj = await db.query<{ container_status: string; container_id: string | null }>(
+			'SELECT container_status, container_id FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(proj.rows[0].container_status).toBe(ContainerStatus.Error);
+		expect(proj.rows[0].container_id).toBeNull();
+
+		// And the correction was broadcast so the banner/sidebar/Container page update.
+		expect(
+			broadcasts.some(
+				(b) => b.event.type === WsMessageType.RowChange && b.event.table === 'projects',
+			),
+		).toBe(true);
 	});
 
 	it('returns failure when container_id is null and records it in the run log', async () => {

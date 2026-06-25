@@ -1,9 +1,10 @@
-import { AgentAdminStatus, ContainerStatus } from '@hezo/shared';
+import { AgentAdminStatus } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { AlertTriangle, Globe, Info } from 'lucide-react';
+import { AlertTriangle, Globe, Info, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useAgents } from '../hooks/use-agents';
+import { useContainerHealth } from '../hooks/use-container-health';
 import { useInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useProjectMeta } from '../hooks/use-projects';
 import { agentPageParams } from './agent-link';
@@ -32,6 +33,7 @@ export function ProjectSidebar() {
 	const navigate = useNavigate();
 	const projectId = active?.slug ?? '';
 	const project = useProjectMeta(projectId);
+	const health = useContainerHealth(project);
 	const { data: inboxCount } = useInboxUnreadCount(projectId);
 	const { data: agents } = useAgents(projectId);
 	const [teamCollapsed, setTeamCollapsed] = useState(readTeamCollapsed);
@@ -49,9 +51,8 @@ export function ProjectSidebar() {
 
 	const isInternal = project?.is_internal ?? false;
 	const projectParams = { projectId };
-	const containerFailed =
-		project?.container_status === ContainerStatus.Stopped ||
-		project?.container_status === ContainerStatus.Error;
+	const containerFailed = health?.kind === 'stopped' || health?.kind === 'error';
+	const containerProvisioning = health?.kind === 'provisioning' || health?.kind === 'rebuilding';
 
 	const enabledAgents = (agents ?? []).filter((a) => a.admin_status !== AgentAdminStatus.Disabled);
 	const byCreatedAt = (a: { created_at: string }, b: { created_at: string }) =>
@@ -70,6 +71,13 @@ export function ProjectSidebar() {
 		label: (
 			<span className="inline-flex items-center gap-1.5">
 				<span>Container</span>
+				{containerProvisioning && (
+					<Loader2
+						data-testid="project-sidebar-container-spinner"
+						aria-hidden="true"
+						className="w-3 h-3 shrink-0 animate-spin text-info"
+					/>
+				)}
 				{containerFailed && (
 					<Tooltip content="Container failed — click for details" side="right">
 						<span

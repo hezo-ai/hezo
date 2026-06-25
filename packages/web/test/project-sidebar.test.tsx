@@ -231,3 +231,68 @@ test("the project menu persists across the project's team pages and disappears o
 		expect(container.querySelector('[data-testid="project-sidebar-name"]')).toBeNull(),
 	);
 });
+
+test('the Container nav item shows a provisioning spinner while the container is creating', async () => {
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+	const { findByTestId, queryByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Operations' });
+			projectSlug = project.slug;
+			// A container mid-provision: the sidebar should surface a live spinner.
+			await getTestContext().db.query(
+				`UPDATE projects SET container_status = 'creating'::container_status WHERE id = $1`,
+				[project.id],
+			);
+		},
+	});
+
+	// The Container item discloses on its own route; its label carries the spinner.
+	await router.navigate({
+		to: '/projects/$projectId/container',
+		params: { projectId: projectSlug },
+	});
+	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+
+	const spinner = await findByTestId('project-sidebar-container-spinner', undefined, {
+		timeout: 15_000,
+	});
+	expect(spinner.className).toContain('animate-spin');
+	expect(spinner.className).toContain('text-info');
+	// Provisioning is not a failure — no error indicator alongside it.
+	expect(queryByTestId('project-sidebar-container-error')).toBeNull();
+});
+
+test('the Container nav item shows no spinner once the container is running', async () => {
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+	const { container, findByTestId, queryByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Operations' });
+			projectSlug = project.slug;
+			await getTestContext().db.query(
+				`UPDATE projects SET container_status = 'running'::container_status,
+				        container_id = COALESCE(container_id, 'c1') WHERE id = $1`,
+				[project.id],
+			);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/container',
+		params: { projectId: projectSlug },
+	});
+	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+
+	// Once the Container item is disclosed (and healthy), no spinner or error icon.
+	const nav = getNav(container);
+	await waitFor(() => expect(within(nav).getByRole('link', { name: 'Container' })).toBeTruthy(), {
+		timeout: 15_000,
+	});
+	expect(queryByTestId('project-sidebar-container-spinner')).toBeNull();
+	expect(queryByTestId('project-sidebar-container-error')).toBeNull();
+});
