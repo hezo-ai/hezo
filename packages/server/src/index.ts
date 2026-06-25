@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import type { PGlite } from '@electric-sql/pglite';
 import { AuthType } from '@hezo/shared';
 import { app } from './app';
-import { parseConfig, runRestore } from './cli';
+import { parseConfig, runRestore, runVersion } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
 import { PgDataCorruptError } from './db/client';
 import { DbNewerThanAppError, MigrationFailedError } from './db/migrate-errors';
@@ -80,6 +80,12 @@ process.on('uncaughtException', (err) => {
 
 interface WsConnectionData extends WsData {
 	_token?: string;
+}
+
+// `hezo --version` / `hezo version` prints the version and exits before any
+// server startup.
+if (runVersion()) {
+	process.exit(0);
 }
 
 // `hezo restore <backup>` runs and exits before any server startup.

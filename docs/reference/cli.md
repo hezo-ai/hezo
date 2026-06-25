@@ -60,6 +60,7 @@ this is effectively the only path forward once the master key is lost.
 
 ```sh
 hezo --help          # show all commands and flags
+hezo --version       # print the Hezo version and exit
 ```
 
 ## See also

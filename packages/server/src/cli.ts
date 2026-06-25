@@ -8,6 +8,7 @@ import {
 	validateMnemonic,
 } from '@hezo/shared';
 import { Command } from 'commander';
+import { HEZO_VERSION } from './version';
 
 export type LogLevelName = 'debug' | 'info' | 'warn' | 'error';
 
@@ -94,6 +95,24 @@ function parseMasterKey(raw: string): { unlockKeyHex: string; publicKeyHex: stri
 		unlockKeyHex: deriveUnlockKey(raw),
 		publicKeyHex: deriveAuthKeyPair(raw).publicKeyHex,
 	};
+}
+
+/**
+ * Handle a version request: `hezo --version`, `hezo -V`, or `hezo version`.
+ * Prints the running build's version string and returns `true` so the caller
+ * skips normal server startup (mirroring `runRestore`). Returns `false` when no
+ * version was requested. `out` is injectable for testing.
+ */
+export function runVersion(
+	argv: string[] = process.argv,
+	out: (line: string) => void = console.log,
+): boolean {
+	const tokens = argv.slice(2);
+	if (tokens.includes('--version') || tokens.includes('-V') || tokens[0] === 'version') {
+		out(HEZO_VERSION);
+		return true;
+	}
+	return false;
 }
 
 /**

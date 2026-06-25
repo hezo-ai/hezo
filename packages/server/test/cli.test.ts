@@ -2,7 +2,8 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { deriveAuthKeyPair, deriveUnlockKey } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
-import { parseConfig, resolveDevDataDir } from '../src/cli';
+import { parseConfig, resolveDevDataDir, runVersion } from '../src/cli';
+import { HEZO_VERSION } from '../src/version';
 
 // Canonical BIP39 vector — parseMasterKey only accepts a valid mnemonic.
 const PHRASE =
@@ -157,6 +158,32 @@ describe('parseConfig', () => {
 			const config = parseConfig(argv('--port', '8080'), { HEZO_PORT: '' });
 			expect(config.port).toBe(8080);
 		});
+	});
+});
+
+describe('runVersion', () => {
+	it('prints the version and returns true for --version', () => {
+		const lines: string[] = [];
+		expect(runVersion(argv('--version'), (l) => lines.push(l))).toBe(true);
+		expect(lines).toEqual([HEZO_VERSION]);
+	});
+
+	it('handles the -V short flag', () => {
+		const lines: string[] = [];
+		expect(runVersion(argv('-V'), (l) => lines.push(l))).toBe(true);
+		expect(lines).toEqual([HEZO_VERSION]);
+	});
+
+	it('handles the `version` subcommand', () => {
+		const lines: string[] = [];
+		expect(runVersion(argv('version'), (l) => lines.push(l))).toBe(true);
+		expect(lines).toEqual([HEZO_VERSION]);
+	});
+
+	it('returns false and prints nothing when no version is requested', () => {
+		const lines: string[] = [];
+		expect(runVersion(argv('--port', '8080'), (l) => lines.push(l))).toBe(false);
+		expect(lines).toEqual([]);
 	});
 });
 
