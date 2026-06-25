@@ -71,6 +71,35 @@ test('the header identifies the CEO with the HQ badge and the composer invites c
 	expect(input.placeholder).toBe('Ask the CEO anything, across every project…');
 });
 
+test('blocks the composer and links to the container page when the HQ container is down', async () => {
+	const { findByTestId } = await renderApp({
+		initialPath: '/home',
+		seed: async (ctx) => {
+			await ctx.db.query(
+				`UPDATE projects SET container_status = 'error',
+				        container_error = 'pull access denied'
+				 WHERE is_internal = true`,
+			);
+		},
+	});
+
+	(await findByTestId('ceo-chat-launcher')).click();
+	const panel = await findByTestId('ceo-chat-panel');
+
+	// The container-state notice replaces the composer inside the chat panel.
+	const notice = await waitFor(() => {
+		const el = panel.querySelector('[data-testid="hq-container-notice"]');
+		if (!el) throw new Error('notice not yet rendered');
+		return el as HTMLElement;
+	});
+	expect(notice.textContent ?? '').toContain('error');
+	expect(panel.querySelector('[data-testid="ceo-chat-input"]')).toBeNull();
+
+	// It links to the HQ container page.
+	const link = notice.querySelector('[data-testid="hq-container-notice-link"]');
+	expect(link?.getAttribute('href')).toContain('/projects/hq/container');
+});
+
 test('each message carries its role eyebrow — "You" for the operator, "CEO · HQ" for the CEO', async () => {
 	const { findByTestId, findByText } = await renderApp({ initialPath: '/home' });
 	(await findByTestId('ceo-chat-launcher')).click();

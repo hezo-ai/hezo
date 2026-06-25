@@ -1,8 +1,7 @@
-import { ContainerStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 import { useCallback, useState } from 'react';
-import { useImageBuild } from '../hooks/use-image-build';
+import { useContainerHealth } from '../hooks/use-container-health';
 import { useProjectMeta } from '../hooks/use-projects';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -15,7 +14,7 @@ const BANNER_INNER = 'flex items-center gap-2 px-4 py-2 text-[13px] font-medium'
 
 export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 	const project = useProjectMeta(projectId);
-	const imageBuild = useImageBuild(project?.docker_base_image);
+	const health = useContainerHealth(project);
 	const [isRebuilding, setIsRebuilding] = useState(false);
 
 	const bannerRef = useCallback((node: HTMLDivElement | null) => {
@@ -31,17 +30,12 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 		};
 	}, []);
 
-	if (!project) return null;
-
-	const status = project.container_status;
+	if (!project || !health || health.kind === 'healthy') return null;
 
 	// The shared base image is (re)building. Surface the rebuilding status with a
-	// determinate progress bar. Shown whenever a build is in flight unless the
-	// operator deliberately stopped the container — a "rebuilding" container can
-	// still read a stale `running`/`creating` status, and the build gates every
-	// container that needs the fresh image.
-	const rebuilding = !!imageBuild?.building && status !== ContainerStatus.Stopped;
-	if (rebuilding && imageBuild) {
+	// determinate progress bar — the build gates every container that needs the
+	// fresh image.
+	if (health.kind === 'rebuilding') {
 		return (
 			<div ref={bannerRef} className={BANNER_OUTER}>
 				<Link
@@ -56,9 +50,9 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 						<span data-testid="container-status-banner-message" className="min-w-0 truncate">
 							Rebuilding {project.name}'s base image…
 						</span>
-						<span className="ml-auto shrink-0 tabular-nums">{imageBuild.percent}%</span>
+						<span className="ml-auto shrink-0 tabular-nums">{health.percent}%</span>
 					</div>
-					<Progress value={imageBuild.percent} label="Base image build progress" />
+					<Progress value={health.percent} label="Base image build progress" />
 				</Link>
 			</div>
 		);
@@ -66,10 +60,9 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 
 	// Provisioning / shutting down: a transient state that resolves on its own.
 	// Show a loading banner that links to the container page for live logs.
-	const provisioning = status === ContainerStatus.Creating || status === ContainerStatus.Stopping;
-	if (provisioning) {
+	if (health.kind === 'provisioning') {
 		const message =
-			status === ContainerStatus.Stopping
+			health.transient === 'stopping'
 				? `Stopping ${project.name}'s container…`
 				: `Provisioning ${project.name}'s container…`;
 		return (
@@ -91,13 +84,14 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 		);
 	}
 
-	const unhealthy = status === ContainerStatus.Stopped || status === ContainerStatus.Error;
-	if (!unhealthy) return null;
-
-	const hasError = status === ContainerStatus.Error;
+	// Stopped or errored — the container needs a rebuild. The banner body links to
+	// the container page; the Restart button rebuilds in place without navigating.
+	const hasError = health.kind === 'error';
 	const message = `${project.name} container is not running`;
 
-	const rebuild = async () => {
+	const rebuild = async (e: React.MouseEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
 		if (isRebuilding) return;
 		setIsRebuilding(true);
 		try {
@@ -108,11 +102,19 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 		}
 	};
 
-	const tone = hasError ? 'bg-danger/10 text-danger' : 'bg-warning/10 text-warning';
+	const tone = hasError
+		? 'bg-danger/10 text-danger hover:bg-danger/20'
+		: 'bg-warning/10 text-warning hover:bg-warning/20';
 
 	return (
 		<div ref={bannerRef} className={BANNER_OUTER}>
-			<div data-testid="container-status-banner" className={`${BANNER_INNER} ${tone}`}>
+			<Link
+				to="/projects/$projectId/container"
+				params={{ projectId }}
+				data-testid="container-status-banner"
+				aria-label={`${message}. View container`}
+				className={`${BANNER_INNER} ${tone} transition-colors`}
+			>
 				<AlertTriangle className="w-3.5 h-3.5 shrink-0" />
 				<span data-testid="container-status-banner-message" className="min-w-0 truncate">
 					{message}
@@ -132,7 +134,7 @@ export function ContainerStatusBanner({ projectId }: { projectId: string }) {
 					)}
 					<span>Restart</span>
 				</Button>
-			</div>
+			</Link>
 		</div>
 	);
 }

@@ -97,6 +97,16 @@ beforeEach(async () => {
 		}),
 	});
 
+	// A booted instance has its HQ container running; the harness skips real
+	// container provisioning, so reflect the healthy steady state by default.
+	// Specs exercising the container-down/rebuilding gates set the status
+	// explicitly (via DB or a fetch override of the projects index).
+	await test.db.query(
+		`UPDATE projects SET container_status = 'running',
+		        container_id = COALESCE(container_id, 'test-hq-container')
+		 WHERE is_internal = true`,
+	);
+
 	// Reroute fetch through the in-process Hono app. Bypasses the real network
 	// entirely; matches the way the dev Vite proxy forwards /api, /oauth, /mcp,
 	// /health, /SKILL.md, and /llms.txt to the server.

@@ -8,6 +8,7 @@ import {
 	COACH_AGENT_SLUG,
 	CommentContentType,
 	ContainerStatus,
+	DEFAULT_TEAM_ID,
 	HeartbeatRunStatus,
 	INSTANCE_AGENT_SLUGS,
 	TaskPriority,
@@ -41,6 +42,7 @@ import {
 	type ContainerDeps,
 	type ContainerExitReason,
 	type ContainerTransition,
+	ensureProjectContainerRunning,
 	failProjectRuns,
 	provisionContainer,
 	rebuildContainer,
@@ -600,6 +602,31 @@ export class JobManager {
 		await this.selfHealErroredContainers(docker);
 		await this.restartStoppedRunningContainers(docker);
 		await this.repairStaleContainerMounts(docker);
+	}
+
+	/**
+	 * Bring the HQ container up as early as possible after boot. The startup
+	 * restart pass deliberately leaves `stopped` projects alone, but HQ — home of
+	 * the always-on CEO and Coach — should be running whenever the instance is.
+	 * `ensureProjectContainerRunning` no-ops when Docker confirms it is already
+	 * running, starts a stopped container in place, and provisions a missing one,
+	 * so this is safe to call unconditionally. Provisioning needs the master key
+	 * (secrets/egress), so the caller runs this only after unlock; it is kicked
+	 * fire-and-forget there so a slow image pull never delays the rest of startup.
+	 */
+	async ensureHqContainerRunning(): Promise<void> {
+		const reachable = await this.deps.docker.ping();
+		if (!reachable) {
+			log.warn('Docker not reachable at startup; skipping HQ container warm-up');
+			return;
+		}
+		const hq = await this.deps.db.query<{ id: string }>(
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+			[DEFAULT_TEAM_ID],
+		);
+		const hqProjectId = hq.rows[0]?.id;
+		if (!hqProjectId) return;
+		await ensureProjectContainerRunning(this.buildContainerDeps(), hqProjectId);
 	}
 
 	/**

@@ -139,6 +139,10 @@ test('banner flags the active project as failed and rebuilds it', async () => {
 	const message = await findByTestId('container-status-banner-message');
 	expect(message.textContent ?? '').toContain('Failed Banner');
 
+	// The whole banner links to the container page for diagnostics.
+	expect(banner.getAttribute('href') ?? '').toContain(`/projects/${projectSlug}/container`);
+
+	// Clicking Restart rebuilds in place without following the banner link.
 	const rebuildBtn = banner.querySelector(
 		'button[aria-label="Restart failed container"]',
 	) as HTMLButtonElement;

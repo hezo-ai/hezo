@@ -10,12 +10,10 @@ import {
 	MemberType,
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
-import { trackBackground } from '../lib/background';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import type { ContainerLogStreamer } from './container-logs';
-import { type ProjectRow, provisionContainer } from './containers';
 import type { DockerClient } from './docker';
 import type { LogStreamBroker } from './log-stream-broker';
 import {
@@ -156,11 +154,11 @@ export async function createTeam(
  * every project-team's Captain reports up to the CEO that lives here.
  */
 export async function seedDefaultTeam(deps: CreateTeamDeps): Promise<void> {
-	const { db, docker, dataDir, wsManager, masterKeyManager, logs } = deps;
+	const { db } = deps;
 	const existing = await db.query('SELECT 1 FROM teams WHERE id = $1', [DEFAULT_TEAM_ID]);
 	if (existing.rows.length > 0) return;
 
-	const hqProjectId = await withTransaction(db, async () => {
+	await withTransaction(db, async () => {
 		await db.query(
 			`INSERT INTO teams (id, name, slug, description, summary) VALUES ($1, $2, $3, '', '')`,
 			[DEFAULT_TEAM_ID, DEFAULT_TEAM_NAME, DEFAULT_TEAM_SLUG],
@@ -174,7 +172,6 @@ export async function seedDefaultTeam(deps: CreateTeamDeps): Promise<void> {
 		await db.query('INSERT INTO project_task_counters (project_id, next_number) VALUES ($1, 1)', [
 			projectResult.rows[0].id,
 		]);
-		return projectResult.rows[0].id;
 	});
 
 	// The chatbox memory doc lives in the HQ project. Ensure it exists rather than
@@ -185,31 +182,9 @@ export async function seedDefaultTeam(deps: CreateTeamDeps): Promise<void> {
 	await ensureInstanceCeo(db, DEFAULT_TEAM_ID);
 	await ensureInstanceCoach(db, DEFAULT_TEAM_ID);
 
-	const hqProject = await db.query<ProjectRow>(
-		`SELECT id, team_id, slug, docker_base_image, container_id, container_status, dev_ports
-		 FROM projects WHERE id = $1`,
-		[hqProjectId],
-	);
-	if (hqProject.rows[0]) {
-		trackBackground(
-			provisionContainer(
-				{
-					db,
-					docker,
-					dataDir,
-					wsManager,
-					masterKeyManager,
-					logs,
-					containerLogStreamer: deps.containerLogStreamer,
-					egressCAPath: deps.egressCAPath ?? null,
-				},
-				hqProject.rows[0],
-				DEFAULT_TEAM_SLUG,
-			).catch((error) => {
-				log.error('Failed to provision container for HQ project:', error);
-			}),
-		);
-	}
+	// The HQ container is brought up by the startup reconciliation pass
+	// (JobManager.ensureHqContainerRunning), which runs after the master key is
+	// unlocked — provisioning needs secrets/egress that aren't available here.
 
 	log.info(`Seeded HQ team (${DEFAULT_TEAM_SLUG}) with CEO + Coach`);
 }

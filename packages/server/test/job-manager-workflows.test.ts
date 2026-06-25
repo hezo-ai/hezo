@@ -2163,6 +2163,110 @@ describe('JobManager workflow methods', () => {
 		});
 	});
 
+	describe('ensureHqContainerRunning', () => {
+		async function hqProject(): Promise<{ id: string }> {
+			const r = await db.query<{ id: string }>(
+				`SELECT id FROM projects WHERE is_internal = true LIMIT 1`,
+			);
+			return r.rows[0];
+		}
+
+		afterEach(async () => {
+			await db.query(
+				`UPDATE projects SET container_status = NULL, container_id = NULL, container_error = NULL
+				 WHERE is_internal = true`,
+			);
+		});
+
+		it('starts the stopped HQ container in place and marks it running', async () => {
+			const hq = await hqProject();
+			await db.query(
+				`UPDATE projects SET container_status = 'stopped'::container_status, container_id = 'hq-box'
+				 WHERE id = $1`,
+				[hq.id],
+			);
+
+			const startCalls: string[] = [];
+			const manager = createJobManager({
+				docker: createStubDocker({
+					inspectContainer: async (id: string) => ({
+						Id: id,
+						State: { Status: 'exited', Running: false, Pid: 0, ExitCode: 0 },
+						Config: { Image: 'stub' },
+					}),
+					startContainer: async (id: string) => {
+						startCalls.push(id);
+					},
+				}),
+			});
+
+			await manager.ensureHqContainerRunning();
+
+			expect(startCalls).toEqual(['hq-box']);
+			const row = await db.query<{ container_status: string }>(
+				'SELECT container_status FROM projects WHERE id = $1',
+				[hq.id],
+			);
+			expect(row.rows[0].container_status).toBe('running');
+
+			manager.shutdown();
+		});
+
+		it('leaves an already-running HQ container alone', async () => {
+			const hq = await hqProject();
+			await db.query(
+				`UPDATE projects SET container_status = 'running'::container_status, container_id = 'hq-box'
+				 WHERE id = $1`,
+				[hq.id],
+			);
+
+			const startCalls: string[] = [];
+			const manager = createJobManager({
+				docker: createStubDocker({
+					inspectContainer: async (id: string) => ({
+						Id: id,
+						State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
+						Config: { Image: 'stub' },
+					}),
+					startContainer: async (id: string) => {
+						startCalls.push(id);
+					},
+				}),
+			});
+
+			await manager.ensureHqContainerRunning();
+
+			expect(startCalls).toEqual([]);
+
+			manager.shutdown();
+		});
+
+		it('skips the warm-up when Docker is unreachable', async () => {
+			const hq = await hqProject();
+			await db.query(
+				`UPDATE projects SET container_status = 'stopped'::container_status, container_id = 'hq-box'
+				 WHERE id = $1`,
+				[hq.id],
+			);
+
+			const startCalls: string[] = [];
+			const manager = createJobManager({
+				docker: createStubDocker({
+					ping: async () => false,
+					startContainer: async (id: string) => {
+						startCalls.push(id);
+					},
+				}),
+			});
+
+			await manager.ensureHqContainerRunning();
+
+			expect(startCalls).toEqual([]);
+
+			manager.shutdown();
+		});
+	});
+
 	describe('live-run registry', () => {
 		it('register / unregister updates getLiveRunIds and getLiveRunsForProject', () => {
 			const manager = createJobManager();

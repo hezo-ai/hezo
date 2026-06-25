@@ -215,6 +215,15 @@ project.
 - **Coach** — reviews completed tickets across **every** project to improve agent system
   prompts; woken on any task completion.
 
+The **HQ container** is warmed as early as possible after boot: once the master key is
+unlocked (provisioning needs secrets/egress), `JobManager.ensureHqContainerRunning` runs
+after the container-restart reconcile pass and brings HQ up via
+`ensureProjectContainerRunning` (no-op if already running, start-in-place if stopped,
+provision if missing) — fire-and-forget so a slow image pull doesn't delay startup. This is
+unconditional because the standard restart pass deliberately leaves `stopped` projects
+alone, whereas HQ — home of the always-on CEO/Coach — should run whenever the instance does.
+The live CEO chat (`ceo-session-manager.ts`) also provisions it on demand as a fallback.
+
 HQ also exposes the standard **assets library** — the one internal-project surface that
 isn't hidden in the UI (Budget/Settings still are). Files the CEO produces for the operator
 in the live chat (a quick mockup, demo, or export) are saved via `write_project_asset` and

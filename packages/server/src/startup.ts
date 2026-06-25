@@ -15,6 +15,7 @@ import type { Migration } from './db/migrate';
 import { BASE_SCHEMA } from './db/schema';
 import { registerAuditObserver } from './events/audit-observer';
 import { DomainEventBus } from './events/bus';
+import { trackBackground } from './lib/background';
 import { getInstanceBaseUrl } from './lib/system-meta';
 import type { Env } from './lib/types';
 import { generateLlmsTxt } from './mcp/llms-txt';
@@ -217,7 +218,18 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		jobManager
 			.reconcileOnStartup()
 			.catch((err) => log.error('Startup reconciliation failed:', err))
-			.finally(() => jobManager.start());
+			.finally(() => {
+				jobManager.start();
+				// Warm the HQ container as soon as the instance is unlocked so the CEO
+				// chat and project creation are ready without waiting for first use.
+				// Provisioning needs the master key, hence after unlock; fire-and-forget
+				// so a slow image pull doesn't hold up the rest of startup.
+				trackBackground(
+					jobManager
+						.ensureHqContainerRunning()
+						.catch((err) => log.error('Failed to warm HQ container on startup:', err)),
+				);
+			});
 		ceoSessionManager
 			.reconcileOnStartup()
 			.catch((err) => log.error('CEO session reconciliation failed:', err))
