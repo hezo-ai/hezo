@@ -2,6 +2,9 @@ import { HQ_PROJECT_NAME } from '@hezo/shared';
 import { ArrowRight, Loader2, Maximize2, MessageSquare, Minimize2, X } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { type CeoMessage, useCeoChat } from '../../hooks/use-ceo-chat';
+import { useContainerHealth } from '../../hooks/use-container-health';
+import { useHqProject } from '../../hooks/use-projects';
+import { HqContainerNotice } from '../hq-container-notice';
 import { MarkdownProse } from '../markdown-prose';
 import { CountOverlayBadge } from '../ui/count-overlay-badge';
 import { Tooltip } from '../ui/tooltip';
@@ -17,6 +20,11 @@ export function CeoChatWidget() {
 	const [open, setOpen] = useState(false);
 	const [expanded, setExpanded] = useState(false);
 	const { messages, send, streaming, loaded, unread } = useCeoChat(open);
+	const hq = useHqProject();
+	const hqHealth = useContainerHealth(hq);
+	// The CEO can only act while the HQ container is up. When it isn't, the chat
+	// stays openable but swaps its body for the container state + a link to fix it.
+	const blockedHealth = hqHealth && hqHealth.kind !== 'healthy' ? hqHealth : null;
 	const [draft, setDraft] = useState('');
 	const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -121,56 +129,71 @@ export function CeoChatWidget() {
 					</div>
 				</header>
 
-				<div
-					ref={scrollRef}
-					data-testid="ceo-chat-messages"
-					className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 scroll-smooth"
-				>
-					{!loaded && (
-						<div className="flex items-center justify-center py-6 text-[13px] text-text-2">
-							<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-							Loading…
-						</div>
-					)}
-					{loaded && messages.length === 0 && (
-						<p className="px-1 py-6 text-center text-[13px] text-text-2">
-							Say hello to the CEO. Ask about anything, including active projects, notifications,
-							task blockers, etc
-						</p>
-					)}
-					{messages.map((m) => (
-						<MessageBubble key={m.id} message={m} />
-					))}
-				</div>
-
-				<div className="border-t border-border p-3">
-					<div className="flex items-end gap-2 rounded-2xl border border-border bg-surface px-2 py-1.5 transition-colors focus-within:border-border-strong">
-						<textarea
-							value={draft}
-							onChange={(e) => setDraft(e.target.value)}
-							onKeyDown={(e) => {
-								if (e.key === 'Enter' && !e.shiftKey) {
-									e.preventDefault();
-									submit();
-								}
-							}}
-							rows={1}
-							placeholder="Ask the CEO anything, across every project…"
-							data-testid="ceo-chat-input"
-							className="max-h-32 min-h-[2.25rem] flex-1 resize-none bg-transparent px-2 py-2 text-[13px] leading-5 text-text-1 outline-none placeholder:text-text-3"
+				{hq && blockedHealth ? (
+					<div
+						data-testid="ceo-chat-messages"
+						className="flex flex-1 items-center justify-center overflow-y-auto"
+					>
+						<HqContainerNotice
+							health={blockedHealth}
+							slug={hq.slug}
+							description="The CEO is unavailable until the HQ container is running."
 						/>
-						<button
-							type="button"
-							onClick={submit}
-							disabled={!draft.trim()}
-							aria-label="Send message"
-							data-testid="ceo-chat-send"
-							className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-solid text-accent-solid-fg transition-colors hover:bg-accent-hover disabled:opacity-40"
-						>
-							<ArrowRight className="h-4 w-4" />
-						</button>
 					</div>
-				</div>
+				) : (
+					<>
+						<div
+							ref={scrollRef}
+							data-testid="ceo-chat-messages"
+							className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 scroll-smooth"
+						>
+							{!loaded && (
+								<div className="flex items-center justify-center py-6 text-[13px] text-text-2">
+									<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+									Loading…
+								</div>
+							)}
+							{loaded && messages.length === 0 && (
+								<p className="px-1 py-6 text-center text-[13px] text-text-2">
+									Say hello to the CEO. Ask about anything, including active projects,
+									notifications, task blockers, etc
+								</p>
+							)}
+							{messages.map((m) => (
+								<MessageBubble key={m.id} message={m} />
+							))}
+						</div>
+
+						<div className="border-t border-border p-3">
+							<div className="flex items-end gap-2 rounded-2xl border border-border bg-surface px-2 py-1.5 transition-colors focus-within:border-border-strong">
+								<textarea
+									value={draft}
+									onChange={(e) => setDraft(e.target.value)}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter' && !e.shiftKey) {
+											e.preventDefault();
+											submit();
+										}
+									}}
+									rows={1}
+									placeholder="Ask the CEO anything, across every project…"
+									data-testid="ceo-chat-input"
+									className="max-h-32 min-h-[2.25rem] flex-1 resize-none bg-transparent px-2 py-2 text-[13px] leading-5 text-text-1 outline-none placeholder:text-text-3"
+								/>
+								<button
+									type="button"
+									onClick={submit}
+									disabled={!draft.trim()}
+									aria-label="Send message"
+									data-testid="ceo-chat-send"
+									className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-solid text-accent-solid-fg transition-colors hover:bg-accent-hover disabled:opacity-40"
+								>
+									<ArrowRight className="h-4 w-4" />
+								</button>
+							</div>
+						</div>
+					</>
+				)}
 			</div>
 		</>
 	);
