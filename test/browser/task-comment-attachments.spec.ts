@@ -15,12 +15,15 @@ const PNG_BYTES = Uint8Array.from([
 ]);
 
 // Attachment chips/previews only render after the dropped file's upload
-// round-trips to the server (handleFiles → upload.mutateAsync). The e2e server
-// runs on a single-connection PGlite, so every query from all four parallel
-// workers serialises through it; under a burst the upload's handful of queries
-// can queue for many seconds behind other workers' requests. That is genuine
-// saturation latency, not a stuck render, so wait generously rather than letting
-// a transient spike fail the run.
+// round-trips to the server (handleFiles → upload.mutateAsync) and the composer
+// commits its local state. The historical first-attempt failures here were not
+// upload latency: they were the route's UUID→identifier canonicalization redirect
+// remounting CommentComposer mid-upload and wiping its pending-attachment state
+// (see openTaskDetail below), which no timeout could rescue. With canonical
+// navigation that race is gone; this generous budget is just headroom for genuine
+// PGlite saturation — the e2e server runs on a single-connection PGlite, so every
+// query from all four parallel workers serialises through it and a burst can queue
+// the upload's handful of queries behind other workers' requests.
 const UPLOAD_WAIT_MS = 30_000;
 
 test.describe('Task Comment Attachments', () => {
@@ -47,11 +50,34 @@ test.describe('Task Comment Attachments', () => {
 			headers,
 			data: { project_id: project.id, title: 'Attach me', assignee_id: assigneeId },
 		});
-		const task = ((await taskRes.json()) as { data: { id: string } }).data;
+		const task = ((await taskRes.json()) as { data: { id: string; identifier: string } }).data;
 
 		await waitForAgentIdle(page, project.team_slug, assigneeId, token);
 
 		return { token, task, project, headers };
+	}
+
+	// Open a task's detail page ready for composer interaction. Navigate by the
+	// canonical friendly identifier, NOT task.id (UUID): a UUID URL triggers the
+	// route's canonicalization redirect (routes/.../$taskId.tsx), which changes the
+	// useTask query key, drops the page to its `isLoading` branch, and remounts
+	// CommentComposer — wiping the composer-local pendingAttachmentIds/metaById. If
+	// that remount races an in-flight upload, the chip/thumb/preview never renders
+	// and no UPLOAD_WAIT_MS can save it. Friendly-id navigation is already canonical,
+	// so the redirect never fires and the composer stays mounted across the upload.
+	async function openTaskDetail(
+		page: import('@playwright/test').Page,
+		projectSlug: string,
+		task: { identifier: string },
+	) {
+		const friendlyId = task.identifier.toLowerCase();
+		await page.goto(`/projects/${projectSlug}/tasks/${friendlyId}`);
+		await waitForPageLoad(page);
+		// Cheap regression guard: passes instantly when already canonical; if anyone
+		// reverts to UUID navigation it forces the redirect to settle before we touch
+		// the composer (the agent-run-logs.spec.ts safety pattern).
+		await expect(page).toHaveURL(new RegExp(`/tasks/${friendlyId}$`));
+		await expect(page.getByPlaceholder('Add a comment...')).toBeVisible({ timeout: 20000 });
 	}
 
 	async function dropFile(
@@ -115,9 +141,7 @@ test.describe('Task Comment Attachments', () => {
 	}) => {
 		const { task, project } = await createTask(page, sharedWorkspace.token);
 
-		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
-		await waitForPageLoad(page);
-		await expect(page.getByPlaceholder('Add a comment...')).toBeVisible({ timeout: 20000 });
+		await openTaskDetail(page, project.slug, task);
 
 		await dropFileAndAwaitUpload(
 			page,
@@ -158,9 +182,7 @@ test.describe('Task Comment Attachments', () => {
 	}) => {
 		const { task, project } = await createTask(page, sharedWorkspace.token);
 
-		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
-		await waitForPageLoad(page);
-		await expect(page.getByPlaceholder('Add a comment...')).toBeVisible({ timeout: 20000 });
+		await openTaskDetail(page, project.slug, task);
 
 		const hint = page.locator('[data-testid="comment-attachment-hint"]');
 		await expect(hint).toBeVisible();
@@ -213,9 +235,7 @@ test.describe('Task Comment Attachments', () => {
 	}) => {
 		const { task, project } = await createTask(page, sharedWorkspace.token);
 
-		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
-		await waitForPageLoad(page);
-		await expect(page.getByPlaceholder('Add a comment...')).toBeVisible({ timeout: 20000 });
+		await openTaskDetail(page, project.slug, task);
 
 		await dropFileAndAwaitUpload(
 			page,
@@ -243,9 +263,7 @@ test.describe('Task Comment Attachments', () => {
 	}) => {
 		const { task, project } = await createTask(page, sharedWorkspace.token);
 
-		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
-		await waitForPageLoad(page);
-		await expect(page.getByPlaceholder('Add a comment...')).toBeVisible({ timeout: 20000 });
+		await openTaskDetail(page, project.slug, task);
 
 		await dropFile(
 			page,
@@ -267,9 +285,7 @@ test.describe('Task Comment Attachments', () => {
 		await page.setViewportSize({ width: 375, height: 812 });
 		const { task, project } = await createTask(page, sharedWorkspace.token);
 
-		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
-		await waitForPageLoad(page);
-		await expect(page.getByPlaceholder('Add a comment...')).toBeVisible({ timeout: 20000 });
+		await openTaskDetail(page, project.slug, task);
 
 		const hint = page.locator('[data-testid="comment-attachment-hint"]');
 		await expect(hint).toBeVisible();
