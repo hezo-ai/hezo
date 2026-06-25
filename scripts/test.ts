@@ -62,20 +62,30 @@ async function buildAgentBundle() {
 	}
 }
 
-// coverage-v8 (vitest) and `bun test --coverage` both write lcov `SF:` paths
-// relative to the spawn cwd (the package dir), e.g. `SF:src/logger.ts`. Coveralls
-// resolves lcov paths from the repo root, so they must be repo-root-relative
-// (`packages/server/src/logger.ts`) to map across the monorepo — otherwise the
-// per-package `src/...` paths collide. Rewrite in place so the uploaded lcov is
-// correct at the source. Idempotent: lines already rooted at `/` (absolute) or
-// `packages/` are left untouched.
-function rewriteLcovToRepoRoot(lcovPath: string, pkg: string): void {
+// Both the vitest (coverage-v8) and Bun tiers write lcov `SF:` paths relative to
+// the spawn cwd (the package dir), e.g. `SF:src/logger.ts`. Normalize each report
+// before upload: (1) rewrite every SF path to be repo-root-relative
+// (`packages/<pkg>/src/...`) so Coveralls maps it across the monorepo without the
+// per-package `src/...` paths colliding, and (2) keep only records under the
+// package's `src/` tree. The vitest tier already scopes to src via `include`, but
+// `bun test --coverage` also instruments loaded test support (test/helpers/*, the
+// bun setup preload) — coverage must report source, not test code.
+function normalizeLcov(lcovPath: string, pkg: string): void {
 	if (!existsSync(lcovPath)) return;
-	const fixed = readFileSync(lcovPath, 'utf8').replace(
-		/^SF:(?!\/|packages\/)(.+)$/gm,
-		(_m, rest) => `SF:${pkg}/${rest}`,
+	const srcPrefix = `${pkg}/src/`;
+	const records = readFileSync(lcovPath, 'utf8')
+		.split(/^end_of_record$/m)
+		.map((rec) => rec.trim())
+		.filter(Boolean)
+		.map((rec) => rec.replace(/^SF:(?!\/|packages\/)(.+)$/m, (_m, rest) => `SF:${pkg}/${rest}`))
+		.filter((rec) => {
+			const sf = rec.match(/^SF:(.+)$/m);
+			return sf ? sf[1].startsWith(srcPrefix) : false;
+		});
+	writeFileSync(
+		lcovPath,
+		records.length ? `${records.join('\nend_of_record\n')}\nend_of_record\n` : '',
 	);
-	writeFileSync(lcovPath, fixed);
 }
 
 async function runVitestForPackage(pkg: string): Promise<boolean> {
@@ -108,8 +118,8 @@ async function runVitestForPackage(pkg: string): Promise<boolean> {
 	const exitCode = await proc.exited;
 	const duration = Date.now() - start;
 	const passed = exitCode === 0;
-	// reportOnFailure:true means an lcov exists even on failure — rewrite either way.
-	if (coverage) rewriteLcovToRepoRoot(resolve(ROOT, pkg, 'coverage/lcov.info'), pkg);
+	// reportOnFailure:true means an lcov exists even on failure — normalize either way.
+	if (coverage) normalizeLcov(resolve(ROOT, pkg, 'coverage/lcov.info'), pkg);
 	console.log(`\n${pkg}: ${passed ? 'passed' : 'FAILED'} (${(duration / 1000).toFixed(1)}s)`);
 	return passed;
 }
@@ -136,7 +146,7 @@ async function runBunNativeForPackage(pkg: string): Promise<boolean> {
 	const exitCode = await proc.exited;
 	const duration = Date.now() - start;
 	const passed = exitCode === 0;
-	if (coverage) rewriteLcovToRepoRoot(resolve(ROOT, pkg, 'coverage-bun/lcov.info'), pkg);
+	if (coverage) normalizeLcov(resolve(ROOT, pkg, 'coverage-bun/lcov.info'), pkg);
 	console.log(
 		`\n${pkg} (Bun-native): ${passed ? 'passed' : 'FAILED'} (${(duration / 1000).toFixed(1)}s)`,
 	);
