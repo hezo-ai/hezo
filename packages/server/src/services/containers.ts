@@ -19,6 +19,7 @@ import type { ContainerLogStreamer } from './container-logs';
 import type { DockerClient } from './docker';
 import { ensureImage } from './ensure-image';
 import { ContainerGitExecutor } from './git-executor';
+import { resolveAgentBaseImage } from './image-registry';
 import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
 import { type BridgeRunnerArgs, type SshAgentServer, withProvisionBridge } from './ssh-agent';
@@ -272,18 +273,23 @@ export async function provisionContainer(
 
 		const env: string[] = [];
 
-		emit('stdout', `→ Resolving image ${project.docker_base_image}`);
+		// The stored image is the managed sentinel/default for most projects; in a
+		// release binary it resolves to the version-pinned GHCR image (pulled, with a
+		// local-build fallback). Custom per-project images pass through unchanged.
+		const { image: baseImage, preferPull } = resolveAgentBaseImage(project.docker_base_image);
+		emit('stdout', `→ Resolving image ${baseImage}`);
 		// Docker writes its build trace to stderr even on success; surface it as
 		// informational stdout so a clean build isn't a wall of red. A real build
 		// failure still throws (non-zero exit) and is reported by the catch below.
-		await ensureImage(docker, project.docker_base_image, {
+		await ensureImage(docker, baseImage, {
+			preferPull,
 			onLine: (_stream, text) => emit('stdout', text),
 		});
 
 		emit('stdout', `→ Creating container ${containerName}`);
 
 		const { Id } = await docker.createContainer(containerName, {
-			Image: project.docker_base_image,
+			Image: baseImage,
 			Cmd: ['sleep', 'infinity'],
 			Env: env,
 			WorkingDir: '/workspace',

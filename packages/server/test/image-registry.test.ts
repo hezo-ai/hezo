@@ -3,9 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+	AGENT_BASE_GHCR_REPO,
 	BUNDLE_SHA_LABEL,
 	computeBundleSourceHash,
 	findRepoRoot,
+	isReleaseVersion,
+	MANAGED_AGENT_BASE_IMAGE,
+	publishedAgentBaseRef,
+	resolveAgentBaseImage,
 	resolveLocalImage,
 	setDockerBaseDir,
 } from '../src/services/image-registry';
@@ -35,6 +40,68 @@ describe('image-registry', () => {
 	it('returns null for unregistered images', () => {
 		expect(resolveLocalImage('alpine:latest')).toBeNull();
 		expect(resolveLocalImage('some/other:tag')).toBeNull();
+	});
+
+	describe('isReleaseVersion', () => {
+		it('accepts plain MAJOR.MINOR.PATCH', () => {
+			expect(isReleaseVersion('0.6.1')).toBe(true);
+			expect(isReleaseVersion('1.2.3')).toBe(true);
+			expect(isReleaseVersion('10.20.30')).toBe(true);
+		});
+		it('rejects dev, partial, prefixed, and pre-release versions', () => {
+			expect(isReleaseVersion('0.0.0-dev')).toBe(false);
+			expect(isReleaseVersion('1.2')).toBe(false);
+			expect(isReleaseVersion('v1.2.3')).toBe(false);
+			expect(isReleaseVersion('1.2.3-rc.1')).toBe(false);
+		});
+	});
+
+	describe('publishedAgentBaseRef', () => {
+		it('returns the versioned GHCR ref for a packaged release build', () => {
+			expect(publishedAgentBaseRef('0.6.1', true)).toBe(`${AGENT_BASE_GHCR_REPO}:0.6.1`);
+		});
+		it('returns null for an unpackaged (dev/test) build', () => {
+			expect(publishedAgentBaseRef('0.6.1', false)).toBeNull();
+		});
+		it('returns null for a non-release version even when packaged', () => {
+			expect(publishedAgentBaseRef('0.0.0-dev', true)).toBeNull();
+		});
+	});
+
+	describe('resolveAgentBaseImage', () => {
+		const ref = `${AGENT_BASE_GHCR_REPO}:0.6.1`;
+		it('maps the managed sentinel to the published ref with preferPull', () => {
+			expect(resolveAgentBaseImage(MANAGED_AGENT_BASE_IMAGE, ref)).toEqual({
+				image: ref,
+				preferPull: true,
+			});
+		});
+		it('keeps the sentinel and builds locally when no published ref exists', () => {
+			expect(resolveAgentBaseImage(MANAGED_AGENT_BASE_IMAGE, null)).toEqual({
+				image: MANAGED_AGENT_BASE_IMAGE,
+				preferPull: false,
+			});
+		});
+		it('passes custom per-project images through untouched', () => {
+			expect(resolveAgentBaseImage('registry.example.com/custom:tag', ref)).toEqual({
+				image: 'registry.example.com/custom:tag',
+				preferPull: false,
+			});
+		});
+	});
+
+	describe('resolveLocalImage published-ref fallback', () => {
+		const ref = `${AGENT_BASE_GHCR_REPO}:0.6.1`;
+		it('resolves the published ref for this build to the agent-base Dockerfile', () => {
+			const resolved = resolveLocalImage(ref, ref);
+			expect(resolved).not.toBeNull();
+			expect(resolved?.image).toBe(ref);
+			expect(resolved?.dockerfile.endsWith('docker/Dockerfile.agent-base')).toBe(true);
+			expect(resolved?.bundleSourceHash).toMatch(/^[0-9a-f]{64}$/);
+		});
+		it('returns null for a published ref that does not match this build', () => {
+			expect(resolveLocalImage(`${AGENT_BASE_GHCR_REPO}:9.9.9`, ref)).toBeNull();
+		});
 	});
 
 	describe('setDockerBaseDir override (compiled binary)', () => {
