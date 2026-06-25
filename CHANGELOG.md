@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.0 - 2026-06-25
+
+### Features
+
+- **web:** float update banner at top with one-click Download & Restart ([#386](https://github.com/hezo-ai/hezo/pull/386))
+
+### Bug Fixes
+
+- **seed:** load agent summaries via dynamic import to survive --hot reload
+
+### Other
+
+- add coverage across test tiers and merge into Coveralls ([#385](https://github.com/hezo-ai/hezo/pull/385))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.4.0...0.5.0
+
 ## 0.4.0 - 2026-06-25
 
 ### Features
