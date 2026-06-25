@@ -69,6 +69,7 @@ import {
 	ensureRuntimeHomeDir,
 	getContainerSubscriptionRoot as getContainerSubscriptionRootImpl,
 	getHostSubscriptionRoot as getHostSubscriptionRootImpl,
+	mkdirTraversable,
 	type RuntimeHomeMount,
 	SUBSCRIPTION_LAYOUTS,
 	type SubscriptionMount as SubscriptionMountImpl,
@@ -390,7 +391,9 @@ export async function buildRuntimeInvocation(
 	validateInjection(adapter, mcpInjection);
 
 	for (const file of mcpInjection.files) {
-		mkdirSync(dirname(file.hostPath), { recursive: true, mode: 0o711 });
+		// mkdirTraversable (not a bare mkdir mode) so a strict process umask can't strip
+		// the other-execute bit the non-root run-user needs to traverse to this leaf.
+		mkdirTraversable(dirname(file.hostPath));
 		writeFileSync(file.hostPath, file.contents, { mode: file.mode });
 	}
 
