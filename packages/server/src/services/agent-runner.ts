@@ -29,7 +29,7 @@ import {
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { DomainEventBus } from '../events/bus';
-import { broadcastRowChange } from '../lib/broadcast';
+import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { signAgentJwt } from '../middleware/auth';
@@ -42,6 +42,7 @@ import {
 } from './ai-provider-keys';
 import { checkOverBudget, recordRunCost } from './budget';
 import { type ContainerRunUser, chownToRunUser, resolveContainerRunUser } from './container-user';
+import { syncContainerStatus } from './containers';
 import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
@@ -790,6 +791,27 @@ export async function runAgent(
 	};
 
 	if (!project.container_id || project.container_status !== ContainerStatus.Running) {
+		return finalizeFailure(
+			'Project container is not running. Start the container from the Project page and retry.',
+		);
+	}
+
+	// The cached container_status can lag reality — Docker may have been restarted
+	// or the container pruned externally, leaving the row marked "running" while
+	// execCreate would 404 mid-run. Verify liveness against Docker and reconcile the
+	// DB (syncContainerStatus nulls the id + flips status on a 404 or exit) before we
+	// commit to the run, then broadcast so the banner / sidebar / Container page
+	// correct at once.
+	const liveStatus = await syncContainerStatus(
+		deps.db,
+		deps.docker,
+		project.id,
+		project.slug,
+		project.container_id,
+		project.container_status,
+	);
+	if (liveStatus !== ContainerStatus.Running) {
+		await broadcastProjectUpdate(deps.db, deps.wsManager, project.team_id, project.id);
 		return finalizeFailure(
 			'Project container is not running. Start the container from the Project page and retry.',
 		);

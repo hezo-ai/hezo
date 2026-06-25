@@ -1,6 +1,6 @@
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { renderApp } from './helpers/render';
+import { getTestContext, renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 // The Retry button on a failed run-entry comment. It must appear only for the
@@ -98,8 +98,10 @@ async function setup(opts: {
 		teamId: string;
 	}) => Record<string, Record<string, unknown>>;
 	taskOverride?: Record<string, unknown>;
+	/** Container state the project index should report; Retry is gated on health. */
+	containerStatus?: string;
 }) {
-	const { seeded, retryCalls, comments, runs, taskOverride } = opts;
+	const { seeded, retryCalls, comments, runs, taskOverride, containerStatus = 'running' } = opts;
 	return renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -110,6 +112,14 @@ async function setup(opts: {
 				title: 'Run Retry Task',
 				assignee_id: captain.id,
 			});
+
+			// Retry is gated on container health; default the project to running so
+			// the button is clickable, and let specs override to exercise the gate.
+			await getTestContext().db.query(
+				`UPDATE projects SET container_status = $1::container_status,
+				        container_id = COALESCE(container_id, 'retry-test-container') WHERE id = $2`,
+				[containerStatus, project.id],
+			);
 
 			seeded.projectSlug = project.slug;
 			seeded.taskId = task.identifier.toLowerCase();
@@ -192,6 +202,8 @@ test('failed run-entry comment shows Retry and retries that run on click', async
 		timeout: 20_000,
 	})) as HTMLButtonElement;
 	expect(retryButton.textContent ?? '').toContain('Retry');
+	// Enabled once the project index confirms the container is running.
+	await waitFor(() => expect(retryButton.disabled).toBe(false), { timeout: 20_000 });
 
 	await user.click(retryButton);
 
@@ -275,4 +287,38 @@ test('succeeded run-entry comment shows no Retry button', async () => {
 
 	await findByTestId('run-comment-summary', undefined, { timeout: 20_000 });
 	expect(queryByTestId('retry-failed-run')).toBeNull();
+});
+
+test('failed run-entry comment disables Retry while the container is not running', async () => {
+	const seeded: Seeded = { projectSlug: '', taskId: '', agentSlug: '' };
+	const retryCalls: string[] = [];
+
+	const { findByTestId, user, router } = await setup({
+		seeded,
+		retryCalls,
+		// The exact stale state from the incident: the run failed and the container
+		// is gone, so a retry would only fail again.
+		containerStatus: 'stopped',
+		comments: ({ task, agent }) => [
+			runComment('c1', task.id, FAILED_RUN_ID, agent, '2026-05-20T11:30:00Z'),
+		],
+		runs: ({ task, agent, teamId }) => ({
+			[FAILED_RUN_ID]: runResponse(FAILED_RUN_ID, agent, teamId, task.id, 'failed'),
+		}),
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	// The button still renders (this is the latest failed run), but the not-running
+	// container makes it inert so a click can't dispatch a doomed retry.
+	const retryButton = (await findByTestId('retry-failed-run', undefined, {
+		timeout: 20_000,
+	})) as HTMLButtonElement;
+	await waitFor(() => expect(retryButton.disabled).toBe(true), { timeout: 20_000 });
+
+	await user.click(retryButton).catch(() => {});
+	expect(retryCalls).toEqual([]);
 });
