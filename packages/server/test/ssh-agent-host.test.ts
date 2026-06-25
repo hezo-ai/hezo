@@ -85,11 +85,12 @@ afterAll(async () => {
 describe('withProvisionBridge', () => {
 	it('allocates a bridge advertising the team key, then releases on exit', async () => {
 		let port = 0;
-		await withProvisionBridge(server, teamId, dataDir, async ({ bridge }) => {
+		await withProvisionBridge(server, teamId, dataDir, 'node', async ({ bridge }) => {
 			port = bridge.hostPort;
 			expect(bridge.tokenHex).toMatch(/^[0-9a-f]{32}$/);
 			expect(bridge.hostPort).toBeGreaterThan(0);
 			expect(bridge.socketPath.startsWith('/run/hezo/')).toBe(true);
+			expect(bridge.socketUser).toBe('node');
 			expect(bridge.hostName).toBe('host.docker.internal');
 
 			const reply = await tcpRequestIdentities(bridge.hostPort, bridge.tokenHex);
@@ -105,7 +106,7 @@ describe('withProvisionBridge', () => {
 	it('releases the bridge even if fn throws', async () => {
 		let port = 0;
 		await expect(
-			withProvisionBridge(server, teamId, dataDir, async ({ bridge }) => {
+			withProvisionBridge(server, teamId, dataDir, 'node', async ({ bridge }) => {
 				port = bridge.hostPort;
 				throw new Error('boom');
 			}),
