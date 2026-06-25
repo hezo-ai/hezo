@@ -22,6 +22,9 @@ import { isAutoUpdateEnabled } from './services/updater';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import { handleWsSubscribe, handleWsUnsubscribe } from './services/ws-subscribe-handler';
 import { type StartupResult, startup } from './startup';
+import { getStartupProgress, markStartupError, setStartupPhase } from './startup-progress';
+import { serveStartupRequest } from './startup-serving';
+import { loadStaticBundle } from './static-assets';
 import { runSupervisor } from './supervisor';
 
 const log = logger.child('server');
@@ -186,13 +189,6 @@ async function canAccessTeam(auth: WsData['auth'], teamId: string): Promise<bool
 	return canAuthAccessTeam(dbRef, auth as AuthInfo, teamId);
 }
 
-function startingResponse(): Response {
-	return Response.json(
-		{ error: { code: 'STARTING', message: 'Server is starting — retry in a moment' } },
-		{ status: 503 },
-	);
-}
-
 void (async () => {
 	await shutdownPreviousRuntime();
 
@@ -212,6 +208,7 @@ void (async () => {
 		logsRef = result.logs;
 		containerLogStreamerRef = result.containerLogStreamer;
 		serverReady = true;
+		setStartupPhase('ready');
 		const url = `http://localhost:${result.port}`;
 		log.info(`Hezo server running at ${url} [${result.masterKeyState}]`);
 		if (config.open) {
@@ -244,6 +241,7 @@ void (async () => {
 		} else {
 			log.error('Startup failed, serving minimal app:', err);
 		}
+		markStartupError(err instanceof Error ? err.message : 'Unexpected startup error');
 		log.info(`Hezo server (minimal) starting on port ${config.port}...`);
 	}
 })();
@@ -252,8 +250,11 @@ export default {
 	port: config.port,
 	fetch: (req: Request, server: Bun.Server<WsConnectionData>) => {
 		const url = new URL(req.url);
-		if (!serverReady && url.pathname !== '/health') {
-			return startingResponse();
+		if (!serverReady) {
+			return serveStartupRequest(req, {
+				progress: getStartupProgress(),
+				loadBundle: loadStaticBundle,
+			});
 		}
 		if (url.pathname === '/ws') {
 			const token =

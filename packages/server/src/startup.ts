@@ -65,12 +65,17 @@ import { DockerClient } from './services/docker';
 import { extractBundledDockerContext } from './services/docker-assets';
 import { EgressProxy, loadOrCreateCA } from './services/egress';
 import { ImageBuildTracker, setSharedImageBuildTracker } from './services/image-build-tracker';
-import { pruneStaleBundledImages, setDockerBaseDir } from './services/image-registry';
+import {
+	pruneStaleBundledImages,
+	refreshPublishedAgentBaseImage,
+	setDockerBaseDir,
+} from './services/image-registry';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
 import { PricingService } from './services/pricing';
 import { SshAgentServer } from './services/ssh-agent';
 import { WebSocketManager } from './services/ws';
+import { setStartupPhase } from './startup-progress';
 import { loadStaticBundle } from './static-assets';
 import { HEZO_VERSION } from './version';
 
@@ -107,15 +112,19 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 
 	// `db` may be replaced by a fresh handle if migrations run against a copy and
 	// swap it in, so it's a `let` — every consumer below uses the post-migration handle.
+	setStartupPhase('database');
 	let db = await openPersistentDb(config.dataDir, { reset: config.reset });
 
 	await db.exec(BASE_SCHEMA);
+	setStartupPhase('migrations');
 	db = await runAvailableMigrations(db, config.dataDir);
+	setStartupPhase('seed');
 	await runSeed(db);
 
 	// Runtime model pricing: seed the table from the bundled snapshot if empty,
 	// load it into memory, and (unless disabled) refresh from the live LiteLLM
 	// feed in the background. Drives per-run cost across every runtime.
+	setStartupPhase('pricing');
 	const pricing = new PricingService(db);
 	await pricing.init({ refresh: !process.env.HEZO_SKIP_PRICING_REFRESH });
 
@@ -128,27 +137,45 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		docker = createFakeDockerClient(db);
 	} else {
 		docker = new DockerClient();
-		// A compiled binary has no repo checkout, so the agent-base image can't be
-		// built from disk (and is published to no registry to pull). Extract the
-		// embedded build context to the data dir and point the image resolver at it,
-		// so provisioning builds the image locally. No-op in dev/source (returns
-		// null — the resolver falls back to the repo's docker/ dir).
+		// A compiled binary has no repo checkout, so extract the embedded agent-base
+		// build context to the data dir and point the image resolver at it. This is
+		// the local-build fallback for when the published-image pull fails, and it's
+		// fast (writing files), so it stays on the critical path. No-op in dev/source
+		// (returns null — the resolver falls back to the repo's docker/ dir).
 		try {
 			const contextDir = await extractBundledDockerContext(config.dataDir);
 			if (contextDir) setDockerBaseDir(contextDir);
 		} catch (err) {
 			log.error('Failed to extract bundled agent-base build context (continuing):', err);
 		}
-		try {
-			const outcome = await pruneStaleBundledImages(docker);
-			if (outcome.removed.length > 0 || outcome.skipped.length > 0) {
-				log.info(
-					`bundled-image prune: kept=${outcome.kept.length} removed=${outcome.removed.length} skipped=${outcome.skipped.length}`,
-				);
-			}
-		} catch (err) {
-			log.error('bundled-image prune failed (continuing startup):', err);
-		}
+		// Prune stale bundled images and refresh the published agent-base image (so a
+		// long-running install picks up a newer release's :latest on restart — Docker
+		// caches :latest by name and never refreshes it on its own). The pull is
+		// network-bound and can take minutes on a cold cache, so run it in the
+		// BACKGROUND: it must not gate `serverReady` (the web UI, master-key unlock,
+		// and project creation are all usable without it). It's best-effort anyway —
+		// container provisioning pulls-then-builds on demand and falls back to a local
+		// build, so a missing/slow refresh self-heals on first use. No-op in dev/tests.
+		trackBackground(
+			(async () => {
+				try {
+					const outcome = await pruneStaleBundledImages(docker);
+					if (outcome.removed.length > 0 || outcome.skipped.length > 0) {
+						log.info(
+							`bundled-image prune: kept=${outcome.kept.length} removed=${outcome.removed.length} skipped=${outcome.skipped.length}`,
+						);
+					}
+				} catch (err) {
+					log.error('bundled-image prune failed (continuing startup):', err);
+				}
+				try {
+					const refreshed = await refreshPublishedAgentBaseImage(docker);
+					if (refreshed) log.info(`refreshed published agent-base image ${refreshed}`);
+				} catch (err) {
+					log.warn('agent-base image refresh failed (continuing startup):', err);
+				}
+			})(),
+		);
 	}
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
@@ -195,6 +222,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		containerLogStreamer,
 	});
 
+	setStartupPhase('workspace');
 	const { seedDefaultTeam, ensureChatMemoryDoc } = await import('./services/teams.js');
 	try {
 		await seedDefaultTeam({
