@@ -5,13 +5,19 @@ import {
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
 	INSTANCE_AGENT_SLUGS,
 } from '@hezo/shared';
-import agentSummaries from './agent-summaries.json' with { type: 'json' };
 
-const summaries: {
+interface AgentSummaries {
 	agents: Record<string, string>;
 	teams: Record<string, string>;
 	team_contexts: Record<string, Record<string, string>>;
-} = agentSummaries;
+}
+
+// Loaded via a literal dynamic import (read `.default`) rather than a static
+// import-attributes form: this is the JSON-loading shape that survives both
+// `bun build --compile` embedding and `bun --hot` reloads. The static
+// `with { type: 'json' }` variant leaves this dynamically-imported module's
+// namespace unpopulated after a hot reload. Mirrors loadBundledAgentRoles.
+let summaries: AgentSummaries;
 
 interface AgentTypeDef {
 	name: string;
@@ -181,6 +187,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 }
 
 export async function seedBuiltins(db: PGlite, roleDocs: Record<string, string>): Promise<void> {
+	summaries = (await import('./agent-summaries.json')).default as AgentSummaries;
 	const defs = buildAgentTypeDefs();
 	// The Coach is an instance-level role (like the CEO), so its prompt lives under
 	// _instance/, not in any team template.
