@@ -113,8 +113,36 @@ jobs:
       # egress-proxy / mcp-connections container suites now that the image is
       # present — followed by the Bun-native tier (test/bun/** under `bun test`,
       # gated to shard 1 by scripts/test.ts), which exercises runtime-sensitive
-      # code (e.g. egress TLS) on the production Bun runtime.
-      - run: bun run test --package server --shard ${{ matrix.shard }}/2
+      # code (e.g. egress TLS) on the production Bun runtime. --coverage writes
+      # lcov to packages/server/coverage (vitest) and coverage-bun (Bun tier).
+      - run: bun run test --package server --shard ${{ matrix.shard }}/2 --coverage
+      # Coveralls parallel build: each shard/tier uploads its own lcov under a
+      # unique flag-name with parallel:true; the coverage-finished job below
+      # closes the build so Coveralls merges them into one total. if:always() so
+      # partial coverage still uploads when a shard's tests fail
+      # (reportOnFailure:true guarantees the lcov exists).
+      - name: Upload backend coverage (vitest)
+        if: always()
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: packages/server/coverage/lcov.info
+          flag-name: backend-vitest-${{ matrix.shard }}
+          parallel: true
+          fail-on-error: false
+          allow-empty: true
+      # The Bun-native tier only runs on shard 1 (gated in scripts/test.ts), so
+      # its lcov only exists there.
+      - name: Upload backend Bun-native coverage
+        if: always() && matrix.shard == 1
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: packages/server/coverage-bun/lcov.info
+          flag-name: backend-bun
+          parallel: true
+          fail-on-error: false
+          allow-empty: true
 
   test-integration:
     runs-on: ubuntu-latest
@@ -138,7 +166,18 @@ jobs:
       - run: bun install --frozen-lockfile
       # ubuntu-latest is 4 cores; 10 forks each owning a PGlite + Hono boot
       # produces enough contention that random `findBy*` queries time out.
-      - run: bun run test --package web --concurrency 4 --shard ${{ matrix.shard }}/3
+      - run: bun run test --package web --concurrency 4 --shard ${{ matrix.shard }}/3 --coverage
+      # Part of the same Coveralls parallel build; closed by coverage-finished.
+      - name: Upload web coverage
+        if: always()
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: packages/web/coverage/lcov.info
+          flag-name: web-${{ matrix.shard }}
+          parallel: true
+          fail-on-error: false
+          allow-empty: true
 
   test-browser:
     runs-on: ubuntu-latest
@@ -191,3 +230,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: '[ "${{ needs.test-integration.result }}" = "success" ]'
+
+  # Closes the Coveralls parallel build once every shard/tier has uploaded, so
+  # Coveralls merges them into a single coverage total for the commit. Runs
+  # regardless of test outcome (if:always) so a failed shard still finalizes the
+  # partial coverage. Not a required check — coverage reports on the PR but never
+  # blocks a merge. Requires the repo to be enabled on Coveralls (see AGENTS.md).
+  coverage-finished:
+    if: always()
+    needs: [test-backend, test-integration]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close Coveralls parallel build
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          parallel-finished: true
+          carryforward: "backend-vitest-1,backend-vitest-2,backend-bun,web-1,web-2,web-3"
+          fail-on-error: false

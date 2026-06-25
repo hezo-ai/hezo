@@ -63,6 +63,8 @@
 			"!test/test-run-order.json",
 			"!test-results",
 			"!playwright-report",
+			"!**/coverage",
+			"!**/coverage-bun",
 			"!**/routeTree.gen.ts",
 			"!**/static"
 		]
