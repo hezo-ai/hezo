@@ -110,7 +110,7 @@ a 409 `DESIGNATED_REPO_IMMUTABLE` guard).
 an agent-maintained `progress_summary`. Numbering is atomic via `project_task_counters`.
 `task_dependencies` is the many-to-many blocking graph (`UNIQUE`, no self-blocks).
 `task_comments` is **polymorphic** over a `content_type` enum + `content` JSONB — `text`,
-`system` (timeline entries like `status_change`/`task_link`), `execution` (auto-written
+`system` (timeline entries like `status_change`/`task_link`), `run` (auto-written
 on run completion), `preview`, `action`,
 `connect_required`, `credential_request`. Each comment carries a `public_id` slug for
 `#comment-<id>` deep-links. `comment_reactions` holds emoji reactions.
@@ -118,11 +118,12 @@ on run completion), `preview`, `action`,
 **Secrets, OAuth, MCP connectors.** `secrets` stores AES-256-GCM ciphertext gated by
 `allowed_hosts` (§ 7). `oauth_connections` records connected GitHub/SaaS accounts; their
 tokens *ride the `secrets` table* (no token column). `mcp_connections` is the catalog of
-SaaS/local MCP servers injected into runs (§ 9). All three use the same
-**nullable-`team_id` + partial-unique-index** pattern: `team_id NULL` = an instance-level
-row shared across teams; the run-time loader resolves the most specific scope on a name
-clash (**project > team > instance**). `team_ssh_keys` is the exception — one Ed25519 key
-**per project**, encrypted on the backing team row, never in the vault (§ 8).
+SaaS/local MCP servers injected into runs (§ 9). All three are **instance-global** — a
+single shared catalog keyed by a globally-unique name (`secrets.name` /
+`mcp_connections.name` / `oauth_connections (provider, provider_account_id)`), with no
+`team_id` column, so every team's runs see the same set. `team_ssh_keys` is the exception
+— one Ed25519 key **per team** (`UNIQUE(team_id)`, and therefore per project given the
+1:1), encrypted on the team row, never in the vault (§ 8).
 
 **Runs, wakeups, sessions.** `agent_wakeup_requests` is the trigger queue, with
 idempotency keys and `coalesced_count` merging (§ 5). `heartbeat_runs` is one row per
@@ -286,7 +287,8 @@ Work reaches an agent through the **wakeup → job-manager → agent-runner** pi
 
 **Wakeups.** Every trigger is an `agent_wakeup_requests` row. Sources: `heartbeat`
 (scheduled fallback tick), `timer` (recovery: orphan detector, retry), `assignment`,
-`mention`, `reply`, `comment` (opt-in assignee wake), `on_demand`, `automation`.
+`mention`, `reply`, `comment` (opt-in assignee wake), `credential_provided` (a human
+supplied a requested credential), `on_demand`, `automation`.
 Event-based triggers wake agents immediately; scheduled heartbeats are the idle-agent
 fallback. A scheduled heartbeat that fires but finds no actionable task is a no-op that
 still **advances `last_heartbeat_at`** (the same field a completed run stamps), so the
@@ -398,8 +400,9 @@ servers, and wires the stop-hook. OpenCode and Kimi take the prompt as a CLI **a
 to end its turn and **blocks** it (keeping the same headless exec alive) when it's bailing
 on failing tests, calling problems "out of scope", or deferring without filing a sub-task.
 The rule body (`STOP_HOOK_RULES` in `stop-hook-prompt.ts`) is identical across runtimes;
-judge models are hardcoded per provider (Sonnet / gpt-4o-mini / gemini-1.5-flash /
-`kimi-for-coding`). Wiring differs by runtime's native hook: Claude Code uses a
+judge models are hardcoded per provider (Anthropic `claude-sonnet-4-6` / DeepSeek
+`deepseek-v4-pro` / Z.ai `GLM-4.7` / OpenAI `gpt-4o-mini` / Google `gemini-1.5-flash` /
+Kimi `kimi-for-coding`). Wiring differs by runtime's native hook: Claude Code uses a
 `type: "prompt"` `Stop` hook (makes the judge call itself); Codex/Gemini/Kimi use command
 scripts (`buildCodexJudgeScript`/`buildGeminiJudgeScript`/`buildKimiJudgeScript`) that
 call the provider API. **OpenCode is the sole exception — no judge** (its plugin API can't
@@ -582,7 +585,7 @@ domain-separated so signatures can't be replayed or cross-purposed; on unlock
   admin-equivalent for data and instance settings but **not** for managing API keys
   themselves — minting, approving, and revoking stay human-superuser-only. Having no home
   project, a key must name the `project` on project-scoped tools.
-- **Agent JWT** — minted per run, carrying `{ member_id, team_id, run_id, exp }`. Validated
+- **Agent JWT** — minted per run, carrying `{ member_id, team_id, run_id, project_id, cross_project, exp }`. Validated
   on every call against the **`heartbeat_runs` row** (`id=run_id`, member/team match,
   status `running`); when the run finalizes the token is rejected on the next call —
   revocation for free, no token store.
@@ -737,7 +740,7 @@ the user-JWT (human/browser) surface. `GET /SKILL.md` serves the
 manifest that teaches an external agent how to use it — including the connect/register
 flow — and `GET /llms.txt` points to it. The matching **human** reference — a full
 tool-by-tool page with parameters and return shapes — is generated from the same registry
-by `scripts/build-mcp-reference.ts` (run under `bun run build:docs`, guarded by
+by `packages/server/scripts/build-mcp-reference.ts` (run under `bun run build:docs`, guarded by
 `mcp-reference.test.ts`) and committed as `docs/reference/mcp-api.md`. Authorization for
 both the REST and MCP surfaces is § 10.
 

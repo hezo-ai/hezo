@@ -129,9 +129,10 @@ service.
 ## Ports
 
 - **3100** — the Hezo server and web app (configurable with `--port`).
-- **4100** — Hezo Connect, the gateway that brokers account sign-ins (such as GitHub).
 
-Only the server port needs to be reachable by the people using Hezo.
+This is the only port Hezo listens on, and the only one that needs to be reachable by
+the people using Hezo. Account sign-ins (such as GitHub) use per-instance OAuth that the
+server brokers itself — there is no separate gateway service or port.
 
 ## Updating
 

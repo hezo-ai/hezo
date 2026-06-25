@@ -7,7 +7,7 @@ section: Getting started
 # First-run setup
 
 The first time you open Hezo at **http://localhost:3100**, a short setup flow gets you
-to a working instance: create your master key, sign in, and connect a model.
+to a working instance: create your master key and connect a model.
 
 ## 1. Create your master key
 
@@ -25,12 +25,11 @@ read until you provide the phrase again on the unlock screen. You can also suppl
 non-interactively with `--master-key` / the `HEZO_MASTER_KEY` environment variable —
 useful for servers (see [Deploying to the cloud](/docs/deployment/cloud)).
 
-## 2. Sign in
+Setting the master key also signs you in as the instance operator — the board account
+you'll use to oversee teams, approve work, and chat with the CEO. There's no separate
+account sign-up step.
 
-Create your operator account. This is the human board account you'll use to oversee
-teams, approve work, and chat with the CEO.
-
-## 3. Connect a model
+## 2. Connect a model
 
 Agents need a model to run. Add at least one **AI provider** — paste an API key (or
 connect a subscription where supported) for Anthropic (Claude), OpenAI (ChatGPT),

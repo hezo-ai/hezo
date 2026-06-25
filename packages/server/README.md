@@ -7,7 +7,6 @@ Main Hezo application server. Embeds a PGlite database, runs migrations on start
 - [Hono](https://hono.dev/) — HTTP framework
 - [PGlite](https://electric-sql.com/docs/api/pglite) — embedded Postgres with filesystem persistence
 - AES-256-GCM — encryption for secrets and master key canary
-- [@hiddentao/zip-json](https://github.com/hiddentao/zip-json) — migration bundling
 
 ## Setup
 
@@ -28,12 +27,14 @@ Starts the server on port 3100 with hot reload. In dev, PGlite data persists at 
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--port <n>` | `3100` | HTTP listen port |
-| `--data-dir <path>` | `~/.hezo` | Data directory for PGlite and assets |
-| `--master-key <key>` | — | Provide master key to unlock on startup |
-| `--connect-url <url>` | `http://localhost:4100` | Hezo Connect OAuth gateway URL |
-| `--connect-api-key <key>` | — | API key for centrally hosted Connect |
-| `--reset` | `false` | Wipe database and start fresh |
+| `--port <n>` | `3100` | HTTP listen port (env: `HEZO_PORT`) |
+| `--data-dir <path>` | `~/.hezo` | Data directory for PGlite and assets (env: `HEZO_DATA_DIR`) |
+| `--master-key <phrase>` | — | Twelve-word master key to set up/unlock on startup (env: `HEZO_MASTER_KEY`) |
+| `--web-url <url>` | same origin | Public base URL for sign-in redirects (env: `HEZO_WEB_URL`) |
+| `--reset` | `false` | Start fresh (existing `pgdata` is renamed aside, not deleted) (env: `HEZO_RESET`) |
+| `--open` | `false` | Open the web app in the browser on startup (env: `HEZO_OPEN`) |
+| `--log-level <level>` | `info` | Logging verbosity: `debug`, `info`, `warn`, `error` (env: `HEZO_LOG_LEVEL`) |
+| `--keep-old-containers` | `false` | Keep old project containers instead of removing them, for debugging (env: `HEZO_KEEP_OLD_CONTAINERS`) |
 
 ## Master Key
 
@@ -52,10 +53,10 @@ The master key encrypts all secrets using AES-256-GCM. It is held in memory only
 
 ## Migrations
 
-SQL migrations are bundled into the binary at build time using `@hiddentao/zip-json`.
+SQL migrations are bundled into the binary at build time as a JSON map.
 
 ```bash
-bun run build:migrations    # compress migrations/*.sql into src/db/migrations-bundle.json
+bun run build:migrations    # bundle migrations/*.sql into src/db/migrations-bundle.json
 ```
 
 On startup, the migration runner:
@@ -71,15 +72,15 @@ Migrations are forward-only — no rollbacks. Use `--reset` during development t
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Returns `{ "ok": true }` |
-| GET | `/api/status` | Returns `{ "masterKeyState": "...", "version": "0.1.0" }` |
+| GET | `/api/status` | Returns `{ "masterKeyState": "...", "version": "<server version>" }` |
 
 ## Testing
 
 ```bash
-bun test
+bun run test
 ```
 
-Tests use in-memory PGlite instances — no external database or Docker needed.
+Tests use in-memory PGlite instances — no external database needed.
 
 **Test helpers:**
 - `createTestDb()` — fresh in-memory PGlite with base schema applied

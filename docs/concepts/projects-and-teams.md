@@ -36,9 +36,10 @@ Just a **Captain** — the minimal baseline. Hire roles as you need them.
   Captain, this Captain produces a plain **project plan** rather than a formal product
   requirements document (PRD).
 
-### Software development team
+### Startup team
 
-A **Captain** plus a full delivery roster:
+Named **Startup** in the template picker, this is a **Captain** plus a full
+software-development roster:
 
 - [Captain](https://github.com/hezo-ai/hezo/blob/main/agents/software-development/captain.md) —
   leads the team, breaks the goal into tickets, and coordinates delivery.

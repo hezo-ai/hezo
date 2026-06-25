@@ -9,7 +9,7 @@ section: AI models & MCP
 The other side of [Hezo's MCP server](/docs/mcp/hezo-mcp-server): you can give Hezo's
 own agents access to **external MCP servers**, so they can use the tools you already
 rely on — web search, a project tracker, a CMS, a filesystem, and so on. Once a
-connection is registered it's available to that team's agent runs and survives
+connection is registered it's available to your agents' runs and survives
 container rebuilds.
 
 ## Remote (HTTP) servers
@@ -32,16 +32,9 @@ choice.
 
 ## Where a connection applies
 
-Connections can be registered at three scopes:
-
-- **Instance-wide** — shared with every team.
-- **Team** — available to one team's projects.
-- **Project** — available to a single project, and shadows a team or instance entry of
-  the same name.
-
-When the same name exists at more than one scope, the most specific one wins
-(**project, then team, then instance**) — handy for swapping in a sandbox server for one
-project while everything else uses the shared one.
+MCP connections are **instance-wide**: there's a single shared catalog and each
+connection name is unique across the instance. Once you add a server it's available to
+every team's agent runs.
 
 ## Adding a connection
 

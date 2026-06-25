@@ -73,5 +73,5 @@ environment variable.
 ## Verify the install
 
 ```sh
-hezo --version
+hezo --help
 ```

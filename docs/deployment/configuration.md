@@ -19,7 +19,7 @@ handy for baking defaults into a service definition while still overriding per r
 | `--data-dir <path>` | `HEZO_DATA_DIR` | `~/.hezo/` | Where Hezo stores its database, encrypted secrets, and assets. |
 | `--master-key <phrase>` | `HEZO_MASTER_KEY` | — | The twelve-word master key, to set up or unlock without the web gate. |
 | `--web-url <url>` | `HEZO_WEB_URL` | same origin | Public base URL, used so account sign-ins redirect back correctly. |
-| `--reset` | `HEZO_RESET` | off | Wipe the database and start fresh. |
+| `--reset` | `HEZO_RESET` | off | Start fresh with an empty database (the existing `pgdata` is renamed aside, not deleted). |
 | `--open` | `HEZO_OPEN` | off | Open the web app in your browser on startup. |
 | `--log-level <level>` | `HEZO_LOG_LEVEL` | `info` | Logging verbosity: `debug`, `info`, `warn`, or `error`. |
 | `--keep-old-containers` | `HEZO_KEEP_OLD_CONTAINERS` | off | Keep old project containers instead of removing them — for debugging a crashed container. |

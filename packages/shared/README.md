@@ -7,21 +7,20 @@ Shared TypeScript types and constants used across Hezo packages.
 Import from `@hezo/shared` in any workspace package:
 
 ```typescript
-import { DEFAULT_PORT, AgentRuntime, type HezoConfig } from "@hezo/shared";
+import { DEFAULT_PORT, AgentRuntime, type MasterKeyState } from "@hezo/shared";
 ```
 
 ## Exports
 
 ### Types
 
-- `ConnectConfig` — OAuth gateway configuration
 - `MasterKeyState` — `"unset" | "locked" | "unlocked"`
 
 ### Enums
 
 All enums use the `as const` object pattern (not TypeScript `enum`):
 
-`MemberType`, `AgentRuntime`, `AgentStatus`, `TaskStatus`, `TaskPriority`, `CommentContentType`, `ApprovalType`, `ApprovalStatus`, `MembershipRole`, `PlatformType`, `ConnectionStatus`, and more.
+`MemberType`, `AgentRuntime`, `AgentRuntimeStatus`, `TaskStatus`, `TaskPriority`, `CommentContentType`, `ApprovalType`, `ApprovalStatus`, `MembershipRole`, `PlatformType`, `ConnectionStatus`, and more.
 
 ### Constants
 

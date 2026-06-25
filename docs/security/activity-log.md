@@ -23,7 +23,7 @@ The log captures every state-changing action on the project:
 - **Connectors** — MCP connections and OAuth account connections changing.
 - **Outbound traffic** — every request an agent made that used one of your secrets (see below).
 
-Each entry names the **actor** (you, an agent, the system, or a connected external agent),
+Each entry names the **actor** (you, an agent, the system, or an external MCP client),
 so a human action and an automated one are always told apart.
 
 ## Reading the log
@@ -32,7 +32,7 @@ Open a project and choose **Activity** in the sidebar. Entries are listed newest
 three columns:
 
 - **Time** — when it happened.
-- **Actor** — who did it, with a badge distinguishing a person from an agent.
+- **Actor** — who did it. A badge flags human admins and external MCP clients (API keys); the actor's name is always shown.
 - **Activity** — a plain-language description ("Created task TO-4", "Changed status of TO-4
   from Backlog to In Progress"). Most rows link straight to the task, agent, or page they
   concern.
