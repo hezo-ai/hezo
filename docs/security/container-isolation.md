@@ -18,16 +18,20 @@ work — the blast radius of anything going wrong is contained to a single proje
 
 From inside the container, agents **cannot** reach:
 
-- your **host filesystem** (only the project's own workspace is available),
-- your **host processes or devices**, or
-- the **network**, except through Hezo's controlled exit (below).
+- your **host filesystem** (only the project's own workspace is available), or
+- your **host processes or devices**.
 
-## All network traffic is forced through the egress proxy
+Outbound network access is handled separately, through Hezo's egress proxy (below).
 
-Agents don't get raw network access. Every outbound connection is routed through Hezo's
-**egress proxy** — there's no path around it. That's what makes the
-[secret protection](/docs/security/secret-protection) guarantee hold: an agent can't
-open a side channel to leak data, because the proxy is the only way out.
+## Outbound traffic goes through the egress proxy
+
+Hezo points the container's outbound traffic at its **egress proxy** using the standard
+`HTTP(S)_PROXY` settings. That's what makes the
+[secret protection](/docs/security/secret-protection) guarantee hold: your real secrets
+are only ever materialised at the proxy — agents inside the container hold placeholders,
+never the actual values — and the proxy enforces which hosts each secret may be sent to.
+(Calls to your LLM provider are the one exception: they go direct, with the model
+credentials injected into the run.)
 
 ## Keys never enter the container
 
@@ -43,7 +47,7 @@ them:
 ## What this gives you
 
 Putting the three pillars together — placeholders + egress scoping, encryption at rest,
-and container isolation — a compromised agent is boxed in on every side: it can't read
-your secrets, can't reach your host, can't escape its project, and can't smuggle data
-out. You get the upside of autonomous agents running real code without betting your
-system on every line of it being safe.
+and container isolation — a compromised agent is boxed in: it can't read your secrets
+(they're only ever materialised at the proxy, behind host allow-lists), can't reach your
+host, and can't escape its project. You get the upside of autonomous agents running real
+code without betting your system on every line of it being safe.

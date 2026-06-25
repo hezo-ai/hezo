@@ -47,13 +47,13 @@ to an earlier version. After restoring, start the matching (older) binary. See
 hezo --reset
 ```
 
-Wipes the database and starts fresh. This is irreversible and is the only path forward
-if the master key is lost.
+Starts fresh with an empty database. Your previous data isn't deleted — the existing
+`pgdata` is renamed aside on disk — but it stays encrypted with the old master key, so
+this is effectively the only path forward once the master key is lost.
 
 ## Info
 
 ```sh
-hezo --version       # print the installed version
 hezo --help          # show all commands and flags
 ```
 

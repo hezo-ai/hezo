@@ -49,5 +49,7 @@ the instance:
 hezo --reset
 ```
 
-This **wipes the database** and starts fresh. There's no other recovery path for a lost
-master key, so treat `--reset` as the last resort it is.
+This **starts fresh with an empty database**. Your previous data isn't deleted — the
+existing `pgdata` is renamed aside on disk as `pgdata.corrupt.<timestamp>` — but it stays
+encrypted with the old master key, so there's no recovery path for a lost key. Treat
+`--reset` as the last resort it is.

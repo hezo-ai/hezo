@@ -6,8 +6,9 @@ section: Getting started
 
 # Your first project
 
-In Hezo you don't configure a project by filling in forms — you **talk to the CEO**.
-The CEO is the agent that handles intake for every new piece of work.
+The main way to start a project in Hezo is to **talk to the CEO** rather than fill in a
+long form — the CEO is the agent that handles intake for every new piece of work. (A
+superuser can also create one directly from the web app's "Create" dialog.)
 
 ## 1. Tell the CEO what you want
 
