@@ -290,20 +290,20 @@ describe('ensureImage', () => {
 			pullImage: vi.fn().mockResolvedValue(undefined),
 		} as unknown as DockerClient;
 		const resolveLocal = vi.fn().mockReturnValue({
-			image: 'ghcr.io/hezo-ai/agent-base:1.2.3',
+			image: 'ghcr.io/hezo-ai/agent-base:latest',
 			dockerfile: '/repo/docker/Dockerfile.agent-base',
 			context: '/repo/docker',
 			bundleSourceHash: 'a'.repeat(64),
 		});
 		const build = vi.fn();
 
-		await ensureImage(docker, 'ghcr.io/hezo-ai/agent-base:1.2.3', {
+		await ensureImage(docker, 'ghcr.io/hezo-ai/agent-base:latest', {
 			resolveLocal,
 			build,
 			preferPull: true,
 		});
 
-		expect(docker.pullImage).toHaveBeenCalledWith('ghcr.io/hezo-ai/agent-base:1.2.3');
+		expect(docker.pullImage).toHaveBeenCalledWith('ghcr.io/hezo-ai/agent-base:latest');
 		expect(build).not.toHaveBeenCalled();
 	});
 
@@ -313,14 +313,14 @@ describe('ensureImage', () => {
 			pullImage: vi.fn().mockRejectedValue(new Error('manifest unknown')),
 		} as unknown as DockerClient;
 		const resolveLocal = vi.fn().mockReturnValue({
-			image: 'ghcr.io/hezo-ai/agent-base:1.2.3',
+			image: 'ghcr.io/hezo-ai/agent-base:latest',
 			dockerfile: '/repo/docker/Dockerfile.agent-base',
 			context: '/repo/docker',
 			bundleSourceHash: 'a'.repeat(64),
 		});
 		const build = vi.fn().mockResolvedValue(undefined);
 
-		await ensureImage(docker, 'ghcr.io/hezo-ai/agent-base:1.2.3', {
+		await ensureImage(docker, 'ghcr.io/hezo-ai/agent-base:latest', {
 			resolveLocal,
 			build,
 			preferPull: true,
@@ -328,7 +328,7 @@ describe('ensureImage', () => {
 
 		expect(docker.pullImage).toHaveBeenCalledTimes(1);
 		expect(build).toHaveBeenCalledWith(
-			'ghcr.io/hezo-ai/agent-base:1.2.3',
+			'ghcr.io/hezo-ai/agent-base:latest',
 			'/repo/docker',
 			'/repo/docker/Dockerfile.agent-base',
 			expect.objectContaining({ labels: { 'hezo.bundle.sha': 'a'.repeat(64) } }),
@@ -344,7 +344,7 @@ describe('ensureImage', () => {
 		const build = vi.fn();
 
 		await expect(
-			ensureImage(docker, 'ghcr.io/hezo-ai/agent-base:1.2.3', {
+			ensureImage(docker, 'ghcr.io/hezo-ai/agent-base:latest', {
 				resolveLocal,
 				build,
 				preferPull: true,
