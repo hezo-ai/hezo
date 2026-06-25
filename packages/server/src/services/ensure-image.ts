@@ -17,6 +17,12 @@ export interface EnsureImageDeps {
 	onLine?: BuildOnLine;
 	/** Receives build start/progress/finish; defaults to the process singleton. */
 	tracker?: ImageBuildTracker | null;
+	/**
+	 * When true, pull `image` first and only build locally if the pull fails.
+	 * Set for the managed agent-base image published per release (the version-
+	 * pinned GHCR ref). For any other image a pull failure stays terminal.
+	 */
+	preferPull?: boolean;
 }
 
 interface InFlightBuild {
@@ -41,6 +47,22 @@ export async function ensureImage(
 
 	const resolver = deps.resolveLocal ?? resolveLocalImage;
 	const local = resolver(image);
+
+	// Managed agent-base in a release binary: prefer the image published for this
+	// version, falling back to a local build when the pull fails (not published
+	// yet, offline, private fork). Only swallow the pull error when a local spec
+	// lets us rebuild; otherwise a failed pull stays terminal.
+	if (deps.preferPull) {
+		try {
+			await docker.pullImage(image);
+			return;
+		} catch (err) {
+			if (!local) throw err;
+			const msg = err instanceof Error ? err.message : String(err);
+			log.warn(`Pull of ${image} failed; building agent-base locally: ${msg}`);
+		}
+	}
+
 	if (local) {
 		await buildLocalImageOnce(docker, local, deps);
 		return;

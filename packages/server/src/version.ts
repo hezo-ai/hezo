@@ -22,3 +22,12 @@ function readDevVersion(): string {
 }
 
 export const HEZO_VERSION: string = process.env.HEZO_VERSION ?? readDevVersion();
+
+/**
+ * True only in a compiled release binary, where `bun build --define` injected
+ * `process.env.HEZO_VERSION` (so the lookup folds to a literal). In dev
+ * (`bun run`) and tests the env var is absent, so this is `false` — the
+ * agent-base image is then always built from the working-tree Dockerfile rather
+ * than pulled from the registry, so Dockerfile edits take effect immediately.
+ */
+export const IS_PACKAGED_BUILD: boolean = process.env.HEZO_VERSION !== undefined;

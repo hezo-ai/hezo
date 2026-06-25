@@ -654,13 +654,21 @@ asset is pulled in as a static import and served **from memory**: migrations
 (`migrations-bundle.json`), agent roles (`agents-bundle.json`), the React frontend
 (`static-bundle.json`, base64), and the PGlite runtime (`postgres.wasm`/`.data`
 embedded). The **agent-base Docker build context** (`docker/`) is embedded the same
-way (`docker-bundle.json`, base64) because the `hezo/agent-base` image is published to
-no registry — at startup the binary extracts it to `<dataDir>/agent-base-context` and
-points the image resolver (`setDockerBaseDir`) at it, so the first container provision
-**builds the image locally** instead of failing to pull. In dev (`bun run`) the bundles
-don't exist and every loader falls back to the filesystem (the docker context to the
-repo's `docker/` dir). The version is injected at compile time
-(`--define process.env.HEZO_VERSION`) and surfaced at `/api/status`.
+way (`docker-bundle.json`, base64) so the image can always be built on the host as a
+fallback. A release binary first **pulls** the image published for its own version —
+`ghcr.io/hezo-ai/agent-base:<version>` (multi-arch amd64/arm64), pushed per release by
+`.github/workflows/release-publish.yml` to a public GHCR package — and only **builds
+locally** when that pull fails (not published yet, offline, private fork): at startup it
+extracts the embedded context to `<dataDir>/agent-base-context` and points the resolver
+(`setDockerBaseDir`) at it, so the fallback build needs no checkout. `resolveAgentBaseImage`
+(`image-registry.ts`) maps the stored `hezo/agent-base:latest` sentinel to the
+version-pinned GHCR ref with `preferPull`, and `ensureImage` does pull-then-build; custom
+per-project `docker_base_image` values are pulled as-is. Pulling is gated on
+`IS_PACKAGED_BUILD` (set by the compile-time `--define process.env.HEZO_VERSION`), so in
+dev (`bun run`) and tests the bundles don't exist, loaders fall back to the filesystem
+(docker context → repo's `docker/` dir), and the image is always built from the
+working-tree Dockerfile so edits take effect immediately. The version is also surfaced at
+`/api/status`.
 
 **Migrations.** Real, tracked, **append-only** SQL under `packages/server/migrations/`
 (`001_initial_schema.sql` is the frozen baseline — never edit a shipped migration; each is

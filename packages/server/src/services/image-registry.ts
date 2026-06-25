@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logger } from '../logger';
+import { HEZO_VERSION, IS_PACKAGED_BUILD } from '../version';
 import type { DockerClient } from './docker';
 
 const log = logger.child('image-registry');
@@ -12,12 +13,71 @@ interface LocalImageSpec {
 	context: string;
 }
 
-const LOCAL_IMAGES: Record<string, LocalImageSpec> = {
-	'hezo/agent-base:latest': {
-		dockerfile: 'docker/Dockerfile.agent-base',
-		context: 'docker',
-	},
+/**
+ * The DB sentinel / default `projects.docker_base_image`. At provision time
+ * `resolveAgentBaseImage` maps it to either the published GHCR image (in a
+ * release binary whose version is published) or a local build of `AGENT_BASE_SPEC`.
+ */
+export const MANAGED_AGENT_BASE_IMAGE = 'hezo/agent-base:latest';
+
+/**
+ * Registry repo the agent-base image is published to — one tag per release
+ * (`<repo>:<version>`), pushed by `.github/workflows/release-publish.yml`. The
+ * server pulls `<repo>:<HEZO_VERSION>` anonymously, so the GHCR package must be
+ * public.
+ */
+export const AGENT_BASE_GHCR_REPO = 'ghcr.io/hezo-ai/agent-base';
+
+/**
+ * Build spec (Dockerfile + context, relative to the repo root or the extracted
+ * bundle dir) for the agent-base image — used for the dev/local build and as the
+ * fallback when pulling the published image fails.
+ */
+const AGENT_BASE_SPEC: LocalImageSpec = {
+	dockerfile: 'docker/Dockerfile.agent-base',
+	context: 'docker',
 };
+
+const LOCAL_IMAGES: Record<string, LocalImageSpec> = {
+	[MANAGED_AGENT_BASE_IMAGE]: AGENT_BASE_SPEC,
+};
+
+/** A plain `MAJOR.MINOR.PATCH` version, matching the no-`v`-prefix release tags
+ *  cut by `release-publish.yml`. Dev/test versions (`0.0.0-dev`, pre-release, …)
+ *  don't match, so they never resolve to a published image. */
+export function isReleaseVersion(version: string): boolean {
+	return /^\d+\.\d+\.\d+$/.test(version);
+}
+
+/**
+ * The published agent-base ref for the running build, or `null` when none should
+ * exist — i.e. anything but a compiled release binary at a real release version
+ * (dev, tests, pre-release builds). When `null`, the managed image is always
+ * built locally. Params default to the module constants; they're injectable so
+ * the pure logic is unit-testable without env munging.
+ */
+export function publishedAgentBaseRef(
+	version: string = HEZO_VERSION,
+	packaged: boolean = IS_PACKAGED_BUILD,
+): string | null {
+	return packaged && isReleaseVersion(version) ? `${AGENT_BASE_GHCR_REPO}:${version}` : null;
+}
+
+/**
+ * Resolve a project's stored `docker_base_image` to the image to actually
+ * pull/build and run a container from. For the managed default in a release
+ * binary, prefer the published GHCR image (pull, with a local-build fallback);
+ * custom per-project images are returned untouched and never pulled-as-managed.
+ */
+export function resolveAgentBaseImage(
+	storedImage: string,
+	publishedRef: string | null = publishedAgentBaseRef(),
+): { image: string; preferPull: boolean } {
+	if (storedImage === MANAGED_AGENT_BASE_IMAGE && publishedRef) {
+		return { image: publishedRef, preferPull: true };
+	}
+	return { image: storedImage, preferPull: false };
+}
 
 /**
  * Label key stamped onto every locally-built bundled image. The value is the
@@ -71,8 +131,16 @@ export function findRepoRoot(startDir?: string): string | null {
 	}
 }
 
-export function resolveLocalImage(image: string): ResolvedLocalImage | null {
-	const spec = LOCAL_IMAGES[image];
+export function resolveLocalImage(
+	image: string,
+	publishedRef: string | null = publishedAgentBaseRef(),
+): ResolvedLocalImage | null {
+	// The managed sentinel maps to the bundled spec directly; the published GHCR
+	// ref for this build maps to the same spec so a failed pull can fall back to a
+	// local build of the identical Dockerfile/context. The published ref is
+	// deliberately not in LOCAL_IMAGES so `pruneStaleBundledImages` never removes a
+	// pulled (label-less) image — version-in-tag handles staleness across upgrades.
+	const spec = LOCAL_IMAGES[image] ?? (image === publishedRef ? AGENT_BASE_SPEC : undefined);
 	if (!spec) return null;
 
 	const root = dockerBaseDirOverride ?? findRepoRoot();
