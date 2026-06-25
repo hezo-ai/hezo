@@ -15,6 +15,7 @@ import { MasterKeyGate } from '../components/master-key-gate';
 import { ProjectRail } from '../components/project-rail';
 import { ProjectSidebar } from '../components/project-sidebar';
 import { MasterKeyStep, SetupGate } from '../components/setup/setup-wizard';
+import { StartingScreen } from '../components/starting-screen';
 import { UpdateBanner } from '../components/update-banner';
 import { SocketProvider } from '../contexts/socket-context';
 import { useActiveProject } from '../hooks/use-active-project';
@@ -50,9 +51,15 @@ function AppShell() {
 		}
 	}, [status?.masterKeyState, navigate]);
 
+	// The server is still booting (compiled binary serves the SPA shell during
+	// startup). Show the boot phase and keep polling rather than the bare spinner.
+	if (status?.starting) {
+		return <StartingScreen phase={status.phase} message={status.message} detail={status.detail} />;
+	}
+
 	if (isPending || isFetching) return <Spinner />;
 
-	if (isError || !status) {
+	if (isError || !status || !status.masterKeyState) {
 		const message =
 			(error as { message?: string } | null)?.message ??
 			'Could not reach the server. If you just reset the database, wait a few seconds and retry.';
