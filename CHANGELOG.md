@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.3 - 2026-06-25
+
+### Features
+
+- **docker:** fetch agent-base :latest (refreshed at startup) instead of the version tag ([#405](https://github.com/hezo-ai/hezo/pull/405))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.6.2...0.6.3
+
 ## 0.6.2 - 2026-06-25
 
 ### Features
