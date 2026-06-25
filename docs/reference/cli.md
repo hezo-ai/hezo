@@ -28,8 +28,13 @@ hezo --port 8080                 # listen on a different port
 hezo --data-dir /var/lib/hezo    # use a specific data directory
 hezo --master-key "<phrase>"     # set up or unlock without the web gate
 hezo --web-url https://hezo.example.com   # public base URL for sign-in redirects
-hezo --open                      # open the web app in your browser on start
+hezo --no-open                   # don't open the web app in your browser on start
 ```
+
+On a desktop machine Hezo opens the web app in your default browser once the server is
+ready. It skips this automatically in environments without a browser — CI, containers,
+SSH sessions, and headless Linux (no `DISPLAY`/`WAYLAND_DISPLAY`) — and logs where to
+point your browser instead. Use `--no-open` (or `HEZO_OPEN=0`) to turn it off.
 
 ## Restore a snapshot
 

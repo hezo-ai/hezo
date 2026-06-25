@@ -1,10 +1,12 @@
+import { existsSync } from 'node:fs';
 import type { PGlite } from '@electric-sql/pglite';
-import { AuthType, DEFAULT_WEB_PORT } from '@hezo/shared';
+import { AuthType } from '@hezo/shared';
 import { app } from './app';
 import { parseConfig, runRestore } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
 import { PgDataCorruptError } from './db/client';
 import { DbNewerThanAppError, MigrationFailedError } from './db/migrate-errors';
+import { browserAvailable, openBrowser } from './lib/open-browser';
 import type { AuthInfo } from './lib/types';
 import { logger, setLogLevel } from './logger';
 import { canAuthAccessTeam, loadAdminAuth, verifyToken } from './middleware/auth';
@@ -213,7 +215,20 @@ void (async () => {
 		const url = `http://localhost:${result.port}`;
 		log.info(`Hezo server running at ${url} [${result.masterKeyState}]`);
 		if (config.open) {
-			Bun.spawn(['open', `http://localhost:${DEFAULT_WEB_PORT}`]);
+			// In dev the SPA is served by Vite (config.webUrl); the compiled
+			// binary serves it from the server port. Prefer the configured web URL.
+			const target = config.webUrl || url;
+			const decision = browserAvailable({
+				platform: process.platform,
+				env: process.env,
+				hasDockerEnv: existsSync('/.dockerenv'),
+			});
+			if (decision.available) {
+				log.info(`Opening ${target} in your browser…`);
+				openBrowser(target);
+			} else {
+				log.info(`Not opening a browser (${decision.reason}). Visit ${target}`);
+			}
 		}
 	} catch (err) {
 		if (thisStartupGeneration !== startupGeneration) return;

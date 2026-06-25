@@ -32,7 +32,7 @@ Starts the server on port 3100 with hot reload. In dev, PGlite data persists at 
 | `--master-key <phrase>` | — | Twelve-word master key to set up/unlock on startup (env: `HEZO_MASTER_KEY`) |
 | `--web-url <url>` | same origin | Public base URL for sign-in redirects (env: `HEZO_WEB_URL`) |
 | `--reset` | `false` | Start fresh (existing `pgdata` is renamed aside, not deleted) (env: `HEZO_RESET`) |
-| `--open` | `false` | Open the web app in the browser on startup (env: `HEZO_OPEN`) |
+| `--no-open` | open on | Auto-open the web app in the browser on startup (on by default; skipped automatically in CI/containers/SSH/headless Linux). Disable with `--no-open` or `HEZO_OPEN=0` |
 | `--log-level <level>` | `info` | Logging verbosity: `debug`, `info`, `warn`, `error` (env: `HEZO_LOG_LEVEL`) |
 | `--keep-old-containers` | `false` | Keep old project containers instead of removing them, for debugging (env: `HEZO_KEEP_OLD_CONTAINERS`) |
 
