@@ -655,17 +655,19 @@ asset is pulled in as a static import and served **from memory**: migrations
 (`static-bundle.json`, base64), and the PGlite runtime (`postgres.wasm`/`.data`
 embedded). The **agent-base Docker build context** (`docker/`) is embedded the same
 way (`docker-bundle.json`, base64) so the image can always be built on the host as a
-fallback. A release binary first **pulls** the image published for its own version —
-`ghcr.io/hezo-ai/agent-base:<version>` (multi-arch amd64/arm64), pushed per release by
-`.github/workflows/release-publish.yml` to a public GHCR package — and only **builds
-locally** when that pull fails (not published yet, offline, private fork): at startup it
-extracts the embedded context to `<dataDir>/agent-base-context` and points the resolver
-(`setDockerBaseDir`) at it, so the fallback build needs no checkout. `resolveAgentBaseImage`
-(`image-registry.ts`) maps the stored `hezo/agent-base:latest` sentinel to the
-version-pinned GHCR ref with `preferPull`, and `ensureImage` does pull-then-build; custom
-per-project `docker_base_image` values are pulled as-is. Pulling is gated on
-`IS_PACKAGED_BUILD` (set by the compile-time `--define process.env.HEZO_VERSION`), so in
-dev (`bun run`) and tests the bundles don't exist, loaders fall back to the filesystem
+fallback. A release binary **pulls** the published image —
+`ghcr.io/hezo-ai/agent-base:latest` (multi-arch amd64/arm64), pushed per release by
+`.github/workflows/release-publish.yml` (alongside a `:<version>` tag) to a public GHCR
+package — and refreshes it once at startup (`refreshPublishedAgentBaseImage`, since Docker
+otherwise caches `:latest` by name), so a long-running install picks up a newer release on
+restart. It only **builds locally** when the pull fails (offline, package missing, private
+fork): at startup it also extracts the embedded context to `<dataDir>/agent-base-context`
+and points the resolver (`setDockerBaseDir`) at it, so the fallback build needs no checkout.
+`resolveAgentBaseImage` (`image-registry.ts`) maps the stored `hezo/agent-base:latest`
+sentinel to `ghcr.io/hezo-ai/agent-base:latest` with `preferPull`, and `ensureImage` does
+pull-then-build; custom per-project `docker_base_image` values are pulled as-is. Pulling is
+gated on `IS_PACKAGED_BUILD` (set by the compile-time `--define process.env.HEZO_VERSION`),
+so in dev (`bun run`) and tests the bundles don't exist, loaders fall back to the filesystem
 (docker context → repo's `docker/` dir), and the image is always built from the
 working-tree Dockerfile so edits take effect immediately. The version is also surfaced at
 `/api/status`.

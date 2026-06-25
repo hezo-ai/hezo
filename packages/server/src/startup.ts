@@ -65,7 +65,11 @@ import { DockerClient } from './services/docker';
 import { extractBundledDockerContext } from './services/docker-assets';
 import { EgressProxy, loadOrCreateCA } from './services/egress';
 import { ImageBuildTracker, setSharedImageBuildTracker } from './services/image-build-tracker';
-import { pruneStaleBundledImages, setDockerBaseDir } from './services/image-registry';
+import {
+	pruneStaleBundledImages,
+	refreshPublishedAgentBaseImage,
+	setDockerBaseDir,
+} from './services/image-registry';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
 import { PricingService } from './services/pricing';
@@ -128,11 +132,11 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		docker = createFakeDockerClient(db);
 	} else {
 		docker = new DockerClient();
-		// A compiled binary has no repo checkout, so the agent-base image can't be
-		// built from disk (and is published to no registry to pull). Extract the
-		// embedded build context to the data dir and point the image resolver at it,
-		// so provisioning builds the image locally. No-op in dev/source (returns
-		// null — the resolver falls back to the repo's docker/ dir).
+		// A compiled binary has no repo checkout, so extract the embedded agent-base
+		// build context to the data dir and point the image resolver at it. The
+		// published image is pulled first (refreshed below); this is the local-build
+		// fallback for when that pull fails. No-op in dev/source (returns null — the
+		// resolver falls back to the repo's docker/ dir).
 		try {
 			const contextDir = await extractBundledDockerContext(config.dataDir);
 			if (contextDir) setDockerBaseDir(contextDir);
@@ -148,6 +152,16 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			}
 		} catch (err) {
 			log.error('bundled-image prune failed (continuing startup):', err);
+		}
+		// Refresh the published agent-base image so a long-running install picks up a
+		// newer release's :latest on restart (Docker caches :latest by name, so it is
+		// never refreshed on its own). Best-effort: provisioning falls back to the
+		// cached image or a local build if this fails. No-op in dev/tests.
+		try {
+			const refreshed = await refreshPublishedAgentBaseImage(docker);
+			if (refreshed) log.info(`refreshed published agent-base image ${refreshed}`);
+		} catch (err) {
+			log.warn('agent-base image refresh failed (continuing startup):', err);
 		}
 	}
 	const wsManager = new WebSocketManager();

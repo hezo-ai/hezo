@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logger } from '../logger';
-import { HEZO_VERSION, IS_PACKAGED_BUILD } from '../version';
+import { IS_PACKAGED_BUILD } from '../version';
 import type { DockerClient } from './docker';
 
 const log = logger.child('image-registry');
@@ -16,15 +16,15 @@ interface LocalImageSpec {
 /**
  * The DB sentinel / default `projects.docker_base_image`. At provision time
  * `resolveAgentBaseImage` maps it to either the published GHCR image (in a
- * release binary whose version is published) or a local build of `AGENT_BASE_SPEC`.
+ * release binary) or a local build of `AGENT_BASE_SPEC`.
  */
 export const MANAGED_AGENT_BASE_IMAGE = 'hezo/agent-base:latest';
 
 /**
- * Registry repo the agent-base image is published to — one tag per release
- * (`<repo>:<version>`), pushed by `.github/workflows/release-publish.yml`. The
- * server pulls `<repo>:<HEZO_VERSION>` anonymously, so the GHCR package must be
- * public.
+ * Registry repo the agent-base image is published to by
+ * `.github/workflows/release-publish.yml` (each release pushes both
+ * `<repo>:<version>` and `<repo>:latest`). The server pulls `<repo>:latest`
+ * anonymously, so the GHCR package must be public.
  */
 export const AGENT_BASE_GHCR_REPO = 'ghcr.io/hezo-ai/agent-base';
 
@@ -42,25 +42,18 @@ const LOCAL_IMAGES: Record<string, LocalImageSpec> = {
 	[MANAGED_AGENT_BASE_IMAGE]: AGENT_BASE_SPEC,
 };
 
-/** A plain `MAJOR.MINOR.PATCH` version, matching the no-`v`-prefix release tags
- *  cut by `release-publish.yml`. Dev/test versions (`0.0.0-dev`, pre-release, …)
- *  don't match, so they never resolve to a published image. */
-export function isReleaseVersion(version: string): boolean {
-	return /^\d+\.\d+\.\d+$/.test(version);
-}
-
 /**
- * The published agent-base ref for the running build, or `null` when none should
- * exist — i.e. anything but a compiled release binary at a real release version
- * (dev, tests, pre-release builds). When `null`, the managed image is always
- * built locally. Params default to the module constants; they're injectable so
- * the pure logic is unit-testable without env munging.
+ * The published agent-base ref to fetch, or `null` when none should exist. Only a
+ * compiled release binary (`IS_PACKAGED_BUILD`) uses the published image; dev
+ * (`bun run`) and tests build from the working-tree Dockerfile so edits take
+ * effect immediately. We fetch the floating `:latest` tag (not the binary's exact
+ * version) so a host always runs the newest published agent-base — `startup.ts`
+ * refreshes it each boot since Docker otherwise caches `:latest` by name. The
+ * `packaged` param defaults to the module constant but is injectable so the logic
+ * is unit-testable without env munging.
  */
-export function publishedAgentBaseRef(
-	version: string = HEZO_VERSION,
-	packaged: boolean = IS_PACKAGED_BUILD,
-): string | null {
-	return packaged && isReleaseVersion(version) ? `${AGENT_BASE_GHCR_REPO}:${version}` : null;
+export function publishedAgentBaseRef(packaged: boolean = IS_PACKAGED_BUILD): string | null {
+	return packaged ? `${AGENT_BASE_GHCR_REPO}:latest` : null;
 }
 
 /**
@@ -77,6 +70,23 @@ export function resolveAgentBaseImage(
 		return { image: publishedRef, preferPull: true };
 	}
 	return { image: storedImage, preferPull: false };
+}
+
+/**
+ * Pull the published agent-base image so a long-running install picks up a newer
+ * release's `:latest` — Docker caches `:latest` by name, so an already-pulled tag
+ * is never refreshed on its own. Called once at startup; best-effort, so a failure
+ * is non-fatal (provisioning falls back to the cached image or a local build).
+ * No-op returning `null` when there's no published ref (dev/tests). The `ref` param
+ * is injectable for tests.
+ */
+export async function refreshPublishedAgentBaseImage(
+	docker: DockerClient,
+	ref: string | null = publishedAgentBaseRef(),
+): Promise<string | null> {
+	if (!ref) return null;
+	await docker.pullImage(ref);
+	return ref;
 }
 
 /**
