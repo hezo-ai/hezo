@@ -27,7 +27,7 @@
     },
     "packages/server": {
       "name": "@hezo/server",
-      "version": "0.3.0",
+      "version": "0.6.1",
       "dependencies": {
         "@electric-sql/pglite": "^0.2",
         "@hezo/shared": "workspace:*",
@@ -50,19 +50,21 @@
     },
     "packages/shared": {
       "name": "@hezo/shared",
-      "version": "0.3.0",
+      "version": "0.6.1",
       "dependencies": {
         "@noble/curves": "^1.9.1",
         "@noble/hashes": "^1.8.0",
         "@scure/bip39": "^1.6.0",
       },
       "devDependencies": {
+        "@vitest/coverage-v8": "3.2.4",
         "typescript": "^5",
+        "vitest": "^3",
       },
     },
     "packages/web": {
       "name": "@hezo/web",
-      "version": "0.3.0",
+      "version": "0.6.1",
       "dependencies": {
         "@hezo/shared": "workspace:*",
         "@radix-ui/react-alert-dialog": "^1",

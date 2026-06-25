@@ -179,6 +179,35 @@ jobs:
           fail-on-error: false
           allow-empty: true
 
+  # The pure-logic shared package (packages/shared) has no DB/DOM/browser
+  # dependencies, so it runs as a single fast job (no sharding). Its coverage
+  # joins the same Coveralls parallel build under the `shared` flag.
+  test-shared:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - run: bun run test --package shared --coverage
+      - name: Upload shared coverage
+        if: always()
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: packages/shared/coverage/lcov.info
+          flag-name: shared
+          parallel: true
+          fail-on-error: false
+          allow-empty: true
+
   test-browser:
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -231,6 +260,13 @@ jobs:
     steps:
       - run: '[ "${{ needs.test-integration.result }}" = "success" ]'
 
+  test-shared-complete:
+    if: always()
+    needs: test-shared
+    runs-on: ubuntu-latest
+    steps:
+      - run: '[ "${{ needs.test-shared.result }}" = "success" ]'
+
   # Closes the Coveralls parallel build once every shard/tier has uploaded, so
   # Coveralls merges them into a single coverage total for the commit. Runs
   # regardless of test outcome (if:always) so a failed shard still finalizes the
@@ -238,7 +274,7 @@ jobs:
   # blocks a merge. Requires the repo to be enabled on Coveralls (see AGENTS.md).
   coverage-finished:
     if: always()
-    needs: [test-backend, test-integration]
+    needs: [test-backend, test-integration, test-shared]
     runs-on: ubuntu-latest
     steps:
       - name: Close Coveralls parallel build
@@ -246,5 +282,5 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           parallel-finished: true
-          carryforward: "backend-vitest-1,backend-vitest-2,backend-bun,web-1,web-2,web-3"
+          carryforward: "backend-vitest-1,backend-vitest-2,backend-bun,web-1,web-2,web-3,shared"
           fail-on-error: false

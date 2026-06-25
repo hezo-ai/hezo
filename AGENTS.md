@@ -2,15 +2,15 @@
 
 ## Commands
 
-- `bun run test` — server unit/integration (vitest, Node) + server Bun-native tier (`bun test`) + web component tier (vitest) + browser (Playwright), in that order
-- `bun run test --skip-browser` — drop Playwright; runs server + web vitest only (~30s)
+- `bun run test` — server unit/integration (vitest, Node) + server Bun-native tier (`bun test`) + web component tier (vitest) + shared pure-logic unit tier (vitest) + browser (Playwright), in that order
+- `bun run test --skip-browser` — drop Playwright; runs server, web, and shared vitest only (~30s)
 - `bun run test --browser` — Playwright only
 - `bun run test --pattern <substring>` — filter by file-path substring (works across all tiers; combine with `--browser` to narrow browser tests)
-- `bun run test --package <server|web>` — restrict vitest run to one package
+- `bun run test --package <server|web|shared>` — restrict vitest run to one package
 - `bun run test --concurrency <n>` — override worker count (default 10)
-- `bun run test --shard <index>/<count>` — run one vitest shard (e.g. `1/3`); CI fans `test-backend` (2 shards) and `test-integration` (3 shards) across runners this way. The Bun-native tier runs only on shard 1. Composes with `--package`/`--concurrency`.
+- `bun run test --shard <index>/<count>` — run one vitest shard (e.g. `1/3`); CI fans `test-backend` (2 shards) and `test-integration` (3 shards) across runners this way; the pure-logic `shared` package runs unsharded as a single `test-shared` job. The Bun-native tier runs only on shard 1. Composes with `--package`/`--concurrency`.
 - `bun run test --bail` — stop on first failure
-- `bun run test --coverage` — instrument the vitest (server + web) and Bun-native tiers with V8 coverage; writes lcov/json to `packages/<pkg>/coverage` (plus `packages/server/coverage-bun` for the Bun tier). lcov reports are normalized before upload — `SF:` paths rewritten to be repo-root-relative so they map across the monorepo, and records scoped to `src/` only (the Bun tier otherwise instruments loaded test helpers). Off by default so normal runs stay fast. Composes with `--package`/`--shard`. CI uploads each shard/tier's lcov to Coveralls as a parallel build (unique `flag-name` each); a final `coverage-finished` job closes the build so Coveralls merges them into one total. Playwright is not yet instrumented.
+- `bun run test --coverage` — instrument the vitest (server, web, and shared) and Bun-native tiers with V8 coverage; writes lcov/json to `packages/<pkg>/coverage` (plus `packages/server/coverage-bun` for the Bun tier). lcov reports are normalized before upload — `SF:` paths rewritten to be repo-root-relative so they map across the monorepo, and records scoped to `src/` only (the Bun tier otherwise instruments loaded test helpers). Off by default so normal runs stay fast. Composes with `--package`/`--shard`. CI uploads each shard/tier's lcov to Coveralls as a parallel build (unique `flag-name` each — `backend-vitest-*`, `backend-bun`, `web-*`, `shared`); a final `coverage-finished` job closes the build so Coveralls merges them into one total. Playwright is not yet instrumented.
 - `bun run build` / `check` / `check:fix` / `typecheck` / `dev`
 
 `scripts/test.ts` is a commander CLI — it rejects unknown flags and `--` passthrough. To narrow by test name, use `test.only` / `describe.only` and revert before commit. Never call `npx playwright` or `npx vitest` directly (vitest's global `expect` clashes with Playwright outside the runner).
@@ -120,12 +120,13 @@ describe('017_example migration', () => {
 
 ## Testing
 
-All changes ship with tests that exercise functionality (not "code runs without throwing"). Prefer integration over heavily-mocked unit tests. Four tiers:
+All changes ship with tests that exercise functionality (not "code runs without throwing"). Prefer integration over heavily-mocked unit tests. Five tiers:
 
 | Tier | Where | Run cost | What it tests | When to use |
 |---|---|---|---|---|
 | Server unit/integration | `packages/server/test/**/*.test.ts` | ~ms each | API handlers, DB queries, services, MCP tools, agent run plumbing. Each test boots a fresh PGlite + Hono app via `createTestContext()`. | Everything backend. |
 | Web component | `packages/web/test/**/*.test.tsx` | ~100-700ms each | React tree rendered in happy-dom against an **in-process** Hono + PGlite backend via `renderApp()` in `packages/web/test/helpers/render.tsx`. Asserts on DOM, forms, React Query refetches, navigation, mention rendering. Stubs WebSocket (`reconnecting-websocket`'s constructor checks) and `IntersectionObserver`. | Anything render-driven that doesn't depend on a real browser layout engine or WebSocket stream. ~80% of what would otherwise be a browser test. |
+| Shared pure-logic unit | `packages/shared/test/**/*.test.ts` | ~ms each | Pure functions in `@hezo/shared` (crypto/auth, mnemonic, mention parsing, budget/pricing math, task-progress, enum/type guards) — no DB, no DOM, plain Node via vitest. Counted in the Coveralls total alongside server/web. | The shared package's logic. |
 | Playwright browser | `test/browser/**/*.spec.ts` | ~10-30s each | Real Chromium. Mobile viewport (responsive checks at 375px), drag-drop file events, `boundingBox()` / sticky positioning, Virtuoso virtualization windows + scroll, scroll-to-bottom buttons, real `clientHeight`/`scrollHeight` comparisons, real WebSocket-streamed logs, the master-key gate flow before any token is set. | The thin slice that genuinely needs the browser. Default: write a component test instead. |
 | Bun-native runtime | `packages/server/test/bun/**/*.bun.test.ts` | ~ms each | Code whose behaviour diverges between Node and Bun, exercised on the **production Bun runtime** via `bun test` (not vitest, which runs under Node). Today: the egress proxy's TLS MITM path. Imports `bun:test`; reuses the server helpers (`createTestApp`, etc.). | Anything that relies on runtime-specific `node:` API behaviour (TLS, `net`, `crypto`, `child_process`) where a Node-only test would give false confidence. |
 

@@ -8,6 +8,7 @@
 	"main": "./src/index.ts",
 	"scripts": {
 		"build": "tsc",
+		"test": "vitest run",
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
@@ -16,6 +17,8 @@
 		"@scure/bip39": "^1.6.0"
 	},
 	"devDependencies": {
-		"typescript": "^5"
+		"@vitest/coverage-v8": "3.2.4",
+		"typescript": "^5",
+		"vitest": "^3"
 	}
 }
