@@ -195,6 +195,38 @@ describe('CeoSessionManager', () => {
 		await manager.stop();
 	});
 
+	test('provisions the HQ container on demand when it is not running', async () => {
+		// A fresh instance exposes the CEO chat before any project is created, so the
+		// HQ container may never have been provisioned. The turn must bring it up
+		// rather than failing with "HQ container is not running".
+		await ctx.db.query(
+			`UPDATE projects SET container_id = NULL, container_status = 'stopped'
+			 WHERE team_id = $1 AND is_internal = true`,
+			[DEFAULT_TEAM_ID],
+		);
+
+		const chat = makeChatDocker(ctx.dataDir, projectId);
+		const { manager } = makeManager(ctx, chat.docker);
+
+		const { assistantMessageId } = await manager.sendTurn({ text: 'Hello CEO' });
+		await poll(async () => {
+			const r = await ctx.db.query<{ status: string }>(
+				'SELECT status FROM ceo_messages WHERE id = $1',
+				[assistantMessageId],
+			);
+			return r.rows[0]?.status === CeoMessageStatus.Complete;
+		});
+
+		const proj = await ctx.db.query<{ container_id: string | null; container_status: string }>(
+			`SELECT container_id, container_status FROM projects WHERE team_id = $1 AND is_internal = true`,
+			[DEFAULT_TEAM_ID],
+		);
+		expect(proj.rows[0].container_status).toBe('running');
+		expect(proj.rows[0].container_id).toBeTruthy();
+
+		await manager.stop();
+	});
+
 	test('second turn composes prior history into the prompt', async () => {
 		const chat = makeChatDocker(ctx.dataDir, projectId);
 		const { manager } = makeManager(ctx, chat.docker);

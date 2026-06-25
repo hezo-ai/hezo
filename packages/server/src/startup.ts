@@ -191,6 +191,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		sshAgentServer,
 		egressProxy,
 		egressCAPath: egressCA.certPath,
+		containerLogStreamer,
 	});
 
 	const { seedDefaultTeam, ensureChatMemoryDoc } = await import('./services/teams.js');

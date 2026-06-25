@@ -6,7 +6,7 @@ import { err, ok } from '../lib/response';
 import { isUniqueViolation, withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { provisionContainer } from '../services/containers';
+import { ensureProjectContainerRunning } from '../services/containers';
 import { ContainerGitExecutor } from '../services/git-executor';
 import { createGitHubRepo, parseGitHubUrl, validateRepoAccess } from '../services/github';
 import { getConnection } from '../services/oauth/connection-store';
@@ -417,53 +417,26 @@ async function loadOAuthAccessToken(
 }
 
 async function ensureProjectContainerUp(c: Context<Env>, projectId: string): Promise<void> {
-	const db = c.get('db');
 	const docker = c.get('docker');
 	const dataDir = c.get('dataDir');
-	const masterKeyManager = c.get('masterKeyManager');
-	const wsManager = c.get('wsManager');
-	const logs = c.get('logs');
-	const containerLogStreamer = c.get('containerLogStreamer');
-	const sshAgentServer = c.get('sshAgentServer');
 	const egressProxy = c.get('egressProxy');
 
 	if (!docker || !dataDir) return;
 
-	const projectRes = await db.query<{
-		id: string;
-		team_id: string;
-		slug: string;
-		docker_base_image: string;
-		container_id: string | null;
-		container_status: string | null;
-		dev_ports: Array<{ container: number; host: number }>;
-		team_slug: string;
-	}>(
-		`SELECT p.id, p.team_id, p.slug, p.docker_base_image, p.container_id, p.container_status,
-		        p.dev_ports, c.slug AS team_slug
-		 FROM projects p JOIN teams c ON c.id = p.team_id
-		 WHERE p.id = $1`,
-		[projectId],
-	);
-	if (projectRes.rows.length === 0) return;
-	const proj = projectRes.rows[0];
-	if (proj.container_status === 'running') return;
-
 	try {
-		await provisionContainer(
+		await ensureProjectContainerRunning(
 			{
-				db,
+				db: c.get('db'),
 				docker,
 				dataDir,
-				wsManager,
-				masterKeyManager,
-				logs,
-				containerLogStreamer,
-				sshAgentServer,
+				wsManager: c.get('wsManager'),
+				masterKeyManager: c.get('masterKeyManager'),
+				logs: c.get('logs'),
+				containerLogStreamer: c.get('containerLogStreamer'),
+				sshAgentServer: c.get('sshAgentServer'),
 				egressCAPath: egressProxy?.caCertPath ?? null,
 			},
-			proj,
-			proj.team_slug,
+			projectId,
 		);
 	} catch (e) {
 		log.error('Failed to auto-start container after repo add:', e);
