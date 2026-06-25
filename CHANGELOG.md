@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.2 - 2026-06-25
+
+### Features
+
+- **docker:** publish agent-base image per release, pull it for matching versions ([#402](https://github.com/hezo-ai/hezo/pull/402))
+- warm HQ container at startup; gate CEO chat + project creation on it ([#401](https://github.com/hezo-ai/hezo/pull/401))
+- **updates:** background-download before showing "Install & restart" ([#400](https://github.com/hezo-ai/hezo/pull/400))
+- auto-open the browser on startup, skipping headless environments ([#399](https://github.com/hezo-ai/hezo/pull/399))
+
+### Bug Fixes
+
+- **server:** provision HQ container on demand for CEO chat ([#398](https://github.com/hezo-ai/hezo/pull/398))
+
+### Documentation
+
+- hosted Hezo architecture recommendation ([#397](https://github.com/hezo-ai/hezo/pull/397))
+- align all docs with the current codebase + add a docs-sync check to AGENTS.md ([#394](https://github.com/hezo-ai/hezo/pull/394))
+
+### Other
+
+- Require removing superseded code as changes are made (engineer + QA) ([#395](https://github.com/hezo-ai/hezo/pull/395))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.6.1...0.6.2
+
 ## 0.6.1 - 2026-06-25
 
 ### Bug Fixes
