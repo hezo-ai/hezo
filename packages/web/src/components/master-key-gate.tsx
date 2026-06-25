@@ -8,6 +8,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { KeyRound, Loader2, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import { authenticateWithMnemonic } from '../lib/auth';
+import { copyToClipboard } from '../lib/clipboard';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 import { Button } from './ui/button';
@@ -55,9 +56,10 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 	}
 
 	async function handleCopy() {
-		await navigator.clipboard.writeText(generatedKey ?? '');
-		setCopied(true);
-		setTimeout(() => setCopied(false), 2000);
+		if (await copyToClipboard(generatedKey ?? '')) {
+			setCopied(true);
+			setTimeout(() => setCopied(false), 2000);
+		}
 	}
 
 	return (

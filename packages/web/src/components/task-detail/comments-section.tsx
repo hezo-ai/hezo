@@ -6,6 +6,7 @@ import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useAgents } from '../../hooks/use-agents';
 import { type Comment, useComments } from '../../hooks/use-comments';
 import type { Task } from '../../hooks/use-tasks';
+import { copyToClipboard } from '../../lib/clipboard';
 import { AgentLink } from '../agent-link';
 import {
 	type CommentData,
@@ -37,13 +38,10 @@ function CopyCommentButton({ text }: { text: string }) {
 	}, []);
 
 	const handleCopy = async () => {
-		try {
-			await navigator.clipboard.writeText(text);
+		if (await copyToClipboard(text)) {
 			setCopied(true);
 			if (timeoutRef.current) clearTimeout(timeoutRef.current);
 			timeoutRef.current = setTimeout(() => setCopied(false), 1500);
-		} catch {
-			// clipboard write failed (e.g. insecure context) — leave state unchanged
 		}
 	};
 

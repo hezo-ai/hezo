@@ -1,6 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { AlignLeft, Check, Code, Copy, Maximize2, Minimize2, MoveVertical } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { copyToClipboard } from '../lib/clipboard';
 import type { CommentRefTask } from '../lib/remark-comment-refs';
 import { FormattedLogView } from './formatted-log-view';
 import { Button } from './ui/button';
@@ -99,13 +100,10 @@ export function LogViewer({
 
 	const handleCopy = async () => {
 		const text = lines.map((l) => l.text).join('\n');
-		try {
-			await navigator.clipboard.writeText(text);
+		if (await copyToClipboard(text)) {
 			setCopied(true);
 			if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
 			copyTimeoutRef.current = setTimeout(() => setCopied(false), 1500);
-		} catch {
-			// clipboard write failed (e.g. insecure context) — leave state unchanged
 		}
 	};
 

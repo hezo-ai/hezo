@@ -7,6 +7,7 @@ import {
 	pollDeviceFlow,
 	useDeviceStart,
 } from '../hooks/use-oauth-connections';
+import { copyToClipboard } from '../lib/clipboard';
 import { Button } from './ui/button';
 import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
 
@@ -116,9 +117,10 @@ export function ConnectorDeviceFlowDialog({
 
 	const handleCopyCode = async () => {
 		if (!deviceFlow) return;
-		await navigator.clipboard.writeText(deviceFlow.user_code);
-		setCodeCopied(true);
-		setTimeout(() => setCodeCopied(false), 2000);
+		if (await copyToClipboard(deviceFlow.user_code)) {
+			setCodeCopied(true);
+			setTimeout(() => setCodeCopied(false), 2000);
+		}
 	};
 
 	return (
