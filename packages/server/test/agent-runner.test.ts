@@ -26,6 +26,7 @@ import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { PricingService, upsertManualRate } from '../src/services/pricing';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import { withRunUserStub } from './helpers/run-user-docker';
 
 function readPromptFromExec(
 	opts: { Env: string[] },
@@ -129,7 +130,7 @@ function createMockDocker(overrides: Record<string, any> = {}): DockerClient {
 		...rest
 	} = overrides;
 	const innerExecStart = execStartOverride ?? (async () => ({ stdout: 'done', stderr: '' }));
-	return {
+	const base = {
 		ping: async () => true,
 		imageExists: async () => true,
 		pullImage: async () => {},
@@ -162,6 +163,10 @@ function createMockDocker(overrides: Record<string, any> = {}): DockerClient {
 			return (innerExecStart as (...a: unknown[]) => unknown)(...args);
 		},
 	} as unknown as DockerClient;
+	// Transparently answer the run-user probe (`id -u node`) + ownership chowns so the
+	// runner resolves a `node` run-user without those infra execs reaching the test's
+	// own execCreate/execStart handlers above.
+	return withRunUserStub(base);
 }
 
 async function setAgentPrompt(content: string) {

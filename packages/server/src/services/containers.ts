@@ -16,6 +16,11 @@ import { terminalStatusParams } from '../lib/sql';
 import { logger } from '../logger';
 import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
 import type { ContainerLogStreamer } from './container-logs';
+import {
+	chownToRunUser,
+	clearContainerRunUserCache,
+	resolveContainerRunUser,
+} from './container-user';
 import type { DockerClient } from './docker';
 import { ensureImage } from './ensure-image';
 import { ContainerGitExecutor } from './git-executor';
@@ -24,7 +29,12 @@ import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
 import { type BridgeRunnerArgs, type SshAgentServer, withProvisionBridge } from './ssh-agent';
 import { createWakeup } from './wakeup';
-import { ensureProjectWorkspace, removeProjectWorkspace } from './workspace';
+import {
+	CONTAINER_WORKSPACE_ROOT,
+	CONTAINER_WORKTREES_ROOT,
+	ensureProjectWorkspace,
+	removeProjectWorkspace,
+} from './workspace';
 import type { WebSocketManager } from './ws';
 
 export type ContainerExitReason = 'container_error' | 'container_stopped';
@@ -332,6 +342,22 @@ export async function provisionContainer(
 			}
 		}
 
+		// Detect the container's run-user (the stock agent-base's `node`, or root for a
+		// custom image without it). The host created the bind-mounted dirs as root;
+		// give the run-user ownership of those the deprivileged git/agent execs must
+		// write into — repo clones (/workspace), worktrees, previews — plus the per-run
+		// ssh socket dir. Chowning in-container (as root) needs no host privilege; a
+		// no-op when the run-user is root. Cleared on rebuild so a fresh container
+		// re-detects.
+		clearContainerRunUserCache(Id);
+		const runUser = await resolveContainerRunUser(docker, Id);
+		await chownToRunUser(docker, Id, runUser, [
+			CONTAINER_WORKSPACE_ROOT,
+			CONTAINER_WORKTREES_ROOT,
+			`${CONTAINER_WORKSPACE_ROOT}/.previews`,
+			'/run/hezo',
+		]);
+
 		if (masterKeyManager) {
 			emit('stdout', '→ Syncing project repos');
 			// Clone in-container (the host has no git). Repos clone over SSH, which
@@ -343,12 +369,16 @@ export async function provisionContainer(
 					db,
 					{ id: project.id, team_id: teamId },
 					dataDir,
-					ContainerGitExecutor.forPrep(docker, Id, bridge),
+					ContainerGitExecutor.forPrep(docker, Id, bridge, runUser),
 					(stream, text) => emit(stream, text),
 				);
 			const syncRes = deps.sshAgentServer
-				? await withProvisionBridge(deps.sshAgentServer, teamId, dataDir, ({ bridge }) =>
-						syncRepos(bridge),
+				? await withProvisionBridge(
+						deps.sshAgentServer,
+						teamId,
+						dataDir,
+						runUser.name,
+						({ bridge }) => syncRepos(bridge),
 					)
 				: await syncRepos(null);
 			if (syncRes.failed.length > 0) {

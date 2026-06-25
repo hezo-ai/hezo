@@ -904,6 +904,81 @@ describe('provisionContainer broadcasting', () => {
 		expect(mockDocker.execCreate).toHaveBeenCalled();
 	});
 
+	// A recording docker that answers the run-user probe from `users` and records
+	// every exec, so a test can assert the in-container ownership chowns.
+	function provisionRecordingDocker(users: Record<string, { uid: number; gid: number }>) {
+		const execs: { Cmd: string[]; User?: string }[] = [];
+		const byId = new Map<string, string[]>();
+		let seq = 0;
+		const docker = createStubDocker({
+			imageExists: vi.fn().mockResolvedValue(true),
+			createContainer: vi.fn().mockResolvedValue({ Id: 'runuser-cid' }),
+			startContainer: vi.fn().mockResolvedValue(undefined),
+			execCreate: vi.fn(async (_id: string, config: { Cmd: string[]; User?: string }) => {
+				execs.push(config);
+				const id = `e-${seq++}`;
+				byId.set(id, config.Cmd);
+				return id;
+			}),
+			execStart: vi.fn(async (id: string) => {
+				const m = byId.get(id)?.[2]?.match(/^id -u (\S+) &&/);
+				const u = m ? users[m[1]] : users.__default;
+				if (byId.get(id)?.[2]?.startsWith('id -u')) {
+					return u
+						? { stdout: `${u.uid}\n${u.gid}\n${m ? m[1] : '__default'}\n`, stderr: '' }
+						: { stdout: '', stderr: 'no such user' };
+				}
+				return { stdout: '', stderr: '' };
+			}),
+			execInspect: vi.fn(async (id: string) => {
+				const script = byId.get(id)?.[2] ?? '';
+				const m = script.match(/^id -u (\S+) &&/);
+				const known = script.startsWith('id -u') ? (m ? !!users[m[1]] : !!users.__default) : true;
+				return { ExitCode: known ? 0 : 1, Running: false, Pid: 0 };
+			}),
+		});
+		return { docker, execs };
+	}
+
+	it('chowns the bind-mount dirs + /run/hezo to the detected run-user', async () => {
+		await db.query(
+			'UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1',
+			[projectId],
+		);
+		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
+		const { docker, execs } = provisionRecordingDocker({ node: { uid: 1000, gid: 1000 } });
+		const project = (
+			await db.query<ProjectRow>('SELECT * FROM projects WHERE id = $1', [projectId])
+		).rows[0];
+
+		await provisionContainer({ db, docker, dataDir }, project, 'container-sync-co');
+
+		const chown = execs.find((e) => e.Cmd?.[2]?.startsWith('chown'));
+		expect(chown).toBeDefined();
+		expect(chown?.User).toBe('root'); // chown runs in-container as root
+		expect(chown?.Cmd[2]).toContain("'node':'node'");
+		expect(chown?.Cmd[2]).toContain('/workspace');
+		expect(chown?.Cmd[2]).toContain('/worktrees');
+		expect(chown?.Cmd[2]).toContain('/run/hezo');
+	});
+
+	it('runs as root with no chown for a custom image without a node user', async () => {
+		await db.query(
+			'UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1',
+			[projectId],
+		);
+		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
+		// No `node`; the container default user is root.
+		const { docker, execs } = provisionRecordingDocker({ __default: { uid: 0, gid: 0 } });
+		const project = (
+			await db.query<ProjectRow>('SELECT * FROM projects WHERE id = $1', [projectId])
+		).rows[0];
+
+		await provisionContainer({ db, docker, dataDir }, project, 'container-sync-co');
+
+		expect(execs.some((e) => e.Cmd?.[2]?.startsWith('chown'))).toBe(false);
+	});
+
 	it('broadcasts row_change on provisioning error', async () => {
 		// Reset status
 		await db.query(

@@ -345,6 +345,24 @@ authenticates through the host ssh-agent; the container's baked-in `/etc/ssh/ssh
 verifies the host key. Cloning outside a run (container provision, repo link) uses a
 short-lived `withProvisionBridge`.
 
+**Container run-user & host-file ownership.** The agent base image (`node:24-slim`) sets no
+`USER`, so the container runs as **root**; Hezo deprivileges individual `docker exec`s — the
+agent CLI and every git op — to a non-root **run-user** (the stock image's `node`, which has
+passwordless sudo, so this is for file-ownership hygiene, not a security boundary) so files
+those execs create in the bind-mounted workspace stay non-root-owned. The run-user is
+**detected, not assumed** (`resolveContainerRunUser`, `services/container-user.ts`): it prefers
+a `node` user and falls back to the container's default user (root, for a custom
+`docker_base_image` with no `node`), cached per container, and is used for the `--user` of every
+exec and the socat socket owner. Because the server writes the per-run runtime config dir +
+credentials and creates the workspace/worktree dirs on the host (as root in production), Hezo
+gives the run-user ownership of every bind-mounted path those deprivileged execs must read or
+write — the per-run config dir, `/workspace`, `/worktrees`, `/workspace/.previews`, `/run/hezo`
+— via an **in-container `chown` run as root** (`chownToRunUser`). Doing the chown inside the
+container needs no host privilege, so it works identically on a root server, a non-root
+`User=hezo` server, and macOS (where Docker Desktop's bind-mount uid-remapping otherwise hides
+the mismatch — the reason this class of bug only surfaced on a native-Linux production host). It
+is a no-op when the run-user is root.
+
 Before building a worktree the runner fetches each clone, then **fast-forwards the clone's
 local default branch** (the "main codebase") to `origin/<default>` (resolved via `origin/HEAD`
 → fallback `main`/`master`) — a clean fast-forward when it's checked out, else an `update-ref`,
@@ -448,6 +466,11 @@ substitution — there is **no fall-through**; if it can't bind, the run aborts
 (`<dataDir>/ca/`, cert world-readable, key host-owner-only) that both signs per-host leaf
 certs and is bind-mounted into every container's trust store
 (`update-ca-certificates`, `NODE_EXTRA_CA_CERTS`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`).
+Unlike the CA cert (deliberately world-readable so any in-container uid can read it), the
+per-run runtime config and subscription-credential files the server writes into the
+`/workspace` bind mount stay `0o600`/`0o700` and are instead **chowned to the container
+run-user** (see § Containers & worktrees) so the deprivileged agent CLI can read them
+without exposing secrets to other host users.
 Per run, the agent's container gets `HTTP(S)_PROXY=http://host.docker.internal:<port>`
 with `NO_PROXY` carving out the Hezo backend and the LLM provider host (LLM traffic goes
 direct — credentials are env-injected, and MITM breaks some Anthropic-compatible APIs).
