@@ -21,5 +21,8 @@ export function useStatus() {
 		refetchOnMount: 'always',
 		retry: (failureCount, error) => isRetryableStatusError(error) && failureCount < 40,
 		retryDelay: 500,
+		// While the server reports it's still booting, keep polling so the loading
+		// screen advances through phases and flips to the app the moment it's ready.
+		refetchInterval: (query) => (query.state.data?.starting ? 500 : false),
 	});
 }

@@ -10,9 +10,18 @@ import {
 } from '@hezo/shared';
 import { type ApiError, api } from './api';
 
-interface StatusResponse {
-	masterKeyState: MasterKeyState;
+export interface StatusResponse {
+	/** Absent while the server is still booting (`starting` is true). */
+	masterKeyState?: MasterKeyState;
 	version: string;
+	/** True when the server is still booting; the rest of the app should wait. */
+	starting?: boolean;
+	/** Coarse boot phase id (e.g. `migrations`, `workspace`) — for the loading screen. */
+	phase?: string;
+	/** Human-readable phase message, safe to show in the UI. */
+	message?: string;
+	/** Optional extra context for the loading screen. */
+	detail?: string;
 }
 
 export async function checkStatus(): Promise<StatusResponse> {
@@ -20,6 +29,17 @@ export async function checkStatus(): Promise<StatusResponse> {
 	const body = (await res.json()) as StatusResponse & {
 		error?: { code?: string; message?: string };
 	};
+	// While booting, the server answers 200 with `starting: true` and a live phase
+	// instead of `masterKeyState`. Surface it so the UI can render a loading screen.
+	if (body.starting) {
+		return {
+			starting: true,
+			phase: body.phase,
+			message: body.message,
+			detail: body.detail,
+			version: body.version,
+		};
+	}
 	if (!res.ok) {
 		const msg = body.error?.message ?? res.statusText;
 		throw new Error(msg || `Status request failed (${res.status})`);

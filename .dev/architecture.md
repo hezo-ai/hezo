@@ -658,10 +658,15 @@ way (`docker-bundle.json`, base64) so the image can always be built on the host 
 fallback. A release binary **pulls** the published image —
 `ghcr.io/hezo-ai/agent-base:latest` (multi-arch amd64/arm64), pushed per release by
 `.github/workflows/release-publish.yml` (alongside a `:<version>` tag) to a public GHCR
-package — and refreshes it once at startup (`refreshPublishedAgentBaseImage`, since Docker
+package — and refreshes it at startup (`refreshPublishedAgentBaseImage`, since Docker
 otherwise caches `:latest` by name), so a long-running install picks up a newer release on
-restart. It only **builds locally** when the pull fails (offline, package missing, private
-fork): at startup it also extracts the embedded context to `<dataDir>/agent-base-context`
+restart. That refresh (and the stale-bundled-image prune) runs **in the background**, off
+the readiness path: a cold first pull can take minutes, and it must never gate `serverReady`
+— the web UI, master-key unlock, and project creation are all usable without it, and
+provisioning pulls-then-builds on demand, so a missing/slow refresh self-heals on first use.
+It only **builds locally** when the pull fails (offline, package missing, private
+fork): at startup it also (synchronously, since it's fast and the local-build fallback needs
+it) extracts the embedded context to `<dataDir>/agent-base-context`
 and points the resolver (`setDockerBaseDir`) at it, so the fallback build needs no checkout.
 `resolveAgentBaseImage` (`image-registry.ts`) maps the stored `hezo/agent-base:latest`
 sentinel to `ghcr.io/hezo-ai/agent-base:latest` with `preferPull`, and `ensureImage` does
@@ -671,6 +676,17 @@ so in dev (`bun run`) and tests the bundles don't exist, loaders fall back to th
 (docker context → repo's `docker/` dir), and the image is always built from the
 working-tree Dockerfile so edits take effect immediately. The version is also surfaced at
 `/api/status`.
+
+**Pre-ready serving.** `startup()` is async and the Bun fetch entry (`index.ts`) binds the
+port immediately, so requests can arrive before the app exists. Until `serverReady` flips,
+the entry delegates to `serveStartupRequest` (`startup-serving.ts`): browser navigations and
+static assets are served from the embedded SPA bundle, and `/api/status` answers **200** with
+`{ starting: true, phase, message }` read from a boot-progress singleton (`startup-progress.ts`,
+advanced through `database → migrations → seed → pricing → workspace`). The web UI
+(`useStatus` → `StartingScreen`) renders a loading screen naming the current phase and keeps
+polling, flipping to the master-key gate the moment boot finishes — so a browser that connects
+mid-boot never sees a raw JSON error. Other API/MCP/WebSocket surfaces still get a JSON **503
+STARTING** so machine clients retry; `/health` always answers 200.
 
 **Migrations.** Real, tracked, **append-only** SQL under `packages/server/migrations/`
 (`001_initial_schema.sql` is the frozen baseline — never edit a shipped migration; each is
