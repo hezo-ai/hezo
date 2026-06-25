@@ -40,6 +40,39 @@ provider is driven through its native command-line runtime inside the container.
 with a model — and you can give any agent its own model. See
 [AI model support](/docs/ai-models).
 
+## Hezo is a meta-harness
+
+Every major model now ships its own agentic command-line tool — Claude Code, Codex, the
+Gemini CLI, and more. Each wraps a model in a loop that reads and writes files, runs
+commands, and uses tools, and each has its own strengths and rough edges. Hezo runs every
+model on its **own first-party harness** rather than a lowest-common-denominator wrapper,
+then sits one level up as a **meta-harness**, wrapping a uniform platform layer around all
+of them — so the harness an agent runs on becomes an implementation detail.
+
+> [!NOTE]
+> These are usually called *coding* harnesses, but the loop they run — read, write, run a
+> command, use a tool, repeat — is general-purpose. **Hezo is for any task, not just
+> code** — software, research, marketing, operations — and runs on these harnesses
+> precisely because they are the most capable general-purpose agents available.
+
+That platform layer evens out the differences between models:
+
+- **A completeness check on every run.** When an agent decides it's finished, Hezo
+  independently judges whether the work *actually* is done before letting the run end — it
+  won't stop on failing tests, declare a problem "out of scope", or punt with "I'll leave
+  that for later". (One harness, OpenCode, can't support this hook yet.)
+- **The same capabilities and safety, whichever model you pick.** Every agent gets the
+  same built-in tools, [skills](/docs/concepts/skills), project memory, task board,
+  [sandbox](/docs/security/container-isolation), and
+  [secret protection](/docs/security/secret-protection) — switching models, or running
+  several at once, never changes what an agent can do or how safely it runs.
+- **Rough edges smoothed over.** Per-tool differences in how a prompt is delivered, a run
+  is configured, and results come back are normalised by Hezo.
+
+So you can put a cheaper model on routine work and a frontier model on the hard problems
+and trust that the floor — the tooling, the guardrails, and the security — stays the same
+underneath.
+
 ## How work is organised
 
 - A **project** owns exactly one **team** (its agent roster).
