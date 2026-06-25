@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.1 - 2026-06-25
+
+### Bug Fixes
+
+- **web:** make clipboard copy work in insecure contexts ([#392](https://github.com/hezo-ai/hezo/pull/392))
+
+### Documentation
+
+- add systemd service example for self-hosting on Linux ([#391](https://github.com/hezo-ai/hezo/pull/391))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.6.0...0.6.1
+
 ## 0.6.0 - 2026-06-25
 
 ### Bug Fixes
