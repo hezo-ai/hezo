@@ -167,6 +167,40 @@ The cost levers, in order of impact:
 > expectation, so it is **not** the default — noted only as a future lever for
 > provably-idle tenants.
 
+### Recommended provider & phased path
+
+The architecture (per-tenant microVM) is constant; the substrate it runs on
+should change as tenant count grows.
+
+- **Phase 1 — launch on Fly.io Machines.** Each Machine is a Firecracker
+  microVM (correct hardware-virt boundary for untrusted code), runs always-on
+  (just don't enable auto-stop), takes a per-Machine Volume for `HEZO_DATA_DIR`,
+  and gets wildcard subdomain routing via Fly's Anycast proxy. The Machines REST
+  API *is* the provisioning primitive the control plane calls on signup
+  (create → start → never stop), so you ship without operating a hypervisor.
+  Lowest time-to-launch.
+- **Phase 2 — self-managed Firecracker on bare metal when unit economics
+  demand it.** Hetzner is the cost sweet spot (AWS `.metal` if AWS is required).
+  Pack many always-on microVMs per large host and **oversubscribe CPU/RAM** —
+  which works precisely because the workload is always-on but bursty-idle. This
+  flattens the cost curve; the price is building/adopting an orchestrator
+  (firecracker-containerd / Cloud Hypervisor / Kata) plus your own routing and
+  volume management.
+- **Avoid as a steady state:** one managed hyperscaler VM per tenant
+  (e.g. a small EC2/GCE instance each). Isolation is correct, but you pay
+  reserved capacity 100× with no packing — the worst always-on economics. Fine
+  only as a throwaway prototype.
+
+**Validate first:** nested Docker inside the chosen microVM. Hezo needs a real
+`dockerd` and `/var/run/docker.sock`; this works in any true VM guest, but
+confirm it on Fly Machines specifically (it is the one genuine unknown).
+
+**Sizing intuition (100 tenants):** right-size each tenant to ~1–2 GiB baseline
+and let it burst. Unpacked, that is ~100–200 GiB committed RAM; with
+oversubscription (most idle at any instant) one or two large hosts (128–256 GiB
+RAM) cover the fleet — concurrent *active* runs, not tenant count, set the
+ceiling.
+
 ## What the control plane must own (the only real new work)
 
 This is orchestration around Hezo, not Hezo internals:
