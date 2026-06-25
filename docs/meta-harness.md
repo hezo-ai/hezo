@@ -1,18 +1,27 @@
 ---
-title: Why Hezo
+title: Meta-harness
 order: 2
 section: Overview
 ---
 
-# Why Hezo
+# Meta-harness
 
-Every serious coding model now ships its own agentic command-line tool — Anthropic has
+Every serious model now ships its own agentic command-line tool — Anthropic has
 Claude Code, OpenAI has Codex, Google has the Gemini CLI, and there are more. Each of
 these *harnesses* wraps a model in a loop that can read and write files, run commands,
 and use tools. They are genuinely good, and they are genuinely different: each has its
 own strengths, its own guardrails, and its own rough edges. Picking one means inheriting
 all of its tradeoffs; juggling several by hand means re-learning each tool and getting
 inconsistent results depending on which one you happened to use.
+
+> [!NOTE]
+> These tools are usually called *coding* harnesses because they grew up around
+> software, but the loop they provide — read, write, run a command, use a tool, repeat —
+> is general-purpose. Being able to run code turns out to be useful far beyond
+> programming, so a coding harness is really a general-purpose agent. **Hezo aims to be
+> for any task, not just code** — software, research, marketing, operations, whatever the
+> work is — and it runs each agent on one of these harnesses precisely because they are
+> the most capable general-purpose agents available.
 
 Hezo's answer is to sit one level up.
 
