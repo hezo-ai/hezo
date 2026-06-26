@@ -17,8 +17,12 @@ research write-ups.
 
 There is **one skills catalog for the whole instance**. A skill you add is available to
 every team's agents — you don't re-create it per project. Each skill is a markdown
-document with a name, a short description, and optional tags, and agents see a manifest of
-the available skills on every run so they know what they can reach for.
+document with a name, a short description, and optional tags. On every run agents are given
+a **manifest** of the available skills — each one's name and description, not its full body
+— so they know what they can reach for; an agent then loads a skill's full instructions
+on demand when it's relevant to the task. That manifest-plus-load-on-demand pattern is part
+of how Hezo gives agents [long-term memory](/docs/concepts/documents-and-memory#what-an-agent-carries-into-every-run)
+without bloating every prompt.
 
 ## Where skills come from
 
