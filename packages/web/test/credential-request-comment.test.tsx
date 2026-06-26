@@ -72,7 +72,11 @@ test('human can set allowed_hosts when fulfilling an unscoped request', async ()
 	await findByTestId('credential-request', undefined, { timeout: 15_000 });
 
 	await user.type(await findByTestId('credential-input'), 'tok-123');
-	await user.type(await findByTestId('credential-hosts-input'), 'api.netlify.com, *.netlify.com');
+	// The field prefills with an inferred suggestion (NETLIFY_* → api.netlify.com);
+	// clear it before typing the exact allowlist this test asserts on.
+	const hostsField = await findByTestId('credential-hosts-input');
+	await user.clear(hostsField);
+	await user.type(hostsField, 'api.netlify.com, *.netlify.com');
 	await user.click(await findByTestId('credential-submit'));
 
 	// Fulfillment swaps the form for the confirmation block.
@@ -257,6 +261,69 @@ test('an already-fulfilled request renders the fulfilled state directly', async 
 	const fulfilled = await findByTestId('credential-fulfilled', undefined, { timeout: 15_000 });
 	expect(fulfilled.textContent).toContain('PREFILLED_TOKEN provided');
 	expect(fulfilled.textContent).toContain('__HEZO_SECRET_PREFILLED_TOKEN__');
+});
+
+test('prefills allowed_hosts from a known service in the name when the agent left it unscoped', async () => {
+	const { findByTestId } = await renderTaskWithCredentialContent({
+		name: 'NETLIFY_AUTH_TOKEN',
+		kind: 'other',
+		input_type: 'text',
+		instructions: 'Create a personal access token from the dashboard.',
+		// no allowed_hosts — the agent did not scope the request
+	});
+
+	const hosts = (await findByTestId('credential-hosts-input', undefined, {
+		timeout: 15_000,
+	})) as HTMLInputElement;
+	await waitFor(() => expect(hosts.value).toBe('api.netlify.com'));
+	// The suggestion hint is shown until the human edits the field.
+	await findByTestId('credential-hosts-suggested');
+});
+
+test('prefills allowed_hosts from a URL named in the instructions (self-hosted service)', async () => {
+	const { findByTestId } = await renderTaskWithCredentialContent({
+		name: 'UMAMI_INSTANCE_URL',
+		kind: 'other',
+		input_type: 'text',
+		instructions: 'Use the self-hosted instance at https://umami.hezo.ai or similar.',
+	});
+
+	const hosts = (await findByTestId('credential-hosts-input', undefined, {
+		timeout: 15_000,
+	})) as HTMLInputElement;
+	await waitFor(() => expect(hosts.value).toBe('umami.hezo.ai'));
+});
+
+test('editing the prefilled hosts clears the suggestion hint', async () => {
+	const { findByTestId, queryByTestId, user } = await renderTaskWithCredentialContent({
+		name: 'STRIPE_SECRET_KEY',
+		kind: 'other',
+		input_type: 'text',
+	});
+
+	const hosts = (await findByTestId('credential-hosts-input', undefined, {
+		timeout: 15_000,
+	})) as HTMLInputElement;
+	await waitFor(() => expect(hosts.value).toBe('api.stripe.com'));
+	await findByTestId('credential-hosts-suggested');
+
+	await user.type(hosts, ', api.override.com');
+	expect(queryByTestId('credential-hosts-suggested')).toBeNull();
+});
+
+test('does not prefill or hint when the credential name is generic and no URL is given', async () => {
+	const { findByTestId, queryByTestId } = await renderTaskWithCredentialContent({
+		name: 'GENERIC_SECRET',
+		kind: 'other',
+		input_type: 'text',
+		instructions: 'Paste the value here.',
+	});
+
+	const hosts = (await findByTestId('credential-hosts-input', undefined, {
+		timeout: 15_000,
+	})) as HTMLInputElement;
+	expect(hosts.value).toBe('');
+	expect(queryByTestId('credential-hosts-suggested')).toBeNull();
 });
 
 test('textarea input_type renders a multi-line value field; host override seeds from the request', async () => {
