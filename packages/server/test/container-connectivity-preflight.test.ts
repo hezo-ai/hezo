@@ -2,6 +2,7 @@ import { Logger } from '@hiddentao/logger';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	buildProbeScript,
+	type ConnectivityCheckDeps,
 	type ConnectivityCheckResult,
 	type ConnectivityProbeResult,
 	checkAndAutoRebindConnectivity,
@@ -355,7 +356,13 @@ describe('logConnectivityOutcome', () => {
 });
 
 describe('checkAndAutoRebindConnectivity', () => {
+	// Default stub resolves the bridge gateway host-side (172.17.0.1).
 	const docker = createStubDocker({ imageExists: async () => true });
+	// A host with no resolvable bridge gateway (host-side inspect returns null).
+	const noGwDocker = createStubDocker({
+		imageExists: async () => true,
+		inspectNetwork: async () => null,
+	});
 	let errorSpy: ReturnType<typeof vi.spyOn>;
 	let warnSpy: ReturnType<typeof vi.spyOn>;
 	let infoSpy: ReturnType<typeof vi.spyOn>;
@@ -403,7 +410,7 @@ describe('checkAndAutoRebindConnectivity', () => {
 			.mockResolvedValue({ outcome: 'bind-loopback' });
 
 		const result = await checkAndAutoRebindConnectivity({
-			docker,
+			docker: noGwDocker,
 			serverPort: 3100,
 			bindHost: ref,
 			check,
@@ -423,7 +430,7 @@ describe('checkAndAutoRebindConnectivity', () => {
 			.mockResolvedValue({ outcome: 'bind-loopback' });
 
 		const result = await checkAndAutoRebindConnectivity({
-			docker,
+			docker: noGwDocker,
 			serverPort: 3100,
 			bindHost: ref,
 			check,
@@ -433,6 +440,47 @@ describe('checkAndAutoRebindConnectivity', () => {
 		expect(ref.get()).toBe('127.0.0.1');
 		expect(check).toHaveBeenCalledTimes(1);
 		expect(warnSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it('uses the host-side bridge gateway to rebind when the in-container probe found none', async () => {
+		const ref = bindRef('127.0.0.1');
+		// In-container probe never resolves a gatewayIp (e.g. image lacks getent/awk);
+		// the host-side inspectNetwork (172.17.0.1 from the stub) supplies the target.
+		const check = vi
+			.fn<() => Promise<ConnectivityCheckResult>>()
+			.mockResolvedValueOnce({ outcome: 'bind-loopback' })
+			.mockResolvedValueOnce({ outcome: 'ok' });
+
+		const result = await checkAndAutoRebindConnectivity({
+			docker,
+			serverPort: 3100,
+			bindHost: ref,
+			check,
+		});
+
+		expect(result).toEqual({ outcome: 'ok', bindHost: '172.17.0.1' });
+		expect(ref.get()).toBe('172.17.0.1');
+		expect(check).toHaveBeenCalledTimes(2);
+	});
+
+	it('probes the exploratory loopback bind only once (no retry loop)', async () => {
+		const ref = bindRef('127.0.0.1');
+		const calls: Array<number | undefined> = [];
+		const check = vi.fn<(d: ConnectivityCheckDeps) => Promise<ConnectivityCheckResult>>(
+			async (d) => {
+				calls.push(d.attempts);
+				return { outcome: 'ok' };
+			},
+		);
+
+		await checkAndAutoRebindConnectivity({
+			docker: noGwDocker,
+			serverPort: 3100,
+			bindHost: ref,
+			check,
+		});
+
+		expect(calls[0]).toBe(1); // loopback probe forced to a single attempt
 	});
 
 	it('does not rebind an explicit non-loopback bind, warns once on firewalled', async () => {

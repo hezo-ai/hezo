@@ -2,7 +2,7 @@ import type { CeoMessage } from '@hezo/web/hooks/use-ceo-chat';
 import { toast } from '@hezo/web/hooks/use-toast';
 import { queryClient } from '@hezo/web/lib/query-client';
 import { queryKeys } from '@hezo/web/lib/query-keys';
-import { waitFor } from '@testing-library/react';
+import { fireEvent, waitFor } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
 import { renderApp } from './helpers/render';
 
@@ -51,6 +51,30 @@ test('composer enables send when text is entered and clears on submit', async ()
 	await user.click(send);
 	// The draft clears immediately on submit regardless of the server result.
 	expect(input.value).toBe('');
+});
+
+test('shows the user message optimistically and disables send while in flight', async () => {
+	const { findByTestId, getByTestId, getByText, queryByText, user } = await renderApp({
+		initialPath: '/home',
+	});
+	(await findByTestId('ceo-chat-launcher')).click();
+	const input = (await findByTestId('ceo-chat-input')) as HTMLTextAreaElement;
+	const sendBtn = getByTestId('ceo-chat-send') as HTMLButtonElement;
+
+	await user.type(input, 'i just enabled markdown assets');
+	// fireEvent (synchronous) so we can observe the optimistic state before the
+	// harness's 503 lands and clears it.
+	fireEvent.click(sendBtn);
+
+	// The user's message renders immediately (optimistic), before any WS round-trip…
+	expect(getByText('i just enabled markdown assets')).toBeTruthy();
+	// …a pending assistant "thinking" indicator shows…
+	expect(getByTestId('ceo-chat-typing')).toBeTruthy();
+	// …and the send button is disabled so an impatient re-click can't spawn duplicates.
+	expect(sendBtn.disabled).toBe(true);
+
+	// Once the (failed) send settles, the optimistic placeholder is dropped.
+	await waitFor(() => expect(queryByText('i just enabled markdown assets')).toBeNull());
 });
 
 test('surfaces a failed CEO send as an error toast', async () => {

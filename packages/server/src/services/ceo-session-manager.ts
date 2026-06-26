@@ -141,6 +141,11 @@ export class CeoSessionManager {
 	private current: CurrentTurn | null = null;
 	private ensuring: Promise<LiveSession> | null = null;
 	private healthTimer: ReturnType<typeof setInterval> | null = null;
+	// Serializes `sendTurn` so concurrent sends (e.g. an impatient double-click while
+	// the boot egress check is still warming up) can't each clear the gate together
+	// and spawn their own session/turn. With sends serialized, the interrupt guard in
+	// `sendTurn` correctly aborts the prior turn and only the latest one streams.
+	private turnLock: Promise<unknown> = Promise.resolve();
 
 	constructor(private readonly deps: CeoSessionDeps) {}
 
@@ -170,6 +175,19 @@ export class CeoSessionManager {
 			 WHERE status IN ($2, $3)`,
 			[CeoSessionStatus.Crashed, CeoSessionStatus.Starting, CeoSessionStatus.Running],
 		);
+		// No CEO turn survives a process restart, so any message left in a non-terminal
+		// state (streaming/pending) is orphaned — its run is gone. Empty ones are pure
+		// "thinking" placeholders with nothing to show: delete them so they don't reload
+		// as perpetual dots. Non-empty ones kept a partial reply: mark them interrupted.
+		await this.deps.db.query(`DELETE FROM ceo_messages WHERE status IN ($1, $2) AND content = ''`, [
+			CeoMessageStatus.Streaming,
+			CeoMessageStatus.Pending,
+		]);
+		await this.deps.db.query(`UPDATE ceo_messages SET status = $1 WHERE status IN ($2, $3)`, [
+			CeoMessageStatus.Interrupted,
+			CeoMessageStatus.Streaming,
+			CeoMessageStatus.Pending,
+		]);
 	}
 
 	/**
@@ -178,6 +196,22 @@ export class CeoSessionManager {
 	 * Returns the two message ids so the client can correlate streamed deltas.
 	 */
 	async sendTurn(input: {
+		text: string;
+		channel?: CeoChannel;
+		authorUserId?: string | null;
+	}): Promise<{ userMessageId: string; assistantMessageId: string }> {
+		// Serialize turns: chain on the prior send so two overlapping requests run the
+		// body sequentially (the second only after the first has set `this.current`),
+		// letting the interrupt guard below abort the prior turn instead of racing it.
+		const run = this.turnLock.then(
+			() => this.runSendTurn(input),
+			() => this.runSendTurn(input),
+		);
+		this.turnLock = run.catch(() => undefined);
+		return run;
+	}
+
+	private async runSendTurn(input: {
 		text: string;
 		channel?: CeoChannel;
 		authorUserId?: string | null;

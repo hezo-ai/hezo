@@ -65,6 +65,7 @@ export function createFakeDockerClient(db?: PGlite): DockerClient {
 		removeContainer: async (id: string) => {
 			containers.delete(id);
 		},
+		inspectNetwork: async () => ({ IPAM: { Config: [{ Gateway: '172.17.0.1' }] } }),
 		inspectContainer: async (id: string) => {
 			const c = containers.get(id);
 			const running = c?.running ?? true;

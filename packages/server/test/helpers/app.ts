@@ -48,6 +48,7 @@ const STUB_DOCKER_METHODS = {
 		Config: { Image: 'stub' },
 	}),
 	findContainerByNamePrefix: async () => null,
+	inspectNetwork: async () => ({ IPAM: { Config: [{ Gateway: '172.17.0.1' }] } }),
 	containerStats: async () => null,
 	containerLogs: async () => ({ arrayBuffer: async () => new ArrayBuffer(0) }),
 	execCreate: async () => {

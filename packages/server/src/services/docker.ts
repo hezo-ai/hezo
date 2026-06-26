@@ -83,6 +83,12 @@ export interface ImageInfo {
 	};
 }
 
+export interface NetworkInfo {
+	IPAM: {
+		Config: Array<{ Gateway?: string; Subnet?: string }> | null;
+	} | null;
+}
+
 async function parseJsonOrThrow<T>(res: Response, op: string): Promise<T> {
 	const text = await res.text();
 	if (text.trim() === '') {
@@ -160,6 +166,24 @@ export class DockerClient {
 			throw new Error(`Docker inspectImage failed (${res.status}): ${text}`);
 		}
 		return parseJsonOrThrow(res, 'inspectImage');
+	}
+
+	/**
+	 * Read a Docker network's config — used to resolve the bridge gateway IP host-side
+	 * (`IPAM.Config[].Gateway`, e.g. `172.17.0.1`) for the connectivity preflight,
+	 * avoiding a throwaway container just to detect it. Returns null on 404.
+	 */
+	async inspectNetwork(name: string): Promise<NetworkInfo | null> {
+		const res = await this.request('GET', `/networks/${encodeURIComponent(name)}`);
+		if (res.status === 404) {
+			await res.text();
+			return null;
+		}
+		if (!res.ok) {
+			const text = await res.text();
+			throw new Error(`Docker inspectNetwork failed (${res.status}): ${text}`);
+		}
+		return parseJsonOrThrow(res, 'inspectNetwork');
 	}
 
 	async removeImage(image: string, force = false): Promise<void> {

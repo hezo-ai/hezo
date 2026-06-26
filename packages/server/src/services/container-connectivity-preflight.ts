@@ -196,7 +196,7 @@ export function formatContainerConnectivityMessage(
  */
 export function buildProbeScript(serverPort: number, bindPort: number): string {
 	const probe = (name: string, url: string) =>
-		`${name}=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 ${url} 2>/dev/null) || true; ` +
+		`${name}=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 ${url} 2>/dev/null) || true; ` +
 		`[ -z "$${name}" ] && ${name}=DOWN`;
 	return (
 		`${probe('mcp', `http://host.docker.internal:${serverPort}/mcp`)}; ` +
@@ -402,6 +402,21 @@ export async function checkContainerToHostConnectivity(
 	}
 }
 
+/**
+ * The docker bridge gateway IP host-side (`IPAM.Config[].Gateway`, e.g.
+ * `172.17.0.1`) — the IP a container reaches the host through on the default
+ * bridge, and the auto-rebind target. Read directly from the Docker API so it
+ * doesn't depend on in-container tooling. Returns null if it can't be determined.
+ */
+async function resolveBridgeGateway(docker: DockerClient): Promise<string | null> {
+	try {
+		const net = await docker.inspectNetwork('bridge');
+		return net?.IPAM?.Config?.find((c) => c.Gateway)?.Gateway ?? null;
+	} catch {
+		return null;
+	}
+}
+
 export interface AutoRebindDeps {
 	docker: DockerClient;
 	serverPort: number;
@@ -428,20 +443,32 @@ export async function checkAndAutoRebindConnectivity(
 	deps: AutoRebindDeps,
 ): Promise<{ outcome: ConnectivityOutcome | 'skipped'; bindHost: string }> {
 	const check = deps.check ?? checkContainerToHostConnectivity;
-	const probe = (containerBindHost: string) =>
+	const probe = (containerBindHost: string, attempts?: number) =>
 		check({
 			docker: deps.docker,
 			serverPort: deps.serverPort,
 			containerBindHost,
 			logOutcome: false,
+			attempts,
 		});
 
-	const first = await probe(deps.bindHost.get());
+	// The exploratory loopback probe is deterministic — loopback is either reachable
+	// (Docker Desktop → ok) or structurally unreachable from a bridge container
+	// (native Linux → bind-loopback). Retrying it just wastes ~3 container boots and
+	// 5s curl timeouts, so probe ONCE here; the gateway re-probe below keeps retries.
+	const first = await probe(deps.bindHost.get(), 1);
 	let outcome = first.outcome;
 	let bindHost = deps.bindHost.get();
 
+	// Resolve the bridge gateway host-side too (a single Docker API call, no
+	// container) and use it when the in-container probe couldn't — so auto-rebind
+	// still works on agent images that lack `getent`/`awk`.
+	const hostGateway = await resolveBridgeGateway(deps.docker);
 	const logResult = deps.logResult !== false;
-	const rebindTo = resolveAutoRebindTarget(first, bindHost);
+	const rebindTo = resolveAutoRebindTarget(
+		{ outcome: first.outcome, gatewayIp: first.gatewayIp ?? hostGateway ?? undefined },
+		bindHost,
+	);
 	if (rebindTo) {
 		if (logResult) {
 			log.info(
