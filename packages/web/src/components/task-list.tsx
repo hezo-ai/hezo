@@ -92,9 +92,18 @@ interface TaskListSectionProps {
 	tasks: TaskRow[];
 	columns: Column<TaskRow>[];
 	onRowClick: (row: TaskRow) => void;
+	/** Dim the section's rows — used for finished (terminal) work in "Done". */
+	faded?: boolean;
 }
 
-function TaskListSection({ title, testId, tasks, columns, onRowClick }: TaskListSectionProps) {
+function TaskListSection({
+	title,
+	testId,
+	tasks,
+	columns,
+	onRowClick,
+	faded,
+}: TaskListSectionProps) {
 	if (tasks.length === 0) return null;
 
 	return (
@@ -109,6 +118,9 @@ function TaskListSection({ title, testId, tasks, columns, onRowClick }: TaskList
 				onRowClick={onRowClick}
 				getRowDepth={(row) => row.depth}
 				indentColumnKey="title"
+				// Fade finished work via opacity — reads as "faded" in both light and
+				// dark themes (it only lowers alpha, no theme-specific colour).
+				rowClassName={faded ? () => 'opacity-60' : undefined}
 			/>
 		</section>
 	);
@@ -609,6 +621,7 @@ export function TaskList({ projectId }: TaskListProps) {
 						tasks={doneTasks}
 						columns={columns}
 						onRowClick={handleRowClick}
+						faded
 					/>
 
 					{backlogTasks.length === 0 && doneTasks.length === 0 && (
@@ -638,7 +651,12 @@ export function TaskList({ projectId }: TaskListProps) {
 							)}
 							{/* Bottom sentinel: when it scrolls into view the observer
 							    auto-fetches the next page (see effect above). */}
-							<div ref={sentinelRef} aria-hidden="true" className="h-px w-full" />
+							<div
+								ref={sentinelRef}
+								data-testid="task-list-sentinel"
+								aria-hidden="true"
+								className="h-px w-full"
+							/>
 						</div>
 					)}
 				</>

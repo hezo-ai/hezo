@@ -25,19 +25,18 @@ test.describe('Task list — infinite scroll', () => {
 		const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
 		// Seed more than one page worth of backlog tasks (default per_page is 50).
+		// Create sequentially: per-project ticket numbering is not safe under
+		// concurrent inserts, so a parallel burst collides and drops most rows.
 		const TOTAL = 60;
-		for (let batch = 0; batch < TOTAL; batch += 10) {
-			await Promise.all(
-				Array.from({ length: Math.min(10, TOTAL - batch) }, (_, i) =>
-					page.request.post(`/api/projects/${project.slug}/tasks`, {
-						headers,
-						data: {
-							project_id: project.id,
-							title: `Scroll Task ${String(batch + i + 1).padStart(3, '0')}`,
-						},
-					}),
-				),
-			);
+		for (let i = 1; i <= TOTAL; i++) {
+			const res = await page.request.post(`/api/projects/${project.slug}/tasks`, {
+				headers,
+				data: {
+					project_id: project.id,
+					title: `Scroll Task ${String(i).padStart(3, '0')}`,
+				},
+			});
+			expect(res.ok()).toBeTruthy();
 		}
 
 		await authenticate(page);
@@ -55,9 +54,11 @@ test.describe('Task list — infinite scroll', () => {
 		expect(Number(before![2])).toBeGreaterThan(50);
 
 		// Scrolling the bottom sentinel into view auto-fetches the remaining pages.
-		const main = page.locator('main').first();
+		// scrollIntoViewIfNeeded scrolls whichever ancestor is scrollable, so this
+		// works without assuming which element owns the scroll.
+		const sentinel = page.getByTestId('task-list-sentinel');
 		await expect(async () => {
-			await main.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+			await sentinel.scrollIntoViewIfNeeded();
 			const text = (await count.textContent()) ?? '';
 			const m = text.match(/Showing (\d+) of (\d+)/);
 			expect(m).toBeTruthy();

@@ -35,9 +35,9 @@ test('filter selections persist for the same project across navigation away and 
 		params: { projectId: projectSlug },
 	});
 
-	// Default view: open tasks show, terminal (done) tasks are hidden.
+	// Default view shows open work plus done tasks (done in its own bottom section).
 	await findByText('Backlog Task', undefined, { timeout: 10_000 });
-	expect(queryByText('Done Task')).toBeNull();
+	await findByText('Done Task');
 
 	// Set a non-default filter set: status → Done only, plus a sort change.
 	const toggle = await findByTestId('task-filter-toggle');

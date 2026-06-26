@@ -225,6 +225,10 @@ test('terminal tasks render in a Done section split out from the Backlog', async
 	expect(backlogSection.textContent).toContain('Backlog Task');
 	expect(backlogSection.textContent).not.toContain('Done Task');
 	expect(backlogSection.textContent).not.toContain('Cancelled Task');
+
+	// Finished work is visually faded (theme-agnostic opacity); open work is not.
+	expect(doneSection.querySelector('tbody tr')?.className).toContain('opacity-60');
+	expect(backlogSection.querySelector('tbody tr')?.className ?? '').not.toContain('opacity-60');
 });
 
 test('Done section hides when only terminal tasks remain after filtering them out', async () => {
