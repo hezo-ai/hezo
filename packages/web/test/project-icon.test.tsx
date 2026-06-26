@@ -43,6 +43,9 @@ test('the rail renders the icon image when a project has one', async () => {
 	await expect.poll(() => avatar.querySelector('img'), { timeout: 15_000 }).toBeTruthy();
 	const img = avatar.querySelector('img');
 	expect(img?.getAttribute('src')).toContain(`/icon?exp=`);
+	// An image avatar drops the initials border, so it doesn't show a stray grey
+	// ring between the image and the active/live ring.
+	expect(img?.parentElement?.className).not.toContain('border-border');
 });
 
 test('settings shows Upload image with no icon, and Replace/Remove once set', async () => {
