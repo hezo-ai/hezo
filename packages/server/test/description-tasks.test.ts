@@ -143,7 +143,7 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 			`SELECT count(*)::int AS n FROM tasks
 			 WHERE team_id = $1
 			   AND labels @> '["team-coherence-review"]'::jsonb
-			   AND status NOT IN ('done', 'closed', 'cancelled')`,
+			   AND status NOT IN ('done', 'cancelled')`,
 			[teamId],
 		);
 		expect(count.rows[0].n).toBe(1);

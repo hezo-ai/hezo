@@ -11,7 +11,6 @@ import {
 	createTestProject,
 	createTestTeam,
 	instanceCeoId,
-	instanceCoachId,
 	mintAgentToken,
 	projectSlugForTeamSlug,
 } from './helpers/app';
@@ -419,73 +418,34 @@ describe('MCP endpoint: tool call integration', () => {
 		return JSON.parse(body.result.content[0].text);
 	}
 
-	it('update_task via MCP as a non-Coach agent rejects status=closed', async () => {
+	it('update_task via MCP lets an agent mark a task done (the completed state)', async () => {
 		const created = (await callToolViaMcp('create_task', {
 			project: projectId,
-			title: 'Agent MCP close target',
+			title: 'Agent MCP done target',
 			assignee_id: agentId,
 		})) as { id: string };
 
 		const result = (await callUpdateTaskAsAgent({
 			project: projectId,
 			task_id: created.id,
-			status: 'closed',
+			status: 'done',
 		})) as { status?: string; error?: string };
-		expect(result.error).toMatch(/coach/i);
-		expect(result.status).toBeUndefined();
-
-		const row = await db.query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [
-			created.id,
-		]);
-		expect(row.rows[0].status).not.toBe('closed');
-	});
-
-	it('update_task via MCP as Coach can set status=closed', async () => {
-		const created = (await callToolViaMcp('create_task', {
-			project: projectId,
-			title: 'Coach MCP close target',
-			assignee_id: agentId,
-		})) as { id: string };
-
-		const coachId = await instanceCoachId(db);
-		const { token: coachToken } = await mintAgentToken(db, masterKeyManager, coachId, teamId);
-
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(coachToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				jsonrpc: '2.0',
-				method: 'tools/call',
-				params: {
-					name: 'update_task',
-					arguments: { project: projectId, task_id: created.id, status: 'closed' },
-				},
-				id: 1,
-			}),
-		});
-		const body = (await res.json()) as {
-			result: { content: Array<{ type: string; text: string }> };
-		};
-		const result = JSON.parse(body.result.content[0].text) as {
-			status?: string;
-			error?: string;
-		};
 		expect(result.error).toBeUndefined();
-		expect(result.status).toBe('closed');
+		expect(result.status).toBe('done');
 	});
 
-	it('update_task via MCP as agent cannot re-open a closed task', async () => {
+	it('update_task via MCP as agent cannot re-open a terminal task', async () => {
 		const created = (await callToolViaMcp('create_task', {
 			project: projectId,
 			title: 'Agent MCP reopen target',
 			assignee_id: agentId,
 		})) as { id: string };
 
-		// Admin closes the task first.
+		// Admin closes (cancels) the task first.
 		await callToolViaMcp('update_task', {
 			project: projectId,
 			task_id: created.id,
-			status: 'closed',
+			status: 'cancelled',
 		});
 
 		const result = (await callUpdateTaskAsAgent({

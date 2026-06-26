@@ -170,7 +170,7 @@ async function closePlanningTask(
 			(await taskRes.json()) as { data?: { status: string; assignee_id: string | null } }
 		).data;
 		if (!task) throw new Error('closePlanningTask: task not found');
-		if (task.status === 'done' || task.status === 'closed' || task.status === 'cancelled') return;
+		if (task.status === 'done' || task.status === 'cancelled') return;
 
 		if (task.assignee_id) {
 			const runsRes = await page.request.get(

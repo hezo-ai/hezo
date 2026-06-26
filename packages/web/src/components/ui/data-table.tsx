@@ -17,6 +17,8 @@ interface DataTableProps<T> {
 	/** When set with indentColumnKey, adds left padding on that column per depth. */
 	getRowDepth?: (row: T) => number;
 	indentColumnKey?: string;
+	/** Extra class(es) applied per row — e.g. to fade finished (terminal) tasks. */
+	rowClassName?: (row: T) => string;
 }
 
 const depthIndentClass: Record<number, string> = {
@@ -31,6 +33,7 @@ export function DataTable<T>({
 	onRowClick,
 	getRowDepth,
 	indentColumnKey,
+	rowClassName,
 }: DataTableProps<T>) {
 	return (
 		<div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
@@ -58,7 +61,9 @@ export function DataTable<T>({
 								key={rowKey(row)}
 								data-depth={depth > 0 ? depth : undefined}
 								onClick={onRowClick ? () => onRowClick(row) : undefined}
-								className={onRowClick ? 'cursor-pointer hover:bg-surface-2' : ''}
+								className={`${onRowClick ? 'cursor-pointer hover:bg-surface-2' : ''} ${
+									rowClassName?.(row) ?? ''
+								}`.trim()}
 							>
 								{columns.map((col) => {
 									const indent =

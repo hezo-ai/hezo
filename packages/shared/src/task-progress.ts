@@ -34,9 +34,9 @@ export function isExecutionScopeTask(
 	return !hasPlanningLabel(task.labels);
 }
 
-/** Planning phase ends when the Captain's planning epic is Coach-closed. */
+/** Planning phase ends when the Captain's planning epic is done. */
 export function isPlanningPhaseComplete(planningTaskStatus: string | null): boolean {
-	return planningTaskStatus === TaskStatus.Closed;
+	return planningTaskStatus === TaskStatus.Done;
 }
 
 export const ProjectStatus = {
@@ -81,7 +81,7 @@ export function deriveProjectTaskListPhaseBanner(input: {
 }
 
 export interface TaskProgressSummary {
-	/** True when the draft execution plan ticket has reached `closed`. */
+	/** True when the draft execution plan ticket has reached `done`. */
 	planning_complete: boolean;
 	total: number;
 	complete: number;

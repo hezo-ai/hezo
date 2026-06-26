@@ -65,11 +65,11 @@ test('renders the onboarding phase banner while a coherence-review task is open'
 	expect(banner.getAttribute('role')).toBe('status');
 });
 
-test('does NOT render the banner once the coherence-review task is closed', async () => {
+test('does NOT render the banner once the coherence-review task is done', async () => {
 	const { findByTestId, queryByTestId } = await renderTasksPage(async (ws, project) => {
 		const task = await seedTask(ws, project, { title: 'Coherence review' });
-		// Closed → excluded from the coherence query → phase_banner is null.
-		await makeCoherenceReviewTask(task.id, 'closed');
+		// Done (terminal) → excluded from the coherence query → phase_banner is null.
+		await makeCoherenceReviewTask(task.id, 'done');
 	});
 
 	// The task list mounts, but no onboarding banner is shown.

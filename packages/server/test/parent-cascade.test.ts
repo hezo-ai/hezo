@@ -117,18 +117,18 @@ async function listWakeups(
 }
 
 describe('parent cascade — sub-task closure wakes parent agent', () => {
-	it('wakes parent assignee when the only sub-task transitions to Closed', async () => {
+	it('wakes parent assignee when the only sub-task transitions to Done', async () => {
 		const parent = await createTask('parent solo', architectId);
 		const child = await createTask('child solo', uiDesignerId, parent.id);
 		await clearWakeups(architectId);
 
-		await setStatusDirect(child.id, TaskStatus.Closed);
+		await setStatusDirect(child.id, TaskStatus.Done);
 		await triggerStatusAutomations(
 			db,
 			teamId,
 			child.id,
+			TaskStatus.InProgress,
 			TaskStatus.Done,
-			TaskStatus.Closed,
 			null,
 			undefined,
 		);
@@ -147,13 +147,13 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 		await createTask('child B still open', engineerId, parent.id);
 		await clearWakeups(architectId);
 
-		await setStatusDirect(childA.id, TaskStatus.Closed);
+		await setStatusDirect(childA.id, TaskStatus.Done);
 		await triggerStatusAutomations(
 			db,
 			teamId,
 			childA.id,
+			TaskStatus.InProgress,
 			TaskStatus.Done,
-			TaskStatus.Closed,
 			null,
 			undefined,
 		);
@@ -163,19 +163,19 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 		expect(childrenClosed).toBeUndefined();
 	});
 
-	it('fires once the final sibling sub-task reaches Closed', async () => {
+	it('fires once the final sibling sub-task reaches Done', async () => {
 		const parent = await createTask('parent two siblings', architectId);
 		const childA = await createTask('first child', uiDesignerId, parent.id);
 		const childB = await createTask('second child', engineerId, parent.id);
 		await clearWakeups(architectId);
 
-		await setStatusDirect(childA.id, TaskStatus.Closed);
+		await setStatusDirect(childA.id, TaskStatus.Done);
 		await triggerStatusAutomations(
 			db,
 			teamId,
 			childA.id,
+			TaskStatus.InProgress,
 			TaskStatus.Done,
-			TaskStatus.Closed,
 			null,
 			undefined,
 		);
@@ -185,13 +185,13 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 			),
 		).toBeUndefined();
 
-		await setStatusDirect(childB.id, TaskStatus.Closed);
+		await setStatusDirect(childB.id, TaskStatus.Done);
 		await triggerStatusAutomations(
 			db,
 			teamId,
 			childB.id,
+			TaskStatus.InProgress,
 			TaskStatus.Done,
-			TaskStatus.Closed,
 			null,
 			undefined,
 		);
@@ -201,7 +201,7 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 		expect(after).toBeDefined();
 	});
 
-	it('cancelled sub-task wakes parent — cancelled counts the same as Closed', async () => {
+	it('cancelled sub-task wakes parent — cancelled counts the same as Done', async () => {
 		const parent = await createTask('parent cancel', architectId);
 		const child = await createTask('to be cancelled', uiDesignerId, parent.id);
 		await clearWakeups(architectId);
@@ -245,9 +245,10 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 		expect(wakeups.find((w) => w.payload.reason === 'children_closed')).toBeUndefined();
 	});
 
-	it('does not fire on Done — Done leaves parent still gated', async () => {
+	it('does not wake the parent while a Done child sits beside an open sibling', async () => {
 		const parent = await createTask('parent done child', architectId);
 		const child = await createTask('child going done', uiDesignerId, parent.id);
+		await createTask('still open sibling', engineerId, parent.id);
 		await clearWakeups(architectId);
 
 		await setStatusDirect(child.id, TaskStatus.Done);
@@ -271,15 +272,15 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 		const childB = await createTask('idem child B', engineerId, parent.id);
 		await clearWakeups(architectId);
 
-		await setStatusDirect(childA.id, TaskStatus.Closed);
-		await setStatusDirect(childB.id, TaskStatus.Closed);
+		await setStatusDirect(childA.id, TaskStatus.Done);
+		await setStatusDirect(childB.id, TaskStatus.Done);
 
 		await triggerStatusAutomations(
 			db,
 			teamId,
 			childA.id,
+			TaskStatus.InProgress,
 			TaskStatus.Done,
-			TaskStatus.Closed,
 			null,
 			undefined,
 		);
@@ -287,8 +288,8 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 			db,
 			teamId,
 			childB.id,
+			TaskStatus.InProgress,
 			TaskStatus.Done,
-			TaskStatus.Closed,
 			null,
 			undefined,
 		);
@@ -305,13 +306,13 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 		const child = await createTask('orphan child', uiDesignerId, parent.id);
 		await clearWakeups(architectId);
 
-		await setStatusDirect(child.id, TaskStatus.Closed);
+		await setStatusDirect(child.id, TaskStatus.Done);
 		await triggerStatusAutomations(
 			db,
 			teamId,
 			child.id,
+			TaskStatus.InProgress,
 			TaskStatus.Done,
-			TaskStatus.Closed,
 			null,
 			undefined,
 		);
@@ -324,13 +325,13 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 		const top = await createTask('top-level standalone', architectId);
 		await clearWakeups(architectId);
 
-		await setStatusDirect(top.id, TaskStatus.Closed);
+		await setStatusDirect(top.id, TaskStatus.Done);
 		await triggerStatusAutomations(
 			db,
 			teamId,
 			top.id,
+			TaskStatus.InProgress,
 			TaskStatus.Done,
-			TaskStatus.Closed,
 			null,
 			undefined,
 		);

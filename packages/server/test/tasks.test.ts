@@ -584,76 +584,7 @@ describe('tasks CRUD', () => {
 		await db.query(`DELETE FROM heartbeat_runs WHERE task_id = $1`, [oldTask.id]);
 	});
 
-	it('rejects a non-Coach agent trying to close an task via PATCH', async () => {
-		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				project_id: projectId,
-				title: 'Agent-close target',
-				assignee_id: agentId,
-			}),
-		});
-		const task = (await createRes.json()).data;
-
-		const { token: agentToken } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			agentId,
-			teamId,
-			null,
-			{ projectId },
-		);
-
-		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: 'closed' }),
-		});
-		expect(res.status).toBe(403);
-		expect((await res.json()).error.message).toMatch(/coach/i);
-
-		const row = await db.query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [
-			task.id,
-		]);
-		expect(row.rows[0].status).not.toBe('closed');
-	});
-
-	it('allows Coach to close an task via PATCH', async () => {
-		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				project_id: projectId,
-				title: 'Coach-close target',
-				assignee_id: agentId,
-			}),
-		});
-		const task = (await createRes.json()).data;
-
-		const coachRow = await db.query<{ id: string }>(
-			"SELECT id FROM member_agents WHERE slug = 'coach' LIMIT 1",
-		);
-		const coachId = coachRow.rows[0].id;
-		const { token: coachToken } = await mintAgentToken(
-			db,
-			masterKeyManager,
-			coachId,
-			teamId,
-			null,
-			{ projectId },
-		);
-
-		const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
-			method: 'PATCH',
-			headers: { ...authHeader(coachToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: 'closed' }),
-		});
-		expect(res.status).toBe(200);
-		expect((await res.json()).data.status).toBe('closed');
-	});
-
-	it('rejects an agent trying to re-open a closed task via PATCH', async () => {
+	it('rejects an agent trying to re-open a terminal task via PATCH', async () => {
 		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -665,10 +596,11 @@ describe('tasks CRUD', () => {
 		});
 		const task = (await createRes.json()).data;
 
+		// Admin marks it cancelled (a terminal state).
 		await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: 'closed' }),
+			body: JSON.stringify({ status: 'cancelled' }),
 		});
 
 		const { token: agentToken } = await mintAgentToken(
@@ -697,7 +629,7 @@ describe('tasks CRUD', () => {
 		expect(bypassRes.status).toBe(403);
 	});
 
-	it('allows a the admin to close and re-open an task', async () => {
+	it('marks a task cancelled when the admin closes it, then re-opens to backlog', async () => {
 		const createRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -712,10 +644,10 @@ describe('tasks CRUD', () => {
 		const closeRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: 'closed' }),
+			body: JSON.stringify({ status: 'cancelled' }),
 		});
 		expect(closeRes.status).toBe(200);
-		expect((await closeRes.json()).data.status).toBe('closed');
+		expect((await closeRes.json()).data.status).toBe('cancelled');
 
 		const reopenRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
@@ -953,7 +885,7 @@ describe('sub-task depth + ancestors', () => {
 	});
 });
 
-describe('closure rules — sub-tasks must be closed before parent', () => {
+describe('closure rules — sub-tasks must be resolved before parent', () => {
 	async function createParent(): Promise<{ id: string; identifier: string }> {
 		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
@@ -1002,36 +934,29 @@ describe('closure rules — sub-tasks must be closed before parent', () => {
 		expect(body.error.message).toMatch(/sub-task/i);
 	});
 
-	it('rejects done on a parent while a sub-task is in done (not yet closed)', async () => {
-		const parent = await createParent();
-		const child = await createChild(parent.id);
-		await forceStatus(child.id, 'done');
-
-		const res = await setStatus(parent.id, 'done');
-		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toContain(child.identifier);
-	});
-
-	it('rejects closed on a parent while a sub-task is still open', async () => {
+	it('allows cancelling a parent even while a sub-task is still open', async () => {
+		// Cancelling is an abandon action — unlike `done`, it is not gated on
+		// children, so a parent can be cancelled with open sub-tasks.
 		const parent = await createParent();
 		const child = await createChild(parent.id);
 		await forceStatus(child.id, 'in_progress');
 
-		const res = await setStatus(parent.id, 'closed');
-		expect(res.status).toBe(400);
+		const res = await setStatus(parent.id, 'cancelled');
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.status).toBe('cancelled');
 	});
 
-	it('allows done once every sub-task is closed', async () => {
+	it('allows done once every sub-task is done', async () => {
 		const parent = await createParent();
 		const child = await createChild(parent.id);
-		await forceStatus(child.id, 'closed');
+		await forceStatus(child.id, 'done');
 
 		const res = await setStatus(parent.id, 'done');
 		expect(res.status).toBe(200);
 		expect((await res.json()).data.status).toBe('done');
 	});
 
-	it('allows done when the only sub-task is cancelled (cancelled counts as closed)', async () => {
+	it('allows done when the only sub-task is cancelled (cancelled is terminal)', async () => {
 		const parent = await createParent();
 		const child = await createChild(parent.id);
 		await forceStatus(child.id, 'cancelled');
@@ -1041,11 +966,11 @@ describe('closure rules — sub-tasks must be closed before parent', () => {
 		expect((await res.json()).data.status).toBe('done');
 	});
 
-	it('allows done when sub-tasks are a mix of closed and cancelled', async () => {
+	it('allows done when sub-tasks are a mix of done and cancelled', async () => {
 		const parent = await createParent();
-		const closedChild = await createChild(parent.id);
+		const doneChild = await createChild(parent.id);
 		const cancelledChild = await createChild(parent.id);
-		await forceStatus(closedChild.id, 'closed');
+		await forceStatus(doneChild.id, 'done');
 		await forceStatus(cancelledChild.id, 'cancelled');
 
 		const res = await setStatus(parent.id, 'done');

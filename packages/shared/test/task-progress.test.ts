@@ -26,7 +26,6 @@ const row = (over: Partial<TaskProgressStatusRow> & { id: string }): TaskProgres
 describe('taskProgressBucket', () => {
 	it('buckets terminal, in-progress, and not-done statuses', () => {
 		expect(taskProgressBucket(TaskStatus.Done)).toBe('complete');
-		expect(taskProgressBucket(TaskStatus.Closed)).toBe('complete');
 		expect(taskProgressBucket(TaskStatus.Cancelled)).toBe('complete');
 		expect(taskProgressBucket(TaskStatus.InProgress)).toBe('in_progress');
 		expect(taskProgressBucket(TaskStatus.Review)).toBe('in_progress');
@@ -49,8 +48,8 @@ describe('scope helpers', () => {
 		expect(isExecutionScopeTask(row({ id: 'work' }), null)).toBe(true);
 	});
 
-	it('marks planning complete only when the epic is closed', () => {
-		expect(isPlanningPhaseComplete(TaskStatus.Closed)).toBe(true);
+	it('marks planning complete only when the epic is done', () => {
+		expect(isPlanningPhaseComplete(TaskStatus.Done)).toBe(true);
 		expect(isPlanningPhaseComplete(TaskStatus.InProgress)).toBe(false);
 		expect(isPlanningPhaseComplete(null)).toBe(false);
 	});
@@ -73,9 +72,7 @@ describe('formatProjectStatus / phase banner', () => {
 		expect(deriveProjectTaskListPhaseBanner({ coherenceReviewStatus: TaskStatus.InProgress })).toBe(
 			'onboarding',
 		);
-		expect(
-			deriveProjectTaskListPhaseBanner({ coherenceReviewStatus: TaskStatus.Closed }),
-		).toBeNull();
+		expect(deriveProjectTaskListPhaseBanner({ coherenceReviewStatus: TaskStatus.Done })).toBeNull();
 		expect(deriveProjectTaskListPhaseBanner({ coherenceReviewStatus: null })).toBeNull();
 	});
 });
@@ -89,7 +86,7 @@ describe('deriveProjectStatus', () => {
 	it('is Completed when every scoped task is terminal', () => {
 		const tasks = [
 			row({ id: 'a', status: TaskStatus.Done }),
-			row({ id: 'b', status: TaskStatus.Closed }),
+			row({ id: 'b', status: TaskStatus.Cancelled }),
 		];
 		expect(deriveProjectStatus(tasks, null)).toBe(ProjectStatus.Completed);
 	});
@@ -127,14 +124,14 @@ describe('buildTaskProgressSummary', () => {
 		expect(s.project_name).toBe('Demo');
 	});
 
-	it('counts execution-scope tasks once planning is closed', () => {
+	it('counts execution-scope tasks once planning is done', () => {
 		const s = buildTaskProgressSummary({
 			planningTaskId: 'epic',
-			planningTaskStatus: TaskStatus.Closed,
+			planningTaskStatus: TaskStatus.Done,
 			coherenceReviewStatus: null,
 			projectName: 'Demo',
 			tasks: [
-				row({ id: 'epic', status: TaskStatus.Closed }),
+				row({ id: 'epic', status: TaskStatus.Done }),
 				row({ id: 'a', status: TaskStatus.Done }),
 				row({ id: 'b', status: TaskStatus.InProgress }),
 				row({ id: 'c', status: TaskStatus.Backlog }),

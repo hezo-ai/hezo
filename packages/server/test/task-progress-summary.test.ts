@@ -98,9 +98,9 @@ describe('GET /projects/:projectId/tasks/progress-summary', () => {
 		expect(summary.phase_banner).toBeNull();
 	});
 
-	it('counts execution-scope tasks once the planning ticket is closed', async () => {
+	it('counts execution-scope tasks once the planning ticket is done', async () => {
 		await db.query('UPDATE tasks SET status = $1::task_status WHERE id = $2', [
-			TaskStatus.Closed,
+			TaskStatus.Done,
 			planningTaskId,
 		]);
 

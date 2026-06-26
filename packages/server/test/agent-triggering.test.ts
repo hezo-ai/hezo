@@ -234,7 +234,7 @@ describe('agent triggering', () => {
 			 FROM tasks i
 			 JOIN member_agents ma ON ma.id = i.assignee_id
 			 WHERE i.project_id = $1 AND i.team_id = $2
-			   AND i.status NOT IN ('done'::task_status, 'closed'::task_status, 'cancelled'::task_status)
+			   AND i.status NOT IN ('done'::task_status, 'cancelled'::task_status)
 			   AND ma.admin_status = 'enabled'`,
 			[projectId, teamId],
 		);

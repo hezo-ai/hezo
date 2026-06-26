@@ -170,14 +170,14 @@ describe('POST /heartbeat-runs/:runId/terminate', () => {
 	});
 });
 
-describe('PATCH /tasks status → Closed/Cancelled', () => {
-	it('auto-terminates queued runs when task closes', async () => {
+describe('PATCH /tasks status → Cancelled', () => {
+	it('auto-terminates queued runs when task is cancelled', async () => {
 		const runId = await makeRun('queued');
 
 		const res = await app.request(`/api/projects/${projectId}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: 'closed' }),
+			body: JSON.stringify({ status: 'cancelled' }),
 		});
 		expect(res.status).toBe(200);
 
@@ -188,7 +188,7 @@ describe('PATCH /tasks status → Closed/Cancelled', () => {
 
 		const row = await getRunRow(runId);
 		expect(row.status).toBe('cancelled');
-		expect(row.error).toBe('Task closed');
+		expect(row.error).toBe('Task cancelled');
 
 		const sysComments = await getSystemComments(taskId);
 		const terminationComment = sysComments.find(

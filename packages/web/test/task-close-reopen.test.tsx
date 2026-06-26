@@ -86,9 +86,9 @@ test('task detail no longer shows a delete button or status pill row', async () 
 	expect(queryByRole('button', { name: 'review' })).toBeNull();
 });
 
-test('a done task offers both re-open and close', async () => {
+test('a done task offers re-open and hides close (done is terminal)', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
-	const { findByTestId, router } = await renderApp({
+	const { findByTestId, queryByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -106,7 +106,7 @@ test('a done task offers both re-open and close', async () => {
 	});
 
 	await findByTestId('task-reopen-button', undefined, { timeout: 10_000 });
-	await findByTestId('task-close-button');
+	expect(queryByTestId('task-close-button')).toBeNull();
 });
 
 test('a cancelled task offers re-open and hides close', async () => {

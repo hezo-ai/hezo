@@ -100,7 +100,6 @@ export const TaskStatus = {
 	Review: 'review',
 	Blocked: 'blocked',
 	Done: 'done',
-	Closed: 'closed',
 	Cancelled: 'cancelled',
 } as const;
 export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
@@ -111,7 +110,6 @@ export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
 	[TaskStatus.Review]: 'Review',
 	[TaskStatus.Blocked]: 'Blocked',
 	[TaskStatus.Done]: 'Done',
-	[TaskStatus.Closed]: 'Closed',
 	[TaskStatus.Cancelled]: 'Cancelled',
 };
 
@@ -751,11 +749,7 @@ export const AuditAction = {
 } as const;
 export type AuditAction = (typeof AuditAction)[keyof typeof AuditAction];
 
-export const TERMINAL_TASK_STATUSES = [
-	TaskStatus.Done,
-	TaskStatus.Closed,
-	TaskStatus.Cancelled,
-] as const;
+export const TERMINAL_TASK_STATUSES = [TaskStatus.Done, TaskStatus.Cancelled] as const;
 
 export const PRIORITY_ORDER: Record<TaskPriority, number> = {
 	[TaskPriority.Urgent]: 0,

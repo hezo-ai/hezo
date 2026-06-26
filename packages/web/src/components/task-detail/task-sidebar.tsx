@@ -265,7 +265,7 @@ export function TaskSidebar({
 							Re-open task
 						</Button>
 					)}
-					{task.status !== TaskStatus.Closed && task.status !== TaskStatus.Cancelled && (
+					{!(TERMINAL_TASK_STATUSES as readonly string[]).includes(task.status) && (
 						<Button
 							variant="danger-text"
 							size="sm"
@@ -283,12 +283,12 @@ export function TaskSidebar({
 				open={closeOpen}
 				onOpenChange={setCloseOpen}
 				title="Close this task?"
-				description="The task will be marked as closed. This skips the coach review step that runs when an task is marked done."
+				description="The task will be marked as cancelled. Use this for work that's being abandoned rather than completed."
 				confirmLabel="Close task"
 				variant="danger"
 				loading={updateTask.isPending}
 				onConfirm={async () => {
-					await updateTask.mutateAsync({ status: TaskStatus.Closed });
+					await updateTask.mutateAsync({ status: TaskStatus.Cancelled });
 					scrollToBottom();
 				}}
 			/>

@@ -28,20 +28,18 @@ export async function assertChildDepthAllowed(
 	return { ok: true };
 }
 
-// Sub-task statuses that still block the parent from being marked done/closed.
-// A parent can only close once every sub-task has reached a *resolved* terminal
-// state — `closed` (Coach-reviewed) or `cancelled` (abandoned). `done` still
-// blocks because it's awaiting Coach review. `cancelled` is intentionally absent:
-// a cancelled sub-task counts the same as a closed one — it's terminal and will
-// never be Coach-reviewed, so gating on it would strand the parent permanently.
-// This mirrors `hasOpenBlockers` in dependencies.ts, where a `cancelled` upstream
-// likewise satisfies a dependency.
+// Sub-task statuses that still block the parent from being marked done. A parent
+// can only be marked done once every sub-task has reached a terminal state —
+// `done` (completed) or `cancelled` (abandoned). Both terminal statuses are
+// intentionally absent: each is resolved and will never reopen on its own, so
+// gating on them would strand the parent permanently. This mirrors
+// `hasOpenBlockers` in dependencies.ts, where a terminal upstream satisfies a
+// dependency.
 const OPEN_CHILD_STATUSES = [
 	TaskStatus.Backlog,
 	TaskStatus.InProgress,
 	TaskStatus.Review,
 	TaskStatus.Blocked,
-	TaskStatus.Done,
 ];
 
 export async function assertChildrenAllClosed(
@@ -63,7 +61,7 @@ export async function assertChildrenAllClosed(
 	const plural = r.rows.length > 1 ? 's' : '';
 	return {
 		ok: false,
-		message: `Cannot mark this ticket done/closed — sub-task${plural} still open: ${blockers}. Sub-tasks must reach 'closed' (Coach-reviewed) first.`,
+		message: `Cannot mark this ticket done — sub-task${plural} still open: ${blockers}. Sub-tasks must reach 'done' or 'cancelled' first.`,
 	};
 }
 
