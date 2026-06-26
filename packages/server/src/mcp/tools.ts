@@ -1354,7 +1354,9 @@ export function registerTools(
 			task_id: z
 				.string()
 				.optional()
-				.describe('Optional originating ticket id to link the proposal to'),
+				.describe(
+					'Optional originating ticket to link the proposal to — a task identifier (e.g. "HM-1") or UUID',
+				),
 		},
 		async (args, db, auth) => {
 			if (auth.type !== AuthType.Agent) {
@@ -1377,14 +1379,21 @@ export function registerTools(
 
 			let taskId: string | null = null;
 			if (args.task_id !== undefined) {
-				const taskCheck = await db.query<{ id: string }>(
-					'SELECT id FROM tasks WHERE id = $1 AND team_id = $2',
-					[args.task_id, teamId],
-				);
-				if (taskCheck.rows.length === 0) {
+				// Agents naturally hold the human-readable identifier (e.g. "HM-1"),
+				// not the UUID — resolve either form before linking.
+				const resolved = await resolveTaskId(db, teamId, args.task_id as string);
+				// resolveTaskId trusts a well-formed UUID without a team check, so
+				// re-verify the resolved task actually belongs to this team.
+				const taskCheck = resolved
+					? await db.query<{ id: string }>('SELECT id FROM tasks WHERE id = $1 AND team_id = $2', [
+							resolved,
+							teamId,
+						])
+					: null;
+				if (!resolved || !taskCheck || taskCheck.rows.length === 0) {
 					return { error: 'task_id not found on this team' };
 				}
-				taskId = args.task_id as string;
+				taskId = resolved;
 			}
 
 			const prepared = await prepareHireProposal(db, teamId, args as unknown as HireProposalInput);

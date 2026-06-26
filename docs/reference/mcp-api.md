@@ -419,7 +419,7 @@ File a new hire proposal. Callable by a team Captain (for its own team) or the C
 | `weekly_budget_cents` | `number` | No | Weekly budget in cents |
 | `monthly_budget_cents` | `number` | No | Monthly budget in cents |
 | `touches_code` | `boolean` | No | Whether this agent reads/writes repo code |
-| `task_id` | `string` | No | Optional originating ticket id to link the proposal to |
+| `task_id` | `string` | No | Optional originating ticket to link the proposal to — a task identifier (e.g. "HM-1") or UUID |
 
 **Returns:** `{ approval_id, status, payload }` for the new pending hire approval, or `{ error }` if the spec is rejected (missing title, invalid effort/budget, reserved or duplicate slug, or an unknown `task_id`).
 
