@@ -10,6 +10,7 @@ import {
 	isLoopbackHost,
 	NETWORKING_DOCS_URL,
 	parseProbeOutput,
+	resolveAutoRebindTarget,
 	SKIP_CONNECTIVITY_ENV,
 } from '../src/services/container-connectivity-preflight';
 import { createStubDocker } from './helpers/app';
@@ -84,16 +85,44 @@ describe('parseProbeOutput', () => {
 			bindReachable: false,
 		});
 	});
+
+	it('extracts the bridge gateway IP and treats GW:- / missing as undefined', () => {
+		expect(parseProbeOutput('MCP:200 BIND:200 GW:172.17.0.1').gatewayIp).toBe('172.17.0.1');
+		expect(parseProbeOutput('MCP:200 BIND:000 GW:-').gatewayIp).toBeUndefined();
+		expect(parseProbeOutput('MCP:200 BIND:200').gatewayIp).toBeUndefined();
+	});
 });
 
 describe('buildProbeScript', () => {
-	it('curls both host targets and prints parseable markers', () => {
+	it('curls both host targets, resolves the gateway, and prints parseable markers', () => {
 		const script = buildProbeScript(3100, 25000);
 		expect(script).toContain('http://host.docker.internal:3100/mcp');
 		expect(script).toContain('http://host.docker.internal:25000/');
-		expect(script).toContain("printf 'MCP:%s BIND:%s");
+		expect(script).toContain('getent hosts host.docker.internal');
+		expect(script).toContain("printf 'MCP:%s BIND:%s GW:%s");
 		// Round-trips through the parser when the markers are filled in.
 		expect(parseProbeOutput('MCP:200 BIND:200')).toEqual(REACHABLE);
+	});
+});
+
+describe('resolveAutoRebindTarget', () => {
+	it('rebinds to the gateway IP only when a loopback bind is unreachable', () => {
+		expect(
+			resolveAutoRebindTarget({ outcome: 'bind-loopback', gatewayIp: '172.17.0.1' }, '127.0.0.1'),
+		).toBe('172.17.0.1');
+	});
+	it('never overrides an explicit non-loopback bind host (operator intent wins)', () => {
+		expect(
+			resolveAutoRebindTarget({ outcome: 'bind-loopback', gatewayIp: '172.17.0.1' }, '0.0.0.0'),
+		).toBeNull();
+	});
+	it('does not rebind without a resolved gateway IP', () => {
+		expect(resolveAutoRebindTarget({ outcome: 'bind-loopback' }, '127.0.0.1')).toBeNull();
+	});
+	it('does not rebind on any other outcome', () => {
+		for (const outcome of ['ok', 'bind-firewalled', 'mcp-unreachable', 'skipped'] as const) {
+			expect(resolveAutoRebindTarget({ outcome, gatewayIp: '172.17.0.1' }, '127.0.0.1')).toBeNull();
+		}
 	});
 });
 
@@ -188,7 +217,7 @@ describe('checkContainerToHostConnectivity', () => {
 			env: { HEZO_SKIP_DOCKER: '1' },
 			probe,
 		});
-		expect(outcome).toBe('skipped');
+		expect(outcome.outcome).toBe('skipped');
 		expect(probe).not.toHaveBeenCalled();
 	});
 
@@ -199,7 +228,7 @@ describe('checkContainerToHostConnectivity', () => {
 			env: { [SKIP_CONNECTIVITY_ENV]: '1' },
 			probe,
 		});
-		expect(outcome).toBe('skipped');
+		expect(outcome.outcome).toBe('skipped');
 		expect(probe).not.toHaveBeenCalled();
 	});
 
@@ -208,9 +237,18 @@ describe('checkContainerToHostConnectivity', () => {
 			...base,
 			probe: async () => REACHABLE,
 		});
-		expect(outcome).toBe('ok');
+		expect(outcome.outcome).toBe('ok');
 		expect(errorSpy).not.toHaveBeenCalled();
 		expect(warnSpy).not.toHaveBeenCalled();
+	});
+
+	it('surfaces the gateway IP the probe resolved', async () => {
+		const outcome = await checkContainerToHostConnectivity({
+			...base,
+			probe: async () => ({ ...BIND_DOWN, gatewayIp: '172.17.0.1' }),
+		});
+		expect(outcome.outcome).toBe('bind-loopback');
+		expect(outcome.gatewayIp).toBe('172.17.0.1');
 	});
 
 	it('logs mcp-unreachable at error (fatal — no tools load)', async () => {
@@ -218,7 +256,7 @@ describe('checkContainerToHostConnectivity', () => {
 			...base,
 			probe: async () => MCP_DOWN,
 		});
-		expect(outcome).toBe('mcp-unreachable');
+		expect(outcome.outcome).toBe('mcp-unreachable');
 		expect(errorSpy).toHaveBeenCalled();
 		expect(warnSpy).not.toHaveBeenCalled();
 	});
@@ -228,7 +266,7 @@ describe('checkContainerToHostConnectivity', () => {
 			...base,
 			probe: async () => BIND_DOWN,
 		});
-		expect(outcome).toBe('bind-loopback');
+		expect(outcome.outcome).toBe('bind-loopback');
 		expect(warnSpy).toHaveBeenCalled();
 		expect(errorSpy).not.toHaveBeenCalled();
 	});
@@ -239,7 +277,7 @@ describe('checkContainerToHostConnectivity', () => {
 			containerBindHost: '0.0.0.0',
 			probe: async () => BIND_DOWN,
 		});
-		expect(outcome).toBe('bind-firewalled');
+		expect(outcome.outcome).toBe('bind-firewalled');
 		expect(warnSpy).toHaveBeenCalled();
 		expect(errorSpy).not.toHaveBeenCalled();
 	});
@@ -250,7 +288,7 @@ describe('checkContainerToHostConnectivity', () => {
 			.mockResolvedValueOnce(MCP_DOWN)
 			.mockResolvedValueOnce(REACHABLE);
 		const outcome = await checkContainerToHostConnectivity({ ...base, probe });
-		expect(outcome).toBe('ok');
+		expect(outcome.outcome).toBe('ok');
 		expect(probe).toHaveBeenCalledTimes(2);
 	});
 
@@ -261,6 +299,6 @@ describe('checkContainerToHostConnectivity', () => {
 				throw new Error('docker boom');
 			},
 		});
-		expect(outcome).toBe('skipped');
+		expect(outcome.outcome).toBe('skipped');
 	});
 });

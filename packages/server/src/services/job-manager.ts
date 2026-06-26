@@ -36,6 +36,7 @@ import {
 	setAgentIdleIfNoActiveRuns,
 } from './agent-runtime-status';
 import { checkOverBudget } from './budget';
+import type { ContainerConnectivityStatus } from './container-connectivity-status';
 import type { ContainerLogStreamer } from './container-logs';
 import {
 	type ContainerDeps,
@@ -134,6 +135,7 @@ export interface JobManagerDeps {
 	sshAgentServer?: SshAgentServer;
 	egressProxy?: EgressProxy | null;
 	egressCAPath?: string;
+	connectivityStatus?: ContainerConnectivityStatus;
 	pricing?: PricingService;
 }
 

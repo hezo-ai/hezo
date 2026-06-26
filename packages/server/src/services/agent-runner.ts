@@ -41,6 +41,15 @@ import {
 	updateAiProviderCredential,
 } from './ai-provider-keys';
 import { checkOverBudget, recordRunCost } from './budget';
+import {
+	checkContainerToHostConnectivity,
+	formatContainerConnectivityMessage,
+} from './container-connectivity-preflight';
+import {
+	CONNECTIVITY_STALE_MS,
+	type ContainerConnectivityStatus,
+	shouldAbortForConnectivity,
+} from './container-connectivity-status';
 import { type ContainerRunUser, chownToRunUser, resolveContainerRunUser } from './container-user';
 import { syncContainerStatus } from './containers';
 import type { DockerClient, ExecLogChunk } from './docker';
@@ -149,6 +158,10 @@ export interface RunnerDeps {
 	sshAgentServer?: SshAgentServer;
 	egressProxy?: EgressProxy | null;
 	egressCAPath?: string | null;
+	/** Latest container→host connectivity outcome. When present and the egress
+	 * proxy is unreachable from containers, the run aborts instead of silently
+	 * falling through to direct egress. Absent → fail open (back-compat). */
+	connectivityStatus?: ContainerConnectivityStatus;
 	/** Runtime model pricing; when present, the parser computes run cost from it. */
 	pricing?: PricingService;
 }
@@ -906,6 +919,40 @@ export async function runAgent(
 			// Egress proxy is mandatory: agents may have placeholder secrets in
 			// their env. Failing fast prevents real secrets from leaking through
 			// a fall-through path. If allocation fails, the run aborts.
+			//
+			// Allocation only proves the host-side bind succeeded — not that the
+			// container can REACH the proxy. On a misconfigured native-Linux Docker
+			// host the proxy binds fine but containers can't connect, and the agent
+			// falls through to direct egress (`--noproxy`), defeating secret
+			// substitution, allowed_hosts, and audit. Gate on the captured
+			// connectivity outcome and abort with operator guidance when the proxy is
+			// known-unreachable. Fail OPEN on ok/skipped/unknown (and when no status
+			// holder is wired) so Docker Desktop and tests are unaffected.
+			if (deps.connectivityStatus) {
+				const probeBindHost = deps.connectivityStatus.get().bindHost;
+				const status = await deps.connectivityStatus.ensureFresh(async () => {
+					const { outcome } = await checkContainerToHostConnectivity({
+						docker: deps.docker,
+						serverPort: deps.serverPort,
+						containerBindHost: probeBindHost,
+					});
+					return { status: outcome, bindHost: probeBindHost };
+				}, CONNECTIVITY_STALE_MS);
+				if (shouldAbortForConnectivity(status)) {
+					// Release the ssh socket allocated just above; the credential lock is
+					// freed by the outer finally.
+					if (deps.sshAgentServer && sshSocketHostPath) {
+						await deps.sshAgentServer.releaseRunSocket(heartbeatRunId).catch(() => {});
+					}
+					const guidance = formatContainerConnectivityMessage(status, {
+						serverPort: deps.serverPort,
+						containerBindHost: deps.connectivityStatus.get().bindHost,
+					});
+					return finalizeFailure(
+						`Egress proxy unreachable from agent containers — aborting to avoid leaking secrets via direct egress.\n\n${guidance}`,
+					);
+				}
+			}
 			const allocated = await deps.egressProxy.allocateRunProxy(heartbeatRunId, {
 				teamId: agent.team_id,
 				agentId: agent.id,

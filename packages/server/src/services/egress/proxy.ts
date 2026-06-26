@@ -79,6 +79,10 @@ export interface EgressProxyDeps {
 	 * tests on a native-Linux daemon set this to `0.0.0.0` so the container can
 	 * reach the proxy via the bridge gateway IP, which loopback would refuse. */
 	proxyBindHost?: string;
+	/** Mutable override for the bind host, read **per-run** at allocation time so
+	 * the boot connectivity check can auto-rebind to the detected bridge gateway IP
+	 * without a restart. Takes precedence over `proxyBindHost` when set. */
+	bindHostRef?: { get(): string };
 	/** Additional CA certs to trust when verifying upstream HTTPS servers.
 	 * Tests use this to trust upstreams that present certs minted from the
 	 * same CA the proxy uses. Production keeps this empty so the proxy
@@ -157,7 +161,7 @@ export class EgressProxy {
 					runId,
 					scope,
 					port,
-					bindHost: this.proxyBindHost,
+					bindHost: this.deps.bindHostRef?.get() ?? this.proxyBindHost,
 					db: this.deps.db,
 					masterKeyManager: this.deps.masterKeyManager,
 					getMintCa: () => this.getMintCa(),

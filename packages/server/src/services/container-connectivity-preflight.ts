@@ -27,6 +27,11 @@ export interface ConnectivityProbeResult {
 	mcpReachable: boolean;
 	/** A container could reach a throwaway listener bound at `containerBindHost`. */
 	bindReachable: boolean;
+	/** The IP `host.docker.internal` resolves to inside the container — i.e. the
+	 * docker bridge gateway. Used to auto-rebind the egress proxy / SSH bridge to a
+	 * container-reachable interface when the host-side bind is loopback-only.
+	 * Undefined when the probe couldn't resolve it. */
+	gatewayIp?: string;
 }
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '0:0:0:0:0:0:0:1']);
@@ -54,6 +59,23 @@ export function classifyConnectivity(
 }
 
 /**
+ * Decide whether to auto-rebind the egress proxy / SSH bridge to the docker bridge
+ * gateway IP. We rebind only when: the container couldn't reach the host-side bind
+ * (`bind-loopback`); that bind is loopback (so we never override an explicit
+ * operator `--container-bind-host` set to a non-loopback interface); and the probe
+ * resolved a gateway IP to bind to instead. Returns the gateway IP to bind to, or
+ * `null` to leave the bind host unchanged. Pure — testable without Docker.
+ */
+export function resolveAutoRebindTarget(
+	probe: { outcome: ConnectivityOutcome | 'skipped'; gatewayIp?: string },
+	currentBindHost: string,
+): string | null {
+	if (probe.outcome !== 'bind-loopback') return null;
+	if (!isLoopbackHost(currentBindHost)) return null;
+	return probe.gatewayIp ?? null;
+}
+
+/**
  * Parse the probe container's `MCP:<code> BIND:<code>` stdout line. A real HTTP
  * status (1xx–5xx) means reachable; curl's `000` (connect failure / timeout),
  * `DOWN`, or a missing marker means not.
@@ -63,7 +85,9 @@ export function parseProbeOutput(stdout: string): ConnectivityProbeResult {
 		const m = stdout.match(new RegExp(`${key}:(\\d{3}|DOWN)`));
 		return m ? /^[1-5]\d\d$/.test(m[1]) : false;
 	};
-	return { mcpReachable: read('MCP'), bindReachable: read('BIND') };
+	const gw = stdout.match(/GW:(\S+)/);
+	const gatewayIp = gw && gw[1] !== '-' ? gw[1] : undefined;
+	return { mcpReachable: read('MCP'), bindReachable: read('BIND'), gatewayIp };
 }
 
 const FAILURE_HEADER = [
@@ -164,9 +188,11 @@ export function formatContainerConnectivityMessage(
 
 /**
  * The shell the probe container runs: curl the MCP/web port and the throwaway
- * bind-host listener, printing `MCP:<code> BIND:<code>` for the host to classify.
- * `curl -w '%{http_code}'` prints `000` on a connect failure/timeout, so a
- * blocked path reads as unreachable without the shell needing to branch on exit.
+ * bind-host listener, and resolve the bridge gateway, printing
+ * `MCP:<code> BIND:<code> GW:<ip>` for the host to classify. `curl -w
+ * '%{http_code}'` prints `000` on a connect failure/timeout, so a blocked path
+ * reads as unreachable without the shell needing to branch on exit. `GW:-` means
+ * the gateway IP couldn't be resolved (no auto-rebind target).
  */
 export function buildProbeScript(serverPort: number, bindPort: number): string {
 	const probe = (name: string, url: string) =>
@@ -175,7 +201,9 @@ export function buildProbeScript(serverPort: number, bindPort: number): string {
 	return (
 		`${probe('mcp', `http://host.docker.internal:${serverPort}/mcp`)}; ` +
 		`${probe('bind', `http://host.docker.internal:${bindPort}/`)}; ` +
-		`printf 'MCP:%s BIND:%s\\n' "$mcp" "$bind"`
+		`gw=$(getent hosts host.docker.internal 2>/dev/null | awk '{print $1; exit}'); ` +
+		`[ -z "$gw" ] && gw=-; ` +
+		`printf 'MCP:%s BIND:%s GW:%s\\n' "$mcp" "$bind" "$gw"`
 	);
 }
 
@@ -287,6 +315,13 @@ function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export interface ConnectivityCheckResult {
+	outcome: ConnectivityOutcome | 'skipped';
+	/** Bridge gateway IP the container resolved for `host.docker.internal`, when
+	 * the probe could determine it — the auto-rebind target for a loopback bind. */
+	gatewayIp?: string;
+}
+
 /**
  * Verify a container can actually reach back to the host (MCP server + egress
  * bridge) and log operator-actionable guidance when it can't. Best-effort and
@@ -298,9 +333,9 @@ function delay(ms: number): Promise<void> {
  */
 export async function checkContainerToHostConnectivity(
 	deps: ConnectivityCheckDeps,
-): Promise<ConnectivityOutcome | 'skipped'> {
+): Promise<ConnectivityCheckResult> {
 	const env = deps.env ?? process.env;
-	if (env.HEZO_SKIP_DOCKER || env[SKIP_CONNECTIVITY_ENV]) return 'skipped';
+	if (env.HEZO_SKIP_DOCKER || env[SKIP_CONNECTIVITY_ENV]) return { outcome: 'skipped' };
 
 	try {
 		const { image, preferPull } = resolveAgentBaseImage(MANAGED_AGENT_BASE_IMAGE);
@@ -324,7 +359,7 @@ export async function checkContainerToHostConnectivity(
 		const outcome = classifyConnectivity(result, deps.containerBindHost);
 		if (outcome === 'ok') {
 			log.info('container→host connectivity OK (MCP + egress bridge reachable from a container)');
-			return outcome;
+			return { outcome, gatewayIp: result.gatewayIp };
 		}
 		// Severity tracks impact: mcp-unreachable means no tools load (error); the
 		// bind-host cases are a degradation — MCP works and agents run, only proxied
@@ -335,7 +370,7 @@ export async function checkContainerToHostConnectivity(
 		})}\n`;
 		if (connectivitySeverity(outcome) === 'error') log.error(message);
 		else log.warn(message);
-		return outcome;
+		return { outcome, gatewayIp: result.gatewayIp };
 	} catch (err) {
 		// Diagnostics must never break startup. If the probe machinery itself
 		// fails (image unavailable offline, Docker hiccup), stay quiet at info —
@@ -343,6 +378,6 @@ export async function checkContainerToHostConnectivity(
 		log.info('container→host connectivity check skipped (probe unavailable)', {
 			error: err instanceof Error ? err.message : String(err),
 		});
-		return 'skipped';
+		return { outcome: 'skipped' };
 	}
 }
