@@ -37,6 +37,20 @@ request**. So even if an agent is tricked or compromised into trying to send you
 Stripe key somewhere it shouldn't, the substitution simply never happens and the
 secret never leaves.
 
+### Credentials that go in the request body
+
+Some APIs take a credential in the request body rather than a header — for example a
+login endpoint that you `POST` a username and password to and that returns a token. By
+default the proxy never touches request bodies, but you can opt an individual secret
+into **body substitution**. When you do, the proxy will substitute that secret's
+placeholder into a small JSON request body (a single `application/json` request up to
+8 KB) — still only for the secret's allowed hosts. You enable it per secret, either by
+ticking the box when you provide the credential the agent asked for, or by editing the
+secret on the **Credentials** settings page. It stays **off** until you turn it on, and
+a placeholder in a body for a secret without it is blocked just like a disallowed host.
+After such a login, the agent uses the returned token via the normal `Authorization`
+header, so the credential itself only ever travels in that one login request.
+
 ## Scoped to the hosts that need it
 
 Every secret carries an **allowed-hosts** list — the upstreams it may be used with

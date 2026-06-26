@@ -106,6 +106,7 @@ export interface CredentialRequestContent {
 	confirmation_text?: string | null;
 	placeholder?: string;
 	allowed_hosts?: string[];
+	allow_body_substitution?: boolean;
 	scope?: string;
 }
 

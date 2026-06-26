@@ -5,13 +5,15 @@ import { createPlaceholderRegex, PLACEHOLDER_PROBE } from '../../lib/credential-
 import { refreshExpiringTokens } from '../oauth/token-resolver';
 
 /**
- * Token agents emit in headers and URLs in place of real secret values.
- * The egress proxy intercepts every outbound request and substitutes
- * these tokens with the matching `secrets.name` before the request leaves
- * the host. Secrets are instance-global, so any run can emit any
- * placeholder (still bounded by each secret's allowed_hosts). Bodies are
- * forwarded unchanged — agents that need a secret in a JSON payload should
- * use the local-MCP-with-proxy pattern instead.
+ * Token agents emit in headers, URLs, and (when opted-in) request bodies in
+ * place of real secret values. The egress proxy intercepts every outbound
+ * request and substitutes these tokens with the matching `secrets.name`
+ * before the request leaves the host. Secrets are instance-global, so any
+ * run can emit any placeholder (still bounded by each secret's
+ * allowed_hosts). Bodies are forwarded unchanged by default; a secret with
+ * `allow_body_substitution` may also be substituted into a small JSON request
+ * body (gated by the proxy to ≤ 8 KB `application/json` requests) — for APIs
+ * that take a credential in the body, such as a login that returns a token.
  *
  * The match grammar is the SINGLE canonical one shared with
  * `request_credential` and the admin secrets route (see
@@ -33,18 +35,22 @@ export interface ResolvedSecret {
 	value: string;
 	allowedHosts: string[];
 	allowAllHosts: boolean;
+	allowBodySubstitution: boolean;
 }
 
 export type SubstitutionFailure =
 	| { kind: 'unknown_secret'; name: string }
 	| { kind: 'secret_not_allowed_for_host'; name: string; host: string }
+	| { kind: 'secret_not_allowed_in_body'; name: string }
 	| { kind: 'secrets_unavailable' };
 
 export interface SubstitutionResult {
 	headers: Record<string, string | string[]>;
 	url: string;
+	body: string | null;
 	headersChanged: boolean;
 	urlChanged: boolean;
+	bodyChanged: boolean;
 	secretsUsed: Set<string>;
 	failure: SubstitutionFailure | null;
 }
@@ -54,6 +60,10 @@ interface RequestInputs {
 	headers: Record<string, string | string[] | undefined>;
 	method: string;
 	host: string;
+	/** Decoded request body, when the proxy has buffered it for substitution.
+	 * Only set for gated requests (small `application/json`); omitted otherwise,
+	 * in which case the body is forwarded byte-for-byte and never inspected. */
+	body?: string | null;
 }
 
 export async function loadAllSecrets(
@@ -75,8 +85,9 @@ export async function loadAllSecrets(
 		encrypted_value: string;
 		allowed_hosts: string[];
 		allow_all_hosts: boolean;
+		allow_body_substitution: boolean;
 	}>(
-		`SELECT name, encrypted_value, allowed_hosts, allow_all_hosts
+		`SELECT name, encrypted_value, allowed_hosts, allow_all_hosts, allow_body_substitution
 		 FROM secrets`,
 	);
 
@@ -87,6 +98,7 @@ export async function loadAllSecrets(
 			value: decrypt(row.encrypted_value, key),
 			allowedHosts: row.allowed_hosts ?? [],
 			allowAllHosts: row.allow_all_hosts,
+			allowBodySubstitution: row.allow_body_substitution ?? false,
 		});
 	}
 	return out;
@@ -106,6 +118,16 @@ export function substituteRequest(
 		) {
 			return { kind: 'secret_not_allowed_for_host', name, host: input.host };
 		}
+		return null;
+	};
+	// Body substitution is gated on a per-secret opt-in on top of the host check:
+	// a placeholder in the body for a secret without `allow_body_substitution`
+	// fails loudly rather than leaking the literal placeholder into the payload.
+	const checkBodyAccess = (name: string): SubstitutionFailure | null => {
+		const hostFailure = checkAccess(name);
+		if (hostFailure) return hostFailure;
+		const secret = secrets.get(name);
+		if (!secret?.allowBodySubstitution) return { kind: 'secret_not_allowed_in_body', name };
 		return null;
 	};
 
@@ -135,11 +157,22 @@ export function substituteRequest(
 	const urlOut = applyToString(input.url, secrets, secretsUsed, checkAccess);
 	if (urlOut.failure) failure ??= urlOut.failure;
 
+	let body: string | null = input.body ?? null;
+	let bodyChanged = false;
+	if (typeof input.body === 'string') {
+		const bodyOut = applyToString(input.body, secrets, secretsUsed, checkBodyAccess);
+		if (bodyOut.failure) failure ??= bodyOut.failure;
+		body = bodyOut.value;
+		bodyChanged = bodyOut.changed;
+	}
+
 	return {
 		headers: headersOut,
 		url: urlOut.value,
+		body,
 		headersChanged,
 		urlChanged: urlOut.changed,
+		bodyChanged,
 		secretsUsed,
 		failure,
 	};

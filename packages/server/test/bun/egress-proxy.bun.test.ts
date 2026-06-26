@@ -84,6 +84,38 @@ describe('EgressProxy under Bun', () => {
 		}
 	}, 30_000);
 
+	// Body substitution reads the decrypted request body off the MITM TLS stream
+	// and re-writes it upstream — runtime-sensitive on Bun, so guard it here.
+	test('substitutes a JSON body placeholder through the MITM path and recomputes Content-Length', async () => {
+		const upstream = await startHttpsBodyUpstream(ca);
+		const upstreamPort = (upstream.address() as { port: number }).port;
+		const runId = `bun-run-${process.pid}-body`;
+		await insertSecret('BUN_BODY_PW', 'real-bun-pw', ['localhost'], true);
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const res = await fetchHttpsThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				targetHost: 'localhost',
+				targetPort: upstreamPort,
+				path: '/api/auth/login',
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: '{"username":"admin","password":"__HEZO_SECRET_BUN_BODY_PW__"}',
+				caCert: ca.cert,
+			});
+			expect(res.status).toBe(200);
+			const hit = httpsBodyHits.at(-1);
+			expect(hit?.body).toBe('{"username":"admin","password":"real-bun-pw"}');
+			expect(hit?.headers['content-length']).toBe(
+				String(Buffer.byteLength('{"username":"admin","password":"real-bun-pw"}')),
+			);
+		} finally {
+			await proxy.releaseRunProxy(runId);
+			await new Promise<void>((resolve) => upstream.close(() => resolve()));
+		}
+	}, 30_000);
+
 	// A proxy must not relay hop-by-hop headers (RFC 7230 §6.1) to the upstream.
 	// Relaying the client's `connection: keep-alive` / `keep-alive` / `upgrade`
 	// lets the client dictate the upstream socket's lifetime against the proxy's
@@ -330,17 +362,23 @@ function getHostServers(
 
 const httpsHits: Array<Record<string, string | string[] | undefined>> = [];
 
-async function insertSecret(name: string, value: string, allowedHosts: string[]): Promise<void> {
+async function insertSecret(
+	name: string,
+	value: string,
+	allowedHosts: string[],
+	allowBodySubstitution = false,
+): Promise<void> {
 	const key = masterKeyManager.getKey();
 	if (!key) throw new Error('master key unavailable in test');
 	const enc = encrypt(value, key);
 	await db.query(
-		`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
-		 VALUES ($1, $2, 'api_token'::secret_category, $3)
+		`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts, allow_body_substitution)
+		 VALUES ($1, $2, 'api_token'::secret_category, $3, $4)
 		 ON CONFLICT (name) DO UPDATE
 		 SET encrypted_value = EXCLUDED.encrypted_value,
-		     allowed_hosts = EXCLUDED.allowed_hosts`,
-		[name, enc, allowedHosts],
+		     allowed_hosts = EXCLUDED.allowed_hosts,
+		     allow_body_substitution = EXCLUDED.allow_body_substitution`,
+		[name, enc, allowedHosts, allowBodySubstitution],
 	);
 }
 
@@ -355,6 +393,28 @@ async function startHttpsUpstream(rootCa: { cert: string; key: string }): Promis
 	return server;
 }
 
+const httpsBodyHits: Array<{ headers: Record<string, string | undefined>; body: string }> = [];
+
+/** HTTPS upstream that records the decrypted request body — used to assert body
+ * substitution survives the MITM read-and-rewrite path on the Bun runtime. */
+async function startHttpsBodyUpstream(rootCa: { cert: string; key: string }): Promise<HttpsServer> {
+	const { cert, key } = await mintCertFromCA(rootCa, 'localhost');
+	const server = createHttpsServer({ cert, key }, (req, res) => {
+		const chunks: Buffer[] = [];
+		req.on('data', (chunk) => chunks.push(chunk));
+		req.on('end', () => {
+			httpsBodyHits.push({
+				headers: req.headers as Record<string, string | undefined>,
+				body: Buffer.concat(chunks).toString(),
+			});
+			res.writeHead(200, { 'content-type': 'application/json' });
+			res.end(JSON.stringify({ ok: true }));
+		});
+	});
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+	return server;
+}
+
 interface HttpsProxyFetchOpts {
 	proxyHost: string;
 	proxyPort: number;
@@ -363,6 +423,7 @@ interface HttpsProxyFetchOpts {
 	path: string;
 	method?: string;
 	headers?: Record<string, string>;
+	body?: string;
 	caCert: string;
 }
 
@@ -401,7 +462,10 @@ async function fetchHttpsThroughProxy(
 					'Connection: close',
 					...Object.entries(opts.headers ?? {}).map(([k, v]) => `${k}: ${v}`),
 				];
-				tls.write(`${headerLines.join('\r\n')}\r\n\r\n`);
+				if (opts.body !== undefined) {
+					headerLines.push(`Content-Length: ${Buffer.byteLength(opts.body)}`);
+				}
+				tls.write(`${headerLines.join('\r\n')}\r\n\r\n${opts.body ?? ''}`);
 			},
 		);
 		const chunks: Buffer[] = [];

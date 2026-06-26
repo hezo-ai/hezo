@@ -6,8 +6,15 @@ function makeSecret(
 	value: string,
 	hosts: string[],
 	allowAll = false,
+	allowBody = false,
 ): ResolvedSecret {
-	return { name, value, allowedHosts: hosts, allowAllHosts: allowAll };
+	return {
+		name,
+		value,
+		allowedHosts: hosts,
+		allowAllHosts: allowAll,
+		allowBodySubstitution: allowBody,
+	};
 }
 
 const baseRequest = {
@@ -174,6 +181,95 @@ describe('substituteRequest', () => {
 		expect(result.failure).toBeNull();
 		expect(result.headers.authorization).toBe('Bearer __HEZO_SECRET_INNER__');
 		expect([...result.secretsUsed]).toEqual(['OUTER']);
+	});
+
+	describe('request body substitution', () => {
+		it('substitutes a placeholder in the body when the secret opts in', () => {
+			const secrets = new Map([
+				['UMAMI_PW', makeSecret('UMAMI_PW', 's3cr3t', ['umami.example'], false, true)],
+			]);
+			const result = substituteRequest(
+				{
+					...baseRequest,
+					host: 'umami.example',
+					url: 'https://umami.example/api/auth/login',
+					body: '{"username":"admin","password":"__HEZO_SECRET_UMAMI_PW__"}',
+				},
+				secrets,
+			);
+			expect(result.failure).toBeNull();
+			expect(result.body).toBe('{"username":"admin","password":"s3cr3t"}');
+			expect(result.bodyChanged).toBe(true);
+			expect([...result.secretsUsed]).toEqual(['UMAMI_PW']);
+		});
+
+		it('rejects a body placeholder when the secret has not opted in', () => {
+			const secrets = new Map([
+				['UMAMI_PW', makeSecret('UMAMI_PW', 's3cr3t', ['umami.example'], false, false)],
+			]);
+			const result = substituteRequest(
+				{
+					...baseRequest,
+					host: 'umami.example',
+					url: 'https://umami.example/api/auth/login',
+					body: '{"password":"__HEZO_SECRET_UMAMI_PW__"}',
+				},
+				secrets,
+			);
+			expect(result.failure).toEqual({ kind: 'secret_not_allowed_in_body', name: 'UMAMI_PW' });
+			expect(result.body).toBe('{"password":"__HEZO_SECRET_UMAMI_PW__"}');
+			expect(result.bodyChanged).toBe(false);
+			expect(result.secretsUsed.size).toBe(0);
+		});
+
+		it('still enforces allowed_hosts on body placeholders', () => {
+			const secrets = new Map([
+				['UMAMI_PW', makeSecret('UMAMI_PW', 's3cr3t', ['umami.example'], false, true)],
+			]);
+			const result = substituteRequest(
+				{
+					...baseRequest,
+					host: 'attacker.example',
+					url: 'https://attacker.example/login',
+					body: '{"password":"__HEZO_SECRET_UMAMI_PW__"}',
+				},
+				secrets,
+			);
+			expect(result.failure).toEqual({
+				kind: 'secret_not_allowed_for_host',
+				name: 'UMAMI_PW',
+				host: 'attacker.example',
+			});
+			expect(result.bodyChanged).toBe(false);
+		});
+
+		it('leaves the body untouched when no placeholder is present', () => {
+			const secrets = new Map([
+				['UMAMI_PW', makeSecret('UMAMI_PW', 's3cr3t', ['umami.example'], false, true)],
+			]);
+			const result = substituteRequest(
+				{
+					...baseRequest,
+					host: 'umami.example',
+					url: 'https://umami.example/api/auth/login',
+					body: '{"username":"admin"}',
+				},
+				secrets,
+			);
+			expect(result.failure).toBeNull();
+			expect(result.body).toBe('{"username":"admin"}');
+			expect(result.bodyChanged).toBe(false);
+		});
+
+		it('returns body null and unchanged when no body is provided', () => {
+			const secrets = new Map([['T', makeSecret('T', 'v', ['x.example'])]]);
+			const result = substituteRequest(
+				{ ...baseRequest, host: 'x.example', url: 'https://x.example/y' },
+				secrets,
+			);
+			expect(result.body).toBeNull();
+			expect(result.bodyChanged).toBe(false);
+		});
 	});
 
 	describe('name grammar (matches request_credential / admin-route validation)', () => {

@@ -15,6 +15,7 @@ export interface CredentialUsage {
 	category: string;
 	allowed_hosts: string[];
 	allow_all_hosts: boolean;
+	allow_body_substitution: boolean;
 	created_at: string;
 	updated_at: string;
 	last_used_at: string | null;
@@ -28,6 +29,7 @@ export interface InstanceSecret {
 	category: string;
 	allowed_hosts: string[];
 	allow_all_hosts: boolean;
+	allow_body_substitution: boolean;
 	created_at: string;
 	updated_at: string;
 }
@@ -38,6 +40,7 @@ export interface CreateInstanceSecretPayload {
 	category?: string;
 	allowed_hosts?: string[];
 	allow_all_hosts?: boolean;
+	allow_body_substitution?: boolean;
 }
 
 export interface UpdateInstanceSecretPayload {
@@ -46,6 +49,7 @@ export interface UpdateInstanceSecretPayload {
 	category?: string;
 	allowed_hosts?: string[];
 	allow_all_hosts?: boolean;
+	allow_body_substitution?: boolean;
 }
 
 export function useInstanceCredentials() {

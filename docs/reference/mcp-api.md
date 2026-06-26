@@ -746,6 +746,7 @@ Ask the human assignee to provide a secret value (API key, SSH private key, OAut
 | `input_type` | `text` \| `textarea` \| `file` | No | Form input type. Defaults: text for short keys, textarea for SSH/multiline. |
 | `confirmation_text` | `string` | No | Optional yes/no confirmation prompt instead of a paste form (e.g. "Have you added the public key to github.com/owner/repo/settings/keys?"). When set, input_type is ignored. |
 | `allowed_hosts` | `string[]` | No | Hostname allowlist for the egress proxy. The credential is only substituted into outbound requests to these hosts. REQUIRED for HTTP-auth kinds (api_key, oauth_token, github_pat) — e.g. ["api.netlify.com"]. Wildcards: *.github.com matches one label segment. |
+| `allow_body_substitution` | `boolean` | No | Request that this credential may be substituted into a small JSON request body, not just headers/URL — for APIs that take the secret in the body, e.g. a login POST that returns a token. The human sees this as a pre-checked box on the paste form and can decline it. Body substitution is gated to a single application/json request under 8KB with a fixed Content-Length; after a login, read the returned token and use it via the Authorization header on later calls. |
 
 **Returns:** `{ placeholder, comment_id, status: "pending", reused }`. The agent never sees the value; it embeds `placeholder` (`__HEZO_SECRET_<NAME>__`) and the egress proxy substitutes the real value. Returns `{ error }` for an invalid name, or for an HTTP-auth kind requested without `allowed_hosts`. Idempotent on `name`.
 

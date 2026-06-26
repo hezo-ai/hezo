@@ -49,6 +49,13 @@ const EGRESS_DEBUG = !!process.env.HEZO_EGRESS_DEBUG;
  * runtime recomputes body framing for the re-issued request. */
 const HOP_BY_HOP_HEADERS = new Set(['connection', 'keep-alive', 'upgrade']);
 
+/** Hard cap on request bodies the proxy will buffer for placeholder
+ * substitution. Body substitution exists for credential-in-body logins (small
+ * JSON payloads); anything larger streams through byte-for-byte unchanged, so a
+ * streaming/long-lived request body (SSE, Streamable-HTTP MCP) is never
+ * buffered. Kept deliberately small so the supported shape is unambiguous. */
+const MAX_BODY_SUBSTITUTION_BYTES = 8192;
+
 const PROXY_HOST = 'host.docker.internal';
 const PROXY_BIND_HOST = '127.0.0.1';
 
@@ -604,7 +611,32 @@ class RunProxyInstance {
 		const url = `${protocol}://${host}${path}`;
 		const probeInUrlOrHeaders = PLACEHOLDER_PROBE_REGEX.test(path) || headersContainProbe(headers);
 
-		if (probeInUrlOrHeaders) {
+		// Decide from headers alone whether this request may carry a credential in
+		// its body. Only small, fixed-length, uncompressed application/json
+		// POST/PUT/PATCH bodies qualify; everything else (streaming, large,
+		// non-JSON) is never buffered and streams through byte-for-byte as before.
+		const bodyEligible = isBodySubstitutionEligible(method, headers);
+
+		let bufferedBody: Buffer | null = null;
+		if (bodyEligible) {
+			const read = await readBodyCapped(req, MAX_BODY_SUBSTITUTION_BYTES);
+			if (read.tooLarge) {
+				await this.audit(host, method, path, 413, 0, [], 'body_too_large');
+				respondEarly(
+					res,
+					413,
+					'body_too_large',
+					`Request body exceeds the ${MAX_BODY_SUBSTITUTION_BYTES}-byte limit for body substitution.`,
+				);
+				return;
+			}
+			bufferedBody = read.buffer;
+		}
+
+		const probeInBody =
+			bufferedBody !== null && PLACEHOLDER_PROBE_REGEX.test(bufferedBody.toString('utf8'));
+
+		if (probeInUrlOrHeaders || probeInBody) {
 			let secrets: Map<string, ResolvedSecret>;
 			try {
 				secrets = await loadAllSecrets({
@@ -621,7 +653,16 @@ class RunProxyInstance {
 				throw e;
 			}
 
-			const result = substituteRequest({ url, headers, method, host }, secrets);
+			const result = substituteRequest(
+				{
+					url,
+					headers,
+					method,
+					host,
+					...(bufferedBody !== null ? { body: bufferedBody.toString('utf8') } : {}),
+				},
+				secrets,
+			);
 			if (result.failure) {
 				const fail = describeFailure(result.failure);
 				await this.audit(host, method, path, fail.statusCode, 0, [], fail.code);
@@ -648,11 +689,25 @@ class RunProxyInstance {
 					...result.secretsUsed,
 				]);
 			}
-			this.pipeUpstream(isSSL, host, port, method, upstreamPath, headers, req, res);
+			if (bufferedBody !== null) {
+				const outBody =
+					result.bodyChanged && result.body !== null
+						? Buffer.from(result.body, 'utf8')
+						: bufferedBody;
+				this.forwardBuffered(isSSL, host, port, method, upstreamPath, headers, outBody, res);
+			} else {
+				this.pipeUpstream(isSSL, host, port, method, upstreamPath, headers, req, res);
+			}
 			return;
 		}
 
-		this.pipeUpstream(isSSL, host, port, method, path, headers, req, res);
+		// No placeholder anywhere. A buffered (eligible) body must be forwarded from
+		// the buffer — its stream is already consumed; otherwise stream as usual.
+		if (bufferedBody !== null) {
+			this.forwardBuffered(isSSL, host, port, method, path, headers, bufferedBody, res);
+		} else {
+			this.pipeUpstream(isSSL, host, port, method, path, headers, req, res);
+		}
 	}
 
 	private pipeUpstream(
@@ -683,6 +738,45 @@ class RunProxyInstance {
 		this.trackUpstream(upstream);
 		upstream.on('error', (err) => this.onForwardError(res, err, { host, port, method, path }));
 		req.pipe(upstream);
+	}
+
+	/** Forward a request whose body the proxy buffered (and possibly substituted)
+	 * rather than streamed. Mirrors `pipeUpstream`, but writes a fixed `Buffer`
+	 * with a recomputed `Content-Length` instead of piping the live request —
+	 * substitution changes the body length, so the original framing is stale. */
+	private forwardBuffered(
+		isSSL: boolean,
+		host: string,
+		port: number,
+		method: string,
+		path: string,
+		headers: Record<string, string | string[] | undefined>,
+		body: Buffer,
+		res: ServerResponse,
+	): void {
+		const outHeaders: Record<string, string | string[] | undefined> = { ...headers };
+		outHeaders['content-length'] = String(body.byteLength);
+		// Eligible requests carry a fixed Content-Length (never chunked), but drop
+		// any transfer-encoding defensively so framing can't be ambiguous upstream.
+		delete outHeaders['transfer-encoding'];
+		const requestFn = isSSL ? httpsRequest : httpRequest;
+		const upstream = requestFn(
+			{
+				host,
+				port,
+				method,
+				path,
+				headers: outHeaders,
+				...(isSSL ? { servername: host, agent: this.upstreamAgent } : {}),
+			},
+			(upstreamRes) => {
+				res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+				upstreamRes.pipe(res);
+			},
+		);
+		this.trackUpstream(upstream);
+		upstream.on('error', (err) => this.onForwardError(res, err, { host, port, method, path }));
+		upstream.end(body);
 	}
 
 	/** A connection to the real upstream failed (refused, DNS, timeout, TLS).
@@ -829,6 +923,12 @@ function describeFailure(failure: SubstitutionFailure): FailureDescription {
 				code: 'secret_not_allowed_for_host',
 				message: `Secret ${failure.name} is not permitted for host ${failure.host}.`,
 			};
+		case 'secret_not_allowed_in_body':
+			return {
+				statusCode: 403,
+				code: 'secret_not_allowed_in_body',
+				message: `Secret ${failure.name} is not permitted in request bodies. Enable body substitution for this credential to use it in a JSON payload.`,
+			};
 		case 'secrets_unavailable':
 			return {
 				statusCode: 503,
@@ -862,4 +962,84 @@ function headersContainProbe(headers: Record<string, string | string[] | undefin
 		if (Array.isArray(v) && v.some((s) => PLACEHOLDER_PROBE_REGEX.test(s))) return true;
 	}
 	return false;
+}
+
+function headerValue(
+	headers: Record<string, string | string[] | undefined>,
+	name: string,
+): string | null {
+	const v = headers[name];
+	if (typeof v === 'string') return v;
+	if (Array.isArray(v)) return v[0] ?? null;
+	return null;
+}
+
+/** Whether a request is eligible for body placeholder substitution, decided from
+ * the request line + headers alone (before any body byte is read). Gates keep
+ * buffering to small credential-in-body logins and never touch streaming bodies:
+ * a POST/PUT/PATCH with an uncompressed `application/json` payload and a fixed
+ * `Content-Length` within the cap. Everything else streams through unchanged. */
+function isBodySubstitutionEligible(
+	method: string,
+	headers: Record<string, string | string[] | undefined>,
+): boolean {
+	const m = method.toUpperCase();
+	if (m !== 'POST' && m !== 'PUT' && m !== 'PATCH') return false;
+	const contentType = headerValue(headers, 'content-type');
+	if (!contentType || !/^\s*application\/json\b/i.test(contentType)) return false;
+	// A compressed body can't be string-substituted safely — exclude it.
+	if (headerValue(headers, 'content-encoding')) return false;
+	// Require a fixed, in-range Content-Length: excludes chunked/streaming bodies
+	// and bounds buffering before a single byte is read.
+	const lenRaw = headerValue(headers, 'content-length');
+	if (lenRaw === null) return false;
+	const len = Number(lenRaw);
+	if (!Number.isInteger(len) || len < 0 || len > MAX_BODY_SUBSTITUTION_BYTES) return false;
+	return true;
+}
+
+/** Read a paused request body into memory, aborting as soon as it exceeds `cap`
+ * (a defence against a lying Content-Length). Resumes the stream itself; the
+ * caller paused it. */
+function readBodyCapped(
+	req: IncomingMessage,
+	cap: number,
+): Promise<{ tooLarge: true } | { tooLarge: false; buffer: Buffer }> {
+	return new Promise((resolve, reject) => {
+		const chunks: Buffer[] = [];
+		let total = 0;
+		let settled = false;
+		const cleanup = () => {
+			req.off('data', onData);
+			req.off('end', onEnd);
+			req.off('error', onError);
+		};
+		const onData = (chunk: Buffer) => {
+			if (settled) return;
+			total += chunk.length;
+			if (total > cap) {
+				settled = true;
+				cleanup();
+				resolve({ tooLarge: true });
+				return;
+			}
+			chunks.push(chunk);
+		};
+		const onEnd = () => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			resolve({ tooLarge: false, buffer: Buffer.concat(chunks) });
+		};
+		const onError = (err: Error) => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			reject(err);
+		};
+		req.on('data', onData);
+		req.on('end', onEnd);
+		req.on('error', onError);
+		req.resume();
+	});
 }
