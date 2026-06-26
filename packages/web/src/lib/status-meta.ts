@@ -30,7 +30,6 @@ const TASK_STATUS_COLORS: Record<TaskStatus, BadgeColor> = {
 	[TaskStatus.Review]: 'purple',
 	[TaskStatus.Blocked]: 'danger',
 	[TaskStatus.Done]: 'success',
-	[TaskStatus.Closed]: 'neutral',
 	[TaskStatus.Cancelled]: 'neutral',
 };
 

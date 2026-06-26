@@ -19,7 +19,6 @@ describe('status-meta registry', () => {
 		expect(taskStatusColor(TaskStatus.Review)).toBe('purple');
 		expect(taskStatusColor(TaskStatus.Blocked)).toBe('danger');
 		expect(taskStatusColor(TaskStatus.Done)).toBe('success');
-		expect(taskStatusColor(TaskStatus.Closed)).toBe('neutral');
 		expect(taskStatusColor(TaskStatus.Cancelled)).toBe('neutral');
 	});
 

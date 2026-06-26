@@ -43,7 +43,7 @@ describe('deriveProjectStatus', () => {
 		const tasks = [
 			row({ id: planningId, labels: ['planning'] }),
 			row({ id: 'a', status: TaskStatus.Done }),
-			row({ id: 'b', status: TaskStatus.Closed }),
+			row({ id: 'b', status: TaskStatus.Cancelled }),
 		];
 		expect(deriveProjectStatus(tasks, planningId)).toBe(ProjectStatus.Completed);
 	});
@@ -165,7 +165,7 @@ describe('project_status integration', () => {
 		});
 
 		await db.query('UPDATE tasks SET status = $1::task_status WHERE id = $2', [
-			TaskStatus.Closed,
+			TaskStatus.Done,
 			planningTaskId,
 		]);
 	});

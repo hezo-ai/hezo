@@ -126,7 +126,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		category: 'Tasks',
 		returns:
 			'The updated task row (may carry a `warning` string), `{ unchanged: true }` when no fields changed, `null` if not found, or `{ error }` on a validation failure.',
-		auth: 'A non-Coach agent cannot set `closed` (set `done`; Coach closes after review); only the admin can re-open a closed task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate.',
+		auth: '`done` is the final completed state; marking a ticket `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate.',
 	},
 	add_task_blocker: {
 		category: 'Tasks',

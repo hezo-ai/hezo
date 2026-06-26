@@ -57,8 +57,8 @@ test('status changes and cross-task mentions appear as system entries on the tim
 				title: 'Source ticket',
 				assignee_id: workspace.agents[0].id,
 			});
-			// Close target by patching status.
-			await patchTask(workspace, target.id, { status: 'closed' });
+			// Close target by patching status to a terminal state.
+			await patchTask(workspace, target.id, { status: 'cancelled' });
 			// Post a comment on source that mentions target — should fan out a
 			// "Linked from" system entry on target.
 			await seedComment(workspace, source, `context: ${target.identifier}`);

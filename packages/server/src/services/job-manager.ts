@@ -5,14 +5,12 @@ import {
 	AgentRuntimeStatus,
 	type AiProvider,
 	BUDGET_PAUSE_STATUSES,
-	COACH_AGENT_SLUG,
 	CommentContentType,
 	ContainerStatus,
 	DEFAULT_TEAM_ID,
 	HeartbeatRunStatus,
 	INSTANCE_AGENT_SLUGS,
 	TaskPriority,
-	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 	WakeupSkipReason,
 	WakeupSource,
@@ -26,7 +24,6 @@ import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { ref } from '../lib/log-ref';
-import { assertChildrenAllClosed } from '../lib/task-relationships';
 import { logger } from '../logger';
 import { getLatestInfo } from '../routes/updates';
 import { type RunnerDeps, type RunResult, recordRunCostAndEnforce, runAgent } from './agent-runner';
@@ -59,7 +56,6 @@ import type { PricingService } from './pricing';
 import { ensureRepoSetupAction } from './repo-setup';
 import { getProjectConcurrency, isTaskBusyInDb } from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
-import { triggerStatusAutomations } from './task-automation';
 import { ensureUpdateStaged, isSupervisedWorker } from './updater';
 import { absorbQueuedTaskWakeups, assignmentWakeupAlreadyServed, createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
@@ -1319,7 +1315,7 @@ export class JobManager {
 			}
 			const termStart = params.length + 1;
 			params.push(...TERMINAL_TASK_STATUSES);
-			const termList = `$${termStart}, $${termStart + 1}, $${termStart + 2}`;
+			const termList = TERMINAL_TASK_STATUSES.map((_, i) => `$${termStart + i}`).join(', ');
 			const prStart = params.length + 1;
 			params.push(TaskPriority.Urgent, TaskPriority.High, TaskPriority.Medium, TaskPriority.Low);
 			const tasks = await db.query<TaskRow>(
@@ -1726,7 +1722,9 @@ export class JobManager {
 		taskIdentifier: string,
 		teamId: string,
 		wakeupId: string | undefined,
-		wakeupPayload: Record<string, unknown> | undefined,
+		// Part of the completion contract (callers pass the wakeup payload); the
+		// Coach no longer auto-closes on `task_done`, so it is currently unused.
+		_wakeupPayload: Record<string, unknown> | undefined,
 		result: RunResult,
 	): Promise<void> {
 		const { db } = this.deps;
@@ -1766,44 +1764,9 @@ export class JobManager {
 			);
 		}
 
-		if (
-			agentSlug === COACH_AGENT_SLUG &&
-			result.success &&
-			wakeupPayload?.trigger === 'task_done'
-		) {
-			const childrenCheck = await assertChildrenAllClosed(db, teamId, taskId);
-			if (!childrenCheck.ok) {
-				log.warn(
-					`Skipping coach auto-close for task ${ref(taskIdentifier, taskId)}: ${childrenCheck.message}`,
-				);
-			} else {
-				const closed = await db.query<Record<string, unknown>>(
-					`UPDATE tasks SET status = $1::task_status, updated_at = now()
-					 WHERE id = $2 AND team_id = $3 AND status = $4::task_status
-					 RETURNING *`,
-					[TaskStatus.Closed, taskId, teamId, TaskStatus.Done],
-				);
-				if (closed.rows[0]) {
-					broadcastRowChange(
-						this.deps.wsManager,
-						wsRoom.team(teamId),
-						'tasks',
-						'UPDATE',
-						closed.rows[0],
-					);
-					await triggerStatusAutomations(
-						db,
-						teamId,
-						taskId,
-						TaskStatus.Done,
-						TaskStatus.Closed,
-						memberId,
-						null,
-						this.deps.wsManager,
-					);
-				}
-			}
-		}
+		// The Coach reviews a `done` ticket for prompt-learning but no longer
+		// changes its status — `done` is now the final completed state (there is
+		// no `closed`), so the task stays `done` after the Coach run.
 
 		await this.chainNextTaskWakeup(memberId, agentSlug, taskId, teamId);
 	}
@@ -1923,7 +1886,7 @@ export class JobManager {
 		const selfIdx = params.length;
 		const ts = params.length + 1;
 		params.push(...TERMINAL_TASK_STATUSES);
-		const term = `$${ts}::task_status, $${ts + 1}::task_status, $${ts + 2}::task_status`;
+		const term = TERMINAL_TASK_STATUSES.map((_, i) => `$${ts + i}::task_status`).join(', ');
 		const pr = params.length + 1;
 		params.push(TaskPriority.Urgent, TaskPriority.High, TaskPriority.Medium, TaskPriority.Low);
 		const hr = params.length + 1;

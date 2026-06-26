@@ -64,7 +64,7 @@ test('tasks page keeps the progress bar hidden after the planning ticket is clos
 			const engineer = ws.agents.find((a) => a.slug === 'engineer');
 			if (!engineer) throw new Error('missing agents');
 
-			await patchStatus(ws, planningId, 'closed');
+			await patchStatus(ws, planningId, 'done');
 
 			const exec = await seedTask(ws, project, {
 				title: 'Build API',

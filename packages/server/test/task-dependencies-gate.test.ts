@@ -366,7 +366,7 @@ describe('dependency gate — wakeup deferral and reverse trigger', () => {
 		expect(after).toBeNull();
 	});
 
-	it("blocker's done → closed transition does not requeue the downstream's assignee while it is mid-run", async () => {
+	it("re-applying a blocker's terminal status does not requeue the downstream's assignee while it is mid-run", async () => {
 		const r = await createTask('term-r', researcherId);
 		const p = await createTask('term-p', productLeadId, [r.identifier]);
 
@@ -382,14 +382,16 @@ describe('dependency gate — wakeup deferral and reverse trigger', () => {
 			[productLeadId, teamId, p.id, HeartbeatRunStatus.Running],
 		);
 
-		await setStatus(r.id, TaskStatus.Closed);
+		// A redundant same-status update stays within the terminal bucket, so the
+		// downstream recompute is skipped and no duplicate wakeup is queued.
+		await setStatus(r.id, TaskStatus.Done);
 		await new Promise((res) => setTimeout(res, 100));
 
 		const after = await getWakeupForTask(productLeadId, p.id);
 		expect(after).toBeNull();
 	});
 
-	it("blocker's done → closed creates no downstream wakeup even when downstream has no in-flight run", async () => {
+	it("re-applying a blocker's terminal status creates no downstream wakeup even when downstream has no in-flight run", async () => {
 		const r = await createTask('term2-r', researcherId);
 		const p = await createTask('term2-p', productLeadId, [r.identifier]);
 
@@ -398,7 +400,7 @@ describe('dependency gate — wakeup deferral and reverse trigger', () => {
 
 		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [productLeadId]);
 
-		await setStatus(r.id, TaskStatus.Closed);
+		await setStatus(r.id, TaskStatus.Done);
 		await new Promise((res) => setTimeout(res, 100));
 
 		const after = await getWakeupForTask(productLeadId, p.id);

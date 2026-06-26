@@ -1,5 +1,11 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { HeartbeatRunStatus, wsRoom } from '@hezo/shared';
+import {
+	AgentAdminStatus,
+	COACH_AGENT_SLUG,
+	HeartbeatRunStatus,
+	WakeupStatus,
+	wsRoom,
+} from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
 import type { JobManager } from './job-manager';
 import { recordRunTerminated } from './task-events';
@@ -91,6 +97,63 @@ export async function terminateHeartbeatRun(
 	}
 
 	return { terminated: true, taskId: row.task_id };
+}
+
+/**
+ * Cancel any pending Coach work on a task that has just been re-opened. The
+ * Coach is an instance-level singleton woken when a task is marked `done`; once
+ * the admin re-opens the task that review is moot, so retire its still-queued
+ * wakeup(s) and terminate any queued/running Coach run on the task. Strictly
+ * scoped to the Coach member, so the assignee's `task_reopened` wakeup and any
+ * other agent's work on the task are untouched.
+ */
+export async function cancelCoachWorkForTask(
+	deps: TerminateRunDeps,
+	teamId: string,
+	taskId: string,
+	actorMemberId: string | null,
+): Promise<void> {
+	const { db, wsManager } = deps;
+
+	const coach = await db.query<{ id: string }>(
+		`SELECT id FROM member_agents
+		  WHERE slug = $1 AND admin_status = $2::agent_admin_status
+		  LIMIT 1`,
+		[COACH_AGENT_SLUG, AgentAdminStatus.Enabled],
+	);
+	const coachId = coach.rows[0]?.id;
+	if (!coachId) return;
+
+	// Retire still-queued Coach wakeups for this task.
+	const cancelled = await db.query<{ id: string }>(
+		`UPDATE agent_wakeup_requests
+		    SET status = $1::wakeup_status, completed_at = now()
+		  WHERE member_id = $2
+		    AND status = $3::wakeup_status
+		    AND payload->>'task_id' = $4
+		 RETURNING id`,
+		[WakeupStatus.Cancelled, coachId, WakeupStatus.Queued, taskId],
+	);
+	for (const row of cancelled.rows) {
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'agent_wakeup_requests', 'UPDATE', {
+			id: row.id,
+			team_id: teamId,
+			task_id: taskId,
+			member_id: coachId,
+			status: WakeupStatus.Cancelled,
+		});
+	}
+
+	// Terminate any queued/running Coach run already started for this task.
+	const runs = await db.query<{ id: string }>(
+		`SELECT id FROM heartbeat_runs
+		  WHERE task_id = $1 AND member_id = $2
+		    AND status IN ($3::heartbeat_run_status, $4::heartbeat_run_status)`,
+		[taskId, coachId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
+	);
+	for (const row of runs.rows) {
+		await terminateHeartbeatRun(deps, row.id, 'Task re-opened', actorMemberId);
+	}
 }
 
 export async function terminateRunsForTask(

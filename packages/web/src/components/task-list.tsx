@@ -4,7 +4,7 @@ import { AlertTriangle, AtSign, ChevronDown, ListPlus, Plus, Search } from 'luci
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { useProjectMeta } from '../hooks/use-projects';
-import { type Task, useTasks } from '../hooks/use-tasks';
+import { type Task, useInfiniteTasks, useTasks } from '../hooks/use-tasks';
 import { nestTasksForDisplay } from '../lib/nest-tasks-for-display';
 import {
 	clearStoredTaskFilters,
@@ -34,9 +34,13 @@ const DEFAULT_OPEN_STATUSES: string[] = ALL_STATUSES.filter((s) => !TERMINAL_STA
 const PINNED_TASK_STATUSES = [TaskStatus.InProgress, TaskStatus.Review] as const;
 const PINNED_STATUS_SET = new Set<string>(PINNED_TASK_STATUSES);
 const PINNED_STATUS_PARAM = PINNED_TASK_STATUSES.join(',');
-const DEFAULT_TODO_STATUSES: string[] = DEFAULT_OPEN_STATUSES.filter(
-	(s) => !PINNED_STATUS_SET.has(s),
-);
+// The default selection shows open work (backlog/blocked; in_progress/review are
+// pinned in their own section) plus completed (`done`) tasks, which land in the
+// bottom "Done" section. `cancelled` stays hidden unless explicitly filtered in.
+const DEFAULT_TODO_STATUSES: string[] = [
+	...DEFAULT_OPEN_STATUSES.filter((s) => !PINNED_STATUS_SET.has(s)),
+	TaskStatus.Done,
+];
 
 const todoStatusOptions: MultiSelectOption[] = ALL_STATUSES.filter(
 	(s) => !PINNED_STATUS_SET.has(s),
@@ -126,13 +130,11 @@ export function TaskList({ projectId }: TaskListProps) {
 	const [ownerValues, setOwnerValues] = useState<string[]>(stored?.ownerValues ?? []);
 	const [sortField, setSortField] = useState<SortField>(stored?.sortField ?? 'work_order');
 	const [sortDir, setSortDir] = useState<SortDir>(stored?.sortDir ?? 'asc');
-	const [page, setPage] = useState(1);
 	const [createOpen, setCreateOpen] = useState(false);
 
 	useEffect(() => {
 		const handle = setTimeout(() => {
 			setDebouncedSearch(search.trim());
-			setPage(1);
 		}, 250);
 		return () => clearTimeout(handle);
 	}, [search]);
@@ -151,7 +153,6 @@ export function TaskList({ projectId }: TaskListProps) {
 		setOwnerValues(next?.ownerValues ?? []);
 		setSortField(next?.sortField ?? 'work_order');
 		setSortDir(next?.sortDir ?? 'asc');
-		setPage(1);
 	}, [projectId]);
 
 	// Persist the full filter set on every change, overriding the one field that
@@ -200,15 +201,26 @@ export function TaskList({ projectId }: TaskListProps) {
 
 	const todoListEnabled = statusValues.length > 0;
 
-	const { data: result, isLoading: mainLoading } = useTasks(
+	const {
+		data: infiniteData,
+		isLoading: mainLoading,
+		hasNextPage,
+		isFetchingNextPage,
+		fetchNextPage,
+	} = useInfiniteTasks(
 		projectId,
 		{
 			...todoFilters,
 			status: statusValues.length > 0 ? statusValues.join(',') : undefined,
-			page: String(page),
 		},
 		{ enabled: todoListEnabled },
 	);
+
+	const mainRows = useMemo(
+		() => (infiniteData?.pages ?? []).flatMap((p) => p.data),
+		[infiniteData],
+	);
+	const totalCount = infiniteData?.pages[0]?.meta.total ?? 0;
 
 	const inProgressTasks = useMemo(
 		() => nestTasksForDisplay(inProgressResult?.data ?? []),
@@ -223,12 +235,12 @@ export function TaskList({ projectId }: TaskListProps) {
 		doneTasks: TaskRow[];
 	}>(() => {
 		if (!todoListEnabled) return { backlogTasks: [], doneTasks: [] };
-		const rows = (result?.data ?? []).filter((t) => !PINNED_STATUS_SET.has(t.status));
+		const rows = mainRows.filter((t) => !PINNED_STATUS_SET.has(t.status));
 		return {
 			backlogTasks: nestTasksForDisplay(rows.filter((t) => !TERMINAL_STATUS_SET.has(t.status))),
 			doneTasks: nestTasksForDisplay(rows.filter((t) => TERMINAL_STATUS_SET.has(t.status))),
 		};
-	}, [result?.data, todoListEnabled]);
+	}, [mainRows, todoListEnabled]);
 
 	const hasNoTasksAtAll =
 		!inProgressLoading &&
@@ -273,25 +285,21 @@ export function TaskList({ projectId }: TaskListProps) {
 	function handleStatusChange(next: string[]) {
 		setStatusValues(next);
 		persistFilters({ statusValues: next });
-		setPage(1);
 	}
 
 	function handleOwnerChange(next: string[]) {
 		setOwnerValues(next);
 		persistFilters({ ownerValues: next });
-		setPage(1);
 	}
 
 	function handleSortFieldChange(next: SortField) {
 		setSortField(next);
 		persistFilters({ sortField: next });
-		setPage(1);
 	}
 
 	function handleSortDirChange(next: SortDir) {
 		setSortDir(next);
 		persistFilters({ sortDir: next });
-		setPage(1);
 	}
 
 	function resetFilters() {
@@ -300,7 +308,6 @@ export function TaskList({ projectId }: TaskListProps) {
 		setOwnerValues([]);
 		setSortField('work_order');
 		setSortDir('asc');
-		setPage(1);
 		clearStoredTaskFilters(projectId);
 	}
 
@@ -410,6 +417,23 @@ export function TaskList({ projectId }: TaskListProps) {
 		},
 		[navigate, projectId],
 	);
+
+	// Auto-load the next page when the bottom sentinel scrolls into view. The
+	// component-test harness stubs IntersectionObserver, so the "Load more" button
+	// below is the deterministic fallback; this observer drives real scroll.
+	const sentinelRef = useRef<HTMLDivElement | null>(null);
+	useEffect(() => {
+		if (typeof IntersectionObserver === 'undefined') return;
+		const el = sentinelRef.current;
+		if (!el) return;
+		const observer = new IntersectionObserver((entries) => {
+			if (entries[0]?.isIntersecting && hasNextPage && !isFetchingNextPage) {
+				fetchNextPage();
+			}
+		});
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
 	const filterBar = (
 		<div className="relative flex-1 min-w-0 h-10" data-testid="task-filter-bar">
@@ -596,29 +620,25 @@ export function TaskList({ projectId }: TaskListProps) {
 						</p>
 					)}
 
-					{result?.meta && result.meta.total > result.meta.per_page && (
-						<div className="flex items-center justify-between mt-4 text-xs text-text-2">
-							<span>
-								Showing {backlogTasks.length + doneTasks.length} of {result.meta.total}
+					{(backlogTasks.length > 0 || doneTasks.length > 0) && (
+						<div className="mt-4 flex flex-col items-center gap-2 text-xs text-text-2">
+							<span data-testid="task-list-count">
+								Showing {backlogTasks.length + doneTasks.length} of {totalCount}
 							</span>
-							<div className="flex gap-2">
+							{hasNextPage && (
 								<Button
 									variant="secondary"
 									size="sm"
-									disabled={result.meta.page <= 1}
-									onClick={() => setPage((p) => Math.max(1, p - 1))}
+									disabled={isFetchingNextPage}
+									onClick={() => fetchNextPage()}
+									data-testid="task-list-load-more"
 								>
-									Previous
+									{isFetchingNextPage ? 'Loading…' : 'Load more'}
 								</Button>
-								<Button
-									variant="secondary"
-									size="sm"
-									disabled={result.meta.page * result.meta.per_page >= result.meta.total}
-									onClick={() => setPage((p) => p + 1)}
-								>
-									Next
-								</Button>
-							</div>
+							)}
+							{/* Bottom sentinel: when it scrolls into view the observer
+							    auto-fetches the next page (see effect above). */}
+							<div ref={sentinelRef} aria-hidden="true" className="h-px w-full" />
 						</div>
 					)}
 				</>

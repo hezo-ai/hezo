@@ -44,10 +44,10 @@ async function seedAdminMention(ws: SeededWorkspace, taskId: string, text: strin
 	);
 }
 
-test('default view shows non-terminal tasks with status badges and a collapsed filter bar with New Task button', async () => {
+test('default view shows open and done tasks with a collapsed filter bar and New Task button', async () => {
 	let projectSlug = '';
 
-	const { findByText, findByTestId, queryByTestId, queryByText, router } = await renderApp({
+	const { findByText, findByTestId, queryByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -73,7 +73,8 @@ test('default view shows non-terminal tasks with status badges and a collapsed f
 	await findByText('Review Task', undefined, { timeout: 10_000 });
 	await findByText('In Progress Task');
 	await findByText('Backlog Task');
-	expect(queryByText('Done Task')).toBeNull();
+	// Done tasks are shown by default now (in the bottom Done section).
+	await findByText('Done Task');
 
 	await findByTestId('task-filter-bar');
 	expect(queryByTestId('task-filter-panel')).toBeNull();
@@ -158,7 +159,8 @@ test('multi-select status filter narrows results and reset restores defaults', a
 			expect(queryByText('Review Task')).not.toBeNull();
 			expect(queryByText('In Progress Task')).not.toBeNull();
 			expect(queryByText('Backlog Task')).not.toBeNull();
-			expect(queryByText('Done Task')).toBeNull();
+			// Reset restores the default selection, which now includes done.
+			expect(queryByText('Done Task')).not.toBeNull();
 		},
 		{ timeout: 10_000 },
 	);
@@ -167,50 +169,51 @@ test('multi-select status filter narrows results and reset restores defaults', a
 test('terminal tasks render in a Done section split out from the Backlog', async () => {
 	let projectSlug = '';
 
-	const { findByTestId, findByText, findByRole, queryByTestId, queryByText, router, user } =
-		await renderApp({
-			initialPath: '/',
-			seed: async () => {
-				const ws = await seedWorkspace();
-				const project = await seedProject(ws, { name: 'Done Split Project' });
-				projectSlug = project.slug;
-				const agentId = ws.agents[0].id;
-				await seedTask(ws, project, { title: 'Backlog Task', assignee_id: agentId });
-				const done = await seedTask(ws, project, { title: 'Done Task', assignee_id: agentId });
-				const closed = await seedTask(ws, project, { title: 'Closed Task', assignee_id: agentId });
-				await patchStatus(ws, done.id, 'done');
-				await patchStatus(ws, closed.id, 'closed');
-			},
-		});
+	const { findByTestId, findByText, findByRole, queryByText, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Done Split Project' });
+			projectSlug = project.slug;
+			const agentId = ws.agents[0].id;
+			await seedTask(ws, project, { title: 'Backlog Task', assignee_id: agentId });
+			const done = await seedTask(ws, project, { title: 'Done Task', assignee_id: agentId });
+			const cancelled = await seedTask(ws, project, {
+				title: 'Cancelled Task',
+				assignee_id: agentId,
+			});
+			await patchStatus(ws, done.id, 'done');
+			await patchStatus(ws, cancelled.id, 'cancelled');
+		},
+	});
 
 	await router.navigate({
 		to: '/projects/$projectId/tasks',
 		params: { projectId: projectSlug },
 	});
 
-	// Default view excludes terminal statuses, so the Done section is absent.
+	// Default view shows done tasks (in their own bottom section) but not cancelled.
 	await findByText('Backlog Task', undefined, { timeout: 10_000 });
-	expect(queryByTestId('task-list-done')).toBeNull();
-	expect(queryByText('Done Task')).toBeNull();
-	expect(queryByText('Closed Task')).toBeNull();
+	const initialDone = await findByTestId('task-list-done');
+	expect(initialDone.textContent).toContain('Done Task');
+	expect(initialDone.querySelector('h2')?.textContent).toBe('Done');
+	expect(queryByText('Cancelled Task')).toBeNull();
 
-	// Add the terminal statuses to the filter so the finished work is fetched.
+	// Add cancelled to the filter so the abandoned work is also fetched.
 	const toggle = await findByTestId('task-filter-toggle');
 	await user.click(toggle);
 	const statusBtn = await findByTestId('task-filter-status');
 	await user.click(statusBtn);
-	const doneOption = await findByRole('button', { name: 'Done' });
-	await user.click(doneOption);
-	const closedOption = await findByRole('button', { name: 'Closed' });
-	await user.click(closedOption);
+	const cancelledOption = await findByRole('button', { name: 'Cancelled' });
+	await user.click(cancelledOption);
 	await user.click(statusBtn);
 
-	// Terminal tasks land under "Done"; the Backlog keeps only open work.
+	// Both terminal tasks land under "Done"; the Backlog keeps only open work.
 	const doneSection = await findByTestId('task-list-done');
 	await waitFor(
 		() => {
 			expect(doneSection.textContent).toContain('Done Task');
-			expect(doneSection.textContent).toContain('Closed Task');
+			expect(doneSection.textContent).toContain('Cancelled Task');
 		},
 		{ timeout: 10_000 },
 	);
@@ -221,7 +224,7 @@ test('terminal tasks render in a Done section split out from the Backlog', async
 	expect(backlogSection.querySelector('h2')?.textContent).toBe('Backlog');
 	expect(backlogSection.textContent).toContain('Backlog Task');
 	expect(backlogSection.textContent).not.toContain('Done Task');
-	expect(backlogSection.textContent).not.toContain('Closed Task');
+	expect(backlogSection.textContent).not.toContain('Cancelled Task');
 });
 
 test('Done section hides when only terminal tasks remain after filtering them out', async () => {

@@ -52,9 +52,9 @@ export async function shouldDeferWakeupForBlockers(
 
 /**
  * True when `taskId` has at least one blocker whose status is not terminal.
- * A blocker is satisfied when the upstream task reaches `done`, `closed`, or
- * `cancelled`. Anything else (backlog, in_progress, review, blocked) leaves
- * the downstream gated.
+ * A blocker is satisfied when the upstream task reaches `done` or `cancelled`.
+ * Anything else (backlog, in_progress, review, blocked) leaves the downstream
+ * gated.
  */
 export async function hasOpenBlockers(db: PGlite, taskId: string): Promise<boolean> {
 	const terminalPlaceholders = TERMINAL_TASK_STATUSES.map((_, i) => `$${i + 2}::task_status`).join(

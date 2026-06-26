@@ -419,7 +419,7 @@ describe('JobManager workflow methods', () => {
 
 			// Ensure agent has no open tasks assigned to it
 			await db.query(
-				"UPDATE tasks SET assignee_id = NULL WHERE assignee_id = $1 AND status NOT IN ('done', 'closed', 'cancelled')",
+				"UPDATE tasks SET assignee_id = NULL WHERE assignee_id = $1 AND status NOT IN ('done', 'cancelled')",
 				[agentId],
 			);
 			// A never-heartbeated agent is perpetually "due"; the no-op scan must stamp
@@ -1146,7 +1146,7 @@ describe('JobManager workflow methods', () => {
 			await db.query(
 				`UPDATE tasks SET assignee_id = NULL
 				 WHERE assignee_id = $1 AND id != $2
-				   AND status NOT IN ('done', 'closed', 'cancelled')`,
+				   AND status NOT IN ('done', 'cancelled')`,
 				[agentId, taskId],
 			);
 			await db.query('UPDATE tasks SET assignee_id = $1 WHERE id = $2', [agentId, taskId]);
@@ -1451,7 +1451,7 @@ describe('JobManager workflow methods', () => {
 		});
 	});
 
-	describe('coach auto-close', () => {
+	describe('coach review on a done task', () => {
 		async function setTaskDone(): Promise<void> {
 			await db.query(`UPDATE tasks SET status = $1::task_status WHERE id = $2`, [
 				TaskStatus.Done,
@@ -1467,116 +1467,11 @@ describe('JobManager workflow methods', () => {
 			return r.rows[0].status;
 		}
 
-		it('closes a Done task after a successful coach run with task_done trigger', async () => {
+		// `done` is the final completed state; the Coach reviews it for
+		// prompt-learning but no longer changes the task's status.
+		it('leaves a Done task in Done after a successful coach run (no auto-close)', async () => {
 			const manager = createJobManager();
 			await setTaskDone();
-
-			await (manager as any).onAgentComplete(
-				agentId,
-				'coach',
-				taskId,
-				taskIdentifier,
-				teamId,
-				undefined,
-				{ trigger: 'task_done', task_id: taskId },
-				{ success: true, exitCode: 0, stdout: '', stderr: '' },
-			);
-
-			expect(await readTaskStatus()).toBe(TaskStatus.Closed);
-			manager.shutdown();
-		});
-
-		it('does not close when the coach run failed', async () => {
-			const manager = createJobManager();
-			await setTaskDone();
-
-			await (manager as any).onAgentComplete(
-				agentId,
-				'coach',
-				taskId,
-				taskIdentifier,
-				teamId,
-				undefined,
-				{ trigger: 'task_done', task_id: taskId },
-				{ success: false, exitCode: 1, stdout: '', stderr: 'failed' },
-			);
-
-			expect(await readTaskStatus()).toBe(TaskStatus.Done);
-			manager.shutdown();
-		});
-
-		it('does not close when a non-coach agent completes on a Done task', async () => {
-			const manager = createJobManager();
-			await setTaskDone();
-
-			await (manager as any).onAgentComplete(
-				agentId,
-				'engineer',
-				taskId,
-				taskIdentifier,
-				teamId,
-				undefined,
-				{ trigger: 'task_done', task_id: taskId },
-				{ success: true, exitCode: 0, stdout: '', stderr: '' },
-			);
-
-			expect(await readTaskStatus()).toBe(TaskStatus.Done);
-			manager.shutdown();
-		});
-
-		it('does not close when the task is no longer in Done', async () => {
-			const manager = createJobManager();
-			await db.query(`UPDATE tasks SET status = $1::task_status WHERE id = $2`, [
-				TaskStatus.Cancelled,
-				taskId,
-			]);
-
-			await (manager as any).onAgentComplete(
-				agentId,
-				'coach',
-				taskId,
-				taskIdentifier,
-				teamId,
-				undefined,
-				{ trigger: 'task_done', task_id: taskId },
-				{ success: true, exitCode: 0, stdout: '', stderr: '' },
-			);
-
-			expect(await readTaskStatus()).toBe(TaskStatus.Cancelled);
-			manager.shutdown();
-		});
-
-		it('does not close when wakeup payload trigger is not task_done', async () => {
-			const manager = createJobManager();
-			await setTaskDone();
-
-			await (manager as any).onAgentComplete(
-				agentId,
-				'coach',
-				taskId,
-				taskIdentifier,
-				teamId,
-				undefined,
-				{ trigger: 'mention', task_id: taskId },
-				{ success: true, exitCode: 0, stdout: '', stderr: '' },
-			);
-
-			expect(await readTaskStatus()).toBe(TaskStatus.Done);
-			manager.shutdown();
-		});
-
-		it('does not close when an open sub-task still blocks the parent', async () => {
-			const manager = createJobManager();
-			await setTaskDone();
-
-			const childResult = await db.query<{ id: string }>(
-				`INSERT INTO tasks (team_id, project_id, assignee_id, parent_task_id, number, identifier,
-				                     title, description, status, priority)
-				 VALUES ($1, $2, $3, $4, 9999, 'TST-9999', 'Open child', '', 'in_progress'::task_status, 'medium'::task_priority)
-				 RETURNING id`,
-				[teamId, projectId, agentId, taskId],
-			);
-			const childId = childResult.rows[0].id;
 
 			await (manager as any).onAgentComplete(
 				agentId,
@@ -1591,8 +1486,6 @@ describe('JobManager workflow methods', () => {
 
 			expect(await readTaskStatus()).toBe(TaskStatus.Done);
 			manager.shutdown();
-
-			await db.query('DELETE FROM tasks WHERE id = $1', [childId]);
 		});
 	});
 

@@ -43,12 +43,12 @@ fact and mines it for patterns.
    **learned rule** into their system prompt. It updates *everyone* involved in the
    feedback loop, not just the agent that got the direct pushback.
 4. **It closes the loop.** The Coach leaves a short summary comment on the ticket noting
-   what it changed (or that the ticket went smoothly and needed nothing), and the ticket
-   moves to its final, **Closed** state.
+   what it changed (or that the ticket went smoothly and needed nothing). The ticket stays
+   in its final **Done** state — the Coach reviews it but does not change its status.
 
-This sits at the very end of the task lifecycle: **Done** means the work is approved and
-landed; **Closed** means the Coach has done its post-mortem. The review happens in the
-background — you don't have to trigger it or wait on it.
+This sits at the very end of the task lifecycle: **Done** is the final, completed state;
+the Coach's post-mortem runs against a done ticket without moving it anywhere. The review
+happens in the background — you don't have to trigger it or wait on it.
 
 ## Learned rules
 

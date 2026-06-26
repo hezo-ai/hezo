@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -76,6 +76,42 @@ export function useTasks(
 		queryFn: async () => {
 			const params: Record<string, string | undefined> = { ...filters };
 			return api.getPaginated<Task>(`/api/projects/${projectId}/tasks`, params);
+		},
+		enabled: options?.enabled ?? true,
+	});
+}
+
+/**
+ * Infinite (page-accumulating) variant of {@link useTasks} for the main task
+ * list. Pages are fetched via offset pagination and concatenated client-side as
+ * the user scrolls. Keyed separately from `tasksFiltered` so the pinned
+ * in-progress query (which uses `useTasks`) stays independent; both share the
+ * `projects.tasks(slug)` prefix, so mutation/WebSocket invalidation still reaches
+ * this query.
+ */
+export function useInfiniteTasks(
+	projectId: string,
+	filters?: Omit<TaskFilters, 'page' | 'per_page'>,
+	options?: { enabled?: boolean; perPage?: number },
+) {
+	const perPage = options?.perPage ?? 50;
+	return useInfiniteQuery({
+		queryKey: queryKeys.projects.tasksInfinite(projectId, {
+			...filters,
+			per_page: String(perPage),
+		}),
+		initialPageParam: 1,
+		queryFn: ({ pageParam }) => {
+			const params: Record<string, string | undefined> = {
+				...filters,
+				page: String(pageParam),
+				per_page: String(perPage),
+			};
+			return api.getPaginated<Task>(`/api/projects/${projectId}/tasks`, params);
+		},
+		getNextPageParam: (lastPage) => {
+			const { page, per_page, total } = lastPage.meta;
+			return page * per_page < total ? page + 1 : undefined;
 		},
 		enabled: options?.enabled ?? true,
 	});

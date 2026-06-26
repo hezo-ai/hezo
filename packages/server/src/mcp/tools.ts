@@ -810,7 +810,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_task',
-		"Get task details, including the ticket's declared blockers (upstream — what this ticket is waiting on) and dependents (downstream — tickets that are blocked on this one). Each entry has identifier, title, and current status. A non-empty blockers list means an automatic agent run on this ticket is paused until every blocker reaches a terminal status (done, closed, cancelled). The dependents list shows which teammates' tickets will be auto-unblocked when this ticket is marked terminal — you do not need to @-mention them, the auto-wake handles it.",
+		"Get task details, including the ticket's declared blockers (upstream — what this ticket is waiting on) and dependents (downstream — tickets that are blocked on this one). Each entry has identifier, title, and current status. A non-empty blockers list means an automatic agent run on this ticket is paused until every blocker reaches a terminal status (done, cancelled). The dependents list shows which teammates' tickets will be auto-unblocked when this ticket is marked terminal — you do not need to @-mention them, the auto-wake handles it.",
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -853,7 +853,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_task',
-		"Create a new task. Use parent_task_id for sub-tasks — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates — to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites — the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, closed, cancelled). When splitting work into sequential phases, prefer create_tasks and chain the items with '#<index>' blockers instead of filing them unordered. In title/description, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.",
+		"Create a new task. Use parent_task_id for sub-tasks — prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates — to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites — the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, cancelled). When splitting work into sequential phases, prefer create_tasks and chain the items with '#<index>' blockers instead of filing them unordered. In title/description, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.",
 		{
 			project: projectArg(),
 			title: z.string().describe('Task title'),
@@ -994,7 +994,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_task',
-		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` — that wakes Coach for review, who will set the ticket to `closed` after the review passes. Agents other than Coach cannot set status to `closed` directly. Re-opening a closed task is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` — that is the final completed state and wakes Coach to review the ticket for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -1004,7 +1004,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'New status (backlog, in_progress, review, blocked, done, cancelled). To finish a ticket, set `done` — Coach will review and set it to `closed`. Setting `closed` directly is reserved for Coach. Once a task is `closed`, only the admin can change its status again.',
+					'New status (backlog, in_progress, review, blocked, done, cancelled). `done` = completed (final); marking a ticket `done` wakes Coach to review it for prompt-learning but leaves it `done`. `cancelled` = abandoned. Re-opening a completed task (done/cancelled) is admin-only.',
 				),
 			priority: z.string().optional().describe('New priority'),
 			assignee_id: z.string().optional().describe('New assignee ID'),
@@ -1040,26 +1040,18 @@ export function registerTools(
 			const currentStatus = currentRow?.status;
 			const previousAssigneeId = currentRow?.assignee_id ?? null;
 
+			// `done` and `cancelled` are the only terminal states; once a task is
+			// terminal only the admin can re-open it (move it back to active).
 			if (
 				args.status !== undefined &&
+				args.status !== currentStatus &&
 				auth.type === AuthType.Agent &&
-				currentStatus === TaskStatus.Closed
+				(TERMINAL_TASK_STATUSES as readonly string[]).includes(currentStatus ?? '')
 			) {
-				return { error: 'Only the admin can re-open a closed task' };
+				return { error: 'Only the admin can re-open a completed task' };
 			}
 
-			if (
-				args.status === TaskStatus.Closed &&
-				auth.type === AuthType.Agent &&
-				!(await isCoach(db, auth))
-			) {
-				return {
-					error:
-						'Only Coach can set status to "closed". Set status to "done" and Coach will close the task after review.',
-				};
-			}
-
-			if (args.status === TaskStatus.Done || args.status === TaskStatus.Closed) {
+			if (args.status === TaskStatus.Done) {
 				const childrenCheck = await assertChildrenAllClosed(db, teamId, taskId);
 				if (!childrenCheck.ok) return { error: childrenCheck.message };
 			}
@@ -1191,7 +1183,7 @@ export function registerTools(
 	tool(
 		server,
 		'add_task_blocker',
-		'Declare that one task blocks another. The downstream ticket will not start an automatic agent run until the blocker reaches a terminal status (done, closed, cancelled). Use this when you discover that a ticket you have been woken on depends on work that has not landed yet — declare the blocker and end your turn; the system will wake you again when the blocker resolves. Cycles are rejected.',
+		'Declare that one task blocks another. The downstream ticket will not start an automatic agent run until the blocker reaches a terminal status (done, cancelled). Use this when you discover that a ticket you have been woken on depends on work that has not landed yet — declare the blocker and end your turn; the system will wake you again when the blocker resolves. Cycles are rejected.',
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID that should be blocked'),

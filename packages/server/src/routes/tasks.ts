@@ -1,15 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
-import {
-	AuditActorType,
-	AuthType,
-	TaskStatus,
-	TERMINAL_TASK_STATUSES,
-	WakeupSource,
-	wsRoom,
-} from '@hezo/shared';
+import { AuthType, TaskStatus, TERMINAL_TASK_STATUSES, WakeupSource, wsRoom } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { assertNoActiveRun } from '../lib/active-run';
-import { isCoach } from '../lib/agent-roles';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import {
@@ -30,10 +22,10 @@ import { err, ok } from '../lib/response';
 import { assertRunTaskScope } from '../lib/run-scope';
 import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/task-relationships';
 import { buildTaskListOrderBy, parseTaskListSort } from '../lib/task-sort';
-import type { AuthInfo, Env } from '../lib/types';
+import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { removeTaskWorktrees } from '../services/repo-sync';
-import { terminateRunsForTask } from '../services/run-termination';
+import { cancelCoachWorkForTask, terminateRunsForTask } from '../services/run-termination';
 import { triggerStatusAutomations } from '../services/task-automation';
 import { recordAssigneeChange, recordTaskLinks, recordTitleChange } from '../services/task-events';
 import { getTaskProgressSummary } from '../services/task-progress-summary';
@@ -473,28 +465,18 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 	const scopeDenied = assertRunTaskScope(auth, taskId, body.status);
 	if (scopeDenied) return err(c, 'FORBIDDEN', scopeDenied, 403);
 
+	// `done` and `cancelled` are now the only terminal states; once a task is
+	// terminal only the admin can move it back to an active status (re-open).
 	if (
 		body.status !== undefined &&
+		body.status !== existing.rows[0].status &&
 		auth.type === AuthType.Agent &&
-		existing.rows[0].status === TaskStatus.Closed
+		(TERMINAL_TASK_STATUSES as readonly string[]).includes(existing.rows[0].status)
 	) {
-		return err(c, 'FORBIDDEN', 'Only the admin can re-open a closed task', 403);
+		return err(c, 'FORBIDDEN', 'Only the admin can re-open a completed task', 403);
 	}
 
-	if (
-		body.status === TaskStatus.Closed &&
-		auth.type === AuthType.Agent &&
-		!(await isCoach(db, auth))
-	) {
-		return err(
-			c,
-			'FORBIDDEN',
-			'Only Coach can set status to "closed". Set status to "done" and Coach will close the task after review.',
-			403,
-		);
-	}
-
-	if (body.status === TaskStatus.Done || body.status === TaskStatus.Closed) {
+	if (body.status === TaskStatus.Done) {
 		const childrenCheck = await assertChildrenAllClosed(db, teamId, taskId);
 		if (!childrenCheck.ok) {
 			return err(c, 'INVALID_REQUEST', childrenCheck.message, 400);
@@ -721,7 +703,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 			}
 		}
 
-		if (body.status === TaskStatus.Closed || body.status === TaskStatus.Cancelled) {
+		if (body.status === TaskStatus.Cancelled) {
 			const terminateReason = `Task ${body.status}`;
 			trackBackground(
 				terminateRunsForTask(
@@ -733,7 +715,24 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 					taskId,
 					terminateReason,
 					actorMemberId,
-				).catch((e) => log.error('Failed to terminate runs on task close:', e)),
+				).catch((e) => log.error('Failed to terminate runs on task cancel:', e)),
+			);
+		}
+
+		// Re-opening a terminal task (terminal → active) makes any pending Coach
+		// review moot — retire its queued wakeup(s) and terminate any Coach run.
+		if (wasTerminal && !nowTerminal) {
+			trackBackground(
+				cancelCoachWorkForTask(
+					{
+						db,
+						wsManager: c.get('wsManager'),
+						jobManager: c.get('jobManager'),
+					},
+					teamId,
+					taskId,
+					actorMemberId,
+				).catch((e) => log.error('Failed to cancel Coach work on task re-open:', e)),
 			);
 		}
 
