@@ -33,14 +33,18 @@ function buildCtx(
 /**
  * Run the side effect for a *denied* approval. Dispatches to the handler's
  * optional `applyDenied`; types with no denied side effect return nothing.
+ * `wsManager` is threaded through so a denied handler can broadcast its own
+ * realtime changes (e.g. the hire handler flipping its proposal comment).
  */
 export async function applyApprovalDeniedSideEffect(
 	db: PGlite,
 	approval: Record<string, unknown>,
+	actorMemberId: string | null,
+	wsManager?: WebSocketManager,
 ): Promise<SideEffectBroadcast[]> {
 	const handler = APPROVAL_HANDLERS[approval.type as ApprovalType];
 	if (!handler?.applyDenied) return [];
-	return handler.applyDenied(buildCtx(db, approval, '', null));
+	return handler.applyDenied(buildCtx(db, approval, '', actorMemberId, wsManager));
 }
 
 /**

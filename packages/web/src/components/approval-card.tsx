@@ -271,40 +271,46 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 						</Button>
 					</Link>
 				)}
-				<Button
-					size="sm"
-					variant="secondary"
-					disabled={resolveApproval.isPending}
-					onClick={() =>
-						resolveApproval.mutate({
-							approvalId: approval.id,
-							status: ApprovalStatus.Approved,
-							projectSlug: approval.payload_project_slug ?? undefined,
-						})
-					}
-				>
-					{resolveApproval.isPending ? (
-						<Loader2 className="w-3 h-3 animate-spin" />
-					) : (
-						<Check className="w-3 h-3" />
-					)}
-					Approve
-				</Button>
-				<Button
-					size="sm"
-					variant="ghost"
-					className="text-danger"
-					disabled={resolveApproval.isPending}
-					onClick={() =>
-						resolveApproval.mutate({
-							approvalId: approval.id,
-							status: ApprovalStatus.Denied,
-							projectSlug: approval.payload_project_slug ?? undefined,
-						})
-					}
-				>
-					<X className="w-3 h-3" /> Deny
-				</Button>
+				{/* Hires are decided only on the edit/review page, never inline — the
+				    proposal must be opened and reviewed before approve/deny. */}
+				{approval.type !== ApprovalType.Hire && (
+					<>
+						<Button
+							size="sm"
+							variant="secondary"
+							disabled={resolveApproval.isPending}
+							onClick={() =>
+								resolveApproval.mutate({
+									approvalId: approval.id,
+									status: ApprovalStatus.Approved,
+									projectSlug: approval.payload_project_slug ?? undefined,
+								})
+							}
+						>
+							{resolveApproval.isPending ? (
+								<Loader2 className="w-3 h-3 animate-spin" />
+							) : (
+								<Check className="w-3 h-3" />
+							)}
+							Approve
+						</Button>
+						<Button
+							size="sm"
+							variant="ghost"
+							className="text-danger"
+							disabled={resolveApproval.isPending}
+							onClick={() =>
+								resolveApproval.mutate({
+									approvalId: approval.id,
+									status: ApprovalStatus.Denied,
+									projectSlug: approval.payload_project_slug ?? undefined,
+								})
+							}
+						>
+							<X className="w-3 h-3" /> Deny
+						</Button>
+					</>
+				)}
 			</div>
 		</div>
 	);

@@ -61,6 +61,8 @@ test('inbox shows pending approval with type badge', async () => {
 	await findByRole('button', { name: 'Deny' });
 });
 
+// Uses a strategy approval: hires are reviewed/decided only on the edit page, so
+// they carry no inline Approve/Deny in the inbox (see approval-card.test.tsx).
 test('can approve a pending approval', async () => {
 	const seeded = { projectSlug: '' };
 	const { findByText, findByRole, router, user } = await renderApp({
@@ -69,12 +71,8 @@ test('can approve a pending approval', async () => {
 			const ws = await seedWorkspace();
 			seeded.projectSlug = ws.internalSlug;
 			await createApproval(ws, {
-				type: 'hire',
-				payload: {
-					title: 'New Designer',
-					slug: `new-designer-${Date.now()}`,
-					system_prompt: 'You are a designer.',
-				},
+				type: 'strategy',
+				payload: { plan: 'Launch new product line' },
 			});
 		},
 	});
@@ -84,11 +82,11 @@ test('can approve a pending approval', async () => {
 		params: { projectId: seeded.projectSlug },
 	});
 
-	await findByText('Proposing to hire', undefined, { timeout: 10_000 });
+	await findByText('Proposing strategy', undefined, { timeout: 10_000 });
 	await user.click(await findByRole('button', { name: 'Approve' }));
 	// Resolved approvals stay in the inbox as read history with a status badge.
 	await findByText('approved', undefined, { timeout: 15_000 });
-	await findByText('Proposing to hire');
+	await findByText('Proposing strategy');
 });
 
 test('can deny a pending approval', async () => {
@@ -99,12 +97,8 @@ test('can deny a pending approval', async () => {
 			const ws = await seedWorkspace();
 			seeded.projectSlug = ws.internalSlug;
 			await createApproval(ws, {
-				type: 'hire',
-				payload: {
-					title: 'New Agent',
-					slug: `new-agent-${Date.now()}`,
-					system_prompt: 'You help.',
-				},
+				type: 'strategy',
+				payload: { plan: 'Consolidate the roadmap' },
 			});
 		},
 	});
@@ -114,11 +108,11 @@ test('can deny a pending approval', async () => {
 		params: { projectId: seeded.projectSlug },
 	});
 
-	await findByText('Proposing to hire', undefined, { timeout: 10_000 });
+	await findByText('Proposing strategy', undefined, { timeout: 10_000 });
 	await user.click(await findByRole('button', { name: 'Deny' }));
 	// Resolved approvals stay in the inbox as read history with a status badge.
 	await findByText('denied', undefined, { timeout: 15_000 });
-	await findByText('Proposing to hire');
+	await findByText('Proposing strategy');
 });
 
 test('header has the global Inbox link', async () => {

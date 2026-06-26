@@ -89,6 +89,13 @@ export interface RunContent {
 export interface ActionContent {
 	kind?: string;
 	approval_id?: string;
+	// hire_proposal snapshot (kind === 'hire_proposal')
+	title?: string;
+	slug?: string;
+	role_description?: string;
+	monthly_budget_cents?: number;
+	heartbeat_interval_min?: number | null;
+	touches_code?: boolean;
 }
 
 export interface CredentialRequestContent {
@@ -135,11 +142,15 @@ export interface CredentialRequestChosen {
 }
 
 export interface ActionChosen {
-	status: 'complete' | string;
+	status: 'complete' | 'approved' | 'denied' | string;
 	result?: {
 		repo_id?: string;
 		repo_identifier?: string;
 	};
+	// set when a hire_proposal action resolves
+	member_agent_slug?: string;
+	resolution_note?: string;
+	resolved_at?: string;
 }
 
 export type CommentChosenByType = {

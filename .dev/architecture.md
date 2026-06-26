@@ -205,7 +205,10 @@ project.
   including HQ). The Captain refines an admin-started draft
   with `update_hire_proposal`; both tools share the validation/insert helpers in
   `services/hire-proposal.ts`. Approval materialises the agent via the hire approval
-  handler. Retiring/reinstating an agent is the `set_agent_status` MCP tool (gated to
+  handler. Each proposal is also mirrored as a `hire_proposal` action comment on the
+  linked ticket (`services/hire-proposal-comment.ts`), which flips to hired/denied on
+  resolution and re-wakes the requester; the approval no longer auto-closes the ticket —
+  the requester (the CEO) closes it once setup is complete. Retiring/reinstating an agent is the `set_agent_status` MCP tool (gated to
   the team's Captain or an HQ coordinator), which runs the same `setAgentAdminStatus`
   service as the REST disable/enable routes — it can't disable a Captain or an instance
   agent. On a new team the CEO's initial coherence/setup pass **blocks** the Captain's

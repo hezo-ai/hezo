@@ -346,6 +346,7 @@ export type CredentialInputType = (typeof CredentialInputType)[keyof typeof Cred
 
 export const ActionCommentKind = {
 	SetupRepo: 'setup_repo',
+	HireProposal: 'hire_proposal',
 } as const;
 export type ActionCommentKind = (typeof ActionCommentKind)[keyof typeof ActionCommentKind];
 

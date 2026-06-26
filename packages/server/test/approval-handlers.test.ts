@@ -18,13 +18,14 @@ describe('approval handler registry', () => {
 		}
 	});
 
-	it('no approval type carries a denied side effect', () => {
-		// Project creation is no longer an approval — it is created directly by the
-		// CEO's create_project tool — so nothing relies on a denied side effect.
+	it('only the hire approval carries a denied side effect', () => {
+		// Hire flips its proposal comment to "denied" and re-wakes the requester on a
+		// deny; the other side-effecting types (strategy, skill_proposal) have no
+		// denied behaviour, and project creation is no longer an approval at all.
 		const withDenied = Object.entries(APPROVAL_HANDLERS)
 			.filter(([, handler]) => typeof handler?.applyDenied === 'function')
 			.map(([type]) => type);
-		expect(withDenied).toEqual([]);
+		expect(withDenied).toEqual([ApprovalType.Hire]);
 	});
 
 	it('has no handler for pure status-flip approval types or project creation', () => {
