@@ -251,4 +251,57 @@ test.describe('CEO chat widget — composer auto-grow', () => {
 		await expect(input).toHaveValue('');
 		await expect.poll(heightOf).toBeLessThan(initialHeight + 8);
 	});
+
+	// Regression: the content height depends on the composer's width too, so a
+	// width change (expand/collapse, viewport) must re-fit. Otherwise the box keeps
+	// a stale height — too tall after widening, or clipping the top line after
+	// narrowing. Real layout (re-wrap + scrollHeight/clientHeight), so Playwright.
+	test('the composer re-fits when the panel width changes, never clipping its content', async ({
+		sharedPage,
+		sharedWorkspace,
+	}) => {
+		const page = sharedPage;
+
+		await page.setViewportSize({ width: 1280, height: 800 });
+		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
+		await waitForPageLoad(page);
+
+		const launcher = page.getByTestId('ceo-chat-launcher');
+		await expect(launcher).toBeVisible({ timeout: 15000 });
+		await launcher.click();
+		await expect(page.getByTestId('ceo-chat-panel')).toBeVisible();
+
+		const input = page.getByTestId('ceo-chat-input');
+		// scrollHeight > clientHeight means content is taller than the box → the top
+		// is clipped/scrolled out of view, which is the bug we're guarding against.
+		const isClipped = () =>
+			input.evaluate((el) => {
+				const t = el as HTMLTextAreaElement;
+				return t.scrollHeight > t.clientHeight + 1;
+			});
+		const heightOf = async () => (await input.boundingBox())?.height ?? 0;
+
+		// A long line with no explicit newlines wraps to several visual rows inside
+		// the narrow (~420px) anchored panel.
+		await input.fill(
+			'This is a long single-line message with no explicit newlines that wraps across multiple visual rows inside the narrow anchored composer panel.',
+		);
+		await expect.poll(heightOf).toBeGreaterThan(60);
+		const narrowHeight = await heightOf();
+		expect(await isClipped()).toBe(false);
+
+		// Expanding widens the composer: the same text now fits in fewer rows, so the
+		// box must shrink rather than keep its taller height.
+		await page.getByTestId('ceo-chat-expand').click();
+		await expect(page.getByTestId('ceo-chat-panel')).toHaveAttribute('data-expanded', 'true');
+		await expect.poll(heightOf).toBeLessThan(narrowHeight - 10);
+		expect(await isClipped()).toBe(false);
+
+		// Collapsing narrows it again: the text re-wraps to more rows, so the box must
+		// grow back — without this re-fit the top line would be clipped.
+		await page.getByTestId('ceo-chat-expand').click();
+		await expect(page.getByTestId('ceo-chat-panel')).toHaveAttribute('data-expanded', 'false');
+		await expect.poll(heightOf).toBeGreaterThan(narrowHeight - 5);
+		expect(await isClipped()).toBe(false);
+	});
 });

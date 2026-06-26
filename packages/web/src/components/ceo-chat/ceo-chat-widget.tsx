@@ -19,6 +19,12 @@ import { MarkdownProse } from '../markdown-prose';
 import { CountOverlayBadge } from '../ui/count-overlay-badge';
 import { Tooltip } from '../ui/tooltip';
 
+/** Grow/shrink a textarea to fit its content, capped by its CSS `max-height`. */
+function fitTextareaToContent(el: HTMLTextAreaElement): void {
+	el.style.height = 'auto';
+	el.style.height = `${el.scrollHeight}px`;
+}
+
 /**
  * Floating chat with the CEO, pinned bottom-right. Talks to the single global CEO
  * conversation; messages stream in over the `ceo:global` WebSocket room. Sending a
@@ -66,16 +72,33 @@ export function CeoChatWidget() {
 
 	// Grow the composer with its content (capped by `max-h-32`, then it scrolls),
 	// and collapse it back to a single row when the draft is cleared on submit.
-	// Reset to `auto` first so the measured `scrollHeight` can shrink, not only grow.
 	// `open` re-runs it when the panel (re)mounts so a draft kept across a close/open
 	// is sized correctly rather than clipped to a single row.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: re-measure on draft/open change (body reads the DOM via a stable ref)
 	useEffect(() => {
 		const el = inputRef.current;
-		if (!el) return;
-		el.style.height = 'auto';
-		el.style.height = `${el.scrollHeight}px`;
+		if (el) fitTextareaToContent(el);
 	}, [draft, open]);
+
+	// The content height also depends on the composer's *width*: expanding/collapsing
+	// the panel, a viewport breakpoint change, or a web font swapping in all re-wrap
+	// the text. Without re-measuring on those, the box keeps a stale height — too tall
+	// after it widens, or clipping the top line after it narrows. A ResizeObserver
+	// re-fits on any width change; the guard keeps our own height writes (which don't
+	// change width) from feeding back into a resize loop.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-attach the observer when the composer (re)mounts on open
+	useEffect(() => {
+		const el = inputRef.current;
+		if (!el || typeof ResizeObserver === 'undefined') return;
+		let lastWidth = el.clientWidth;
+		const ro = new ResizeObserver(() => {
+			if (el.clientWidth === lastWidth) return;
+			lastWidth = el.clientWidth;
+			fitTextareaToContent(el);
+		});
+		ro.observe(el);
+		return () => ro.disconnect();
+	}, [open]);
 
 	// Clear the "copied" reset timer on unmount so it can't fire into a gone component.
 	useEffect(() => {
