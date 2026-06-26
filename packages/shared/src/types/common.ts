@@ -235,6 +235,7 @@ export function isAllowedProjectIconStoredMime(mime: string): boolean {
 
 export const ATTACHMENT_EXTENSIONS = {
 	txt: 'text/plain',
+	md: 'text/markdown',
 	html: 'text/html',
 	pdf: 'application/pdf',
 	png: 'image/png',
@@ -286,7 +287,18 @@ export const AGENT_AUTHORABLE_ASSET_MIME: ReadonlySet<string> = new Set([
 	'text/html',
 	'image/svg+xml',
 	'text/plain',
+	'text/markdown',
 ]);
+
+// Asset content types that the app renders as markdown (rich preview + a raw
+// "source" toggle) rather than downloading or framing. Project docs are a
+// separate store; this is for markdown that lives in the assets library, e.g. a
+// generated blog post or report.
+export const ASSET_MARKDOWN_MIME: ReadonlySet<string> = new Set(['text/markdown']);
+
+export function isMarkdownAssetMime(mime: string): boolean {
+	return ASSET_MARKDOWN_MIME.has(mime);
+}
 
 export function isAgentAuthorableAssetMime(mime: string): boolean {
 	return AGENT_AUTHORABLE_ASSET_MIME.has(mime);

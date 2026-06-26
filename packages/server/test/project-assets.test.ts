@@ -178,6 +178,20 @@ describe('project asset upload', () => {
 		expect(webp.status).toBe(201);
 		expect(svg.status).toBe(201);
 	});
+
+	it('accepts a markdown upload, deriving text/markdown when the browser sends no MIME', async () => {
+		// Browsers commonly leave `.md` files with an empty type; the canonical
+		// type is filled in from the (allowlisted) extension.
+		const res = await uploadProjectAsset('notes.md', '', new TextEncoder().encode('# Hello'));
+		expect(res.status).toBe(201);
+		const body = await res.json();
+		expect(body.data.content_type).toBe('text/markdown');
+
+		// And it serves inline (markdown is inert text — no forced download).
+		const served = await app.request(body.data.url);
+		expect(served.headers.get('content-disposition')).toContain('inline');
+		expect(await served.text()).toBe('# Hello');
+	});
 });
 
 describe('asset serving disposition', () => {
@@ -230,6 +244,40 @@ describe('agent-authored assets (write_project_asset)', () => {
 		expect(row.rows[0].content_type).toBe('text/html');
 		const onDisk = join(dataDir, 'teams', teamId, 'projects', projectId, 'assets', row.rows[0].id);
 		expect(existsSync(onDisk)).toBe(true);
+	});
+
+	it('writes a markdown asset (e.g. a blog post) stored as text/markdown', async () => {
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+		);
+		const body = '# Launch announcement\n\nWe shipped **markdown assets**.';
+		const result = await callToolViaMcp(agentToken, 'write_project_asset', {
+			project: projectId,
+			filename: 'launch-post.md',
+			content: body,
+		});
+		expect(result.written).toBe(true);
+		expect(result.reference).toBe('assets/launch-post.md');
+
+		const row = await db.query<{ id: string; content_type: string }>(
+			'SELECT id, content_type FROM assets WHERE project_id = $1 AND original_filename = $2',
+			[projectId, 'launch-post.md'],
+		);
+		expect(row.rows).toHaveLength(1);
+		expect(row.rows[0].content_type).toBe('text/markdown');
+
+		// It reads back inline (so the agent and the in-app viewer get the raw text).
+		const read = await callToolViaMcp(agentToken, 'read_project_asset', {
+			project: projectId,
+			filename: 'launch-post.md',
+		});
+		expect(read.content_type).toBe('text/markdown');
+		expect(read.content).toBe(body);
+		expect(read.binary).toBeUndefined();
 	});
 
 	it('overwrites the same filename on re-save, keeping a single stable reference', async () => {

@@ -6,6 +6,7 @@ import {
 	AuthType,
 	assetContentDisposition,
 	assetServeCsp,
+	extensionOf,
 	isAllowedAttachmentExtension,
 	isAllowedAttachmentMime,
 	normalizeAssetFilename,
@@ -48,7 +49,19 @@ export async function storeUploadedAsset(
 	if (!isAllowedAttachmentExtension(file.name)) {
 		return err(c, 'INVALID_ATTACHMENT', 'Unsupported file extension', 400);
 	}
-	const contentType = file.type || 'application/octet-stream';
+	// Derive the canonical type from the (already validated) extension when the
+	// browser declares no real type — an empty string or the generic
+	// `application/octet-stream` it falls back to for files it doesn't recognise
+	// (common for `.md`), which would otherwise be rejected despite a valid
+	// extension. A *specific* present-but-disallowed MIME is still rejected: a type
+	// that contradicts the extension (e.g. a `.png` claiming
+	// `application/x-msdownload`) is suspicious.
+	const ext = extensionOf(file.name);
+	const extMime = ext
+		? ATTACHMENT_EXTENSIONS[ext as keyof typeof ATTACHMENT_EXTENSIONS]
+		: undefined;
+	const declared = file.type === 'application/octet-stream' ? '' : file.type;
+	const contentType = declared || extMime || '';
 	if (!isAllowedAttachmentMime(contentType)) {
 		return err(c, 'INVALID_ATTACHMENT', `Unsupported content type: ${contentType}`, 400);
 	}

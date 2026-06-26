@@ -868,7 +868,7 @@ List project documentation files (PRD, spec, implementation plan, etc.)
 
 _Read-only._
 
-List the project's assets — non-markdown files (UI mockups, wireframes, diagrams, PDFs). Reference one in a comment or doc as `assets/<filename>` (e.g. assets/login-mockup.png), no backticks. You can author text-based assets (.html, .svg, .txt) with write_project_asset; binary assets (images, PDFs) are human-uploaded.
+List the project's assets — files in the assets library (UI mockups, wireframes, diagrams, PDFs, and generated markdown such as blog posts or reports). Reference one in a comment or doc as `assets/<filename>` (e.g. assets/login-mockup.png), no backticks. You can author text-based assets (.html, .svg, .txt, .md) with write_project_asset; binary assets (images, PDFs) are human-uploaded.
 
 **Parameters:**
 
@@ -876,13 +876,13 @@ List the project's assets — non-markdown files (UI mockups, wireframes, diagra
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 
-**Returns:** `{ files: [{ id, filename, content_type, created_at }] }` — the non-markdown assets.
+**Returns:** `{ files: [{ id, filename, content_type, created_at }] }` — the project asset files.
 
 ### `write_project_asset`
 
 _Write tool._
 
-Save a text-based file to the project assets library so a human can open it (an interactive HTML mockup, an SVG diagram, a plain-text export). Allowed extensions: .html, .svg, .txt. Re-saving the same filename overwrites it, so the reference stays stable. Returns the reference string to drop into a comment as `assets/<filename>` (no backticks). HTML opens interactively in a new tab. Mockups and other deliverables belong here, never committed to the source repo.
+Save a text-based file to the project assets library so a human can open it (an interactive HTML mockup, an SVG diagram, a plain-text export, or a markdown deliverable such as a blog post or report). Allowed extensions: .html, .svg, .txt, .md. Re-saving the same filename overwrites it, so the reference stays stable. Returns the reference string to drop into a comment as `assets/<filename>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.
 
 **Parameters:**
 
@@ -892,13 +892,13 @@ Save a text-based file to the project assets library so a human can open it (an 
 | `filename` | `string` | Yes | Filename to write (e.g. "ui-mockups.html") |
 | `content` | `string` | Yes | File content |
 
-**Returns:** `{ written: true, id, reference: "assets/<filename>" }`, or `{ error }` if the type is not text-based (`.html`, `.svg`, `.txt`) or exceeds 10 MB. Re-saving the same filename overwrites it.
+**Returns:** `{ written: true, id, reference: "assets/<filename>" }`, or `{ error }` if the type is not text-based (`.html`, `.svg`, `.txt`, `.md`) or exceeds 10 MB. Re-saving the same filename overwrites it.
 
 ### `read_project_asset`
 
 _Read-only._
 
-Read a project asset's contents by filename (e.g. "ui-mockups.html") — the non-markdown files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports). Text-based assets (HTML, SVG, plain text) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a read-only container path under /workspace/.hezo/assets/ to open directly. For markdown project docs use read_project_doc instead.
+Read a project asset's contents by filename (e.g. "ui-mockups.html") — the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, markdown deliverables). Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a read-only container path under /workspace/.hezo/assets/ to open directly. For markdown project docs use read_project_doc instead.
 
 **Parameters:**
 

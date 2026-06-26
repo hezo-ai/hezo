@@ -151,7 +151,10 @@ interrupted run still counts against budgets.
 unique scoping and full revision history in `document_revisions`. `skills` is the
 instance/team reference store (manifest-injected into runs, full-text-searchable) with
 `skill_revisions` history. `assets` + `task_attachments`/`comment_attachments` handle
-uploaded files (bytes on local disk, served over HMAC-signed URLs). `project_icons`
+uploaded files (bytes on local disk, served over HMAC-signed URLs); agents can also author
+text-based assets directly (`write_project_asset` — HTML, SVG, plain text, and markdown such
+as a blog post), and the web app renders markdown assets with a rich preview plus a
+view-source toggle. `project_icons`
 (1:1 with `projects`, `ON DELETE CASCADE`) holds an optional per-project icon image —
 unlike assets the **bytes live in the DB** (a `BYTEA` column) in a dedicated table so the
 hot `projects.*` list query never pulls the blob; it is rendered in the project rail and

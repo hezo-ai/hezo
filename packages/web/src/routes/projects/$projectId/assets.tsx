@@ -1,3 +1,4 @@
+import { isMarkdownAssetMime } from '@hezo/shared';
 import { createFileRoute } from '@tanstack/react-router';
 import {
 	Code,
@@ -12,6 +13,7 @@ import {
 	Upload,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { MarkdownAssetDialog } from '../../../components/markdown-asset-dialog';
 import { Button } from '../../../components/ui/button';
 import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
 import { EmptyState } from '../../../components/ui/empty-state';
@@ -38,7 +40,11 @@ function AssetIcon({ contentType }: { contentType: string }) {
 	if (contentType.startsWith('audio/')) return <FileAudio className={cls} />;
 	if (contentType.startsWith('video/')) return <FileVideo className={cls} />;
 	if (contentType === 'text/html') return <Code className={cls} />;
-	if (contentType === 'application/pdf' || contentType === 'text/plain') {
+	if (
+		contentType === 'application/pdf' ||
+		contentType === 'text/plain' ||
+		isMarkdownAssetMime(contentType)
+	) {
 		return <FileText className={cls} />;
 	}
 	if (contentType.startsWith('image/')) return <ImageIcon className={cls} />;
@@ -64,6 +70,7 @@ function ProjectAssetsPage() {
 	const dragDepth = useRef(0);
 	const [errors, setErrors] = useState<ErrorChip[]>([]);
 	const [pendingDelete, setPendingDelete] = useState<ProjectAsset | null>(null);
+	const [viewMarkdown, setViewMarkdown] = useState<ProjectAsset | null>(null);
 
 	const pushError = useCallback((filename: string, message: string) => {
 		const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -190,6 +197,7 @@ function ProjectAssetsPage() {
 								asset={asset}
 								highlighted={focusFile === asset.original_filename}
 								onDelete={() => setPendingDelete(asset)}
+								onView={() => setViewMarkdown(asset)}
 							/>
 						))}
 					</ul>
@@ -233,6 +241,17 @@ function ProjectAssetsPage() {
 					setPendingDelete(null);
 				}}
 			/>
+
+			{viewMarkdown && (
+				<MarkdownAssetDialog
+					asset={viewMarkdown}
+					projectId={projectId}
+					open={viewMarkdown !== null}
+					onOpenChange={(open) => {
+						if (!open) setViewMarkdown(null);
+					}}
+				/>
+			)}
 		</div>
 	);
 }
@@ -241,10 +260,12 @@ function AssetCard({
 	asset,
 	highlighted,
 	onDelete,
+	onView,
 }: {
 	asset: ProjectAsset;
 	highlighted: boolean;
 	onDelete: () => void;
+	onView: () => void;
 }) {
 	const ref = useRef<HTMLLIElement>(null);
 	useEffect(() => {
@@ -253,6 +274,19 @@ function AssetCard({
 
 	const isImage = asset.content_type.startsWith('image/');
 	const isHtml = asset.content_type === 'text/html';
+	const isMarkdown = isMarkdownAssetMime(asset.content_type);
+	const thumbnail = isImage ? (
+		<img src={asset.url} alt={asset.original_filename} className="h-full w-full object-cover" />
+	) : isHtml ? (
+		<iframe
+			src={asset.url}
+			title={asset.original_filename}
+			sandbox=""
+			className="pointer-events-none h-full w-full bg-surface"
+		/>
+	) : (
+		<AssetIcon contentType={asset.content_type} />
+	);
 	return (
 		<li
 			ref={ref}
@@ -262,31 +296,30 @@ function AssetCard({
 				highlighted ? 'border-info' : 'border-border'
 			}`}
 		>
-			<a
-				href={asset.url}
-				target="_blank"
-				rel="noopener noreferrer"
-				className="flex h-28 items-center justify-center bg-surface-3"
-				data-testid="asset-open-link"
-				aria-label={`Open ${asset.original_filename} in a new tab`}
-			>
-				{isImage ? (
-					<img
-						src={asset.url}
-						alt={asset.original_filename}
-						className="h-full w-full object-cover"
-					/>
-				) : isHtml ? (
-					<iframe
-						src={asset.url}
-						title={asset.original_filename}
-						sandbox=""
-						className="pointer-events-none h-full w-full bg-surface"
-					/>
-				) : (
-					<AssetIcon contentType={asset.content_type} />
-				)}
-			</a>
+			{/* Markdown renders in-app (rich preview + view-source); everything else
+			    opens its raw signed URL in a new tab. */}
+			{isMarkdown ? (
+				<button
+					type="button"
+					onClick={onView}
+					className="flex h-28 items-center justify-center bg-surface-3"
+					data-testid="asset-open-markdown"
+					aria-label={`View ${asset.original_filename}`}
+				>
+					{thumbnail}
+				</button>
+			) : (
+				<a
+					href={asset.url}
+					target="_blank"
+					rel="noopener noreferrer"
+					className="flex h-28 items-center justify-center bg-surface-3"
+					data-testid="asset-open-link"
+					aria-label={`Open ${asset.original_filename} in a new tab`}
+				>
+					{thumbnail}
+				</a>
+			)}
 			<div className="flex items-start justify-between gap-1 p-2">
 				<div className="min-w-0">
 					<div
