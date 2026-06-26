@@ -5,6 +5,7 @@ import {
 	type ConnectivityProbeResult,
 	checkContainerToHostConnectivity,
 	classifyConnectivity,
+	connectivitySeverity,
 	formatContainerConnectivityMessage,
 	isLoopbackHost,
 	NETWORKING_DOCS_URL,
@@ -46,6 +47,16 @@ describe('classifyConnectivity', () => {
 	});
 	it('blames the firewall when the bind host is non-loopback but still unreachable', () => {
 		expect(classifyConnectivity(BIND_DOWN, '0.0.0.0')).toBe('bind-firewalled');
+	});
+});
+
+describe('connectivitySeverity', () => {
+	it('is error only for the fully-broken mcp-unreachable case', () => {
+		expect(connectivitySeverity('mcp-unreachable')).toBe('error');
+	});
+	it('is warn for the bind-host degradations (MCP works, agents still run)', () => {
+		expect(connectivitySeverity('bind-loopback')).toBe('warn');
+		expect(connectivitySeverity('bind-firewalled')).toBe('warn');
 	});
 });
 
@@ -100,6 +111,10 @@ describe('formatContainerConnectivityMessage', () => {
 		const msg = formatContainerConnectivityMessage('bind-loopback', opts);
 		expect(msg).toContain('--container-bind-host 0.0.0.0');
 		expect(msg).toContain('20000:29999');
+		// Degradation framing, not the fatal "produce nothing" of mcp-unreachable.
+		expect(msg).toContain('direct LLM providers');
+		expect(msg).toContain('safe');
+		expect(msg).not.toContain('produce nothing');
 	});
 
 	it('points at the firewall (egress range) when the bind host is already non-loopback', () => {
@@ -109,6 +124,20 @@ describe('formatContainerConnectivityMessage', () => {
 		});
 		expect(msg).toContain('20000:29999');
 		expect(msg).not.toContain('--container-bind-host');
+		expect(msg).toContain('direct LLM providers');
+		expect(msg).not.toContain('produce nothing');
+	});
+
+	it('frames mcp-unreachable as fatal and the bind cases as non-fatal degradations', () => {
+		expect(formatContainerConnectivityMessage('mcp-unreachable', opts)).toContain(
+			'hang with no tools',
+		);
+		for (const outcome of ['bind-loopback', 'bind-firewalled'] as const) {
+			const msg = formatContainerConnectivityMessage(outcome, opts);
+			expect(msg).toContain('degraded');
+			expect(msg).toContain('agents run');
+			expect(msg).not.toContain('produce nothing');
+		}
 	});
 
 	it('honours a custom --port in the firewall rule', () => {
@@ -138,11 +167,14 @@ describe('checkContainerToHostConnectivity', () => {
 		env: {} as NodeJS.ProcessEnv,
 	};
 
-	// The orchestrator logs its (multi-line) guidance on the failure path. Spy on
-	// the logger so a green run stays quiet and so we can assert it actually fired.
+	// The orchestrator logs its (multi-line) guidance on the non-ok path. Spy on the
+	// logger so a green run stays quiet and so we can assert which level fired:
+	// error for the fatal mcp-unreachable case, warn for the bind-host degradations.
 	let errorSpy: ReturnType<typeof vi.spyOn>;
+	let warnSpy: ReturnType<typeof vi.spyOn>;
 	beforeEach(() => {
 		errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+		warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
 		vi.spyOn(Logger.prototype, 'info').mockImplementation(() => {});
 	});
 	afterEach(() => {
@@ -178,32 +210,38 @@ describe('checkContainerToHostConnectivity', () => {
 		});
 		expect(outcome).toBe('ok');
 		expect(errorSpy).not.toHaveBeenCalled();
+		expect(warnSpy).not.toHaveBeenCalled();
 	});
 
-	it('classifies a blocked MCP port as mcp-unreachable and logs guidance', async () => {
+	it('logs mcp-unreachable at error (fatal — no tools load)', async () => {
 		const outcome = await checkContainerToHostConnectivity({
 			...base,
 			probe: async () => MCP_DOWN,
 		});
 		expect(outcome).toBe('mcp-unreachable');
 		expect(errorSpy).toHaveBeenCalled();
+		expect(warnSpy).not.toHaveBeenCalled();
 	});
 
-	it('classifies a loopback bind (default host) as bind-loopback', async () => {
+	it('logs a loopback bind at warn (degraded — MCP works, agents run)', async () => {
 		const outcome = await checkContainerToHostConnectivity({
 			...base,
 			probe: async () => BIND_DOWN,
 		});
 		expect(outcome).toBe('bind-loopback');
+		expect(warnSpy).toHaveBeenCalled();
+		expect(errorSpy).not.toHaveBeenCalled();
 	});
 
-	it('classifies an unreachable non-loopback bind as bind-firewalled', async () => {
+	it('logs an unreachable non-loopback bind at warn (degraded)', async () => {
 		const outcome = await checkContainerToHostConnectivity({
 			...base,
 			containerBindHost: '0.0.0.0',
 			probe: async () => BIND_DOWN,
 		});
 		expect(outcome).toBe('bind-firewalled');
+		expect(warnSpy).toHaveBeenCalled();
+		expect(errorSpy).not.toHaveBeenCalled();
 	});
 
 	it('retries a transient failure before settling on the result', async () => {
