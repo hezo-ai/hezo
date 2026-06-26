@@ -79,6 +79,15 @@ export const wsRoom = {
 	 * progress is broadcast here once and every project page filters by image.
 	 */
 	imageBuilds: () => 'image-builds',
+	/**
+	 * The single global project-index room. A project is created in a brand-new
+	 * team whose `team:<id>` room no client has joined yet (and whose row isn't in
+	 * the cached index to resolve a slug from), so a project-INSERT on the team
+	 * room can't reach the rail live. The "the index changed" signal is broadcast
+	 * here instead; every shell subscribes so the project rail stays current the
+	 * moment any project is created — by the dialog, the CEO, or another session.
+	 */
+	projects: () => 'projects:global',
 } as const;
 
 /**

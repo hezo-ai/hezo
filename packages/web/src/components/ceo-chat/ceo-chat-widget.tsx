@@ -155,6 +155,16 @@ export function CeoChatWidget() {
 						<span className="rounded-sm border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-2">
 							{HQ_PROJECT_NAME}
 						</span>
+						{/* Mirror the in-thread typing dots up here so the "CEO is working"
+						    signal stays visible even when the latest reply is scrolled out of
+						    view. Decorative only — the in-thread indicator carries the aria
+						    live-region announcement, so this stays aria-hidden to avoid a
+						    duplicate read. */}
+						{streaming && (
+							<span data-testid="ceo-chat-header-dots" className="pl-0.5">
+								<Dots />
+							</span>
+						)}
 					</div>
 					<div className="flex items-center gap-1">
 						{/* Copy the full transcript to the clipboard. Disabled until there's

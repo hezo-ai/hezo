@@ -39,6 +39,15 @@ export async function handleWsSubscribe(
 		return;
 	}
 
+	// The single global project-index room. Its messages carry only an "index
+	// changed" signal (no row data), and the refetch they trigger
+	// (`GET /api/projects`) is itself authorized per team, so any authenticated
+	// socket may watch it without leaking a project it can't see.
+	if (room === wsRoom.projects()) {
+		deps.wsManager.subscribe(ws, room);
+		return;
+	}
+
 	const teamMatch = room.match(/^team:(.+)$/);
 	if (teamMatch) {
 		const allowed = await deps.canAccessTeam(ws.data.auth, teamMatch[1]);

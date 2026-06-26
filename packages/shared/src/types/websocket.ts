@@ -10,6 +10,7 @@ export enum WsMessageType {
 	CeoMessageStart = 'ceo_message_start',
 	CeoMessageDelta = 'ceo_message_delta',
 	CeoMessageComplete = 'ceo_message_complete',
+	ProjectsChanged = 'projects_changed',
 	Error = 'error',
 }
 
@@ -79,6 +80,18 @@ export interface WsErrorMessage {
 }
 
 /**
+ * The instance-wide project index changed (a project was created). Broadcast to
+ * the global `projects:global` room with no row payload: the project list is
+ * authorized per-caller (`GET /api/projects` filters by team membership), so a
+ * full row on a room every client watches would leak projects a user can't see.
+ * Clients react by refetching the index, which returns only their visible
+ * projects — keeping the project rail live without exposing anything.
+ */
+export interface WsProjectsChangedMessage {
+	type: WsMessageType.ProjectsChanged;
+}
+
+/**
  * A new CEO chat message row was created. Sent for assistant replies as they
  * begin streaming AND for user messages from any channel, so every mirrored
  * surface (web, future Telegram/WhatsApp) renders the full thread live.
@@ -119,6 +132,7 @@ export type WsServerMessage =
 	| WsCeoMessageStartMessage
 	| WsCeoMessageDeltaMessage
 	| WsCeoMessageCompleteMessage
+	| WsProjectsChangedMessage
 	| WsConnectedMessage
 	| WsErrorMessage;
 
