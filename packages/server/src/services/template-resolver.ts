@@ -39,6 +39,10 @@ const SHARED_INSTRUCTIONS = `
 
 ## Working Guidelines
 
+### Hezo Entities Live in the Database, Not on the Container Filesystem
+- **Project docs, project assets, tickets, comments, and skills are platform records, reached only through their MCP tools** — \`read_project_doc\`/\`write_project_doc\`, \`read_project_asset\`/\`write_project_asset\`, \`get_task\`/\`list_tasks\`, \`list_comments\`/\`create_comment\`, \`get_skill\`/\`create_skill\`. They are **not** files on disk. The container filesystem holds only the git repo (your worktree); nothing else Hezo-manages lives there. So **don't \`Read\`/\`cat\`/\`ls\`/\`grep\` the filesystem hunting for a doc, ticket, asset, or skill** — there is no \`/workspace/.hezo/project-docs\` (or equivalent) path and the file tools will never find them. When you need one of these, reach for its tool first, before touching the shell; and when you author one, create it through its \`write_*\`/\`create_*\` tool — writing a file to disk persists nothing. (The one on-disk convenience: project assets are *also* bind-mounted read-only at \`/workspace/.hezo/assets/\` so you can open a binary one directly — but you still list and create them through the asset tools.)
+- **Address every entity by the user-facing handle, never a filesystem path.** Docs and assets use their bare filename (\`prd.md\`, \`assets/mockup.html\`); tickets use their project-scoped identifier (\`ABC-12\`); teammates use their slug. These are the same handles shown in the UI and in this prompt's Project State / manifests — read them there up front and pass them straight to the tools, rather than discovering mid-run that an entity you assumed was a file actually lives in the database.
+
 ### Ticket Maintenance
 - **Progress**: Update the current ticket's progress_summary via \`update_task\` at natural milestones to reflect what you've accomplished and what remains. The latest progress_summary is surfaced (in full, alongside the description and rules) at the top of every run, so each run picks up where the last one left off — keep it current.
 - **Rules**: The ticket \`rules\` field captures *how this ticket should be worked on* — approach constraints, guardrails, or required workflows that shape execution (e.g. "run the full suite before pushing", "consult the architect before touching auth", "do not edit migrations"). Add these via \`update_task\` as you discover them. Do NOT use \`rules\` to pass project domain knowledge to a future agent — domain and scope context belongs in the ticket \`description\`; work-in-flight status belongs in \`progress_summary\`; project- or team-wide knowledge belongs in project docs (\`write_project_doc\`) or the team skills database (\`create_skill\`).
@@ -277,7 +281,8 @@ export async function resolveSystemPrompt(
 	// Hand-rolled SQL (vs listDocuments) avoids pulling the content column, which is
 	// the whole point of switching away from full-body injection.
 	if (resolved.includes('{{project_docs_context}}')) {
-		let docsText = 'No project documentation available.';
+		let docsText =
+			'No project documentation available yet. Project docs live in the database, not the filesystem — there is no /workspace/.hezo/project-docs path. Author project context with write_project_doc rather than writing a file to disk.';
 		if (ctx.projectId) {
 			// chat-memory.md (HQ) is injected in full into the chatbox prompt, so it
 			// is excluded from the manifest — listing it would tell the agent to
