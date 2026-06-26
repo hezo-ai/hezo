@@ -31,12 +31,16 @@ export function CeoChatWidget() {
 
 	const lastId = messages.at(-1)?.id;
 	const lastLen = messages.at(-1)?.content.length ?? 0;
-	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll as messages stream
+	// Pin to the latest message as it streams in, and re-pin whenever the panel
+	// resizes (expand/collapse). A size change reflows the scroll area without
+	// moving scrollTop, so without `expanded` here the newest message silently
+	// drops below the fold on collapse even though it's still mounted.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: deliberate scroll-to-bottom triggers
 	useEffect(() => {
 		const el = scrollRef.current;
 		if (!el) return;
 		el.scrollTop = el.scrollHeight;
-	}, [lastId, lastLen, streaming, open]);
+	}, [lastId, lastLen, streaming, open, expanded]);
 
 	// Escape closes the chat from any open state (anchored or the expanded modal).
 	useEffect(() => {
