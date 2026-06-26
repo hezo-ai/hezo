@@ -49,17 +49,21 @@ export async function storeUploadedAsset(
 	if (!isAllowedAttachmentExtension(file.name)) {
 		return err(c, 'INVALID_ATTACHMENT', 'Unsupported file extension', 400);
 	}
-	// Trust the browser's MIME only when it's one we allow; otherwise fall back to
-	// the canonical type for the (already validated) extension. Browsers often send
-	// an empty type or `application/octet-stream` for files they don't recognise —
-	// notably `.md` — which would otherwise be rejected despite a valid extension.
+	// Derive the canonical type from the (already validated) extension when the
+	// browser declares no real type — an empty string or the generic
+	// `application/octet-stream` it falls back to for files it doesn't recognise
+	// (common for `.md`), which would otherwise be rejected despite a valid
+	// extension. A *specific* present-but-disallowed MIME is still rejected: a type
+	// that contradicts the extension (e.g. a `.png` claiming
+	// `application/x-msdownload`) is suspicious.
 	const ext = extensionOf(file.name);
 	const extMime = ext
 		? ATTACHMENT_EXTENSIONS[ext as keyof typeof ATTACHMENT_EXTENSIONS]
 		: undefined;
-	const contentType = file.type && isAllowedAttachmentMime(file.type) ? file.type : (extMime ?? '');
+	const declared = file.type === 'application/octet-stream' ? '' : file.type;
+	const contentType = declared || extMime || '';
 	if (!isAllowedAttachmentMime(contentType)) {
-		return err(c, 'INVALID_ATTACHMENT', `Unsupported content type: ${file.type}`, 400);
+		return err(c, 'INVALID_ATTACHMENT', `Unsupported content type: ${contentType}`, 400);
 	}
 	if (file.size > ATTACHMENT_MAX_BYTES) {
 		return err(c, 'TOO_LARGE', 'Attachment exceeds 10 MB', 400);
