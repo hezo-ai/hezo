@@ -226,6 +226,25 @@ describe('handleWsSubscribe', () => {
 		});
 	});
 
+	it('subscribes any authenticated socket to the global projects room', async () => {
+		// A board user who is a member of no team must still watch the project
+		// index: the signal carries no row data and the refetch it triggers is
+		// authorized per team, so this can't leak a project they can't see.
+		const user = await db.query<{ id: string }>(
+			"INSERT INTO users (display_name) VALUES ('U') RETURNING id",
+		);
+		const ws = createMockWs({ type: AuthType.Admin, userId: user.rows[0].id });
+
+		await handleWsSubscribe(ws, wsRoom.projects(), deps());
+
+		expect(wsManager.getRoomSize(wsRoom.projects())).toBe(1);
+
+		// A live signal reaches the now-subscribed socket.
+		wsManager.broadcast(wsRoom.projects(), { type: WsMessageType.ProjectsChanged });
+		expect(ws._sent).toHaveLength(1);
+		expect(JSON.parse(ws._sent[0]).type).toBe(WsMessageType.ProjectsChanged);
+	});
+
 	it('subscribes to container-logs and replays buffered logs for that room', async () => {
 		const { userId, projectId } = await seedTeamWithProject(db);
 		const ws = createMockWs({ type: AuthType.Admin, userId });

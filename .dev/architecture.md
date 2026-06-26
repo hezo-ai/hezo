@@ -672,7 +672,13 @@ server state. Tailwind + Radix UI primitives (shadcn-style) under `components/ui
 events over WebSocket (UUID-keyed rooms), and the client **invalidates the matching query
 keys** to refetch. There is no client-side local query engine. The hard rule (`AGENTS.md`
 › Slugs vs UUIDs): **query keys use the route-param slug**, WebSocket rooms use UUIDs, and
-`useWebSocket` takes both — mixing them silently breaks realtime updates.
+`useWebSocket` takes both — mixing them silently breaks realtime updates. Project
+**creation** is the exception to the per-team room model: a brand-new project lands in a
+team whose `team:<uuid>` room no client has joined yet, so creation also emits a
+payload-free `ProjectsChanged` signal on the global `projects:global` room (which every
+shell watches). Clients react by refetching the per-caller-authorized project index, so the
+left project rail updates live — for the dialog, the CEO's `create_project`, and other
+sessions alike — without a row on the shared room leaking a project a user can't see.
 
 **Mutations** (three strategies, by shape — see `AGENTS.md` › Web frontend mutations):
 **optimistic + rollback** (default for field edits/toggles/reactions, via

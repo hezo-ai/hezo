@@ -204,6 +204,70 @@ test('a completed reply shows no typing dots', async () => {
 	expect(queryByTestId('ceo-chat-typing')).toBeNull();
 });
 
+// The header mirrors the in-thread "still working" dots up next to the CEO
+// label, so the processing signal stays visible even when the latest reply has
+// scrolled out of view. It tracks the same streaming state as the in-thread
+// indicators, whether or not any text has landed yet.
+test('the header shows processing dots while the CEO is composing with no text yet', async () => {
+	const { findByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+
+	seedConversation([
+		{
+			id: 'a1',
+			role: 'assistant',
+			channel: 'web',
+			status: 'streaming',
+			content: '',
+			created_at: now(),
+		},
+	]);
+
+	expect(await findByTestId('ceo-chat-header-dots')).toBeTruthy();
+});
+
+test('the header keeps the processing dots while a reply is still streaming text', async () => {
+	const { findByTestId, findByText } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+
+	seedConversation([
+		{
+			id: 'a1',
+			role: 'assistant',
+			channel: 'web',
+			status: 'streaming',
+			content: 'Working on it',
+			created_at: now(),
+		},
+	]);
+
+	// Both the in-thread trailing dots and the header dots are present mid-stream.
+	expect(await findByText('Working on it')).toBeTruthy();
+	expect(await findByTestId('ceo-chat-header-dots')).toBeTruthy();
+});
+
+test('the header drops the processing dots once the reply settles', async () => {
+	const { findByTestId, findByText, queryByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+
+	seedConversation([
+		{
+			id: 'a1',
+			role: 'assistant',
+			channel: 'web',
+			status: 'complete',
+			content: 'All done',
+			created_at: now(),
+		},
+	]);
+
+	await findByText('All done');
+	expect(queryByTestId('ceo-chat-header-dots')).toBeNull();
+});
+
 test('a CEO reply renders its markdown as formatted HTML, not raw text', async () => {
 	const { findByTestId } = await renderApp({ initialPath: '/home' });
 	(await findByTestId('ceo-chat-launcher')).click();

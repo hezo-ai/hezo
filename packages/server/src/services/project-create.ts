@@ -10,7 +10,7 @@ import {
 } from '@hezo/shared';
 import type { DomainEventBus } from '../events/bus';
 import { trackBackground } from '../lib/background';
-import { broadcastRowChange } from '../lib/broadcast';
+import { broadcastProjectsChanged, broadcastRowChange } from '../lib/broadcast';
 import { toProjectTaskPrefix, toSlug, uniqueSlug } from '../lib/slug';
 import { withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
@@ -559,6 +559,11 @@ export async function createProjectWithTeam(
 		if (coherenceRow) {
 			broadcastRowChange(deps.wsManager, wsRoom.team(team.id), 'tasks', 'INSERT', coherenceRow);
 		}
+		// The new team's room above is one no shell has joined yet, so the rail
+		// can't learn of the project from it. Signal the global project index so
+		// every connected shell refetches and the project appears in the rail at
+		// once — covers the dialog, the CEO's create_project, and other sessions.
+		broadcastProjectsChanged(deps.wsManager);
 	}
 
 	if (coherenceTaskId) {

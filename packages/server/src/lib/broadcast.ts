@@ -62,6 +62,21 @@ export function broadcastEvent(
 	wsManager.broadcast(room, { type, ...data });
 }
 
+/**
+ * Signal the global project index changed (a project was created) so every
+ * connected shell refetches `/api/projects` and the project rail updates live.
+ *
+ * A new project lands in a brand-new team whose `team:<id>` room no client has
+ * joined yet, so the per-team `projects`-INSERT broadcast never reaches the
+ * rail. This fires on the global `projects:global` room — which every shell
+ * watches — carrying no row data (the index is authorized per caller, so a row
+ * here would leak projects a user can't see; clients refetch instead).
+ */
+export function broadcastProjectsChanged(wsManager: WebSocketManager | undefined): void {
+	if (!wsManager) return;
+	wsManager.broadcast(wsRoom.projects(), { type: WsMessageType.ProjectsChanged });
+}
+
 export async function broadcastProjectUpdate(
 	db: PGlite,
 	wsManager: WebSocketManager | undefined,
