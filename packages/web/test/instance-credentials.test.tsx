@@ -1,6 +1,6 @@
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { renderApp } from './helpers/render';
+import { getTestContext, renderApp } from './helpers/render';
 
 async function seedInstanceSecret(
 	ctx: { token: string; apiBase: (p: string, i?: RequestInit) => Promise<Response> },
@@ -65,6 +65,36 @@ test('edits an instance credential host policy via the row edit affordance', asy
 
 	// After the invalidate + refetch the table shows the new host policy.
 	await findByText('api.new.example');
+});
+
+test('toggles body substitution on an existing credential via the edit form', async () => {
+	const { findByText, getByRole, getByTestId, user } = await renderApp({
+		initialPath: '/settings/credentials',
+		seed: async (ctx) => {
+			await seedInstanceSecret(ctx, {
+				name: 'UMAMI_ADMIN_PASSWORD',
+				value: 'pw',
+				allowed_hosts: ['umami.example'],
+			});
+		},
+	});
+
+	await findByText('UMAMI_ADMIN_PASSWORD');
+	await user.click(getByRole('button', { name: 'Edit UMAMI_ADMIN_PASSWORD' }));
+
+	const toggle = getByTestId('credential-body-substitution') as HTMLInputElement;
+	expect(toggle.checked).toBe(false);
+	await user.click(toggle);
+	await user.click(getByRole('button', { name: 'Save changes' }));
+
+	// The PATCH persisted the flag on the existing secret (no recreate).
+	const { db } = getTestContext();
+	await waitFor(async () => {
+		const r = await db.query<{ allow_body_substitution: boolean }>(
+			"SELECT allow_body_substitution FROM secrets WHERE name = 'UMAMI_ADMIN_PASSWORD'",
+		);
+		expect(r.rows[0]?.allow_body_substitution).toBe(true);
+	});
 });
 
 test('settings page shows the superuser Credentials link and navigates to it', async () => {

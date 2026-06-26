@@ -2106,6 +2106,12 @@ export function registerTools(
 				.describe(
 					'Hostname allowlist for the egress proxy. The credential is only substituted into outbound requests to these hosts. REQUIRED for HTTP-auth kinds (api_key, oauth_token, github_pat) — e.g. ["api.netlify.com"]. Wildcards: *.github.com matches one label segment.',
 				),
+			allow_body_substitution: z
+				.boolean()
+				.optional()
+				.describe(
+					'Request that this credential may be substituted into a small JSON request body, not just headers/URL — for APIs that take the secret in the body, e.g. a login POST that returns a token. The human sees this as a pre-checked box on the paste form and can decline it. Body substitution is gated to a single application/json request under 8KB with a fixed Content-Length; after a login, read the returned token and use it via the Authorization header on later calls.',
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveTaskScope(db, auth, args);
@@ -2167,6 +2173,7 @@ export function registerTools(
 					: ((args.input_type as string | undefined) ?? CredentialInputType.Text),
 				confirmation_text: args.confirmation_text ?? null,
 				allowed_hosts: requestedHosts,
+				allow_body_substitution: !!args.allow_body_substitution,
 				placeholder,
 			};
 

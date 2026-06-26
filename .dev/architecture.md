@@ -549,11 +549,21 @@ substitution, `allowed_hosts`, and audit). It **fails open** on `ok`/`skipped`/u
 single-flight lazy re-probe (5-min staleness) so a firewall fix clears the gate — or a
 regression re-closes it — without a restart.
 
-For each request the proxy terminates TLS, matches placeholders **in the URL and headers
-only** (bodies are forwarded byte-for-byte — body substitution is intentionally absent),
+For each request the proxy terminates TLS, matches placeholders **in the URL and headers**,
 loads the named secret, verifies the host against `allowed_hosts`, substitutes, and
-forwards. Failures are explicit and audited: `unknown_secret` (400),
-`secret_not_allowed_for_host` (403), `secrets_unavailable` (503, master key locked).
+forwards. **Request bodies** are forwarded byte-for-byte by default and never buffered —
+except a narrowly-gated path for secrets a human has opted into body substitution
+(`secrets.allow_body_substitution`): a `POST`/`PUT`/`PATCH` with an uncompressed
+`application/json` body and a fixed `Content-Length` ≤ 8 KB is buffered, has its placeholders
+substituted, and is forwarded with a recomputed `Content-Length`. Everything else — larger,
+non-JSON, compressed, chunked, or streaming bodies (SSE, Streamable-HTTP MCP) — streams
+through untouched, so long-lived connections are never held in memory. Body substitution
+still enforces `allowed_hosts`, and a body placeholder for a secret without the opt-in is
+rejected, not leaked. This exists for APIs that take credentials in the body, such as a login
+POST that returns a token (the agent then uses that token via the `Authorization` header).
+Failures are explicit and audited: `unknown_secret` (400), `secret_not_allowed_for_host`
+(403), `secret_not_allowed_in_body` (403), `body_too_large` (413), `secrets_unavailable`
+(503, master key locked).
 
 **Audit.** Every substitution attempt writes one `audit_log` row
 (`entity_type='egress_request'`) recording run id, host, method, path, status, count, and

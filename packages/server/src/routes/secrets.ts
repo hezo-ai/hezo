@@ -31,7 +31,7 @@ secretsRoutes.get('/credentials', async (c) => {
 	// credential can be used by any team.
 	const result = await db.query(
 		`SELECT s.id, s.name, s.category,
-		        s.allowed_hosts, s.allow_all_hosts, s.created_at, s.updated_at,
+		        s.allowed_hosts, s.allow_all_hosts, s.allow_body_substitution, s.created_at, s.updated_at,
 		        usage.last_used_at,
 		        usage.use_count,
 		        usage.last_host
@@ -65,6 +65,7 @@ secretsRoutes.post('/secrets', async (c) => {
 		category?: string;
 		allowed_hosts?: string[];
 		allow_all_hosts?: boolean;
+		allow_body_substitution?: boolean;
 	}>();
 
 	if (!body.name?.trim() || !body.value) {
@@ -91,18 +92,27 @@ secretsRoutes.post('/secrets', async (c) => {
 	const encryptedValue = encrypt(body.value, key);
 	const allowedHosts = normalizeAllowedHosts(body.allowed_hosts);
 	const allowAllHosts = !!body.allow_all_hosts;
+	const allowBodySubstitution = !!body.allow_body_substitution;
 
 	const result = await db.query(
-		`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts, allow_all_hosts)
-		 VALUES ($1, $2, $3::secret_category, $4, $5)
+		`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts, allow_all_hosts, allow_body_substitution)
+		 VALUES ($1, $2, $3::secret_category, $4, $5, $6)
 		 ON CONFLICT (name) DO UPDATE
 		 SET encrypted_value = EXCLUDED.encrypted_value,
 		     category = EXCLUDED.category,
 		     allowed_hosts = EXCLUDED.allowed_hosts,
 		     allow_all_hosts = EXCLUDED.allow_all_hosts,
+		     allow_body_substitution = EXCLUDED.allow_body_substitution,
 		     updated_at = now()
-		 RETURNING id, name, category, allowed_hosts, allow_all_hosts, created_at, updated_at`,
-		[name, encryptedValue, body.category ?? SecretCategory.Other, allowedHosts, allowAllHosts],
+		 RETURNING id, name, category, allowed_hosts, allow_all_hosts, allow_body_substitution, created_at, updated_at`,
+		[
+			name,
+			encryptedValue,
+			body.category ?? SecretCategory.Other,
+			allowedHosts,
+			allowAllHosts,
+			allowBodySubstitution,
+		],
 	);
 	const created = result.rows[0] as { id: string; name: string };
 	c.get('events').emit({
@@ -133,6 +143,7 @@ secretsRoutes.patch('/secrets/:secretId', async (c) => {
 		category?: string;
 		allowed_hosts?: string[];
 		allow_all_hosts?: boolean;
+		allow_body_substitution?: boolean;
 	}>();
 
 	const sets: string[] = [];
@@ -167,6 +178,11 @@ secretsRoutes.patch('/secrets/:secretId', async (c) => {
 		params.push(!!body.allow_all_hosts);
 		idx++;
 	}
+	if (body.allow_body_substitution !== undefined) {
+		sets.push(`allow_body_substitution = $${idx}`);
+		params.push(!!body.allow_body_substitution);
+		idx++;
+	}
 
 	if (sets.length === 0) {
 		return ok(c, existing.rows[0]);
@@ -175,7 +191,7 @@ secretsRoutes.patch('/secrets/:secretId', async (c) => {
 	params.push(secretId);
 	const result = await db.query(
 		`UPDATE secrets SET ${sets.join(', ')} WHERE id = $${idx}
-		 RETURNING id, name, category, allowed_hosts, allow_all_hosts, created_at, updated_at`,
+		 RETURNING id, name, category, allowed_hosts, allow_all_hosts, allow_body_substitution, created_at, updated_at`,
 		params,
 	);
 	const updated = result.rows[0] as { id: string; name: string };

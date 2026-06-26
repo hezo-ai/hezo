@@ -15,7 +15,7 @@ import {
 async function seedCredentialRequest(
 	ws: SeededWorkspace,
 	task: SeededTask,
-	input: { name: string; kind: string; allowedHosts: string[] },
+	input: { name: string; kind: string; allowedHosts: string[]; allowBodySubstitution?: boolean },
 ): Promise<void> {
 	const { db } = getTestContext();
 	const content = {
@@ -25,6 +25,7 @@ async function seedCredentialRequest(
 		input_type: 'text',
 		confirmation_text: null,
 		allowed_hosts: input.allowedHosts,
+		allow_body_substitution: input.allowBodySubstitution ?? false,
 		scope: 'team',
 		project_id: null,
 		placeholder: `__HEZO_SECRET_${input.name}__`,
@@ -87,6 +88,48 @@ test('human can set allowed_hosts when fulfilling an unscoped request', async ()
 		"SELECT allowed_hosts FROM secrets WHERE name = 'NETLIFY_AUTH_TOKEN'",
 	);
 	expect(secret.rows[0]?.allowed_hosts).toEqual(['api.netlify.com', '*.netlify.com']);
+});
+
+test('body-substitution checkbox is pre-checked from the request and can be declined', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+	const helpers = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Cred Body Project' });
+			const task = await seedTask(ws, project, { title: 'Login Task' });
+			await seedCredentialRequest(ws, task, {
+				name: 'UMAMI_LOGIN_PW',
+				kind: 'other',
+				allowedHosts: ['umami.example'],
+				allowBodySubstitution: true,
+			});
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+	await helpers.router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	const checkbox = (await helpers.findByTestId('credential-body-substitution', undefined, {
+		timeout: 15_000,
+	})) as HTMLInputElement;
+	expect(checkbox.checked).toBe(true);
+
+	// Decline body substitution, then provide the value.
+	await helpers.user.click(checkbox);
+	expect(checkbox.checked).toBe(false);
+	await helpers.user.type(await helpers.findByTestId('credential-input'), 'pw-123');
+	await helpers.user.click(await helpers.findByTestId('credential-submit'));
+	await helpers.findByTestId('credential-fulfilled', undefined, { timeout: 15_000 });
+
+	const { db } = getTestContext();
+	const secret = await db.query<{ allow_body_substitution: boolean }>(
+		"SELECT allow_body_substitution FROM secrets WHERE name = 'UMAMI_LOGIN_PW'",
+	);
+	expect(secret.rows[0]?.allow_body_substitution).toBe(false);
 });
 
 test('credential request with allowed_hosts shows the scoped-hosts line', async () => {

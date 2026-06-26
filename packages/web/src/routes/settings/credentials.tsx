@@ -43,6 +43,7 @@ function InstanceCredentialsPage() {
 	const [value, setValue] = useState('');
 	const [allowedHosts, setAllowedHosts] = useState('');
 	const [allowAllHosts, setAllowAllHosts] = useState(false);
+	const [allowBodySubstitution, setAllowBodySubstitution] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
 	function resetForm() {
@@ -52,6 +53,7 @@ function InstanceCredentialsPage() {
 		setValue('');
 		setAllowedHosts('');
 		setAllowAllHosts(false);
+		setAllowBodySubstitution(false);
 		setError(null);
 	}
 
@@ -66,6 +68,7 @@ function InstanceCredentialsPage() {
 		setValue('');
 		setAllowedHosts(row.allowed_hosts.join(', '));
 		setAllowAllHosts(row.allow_all_hosts);
+		setAllowBodySubstitution(row.allow_body_substitution);
 		setError(null);
 		setShowForm(true);
 	}
@@ -91,6 +94,7 @@ function InstanceCredentialsPage() {
 					value: value ? value : undefined,
 					allowed_hosts: hosts,
 					allow_all_hosts: allowAllHosts,
+					allow_body_substitution: allowBodySubstitution,
 				});
 			} else {
 				await createSecret.mutateAsync({
@@ -98,6 +102,7 @@ function InstanceCredentialsPage() {
 					value,
 					allowed_hosts: hosts,
 					allow_all_hosts: allowAllHosts,
+					allow_body_substitution: allowBodySubstitution,
 				});
 			}
 			resetForm();
@@ -257,6 +262,19 @@ function InstanceCredentialsPage() {
 								onChange={(e) => setAllowAllHosts(e.target.checked)}
 							/>
 							Allow this credential to reach any host (escape hatch — use sparingly)
+						</label>
+						<label className="flex items-start gap-2 text-[13px] text-text-2">
+							<input
+								type="checkbox"
+								checked={allowBodySubstitution}
+								onChange={(e) => setAllowBodySubstitution(e.target.checked)}
+								className="mt-0.5"
+								data-testid="credential-body-substitution"
+							/>
+							<span>
+								Allow substitution into small JSON request bodies (e.g. an API login that takes the
+								credential in the body). Off by default — enable only for APIs that require it.
+							</span>
 						</label>
 						{error && <p className="text-[13px] text-danger">{error}</p>}
 						<div className="flex gap-2">

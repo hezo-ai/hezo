@@ -36,6 +36,11 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 		allowedHosts.length > 0 ? allowedHosts.join(', ') : suggestedHosts.join(', '),
 	);
 	const [hostsEdited, setHostsEdited] = useState(false);
+	// The agent may request body substitution; the human approves or declines it
+	// here. Pre-checked when requested, but freely unchecked before storing.
+	const [allowBodySubstitution, setAllowBodySubstitution] = useState(
+		content.allow_body_substitution === true,
+	);
 	const [error, setError] = useState<string | null>(null);
 	const showSuggestionHint = !hostsEdited && suggestedHosts.length > 0 && hostsInput.length > 0;
 	const fulfill = useFulfillCredential(projectId ?? '', taskId ?? '');
@@ -75,7 +80,12 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 		setError(null);
 		const args = confirmationText
 			? { commentId: comment.id, confirmed: true }
-			: { commentId: comment.id, value, allowedHosts: parseHosts(hostsInput) };
+			: {
+					commentId: comment.id,
+					value,
+					allowedHosts: parseHosts(hostsInput),
+					allowBodySubstitution,
+				};
 		fulfill.mutate(args, {
 			onError: (e: unknown) => {
 				const msg = e instanceof Error ? e.message : 'Failed to submit';
@@ -191,6 +201,19 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 							</p>
 						)}
 					</div>
+					<label className="flex items-start gap-2 text-xs text-text-2">
+						<input
+							type="checkbox"
+							checked={allowBodySubstitution}
+							onChange={(e) => setAllowBodySubstitution(e.target.checked)}
+							className="mt-0.5"
+							data-testid="credential-body-substitution"
+						/>
+						<span>
+							Allow substitution into small JSON request bodies (e.g. an API login that takes the
+							credential in the body). Leave off unless an API requires it.
+						</span>
+					</label>
 					{error && <p className="text-xs text-danger-soft-fg">{error}</p>}
 					<div>
 						<Button

@@ -136,7 +136,7 @@ describe('EgressProxy', () => {
 		}
 	}, 30_000);
 
-	it('forwards request bodies unchanged (no body substitution by design)', async () => {
+	it('forwards a body without placeholders unchanged', async () => {
 		const runId = `run-${Date.now()}-4`;
 		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
 		try {
@@ -152,6 +152,133 @@ describe('EgressProxy', () => {
 			expect(res.status).toBe(200);
 			const lastReq = upstreamRequests.at(-1);
 			expect(lastReq?.body).toBe(body);
+		} finally {
+			await proxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
+	it('substitutes a placeholder in a small JSON body when the secret opts in', async () => {
+		const runId = `run-${Date.now()}-body-ok`;
+		await insertSecret('UMAMI_PW_OK', 's3cr3t-pw', ['127.0.0.1'], true);
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const body = '{"username":"admin","password":"__HEZO_SECRET_UMAMI_PW_OK__"}';
+			const res = await fetchThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				url: `${upstreamUrl}/api/auth/login`,
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body,
+			});
+			expect(res.status).toBe(200);
+			const lastReq = upstreamRequests.at(-1);
+			expect(lastReq?.body).toBe('{"username":"admin","password":"s3cr3t-pw"}');
+			// Content-Length must be recomputed for the substituted body.
+			expect(lastReq?.headers['content-length']).toBe(
+				String(Buffer.byteLength('{"username":"admin","password":"s3cr3t-pw"}')),
+			);
+		} finally {
+			await proxy.releaseRunProxy(runId);
+		}
+		const audit = await db.query(
+			`SELECT details FROM audit_log WHERE entity_type = 'egress_request' AND details->>'run_id' = $1 ORDER BY created_at DESC LIMIT 1`,
+			[runId],
+		);
+		const details = (audit.rows[0] as { details: Record<string, unknown> }).details;
+		expect(details.substitutions_count).toBe(1);
+		expect(details.secret_names_used).toEqual(['UMAMI_PW_OK']);
+	}, 30_000);
+
+	it('blocks a body placeholder for a secret without body opt-in with 403', async () => {
+		const runId = `run-${Date.now()}-body-noopt`;
+		await insertSecret('UMAMI_PW_NOOPT', 'never-leaked-body', ['127.0.0.1'], false);
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const res = await fetchThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				url: `${upstreamUrl}/api/auth/login`,
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: '{"password":"__HEZO_SECRET_UMAMI_PW_NOOPT__"}',
+			});
+			expect(res.status).toBe(403);
+			expect(JSON.parse(res.body).error).toBe('secret_not_allowed_in_body');
+			for (const req of upstreamRequests) {
+				expect(req.body.includes('never-leaked-body')).toBe(false);
+			}
+		} finally {
+			await proxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
+	it('does not substitute a body placeholder on a non-allowed host', async () => {
+		const runId = `run-${Date.now()}-body-host`;
+		await insertSecret('UMAMI_PW_HOST', 'never-leaked-host', ['only.example'], true);
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const res = await fetchThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				url: `${upstreamUrl}/api/auth/login`,
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: '{"password":"__HEZO_SECRET_UMAMI_PW_HOST__"}',
+			});
+			expect(res.status).toBe(403);
+			expect(JSON.parse(res.body).error).toBe('secret_not_allowed_for_host');
+			for (const req of upstreamRequests) {
+				expect(req.body.includes('never-leaked-host')).toBe(false);
+			}
+		} finally {
+			await proxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
+	it('does not substitute placeholders in a non-JSON body (streams it through)', async () => {
+		const runId = `run-${Date.now()}-body-nonjson`;
+		await insertSecret('UMAMI_PW_FORM', 's3cr3t-form', ['127.0.0.1'], true);
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const body = 'password=__HEZO_SECRET_UMAMI_PW_FORM__';
+			const res = await fetchThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				url: `${upstreamUrl}/api/auth/login`,
+				method: 'POST',
+				headers: { 'content-type': 'application/x-www-form-urlencoded' },
+				body,
+			});
+			expect(res.status).toBe(200);
+			// Non-JSON is not eligible — the placeholder is forwarded verbatim.
+			const lastReq = upstreamRequests.at(-1);
+			expect(lastReq?.body).toBe(body);
+		} finally {
+			await proxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
+	it('does not substitute a JSON body larger than the 8KB cap', async () => {
+		const runId = `run-${Date.now()}-body-large`;
+		await insertSecret('UMAMI_PW_BIG', 's3cr3t-big', ['127.0.0.1'], true);
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			// Pad past 8192 bytes so the request is ineligible and streams unchanged.
+			const padding = 'x'.repeat(9000);
+			const body = `{"pad":"${padding}","password":"__HEZO_SECRET_UMAMI_PW_BIG__"}`;
+			const res = await fetchThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				url: `${upstreamUrl}/api/auth/login`,
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body,
+			});
+			expect(res.status).toBe(200);
+			const lastReq = upstreamRequests.at(-1);
+			expect(lastReq?.body).toBe(body);
+			expect(lastReq?.body.includes('s3cr3t-big')).toBe(false);
 		} finally {
 			await proxy.releaseRunProxy(runId);
 		}
@@ -263,17 +390,23 @@ async function fetchThroughProxy(opts: ProxyFetchOpts): Promise<{ status: number
 	});
 }
 
-async function insertSecret(name: string, value: string, allowedHosts: string[]): Promise<void> {
+async function insertSecret(
+	name: string,
+	value: string,
+	allowedHosts: string[],
+	allowBodySubstitution = false,
+): Promise<void> {
 	const key = masterKeyManager.getKey();
 	if (!key) throw new Error('master key unavailable in test');
 	const enc = encrypt(value, key);
 	await db.query(
-		`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
-		 VALUES ($1, $2, 'api_token'::secret_category, $3)
+		`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts, allow_body_substitution)
+		 VALUES ($1, $2, 'api_token'::secret_category, $3, $4)
 		 ON CONFLICT (name) DO UPDATE
 		 SET encrypted_value = EXCLUDED.encrypted_value,
-		     allowed_hosts = EXCLUDED.allowed_hosts`,
-		[name, enc, allowedHosts],
+		     allowed_hosts = EXCLUDED.allowed_hosts,
+		     allow_body_substitution = EXCLUDED.allow_body_substitution`,
+		[name, enc, allowedHosts, allowBodySubstitution],
 	);
 }
 

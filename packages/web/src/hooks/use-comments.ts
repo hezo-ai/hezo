@@ -186,11 +186,13 @@ export function useFulfillCredential(projectId: string, taskId: string) {
 			value,
 			confirmed,
 			allowedHosts,
+			allowBodySubstitution,
 		}: {
 			commentId: string;
 			value?: string;
 			confirmed?: boolean;
 			allowedHosts?: string[];
+			allowBodySubstitution?: boolean;
 		}) =>
 			api.post(
 				`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/fulfill-credential`,
@@ -198,6 +200,7 @@ export function useFulfillCredential(projectId: string, taskId: string) {
 					value,
 					confirmed,
 					allowed_hosts: allowedHosts,
+					allow_body_substitution: allowBodySubstitution,
 				},
 			),
 		onSuccess: () =>

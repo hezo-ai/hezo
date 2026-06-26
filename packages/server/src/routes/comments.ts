@@ -339,6 +339,7 @@ commentsRoutes.post(
 			value?: string;
 			confirmed?: boolean;
 			allowed_hosts?: string[];
+			allow_body_substitution?: boolean;
 		}>();
 
 		const existing = await db.query<{
@@ -374,6 +375,13 @@ commentsRoutes.post(
 			? body.allowed_hosts.map((h) => String(h).trim().toLowerCase()).filter((h) => h.length > 0)
 			: [];
 		const allowedHosts = overrideHosts.length > 0 ? overrideHosts : requestHosts;
+		// Body substitution is a sensitive capability the human must approve. The
+		// agent's request (stored in the comment) seeds the form's checkbox; if the
+		// fulfiller sends an explicit boolean, their decision (e.g. unchecking) wins.
+		const allowBodySubstitution =
+			typeof body.allow_body_substitution === 'boolean'
+				? body.allow_body_substitution
+				: requestContent.allow_body_substitution === true;
 		const requestingAgentId = row.author_member_id;
 
 		const isConfirmation = typeof requestContent.confirmation_text === 'string';
@@ -406,15 +414,16 @@ commentsRoutes.post(
 			const category = pickSecretCategory(kind);
 
 			const upsert = await db.query<{ id: string }>(
-				`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
-				 VALUES ($1, $2, $3::secret_category, $4::text[])
+				`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts, allow_body_substitution)
+				 VALUES ($1, $2, $3::secret_category, $4::text[], $5)
 				 ON CONFLICT (name)
 				 DO UPDATE SET encrypted_value = EXCLUDED.encrypted_value,
 				               category = EXCLUDED.category,
 				               allowed_hosts = EXCLUDED.allowed_hosts,
+				               allow_body_substitution = EXCLUDED.allow_body_substitution,
 				               updated_at = now()
 				 RETURNING id`,
-				[name, encryptedValue, category, allowedHosts],
+				[name, encryptedValue, category, allowedHosts, allowBodySubstitution],
 			);
 			const secretId = upsert.rows[0].id;
 

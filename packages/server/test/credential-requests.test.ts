@@ -131,6 +131,25 @@ describe('request_credential MCP tool', () => {
 		expect(row.rows[0].content.kind).toBe('api_key');
 		expect(row.rows[0].content.allowed_hosts).toEqual(['api.stripe.com']);
 		expect(row.rows[0].content.placeholder).toBe('__HEZO_SECRET_STRIPE_API_KEY__');
+		// Not requested → defaults to false in the stored content.
+		expect(row.rows[0].content.allow_body_substitution).toBe(false);
+	});
+
+	it('records a requested allow_body_substitution in the comment content', async () => {
+		const result = (await callRequestCredential({
+			project: projectId,
+			task_id: taskId,
+			name: 'UMAMI_LOGIN_PW',
+			kind: 'other',
+			instructions: 'Umami login password (sent in the login POST body).',
+			allowed_hosts: ['umami.example'],
+			allow_body_substitution: true,
+		})) as { comment_id?: string };
+		const row = await db.query<{ content: Record<string, unknown> }>(
+			'SELECT content FROM task_comments WHERE id = $1',
+			[result.comment_id],
+		);
+		expect(row.rows[0].content.allow_body_substitution).toBe(true);
 	});
 
 	it('returns the existing comment on duplicate request (idempotent)', async () => {
@@ -356,6 +375,64 @@ describe('fulfill-credential endpoint', () => {
 		);
 		// Normalized (trimmed + lowercased) and applied over the empty request.
 		expect(secretRow.rows[0].allowed_hosts).toEqual(['api.netlify.com', 'app.netlify.com']);
+	});
+
+	it('defaults allow_body_substitution from the agent request when fulfilling', async () => {
+		const created = (await callRequestCredential({
+			project: projectId,
+			task_id: taskId,
+			name: 'FULFILL_BODY_DEFAULT',
+			kind: 'other',
+			instructions: 'login password',
+			allowed_hosts: ['umami.example'],
+			allow_body_substitution: true,
+		})) as { comment_id: string };
+
+		const res = await app.request(
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${created.comment_id}/fulfill-credential`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				// No explicit flag in the body → the agent's request stands.
+				body: JSON.stringify({ value: 'pw-123' }),
+			},
+		);
+		expect(res.status).toBe(200);
+		const secretId = (await res.json()).data.secret_id;
+		const row = await db.query<{ allow_body_substitution: boolean }>(
+			'SELECT allow_body_substitution FROM secrets WHERE id = $1',
+			[secretId],
+		);
+		expect(row.rows[0].allow_body_substitution).toBe(true);
+	});
+
+	it('lets the human decline body substitution the agent requested', async () => {
+		const created = (await callRequestCredential({
+			project: projectId,
+			task_id: taskId,
+			name: 'FULFILL_BODY_DECLINED',
+			kind: 'other',
+			instructions: 'login password',
+			allowed_hosts: ['umami.example'],
+			allow_body_substitution: true,
+		})) as { comment_id: string };
+
+		const res = await app.request(
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${created.comment_id}/fulfill-credential`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				// Human unchecked the box → explicit false overrides the request.
+				body: JSON.stringify({ value: 'pw-123', allow_body_substitution: false }),
+			},
+		);
+		expect(res.status).toBe(200);
+		const secretId = (await res.json()).data.secret_id;
+		const row = await db.query<{ allow_body_substitution: boolean }>(
+			'SELECT allow_body_substitution FROM secrets WHERE id = $1',
+			[secretId],
+		);
+		expect(row.rows[0].allow_body_substitution).toBe(false);
 	});
 
 	it('rejects fulfill on a non-credential-request comment', async () => {
