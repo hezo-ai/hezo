@@ -26,6 +26,41 @@ test('the assets library lists uploads with an open-in-new-tab link to a signed 
 	expect(openLink.getAttribute('target')).toBe('_blank');
 });
 
+test('a markdown asset renders in-app with a view-source toggle', async () => {
+	let ctx!: { projectSlug: string };
+	const md = '# Launch Post\n\nWe shipped **markdown assets**.';
+	const { findByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Blog' });
+			await seedAsset(ws, project, {
+				filename: 'post.md',
+				contentType: 'text/markdown',
+				bytes: new TextEncoder().encode(md),
+			});
+			ctx = { projectSlug: project.slug };
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/assets',
+		params: { projectId: ctx.projectSlug },
+	});
+
+	// Markdown opens the in-app viewer (a button), not an external new-tab link.
+	await user.click(await findByTestId('asset-open-markdown'));
+
+	// Preview renders the markdown — the heading becomes an <h1>, not a literal `#`.
+	const rendered = await findByTestId('markdown-asset-rendered');
+	await waitFor(() => expect(rendered.querySelector('h1')?.textContent).toBe('Launch Post'));
+
+	// Flipping to Source shows the raw markdown verbatim (the `#`, the `**`).
+	await user.click(await findByTestId('markdown-asset-source-tab'));
+	const source = await findByTestId('markdown-asset-source');
+	expect(source.textContent).toBe(md);
+});
+
 test('an asset can be deleted from the library', async () => {
 	let ctx!: { projectSlug: string };
 	const { findByText, findByTestId, getByRole, queryByText, user, router } = await renderApp({

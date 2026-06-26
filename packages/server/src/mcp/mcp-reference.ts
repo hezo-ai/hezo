@@ -332,7 +332,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	},
 	list_project_assets: {
 		category: 'Project docs & assets',
-		returns: '`{ files: [{ id, filename, content_type, created_at }] }` — the non-markdown assets.',
+		returns: '`{ files: [{ id, filename, content_type, created_at }] }` — the project asset files.',
 	},
 	read_project_asset: {
 		category: 'Project docs & assets',
@@ -342,7 +342,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	write_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ written: true, id, reference: "assets/<filename>" }`, or `{ error }` if the type is not text-based (`.html`, `.svg`, `.txt`) or exceeds 10 MB. Re-saving the same filename overwrites it.',
+			'`{ written: true, id, reference: "assets/<filename>" }`, or `{ error }` if the type is not text-based (`.html`, `.svg`, `.txt`, `.md`) or exceeds 10 MB. Re-saving the same filename overwrites it.',
 	},
 
 	// Costs

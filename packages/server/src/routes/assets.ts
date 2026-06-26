@@ -6,6 +6,7 @@ import {
 	AuthType,
 	assetContentDisposition,
 	assetServeCsp,
+	extensionOf,
 	isAllowedAttachmentExtension,
 	isAllowedAttachmentMime,
 	normalizeAssetFilename,
@@ -48,9 +49,17 @@ export async function storeUploadedAsset(
 	if (!isAllowedAttachmentExtension(file.name)) {
 		return err(c, 'INVALID_ATTACHMENT', 'Unsupported file extension', 400);
 	}
-	const contentType = file.type || 'application/octet-stream';
+	// Trust the browser's MIME only when it's one we allow; otherwise fall back to
+	// the canonical type for the (already validated) extension. Browsers often send
+	// an empty type or `application/octet-stream` for files they don't recognise —
+	// notably `.md` — which would otherwise be rejected despite a valid extension.
+	const ext = extensionOf(file.name);
+	const extMime = ext
+		? ATTACHMENT_EXTENSIONS[ext as keyof typeof ATTACHMENT_EXTENSIONS]
+		: undefined;
+	const contentType = file.type && isAllowedAttachmentMime(file.type) ? file.type : (extMime ?? '');
 	if (!isAllowedAttachmentMime(contentType)) {
-		return err(c, 'INVALID_ATTACHMENT', `Unsupported content type: ${contentType}`, 400);
+		return err(c, 'INVALID_ATTACHMENT', `Unsupported content type: ${file.type}`, 400);
 	}
 	if (file.size > ATTACHMENT_MAX_BYTES) {
 		return err(c, 'TOO_LARGE', 'Attachment exceeds 10 MB', 400);
