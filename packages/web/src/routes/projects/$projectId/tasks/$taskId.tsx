@@ -1,6 +1,6 @@
 import type { AgentEffort } from '@hezo/shared';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
-import { ArrowDown } from 'lucide-react';
+import { ArrowDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { jumpToComment } from '../../../../components/comment-renderers';
 import { CommentComposer } from '../../../../components/task-detail/comment-composer';
@@ -63,6 +63,14 @@ function TaskDetailPage() {
 	// A doc/asset clicked in a comment opens in the right-rail preview panel
 	// (replacing the metadata sidebar until closed).
 	const [preview, setPreview] = useState<PreviewItem | null>(null);
+	// On mobile the right rail is a collapsed-by-default drawer. Opening a preview
+	// (a doc/asset clicked in a comment) must also open the drawer, otherwise the
+	// preview would render off-screen behind the collapsed rail.
+	const [sidebarOpen, setSidebarOpen] = useState(false);
+	const openPreview = (item: PreviewItem | null) => {
+		setPreview(item);
+		if (item) setSidebarOpen(true);
+	};
 	const commentFormRef = useRef<HTMLFormElement>(null);
 	const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -97,7 +105,7 @@ function TaskDetailPage() {
 			<div
 				className={`grid grid-cols-1 gap-5 ${preview ? 'lg:grid-cols-[1fr_360px]' : 'lg:grid-cols-[1fr_190px]'}`}
 			>
-				<PreviewProvider value={setPreview}>
+				<PreviewProvider value={openPreview}>
 					<div className="min-w-0">
 						<LastRunFailedBanner task={task} />
 						<TaskHeader
@@ -157,21 +165,51 @@ function TaskDetailPage() {
 					</div>
 				</PreviewProvider>
 
-				{preview ? (
-					<PreviewPanel item={preview} onClose={() => setPreview(null)} />
-				) : (
-					<TaskSidebar
-						task={task}
-						projectId={projectId}
-						agents={agents}
-						lock={lock}
-						comments={comments}
-						updateTask={updateTask}
-						commentEffort={commentEffort}
-						setCommentEffort={setCommentEffort}
-						scrollToBottom={scrollToBottom}
+				{/* Right rail: an in-grid sticky column at lg+, a slide-in floating
+				    drawer below lg (collapsed by default, toggled by the chevron). */}
+				<button
+					type="button"
+					onClick={() => setSidebarOpen((o) => !o)}
+					data-testid="task-sidebar-toggle"
+					aria-label={sidebarOpen ? 'Collapse task details' : 'Expand task details'}
+					aria-expanded={sidebarOpen}
+					className="lg:hidden fixed right-0 top-1/2 -translate-y-1/2 z-50 h-12 w-7 rounded-l-md border border-r-0 border-border bg-surface text-text-2 hover:text-text-1 shadow-md flex items-center justify-center"
+				>
+					{sidebarOpen ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+				</button>
+				{sidebarOpen && (
+					<button
+						type="button"
+						aria-label="Close task details"
+						onClick={() => setSidebarOpen(false)}
+						className="lg:hidden fixed inset-0 z-40 bg-[var(--overlay)] cursor-default"
 					/>
 				)}
+				{/* Mobile: a fixed right-side drawer. Desktop: `lg:contents` makes this
+				    wrapper generate no box, so TaskSidebar/PreviewPanel become the direct
+				    grid child again — preserving the in-grid sticky column unchanged. */}
+				<div
+					data-testid="task-rail"
+					className={`fixed top-0 right-0 z-40 h-full w-[280px] max-w-[85vw] overflow-y-auto bg-surface p-4 shadow-xl transition-transform duration-200 ${
+						sidebarOpen ? 'translate-x-0' : 'translate-x-full'
+					} lg:contents`}
+				>
+					{preview ? (
+						<PreviewPanel item={preview} onClose={() => setPreview(null)} />
+					) : (
+						<TaskSidebar
+							task={task}
+							projectId={projectId}
+							agents={agents}
+							lock={lock}
+							comments={comments}
+							updateTask={updateTask}
+							commentEffort={commentEffort}
+							setCommentEffort={setCommentEffort}
+							scrollToBottom={scrollToBottom}
+						/>
+					)}
+				</div>
 			</div>
 
 			{/* Sits above the persistent CEO chat launcher (fixed bottom-right) so

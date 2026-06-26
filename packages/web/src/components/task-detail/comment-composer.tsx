@@ -85,7 +85,7 @@ export function CommentComposer({
 
 	return (
 		<form ref={commentFormRef} onSubmit={handleComment} className="flex gap-2.5 scroll-mt-20">
-			<div className="w-[26px] shrink-0" aria-hidden />
+			<div className="hidden md:block w-[26px] shrink-0" aria-hidden />
 			<div className="flex-1 min-w-0 flex flex-col gap-2">
 				<CommentAttachmentsDrop
 					projectId={projectId}

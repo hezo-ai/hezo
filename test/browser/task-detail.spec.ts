@@ -71,6 +71,10 @@ test.describe('Task detail — right sidebar sticky positioning', () => {
 		const sidebar = page.getByTestId('task-sidebar');
 		await expect(sidebar).toBeVisible({ timeout: 20000 });
 
+		// On desktop the rail is an in-grid sticky column — the mobile floating
+		// toggle (`lg:hidden`) must not be present.
+		await expect(page.getByTestId('task-sidebar-toggle')).toBeHidden();
+
 		const position = await sidebar.evaluate((el) => getComputedStyle(el).position);
 		expect(position).toBe('sticky');
 
