@@ -9,6 +9,7 @@ import { useInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useProjectMeta } from '../hooks/use-projects';
 import { agentPageParams } from './agent-link';
 import { AgentStatusLabel } from './agent-status-label';
+import { CreateTaskDialog } from './create-task-dialog';
 import { SidebarNav, type SidebarNavSection } from './sidebar-nav';
 import { Tooltip } from './ui/tooltip';
 
@@ -37,6 +38,7 @@ export function ProjectSidebar() {
 	const { data: inboxCount } = useInboxUnreadCount(projectId);
 	const { data: agents } = useAgents(projectId);
 	const [teamCollapsed, setTeamCollapsed] = useState(readTeamCollapsed);
+	const [createTaskOpen, setCreateTaskOpen] = useState(false);
 
 	if (!active) return null;
 
@@ -107,6 +109,11 @@ export function ProjectSidebar() {
 			label: 'Tasks',
 			count: project?.open_task_count,
 			testId: 'project-sidebar-tasks',
+			action: {
+				onClick: () => setCreateTaskOpen(true),
+				label: 'New task',
+				testId: 'project-sidebar-new-task',
+			},
 		},
 		// HQ (internal) exposes Documents (the chatbox memory doc) and Assets (where
 		// the CEO saves files it produces for the operator in chat); Budget and
@@ -236,6 +243,11 @@ export function ProjectSidebar() {
 			<div className="flex-1">
 				<SidebarNav sections={sections} />
 			</div>
+			<CreateTaskDialog
+				projectId={projectId}
+				open={createTaskOpen}
+				onOpenChange={setCreateTaskOpen}
+			/>
 		</div>
 	);
 }

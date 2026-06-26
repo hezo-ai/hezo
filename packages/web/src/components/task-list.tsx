@@ -4,7 +4,7 @@ import { AlertTriangle, AtSign, ChevronDown, ListPlus, Plus, Search } from 'luci
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { useProjectMeta } from '../hooks/use-projects';
-import { type Task, type TaskFilters, useTasks } from '../hooks/use-tasks';
+import { type Task, useTasks } from '../hooks/use-tasks';
 import { nestTasksForDisplay } from '../lib/nest-tasks-for-display';
 import {
 	clearStoredTaskFilters,
@@ -412,7 +412,7 @@ export function TaskList({ projectId }: TaskListProps) {
 	);
 
 	const filterBar = (
-		<div className="relative flex-1 min-w-0 h-9" data-testid="task-filter-bar">
+		<div className="relative flex-1 min-w-0 h-10" data-testid="task-filter-bar">
 			<div className="h-full rounded-md border border-border bg-surface">
 				<button
 					type="button"
@@ -511,17 +511,20 @@ export function TaskList({ projectId }: TaskListProps) {
 			<AdminApprovalsBanner projectId={projectId} />
 			{showProjectProgress && <ProjectTaskListHeader projectId={projectId} />}
 
-			<div className="mb-4 flex flex-col sm:flex-row items-stretch gap-2">
+			<div className="mb-4 flex flex-row items-stretch gap-2">
 				{filterBar}
-				<Button
-					size="sm"
+				{/* Icon-only create button pinned to the filter bar's row, matching its
+				    height. The accessible name keeps it discoverable without the label. */}
+				<button
+					type="button"
 					onClick={() => setCreateOpen(true)}
 					data-testid="task-list-new-task"
-					className="h-9 sm:shrink-0"
+					aria-label="New task"
+					title="New task"
+					className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-inverse text-inverse-fg transition-colors hover:opacity-90 outline-none focus-visible:ring-[3px] focus-visible:ring-ring focus-visible:border-accent"
 				>
-					<Plus className="w-3.5 h-3.5" />
-					New task
-				</Button>
+					<Plus className="w-4 h-4" />
+				</button>
 			</div>
 
 			{inProgressLoading ? (

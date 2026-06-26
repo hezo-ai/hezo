@@ -20,7 +20,7 @@ async function lockTask(
 
 test('can create a task with required assignee', async () => {
 	const seeded = { projectSlug: '' };
-	const { findByRole, findByLabelText, router, user, container } = await renderApp({
+	const { findByRole, findByTestId, findByLabelText, router, user, container } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -34,7 +34,9 @@ test('can create a task with required assignee', async () => {
 		params: { projectId: seeded.projectSlug },
 	});
 
-	const newTaskBtn = await findByRole('button', { name: /New task/i });
+	// The filter-bar create button is now icon-only; target it by testid (several
+	// "New task" affordances — sidebar "+", floating button — share the label).
+	const newTaskBtn = await findByTestId('task-list-new-task');
 	await user.click(newTaskBtn);
 
 	const titleInput = await findByLabelText('Title');
