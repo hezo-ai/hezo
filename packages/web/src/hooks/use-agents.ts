@@ -187,6 +187,7 @@ export function useOnboardAgent(projectId: string) {
 			title: string;
 			role_description?: string;
 			system_prompt?: string;
+			reports_to?: string;
 			daily_budget_cents?: number;
 			weekly_budget_cents?: number;
 			monthly_budget_cents?: number;

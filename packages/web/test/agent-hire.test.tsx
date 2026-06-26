@@ -81,7 +81,9 @@ test('admin modifies a pending hire proposal then approves it', async () => {
 				title: 'Analyst',
 				slug: 'analyst',
 				role_description: 'Reporting',
-				system_prompt: 'Draft prompt.',
+				// Must carry the required substitution vars or Save/Approve stay disabled.
+				system_prompt:
+					'You are the Analyst. {{team_name}} {{reports_to}} {{skills_context}} {{project_docs_context}} {{team_preferences_context}}',
 				heartbeat_interval_min: 60,
 				daily_budget_cents: 0,
 				weekly_budget_cents: 0,
@@ -131,6 +133,48 @@ test('admin modifies a pending hire proposal then approves it', async () => {
 	});
 }, 60_000);
 
+test('hire form reports-to dropdown defaults to Captain and posts the chosen manager', async () => {
+	let ws!: SeededWorkspace;
+	const { findByLabelText, findByRole, findByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/agents/hire',
+		params: { projectId: ws.internalSlug },
+	});
+
+	const select = (await findByLabelText('Reports to')) as HTMLSelectElement;
+	// Options populate once the team roster loads; default selection is the Captain.
+	await findByText('Architect');
+	await waitFor(() => expect(select.value).toBe('captain'));
+
+	await user.selectOptions(select, 'architect');
+	expect(select.value).toBe('architect');
+
+	const role = uniqueName('Data Scientist');
+	await user.type((await findByLabelText('Role title')) as HTMLInputElement, role);
+	fireEvent.submit(
+		(await findByRole('button', { name: /hire agent/i })).closest('form') as HTMLFormElement,
+	);
+
+	// The filed hire proposal carries the chosen manager slug.
+	const { apiBase, token } = getTestContext();
+	await waitFor(async () => {
+		const res = await apiBase(`/api/projects/${ws.internalSlug}/approvals`, {
+			headers: { Authorization: `Bearer ${token}` },
+		});
+		const list = (await res.json()) as {
+			data: Array<{ payload: { title: string; reports_to: string } }>;
+		};
+		const row = list.data.find((a) => a.payload.title === role);
+		expect(row?.payload.reports_to).toBe('architect');
+	});
+}, 60_000);
+
 test('template variable chips insert into system prompt', async () => {
 	let ws!: SeededWorkspace;
 	const { findByRole, container, user, router } = await renderApp({
@@ -145,12 +189,53 @@ test('template variable chips insert into system prompt', async () => {
 		params: { projectId: ws.internalSlug },
 	});
 
-	await user.click(await findByRole('button', { name: '{{team_name}}' }));
-	await user.click(await findByRole('button', { name: '{{agent_role}}' }));
+	// Chips now carry a tooltip description in their accessible name, so match by
+	// the token substring rather than an exact name.
+	await user.click(await findByRole('button', { name: /\{\{team_name\}\}/ }));
+	await user.click(await findByRole('button', { name: /\{\{skills_context\}\}/ }));
 
 	const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
 	expect(textarea.value).toContain('{{team_name}}');
-	expect(textarea.value).toContain('{{agent_role}}');
+	expect(textarea.value).toContain('{{skills_context}}');
+});
+
+test('hire form blocks submit until all required vars are present', async () => {
+	let ws!: SeededWorkspace;
+	const { findByLabelText, findByRole, findByText, container, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/agents/hire',
+		params: { projectId: ws.internalSlug },
+	});
+
+	const titleInput = (await findByLabelText('Role title')) as HTMLInputElement;
+	await user.type(titleInput, 'Gap Role');
+
+	// The starter prompt is compliant, so the button starts enabled.
+	const hireBtn = (await findByRole('button', { name: /hire agent/i })) as HTMLButtonElement;
+	expect(hireBtn.disabled).toBe(false);
+
+	// Clear the prompt → all required vars missing → guidance flags them and the
+	// button disables.
+	const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+	await user.clear(textarea);
+	await findByText(/missing required variable/i);
+	expect(hireBtn.disabled).toBe(true);
+
+	// Re-add a compliant prompt → button re-enables. Set the value directly:
+	// userEvent treats `{`/`}` as special key syntax, so typing the tokens is awkward.
+	fireEvent.change(textarea, {
+		target: {
+			value:
+				'Role. {{team_name}} {{reports_to}} {{skills_context}} {{project_docs_context}} {{team_preferences_context}}',
+		},
+	});
+	await waitFor(() => expect(hireBtn.disabled).toBe(false));
 });
 
 test('can hire agent with full fields', async () => {

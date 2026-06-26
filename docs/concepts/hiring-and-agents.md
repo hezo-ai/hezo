@@ -22,8 +22,16 @@ and code access before approving it. Nothing is added to the roster without your
 When you hire an agent you set:
 
 - **Role** — its title and a short description of what it's responsible for.
-- **System prompt** — the instructions that define how it works. Helpers let you
-  reference team and project context so the prompt stays in sync as things change.
+- **Reports to** — the manager this agent answers to. This sets the reporting line in the
+  org chart, which is what lets work be delegated to and from the agent, so it's worth
+  getting right (it defaults to the Captain). You can change it later from the agent's
+  settings, and the Captain/CEO can also adjust reporting lines during a coherence review.
+- **System prompt** — the instructions that define how it works. Variable chips let you
+  insert substitution variables (e.g. `{{team_name}}`, `{{reports_to}}`,
+  `{{skills_context}}`) that are filled with live team and project context on every run, so
+  the prompt stays in sync as things change. Hover a chip (tap on mobile) to see what each
+  one means. A handful of variables are **required** and must stay in the prompt for it to
+  be accepted — the editor marks them and flags any that are missing.
 - **Model** — which provider/model it runs on (defaults to the team's model; override
   per agent if you want).
 - **Heartbeat** — how often it wakes to look for work. The agent's page shows a live
@@ -39,7 +47,10 @@ heartbeat.
 
 Every agent's system prompt is editable from its settings at any time. Changes take
 effect on the agent's next run, so you can correct course — tighten scope, add a
-convention, change tone — without rebuilding anything.
+convention, change tone — without rebuilding anything. The required substitution variables
+must remain in the prompt; an edit that drops one is rejected so an agent never loses its
+identity or live context. (The instance-wide CEO and Coach are exempt — they have no
+manager.)
 
 ## Per-agent model override
 

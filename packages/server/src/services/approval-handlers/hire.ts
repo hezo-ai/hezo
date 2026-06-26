@@ -6,6 +6,7 @@ import {
 	MemberType,
 } from '@hezo/shared';
 import { trackBackground } from '../../lib/background';
+import { resolveAgentId } from '../../lib/resolve';
 import { logger } from '../../logger';
 import { enqueueTeamCoherenceReviewTask } from '../description-tasks';
 import { upsertDocument } from '../documents';
@@ -49,17 +50,24 @@ export const hireHandler: ApprovalHandler = {
 		);
 		const memberId = memberResult.rows[0].id;
 
+		// The payload stores the manager as a slug (or id); resolve it to a member
+		// id now. Null when absent or no longer resolvable (manager retired between
+		// proposal and approval) — the agent is created unmanaged rather than failing.
+		const reportsToRaw = (payload.reports_to as string | null) ?? null;
+		const reportsToId = reportsToRaw ? await resolveAgentId(db, teamId, reportsToRaw) : null;
+
 		await db.query(
-			`INSERT INTO member_agents (id, title, slug, role_description,
+			`INSERT INTO member_agents (id, title, slug, role_description, reports_to,
 			                            default_effort, heartbeat_interval_min,
 			                            daily_budget_cents, weekly_budget_cents, monthly_budget_cents,
 			                            touches_code, admin_status)
-			 VALUES ($1, $2, $3, $4, $5::agent_effort, $6, $7, $8, $9, $10, $11::agent_admin_status)`,
+			 VALUES ($1, $2, $3, $4, $5, $6::agent_effort, $7, $8, $9, $10, $11, $12::agent_admin_status)`,
 			[
 				memberId,
 				title,
 				slug,
 				(payload.role_description as string) ?? '',
+				reportsToId,
 				(payload.default_effort as string) ?? 'medium',
 				(payload.heartbeat_interval_min as number) ?? DEFAULT_HEARTBEAT_INTERVAL_MIN,
 				(payload.daily_budget_cents as number) ?? 0,

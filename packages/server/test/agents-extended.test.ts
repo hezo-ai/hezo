@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import { compliantPrompt } from './helpers/prompt';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -47,7 +48,7 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 			body: JSON.stringify({
 				title: 'Data Engineer',
 				role_description: 'Builds and maintains data pipelines',
-				system_prompt: 'Draft prompt',
+				system_prompt: compliantPrompt('Draft prompt'),
 			}),
 		});
 		expect(res.status).toBe(201);
@@ -64,7 +65,7 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 		expect(approval.status).toBe('pending');
 		expect(approval.payload.title).toBe('Data Engineer');
 		expect(approval.payload.slug).toBe('data-engineer');
-		expect(approval.payload.system_prompt).toBe('Draft prompt');
+		expect(approval.payload.system_prompt).toContain('Draft prompt');
 		expect(approval.payload.task_id).toBe(task.id);
 
 		// No member_agent should exist yet
@@ -96,7 +97,7 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 			body: JSON.stringify({
 				title: 'Payments Engineer',
 				role_description: 'Owns payments integration',
-				system_prompt: 'Draft prompt',
+				system_prompt: compliantPrompt('Draft prompt'),
 				monthly_budget_cents: 7500,
 				heartbeat_interval_min: 45,
 			}),
@@ -129,7 +130,7 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 				headers: authHeader(token),
 			},
 		);
-		expect((await promptRes.json()).data.content).toBe('Draft prompt');
+		expect((await promptRes.json()).data.content).toContain('Draft prompt');
 
 		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			headers: authHeader(token),
@@ -405,7 +406,7 @@ describe('PATCH /teams/:teamId/agents/:agentId (partial updates)', () => {
 		const res = await app.request(`/api/projects/${projectSlug}/agents/${agent.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ system_prompt: 'New system prompt for Architect.' }),
+			body: JSON.stringify({ system_prompt: compliantPrompt('New system prompt for Architect.') }),
 		});
 		expect(res.status).toBe(200);
 
@@ -416,7 +417,7 @@ describe('PATCH /teams/:teamId/agents/:agentId (partial updates)', () => {
 			},
 		);
 		const promptDoc = (await promptRes.json()).data;
-		expect(promptDoc.content).toBe('New system prompt for Architect.');
+		expect(promptDoc.content).toContain('New system prompt for Architect.');
 
 		const revisionsRes = await app.request(
 			`/api/projects/${projectSlug}/agents/${agent.id}/system-prompt/revisions`,

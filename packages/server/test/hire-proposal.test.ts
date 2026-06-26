@@ -12,6 +12,7 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
+import { compliantPrompt } from './helpers/prompt';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -83,7 +84,7 @@ describe('MCP tool update_hire_proposal', () => {
 			body: JSON.stringify({
 				title: 'Support Lead',
 				role_description: 'Runs customer support',
-				system_prompt: 'Draft prompt.',
+				system_prompt: compliantPrompt('Draft prompt.'),
 			}),
 		});
 		const { approval } = (await onboardRes.json()).data;
@@ -98,7 +99,9 @@ describe('MCP tool update_hire_proposal', () => {
 		);
 		const result = (await callTool(ceoToken, 'update_hire_proposal', {
 			approval_id: approval.id,
-			system_prompt: 'You are the Support Lead. Own all customer support channels.',
+			system_prompt: compliantPrompt(
+				'You are the Support Lead. Own all customer support channels.',
+			),
 			monthly_budget_cents: 4200,
 		})) as { payload: Record<string, unknown> } | { error: string };
 

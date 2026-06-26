@@ -8,6 +8,13 @@ interface TooltipProps {
 	delayDuration?: number;
 	/** Extra classes on the floating content panel (e.g. wider role-description tooltips). */
 	contentClassName?: string;
+	/**
+	 * Controlled open state. Radix tooltips open on hover/focus but never on a
+	 * touch tap; pass these to drive `open` yourself (e.g. toggle on click) so
+	 * the tooltip also works on mobile.
+	 */
+	open?: boolean;
+	onOpenChange?: (open: boolean) => void;
 }
 
 export function Tooltip({
@@ -16,10 +23,12 @@ export function Tooltip({
 	side = 'top',
 	delayDuration = 150,
 	contentClassName,
+	open,
+	onOpenChange,
 }: TooltipProps) {
 	return (
 		<TooltipPrimitive.Provider delayDuration={delayDuration}>
-			<TooltipPrimitive.Root>
+			<TooltipPrimitive.Root open={open} onOpenChange={onOpenChange}>
 				<TooltipPrimitive.Trigger asChild>{children}</TooltipPrimitive.Trigger>
 				<TooltipPrimitive.Portal>
 					<TooltipPrimitive.Content

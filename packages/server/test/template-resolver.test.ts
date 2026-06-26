@@ -67,13 +67,6 @@ describe('template resolver', () => {
 		expect(result).toContain('already handed this ticket off');
 	});
 
-	it('resolves {{team_mission}} to team description', async () => {
-		const result = await resolveSystemPrompt(db, 'Mission: {{team_mission}}', {
-			teamId,
-		});
-		expect(result).toContain('Mission: Build amazing things');
-	});
-
 	it('resolves {{team_description}} to team description', async () => {
 		const result = await resolveSystemPrompt(db, 'Desc: {{team_description}}', {
 			teamId,
@@ -81,13 +74,19 @@ describe('template resolver', () => {
 		expect(result).toContain('Desc: Build amazing things');
 	});
 
-	it('resolves team_name, team_mission, and team_description in a single query', async () => {
-		const result = await resolveSystemPrompt(
-			db,
-			'{{team_name}} - {{team_mission}} ({{team_description}})',
-			{ teamId },
-		);
-		expect(result).toContain('Template Co - Build amazing things (Build amazing things)');
+	it('leaves the removed {{team_mission}} placeholder untouched', async () => {
+		const result = await resolveSystemPrompt(db, 'Mission: {{team_mission}}', {
+			teamId,
+		});
+		// team_mission was retired; the resolver no longer substitutes it.
+		expect(result).toContain('Mission: {{team_mission}}');
+	});
+
+	it('resolves team_name and team_description in a single query', async () => {
+		const result = await resolveSystemPrompt(db, '{{team_name}} - ({{team_description}})', {
+			teamId,
+		});
+		expect(result).toContain('Template Co - (Build amazing things)');
 	});
 
 	it('resolves {{team_preferences_context}} with no prefs', async () => {
@@ -462,7 +461,7 @@ describe('template resolver', () => {
 	it('preview mode substitutes placeholders, omits Run Context, keeps Teammates and Working Guidelines', async () => {
 		const result = await resolveSystemPrompt(
 			db,
-			'Working for {{team_name}}, mission: {{team_mission}}.',
+			'Working for {{team_name}} ({{team_description}}).',
 			{ teamId, mode: 'preview' },
 		);
 		expect(result).toContain('Working for Template Co');
@@ -524,18 +523,27 @@ describe('template resolver with agents', () => {
 		expect(result).toContain('Reports to: Architect');
 	});
 
-	it('resolves {{reports_to}} for Captain (no manager) to empty string', async () => {
+	it('resolves {{reports_to}} for a Captain to the instance CEO', async () => {
+		const ceo = await db.query<{ display_name: string }>(
+			`SELECT m.display_name FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE ma.slug = 'ceo' AND m.team_id = $1`,
+			[DEFAULT_TEAM_ID],
+		);
+		const ceoName = ceo.rows[0].display_name;
+		expect(ceoName).toBeTruthy();
 		const result = await resolveSystemPrompt(db, 'Reports to: {{reports_to}}', {
 			teamId: agentTeamId,
 			agentId: captainAgentId,
 		});
-		expect(result).toContain('Reports to: ');
+		// A Captain's reports_to is wired to the CEO at provisioning time
+		// (linkTeamCaptainToInstanceCeo), so the placeholder resolves to the CEO.
+		expect(result).toContain(`Reports to: ${ceoName}`);
 	});
 
 	it('resolves a full system prompt template with all variables', async () => {
 		const template = `You are an Engineer at {{team_name}}.
 
-Team mission: {{team_mission}}
 You report to: Architect ({{reports_to}})
 
 Current date: {{current_date}}
@@ -558,7 +566,6 @@ Current date: {{current_date}}
 		});
 
 		expect(result).toContain('You are an Engineer at Agent Test Co.');
-		expect(result).toContain('Team mission: Test team for agent templates');
 		expect(result).toContain('You report to: Architect (Architect)');
 		expect(result).toMatch(/Current date: \d{4}-\d{2}-\d{2}/);
 		expect(result).toContain('Team Overview');
@@ -591,8 +598,7 @@ Current date: {{current_date}}
 			expect(prompt).toBeTruthy();
 			expect(prompt.length).toBeGreaterThan(100);
 			expect(prompt).toContain('{{team_name}}');
-			expect(prompt).toContain('{{team_mission}}');
-			expect(prompt).toContain('{{current_date}}');
+			expect(prompt).toContain('{{reports_to}}');
 			expect(prompt).toContain('{{skills_context}}');
 			expect(prompt).toMatch(/##\s*Rules/);
 		}
@@ -671,7 +677,7 @@ Current date: {{current_date}}
 		expect(prompt).not.toContain('structured-option');
 	});
 
-	it('Captain system prompt does not use {{reports_to}}', async () => {
+	it('Captain system prompt uses {{reports_to}} (resolves to the instance CEO)', async () => {
 		const agentsRes = await app.request(
 			`/api/projects/${await projectSlugForTeamSlug(db, agentTeamSlug)}/agents`,
 			{
@@ -681,7 +687,9 @@ Current date: {{current_date}}
 		);
 		const agents = ((await agentsRes.json()) as any).data;
 		const captain = agents.find((a: any) => a.slug === 'captain');
-		expect(await getAgentPrompt(captain.id)).not.toContain('{{reports_to}}');
+		// A Captain reports to the CEO, so its prompt carries {{reports_to}} like
+		// every other role; it is wired to the CEO at provisioning time.
+		expect(await getAgentPrompt(captain.id)).toContain('{{reports_to}}');
 	});
 
 	it('non-Captain agents use {{reports_to}} in their system prompts', async () => {

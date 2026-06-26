@@ -37,6 +37,11 @@ beforeAll(async () => {
 		'',
 		'Team context:',
 		'{{team_context}}',
+		'',
+		// Required substitution vars (enforced by the authoring surfaces).
+		'{{skills_context}}',
+		'{{project_docs_context}}',
+		'{{team_preferences_context}}',
 	].join('\n');
 
 	const makeAgent = async (pSlug: string, title: string) => {

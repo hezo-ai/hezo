@@ -192,10 +192,7 @@ export async function resolveSystemPrompt(
 		resolved = resolved.replace(/\{\{current_date\}\}/g, new Date().toISOString().slice(0, 10));
 	}
 
-	const needsTeam =
-		resolved.includes('{{team_name}}') ||
-		resolved.includes('{{team_description}}') ||
-		resolved.includes('{{team_mission}}');
+	const needsTeam = resolved.includes('{{team_name}}') || resolved.includes('{{team_description}}');
 
 	if (needsTeam) {
 		const result = await db.query<{ name: string; slug: string; description: string }>(
@@ -205,12 +202,14 @@ export async function resolveSystemPrompt(
 		const row = result.rows[0];
 		resolved = resolved.replace(/\{\{team_name\}\}/g, row?.name ?? '');
 		resolved = resolved.replace(/\{\{team_description\}\}/g, row?.description ?? '');
-		resolved = resolved.replace(/\{\{team_mission\}\}/g, row?.description ?? '');
 	}
 
 	if (resolved.includes('{{reports_to}}')) {
 		let managerName = '';
 		if (ctx.agentId) {
+			// A Captain's manager is wired to the instance CEO at provisioning time
+			// (linkTeamCaptainToInstanceCeo), so this resolves to the CEO for
+			// Captains and to the in-team manager for every other role.
 			const result = await db.query<{ display_name: string }>(
 				`SELECT m.display_name FROM member_agents ma
 				 JOIN members m ON m.id = ma.reports_to

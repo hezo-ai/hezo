@@ -122,7 +122,7 @@ test('isPreviewLoading shows a resolving placeholder instead of the body', async
 test('chips insert their token into the value', async () => {
 	const user = userEvent.setup({ delay: null });
 	const { getByRole, getByLabelText } = renderWithClient(
-		<Harness ariaLabel="Body" chips={['{{team_name}}', '{{agent_role}}']} />,
+		<Harness ariaLabel="Body" chips={[{ token: '{{team_name}}' }, { token: '{{agent_role}}' }]} />,
 	);
 
 	await user.click(getByRole('button', { name: '{{team_name}}' }));
