@@ -2,12 +2,15 @@ import { Logger } from '@hiddentao/logger';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	buildProbeScript,
+	type ConnectivityCheckResult,
 	type ConnectivityProbeResult,
+	checkAndAutoRebindConnectivity,
 	checkContainerToHostConnectivity,
 	classifyConnectivity,
 	connectivitySeverity,
 	formatContainerConnectivityMessage,
 	isLoopbackHost,
+	logConnectivityOutcome,
 	NETWORKING_DOCS_URL,
 	parseProbeOutput,
 	resolveAutoRebindTarget,
@@ -300,5 +303,152 @@ describe('checkContainerToHostConnectivity', () => {
 			},
 		});
 		expect(outcome.outcome).toBe('skipped');
+	});
+
+	it('returns the outcome but logs nothing when logOutcome is false', async () => {
+		const outcome = await checkContainerToHostConnectivity({
+			...base,
+			logOutcome: false,
+			probe: async () => BIND_DOWN,
+		});
+		expect(outcome.outcome).toBe('bind-loopback');
+		expect(warnSpy).not.toHaveBeenCalled();
+		expect(errorSpy).not.toHaveBeenCalled();
+	});
+});
+
+describe('logConnectivityOutcome', () => {
+	const opts = { serverPort: 3100, containerBindHost: '127.0.0.1' };
+	let errorSpy: ReturnType<typeof vi.spyOn>;
+	let warnSpy: ReturnType<typeof vi.spyOn>;
+	let infoSpy: ReturnType<typeof vi.spyOn>;
+	beforeEach(() => {
+		errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+		warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+		infoSpy = vi.spyOn(Logger.prototype, 'info').mockImplementation(() => {});
+	});
+	afterEach(() => vi.restoreAllMocks());
+
+	it('logs ok at info only', () => {
+		logConnectivityOutcome('ok', opts);
+		expect(infoSpy).toHaveBeenCalled();
+		expect(warnSpy).not.toHaveBeenCalled();
+		expect(errorSpy).not.toHaveBeenCalled();
+	});
+	it('logs the bind-host degradations at warn', () => {
+		logConnectivityOutcome('bind-loopback', opts);
+		logConnectivityOutcome('bind-firewalled', opts);
+		expect(warnSpy).toHaveBeenCalledTimes(2);
+		expect(errorSpy).not.toHaveBeenCalled();
+	});
+	it('logs the fatal mcp-unreachable case at error', () => {
+		logConnectivityOutcome('mcp-unreachable', opts);
+		expect(errorSpy).toHaveBeenCalled();
+		expect(warnSpy).not.toHaveBeenCalled();
+	});
+	it('says nothing for skipped', () => {
+		logConnectivityOutcome('skipped', opts);
+		expect(infoSpy).not.toHaveBeenCalled();
+		expect(warnSpy).not.toHaveBeenCalled();
+		expect(errorSpy).not.toHaveBeenCalled();
+	});
+});
+
+describe('checkAndAutoRebindConnectivity', () => {
+	const docker = createStubDocker({ imageExists: async () => true });
+	let errorSpy: ReturnType<typeof vi.spyOn>;
+	let warnSpy: ReturnType<typeof vi.spyOn>;
+	let infoSpy: ReturnType<typeof vi.spyOn>;
+	beforeEach(() => {
+		errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+		warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+		infoSpy = vi.spyOn(Logger.prototype, 'info').mockImplementation(() => {});
+	});
+	afterEach(() => vi.restoreAllMocks());
+
+	// A mutable bind-host ref like the production EffectiveBindHost.
+	function bindRef(initial: string) {
+		let host = initial;
+		return { get: () => host, set: (h: string) => (host = h) };
+	}
+
+	it('rebinds a loopback bind to the gateway IP and logs no warning (the success path)', async () => {
+		const ref = bindRef('127.0.0.1');
+		const check = vi
+			.fn<() => Promise<ConnectivityCheckResult>>()
+			.mockResolvedValueOnce({ outcome: 'bind-loopback', gatewayIp: '172.17.0.1' })
+			.mockResolvedValueOnce({ outcome: 'ok' });
+
+		const result = await checkAndAutoRebindConnectivity({
+			docker,
+			serverPort: 3100,
+			bindHost: ref,
+			check,
+		});
+
+		expect(result).toEqual({ outcome: 'ok', bindHost: '172.17.0.1' });
+		expect(ref.get()).toBe('172.17.0.1');
+		expect(check).toHaveBeenCalledTimes(2);
+		// No warning at all; the final OK + the auto-bound notice are info.
+		expect(warnSpy).not.toHaveBeenCalled();
+		expect(errorSpy).not.toHaveBeenCalled();
+		expect(infoSpy).toHaveBeenCalled();
+	});
+
+	it('warns once and leaves the bind host unchanged when no gateway IP was resolved', async () => {
+		const ref = bindRef('127.0.0.1');
+		const check = vi
+			.fn<() => Promise<ConnectivityCheckResult>>()
+			.mockResolvedValue({ outcome: 'bind-loopback' });
+
+		const result = await checkAndAutoRebindConnectivity({
+			docker,
+			serverPort: 3100,
+			bindHost: ref,
+			check,
+		});
+
+		expect(result).toEqual({ outcome: 'bind-loopback', bindHost: '127.0.0.1' });
+		expect(ref.get()).toBe('127.0.0.1');
+		expect(check).toHaveBeenCalledTimes(1);
+		expect(warnSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not rebind an explicit non-loopback bind, warns once on firewalled', async () => {
+		const ref = bindRef('0.0.0.0');
+		const check = vi
+			.fn<() => Promise<ConnectivityCheckResult>>()
+			.mockResolvedValue({ outcome: 'bind-firewalled', gatewayIp: '172.17.0.1' });
+
+		const result = await checkAndAutoRebindConnectivity({
+			docker,
+			serverPort: 3100,
+			bindHost: ref,
+			check,
+		});
+
+		expect(result).toEqual({ outcome: 'bind-firewalled', bindHost: '0.0.0.0' });
+		expect(ref.get()).toBe('0.0.0.0');
+		expect(check).toHaveBeenCalledTimes(1);
+		expect(warnSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it('logs OK and does not rebind when the first probe already passes', async () => {
+		const ref = bindRef('127.0.0.1');
+		const check = vi
+			.fn<() => Promise<ConnectivityCheckResult>>()
+			.mockResolvedValue({ outcome: 'ok' });
+
+		const result = await checkAndAutoRebindConnectivity({
+			docker,
+			serverPort: 3100,
+			bindHost: ref,
+			check,
+		});
+
+		expect(result).toEqual({ outcome: 'ok', bindHost: '127.0.0.1' });
+		expect(check).toHaveBeenCalledTimes(1);
+		expect(warnSpy).not.toHaveBeenCalled();
+		expect(infoSpy).toHaveBeenCalled();
 	});
 });

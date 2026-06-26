@@ -59,10 +59,7 @@ import { uiStateRoutes } from './routes/ui-state';
 import { buildUpdatesRoutes } from './routes/updates';
 import { AuthChallengeStore } from './services/auth-challenges';
 import { CeoSessionManager } from './services/ceo-session-manager';
-import {
-	checkContainerToHostConnectivity,
-	resolveAutoRebindTarget,
-} from './services/container-connectivity-preflight';
+import { checkAndAutoRebindConnectivity } from './services/container-connectivity-preflight';
 import {
 	ContainerConnectivityStatus,
 	EffectiveBindHost,
@@ -228,34 +225,14 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	// so the operator can act on any residual guidance. No-ops under HEZO_SKIP_DOCKER
 	// (fake docker / tests) and the documented opt-out.
 	trackBackground(
-		(async () => {
-			const first = await checkContainerToHostConnectivity({
-				docker,
-				serverPort: config.port,
-				containerBindHost: bindHost.get(),
-			});
-			const rebindTo = resolveAutoRebindTarget(first, bindHost.get());
-			if (rebindTo) {
-				log.info(
-					`Egress proxy / SSH bridge auto-bound to docker bridge gateway ${rebindTo} ` +
-						`(a container could not reach the loopback bind). Override with --container-bind-host.`,
-				);
-				bindHost.set(rebindTo);
-				const second = await checkContainerToHostConnectivity({
-					docker,
-					serverPort: config.port,
-					containerBindHost: rebindTo,
+		checkAndAutoRebindConnectivity({ docker, serverPort: config.port, bindHost })
+			.then((r) => connectivityStatus.set(r.outcome, r.bindHost))
+			.catch((err) => {
+				log.info('container→host connectivity check failed', {
+					error: err instanceof Error ? err.message : String(err),
 				});
-				connectivityStatus.set(second.outcome, rebindTo);
-				return;
-			}
-			connectivityStatus.set(first.outcome, bindHost.get());
-		})().catch((err) => {
-			log.info('container→host connectivity check failed', {
-				error: err instanceof Error ? err.message : String(err),
-			});
-			connectivityStatus.set('skipped', bindHost.get());
-		}),
+				connectivityStatus.set('skipped', bindHost.get());
+			}),
 	);
 	const events = new DomainEventBus();
 	const jobManager = new JobManager({

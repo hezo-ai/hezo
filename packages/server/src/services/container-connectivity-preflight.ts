@@ -306,6 +306,10 @@ export interface ConnectivityCheckDeps {
 	attempts?: number;
 	/** Gap between retries in ms (default 2000); 0 in tests. */
 	retryGapMs?: number;
+	/** Whether to log the outcome (default true). Set false for the silent
+	 * exploratory probe during auto-rebind, where only the *final* outcome should
+	 * be logged — otherwise the loopback probe warns even when the rebind fixes it. */
+	logOutcome?: boolean;
 }
 
 const PROBE_ATTEMPTS = 3;
@@ -313,6 +317,29 @@ const PROBE_RETRY_GAP_MS = 2000;
 
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Log a connectivity outcome at the right level: `ok` at info, the bind-host
+ * degradations at `warn`, an unreachable MCP server at `error`, `skipped` not at
+ * all. Split out from the probe so the auto-rebind flow can probe silently and log
+ * only the final state (see `checkAndAutoRebindConnectivity`).
+ */
+export function logConnectivityOutcome(
+	outcome: ConnectivityOutcome | 'skipped',
+	opts: { serverPort: number; containerBindHost: string },
+): void {
+	if (outcome === 'skipped') return;
+	if (outcome === 'ok') {
+		log.info('container→host connectivity OK (MCP + egress bridge reachable from a container)');
+		return;
+	}
+	// Severity tracks impact: mcp-unreachable means no tools load (error); the
+	// bind-host cases are a degradation — MCP works and agents run, only proxied
+	// egress / git-over-SSH are affected (warn).
+	const message = `\n${formatContainerConnectivityMessage(outcome, opts)}\n`;
+	if (connectivitySeverity(outcome) === 'error') log.error(message);
+	else log.warn(message);
 }
 
 export interface ConnectivityCheckResult {
@@ -357,19 +384,12 @@ export async function checkContainerToHostConnectivity(
 		}
 
 		const outcome = classifyConnectivity(result, deps.containerBindHost);
-		if (outcome === 'ok') {
-			log.info('container→host connectivity OK (MCP + egress bridge reachable from a container)');
-			return { outcome, gatewayIp: result.gatewayIp };
+		if (deps.logOutcome !== false) {
+			logConnectivityOutcome(outcome, {
+				serverPort: deps.serverPort,
+				containerBindHost: deps.containerBindHost,
+			});
 		}
-		// Severity tracks impact: mcp-unreachable means no tools load (error); the
-		// bind-host cases are a degradation — MCP works and agents run, only proxied
-		// egress / git-over-SSH are affected (warn).
-		const message = `\n${formatContainerConnectivityMessage(outcome, {
-			serverPort: deps.serverPort,
-			containerBindHost: deps.containerBindHost,
-		})}\n`;
-		if (connectivitySeverity(outcome) === 'error') log.error(message);
-		else log.warn(message);
 		return { outcome, gatewayIp: result.gatewayIp };
 	} catch (err) {
 		// Diagnostics must never break startup. If the probe machinery itself
@@ -380,4 +400,54 @@ export async function checkContainerToHostConnectivity(
 		});
 		return { outcome: 'skipped' };
 	}
+}
+
+export interface AutoRebindDeps {
+	docker: DockerClient;
+	serverPort: number;
+	/** The shared, mutable bind host read per-run by the egress proxy / SSH bridge.
+	 * Rebound in place to the detected gateway IP when a loopback bind is unreachable. */
+	bindHost: { get(): string; set(host: string): void };
+	/** Injectable for tests; defaults to the real preflight. */
+	check?: (deps: ConnectivityCheckDeps) => Promise<ConnectivityCheckResult>;
+}
+
+/**
+ * Run the boot connectivity check and, when a loopback bind is unreachable from a
+ * container, auto-rebind the egress proxy / SSH bridge to the detected docker
+ * bridge gateway IP and re-probe. Both probes run **silently**; only the final
+ * outcome is logged — so a successful rebind logs `connectivity OK` and no warning,
+ * while a genuine failure (no gateway IP, or a still-blocked bind) warns exactly
+ * once with the right bind host. Returns the final outcome + the effective bind host.
+ */
+export async function checkAndAutoRebindConnectivity(
+	deps: AutoRebindDeps,
+): Promise<{ outcome: ConnectivityOutcome | 'skipped'; bindHost: string }> {
+	const check = deps.check ?? checkContainerToHostConnectivity;
+	const probe = (containerBindHost: string) =>
+		check({
+			docker: deps.docker,
+			serverPort: deps.serverPort,
+			containerBindHost,
+			logOutcome: false,
+		});
+
+	const first = await probe(deps.bindHost.get());
+	let outcome = first.outcome;
+	let bindHost = deps.bindHost.get();
+
+	const rebindTo = resolveAutoRebindTarget(first, bindHost);
+	if (rebindTo) {
+		log.info(
+			`Egress proxy / SSH bridge auto-bound to docker bridge gateway ${rebindTo} ` +
+				`(a container could not reach the loopback bind). Override with --container-bind-host.`,
+		);
+		deps.bindHost.set(rebindTo);
+		const second = await probe(rebindTo);
+		outcome = second.outcome;
+		bindHost = rebindTo;
+	}
+
+	logConnectivityOutcome(outcome, { serverPort: deps.serverPort, containerBindHost: bindHost });
+	return { outcome, bindHost };
 }
