@@ -241,7 +241,12 @@ after the container-restart reconcile pass and brings HQ up via
 provision if missing) — fire-and-forget so a slow image pull doesn't delay startup. This is
 unconditional because the standard restart pass deliberately leaves `stopped` projects
 alone, whereas HQ — home of the always-on CEO/Coach — should run whenever the instance does.
-The live CEO chat (`ceo-session-manager.ts`) also provisions it on demand as a fallback.
+The live CEO chat (`ceo-session-manager.ts`) also provisions it on demand as a fallback. Turns
+are **serialized** (a `turnLock` chain) so concurrent sends can't each spawn a turn — a newer
+message interrupts the in-flight reply (kept as `interrupted`) and only the latest streams. No
+turn survives a process restart, so `reconcileOnStartup` clears orphaned non-terminal
+`ceo_messages` (deletes empty `streaming`/`pending` placeholders, marks partial ones
+`interrupted`) — an abandoned turn never lingers as a stuck "thinking" bubble.
 
 HQ also exposes the standard **assets library** — the one internal-project surface that
 isn't hidden in the UI (Budget/Settings still are). Files the CEO produces for the operator
@@ -528,13 +533,17 @@ ssh-agent TCP bridge is read **per-run** from a shared mutable holder (`Effectiv
 seeded from `HEZO_CONTAINER_BIND_HOST` / `--container-bind-host` (default `127.0.0.1`).
 
 A boot-time preflight (`container-connectivity-preflight.ts`) starts a throwaway container,
-probes the MCP port and a bind-host listener in the egress range (20000–29999), and also
-resolves the bridge gateway IP the container sees for `host.docker.internal`. **Auto-rebind:**
+probes the MCP port and a bind-host listener in the egress range (20000–29999), and resolves
+the bridge gateway IP both host-side (`DockerClient.inspectNetwork('bridge')` → `IPAM.Config[]
+.Gateway`, no container needed) and in-container (for images that expose it). **Auto-rebind:**
 when the bind is loopback-only and a container can't reach it (`bind-loopback`), the proxy +
 SSH bridge are rebound to that detected gateway IP and re-probed — so native-Linux works out
 of the box without exposing them on all interfaces (the gateway IP is host-local, container-
 reachable; binding `0.0.0.0` would expose the proxy and the SSH key bridge on every
-interface). An explicit non-loopback `--container-bind-host` is never overridden. The preflight
+interface). An explicit non-loopback `--container-bind-host` is never overridden. The
+exploratory loopback probe runs **once** (it's deterministic — loopback is reachable on Docker
+Desktop, structurally not on native-Linux) with a short curl timeout, so the whole check is a
+couple of container round-trips (~10s), not a retry loop. The preflight
 logs the exact firewall / `--container-bind-host` remedy when a path is still blocked; severity
 tracks impact: `error` when the MCP server is unreachable (no tools load, runs hang), a
 non-fatal `warn` for a residual egress/SSH bind-host degradation. It never gates startup, so

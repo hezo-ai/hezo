@@ -35,7 +35,7 @@ function fitTextareaToContent(el: HTMLTextAreaElement): void {
 export function CeoChatWidget() {
 	const [open, setOpen] = useState(false);
 	const [expanded, setExpanded] = useState(false);
-	const { messages, send, streaming, loaded, unread } = useCeoChat(open);
+	const { messages, send, streaming, sending, loaded, unread } = useCeoChat(open);
 	const hq = useHqProject();
 	const hqHealth = useContainerHealth(hq);
 	// The CEO can only act while the HQ container is up. When it isn't, the chat
@@ -109,7 +109,10 @@ export function CeoChatWidget() {
 
 	const submit = () => {
 		const text = draft.trim();
-		if (!text) return;
+		// Block while a send is in flight or a reply is streaming — prevents the
+		// impatient double-click (seeing the optimistic bubble "stuck" during the
+		// egress check) that used to spawn duplicate CEO turns.
+		if (!text || sending || streaming) return;
 		setDraft('');
 		send(text).catch(() => undefined);
 	};
@@ -280,7 +283,7 @@ export function CeoChatWidget() {
 								<button
 									type="button"
 									onClick={submit}
-									disabled={!draft.trim()}
+									disabled={!draft.trim() || sending || streaming}
 									aria-label="Send message"
 									data-testid="ceo-chat-send"
 									className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-solid text-accent-solid-fg transition-colors hover:bg-accent-hover disabled:opacity-40"

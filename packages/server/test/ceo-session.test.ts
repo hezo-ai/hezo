@@ -363,6 +363,73 @@ describe('CeoSessionManager', () => {
 		const r = await ctx.db.query<{ status: string }>('SELECT status FROM ceo_sessions LIMIT 1');
 		expect(r.rows[0].status).toBe(CeoSessionStatus.Crashed);
 	});
+
+	test('reconcileOnStartup clears orphaned streaming messages (deletes empty, interrupts partial)', async () => {
+		const { manager } = makeManager(ctx, makeChatDocker(ctx.dataDir, projectId).docker);
+		const conversationId = await manager.getConversationId();
+		const insert = async (status: string, content: string, role = 'assistant') => {
+			const r = await ctx.db.query<{ id: string }>(
+				`INSERT INTO ceo_messages (conversation_id, role, channel, status, content)
+				 VALUES ($1, $2::ceo_message_role, 'web'::ceo_channel, $3::ceo_message_status, $4)
+				 RETURNING id`,
+				[conversationId, role, status, content],
+			);
+			return r.rows[0].id;
+		};
+		const emptyStreaming = await insert('streaming', '');
+		const partialStreaming = await insert('streaming', 'half a thought');
+		const emptyPending = await insert('pending', '');
+		const done = await insert('complete', 'all good');
+		const userMsg = await insert('complete', 'hello', 'user');
+
+		await manager.reconcileOnStartup();
+
+		const rows = await ctx.db.query<{ id: string; status: string }>(
+			'SELECT id, status FROM ceo_messages',
+		);
+		const byId = new Map(rows.rows.map((r) => [r.id, r.status]));
+		// Empty orphaned placeholders (the stuck "thinking" dots) are deleted.
+		expect(byId.has(emptyStreaming)).toBe(false);
+		expect(byId.has(emptyPending)).toBe(false);
+		// A partial reply is preserved, marked interrupted; terminal rows untouched.
+		expect(byId.get(partialStreaming)).toBe(CeoMessageStatus.Interrupted);
+		expect(byId.get(done)).toBe(CeoMessageStatus.Complete);
+		expect(byId.get(userMsg)).toBe(CeoMessageStatus.Complete);
+	});
+
+	test('serializes concurrent sends — no overlapping turns or orphaned streaming rows', async () => {
+		const { manager } = makeManager(ctx, makeChatDocker(ctx.dataDir, projectId).docker);
+
+		// Two sends fired together (the impatient double-send during a slow gate).
+		const [a, b] = await Promise.all([
+			manager.sendTurn({ text: 'first' }),
+			manager.sendTurn({ text: 'second' }),
+		]);
+		expect(a.assistantMessageId).not.toBe(b.assistantMessageId);
+
+		// Every turn finalizes to a terminal state — none left streaming (the earlier is
+		// interrupted by the later, which the mutex makes deterministic).
+		await poll(async () => {
+			const r = await ctx.db.query<{ n: number }>(
+				`SELECT COUNT(*)::int AS n FROM ceo_messages WHERE role = 'assistant' AND status = $1`,
+				[CeoMessageStatus.Streaming],
+			);
+			return r.rows[0].n === 0;
+		});
+
+		// Exactly one assistant row per send (not duplicated) and a single live session.
+		const assistants = await ctx.db.query<{ n: number }>(
+			`SELECT COUNT(*)::int AS n FROM ceo_messages WHERE role = 'assistant'`,
+		);
+		expect(assistants.rows[0].n).toBe(2);
+		const sessions = await ctx.db.query<{ n: number }>(
+			`SELECT COUNT(*)::int AS n FROM ceo_sessions WHERE status IN ($1, $2)`,
+			[CeoSessionStatus.Starting, CeoSessionStatus.Running],
+		);
+		expect(sessions.rows[0].n).toBe(1);
+
+		await manager.stop();
+	});
 });
 
 describe('CEO session auth', () => {

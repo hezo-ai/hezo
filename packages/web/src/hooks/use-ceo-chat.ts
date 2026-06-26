@@ -70,6 +70,11 @@ export function useCeoChat(active: boolean) {
 	const { subscribe, joinRoom, leaveRoom } = useSocket();
 	const queryClient = useQueryClient();
 	const [unread, setUnread] = useState<number>(readStoredUnread);
+	// In-flight send: the user's text is shown optimistically (with a pending
+	// assistant placeholder) while the server warms the session / egress check, so
+	// the operator gets immediate feedback instead of a ~10s blank. Cleared when the
+	// real user message arrives over WS, or when the send settles (incl. failure).
+	const [pending, setPending] = useState<{ text: string; at: string } | null>(null);
 	// The socket handler is wired once; this ref lets it read the live open state
 	// (whether the chat is currently visible) without re-subscribing every toggle.
 	const activeRef = useRef(active);
@@ -109,6 +114,9 @@ export function useCeoChat(active: boolean) {
 		};
 		const offStart = subscribe(WsMessageType.CeoMessageStart, (raw) => {
 			const m = raw as WsCeoMessageStartMessage;
+			// The real user message landed — drop the optimistic placeholder so the
+			// server rows (user + streaming assistant) take over without duplicating.
+			if (m.role === 'user') setPending(null);
 			patch((messages) =>
 				messages.some((x) => x.id === m.messageId)
 					? messages
@@ -160,15 +168,52 @@ export function useCeoChat(active: boolean) {
 		onError: (error: { message?: string }) => {
 			toast.error(error?.message ?? 'Failed to send message to the CEO');
 		},
+		// Clear the optimistic placeholder once the request settles — on success the
+		// WS user-message event has already cleared it; on failure (e.g. egress gate
+		// reject, toasted above) this drops the unsent bubble.
+		onSettled: () => setPending(null),
 	});
 
-	const messages = query.data?.messages ?? [];
+	const serverMessages = query.data?.messages ?? [];
+	// Append the optimistic user bubble + a pending assistant "thinking" placeholder
+	// while a send is in flight (an assistant row with empty streaming content renders
+	// the existing typing indicator). They're dropped the moment the real rows arrive.
+	const messages: CeoMessage[] =
+		pending !== null
+			? [
+					...serverMessages,
+					{
+						id: 'optimistic-user',
+						role: 'user' as CeoMessageRole,
+						channel: 'web' as CeoChannel,
+						status: 'complete' as CeoMessageStatus,
+						content: pending.text,
+						created_at: pending.at,
+					},
+					{
+						id: 'optimistic-assistant',
+						role: 'assistant' as CeoMessageRole,
+						channel: 'web' as CeoChannel,
+						status: 'streaming' as CeoMessageStatus,
+						content: '',
+						created_at: pending.at,
+					},
+				]
+			: serverMessages;
 	const streaming = messages.some((m) => m.role === 'assistant' && m.status === 'streaming');
+
+	const send = (text: string) => {
+		const trimmed = text.trim();
+		if (!trimmed) return Promise.resolve();
+		setPending({ text: trimmed, at: new Date().toISOString() });
+		return sendMutation.mutateAsync(trimmed);
+	};
 
 	return {
 		messages,
-		send: (text: string) => sendMutation.mutateAsync(text.trim()),
+		send,
 		streaming,
+		sending: pending !== null,
 		loaded: !query.isPending,
 		unread,
 	};
