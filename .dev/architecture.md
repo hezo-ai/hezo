@@ -151,7 +151,14 @@ interrupted run still counts against budgets.
 unique scoping and full revision history in `document_revisions`. `skills` is the
 instance/team reference store (manifest-injected into runs, full-text-searchable) with
 `skill_revisions` history. `assets` + `task_attachments`/`comment_attachments` handle
-uploaded files (bytes on local disk, served over HMAC-signed URLs).
+uploaded files (bytes on local disk, served over HMAC-signed URLs). `project_icons`
+(1:1 with `projects`, `ON DELETE CASCADE`) holds an optional per-project icon image —
+unlike assets the **bytes live in the DB** (a `BYTEA` column) in a dedicated table so the
+hot `projects.*` list query never pulls the blob; it is rendered in the project rail and
+served from a public HMAC-signed read route (`GET /api/projects/:projectId/icon`, the `sig`
+query param is the credential since an `<img>` carries no bearer token). The serialized
+project carries a freshly-signed `icon_url` (null when unset); the client normalizes any
+picked image to a square PNG ≤512×512 before upload (`PUT`/`DELETE` on the same path).
 
 **Governance & misc.** `approvals` (polymorphic board decisions), `audit_log`
 (append-only, project + instance scopes — `project_id` set scopes a row to one project,

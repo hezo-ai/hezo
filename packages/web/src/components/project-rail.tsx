@@ -60,7 +60,11 @@ export function ProjectRail() {
 										isActive ? 'ring-2 ring-inverse ring-offset-1 ring-offset-surface-2' : ''
 									}`}
 								>
-									<Avatar initials={getInitials(p.name)} color={avatarColorFromString(p.name)} />
+									<Avatar
+										initials={getInitials(p.name)}
+										color={avatarColorFromString(p.name)}
+										imageUrl={p.icon_url}
+									/>
 									<CountOverlayBadge
 										count={inboxCounts[p.slug] ?? 0}
 										testId={`project-rail-inbox-badge-${p.slug}`}

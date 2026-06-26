@@ -15,6 +15,14 @@ project. You don't manage teams separately; you reach a team through its project
 This keeps things clean: a project's agents, tasks, budget, container, and connections
 all belong to that project and nothing leaks between them.
 
+## Project icon
+
+By default a project shows its initials in the project rail. To give it a distinct look,
+open the project's **Settings** and upload an image under **Project icon** — it then
+appears as the project's thumbnail in the rail. Pick any common image (PNG, JPEG, WebP,
+GIF, or SVG); Hezo crops it to a square and resizes it to 512×512. Use **Replace image**
+to swap it or **Remove** to go back to the initials.
+
 ## Team templates
 
 When you create a project you choose a **template**, which decides the starting roster.

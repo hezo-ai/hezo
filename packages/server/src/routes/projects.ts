@@ -1,10 +1,21 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { AuthType, ContainerStatus, MemberType, wsRoom } from '@hezo/shared';
+import {
+	AuthType,
+	ContainerStatus,
+	isAllowedProjectIconStoredMime,
+	MemberType,
+	PROJECT_ICON_MAX_BYTES,
+	PROJECT_ICON_MAX_DIMENSION,
+	wsRoom,
+} from '@hezo/shared';
 import { type Context, Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { trackBackground } from '../lib/background';
 import { broadcastChange, broadcastProjectUpdate } from '../lib/broadcast';
 import { budgetWindowsError } from '../lib/budget-validation';
+import { readImageDimensions } from '../lib/image-dimensions';
 import { ref } from '../lib/log-ref';
+import { signProjectIconUrl, verifyProjectIconUrl } from '../lib/project-icon-urls';
 import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
@@ -39,6 +50,26 @@ function buildContainerDeps(c: Context<Env>): ContainerDeps {
 }
 
 const log = logger.child('routes');
+
+/**
+ * Attach a freshly-signed `icon_url` to a serialized project row when it has an
+ * icon (`icon_updated_at` is present from a LEFT-correlated subselect against
+ * `project_icons`). The icon bytes themselves are never selected onto the row.
+ */
+async function withIconUrl(
+	c: Context<Env>,
+	row: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+	const updatedAt = row.icon_updated_at;
+	if (typeof updatedAt === 'string' || updatedAt instanceof Date) {
+		const version = Math.floor(new Date(updatedAt).getTime() / 1000);
+		row.icon_url = await signProjectIconUrl(row.id as string, c.get('masterKeyManager'), version);
+	} else {
+		row.icon_url = null;
+		row.icon_updated_at = null;
+	}
+	return row;
+}
 
 async function cancelRunningAgentTasks(
 	db: PGlite,
@@ -84,7 +115,8 @@ projectsRoutes.get('/projects', async (c) => {
           WHERE ce.project_id = p.id AND ce.created_at >= date_trunc('day', now()))::int
           AS today_spend_cents,
        COALESCE((SELECT max(i3.updated_at) FROM tasks i3 WHERE i3.project_id = p.id), p.created_at)
-          AS last_activity_at
+          AS last_activity_at,
+       (SELECT pi.updated_at FROM project_icons pi WHERE pi.project_id = p.id) AS icon_updated_at
      FROM projects p
      JOIN teams t ON t.id = p.team_id`;
 
@@ -101,7 +133,10 @@ projectsRoutes.get('/projects', async (c) => {
 	}
 
 	const result = await db.query(query, params);
-	return ok(c, result.rows);
+	const rows = await Promise.all(
+		result.rows.map((r) => withIconUrl(c, r as Record<string, unknown>)),
+	);
+	return ok(c, rows);
 });
 
 // Projects-primary creation: a project owns its own team (1:1). "Create a
@@ -263,7 +298,8 @@ projectsRoutes.get('/projects/:projectId', async (c) => {
 	const result = await db.query(
 		`SELECT p.*,
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
-       (SELECT count(*) FROM tasks i WHERE i.project_id = p.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_task_count
+       (SELECT count(*) FROM tasks i WHERE i.project_id = p.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_task_count,
+       (SELECT pi.updated_at FROM project_icons pi WHERE pi.project_id = p.id) AS icon_updated_at
      FROM projects p
      WHERE p.id = $1 AND p.team_id = $2`,
 		[projectId, teamId, ...ts2.values],
@@ -278,7 +314,8 @@ projectsRoutes.get('/projects/:projectId', async (c) => {
 		[projectId],
 	);
 
-	return ok(c, { ...(result.rows[0] as Record<string, unknown>), repos: repos.rows });
+	const row = await withIconUrl(c, result.rows[0] as Record<string, unknown>);
+	return ok(c, { ...row, repos: repos.rows });
 });
 
 projectsRoutes.patch('/projects/:projectId', async (c) => {
@@ -396,6 +433,91 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		result.rows[0] as Record<string, unknown>,
 	);
 	return ok(c, result.rows[0]);
+});
+
+// --- Project icon -------------------------------------------------------------
+// An optional user-uploaded image shown in the rail in place of the initials.
+// Stored as bytes in the DB (project_icons, 1:1). The client normalizes any
+// picked image to a square PNG ≤ PROJECT_ICON_MAX_DIMENSION before upload; the
+// server re-validates content-type, byte size, and pixel dimensions defensively.
+
+projectsRoutes.put(
+	'/projects/:projectId/icon',
+	bodyLimit({
+		maxSize: PROJECT_ICON_MAX_BYTES,
+		onError: (c) => err(c, 'TOO_LARGE', 'Icon exceeds the size limit', 400),
+	}),
+	async (c) => {
+		const teamId = c.get('teamId') as string;
+		const db = c.get('db');
+		const projectId = c.get('projectId') as string;
+		if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+
+		let form: Awaited<ReturnType<typeof c.req.parseBody>>;
+		try {
+			form = await c.req.parseBody({ all: false });
+		} catch (e) {
+			log.error('project icon parseBody failed:', e);
+			return err(c, 'INVALID_REQUEST', 'Malformed upload', 400);
+		}
+		const file = form.file;
+		if (!(file instanceof Blob)) {
+			return err(c, 'INVALID_REQUEST', 'Missing file field', 400);
+		}
+
+		const contentType = file.type || 'application/octet-stream';
+		if (!isAllowedProjectIconStoredMime(contentType)) {
+			return err(c, 'INVALID_ATTACHMENT', `Unsupported content type: ${contentType}`, 400);
+		}
+		if (file.size > PROJECT_ICON_MAX_BYTES) {
+			return err(c, 'TOO_LARGE', 'Icon exceeds the size limit', 400);
+		}
+
+		const buf = Buffer.from(await file.arrayBuffer());
+		const dims = readImageDimensions(buf);
+		if (!dims) {
+			return err(c, 'INVALID_ATTACHMENT', 'Could not read image dimensions', 400);
+		}
+		if (dims.width > PROJECT_ICON_MAX_DIMENSION || dims.height > PROJECT_ICON_MAX_DIMENSION) {
+			return err(
+				c,
+				'INVALID_ATTACHMENT',
+				`Icon exceeds ${PROJECT_ICON_MAX_DIMENSION}×${PROJECT_ICON_MAX_DIMENSION} pixels`,
+				400,
+			);
+		}
+
+		const updated = await db.query<{ updated_at: string }>(
+			`INSERT INTO project_icons (project_id, content_type, data, byte_size, width, height, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, now())
+			 ON CONFLICT (project_id) DO UPDATE SET
+			   content_type = EXCLUDED.content_type,
+			   data         = EXCLUDED.data,
+			   byte_size    = EXCLUDED.byte_size,
+			   width        = EXCLUDED.width,
+			   height       = EXCLUDED.height,
+			   updated_at   = now()
+			 RETURNING updated_at`,
+			[projectId, contentType, buf, buf.byteLength, dims.width, dims.height],
+		);
+
+		await broadcastProjectUpdate(db, c.get('wsManager'), teamId, projectId);
+
+		const version = Math.floor(new Date(updated.rows[0].updated_at).getTime() / 1000);
+		const iconUrl = await signProjectIconUrl(projectId, c.get('masterKeyManager'), version);
+		return ok(c, { icon_url: iconUrl, icon_updated_at: updated.rows[0].updated_at });
+	},
+);
+
+projectsRoutes.delete('/projects/:projectId/icon', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const projectId = c.get('projectId') as string;
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+
+	await db.query('DELETE FROM project_icons WHERE project_id = $1', [projectId]);
+	await broadcastProjectUpdate(db, c.get('wsManager'), teamId, projectId);
+	return ok(c, { icon_url: null, icon_updated_at: null });
 });
 
 projectsRoutes.delete('/projects/:projectId', async (c) => {
@@ -591,4 +713,46 @@ projectsRoutes.post('/projects/:projectId/container/rebuild', async (c) => {
 	);
 
 	return ok(c, { container_status: ContainerStatus.Creating });
+});
+
+// Public signed-URL read endpoint for a project icon. Rendered in an `<img>`
+// tag, which can't carry a bearer token, so the HMAC `sig` query param is the
+// credential. Must be mounted before the `/api/*` auth middleware.
+export const publicProjectsRoutes = new Hono<Env>();
+
+publicProjectsRoutes.get('/api/projects/:projectId/icon', async (c) => {
+	const projectId = c.req.param('projectId');
+	const expRaw = c.req.query('exp');
+	const sig = c.req.query('sig');
+	if (!expRaw || !sig) {
+		return err(c, 'UNAUTHORIZED', 'Missing signature', 401);
+	}
+	const exp = Number.parseInt(expRaw, 10);
+	const masterKeyManager = c.get('masterKeyManager');
+	const valid = await verifyProjectIconUrl(projectId, exp, sig, masterKeyManager);
+	if (!valid) {
+		return err(c, 'UNAUTHORIZED', 'Invalid or expired signature', 401);
+	}
+
+	const row = await c.get('db').query<{
+		content_type: string;
+		data: Uint8Array;
+		updated_at: string;
+	}>('SELECT content_type, data, updated_at FROM project_icons WHERE project_id = $1', [projectId]);
+	if (row.rows.length === 0) {
+		return err(c, 'NOT_FOUND', 'Icon not found', 404);
+	}
+	const { content_type, data, updated_at } = row.rows[0];
+	const src = data instanceof Uint8Array ? data : new Uint8Array(data);
+	// Copy into a fresh ArrayBuffer so the body type is Uint8Array<ArrayBuffer>
+	// (PGlite hands back a Uint8Array<ArrayBufferLike>).
+	const ab = new ArrayBuffer(src.byteLength);
+	new Uint8Array(ab).set(src);
+
+	return c.body(new Uint8Array(ab), 200, {
+		'Content-Type': content_type,
+		'Content-Length': String(src.byteLength),
+		'Cache-Control': 'private, max-age=3600',
+		ETag: `"${new Date(updated_at).getTime()}"`,
+	});
 });

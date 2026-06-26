@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 // Avatars are monochrome (the spec: "monochrome, color = state"). Identity is
 // the initials; state (a running agent) is shown by a cyan `--live` ring.
 const sizeMap = {
@@ -17,6 +19,8 @@ interface AvatarProps {
 	color?: AvatarColor;
 	/** Running agents get a cyan live ring. */
 	running?: boolean;
+	/** Optional image (e.g. a project icon). Falls back to initials on load error. */
+	imageUrl?: string | null;
 	className?: string;
 }
 
@@ -35,14 +39,32 @@ export function avatarColorFromString(str: string): AvatarColor {
 	return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
-export function Avatar({ initials, size = 'md', running = false, className = '' }: AvatarProps) {
+export function Avatar({
+	initials,
+	size = 'md',
+	running = false,
+	imageUrl,
+	className = '',
+}: AvatarProps) {
+	// Track the specific URL that failed so a later icon change re-attempts the image.
+	const [failedUrl, setFailedUrl] = useState<string | null>(null);
+	const showImage = !!imageUrl && failedUrl !== imageUrl;
 	return (
 		<div
-			className={`inline-flex shrink-0 items-center justify-center rounded-full border border-border bg-surface-3 font-semibold text-text-2 ${
+			className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-surface-3 font-semibold text-text-2 ${
 				sizeMap[size]
 			} ${running ? 'ring-2 ring-live ring-offset-2 ring-offset-bg' : ''} ${className}`}
 		>
-			{initials.slice(0, 2).toUpperCase()}
+			{showImage ? (
+				<img
+					src={imageUrl}
+					alt=""
+					className="h-full w-full object-cover"
+					onError={() => setFailedUrl(imageUrl)}
+				/>
+			) : (
+				initials.slice(0, 2).toUpperCase()
+			)}
 		</div>
 	);
 }
