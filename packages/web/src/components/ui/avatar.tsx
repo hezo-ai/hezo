@@ -51,9 +51,14 @@ export function Avatar({
 	const showImage = !!imageUrl && failedUrl !== imageUrl;
 	return (
 		<div
-			className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-surface-3 font-semibold text-text-2 ${
-				sizeMap[size]
-			} ${running ? 'ring-2 ring-live ring-offset-2 ring-offset-bg' : ''} ${className}`}
+			// The 1px border gives *initials* contrast against the surface. A
+			// full-bleed image needs no border — keeping it would add a stray grey
+			// ring between the image and any active/live ring (looks mis-spaced).
+			className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-surface-3 font-semibold text-text-2 ${
+				showImage ? '' : 'border border-border'
+			} ${sizeMap[size]} ${
+				running ? 'ring-2 ring-live ring-offset-2 ring-offset-bg' : ''
+			} ${className}`}
 		>
 			{showImage ? (
 				<img
