@@ -33,8 +33,10 @@ hezo --container-bind-host 0.0.0.0  # native-Linux Docker: let agent containers 
 ```
 
 On **native-Linux Docker**, agent containers reach the host over the bridge gateway, so the
-host firewall must allow the Docker bridge to reach Hezo's ports and `--container-bind-host`
-must be set to a container-reachable interface. See
+host firewall must allow the Docker bridge to reach Hezo's ports. The boot connectivity check
+auto-rebinds the egress proxy / SSH bridge to the detected bridge gateway IP when a loopback
+bind is unreachable, so `--container-bind-host` usually needs no change — set it only to pin a
+specific interface. See
 [Self-hosting → Networking & firewall](/docs/deployment/self-hosting) for the details.
 
 On a desktop machine Hezo opens the web app in your default browser once the server is

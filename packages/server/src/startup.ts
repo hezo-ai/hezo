@@ -59,7 +59,14 @@ import { uiStateRoutes } from './routes/ui-state';
 import { buildUpdatesRoutes } from './routes/updates';
 import { AuthChallengeStore } from './services/auth-challenges';
 import { CeoSessionManager } from './services/ceo-session-manager';
-import { checkContainerToHostConnectivity } from './services/container-connectivity-preflight';
+import {
+	checkContainerToHostConnectivity,
+	resolveAutoRebindTarget,
+} from './services/container-connectivity-preflight';
+import {
+	ContainerConnectivityStatus,
+	EffectiveBindHost,
+} from './services/container-connectivity-status';
 import { ContainerLogStreamer } from './services/container-logs';
 import type { ContainerDeps } from './services/containers';
 import { DockerClient } from './services/docker';
@@ -188,10 +195,17 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	imageBuildTracker.setWsManager(wsManager);
 	setSharedImageBuildTracker(imageBuildTracker);
 	const containerLogStreamer = new ContainerLogStreamer();
+	// Mutable bind host shared by the egress proxy and SSH bridge, read per-run at
+	// allocation. The boot connectivity check below can auto-rebind it to the
+	// detected docker bridge gateway IP when loopback is unreachable — no restart.
+	const bindHost = new EffectiveBindHost(config.containerBindHost);
+	// Latest container→host connectivity outcome, read at run time to gate egress.
+	const connectivityStatus = new ContainerConnectivityStatus(config.containerBindHost);
 	const sshAgentServer = new SshAgentServer({
 		db,
 		masterKeyManager,
 		tcpListenHost: config.containerBindHost,
+		bindHostRef: bindHost,
 	});
 	await cleanupOrphanRunSockets(db, config.dataDir);
 	const egressCA = await loadOrCreateCA(config.dataDir);
@@ -200,19 +214,47 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		masterKeyManager,
 		ca: egressCA,
 		proxyBindHost: config.containerBindHost,
+		bindHostRef: bindHost,
 	});
 	// Verify a container can actually reach back to the host — the MCP server
 	// (firewall signal) and a listener at the egress/SSH bind host. On native-Linux
 	// Docker a host firewall or a loopback bind silently blocks this, leaving every
 	// agent with no tools; detect it at boot and log the exact fix instead of
-	// letting runs hang. Backgrounded + non-fatal: it must not gate readiness, and
-	// the web UI stays up so the operator can act on the guidance. The check itself
-	// no-ops under HEZO_SKIP_DOCKER (fake docker / tests) and the documented opt-out.
+	// letting runs hang. When the bind is loopback-only and a container can't reach
+	// it, auto-rebind the proxy + SSH bridge to the detected bridge gateway IP and
+	// re-probe — so native-Linux works out of the box without exposing them on all
+	// interfaces. The captured outcome gates egress at run time (see agent-runner).
+	// Backgrounded + non-fatal: it must not gate readiness, and the web UI stays up
+	// so the operator can act on any residual guidance. No-ops under HEZO_SKIP_DOCKER
+	// (fake docker / tests) and the documented opt-out.
 	trackBackground(
-		checkContainerToHostConnectivity({
-			docker,
-			serverPort: config.port,
-			containerBindHost: config.containerBindHost,
+		(async () => {
+			const first = await checkContainerToHostConnectivity({
+				docker,
+				serverPort: config.port,
+				containerBindHost: bindHost.get(),
+			});
+			const rebindTo = resolveAutoRebindTarget(first, bindHost.get());
+			if (rebindTo) {
+				log.info(
+					`Egress proxy / SSH bridge auto-bound to docker bridge gateway ${rebindTo} ` +
+						`(a container could not reach the loopback bind). Override with --container-bind-host.`,
+				);
+				bindHost.set(rebindTo);
+				const second = await checkContainerToHostConnectivity({
+					docker,
+					serverPort: config.port,
+					containerBindHost: rebindTo,
+				});
+				connectivityStatus.set(second.outcome, rebindTo);
+				return;
+			}
+			connectivityStatus.set(first.outcome, bindHost.get());
+		})().catch((err) => {
+			log.info('container→host connectivity check failed', {
+				error: err instanceof Error ? err.message : String(err),
+			});
+			connectivityStatus.set('skipped', bindHost.get());
 		}),
 	);
 	const events = new DomainEventBus();
@@ -229,6 +271,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		sshAgentServer,
 		egressProxy,
 		egressCAPath: egressCA.certPath,
+		connectivityStatus,
 		pricing,
 	});
 	const ceoSessionManager = new CeoSessionManager({
@@ -243,6 +286,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		sshAgentServer,
 		egressProxy,
 		egressCAPath: egressCA.certPath,
+		connectivityStatus,
 		containerLogStreamer,
 	});
 

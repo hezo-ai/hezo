@@ -496,16 +496,31 @@ with `NO_PROXY` carving out the Hezo backend and the LLM provider host (LLM traf
 direct — credentials are env-injected, and MITM breaks some Anthropic-compatible APIs).
 The front proxy binds `127.0.0.1` by default — reachable from containers via
 `host.docker.internal` on Docker Desktop, but **not** on native-Linux Docker, where that
-name maps to the bridge gateway IP. `HEZO_CONTAINER_BIND_HOST` / `--container-bind-host`
-overrides the bind interface for both the egress proxy and the ssh-agent TCP bridge; native
-Linux sets `0.0.0.0` and firewall-restricts the egress range (20000–29999) to the docker
-bridge. A boot-time preflight (`container-connectivity-preflight.ts`) starts a throwaway
-container, probes the MCP port and a bind-host listener in the egress range, and logs the
-exact firewall / `--container-bind-host` remedy when the path is blocked. Severity tracks
-impact: `error` when the MCP server is unreachable (no tools load, runs hang), a non-fatal
-`warn` for the egress/SSH bind-host degradation (MCP works and agents still run — only
-proxied egress and git-over-SSH are affected). Either way it never gates startup, so the web
-UI stays up to act on it.
+name maps to the bridge gateway IP. The bind interface for both the egress proxy and the
+ssh-agent TCP bridge is read **per-run** from a shared mutable holder (`EffectiveBindHost`),
+seeded from `HEZO_CONTAINER_BIND_HOST` / `--container-bind-host` (default `127.0.0.1`).
+
+A boot-time preflight (`container-connectivity-preflight.ts`) starts a throwaway container,
+probes the MCP port and a bind-host listener in the egress range (20000–29999), and also
+resolves the bridge gateway IP the container sees for `host.docker.internal`. **Auto-rebind:**
+when the bind is loopback-only and a container can't reach it (`bind-loopback`), the proxy +
+SSH bridge are rebound to that detected gateway IP and re-probed — so native-Linux works out
+of the box without exposing them on all interfaces (the gateway IP is host-local, container-
+reachable; binding `0.0.0.0` would expose the proxy and the SSH key bridge on every
+interface). An explicit non-loopback `--container-bind-host` is never overridden. The preflight
+logs the exact firewall / `--container-bind-host` remedy when a path is still blocked; severity
+tracks impact: `error` when the MCP server is unreachable (no tools load, runs hang), a
+non-fatal `warn` for a residual egress/SSH bind-host degradation. It never gates startup, so
+the web UI stays up to act on it.
+
+**Run-time gate.** The captured outcome (held in `ContainerConnectivityStatus`) gates egress at
+run time: when egress is required but the proxy is known-unreachable (`bind-loopback` /
+`bind-firewalled` / `mcp-unreachable`), an agent run aborts (recorded `Failed`) and a CEO chat
+turn fails — both with the same operator guidance — instead of allocating a proxy the container
+can't reach and letting the agent fall through to direct egress (which would defeat secret
+substitution, `allowed_hosts`, and audit). It **fails open** on `ok`/`skipped`/unknown, with a
+single-flight lazy re-probe (5-min staleness) so a firewall fix clears the gate — or a
+regression re-closes it — without a restart.
 
 For each request the proxy terminates TLS, matches placeholders **in the URL and headers
 only** (bodies are forwarded byte-for-byte — body substitution is intentionally absent),
@@ -539,8 +554,10 @@ see it.
 **Per-run ssh-agent** (`services/ssh-agent/`). `SshAgentServer.allocateRunSocket` exposes
 the key over two listeners: a **host Unix socket** and a **loopback TCP** listener
 (in-container access, since Docker Desktop on macOS won't forward `AF_UNIX` bind-mounts).
-The TCP listener honours `HEZO_CONTAINER_BIND_HOST` (default `127.0.0.1`; native-Linux
-Docker sets `0.0.0.0` so git-over-SSH containers can reach it via the bridge gateway).
+The TCP listener honours `HEZO_CONTAINER_BIND_HOST` (default `127.0.0.1`), read per-run from
+the same `EffectiveBindHost` holder as the egress proxy — so the boot preflight's auto-rebind
+to the bridge gateway IP makes git-over-SSH containers reach it on native-Linux Docker without
+a manual override.
 TCP connections must prefix a 16-byte per-run token (timing-safe compared). The protocol
 answers `MSG_REQUEST_IDENTITIES` (advertises the public key) and `MSG_SIGN_REQUEST` (signs
 with the lazily-decrypted private key). Because **all git now runs in-container** (§ Agent

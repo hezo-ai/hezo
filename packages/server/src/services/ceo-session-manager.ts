@@ -33,6 +33,11 @@ import {
 	createAgentChatParser,
 } from './agent-stream-parser';
 import { getProviderCredentialAndModel } from './ai-provider-keys';
+import {
+	checkContainerToHostConnectivity,
+	formatContainerConnectivityMessage,
+} from './container-connectivity-preflight';
+import { CONNECTIVITY_STALE_MS, shouldAbortForConnectivity } from './container-connectivity-status';
 import type { ContainerLogStreamer } from './container-logs';
 import { type ContainerRunUser, resolveContainerRunUser } from './container-user';
 import { type ContainerDeps, ensureProjectContainerRunning } from './containers';
@@ -374,6 +379,32 @@ export class CeoSessionManager {
 			let egress: EgressEnvDescriptor | null = null;
 			const egressProxy = this.deps.egressProxy;
 			if (egressProxy && this.deps.egressCAPath) {
+				// Abort with operator guidance when the proxy is known-unreachable from
+				// containers, rather than launching the CEO into a black-hole proxy that
+				// would silently fall through to direct egress. The throw is caught below,
+				// which releases the ssh bridge and records the session error. Fail open on
+				// ok/skipped/unknown (and when no status holder is wired).
+				const connectivityStatus = this.deps.connectivityStatus;
+				if (connectivityStatus) {
+					const probeBindHost = connectivityStatus.get().bindHost;
+					const status = await connectivityStatus.ensureFresh(async () => {
+						const { outcome } = await checkContainerToHostConnectivity({
+							docker: this.deps.docker,
+							serverPort: this.deps.serverPort,
+							containerBindHost: probeBindHost,
+						});
+						return { status: outcome, bindHost: probeBindHost };
+					}, CONNECTIVITY_STALE_MS);
+					if (shouldAbortForConnectivity(status)) {
+						const guidance = formatContainerConnectivityMessage(status, {
+							serverPort: this.deps.serverPort,
+							containerBindHost: connectivityStatus.get().bindHost,
+						});
+						throw new Error(
+							`Egress proxy unreachable from agent containers — cannot start CEO chat.\n\n${guidance}`,
+						);
+					}
+				}
 				const allocated = await egressProxy.allocateRunProxy(sessionId, {
 					teamId: DEFAULT_TEAM_ID,
 					agentId: ceoMemberId,

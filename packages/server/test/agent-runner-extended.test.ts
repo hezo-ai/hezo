@@ -23,6 +23,11 @@ import {
 	type RunnerDeps,
 	runAgent,
 } from '../src/services/agent-runner';
+import { NETWORKING_DOCS_URL } from '../src/services/container-connectivity-preflight';
+import {
+	type ConnectivityStatus,
+	ContainerConnectivityStatus,
+} from '../src/services/container-connectivity-status';
 import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { PricingService, upsertManualRate } from '../src/services/pricing';
@@ -345,6 +350,81 @@ describe('runAgent — egress proxy + ssh agent env injection', () => {
 		// The bridge runner forwards the per-run socket path as one of its argv.
 		expect(capturedExecCmd).toContain(`/run/hezo/${result.heartbeatRunId}.sock`);
 		expect(ssh.calls.released).toContain(result.heartbeatRunId);
+	});
+});
+
+describe('runAgent — egress connectivity gate', () => {
+	// A fresh status holder preset to `s` (so ensureFresh hits the cache and never
+	// boots a probe container). `unknown` is left unset.
+	function presetStatus(s: ConnectivityStatus): ContainerConnectivityStatus {
+		const status = new ContainerConnectivityStatus('127.0.0.1');
+		if (s !== 'unknown') status.set(s, '127.0.0.1');
+		return status;
+	}
+
+	const okDocker = () =>
+		createMockDocker(taskId, {
+			execCreate: async () => 'exec-gate',
+			execStart: async () => ({ stdout: 'ok', stderr: '' }),
+			execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+		});
+
+	it.each([
+		'bind-loopback',
+		'bind-firewalled',
+		'mcp-unreachable',
+	] as const)('aborts (without allocating egress) when the proxy is unreachable: %s', async (badStatus) => {
+		const egress = fakeEgressProxy();
+		const ssh = fakeSshAgentServer();
+		const deps = baseDeps(okDocker(), {
+			egressProxy: egress.proxy,
+			egressCAPath: '/tmp/test-data/egress-ca.crt',
+			sshAgentServer: ssh.server,
+			connectivityStatus: presetStatus(badStatus),
+		});
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		expect(result.success).toBe(false);
+		// The operator-actionable guidance (with the docs pointer) is surfaced.
+		expect(result.stderr).toContain(NETWORKING_DOCS_URL);
+		// Egress was never allocated; the ssh socket allocated above was released.
+		expect(egress.calls.allocated).not.toContain(result.heartbeatRunId);
+		expect(ssh.calls.released).toContain(result.heartbeatRunId);
+	});
+
+	it.each([
+		'ok',
+		'skipped',
+	] as const)('proceeds and allocates egress when connectivity is fine: %s', async (goodStatus) => {
+		const egress = fakeEgressProxy();
+		const ssh = fakeSshAgentServer();
+		const deps = baseDeps(okDocker(), {
+			egressProxy: egress.proxy,
+			egressCAPath: '/tmp/test-data/egress-ca.crt',
+			sshAgentServer: ssh.server,
+			connectivityStatus: presetStatus(goodStatus),
+		});
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		expect(result.success).toBe(true);
+		expect(egress.calls.allocated).toContain(result.heartbeatRunId);
+	});
+
+	it('fails open (allocates egress) when no connectivity status holder is wired', async () => {
+		const egress = fakeEgressProxy();
+		const ssh = fakeSshAgentServer();
+		const deps = baseDeps(okDocker(), {
+			egressProxy: egress.proxy,
+			egressCAPath: '/tmp/test-data/egress-ca.crt',
+			sshAgentServer: ssh.server,
+		});
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		expect(result.success).toBe(true);
+		expect(egress.calls.allocated).toContain(result.heartbeatRunId);
 	});
 });
 

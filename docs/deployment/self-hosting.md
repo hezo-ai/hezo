@@ -180,25 +180,30 @@ CEO chat reports its tools "aren't available"**:
    On raw `iptables`, insert matching `ACCEPT` rules for `-i docker0`. `firewalld` usually
    trusts `docker0` already.
 
-2. **The egress proxy and SSH bridge must bind a container-reachable interface.** They
-   default to `127.0.0.1` (loopback — correct for Docker Desktop), which a container can't
-   reach via the bridge gateway. Set `--container-bind-host 0.0.0.0` (or the bridge gateway
-   IP) and let the firewall above restrict who can reach it:
+2. **The egress proxy and SSH bridge bind a container-reachable interface — usually
+   automatically.** They default to `127.0.0.1` (loopback — correct for Docker Desktop), which a
+   container can't reach via the bridge gateway. On native-Linux Docker the **boot-time
+   connectivity check below detects this and auto-rebinds them to the docker bridge gateway IP**
+   (host-local and container-reachable — not exposed on external interfaces), so proxied egress
+   and git-over-SSH normally work out of the box with no flag. To pin a specific interface
+   yourself, set `--container-bind-host` (an explicit non-loopback value is never auto-overridden)
+   and let the firewall above restrict who can reach it:
 
    ```sh
    HEZO_CONTAINER_BIND_HOST=0.0.0.0 hezo     # or --container-bind-host 0.0.0.0
    ```
 
    The MCP server already listens on all interfaces, so step 1 alone restores the agent
-   toolset; step 2 is additionally needed for outbound proxied API calls, credentialed
-   requests, and git-over-SSH.
+   toolset; step 2 covers outbound proxied API calls, credentialed requests, and git-over-SSH.
 
 Hezo runs a **boot-time connectivity check** — it starts a throwaway container, has it call
-back to the host, and logs the exact firewall / `--container-bind-host` fix if the path is
-blocked, so you see the problem at startup instead of as a stalled agent run. An unreachable
-MCP server is logged as an error (no tools load); the egress/SSH bind-host case is a non-fatal
-**warning** — your agents still run, only proxied egress and git-over-SSH are affected. To
-verify by hand:
+back to the host, and (as above) auto-rebinds the proxy / SSH bridge to the bridge gateway IP
+when a loopback bind is unreachable, logging the exact firewall / `--container-bind-host` fix
+for anything still blocked, so you see the problem at startup instead of as a stalled agent run.
+An unreachable MCP server is logged as an error (no tools load); a residual egress/SSH bind-host
+problem is a non-fatal **warning**. If the egress proxy stays unreachable, **agent runs and CEO
+chat turns now fail with a clear error** (rather than silently bypassing the proxy) — the gate
+clears on its own within minutes once you open the path, no restart needed. To verify by hand:
 
 ```sh
 docker run --rm --add-host=host.docker.internal:host-gateway curlimages/curl \
