@@ -166,6 +166,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'set_agent_summary',
 	'set_team_summary',
 	'set_agent_team_context',
+	'set_agent_reports_to',
 	'write_project_asset',
 	'write_project_doc',
 	'propose_skill',
@@ -1285,6 +1286,12 @@ export function registerTools(
 				.describe(
 					`Updated system prompt. If provided, it must keep every required substitution variable (${REQUIRED_SYSTEM_PROMPT_VARS.join(', ')}) or the revision is rejected.`,
 				),
+			reports_to: z
+				.string()
+				.optional()
+				.describe(
+					"Updated manager — an existing agent's slug. Pass an empty string to clear the reporting line.",
+				),
 			default_effort: z
 				.string()
 				.optional()
@@ -1333,6 +1340,16 @@ export function registerTools(
 				if (promptError) return { error: promptError };
 			}
 
+			// A revised manager must resolve to an agent on this team (empty clears it).
+			if (typeof args.reports_to === 'string' && args.reports_to.trim()) {
+				const raw = args.reports_to.trim();
+				if (raw === row.payload.slug) {
+					return { error: 'reports_to: an agent cannot report to itself' };
+				}
+				const managerId = await resolveAgentId(db, row.team_id, raw);
+				if (!managerId) return { error: `reports_to: no agent '${raw}' in this team` };
+			}
+
 			const patch = buildHirePayloadPatch(args as HirePayloadPatchInput);
 
 			if (Object.keys(patch).length === 0) {
@@ -1362,6 +1379,12 @@ export function registerTools(
 				.optional()
 				.describe(
 					`Full system prompt for the new agent. If provided, it MUST contain every required substitution variable (${REQUIRED_SYSTEM_PROMPT_VARS.join(', ')}) or the proposal is rejected — these inject the agent's identity, manager, and live skills/docs/preferences context. Author it in the style of the built-in role docs.`,
+				),
+			reports_to: z
+				.string()
+				.optional()
+				.describe(
+					'The manager this agent reports to — an existing agent\'s slug (e.g. "architect"). Sets the structural reporting line so work can be delegated to and from this agent. Must be an agent already on the team.',
 				),
 			default_effort: z
 				.string()
@@ -2890,6 +2913,92 @@ export function registerTools(
 			if (r.rows.length === 0) return { error: 'Agent not found in this team' };
 
 			return { updated: true };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'set_agent_reports_to',
+		"Set or change the manager an agent reports to — the structural reporting line in the org chart that gates delegation. Work can only be assigned to/from an agent along this line, so an agent whose manager is unset can't be delegated to or hand work down. Use this to wire up reporting structure (e.g. after hiring specialists, point them at their lead) or fix it during a coherence review. Pass the target agent and its new manager (both by slug or member ID); pass an empty reports_to to clear the line. Callable by the team's Captain or an HQ instance agent (CEO/Coach) acting in the team.",
+		{
+			project: projectArg(),
+			agent_id: z.string().describe('Target agent — its slug (e.g. "engineer") or member ID'),
+			reports_to: z
+				.string()
+				.describe(
+					"The new manager — an existing agent's slug (or member ID) on this team. Pass an empty string to clear the reporting line.",
+				),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			if (!(await canCoordinateTeam(db, auth, teamId))) {
+				return { error: 'Access denied: only the Captain or CEO can set reporting lines' };
+			}
+
+			// Resolve the target and confirm it belongs to this team (not an HQ fallback).
+			const agentId = await resolveAgentId(db, teamId, args.agent_id as string);
+			if (!agentId) return { error: 'Agent not found in this team' };
+			const target = await db.query<{ slug: string }>(
+				`SELECT ma.slug FROM member_agents ma JOIN members m ON m.id = ma.id
+				 WHERE ma.id = $1 AND m.team_id = $2`,
+				[agentId, teamId],
+			);
+			if (target.rows.length === 0) return { error: 'Agent not found in this team' };
+
+			const raw = String(args.reports_to ?? '').trim();
+			let managerId: string | null = null;
+			if (raw) {
+				managerId = await resolveAgentId(db, teamId, raw);
+				if (!managerId) return { error: `reports_to: no agent '${raw}' in this team` };
+				if (managerId === agentId) return { error: 'An agent cannot report to itself' };
+				// Reject a cycle: walk up the proposed manager's chain — if it reaches
+				// the target, the new link would close a loop.
+				const seen = new Set<string>();
+				let cursor: string | null = managerId;
+				while (cursor !== null) {
+					if (cursor === agentId) {
+						return { error: 'reports_to would create a reporting cycle' };
+					}
+					if (seen.has(cursor)) break;
+					seen.add(cursor);
+					const parent: { rows: Array<{ reports_to: string | null }> } = await db.query<{
+						reports_to: string | null;
+					}>(`SELECT reports_to FROM member_agents WHERE id = $1`, [cursor]);
+					cursor = parent.rows[0]?.reports_to ?? null;
+				}
+			}
+
+			await db.query(`UPDATE member_agents SET reports_to = $1, updated_at = now() WHERE id = $2`, [
+				managerId,
+				agentId,
+			]);
+
+			const updated = await db.query<Record<string, unknown>>(
+				`SELECT m.id, m.team_id, ma.slug, ma.title, ma.reports_to,
+				        (SELECT ma2.title FROM member_agents ma2 WHERE ma2.id = ma.reports_to)
+				          AS reports_to_title
+				 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1`,
+				[agentId],
+			);
+			if (updated.rows[0]) {
+				broadcastRowChange(
+					wsManager,
+					wsRoom.team(teamId),
+					'member_agents',
+					'UPDATE',
+					updated.rows[0],
+				);
+			}
+
+			return {
+				applied: true,
+				agent: target.rows[0].slug,
+				reports_to: managerId ? raw : null,
+			};
 		},
 		db,
 	);

@@ -1,6 +1,8 @@
 import {
+	AgentAdminStatus,
 	ApprovalStatus,
 	type BudgetWindowsCents,
+	CAPTAIN_AGENT_SLUG,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
 } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
@@ -9,10 +11,11 @@ import { useMemo, useState } from 'react';
 import {
 	HireAgentForm,
 	type HireFormValues,
+	type ManagerOption,
 	missingRequiredVars,
 } from '../../../../components/hire-agent-form';
 import { Button } from '../../../../components/ui/button';
-import { useOnboardAgent } from '../../../../hooks/use-agents';
+import { type Agent, useAgents, useOnboardAgent } from '../../../../hooks/use-agents';
 import {
 	type Approval,
 	type HireProposalEdits,
@@ -48,6 +51,8 @@ const emptyValues: HireFormValues = {
 	title: '',
 	roleDesc: '',
 	systemPrompt: STARTER_SYSTEM_PROMPT,
+	// Default a new hire to reporting to the Captain (every team has one).
+	reportsTo: CAPTAIN_AGENT_SLUG,
 	budget: {
 		daily_budget_cents: 0,
 		weekly_budget_cents: 0,
@@ -62,6 +67,7 @@ function valuesFromPayload(p: Record<string, unknown>): HireFormValues {
 		title: (p.title as string) ?? '',
 		roleDesc: (p.role_description as string) ?? '',
 		systemPrompt: (p.system_prompt as string) ?? '',
+		reportsTo: (p.reports_to as string) ?? '',
 		budget: {
 			daily_budget_cents: (p.daily_budget_cents as number) ?? 0,
 			weekly_budget_cents: (p.weekly_budget_cents as number) ?? 0,
@@ -77,6 +83,7 @@ function editsFromValues(v: HireFormValues): HireProposalEdits {
 		title: v.title,
 		role_description: v.roleDesc,
 		system_prompt: v.systemPrompt,
+		reports_to: v.reportsTo,
 		heartbeat_interval_min: Number.parseInt(v.heartbeat, 10),
 		daily_budget_cents: v.budget.daily_budget_cents,
 		weekly_budget_cents: v.budget.weekly_budget_cents,
@@ -85,9 +92,22 @@ function editsFromValues(v: HireFormValues): HireProposalEdits {
 	};
 }
 
+/** Enabled, non-instance team agents selectable as a manager (excluding `excludeSlug`). */
+function managerOptionsFrom(agents: Agent[] | undefined, excludeSlug?: string): ManagerOption[] {
+	return (agents ?? [])
+		.filter(
+			(a) =>
+				a.admin_status === AgentAdminStatus.Enabled && !a.is_instance && a.slug !== excludeSlug,
+		)
+		.map((a) => ({ slug: a.slug, title: a.title }))
+		.sort((x, y) => x.title.localeCompare(y.title));
+}
+
 function CreateHireForm({ projectId }: { projectId: string }) {
 	const onboardAgent = useOnboardAgent(projectId);
 	const navigate = useNavigate();
+	const { data: agents } = useAgents(projectId);
+	const managerOptions = useMemo(() => managerOptionsFrom(agents), [agents]);
 	const [values, setValues] = useState<HireFormValues>(emptyValues);
 
 	async function handleSubmit(e: React.FormEvent) {
@@ -96,6 +116,7 @@ function CreateHireForm({ projectId }: { projectId: string }) {
 			title: values.title,
 			role_description: values.roleDesc || undefined,
 			system_prompt: values.systemPrompt || undefined,
+			reports_to: values.reportsTo || undefined,
 			daily_budget_cents: values.budget.daily_budget_cents,
 			weekly_budget_cents: values.budget.weekly_budget_cents,
 			monthly_budget_cents: values.budget.monthly_budget_cents,
@@ -119,7 +140,7 @@ function CreateHireForm({ projectId }: { projectId: string }) {
 
 	return (
 		<form onSubmit={handleSubmit}>
-			<HireAgentForm values={values} onChange={setValues} />
+			<HireAgentForm values={values} onChange={setValues} managerOptions={managerOptions} />
 			{onboardAgent.error && (
 				<p className="text-[13px] text-danger mt-4">
 					{(onboardAgent.error as { message: string }).message}
@@ -151,6 +172,13 @@ function EditHireProposal({ projectId, approval }: { projectId: string; approval
 	const navigate = useNavigate();
 	const updateProposal = useUpdateHireProposal();
 	const resolveApproval = useResolveApproval();
+
+	const { data: agents } = useAgents(projectId);
+	const editingSlug = (approval.payload.slug as string) ?? undefined;
+	const managerOptions = useMemo(
+		() => managerOptionsFrom(agents, editingSlug),
+		[agents, editingSlug],
+	);
 
 	const initial = useMemo(() => valuesFromPayload(approval.payload), [approval.payload]);
 	const [values, setValues] = useState<HireFormValues>(initial);
@@ -203,7 +231,8 @@ function EditHireProposal({ projectId, approval }: { projectId: string; approval
 			<HireAgentForm
 				values={values}
 				onChange={setValues}
-				slug={(approval.payload.slug as string) ?? undefined}
+				slug={editingSlug}
+				managerOptions={managerOptions}
 			/>
 			{updateProposal.error && (
 				<p className="text-[13px] text-danger mt-4">

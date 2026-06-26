@@ -390,6 +390,7 @@ Revise the draft of a pending hire approval. Captain-only. Use this to expand or
 | `title` | `string` | No | Updated role title |
 | `role_description` | `string` | No | Updated short role description |
 | `system_prompt` | `string` | No | Updated system prompt. If provided, it must keep every required substitution variable ({{team_name}}, {{reports_to}}, {{skills_context}}, {{project_docs_context}}, {{team_preferences_context}}) or the revision is rejected. |
+| `reports_to` | `string` | No | Updated manager — an existing agent's slug. Pass an empty string to clear the reporting line. |
 | `default_effort` | `string` | No | Updated default effort: minimal, low, medium, high, max |
 | `heartbeat_interval_min` | `number` | No | Updated heartbeat interval (min) |
 | `monthly_budget_cents` | `number` | No | Updated monthly budget in cents |
@@ -413,6 +414,7 @@ File a new hire proposal. Callable by a team Captain (for its own team) or the C
 | `title` | `string` | Yes | Role title (the slug is derived from it) |
 | `role_description` | `string` | No | Short role description |
 | `system_prompt` | `string` | No | Full system prompt for the new agent. If provided, it MUST contain every required substitution variable ({{team_name}}, {{reports_to}}, {{skills_context}}, {{project_docs_context}}, {{team_preferences_context}}) or the proposal is rejected — these inject the agent's identity, manager, and live skills/docs/preferences context. Author it in the style of the built-in role docs. |
+| `reports_to` | `string` | No | The manager this agent reports to — an existing agent's slug (e.g. "architect"). Sets the structural reporting line so work can be delegated to and from this agent. Must be an agent already on the team. |
 | `default_effort` | `string` | No | Default reasoning effort: minimal, low, medium, high, max |
 | `heartbeat_interval_min` | `number` | No | Heartbeat interval (min) |
 | `daily_budget_cents` | `number` | No | Daily budget in cents |
@@ -440,6 +442,24 @@ Declare that, after evaluating the current task this run, there is genuinely not
 **Returns:** `{ ok: true }`, or `{ error }` outside an agent run. Records the run as an intentional no-op so it is not flagged as a failed empty run.
 
 **Authorization:** Available only within an agent run (requires a run identity).
+
+### `set_agent_reports_to`
+
+_Write tool._
+
+Set or change the manager an agent reports to — the structural reporting line in the org chart that gates delegation. Work can only be assigned to/from an agent along this line, so an agent whose manager is unset can't be delegated to or hand work down. Use this to wire up reporting structure (e.g. after hiring specialists, point them at their lead) or fix it during a coherence review. Pass the target agent and its new manager (both by slug or member ID); pass an empty reports_to to clear the line. Callable by the team's Captain or an HQ instance agent (CEO/Coach) acting in the team.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `agent_id` | `string` | Yes | Target agent — its slug (e.g. "engineer") or member ID |
+| `reports_to` | `string` | Yes | The new manager — an existing agent's slug (or member ID) on this team. Pass an empty string to clear the reporting line. |
+
+**Returns:** `{ applied: true, agent, reports_to }` (`reports_to` is null when cleared), or `{ error }` if the agent/manager is not in the team, the manager is the agent itself, or the link would create a reporting cycle.
+
+**Authorization:** The team's Captain, or an HQ instance agent (CEO/Coach) acting in the team.
 
 ### `set_agent_status`
 

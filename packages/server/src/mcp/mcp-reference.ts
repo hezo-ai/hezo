@@ -232,6 +232,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		returns: '`{ title, slug, team_context }`, or `{ error }` if the agent is not in the team.',
 		auth: 'Any agent or the admin in the same team.',
 	},
+	set_agent_reports_to: {
+		category: 'Agents & hiring',
+		returns:
+			'`{ applied: true, agent, reports_to }` (`reports_to` is null when cleared), or `{ error }` if the agent/manager is not in the team, the manager is the agent itself, or the link would create a reporting cycle.',
+		auth: "The team's Captain, or an HQ instance agent (CEO/Coach) acting in the team.",
+	},
 
 	// Approvals
 	list_approvals: {

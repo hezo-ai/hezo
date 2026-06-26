@@ -9,6 +9,7 @@ import {
 	requiredSystemPromptVarsError,
 } from '@hezo/shared';
 import { budgetWindowsError } from '../lib/budget-validation';
+import { resolveAgentId } from '../lib/resolve';
 import { toSlug } from '../lib/slug';
 
 const DEFAULT_MONTHLY_BUDGET_CENTS = 3000;
@@ -18,6 +19,8 @@ export interface HireProposalInput {
 	title: string;
 	role_description?: string;
 	system_prompt?: string;
+	/** The manager this agent reports to — an existing agent's slug (or id). */
+	reports_to?: string;
 	default_effort?: string;
 	heartbeat_interval_min?: number;
 	daily_budget_cents?: number;
@@ -32,6 +35,8 @@ export interface HireProposalPayload {
 	slug: string;
 	role_description: string;
 	system_prompt: string;
+	/** Manager slug (or id) stored verbatim; resolved to a member id at materialize. */
+	reports_to: string | null;
 	default_effort: string;
 	heartbeat_interval_min: number;
 	daily_budget_cents: number;
@@ -96,12 +101,29 @@ export async function prepareHireProposal(
 		return { error: `A pending hire proposal for slug '${slug}' already exists`, conflict: true };
 	}
 
+	// Validate the manager (reports_to) resolves to an existing agent in this
+	// team. Stored verbatim (slug or id) and resolved to a member id when the
+	// hire is materialized.
+	let reportsTo: string | null = null;
+	if (input.reports_to?.trim()) {
+		const raw = input.reports_to.trim();
+		if (toSlug(raw) === slug) {
+			return { error: 'reports_to: an agent cannot report to itself' };
+		}
+		const managerId = await resolveAgentId(db, teamId, raw);
+		if (!managerId) {
+			return { error: `reports_to: no agent '${raw}' in this team` };
+		}
+		reportsTo = raw;
+	}
+
 	return {
 		payload: {
 			title,
 			slug,
 			role_description: input.role_description ?? '',
 			system_prompt: input.system_prompt ?? '',
+			reports_to: reportsTo,
 			default_effort: input.default_effort ?? DEFAULT_EFFORT,
 			heartbeat_interval_min: input.heartbeat_interval_min ?? DEFAULT_HEARTBEAT_INTERVAL_MIN,
 			daily_budget_cents: input.daily_budget_cents ?? 0,
@@ -145,6 +167,8 @@ export interface HirePayloadPatchInput {
 	title?: string;
 	role_description?: string;
 	system_prompt?: string;
+	/** Manager slug (or id); '' / null clears the reporting line. */
+	reports_to?: string | null;
 	default_effort?: string;
 	heartbeat_interval_min?: number;
 	daily_budget_cents?: number;
@@ -162,6 +186,7 @@ export function buildHirePayloadPatch(input: HirePayloadPatchInput): Record<stri
 	if (input.title !== undefined) patch.title = input.title.trim();
 	if (input.role_description !== undefined) patch.role_description = input.role_description;
 	if (input.system_prompt !== undefined) patch.system_prompt = input.system_prompt;
+	if (input.reports_to !== undefined) patch.reports_to = input.reports_to?.trim() || null;
 	if (input.default_effort !== undefined) patch.default_effort = input.default_effort;
 	if (input.heartbeat_interval_min !== undefined)
 		patch.heartbeat_interval_min = input.heartbeat_interval_min;

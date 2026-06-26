@@ -382,17 +382,23 @@ agentsRoutes.post('/projects/:projectId/agents/onboard', async (c) => {
 			);
 			const memberId = memberResult.rows[0].id;
 
+			// Resolve the manager slug (if any) to a member id for the structural link.
+			const reportsToId = proposal.reports_to
+				? await resolveAgentId(db, teamId, proposal.reports_to)
+				: null;
+
 			await db.query(
-				`INSERT INTO member_agents (id, title, slug, role_description,
+				`INSERT INTO member_agents (id, title, slug, role_description, reports_to,
 				                            default_effort, heartbeat_interval_min,
 				                            daily_budget_cents, weekly_budget_cents, monthly_budget_cents,
 				                            touches_code, admin_status)
-				 VALUES ($1, $2, $3, $4, $5::agent_effort, $6, $7, $8, $9, $10, $11::agent_admin_status)`,
+				 VALUES ($1, $2, $3, $4, $5, $6::agent_effort, $7, $8, $9, $10, $11, $12::agent_admin_status)`,
 				[
 					memberId,
 					proposal.title,
 					proposal.slug,
 					proposal.role_description,
+					reportsToId,
 					proposal.default_effort,
 					proposal.heartbeat_interval_min,
 					proposal.daily_budget_cents,

@@ -12,9 +12,17 @@ export interface HireFormValues {
 	title: string;
 	roleDesc: string;
 	systemPrompt: string;
+	/** Manager's slug this agent reports to ('' = no manager). */
+	reportsTo: string;
 	budget: BudgetWindowsCents;
 	heartbeat: string;
 	touchesCode: boolean;
+}
+
+/** A selectable manager for the reports-to dropdown. */
+export interface ManagerOption {
+	slug: string;
+	title: string;
 }
 
 /** Variable chips for the prompt editor, sourced from the shared registry. */
@@ -34,9 +42,11 @@ interface HireAgentFormProps {
 	onChange: (values: HireFormValues) => void;
 	/** When set, the (fixed) slug is shown read-only — used when editing a proposal. */
 	slug?: string;
+	/** Agents on the team that can be selected as this agent's manager. */
+	managerOptions?: ManagerOption[];
 }
 
-export function HireAgentForm({ values, onChange, slug }: HireAgentFormProps) {
+export function HireAgentForm({ values, onChange, slug, managerOptions = [] }: HireAgentFormProps) {
 	function set<K extends keyof HireFormValues>(key: K, value: HireFormValues[K]) {
 		onChange({ ...values, [key]: value });
 	}
@@ -66,20 +76,46 @@ export function HireAgentForm({ values, onChange, slug }: HireAgentFormProps) {
 				</div>
 			)}
 
-			<div className="flex flex-col gap-1.5 max-w-[190px]">
-				<span className="text-xs font-medium uppercase tracking-wider text-text-2">Heartbeat</span>
-				<select
-					value={values.heartbeat}
-					onChange={(e) => set('heartbeat', e.target.value)}
-					className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-1 outline-none focus:border-border-strong"
-				>
-					<option value="30">30m</option>
-					<option value="60">60m</option>
-					<option value="120">2h</option>
-					<option value="240">4h</option>
-					<option value="720">12h</option>
-					<option value="1440">24h</option>
-				</select>
+			<div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-[500px]">
+				<div className="flex flex-col gap-1.5">
+					<span className="text-xs font-medium uppercase tracking-wider text-text-2">
+						Reports to
+					</span>
+					<select
+						aria-label="Reports to"
+						value={values.reportsTo}
+						onChange={(e) => set('reportsTo', e.target.value)}
+						className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-1 outline-none focus:border-border-strong"
+					>
+						<option value="">No manager</option>
+						{managerOptions.map((m) => (
+							<option key={m.slug} value={m.slug}>
+								{m.title}
+							</option>
+						))}
+					</select>
+					<span className="text-xs text-text-3">
+						Sets the reporting line so work can be delegated to and from this agent.
+					</span>
+				</div>
+
+				<div className="flex flex-col gap-1.5 max-w-[190px]">
+					<span className="text-xs font-medium uppercase tracking-wider text-text-2">
+						Heartbeat
+					</span>
+					<select
+						value={values.heartbeat}
+						onChange={(e) => set('heartbeat', e.target.value)}
+						className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-1 outline-none focus:border-border-strong"
+					>
+						<option value="30">30m</option>
+						<option value="60">60m</option>
+						<option value="120">2h</option>
+						<option value="240">4h</option>
+						<option value="720">12h</option>
+						<option value="1440">24h</option>
+					</select>
+				</div>
 			</div>
 
 			<div className="flex flex-col gap-1.5 max-w-[500px]">

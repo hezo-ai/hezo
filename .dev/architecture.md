@@ -211,8 +211,14 @@ project.
   tool — the Captain for its own team, the CEO for any team (it passes `project`,
   including HQ). The Captain refines an admin-started draft
   with `update_hire_proposal`; both tools share the validation/insert helpers in
-  `services/hire-proposal.ts`. Approval materialises the agent via the hire approval
-  handler. Each proposal is also mirrored as a `hire_proposal` action comment on the
+  `services/hire-proposal.ts`. A hire captures **`reports_to`** (the manager's slug,
+  validated against the team) so the materialized agent gets its structural reporting
+  line — without it an agent has no manager and the assignment-hierarchy guard
+  (`assertSubordinateAssignee`) blocks delegation to/from it. Approval materialises the
+  agent via the hire approval handler (resolving the manager slug → member id). An
+  existing agent's manager is set/changed with the **`set_agent_reports_to`** MCP tool
+  (Captain or HQ coordinator; rejects self-reports and cycles) — the structural analogue
+  of the descriptive `team_context` blob. Each proposal is also mirrored as a `hire_proposal` action comment on the
   linked ticket (`services/hire-proposal-comment.ts`), which flips to hired/denied on
   resolution and re-wakes the requester; the approval no longer auto-closes the ticket —
   the requester (the CEO) closes it once setup is complete. Retiring/reinstating an agent is the `set_agent_status` MCP tool (gated to

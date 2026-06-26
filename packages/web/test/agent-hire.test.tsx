@@ -133,6 +133,48 @@ test('admin modifies a pending hire proposal then approves it', async () => {
 	});
 }, 60_000);
 
+test('hire form reports-to dropdown defaults to Captain and posts the chosen manager', async () => {
+	let ws!: SeededWorkspace;
+	const { findByLabelText, findByRole, findByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/agents/hire',
+		params: { projectId: ws.internalSlug },
+	});
+
+	const select = (await findByLabelText('Reports to')) as HTMLSelectElement;
+	// Options populate once the team roster loads; default selection is the Captain.
+	await findByText('Architect');
+	await waitFor(() => expect(select.value).toBe('captain'));
+
+	await user.selectOptions(select, 'architect');
+	expect(select.value).toBe('architect');
+
+	const role = uniqueName('Data Scientist');
+	await user.type((await findByLabelText('Role title')) as HTMLInputElement, role);
+	fireEvent.submit(
+		(await findByRole('button', { name: /hire agent/i })).closest('form') as HTMLFormElement,
+	);
+
+	// The filed hire proposal carries the chosen manager slug.
+	const { apiBase, token } = getTestContext();
+	await waitFor(async () => {
+		const res = await apiBase(`/api/projects/${ws.internalSlug}/approvals`, {
+			headers: { Authorization: `Bearer ${token}` },
+		});
+		const list = (await res.json()) as {
+			data: Array<{ payload: { title: string; reports_to: string } }>;
+		};
+		const row = list.data.find((a) => a.payload.title === role);
+		expect(row?.payload.reports_to).toBe('architect');
+	});
+}, 60_000);
+
 test('template variable chips insert into system prompt', async () => {
 	let ws!: SeededWorkspace;
 	const { findByRole, container, user, router } = await renderApp({

@@ -7,6 +7,7 @@ import {
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
+import { resolveAgentId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireTeamAccessForResource } from '../middleware/auth';
@@ -198,6 +199,18 @@ approvalsRoutes.patch('/approvals/:approvalId', async (c) => {
 	if (body.system_prompt?.trim()) {
 		const promptError = requiredSystemPromptVarsError(body.system_prompt);
 		if (promptError) return err(c, 'INVALID_REQUEST', promptError, 400);
+	}
+	// A revised manager must resolve to an agent on this team (empty clears it).
+	if (typeof body.reports_to === 'string' && body.reports_to.trim()) {
+		const managerId = await resolveAgentId(db, approval.team_id, body.reports_to.trim());
+		if (!managerId) {
+			return err(
+				c,
+				'INVALID_REQUEST',
+				`reports_to: no agent '${body.reports_to}' in this team`,
+				400,
+			);
+		}
 	}
 	const patch = buildHirePayloadPatch(body);
 	if (Object.keys(patch).length === 0) {

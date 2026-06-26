@@ -22,6 +22,10 @@ and code access before approving it. Nothing is added to the roster without your
 When you hire an agent you set:
 
 - **Role** — its title and a short description of what it's responsible for.
+- **Reports to** — the manager this agent answers to. This sets the reporting line in the
+  org chart, which is what lets work be delegated to and from the agent, so it's worth
+  getting right (it defaults to the Captain). You can change it later from the agent's
+  settings, and the Captain/CEO can also adjust reporting lines during a coherence review.
 - **System prompt** — the instructions that define how it works. Variable chips let you
   insert substitution variables (e.g. `{{team_name}}`, `{{reports_to}}`,
   `{{skills_context}}`) that are filled with live team and project context on every run, so
