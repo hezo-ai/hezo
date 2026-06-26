@@ -65,9 +65,14 @@ test('run log defaults to the formatted view and toggles to raw via the icon but
 
 	// Switching to Raw shows the literal prefixed line.
 	await user.click(getByLabelText('Raw logs'));
-	expect((await findByTestId('run-log')).textContent).toContain(
-		'[tool] Bash(command=ls -la /tmp, description=list files)',
-	);
+	const rawBody = await findByTestId('run-log');
+	expect(rawBody.textContent).toContain('[tool] Bash(command=ls -la /tmp, description=list files)');
+	// Raw lines render bright (text-text-1) on the forced-dark terminal surface,
+	// not the dim text-text-2 that low-contrasts against #0d1117 in light mode.
+	expect(rawBody.className).toContain('log-surface-dark');
+	const rawLine = await findByText('[tool] Bash(command=ls -la /tmp, description=list files)');
+	expect(rawLine.className).toContain('text-text-1');
+	expect(rawLine.className).not.toContain('text-text-2');
 
 	// Switching back to Formatted hides the prefixes again.
 	await user.click(getByLabelText('Formatted view'));
