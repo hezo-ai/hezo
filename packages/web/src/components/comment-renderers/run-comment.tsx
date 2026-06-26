@@ -192,7 +192,7 @@ function RunCommentBody({
 			</Link>
 			{actorName && (
 				<span
-					className="inline-flex items-center text-xs text-text-3 shrink-0 whitespace-nowrap"
+					className="hidden sm:inline-flex items-center text-xs text-text-3 shrink-0 whitespace-nowrap"
 					data-testid="run-comment-actor"
 				>
 					<span aria-hidden="true">·</span>
@@ -209,8 +209,10 @@ function RunCommentBody({
 						className={`inline-block w-2 h-2 rounded-full ${runStatusDotClass(status)}`}
 					/>
 					<span>{runStatusLabel(status)}</span>
-					<span aria-hidden="true">·</span>
-					<span data-testid="run-comment-line-count">
+					<span aria-hidden="true" className="hidden sm:inline">
+						·
+					</span>
+					<span className="hidden sm:inline" data-testid="run-comment-line-count">
 						{lines.length} {lines.length === 1 ? 'line' : 'lines'}
 					</span>
 					{durationMs != null && (
@@ -221,8 +223,12 @@ function RunCommentBody({
 					)}
 					{run?.cost_cents != null && run.cost_cents > 0 && (
 						<>
-							<span aria-hidden="true">·</span>
-							<span data-testid="run-comment-cost">${(run.cost_cents / 100).toFixed(2)}</span>
+							<span aria-hidden="true" className="hidden sm:inline">
+								·
+							</span>
+							<span className="hidden sm:inline" data-testid="run-comment-cost">
+								${(run.cost_cents / 100).toFixed(2)}
+							</span>
 						</>
 					)}
 				</span>

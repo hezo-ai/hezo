@@ -117,9 +117,9 @@ export function LogViewer({
 		<>
 			<div className="flex items-center justify-between bg-surface-2 px-3 py-1.5 border-b border-border-subtle">
 				<div className="flex items-center gap-2 text-xs text-text-2 font-medium">
-					<span>Logs</span>
+					<span className="hidden sm:inline">Logs</span>
 					{liveLabel}
-					<span className="text-text-3 font-normal">{lines.length} lines</span>
+					<span className="hidden sm:inline text-text-3 font-normal">{lines.length} lines</span>
 					{formattable && (
 						<div className="flex items-center gap-0.5">
 							<Tooltip content="Formatted view">
