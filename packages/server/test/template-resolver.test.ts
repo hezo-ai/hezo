@@ -117,6 +117,10 @@ describe('template resolver', () => {
 			projectId: bare.rows[0].id,
 		});
 		expect(result).toContain('No project documentation available');
+		// Even with zero docs (the onboarding/team-setup case) the empty state must
+		// steer the agent off filesystem probes toward the DB-backed doc tools.
+		expect(result).toContain('not the filesystem');
+		expect(result).toContain('write_project_doc');
 	});
 
 	it('renders {{project_docs_context}} as a metadata manifest pointing at read_project_doc', async () => {
@@ -213,6 +217,13 @@ describe('template resolver', () => {
 	it('appends shared working guidelines to every prompt', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('## Working Guidelines');
+		// Every agent is told up front that Hezo entities (docs, assets, tickets,
+		// skills) live in the DB and are reached via their MCP tools — not as files
+		// on the container filesystem — so none burns a run rediscovering it.
+		expect(result).toContain(
+			'### Hezo Entities Live in the Database, Not on the Container Filesystem',
+		);
+		expect(result).toContain('read_project_doc');
 		expect(result).toContain('### Ticket Maintenance');
 		expect(result).toContain('### Creating Tickets');
 		expect(result).toContain('### Ticket Dependencies');
