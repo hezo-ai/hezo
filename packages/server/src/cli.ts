@@ -21,6 +21,15 @@ export interface HezoConfig {
 	open: boolean;
 	logLevel: LogLevelName;
 	keepOldContainers: boolean;
+	/**
+	 * Interface the egress proxy and SSH bridge bind to so agent containers can
+	 * reach them. Defaults to `127.0.0.1` (loopback — works with Docker Desktop,
+	 * which tunnels `host.docker.internal` to host loopback). On native-Linux
+	 * Docker a container reaches the host via the bridge gateway IP, where a
+	 * loopback bind is unreachable, so set `0.0.0.0` (or the bridge gateway IP)
+	 * and firewall-restrict the port range to the docker bridge.
+	 */
+	containerBindHost: string;
 }
 
 function resolveDataDir(raw: string): string {
@@ -172,6 +181,10 @@ export function parseConfig(
 			'--keep-old-containers',
 			'Skip removal of old containers on rebuild/teardown/provision — useful for inspecting crashed containers via `docker logs` / `docker inspect`. Subsequent rebuilds will fail with a name conflict until the operator removes them manually. (env: HEZO_KEEP_OLD_CONTAINERS)',
 		)
+		.option(
+			'--container-bind-host <host>',
+			'Interface the egress proxy and SSH bridge bind to so agent containers can reach them. Default 127.0.0.1 (works with Docker Desktop). On native-Linux Docker set 0.0.0.0 (or the bridge gateway IP) and firewall-restrict the egress port range to the docker bridge. (env: HEZO_CONTAINER_BIND_HOST)',
+		)
 		.parse(argv);
 
 	const cli = program.opts();
@@ -213,5 +226,6 @@ export function parseConfig(
 		open: pickOpen('HEZO_OPEN', cli.open),
 		logLevel: parseLogLevel(pick('HEZO_LOG_LEVEL', cli.logLevel) ?? 'info'),
 		keepOldContainers: pickBool('HEZO_KEEP_OLD_CONTAINERS', cli.keepOldContainers),
+		containerBindHost: pick('HEZO_CONTAINER_BIND_HOST', cli.containerBindHost) ?? '127.0.0.1',
 	};
 }
