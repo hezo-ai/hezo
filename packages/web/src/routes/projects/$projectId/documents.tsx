@@ -3,7 +3,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { Info, Loader2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { type DocItem, DocsLibrary } from '../../../components/docs-library';
-import { MentionTextarea } from '../../../components/mention-textarea';
+import { MarkdownEditor } from '../../../components/markdown-editor';
 import { RevisionsPanel } from '../../../components/revisions-panel';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
@@ -218,13 +218,16 @@ function NewProjectDocForm({
 				onChange={(e) => setFilename(e.target.value)}
 				required
 			/>
-			<MentionTextarea
+			<MarkdownEditor
 				projectId={projectId}
 				projectSlug={projectSlug}
 				label="Content (Markdown)"
+				ariaLabel="Content (Markdown)"
 				value={content}
-				onChange={(e) => setContent(e.target.value)}
+				onChange={setContent}
 				className="min-h-[300px] font-mono text-xs"
+				previewClassName="min-h-[300px]"
+				emptyPreviewText="_(empty)_"
 			/>
 			{error && <p className="text-sm text-danger">{error}</p>}
 			<div className="flex justify-end gap-2">

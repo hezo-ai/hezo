@@ -1,5 +1,6 @@
 import type { BudgetWindowsCents } from '@hezo/shared';
 import { BudgetWindowsEditor } from './budget/budget-windows-editor';
+import { MarkdownEditor } from './markdown-editor';
 import { Input } from './ui/input';
 
 export interface HireFormValues {
@@ -30,11 +31,6 @@ interface HireAgentFormProps {
 export function HireAgentForm({ values, onChange, slug }: HireAgentFormProps) {
 	function set<K extends keyof HireFormValues>(key: K, value: HireFormValues[K]) {
 		onChange({ ...values, [key]: value });
-	}
-
-	function insertVar(v: string) {
-		const prev = values.systemPrompt;
-		set('systemPrompt', `${prev}${prev && !prev.endsWith(' ') ? ' ' : ''}${v}`);
 	}
 
 	return (
@@ -101,32 +97,19 @@ export function HireAgentForm({ values, onChange, slug }: HireAgentFormProps) {
 				</span>
 			</label>
 
-			<div>
-				<span className="text-xs font-medium uppercase tracking-wider text-text-2 block mb-1.5">
-					System prompt
-				</span>
-				<div className="flex flex-wrap gap-1.5 mb-2">
-					{templateVars.map((v) => (
-						<button
-							key={v}
-							type="button"
-							onClick={() => insertVar(v)}
-							className="text-[11px] px-2 py-0.5 rounded-md bg-info-soft text-info-soft-fg cursor-pointer hover:opacity-80"
-						>
-							{v}
-						</button>
-					))}
-				</div>
-				<textarea
-					value={values.systemPrompt}
-					onChange={(e) => set('systemPrompt', e.target.value)}
-					className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-1 outline-none focus:border-border-strong min-h-[160px] resize-y font-mono leading-relaxed"
-					placeholder="You are the {{agent_role}} at {{team_name}}..."
-				/>
-				<p className="text-xs text-text-3 mt-1">
-					Insert variables using the chips above. Markdown supported.
-				</p>
-			</div>
+			<MarkdownEditor
+				label="System prompt"
+				labelClassName="text-xs font-medium uppercase tracking-wider text-text-2"
+				ariaLabel="System prompt"
+				value={values.systemPrompt}
+				onChange={(v) => set('systemPrompt', v)}
+				chips={templateVars}
+				placeholder="You are the {{agent_role}} at {{team_name}}..."
+				helpText="Insert variables using the chips above. Markdown supported."
+				className="min-h-[160px] font-mono"
+				previewClassName="min-h-[160px]"
+				emptyPreviewText="_(nothing to preview)_"
+			/>
 		</div>
 	);
 }

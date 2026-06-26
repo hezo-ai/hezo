@@ -8,7 +8,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { Loader2, Power, PowerOff } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BudgetWindowsEditor } from '../../../../../components/budget/budget-windows-editor';
-import { MarkdownProse } from '../../../../../components/markdown-prose';
+import { MarkdownEditor } from '../../../../../components/markdown-editor';
 import { RevisionsPanel } from '../../../../../components/revisions-panel';
 import { Button } from '../../../../../components/ui/button';
 import { ExpandableText } from '../../../../../components/ui/expandable-text';
@@ -167,60 +167,19 @@ function AgentSettingsPage() {
 					onChange={(e) => setRoleDesc(e.target.value)}
 				/>
 				<div>
-					<div className="flex items-center justify-between mb-1.5">
-						<span className="text-sm text-text-2">System Prompt</span>
-						<div
-							role="tablist"
-							aria-label="Prompt view mode"
-							className="inline-flex rounded-md border border-border-subtle bg-surface-2 p-0.5 text-xs"
-						>
-							<button
-								type="button"
-								role="tab"
-								aria-selected={promptMode === 'edit'}
-								onClick={() => setPromptMode('edit')}
-								className={`px-2.5 py-1 rounded ${
-									promptMode === 'edit'
-										? 'bg-surface text-text-1 shadow-sm'
-										: 'text-text-2 hover:text-text-1'
-								}`}
-							>
-								Edit
-							</button>
-							<button
-								type="button"
-								role="tab"
-								aria-selected={promptMode === 'preview'}
-								onClick={() => setPromptMode('preview')}
-								className={`px-2.5 py-1 rounded ${
-									promptMode === 'preview'
-										? 'bg-surface text-text-1 shadow-sm'
-										: 'text-text-2 hover:text-text-1'
-								}`}
-							>
-								Preview
-							</button>
-						</div>
-					</div>
-					{promptMode === 'edit' ? (
-						<Textarea
-							aria-label="System Prompt"
-							value={systemPrompt}
-							onChange={(e) => setSystemPrompt(e.target.value)}
-							className="min-h-[160px] font-mono text-xs"
-						/>
-					) : (
-						<div
-							data-testid="system-prompt-preview"
-							className="min-h-[160px] rounded-md border border-border bg-surface-2 px-3 py-2 text-sm"
-						>
-							{isPreviewLoading ? (
-								<div className="text-text-2 text-xs">Resolving…</div>
-							) : (
-								<MarkdownProse>{previewData?.content ?? ''}</MarkdownProse>
-							)}
-						</div>
-					)}
+					<MarkdownEditor
+						label="System Prompt"
+						ariaLabel="System Prompt"
+						value={systemPrompt}
+						onChange={setSystemPrompt}
+						defaultMode={promptMode}
+						onModeChange={setPromptMode}
+						className="min-h-[160px] font-mono text-xs"
+						previewClassName="min-h-[160px]"
+						previewTestId="system-prompt-preview"
+						previewContent={previewData?.content ?? ''}
+						isPreviewLoading={isPreviewLoading}
+					/>
 					<RevisionsPanel
 						revisions={revisions}
 						onRestore={(rev) => restorePrompt.mutateAsync(rev)}
