@@ -77,11 +77,25 @@ const FAILURE_HEADER = [
 ];
 
 /**
- * Operator-actionable guidance for a failed connectivity check, logged at boot.
- * Mirrors the Docker/port preflights: a one-line diagnosis, then the exact
- * remedy (the firewall rule, or the `--container-bind-host` flag), plus a docs
- * pointer. Never surfaces `HEZO_SKIP_DOCKER` / the opt-out env (those hide the
- * symptom rather than fix it).
+ * Log severity for a non-ok outcome. `mcp-unreachable` is fatal to agent work —
+ * no Hezo tools load, so runs and the CEO chat hang — so it is logged at `error`.
+ * The bind-host cases are a degradation: the MCP server is reachable and agents
+ * run; only proxied egress, credentialed calls, and git-over-SSH are affected, so
+ * they are logged at `warn`.
+ */
+export function connectivitySeverity(
+	outcome: Exclude<ConnectivityOutcome, 'ok'>,
+): 'error' | 'warn' {
+	return outcome === 'mcp-unreachable' ? 'error' : 'warn';
+}
+
+/**
+ * Operator-actionable guidance for a non-ok connectivity check, logged at boot.
+ * `mcp-unreachable` is a fatal failure (no tools load); the bind-host cases are a
+ * degradation (MCP works, agents run — only proxied egress / git-over-SSH break),
+ * worded accordingly. A one-line diagnosis, then the exact remedy (the firewall
+ * rule, or the `--container-bind-host` flag), plus a docs pointer. Never surfaces
+ * `HEZO_SKIP_DOCKER` / the opt-out env (those hide the symptom rather than fix it).
  */
 export function formatContainerConnectivityMessage(
 	outcome: Exclude<ConnectivityOutcome, 'ok'>,
@@ -113,17 +127,18 @@ export function formatContainerConnectivityMessage(
 
 	if (outcome === 'bind-loopback') {
 		return [
-			...FAILURE_HEADER,
-			'The MCP server is reachable, but the egress proxy and SSH bridge bind to',
-			`${containerBindHost} (loopback), which a container on native-Linux Docker cannot`,
-			'reach via host.docker.internal. Outbound API calls, credentialed requests, and',
-			'git-over-SSH will fail even though the MCP tools load.',
+			'Egress proxy / SSH bridge unreachable from agent containers (degraded, not fatal).',
 			'',
-			'Bind them to all interfaces, then firewall-restrict the range to the bridge:',
+			'The MCP server is reachable and agents run, but the egress proxy and SSH bridge',
+			`bind to ${containerBindHost} (loopback), which a container on native-Linux Docker`,
+			'cannot reach via host.docker.internal. Proxied API calls, credentialed requests,',
+			'and git-over-SSH will fail; direct LLM providers (no proxy) are unaffected — safe',
+			'to ignore if that is all you use.',
+			'',
+			'To enable them, bind a container-reachable interface (then firewall-restrict it):',
 			'',
 			'  HEZO_CONTAINER_BIND_HOST=0.0.0.0 hezo      # or --container-bind-host 0.0.0.0',
 			'  sudo ufw allow in on docker0 to any port 20000:29999 proto tcp',
-			'  sudo ufw reload',
 			'',
 			`More detail: ${NETWORKING_DOCS_URL}`,
 		].join('\n');
@@ -131,10 +146,12 @@ export function formatContainerConnectivityMessage(
 
 	// bind-firewalled: the bind host is non-loopback but the range is still blocked.
 	return [
-		...FAILURE_HEADER,
-		'The MCP server is reachable, but a container could not reach the egress proxy /',
-		`SSH bridge port range on the host (bound to ${containerBindHost}). Outbound API`,
-		'calls, credentialed requests, and git-over-SSH will fail.',
+		'Egress proxy / SSH bridge unreachable from agent containers (degraded, not fatal).',
+		'',
+		'The MCP server is reachable and agents run, but a container could not reach the egress',
+		`proxy / SSH bridge port range on the host (bound to ${containerBindHost}). Proxied API`,
+		'calls, credentialed requests, and git-over-SSH will fail; direct LLM providers (no',
+		'proxy) are unaffected — safe to ignore if that is all you use.',
 		'',
 		'Open the Docker bridge to the host for the egress range:',
 		'',
@@ -309,12 +326,15 @@ export async function checkContainerToHostConnectivity(
 			log.info('container→host connectivity OK (MCP + egress bridge reachable from a container)');
 			return outcome;
 		}
-		log.error(
-			`\n${formatContainerConnectivityMessage(outcome, {
-				serverPort: deps.serverPort,
-				containerBindHost: deps.containerBindHost,
-			})}\n`,
-		);
+		// Severity tracks impact: mcp-unreachable means no tools load (error); the
+		// bind-host cases are a degradation — MCP works and agents run, only proxied
+		// egress / git-over-SSH are affected (warn).
+		const message = `\n${formatContainerConnectivityMessage(outcome, {
+			serverPort: deps.serverPort,
+			containerBindHost: deps.containerBindHost,
+		})}\n`;
+		if (connectivitySeverity(outcome) === 'error') log.error(message);
+		else log.warn(message);
 		return outcome;
 	} catch (err) {
 		// Diagnostics must never break startup. If the probe machinery itself

@@ -195,8 +195,10 @@ CEO chat reports its tools "aren't available"**:
 
 Hezo runs a **boot-time connectivity check** — it starts a throwaway container, has it call
 back to the host, and logs the exact firewall / `--container-bind-host` fix if the path is
-blocked, so you see the problem at startup instead of as a stalled agent run. To verify by
-hand:
+blocked, so you see the problem at startup instead of as a stalled agent run. An unreachable
+MCP server is logged as an error (no tools load); the egress/SSH bind-host case is a non-fatal
+**warning** — your agents still run, only proxied egress and git-over-SSH are affected. To
+verify by hand:
 
 ```sh
 docker run --rm --add-host=host.docker.internal:host-gateway curlimages/curl \

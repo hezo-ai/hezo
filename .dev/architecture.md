@@ -491,8 +491,11 @@ overrides the bind interface for both the egress proxy and the ssh-agent TCP bri
 Linux sets `0.0.0.0` and firewall-restricts the egress range (20000–29999) to the docker
 bridge. A boot-time preflight (`container-connectivity-preflight.ts`) starts a throwaway
 container, probes the MCP port and a bind-host listener in the egress range, and logs the
-exact firewall / `--container-bind-host` remedy when the path is blocked — non-fatal, so the
-web UI stays up to act on it.
+exact firewall / `--container-bind-host` remedy when the path is blocked. Severity tracks
+impact: `error` when the MCP server is unreachable (no tools load, runs hang), a non-fatal
+`warn` for the egress/SSH bind-host degradation (MCP works and agents still run — only
+proxied egress and git-over-SSH are affected). Either way it never gates startup, so the web
+UI stays up to act on it.
 
 For each request the proxy terminates TLS, matches placeholders **in the URL and headers
 only** (bodies are forwarded byte-for-byte — body substitution is intentionally absent),
