@@ -95,6 +95,13 @@ export const queryKeys = {
 			'queued-wakeups',
 		],
 
+		// goals
+		goals: (slug: string) => ['projects', slug, 'goals'],
+		goalsFiltered: (slug: string, filters: KeyParam) => ['projects', slug, 'goals', filters],
+		goal: (slug: string, goalId: string) => ['projects', slug, 'goals', goalId],
+		goalHistory: (slug: string, goalId: string) => ['projects', slug, 'goals', goalId, 'history'],
+		goalRuns: (slug: string) => ['projects', slug, 'goals', 'runs'],
+
 		// agents
 		agents: (slug: string) => ['projects', slug, 'agents'],
 		agentsFiltered: (slug: string, filters: KeyParam) => ['projects', slug, 'agents', filters],

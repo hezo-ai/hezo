@@ -5,10 +5,12 @@ import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useAgents } from '../hooks/use-agents';
 import { useContainerHealth } from '../hooks/use-container-health';
+import { useGoals } from '../hooks/use-goals';
 import { useInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useProjectMeta } from '../hooks/use-projects';
 import { agentPageParams } from './agent-link';
 import { AgentStatusLabel } from './agent-status-label';
+import { CreateGoalDialog } from './create-goal-dialog';
 import { CreateTaskDialog } from './create-task-dialog';
 import { SidebarNav, type SidebarNavSection } from './sidebar-nav';
 import { Tooltip } from './ui/tooltip';
@@ -39,6 +41,13 @@ export function ProjectSidebar() {
 	const { data: agents } = useAgents(projectId);
 	const [teamCollapsed, setTeamCollapsed] = useState(readTeamCollapsed);
 	const [createTaskOpen, setCreateTaskOpen] = useState(false);
+	const [createGoalOpen, setCreateGoalOpen] = useState(false);
+	// Goals are a project concept only (HQ has none); fetch only for normal projects.
+	const isInternalProject = project?.is_internal ?? false;
+	const { data: goals, isLoading: goalsLoading } = useGoals(projectId, {
+		enabled: !!projectId && !isInternalProject,
+	});
+	const hasNoGoals = !isInternalProject && !goalsLoading && (goals?.length ?? 0) === 0;
 
 	if (!active) return null;
 
@@ -115,6 +124,36 @@ export function ProjectSidebar() {
 				testId: 'project-sidebar-new-task',
 			},
 		},
+		// Goals are a normal-project concept; HQ (internal) has none.
+		...(isInternal
+			? []
+			: [
+					{
+						to: '/projects/$projectId/goals',
+						params: projectParams,
+						label: (
+							<span className="inline-flex items-center gap-1.5">
+								<span>Goals</span>
+								{hasNoGoals && (
+									<Tooltip content="No goals yet — create one to focus the team" side="right">
+										<span
+											role="img"
+											aria-label="No goals yet"
+											data-testid="project-sidebar-goals-empty-dot"
+											className="inline-block w-2 h-2 rounded-full bg-info animate-pulse shrink-0"
+										/>
+									</Tooltip>
+								)}
+							</span>
+						),
+						testId: 'project-sidebar-goals',
+						action: {
+							onClick: () => setCreateGoalOpen(true),
+							label: 'New goal',
+							testId: 'project-sidebar-new-goal',
+						},
+					},
+				]),
 		// HQ (internal) exposes Documents (the chatbox memory doc) and Assets (where
 		// the CEO saves files it produces for the operator in chat); Budget and
 		// Settings stay hidden below.
@@ -247,6 +286,11 @@ export function ProjectSidebar() {
 				projectId={projectId}
 				open={createTaskOpen}
 				onOpenChange={setCreateTaskOpen}
+			/>
+			<CreateGoalDialog
+				projectId={projectId}
+				open={createGoalOpen}
+				onOpenChange={setCreateGoalOpen}
 			/>
 		</div>
 	);

@@ -9,6 +9,7 @@ import {
 	CommentContentType,
 	ContainerStatus,
 	claudeCodeModelArg,
+	HeartbeatRunKind,
 	HeartbeatRunStatus,
 	opencodeModelArg,
 	PROVIDER_RUNTIME_ADAPTERS,
@@ -505,7 +506,7 @@ export async function buildRuntimeInvocation(
 async function buildRunContext(
 	deps: RunnerDeps,
 	agent: AgentInfo,
-	task: TaskInfo,
+	task: TaskInfo | null,
 	project: ProjectInfo,
 	wakeupPayload: Record<string, unknown> | undefined,
 	credential: AiProviderCredential,
@@ -517,6 +518,7 @@ async function buildRunContext(
 	bridge: BridgeRunnerArgs | null,
 	egress: EgressEnvDescriptor | null,
 	runUser: ContainerRunUser,
+	goalCheck: GoalCheckContext | null,
 ): Promise<RunContext> {
 	// The run is scoped to the project's team (the "run team"). For normal agents
 	// this equals the agent's home team; for instance agents (CEO/Coach) that
@@ -536,22 +538,23 @@ async function buildRunContext(
 	let resolvedPrompt = await resolveSystemPrompt(deps.db, storedPrompt, {
 		teamId: runTeamId,
 		projectId: project.id,
-		taskId: task.id,
+		taskId: task?.id,
 		agentId: agent.id,
 		dataDir: deps.dataDir,
 	});
 
 	if (resolvedPrompt.includes('{{requester_context}}')) {
-		const creator = await deps.db.query<{ display_name: string; member_type: string }>(
-			`SELECT m.display_name, m.member_type FROM tasks i
-			 JOIN members m ON m.id = i.created_by_member_id
-			 WHERE i.id = $1`,
-			[task.id],
-		);
-		const row = creator.rows[0];
-		const requesterText = row
-			? `This task was created by ${row.display_name} (${row.member_type}).`
-			: '';
+		let requesterText = '';
+		if (task) {
+			const creator = await deps.db.query<{ display_name: string; member_type: string }>(
+				`SELECT m.display_name, m.member_type FROM tasks i
+				 JOIN members m ON m.id = i.created_by_member_id
+				 WHERE i.id = $1`,
+				[task.id],
+			);
+			const row = creator.rows[0];
+			if (row) requesterText = `This task was created by ${row.display_name} (${row.member_type}).`;
+		}
 		resolvedPrompt = resolvedPrompt.replace(/\{\{requester_context\}\}/g, requesterText);
 	}
 
@@ -575,14 +578,20 @@ async function buildRunContext(
 		wakeupPayload?.source === WakeupSource.Reply
 			? await loadReplyContext(deps.db, wakeupPayload)
 			: null;
-	const spawnedFrom = await loadSpawnedFromTask(deps.db, task);
-	const basePrompt = isCoachReview
-		? await buildCoachReviewPrompt(deps.db, resolvedPrompt, task, runTeamId)
-		: buildTaskPrompt(resolvedPrompt, task, wakeupPayload, {
-				mentionContext,
-				replyContext,
-				spawnedFrom,
-			});
+	const spawnedFrom = task ? await loadSpawnedFromTask(deps.db, task) : null;
+	let basePrompt: string;
+	if (goalCheck) {
+		basePrompt = buildGoalCheckPrompt(resolvedPrompt, goalCheck);
+	} else if (isCoachReview) {
+		// task is non-null on every non-goal-check path (enforced by runAgent).
+		basePrompt = await buildCoachReviewPrompt(deps.db, resolvedPrompt, task as TaskInfo, runTeamId);
+	} else {
+		basePrompt = buildTaskPrompt(resolvedPrompt, task as TaskInfo, wakeupPayload, {
+			mentionContext,
+			replyContext,
+			spawnedFrom,
+		});
+	}
 	const taskPrompt = effortApplication.promptDirective
 		? `${basePrompt}\n\n${effortApplication.promptDirective}`
 		: basePrompt;
@@ -608,7 +617,9 @@ async function buildRunContext(
 		sshSocketContainerPath,
 		bridge,
 		egress,
-		extraEnv: [`HEZO_TASK_ID=${task.id}`, `HEZO_TASK_IDENTIFIER=${task.identifier}`],
+		extraEnv: task
+			? [`HEZO_TASK_ID=${task.id}`, `HEZO_TASK_IDENTIFIER=${task.identifier}`]
+			: ['HEZO_GOAL_CHECK=1'],
 	});
 
 	return {
@@ -662,12 +673,13 @@ async function createSyntheticOnDemandWakeup(
 export async function runAgent(
 	deps: RunnerDeps,
 	agent: AgentInfo,
-	task: TaskInfo,
+	task: TaskInfo | null,
 	project: ProjectInfo,
 	wakeupPayload?: Record<string, unknown>,
 	signal?: AbortSignal,
 	onRunRegistered?: (heartbeatRunId: string) => void,
 	wakeupId?: string,
+	goalCheck?: GoalCheckContext | null,
 ): Promise<RunResult> {
 	const startTime = Date.now();
 
@@ -681,7 +693,7 @@ export async function runAgent(
 		events: deps.events,
 		teamId: runTeamId,
 		projectId: project.id,
-		taskId: task.id,
+		taskId: task?.id ?? null,
 		memberId: agent.id,
 	};
 	const effectiveWakeupId =
@@ -694,6 +706,7 @@ export async function runAgent(
 		runBroadcast,
 		effectiveWakeupId,
 		extractTriggeredBy(wakeupPayload),
+		goalCheck ? HeartbeatRunKind.GoalCheck : HeartbeatRunKind.Task,
 	);
 	onRunRegistered?.(heartbeatRunId);
 	await emitRunStarted(deps, heartbeatRunId, agent, task, project, effectiveWakeupId);
@@ -712,7 +725,7 @@ export async function runAgent(
 			type: WsMessageType.RunLog,
 			projectId: project.id,
 			runId: heartbeatRunId,
-			taskId: task.id,
+			taskId: task?.id ?? null,
 			stream: line.stream,
 			text: line.text,
 		}),
@@ -720,7 +733,7 @@ export async function runAgent(
 			type: WsMessageType.RunLog,
 			projectId: project.id,
 			runId: heartbeatRunId,
-			taskId: task.id,
+			taskId: task?.id ?? null,
 			stream: 'stdout',
 			text,
 			replace: true,
@@ -841,7 +854,7 @@ export async function runAgent(
 		provider = agent.model_override_provider;
 		runtimeType = PROVIDER_RUNTIME_ADAPTERS[provider].runtime;
 	} else {
-		const resolved = await resolveRuntimeForTask(deps.db, task.runtime_type ?? null);
+		const resolved = await resolveRuntimeForTask(deps.db, task?.runtime_type ?? null);
 		if (!resolved) {
 			return finalizeFailure(
 				'No AI provider credentials configured at the instance level. Add one in Settings > AI Providers.',
@@ -887,7 +900,7 @@ export async function runAgent(
 
 		// Human-friendly label for run-scoped logs (egress proxy, ssh-agent),
 		// since a run has no friendly identifier of its own.
-		const runLabel = `${agent.slug}/${task.identifier}`;
+		const runLabel = task ? `${agent.slug}/${task.identifier}` : `${agent.slug}/goal-check`;
 
 		// Detect the container's run-user once (cached). Drives every --user exec, the
 		// ssh socket owner, and the chowns that give the run-user ownership of the
@@ -982,6 +995,7 @@ export async function runAgent(
 			bridge,
 			egressEnv,
 			runUser,
+			goalCheck ?? null,
 		);
 
 		const hostPromptPath = getHostPromptPath(
@@ -1071,7 +1085,15 @@ export async function runAgent(
 		try {
 			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
-			const prep = await prepareWorktrees(deps, project, task, bridge, runUser, emit, signal);
+			// Goal-check runs only call MCP tools; they need no code worktree.
+			const prep = task
+				? await prepareWorktrees(deps, project, task, bridge, runUser, emit, signal)
+				: {
+						workingDir: '/workspace',
+						designatedRepo: null as RepoRow | null,
+						worktrees: [] as WorktreeRef[],
+						executor: null as GitExecutor | null,
+					};
 
 			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
@@ -1575,6 +1597,53 @@ export interface BuildTaskPromptContext {
 	spawnedFrom?: SpawnedFromTask | null;
 }
 
+/** One due goal handed to the Captain in a goal-check run. */
+export interface GoalCheckGoal {
+	id: string;
+	title: string;
+	description: string;
+	progress_percent: number;
+	health: string;
+	status_blurb: string;
+	check_frequency: string;
+	target_date: string | null;
+}
+
+export interface GoalCheckContext {
+	goals: GoalCheckGoal[];
+}
+
+/**
+ * The user-message body for a Captain goal-check run. Lists every due goal with its current
+ * estimate and instructs the Captain to assess each and call `update_goal_progress`. No task is
+ * attached — the run exists only to refresh goal status.
+ */
+export function buildGoalCheckPrompt(systemPrompt: string, ctx: GoalCheckContext): string {
+	const parts = [systemPrompt, '', '---', '', '## Goal Check', ''];
+	parts.push(
+		`${ctx.goals.length} goal${ctx.goals.length === 1 ? ' is' : 's are'} due for a progress check. ` +
+			'For each goal below, assess real progress toward the objective — read the relevant tickets, ' +
+			'comments, and repo state; do not just count tasks. Then call `update_goal_progress` once per ' +
+			'goal with a fresh `progress_percent` (0-100), a `health` (on_track / at_risk / off_track, ' +
+			'weighing progress against any target date), and a one-paragraph `status_blurb` describing where ' +
+			'the goal stands and the next step needed. Do not lower a percentage without explaining why in ' +
+			'the blurb. Only file new tasks (with `goal_id` set) when a concrete next step is actually ' +
+			'missing — existing backlog or in-flight work often already covers the goal.',
+	);
+	parts.push('');
+	for (const g of ctx.goals) {
+		parts.push(`### ${g.title}  \`${g.id}\``);
+		parts.push(
+			`- Current: ${g.progress_percent}% · health ${g.health} · checked ${g.check_frequency}` +
+				(g.target_date ? ` · target ${g.target_date}` : ''),
+		);
+		if (g.status_blurb) parts.push(`- Last status: ${g.status_blurb}`);
+		parts.push(`- Definition: ${g.description || 'No description provided.'}`);
+		parts.push('');
+	}
+	return parts.join('\n');
+}
+
 export function buildTaskPrompt(
 	systemPrompt: string,
 	task: TaskInfo,
@@ -1923,7 +1992,8 @@ export interface HeartbeatRunBroadcast {
 	events?: DomainEventBus;
 	teamId: string;
 	projectId?: string;
-	taskId: string;
+	/** Null for goal-check runs, which are not tied to a task. */
+	taskId: string | null;
 	memberId: string;
 }
 
@@ -1952,19 +2022,23 @@ export async function createHeartbeatRun(
 	db: PGlite,
 	agent: AgentInfo,
 	runTeamId: string,
-	task: TaskInfo,
+	task: TaskInfo | null,
 	broadcast: HeartbeatRunBroadcast,
 	wakeupId: string,
 	triggeredBy: TriggeredBy | null = null,
+	kind: HeartbeatRunKind = HeartbeatRunKind.Task,
 ): Promise<string> {
 	const { runId, statusFlippedToInProgress } = await withTransaction(db, async () => {
 		const runResult = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, wakeup_id, status)
-			 VALUES ($1, $2, $3, $4, $5::heartbeat_run_status)
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, wakeup_id, status, kind)
+			 VALUES ($1, $2, $3, $4, $5::heartbeat_run_status, $6::heartbeat_run_kind)
 			 RETURNING id`,
-			[agent.id, runTeamId, task.id, wakeupId, HeartbeatRunStatus.Queued],
+			[agent.id, runTeamId, task?.id ?? null, wakeupId, HeartbeatRunStatus.Queued, kind],
 		);
 		const runId = runResult.rows[0].id;
+
+		// Goal-check runs have no task — no Run comment to anchor and no status to flip.
+		if (!task) return { runId, statusFlippedToInProgress: false };
 
 		await db.query(
 			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
@@ -2002,7 +2076,7 @@ export async function createHeartbeatRun(
 	});
 
 	broadcastHeartbeatRunChange(broadcast, runId, HeartbeatRunStatus.Queued, 'INSERT');
-	if (broadcast.wsManager) {
+	if (broadcast.wsManager && task) {
 		broadcastRowChange(
 			broadcast.wsManager,
 			wsRoom.team(broadcast.teamId),
@@ -2020,7 +2094,7 @@ export async function createHeartbeatRun(
 			});
 		}
 	}
-	if (statusFlippedToInProgress) {
+	if (statusFlippedToInProgress && task) {
 		await recordStatusChange(
 			db,
 			broadcast.teamId,
@@ -2188,7 +2262,7 @@ async function emitRunStarted(
 	deps: RunnerDeps,
 	runId: string,
 	agent: AgentInfo,
-	task: TaskInfo,
+	task: TaskInfo | null,
 	project: ProjectInfo,
 	wakeupId: string,
 ): Promise<void> {
@@ -2212,7 +2286,7 @@ async function emitRunStarted(
 		teamId: agent.team_id,
 		projectId: project.id,
 		runId,
-		taskId: task.id,
+		taskId: task?.id ?? null,
 		agentMemberId: agent.id,
 		triggerSource,
 		triggeredBy,

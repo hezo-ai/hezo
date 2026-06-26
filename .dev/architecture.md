@@ -115,6 +115,18 @@ on run completion), `preview`, `action`,
 `connect_required`, `credential_request`. Each comment carries a `public_id` slug for
 `#comment-<id>` deep-links. `comment_reactions` holds emoji reactions.
 
+**Goals.** `goals` are per-project objectives the Captain tracks (`project_id NOT NULL`;
+the `is_internal` HQ project has none, enforced in the service). Each carries a SMART
+`title`/`description`, a `target_date`, a `check_frequency` enum (`daily`/`weekly`/`monthly`,
+default daily), an admin-set `archived_at` (NULL = active; there is **no** achieved status),
+and the Captain-maintained snapshot — `progress_percent` (0–100), a `goal_health` enum
+(`pending`/`on_track`/`at_risk`/`off_track`), a `status_blurb`, and `last_checked_at`. The
+Captain refreshes these on its heartbeat via a **goal-check run** (below). `goal_run_updates`
+is the per-run progress history (one row per goal touched by a run, snapshotting
+percent/health/blurb) — the source of each goal's progress chart and the "this run updated
+goals X, Y" annotation on the Goals page. `tasks.goal_id` optionally links a ticket to the
+goal it advances (traceability only; it does **not** gate or alter how the task runs).
+
 **Secrets, OAuth, MCP connectors.** `secrets` stores AES-256-GCM ciphertext gated by
 `allowed_hosts` (§ 7). `oauth_connections` records connected GitHub/SaaS accounts; their
 tokens *ride the `secrets` table* (no token column). `mcp_connections` is the catalog of
@@ -128,7 +140,10 @@ single shared catalog keyed by a globally-unique name (`secrets.name` /
 **Runs, wakeups, sessions.** `agent_wakeup_requests` is the trigger queue, with
 idempotency keys and `coalesced_count` merging (§ 5). `heartbeat_runs` is one row per
 execution (status, timing, tokens, cost, captured logs, `wakeup_id` provenance, the
-success-gate flags `produced_output`/`reported_no_work`). Token usage is flushed to the
+success-gate flags `produced_output`/`reported_no_work`). A `kind` enum distinguishes a
+normal `task` run from a `goal_check` run (the Captain's task-less goal assessment —
+`task_id IS NULL`); goal-check runs reuse the full run lifecycle but skip the task comment,
+status flip, and code worktree. Token usage is flushed to the
 row *during* the run (alongside the log), so a run the server kills mid-flight still
 reports the tokens/cost it burned instead of `0`; `usage_partial` flags such a snapshot
 until a clean completion supersedes it. `agent_task_sessions` persists
@@ -890,8 +905,8 @@ shapes.
   `project-docs`.
 - **Agents & runs** — `agents` (hire/fire/pause/resume, system-prompt revisions),
   `execution-locks`, `queued-wakeups`, `ceo-chat` (live CEO session).
-- **Tasks & collaboration** — `tasks`, `comments`, `mentions`, `assets`, `inbox`,
-  `search` (full-text).
+- **Tasks & collaboration** — `tasks`, `goals` (CRUD + `/goals/runs` + `/goals/:id/history`),
+  `comments`, `mentions`, `assets`, `inbox`, `search` (full-text).
 - **Money & governance** — `costs` (project-scoped, `group_by=day` for charts),
   `model-pricing`, `approvals`, `audit-log`.
 - **Integrations & secrets** — `ai-providers`, `secrets`, `mcp-connections`, `oauth`

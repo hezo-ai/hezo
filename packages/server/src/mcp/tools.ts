@@ -11,6 +11,7 @@ import {
 	AuditActorType,
 	AuthType,
 	CAPTAIN_AGENT_SLUG,
+	CAPTAIN_SETTABLE_GOAL_HEALTH,
 	CEO_AGENT_SLUG,
 	COACH_AGENT_SLUG,
 	CommentContentType,
@@ -21,6 +22,7 @@ import {
 	DocumentType,
 	extensionOf,
 	extractBacktickedMentionCandidates,
+	type GoalHealth,
 	getConnectorCapability,
 	INSTANCE_AGENT_SLUGS,
 	isAgentAuthorableAssetMime,
@@ -85,6 +87,7 @@ import {
 	listDocuments,
 	upsertDocument,
 } from '../services/documents';
+import { listGoals, recordGoalProgress } from '../services/goals';
 import {
 	buildHirePayloadPatch,
 	type HirePayloadPatchInput,
@@ -173,6 +176,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'create_skill',
 	'add_mcp_connection',
 	'remove_mcp_connection',
+	'update_goal_progress',
 ]);
 
 /** A handler result that signals failure rather than a persisted write. */
@@ -512,6 +516,7 @@ function mcpArgsToCreateTaskInput(
 		priority: args.priority as string | undefined,
 		runtime_type: args.runtime_type as string | undefined,
 		blocked_by_task_ids: args.blocked_by_task_ids as string[] | undefined,
+		goal_id: args.goal_id as string | undefined,
 	};
 }
 
@@ -882,6 +887,12 @@ export function registerTools(
 				.describe(
 					'Task identifiers (e.g. ["BE-2", "BE-3"]) or UUIDs that must reach a terminal status before this ticket is started. The assignee will not be woken on this ticket until every blocker is satisfied.',
 				),
+			goal_id: z
+				.string()
+				.optional()
+				.describe(
+					'UUID of the project goal this task advances. Links the task to the goal for traceability; it does not gate or change how the task runs. (Captain) set this when filing work to move a goal forward.',
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -909,6 +920,76 @@ export function registerTools(
 				args.description as string | undefined,
 				created,
 			);
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'list_goals',
+		"List a project's goals (the objectives the Captain tracks). Each goal has a title, a SMART description, the Captain's current progress_percent (0-100), a health (pending/on_track/at_risk/off_track), a status_blurb, a check_frequency (daily/weekly/monthly), an optional target_date, and last_checked_at. As the Captain, call this during your heartbeat to see which goals are due for a fresh assessment, then call update_goal_progress for each. Archived goals are excluded unless include_archived is true.",
+		{
+			project: projectArg(),
+			include_archived: z.boolean().optional().describe('Include archived goals (default false).'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			return listGoals(db, scope.projectId, {
+				includeArchived: args.include_archived === true,
+			});
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'update_goal_progress',
+		"Record your current assessment of a goal's progress. Only the Captain does this, and only from within a goal-check run. Pass progress_percent (0-100, your honest estimate — do not lower it without a reason in the blurb), health (on_track / at_risk / off_track, weighing progress against the target_date), and a one-paragraph status_blurb explaining where the goal stands and what is needed next. This updates the goal's live status and appends a point to its progress history; the goal then won't be re-surfaced for checking until its cadence elapses again.",
+		{
+			project: projectArg(),
+			goal_id: z.string().describe('UUID of the goal to update.'),
+			progress_percent: z
+				.number()
+				.int()
+				.min(0)
+				.max(100)
+				.describe('Estimated progress toward the goal, 0-100.'),
+			health: z.enum(CAPTAIN_SETTABLE_GOAL_HEALTH).describe('on_track, at_risk, or off_track.'),
+			status_blurb: z
+				.string()
+				.describe('One-paragraph summary of where the goal stands and the next step.'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			if (auth.type !== AuthType.Agent || !auth.runId) {
+				return { error: 'update_goal_progress can only be called from within an agent run' };
+			}
+			const goalId = args.goal_id as string;
+			const found = await db.query<{ id: string }>(
+				`SELECT id FROM goals WHERE id = $1 AND project_id = $2 AND archived_at IS NULL`,
+				[goalId, scope.projectId],
+			);
+			if (found.rows.length === 0) {
+				return { error: `Goal not found in project: ${goalId}` };
+			}
+			try {
+				return await recordGoalProgress(
+					db,
+					{
+						goalId,
+						runId: auth.runId,
+						progressPercent: args.progress_percent as number,
+						health: args.health as GoalHealth,
+						statusBlurb: args.status_blurb as string,
+					},
+					wsManager,
+				);
+			} catch (e) {
+				if (e instanceof Error && 'code' in e) return { error: e.message };
+				throw e;
+			}
 		},
 		db,
 	);

@@ -5,6 +5,7 @@ import {
 	AgentRuntimeStatus,
 	type AiProvider,
 	BUDGET_PAUSE_STATUSES,
+	CAPTAIN_AGENT_SLUG,
 	CommentContentType,
 	ContainerStatus,
 	DEFAULT_TEAM_ID,
@@ -26,7 +27,13 @@ import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { ref } from '../lib/log-ref';
 import { logger } from '../logger';
 import { getLatestInfo } from '../routes/updates';
-import { type RunnerDeps, type RunResult, recordRunCostAndEnforce, runAgent } from './agent-runner';
+import {
+	type GoalCheckContext,
+	type RunnerDeps,
+	type RunResult,
+	recordRunCostAndEnforce,
+	runAgent,
+} from './agent-runner';
 import {
 	pauseAgentForBudget,
 	reconcileBudgetPause,
@@ -49,6 +56,7 @@ import {
 } from './containers';
 import type { DockerClient } from './docker';
 import type { EgressProxy } from './egress';
+import { getDueGoals } from './goals';
 import { HEARTBEAT_INTERVAL_FLOOR_MIN } from './heartbeat-schedule';
 import type { LogStreamBroker } from './log-stream-broker';
 import { detectOrphans, healStaleRunState, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
@@ -99,7 +107,8 @@ interface RunningTask {
 export interface LiveRun {
 	runId: string;
 	memberId: string;
-	taskId: string;
+	/** Null for goal-check runs, which are not tied to a task. */
+	taskId: string | null;
 	projectId: string;
 	teamId: string;
 	taskKey: string;
@@ -1304,6 +1313,29 @@ export class JobManager {
 			}
 			task = payloadTask.rows[0];
 		} else {
+			// The Captain's periodic heartbeat first checks whether any of the project's
+			// goals are due for a progress assessment. If so, it runs one goal-check run
+			// (no task, kind=goal_check) and yields this activation; ordinary task work
+			// resumes on the next heartbeat. Goals not yet due are skipped entirely.
+			if (agent.rows[0].slug === CAPTAIN_AGENT_SLUG) {
+				const dispatched = await this.tryDispatchGoalCheck(
+					memberId,
+					teamId,
+					{
+						id: memberId,
+						title: agent.rows[0].title,
+						slug: agent.rows[0].slug,
+						default_effort: agent.rows[0].default_effort,
+						model_override_provider: agent.rows[0].model_override_provider,
+						model_override_model: agent.rows[0].model_override_model,
+						run_timeout_min: agent.rows[0].run_timeout_min,
+					},
+					wakeupId,
+					wakeupPayload,
+				);
+				if (dispatched) return;
+			}
+
 			// Instance agents (CEO/Coach) select across every team; everyone else is
 			// scoped to their own team. Build the params positionally so the team
 			// filter is only present when its placeholder is.
@@ -1769,6 +1801,198 @@ export class JobManager {
 		// no `closed`), so the task stays `done` after the Coach run.
 
 		await this.chainNextTaskWakeup(memberId, agentSlug, taskId, teamId);
+	}
+
+	/**
+	 * If the Captain has goals due for a check, launch one goal-check run (no task) covering
+	 * all of them and return true so the caller yields this activation. Returns false when there
+	 * are no due goals or the run can't start right now (in which case the caller falls through
+	 * to normal task selection; the goals stay due and re-surface next heartbeat).
+	 */
+	private async tryDispatchGoalCheck(
+		memberId: string,
+		teamId: string,
+		agentRow: {
+			id: string;
+			title: string;
+			slug: string;
+			default_effort: string;
+			model_override_provider: AiProvider | null;
+			model_override_model: string | null;
+			run_timeout_min: number;
+		},
+		wakeupId: string | undefined,
+		wakeupPayload: Record<string, unknown>,
+	): Promise<boolean> {
+		const { db, docker, masterKeyManager, serverPort } = this.deps;
+
+		// The Captain's project is its team's single non-internal project.
+		const project = await db.query<{
+			id: string;
+			slug: string;
+			team_id: string;
+			team_slug: string;
+			container_id: string | null;
+			container_status: string;
+			designated_repo_id: string | null;
+			is_internal: boolean;
+		}>(
+			`SELECT p.id, p.slug, p.team_id, c.slug AS team_slug,
+			        p.container_id, p.container_status, p.designated_repo_id, p.is_internal
+			 FROM projects p JOIN teams c ON c.id = p.team_id
+			 WHERE p.team_id = $1 AND p.is_internal = false
+			 LIMIT 1`,
+			[teamId],
+		);
+		const projectRow = project.rows[0];
+		if (!projectRow) return false;
+
+		const dueGoals = await getDueGoals(db, projectRow.id);
+		if (dueGoals.length === 0) return false;
+
+		// Don't start a goal check while the Captain is already running in this project, the
+		// project is at capacity, the container isn't up, or the Captain/project is over budget.
+		// Fall through (return false) — the goals remain due for the next heartbeat.
+		if (await this.isAgentBusyInProject(memberId, projectRow.id)) return false;
+		if (await this.isProjectAtCapacity(projectRow.id)) return false;
+		if (!projectRow.container_id || projectRow.container_status !== ContainerStatus.Running) {
+			return false;
+		}
+		if (await checkOverBudget(db, memberId, projectRow.id)) return false;
+
+		const goalCheck: GoalCheckContext = {
+			goals: dueGoals.map((g) => ({
+				id: g.id as string,
+				title: g.title as string,
+				description: (g.description as string) ?? '',
+				progress_percent: (g.progress_percent as number) ?? 0,
+				health: (g.health as string) ?? 'pending',
+				status_blurb: (g.status_blurb as string) ?? '',
+				check_frequency: (g.check_frequency as string) ?? 'daily',
+				target_date: (g.target_date as string | null) ?? null,
+			})),
+		};
+
+		const runProject = { ...projectRow, container_id: projectRow.container_id };
+
+		await db.query(
+			'UPDATE member_agents SET runtime_status = $1::agent_runtime_status WHERE id = $2',
+			[AgentRuntimeStatus.Active, memberId],
+		);
+		broadcastRowChange(this.deps.wsManager, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
+			id: memberId,
+			runtime_status: AgentRuntimeStatus.Active,
+		});
+
+		const deps: RunnerDeps = {
+			db,
+			docker,
+			masterKeyManager,
+			serverPort,
+			dataDir: this.deps.dataDir,
+			wsManager: this.deps.wsManager,
+			events: this.deps.events,
+			logs: this.deps.logs,
+			sshAgentServer: this.deps.sshAgentServer,
+			egressProxy: this.deps.egressProxy ?? null,
+			egressCAPath: this.deps.egressCAPath ?? null,
+			pricing: this.deps.pricing,
+		};
+		const timeoutMs = agentRow.run_timeout_min * 60 * 1000;
+		const key = `goalcheck:${memberId}:${projectRow.id}`;
+		this.acquireProjectRun(projectRow.id);
+
+		const launched = this.launchTask(
+			key,
+			async (signal) => {
+				let registeredRunId: string | undefined;
+				try {
+					const result = await runAgent(
+						deps,
+						{
+							id: memberId,
+							title: agentRow.title,
+							slug: agentRow.slug,
+							team_id: teamId,
+							default_effort: agentRow.default_effort,
+							model_override_provider: agentRow.model_override_provider,
+							model_override_model: agentRow.model_override_model,
+						},
+						null,
+						runProject,
+						wakeupPayload,
+						signal,
+						(runId) => {
+							registeredRunId = runId;
+							this.registerLiveRun({
+								runId,
+								memberId,
+								taskId: null,
+								projectId: projectRow.id,
+								teamId,
+								taskKey: key,
+							});
+						},
+						wakeupId,
+						goalCheck,
+					);
+					if (registeredRunId) this.unregisterLiveRun(registeredRunId);
+					await this.onGoalCheckComplete(memberId, teamId, wakeupId, result);
+					return result;
+				} catch (err) {
+					log.error(
+						`Background goal-check run for Captain ${ref('captain', memberId)} failed:`,
+						err,
+					);
+					if (registeredRunId) this.unregisterLiveRun(registeredRunId);
+					await this.onGoalCheckComplete(memberId, teamId, wakeupId, {
+						success: false,
+						exitCode: -1,
+						stdout: '',
+						stderr: err instanceof Error ? err.message : String(err),
+						durationMs: 0,
+						heartbeatRunId: registeredRunId,
+					}).catch((e) => log.error('Goal-check completion bookkeeping failed:', e));
+					return null;
+				} finally {
+					this.releaseProjectRun(projectRow.id);
+					void trackBackground(this.guarded('wakeups', () => this.processWakeups()));
+				}
+			},
+			timeoutMs,
+		);
+
+		if (!launched) {
+			// A concurrent dispatch holds this key; undo the status flip and re-queue.
+			this.releaseProjectRun(projectRow.id);
+			await setAgentIdleIfNoActiveRuns(db, memberId, teamId, undefined, this.deps.wsManager);
+			await this.requeueWakeup(wakeupId);
+			return true;
+		}
+		return true;
+	}
+
+	/** Trimmed completion bookkeeping for a goal-check run: no task lock, badge, or chain. */
+	private async onGoalCheckComplete(
+		memberId: string,
+		teamId: string,
+		wakeupId: string | undefined,
+		result: RunResult,
+	): Promise<void> {
+		const { db } = this.deps;
+		await setAgentIdleIfNoActiveRuns(
+			db,
+			memberId,
+			teamId,
+			result.heartbeatRunId,
+			this.deps.wsManager,
+		);
+		if (wakeupId) {
+			await db.query(
+				`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
+				[result.success ? WakeupStatus.Completed : WakeupStatus.Failed, wakeupId],
+			);
+		}
 	}
 
 	private async postFailurePing(
