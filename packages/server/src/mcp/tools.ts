@@ -22,10 +22,13 @@ import {
 	extensionOf,
 	extractBacktickedMentionCandidates,
 	getConnectorCapability,
+	INSTANCE_AGENT_SLUGS,
 	isAgentAuthorableAssetMime,
 	isMarkdownDocSlug,
 	normalizeAssetFilename,
+	REQUIRED_SYSTEM_PROMPT_VARS,
 	ReactionKind,
+	requiredSystemPromptVarsError,
 	SEARCH_SCOPES,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
@@ -1275,7 +1278,12 @@ export function registerTools(
 			approval_id: z.string().describe('Hire approval ID'),
 			title: z.string().optional().describe('Updated role title'),
 			role_description: z.string().optional().describe('Updated short role description'),
-			system_prompt: z.string().optional().describe('Updated system prompt'),
+			system_prompt: z
+				.string()
+				.optional()
+				.describe(
+					`Updated system prompt. If provided, it must keep every required substitution variable (${REQUIRED_SYSTEM_PROMPT_VARS.join(', ')}) or the revision is rejected.`,
+				),
 			default_effort: z
 				.string()
 				.optional()
@@ -1318,6 +1326,12 @@ export function registerTools(
 				return { error: 'Hire approval is already resolved' };
 			}
 
+			// A revised system prompt must keep the required substitution variables.
+			if (typeof args.system_prompt === 'string' && args.system_prompt.trim()) {
+				const promptError = requiredSystemPromptVarsError(args.system_prompt);
+				if (promptError) return { error: promptError };
+			}
+
 			const patch = buildHirePayloadPatch(args as HirePayloadPatchInput);
 
 			if (Object.keys(patch).length === 0) {
@@ -1342,7 +1356,12 @@ export function registerTools(
 			project: projectArg(),
 			title: z.string().describe('Role title (the slug is derived from it)'),
 			role_description: z.string().optional().describe('Short role description'),
-			system_prompt: z.string().optional().describe('Full system prompt for the new agent'),
+			system_prompt: z
+				.string()
+				.optional()
+				.describe(
+					`Full system prompt for the new agent. If provided, it MUST contain every required substitution variable (${REQUIRED_SYSTEM_PROMPT_VARS.join(', ')}) or the proposal is rejected — these inject the agent's identity, manager, and live skills/docs/preferences context. Author it in the style of the built-in role docs.`,
+				),
 			default_effort: z
 				.string()
 				.optional()
@@ -2530,7 +2549,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_agent_system_prompt',
-		"Read an agent's system prompt. Accessible by any agent or the admin in the same team. Returns the resolved role doc by default — `{{…}}` placeholders substituted with the real team name, mission, manager, KB, project docs, and team context — so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt.",
+		"Read an agent's system prompt. Accessible by any agent or the admin in the same team. Returns the resolved role doc by default — `{{…}}` placeholders substituted with the real team name, manager, skills, project docs, and team context — so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt.",
 		{
 			project: projectArg(),
 			agent_id: z.string().describe('Target agent — its slug (e.g. "engineer") or member ID'),
@@ -2646,7 +2665,11 @@ export function registerTools(
 		{
 			project: projectArg(),
 			agent_id: z.string().describe('Target agent — its slug (e.g. "engineer") or member ID'),
-			new_system_prompt: z.string().describe('The full updated system prompt'),
+			new_system_prompt: z
+				.string()
+				.describe(
+					`The full updated system prompt. It MUST keep every required substitution variable (${REQUIRED_SYSTEM_PROMPT_VARS.join(', ')}) — read the current prompt with get_agent_system_prompt(placeholders=false) first and preserve them, or the update is rejected. (The CEO and Coach are exempt.)`,
+				),
 			change_summary: z.string().describe('Summary of what changed and why'),
 		},
 		async (args, db, auth) => {
@@ -2665,12 +2688,22 @@ export function registerTools(
 			// (resolveAgentId's fallback) from being editable through a project team.
 			const agentId = await resolveAgentId(db, teamId, args.agent_id as string);
 			if (!agentId) return { error: 'Agent not found in this team' };
-			const agentCheck = await db.query<{ id: string }>(
-				`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
+			const agentCheck = await db.query<{ id: string; slug: string }>(
+				`SELECT ma.id, ma.slug FROM member_agents ma JOIN members m ON m.id = ma.id
 				 WHERE ma.id = $1 AND m.team_id = $2`,
 				[agentId, teamId],
 			);
 			if (agentCheck.rows.length === 0) return { error: 'Agent not found in this team' };
+
+			// A revised prompt must keep the required substitution variables.
+			// Instance singletons (CEO/Coach) are exempt — they have no in-team
+			// manager, so the {{reports_to}} requirement does not apply.
+			const targetSlug = agentCheck.rows[0].slug;
+			const isInstanceSingleton = (INSTANCE_AGENT_SLUGS as readonly string[]).includes(targetSlug);
+			if (!isInstanceSingleton) {
+				const promptError = requiredSystemPromptVarsError(args.new_system_prompt as string);
+				if (promptError) return { error: promptError };
+			}
 
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 

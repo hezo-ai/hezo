@@ -15,18 +15,16 @@
 <div class="field-label">System prompt</div>
 <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;">
 <button class="tpl-btn">Load template ▾</button>
-<button class="var-chip">{{team_name}}</button><button class="var-chip">{{team_mission}}</button><button class="var-chip">{{reports_to}}</button><button class="var-chip">{{project_context}}</button><button class="var-chip">{{kb_context}}</button><button class="var-chip">{{agent_role}}</button>
+<button class="var-chip">{{team_name}}</button><button class="var-chip">{{reports_to}}</button><button class="var-chip">{{skills_context}}</button><button class="var-chip">{{project_docs_context}}</button><button class="var-chip">{{team_preferences_context}}</button><button class="var-chip">{{team_description}}</button><button class="var-chip">{{current_date}}</button>
 </div>
-<textarea class="mono-editor">You are the {{agent_role}} at {{team_name}}.
+<textarea class="mono-editor">You are the Engineer at {{team_name}}.
 
-Team mission: {{team_mission}}
+You report to {{reports_to}}. Follow their direction unless it conflicts with the team's goals, in which case escalate.
 
-You report to {{reports_to}}. Follow their direction unless it conflicts with the team mission, in which case escalate to the Board.
-
-{{kb_context}}
+{{skills_context}}
 {{project_docs_context}}
 {{team_preferences_context}}</textarea>
-<div class="field-hint">Monospace editor. Insert variables using the chips above. Markdown supported.</div>
+<div class="field-hint">Monospace editor. Hover a variable chip for what it means; required variables must all be present. Markdown supported.</div>
 </div>
 <div style="margin-bottom:24px;">
 <div class="field-label">MCP servers (agent-level)</div>

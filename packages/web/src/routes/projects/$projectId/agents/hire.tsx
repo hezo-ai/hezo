@@ -6,7 +6,11 @@ import {
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { Check, Loader2, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { HireAgentForm, type HireFormValues } from '../../../../components/hire-agent-form';
+import {
+	HireAgentForm,
+	type HireFormValues,
+	missingRequiredVars,
+} from '../../../../components/hire-agent-form';
 import { Button } from '../../../../components/ui/button';
 import { useOnboardAgent } from '../../../../hooks/use-agents';
 import {
@@ -21,10 +25,29 @@ interface HireSearch {
 	approvalId?: string;
 }
 
+/**
+ * Default starter prompt for a new hire. It already contains every required
+ * substitution variable so the form starts in a valid, editable state.
+ */
+const STARTER_SYSTEM_PROMPT = `You are a new agent at {{team_name}}.
+
+You report to: {{reports_to}}.
+
+Describe this agent's role and responsibilities here.
+
+## Skills
+{{skills_context}}
+
+## Project documentation
+{{project_docs_context}}
+
+## Team preferences
+{{team_preferences_context}}`;
+
 const emptyValues: HireFormValues = {
 	title: '',
 	roleDesc: '',
-	systemPrompt: '',
+	systemPrompt: STARTER_SYSTEM_PROMPT,
 	budget: {
 		daily_budget_cents: 0,
 		weekly_budget_cents: 0,
@@ -108,7 +131,14 @@ function CreateHireForm({ projectId }: { projectId: string }) {
 						Cancel
 					</Button>
 				</Link>
-				<Button type="submit" disabled={!values.title.trim() || onboardAgent.isPending}>
+				<Button
+					type="submit"
+					disabled={
+						!values.title.trim() ||
+						missingRequiredVars(values.systemPrompt).length > 0 ||
+						onboardAgent.isPending
+					}
+				>
 					{onboardAgent.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
 					Hire agent
 				</Button>
@@ -129,6 +159,7 @@ function EditHireProposal({ projectId, approval }: { projectId: string; approval
 		[values, initial],
 	);
 	const busy = updateProposal.isPending || resolveApproval.isPending;
+	const promptInvalid = missingRequiredVars(values.systemPrompt).length > 0;
 
 	function backToAgents() {
 		navigate({ to: '/projects/$projectId/agents', params: { projectId } });
@@ -194,11 +225,20 @@ function EditHireProposal({ projectId, approval }: { projectId: string; approval
 				>
 					<X className="w-4 h-4" /> Deny
 				</Button>
-				<Button type="button" variant="secondary" disabled={busy || !dirty} onClick={handleSave}>
+				<Button
+					type="button"
+					variant="secondary"
+					disabled={busy || !dirty || promptInvalid}
+					onClick={handleSave}
+				>
 					{updateProposal.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
 					Save changes
 				</Button>
-				<Button type="button" disabled={busy || !values.title.trim()} onClick={handleApprove}>
+				<Button
+					type="button"
+					disabled={busy || !values.title.trim() || promptInvalid}
+					onClick={handleApprove}
+				>
 					{resolveApproval.isPending ? (
 						<Loader2 className="w-4 h-4 animate-spin" />
 					) : (

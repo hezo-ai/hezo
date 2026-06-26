@@ -389,7 +389,7 @@ Revise the draft of a pending hire approval. Captain-only. Use this to expand or
 | `approval_id` | `string` | Yes | Hire approval ID |
 | `title` | `string` | No | Updated role title |
 | `role_description` | `string` | No | Updated short role description |
-| `system_prompt` | `string` | No | Updated system prompt |
+| `system_prompt` | `string` | No | Updated system prompt. If provided, it must keep every required substitution variable ({{team_name}}, {{reports_to}}, {{skills_context}}, {{project_docs_context}}, {{team_preferences_context}}) or the revision is rejected. |
 | `default_effort` | `string` | No | Updated default effort: minimal, low, medium, high, max |
 | `heartbeat_interval_min` | `number` | No | Updated heartbeat interval (min) |
 | `monthly_budget_cents` | `number` | No | Updated monthly budget in cents |
@@ -412,7 +412,7 @@ File a new hire proposal. Callable by a team Captain (for its own team) or the C
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `title` | `string` | Yes | Role title (the slug is derived from it) |
 | `role_description` | `string` | No | Short role description |
-| `system_prompt` | `string` | No | Full system prompt for the new agent |
+| `system_prompt` | `string` | No | Full system prompt for the new agent. If provided, it MUST contain every required substitution variable ({{team_name}}, {{reports_to}}, {{skills_context}}, {{project_docs_context}}, {{team_preferences_context}}) or the proposal is rejected — these inject the agent's identity, manager, and live skills/docs/preferences context. Author it in the style of the built-in role docs. |
 | `default_effort` | `string` | No | Default reasoning effort: minimal, low, medium, high, max |
 | `heartbeat_interval_min` | `number` | No | Heartbeat interval (min) |
 | `daily_budget_cents` | `number` | No | Daily budget in cents |
@@ -465,7 +465,7 @@ Retire (disable) or reinstate (enable) an agent on a project's team. Callable by
 
 _Read-only._
 
-Read an agent's system prompt. Accessible by any agent or the admin in the same team. Returns the resolved role doc by default — `{{…}}` placeholders substituted with the real team name, mission, manager, KB, project docs, and team context — so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt.
+Read an agent's system prompt. Accessible by any agent or the admin in the same team. Returns the resolved role doc by default — `{{…}}` placeholders substituted with the real team name, manager, skills, project docs, and team context — so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt.
 
 **Parameters:**
 
@@ -508,7 +508,7 @@ Apply a system prompt change for an agent. Callable by the Coach agent (for afte
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `agent_id` | `string` | Yes | Target agent — its slug (e.g. "engineer") or member ID |
-| `new_system_prompt` | `string` | Yes | The full updated system prompt |
+| `new_system_prompt` | `string` | Yes | The full updated system prompt. It MUST keep every required substitution variable ({{team_name}}, {{reports_to}}, {{skills_context}}, {{project_docs_context}}, {{team_preferences_context}}) — read the current prompt with get_agent_system_prompt(placeholders=false) first and preserve them, or the update is rejected. (The CEO and Coach are exempt.) |
 | `change_summary` | `string` | Yes | Summary of what changed and why |
 
 **Returns:** `{ applied: true, document_id }`, or `{ error }` if denied or the agent is not in the team. A revision snapshot is stored so the admin can restore previous versions.

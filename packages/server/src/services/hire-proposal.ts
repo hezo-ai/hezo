@@ -6,6 +6,7 @@ import {
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
 	isAgentEffort,
 	isReservedAgentSlug,
+	requiredSystemPromptVarsError,
 } from '@hezo/shared';
 import { budgetWindowsError } from '../lib/budget-validation';
 import { toSlug } from '../lib/slug';
@@ -63,6 +64,12 @@ export async function prepareHireProposal(
 		monthly_budget_cents: input.monthly_budget_cents ?? DEFAULT_MONTHLY_BUDGET_CENTS,
 	});
 	if (budgetError) return { error: budgetError };
+
+	// A supplied prompt must keep the required substitution variables so the
+	// agent always receives its identity + live skills/docs/preferences context.
+	// An omitted/empty prompt keeps the existing default behaviour.
+	const promptError = requiredSystemPromptVarsError(input.system_prompt ?? '');
+	if (input.system_prompt?.trim() && promptError) return { error: promptError };
 
 	const slug = toSlug(title);
 	if (isReservedAgentSlug(slug)) {

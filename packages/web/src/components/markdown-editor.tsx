@@ -1,8 +1,51 @@
 import { type ReactNode, useRef, useState } from 'react';
 import { MarkdownProse } from './markdown-prose';
 import { MentionTextarea } from './mention-textarea';
+import { Tooltip } from './ui/tooltip';
 
 export type MarkdownEditorMode = 'edit' | 'preview';
+
+/**
+ * A template-variable chip. Clicking the token inserts it at the cursor; an
+ * optional `description` is surfaced as a tooltip (hover on desktop, tap on
+ * mobile). `required` marks vars the prompt must keep.
+ */
+export interface EditorChip {
+	token: string;
+	description?: string;
+	required?: boolean;
+}
+
+/** Renders one variable chip: insert-on-click + a tooltip explaining it. */
+function VarChip({ chip, onInsert }: { chip: EditorChip; onInsert: (token: string) => void }) {
+	const [open, setOpen] = useState(false);
+	const button = (
+		<button
+			type="button"
+			onClick={() => onInsert(chip.token)}
+			// Pointer enter/leave drives the tooltip on desktop; the tap handler
+			// (below, on touch there is no hover) toggles it on mobile.
+			onPointerEnter={() => setOpen(true)}
+			onPointerLeave={() => setOpen(false)}
+			onTouchStart={(e) => {
+				// Reveal the explanation on tap without also inserting on mobile.
+				e.preventDefault();
+				setOpen((o) => !o);
+			}}
+			aria-label={chip.description ? `${chip.token} — ${chip.description}` : chip.token}
+			className="text-[11px] px-2 py-0.5 rounded-md bg-info-soft text-info-soft-fg cursor-pointer hover:opacity-80"
+		>
+			{chip.token}
+			{chip.required && <span className="text-danger ml-0.5">*</span>}
+		</button>
+	);
+	if (!chip.description) return button;
+	return (
+		<Tooltip content={chip.description} open={open} onOpenChange={setOpen}>
+			{button}
+		</Tooltip>
+	);
+}
 
 interface MarkdownEditorProps {
 	value: string;
@@ -15,7 +58,7 @@ interface MarkdownEditorProps {
 	/** Helper text shown beneath the editor (edit mode only). */
 	helpText?: ReactNode;
 	/** Clickable chips that insert a token at the cursor — e.g. template variables. */
-	chips?: string[];
+	chips?: EditorChip[];
 
 	placeholder?: string;
 	/** Accessible name for the textarea; also how tests query it (findByLabelText). */
@@ -144,15 +187,8 @@ export function MarkdownEditor({
 				<>
 					{chips && chips.length > 0 && (
 						<div className="flex flex-wrap gap-1.5 mb-2">
-							{chips.map((token) => (
-								<button
-									key={token}
-									type="button"
-									onClick={() => insertChip(token)}
-									className="text-[11px] px-2 py-0.5 rounded-md bg-info-soft text-info-soft-fg cursor-pointer hover:opacity-80"
-								>
-									{token}
-								</button>
+							{chips.map((chip) => (
+								<VarChip key={chip.token} chip={chip} onInsert={insertChip} />
 							))}
 						</div>
 					)}

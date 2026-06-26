@@ -330,6 +330,24 @@ fails fast with a clear message rather than tripping over a raw 404 mid-exec. It
 interleaved stdout/stderr into `log_text` (capped at 1 MB, `[stderr]`-prefixed) and
 broadcasts the same stream live over the `project-runs:<projectId>` WebSocket room.
 
+**System prompt composition.** The agent's stored template (its `agent_system_prompt`
+document, loaded from its **home** team) is resolved per run by
+`services/template-resolver.ts`: `{{…}}` placeholders are substituted with live DB values
+(`{{team_name}}`, `{{reports_to}}` — wired to the instance CEO for a Captain via
+`linkTeamCaptainToInstanceCeo` — `{{skills_context}}`, `{{project_docs_context}}`,
+`{{team_preferences_context}}`, `{{team_description}}`, `{{team_context}}`,
+`{{current_date}}`, and the CEO-only `{{projects_context}}`), then the resolver appends the
+Run Context / Repository / Project State / Teammates blocks and `SHARED_INSTRUCTIONS`.
+Every surface that authors or edits a prompt — the hire proposal create/edit
+(`prepareHireProposal`, `PATCH /approvals`), direct agent create + `PATCH /agents`, and the
+`create_hire_proposal` / `update_agent_system_prompt` MCP tools — validates a supplied,
+non-empty prompt against `REQUIRED_SYSTEM_PROMPT_VARS` (`@hezo/shared` —
+`{{team_name}}`, `{{reports_to}}`, `{{skills_context}}`, `{{project_docs_context}}`,
+`{{team_preferences_context}}`) and rejects it (4xx / tool error) when one is missing, so an
+edited prompt can never silently drop the agent's identity or live context. The instance
+singletons (CEO/Coach) are exempt — they have no in-team manager. `{{team_context}}` is
+**not** required because the resolver auto-appends that block on every run regardless.
+
 **Containers & worktrees.** One container per project; the project's
 `<dataDir>/teams/<slug>/projects/<slug>/workspace/` bind-mounts to `/workspace`, with one
 subdirectory per linked repo. For each task the runner creates a `git worktree` at

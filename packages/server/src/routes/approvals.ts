@@ -1,4 +1,10 @@
-import { ApprovalStatus, ApprovalType, AuthType, wsRoom } from '@hezo/shared';
+import {
+	ApprovalStatus,
+	ApprovalType,
+	AuthType,
+	requiredSystemPromptVarsError,
+	wsRoom,
+} from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
@@ -188,6 +194,11 @@ approvalsRoutes.patch('/approvals/:approvalId', async (c) => {
 	}
 
 	const body = await c.req.json<HirePayloadPatchInput>();
+	// A revised system prompt must keep the required substitution variables.
+	if (body.system_prompt?.trim()) {
+		const promptError = requiredSystemPromptVarsError(body.system_prompt);
+		if (promptError) return err(c, 'INVALID_REQUEST', promptError, 400);
+	}
 	const patch = buildHirePayloadPatch(body);
 	if (Object.keys(patch).length === 0) {
 		return err(c, 'INVALID_REQUEST', 'No fields to update', 400);
