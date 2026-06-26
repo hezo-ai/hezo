@@ -5,6 +5,7 @@ import {
 	DEFAULT_EFFORT,
 	HQ_PROJECT_SLUG,
 	TaskStatus,
+	TERMINAL_TASK_STATUSES,
 } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { ChevronDown } from 'lucide-react';
@@ -252,8 +253,8 @@ export function TaskSidebar({
 					</select>
 				</div>
 
-				<div className="mt-auto pt-4 border-t border-border">
-					{task.status === TaskStatus.Closed ? (
+				<div className="mt-auto pt-4 border-t border-border space-y-2">
+					{(TERMINAL_TASK_STATUSES as readonly string[]).includes(task.status) && (
 						<Button
 							variant="secondary"
 							size="sm"
@@ -263,7 +264,8 @@ export function TaskSidebar({
 						>
 							Re-open task
 						</Button>
-					) : (
+					)}
+					{task.status !== TaskStatus.Closed && task.status !== TaskStatus.Cancelled && (
 						<Button
 							variant="danger-text"
 							size="sm"

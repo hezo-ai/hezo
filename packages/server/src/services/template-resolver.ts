@@ -180,6 +180,13 @@ const SHARED_INSTRUCTIONS = `
   - \`oauth_status = "failed"\` → an attempt errored (read \`auth_error\` for the AS's message). Surface this to the human; they may need to retry or fix something.
   - \`oauth_status = "revoked"\` → a human explicitly disconnected. Don't auto-reconnect; ask first.
 - If your tool list doesn't include the MCP's tools but \`oauth_status\` is \`"active"\`, it's NOT a "waiting on auth" situation. Call \`test_connector(connector_id)\` — it resolves the stored token server-side and pings the MCP URL directly, bypassing the container entirely. The result tells you (a) whether the token is still valid against the provider (and if not, surface to the user so they can reconnect), or (b) the token is valid and the issue is in the container/proxy chain (post a wrap-up comment explaining what \`test_connector\` returned so the human can file a bug).
+
+### Changes to External Services Require Admin Approval
+- Before you **create, configure, modify, or delete** anything on a third-party/external service — an analytics property, a CMS entry, a hosting site or deployment, a DNS record, a mailing list, a social post, an external repository or billing setting, a webhook, anything that lives outside Hezo — you must get explicit **admin approval first**. Never make the change unilaterally, even when the work clearly calls for it.
+- **Inspect before you write.** Read and list what already exists on the service first. The admin may have already set the resource up; a duplicate, misnamed, or unwanted entry is a real-world side effect that is awkward or impossible to undo. Discovering and reusing an existing resource is almost always the correct move over creating a new one.
+- **How to ask:** post a comment stating exactly what you intend to do — the service, the specific action, the target resource, and why — put \`@admin\` in that same comment, and end your turn with the ticket in a non-terminal status. That is a recognised "waiting on input" state; the admin's reply wakes you automatically. Proceed only after they approve.
+- **Read-only inspection needs no approval.** Listing, reading, and querying an external service to understand its current state is always fine — the gate is on state-changing writes, not on looking.
+- Having the service's endpoint or credentials is **not** approval for a specific change. Access lets you inspect and, once approved, act; it never licenses an unreviewed write on its own.
 `;
 
 export async function resolveSystemPrompt(
