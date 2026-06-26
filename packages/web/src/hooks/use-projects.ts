@@ -194,9 +194,31 @@ export interface ProjectIconResponse {
 }
 
 /**
+ * Seed the icon fields into the cached project detail + index from a server
+ * response, so the rail and settings reflect the change immediately rather than
+ * waiting for the invalidated queries to refetch (which races under load). The
+ * server returns the signed `icon_url`, so this is response-driven, not optimistic.
+ */
+function applyIconToCaches(projectId: string, icon: ProjectIconResponse) {
+	queryClient.setQueryData<Project>(queryKeys.projects.detail(projectId), (old) =>
+		old ? { ...old, icon_url: icon.icon_url, icon_updated_at: icon.icon_updated_at } : old,
+	);
+	queryClient.setQueryData<Project[]>(queryKeys.projects.all(), (old) =>
+		old?.map((p) =>
+			p.slug === projectId || p.id === projectId
+				? { ...p, icon_url: icon.icon_url, icon_updated_at: icon.icon_updated_at }
+				: p,
+		),
+	);
+	// Reconcile against the server (e.g. exact timestamps) without blocking the UI.
+	queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
+	queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
+}
+
+/**
  * Upload (or replace) a project's icon. `blob` is the already-normalized square
- * PNG produced client-side. Invalidates the project index + detail so the rail
- * and settings page re-render with the new signed `icon_url`.
+ * PNG produced client-side. The response carries the signed `icon_url`, which we
+ * write straight into the project caches so the rail and settings update at once.
  */
 export function useUploadProjectIcon(projectId: string) {
 	return useMutation<ProjectIconResponse, ApiError, Blob>({
@@ -205,19 +227,13 @@ export function useUploadProjectIcon(projectId: string) {
 			fd.set('file', blob, 'icon.png');
 			return api.putForm<ProjectIconResponse>(`/api/projects/${projectId}/icon`, fd);
 		},
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
-			queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
-		},
+		onSuccess: (data) => applyIconToCaches(projectId, data),
 	});
 }
 
 export function useRemoveProjectIcon(projectId: string) {
 	return useMutation<ProjectIconResponse, ApiError, void>({
 		mutationFn: () => api.delete<ProjectIconResponse>(`/api/projects/${projectId}/icon`),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
-			queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
-		},
+		onSuccess: () => applyIconToCaches(projectId, { icon_url: null, icon_updated_at: null }),
 	});
 }
