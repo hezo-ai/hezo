@@ -29,7 +29,13 @@ hezo --data-dir /var/lib/hezo    # use a specific data directory
 hezo --master-key "<phrase>"     # set up or unlock without the web gate
 hezo --web-url https://hezo.example.com   # public base URL for sign-in redirects
 hezo --no-open                   # don't open the web app in your browser on start
+hezo --container-bind-host 0.0.0.0  # native-Linux Docker: let agent containers reach the egress proxy/SSH bridge
 ```
+
+On **native-Linux Docker**, agent containers reach the host over the bridge gateway, so the
+host firewall must allow the Docker bridge to reach Hezo's ports and `--container-bind-host`
+must be set to a container-reachable interface. See
+[Self-hosting → Networking & firewall](/docs/deployment/self-hosting) for the details.
 
 On a desktop machine Hezo opens the web app in your default browser once the server is
 ready. It skips this automatically in environments without a browser — CI, containers,

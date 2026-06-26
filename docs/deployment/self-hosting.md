@@ -136,13 +136,73 @@ ownership of the bind-mounted workspace and per-run config. A custom
 user (root for most images), which also works; include a non-root user named `node`
 if you want agent-created files owned by a non-root uid on the host.
 
-## Ports
+## Networking & firewall
 
 - **3100** — the Hezo server and web app (configurable with `--port`).
 
-This is the only port Hezo listens on, and the only one that needs to be reachable by
-the people using Hezo. Account sign-ins (such as GitHub) use per-instance OAuth that the
-server brokers itself — there is no separate gateway service or port.
+That is the only port **people** need to reach — Hezo serves the web app and brokers
+account sign-ins (such as GitHub) itself, so there is no separate gateway service or port.
+
+### Container → host connectivity (native-Linux Docker)
+
+There is a second path that is easy to miss: agents run inside Docker containers and call
+**back to the host** for their tools and traffic. Each container reaches the host as
+`host.docker.internal` and must connect to:
+
+- **3100** — the MCP server (the agent's Hezo toolset) and, for git, the SSH bridge.
+- **20000–29999** — the per-run egress proxy (outbound API calls and secret substitution).
+
+On **Docker Desktop** (macOS/Windows) this just works — it tunnels `host.docker.internal`
+to the host. On **native-Linux Docker** `host.docker.internal` resolves to the *bridge
+gateway IP*, so two things have to be true or **every agent run hangs with no tools and the
+CEO chat reports its tools "aren't available"**:
+
+1. **The host firewall must let the Docker bridge reach the host.** Docker opens the path
+   for container→internet traffic but **not** container→host, so a default-deny firewall
+   (commonly `ufw`) silently drops it. The simplest correct rule trusts the bridge interface:
+
+   ```sh
+   sudo ufw allow in on docker0          # allow the Docker bridge to reach the host
+   sudo ufw reload
+   ```
+
+   To scope it tighter instead, open the specific ports (adjust `3100` if you changed
+   `--port`; git-over-SSH also uses an ephemeral high port, which the interface rule above
+   covers but a port list does not):
+
+   ```sh
+   sudo ufw allow in on docker0 to any port 3100 proto tcp
+   sudo ufw allow in on docker0 to any port 20000:29999 proto tcp
+   ```
+
+   On a custom bridge network, replace `docker0` with its interface
+   (`docker network inspect bridge -f '{{index .Options "com.docker.network.bridge.name"}}'`).
+   On raw `iptables`, insert matching `ACCEPT` rules for `-i docker0`. `firewalld` usually
+   trusts `docker0` already.
+
+2. **The egress proxy and SSH bridge must bind a container-reachable interface.** They
+   default to `127.0.0.1` (loopback — correct for Docker Desktop), which a container can't
+   reach via the bridge gateway. Set `--container-bind-host 0.0.0.0` (or the bridge gateway
+   IP) and let the firewall above restrict who can reach it:
+
+   ```sh
+   HEZO_CONTAINER_BIND_HOST=0.0.0.0 hezo     # or --container-bind-host 0.0.0.0
+   ```
+
+   The MCP server already listens on all interfaces, so step 1 alone restores the agent
+   toolset; step 2 is additionally needed for outbound proxied API calls, credentialed
+   requests, and git-over-SSH.
+
+Hezo runs a **boot-time connectivity check** — it starts a throwaway container, has it call
+back to the host, and logs the exact firewall / `--container-bind-host` fix if the path is
+blocked, so you see the problem at startup instead of as a stalled agent run. To verify by
+hand:
+
+```sh
+docker run --rm --add-host=host.docker.internal:host-gateway curlimages/curl \
+  curl -sv --max-time 5 http://host.docker.internal:3100/mcp
+# any HTTP response = reachable; a timeout = the firewall is dropping bridge→host
+```
 
 ## Updating
 
