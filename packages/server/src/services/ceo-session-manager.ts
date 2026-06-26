@@ -33,10 +33,7 @@ import {
 	createAgentChatParser,
 } from './agent-stream-parser';
 import { getProviderCredentialAndModel } from './ai-provider-keys';
-import {
-	checkContainerToHostConnectivity,
-	formatContainerConnectivityMessage,
-} from './container-connectivity-preflight';
+import { formatContainerConnectivityMessage } from './container-connectivity-preflight';
 import { CONNECTIVITY_STALE_MS, shouldAbortForConnectivity } from './container-connectivity-status';
 import type { ContainerLogStreamer } from './container-logs';
 import { type ContainerRunUser, resolveContainerRunUser } from './container-user';
@@ -385,16 +382,14 @@ export class CeoSessionManager {
 				// which releases the ssh bridge and records the session error. Fail open on
 				// ok/skipped/unknown (and when no status holder is wired).
 				const connectivityStatus = this.deps.connectivityStatus;
-				if (connectivityStatus) {
-					const probeBindHost = connectivityStatus.get().bindHost;
-					const status = await connectivityStatus.ensureFresh(async () => {
-						const { outcome } = await checkContainerToHostConnectivity({
-							docker: this.deps.docker,
-							serverPort: this.deps.serverPort,
-							containerBindHost: probeBindHost,
-						});
-						return { status: outcome, bindHost: probeBindHost };
-					}, CONNECTIVITY_STALE_MS);
+				const connectivityProbe = this.deps.connectivityProbe;
+				if (connectivityStatus && connectivityProbe) {
+					// Re-confirm a BAD cached outcome before blocking (maxAge 0): the probe
+					// auto-rebinds against the live bind host, so a stale/race-poisoned
+					// loopback result self-heals instead of blocking until restart.
+					const cached = connectivityStatus.get().status;
+					const maxAge = shouldAbortForConnectivity(cached) ? 0 : CONNECTIVITY_STALE_MS;
+					const status = await connectivityStatus.ensureFresh(connectivityProbe, maxAge);
 					if (shouldAbortForConnectivity(status)) {
 						const guidance = formatContainerConnectivityMessage(status, {
 							serverPort: this.deps.serverPort,

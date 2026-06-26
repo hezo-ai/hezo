@@ -224,15 +224,33 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	// Backgrounded + non-fatal: it must not gate readiness, and the web UI stays up
 	// so the operator can act on any residual guidance. No-ops under HEZO_SKIP_DOCKER
 	// (fake docker / tests) and the documented opt-out.
+	//
+	// One probe over the LIVE bind host, used by both the boot check and the per-run
+	// gate (agent-runner / CEO). Routing every probe through checkAndAutoRebindConnectivity
+	// means the gate always re-probes the current EffectiveBindHost (and rebinds if still
+	// on loopback), so a stale/race-poisoned loopback result self-heals on the next run
+	// instead of blocking until restart. The boot probe logs the auto-bind / outcome; the
+	// per-run gate stays quiet (logResult:false) — it surfaces failures via its abort message.
+	const makeConnectivityProbe = (logResult: boolean) => async () => {
+		const r = await checkAndAutoRebindConnectivity({
+			docker,
+			serverPort: config.port,
+			bindHost,
+			logResult,
+		});
+		return { status: r.outcome, bindHost: r.bindHost };
+	};
+	const connectivityProbe = makeConnectivityProbe(false);
+	// Boot via ensureFresh so an early run-time probe shares this single-flight (no race,
+	// no duplicate probe container). maxAge 0 forces the initial probe; the boot closure
+	// logs. Whichever ensureFresh starts first wins — boot starts here, before any request.
 	trackBackground(
-		checkAndAutoRebindConnectivity({ docker, serverPort: config.port, bindHost })
-			.then((r) => connectivityStatus.set(r.outcome, r.bindHost))
-			.catch((err) => {
-				log.info('container→host connectivity check failed', {
-					error: err instanceof Error ? err.message : String(err),
-				});
-				connectivityStatus.set('skipped', bindHost.get());
-			}),
+		connectivityStatus.ensureFresh(makeConnectivityProbe(true), 0).catch((err) => {
+			log.info('container→host connectivity check failed', {
+				error: err instanceof Error ? err.message : String(err),
+			});
+			connectivityStatus.set('skipped', bindHost.get());
+		}),
 	);
 	const events = new DomainEventBus();
 	const jobManager = new JobManager({
@@ -249,6 +267,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		egressProxy,
 		egressCAPath: egressCA.certPath,
 		connectivityStatus,
+		connectivityProbe,
 		pricing,
 	});
 	const ceoSessionManager = new CeoSessionManager({
@@ -264,6 +283,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		egressProxy,
 		egressCAPath: egressCA.certPath,
 		connectivityStatus,
+		connectivityProbe,
 		containerLogStreamer,
 	});
 

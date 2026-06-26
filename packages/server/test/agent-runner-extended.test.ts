@@ -27,6 +27,7 @@ import { NETWORKING_DOCS_URL } from '../src/services/container-connectivity-pref
 import {
 	type ConnectivityStatus,
 	ContainerConnectivityStatus,
+	type ProbeResult,
 } from '../src/services/container-connectivity-status';
 import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
@@ -354,12 +355,23 @@ describe('runAgent — egress proxy + ssh agent env injection', () => {
 });
 
 describe('runAgent — egress connectivity gate', () => {
-	// A fresh status holder preset to `s` (so ensureFresh hits the cache and never
-	// boots a probe container). `unknown` is left unset.
+	// A status holder preset to `s` (fresh). `unknown` is left unset.
 	function presetStatus(s: ConnectivityStatus): ContainerConnectivityStatus {
 		const status = new ContainerConnectivityStatus('127.0.0.1');
 		if (s !== 'unknown') status.set(s, '127.0.0.1');
 		return status;
+	}
+
+	// A fake run-time probe (stands in for the auto-rebind closure from startup).
+	function fakeProbe(result: ProbeResult) {
+		const calls = { count: 0 };
+		return {
+			calls,
+			fn: async () => {
+				calls.count++;
+				return result;
+			},
+		};
 	}
 
 	const okDocker = () =>
@@ -369,18 +381,42 @@ describe('runAgent — egress connectivity gate', () => {
 			execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 		});
 
-	it.each([
-		'bind-loopback',
-		'bind-firewalled',
-		'mcp-unreachable',
-	] as const)('aborts (without allocating egress) when the proxy is unreachable: %s', async (badStatus) => {
+	it('self-heals a stale/race-poisoned bind-loopback cache by re-probing the live bind host', async () => {
+		// The production bug: connectivityStatus stuck at bind-loopback@127.0.0.1 while
+		// the proxy is actually bound+reachable at the gateway. A bad cache must re-probe,
+		// and the auto-rebind probe reports ok@172.17.0.1 → the run proceeds.
 		const egress = fakeEgressProxy();
 		const ssh = fakeSshAgentServer();
+		const probe = fakeProbe({ status: 'ok', bindHost: '172.17.0.1' });
 		const deps = baseDeps(okDocker(), {
 			egressProxy: egress.proxy,
 			egressCAPath: '/tmp/test-data/egress-ca.crt',
 			sshAgentServer: ssh.server,
-			connectivityStatus: presetStatus(badStatus),
+			connectivityStatus: presetStatus('bind-loopback'),
+			connectivityProbe: probe.fn,
+		});
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		expect(result.success).toBe(true);
+		expect(probe.calls.count).toBe(1); // bad cache forced a re-probe
+		expect(egress.calls.allocated).toContain(result.heartbeatRunId);
+	});
+
+	it.each([
+		'bind-loopback',
+		'bind-firewalled',
+		'mcp-unreachable',
+	] as const)('aborts (without allocating egress) when the proxy is genuinely unreachable: %s', async (bad) => {
+		const egress = fakeEgressProxy();
+		const ssh = fakeSshAgentServer();
+		const probe = fakeProbe({ status: bad, bindHost: '127.0.0.1' });
+		const deps = baseDeps(okDocker(), {
+			egressProxy: egress.proxy,
+			egressCAPath: '/tmp/test-data/egress-ca.crt',
+			sshAgentServer: ssh.server,
+			connectivityStatus: presetStatus(bad),
+			connectivityProbe: probe.fn,
 		});
 
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
@@ -393,17 +429,35 @@ describe('runAgent — egress connectivity gate', () => {
 		expect(ssh.calls.released).toContain(result.heartbeatRunId);
 	});
 
-	it.each([
-		'ok',
-		'skipped',
-	] as const)('proceeds and allocates egress when connectivity is fine: %s', async (goodStatus) => {
+	it('short-circuits a fresh good cache without re-probing', async () => {
+		const egress = fakeEgressProxy();
+		const ssh = fakeSshAgentServer();
+		const status = new ContainerConnectivityStatus('172.17.0.1');
+		status.set('ok', '172.17.0.1'); // fresh ok
+		const probe = fakeProbe({ status: 'mcp-unreachable', bindHost: '127.0.0.1' }); // would abort if called
+		const deps = baseDeps(okDocker(), {
+			egressProxy: egress.proxy,
+			egressCAPath: '/tmp/test-data/egress-ca.crt',
+			sshAgentServer: ssh.server,
+			connectivityStatus: status,
+			connectivityProbe: probe.fn,
+		});
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		expect(result.success).toBe(true);
+		expect(probe.calls.count).toBe(0); // fresh ok → no probe
+		expect(egress.calls.allocated).toContain(result.heartbeatRunId);
+	});
+
+	it('fails open (allocates egress) when the probe is not wired (back-compat)', async () => {
 		const egress = fakeEgressProxy();
 		const ssh = fakeSshAgentServer();
 		const deps = baseDeps(okDocker(), {
 			egressProxy: egress.proxy,
 			egressCAPath: '/tmp/test-data/egress-ca.crt',
 			sshAgentServer: ssh.server,
-			connectivityStatus: presetStatus(goodStatus),
+			connectivityStatus: presetStatus('bind-loopback'), // present, but no probe → gate skipped
 		});
 
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
@@ -412,7 +466,7 @@ describe('runAgent — egress connectivity gate', () => {
 		expect(egress.calls.allocated).toContain(result.heartbeatRunId);
 	});
 
-	it('fails open (allocates egress) when no connectivity status holder is wired', async () => {
+	it('fails open when no connectivity status holder is wired', async () => {
 		const egress = fakeEgressProxy();
 		const ssh = fakeSshAgentServer();
 		const deps = baseDeps(okDocker(), {

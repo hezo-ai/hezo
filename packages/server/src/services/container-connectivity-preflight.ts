@@ -410,6 +410,10 @@ export interface AutoRebindDeps {
 	bindHost: { get(): string; set(host: string): void };
 	/** Injectable for tests; defaults to the real preflight. */
 	check?: (deps: ConnectivityCheckDeps) => Promise<ConnectivityCheckResult>;
+	/** Whether to log the final outcome / auto-bind notice (default true). Set false
+	 * for per-run gate re-probes, which call this on every CEO/agent start and would
+	 * otherwise spam the log; the gate surfaces a bad outcome via its abort message. */
+	logResult?: boolean;
 }
 
 /**
@@ -436,18 +440,23 @@ export async function checkAndAutoRebindConnectivity(
 	let outcome = first.outcome;
 	let bindHost = deps.bindHost.get();
 
+	const logResult = deps.logResult !== false;
 	const rebindTo = resolveAutoRebindTarget(first, bindHost);
 	if (rebindTo) {
-		log.info(
-			`Egress proxy / SSH bridge auto-bound to docker bridge gateway ${rebindTo} ` +
-				`(a container could not reach the loopback bind). Override with --container-bind-host.`,
-		);
+		if (logResult) {
+			log.info(
+				`Egress proxy / SSH bridge auto-bound to docker bridge gateway ${rebindTo} ` +
+					`(a container could not reach the loopback bind). Override with --container-bind-host.`,
+			);
+		}
 		deps.bindHost.set(rebindTo);
 		const second = await probe(rebindTo);
 		outcome = second.outcome;
 		bindHost = rebindTo;
 	}
 
-	logConnectivityOutcome(outcome, { serverPort: deps.serverPort, containerBindHost: bindHost });
+	if (logResult) {
+		logConnectivityOutcome(outcome, { serverPort: deps.serverPort, containerBindHost: bindHost });
+	}
 	return { outcome, bindHost };
 }
