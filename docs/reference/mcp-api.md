@@ -472,7 +472,7 @@ Read an agent's system prompt. Accessible by any agent or the admin in the same 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `agent_id` | `string` | Yes | Target agent member ID |
+| `agent_id` | `string` | Yes | Target agent — its slug (e.g. "engineer") or member ID |
 | `placeholders` | `boolean` | No | When true (default) substitutes `{{…}}` placeholders with real team/team values. When false returns the raw stored template — needed when reading before update_agent_system_prompt so placeholders survive the round-trip. |
 
 **Returns:** `{ title, slug, system_prompt }`, or `{ error }` if the agent is not in the team. By default `{{…}}` placeholders are resolved; pass `placeholders: false` for the raw stored template.
@@ -507,7 +507,7 @@ Apply a system prompt change for an agent. Callable by the Coach agent (for afte
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `agent_id` | `string` | Yes | Target agent member ID |
+| `agent_id` | `string` | Yes | Target agent — its slug (e.g. "engineer") or member ID |
 | `new_system_prompt` | `string` | Yes | The full updated system prompt |
 | `change_summary` | `string` | Yes | Summary of what changed and why |
 
@@ -526,7 +526,7 @@ Save a short human-readable summary for an agent (≤1000 chars, single paragrap
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `agent_id` | `string` | Yes | Target agent member ID |
+| `agent_id` | `string` | Yes | Target agent — its slug (e.g. "engineer") or member ID |
 | `summary` | `string` | Yes | The new summary, ≤1000 chars |
 
 **Returns:** `{ updated: true }`, or `{ error }` (summary empty, over 1000 chars, or agent not in team).
@@ -561,7 +561,7 @@ Save the team-relationships context for an agent (≤6000 chars, plain prose, se
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `agent_id` | `string` | Yes | Target agent member ID |
+| `agent_id` | `string` | Yes | Target agent — its slug (e.g. "engineer") or member ID |
 | `content` | `string` | Yes | The new team_context, ≤6000 chars |
 
 **Returns:** `{ updated: true }`, or `{ error }` (content empty, over 6000 chars, or agent not in team).
@@ -579,7 +579,7 @@ Read an agent's stored team-relationships context. Useful for the Captain when r
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `agent_id` | `string` | Yes | Target agent member ID |
+| `agent_id` | `string` | Yes | Target agent — its slug (e.g. "engineer") or member ID |
 
 **Returns:** `{ title, slug, team_context }`, or `{ error }` if the agent is not in the team.
 
