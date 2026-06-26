@@ -6,7 +6,7 @@ import { useMemo, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { useProjectMeta } from '../hooks/use-projects';
 import { useCreateTask } from '../hooks/use-tasks';
-import { MentionTextarea } from './mention-textarea';
+import { MarkdownEditor } from './markdown-editor';
 import { Button } from './ui/button';
 import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
 import { Input } from './ui/input';
@@ -86,13 +86,16 @@ export function CreateTaskDialog({ projectId, open, onOpenChange }: CreateTaskDi
 							onChange={(e) => setTitle(e.target.value)}
 							required
 						/>
-						<MentionTextarea
+						<MarkdownEditor
 							projectId={projectId}
 							projectSlug={project?.slug}
 							label="Description"
+							ariaLabel="Description"
 							value={description}
-							onChange={(e) => setDescription(e.target.value)}
+							onChange={setDescription}
 							placeholder="Optional"
+							previewClassName="min-h-[72px]"
+							emptyPreviewText="_(nothing to preview)_"
 						/>
 
 						<label className="flex flex-col gap-1.5">

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { Task, useUpdateTask } from '../../hooks/use-tasks';
+import { MarkdownEditor } from '../markdown-editor';
 import { MarkdownProse } from '../markdown-prose';
-import { MentionTextarea } from '../mention-textarea';
 import { Button } from '../ui/button';
 import { InfoTooltip } from '../ui/info-tooltip';
 
@@ -57,12 +57,15 @@ export function TaskSummary({ task, projectId, taskProjectSlug, updateTask }: Ta
 				</div>
 				{editingSummary ? (
 					<div className="flex flex-col gap-2">
-						<MentionTextarea
+						<MarkdownEditor
+							ariaLabel="Progress Summary"
 							projectId={projectId}
 							projectSlug={taskProjectSlug}
 							value={summaryText}
-							onChange={(e) => setSummaryText(e.target.value)}
+							onChange={setSummaryText}
 							className="min-h-[60px]"
+							previewClassName="min-h-[60px]"
+							emptyPreviewText="_(nothing to preview)_"
 						/>
 						<div className="flex gap-2 justify-end">
 							<Button size="sm" variant="secondary" onClick={() => setEditingSummary(false)}>
@@ -120,13 +123,16 @@ export function TaskSummary({ task, projectId, taskProjectSlug, updateTask }: Ta
 				</div>
 				{editingRules ? (
 					<div className="flex flex-col gap-2">
-						<MentionTextarea
+						<MarkdownEditor
+							ariaLabel="Rules"
 							projectId={projectId}
 							projectSlug={taskProjectSlug}
 							value={rulesText}
-							onChange={(e) => setRulesText(e.target.value)}
+							onChange={setRulesText}
 							placeholder="e.g., Consult the architect before making changes..."
 							className="min-h-[60px]"
+							previewClassName="min-h-[60px]"
+							emptyPreviewText="_(nothing to preview)_"
 						/>
 						<div className="flex gap-2 justify-end">
 							<Button size="sm" variant="secondary" onClick={() => setEditingRules(false)}>

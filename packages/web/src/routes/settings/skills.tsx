@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { ExternalLink, Loader2, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { MarkdownProse } from '../../components/markdown-prose';
+import { MarkdownEditor } from '../../components/markdown-editor';
 import { RevisionsPanel } from '../../components/revisions-panel';
 import { SettingsBreadcrumb } from '../../components/settings-breadcrumb';
 import { Badge } from '../../components/ui/badge';
@@ -37,7 +37,6 @@ function InstanceSkillsPage() {
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
 	const [content, setContent] = useState('');
-	const [contentMode, setContentMode] = useState<'edit' | 'preview'>('edit');
 	const [tags, setTags] = useState('');
 	const [error, setError] = useState<string | null>(null);
 
@@ -61,7 +60,6 @@ function InstanceSkillsPage() {
 		setName('');
 		setDescription('');
 		setContent('');
-		setContentMode('edit');
 		setTags('');
 		setError(null);
 	}
@@ -176,59 +174,20 @@ function InstanceSkillsPage() {
 							value={description}
 							onChange={(e) => setDescription(e.target.value)}
 						/>
-						<div className="flex items-center justify-between">
-							<span className="text-[13px] text-text-2">Content (markdown)</span>
-							<div
-								role="tablist"
-								aria-label="Content view mode"
-								className="inline-flex rounded-md border border-border-subtle bg-surface-2 p-0.5 text-xs"
-							>
-								<button
-									type="button"
-									role="tab"
-									aria-selected={contentMode === 'edit'}
-									onClick={() => setContentMode('edit')}
-									className={`px-2.5 py-1 rounded ${
-										contentMode === 'edit'
-											? 'bg-surface text-text-1 shadow-sm'
-											: 'text-text-2 hover:text-text-1'
-									}`}
-								>
-									Edit
-								</button>
-								<button
-									type="button"
-									role="tab"
-									aria-selected={contentMode === 'preview'}
-									onClick={() => setContentMode('preview')}
-									className={`px-2.5 py-1 rounded ${
-										contentMode === 'preview'
-											? 'bg-surface text-text-1 shadow-sm'
-											: 'text-text-2 hover:text-text-1'
-									}`}
-								>
-									Preview
-								</button>
-							</div>
-						</div>
-						{contentMode === 'edit' ? (
-							<textarea
-								aria-label="Skill content"
-								placeholder="Skill content (markdown)"
-								value={content}
-								onChange={(e) => setContent(e.target.value)}
-								required
-								rows={10}
-								className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] font-mono focus:outline-none focus:ring-1 focus:ring-accent"
-							/>
-						) : (
-							<div
-								data-testid="skill-content-preview"
-								className="min-h-[200px] rounded-md border border-border bg-surface-2 px-3 py-2 text-sm"
-							>
-								<MarkdownProse>{content || '_(nothing to preview)_'}</MarkdownProse>
-							</div>
-						)}
+						<MarkdownEditor
+							label="Content (markdown)"
+							labelClassName="text-[13px] text-text-2"
+							ariaLabel="Skill content"
+							placeholder="Skill content (markdown)"
+							value={content}
+							onChange={setContent}
+							required
+							rows={10}
+							className="font-mono"
+							previewClassName="min-h-[200px]"
+							previewTestId="skill-content-preview"
+							emptyPreviewText="_(nothing to preview)_"
+						/>
 						{error && <p className="text-[13px] text-danger">{error}</p>}
 						<div className="flex gap-2">
 							<Button
