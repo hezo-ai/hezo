@@ -235,6 +235,11 @@ describe('template resolver', () => {
 		expect(result).toContain('### @-Mentions, Linking & Handoffs');
 		expect(result).toContain('### Knowledge Maintenance');
 		expect(result).toContain('### Sub-Agents & Parallel Exploration');
+		// Before doing assigned work, an agent must first decide whether parts of it
+		// belong to a direct report and delegate rather than absorbing it all —
+		// acute on "redo / revise / fix" assignments that re-do the team's prior work.
+		expect(result).toContain('### Decide Who Owns the Work Before Defaulting to Doing It Yourself');
+		expect(result).toContain('redo / revise / fix');
 		expect(result).toContain('### Sub-Tasks & Delegation');
 		// A defect in the agent's own in-flight deliverable must be fixed on the
 		// current ticket, not offloaded into a sub-task/peer ticket (PR-cascade fix).
