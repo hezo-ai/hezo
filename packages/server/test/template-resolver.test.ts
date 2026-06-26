@@ -143,6 +143,11 @@ describe('template resolver', () => {
 		expect(result).toContain('not the filesystem');
 		expect(result).toContain('/workspace/.hezo/project-docs');
 
+		// It also names the *write* path so agents don't reflexively reach for the
+		// Edit/Write file tools when they go to change a doc (they target disk).
+		expect(result).toContain('write_project_doc(filename, content)');
+		expect(result).toContain('will not touch these');
+
 		// Titled doc (architecture-guidelines.md is seeded by createTestProject with a non-empty title).
 		expect(result).toMatch(
 			/- architecture-guidelines\.md — Architecture Guidelines \(updated \d{4}-\d{2}-\d{2}\)/,
