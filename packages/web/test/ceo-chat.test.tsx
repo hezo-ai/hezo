@@ -372,3 +372,152 @@ test('a user message is shown as typed, not parsed as markdown', async () => {
 	expect(bubble.querySelector('strong')).toBeNull();
 	expect(bubble.querySelector('code')).toBeNull();
 });
+
+test('the copy button writes the whole conversation to the clipboard, labelled by speaker', async () => {
+	const { findByTestId, user } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+
+	seedConversation([
+		{
+			id: 'u1',
+			role: 'user',
+			channel: 'web',
+			status: 'complete',
+			content: 'What is blocked?',
+			created_at: now(),
+		},
+		{
+			id: 'a1',
+			role: 'assistant',
+			channel: 'web',
+			status: 'complete',
+			content: 'Nothing is blocked right now.',
+			created_at: now(),
+		},
+	]);
+
+	const copyBtn = (await findByTestId('ceo-chat-copy')) as HTMLButtonElement;
+	expect(copyBtn.getAttribute('aria-label')).toBe('Copy conversation');
+
+	const writes: string[] = [];
+	const originalDesc = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+	Object.defineProperty(navigator, 'clipboard', {
+		configurable: true,
+		value: {
+			writeText: async (t: string) => {
+				writes.push(t);
+			},
+		},
+	});
+	try {
+		await user.click(copyBtn);
+		// Each turn is prefixed with its speaker and separated by a blank line.
+		expect(writes).toEqual(['You: What is blocked?\n\nCEO · HQ: Nothing is blocked right now.']);
+		// The icon swaps to a check — the aria-label flips to "Conversation copied".
+		await waitFor(() => expect(copyBtn.getAttribute('aria-label')).toBe('Conversation copied'));
+	} finally {
+		if (originalDesc) Object.defineProperty(navigator, 'clipboard', originalDesc);
+		else delete (navigator as { clipboard?: unknown }).clipboard;
+	}
+});
+
+test('the copy button is disabled until the conversation has a message', async () => {
+	const { findByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+
+	// Empty conversation → nothing to copy yet.
+	expect(((await findByTestId('ceo-chat-copy')) as HTMLButtonElement).disabled).toBe(true);
+
+	// Once a message lands, the affordance enables.
+	seedConversation([
+		{
+			id: 'u1',
+			role: 'user',
+			channel: 'web',
+			status: 'complete',
+			content: 'Hi',
+			created_at: now(),
+		},
+	]);
+	await waitFor(() =>
+		expect((getByTestId('ceo-chat-copy') as HTMLButtonElement).disabled).toBe(false),
+	);
+});
+
+test('each message has its own copy button that copies only that message', async () => {
+	const { findByTestId, findAllByTestId, user } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+
+	seedConversation([
+		{
+			id: 'u1',
+			role: 'user',
+			channel: 'web',
+			status: 'complete',
+			content: 'First, the question',
+			created_at: now(),
+		},
+		{
+			id: 'a1',
+			role: 'assistant',
+			channel: 'web',
+			status: 'complete',
+			content: 'Then, the answer',
+			created_at: now(),
+		},
+	]);
+
+	// One copy affordance per message — for the operator's turn and the CEO's alike.
+	const copyButtons = await findAllByTestId('ceo-chat-message-copy');
+	expect(copyButtons).toHaveLength(2);
+	expect(copyButtons[0].getAttribute('aria-label')).toBe('Copy message');
+
+	const writes: string[] = [];
+	const originalDesc = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+	Object.defineProperty(navigator, 'clipboard', {
+		configurable: true,
+		value: {
+			writeText: async (t: string) => {
+				writes.push(t);
+			},
+		},
+	});
+	try {
+		// Copying the CEO reply writes only that message's text — no speaker label
+		// and none of the other turns.
+		await user.click(copyButtons[1]);
+		expect(writes).toEqual(['Then, the answer']);
+		// The check confirms on the button that was clicked…
+		await waitFor(() => expect(copyButtons[1].getAttribute('aria-label')).toBe('Message copied'));
+		// …and only that one — the sibling stays idle.
+		expect(copyButtons[0].getAttribute('aria-label')).toBe('Copy message');
+	} finally {
+		if (originalDesc) Object.defineProperty(navigator, 'clipboard', originalDesc);
+		else delete (navigator as { clipboard?: unknown }).clipboard;
+	}
+});
+
+test('a streaming reply shows no per-message copy button until it settles', async () => {
+	const { findByTestId, findByText, queryAllByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+
+	seedConversation([
+		{
+			id: 'a1',
+			role: 'assistant',
+			channel: 'web',
+			status: 'streaming',
+			content: 'Working on it',
+			created_at: now(),
+		},
+	]);
+
+	await findByText('Working on it');
+	// Mid-stream the trailing dots stand in; the copy affordance only appears once
+	// the reply is complete.
+	expect(queryAllByTestId('ceo-chat-message-copy')).toHaveLength(0);
+});

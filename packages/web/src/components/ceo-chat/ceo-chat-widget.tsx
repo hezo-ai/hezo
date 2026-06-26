@@ -1,9 +1,19 @@
 import { HQ_PROJECT_NAME } from '@hezo/shared';
-import { ArrowRight, Loader2, Maximize2, MessageSquare, Minimize2, X } from 'lucide-react';
+import {
+	ArrowRight,
+	Check,
+	Copy,
+	Loader2,
+	Maximize2,
+	MessageSquare,
+	Minimize2,
+	X,
+} from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { type CeoMessage, useCeoChat } from '../../hooks/use-ceo-chat';
 import { useContainerHealth } from '../../hooks/use-container-health';
 import { useHqProject } from '../../hooks/use-projects';
+import { copyToClipboard } from '../../lib/clipboard';
 import { HqContainerNotice } from '../hq-container-notice';
 import { MarkdownProse } from '../markdown-prose';
 import { CountOverlayBadge } from '../ui/count-overlay-badge';
@@ -26,8 +36,10 @@ export function CeoChatWidget() {
 	// stays openable but swaps its body for the container state + a link to fix it.
 	const blockedHealth = hqHealth && hqHealth.kind !== 'healthy' ? hqHealth : null;
 	const [draft, setDraft] = useState('');
+	const [copied, setCopied] = useState(false);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
+	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const lastId = messages.at(-1)?.id;
 	const lastLen = messages.at(-1)?.content.length ?? 0;
@@ -61,11 +73,32 @@ export function CeoChatWidget() {
 		el.style.height = `${el.scrollHeight}px`;
 	}, [draft, open]);
 
+	// Clear the "copied" reset timer on unmount so it can't fire into a gone component.
+	useEffect(() => {
+		return () => {
+			if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+		};
+	}, []);
+
 	const submit = () => {
 		const text = draft.trim();
 		if (!text) return;
 		setDraft('');
 		send(text).catch(() => undefined);
+	};
+
+	// Copy the whole conversation as plain text, each turn labelled by speaker.
+	const copyConversation = async () => {
+		const transcript = messages
+			.filter((m) => m.content.trim().length > 0)
+			.map((m) => `${m.role === 'assistant' ? `CEO · ${HQ_PROJECT_NAME}` : 'You'}: ${m.content}`)
+			.join('\n\n');
+		if (!transcript) return;
+		if (await copyToClipboard(transcript)) {
+			setCopied(true);
+			if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+			copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
+		}
 	};
 
 	if (!open) {
@@ -120,6 +153,18 @@ export function CeoChatWidget() {
 						</span>
 					</div>
 					<div className="flex items-center gap-1">
+						{/* Copy the full transcript to the clipboard. Disabled until there's
+					    something to copy; the icon flips to a check for 2s on success. */}
+						<button
+							type="button"
+							onClick={copyConversation}
+							disabled={messages.length === 0}
+							aria-label={copied ? 'Conversation copied' : 'Copy conversation'}
+							data-testid="ceo-chat-copy"
+							className="flex h-9 w-9 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1 disabled:pointer-events-none disabled:opacity-40"
+						>
+							{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+						</button>
 						{/* Expand/collapse is desktop-only; the panel is already near-full-screen
 					    on mobile, where the toggle would be a no-op. */}
 						<button
@@ -233,7 +278,7 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 		}
 		return (
 			<div
-				className="flex max-w-[90%] flex-col gap-1"
+				className="group flex max-w-[90%] flex-col gap-1"
 				data-testid="ceo-chat-message"
 				data-role="ceo"
 			>
@@ -256,13 +301,18 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 				{/* Reply has begun but the CEO is still working → dots sit just below
 				    the same bubble. */}
 				{streaming && <StreamingDots />}
+				{/* Once the reply has settled, a hover-revealed copy affordance for this
+				    single message sits just under the bubble. */}
+				{!streaming && message.content.length > 0 && (
+					<MessageCopyButton text={message.content} align="start" />
+				)}
 			</div>
 		);
 	}
 
 	return (
 		<div
-			className="flex max-w-[90%] flex-col items-end gap-1 self-end"
+			className="group flex max-w-[90%] flex-col items-end gap-1 self-end"
 			data-testid="ceo-chat-message"
 			data-role="user"
 		>
@@ -270,7 +320,47 @@ function MessageBubble({ message }: { message: CeoMessage }) {
 			<div className="rounded-2xl rounded-br-sm bg-inverse px-3.5 py-2.5 text-sm leading-relaxed text-inverse-fg whitespace-pre-wrap">
 				{message.content}
 			</div>
+			{message.content.length > 0 && <MessageCopyButton text={message.content} align="end" />}
 		</div>
+	);
+}
+
+/**
+ * A mini copy affordance for a single message, fading in when its bubble is
+ * hovered (or the button is focused). Each instance tracks its own copied state
+ * so the check only flips on the message you actually copied. Keyed on hover
+ * *capability*, not screen size: pointer devices hide it until the bubble is
+ * hovered; touch devices (no hover, any size) keep it visible so it stays
+ * reachable. `group-hover` is itself auto-scoped to `(hover: hover)` by Tailwind.
+ */
+function MessageCopyButton({ text, align }: { text: string; align: 'start' | 'end' }) {
+	const [copied, setCopied] = useState(false);
+	const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(() => {
+		return () => {
+			if (timeoutRef.current) clearTimeout(timeoutRef.current);
+		};
+	}, []);
+
+	const handleCopy = async () => {
+		if (await copyToClipboard(text)) {
+			setCopied(true);
+			if (timeoutRef.current) clearTimeout(timeoutRef.current);
+			timeoutRef.current = setTimeout(() => setCopied(false), 1500);
+		}
+	};
+
+	return (
+		<button
+			type="button"
+			onClick={handleCopy}
+			aria-label={copied ? 'Message copied' : 'Copy message'}
+			data-testid="ceo-chat-message-copy"
+			className={`${align === 'end' ? 'self-end' : 'self-start'} flex h-6 w-6 items-center justify-center rounded-md text-text-3 opacity-100 transition-opacity hover:bg-surface-2 hover:text-text-1 focus-visible:opacity-100 [@media(hover:hover)]:opacity-0 group-hover:opacity-100`}
+		>
+			{copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+		</button>
 	);
 }
 
