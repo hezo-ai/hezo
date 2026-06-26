@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.7.0 - 2026-06-26
+
+### Features
+
+- **egress:** gated request-body secret substitution for credential-in-body logins ([#445](https://github.com/hezo-ai/hezo/pull/445))
+- **assets:** allow markdown as a project asset with rendered viewer ([#442](https://github.com/hezo-ai/hezo/pull/442))
+- enforce required system-prompt vars, remove {{team_mission}} ([#436](https://github.com/hezo-ai/hezo/pull/436))
+- **credentials:** auto-fill suggested allowed hosts on credential requests ([#437](https://github.com/hezo-ai/hezo/pull/437))
+- add project icon upload ([#435](https://github.com/hezo-ai/hezo/pull/435))
+- **hire:** show hire proposals as task comments; stop auto-closing the ticket ([#434](https://github.com/hezo-ai/hezo/pull/434))
+- **web:** reusable markdown edit/preview component ([#432](https://github.com/hezo-ai/hezo/pull/432))
+- live CEO processing dots in header + project rail updates on create ([#429](https://github.com/hezo-ai/hezo/pull/429))
+- add copy buttons to the CEO chat ([#423](https://github.com/hezo-ai/hezo/pull/423))
+- auto-grow the CEO chat composer with multi-line input ([#422](https://github.com/hezo-ai/hezo/pull/422))
+- add a --version argument to the CLI ([#420](https://github.com/hezo-ai/hezo/pull/420))
+
+### Bug Fixes
+
+- fast egress preflight + CEO chat reliability (pending UI, no duplicate/stuck turns) ([#447](https://github.com/hezo-ai/hezo/pull/447))
+- re-openable tickets + agent approval before external-service writes ([#446](https://github.com/hezo-ai/hezo/pull/446))
+- self-heal the egress connectivity gate (unblock CEO/agents) + surface CEO send errors as a toast ([#444](https://github.com/hezo-ai/hezo/pull/444))
+- only log final connectivity outcome so successful auto-rebind is silent ([#443](https://github.com/hezo-ai/hezo/pull/443))
+- auto-detect bridge gateway for egress/SSH bind + fail-fast on unreachable proxy ([#441](https://github.com/hezo-ai/hezo/pull/441))
+- drop avatar border for image project icons so the rail ring isn't mis-spaced ([#439](https://github.com/hezo-ai/hezo/pull/439))
+- re-fit the CEO chat composer when its width changes ([#433](https://github.com/hezo-ai/hezo/pull/433))
+- accept user-facing IDs (task identifier / agent slug) in ID-accepting MCP tools ([#430](https://github.com/hezo-ai/hezo/pull/430))
+- log egress/SSH bind degradation at warn, not error ([#428](https://github.com/hezo-ai/hezo/pull/428))
+- **web:** brighten raw agent-run log text ([#427](https://github.com/hezo-ai/hezo/pull/427))
+- native-Linux container-to-host connectivity for MCP and egress ([#426](https://github.com/hezo-ai/hezo/pull/426))
+- **web:** keep latest CEO chat message visible after expand/collapse ([#424](https://github.com/hezo-ai/hezo/pull/424))
+
+### Documentation
+
+- expand the long-term memory model for agents ([#425](https://github.com/hezo-ai/hezo/pull/425))
+
+### Chores
+
+- tell agents to edit project docs via write_project_doc, not Edit/Write ([#438](https://github.com/hezo-ai/hezo/pull/438))
+- strengthen guidance that Hezo entities live in the DB, not on disk ([#431](https://github.com/hezo-ai/hezo/pull/431))
+- update tagline to "Self-hosted and secure" ([#421](https://github.com/hezo-ai/hezo/pull/421))
+
+### Other
+
+- shard backend tests across 3 runners ([#440](https://github.com/hezo-ai/hezo/pull/440))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.6.6...0.7.0
+
 ## 0.6.6 - 2026-06-25
 
 ### Bug Fixes
