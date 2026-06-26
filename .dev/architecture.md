@@ -151,7 +151,14 @@ interrupted run still counts against budgets.
 unique scoping and full revision history in `document_revisions`. `skills` is the
 instance/team reference store (manifest-injected into runs, full-text-searchable) with
 `skill_revisions` history. `assets` + `task_attachments`/`comment_attachments` handle
-uploaded files (bytes on local disk, served over HMAC-signed URLs).
+uploaded files (bytes on local disk, served over HMAC-signed URLs). `project_icons`
+(1:1 with `projects`, `ON DELETE CASCADE`) holds an optional per-project icon image —
+unlike assets the **bytes live in the DB** (a `BYTEA` column) in a dedicated table so the
+hot `projects.*` list query never pulls the blob; it is rendered in the project rail and
+served from a public HMAC-signed read route (`GET /api/projects/:projectId/icon`, the `sig`
+query param is the credential since an `<img>` carries no bearer token). The serialized
+project carries a freshly-signed `icon_url` (null when unset); the client normalizes any
+picked image to a square PNG ≤512×512 before upload (`PUT`/`DELETE` on the same path).
 
 **Governance & misc.** `approvals` (polymorphic board decisions), `audit_log`
 (append-only, project + instance scopes — `project_id` set scopes a row to one project,
@@ -205,7 +212,10 @@ project.
   including HQ). The Captain refines an admin-started draft
   with `update_hire_proposal`; both tools share the validation/insert helpers in
   `services/hire-proposal.ts`. Approval materialises the agent via the hire approval
-  handler. Retiring/reinstating an agent is the `set_agent_status` MCP tool (gated to
+  handler. Each proposal is also mirrored as a `hire_proposal` action comment on the
+  linked ticket (`services/hire-proposal-comment.ts`), which flips to hired/denied on
+  resolution and re-wakes the requester; the approval no longer auto-closes the ticket —
+  the requester (the CEO) closes it once setup is complete. Retiring/reinstating an agent is the `set_agent_status` MCP tool (gated to
   the team's Captain or an HQ coordinator), which runs the same `setAgentAdminStatus`
   service as the REST disable/enable routes — it can't disable a Captain or an instance
   agent. On a new team the CEO's initial coherence/setup pass **blocks** the Captain's

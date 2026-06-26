@@ -74,9 +74,23 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 		});
 		const agents = (await agentsRes.json()).data;
 		expect(agents.find((a: Record<string, unknown>) => a.slug === 'data-engineer')).toBeUndefined();
+
+		// The proposal also surfaces as a pending comment on the onboarding ticket.
+		const pendingComment = await db.query<{
+			content: { kind: string; title: string };
+			chosen_option: unknown;
+		}>(
+			`SELECT content, chosen_option FROM task_comments
+			 WHERE task_id = $1 AND content_type = 'action'::comment_content_type
+			   AND content->>'kind' = 'hire_proposal'`,
+			[task.id],
+		);
+		expect(pendingComment.rows).toHaveLength(1);
+		expect(pendingComment.rows[0].content.title).toBe('Data Engineer');
+		expect(pendingComment.rows[0].chosen_option).toBeNull();
 	});
 
-	it('resolving the hire approval materializes the agent and closes the ticket', async () => {
+	it('resolving the hire approval materializes the agent, posts a hired comment, and leaves the ticket open', async () => {
 		const onboardRes = await app.request(`/api/projects/${projectSlug}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -122,7 +136,31 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 			headers: authHeader(token),
 		});
 		const updatedTask = (await taskRes.json()).data;
-		expect(updatedTask.status).toBe('done');
+		// The ticket is NOT auto-closed on hire approval — the requester (CEO) closes it
+		// once setup is done. It stays in its original (backlog) status.
+		expect(updatedTask.status).not.toBe('done');
+		expect(updatedTask.status).toBe('backlog');
+
+		// The proposal comment on the ticket flips to "hired".
+		const hiredComment = await db.query<{
+			chosen_option: { status: string; member_agent_slug?: string };
+		}>(
+			`SELECT chosen_option FROM task_comments
+			 WHERE task_id = $1 AND content_type = 'action'::comment_content_type
+			   AND content->>'kind' = 'hire_proposal' AND content->>'approval_id' = $2`,
+			[task.id, approval.id],
+		);
+		expect(hiredComment.rows).toHaveLength(1);
+		expect(hiredComment.rows[0].chosen_option.status).toBe('approved');
+		expect(hiredComment.rows[0].chosen_option.member_agent_slug).toBe('payments-engineer');
+
+		// The requester/assignee (the CEO) is queued to run again to review + resume.
+		const wakeups = await db.query(
+			`SELECT id FROM agent_wakeup_requests
+			 WHERE payload->>'approval_id' = $1 AND payload->>'reason' = 'hire_resolved'`,
+			[approval.id],
+		);
+		expect(wakeups.rows.length).toBeGreaterThan(0);
 	});
 
 	it('denying the hire approval leaves no agent behind', async () => {
@@ -146,6 +184,19 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 			(a: Record<string, unknown>) => a.slug === 'dropped-role',
 		);
 		expect(exists).toBeUndefined();
+
+		// The proposal comment flips to "denied" carrying the resolution note.
+		const deniedComment = await db.query<{
+			chosen_option: { status: string; resolution_note?: string };
+		}>(
+			`SELECT chosen_option FROM task_comments
+			 WHERE content_type = 'action'::comment_content_type
+			   AND content->>'kind' = 'hire_proposal' AND content->>'approval_id' = $1`,
+			[approval.id],
+		);
+		expect(deniedComment.rows).toHaveLength(1);
+		expect(deniedComment.rows[0].chosen_option.status).toBe('denied');
+		expect(deniedComment.rows[0].chosen_option.resolution_note).toBe('not needed right now');
 	});
 
 	it('rejects a second pending hire for the same slug', async () => {

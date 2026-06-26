@@ -62,9 +62,14 @@ export async function resolveApproval(
 			input.events,
 		);
 	} else {
-		// Denied: dispatch to any handler that defines a denied side effect (none
-		// today — kept as a generic extension point).
-		sideEffects = await applyApprovalDeniedSideEffect(db, row);
+		// Denied: dispatch to any handler that defines a denied side effect (today
+		// the hire handler flips its proposal comment and re-wakes the requester).
+		sideEffects = await applyApprovalDeniedSideEffect(
+			db,
+			row,
+			input.actorMemberId,
+			input.wsManager,
+		);
 	}
 
 	return { ok: true, row, sideEffects };

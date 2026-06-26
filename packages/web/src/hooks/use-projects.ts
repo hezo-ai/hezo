@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { type ApiError, api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 import { useSimpleOptimisticUpdate } from './use-optimistic-mutation';
@@ -37,6 +37,10 @@ export interface Project {
 	/** Most recent task update, falling back to the project's creation time. */
 	last_activity_at: string;
 	created_at: string;
+	/** Signed URL for the project's icon image, or null when none is set. */
+	icon_url?: string | null;
+	/** When the icon was last set (drives the `<img>` cache version), or null. */
+	icon_updated_at?: string | null;
 	repos?: Repo[];
 	planning_task_id?: string;
 	planning_task_identifier?: string;
@@ -181,5 +185,55 @@ export function useDeleteProject() {
 	return useMutation({
 		mutationFn: (projectId: string) => api.delete(`/api/projects/${projectId}`),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() }),
+	});
+}
+
+export interface ProjectIconResponse {
+	icon_url: string | null;
+	icon_updated_at: string | null;
+}
+
+/**
+ * Seed the icon fields into the cached project detail + index from a server
+ * response, so the rail and settings reflect the change immediately rather than
+ * waiting for the invalidated queries to refetch (which races under load). The
+ * server returns the signed `icon_url`, so this is response-driven, not optimistic.
+ */
+function applyIconToCaches(projectId: string, icon: ProjectIconResponse) {
+	queryClient.setQueryData<Project>(queryKeys.projects.detail(projectId), (old) =>
+		old ? { ...old, icon_url: icon.icon_url, icon_updated_at: icon.icon_updated_at } : old,
+	);
+	queryClient.setQueryData<Project[]>(queryKeys.projects.all(), (old) =>
+		old?.map((p) =>
+			p.slug === projectId || p.id === projectId
+				? { ...p, icon_url: icon.icon_url, icon_updated_at: icon.icon_updated_at }
+				: p,
+		),
+	);
+	// Reconcile against the server (e.g. exact timestamps) without blocking the UI.
+	queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
+	queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
+}
+
+/**
+ * Upload (or replace) a project's icon. `blob` is the already-normalized square
+ * PNG produced client-side. The response carries the signed `icon_url`, which we
+ * write straight into the project caches so the rail and settings update at once.
+ */
+export function useUploadProjectIcon(projectId: string) {
+	return useMutation<ProjectIconResponse, ApiError, Blob>({
+		mutationFn: (blob) => {
+			const fd = new FormData();
+			fd.set('file', blob, 'icon.png');
+			return api.putForm<ProjectIconResponse>(`/api/projects/${projectId}/icon`, fd);
+		},
+		onSuccess: (data) => applyIconToCaches(projectId, data),
+	});
+}
+
+export function useRemoveProjectIcon(projectId: string) {
+	return useMutation<ProjectIconResponse, ApiError, void>({
+		mutationFn: () => api.delete<ProjectIconResponse>(`/api/projects/${projectId}/icon`),
+		onSuccess: () => applyIconToCaches(projectId, { icon_url: null, icon_updated_at: null }),
 	});
 }

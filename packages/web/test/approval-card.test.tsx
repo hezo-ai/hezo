@@ -15,9 +15,9 @@ import {
 // `resolution_note`, and the typed `payload` that drives each ApprovalMessage
 // branch — the approvals GET route enriches them with payload_* JOINs.
 //
-// inbox-approvals.test.tsx already covers the strategy/hire happy paths and
-// approve/deny; this file targets the message-branch and resolved/read-only
-// states that those don't reach.
+// inbox-approvals.test.tsx covers the strategy approve/deny happy path; this
+// file targets the message-branch, hire (Edit & review only — no inline
+// approve/deny), and resolved/read-only states that those don't reach.
 
 /** Insert an approval row directly (lets us set status + resolution_note). */
 async function insertApproval(
@@ -173,6 +173,10 @@ test('a pending hire approval with a task link renders an Edit & review action a
 		.find((a) => /\/tasks\//.test(a.getAttribute('href') ?? ''));
 	expect(taskLink).toBeTruthy();
 	expect(taskLink?.getAttribute('href')).toMatch(/\/tasks\//);
+
+	// Hires are decided only on the edit/review page — no inline approve/deny.
+	expect(within(hireCard as HTMLElement).queryByRole('button', { name: 'Approve' })).toBeNull();
+	expect(within(hireCard as HTMLElement).queryByRole('button', { name: 'Deny' })).toBeNull();
 });
 
 test('a designated-repo request with reason repo_add links to project settings', async () => {

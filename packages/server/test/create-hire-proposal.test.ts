@@ -131,6 +131,20 @@ describe('MCP tool create_hire_proposal', () => {
 		});
 		expect(result.error).toBeUndefined();
 		expect((result.payload as Record<string, unknown>).task_id).toBe(taskId);
+
+		// The proposal is mirrored as a pending hire_proposal comment on the ticket.
+		const comment = await db.query<{
+			content: { kind: string; title: string };
+			chosen_option: unknown;
+		}>(
+			`SELECT content, chosen_option FROM task_comments
+			 WHERE task_id = $1 AND content_type = 'action'::comment_content_type
+			   AND content->>'kind' = 'hire_proposal' AND content->>'approval_id' = $2`,
+			[taskId, result.approval_id],
+		);
+		expect(comment.rows).toHaveLength(1);
+		expect(comment.rows[0].content.title).toBe('Support Engineer');
+		expect(comment.rows[0].chosen_option).toBeNull();
 	});
 
 	it('links the proposal to an originating ticket by human-readable identifier', async () => {

@@ -19,7 +19,7 @@ import {
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
-import { broadcastChange } from '../lib/broadcast';
+import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
 import { budgetWindowsError } from '../lib/budget-validation';
 import {
 	actorTypeFromAuth,
@@ -53,6 +53,7 @@ import {
 	insertHireApproval,
 	prepareHireProposal,
 } from '../services/hire-proposal';
+import { insertHireProposalComment } from '../services/hire-proposal-comment';
 import { loadTeamCoordinationContext } from '../services/internal-intake';
 import { terminateHeartbeatRun } from '../services/run-termination';
 import { resolveSystemPrompt } from '../services/template-resolver';
@@ -505,6 +506,20 @@ ${teamRoster}`;
 
 	broadcastChange(c, wsRoom.team(teamId), 'approvals', 'INSERT', finalApproval);
 	broadcastChange(c, wsRoom.team(teamId), 'tasks', 'INSERT', task);
+
+	// Surface the proposal as a comment on the freshly-created hire ticket so the
+	// thread mirrors the admin inbox and flips to hired/denied on resolution.
+	await insertHireProposalComment(
+		db,
+		{
+			taskId: task.id as string,
+			approvalId: finalApproval.id as string,
+			payload: proposal as unknown as Record<string, unknown>,
+			teamId,
+			projectId: teamProjectId,
+		},
+		c.get('wsManager'),
+	);
 
 	trackBackground(
 		createWakeup(db, ceoMemberId, teamId, WakeupSource.Assignment, {
