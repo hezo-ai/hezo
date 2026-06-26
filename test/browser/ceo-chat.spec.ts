@@ -124,3 +124,41 @@ test.describe('CEO chat widget — responsive layout', () => {
 		await expect(page.getByTestId('ceo-chat-expand')).toBeHidden();
 	});
 });
+
+// Kept in Playwright by decision-tree item 1 (real CSS layout): the composer
+// auto-grows by measuring its own `scrollHeight` and writing back an inline
+// height. happy-dom reports `scrollHeight` as 0, so the grow/collapse can only
+// be observed against Chromium's real layout pass.
+test.describe('CEO chat widget — composer auto-grow', () => {
+	test('the composer grows with multi-line input and collapses after submit', async ({
+		sharedPage,
+		sharedWorkspace,
+	}) => {
+		const page = sharedPage;
+
+		await page.setViewportSize({ width: 1280, height: 800 });
+		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
+		await waitForPageLoad(page);
+
+		const launcher = page.getByTestId('ceo-chat-launcher');
+		await expect(launcher).toBeVisible({ timeout: 15000 });
+		await launcher.click();
+		await expect(page.getByTestId('ceo-chat-panel')).toBeVisible();
+
+		const input = page.getByTestId('ceo-chat-input');
+		const heightOf = async () => (await input.boundingBox())?.height ?? 0;
+
+		// Empty composer starts as a single row.
+		const initialHeight = await heightOf();
+		expect(initialHeight).toBeGreaterThan(0);
+
+		// Several lines of input expand the box well past its single-row height.
+		await input.fill(['one', 'two', 'three', 'four', 'five'].join('\n'));
+		await expect.poll(heightOf).toBeGreaterThan(initialHeight + 20);
+
+		// Submitting clears the draft, collapsing the composer back to one row.
+		await page.getByTestId('ceo-chat-send').click();
+		await expect(input).toHaveValue('');
+		await expect.poll(heightOf).toBeLessThan(initialHeight + 8);
+	});
+});

@@ -27,6 +27,7 @@ export function CeoChatWidget() {
 	const blockedHealth = hqHealth && hqHealth.kind !== 'healthy' ? hqHealth : null;
 	const [draft, setDraft] = useState('');
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const inputRef = useRef<HTMLTextAreaElement>(null);
 
 	const lastId = messages.at(-1)?.id;
 	const lastLen = messages.at(-1)?.content.length ?? 0;
@@ -46,6 +47,19 @@ export function CeoChatWidget() {
 		window.addEventListener('keydown', onKey);
 		return () => window.removeEventListener('keydown', onKey);
 	}, [open]);
+
+	// Grow the composer with its content (capped by `max-h-32`, then it scrolls),
+	// and collapse it back to a single row when the draft is cleared on submit.
+	// Reset to `auto` first so the measured `scrollHeight` can shrink, not only grow.
+	// `open` re-runs it when the panel (re)mounts so a draft kept across a close/open
+	// is sized correctly rather than clipped to a single row.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-measure on draft/open change (body reads the DOM via a stable ref)
+	useEffect(() => {
+		const el = inputRef.current;
+		if (!el) return;
+		el.style.height = 'auto';
+		el.style.height = `${el.scrollHeight}px`;
+	}, [draft, open]);
 
 	const submit = () => {
 		const text = draft.trim();
@@ -167,6 +181,7 @@ export function CeoChatWidget() {
 						<div className="border-t border-border p-3">
 							<div className="flex items-end gap-2 rounded-2xl border border-border bg-surface px-2 py-1.5 transition-colors focus-within:border-border-strong">
 								<textarea
+									ref={inputRef}
 									value={draft}
 									onChange={(e) => setDraft(e.target.value)}
 									onKeyDown={(e) => {
@@ -178,7 +193,7 @@ export function CeoChatWidget() {
 									rows={1}
 									placeholder="Ask the CEO anything, across every project…"
 									data-testid="ceo-chat-input"
-									className="max-h-32 min-h-[2.25rem] flex-1 resize-none bg-transparent px-2 py-2 text-[13px] leading-5 text-text-1 outline-none placeholder:text-text-3"
+									className="max-h-32 min-h-[2.25rem] flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-[13px] leading-5 text-text-1 outline-none placeholder:text-text-3"
 								/>
 								<button
 									type="button"
