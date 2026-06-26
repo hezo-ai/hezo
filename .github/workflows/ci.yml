@@ -77,14 +77,14 @@ jobs:
     permissions:
       contents: read
       packages: read
-    # Sharded across runners: each shard runs ~half the server files at the same
-    # per-runner fork concurrency, so the per-fork PGlite+Hono contention ceiling
-    # (the reason we can't just raise --concurrency) is unchanged. fail-fast off
-    # so one shard failing still lets the others report.
+    # Sharded across runners: each shard runs ~a third of the server files at the
+    # same per-runner fork concurrency, so the per-fork PGlite+Hono contention
+    # ceiling (the reason we can't just raise --concurrency) is unchanged.
+    # fail-fast off so one shard failing still lets the others report.
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -115,7 +115,7 @@ jobs:
       # gated to shard 1 by scripts/test.ts), which exercises runtime-sensitive
       # code (e.g. egress TLS) on the production Bun runtime. --coverage writes
       # lcov to packages/server/coverage (vitest) and coverage-bun (Bun tier).
-      - run: bun run test --package server --shard ${{ matrix.shard }}/2 --coverage
+      - run: bun run test --package server --shard ${{ matrix.shard }}/3 --coverage
       # Coveralls parallel build: each shard/tier uploads its own lcov under a
       # unique flag-name with parallel:true; the coverage-finished job below
       # closes the build so Coveralls merges them into one total. if:always() so
@@ -282,5 +282,5 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           parallel-finished: true
-          carryforward: "backend-vitest-1,backend-vitest-2,backend-bun,web-1,web-2,web-3,shared"
+          carryforward: "backend-vitest-1,backend-vitest-2,backend-vitest-3,backend-bun,web-1,web-2,web-3,shared"
           fail-on-error: false
