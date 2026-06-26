@@ -198,6 +198,41 @@ export type UpdateState = (typeof UpdateState)[keyof typeof UpdateState];
 export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 export const ATTACHMENT_SIGNED_URL_TTL_SECONDS = 3600;
 
+// Project icons are normalized client-side to a square PNG no larger than
+// PROJECT_ICON_MAX_DIMENSION on each side before upload; the server enforces
+// both caps defensively. The byte cap is generous for a 512×512 PNG (~1 MB).
+export const PROJECT_ICON_MAX_DIMENSION = 512;
+export const PROJECT_ICON_MAX_BYTES = 1024 * 1024;
+
+// Formats accepted from the file picker. Everything is rasterized to a PNG on
+// the client (animated GIFs flatten to a still frame; SVG is rasterized), so the
+// bytes the server stores are always one of the raster types below.
+export const PROJECT_ICON_INPUT_MIME: ReadonlySet<string> = new Set([
+	'image/png',
+	'image/jpeg',
+	'image/webp',
+	'image/gif',
+	'image/svg+xml',
+]);
+
+// Raster content types the server will store for an icon (post client-side
+// normalization). SVG is intentionally excluded — its pixel dimensions can't be
+// bounded, and the client always sends a rasterized PNG.
+export const PROJECT_ICON_STORED_MIME: ReadonlySet<string> = new Set([
+	'image/png',
+	'image/jpeg',
+	'image/webp',
+	'image/gif',
+]);
+
+export function isAllowedProjectIconInputMime(mime: string): boolean {
+	return PROJECT_ICON_INPUT_MIME.has(mime);
+}
+
+export function isAllowedProjectIconStoredMime(mime: string): boolean {
+	return PROJECT_ICON_STORED_MIME.has(mime);
+}
+
 export const ATTACHMENT_EXTENSIONS = {
 	txt: 'text/plain',
 	html: 'text/html',

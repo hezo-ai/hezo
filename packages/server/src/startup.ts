@@ -46,7 +46,7 @@ import { oauthRoutes } from './routes/oauth';
 import { preferencesRoutes } from './routes/preferences';
 import { previewRoutes } from './routes/preview';
 import { projectDocsRoutes } from './routes/project-docs';
-import { projectsRoutes } from './routes/projects';
+import { projectsRoutes, publicProjectsRoutes } from './routes/projects';
 import { queuedWakeupsRoutes } from './routes/queued-wakeups';
 import { reposRoutes } from './routes/repos';
 import { searchRoutes } from './routes/search';
@@ -437,6 +437,11 @@ export function buildApp(
 	// Public signed-URL asset read endpoint (sig query is the credential, so it
 	// must be reachable without a bearer token).
 	app.route('/', publicAssetsRoutes);
+
+	// Public signed-URL project-icon read endpoint — same rationale (rendered in
+	// an <img>, so the sig query param is the credential). Mounted before the
+	// /api/* auth + project-access middleware so it bypasses the bearer check.
+	app.route('/', publicProjectsRoutes);
 
 	// Auth middleware for all /api/* routes
 	app.use('/api/*', authMiddleware);

@@ -109,11 +109,19 @@ class ApiClient {
 	}
 
 	async postForm<T>(path: string, formData: FormData): Promise<T> {
+		return this.sendForm<T>('POST', path, formData);
+	}
+
+	async putForm<T>(path: string, formData: FormData): Promise<T> {
+		return this.sendForm<T>('PUT', path, formData);
+	}
+
+	private async sendForm<T>(method: string, path: string, formData: FormData): Promise<T> {
 		const headers: Record<string, string> = {};
 		if (this.token) headers.Authorization = `Bearer ${this.token}`;
 
 		const res = await fetch(path, {
-			method: 'POST',
+			method,
 			headers,
 			body: formData,
 		});
