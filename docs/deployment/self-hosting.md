@@ -201,8 +201,57 @@ hand:
 ```sh
 docker run --rm --add-host=host.docker.internal:host-gateway curlimages/curl \
   curl -sv --max-time 5 http://host.docker.internal:3100/mcp
-# any HTTP response = reachable; a timeout = the firewall is dropping bridge→host
 ```
+
+Read the result carefully — it tells you which problem you have:
+
+- **Timeout** → packets are being *dropped* by a firewall (or a VPN kill-switch, below). Open
+  the path. This is the common case.
+- **Connection refused** → nothing is listening on that interface. Check the server is up
+  (`sudo ss -ltnp | grep ':3100'` should show `0.0.0.0:3100`) and that the egress proxy / SSH
+  bridge use `--container-bind-host` (step 2 above).
+- **Any HTTP status** (even `401` / `404`) → connectivity is fine; look elsewhere.
+
+#### Opening the path, by firewall tool
+
+The traffic is the container (`172.17.0.0/16`) reaching the host over `docker0`, so it lands
+in the host's **INPUT** chain — which Docker never opens for you:
+
+```sh
+# ufw
+sudo ufw allow in on docker0 && sudo ufw reload
+
+# iptables (persist with netfilter-persistent save / iptables-save)
+sudo iptables -I INPUT -i docker0 -j ACCEPT
+
+# nftables — add to your input chain (adjust table/chain names to your ruleset)
+sudo nft add rule inet filter input iifname "docker0" accept
+
+# firewalld — usually already trusts docker0; if not:
+sudo firewall-cmd --permanent --zone=trusted --add-interface=docker0 && sudo firewall-cmd --reload
+```
+
+#### VPN kill-switches (NordVPN, Tailscale, Mullvad, …)
+
+A VPN kill-switch installs its **own** firewall rules — often in `nftables`, or in `OUTPUT`
+and custom chains rather than `INPUT` — that drop everything not bound for the tunnel,
+including the Docker bridge ↔ host path. The tell-tale sign is a `docker0` **timeout even
+though `sudo iptables -S INPUT` shows `-P INPUT ACCEPT`** and no rule matching the
+container's source: a different ruleset is dropping the packet (or the host's reply). Allow
+the Docker subnet through the VPN instead of disabling protection:
+
+```sh
+# NordVPN — allowlist the docker bridge subnet (older builds call it `whitelist`)
+nordvpn allowlist add subnet 172.17.0.0/16
+# …or permit private LAN ranges, which include the bridge:
+nordvpn set lan-discovery enable
+# confirm it's the cause by toggling the kill-switch off briefly, then re-run the probe:
+nordvpn set killswitch disable
+```
+
+For Tailscale, Mullvad, or another client, allow the local network / the `172.17.0.0/16`
+(or your custom bridge) subnet in its settings. When hunting the drop, inspect **all** chains
+and both backends, not just `INPUT`: `sudo iptables -S` and `sudo nft list ruleset`.
 
 ## Updating
 
