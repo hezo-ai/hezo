@@ -24,9 +24,21 @@ test.describe('Task list — infinite scroll', () => {
 		});
 		const project = ((await projectRes.json()) as { data: { id: string; slug: string } }).data;
 
+		// Every task needs an assignee (createTask rejects otherwise), and the only
+		// agent on a Blank project is the Captain. Disable it first so it doesn't
+		// pick up and churn the seeded tasks out of the backlog filter (test runs
+		// use fake Docker, so agent runs would otherwise fire instantly) — this
+		// keeps the list deterministic.
+		const agentsRes = await page.request.get(`/api/projects/${project.slug}/agents`, { headers });
+		const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+		const captain = agents.find((a) => a.slug === 'captain') ?? agents[0];
+		await page.request.post(`/api/projects/${project.slug}/agents/${captain.id}/disable`, {
+			headers,
+		});
+
 		// Seed more than one page worth of backlog tasks (default per_page is 50).
-		// Create sequentially: per-project ticket numbering is not safe under
-		// concurrent inserts, so a parallel burst collides and drops most rows.
+		// Sequentially — per-project ticket numbering is not safe under concurrent
+		// inserts.
 		const TOTAL = 60;
 		for (let i = 1; i <= TOTAL; i++) {
 			const res = await page.request.post(`/api/projects/${project.slug}/tasks`, {
@@ -34,6 +46,7 @@ test.describe('Task list — infinite scroll', () => {
 				data: {
 					project_id: project.id,
 					title: `Scroll Task ${String(i).padStart(3, '0')}`,
+					assignee_id: captain.id,
 				},
 			});
 			expect(res.ok()).toBeTruthy();
