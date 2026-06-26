@@ -1,3 +1,4 @@
+import { suggestAllowedHosts } from '@hezo/shared';
 import { Check, KeyRound } from 'lucide-react';
 import { useState } from 'react';
 import { useFulfillCredential } from '../../hooks/use-comments';
@@ -23,9 +24,20 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 	const allowedHosts = Array.isArray(content.allowed_hosts) ? content.allowed_hosts : [];
 	const fulfilled = typeof comment.chosen_option?.secret_id === 'string';
 
+	// When the agent didn't scope the request, pre-fill the field with a
+	// best-guess allowlist inferred from the credential name and instructions
+	// (curated service hosts + any URL the agent named). It's only a suggestion —
+	// the human reviews and can edit or clear it before the secret is stored.
+	const suggestedHosts =
+		allowedHosts.length === 0 ? suggestAllowedHosts({ name, instructions }) : [];
+
 	const [value, setValue] = useState('');
-	const [hostsInput, setHostsInput] = useState(allowedHosts.join(', '));
+	const [hostsInput, setHostsInput] = useState(
+		allowedHosts.length > 0 ? allowedHosts.join(', ') : suggestedHosts.join(', '),
+	);
+	const [hostsEdited, setHostsEdited] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const showSuggestionHint = !hostsEdited && suggestedHosts.length > 0 && hostsInput.length > 0;
 	const fulfill = useFulfillCredential(projectId ?? '', taskId ?? '');
 
 	const parseHosts = (raw: string): string[] =>
@@ -164,12 +176,20 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 							id={`hosts-${comment.id}`}
 							type="text"
 							value={hostsInput}
-							onChange={(e) => setHostsInput(e.target.value)}
+							onChange={(e) => {
+								setHostsInput(e.target.value);
+								setHostsEdited(true);
+							}}
 							placeholder="e.g. api.netlify.com, *.netlify.com"
 							autoComplete="off"
 							className="w-full text-sm p-2 rounded border border-border bg-surface focus:outline-none focus:border-info"
 							data-testid="credential-hosts-input"
 						/>
+						{showSuggestionHint && (
+							<p className="text-xs text-text-3" data-testid="credential-hosts-suggested">
+								Suggested from the request — review and edit if these aren't right.
+							</p>
+						)}
 					</div>
 					{error && <p className="text-xs text-danger-soft-fg">{error}</p>}
 					<div>

@@ -1,5 +1,6 @@
 export * from './budget.js';
 export * from './constants.js';
+export * from './credentials/suggest-allowed-hosts.js';
 export * from './crypto/auth.js';
 export * from './crypto/mnemonic.js';
 export * from './mentions/index.js';
