@@ -1,7 +1,9 @@
+import { ActionCommentKind } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { Check, GitBranch } from 'lucide-react';
 import { Button } from '../ui/button';
 import type { CommentDataOf } from './comment-data';
+import { HireProposalComment } from './hire-proposal-comment';
 
 interface Props {
 	comment: CommentDataOf<'action'>;
@@ -11,11 +13,16 @@ interface Props {
 
 export function ActionComment({ comment, projectId }: Props) {
 	const kind = comment.content?.kind ?? '';
-	const resolved = comment.chosen_option?.status === 'complete';
 
-	if (kind !== 'setup_repo') {
+	if (kind === ActionCommentKind.HireProposal) {
+		return <HireProposalComment comment={comment} projectId={projectId} />;
+	}
+
+	if (kind !== ActionCommentKind.SetupRepo) {
 		return <p className="text-xs text-text-3 italic">Unknown action: {kind}</p>;
 	}
+
+	const resolved = comment.chosen_option?.status === 'complete';
 
 	if (resolved) {
 		const result = comment.chosen_option?.result;

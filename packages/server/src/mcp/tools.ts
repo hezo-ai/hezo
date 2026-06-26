@@ -89,6 +89,7 @@ import {
 	insertHireApproval,
 	prepareHireProposal,
 } from '../services/hire-proposal';
+import { insertHireProposalComment } from '../services/hire-proposal-comment';
 import { createProjectWithTeam } from '../services/project-create';
 import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
 import {
@@ -1402,6 +1403,21 @@ export function registerTools(
 
 			const row = await insertHireApproval(db, teamId, prepared.payload, auth.memberId, taskId);
 			broadcastApprovalChange(wsManager, teamId, 'INSERT', row);
+			// Surface the proposal as a comment on the originating ticket so it shows in
+			// the task thread (not just the admin inbox) and flips to hired/denied later.
+			if (taskId) {
+				await insertHireProposalComment(
+					db,
+					{
+						taskId,
+						approvalId: row.id as string,
+						payload: prepared.payload as unknown as Record<string, unknown>,
+						teamId,
+						projectId: scope.projectId,
+					},
+					wsManager,
+				);
+			}
 			return { approval_id: row.id, status: row.status, payload: row.payload };
 		},
 		db,

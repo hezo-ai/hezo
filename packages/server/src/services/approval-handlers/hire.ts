@@ -1,23 +1,28 @@
 import {
 	AgentAdminStatus,
+	ApprovalStatus,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
 	DocumentType,
 	MemberType,
-	TaskStatus,
 } from '@hezo/shared';
 import { trackBackground } from '../../lib/background';
 import { logger } from '../../logger';
 import { enqueueTeamCoherenceReviewTask } from '../description-tasks';
 import { upsertDocument } from '../documents';
-import { recordStatusChange } from '../task-events';
+import { resolveHireProposalCommentAndWake } from '../hire-proposal-comment';
 import type { ApprovalHandler, ApprovalSideEffectCtx, SideEffectBroadcast } from './types';
 
 const log = logger.child('approval-handlers:hire');
 
-/** Materialise an approved agent hire: member + agent rows, system prompt, task close. */
+/**
+ * Materialise an approved agent hire: member + agent rows, system prompt, then flip
+ * the proposal comment to "hired" and re-wake the requester. Denial flips the comment
+ * to "denied" and re-wakes too. Neither path closes the originating ticket — the
+ * requester does that once the team is set up.
+ */
 export const hireHandler: ApprovalHandler = {
 	async applyApproved(ctx: ApprovalSideEffectCtx): Promise<SideEffectBroadcast[]> {
-		const { db, approval, payload, actorMemberId, wsManager } = ctx;
+		const { db, approval, payload, wsManager } = ctx;
 		const broadcasts: SideEffectBroadcast[] = [];
 
 		const teamId = approval.team_id as string;
@@ -81,34 +86,6 @@ export const hireHandler: ApprovalHandler = {
 			row: promptDoc as unknown as Record<string, unknown>,
 		});
 
-		if (payload.task_id) {
-			const taskId = payload.task_id as string;
-			const prior = await db.query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [
-				taskId,
-			]);
-			const oldStatus = prior.rows[0]?.status;
-			const taskUpdate = await db.query<Record<string, unknown>>(
-				`UPDATE tasks SET status = $1::task_status, updated_at = now()
-				 WHERE id = $2 RETURNING *`,
-				[TaskStatus.Done, taskId],
-			);
-			if (taskUpdate.rows[0]) {
-				broadcasts.push({ table: 'tasks', op: 'UPDATE', row: taskUpdate.rows[0] });
-				if (oldStatus) {
-					await recordStatusChange(
-						db,
-						teamId,
-						taskId,
-						oldStatus,
-						TaskStatus.Done,
-						actorMemberId,
-						null,
-						wsManager,
-					);
-				}
-			}
-		}
-
 		const newAgent = await db.query<Record<string, unknown>>(
 			`SELECT m.id, m.team_id, m.display_name, m.created_at,
 			        ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary,
@@ -129,6 +106,28 @@ export const hireHandler: ApprovalHandler = {
 			),
 		);
 
+		// Flip the proposal comment on the originating ticket to "hired" and re-wake
+		// the requester (the CEO) so it can review the new hire and resume setup. The
+		// ticket is intentionally left open — the requester closes it once the team is
+		// fully set up, rather than the approval auto-closing it prematurely.
+		await resolveHireProposalCommentAndWake(
+			db,
+			{ approval, status: ApprovalStatus.Approved, memberAgentSlug: slug },
+			wsManager,
+		);
+
 		return broadcasts;
+	},
+
+	async applyDenied(ctx: ApprovalSideEffectCtx): Promise<SideEffectBroadcast[]> {
+		const { db, approval, resolutionNote, wsManager } = ctx;
+		// Flip the proposal comment to "denied" and re-wake the requester so it can
+		// react (revise and re-propose, or drop the role).
+		await resolveHireProposalCommentAndWake(
+			db,
+			{ approval, status: ApprovalStatus.Denied, resolutionNote },
+			wsManager,
+		);
+		return [];
 	},
 };

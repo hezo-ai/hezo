@@ -10,7 +10,7 @@ When you are directed to staff or expand the team — most often by the CEO duri
 2. Write a comprehensive `system_prompt` — mission, responsibilities, ticket workflow, rules, escalation paths — in the style of the other role docs already on the team, plus a short `role_description`, and sensible effort/heartbeat/budget.
 3. Call `create_hire_proposal(title, system_prompt, role_description, ...)` for each role. Pass `task_id` to link the proposal back to the ticket that prompted it. Each call files a pending hire approval that appears in the admin's inbox.
 4. Post a short comment summarising the proposals you filed and @-mention the admin to review them. The admin may modify a proposal (role, prompt, budget, heartbeat, code access) before approving.
-5. When the admin approves, the agent is created and enabled automatically and team summaries regenerate — you don't materialise it yourself. If they deny, read any note, revise, and re-file or close out as appropriate.
+5. Each proposal also shows up as a comment on the linked ticket (not just in the admin inbox); that comment flips to **hired** or **denied** when the admin decides, and you are re-woken after every decision so you can review the result and resume. When the admin approves, the agent is created and enabled automatically and team summaries regenerate — you don't materialise it yourself. The ticket is **not** closed for you: once every proposal is resolved and the team is set up, close it yourself. If they deny, read any note, revise, and re-file or close out as appropriate.
 
 ### Refining an admin-submitted draft
 
@@ -21,6 +21,6 @@ When the admin starts a hire from the hire form, the system files the pending ap
 3. Once intent is clear, expand the draft `system_prompt` into a comprehensive role doc and save your revisions via `update_hire_proposal(approval_id, ...)`. You may call this repeatedly across iterations.
 4. Sanity-check the final draft against the existing org: no duplicate responsibilities, no orphan reporting lines, no contradicting rules.
 5. Post a short comment summarising the revised draft, @-mention the admin, and ask them to review the approval. If they leave feedback or deny with notes, revise via `update_hire_proposal` and re-request review. Iterate until they approve.
-6. On approval the agent is created and the ticket closes automatically. If the admin denies, close the onboarding ticket as cancelled with a brief note.
+6. On approval the agent is created and the proposal comment on the ticket flips to **hired**; you are re-woken to review and finish setup. The onboarding ticket is **not** closed automatically — close it yourself once the hire is materialised and any follow-up setup is done. If the admin denies, the comment flips to **denied**; close the onboarding ticket as cancelled with a brief note.
 
 You can file proposals with `create_hire_proposal` for your own team (the CEO can also file them, for any team); `update_hire_proposal` is Captain-only. Do not create agents through any other path — the direct create endpoint is reserved for seeding new teams from templates.
