@@ -1,8 +1,9 @@
 import type { CeoMessage } from '@hezo/web/hooks/use-ceo-chat';
+import { toast } from '@hezo/web/hooks/use-toast';
 import { queryClient } from '@hezo/web/lib/query-client';
 import { queryKeys } from '@hezo/web/lib/query-keys';
 import { waitFor } from '@testing-library/react';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { renderApp } from './helpers/render';
 
 // The component harness builds the backend without a CeoSessionManager (the chat
@@ -50,6 +51,22 @@ test('composer enables send when text is entered and clears on submit', async ()
 	await user.click(send);
 	// The draft clears immediately on submit regardless of the server result.
 	expect(input.value).toBe('');
+});
+
+test('surfaces a failed CEO send as an error toast', async () => {
+	// The harness backend has no CeoSessionManager, so POST /api/ceo/messages
+	// returns 503 — the send mutation's onError must surface the server message.
+	const errorSpy = vi.spyOn(toast, 'error');
+	try {
+		const { findByTestId, getByTestId, user } = await renderApp({ initialPath: '/home' });
+		(await findByTestId('ceo-chat-launcher')).click();
+		const input = (await findByTestId('ceo-chat-input')) as HTMLTextAreaElement;
+		await user.type(input, 'why is everything stuck?');
+		await user.click(getByTestId('ceo-chat-send') as HTMLButtonElement);
+		await waitFor(() => expect(errorSpy).toHaveBeenCalledWith('CEO chat is not available'));
+	} finally {
+		errorSpy.mockRestore();
+	}
 });
 
 test('shows the empty state once history loads', async () => {

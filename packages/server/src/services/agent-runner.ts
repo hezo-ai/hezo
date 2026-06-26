@@ -41,13 +41,11 @@ import {
 	updateAiProviderCredential,
 } from './ai-provider-keys';
 import { checkOverBudget, recordRunCost } from './budget';
-import {
-	checkContainerToHostConnectivity,
-	formatContainerConnectivityMessage,
-} from './container-connectivity-preflight';
+import { formatContainerConnectivityMessage } from './container-connectivity-preflight';
 import {
 	CONNECTIVITY_STALE_MS,
 	type ContainerConnectivityStatus,
+	type ProbeResult,
 	shouldAbortForConnectivity,
 } from './container-connectivity-status';
 import { type ContainerRunUser, chownToRunUser, resolveContainerRunUser } from './container-user';
@@ -162,6 +160,10 @@ export interface RunnerDeps {
 	 * proxy is unreachable from containers, the run aborts instead of silently
 	 * falling through to direct egress. Absent → fail open (back-compat). */
 	connectivityStatus?: ContainerConnectivityStatus;
+	/** Probe used to (re)confirm connectivity at run time. Auto-rebinds against the
+	 * live bind host, so a stale loopback result self-heals. Required alongside
+	 * `connectivityStatus` for the gate to run; absent → fail open. */
+	connectivityProbe?: () => Promise<ProbeResult>;
 	/** Runtime model pricing; when present, the parser computes run cost from it. */
 	pricing?: PricingService;
 }
@@ -928,16 +930,14 @@ export async function runAgent(
 			// connectivity outcome and abort with operator guidance when the proxy is
 			// known-unreachable. Fail OPEN on ok/skipped/unknown (and when no status
 			// holder is wired) so Docker Desktop and tests are unaffected.
-			if (deps.connectivityStatus) {
-				const probeBindHost = deps.connectivityStatus.get().bindHost;
-				const status = await deps.connectivityStatus.ensureFresh(async () => {
-					const { outcome } = await checkContainerToHostConnectivity({
-						docker: deps.docker,
-						serverPort: deps.serverPort,
-						containerBindHost: probeBindHost,
-					});
-					return { status: outcome, bindHost: probeBindHost };
-				}, CONNECTIVITY_STALE_MS);
+			if (deps.connectivityStatus && deps.connectivityProbe) {
+				// Re-confirm a BAD cached outcome before blocking (maxAge 0): the probe
+				// auto-rebinds against the live bind host, so a stale/race-poisoned
+				// loopback result self-heals instead of blocking for the whole staleness
+				// window. A good cached outcome short-circuits on the normal staleness.
+				const cached = deps.connectivityStatus.get().status;
+				const maxAge = shouldAbortForConnectivity(cached) ? 0 : CONNECTIVITY_STALE_MS;
+				const status = await deps.connectivityStatus.ensureFresh(deps.connectivityProbe, maxAge);
 				if (shouldAbortForConnectivity(status)) {
 					// Release the ssh socket allocated just above; the credential lock is
 					// freed by the outer finally.

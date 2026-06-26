@@ -36,7 +36,7 @@ import {
 	setAgentIdleIfNoActiveRuns,
 } from './agent-runtime-status';
 import { checkOverBudget } from './budget';
-import type { ContainerConnectivityStatus } from './container-connectivity-status';
+import type { ContainerConnectivityStatus, ProbeResult } from './container-connectivity-status';
 import type { ContainerLogStreamer } from './container-logs';
 import {
 	type ContainerDeps,
@@ -136,6 +136,7 @@ export interface JobManagerDeps {
 	egressProxy?: EgressProxy | null;
 	egressCAPath?: string;
 	connectivityStatus?: ContainerConnectivityStatus;
+	connectivityProbe?: () => Promise<ProbeResult>;
 	pricing?: PricingService;
 }
 

@@ -395,6 +395,27 @@ describe('checkAndAutoRebindConnectivity', () => {
 		expect(infoSpy).toHaveBeenCalled();
 	});
 
+	it('logs nothing when logResult is false (per-run gate re-probes stay quiet)', async () => {
+		const ref = bindRef('127.0.0.1');
+		// A genuinely-degraded outcome that would otherwise warn.
+		const check = vi
+			.fn<() => Promise<ConnectivityCheckResult>>()
+			.mockResolvedValue({ outcome: 'bind-loopback' });
+
+		const result = await checkAndAutoRebindConnectivity({
+			docker,
+			serverPort: 3100,
+			bindHost: ref,
+			check,
+			logResult: false,
+		});
+
+		expect(result).toEqual({ outcome: 'bind-loopback', bindHost: '127.0.0.1' });
+		expect(infoSpy).not.toHaveBeenCalled();
+		expect(warnSpy).not.toHaveBeenCalled();
+		expect(errorSpy).not.toHaveBeenCalled();
+	});
+
 	it('warns once and leaves the bind host unchanged when no gateway IP was resolved', async () => {
 		const ref = bindRef('127.0.0.1');
 		const check = vi

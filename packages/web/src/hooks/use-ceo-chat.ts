@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSocket } from '../contexts/socket-context';
 import { api } from '../lib/api';
 import { queryKeys } from '../lib/query-keys';
+import { toast } from './use-toast';
 
 export interface CeoMessage {
 	id: string;
@@ -156,6 +157,9 @@ export function useCeoChat(active: boolean) {
 
 	const sendMutation = useMutation({
 		mutationFn: (text: string) => api.post('/api/ceo/messages', { text }),
+		onError: (error: { message?: string }) => {
+			toast.error(error?.message ?? 'Failed to send message to the CEO');
+		},
 	});
 
 	const messages = query.data?.messages ?? [];
