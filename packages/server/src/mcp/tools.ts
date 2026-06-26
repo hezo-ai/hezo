@@ -54,6 +54,7 @@ import {
 	actorTypeFromAuth,
 	apiKeyIdFromAuth,
 	resolveActorMemberId,
+	resolveAgentId,
 	resolveProject,
 	resolveTaskId,
 } from '../lib/resolve';
@@ -1354,7 +1355,9 @@ export function registerTools(
 			task_id: z
 				.string()
 				.optional()
-				.describe('Optional originating ticket id to link the proposal to'),
+				.describe(
+					'Optional originating ticket to link the proposal to — a task identifier (e.g. "HM-1") or UUID',
+				),
 		},
 		async (args, db, auth) => {
 			if (auth.type !== AuthType.Agent) {
@@ -1377,14 +1380,21 @@ export function registerTools(
 
 			let taskId: string | null = null;
 			if (args.task_id !== undefined) {
-				const taskCheck = await db.query<{ id: string }>(
-					'SELECT id FROM tasks WHERE id = $1 AND team_id = $2',
-					[args.task_id, teamId],
-				);
-				if (taskCheck.rows.length === 0) {
+				// Agents naturally hold the human-readable identifier (e.g. "HM-1"),
+				// not the UUID — resolve either form before linking.
+				const resolved = await resolveTaskId(db, teamId, args.task_id as string);
+				// resolveTaskId trusts a well-formed UUID without a team check, so
+				// re-verify the resolved task actually belongs to this team.
+				const taskCheck = resolved
+					? await db.query<{ id: string }>('SELECT id FROM tasks WHERE id = $1 AND team_id = $2', [
+							resolved,
+							teamId,
+						])
+					: null;
+				if (!resolved || !taskCheck || taskCheck.rows.length === 0) {
 					return { error: 'task_id not found on this team' };
 				}
-				taskId = args.task_id as string;
+				taskId = resolved;
 			}
 
 			const prepared = await prepareHireProposal(db, teamId, args as unknown as HireProposalInput);
@@ -2523,7 +2533,7 @@ export function registerTools(
 		"Read an agent's system prompt. Accessible by any agent or the admin in the same team. Returns the resolved role doc by default — `{{…}}` placeholders substituted with the real team name, mission, manager, KB, project docs, and team context — so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt.",
 		{
 			project: projectArg(),
-			agent_id: z.string().describe('Target agent member ID'),
+			agent_id: z.string().describe('Target agent — its slug (e.g. "engineer") or member ID'),
 			placeholders: z
 				.boolean()
 				.optional()
@@ -2541,19 +2551,25 @@ export function registerTools(
 				return { error: 'Access denied' };
 			}
 
+			// Agents reference teammates by slug; accept either form. The team-scoped
+			// query below is the authorization check — resolveAgentId can fall back to
+			// an HQ agent, which must not be readable through a project team.
+			const agentId = await resolveAgentId(db, teamId, args.agent_id as string);
+			if (!agentId) return { error: 'Agent not found in this team' };
+
 			const agent = await db.query<{ title: string; slug: string }>(
 				`SELECT ma.title, ma.slug
 				 FROM member_agents ma JOIN members m ON m.id = ma.id
 				 WHERE ma.id = $1 AND m.team_id = $2`,
-				[args.agent_id, teamId],
+				[agentId, teamId],
 			);
 			if (agent.rows.length === 0) return { error: 'Agent not found in this team' };
 
-			const raw = await getAgentSystemPrompt(db, teamId, args.agent_id as string);
+			const raw = await getAgentSystemPrompt(db, teamId, agentId);
 			const system_prompt = args.placeholders
 				? await resolveSystemPrompt(db, raw, {
 						teamId,
-						agentId: args.agent_id as string,
+						agentId,
 						mode: 'placeholders',
 					})
 				: raw;
@@ -2629,7 +2645,7 @@ export function registerTools(
 		'Apply a system prompt change for an agent. Callable by the Coach agent (for after-task learned-rules updates) or by the Captain of the same team (during team-coherence reviews). The change is applied immediately and a revision snapshot is stored so the admin can restore previous versions.',
 		{
 			project: projectArg(),
-			agent_id: z.string().describe('Target agent member ID'),
+			agent_id: z.string().describe('Target agent — its slug (e.g. "engineer") or member ID'),
 			new_system_prompt: z.string().describe('The full updated system prompt'),
 			change_summary: z.string().describe('Summary of what changed and why'),
 		},
@@ -2645,10 +2661,14 @@ export function registerTools(
 				};
 			}
 
+			// Accept a slug or member ID; the team-scoped check keeps an HQ agent
+			// (resolveAgentId's fallback) from being editable through a project team.
+			const agentId = await resolveAgentId(db, teamId, args.agent_id as string);
+			if (!agentId) return { error: 'Agent not found in this team' };
 			const agentCheck = await db.query<{ id: string }>(
 				`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
 				 WHERE ma.id = $1 AND m.team_id = $2`,
-				[args.agent_id, teamId],
+				[agentId, teamId],
 			);
 			if (agentCheck.rows.length === 0) return { error: 'Agent not found in this team' };
 
@@ -2658,7 +2678,7 @@ export function registerTools(
 				scope: {
 					type: DocumentType.AgentSystemPrompt,
 					teamId,
-					memberAgentId: args.agent_id as string,
+					memberAgentId: agentId,
 				},
 				content: args.new_system_prompt as string,
 				changeSummary: args.change_summary as string,
@@ -2684,7 +2704,7 @@ export function registerTools(
 		'Save a short human-readable summary for an agent (≤1000 chars, single paragraph, plain prose). Callable by any agent in the same team or any the admin; the Captain is the expected caller, but agents may also self-summarise.',
 		{
 			project: projectArg(),
-			agent_id: z.string().describe('Target agent member ID'),
+			agent_id: z.string().describe('Target agent — its slug (e.g. "engineer") or member ID'),
 			summary: z.string().describe('The new summary, ≤1000 chars'),
 		},
 		async (args, db, auth) => {
@@ -2702,13 +2722,17 @@ export function registerTools(
 				return { error: `summary too long (${summary.length} chars; max 1000)` };
 			}
 
+			// Accept a slug or member ID; the team_id filter scopes the write so an HQ
+			// agent (resolveAgentId's fallback) can't be summarised through this team.
+			const agentId = await resolveAgentId(db, teamId, args.agent_id as string);
+			if (!agentId) return { error: 'Agent not found in this team' };
 			const r = await db.query<{ id: string }>(
 				`UPDATE member_agents SET summary = $1, updated_at = now()
 				 WHERE id = $2 AND id IN (
 				   SELECT m.id FROM members m WHERE m.id = $2 AND m.team_id = $3
 				 )
 				 RETURNING id`,
-				[summary, args.agent_id, teamId],
+				[summary, agentId, teamId],
 			);
 			if (r.rows.length === 0) return { error: 'Agent not found in this team' };
 
@@ -2784,7 +2808,7 @@ export function registerTools(
 		"Save the team-relationships context for an agent (≤6000 chars, plain prose, second-person 'you', describes how this agent relates to its manager, direct reports, peers, indirect reports, and humans). This blob is injected into the agent's system prompt at the start of every run. Only callable by the Captain of the same team.",
 		{
 			project: projectArg(),
-			agent_id: z.string().describe('Target agent member ID'),
+			agent_id: z.string().describe('Target agent — its slug (e.g. "engineer") or member ID'),
 			content: z.string().describe('The new team_context, ≤6000 chars'),
 		},
 		async (args, db, auth) => {
@@ -2802,13 +2826,17 @@ export function registerTools(
 				return { error: `content too long (${content.length} chars; max 6000)` };
 			}
 
+			// Accept a slug or member ID; the team_id filter scopes the write so an HQ
+			// agent (resolveAgentId's fallback) can't be written through this team.
+			const agentId = await resolveAgentId(db, teamId, args.agent_id as string);
+			if (!agentId) return { error: 'Agent not found in this team' };
 			const r = await db.query<{ id: string }>(
 				`UPDATE member_agents SET team_context = $1, updated_at = now()
 				 WHERE id = $2 AND id IN (
 				   SELECT m.id FROM members m WHERE m.id = $2 AND m.team_id = $3
 				 )
 				 RETURNING id`,
-				[content, args.agent_id, teamId],
+				[content, agentId, teamId],
 			);
 			if (r.rows.length === 0) return { error: 'Agent not found in this team' };
 
@@ -2823,7 +2851,7 @@ export function registerTools(
 		"Read an agent's stored team-relationships context. Useful for the Captain when regenerating siblings' contexts. Accessible by any agent or the admin in the same team.",
 		{
 			project: projectArg(),
-			agent_id: z.string().describe('Target agent member ID'),
+			agent_id: z.string().describe('Target agent — its slug (e.g. "engineer") or member ID'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -2834,11 +2862,15 @@ export function registerTools(
 				return { error: 'Access denied' };
 			}
 
+			// Accept a slug or member ID; the team-scoped query is the authorization
+			// check, keeping an HQ agent (resolveAgentId's fallback) out of this team.
+			const agentId = await resolveAgentId(db, teamId, args.agent_id as string);
+			if (!agentId) return { error: 'Agent not found in this team' };
 			const r = await db.query<{ title: string; slug: string; team_context: string }>(
 				`SELECT ma.title, ma.slug, ma.team_context
 				 FROM member_agents ma JOIN members m ON m.id = ma.id
 				 WHERE ma.id = $1 AND m.team_id = $2`,
-				[args.agent_id, teamId],
+				[agentId, teamId],
 			);
 			if (r.rows.length === 0) return { error: 'Agent not found in this team' };
 

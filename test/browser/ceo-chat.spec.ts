@@ -123,6 +123,96 @@ test.describe('CEO chat widget — responsive layout', () => {
 		// The mobile panel is already near-full-screen, so the control is hidden.
 		await expect(page.getByTestId('ceo-chat-expand')).toBeHidden();
 	});
+
+	// Kept in Playwright by decision-tree item 1 (real CSS layout): this is a
+	// scroll-position regression, and scrollTop/scrollHeight/clientHeight only
+	// carry real values under Chromium's layout engine — happy-dom returns 0.
+	test('collapsing the panel keeps the latest message pinned to the bottom', async ({
+		sharedPage,
+		sharedWorkspace,
+	}) => {
+		const page = sharedPage;
+		await page.setViewportSize({ width: 1280, height: 760 });
+
+		const LAST_MARKER = 'LASTCEOREPLYMARKER';
+		const seeded = Array.from({ length: 24 }, (_, i) => {
+			const isUser = i % 2 === 0;
+			const isLast = i === 23;
+			return {
+				id: `seed-${i}`,
+				conversation_id: 'conv-seed',
+				role: isUser ? 'user' : 'assistant',
+				channel: 'web',
+				status: 'complete',
+				content: isLast
+					? `${LAST_MARKER}. The CEO's final reply that must remain visible.`
+					: `${isUser ? 'You' : 'CEO'} message ${i}. ${'Filler sentence to grow the bubble height. '.repeat(4)}`,
+				created_at: new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString(),
+			};
+		});
+
+		// The widget swaps the scrollable message list for an HQ-container notice
+		// unless HQ is healthy. Force the instance (is_internal) project to
+		// "running" so the list renders regardless of the env's container state.
+		await page.route('**/api/projects', async (route) => {
+			if (route.request().method() !== 'GET') return route.fallback();
+			const response = await route.fetch();
+			const body = (await response.json()) as { data?: Array<Record<string, unknown>> };
+			const data = Array.isArray(body.data)
+				? body.data.map((p) => (p.is_internal ? { ...p, container_status: 'running' } : p))
+				: body.data;
+			await route.fulfill({ response, json: { ...body, data } });
+		});
+
+		// A real CEO reply needs the HQ container + a live LLM, so mock the read
+		// endpoint to get a deterministic conversation that overflows the panel.
+		await page.route('**/api/ceo/conversation', (route) =>
+			route.fulfill({ json: { data: { conversation_id: 'conv-seed', messages: seeded } } }),
+		);
+
+		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
+		await waitForPageLoad(page);
+
+		const launcher = page.getByTestId('ceo-chat-launcher');
+		await expect(launcher).toBeVisible({ timeout: 15000 });
+		await launcher.click();
+
+		const panel = page.getByTestId('ceo-chat-panel');
+		await expect(panel).toBeVisible();
+		await expect(panel).toHaveAttribute('data-expanded', 'false');
+
+		const list = page.getByTestId('ceo-chat-messages');
+		const distanceFromBottom = () =>
+			list.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+
+		// Sanity: the seeded conversation actually overflows the anchored panel —
+		// otherwise there's nothing to scroll and the assertion below is vacuous.
+		await expect
+			.poll(async () => list.evaluate((el) => el.scrollHeight - el.clientHeight))
+			.toBeGreaterThan(100);
+
+		// Opening pins to the bottom — the newest reply is visible.
+		await expect.poll(distanceFromBottom).toBeLessThanOrEqual(8);
+
+		// Put the list in a not-at-bottom state before toggling. This is what an
+		// in-flight (streaming) reply leaves behind between tokens — and it's also
+		// what defeats Chromium's scroll anchoring, which on its own restores a
+		// *symmetric* expand→collapse to the bottom and so would mask the bug.
+		await list.evaluate((el) => el.scrollTo({ top: 0, behavior: 'instant' }));
+		await expect.poll(distanceFromBottom).toBeGreaterThan(100);
+
+		// Expand to the full-viewport sheet, then collapse back to the corner panel.
+		await page.getByTestId('ceo-chat-expand').click();
+		await expect(panel).toHaveAttribute('data-expanded', 'true');
+		await page.getByTestId('ceo-chat-expand').click();
+		await expect(panel).toHaveAttribute('data-expanded', 'false');
+
+		// Regression guard: each resize must re-pin the list to the bottom so the
+		// newest reply stays visible. Without the fix the resize doesn't scroll and
+		// the list is left where it was (top), hiding the latest message.
+		await expect.poll(distanceFromBottom, { timeout: 5000 }).toBeLessThanOrEqual(8);
+		await expect(page.getByText(LAST_MARKER)).toBeInViewport();
+	});
 });
 
 // Kept in Playwright by decision-tree item 1 (real CSS layout): the composer

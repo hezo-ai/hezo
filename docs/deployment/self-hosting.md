@@ -136,13 +136,124 @@ ownership of the bind-mounted workspace and per-run config. A custom
 user (root for most images), which also works; include a non-root user named `node`
 if you want agent-created files owned by a non-root uid on the host.
 
-## Ports
+## Networking & firewall
 
 - **3100** — the Hezo server and web app (configurable with `--port`).
 
-This is the only port Hezo listens on, and the only one that needs to be reachable by
-the people using Hezo. Account sign-ins (such as GitHub) use per-instance OAuth that the
-server brokers itself — there is no separate gateway service or port.
+That is the only port **people** need to reach — Hezo serves the web app and brokers
+account sign-ins (such as GitHub) itself, so there is no separate gateway service or port.
+
+### Container → host connectivity (native-Linux Docker)
+
+There is a second path that is easy to miss: agents run inside Docker containers and call
+**back to the host** for their tools and traffic. Each container reaches the host as
+`host.docker.internal` and must connect to:
+
+- **3100** — the MCP server (the agent's Hezo toolset) and, for git, the SSH bridge.
+- **20000–29999** — the per-run egress proxy (outbound API calls and secret substitution).
+
+On **Docker Desktop** (macOS/Windows) this just works — it tunnels `host.docker.internal`
+to the host. On **native-Linux Docker** `host.docker.internal` resolves to the *bridge
+gateway IP*, so two things have to be true or **every agent run hangs with no tools and the
+CEO chat reports its tools "aren't available"**:
+
+1. **The host firewall must let the Docker bridge reach the host.** Docker opens the path
+   for container→internet traffic but **not** container→host, so a default-deny firewall
+   (commonly `ufw`) silently drops it. The simplest correct rule trusts the bridge interface:
+
+   ```sh
+   sudo ufw allow in on docker0          # allow the Docker bridge to reach the host
+   sudo ufw reload
+   ```
+
+   To scope it tighter instead, open the specific ports (adjust `3100` if you changed
+   `--port`; git-over-SSH also uses an ephemeral high port, which the interface rule above
+   covers but a port list does not):
+
+   ```sh
+   sudo ufw allow in on docker0 to any port 3100 proto tcp
+   sudo ufw allow in on docker0 to any port 20000:29999 proto tcp
+   ```
+
+   On a custom bridge network, replace `docker0` with its interface
+   (`docker network inspect bridge -f '{{index .Options "com.docker.network.bridge.name"}}'`).
+   On raw `iptables`, insert matching `ACCEPT` rules for `-i docker0`. `firewalld` usually
+   trusts `docker0` already.
+
+2. **The egress proxy and SSH bridge must bind a container-reachable interface.** They
+   default to `127.0.0.1` (loopback — correct for Docker Desktop), which a container can't
+   reach via the bridge gateway. Set `--container-bind-host 0.0.0.0` (or the bridge gateway
+   IP) and let the firewall above restrict who can reach it:
+
+   ```sh
+   HEZO_CONTAINER_BIND_HOST=0.0.0.0 hezo     # or --container-bind-host 0.0.0.0
+   ```
+
+   The MCP server already listens on all interfaces, so step 1 alone restores the agent
+   toolset; step 2 is additionally needed for outbound proxied API calls, credentialed
+   requests, and git-over-SSH.
+
+Hezo runs a **boot-time connectivity check** — it starts a throwaway container, has it call
+back to the host, and logs the exact firewall / `--container-bind-host` fix if the path is
+blocked, so you see the problem at startup instead of as a stalled agent run. An unreachable
+MCP server is logged as an error (no tools load); the egress/SSH bind-host case is a non-fatal
+**warning** — your agents still run, only proxied egress and git-over-SSH are affected. To
+verify by hand:
+
+```sh
+docker run --rm --add-host=host.docker.internal:host-gateway curlimages/curl \
+  curl -sv --max-time 5 http://host.docker.internal:3100/mcp
+```
+
+Read the result carefully — it tells you which problem you have:
+
+- **Timeout** → packets are being *dropped* by a firewall (or a VPN kill-switch, below). Open
+  the path. This is the common case.
+- **Connection refused** → nothing is listening on that interface. Check the server is up
+  (`sudo ss -ltnp | grep ':3100'` should show `0.0.0.0:3100`) and that the egress proxy / SSH
+  bridge use `--container-bind-host` (step 2 above).
+- **Any HTTP status** (even `401` / `404`) → connectivity is fine; look elsewhere.
+
+#### Opening the path, by firewall tool
+
+The traffic is the container (`172.17.0.0/16`) reaching the host over `docker0`, so it lands
+in the host's **INPUT** chain — which Docker never opens for you:
+
+```sh
+# ufw
+sudo ufw allow in on docker0 && sudo ufw reload
+
+# iptables (persist with netfilter-persistent save / iptables-save)
+sudo iptables -I INPUT -i docker0 -j ACCEPT
+
+# nftables — add to your input chain (adjust table/chain names to your ruleset)
+sudo nft add rule inet filter input iifname "docker0" accept
+
+# firewalld — usually already trusts docker0; if not:
+sudo firewall-cmd --permanent --zone=trusted --add-interface=docker0 && sudo firewall-cmd --reload
+```
+
+#### VPN kill-switches (NordVPN, Tailscale, Mullvad, …)
+
+A VPN kill-switch installs its **own** firewall rules — often in `nftables`, or in `OUTPUT`
+and custom chains rather than `INPUT` — that drop everything not bound for the tunnel,
+including the Docker bridge ↔ host path. The tell-tale sign is a `docker0` **timeout even
+though `sudo iptables -S INPUT` shows `-P INPUT ACCEPT`** and no rule matching the
+container's source: a different ruleset is dropping the packet (or the host's reply). Allow
+the Docker subnet through the VPN instead of disabling protection:
+
+```sh
+# NordVPN — allowlist the docker bridge subnet (older builds call it `whitelist`)
+nordvpn allowlist add subnet 172.17.0.0/16
+# …or permit private LAN ranges, which include the bridge:
+nordvpn set lan-discovery enable
+# confirm it's the cause by toggling the kill-switch off briefly, then re-run the probe:
+nordvpn set killswitch disable
+```
+
+For Tailscale, Mullvad, or another client, allow the local network / the `172.17.0.0/16`
+(or your custom bridge) subnet in its settings. When hunting the drop, inspect **all** chains
+and both backends, not just `INPUT`: `sudo iptables -S` and `sudo nft list ruleset`.
 
 ## Updating
 

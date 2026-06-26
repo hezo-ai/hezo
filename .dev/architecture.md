@@ -484,6 +484,18 @@ without exposing secrets to other host users.
 Per run, the agent's container gets `HTTP(S)_PROXY=http://host.docker.internal:<port>`
 with `NO_PROXY` carving out the Hezo backend and the LLM provider host (LLM traffic goes
 direct — credentials are env-injected, and MITM breaks some Anthropic-compatible APIs).
+The front proxy binds `127.0.0.1` by default — reachable from containers via
+`host.docker.internal` on Docker Desktop, but **not** on native-Linux Docker, where that
+name maps to the bridge gateway IP. `HEZO_CONTAINER_BIND_HOST` / `--container-bind-host`
+overrides the bind interface for both the egress proxy and the ssh-agent TCP bridge; native
+Linux sets `0.0.0.0` and firewall-restricts the egress range (20000–29999) to the docker
+bridge. A boot-time preflight (`container-connectivity-preflight.ts`) starts a throwaway
+container, probes the MCP port and a bind-host listener in the egress range, and logs the
+exact firewall / `--container-bind-host` remedy when the path is blocked. Severity tracks
+impact: `error` when the MCP server is unreachable (no tools load, runs hang), a non-fatal
+`warn` for the egress/SSH bind-host degradation (MCP works and agents still run — only
+proxied egress and git-over-SSH are affected). Either way it never gates startup, so the web
+UI stays up to act on it.
 
 For each request the proxy terminates TLS, matches placeholders **in the URL and headers
 only** (bodies are forwarded byte-for-byte — body substitution is intentionally absent),
@@ -517,6 +529,8 @@ see it.
 **Per-run ssh-agent** (`services/ssh-agent/`). `SshAgentServer.allocateRunSocket` exposes
 the key over two listeners: a **host Unix socket** and a **loopback TCP** listener
 (in-container access, since Docker Desktop on macOS won't forward `AF_UNIX` bind-mounts).
+The TCP listener honours `HEZO_CONTAINER_BIND_HOST` (default `127.0.0.1`; native-Linux
+Docker sets `0.0.0.0` so git-over-SSH containers can reach it via the bridge gateway).
 TCP connections must prefix a 16-byte per-run token (timing-safe compared). The protocol
 answers `MSG_REQUEST_IDENTITIES` (advertises the public key) and `MSG_SIGN_REQUEST` (signs
 with the lazily-decrypted private key). Because **all git now runs in-container** (§ Agent
@@ -661,7 +675,13 @@ server state. Tailwind + Radix UI primitives (shadcn-style) under `components/ui
 events over WebSocket (UUID-keyed rooms), and the client **invalidates the matching query
 keys** to refetch. There is no client-side local query engine. The hard rule (`AGENTS.md`
 › Slugs vs UUIDs): **query keys use the route-param slug**, WebSocket rooms use UUIDs, and
-`useWebSocket` takes both — mixing them silently breaks realtime updates.
+`useWebSocket` takes both — mixing them silently breaks realtime updates. Project
+**creation** is the exception to the per-team room model: a brand-new project lands in a
+team whose `team:<uuid>` room no client has joined yet, so creation also emits a
+payload-free `ProjectsChanged` signal on the global `projects:global` room (which every
+shell watches). Clients react by refetching the per-caller-authorized project index, so the
+left project rail updates live — for the dialog, the CEO's `create_project`, and other
+sessions alike — without a row on the shared room leaking a project a user can't see.
 
 **Mutations** (three strategies, by shape — see `AGENTS.md` › Web frontend mutations):
 **optimistic + rollback** (default for field edits/toggles/reactions, via

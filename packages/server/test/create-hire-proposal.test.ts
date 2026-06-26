@@ -132,6 +132,25 @@ describe('MCP tool create_hire_proposal', () => {
 		expect((result.payload as Record<string, unknown>).task_id).toBe(taskId);
 	});
 
+	it('links the proposal to an originating ticket by human-readable identifier', async () => {
+		const taskRow = await db.query<{ id: string; identifier: string }>(
+			'SELECT id, identifier FROM tasks WHERE team_id = $1 LIMIT 1',
+			[teamId],
+		);
+		const { id: taskId, identifier } = taskRow.rows[0];
+		// Sanity: the identifier is the human-readable form, not the UUID.
+		expect(identifier).not.toBe(taskId);
+
+		const result = await callTool(await captainToken(), 'create_hire_proposal', {
+			title: 'Field Engineer',
+			system_prompt: 'You handle on-site work.',
+			task_id: identifier,
+		});
+		expect(result.error).toBeUndefined();
+		// The proposal stores the resolved UUID, not the identifier it was given.
+		expect((result.payload as Record<string, unknown>).task_id).toBe(taskId);
+	});
+
 	it('rejects a task_id that is not on the team', async () => {
 		const result = await callTool(await captainToken(), 'create_hire_proposal', {
 			title: 'Stray Role',

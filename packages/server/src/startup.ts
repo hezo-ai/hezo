@@ -59,6 +59,7 @@ import { uiStateRoutes } from './routes/ui-state';
 import { buildUpdatesRoutes } from './routes/updates';
 import { AuthChallengeStore } from './services/auth-challenges';
 import { CeoSessionManager } from './services/ceo-session-manager';
+import { checkContainerToHostConnectivity } from './services/container-connectivity-preflight';
 import { ContainerLogStreamer } from './services/container-logs';
 import type { ContainerDeps } from './services/containers';
 import { DockerClient } from './services/docker';
@@ -187,10 +188,33 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	imageBuildTracker.setWsManager(wsManager);
 	setSharedImageBuildTracker(imageBuildTracker);
 	const containerLogStreamer = new ContainerLogStreamer();
-	const sshAgentServer = new SshAgentServer({ db, masterKeyManager });
+	const sshAgentServer = new SshAgentServer({
+		db,
+		masterKeyManager,
+		tcpListenHost: config.containerBindHost,
+	});
 	await cleanupOrphanRunSockets(db, config.dataDir);
 	const egressCA = await loadOrCreateCA(config.dataDir);
-	const egressProxy = new EgressProxy({ db, masterKeyManager, ca: egressCA });
+	const egressProxy = new EgressProxy({
+		db,
+		masterKeyManager,
+		ca: egressCA,
+		proxyBindHost: config.containerBindHost,
+	});
+	// Verify a container can actually reach back to the host — the MCP server
+	// (firewall signal) and a listener at the egress/SSH bind host. On native-Linux
+	// Docker a host firewall or a loopback bind silently blocks this, leaving every
+	// agent with no tools; detect it at boot and log the exact fix instead of
+	// letting runs hang. Backgrounded + non-fatal: it must not gate readiness, and
+	// the web UI stays up so the operator can act on the guidance. The check itself
+	// no-ops under HEZO_SKIP_DOCKER (fake docker / tests) and the documented opt-out.
+	trackBackground(
+		checkContainerToHostConnectivity({
+			docker,
+			serverPort: config.port,
+			containerBindHost: config.containerBindHost,
+		}),
+	);
 	const events = new DomainEventBus();
 	const jobManager = new JobManager({
 		db,

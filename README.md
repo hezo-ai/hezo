@@ -12,7 +12,7 @@
 </div>
 
 <p align="center">
-  <strong>A whole AI workforce. And you're the boss.</strong>
+  <strong>A whole AI workforce. Self-hosted and secure.</strong>
 </p>
 
 <p align="center">

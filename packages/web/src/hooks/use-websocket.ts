@@ -208,4 +208,23 @@ export function useShellWebSockets(teams: TeamRoom[] | undefined): void {
 			}
 		};
 	}, [teamsKey, queryClient, joinRoom, leaveRoom, subscribe]);
+
+	// The global project-index room is independent of team membership: a freshly
+	// created project lands in a team whose room this client hasn't joined (and
+	// whose row isn't in the cached index yet to resolve a slug from), so the
+	// team-scoped path above can't surface it. Subscribe here unconditionally so
+	// the index — and with it the project rail — refetches the instant any
+	// project is created, whether by the dialog, the CEO, or another session.
+	useEffect(() => {
+		const room = wsRoom.projects();
+		joinRoom(room);
+		const unsubscribe = subscribe(WsMessageType.ProjectsChanged, () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projectIntakes() });
+		});
+		return () => {
+			unsubscribe();
+			leaveRoom(room);
+		};
+	}, [queryClient, joinRoom, leaveRoom, subscribe]);
 }

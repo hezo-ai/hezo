@@ -35,6 +35,7 @@ Starts the server on port 3100 with hot reload. In dev, PGlite data persists at 
 | `--no-open` | open on | Auto-open the web app in the browser on startup (on by default; skipped automatically in CI/containers/SSH/headless Linux). Disable with `--no-open` or `HEZO_OPEN=0` |
 | `--log-level <level>` | `info` | Logging verbosity: `debug`, `info`, `warn`, `error` (env: `HEZO_LOG_LEVEL`) |
 | `--keep-old-containers` | `false` | Keep old project containers instead of removing them, for debugging (env: `HEZO_KEEP_OLD_CONTAINERS`) |
+| `--container-bind-host <host>` | `127.0.0.1` | Interface the egress proxy and SSH bridge bind to so agent containers can reach them. Set `0.0.0.0` on native-Linux Docker (env: `HEZO_CONTAINER_BIND_HOST`) |
 | `--version` | — | Print the Hezo version and exit (also `hezo version`) |
 
 ## Master Key

@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { CredentialKind, DEFAULT_TEAM_ID, ReactionKind } from '@hezo/shared';
+import { CEO_AGENT_SLUG, CredentialKind, DEFAULT_TEAM_ID, ReactionKind } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -961,6 +961,72 @@ describe('MCP set_agent_team_context / get_agent_team_context', () => {
 		const result = (await callToolAs(await captainToken(), 'get_agent_team_context', {
 			project: projectId,
 			agent_id: '00000000-0000-0000-0000-000000000000',
+		})) as ToolResult;
+		expect(result.error).toContain('Agent not found');
+	});
+});
+
+describe('MCP agent tools accept a slug or a member ID', () => {
+	// Regression: these tools previously did a UUID-only `WHERE ma.id = $1` lookup,
+	// so a caller (the CEO/Captain) that referenced a teammate by its natural slug
+	// — e.g. "engineer" — got "Agent not found". They now resolve the slug too,
+	// matching set_agent_status and the REST agent routes.
+	it('get_agent_system_prompt resolves an agent slug', async () => {
+		const result = (await callToolAs(await captainToken(), 'get_agent_system_prompt', {
+			project: projectId,
+			agent_id: 'engineer',
+		})) as { slug?: string; system_prompt?: string; error?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.slug).toBe('engineer');
+		expect(typeof result.system_prompt).toBe('string');
+	});
+
+	it('update_agent_system_prompt resolves an agent slug', async () => {
+		const result = (await callToolAs(await captainToken(), 'update_agent_system_prompt', {
+			project: projectId,
+			agent_id: 'engineer',
+			new_system_prompt: 'You are the engineer. Updated by slug.',
+			change_summary: 'slug round-trip',
+		})) as { applied?: boolean; error?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.applied).toBe(true);
+	});
+
+	it('set_agent_summary resolves an agent slug', async () => {
+		const result = (await callToolAs(await captainToken(), 'set_agent_summary', {
+			project: projectId,
+			agent_id: 'engineer',
+			summary: 'Resolved by slug.',
+		})) as { updated?: boolean; error?: string };
+		expect(result.error).toBeUndefined();
+		expect(result.updated).toBe(true);
+	});
+
+	it('set_agent_team_context then get_agent_team_context resolve an agent slug', async () => {
+		const captain = await captainToken();
+		const written = (await callToolAs(captain, 'set_agent_team_context', {
+			project: projectId,
+			agent_id: 'engineer',
+			content: 'You pair with QA. Written by slug.',
+		})) as { updated?: boolean; error?: string };
+		expect(written.error).toBeUndefined();
+		expect(written.updated).toBe(true);
+
+		const read = (await callToolAs(captain, 'get_agent_team_context', {
+			project: projectId,
+			agent_id: 'engineer',
+		})) as { slug?: string; team_context?: string; error?: string };
+		expect(read.error).toBeUndefined();
+		expect(read.slug).toBe('engineer');
+		expect(read.team_context).toContain('Written by slug.');
+	});
+
+	it('does not resolve an HQ agent slug through a project team', async () => {
+		// resolveAgentId can fall back to an HQ agent (CEO/Coach); the team-scoped
+		// check must still reject it so a project Captain can't read HQ prompts.
+		const result = (await callToolAs(await captainToken(), 'get_agent_team_context', {
+			project: projectId,
+			agent_id: CEO_AGENT_SLUG,
 		})) as ToolResult;
 		expect(result.error).toContain('Agent not found');
 	});
