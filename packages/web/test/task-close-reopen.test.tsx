@@ -1,6 +1,20 @@
 import { expect, test } from 'vitest';
-import { renderApp } from './helpers/render';
-import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
+import { getTestContext, renderApp } from './helpers/render';
+import { type SeededWorkspace, seedProject, seedTask, seedWorkspace } from './helpers/seed';
+
+async function patchStatus(
+	ws: SeededWorkspace,
+	projectSlug: string,
+	taskId: string,
+	status: string,
+) {
+	const { apiBase } = getTestContext();
+	await apiBase(`/api/projects/${projectSlug}/tasks/${taskId}`, {
+		method: 'PATCH',
+		headers: ws.headers,
+		body: JSON.stringify({ status }),
+	});
+}
 
 test('the admin can close and re-open a task via themed modal', async () => {
 	const seeded = { projectSlug: '', taskId: '', identifier: '' };
@@ -70,4 +84,50 @@ test('task detail no longer shows a delete button or status pill row', async () 
 	expect(queryByRole('button', { name: /Delete Task/i })).toBeNull();
 	expect(queryByRole('button', { name: 'in progress' })).toBeNull();
 	expect(queryByRole('button', { name: 'review' })).toBeNull();
+});
+
+test('a done task offers both re-open and close', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Done Project' });
+			const task = await seedTask(ws, project, { title: 'Done Task' });
+			await patchStatus(ws, project.slug, task.id, 'done');
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	await findByTestId('task-reopen-button', undefined, { timeout: 10_000 });
+	await findByTestId('task-close-button');
+});
+
+test('a cancelled task offers re-open and hides close', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+	const { findByTestId, queryByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Cancelled Project' });
+			const task = await seedTask(ws, project, { title: 'Cancelled Task' });
+			await patchStatus(ws, project.slug, task.id, 'cancelled');
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	await findByTestId('task-reopen-button', undefined, { timeout: 10_000 });
+	expect(queryByTestId('task-close-button')).toBeNull();
 });

@@ -247,6 +247,10 @@ describe('template resolver', () => {
 		expect(result).toContain('write_project_doc');
 		expect(result).toContain('create_skill');
 		expect(result).toContain('create_task');
+		// Every agent must seek admin approval before mutating an external service, and
+		// must inspect for an existing resource before creating a duplicate.
+		expect(result).toContain('### Changes to External Services Require Admin Approval');
+		expect(result).toContain('Inspect before you write');
 	});
 
 	it('tells every agent the run is headless and not to point the user at terminal/adapter commands', async () => {

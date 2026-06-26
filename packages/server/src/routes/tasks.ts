@@ -70,13 +70,16 @@ async function wakeAgentIfAssigned(
 	assigneeId: string | null | undefined,
 	teamId: string,
 	taskId: string,
+	source: WakeupSource = WakeupSource.Assignment,
+	extraPayload: Record<string, unknown> = {},
 ): Promise<void> {
 	if (!assigneeId) return;
 	const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
 	if (isAgent.rows.length > 0) {
 		trackBackground(
-			createWakeup(db, assigneeId, teamId, WakeupSource.Assignment, {
+			createWakeup(db, assigneeId, teamId, source, {
 				task_id: taskId,
+				...extraPayload,
 			}).catch((e) => log.error('Failed to create wakeup for assignment:', e)),
 		);
 	}
@@ -590,6 +593,18 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 
 	if (body.assignee_id && body.assignee_id !== existing.rows[0].assignee_id) {
 		wakeAgentIfAssigned(db, body.assignee_id, teamId, taskId);
+	}
+
+	const wasTerminal = (TERMINAL_TASK_STATUSES as readonly string[]).includes(
+		existing.rows[0].status,
+	);
+	const nowTerminal =
+		body.status !== undefined &&
+		(TERMINAL_TASK_STATUSES as readonly string[]).includes(body.status);
+	if (body.status !== undefined && wasTerminal && !nowTerminal) {
+		wakeAgentIfAssigned(db, existing.rows[0].assignee_id, teamId, taskId, WakeupSource.Automation, {
+			trigger: 'task_reopened',
+		});
 	}
 
 	const actorMemberId = await resolveActorMemberId(c, teamId);
