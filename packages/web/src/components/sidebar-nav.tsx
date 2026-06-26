@@ -3,6 +3,12 @@ import { Plus } from 'lucide-react';
 import { Fragment } from 'react';
 import { Tooltip } from './ui/tooltip';
 
+interface SidebarNavItemAction {
+	onClick: () => void;
+	label: string;
+	testId?: string;
+}
+
 interface SidebarNavItem {
 	to: string;
 	params?: Record<string, string>;
@@ -10,6 +16,29 @@ interface SidebarNavItem {
 	count?: number;
 	subItems?: SidebarNavItem[];
 	testId?: string;
+	/** An inline "+" affordance rendered to the right of the row (e.g. create a
+	 *  task next to the Tasks link). Clicking it never follows the row's link. */
+	action?: SidebarNavItemAction;
+}
+
+function ItemAction({ action }: { action: SidebarNavItemAction }) {
+	return (
+		<Tooltip content={action.label} side="right">
+			<button
+				type="button"
+				onClick={(e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					action.onClick();
+				}}
+				data-testid={action.testId}
+				aria-label={action.label}
+				className="mr-1 shrink-0 rounded-sm p-0.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1 cursor-pointer"
+			>
+				<Plus className="w-3.5 h-3.5" />
+			</button>
+		</Tooltip>
+	);
 }
 
 function CountBadge({ value }: { value: number | undefined }) {
@@ -98,6 +127,8 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 									params={item.params ?? {}}
 									data-testid={item.testId}
 									className={`flex items-center text-left text-[12px] ${paddingClass} rounded-md transition-colors ${
+										item.action ? 'flex-1 min-w-0' : ''
+									} ${
 										isActive
 											? 'text-text-1 font-medium bg-surface-2'
 											: 'text-text-2 hover:text-text-1 hover:bg-surface-2'
@@ -107,9 +138,20 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 									<CountBadge value={item.count} />
 								</Link>
 							);
-							// Plain items render exactly as before (no wrapper). Items with
-							// sub-items wrap so the disclosure can sit beneath the parent.
-							if (!item.subItems?.length) return <Fragment key={key}>{link}</Fragment>;
+							// Plain items render exactly as before (no wrapper). An item with an
+							// inline action sits beside its "+" on one row; items with sub-items
+							// wrap so the disclosure can sit beneath the parent.
+							if (!item.subItems?.length) {
+								if (item.action) {
+									return (
+										<div key={key} className="flex items-center">
+											{link}
+											<ItemAction action={item.action} />
+										</div>
+									);
+								}
+								return <Fragment key={key}>{link}</Fragment>;
+							}
 							return (
 								<div key={key}>
 									{link}

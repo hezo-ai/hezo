@@ -32,8 +32,15 @@ function fitTextareaToContent(el: HTMLTextAreaElement): void {
  * starts a fresh turn. The CEO is the instance-level singleton living in the HQ
  * team, so every reply is labelled `CEO · HQ`.
  */
-export function CeoChatWidget() {
-	const [open, setOpen] = useState(false);
+interface CeoChatWidgetProps {
+	/** Open state is lifted to the shell so sibling surfaces (the floating
+	 *  new-task button) can react to the chat being open. */
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+}
+
+export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
+	const setOpen = onOpenChange;
 	const [expanded, setExpanded] = useState(false);
 	const { messages, send, streaming, sending, loaded, unread } = useCeoChat(open);
 	const hq = useHqProject();
@@ -68,7 +75,7 @@ export function CeoChatWidget() {
 		};
 		window.addEventListener('keydown', onKey);
 		return () => window.removeEventListener('keydown', onKey);
-	}, [open]);
+	}, [open, setOpen]);
 
 	// Grow the composer with its content (capped by `max-h-32`, then it scrolls),
 	// and collapse it back to a single row when the draft is cleared on submit.

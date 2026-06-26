@@ -10,6 +10,7 @@ import { X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppHeader } from '../components/app-header';
 import { CeoChatWidget } from '../components/ceo-chat/ceo-chat-widget';
+import { FloatingNewTaskButton } from '../components/floating-new-task-button';
 import { GlobalSearchDialog } from '../components/global-search-dialog';
 import { MasterKeyGate } from '../components/master-key-gate';
 import { ProjectRail } from '../components/project-rail';
@@ -109,20 +110,30 @@ function ShellLayout() {
 	const matches = useMatches();
 	const bare = matches.some((m) => m.staticData?.bare);
 
+	// Drawer + chat open state live here so the floating new-task button can hide
+	// itself whenever either of those full-screen surfaces takes over the corner.
+	const [drawerOpen, setDrawerOpen] = useState(false);
+	const [chatOpen, setChatOpen] = useState(false);
+
 	// Bare routes (e.g. the standalone document preview) render full-viewport
 	// without the header, project rail, or mobile drawer.
 	if (bare) return <Outlet />;
 
 	return (
 		<>
-			<ShellChrome />
-			<CeoChatWidget />
+			<ShellChrome drawerOpen={drawerOpen} setDrawerOpen={setDrawerOpen} />
+			<FloatingNewTaskButton hidden={drawerOpen || chatOpen} />
+			<CeoChatWidget open={chatOpen} onOpenChange={setChatOpen} />
 		</>
 	);
 }
 
-function ShellChrome() {
-	const [drawerOpen, setDrawerOpen] = useState(false);
+interface ShellChromeProps {
+	drawerOpen: boolean;
+	setDrawerOpen: (open: boolean) => void;
+}
+
+function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 	const [searchOpen, setSearchOpen] = useState(false);
 	const active = useActiveProject();
 	const mainRef = useRef<HTMLElement>(null);
