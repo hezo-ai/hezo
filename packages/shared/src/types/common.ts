@@ -618,6 +618,18 @@ export function formatGoalHealth(health: string): string {
 	return GOAL_HEALTH_LABELS[health as GoalHealth] ?? health;
 }
 
+/**
+ * SMART-goal guidance shown on the goal create/edit surfaces so the admin keeps the framework
+ * in mind. Single source of truth so every surface renders the same explanation.
+ */
+export const GOAL_SMART_GUIDANCE: ReadonlyArray<{ letter: string; label: string; hint: string }> = [
+	{ letter: 'S', label: 'Specific', hint: 'Target one clear outcome, not a vague theme.' },
+	{ letter: 'M', label: 'Measurable', hint: 'Define exactly how you will know it is achieved.' },
+	{ letter: 'A', label: 'Achievable', hint: 'Realistic for the team given its resources.' },
+	{ letter: 'R', label: 'Relevant', hint: "Matters to the project's mission right now." },
+	{ letter: 'T', label: 'Time-bound', hint: 'Give it a deadline to work toward.' },
+];
+
 /** One point in a goal's progress history — a snapshot recorded by a goal-check run. */
 export interface GoalHistoryPoint {
 	/** ISO timestamp of the recording goal-check run. */
@@ -631,7 +643,10 @@ export interface Goal {
 	team_id: string;
 	project_id: string;
 	title: string;
-	description: string;
+	/** Precise free-text definition of how we know the goal is achieved (SMART "Measurable"). */
+	measurement: string;
+	/** Optional free-text guidance on actions/checks the Captain could take toward the goal. */
+	actions: string;
 	progress_percent: number;
 	health: GoalHealth;
 	status_blurb: string;

@@ -19,17 +19,22 @@ a fresh estimate, so the Goals page is always a current read on the project.
 
 Open **Goals** in the project menu (above Tasks) and choose **Create Goal**. A goal has:
 
-- **Title** — the objective in a line (e.g. "Reach 100 active customers").
-- **Description** — the guidelines for what the goal means and how to judge it. Write these
-  to be **SMART**: Specific, Measurable, Achievable, Relevant, and Time-bound. The clearer
-  the definition, the more honest the Captain's progress estimates.
-- **Target date** *(optional)* — when the goal should be met. The Captain weighs progress
-  against this date when it sets the goal's health.
+- **Goal name** — the objective in a line (e.g. "Reach 100 active customers").
+- **Measurement** — the precise definition of *how you'll know the goal is achieved* (e.g.
+  "100 active paid subscriptions in Stripe"). This is the bar the Captain measures against, so
+  the more concrete it is, the more honest its progress estimates.
+- **Suggested actions** *(optional)* — guidance on what the Captain should do or check toward
+  the goal: specific checks, or a standing instruction like "run a weekly cron-style review of
+  the signup funnel". Leave it blank to let the Captain decide.
+- **Deadline** *(optional)* — when the goal should be met. The Captain weighs progress against
+  this date when it sets the goal's health.
 - **Check frequency** — how often the Captain re-assesses the goal: **daily** (the default),
   **weekly**, or **monthly**.
 
-A project can have any number of goals. Until you've set one, a gentle dot pulses next to
-**Goals** in the menu as a nudge to create your first.
+The create and edit forms keep the **SMART** framework (Specific, Measurable, Achievable,
+Relevant, Time-bound) in front of you as a reminder. A project can have any number of goals;
+until you've set one, a gentle dot pulses next to **Goals** in the menu as a nudge to create
+your first.
 
 ## How the Captain tracks progress
 
@@ -51,6 +56,13 @@ has moved over time, so you can see momentum (or a stall) at a glance.
 These goal checks are **not** done inside a task — they're standalone Captain runs. The list
 of recent goal checks appears at the bottom of the Goals page, each noting which goals it
 updated (or that nothing changed).
+
+## Archiving
+
+The Goals page defaults to an **Active** view and has an **Archived** filter to see the rest.
+Archiving a goal (from its edit/archive control) sets it aside without deleting it: an archived
+goal is **no longer checked** — the Captain skips it entirely and never updates its status or
+files work for it. Unarchive it any time to bring it back into rotation.
 
 ## Goals and the board
 

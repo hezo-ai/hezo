@@ -1601,7 +1601,8 @@ export interface BuildTaskPromptContext {
 export interface GoalCheckGoal {
 	id: string;
 	title: string;
-	description: string;
+	measurement: string;
+	actions: string;
 	progress_percent: number;
 	health: string;
 	status_blurb: string;
@@ -1635,10 +1636,11 @@ export function buildGoalCheckPrompt(systemPrompt: string, ctx: GoalCheckContext
 		parts.push(`### ${g.title}  \`${g.id}\``);
 		parts.push(
 			`- Current: ${g.progress_percent}% · health ${g.health} · checked ${g.check_frequency}` +
-				(g.target_date ? ` · target ${g.target_date}` : ''),
+				(g.target_date ? ` · deadline ${g.target_date}` : ''),
 		);
 		if (g.status_blurb) parts.push(`- Last status: ${g.status_blurb}`);
-		parts.push(`- Definition: ${g.description || 'No description provided.'}`);
+		parts.push(`- Achieved when: ${g.measurement || 'Not specified.'}`);
+		if (g.actions) parts.push(`- Suggested actions: ${g.actions}`);
 		parts.push('');
 	}
 	return parts.join('\n');

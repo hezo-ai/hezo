@@ -1864,7 +1864,8 @@ export class JobManager {
 			goals: dueGoals.map((g) => ({
 				id: g.id as string,
 				title: g.title as string,
-				description: (g.description as string) ?? '',
+				measurement: (g.measurement as string) ?? '',
+				actions: (g.actions as string) ?? '',
 				progress_percent: (g.progress_percent as number) ?? 0,
 				health: (g.health as string) ?? 'pending',
 				status_blurb: (g.status_blurb as string) ?? '',

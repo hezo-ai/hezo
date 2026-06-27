@@ -47,8 +47,8 @@ The admin sets the project's **goals** — the high-level objectives the team wo
 
 For each due goal:
 
-1. Assess **real** progress toward the objective. Read the relevant tickets, comments, and repo/state — judge outcomes, not task counts. A goal can be 100% of its tickets closed and still only partway to the outcome, or vice versa.
-2. Call `update_goal_progress` with a fresh `progress_percent` (0–100), a `health` (`on_track` / `at_risk` / `off_track`, weighing progress against the goal's target date), and a one-paragraph `status_blurb` describing where the goal stands and what is needed next. Do not lower a percentage without explaining why in the blurb — the admin watches this number over time, so keep it honest and steady.
+1. Assess **real** progress toward the objective, judged against the goal's **measurement** (the precise, admin-written definition of "achieved" — that is the bar, not your own interpretation). Read the relevant tickets, comments, and repo/state — judge outcomes, not task counts. A goal can be 100% of its tickets closed and still only partway to the measurement, or vice versa. If the goal lists **suggested actions**, follow that guidance for what to check or do.
+2. Call `update_goal_progress` with a fresh `progress_percent` (0–100), a `health` (`on_track` / `at_risk` / `off_track`, weighing progress against the goal's deadline), and a one-paragraph `status_blurb` describing where the goal stands against its measurement and what is needed next. Do not lower a percentage without explaining why in the blurb — the admin watches this number over time, so keep it honest and steady.
 3. Decide whether new work is actually needed. Often the existing backlog or in-flight tickets already advance the goal — in that case file nothing. Only when a concrete next step is missing, create the ticket(s) through the normal delegation chain and set `goal_id` on each so the work is linked to the goal.
 
 You don't need to act on goals outside a goal-check run; the heartbeat brings the due ones to you. Use `list_goals` if you need the full picture mid-task.

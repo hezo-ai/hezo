@@ -2,8 +2,9 @@
 --
 -- A goal is a project-level objective the Captain tracks. The Captain estimates each
 -- goal's progress on a cadence (during its heartbeat), updating a percentage, a coloured
--- health, and a one-paragraph status blurb. Goals are SMART: the title/description are the
--- guidelines, target_date carries the time-bound aspect.
+-- health, and a one-paragraph status blurb. Goals are SMART: the title names it, the
+-- measurement defines precisely how we know it's achieved, optional actions hint at what to
+-- do toward it, and target_date carries the time-bound aspect.
 --
 -- Additive only; preserves all existing data. heartbeat_runs.kind defaults to 'task' so every
 -- existing run row stays correct with no backfill, and tasks.goal_id is nullable.
@@ -19,7 +20,11 @@ CREATE TABLE goals (
     team_id               UUID NOT NULL REFERENCES teams(id)    ON DELETE CASCADE,
     project_id            UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     title                 TEXT NOT NULL,
-    description           TEXT NOT NULL DEFAULT '',          -- SMART guidelines
+    -- Precise, free-text definition of how we know the goal is achieved (the "Measurable" in SMART).
+    measurement           TEXT NOT NULL DEFAULT '',
+    -- Optional free-text guidance on what actions/checks the Captain could take toward the goal
+    -- (e.g. "run a weekly cron-style check", "verify the signup funnel each Monday").
+    actions               TEXT NOT NULL DEFAULT '',
     progress_percent      INTEGER NOT NULL DEFAULT 0 CHECK (progress_percent BETWEEN 0 AND 100),
     health                goal_health NOT NULL DEFAULT 'pending',   -- coloured pill, Captain-set
     status_blurb          TEXT NOT NULL DEFAULT '',          -- Captain's "where it stands"

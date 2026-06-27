@@ -15,7 +15,7 @@ import type { WebSocketManager } from './ws';
 
 // Bare projection of the goals table — every column, shared by REST handlers, the MCP
 // tools, and this service.
-export const GOAL_COLUMNS_BARE = `id, team_id, project_id, title, description, progress_percent,
+export const GOAL_COLUMNS_BARE = `id, team_id, project_id, title, measurement, actions, progress_percent,
 	health, status_blurb, check_frequency, target_date, last_checked_at, archived_at,
 	created_by_member_id, created_at, updated_at`;
 
@@ -33,7 +33,8 @@ export class GoalError extends Error {
 export interface CreateGoalInput {
 	project_id: string;
 	title: string;
-	description?: string;
+	measurement?: string;
+	actions?: string;
 	check_frequency?: string;
 	target_date?: string | null;
 }
@@ -44,7 +45,8 @@ export interface CreateGoalCaller {
 
 export interface UpdateGoalInput {
 	title?: string;
-	description?: string;
+	measurement?: string;
+	actions?: string;
 	check_frequency?: string;
 	target_date?: string | null;
 	/** Admin-only: ISO timestamp to archive, or null to un-archive. */
@@ -101,14 +103,15 @@ export async function createGoal(
 	}
 
 	const r = await db.query<GoalRow>(
-		`INSERT INTO goals (team_id, project_id, title, description, check_frequency, target_date, created_by_member_id)
-		 VALUES ($1, $2, $3, $4, $5::goal_check_frequency, $6, $7)
+		`INSERT INTO goals (team_id, project_id, title, measurement, actions, check_frequency, target_date, created_by_member_id)
+		 VALUES ($1, $2, $3, $4, $5, $6::goal_check_frequency, $7, $8)
 		 RETURNING ${GOAL_COLUMNS_BARE}`,
 		[
 			teamId,
 			input.project_id,
 			title,
-			input.description ?? '',
+			input.measurement ?? '',
+			input.actions ?? '',
 			frequency,
 			input.target_date ?? null,
 			caller.actorMemberId,
@@ -136,9 +139,13 @@ export async function updateGoal(
 		sets.push(`title = $${idx++}`);
 		params.push(title);
 	}
-	if (input.description !== undefined) {
-		sets.push(`description = $${idx++}`);
-		params.push(input.description);
+	if (input.measurement !== undefined) {
+		sets.push(`measurement = $${idx++}`);
+		params.push(input.measurement);
+	}
+	if (input.actions !== undefined) {
+		sets.push(`actions = $${idx++}`);
+		params.push(input.actions);
 	}
 	if (input.check_frequency !== undefined) {
 		sets.push(`check_frequency = $${idx++}::goal_check_frequency`);

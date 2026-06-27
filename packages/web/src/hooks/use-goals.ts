@@ -37,7 +37,8 @@ export function useGoalRuns(projectId: string) {
 
 interface CreateGoalVars {
 	title: string;
-	description?: string;
+	measurement?: string;
+	actions?: string;
 	check_frequency?: GoalCheckFrequency;
 	target_date?: string;
 }
@@ -55,7 +56,8 @@ export function useCreateGoal(projectId: string) {
 
 interface UpdateGoalVars {
 	title?: string;
-	description?: string;
+	measurement?: string;
+	actions?: string;
 	check_frequency?: GoalCheckFrequency;
 	target_date?: string | null;
 	archived?: boolean;

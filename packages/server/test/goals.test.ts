@@ -65,7 +65,8 @@ describe('goals REST CRUD', () => {
 			headers: jsonHeaders(),
 			body: JSON.stringify({
 				title: 'Reach 100 paying customers',
-				description: 'Measured by active subscriptions; by end of Q3.',
+				measurement: '100 active paid subscriptions in Stripe',
+				actions: 'Check the signup funnel weekly',
 				check_frequency: 'weekly',
 				target_date: '2026-09-30',
 			}),
@@ -74,6 +75,8 @@ describe('goals REST CRUD', () => {
 		const goal = (await res.json()).data;
 		goalId = goal.id;
 		expect(goal.title).toBe('Reach 100 paying customers');
+		expect(goal.measurement).toBe('100 active paid subscriptions in Stripe');
+		expect(goal.actions).toBe('Check the signup funnel weekly');
 		expect(goal.check_frequency).toBe('weekly');
 		expect(goal.health).toBe('pending');
 		expect(goal.progress_percent).toBe(0);

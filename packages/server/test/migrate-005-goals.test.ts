@@ -108,8 +108,8 @@ describe('005_goals migration', () => {
 
 	it('round-trips a goal and a goal_run_update snapshot', async () => {
 		const goal = await h.db.query<{ id: string; health: string; check_frequency: string }>(
-			`INSERT INTO goals (team_id, project_id, title, description, progress_percent, health, status_blurb, check_frequency)
-			 VALUES ($1, $2, 'Ship v1', 'Launch the product', 40, 'on_track'::goal_health, 'Coming along', 'weekly'::goal_check_frequency)
+			`INSERT INTO goals (team_id, project_id, title, measurement, actions, progress_percent, health, status_blurb, check_frequency)
+			 VALUES ($1, $2, 'Ship v1', '50 paying customers', 'weekly funnel check', 40, 'on_track'::goal_health, 'Coming along', 'weekly'::goal_check_frequency)
 			 RETURNING id, health::text AS health, check_frequency::text AS check_frequency`,
 			[teamId, projectId],
 		);
