@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.8.0 - 2026-06-27
+
+### Features
+
+- **goals:** reintroduce project goals tracked by the Captain ([#453](https://github.com/hezo-ai/hezo/pull/453))
+- **tasks:** remove `closed` status, default-show Done, infinite-scroll task list ([#451](https://github.com/hezo-ai/hezo/pull/451))
+- **agents:** delegate before defaulting to doing it yourself ([#452](https://github.com/hezo-ai/hezo/pull/452))
+- **web:** refine task filter bar and add floating/sidebar new-task buttons ([#450](https://github.com/hezo-ai/hezo/pull/450))
+- **web:** improve task detail mobile layout ([#449](https://github.com/hezo-ai/hezo/pull/449))
+
+### Bug Fixes
+
+- **test:** de-flake browser CI by serving the built web bundle ([#454](https://github.com/hezo-ai/hezo/pull/454))
+
+### Refactors
+
+- safe code-review cleanups (enums, defensive wakeup, dependency toasts) ([#456](https://github.com/hezo-ai/hezo/pull/456))
+
+### Documentation
+
+- lead with the meta-harness concept ([#457](https://github.com/hezo-ai/hezo/pull/457))
+- surface goals as a first-class concept in overview pages ([#455](https://github.com/hezo-ai/hezo/pull/455))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.7.0...0.8.0
+
 ## 0.7.0 - 2026-06-26
 
 ### Features
