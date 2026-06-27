@@ -93,6 +93,9 @@ agentic tooling and a consistent, safe platform around it; you get both.
   oversee everything from **HQ**.
 - Work flows as **tasks** on a board, each with a description, optional rules, and a
   living progress summary.
+- A project also sets **goals** — the outcomes those tasks add up to — and the Captain re-checks each
+  on a schedule, recording progress and health so you can see where things stand. See
+  [Goals & progress](/docs/concepts/goals).
 - Knowledge lives alongside the work: **documents** (markdown PRDs, specs, and research,
   with version history) and an **assets** library (uploads and agent-generated files, with
   HTML previews). See [Documents & long-term memory](/docs/concepts/documents-and-memory)

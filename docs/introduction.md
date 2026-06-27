@@ -56,6 +56,9 @@ agent can't hurt you. A few guarantees sit underneath everything:
 - **Put a hard ceiling on spend.** Per-agent and per-project budgets with live cost
   tracking *pause* runs when a limit is hit and *auto-resume* when the window rolls over —
   control without babysitting. See [Budgets & cost control](/docs/concepts/budgets-and-costs).
+- **Steer by outcome, not just tickets.** Set high-level **goals** and let the Captain re-check
+  each one on a schedule — it writes a fresh progress estimate, health, and status — so you can see
+  where a project stands without reading every ticket. See [Goals & progress](/docs/concepts/goals).
 - **Set the rules per task** and let agents keep a running progress summary so work
   carries cleanly across runs. See [Tasks, rules & summaries](/docs/concepts/tasks).
 - **Give your agents long-term memory — versioned and reversible.** Keep durable project
