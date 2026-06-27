@@ -13,6 +13,19 @@ const TEST_DATA_DIR = join(tmpdir(), 'hezo-e2e-test');
 const GATE_SERVER_PORT = 3102;
 const GATE_WEB_PORT = 5175;
 
+// Serve the web frontend from the *built* bundle (`vite preview`) when the test
+// runner sets HEZO_E2E_PREVIEW=1 (it builds the bundle first — see
+// scripts/test.ts), otherwise fall back to the Vite dev server. The dev server
+// transforms every module on demand; with two of them plus the backend, the 1Hz
+// crons and four Chromium workers on a 2-core CI runner, that sustained CPU cost
+// starved the backend until task fetches blew past the per-test timeouts and the
+// suite flaked. The minified preview build is far cheaper to serve, so CI runs
+// against it; a raw `bunx playwright test` (no runner, no prebuilt dist) still
+// gets the dev server so one-off local debugging needs no build step.
+const USE_PREVIEW = process.env.HEZO_E2E_PREVIEW === '1';
+const webCommand = (port: number) =>
+	USE_PREVIEW ? `bunx vite preview --port ${port} --strictPort` : 'bun run dev';
+
 export default defineConfig({
 	tsconfig: './tsconfig.json',
 	testDir: './test/browser',
@@ -106,7 +119,7 @@ export default defineConfig({
 			},
 		},
 		{
-			command: 'bun run dev',
+			command: webCommand(WEB_PORT),
 			cwd: './packages/web',
 			port: WEB_PORT,
 			reuseExistingServer: false,
@@ -116,7 +129,7 @@ export default defineConfig({
 			},
 		},
 		{
-			command: 'bun run dev',
+			command: webCommand(GATE_WEB_PORT),
 			cwd: './packages/web',
 			port: GATE_WEB_PORT,
 			reuseExistingServer: false,

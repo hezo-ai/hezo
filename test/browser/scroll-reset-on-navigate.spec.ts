@@ -103,7 +103,13 @@ test('resets shell scroll to the top when navigating between pages', async ({
 	// later renders the tall list synchronously (no loading-state self-clamp).
 	await page.goto(`/projects/${project.slug}/tasks`);
 	await waitForPageLoad(page);
-	await expect(page.getByTestId('task-list-main')).toBeVisible({ timeout: 20000 });
+	// Wait on a seeded row rather than a section testid: the list now splits into
+	// "In progress" / "Backlog" / "Done" sections (each omitted when empty), and
+	// the 1Hz wakeup cron may have already moved these agent-assigned tasks out of
+	// Backlog into "In progress". A row is present whichever section owns it.
+	await expect(page.getByRole('row', { name: /Source task with comments/ })).toBeVisible({
+		timeout: 20000,
+	});
 
 	const main = page.locator('main').first();
 	await expect
@@ -135,7 +141,9 @@ test('resets shell scroll to the top when navigating between pages', async ({
 
 	// SPA-navigate back to the (cached, tall) task list via the sidebar link.
 	await page.getByTestId('project-sidebar-tasks').click();
-	await expect(page.getByTestId('task-list-main')).toBeVisible({ timeout: 20000 });
+	await expect(page.getByRole('row', { name: /Source task with comments/ })).toBeVisible({
+		timeout: 20000,
+	});
 
 	// The list still overflows, so without the reset the carried-over scrollTop
 	// would remain > 0. With the fix it lands back at the top.
