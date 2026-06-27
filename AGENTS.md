@@ -221,7 +221,7 @@ test('<what changed>', async () => {
 
 ### Playwright environment
 
-Root `playwright.config.ts` auto-starts server (:3101) and web (:5174). Use `authenticate(page)` to bypass the master-key gate when not testing auth itself. The `sharedWorkspace` fixture in `test/browser/fixtures.ts` provisions a Startup-templated team once per worker; tests create their own per-test project under it via `createProjectAndClearPlanning`. Captain's coherence-review run is suppressed by `HEZO_E2E_SKIP_COHERENCE_REVIEW=1` in the test server env — without it, team setup blocks for ~30-60s.
+Root `playwright.config.ts` auto-starts server (:3101) and web (:5174). The web frontend is served two ways: `bun run test [--browser]` builds the bundle once and serves it via `vite preview` (the runner sets `HEZO_E2E_PREVIEW=1`), because two on-demand-transforming Vite dev servers saturate a 2-core CI runner and starve the backend until task fetches time out; a raw `bunx playwright test` (no runner, no prebuilt `dist`) falls back to the Vite dev server so one-off local debugging needs no build step. Use `authenticate(page)` to bypass the master-key gate when not testing auth itself. The `sharedWorkspace` fixture in `test/browser/fixtures.ts` provisions a Startup-templated team once per worker; tests create their own per-test project under it via `createProjectAndClearPlanning`. Captain's coherence-review run is suppressed by `HEZO_E2E_SKIP_COHERENCE_REVIEW=1` in the test server env — without it, team setup blocks for ~30-60s.
 
 ### No spurious `[error]`/`[warn]` in unit-test output
 

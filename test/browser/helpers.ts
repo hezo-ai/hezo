@@ -459,7 +459,16 @@ export async function waitForPageLoad(page: Page, timeout = 15000) {
 	// the route has committed either its loader or its content, so the loader
 	// check below waits for data to land instead of racing the initial mount.
 	await expect(page.locator('main').first()).toBeVisible({ timeout });
-	await expect(page.getByText('Loading...')).toBeHidden({ timeout });
+	// A route renders its own "Loading..." placeholder while its data resolves —
+	// and some pages render more than one (the documents page has a loader in both
+	// its sidebar `complementary` and its main `section`). A bare
+	// `getByText('Loading...').toBeHidden()` is a *strict* locator and throws a
+	// "resolved to 2 elements" error the moment two loaders are on screen at once
+	// (which the fast preview build renders reliably). `toHaveCount(0)` waits for
+	// every loader to clear and is strict-mode safe; an absent loader is count 0,
+	// so the pre-mount fast-pass it guards against still can't happen (the <main>
+	// visibility gate above already ensures the route has committed).
+	await expect(page.getByText('Loading...')).toHaveCount(0, { timeout });
 }
 
 /**
