@@ -74,18 +74,3 @@ agent can't hurt you. A few guarantees sit underneath everything:
 - **Own your data.** Hezo carries an embedded database — no external service to run — so
   your work lives on hardware you control, with safe, data-preserving upgrades. See
   [Your data & the database](/docs/concepts/your-data).
-
-## Meta-harness
-
-Every major model now ships its own agentic command-line tool — Claude Code, Codex, the
-Gemini CLI, and more. Each *harness* wraps a model in a loop that reads and writes files,
-runs commands, and uses tools. They are genuinely good and genuinely different, so picking
-one means inheriting all of its tradeoffs, and juggling several by hand means inconsistent
-results.
-
-**Hezo is a meta-harness — a harness around the harnesses.** It runs each model inside its
-own first-party harness, so you keep that model's native tooling, then wraps a single,
-uniform platform layer around all of them: the same tools, memory, completeness checks, and
-security on every run, whichever model an agent happens to use. That's what lets you put a
-cheaper model on routine work and a frontier model on the hard problems while trusting the
-floor underneath stays the same. See [Meta-harness](/docs/concepts/meta-harness).
