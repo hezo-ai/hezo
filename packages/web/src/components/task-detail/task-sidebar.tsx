@@ -4,6 +4,7 @@ import {
 	CAPTAIN_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	HQ_PROJECT_SLUG,
+	TaskPriority,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 } from '@hezo/shared';
@@ -110,11 +111,13 @@ export function TaskSidebar({
 						onChange={(e) => updateTask.mutate({ priority: e.target.value })}
 						className="w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-text-1 outline-none"
 					>
-						{['low', 'medium', 'high', 'urgent'].map((p) => (
-							<option key={p} value={p}>
-								{p}
-							</option>
-						))}
+						{[TaskPriority.Low, TaskPriority.Medium, TaskPriority.High, TaskPriority.Urgent].map(
+							(p) => (
+								<option key={p} value={p}>
+									{p}
+								</option>
+							),
+						)}
 					</select>
 				</div>
 

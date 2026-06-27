@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 import { useSimpleOptimisticUpdate } from './use-optimistic-mutation';
+import { toast } from './use-toast';
 
 export interface QueuedWakeup {
 	reason: 'task_busy' | 'project_at_capacity' | 'agent_running';
@@ -270,6 +271,7 @@ export function useAddDependency(projectId: string, taskId: string) {
 			queryClient.invalidateQueries({
 				queryKey: queryKeys.projects.taskDependencies(projectId, taskId),
 			}),
+		onError: () => toast.error('Failed to add dependency'),
 	});
 }
 
@@ -281,5 +283,6 @@ export function useRemoveDependency(projectId: string, taskId: string) {
 			queryClient.invalidateQueries({
 				queryKey: queryKeys.projects.taskDependencies(projectId, taskId),
 			}),
+		onError: () => toast.error('Failed to remove dependency'),
 	});
 }

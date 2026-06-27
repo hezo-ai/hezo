@@ -1,3 +1,4 @@
+import { HeartbeatRunStatus } from '@hezo/shared';
 import {
 	AlertTriangle,
 	ArrowRightLeft,
@@ -43,14 +44,16 @@ export const REACTION_LABEL: Record<string, string> = { ack: 'Acknowledged' };
 export const AVAILABLE_REACTION_KINDS = ['ack'] as const;
 
 export function runStatusLabel(status: string): string {
-	if (status === 'timed_out') return 'timed out';
+	if (status === HeartbeatRunStatus.TimedOut) return 'timed out';
 	return status;
 }
 
 export function runStatusDotClass(status: string): string {
-	if (status === 'running' || status === 'queued') return 'bg-warning animate-pulse';
-	if (status === 'succeeded') return 'bg-success';
-	if (status === 'failed' || status === 'timed_out') return 'bg-danger';
+	if (status === HeartbeatRunStatus.Running || status === HeartbeatRunStatus.Queued)
+		return 'bg-warning animate-pulse';
+	if (status === HeartbeatRunStatus.Succeeded) return 'bg-success';
+	if (status === HeartbeatRunStatus.Failed || status === HeartbeatRunStatus.TimedOut)
+		return 'bg-danger';
 	return 'bg-text-3';
 }
 

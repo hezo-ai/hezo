@@ -1,3 +1,4 @@
+import { HeartbeatRunStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { DoorOpen, Loader2, RotateCw } from 'lucide-react';
 import { useState } from 'react';
@@ -154,7 +155,9 @@ function RunCommentBody({
 	// and only when nothing is already running or queued for this task — that's
 	// exactly what `retryableRunId` resolves to (null otherwise).
 	const canRetry =
-		Boolean(taskId) && runId === retryableRunId && (status === 'failed' || status === 'timed_out');
+		Boolean(taskId) &&
+		runId === retryableRunId &&
+		(status === HeartbeatRunStatus.Failed || status === HeartbeatRunStatus.TimedOut);
 	const { lines } = useRunLogs(run?.project_id, runId, run?.log_text, isActive);
 	const createdTasks = run?.created_tasks ?? [];
 	const createdDocs = run?.created_docs ?? [];

@@ -57,24 +57,29 @@ async function buildCreateTaskCaller(c: Context<Env>, teamId: string): Promise<C
 	return caller;
 }
 
-async function wakeAgentIfAssigned(
+// Fire-and-forget: the agent's run is inherently async, so callers don't await
+// this. The whole body — including the member-agent lookup — is wrapped in
+// trackBackground + catch so a rejection from either query can't surface as an
+// unhandled rejection or race test teardown (the tracker is drained on close).
+function wakeAgentIfAssigned(
 	db: PGlite,
 	assigneeId: string | null | undefined,
 	teamId: string,
 	taskId: string,
 	source: WakeupSource = WakeupSource.Assignment,
 	extraPayload: Record<string, unknown> = {},
-): Promise<void> {
+): void {
 	if (!assigneeId) return;
-	const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
-	if (isAgent.rows.length > 0) {
-		trackBackground(
-			createWakeup(db, assigneeId, teamId, source, {
+	trackBackground(
+		(async () => {
+			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
+			if (isAgent.rows.length === 0) return;
+			await createWakeup(db, assigneeId, teamId, source, {
 				task_id: taskId,
 				...extraPayload,
-			}).catch((e) => log.error('Failed to create wakeup for assignment:', e)),
-		);
-	}
+			});
+		})().catch((e) => log.error('Failed to create wakeup for assignment:', e)),
+	);
 }
 
 async function resolveActorMemberId(c: Context<Env>, teamId: string): Promise<string | null> {

@@ -1,4 +1,9 @@
-import { formatTaskStatus, TaskStatus, TERMINAL_TASK_STATUSES } from '@hezo/shared';
+import {
+	formatTaskStatus,
+	isLastRunFailed,
+	TaskStatus,
+	TERMINAL_TASK_STATUSES,
+} from '@hezo/shared';
 import { useNavigate } from '@tanstack/react-router';
 import { AlertTriangle, AtSign, ChevronDown, ListPlus, Plus, Search } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -330,9 +335,7 @@ export function TaskList({ projectId }: TaskListProps) {
 			width: '88px',
 			className: 'font-mono text-text-2',
 			render: (row) => {
-				const lastRunFailed =
-					!row.has_active_run &&
-					(row.last_run_status === 'failed' || row.last_run_status === 'timed_out');
+				const lastRunFailed = isLastRunFailed(row.has_active_run, row.last_run_status);
 				return (
 					<span className="inline-flex items-center gap-1.5">
 						<TaskRunDot hasActiveRun={row.has_active_run} queuedWakeup={row.queued_wakeup} />
