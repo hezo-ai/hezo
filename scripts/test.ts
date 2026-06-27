@@ -153,15 +153,37 @@ async function runBunNativeForPackage(pkg: string): Promise<boolean> {
 	return passed;
 }
 
+// Build the web bundle the Playwright suite serves via `vite preview`. Running
+// the browser tests against the prebuilt bundle instead of two Vite dev servers
+// keeps the CI runner's CPU off the dev server's per-request module transform,
+// which otherwise starved the backend until task fetches timed out (see the
+// HEZO_E2E_PREVIEW note in playwright.config.ts). Done synchronously here, before
+// Playwright launches its webServers, because Playwright starts webServers ahead
+// of any globalSetup — there is no in-config hook that runs early enough.
+async function buildWebBundle(): Promise<boolean> {
+	console.log('Building web bundle for browser tests...');
+	const proc = Bun.spawn(['bunx', 'vite', 'build'], {
+		cwd: resolve(ROOT, 'packages/web'),
+		stdout: 'inherit',
+		stderr: 'inherit',
+	});
+	const exitCode = await proc.exited;
+	if (exitCode !== 0) console.error('Failed to build web bundle');
+	return exitCode === 0;
+}
+
 async function runBrowserTests(): Promise<boolean> {
 	console.log('\n── Browser Tests ──');
+	if (!(await buildWebBundle())) return false;
 	const playwrightArgs = ['playwright', 'test'];
 	if (pattern) playwrightArgs.push(pattern);
 	const proc = Bun.spawn(['bunx', ...playwrightArgs], {
 		cwd: ROOT,
 		stdout: 'inherit',
 		stderr: 'inherit',
-		env: { ...process.env, NODE_ENV: 'test' },
+		// HEZO_E2E_PREVIEW=1 switches playwright.config.ts's webServers from the
+		// Vite dev server to `vite preview`, serving the bundle built just above.
+		env: { ...process.env, NODE_ENV: 'test', HEZO_E2E_PREVIEW: '1' },
 	});
 	const passed = (await proc.exited) === 0;
 	console.log(`\nBrowser: ${passed ? 'passed' : 'FAILED'}`);
