@@ -5,7 +5,6 @@ import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useAgents } from '../hooks/use-agents';
 import { useContainerHealth } from '../hooks/use-container-health';
-import { useGoals } from '../hooks/use-goals';
 import { useInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useProjectMeta } from '../hooks/use-projects';
 import { agentPageParams } from './agent-link';
@@ -42,12 +41,11 @@ export function ProjectSidebar() {
 	const [teamCollapsed, setTeamCollapsed] = useState(readTeamCollapsed);
 	const [createTaskOpen, setCreateTaskOpen] = useState(false);
 	const [createGoalOpen, setCreateGoalOpen] = useState(false);
-	// Goals are a project concept only (HQ has none); fetch only for normal projects.
+	// Goals are a project concept only (HQ has none). Use the open_goal_count carried on the
+	// project-detail payload rather than a separate per-page goals fetch — the dot shows only
+	// once the project has loaded and reports zero active goals.
 	const isInternalProject = project?.is_internal ?? false;
-	const { data: goals, isLoading: goalsLoading } = useGoals(projectId, {
-		enabled: !!projectId && !isInternalProject,
-	});
-	const hasNoGoals = !isInternalProject && !goalsLoading && (goals?.length ?? 0) === 0;
+	const hasNoGoals = !isInternalProject && project != null && (project.open_goal_count ?? 0) === 0;
 
 	if (!active) return null;
 

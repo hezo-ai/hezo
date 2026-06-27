@@ -113,6 +113,12 @@ describe('goals REST CRUD', () => {
 		expect(goal.title).toBe('Reach 200 paying customers');
 	});
 
+	it('exposes the active goal count on the project detail payload', async () => {
+		const res = await app.request(`/api/projects/${projectSlug}`, { headers: authHeader(token) });
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.open_goal_count).toBe(1);
+	});
+
 	it('archives a goal and hides it from the default list', async () => {
 		const del = await app.request(`/api/projects/${projectSlug}/goals/${goalId}`, {
 			method: 'DELETE',
@@ -120,6 +126,10 @@ describe('goals REST CRUD', () => {
 		});
 		expect(del.status).toBe(200);
 		expect((await del.json()).data.archived_at).not.toBeNull();
+
+		// Archiving drops it out of the active count.
+		const proj = await app.request(`/api/projects/${projectSlug}`, { headers: authHeader(token) });
+		expect((await proj.json()).data.open_goal_count).toBe(0);
 
 		const active = await app.request(`/api/projects/${projectSlug}/goals`, {
 			headers: authHeader(token),
