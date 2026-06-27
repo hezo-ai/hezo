@@ -1,4 +1,4 @@
-import { HQ_PROJECT_NAME } from '@hezo/shared';
+import { CeoMessageStatus, HQ_PROJECT_NAME } from '@hezo/shared';
 import {
 	ArrowRight,
 	Check,
@@ -313,9 +313,9 @@ function RoleLabel({ children }: { children: ReactNode }) {
 
 function MessageBubble({ message }: { message: CeoMessage }) {
 	const isCeo = message.role === 'assistant';
-	const interrupted = message.status === 'interrupted';
-	const failed = message.status === 'failed';
-	const streaming = message.status === 'streaming';
+	const interrupted = message.status === CeoMessageStatus.Interrupted;
+	const failed = message.status === CeoMessageStatus.Failed;
+	const streaming = message.status === CeoMessageStatus.Streaming;
 
 	if (isCeo) {
 		// Still composing with no text yet → the typing indicator stands in for

@@ -1,4 +1,4 @@
-import { TaskStatus, TERMINAL_TASK_STATUSES } from './types/common.js';
+import { HeartbeatRunStatus, TaskStatus, TERMINAL_TASK_STATUSES } from './types/common.js';
 
 export type TaskProgressBucket = 'complete' | 'in_progress' | 'not_done';
 
@@ -108,7 +108,10 @@ export interface TaskProgressStatusRow extends TaskProgressRow {
 }
 
 export function isLastRunFailed(hasActiveRun: boolean, lastRunStatus: string | null): boolean {
-	return !hasActiveRun && (lastRunStatus === 'failed' || lastRunStatus === 'timed_out');
+	return (
+		!hasActiveRun &&
+		(lastRunStatus === HeartbeatRunStatus.Failed || lastRunStatus === HeartbeatRunStatus.TimedOut)
+	);
 }
 
 /**
