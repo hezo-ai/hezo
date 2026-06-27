@@ -565,6 +565,131 @@ export const HeartbeatRunStatus = {
 } as const;
 export type HeartbeatRunStatus = (typeof HeartbeatRunStatus)[keyof typeof HeartbeatRunStatus];
 
+/** Classifies a heartbeat run. 'task' is the normal task-scoped run; 'goal_check' is a
+ * Captain run with no task that estimates progress across the project's due goals. */
+export const HeartbeatRunKind = {
+	Task: 'task',
+	GoalCheck: 'goal_check',
+} as const;
+export type HeartbeatRunKind = (typeof HeartbeatRunKind)[keyof typeof HeartbeatRunKind];
+
+// --- Goals ---
+
+/** How often the Captain re-checks a goal's progress during its heartbeat. */
+export const GoalCheckFrequency = {
+	Daily: 'daily',
+	Weekly: 'weekly',
+	Monthly: 'monthly',
+} as const;
+export type GoalCheckFrequency = (typeof GoalCheckFrequency)[keyof typeof GoalCheckFrequency];
+
+export const GOAL_CHECK_FREQUENCY_LABELS: Record<GoalCheckFrequency, string> = {
+	[GoalCheckFrequency.Daily]: 'Daily',
+	[GoalCheckFrequency.Weekly]: 'Weekly',
+	[GoalCheckFrequency.Monthly]: 'Monthly',
+};
+
+/** The Captain's at-a-glance read on a goal. 'pending' = not yet assessed (a brand-new
+ * goal the Captain hasn't checked). The Captain sets the other three on each check. */
+export const GoalHealth = {
+	Pending: 'pending',
+	OnTrack: 'on_track',
+	AtRisk: 'at_risk',
+	OffTrack: 'off_track',
+} as const;
+export type GoalHealth = (typeof GoalHealth)[keyof typeof GoalHealth];
+
+export const GOAL_HEALTH_LABELS: Record<GoalHealth, string> = {
+	[GoalHealth.Pending]: 'Not assessed',
+	[GoalHealth.OnTrack]: 'On track',
+	[GoalHealth.AtRisk]: 'At risk',
+	[GoalHealth.OffTrack]: 'Off track',
+};
+
+/** The health values the Captain may set via update_goal_progress (excludes 'pending', the
+ * pre-assessment default). */
+export const CAPTAIN_SETTABLE_GOAL_HEALTH = [
+	GoalHealth.OnTrack,
+	GoalHealth.AtRisk,
+	GoalHealth.OffTrack,
+] as const;
+
+export function formatGoalHealth(health: string): string {
+	return GOAL_HEALTH_LABELS[health as GoalHealth] ?? health;
+}
+
+/**
+ * SMART-goal guidance shown on the goal create/edit surfaces so the admin keeps the framework
+ * in mind. Single source of truth so every surface renders the same explanation.
+ */
+export const GOAL_SMART_GUIDANCE: ReadonlyArray<{ letter: string; label: string; hint: string }> = [
+	{ letter: 'S', label: 'Specific', hint: 'Target one clear outcome, not a vague theme.' },
+	{ letter: 'M', label: 'Measurable', hint: 'Define exactly how you will know it is achieved.' },
+	{ letter: 'A', label: 'Achievable', hint: 'Realistic for the team given its resources.' },
+	{ letter: 'R', label: 'Relevant', hint: "Matters to the project's mission right now." },
+	{ letter: 'T', label: 'Time-bound', hint: 'Give it a deadline to work toward.' },
+];
+
+/** One point in a goal's progress history — a snapshot recorded by a goal-check run. */
+export interface GoalHistoryPoint {
+	/** ISO timestamp of the recording goal-check run. */
+	t: string;
+	percent: number;
+	health: GoalHealth;
+}
+
+export interface Goal {
+	id: string;
+	team_id: string;
+	project_id: string;
+	title: string;
+	/** Precise free-text definition of how we know the goal is achieved (SMART "Measurable"). */
+	measurement: string;
+	/** Optional free-text guidance on actions/checks the Captain could take toward the goal. */
+	actions: string;
+	progress_percent: number;
+	health: GoalHealth;
+	status_blurb: string;
+	check_frequency: GoalCheckFrequency;
+	target_date: string | null;
+	last_checked_at: string | null;
+	/** NULL = active; non-null = archived by an admin at this time. */
+	archived_at: string | null;
+	created_by_member_id: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+/** The list/detail DTO: a goal plus its project handle and embedded recent history (so the
+ * goal panels can draw their line charts without an extra round-trip). */
+export interface GoalWithProject extends Goal {
+	project_name: string | null;
+	project_slug: string | null;
+	history: GoalHistoryPoint[];
+}
+
+/** A single goal's progress snapshot taken during one goal-check run. */
+export interface GoalRunUpdate {
+	id: string;
+	run_id: string;
+	goal_id: string;
+	progress_percent: number;
+	health: GoalHealth;
+	status_blurb: string;
+	created_at: string;
+}
+
+/** A goal-check run as shown in the Goals page footer, annotated with which goals it touched. */
+export interface GoalCheckRunSummary {
+	id: string;
+	status: HeartbeatRunStatus;
+	created_at: string;
+	started_at: string | null;
+	finished_at: string | null;
+	/** Titles of the goals this run updated (empty = ran but changed nothing). */
+	updated_goal_titles: string[];
+}
+
 // --- CEO chat ---
 
 /**

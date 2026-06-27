@@ -24,7 +24,7 @@ export const TASK_COLUMNS_BARE = `id, team_id, project_id, assignee_id, parent_t
 	number, identifier, title, description, rules,
 	status, priority, labels,
 	progress_summary, progress_summary_updated_at, progress_summary_updated_by,
-	branch_name, runtime_type,
+	branch_name, runtime_type, goal_id,
 	created_at, updated_at`;
 
 export interface CreateTaskInput {
@@ -38,6 +38,8 @@ export interface CreateTaskInput {
 	labels?: string[];
 	runtime_type?: string;
 	blocked_by_task_ids?: string[];
+	/** Optional, non-gating link to the goal this task advances (set by the Captain). */
+	goal_id?: string;
 }
 
 export interface CreateTaskCaller {
@@ -117,6 +119,20 @@ export async function createTask(
 		}
 	}
 
+	// Optional goal link — the goal must live in the same project. Purely for
+	// traceability; it does not gate or alter how the task runs.
+	let goalId: string | null = null;
+	if (input.goal_id) {
+		const g = await db.query<{ id: string }>(
+			`SELECT id FROM goals WHERE id = $1 AND project_id = $2`,
+			[input.goal_id, input.project_id],
+		);
+		if (g.rows.length === 0) {
+			throw new CreateTaskError('NOT_FOUND', `Goal '${input.goal_id}' not found in this project`);
+		}
+		goalId = g.rows[0].id;
+	}
+
 	// Identifier allocation, the insert, and blocker attachment must land
 	// atomically — a rejected blocker reference would otherwise leave an
 	// orphan task row behind.
@@ -127,9 +143,9 @@ export async function createTask(
 			`INSERT INTO tasks (team_id, project_id, assignee_id, parent_task_id,
 			                     created_by_member_id, created_by_run_id,
 			                     number, identifier, title, description,
-			                     status, priority, labels, runtime_type)
+			                     status, priority, labels, runtime_type, goal_id)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-			         $11::task_status, $12::task_priority, $13::jsonb, $14::agent_runtime)
+			         $11::task_status, $12::task_priority, $13::jsonb, $14::agent_runtime, $15)
 			 RETURNING ${TASK_COLUMNS_BARE}`,
 			[
 				teamId,
@@ -146,6 +162,7 @@ export async function createTask(
 				input.priority ?? TaskPriority.Medium,
 				JSON.stringify(input.labels ?? []),
 				input.runtime_type ?? null,
+				goalId,
 			],
 		);
 		let created = r.rows[0];

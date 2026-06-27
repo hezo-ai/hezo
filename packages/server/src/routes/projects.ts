@@ -299,6 +299,7 @@ projectsRoutes.get('/projects/:projectId', async (c) => {
 		`SELECT p.*,
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
        (SELECT count(*) FROM tasks i WHERE i.project_id = p.id AND i.status NOT IN (${ts2.placeholders}))::int AS open_task_count,
+       (SELECT count(*) FROM goals g WHERE g.project_id = p.id AND g.archived_at IS NULL)::int AS open_goal_count,
        (SELECT pi.updated_at FROM project_icons pi WHERE pi.project_id = p.id) AS icon_updated_at
      FROM projects p
      WHERE p.id = $1 AND p.team_id = $2`,

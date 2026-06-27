@@ -28,6 +28,9 @@ export interface Project {
 	dev_ports: Array<{ container: number; host: number }>;
 	repo_count: number;
 	open_task_count: number;
+	/** Active (non-archived) goals on this project; drives the sidebar "no goals yet" dot. Only
+	 * present on the single-project detail payload, so optional. */
+	open_goal_count?: number;
 	/** Total Agent members on this project's team (the hired roster size). */
 	agent_count: number;
 	/** Agents currently running on this project's team (runtime_status = active). */

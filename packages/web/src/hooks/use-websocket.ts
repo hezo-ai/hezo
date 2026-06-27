@@ -43,6 +43,11 @@ const TABLE_TO_QUERY_KEY: Record<
 				);
 			}
 		}
+		// A goal-check run (a heartbeat run with no task) updates the Goals page's
+		// runs footer; refresh it live.
+		if (!row.task_id) {
+			keys.push(queryKeys.projects.goalRuns(cid));
+		}
 		return keys;
 	},
 	agent_wakeup_requests: (cid, row) => {
@@ -91,6 +96,9 @@ const TABLE_TO_QUERY_KEY: Record<
 	cost_entries: (cid) => [['projects', cid, 'costs']],
 	execution_locks: (cid) => [['projects', cid, 'execution-locks']],
 	repos: (cid) => [queryKeys.projects.repos(cid), queryKeys.projects.all()],
+	// `goals(cid)` = ['projects', slug, 'goals'] is a prefix of goalsFiltered /
+	// goal / goalHistory / goalRuns, so it invalidates every goal query at once.
+	goals: (cid) => [queryKeys.projects.goals(cid), queryKeys.projects.all()],
 };
 
 /** Invalidate TanStack Query caches for a realtime row_change event. */

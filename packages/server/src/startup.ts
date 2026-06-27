@@ -35,6 +35,7 @@ import { ceoChatRoutes } from './routes/ceo-chat';
 import { commentsRoutes } from './routes/comments';
 import { costsRoutes } from './routes/costs';
 import { executionLocksRoutes } from './routes/execution-locks';
+import { goalsRoutes } from './routes/goals';
 import { healthRoutes } from './routes/health';
 import { inboxRoutes } from './routes/inbox';
 import { instanceSettingsRoutes } from './routes/instance-settings';
@@ -502,6 +503,7 @@ export function buildApp(
 	app.route('/api', agentsRoutes);
 	app.route('/api', projectsRoutes);
 	app.route('/api', tasksRoutes);
+	app.route('/api', goalsRoutes);
 	app.route('/api', commentsRoutes);
 	app.route('/api', assetsRoutes);
 	app.route('/api', secretsRoutes);

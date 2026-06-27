@@ -210,6 +210,7 @@ Create a new task. Use parent_task_id for sub-tasks — prefer this over a top-l
 | `parent_task_id` | `string` | No | Parent task to nest this under as a sub-task — a task identifier (e.g. "BE-2") or UUID. Sub-tasks can themselves have sub-tasks, but no deeper — depth is capped at 2. |
 | `runtime_type` | `string` | No | Pin this task to a specific AI runtime (claude_code, codex, gemini). Leave unset to use the instance default. |
 | `blocked_by_task_ids` | `string[]` | No | Task identifiers (e.g. ["BE-2", "BE-3"]) or UUIDs that must reach a terminal status before this ticket is started. The assignee will not be woken on this ticket until every blocker is satisfied. |
+| `goal_id` | `string` | No | UUID of the project goal this task advances. Links the task to the goal for traceability; it does not gate or change how the task runs. (Captain) set this when filing work to move a goal forward. |
 
 **Returns:** The created task row (it may carry an advisory `warning` string when the description backticked a real entity). Returns `{ error }` on a validation failure.
 
@@ -289,6 +290,43 @@ Remove a blocker between two tasks. Call this when a dependency that was previou
 | `blocked_by_task_id` | `string` | Yes | Task identifier or UUID of the blocker to remove |
 
 **Returns:** `{ removed: true }`, or `{ error }` if the dependency or blocker is not found. Clearing the last open blocker wakes the downstream assignee.
+
+## Goals
+
+### `list_goals`
+
+_Read-only._
+
+List a project's goals (the objectives the Captain tracks). Each goal has a title, a `measurement` (the precise definition of when the goal is achieved — the bar to judge against), optional `actions` (admin guidance on what to do/check toward it), the Captain's current progress_percent (0-100), a health (pending/on_track/at_risk/off_track), a status_blurb, a check_frequency (daily/weekly/monthly), an optional target_date (deadline), and last_checked_at. As the Captain, call this during your heartbeat to see which goals are due for a fresh assessment, then call update_goal_progress for each. Archived goals are excluded unless include_archived is true.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `include_archived` | `boolean` | No | Include archived goals (default false). |
+
+**Returns:** An array of the project's goal rows, each with `project_name`/`project_slug` and an embedded `history[]` of recent progress snapshots (`{ t, percent, health }`). Archived goals are excluded unless `include_archived` is true.
+
+### `update_goal_progress`
+
+_Write tool._
+
+Record your current assessment of a goal's progress. Only the Captain does this, and only from within a goal-check run. Pass progress_percent (0-100, your honest estimate — do not lower it without a reason in the blurb), health (on_track / at_risk / off_track, weighing progress against the target_date), and a one-paragraph status_blurb explaining where the goal stands and what is needed next. This updates the goal's live status and appends a point to its progress history; the goal then won't be re-surfaced for checking until its cadence elapses again.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `goal_id` | `string` | Yes | UUID of the goal to update. |
+| `progress_percent` | `integer` | Yes | Estimated progress toward the goal, 0-100. |
+| `health` | `on_track` \| `at_risk` \| `off_track` | Yes | on_track, at_risk, or off_track. |
+| `status_blurb` | `string` | Yes | One-paragraph summary of where the goal stands and the next step. |
+
+**Returns:** The updated goal row (with the new `progress_percent`, `health`, `status_blurb`, and a refreshed `last_checked_at`). Appends a point to the goal’s progress history keyed to the calling run. Returns `{ error }` if the goal is not in the project or the inputs are invalid.
+
+**Authorization:** Captain only, and only from within a goal-check agent run (the run records the history point).
 
 ## Comments & reactions
 

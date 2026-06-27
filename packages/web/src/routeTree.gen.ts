@@ -34,6 +34,7 @@ import { Route as PreviewProjectIdFilenameRouteImport } from './routes/preview/$
 import { Route as ProjectsProjectIdTasksIndexRouteImport } from './routes/projects/$projectId/tasks/index'
 import { Route as ProjectsProjectIdSettingsIndexRouteImport } from './routes/projects/$projectId/settings/index'
 import { Route as ProjectsProjectIdInboxIndexRouteImport } from './routes/projects/$projectId/inbox/index'
+import { Route as ProjectsProjectIdGoalsIndexRouteImport } from './routes/projects/$projectId/goals/index'
 import { Route as ProjectsProjectIdAgentsIndexRouteImport } from './routes/projects/$projectId/agents/index'
 import { Route as ProjectsProjectIdTeamSettingsGeneralRouteImport } from './routes/projects/$projectId/team-settings/general'
 import { Route as ProjectsProjectIdTasksTaskIdRouteImport } from './routes/projects/$projectId/tasks/$taskId'
@@ -177,6 +178,12 @@ const ProjectsProjectIdInboxIndexRoute =
     path: '/inbox/',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
+const ProjectsProjectIdGoalsIndexRoute =
+  ProjectsProjectIdGoalsIndexRouteImport.update({
+    id: '/goals/',
+    path: '/goals/',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
 const ProjectsProjectIdAgentsIndexRoute =
   ProjectsProjectIdAgentsIndexRouteImport.update({
     id: '/agents/',
@@ -260,6 +267,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
   '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
   '/projects/$projectId/agents/': typeof ProjectsProjectIdAgentsIndexRoute
+  '/projects/$projectId/goals/': typeof ProjectsProjectIdGoalsIndexRoute
   '/projects/$projectId/inbox/': typeof ProjectsProjectIdInboxIndexRoute
   '/projects/$projectId/settings/': typeof ProjectsProjectIdSettingsIndexRoute
   '/projects/$projectId/tasks/': typeof ProjectsProjectIdTasksIndexRoute
@@ -294,6 +302,7 @@ export interface FileRoutesByTo {
   '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
   '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
   '/projects/$projectId/agents': typeof ProjectsProjectIdAgentsIndexRoute
+  '/projects/$projectId/goals': typeof ProjectsProjectIdGoalsIndexRoute
   '/projects/$projectId/inbox': typeof ProjectsProjectIdInboxIndexRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsIndexRoute
   '/projects/$projectId/tasks': typeof ProjectsProjectIdTasksIndexRoute
@@ -331,6 +340,7 @@ export interface FileRoutesById {
   '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
   '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
   '/projects/$projectId/agents/': typeof ProjectsProjectIdAgentsIndexRoute
+  '/projects/$projectId/goals/': typeof ProjectsProjectIdGoalsIndexRoute
   '/projects/$projectId/inbox/': typeof ProjectsProjectIdInboxIndexRoute
   '/projects/$projectId/settings/': typeof ProjectsProjectIdSettingsIndexRoute
   '/projects/$projectId/tasks/': typeof ProjectsProjectIdTasksIndexRoute
@@ -369,6 +379,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/tasks/$taskId'
     | '/projects/$projectId/team-settings/general'
     | '/projects/$projectId/agents/'
+    | '/projects/$projectId/goals/'
     | '/projects/$projectId/inbox/'
     | '/projects/$projectId/settings/'
     | '/projects/$projectId/tasks/'
@@ -403,6 +414,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/tasks/$taskId'
     | '/projects/$projectId/team-settings/general'
     | '/projects/$projectId/agents'
+    | '/projects/$projectId/goals'
     | '/projects/$projectId/inbox'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/tasks'
@@ -439,6 +451,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/tasks/$taskId'
     | '/projects/$projectId/team-settings/general'
     | '/projects/$projectId/agents/'
+    | '/projects/$projectId/goals/'
     | '/projects/$projectId/inbox/'
     | '/projects/$projectId/settings/'
     | '/projects/$projectId/tasks/'
@@ -643,6 +656,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdInboxIndexRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
+    '/projects/$projectId/goals/': {
+      id: '/projects/$projectId/goals/'
+      path: '/goals'
+      fullPath: '/projects/$projectId/goals/'
+      preLoaderRoute: typeof ProjectsProjectIdGoalsIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
     '/projects/$projectId/agents/': {
       id: '/projects/$projectId/agents/'
       path: '/agents'
@@ -746,6 +766,7 @@ interface ProjectsProjectIdRouteRouteChildren {
   ProjectsProjectIdTasksTaskIdRoute: typeof ProjectsProjectIdTasksTaskIdRoute
   ProjectsProjectIdTeamSettingsGeneralRoute: typeof ProjectsProjectIdTeamSettingsGeneralRoute
   ProjectsProjectIdAgentsIndexRoute: typeof ProjectsProjectIdAgentsIndexRoute
+  ProjectsProjectIdGoalsIndexRoute: typeof ProjectsProjectIdGoalsIndexRoute
   ProjectsProjectIdInboxIndexRoute: typeof ProjectsProjectIdInboxIndexRoute
   ProjectsProjectIdSettingsIndexRoute: typeof ProjectsProjectIdSettingsIndexRoute
   ProjectsProjectIdTasksIndexRoute: typeof ProjectsProjectIdTasksIndexRoute
@@ -767,6 +788,7 @@ const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
     ProjectsProjectIdTeamSettingsGeneralRoute:
       ProjectsProjectIdTeamSettingsGeneralRoute,
     ProjectsProjectIdAgentsIndexRoute: ProjectsProjectIdAgentsIndexRoute,
+    ProjectsProjectIdGoalsIndexRoute: ProjectsProjectIdGoalsIndexRoute,
     ProjectsProjectIdInboxIndexRoute: ProjectsProjectIdInboxIndexRoute,
     ProjectsProjectIdSettingsIndexRoute: ProjectsProjectIdSettingsIndexRoute,
     ProjectsProjectIdTasksIndexRoute: ProjectsProjectIdTasksIndexRoute,

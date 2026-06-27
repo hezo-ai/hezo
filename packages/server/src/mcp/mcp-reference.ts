@@ -38,6 +38,7 @@ export const MCP_REFERENCE_CATEGORY_ORDER: readonly string[] = [
 	'Teams',
 	'Projects',
 	'Tasks',
+	'Goals',
 	'Comments & reactions',
 	'Agents & hiring',
 	'Agent prompts & context',
@@ -137,6 +138,19 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		category: 'Tasks',
 		returns:
 			'`{ removed: true }`, or `{ error }` if the dependency or blocker is not found. Clearing the last open blocker wakes the downstream assignee.',
+	},
+
+	// Goals
+	list_goals: {
+		category: 'Goals',
+		returns:
+			"An array of the project's goal rows, each with `project_name`/`project_slug` and an embedded `history[]` of recent progress snapshots (`{ t, percent, health }`). Archived goals are excluded unless `include_archived` is true.",
+	},
+	update_goal_progress: {
+		category: 'Goals',
+		returns:
+			'The updated goal row (with the new `progress_percent`, `health`, `status_blurb`, and a refreshed `last_checked_at`). Appends a point to the goal’s progress history keyed to the calling run. Returns `{ error }` if the goal is not in the project or the inputs are invalid.',
+		auth: 'Captain only, and only from within a goal-check agent run (the run records the history point).',
 	},
 
 	// Comments & reactions
