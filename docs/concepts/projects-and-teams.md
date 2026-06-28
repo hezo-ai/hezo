@@ -27,7 +27,9 @@ to swap it or **Remove** to go back to the initials.
 
 When you create a project you choose a **template**, which decides the starting roster.
 Every template gives the team a **Captain** to lead it. The global CEO and Coach
-are never part of a template — they live in HQ (below).
+are never part of a template — they live in HQ (below). A template is only the starting
+point — you reshape the team freely from there; see
+[Team shapes](/docs/concepts/team-shapes) for the bigger picture.
 
 Hezo ships with two built-in templates. Each agent's behaviour comes from a **system
 prompt** that you can read (and, once hired, customise — see
