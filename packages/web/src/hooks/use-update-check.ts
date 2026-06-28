@@ -1,5 +1,5 @@
 import type { UpdateState } from '@hezo/shared';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryKeys } from '../lib/query-keys';
 
@@ -58,5 +58,22 @@ export function useApplyUpdate() {
 	return useMutation({
 		mutationFn: () =>
 			api.post<{ state: UpdateState; targetVersion: string | null }>('/api/updates/apply'),
+	});
+}
+
+/**
+ * Kick a fresh background download+verify+stage of the latest release. Used by the
+ * banner to retry after a failed/abandoned auto-stage, since the server's poll-driven
+ * staging backs off on error. Invalidates the status query so the lifecycle
+ * (`downloading → staged`) is reflected as the server progresses.
+ */
+export function useDownloadUpdate() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: () =>
+			api.post<{ data: { state: UpdateState; targetVersion: string | null } }>(
+				'/api/updates/download',
+			),
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.updateStatus() }),
 	});
 }

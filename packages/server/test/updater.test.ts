@@ -6,12 +6,21 @@ import { join } from 'node:path';
 import { UpdateState } from '@hezo/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+	ASSET_DOWNLOAD_TIMEOUT_MS,
 	applyStagedUpdate,
 	currentAssetName,
 	downloadAndStage,
 	ensureUpdateStaged,
 	readUpdateState,
+	STAGE_DOWNLOAD_STALE_MS,
+	STAGE_ERROR_COOLDOWN_MS,
 } from '../src/services/updater';
+
+describe('staging timing invariants', () => {
+	it('keeps the staleness window above the download timeout so a slow live download is never preempted', () => {
+		expect(STAGE_DOWNLOAD_STALE_MS).toBeGreaterThan(ASSET_DOWNLOAD_TIMEOUT_MS);
+	});
+});
 
 async function tmp(prefix: string): Promise<string> {
 	return mkdtemp(join(tmpdir(), prefix));
@@ -145,10 +154,14 @@ describe('ensureUpdateStaged', () => {
 		}
 	});
 
-	it('no-ops while a download is in flight', async () => {
+	it('no-ops while a fresh download is in flight', async () => {
 		const dir = await tmp('hezo-ensure-downloading-');
 		try {
-			await seedState(dir, { state: UpdateState.Downloading, targetVersion: '9.9.9' });
+			await seedState(dir, {
+				state: UpdateState.Downloading,
+				targetVersion: '9.9.9',
+				updatedAt: Date.now(),
+			});
 			const fetchSpy = vi.spyOn(globalThis, 'fetch');
 			await ensureUpdateStaged(dir, latest());
 			expect(fetchSpy).not.toHaveBeenCalled();
@@ -157,13 +170,49 @@ describe('ensureUpdateStaged', () => {
 		}
 	});
 
-	it('does not re-download once it has errored for that version (retry exhausted)', async () => {
-		const dir = await tmp('hezo-ensure-errored-');
+	it('re-attempts a stale (abandoned) download', async () => {
+		const dir = await tmp('hezo-ensure-downloading-stale-');
 		try {
-			await seedState(dir, { state: UpdateState.Error, targetVersion: '9.9.9' });
+			await seedState(dir, {
+				state: UpdateState.Downloading,
+				targetVersion: '9.9.9',
+				updatedAt: Date.now() - STAGE_DOWNLOAD_STALE_MS - 1,
+			});
+			mockRelease(Buffer.from('new binary'));
+			await ensureUpdateStaged(dir, latest());
+			expect((await readUpdateState(dir)).state).toBe(UpdateState.Staged);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('respects the error cooldown (does not re-download within the window)', async () => {
+		const dir = await tmp('hezo-ensure-errored-fresh-');
+		try {
+			await seedState(dir, {
+				state: UpdateState.Error,
+				targetVersion: '9.9.9',
+				updatedAt: Date.now(),
+			});
 			const fetchSpy = vi.spyOn(globalThis, 'fetch');
 			await ensureUpdateStaged(dir, latest());
 			expect(fetchSpy).not.toHaveBeenCalled();
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('re-attempts a download once the error cooldown has elapsed', async () => {
+		const dir = await tmp('hezo-ensure-errored-stale-');
+		try {
+			await seedState(dir, {
+				state: UpdateState.Error,
+				targetVersion: '9.9.9',
+				updatedAt: Date.now() - STAGE_ERROR_COOLDOWN_MS - 1,
+			});
+			mockRelease(Buffer.from('new binary'));
+			await ensureUpdateStaged(dir, latest());
+			expect((await readUpdateState(dir)).state).toBe(UpdateState.Staged);
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}

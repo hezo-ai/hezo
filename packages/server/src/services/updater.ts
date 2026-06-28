@@ -39,7 +39,32 @@ export interface UpdateStateFile {
 	targetVersion?: string;
 	asset?: string;
 	error?: string;
+	/** Epoch ms of the last state write — drives staging retry/staleness decisions. */
+	updatedAt?: number;
 }
+
+/**
+ * How long to wait before re-attempting a download that previously errored for the
+ * same version, so a transient failure (network blip, rate limit) self-heals on a
+ * later status poll instead of sticking on the release-page link forever.
+ */
+export const STAGE_ERROR_COOLDOWN_MS = 30 * 60 * 1000;
+
+/**
+ * Total budget for fetching the release binary. The assets are large (~130 MB) and a
+ * flat short cap fails on slower links — the original production timeout was hit by a
+ * 129 MB asset that simply couldn't complete in time. Generous so a usable-but-slow
+ * connection still succeeds; a genuinely dead transfer is caught by the retry/cooldown.
+ */
+export const ASSET_DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * How long a `Downloading` state may stand before it's treated as abandoned (the
+ * worker crashed or was restarted mid-download) and re-attempted. Must stay
+ * **comfortably above** `ASSET_DOWNLOAD_TIMEOUT_MS` so a genuinely in-flight (slow but
+ * live) download is never preempted by a concurrent poll.
+ */
+export const STAGE_DOWNLOAD_STALE_MS = 15 * 60 * 1000;
 
 /**
  * True only when this process is a `bun build --compile` standalone binary. In
@@ -128,7 +153,8 @@ export async function readUpdateState(dataDir: string): Promise<UpdateStateFile>
 
 async function writeState(dataDir: string, s: UpdateStateFile): Promise<void> {
 	await mkdir(updateDir(dataDir), { recursive: true });
-	await writeFile(stateFilePath(dataDir), `${JSON.stringify(s, null, 2)}\n`);
+	const stamped: UpdateStateFile = { ...s, updatedAt: Date.now() };
+	await writeFile(stateFilePath(dataDir), `${JSON.stringify(stamped, null, 2)}\n`);
 }
 
 /** Parse a `sha256sum`-style manifest, returning the lowercase hash for `asset`. */
@@ -176,7 +202,7 @@ export async function downloadAndStage(version: string, dataDir: string): Promis
 		const [binRes, sumsRes] = await Promise.all([
 			fetch(`${base}/${asset}`, {
 				headers: { 'User-Agent': 'hezo' },
-				signal: AbortSignal.timeout(120_000),
+				signal: AbortSignal.timeout(ASSET_DOWNLOAD_TIMEOUT_MS),
 			}),
 			fetch(`${base}/SHA256SUMS`, {
 				headers: { 'User-Agent': 'hezo' },
@@ -219,9 +245,11 @@ export async function downloadAndStage(version: string, dataDir: string): Promis
  * `isSupervisedWorker()` first; this helper assumes the feature is available.
  *
  * Retries the download once on failure; a second failure leaves `state.json` in
- * `Error` for that version, which is then honored as "retry exhausted" so we
- * don't re-download on every subsequent status poll. The web banner falls back
- * to a release-page link in that case.
+ * `Error` for that version. That error is honored only for a cooldown window, after
+ * which a later status poll re-attempts — a transient failure self-heals instead of
+ * sticking on the release-page link forever. Likewise a `Downloading` state is
+ * respected only while it's fresh; a stale one (worker crashed/restarted mid-download)
+ * is re-attempted.
  *
  * `latestInfo` is injectable so the route/cron can reuse their cached lookup and
  * tests can stub it without network.
@@ -235,9 +263,17 @@ export async function ensureUpdateStaged(
 	const version = latest.latest;
 
 	const state = await readUpdateState(dataDir);
-	if (state.state === UpdateState.Downloading) return;
-	if (state.state === UpdateState.Staged && state.targetVersion === version) return;
-	if (state.state === UpdateState.Error && state.targetVersion === version) return;
+	const sameVersion = state.targetVersion === version;
+	const age = state.updatedAt ? Date.now() - state.updatedAt : Number.POSITIVE_INFINITY;
+
+	// Already staged for this version — nothing to do.
+	if (state.state === UpdateState.Staged && sameVersion) return;
+	// A download for this version is still in flight (recent enough to be alive). A
+	// stale one was abandoned by a restart/crash, so fall through and re-attempt.
+	if (state.state === UpdateState.Downloading && sameVersion && age < STAGE_DOWNLOAD_STALE_MS)
+		return;
+	// A prior attempt errored for this version — back off for a cooldown, then re-attempt.
+	if (state.state === UpdateState.Error && sameVersion && age < STAGE_ERROR_COOLDOWN_MS) return;
 
 	try {
 		await downloadAndStage(version, dataDir);

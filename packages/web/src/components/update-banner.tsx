@@ -2,7 +2,7 @@ import { UpdateState } from '@hezo/shared';
 import { X } from 'lucide-react';
 import { useState } from 'react';
 import { useMe } from '../hooks/use-me';
-import { useApplyUpdate, useUpdateStatus } from '../hooks/use-update-check';
+import { useApplyUpdate, useDownloadUpdate, useUpdateStatus } from '../hooks/use-update-check';
 import { Button } from './ui/button';
 import { ConfirmDialog } from './ui/confirm-dialog';
 import { UpdateRestartOverlay } from './update-restart-overlay';
@@ -41,14 +41,16 @@ function readDismissed(): Dismissal | null {
  * binary), the caller is a superuser, and the binary is staged, an "Install &
  * restart" button — after a confirmation that warns about the master-key
  * re-unlock — restarts onto it instantly. While the background download is still
- * in flight the banner stays hidden; on a download error (and for any instance
- * that can't self-apply) it falls back to a link to the GitHub Release.
- * Dismissal lasts until the next calendar day (or until a newer version ships).
+ * in flight the banner stays hidden; if staging errored on a self-applying
+ * instance it offers a "Retry download" button (with the GitHub Release as a
+ * secondary link), and for any instance that can't self-apply it falls back to the
+ * release link. Dismissal lasts until the next calendar day (or a newer version ships).
  */
 export function UpdateBanner() {
 	const { data } = useUpdateStatus();
 	const { data: me } = useMe();
 	const apply = useApplyUpdate();
+	const download = useDownloadUpdate();
 	const [applying, setApplying] = useState(false);
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const [dismissed, setDismissed] = useState<Dismissal | null>(readDismissed);
@@ -81,9 +83,11 @@ export function UpdateBanner() {
 		setDismissed(record);
 	};
 
-	// Instant restart only once the binary is staged; otherwise (download errored,
-	// or this instance can't self-apply) fall back to the release-page download.
+	// Instant restart only once the binary is staged. A self-applying instance whose
+	// staging errored can re-trigger the background download; otherwise (can't
+	// self-apply) fall back to the release-page download.
 	const showInstall = canApply && staged;
+	const showRetry = canApply && !staged && errored;
 
 	const confirmDescription = (
 		<>
@@ -120,6 +124,30 @@ export function UpdateBanner() {
 					>
 						Install & restart
 					</Button>
+				) : showRetry ? (
+					<>
+						<Button
+							type="button"
+							variant="primary"
+							size="sm"
+							data-testid="update-retry-button"
+							disabled={download.isPending}
+							onClick={() => download.mutate()}
+						>
+							{download.isPending ? 'Downloading…' : 'Retry download'}
+						</Button>
+						{data.url && (
+							<a
+								href={data.url}
+								target="_blank"
+								rel="noreferrer"
+								data-testid="update-download-link"
+								className="underline underline-offset-2 hover:no-underline"
+							>
+								Download manually
+							</a>
+						)}
+					</>
 				) : (
 					data.url && (
 						<a
