@@ -50,6 +50,20 @@ RUN npm install -g @anthropic-ai/claude-code \
     && npm install -g opencode-ai \
     && npm install -g @moonshot-ai/kimi-code
 
+# Install the Grok Build CLI (xAI) → grok. Unlike the npm CLIs above, Grok ships
+# a curl|bash installer that drops the binary under the invoking (root) user's
+# home — `/root/.grok/bin/{grok,agent}` — and symlinks it onto /usr/local/bin.
+# The container runs agents as the unprivileged `node` user, which can't traverse
+# /root (mode 0700), so that default symlink would be a dead link for agents.
+# Relocate the install to a world-readable prefix (/opt/grok), re-point the
+# symlinks at it, make it traversable, and verify.
+RUN curl -fsSL https://x.ai/cli/install.sh | bash \
+    && mv /root/.grok /opt/grok \
+    && ln -sf /opt/grok/bin/grok /usr/local/bin/grok \
+    && ln -sf /opt/grok/bin/agent /usr/local/bin/agent \
+    && chmod -R a+rX /opt/grok \
+    && grok --version
+
 # Pre-install Bun (latest) for agent-authored JS/TS projects — the common case,
 # and the runtime Hezo itself uses. Installed globally via npm so `bun`/`bunx`
 # land on the shared PATH for both root and the `node` user (matching the AI CLIs

@@ -85,15 +85,16 @@ export function createAgentStreamParser(
 			return createCodexParser(price);
 		case AgentRuntime.Gemini:
 			return createGeminiParser(price);
-		// OpenCode (`run --format json`) and Kimi (`--output-format stream-json`)
-		// both emit JSONL but with shapes that vary across versions and aren't
-		// fully documented. The generic parser is lenient — it renders recognizable
-		// assistant text / tool activity and captures token usage from whatever
-		// terminal event carries it, dropping anything it doesn't recognize so the
-		// log stays clean. Tighten into bespoke parsers once a real run's events
-		// are captured (see PR notes).
+		// OpenCode (`run --format json`), Kimi (`--output-format stream-json`) and
+		// Grok (`--output-format streaming-json`) all emit JSONL but with shapes
+		// that vary across versions and aren't fully documented. The generic parser
+		// is lenient — it renders recognizable assistant text / tool activity and
+		// captures token usage from whatever terminal event carries it, dropping
+		// anything it doesn't recognize so the log stays clean. Tighten into bespoke
+		// parsers once a real run's events are captured (see PR notes).
 		case AgentRuntime.OpenCode:
 		case AgentRuntime.Kimi:
+		case AgentRuntime.Grok:
 			return createGenericJsonlParser(price);
 		default:
 			return createPassthroughParser();

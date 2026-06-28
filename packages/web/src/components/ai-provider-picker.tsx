@@ -2,6 +2,7 @@ import { AI_PROVIDER_INFO, AiAuthMethod, AiProvider } from '@hezo/shared';
 import { ClipboardPaste, Key, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useCreateAiProvider } from '../hooks/use-ai-providers';
+import { PROVIDER_LOGOS, ProviderLogo } from './provider-logos';
 import { SubscriptionPasteForm } from './subscription-paste-form';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -15,6 +16,7 @@ const PROVIDERS = [
 	AiProvider.Google,
 	AiProvider.OpenRouter,
 	AiProvider.Kimi,
+	AiProvider.XAi,
 ] as const;
 
 export function AiProviderPicker() {
@@ -53,9 +55,14 @@ function ProviderCard({ provider }: { provider: AiProvider }) {
 	return (
 		<div className="border border-border rounded-md p-4">
 			<div className="flex items-center justify-between mb-2">
-				<div>
+				<div className="flex items-center gap-2">
+					{PROVIDER_LOGOS[provider] && (
+						<span className="flex h-6 w-6 items-center justify-center text-text-1">
+							<ProviderLogo provider={provider} className="h-5 w-5" />
+						</span>
+					)}
 					<span className="text-[13px] font-medium">{info.name}</span>
-					<Badge color="neutral" className="ml-2">
+					<Badge color="neutral" className="ml-1">
 						{info.runtimeLabel}
 					</Badge>
 				</div>

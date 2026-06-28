@@ -26,7 +26,7 @@
  * — and the agent stops normally.
  */
 
-import { AgentRuntime, AiProvider, KIMI_CODING_BASE_URL } from '@hezo/shared';
+import { AgentRuntime, AiProvider, KIMI_CODING_BASE_URL, XAI_API_BASE_URL } from '@hezo/shared';
 
 export const STOP_HOOK_JUDGE_MODEL_ANTHROPIC = 'claude-sonnet-4-6';
 export const STOP_HOOK_JUDGE_MODEL_DEEPSEEK = 'deepseek-v4-pro';
@@ -34,6 +34,7 @@ export const STOP_HOOK_JUDGE_MODEL_ZAI = 'GLM-4.7';
 export const STOP_HOOK_JUDGE_MODEL_OPENAI = 'gpt-4o-mini';
 export const STOP_HOOK_JUDGE_MODEL_GOOGLE = 'gemini-1.5-flash';
 export const STOP_HOOK_JUDGE_MODEL_KIMI = 'kimi-for-coding';
+export const STOP_HOOK_JUDGE_MODEL_XAI = 'grok-4-fast';
 
 /**
  * Judge model for the Claude Code `type:"prompt"` Stop hook, keyed by provider.
@@ -126,8 +127,12 @@ export function buildClaudeCodeSettings(provider: AiProvider): ClaudeCodeSetting
 interface JudgeRuntimeSpec {
 	/** API key env var(s), checked in order; first non-empty wins. */
 	apiKeyEnvVars: string[];
-	/** Field on the parsed stdin JSON that carries the agent's final message. */
-	inputField: string;
+	/**
+	 * Field(s) on the parsed stdin JSON that may carry the agent's final
+	 * message, probed in order (first non-empty string wins). A list lets a
+	 * runtime whose Stop payload shape is undocumented degrade gracefully.
+	 */
+	inputFields: string[];
 	/** Judge model identifier passed to the upstream API. */
 	model: string;
 	/**
@@ -147,6 +152,7 @@ function buildJudgeScript(spec: JudgeRuntimeSpec): string {
 	return `#!/usr/bin/env node
 const SYSTEM_PROMPT = ${JSON.stringify(STOP_HOOK_RULES)};
 const JUDGE_MODEL = ${JSON.stringify(spec.model)};
+const MESSAGE_FIELDS = ${JSON.stringify(spec.inputFields)};
 const apiKey = ${apiKeyExpr};
 
 async function readStdin() {
@@ -161,8 +167,11 @@ async function main() {
 	if (!raw.trim()) return;
 	let input;
 	try { input = JSON.parse(raw); } catch { return; }
-	const message = input[${JSON.stringify(spec.inputField)}];
-	if (!message) return;
+	let message;
+	for (const f of MESSAGE_FIELDS) {
+		if (typeof input[f] === 'string' && input[f].trim()) { message = input[f]; break; }
+	}
+	if (!message) return; // no final message available — fail open
 
 	let verdict;
 	try {
@@ -189,13 +198,23 @@ main().catch(() => {});
  * the native `type:"prompt"` Stop hook via `buildClaudeCodeSettings`. Adding a
  * fourth command-hook provider is one entry here, not a new build function.
  */
-const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
-	// Codex `Stop` hook → OpenAI Chat Completions, judging `last_assistant_message`.
-	[AgentRuntime.Codex]: {
-		apiKeyEnvVars: ['OPENAI_API_KEY'],
-		inputField: 'last_assistant_message',
-		model: STOP_HOOK_JUDGE_MODEL_OPENAI,
-		fetchExpr: `fetch('https://api.openai.com/v1/chat/completions', {
+/**
+ * Build a JudgeRuntimeSpec for any OpenAI-compatible Chat Completions upstream
+ * (Codex/OpenAI, Grok/xAI). Only the base URL, key env, model, and stdin field
+ * names vary — the request/response shape is identical.
+ */
+function openAiCompatJudgeSpec(opts: {
+	baseUrl: string;
+	apiKeyEnvVars: string[];
+	model: string;
+	inputFields: string[];
+}): JudgeRuntimeSpec {
+	const url = `${opts.baseUrl.replace(/\/$/, '')}/chat/completions`;
+	return {
+		apiKeyEnvVars: opts.apiKeyEnvVars,
+		inputFields: opts.inputFields,
+		model: opts.model,
+		fetchExpr: `fetch(${JSON.stringify(url)}, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
 			body: JSON.stringify({
@@ -210,11 +229,36 @@ const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
 			signal: AbortSignal.timeout(25_000),
 		})`,
 		extractTextExpr: `data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content`,
-	},
+	};
+}
+
+const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
+	// Codex `Stop` hook → OpenAI Chat Completions, judging `last_assistant_message`.
+	[AgentRuntime.Codex]: openAiCompatJudgeSpec({
+		baseUrl: 'https://api.openai.com/v1',
+		apiKeyEnvVars: ['OPENAI_API_KEY'],
+		model: STOP_HOOK_JUDGE_MODEL_OPENAI,
+		inputFields: ['last_assistant_message'],
+	}),
+	// Grok `Stop` hook → xAI's OpenAI-compatible Chat Completions. Grok's Stop
+	// stdin payload shape is undocumented (beta), so probe the common field
+	// names; the judge fails open if none is present.
+	[AgentRuntime.Grok]: openAiCompatJudgeSpec({
+		baseUrl: XAI_API_BASE_URL,
+		apiKeyEnvVars: ['XAI_API_KEY'],
+		model: STOP_HOOK_JUDGE_MODEL_XAI,
+		inputFields: [
+			'last_assistant_message',
+			'final_message',
+			'last_message',
+			'prompt_response',
+			'message',
+		],
+	}),
 	// Gemini `AfterAgent` hook → Google Generative AI, judging `prompt_response`.
 	[AgentRuntime.Gemini]: {
 		apiKeyEnvVars: ['GOOGLE_API_KEY', 'GEMINI_API_KEY'],
-		inputField: 'prompt_response',
+		inputFields: ['prompt_response'],
 		model: STOP_HOOK_JUDGE_MODEL_GOOGLE,
 		fetchExpr: `fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(JUDGE_MODEL) + ':generateContent?key=' + encodeURIComponent(apiKey), {
 			method: 'POST',
@@ -246,6 +290,17 @@ export function buildJudgeScriptForRuntime(runtime: AgentRuntime): string | null
  */
 export function buildCodexJudgeScript(): string {
 	return buildJudgeScript(JUDGE_SPECS[AgentRuntime.Codex] as JudgeRuntimeSpec);
+}
+
+/**
+ * Node script that runs inside the Grok Build container as the `Stop` hook
+ * command. Reads the hook input JSON from stdin and asks xAI's
+ * OpenAI-compatible Chat Completions API to judge completeness, blocking the
+ * stop by writing `{"decision":"block","reason":...}` to stdout. Fails open
+ * (exit 0, no output) without `XAI_API_KEY` or a recognisable final message.
+ */
+export function buildGrokJudgeScript(): string {
+	return buildJudgeScript(JUDGE_SPECS[AgentRuntime.Grok] as JudgeRuntimeSpec);
 }
 
 /**

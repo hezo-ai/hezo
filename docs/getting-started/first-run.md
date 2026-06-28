@@ -33,7 +33,7 @@ account sign-up step.
 
 Agents need a model to run. Add at least one **AI provider** — paste an API key (or
 connect a subscription where supported) for Anthropic (Claude), OpenAI (ChatGPT),
-Google (Gemini), DeepSeek, Z.ai, OpenRouter, or Kimi.
+Google (Gemini), DeepSeek, Z.ai, OpenRouter, Kimi, or xAI (Grok).
 
 You can add more than one provider and switch between them later, including giving an
 individual agent its own model. See [AI model support](/docs/ai-models).

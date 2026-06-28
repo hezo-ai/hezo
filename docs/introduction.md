@@ -50,7 +50,7 @@ agent can't hurt you. A few guarantees sit underneath everything:
   they ship — without you hand-tuning prompts. See
   [The Coach & self-improving teams](/docs/concepts/coach-and-self-improving-teams).
 - **Bring your own models, each via its native runtime.** Claude, ChatGPT, Gemini,
-  DeepSeek, Z.ai, OpenRouter, and Kimi are all supported — each driven through its own
+  DeepSeek, Z.ai, OpenRouter, Kimi, and xAI (Grok) are all supported — each driven through its own
   first-party command-line tooling, not a lowest-common-denominator wrapper — and you can
   give any individual agent its own model. See [AI model support](/docs/ai-models).
 - **Put a hard ceiling on spend.** Per-agent and per-project budgets with live cost

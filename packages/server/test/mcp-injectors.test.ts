@@ -332,6 +332,73 @@ describe('gemini adapter', () => {
 	});
 });
 
+describe('grok adapter', () => {
+	const adapter = MCP_ADAPTERS[AgentRuntime.Grok];
+
+	it('declares env-var bearer storage and a required home dir', () => {
+		expect(adapter.capabilities.requiresHomeDir).toBe(true);
+		expect(adapter.capabilities.bearerTokenStorage).toBe('env-var');
+	});
+
+	it('throws when no host home dir is provided', () => {
+		expect(() =>
+			adapter.build([HEZO_DESCRIPTOR], { hostHomeDir: null, containerHomeDir: null }),
+		).toThrow(/hostHomeDir/);
+	});
+
+	it('writes .grok/config.toml with an mcp_servers block and an env-var bearer token', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+
+		expect(injection.cliArgs).toEqual([]);
+		// 2 files: .grok/config.toml + stop-hook judge script
+		expect(injection.files.length).toBe(2);
+		const config = injection.files.find((f) => f.hostPath === `${HOME}/.grok/config.toml`);
+		expect(config).toBeDefined();
+		if (!config) throw new Error('.grok/config.toml not emitted');
+		expect(config.mode).toBe(0o600);
+
+		expect(config.contents).toContain('[mcp_servers.hezo]');
+		expect(config.contents).toContain(`url = "${URL}"`);
+		expect(config.contents).toContain('bearer_token_env_var = "HEZO_MCP_BEARER_TOKEN_HEZO"');
+		expect(config.contents).not.toContain(TOKEN);
+		expect(config.contents).not.toContain('Bearer ');
+		// No Codex-specific top-level web_search key.
+		expect(config.contents).not.toContain('web_search');
+
+		expect(injection.envEntries).toEqual([`HEZO_MCP_BEARER_TOKEN_HEZO=${TOKEN}`]);
+	});
+
+	it('emits a Stop hook pointing at the judge script and the judge calls xAI', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+		const config = injection.files.find((f) => f.hostPath === `${HOME}/.grok/config.toml`);
+		expect(config?.contents).toContain('[[hooks.Stop]]');
+		expect(config?.contents).toContain('type = "command"');
+		expect(config?.contents).toContain(`command = "node ${HOME}/stop-hook-judge.mjs"`);
+
+		const script = injection.files.find((f) => f.hostPath === `${HOME}/stop-hook-judge.mjs`);
+		expect(script).toBeDefined();
+		if (!script) throw new Error('judge script not emitted');
+		expect(script.mode).toBe(0o700);
+		expect(script.contents).toContain('quality gate');
+		expect(script.contents).toContain('api.x.ai');
+		expect(script.contents).toContain('XAI_API_KEY');
+	});
+
+	it('still emits the Stop hook + judge script with an empty descriptor list', () => {
+		const injection = adapter.build([], { hostHomeDir: HOME, containerHomeDir: HOME });
+		expect(injection.envEntries).toEqual([]);
+		expect(injection.files.length).toBe(2);
+		const config = injection.files.find((f) => f.hostPath === `${HOME}/.grok/config.toml`);
+		expect(config?.contents).toContain('[[hooks.Stop]]');
+	});
+});
+
 describe('validateInjection', () => {
 	const codex = MCP_ADAPTERS[AgentRuntime.Codex];
 

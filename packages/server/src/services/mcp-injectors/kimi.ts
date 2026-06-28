@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { AiAuthMethod, KIMI_CODING_BASE_URL } from '@hezo/shared';
 import { buildKimiJudgeScript } from '../stop-hook-prompt';
+import { escapeTomlBasicString, TOML_KEY_RE, tomlTableKey } from './toml';
 import type {
 	McpAdapterContext,
 	McpHttpDescriptor,
@@ -46,30 +47,6 @@ const DEFAULT_MAX_CONTEXT_SIZE = 262144;
 const JUDGE_SCRIPT_BASENAME = 'stop-hook-judge.mjs';
 const CONFIG_BASENAME = 'config.toml';
 const MCP_BASENAME = 'mcp.json';
-
-const TOML_KEY_RE = /^[A-Za-z0-9_-]+$/;
-
-/** Render a provider id as a TOML table-key segment: bare when it only uses
- *  `[A-Za-z0-9_-]`, otherwise a quoted basic string (e.g. `"managed:kimi-code"`). */
-function tomlTableKey(name: string): string {
-	return TOML_KEY_RE.test(name) ? name : escapeTomlBasicString(name);
-}
-
-function escapeTomlBasicString(value: string): string {
-	let out = '';
-	for (const ch of value) {
-		const code = ch.codePointAt(0);
-		if (code === undefined) continue;
-		if (ch === '\\') out += '\\\\';
-		else if (ch === '"') out += '\\"';
-		else if (ch === '\n') out += '\\n';
-		else if (ch === '\r') out += '\\r';
-		else if (ch === '\t') out += '\\t';
-		else if (code < 0x20) out += `\\u${code.toString(16).padStart(4, '0')}`;
-		else out += ch;
-	}
-	return `"${out}"`;
-}
 
 /** Sanitize a model id into a TOML-table key (`[models.<key>]`). */
 function modelKey(model: string): string {
