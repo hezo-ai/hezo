@@ -21,6 +21,7 @@ and your agents run on the models you choose.
 | **DeepSeek** | DeepSeek | Claude Code | API key |
 | **Z.ai** | GLM | Claude Code | API key |
 | **OpenRouter** | Many, via one key | OpenCode | API key |
+| **xAI** | Grok | Grok Build | API key |
 
 Each provider is driven through its **native command-line runtime** inside the agent's
 container — so you get each model's first-party agentic tooling, not a lowest-common-

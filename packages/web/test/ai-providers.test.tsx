@@ -33,7 +33,7 @@ async function postProvider(body: Record<string, unknown>) {
 	});
 }
 
-test('Add provider modal lists Anthropic / OpenAI / Google (no Moonshot, no OAuth)', async () => {
+test('Add provider modal shows provider cards incl. xAI (no Moonshot, no OAuth)', async () => {
 	const { findByRole, getByRole, queryAllByText, queryAllByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 	});
@@ -42,15 +42,58 @@ test('Add provider modal lists Anthropic / OpenAI / Google (no Moonshot, no OAut
 	await user.click(getByRole('button', { name: 'Add provider' }));
 
 	const dialog = await findByRole('dialog');
-	const providerSelect = within(dialog).getByLabelText('Provider');
-	const optionText = Array.from(providerSelect.querySelectorAll('option')).map(
-		(o) => o.textContent ?? '',
-	);
-	for (const name of ['Anthropic', 'OpenAI', 'Google', 'OpenRouter', 'Kimi']) {
-		expect(optionText.some((t) => t.includes(name))).toBe(true);
+	// The picker step renders one selectable card per provider (aria-label is
+	// "<name> · <runtime>"), including the new xAI / Grok Build entry.
+	for (const name of ['Anthropic', 'OpenAI', 'Google', 'OpenRouter', 'Kimi', 'xAI']) {
+		expect(within(dialog).getByRole('button', { name: new RegExp(name) })).toBeTruthy();
 	}
+	expect(within(dialog).getByRole('button', { name: /xAI · Grok Build/ })).toBeTruthy();
 	expect(queryAllByText('Moonshot').length).toBe(0);
 	expect(queryAllByRole('button', { name: /OAuth/i }).length).toBe(0);
+});
+
+test('Add provider modal: pick xAI card → API-key form → Back returns to the grid', async () => {
+	const { findByRole, getByRole, queryByLabelText, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await user.click(getByRole('button', { name: 'Add provider' }));
+
+	const dialog = await findByRole('dialog');
+	await user.click(within(dialog).getByRole('button', { name: /xAI · Grok Build/ }));
+
+	// Configure step: title flips and an API-key field appears (xAI is key-only,
+	// so there's no subscription toggle).
+	await within(dialog).findByText('Connect xAI');
+	expect(within(dialog).getByLabelText('API key')).toBeTruthy();
+	expect(within(dialog).queryByRole('button', { name: /subscription/i })).toBeNull();
+
+	// Back arrow returns to the card grid (form fields gone, cards back).
+	await user.click(within(dialog).getByRole('button', { name: 'Back' }));
+	expect(queryByLabelText('API key')).toBeNull();
+	expect(within(dialog).getByRole('button', { name: /Anthropic/ })).toBeTruthy();
+});
+
+test('adds an xAI API key via the card flow', async () => {
+	const { findByRole, findByText, getByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await user.click(getByRole('button', { name: 'Add provider' }));
+
+	const dialog = await findByRole('dialog');
+	await user.click(within(dialog).getByRole('button', { name: /xAI · Grok Build/ }));
+
+	const nameInput = within(dialog).getByLabelText('Name') as HTMLInputElement;
+	fireEvent.change(nameInput, { target: { value: 'My Grok' } });
+	const keyInput = within(dialog).getByLabelText('API key') as HTMLInputElement;
+	fireEvent.change(keyInput, { target: { value: 'xai-component-test-123' } });
+
+	await user.click(within(dialog).getByRole('button', { name: 'Add provider' }));
+
+	await findByText('My Grok', undefined, { timeout: 15_000 });
 });
 
 test('sidebar Settings link navigates to /settings and renders the AI providers section', async () => {
@@ -301,12 +344,17 @@ test('Add provider modal pre-fills a default name from the selected provider', a
 	await user.click(getByRole('button', { name: 'Add provider' }));
 
 	const dialog = await findByRole('dialog');
+	// Pick the Anthropic card; the Name field pre-fills from the provider.
+	await user.click(within(dialog).getByRole('button', { name: /Anthropic/ }));
 	const nameInput = within(dialog).getByLabelText('Name') as HTMLInputElement;
 	// Default seed only uses the label "test-default", so "Anthropic" is free.
 	await waitFor(() => expect(nameInput.value).toBe('Anthropic'));
 
-	await user.selectOptions(within(dialog).getByLabelText('Provider'), 'google');
-	await waitFor(() => expect(nameInput.value).toBe('Google'));
+	// Back to the grid, pick Google: the default name follows the new provider.
+	await user.click(within(dialog).getByRole('button', { name: 'Back' }));
+	await user.click(within(dialog).getByRole('button', { name: /Google/ }));
+	const googleNameInput = within(dialog).getByLabelText('Name') as HTMLInputElement;
+	await waitFor(() => expect(googleNameInput.value).toBe('Google'));
 });
 
 test('Add provider modal increments the default name when the label is taken', async () => {
@@ -327,6 +375,7 @@ test('Add provider modal increments the default name when the label is taken', a
 	await user.click(getByRole('button', { name: 'Add provider' }));
 
 	const dialog = await findByRole('dialog');
+	await user.click(within(dialog).getByRole('button', { name: /Anthropic/ }));
 	const nameInput = within(dialog).getByLabelText('Name') as HTMLInputElement;
 	await waitFor(() => expect(nameInput.value).toBe('Anthropic 2'));
 });
@@ -340,7 +389,7 @@ test('adds an API key provider via the Add modal', async () => {
 	await user.click(getByRole('button', { name: 'Add provider' }));
 
 	const dialog = await findByRole('dialog');
-	await user.selectOptions(within(dialog).getByLabelText('Provider'), 'google');
+	await user.click(within(dialog).getByRole('button', { name: /Google/ }));
 
 	const nameInput = within(dialog).getByLabelText('Name') as HTMLInputElement;
 	fireEvent.change(nameInput, { target: { value: 'My Gemini' } });
@@ -362,7 +411,7 @@ test('adds a subscription credential via the Add modal', async () => {
 	await user.click(getByRole('button', { name: 'Add provider' }));
 
 	const dialog = await findByRole('dialog');
-	await user.selectOptions(within(dialog).getByLabelText('Provider'), 'openai');
+	await user.click(within(dialog).getByRole('button', { name: /OpenAI · Codex/ }));
 	await user.click(within(dialog).getByRole('button', { name: /Codex subscription/i }));
 
 	// "codex login" appears in both a step and the footer, so match all.

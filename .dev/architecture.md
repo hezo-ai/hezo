@@ -462,13 +462,15 @@ agents back to `idle` once a window rolls over or a limit is raised.
 
 ## 6. AI providers, runtimes & the completeness stop-hook
 
-**Providers → runtimes.** `AiProvider` has **seven** values — `anthropic`, `openai`,
-`google`, `deepseek`, `z_ai`, `openrouter`, `kimi` — and `AgentRuntime` has **five** —
-`claude_code`, `codex`, `gemini`, `opencode`, `kimi`. The mapping is data-driven in
+**Providers → runtimes.** `AiProvider` has **eight** values — `anthropic`, `openai`,
+`google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `x_ai` — and `AgentRuntime` has **six** —
+`claude_code`, `codex`, `gemini`, `opencode`, `kimi`, `grok`. The mapping is data-driven in
 `packages/shared/src/types/common.ts` (`PROVIDER_RUNTIME_ADAPTERS`, `PROVIDER_TO_RUNTIME`,
 `PROVIDERS_BY_RUNTIME`): Anthropic + DeepSeek + Z.ai → `claude_code` (DeepSeek/Z.ai inject
 `ANTHROPIC_BASE_URL` + model defaults to point Claude Code at their Anthropic-compatible
-gateway), OpenAI → `codex`, Google → `gemini`, OpenRouter → `opencode`, Kimi → `kimi`.
+gateway), OpenAI → `codex`, Google → `gemini`, OpenRouter → `opencode`, Kimi → `kimi`,
+xAI → `grok` (the `grok` CLI talks to xAI natively via `XAI_API_KEY`; OpenAI-compatible,
+its Anthropic-compat endpoint is deprecated).
 
 **Provider config.** `ai_provider_configs` is instance-level (shared across teams), one
 row per `(provider, label)`, each inlining an encrypted credential. `auth_method`
@@ -484,11 +486,13 @@ global `medium`. Each runtime maps it natively: `claude_code` appends
 `think`/`think hard`/`ultrathink`; `codex` passes `-c model_reasoning_effort=`; `gemini`
 sets `GEMINI_REASONING_EFFORT`. It's also exposed as `HEZO_AGENT_EFFORT`.
 
-**Per-runtime wiring** lives in the MCP injectors (`services/mcp-injectors/`, five
-adapters in `index.ts`: ClaudeCode, Codex, Gemini, OpenCode, Kimi). Each builds the CLI
-invocation (headless prefix, prompt delivery, stream/auto-approve args), injects MCP
-servers, and wires the stop-hook. OpenCode and Kimi take the prompt as a CLI **argument**
-(`HEZO_PROMPT_MODE=arg`, `RUNTIME_PROMPT_DELIVERY`); the rest read it on stdin.
+**Per-runtime wiring** lives in the MCP injectors (`services/mcp-injectors/`, six
+adapters in `index.ts`: ClaudeCode, Codex, Gemini, OpenCode, Kimi, Grok). Each builds the
+CLI invocation (headless prefix, prompt delivery, stream/auto-approve args), injects MCP
+servers, and wires the stop-hook. OpenCode, Kimi, and Grok take the prompt as a CLI
+**argument** (`HEZO_PROMPT_MODE=arg`, `RUNTIME_PROMPT_DELIVERY`); the rest read it on stdin.
+The Grok adapter writes `~/.grok/config.toml` (Codex-shaped `[mcp_servers.*]` + a
+`[[hooks.Stop]]` command hook); shared TOML rendering lives in `mcp-injectors/toml.ts`.
 
 **Completeness stop-hook.** Every run is gated by a judge that fires when the agent tries
 to end its turn and **blocks** it (keeping the same headless exec alive) when it's bailing
@@ -496,10 +500,11 @@ on failing tests, calling problems "out of scope", or deferring without filing a
 The rule body (`STOP_HOOK_RULES` in `stop-hook-prompt.ts`) is identical across runtimes;
 judge models are hardcoded per provider (Anthropic `claude-sonnet-4-6` / DeepSeek
 `deepseek-v4-pro` / Z.ai `GLM-4.7` / OpenAI `gpt-4o-mini` / Google `gemini-1.5-flash` /
-Kimi `kimi-for-coding`). Wiring differs by runtime's native hook: Claude Code uses a
-`type: "prompt"` `Stop` hook (makes the judge call itself); Codex/Gemini/Kimi use command
-scripts (`buildCodexJudgeScript`/`buildGeminiJudgeScript`/`buildKimiJudgeScript`) that
-call the provider API. **OpenCode is the sole exception — no judge** (its plugin API can't
+Kimi `kimi-for-coding` / xAI `grok-4-fast`). Wiring differs by runtime's native hook:
+Claude Code uses a `type: "prompt"` `Stop` hook (makes the judge call itself);
+Codex/Gemini/Kimi/Grok use command scripts (`buildCodexJudgeScript`/`buildGeminiJudgeScript`/
+`buildKimiJudgeScript`/`buildGrokJudgeScript`) that call the provider API — Grok's calls
+xAI's OpenAI-compatible Chat Completions at `api.x.ai`. **OpenCode is the sole exception — no judge** (its plugin API can't
 block-and-continue headless). File-mount subscription runtimes fail open (no API key in
 env); Anthropic subscription still fires via `CLAUDE_CODE_OAUTH_TOKEN`. Full per-runtime
 detail is in `AGENTS.md` › AI runtime hooks.
