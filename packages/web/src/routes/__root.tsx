@@ -210,7 +210,7 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 						className="absolute inset-0 bg-[var(--overlay)] cursor-default"
 					/>
 					<div className="relative flex h-full bg-surface shadow-xl">
-						<ProjectRail />
+						<ProjectRail showHome />
 						{active && (
 							<div className="w-[208px] h-full overflow-y-auto py-2 border-r border-border bg-surface">
 								<ProjectSidebar />
@@ -221,7 +221,7 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 							aria-label="Close navigation"
 							onClick={() => setDrawerOpen(false)}
 							data-testid="mobile-nav-close"
-							className="absolute top-2 -right-10 w-9 h-9 rounded-md bg-surface border border-border flex items-center justify-center text-text-2 hover:text-text-1 shadow-sm"
+							className="absolute top-2 right-2 z-10 w-9 h-9 rounded-md flex items-center justify-center text-text-2 hover:text-text-1 hover:bg-surface-2 transition-colors"
 						>
 							<X className="w-4 h-4" />
 						</button>

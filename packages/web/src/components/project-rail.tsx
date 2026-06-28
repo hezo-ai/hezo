@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import { Building2, Plus } from 'lucide-react';
+import { Building2, Home, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useInboxUnreadCount, useInboxUnreadCountsBySlug } from '../hooks/use-inbox-count';
@@ -17,8 +17,12 @@ import { Tooltip } from './ui/tooltip';
  * each project is presented as a standalone entity. The create-project action
  * and the HQ entry are pinned below the scrolling avatar list (create-project
  * above HQ) so they stay in place as the avatar list scrolls.
+ *
+ * `showHome` pins a Home button above the avatar list (separated by a border).
+ * It's used in the mobile side drawer, where the header logo opens the drawer
+ * instead of linking home, so the drawer needs its own way back to the dashboard.
  */
-export function ProjectRail() {
+export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 	const { data: me } = useMe();
 	const { projects } = useAllVisibleProjects();
 	const hq = useHqProject();
@@ -37,6 +41,20 @@ export function ProjectRail() {
 				data-testid="project-rail"
 				aria-label="Projects"
 			>
+				{showHome && (
+					<div className="shrink-0 pb-2 mb-1 w-full flex justify-center border-b border-border">
+						<Tooltip content="Home" side="right">
+							<Link
+								to="/home"
+								aria-label="Home"
+								data-testid="project-rail-home"
+								className="w-9 h-9 rounded-md flex items-center justify-center text-text-2 hover:text-text-1 hover:bg-surface border border-border bg-surface transition-colors"
+							>
+								<Home className="w-4 h-4" />
+							</Link>
+						</Tooltip>
+					</div>
+				)}
 				{/*
 				  `overflow-y-auto` clips to the padding box, so the count badge
 				  (`-top-1.5`, 6px above each avatar) on the topmost avatar would be
@@ -56,7 +74,7 @@ export function ProjectRail() {
 									params={{ projectId: p.slug }}
 									aria-label={p.name}
 									data-testid={`project-rail-avatar-${p.slug}`}
-									className={`relative rounded-full transition-shadow ${
+									className={`relative inline-flex rounded-full transition-shadow ${
 										isActive ? 'ring-2 ring-inverse ring-offset-1 ring-offset-surface-2' : ''
 									}`}
 								>
