@@ -109,6 +109,34 @@ export function ProjectSidebar() {
 		testId: 'project-sidebar-activity',
 	};
 
+	// Progress (the project's goals + Captain-maintained summary) leads under Inbox; it's a
+	// normal-project concept, so HQ (internal) has none.
+	const progressPage = {
+		to: '/projects/$projectId/goals',
+		params: projectParams,
+		label: (
+			<span className="inline-flex items-center gap-1.5">
+				<span>Progress</span>
+				{hasNoGoals && (
+					<Tooltip content="No goals yet — create one to focus the team" side="right">
+						<span
+							role="img"
+							aria-label="No goals yet"
+							data-testid="project-sidebar-goals-empty-dot"
+							className="inline-block w-2 h-2 rounded-full bg-info animate-pulse shrink-0"
+						/>
+					</Tooltip>
+				)}
+			</span>
+		),
+		testId: 'project-sidebar-progress',
+		action: {
+			onClick: () => setCreateGoalOpen(true),
+			label: 'New goal',
+			testId: 'project-sidebar-new-goal',
+		},
+	};
+
 	const projectPages = [
 		{
 			to: '/projects/$projectId/tasks',
@@ -122,36 +150,6 @@ export function ProjectSidebar() {
 				testId: 'project-sidebar-new-task',
 			},
 		},
-		// Goals are a normal-project concept; HQ (internal) has none.
-		...(isInternal
-			? []
-			: [
-					{
-						to: '/projects/$projectId/goals',
-						params: projectParams,
-						label: (
-							<span className="inline-flex items-center gap-1.5">
-								<span>Goals</span>
-								{hasNoGoals && (
-									<Tooltip content="No goals yet — create one to focus the team" side="right">
-										<span
-											role="img"
-											aria-label="No goals yet"
-											data-testid="project-sidebar-goals-empty-dot"
-											className="inline-block w-2 h-2 rounded-full bg-info animate-pulse shrink-0"
-										/>
-									</Tooltip>
-								)}
-							</span>
-						),
-						testId: 'project-sidebar-goals',
-						action: {
-							onClick: () => setCreateGoalOpen(true),
-							label: 'New goal',
-							testId: 'project-sidebar-new-goal',
-						},
-					},
-				]),
 		// HQ (internal) exposes Documents (the chatbox memory doc) and Assets (where
 		// the CEO saves files it produces for the operator in chat); Budget and
 		// Settings stay hidden below.
@@ -197,6 +195,8 @@ export function ProjectSidebar() {
 					count: inboxCount?.unread,
 					testId: 'sidebar-link-inbox',
 				},
+				// Progress sits under Inbox; HQ (internal) has no goals.
+				...(isInternal ? [] : [progressPage]),
 			],
 		},
 		{ items: projectPages },

@@ -38,6 +38,7 @@ import { Route as ProjectsProjectIdGoalsIndexRouteImport } from './routes/projec
 import { Route as ProjectsProjectIdAgentsIndexRouteImport } from './routes/projects/$projectId/agents/index'
 import { Route as ProjectsProjectIdTeamSettingsGeneralRouteImport } from './routes/projects/$projectId/team-settings/general'
 import { Route as ProjectsProjectIdTasksTaskIdRouteImport } from './routes/projects/$projectId/tasks/$taskId'
+import { Route as ProjectsProjectIdGoalsGoalIdRouteImport } from './routes/projects/$projectId/goals/$goalId'
 import { Route as ProjectsProjectIdAgentsHireRouteImport } from './routes/projects/$projectId/agents/hire'
 import { Route as ProjectsProjectIdAgentsAgentIdRouteRouteImport } from './routes/projects/$projectId/agents/$agentId/route'
 import { Route as ProjectsProjectIdAgentsAgentIdIndexRouteImport } from './routes/projects/$projectId/agents/$agentId/index'
@@ -202,6 +203,12 @@ const ProjectsProjectIdTasksTaskIdRoute =
     path: '/tasks/$taskId',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
+const ProjectsProjectIdGoalsGoalIdRoute =
+  ProjectsProjectIdGoalsGoalIdRouteImport.update({
+    id: '/goals/$goalId',
+    path: '/goals/$goalId',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
 const ProjectsProjectIdAgentsHireRoute =
   ProjectsProjectIdAgentsHireRouteImport.update({
     id: '/agents/hire',
@@ -264,6 +271,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/projects/$projectId/agents/$agentId': typeof ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren
   '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
+  '/projects/$projectId/goals/$goalId': typeof ProjectsProjectIdGoalsGoalIdRoute
   '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
   '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
   '/projects/$projectId/agents/': typeof ProjectsProjectIdAgentsIndexRoute
@@ -299,6 +307,7 @@ export interface FileRoutesByTo {
   '/home/tasks': typeof HomeTasksIndexRoute
   '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
   '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
+  '/projects/$projectId/goals/$goalId': typeof ProjectsProjectIdGoalsGoalIdRoute
   '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
   '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
   '/projects/$projectId/agents': typeof ProjectsProjectIdAgentsIndexRoute
@@ -337,6 +346,7 @@ export interface FileRoutesById {
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/projects/$projectId/agents/$agentId': typeof ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren
   '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
+  '/projects/$projectId/goals/$goalId': typeof ProjectsProjectIdGoalsGoalIdRoute
   '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
   '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
   '/projects/$projectId/agents/': typeof ProjectsProjectIdAgentsIndexRoute
@@ -376,6 +386,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/'
     | '/projects/$projectId/agents/$agentId'
     | '/projects/$projectId/agents/hire'
+    | '/projects/$projectId/goals/$goalId'
     | '/projects/$projectId/tasks/$taskId'
     | '/projects/$projectId/team-settings/general'
     | '/projects/$projectId/agents/'
@@ -411,6 +422,7 @@ export interface FileRouteTypes {
     | '/home/tasks'
     | '/projects/$projectId'
     | '/projects/$projectId/agents/hire'
+    | '/projects/$projectId/goals/$goalId'
     | '/projects/$projectId/tasks/$taskId'
     | '/projects/$projectId/team-settings/general'
     | '/projects/$projectId/agents'
@@ -448,6 +460,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/'
     | '/projects/$projectId/agents/$agentId'
     | '/projects/$projectId/agents/hire'
+    | '/projects/$projectId/goals/$goalId'
     | '/projects/$projectId/tasks/$taskId'
     | '/projects/$projectId/team-settings/general'
     | '/projects/$projectId/agents/'
@@ -684,6 +697,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdTasksTaskIdRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
+    '/projects/$projectId/goals/$goalId': {
+      id: '/projects/$projectId/goals/$goalId'
+      path: '/goals/$goalId'
+      fullPath: '/projects/$projectId/goals/$goalId'
+      preLoaderRoute: typeof ProjectsProjectIdGoalsGoalIdRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
     '/projects/$projectId/agents/hire': {
       id: '/projects/$projectId/agents/hire'
       path: '/agents/hire'
@@ -763,6 +783,7 @@ interface ProjectsProjectIdRouteRouteChildren {
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
   ProjectsProjectIdAgentsAgentIdRouteRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren
   ProjectsProjectIdAgentsHireRoute: typeof ProjectsProjectIdAgentsHireRoute
+  ProjectsProjectIdGoalsGoalIdRoute: typeof ProjectsProjectIdGoalsGoalIdRoute
   ProjectsProjectIdTasksTaskIdRoute: typeof ProjectsProjectIdTasksTaskIdRoute
   ProjectsProjectIdTeamSettingsGeneralRoute: typeof ProjectsProjectIdTeamSettingsGeneralRoute
   ProjectsProjectIdAgentsIndexRoute: typeof ProjectsProjectIdAgentsIndexRoute
@@ -784,6 +805,7 @@ const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
     ProjectsProjectIdAgentsAgentIdRouteRoute:
       ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren,
     ProjectsProjectIdAgentsHireRoute: ProjectsProjectIdAgentsHireRoute,
+    ProjectsProjectIdGoalsGoalIdRoute: ProjectsProjectIdGoalsGoalIdRoute,
     ProjectsProjectIdTasksTaskIdRoute: ProjectsProjectIdTasksTaskIdRoute,
     ProjectsProjectIdTeamSettingsGeneralRoute:
       ProjectsProjectIdTeamSettingsGeneralRoute,

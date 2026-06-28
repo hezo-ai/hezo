@@ -691,6 +691,39 @@ export interface GoalCheckRunSummary {
 	updated_goal_titles: string[];
 }
 
+/** A task touched by a goal-check run, shown in the goal detail page's per-goal run feed. */
+export interface GoalRunTaskRef {
+	id: string;
+	identifier: string;
+	title: string;
+	status: TaskStatus;
+}
+
+/**
+ * One goal-check run that did something for a specific goal, shown at the bottom of the goal
+ * detail page: it estimated the goal's progress, created task(s) for it, and/or commented on
+ * goal-linked task(s).
+ */
+export interface GoalRunActivity {
+	id: string;
+	status: HeartbeatRunStatus;
+	created_at: string;
+	started_at: string | null;
+	finished_at: string | null;
+	/** The progress snapshot this run recorded for the goal, or null if it only created/commented. */
+	progress: { progress_percent: number; health: GoalHealth; status_blurb: string } | null;
+	/** Tasks this run created that are linked to the goal. */
+	created_tasks: GoalRunTaskRef[];
+	/** Goal-linked tasks this run commented on (with the number of comments it left). */
+	commented_tasks: (GoalRunTaskRef & { comment_count: number })[];
+}
+
+/** The Captain-maintained project progress summary shown at the top of the Progress page. */
+export interface ProjectProgress {
+	summary: string;
+	updated_at: string | null;
+}
+
 // --- CEO chat ---
 
 /**

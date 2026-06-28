@@ -98,6 +98,7 @@ import {
 import { insertHireProposalComment } from '../services/hire-proposal-comment';
 import { createProjectWithTeam } from '../services/project-create';
 import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
+import { ProjectProgressError, updateProjectProgress } from '../services/projects';
 import {
 	addCommentReaction,
 	loadReactionsForTask,
@@ -177,6 +178,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'add_mcp_connection',
 	'remove_mcp_connection',
 	'update_goal_progress',
+	'update_project_progress',
 ]);
 
 /** A handler result that signals failure rather than a persisted write. */
@@ -988,6 +990,40 @@ export function registerTools(
 				);
 			} catch (e) {
 				if (e instanceof Error && 'code' in e) return { error: e.message };
+				throw e;
+			}
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'update_project_progress',
+		"Replace the project's progress summary shown at the top of the Progress page. Only the Captain does this, and only from within a goal-check run. Keep it a concise summary, not a backlog: lead with the key points in **bold**, then a short narrative of what is done, what is in progress, and what is still to do. You may reference a few of the most relevant tickets by their bare identifier (e.g. BE-2) — link sparingly. This overwrites the whole summary, so include everything that should remain.",
+		{
+			project: projectArg(),
+			summary: z
+				.string()
+				.describe(
+					'Markdown summary of project progress. Lead with the key points in **bold**, then a short narrative of done / in-progress / to-do. Link only a few key tickets by identifier; keep it a summary.',
+				),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			if (auth.type !== AuthType.Agent || !auth.runId) {
+				return { error: 'update_project_progress can only be called from within an agent run' };
+			}
+			try {
+				return await updateProjectProgress(
+					db,
+					scope.teamId,
+					scope.projectId,
+					args.summary as string,
+					wsManager,
+				);
+			} catch (e) {
+				if (e instanceof ProjectProgressError) return { error: e.message };
 				throw e;
 			}
 		},
@@ -2054,11 +2090,14 @@ export function registerTools(
 			}
 			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const authorApiKeyId = apiKeyIdFromAuth(auth);
+			// Attribute the comment to the run that wrote it (only on the agent-run path) so the
+			// goal detail page can show "this goal-check run commented on task X".
+			const createdByRunId = auth.type === AuthType.Agent ? (auth.runId ?? null) : null;
 			const content = { text: args.content };
 			// RETURNING * includes public_id (the timestamp slug for comment links),
 			// so the agent gets it back without a follow-up list_comments.
 			const r = await db.query<{ id: string; public_id: string }>(
-				`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, parent_comment_id, content_type, content) VALUES ($1, $2, $3, $4, $5::comment_content_type, $6::jsonb) RETURNING *`,
+				`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, parent_comment_id, content_type, content, created_by_run_id) VALUES ($1, $2, $3, $4, $5::comment_content_type, $6::jsonb, $7) RETURNING *`,
 				[
 					taskId,
 					authorMemberId,
@@ -2066,6 +2105,7 @@ export function registerTools(
 					parentCommentId,
 					CommentContentType.Text,
 					JSON.stringify(content),
+					createdByRunId,
 				],
 			);
 			// Realtime: notify open task pages. Agent comments come through MCP,

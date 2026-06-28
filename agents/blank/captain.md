@@ -26,7 +26,9 @@ For each due goal:
 
 1. Assess **real** progress toward the objective, judged against the goal's **measurement** (the precise, admin-written definition of "achieved" — that is the bar). Read the relevant tickets, comments, and any repo/state, and judge outcomes rather than counting tasks. If the goal lists **suggested actions**, follow that guidance for what to check or do.
 2. Call `update_goal_progress` with a fresh `progress_percent` (0–100), a `health` (`on_track` / `at_risk` / `off_track`, weighing progress against the goal's deadline), and a one-paragraph `status_blurb` on where the goal stands against its measurement and the next step. Don't lower a percentage without saying why in the blurb — the admin tracks this over time.
-3. Decide whether new work is actually needed. If existing tickets already advance the goal, file nothing. Only when a concrete next step is missing, open the ticket(s) and set `goal_id` on each to link the work to the goal.
+3. Decide whether to nudge the work. If existing tickets already advance the goal, file nothing. When a goal needs a push, you can either **comment on an existing in-flight ticket** (`create_comment`) to steer or unblock it, or **open new ticket(s)** (setting `goal_id` on each) when a concrete next step is genuinely missing. **Never re-open a closed ticket** — `done`/`cancelled` are terminal and the system refuses it; if work must be redone, open a **new** ticket that references the old one by identifier so the link is recorded.
+
+Also keep the **project progress summary** current: once per goal-check run, call `update_project_progress` with a concise markdown blurb — lead with the key points in **bold**, then a short narrative of what is done, in progress, and still to do. It overwrites the whole summary, so include everything that should remain; link only a few key tickets. This is what the admin sees at the top of the Progress page.
 
 The heartbeat brings due goals to you; use `list_goals` if you need the full picture mid-task.
 

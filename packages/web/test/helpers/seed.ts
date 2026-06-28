@@ -115,6 +115,41 @@ export async function seedTask(
 	return task;
 }
 
+export interface SeededGoal {
+	id: string;
+	title: string;
+}
+
+/** Create a goal on a project via the real API. */
+export async function seedGoal(
+	workspace: SeededWorkspace,
+	project: SeededProject,
+	input: {
+		title: string;
+		measurement?: string;
+		actions?: string;
+		check_frequency?: string;
+		target_date?: string;
+	},
+): Promise<SeededGoal> {
+	const { apiBase } = getTestContext();
+	const res = await apiBase(`/api/projects/${project.slug}/goals`, {
+		method: 'POST',
+		headers: workspace.headers,
+		body: JSON.stringify(input),
+	});
+	return ((await res.json()) as { data: SeededGoal }).data;
+}
+
+/** Set a project's Captain-maintained progress summary directly (no agent run needed). */
+export async function seedProjectProgress(project: SeededProject, summary: string): Promise<void> {
+	const { db } = getTestContext();
+	await db.query(
+		`UPDATE projects SET progress_summary = $1, progress_summary_updated_at = now() WHERE id = $2`,
+		[summary, project.id],
+	);
+}
+
 export interface SeededAsset {
 	id: string;
 	original_filename: string;

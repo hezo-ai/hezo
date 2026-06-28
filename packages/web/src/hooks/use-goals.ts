@@ -1,11 +1,17 @@
-import type { GoalCheckFrequency, GoalCheckRunSummary, GoalWithProject } from '@hezo/shared';
+import type {
+	GoalCheckFrequency,
+	GoalCheckRunSummary,
+	GoalHistoryPoint,
+	GoalRunActivity,
+	GoalWithProject,
+} from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 import { useOptimisticMutation } from './use-optimistic-mutation';
 
-export type { GoalCheckRunSummary, GoalWithProject };
+export type { GoalCheckRunSummary, GoalRunActivity, GoalWithProject };
 
 interface UseGoalsOptions {
 	includeArchived?: boolean;
@@ -27,11 +33,36 @@ export function useGoals(projectId: string, options?: UseGoalsOptions) {
 	});
 }
 
+/** A single goal with embedded history, for the goal detail page. */
+export function useGoal(projectId: string, goalId: string) {
+	return useQuery({
+		queryKey: queryKeys.projects.goal(projectId, goalId),
+		queryFn: () => api.get<GoalWithProject>(`/api/projects/${projectId}/goals/${goalId}`),
+	});
+}
+
+/** A goal's full (uncapped) progress history, for the detail page chart. */
+export function useGoalHistory(projectId: string, goalId: string) {
+	return useQuery({
+		queryKey: queryKeys.projects.goalHistory(projectId, goalId),
+		queryFn: () =>
+			api.get<GoalHistoryPoint[]>(`/api/projects/${projectId}/goals/${goalId}/history`),
+	});
+}
+
 /** The goal-check runs for this project (newest-first as returned by the server). */
 export function useGoalRuns(projectId: string) {
 	return useQuery({
 		queryKey: queryKeys.projects.goalRuns(projectId),
 		queryFn: () => api.get<GoalCheckRunSummary[]>(`/api/projects/${projectId}/goals/runs`),
+	});
+}
+
+/** The goal-check runs that did something for one goal — shown at the bottom of its detail page. */
+export function useGoalRunActivity(projectId: string, goalId: string) {
+	return useQuery({
+		queryKey: queryKeys.projects.goalRunsForGoal(projectId, goalId),
+		queryFn: () => api.get<GoalRunActivity[]>(`/api/projects/${projectId}/goals/${goalId}/runs`),
 	});
 }
 

@@ -1628,8 +1628,14 @@ export function buildGoalCheckPrompt(systemPrompt: string, ctx: GoalCheckContext
 			'goal with a fresh `progress_percent` (0-100), a `health` (on_track / at_risk / off_track, ' +
 			'weighing progress against any target date), and a one-paragraph `status_blurb` describing where ' +
 			'the goal stands and the next step needed. Do not lower a percentage without explaining why in ' +
-			'the blurb. Only file new tasks (with `goal_id` set) when a concrete next step is actually ' +
-			'missing — existing backlog or in-flight work often already covers the goal.',
+			'the blurb. When a goal needs a push, you can either comment on an existing in-flight ticket ' +
+			'(`create_comment`) to steer or unblock it, or file new task(s) (with `goal_id` set) when a ' +
+			'concrete next step is actually missing — existing backlog or in-flight work often already ' +
+			'covers the goal. Never re-open a closed ticket (done/cancelled are terminal and the system will ' +
+			'refuse it); if work must be redone, file a new ticket that references the old one by identifier. ' +
+			'Finally, call `update_project_progress` once to refresh the project progress summary shown at the ' +
+			'top of the Progress page: a concise markdown blurb leading with the key points in **bold**, then ' +
+			'a short narrative of what is done, in progress, and still to do (link only a few key tickets).',
 	);
 	parts.push('');
 	for (const g of ctx.goals) {
