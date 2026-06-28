@@ -8,9 +8,11 @@ import {
 	type GoalError,
 	getDueGoals,
 	listGoalCheckRuns,
+	listGoalRunActivity,
 	listGoals,
 	recordGoalProgress,
 } from '../src/services/goals';
+import { getProjectProgress, updateProjectProgress } from '../src/services/projects';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
@@ -251,5 +253,141 @@ describe('goals service', () => {
 				undefined,
 			),
 		).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+	});
+});
+
+describe('listGoalRunActivity', () => {
+	let taskSeq = 5000;
+
+	async function newGoalCheckRun(): Promise<string> {
+		const r = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (team_id, member_id, status, kind)
+			 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, 'goal_check'::heartbeat_run_kind)
+			 RETURNING id`,
+			[teamId, captainMemberId],
+		);
+		return r.rows[0].id;
+	}
+
+	async function newGoal(title: string): Promise<string> {
+		const r = await db.query<{ id: string }>(
+			`INSERT INTO goals (team_id, project_id, title) VALUES ($1, $2, $3) RETURNING id`,
+			[teamId, projectId, title],
+		);
+		return r.rows[0].id;
+	}
+
+	async function newTask(opts: {
+		goalId?: string | null;
+		runId?: string | null;
+	}): Promise<{ id: string; identifier: string }> {
+		const n = ++taskSeq;
+		const r = await db.query<{ id: string; identifier: string }>(
+			`INSERT INTO tasks (team_id, project_id, number, identifier, title, status, priority, labels, goal_id, created_by_run_id)
+			 VALUES ($1, $2, $3, $4, 'Seed task', 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb, $5, $6)
+			 RETURNING id, identifier`,
+			[teamId, projectId, n, `GP-${n}`, opts.goalId ?? null, opts.runId ?? null],
+		);
+		return r.rows[0];
+	}
+
+	async function comment(taskId: string, runId: string): Promise<void> {
+		await db.query(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content, created_by_run_id)
+			 VALUES ($1, $2, 'text'::comment_content_type, '{"text":"nudge"}'::jsonb, $3)`,
+			[taskId, captainMemberId, runId],
+		);
+	}
+
+	it('returns goal-check runs that estimated, created tasks for, or commented on the goal', async () => {
+		const goalA = await newGoal('Feed goal A');
+		const goalB = await newGoal('Feed goal B');
+
+		// Run A: estimates goalA, creates one task for it, and comments on another goalA task.
+		const runA = await newGoalCheckRun();
+		await recordGoalProgress(
+			db,
+			{
+				goalId: goalA,
+				runId: runA,
+				progressPercent: 30,
+				health: GoalHealth.OnTrack,
+				statusBlurb: 'Going well',
+			},
+			undefined,
+		);
+		const created = await newTask({ goalId: goalA, runId: runA });
+		const commented = await newTask({ goalId: goalA });
+		await comment(commented.id, runA);
+
+		// Run B touches only goalB — must not surface for goalA.
+		const runB = await newGoalCheckRun();
+		await recordGoalProgress(
+			db,
+			{
+				goalId: goalB,
+				runId: runB,
+				progressPercent: 10,
+				health: GoalHealth.AtRisk,
+				statusBlurb: 'Slow',
+			},
+			undefined,
+		);
+
+		const activityA = await listGoalRunActivity(db, projectId, goalA);
+		expect(activityA.map((r) => r.id)).toContain(runA);
+		expect(activityA.map((r) => r.id)).not.toContain(runB);
+
+		const a = activityA.find((r) => r.id === runA);
+		expect(a?.progress?.progress_percent).toBe(30);
+		expect(a?.progress?.health).toBe(GoalHealth.OnTrack);
+		expect(a?.created_tasks.map((t) => t.identifier)).toContain(created.identifier);
+		expect(a?.commented_tasks.map((t) => t.identifier)).toContain(commented.identifier);
+		expect(a?.commented_tasks.find((t) => t.id === commented.id)?.comment_count).toBe(1);
+
+		const activityB = await listGoalRunActivity(db, projectId, goalB);
+		expect(activityB.map((r) => r.id)).toContain(runB);
+		expect(activityB.map((r) => r.id)).not.toContain(runA);
+	});
+
+	it('includes a run that only created a task for the goal, with null progress', async () => {
+		const goal = await newGoal('Feed goal C');
+		const run = await newGoalCheckRun();
+		const created = await newTask({ goalId: goal, runId: run });
+
+		const activity = await listGoalRunActivity(db, projectId, goal);
+		const entry = activity.find((r) => r.id === run);
+		expect(entry).toBeTruthy();
+		expect(entry?.progress).toBeNull();
+		expect(entry?.created_tasks.map((t) => t.identifier)).toContain(created.identifier);
+	});
+});
+
+describe('project progress summary', () => {
+	it('sets and reads the project progress summary (service + REST)', async () => {
+		const updated = await updateProjectProgress(
+			db,
+			teamId,
+			projectId,
+			'**Shipping v1.** Auth done; payments in progress.',
+			undefined,
+		);
+		expect(updated.summary).toContain('Shipping v1');
+		expect(updated.updated_at).not.toBeNull();
+
+		const got = await getProjectProgress(db, projectId);
+		expect(got?.summary).toContain('Shipping v1');
+
+		const res = await app.request(`/api/projects/${projectSlug}/progress`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.summary).toContain('Shipping v1');
+	});
+
+	it('rejects an unknown project', async () => {
+		await expect(
+			updateProjectProgress(db, teamId, crypto.randomUUID(), 'x', undefined),
+		).rejects.toMatchObject({ code: 'NOT_FOUND' });
 	});
 });

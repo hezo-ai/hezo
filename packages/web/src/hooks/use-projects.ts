@@ -1,3 +1,4 @@
+import type { ProjectProgress } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { type ApiError, api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -47,6 +48,9 @@ export interface Project {
 	repos?: Repo[];
 	planning_task_id?: string;
 	planning_task_identifier?: string;
+	/** Captain-maintained progress summary (markdown). Present on the project detail payload. */
+	progress_summary?: string;
+	progress_summary_updated_at?: string | null;
 }
 
 export interface Repo {
@@ -120,6 +124,15 @@ export function useProject(projectId: string, options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: queryKeys.projects.detail(projectId),
 		queryFn: () => api.get<Project>(`/api/projects/${projectId}`),
+		enabled: options?.enabled,
+	});
+}
+
+/** The Captain-maintained progress summary shown at the top of the Progress page. */
+export function useProjectProgress(projectId: string, options?: { enabled?: boolean }) {
+	return useQuery({
+		queryKey: queryKeys.projects.progress(projectId),
+		queryFn: () => api.get<ProjectProgress>(`/api/projects/${projectId}/progress`),
 		enabled: options?.enabled,
 	});
 }

@@ -13,11 +13,23 @@ they give you, the admin, a way to see how far along a project is and where thin
 
 You set the goals; the **Captain** keeps them up to date. You don't have to remember to
 update a status or move a slider — the Captain re-checks each goal on a schedule and writes
-a fresh estimate, so the Goals page is always a current read on the project.
+a fresh estimate, so the **Progress** page is always a current read on the project.
+
+## The Progress page
+
+Open **Progress** in the project menu (just under **Inbox**). Top to bottom it shows:
+
+- a **project progress summary** the Captain keeps current — a short blurb of what's done,
+  what's in progress, and what's still to do. It opens collapsed (showing the Captain's
+  headline points); expand it for the full narrative, which may link a few key tickets.
+- your **goals**, each as a panel with its progress, health, and a sparkline. Click a goal to
+  open its own page.
+- the recent **goal heartbeat runs** for the project.
 
 ## Setting a goal
 
-Open **Goals** in the project menu (above Tasks) and choose **Create Goal**. A goal has:
+From the **Progress** page choose **Create Goal** (or use **New goal** next to Progress in the
+menu). A goal has:
 
 - **Goal name** — the objective in a line (e.g. "Reach 100 active customers").
 - **Measurement** — the precise definition of *how you'll know the goal is achieved* (e.g.
@@ -33,8 +45,9 @@ Open **Goals** in the project menu (above Tasks) and choose **Create Goal**. A g
 
 The create and edit forms keep the **SMART** framework (Specific, Measurable, Achievable,
 Relevant, Time-bound) in front of you as a reminder. A project can have any number of goals;
-until you've set one, a gentle dot pulses next to **Goals** in the menu as a nudge to create
-your first.
+until you've set one, a gentle dot pulses next to **Progress** in the menu as a nudge to create
+your first. Editing a goal — from the goal's own page or the panel's edit control — reopens the
+same form.
 
 ## How the Captain tracks progress
 
@@ -53,24 +66,30 @@ finished tasks — and records three things:
 Because each check is recorded, every goal shows a **progress chart** of how its percentage
 has moved over time, so you can see momentum (or a stall) at a glance.
 
-These goal checks are **not** done inside a task — they're standalone Captain runs. The list
-of recent goal checks appears at the bottom of the Goals page, each noting which goals it
-updated (or that nothing changed).
+These goal checks are **not** done inside a task — they're standalone Captain runs. The recent
+goal checks for the whole project appear at the bottom of the **Progress** page. Each goal's own
+page also has a **Goal heartbeat runs** section showing just the runs that did something for *that*
+goal — the progress it set, plus any tickets it created or commented on toward the goal.
+
+During the same run the Captain also refreshes the **project progress summary** shown at the top
+of the Progress page, so that headline stays in step with the goal estimates.
 
 ## Archiving
 
-The Goals page defaults to an **Active** view and has an **Archived** filter to see the rest.
+The Progress page defaults to an **Active** view and has an **Archived** filter to see the rest.
 Archiving a goal (from its edit/archive control) sets it aside without deleting it: an archived
 goal is **no longer checked** — the Captain skips it entirely and never updates its status or
 files work for it. Unarchive it any time to bring it back into rotation.
 
 ## Goals and the board
 
-When the Captain decides a goal needs work to move forward, it files the tickets through the
-normal delegation flow and links them to the goal. But it doesn't create work for its own
-sake: if tickets already in the backlog or in flight will advance the goal, the Captain
-leaves the board alone. The point of a goal check is to judge whether the project is on
-course — not to manufacture busywork every time a goal comes due.
+When the Captain decides a goal needs a push, it either **comments on an existing in-flight
+ticket** to steer or unblock it, or **files new tickets** through the normal delegation flow and
+links them to the goal. But it doesn't create work for its own sake: if tickets already in the
+backlog or in flight will advance the goal, the Captain leaves the board alone. The point of a
+goal check is to judge whether the project is on course — not to manufacture busywork every time
+a goal comes due. The Captain never re-opens a closed ticket; if something needs redoing it files
+a fresh ticket that points back at the original.
 
 The estimate is exactly that — an estimate, made by the Captain. Treat the **blurb** as the
 primary signal and the **percentage** as a quick gauge of direction. Together they let you

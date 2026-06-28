@@ -61,7 +61,13 @@ const TABLE_TO_QUERY_KEY: Record<
 	comment_reactions: (cid) => [queryKeys.projects.tasks(cid)],
 	comment_attachments: (cid) => [queryKeys.projects.tasks(cid)],
 	member_agents: (cid) => [queryKeys.projects.agents(cid)],
-	projects: () => [queryKeys.projects.all(), queryKeys.projectIntakes()],
+	projects: (cid) => [
+		queryKeys.projects.all(),
+		queryKeys.projectIntakes(),
+		// The Captain refreshing the progress summary broadcasts a projects UPDATE.
+		queryKeys.projects.progress(cid),
+		queryKeys.projects.detail(cid),
+	],
 	approvals: (cid) => [
 		queryKeys.projects.approvals(cid),
 		queryKeys.projects.inboxCount(cid),

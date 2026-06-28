@@ -34,6 +34,7 @@ import { loadCoordinationContext } from '../services/internal-intake';
 import type { JobManager } from '../services/job-manager';
 import { createProjectWithTeam } from '../services/project-create';
 import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
+import { getProjectProgress } from '../services/projects';
 
 function buildContainerDeps(c: Context<Env>): ContainerDeps {
 	return {
@@ -317,6 +318,15 @@ projectsRoutes.get('/projects/:projectId', async (c) => {
 
 	const row = await withIconUrl(c, result.rows[0] as Record<string, unknown>);
 	return ok(c, { ...row, repos: repos.rows });
+});
+
+// The Captain-maintained progress summary shown at the top of the Progress page. Kept off the
+// project index (which lists every project) so the potentially-long summary is fetched per page.
+projectsRoutes.get('/projects/:projectId/progress', async (c) => {
+	const projectId = c.get('projectId') as string;
+	const progress = await getProjectProgress(c.get('db'), projectId);
+	if (!progress) return err(c, 'NOT_FOUND', 'Project not found', 404);
+	return ok(c, progress);
 });
 
 projectsRoutes.patch('/projects/:projectId', async (c) => {

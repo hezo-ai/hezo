@@ -4,6 +4,7 @@ import {
 	type GoalWithProject,
 	HeartbeatRunStatus,
 } from '@hezo/shared';
+import { Link } from '@tanstack/react-router';
 import { Archive, ArchiveRestore, Pencil, Plus, Target } from 'lucide-react';
 import { useState } from 'react';
 import { useGoalRuns, useGoals, useUpdateGoal } from '../hooks/use-goals';
@@ -11,6 +12,7 @@ import { CreateGoalDialog } from './create-goal-dialog';
 import { GoalHealthPill } from './goal-health-pill';
 import { GoalProgressChart } from './goal-progress-chart';
 import { GoalSmartGuidance } from './goal-smart-guidance';
+import { ProjectProgressSummary } from './project-progress-summary';
 import { Button } from './ui/button';
 import { EmptyState } from './ui/empty-state';
 
@@ -59,10 +61,17 @@ function GoalPanel({
 			}`}
 		>
 			<div className="flex items-start justify-between gap-2">
-				<div className="flex flex-col gap-1.5 min-w-0">
-					<h3 className="text-sm font-semibold text-text-1 break-words">{goal.title}</h3>
+				<Link
+					to="/projects/$projectId/goals/$goalId"
+					params={{ projectId, goalId: goal.id }}
+					data-testid="goal-open"
+					className="flex min-w-0 flex-col gap-1.5 group"
+				>
+					<h3 className="text-sm font-semibold text-text-1 break-words group-hover:underline">
+						{goal.title}
+					</h3>
 					<GoalHealthPill health={goal.health} testId="goal-health-pill" />
-				</div>
+				</Link>
 				<div className="flex shrink-0 items-center gap-0.5">
 					<button
 						type="button"
@@ -135,7 +144,7 @@ function GoalChecksFooter({ projectId }: { projectId: string }) {
 	return (
 		<section data-testid="goal-checks" className="mt-8">
 			<h2 className="text-[11px] font-medium uppercase tracking-wider text-text-3 mb-2 px-0.5">
-				Goal checks
+				Goal heartbeat runs
 			</h2>
 			<ul className="flex flex-col divide-y divide-border rounded-md border border-border bg-surface">
 				{runs.map((run) => {
@@ -212,6 +221,7 @@ export function GoalsList({ projectId }: GoalsListProps) {
 	if (view === 'active' && goals.length === 0) {
 		return (
 			<div>
+				<ProjectProgressSummary projectId={projectId} />
 				<EmptyState
 					variant="hero"
 					icon={<Target className="w-8 h-8" />}
@@ -231,6 +241,7 @@ export function GoalsList({ projectId }: GoalsListProps) {
 
 	return (
 		<div>
+			<ProjectProgressSummary projectId={projectId} />
 			<div className="mb-4 flex flex-wrap items-center justify-between gap-2">
 				<div className="flex items-center gap-3">
 					<h1 className="text-lg font-semibold text-text-1">Goals</h1>

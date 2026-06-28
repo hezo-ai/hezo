@@ -133,3 +133,103 @@ describe('MCP goals tools', () => {
 		expect(goal?.history.at(-1)?.percent).toBe(45);
 	});
 });
+
+describe('MCP project progress + goal run activity', () => {
+	it('registers update_project_progress', async () => {
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
+		});
+		const names = (await res.json()).result.tools.map((t: { name: string }) => t.name);
+		expect(names).toContain('update_project_progress');
+	});
+
+	it('update_project_progress is rejected for a non-run caller', async () => {
+		const result = (await callTool(token, 'update_project_progress', {
+			project: projectSlug,
+			summary: 'Should not stick',
+		})) as { error?: string };
+		expect(result.error).toMatch(/within an agent run/);
+	});
+
+	it('update_project_progress from a Captain run is shown by GET /progress', async () => {
+		const agent = await mintAgentToken(db, masterKeyManager, captainAgentId, teamId, null, {
+			projectId,
+		});
+		const updated = (await callTool(agent.token, 'update_project_progress', {
+			project: projectSlug,
+			summary: '**On track.** Onboarding shipped; billing next.',
+		})) as { summary: string; updated_at: string | null };
+		expect(updated.summary).toContain('On track');
+		expect(updated.updated_at).not.toBeNull();
+
+		const res = await app.request(`/api/projects/${projectSlug}/progress`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.summary).toContain('Onboarding shipped');
+	});
+
+	it('surfaces a run that created a task and commented on it for the goal', async () => {
+		// A fresh goal so the feed reflects only this run's activity.
+		const goalRes = await app.request(`/api/projects/${projectSlug}/goals`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'content-type': 'application/json' },
+			body: JSON.stringify({ title: 'Launch the beta', check_frequency: 'daily' }),
+		});
+		const feedGoalId = (await goalRes.json()).data.id as string;
+
+		// One Captain run: estimate the goal, and comment on a task linked to it. The task is
+		// seeded directly with created_by_run_id = this run, so the feed shows both the created
+		// task and the comment attribution (create_comment sets created_by_run_id over MCP).
+		const agent = await mintAgentToken(db, masterKeyManager, captainAgentId, teamId, null, {
+			projectId,
+		});
+		// The scheduler tags goal-check runs with kind='goal_check'; mintAgentToken makes a
+		// generic task-kind run, so mark it to mirror a real goal-check run.
+		await db.query(
+			`UPDATE heartbeat_runs SET kind = 'goal_check'::heartbeat_run_kind WHERE id = $1`,
+			[agent.runId],
+		);
+		const task = (
+			await db.query<{ id: string; identifier: string }>(
+				`INSERT INTO tasks (team_id, project_id, number, identifier, title, status, priority, labels, goal_id, created_by_run_id)
+				 VALUES ($1, $2, 9001, 'BETA-1', 'Stand up the beta signup', 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb, $3, $4)
+				 RETURNING id, identifier`,
+				[teamId, projectId, feedGoalId, agent.runId],
+			)
+		).rows[0];
+		await callTool(agent.token, 'update_goal_progress', {
+			project: projectSlug,
+			goal_id: feedGoalId,
+			progress_percent: 15,
+			health: 'on_track',
+			status_blurb: 'Kicking off the beta work.',
+		});
+		await callTool(agent.token, 'create_comment', {
+			project: projectSlug,
+			task_id: task.id,
+			content: 'Prioritise the signup funnel first.',
+		});
+
+		const res = await app.request(`/api/projects/${projectSlug}/goals/${feedGoalId}/runs`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const runs = (await res.json()).data as Array<{
+			id: string;
+			progress: { progress_percent: number } | null;
+			created_tasks: Array<{ identifier: string }>;
+			commented_tasks: Array<{ identifier: string; comment_count: number }>;
+		}>;
+		const entry = runs.find((r) => r.id === agent.runId);
+		expect(entry).toBeTruthy();
+		expect(entry?.progress?.progress_percent).toBe(15);
+		expect(entry?.created_tasks.map((t) => t.identifier)).toContain(task.identifier);
+		expect(entry?.commented_tasks.map((t) => t.identifier)).toContain(task.identifier);
+		expect(
+			entry?.commented_tasks.find((t) => t.identifier === task.identifier)?.comment_count,
+		).toBe(1);
+	});
+});
