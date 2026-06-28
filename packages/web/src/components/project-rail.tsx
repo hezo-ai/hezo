@@ -56,7 +56,7 @@ export function ProjectRail() {
 									params={{ projectId: p.slug }}
 									aria-label={p.name}
 									data-testid={`project-rail-avatar-${p.slug}`}
-									className={`relative rounded-full transition-shadow ${
+									className={`relative inline-flex rounded-full transition-shadow ${
 										isActive ? 'ring-2 ring-inverse ring-offset-1 ring-offset-surface-2' : ''
 									}`}
 								>
