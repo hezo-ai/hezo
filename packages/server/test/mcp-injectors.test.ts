@@ -437,6 +437,48 @@ describe('validateInjection', () => {
 			}),
 		).toThrow(/inlined a bearer token/);
 	});
+
+	it('rejects a file mode that is zero or out of range', () => {
+		for (const mode of [0, 0o1000]) {
+			expect(() =>
+				validateInjection(codex, {
+					cliArgs: [],
+					envEntries: [],
+					files: [{ hostPath: '/tmp/c.toml', mode, contents: 'x' }],
+				}),
+			).toThrow(/mode out of range/);
+		}
+	});
+
+	it('rejects an empty file', () => {
+		expect(() =>
+			validateInjection(codex, {
+				cliArgs: [],
+				envEntries: [],
+				files: [{ hostPath: '/tmp/c.toml', mode: 0o600, contents: '' }],
+			}),
+		).toThrow(/empty/);
+	});
+
+	it('rejects an env entry that is not KEY=VALUE', () => {
+		expect(() =>
+			validateInjection(codex, {
+				cliArgs: [],
+				envEntries: ['NOEQUALS'],
+				files: [],
+			}),
+		).toThrow(/KEY=VALUE/);
+	});
+
+	it('accepts a well-formed injection', () => {
+		expect(() =>
+			validateInjection(codex, {
+				cliArgs: [],
+				envEntries: ['HEZO_MCP_BEARER_TOKEN_HEZO=tok'],
+				files: [{ hostPath: '/tmp/c.toml', mode: 0o600, contents: 'url = "x"' }],
+			}),
+		).not.toThrow();
+	});
 });
 
 describe('opencode adapter', () => {
@@ -491,6 +533,38 @@ describe('opencode adapter', () => {
 		const injection = adapter.build([], { hostHomeDir: HOME, containerHomeDir: HOME });
 		const config = JSON.parse(injection.files[0].contents) as { mcp?: unknown };
 		expect(config.mcp).toBeUndefined();
+	});
+
+	it('renders a local (stdio) MCP server with its command array and environment', () => {
+		const stdio: McpDescriptor = {
+			kind: 'stdio',
+			name: 'local-srv',
+			command: '/usr/bin/srv',
+			args: ['--port', '7'],
+			env: { TOKEN: 'x' },
+		};
+		const injection = adapter.build([stdio], { hostHomeDir: HOME, containerHomeDir: HOME });
+		const config = JSON.parse(injection.files[0].contents) as {
+			mcp: Record<
+				string,
+				{ type: string; command: string[]; enabled: boolean; environment?: Record<string, string> }
+			>;
+		};
+		expect(config.mcp['local-srv']).toEqual({
+			type: 'local',
+			command: ['/usr/bin/srv', '--port', '7'],
+			enabled: true,
+			environment: { TOKEN: 'x' },
+		});
+	});
+
+	it('omits headers and environment when none are provided', () => {
+		const http: McpDescriptor = { kind: 'http', name: 'bare', url: URL };
+		const injection = adapter.build([http], { hostHomeDir: HOME, containerHomeDir: HOME });
+		const config = JSON.parse(injection.files[0].contents) as {
+			mcp: Record<string, { headers?: unknown }>;
+		};
+		expect(config.mcp.bare.headers).toBeUndefined();
 	});
 });
 

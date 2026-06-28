@@ -61,7 +61,9 @@ export async function findOpenLabeledTask(
 	db: PGlite,
 	label: string,
 ): Promise<{ id: string; identifier: string; project_slug: string } | null> {
-	const ts = terminalStatusParams(1);
+	// $1 is the jsonb labels param below, so the terminal-status placeholders
+	// start at $2.
+	const ts = terminalStatusParams(2);
 	const result = await db.query<{ id: string; identifier: string; project_slug: string }>(
 		`SELECT i.id, i.identifier, p.slug AS project_slug
 		 FROM tasks i
