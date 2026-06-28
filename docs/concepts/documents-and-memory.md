@@ -15,11 +15,11 @@ That memory lives at a few different scopes, and each one is kept current by you
 the agents as they work:
 
 - **Per task** — the [rules, description, and progress summary](/docs/concepts/tasks) that
-  say how a ticket should be worked and where it stands, plus the comment thread an agent
+  say how a task should be worked and where it stands, plus the comment thread an agent
   reads to catch up on what's happened.
 - **Per project** — the **Documents** library of PRDs, specs, and research the whole team
   keeps coming back to.
-- **Instance-wide** — [skills](/docs/concepts/skills), the reusable know-how every team can
+- **Global** — [skills](/docs/concepts/skills), the reusable know-how every team can
   reach for.
 - **Per team** — [preferences](#team-preferences): custom instructions applied to every
   agent on a team.
@@ -53,7 +53,7 @@ cached to go stale. Context reaches the agent in one of two ways:
 | Team preferences | One team | In full, every run | You |
 | Chatbox memory | The CEO | In full, every chat turn | You and the CEO |
 
-For how rules, the progress summary, and the thread work together on a single ticket — and
+For how rules, the progress summary, and the thread work together on a single task — and
 how an agent uses them to pick up where the last run left off — see
 [Tasks, rules & summaries](/docs/concepts/tasks).
 
@@ -128,10 +128,10 @@ prompts, every edit is **versioned and restorable**.
 All of the above is memory, but each piece has a natural home — putting knowledge in the
 right place is what keeps it findable and applied at the right moment:
 
-- **Where one ticket stands right now** → that task's **progress summary**.
-- **How a single ticket must be worked** (guardrails, required steps) → that task's
+- **Where one task stands right now** → that task's **progress summary**.
+- **How a single task must be worked** (guardrails, required steps) → that task's
   **rules**.
-- **What a ticket is and the domain context to do it** → that task's **description**.
+- **What a task is and the domain context to do it** → that task's **description**.
 - **Project-wide knowledge many tasks draw on** (the spec, the plan, the research) →
   a **project document**.
 - **Reusable, project-independent know-how** (how to use an MCP server, a release
@@ -140,5 +140,5 @@ right place is what keeps it findable and applied at the right moment:
 - **Your durable preferences for how the CEO works with you** → the CEO's **chatbox
   memory**.
 
-When in doubt, keep ticket-specific status in the summary, how-to-work constraints in the
+When in doubt, keep task-specific status in the summary, how-to-work constraints in the
 rules, and anything the wider team will need again in a document or a skill.

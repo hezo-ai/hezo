@@ -21,7 +21,7 @@ Open **Progress** in the project menu (just under **Inbox**). Top to bottom it s
 
 - a **project progress summary** the Captain keeps current — a short blurb of what's done,
   what's in progress, and what's still to do. It opens collapsed (showing the Captain's
-  headline points); expand it for the full narrative, which may link a few key tickets.
+  headline points); expand it for the full narrative, which may link a few key tasks.
 - your **goals**, each as a panel with its progress, health, and a sparkline. Click a goal to
   open its own page.
 - the recent **goal heartbeat runs** for the project.
@@ -39,7 +39,8 @@ menu). A goal has:
   the goal: specific checks, or a standing instruction like "run a weekly cron-style review of
   the signup funnel". Leave it blank to let the Captain decide.
 - **Deadline** *(optional)* — when the goal should be met. The Captain weighs progress against
-  this date when it sets the goal's health.
+  this date when it sets the goal's health, and once the deadline has passed the goal is checked
+  on every heartbeat — regardless of its check frequency — until it's met or archived.
 - **Check frequency** — how often the Captain re-assesses the goal: **daily** (the default),
   **weekly**, or **monthly**.
 
@@ -51,11 +52,13 @@ same form.
 
 ## How the Captain tracks progress
 
-On the Captain's heartbeat, it looks at which goals are **due** for a check (based on each
-goal's frequency) and runs a single **goal check** covering all of them at once. Goals that
-aren't due yet are skipped. For each due goal the Captain assesses real progress toward the
-outcome — reading the relevant tickets, comments, and project state rather than just counting
-finished tasks — and records three things:
+On the Captain's heartbeat, it looks at which goals are **due** for a check and runs a single
+**goal check** covering all of them at once. A goal is due when its **check frequency** has come
+round (last checked longer ago than its cadence, or never checked) **or** once its **deadline**
+has passed — a goal past its deadline is always checked and never skipped while it stays active.
+Goals that aren't due on either count are skipped. For each due goal the Captain assesses real
+progress toward the outcome — reading the relevant tasks, comments, and project state rather than
+just counting finished tasks — and records three things:
 
 - a **progress percentage** (0–100) — its honest estimate of how far along the goal is,
 - a **health** — a coloured pill that reads at a glance: **on track** (green), **at risk**
@@ -69,7 +72,7 @@ has moved over time, so you can see momentum (or a stall) at a glance.
 These goal checks are **not** done inside a task — they're standalone Captain runs. The recent
 goal checks for the whole project appear at the bottom of the **Progress** page. Each goal's own
 page also has a **Goal heartbeat runs** section showing just the runs that did something for *that*
-goal — the progress it set, plus any tickets it created or commented on toward the goal.
+goal — the progress it set, plus any tasks it created or commented on toward the goal.
 
 During the same run the Captain also refreshes the **project progress summary** shown at the top
 of the Progress page, so that headline stays in step with the goal estimates.
@@ -84,15 +87,15 @@ files work for it. Unarchive it any time to bring it back into rotation.
 ## Goals and the board
 
 When the Captain decides a goal needs a push, it either **comments on an existing in-flight
-ticket** to steer or unblock it, or **files new tickets** through the normal delegation flow and
-links them to the goal. But it doesn't create work for its own sake: if tickets already in the
+task** to steer or unblock it, or **files new tasks** through the normal delegation flow and
+links them to the goal. But it doesn't create work for its own sake: if tasks already in the
 backlog or in flight will advance the goal, the Captain leaves the board alone. The point of a
 goal check is to judge whether the project is on course — not to manufacture busywork every time
-a goal comes due. The Captain never re-opens a closed ticket; if something needs redoing it files
-a fresh ticket that points back at the original.
+a goal comes due. The Captain never re-opens a closed task; if something needs redoing it files
+a fresh task that points back at the original.
 
 The estimate is exactly that — an estimate, made by the Captain. Treat the **blurb** as the
 primary signal and the **percentage** as a quick gauge of direction. Together they let you
-glance at a project and know where it's headed without reading every ticket.
+glance at a project and know where it's headed without reading every task.
 
-> Goals are a per-project concept. The instance-wide **HQ** project does not have goals.
+> Goals are a per-project concept. The global **HQ** project does not have goals.

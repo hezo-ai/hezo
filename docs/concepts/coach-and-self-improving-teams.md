@@ -8,17 +8,17 @@ section: Concepts
 
 Most agent setups stay exactly as good as the day you wrote their prompts. Hezo teams
 don't: they get better the more they ship. That improvement loop is run by the **Coach** —
-an instance-wide agent whose only job is to turn finished work into durable lessons, so
+a global agent whose only job is to turn finished work into durable lessons, so
 the same mistake doesn't happen twice.
 
 ## What the Coach is
 
-The **Coach** is one of two instance-wide roles that live in
+The **Coach** is one of two global roles that live in
 [HQ](/docs/concepts/projects-and-teams#hq--the-home-team) (the other is the
 [CEO](/docs/concepts/roles-and-coordination#the-ceo)). There is exactly one Coach for the
 whole instance, it isn't a member of any single project team, and it reports to you — the
 admin. Unlike a worker, it doesn't pick up tasks, write features, or review code. Its sole
-purpose is **organisational learning**: reviewing how completed tickets actually went and
+purpose is **organisational learning**: reviewing how completed tasks actually went and
 improving the agents involved.
 
 The Coach's behaviour comes from its
@@ -26,14 +26,14 @@ The Coach's behaviour comes from its
 
 ## How the loop works
 
-Every ticket already carries a rich record of how the work went — the comment thread,
+Every task already carries a rich record of how the work went — the comment thread,
 the back-and-forth, any rejections or rework, and what each agent actually did (see
 [Tasks, rules & summaries](/docs/concepts/tasks)). The Coach reads that record after the
 fact and mines it for patterns.
 
-1. **A ticket is completed.** When a task is marked **Done** — in any project, in any
-   team — the Coach is woken automatically with that ticket's full history. It also runs
-   on its own heartbeat to catch any completed tickets that slipped through.
+1. **A task is completed.** When a task is marked **Done** — in any project, in any
+   team — the Coach is woken automatically with that task's full history. It also runs
+   on its own heartbeat to catch any completed tasks that slipped through.
 2. **It reviews the whole thread.** The Coach reads the comments and the agents' work
    end to end, looking for the moments that matter: work that got sent back, an agent that
    received corrective feedback or made a wrong assumption, an approach that was tried and
@@ -42,12 +42,12 @@ fact and mines it for patterns.
    out which agent (or agents) should learn from it and writes a concise, generalisable
    **learned rule** into their system prompt. It updates *everyone* involved in the
    feedback loop, not just the agent that got the direct pushback.
-4. **It closes the loop.** The Coach leaves a short summary comment on the ticket noting
-   what it changed (or that the ticket went smoothly and needed nothing). The ticket stays
+4. **It closes the loop.** The Coach leaves a short summary comment on the task noting
+   what it changed (or that the task went smoothly and needed nothing). The task stays
    in its final **Done** state — the Coach reviews it but does not change its status.
 
 This sits at the very end of the task lifecycle: **Done** is the final, completed state;
-the Coach's post-mortem runs against a done ticket without moving it anywhere. The review
+the Coach's post-mortem runs against a done task without moving it anywhere. The review
 happens in the background — you don't have to trigger it or wait on it.
 
 ## Learned rules
@@ -55,7 +55,7 @@ happens in the background — you don't have to trigger it or wait on it.
 A **learned rule** is a short, specific instruction the Coach appends to an agent's
 system prompt — collected together in a dedicated *Learned Rules* section so they're easy
 to find. A rule is a generalisable lesson ("always confirm the target environment before
-running a migration"), never a one-off fix for a single ticket.
+running a migration"), never a one-off fix for a single task.
 
 The Coach is deliberately conservative about what it writes:
 
@@ -64,7 +64,7 @@ The Coach is deliberately conservative about what it writes:
   existing instructions.
 - **No duplicates** — it reads an agent's current prompt first and skips anything already
   covered.
-- **When in doubt, it skips** — a false lesson is worse than a missed one, and a ticket
+- **When in doubt, it skips** — a false lesson is worse than a missed one, and a task
   that went cleanly gets no changes at all.
 
 Because learned rules are just additions to the system prompt, they behave exactly like
@@ -89,8 +89,8 @@ best. See [Documents & memory](/docs/concepts/documents-and-memory).
 
 ## Why this matters
 
-The result is a team that compounds. Each shipped ticket isn't just a finished piece of
-work — it's a data point that makes the next ticket go a little smoother. Agents stop
+The result is a team that compounds. Each shipped task isn't just a finished piece of
+work — it's a data point that makes the next task go a little smoother. Agents stop
 repeating the mistakes that earned them pushback, conventions that were learned the hard
 way get written down, and the whole roster sharpens over time **without you hand-tuning
 prompts after every misstep**. You keep the final say through approvals and rollbacks; the

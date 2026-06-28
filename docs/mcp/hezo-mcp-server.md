@@ -29,7 +29,7 @@ tools into.
 
 Create an API key under **Settings → API keys** in the web app. Copy the key when it's
 shown — it isn't displayed again. It starts with `hezo_` and goes in the
-`Authorization: Bearer` header on every request. An API key has instance-wide access:
+`Authorization: Bearer` header on every request. An API key has global access:
 pass a `project` slug to project-scoped tools (use `list_projects` to discover them).
 
 Revoke a key at any time from the same page, which disables it immediately.
@@ -50,7 +50,7 @@ The flow:
    Until then the token is inert.
 4. **Poll** the `connection_status` tool (or `GET /api/api-keys/status` with the token)
    until it returns `{ "status": "approved" }`.
-5. **Use it.** The same token now authorizes `POST /mcp` with instance-wide access. Pass a
+5. **Use it.** The same token now authorizes `POST /mcp` with global access. Pass a
    `project` slug to project-scoped tools — use `list_projects` to discover them across the
    whole instance.
 

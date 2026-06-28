@@ -186,6 +186,29 @@ describe('goals service', () => {
 		expect(dueIds.has(weeklyRecent)).toBe(false);
 	});
 
+	it('checks a goal whose deadline is due even when its frequency is not', async () => {
+		// A goal is never skipped once its deadline (target_date) has arrived, regardless of
+		// cadence. A goal whose deadline is still in the future falls back to the frequency test.
+		const mk = async (title: string, checkedAgo: string, targetDate: string): Promise<string> => {
+			const r = await db.query<{ id: string }>(
+				`INSERT INTO goals (team_id, project_id, title, check_frequency, last_checked_at, target_date)
+				 VALUES ($1, $2, $3, 'weekly'::goal_check_frequency, now() - interval '${checkedAgo}', ${targetDate})
+				 RETURNING id`,
+				[teamId, projectId, title],
+			);
+			return r.rows[0].id;
+		};
+		// Checked an hour ago (frequency NOT due), but deadline passed yesterday -> due.
+		const deadlinePassed = await mk('deadline-passed', '1 hour', `now() - interval '1 day'`);
+		// Checked an hour ago (frequency NOT due), deadline a week out -> skipped.
+		const deadlineFuture = await mk('deadline-future', '1 hour', `now() + interval '7 days'`);
+
+		const due = await getDueGoals(db, projectId);
+		const dueIds = new Set(due.map((g) => g.id));
+		expect(dueIds.has(deadlinePassed)).toBe(true);
+		expect(dueIds.has(deadlineFuture)).toBe(false);
+	});
+
 	it('records progress: updates the goal, advances last_checked_at, writes history and run summary', async () => {
 		const goal = await db.query<{ id: string }>(
 			`INSERT INTO goals (team_id, project_id, title) VALUES ($1, $2, 'Track me') RETURNING id`,

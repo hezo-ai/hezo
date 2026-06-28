@@ -90,7 +90,7 @@ heartbeat) paired with a model — and you can give any agent its own model. See
 ### How work is organised
 
 - A **project** owns exactly one **team** (its agent roster).
-- A team has a **Captain** plus worker roles; an instance-wide **CEO** and **Coach**
+- A team has a **Captain** plus worker roles; a global **CEO** and **Coach**
   oversee everything from **HQ**.
 - Work flows as **tasks** on a board, each with a description, optional rules, and a
   living progress summary.

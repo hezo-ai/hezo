@@ -49,7 +49,7 @@ Every agent's system prompt is editable from its settings at any time. Changes t
 effect on the agent's next run, so you can correct course — tighten scope, add a
 convention, change tone — without rebuilding anything. The required substitution variables
 must remain in the prompt; an edit that drops one is rejected so an agent never loses its
-identity or live context. (The instance-wide CEO and Coach are exempt — they have no
+identity or live context. (The global CEO and Coach are exempt — they have no
 manager.)
 
 ## Per-agent model override
@@ -67,7 +67,7 @@ scheduled and unassigns it from any open tasks, but keeps all of its history, so
 fully reversible: reinstate (enable) it at any time and it picks work back up on its
 heartbeat. The CEO actions this directly once you confirm, which is handy after a
 project's direction changes and several roles no longer fit. (A team's Captain and the
-instance-wide CEO and Coach can't be retired this way.)
+global CEO and Coach can't be retired this way.)
 
 ## Other settings
 

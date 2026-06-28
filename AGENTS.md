@@ -264,6 +264,13 @@ Never commit `.js`/`.d.ts`/`.js.map`/`.d.ts.map` alongside source. Compiled outp
 - Use shared constants/enums from `@hezo/shared` (`packages/shared/src/types/common.ts`) — no raw status/type strings. Add new enum values to the shared package first.
 - `bunx`, not `npx`.
 
+### User-facing docs terminology
+
+These rules apply to **user-facing prose** — the `docs/` tree and anything a Hezo operator reads — because the audience is users, not engineers. They do **not** force renames of code identifiers, DB columns, route paths, or internal comments.
+
+- **Say "task", never "ticket".** The work item on the board is a **task** everywhere in `docs/`. "Ticket" is banned from user-facing prose — use "task" (plural "tasks"). The generated `docs/reference/mcp-api.md` is the one exception: it is built from the MCP tool registry and must not be hand-edited; when you author a tool's description or `TOOL_DOC_META` that will surface there, prefer "task" too so the generated page stays consistent.
+- **Say "global", never "instance-wide".** Describe HQ, the CEO, the Coach, skills, and MCP connections as **global** (e.g. "the global HQ project"). Users don't know what "instance-wide" means — don't use it in `docs/`.
+
 ### Web frontend mutations
 
 Three strategies, picked by mutation shape. Default to optimistic unless the mutation falls into the response-driven or invalidate carve-outs below.
