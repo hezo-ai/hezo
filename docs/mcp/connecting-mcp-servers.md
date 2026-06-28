@@ -32,7 +32,7 @@ choice.
 
 ## Where a connection applies
 
-MCP connections are **instance-wide**: there's a single shared catalog and each
+MCP connections are **global**: there's a single shared catalog and each
 connection name is unique across the instance. Once you add a server it's available to
 every team's agent runs.
 

@@ -10,7 +10,7 @@ Hezo organises agents like a company. A few roles coordinate; the rest do the wo
 
 ## The CEO
 
-The **CEO** is the instance-wide executive, and your main point of contact. There is
+The **CEO** is the global executive, and your main point of contact. There is
 exactly one CEO, and it lives in [HQ](/docs/concepts/projects-and-teams#hq--the-home-team) —
 so it can see and act across every project. You chat with the CEO to get things done
 across the whole instance:
@@ -19,7 +19,7 @@ across the whole instance:
   team once you've confirmed the plan (see
   [Your first project](/docs/getting-started/first-project)). It won't create anything
   until you give the go-ahead.
-- **Coordination** — ask about any project's status, tickets, or roster; the CEO
+- **Coordination** — ask about any project's status, tasks, or roster; the CEO
   works across every team.
 - **Setup review** — before a new team starts planning, the CEO aligns its roster with the
   goal. When the CEO creates a project with you, it sets the team up according to the plan
@@ -37,7 +37,7 @@ The CEO's behaviour comes from its
 
 ## The Coach
 
-The **Coach** is the second instance-wide role that lives in HQ. Whenever a ticket is
+The **Coach** is the second global role that lives in HQ. Whenever a task is
 completed — in any project — the Coach automatically reviews how it went: it reads the
 whole thread, notices where an agent struggled, got pushback, or needed several attempts,
 and captures what went well and what to improve. It then writes those lessons back as
@@ -50,7 +50,7 @@ this loop works, see
 The Coach's behaviour comes from its
 [system prompt](https://github.com/hezo-ai/hezo/blob/main/agents/_instance/coach.md).
 
-Both the CEO and the Coach are instance-wide singletons that live in
+Both the CEO and the Coach are global singletons that live in
 [HQ](/docs/concepts/projects-and-teams#hq--the-home-team) — the one special team — and
 act across every project's team. They are never part of a project template.
 
@@ -85,7 +85,7 @@ modal view. Collapse it back to the anchored panel when you're done, or press **
 Because the CEO works across the whole instance, you can ask about anything without
 opening a project first: "how's the marketing site coming along?", "what's the engineering
 team stuck on?", "spin up a team to research competitors". It answers with knowledge of
-every project, ticket, and roster.
+every project, task, and roster.
 
 The chat is also the control surface for the things that are awkward to click through:
 scoping work, reorganising a team, or changing how an agent behaves. State what you want

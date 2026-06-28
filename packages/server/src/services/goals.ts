@@ -235,8 +235,11 @@ export async function getGoalHistory(
 
 /**
  * Goals in a project that are due for a Captain check: active (not archived) and either
- * never checked or last checked longer ago than their cadence. Mirrors the interval-elapsed
- * test the heartbeat scheduler uses for agents.
+ * past their deadline or due on cadence. A goal whose **deadline** (`target_date`) has
+ * arrived is always checked — it is never skipped while it remains active. Otherwise the
+ * goal is skipped unless its **check frequency** is due: never checked, or last checked
+ * longer ago than its cadence. The cadence test mirrors the interval-elapsed check the
+ * heartbeat scheduler uses for agents.
  */
 export async function getDueGoals(db: PGlite, projectId: string): Promise<GoalRow[]> {
 	const r = await db.query<GoalRow>(
@@ -244,7 +247,8 @@ export async function getDueGoals(db: PGlite, projectId: string): Promise<GoalRo
 		 WHERE g.project_id = $1
 		   AND g.archived_at IS NULL
 		   AND (
-		     g.last_checked_at IS NULL
+		     (g.target_date IS NOT NULL AND g.target_date <= now())
+		     OR g.last_checked_at IS NULL
 		     OR g.last_checked_at + (CASE g.check_frequency
 		          WHEN 'daily'   THEN interval '1 day'
 		          WHEN 'weekly'  THEN interval '7 days'

@@ -33,7 +33,7 @@ The palette closes and you land where you needed to be.
 
 The palette searches **across all the teams you can access** at once — you don't pick a
 project first, and [HQ](/docs/concepts/projects-and-teams#hq--the-home-team) is included
-like any other team. Skills are instance-wide, so they turn up wherever you search.
+like any other team. Skills are global, so they turn up wherever you search.
 Scoping is enforced on the server: content from a team you can't see never appears in
 your results.
 

@@ -26,7 +26,7 @@ to swap it or **Remove** to go back to the initials.
 ## Team templates
 
 When you create a project you choose a **template**, which decides the starting roster.
-Every template gives the team a **Captain** to lead it. The instance-wide CEO and Coach
+Every template gives the team a **Captain** to lead it. The global CEO and Coach
 are never part of a template — they live in HQ (below).
 
 Hezo ships with two built-in templates. Each agent's behaviour comes from a **system
@@ -50,7 +50,7 @@ Named **Startup** in the template picker, this is a **Captain** plus a full
 software-development roster:
 
 - [Captain](https://github.com/hezo-ai/hezo/blob/main/agents/software-development/captain.md) —
-  leads the team, breaks the goal into tickets, and coordinates delivery.
+  leads the team, breaks the goal into tasks, and coordinates delivery.
 - [Architect](https://github.com/hezo-ai/hezo/blob/main/agents/software-development/architect.md) —
   technical vision, specs, and architecture decisions; gates and schedules the deploy.
 - [Product Lead](https://github.com/hezo-ai/hezo/blob/main/agents/software-development/product-lead.md) —
@@ -103,7 +103,7 @@ the other.
 
 ## HQ — the home team
 
-**HQ** is the one special, instance-wide team. It's the permanent home of the two roles
+**HQ** is the one special, global team. It's the permanent home of the two roles
 that work across every project — the **CEO** and the **Coach** — and it's where
 instance-level settings live (model providers, shared connections, and the like). HQ is
 also where you [chat with the CEO](/docs/concepts/roles-and-coordination#chatting-with-the-ceo):
