@@ -875,9 +875,13 @@ applies the staged binary and relaunches. The supervisor branch sits in `index.t
 after the `restore` subcommand and before preflights, so dev (`bun run`) and `hezo restore`
 never supervise. The `updater.ts` service handles the rest. Staging is **proactive**: the
 idempotent `ensureUpdateStaged()` downloads the platform asset + `SHA256SUMS`, verifies the
-hash, and stages to `<dataDir>/.update/staged[.exe]` (recording lifecycle in `state.json`),
-retrying once on failure (a second failure leaves `state.json` in `Error` for that version,
-honored as "retry exhausted" so polls don't re-download). It runs from `GET /api/updates/status`
+hash, and stages to `<dataDir>/.update/staged[.exe]` (recording lifecycle + an `updatedAt`
+timestamp in `state.json`), retrying once on failure. A second failure leaves `state.json` in
+`Error`, but that's honored only for a **cooldown** (`STAGE_ERROR_COOLDOWN_MS`) — a later poll
+re-attempts so a transient failure self-heals instead of sticking forever; likewise a
+`Downloading` state is respected only while **fresh** (`STAGE_DOWNLOAD_STALE_MS`), so a download
+abandoned by a worker crash/restart is re-attempted rather than wedging staging permanently. It
+runs from `GET /api/updates/status`
 (fire-and-forget on every banner poll, gated on `isSupervisedWorker()`) and the daily
 `update-check` cron (`HEZO_UPDATE_CHECK_CRON`), so a running instance usually stages a new
 release within seconds. `POST /api/updates/download` (superuser) is the same download path on
@@ -893,8 +897,9 @@ instance returns **locked** unless `HEZO_MASTER_KEY` is set (the web restart ove
 staged-update state plus an `autoUnlock` hint so the UI's confirmation can warn about the
 master-key re-unlock. The web banner shows an **"Install & restart"** button only once the
 binary is `Staged` (so the restart is instant); while the background download is in flight it
-stays hidden, and on a download `Error` (or for any instance that can't self-apply) it falls
-back to a **"Download"** link to the GitHub release page.
+stays hidden. On a download `Error`, a self-applying instance shows a **"Retry download"**
+button (which re-triggers `POST /api/updates/download`) with the GitHub release as a secondary
+link; an instance that can't self-apply falls back to the **"Download"** release link.
 
 **Known limits.** macOS binaries are unsigned (built on Linux; clear quarantine with `xattr -d`);
 on Apple Silicon an unsigned replacement may still be Gatekeeper-blocked. Windows self-update

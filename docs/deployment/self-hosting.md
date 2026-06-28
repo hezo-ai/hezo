@@ -269,8 +269,11 @@ verifies the binary for your platform in the background. Once it's staged, a bar
 appears in the web UI; a superuser clicks **Install & restart** and confirms.
 Because the download already happened, the restart is instant — Hezo shuts down
 gracefully, swaps in the new binary, and restarts onto it, with no manual file
-replacement. (If the background download is disabled or can't run — for example
-inside a container — the bar instead links to the GitHub release page.)
+replacement. If a background download fails, the bar offers a **Retry download**
+button (with the GitHub release as a manual fallback), and it automatically
+re-attempts on a later check. (If the background download is disabled or can't
+run — for example inside a container — the bar instead links to the GitHub
+release page.)
 
 Because the restart re-locks the instance, **you'll need your 12-word master key
 to unlock Hezo again afterward** — unless you run Hezo with the master key set in

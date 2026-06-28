@@ -75,13 +75,28 @@ test('banner stays hidden while the background download is in flight', () => {
 	}
 });
 
-test('a download error falls back to the release-page download link', () => {
+test('a staging error on a self-applying instance offers a retry (with a manual link)', () => {
 	const { getByTestId, getByText, queryByTestId } = renderBanner({ state: UpdateState.Error });
 	expect(getByTestId('update-banner')).toBeTruthy();
 	// No instant-restart button — the staged binary never landed.
 	expect(queryByTestId('update-restart-button')).toBeNull();
-	const link = getByText('Download') as HTMLAnchorElement;
+	// The retry button re-triggers the background download; the release page stays
+	// available as a secondary fallback.
+	expect(getByTestId('update-retry-button').textContent).toContain('Retry download');
+	const link = getByText('Download manually') as HTMLAnchorElement;
 	expect(link.getAttribute('href')).toBe('https://github.com/hezo-ai/hezo/releases/0.2.0');
+});
+
+test('retry posts to the download route to re-stage', async () => {
+	const user = userEvent.setup();
+	const postSpy = vi
+		.spyOn(api, 'post')
+		.mockResolvedValue({ data: { state: UpdateState.Downloading, targetVersion: '0.2.0' } });
+	// onSuccess invalidates the status query; stub the refetch so it doesn't hit the network.
+	vi.spyOn(api, 'get').mockResolvedValue({ ...BASE, state: UpdateState.Downloading });
+	const { getByTestId } = renderBanner({ state: UpdateState.Error });
+	await user.click(getByTestId('update-retry-button'));
+	await waitFor(() => expect(postSpy).toHaveBeenCalledWith('/api/updates/download'));
 });
 
 test('Install & restart asks for confirmation (with master-key warning) before applying', async () => {

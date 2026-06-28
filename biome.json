@@ -60,6 +60,8 @@
 			"!**/migrations-bundle.json",
 			"!**/agents-bundle.json",
 			"!**/docs-bundle.json",
+			"!**/docker-bundle.json",
+			"!**/static-bundle.json",
 			"!test/test-run-order.json",
 			"!test-results",
 			"!playwright-report",
