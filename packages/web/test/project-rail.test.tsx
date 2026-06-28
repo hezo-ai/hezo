@@ -188,6 +188,29 @@ test('rail avatars badge each project with its outstanding inbox count', async (
 	expect(queryByTestId(`project-rail-inbox-badge-${betaSlug}`)).toBeNull();
 });
 
+test('the mobile drawer rail exposes a Home button that the desktop rail omits', async () => {
+	const { findByTestId, queryByTestId, getByTestId, user, router } = await renderApp({
+		initialPath: '/home/tasks',
+		seed: async () => {
+			await seedWorkspace();
+		},
+	});
+
+	// The persistent (desktop) rail has no Home button — the header logo links home there.
+	await findByTestId('project-rail', undefined, { timeout: 15_000 });
+	expect(queryByTestId('project-rail-home')).toBeNull();
+
+	// Opening the side drawer (the logo doubles as the toggle below lg) surfaces it.
+	await user.click(getByTestId('mobile-nav-toggle'));
+	const drawer = await findByTestId('mobile-nav-drawer');
+	const home = await findByTestId('project-rail-home', undefined, { timeout: 15_000 });
+	expect(drawer.contains(home)).toBe(true);
+	expect(home.getAttribute('href')).toBe('/home');
+
+	await user.click(home);
+	await waitFor(() => expect(router.state.location.pathname).toBe('/home'));
+});
+
 test('the pinned HQ entry badges HQ outstanding inbox items', async () => {
 	const { findByTestId } = await renderApp({
 		initialPath: '/home',

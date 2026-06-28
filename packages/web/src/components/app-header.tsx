@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import { BookOpen, FolderKanban, Inbox, Menu, Search, Settings } from 'lucide-react';
+import { BookOpen, FolderKanban, Inbox, Search, Settings } from 'lucide-react';
 import { useGlobalInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useMe } from '../hooks/use-me';
 import { CountOverlayBadge } from './ui/count-overlay-badge';
@@ -14,7 +14,8 @@ const iconLinkClass =
  * top-left; everything else (Inbox, All Tasks, the Admin-only Skills
  * shortcut, Settings, and the theme switcher) lives in the top-right group.
  * Connectors and Credentials are reached through the Settings sidebar.
- * On mobile a hamburger opens the project drawer.
+ * Below `lg` the navigation is a side drawer, so the logo doubles as the drawer
+ * toggle; at `lg`+ the rail/sidebar are persistent and the logo links home.
  */
 export function AppHeader({
 	onOpenDrawer,
@@ -32,21 +33,24 @@ export function AppHeader({
 			data-testid="app-header"
 		>
 			<div className="flex items-center gap-0.5">
+				{/* Below lg the menu is a side drawer — the logo opens it. */}
 				<button
 					type="button"
 					onClick={onOpenDrawer}
 					aria-label="Open navigation"
+					title="Open navigation"
 					data-testid="mobile-nav-toggle"
-					className={`lg:hidden ${iconLinkClass}`}
+					className="lg:hidden flex items-center justify-center w-8 h-8"
 				>
-					<Menu className="w-4 h-4" />
+					<Logo size="sm" />
 				</button>
+				{/* At lg+ the rail/sidebar are persistent — the logo links home. */}
 				<Link
 					to="/home"
 					aria-label="Home"
 					title="Home"
 					data-testid="app-header-home"
-					className="flex items-center justify-center w-8 h-8"
+					className="hidden lg:flex items-center justify-center w-8 h-8"
 				>
 					<Logo size="sm" />
 				</Link>

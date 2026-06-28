@@ -210,7 +210,7 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 						className="absolute inset-0 bg-[var(--overlay)] cursor-default"
 					/>
 					<div className="relative flex h-full bg-surface shadow-xl">
-						<ProjectRail />
+						<ProjectRail showHome />
 						{active && (
 							<div className="w-[208px] h-full overflow-y-auto py-2 border-r border-border bg-surface">
 								<ProjectSidebar />
