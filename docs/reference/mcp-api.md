@@ -92,6 +92,23 @@ Create a new team (superuser only)
 
 ## Projects
 
+### `update_project_progress`
+
+_Write tool._
+
+Replace the project's progress summary shown at the top of the Progress page. Only the Captain does this, and only from within a goal-check run. Keep it a concise summary, not a backlog: lead with the key points in **bold**, then a short narrative of what is done, what is in progress, and what is still to do. You may reference a few of the most relevant tickets by their bare identifier (e.g. BE-2) — link sparingly. This overwrites the whole summary, so include everything that should remain.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `summary` | `string` | Yes | Markdown summary of project progress. Lead with the key points in **bold**, then a short narrative of done / in-progress / to-do. Link only a few key tickets by identifier; keep it a summary. |
+
+**Returns:** `{ summary, updated_at }` after replacing the project’s progress summary (shown at the top of the Progress page). Returns `{ error }` if the project is HQ/internal (no progress summary) or the call is not from within an agent run.
+
+**Authorization:** Captain only, and only from within a goal-check agent run.
+
 ### `create_project`
 
 _Write tool._

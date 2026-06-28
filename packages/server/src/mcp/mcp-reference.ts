@@ -99,6 +99,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		returns:
 			'An array of templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`).',
 	},
+	update_project_progress: {
+		category: 'Projects',
+		returns:
+			'`{ summary, updated_at }` after replacing the project’s progress summary (shown at the top of the Progress page). Returns `{ error }` if the project is HQ/internal (no progress summary) or the call is not from within an agent run.',
+		auth: 'Captain only, and only from within a goal-check agent run.',
+	},
 
 	// Tasks
 	list_tasks: {

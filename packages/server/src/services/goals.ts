@@ -4,6 +4,7 @@ import {
 	type GoalCheckFrequency,
 	type GoalCheckRunSummary,
 	type GoalHealth,
+	type GoalRunActivity,
 	type GoalWithProject,
 	GoalHealth as Health,
 	HeartbeatRunKind,
@@ -335,6 +336,65 @@ export async function listGoalCheckRuns(
 		 ORDER BY hr.created_at DESC
 		 LIMIT $3`,
 		[HeartbeatRunKind.GoalCheck, projectId, limit],
+	);
+	return r.rows;
+}
+
+/**
+ * The goal-check runs that did something for one specific goal, newest first — shown at the bottom
+ * of the goal detail page. A run qualifies if it estimated this goal's progress, created task(s)
+ * linked to it, or commented on goal-linked task(s). Each run carries its progress snapshot plus the
+ * tasks it created and the goal-linked tasks it commented on.
+ */
+export async function listGoalRunActivity(
+	db: PGlite,
+	projectId: string,
+	goalId: string,
+	limit = 50,
+): Promise<GoalRunActivity[]> {
+	const r = await db.query<GoalRunActivity>(
+		`SELECT hr.id, hr.status, hr.created_at, hr.started_at, hr.finished_at,
+		        (
+		          SELECT json_build_object(
+		                   'progress_percent', gru.progress_percent,
+		                   'health', gru.health,
+		                   'status_blurb', gru.status_blurb)
+		          FROM goal_run_updates gru
+		          WHERE gru.run_id = hr.id AND gru.goal_id = $2
+		        ) AS progress,
+		        COALESCE((
+		          SELECT json_agg(json_build_object(
+		                   'id', t.id, 'identifier', t.identifier,
+		                   'title', t.title, 'status', t.status) ORDER BY t.created_at)
+		          FROM tasks t
+		          WHERE t.goal_id = $2 AND t.created_by_run_id = hr.id
+		        ), '[]'::json) AS created_tasks,
+		        COALESCE((
+		          SELECT json_agg(ct ORDER BY ct.identifier)
+		          FROM (
+		            SELECT t.id, t.identifier, t.title, t.status,
+		                   count(*)::int AS comment_count
+		            FROM task_comments tc
+		            JOIN tasks t ON t.id = tc.task_id
+		            WHERE tc.created_by_run_id = hr.id AND t.goal_id = $2
+		            GROUP BY t.id, t.identifier, t.title, t.status
+		          ) ct
+		        ), '[]'::json) AS commented_tasks
+		 FROM heartbeat_runs hr
+		 WHERE hr.kind = $1
+		   AND hr.task_id IS NULL
+		   AND hr.team_id = (SELECT team_id FROM projects WHERE id = $3)
+		   AND (
+		     EXISTS (SELECT 1 FROM goal_run_updates gru WHERE gru.run_id = hr.id AND gru.goal_id = $2)
+		     OR EXISTS (SELECT 1 FROM tasks t WHERE t.goal_id = $2 AND t.created_by_run_id = hr.id)
+		     OR EXISTS (
+		       SELECT 1 FROM task_comments tc JOIN tasks t ON t.id = tc.task_id
+		       WHERE tc.created_by_run_id = hr.id AND t.goal_id = $2
+		     )
+		   )
+		 ORDER BY hr.created_at DESC
+		 LIMIT $4`,
+		[HeartbeatRunKind.GoalCheck, goalId, projectId, limit],
 	);
 	return r.rows;
 }

@@ -9,6 +9,7 @@ import {
 	getGoal,
 	getGoalHistory,
 	listGoalCheckRuns,
+	listGoalRunActivity,
 	listGoals,
 	type UpdateGoalInput,
 	updateGoal,
@@ -64,6 +65,17 @@ goalsRoutes.get('/projects/:projectId/goals/:goalId/history', async (c) => {
 	const history = await getGoalHistory(c.get('db'), projectId, c.req.param('goalId'));
 	if (history === null) return err(c, 'NOT_FOUND', 'Goal not found', 404);
 	return ok(c, history);
+});
+
+// The goal-check runs that did something for this goal (progress estimate, created tasks,
+// commented tasks) — shown at the bottom of the goal detail page.
+goalsRoutes.get('/projects/:projectId/goals/:goalId/runs', async (c) => {
+	const projectId = c.get('projectId') as string;
+	const goalId = c.req.param('goalId');
+	const goal = await getGoal(c.get('db'), projectId, goalId);
+	if (!goal) return err(c, 'NOT_FOUND', 'Goal not found', 404);
+	const runs = await listGoalRunActivity(c.get('db'), projectId, goalId);
+	return ok(c, runs);
 });
 
 goalsRoutes.patch('/projects/:projectId/goals/:goalId', async (c) => {
