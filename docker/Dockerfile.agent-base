@@ -51,15 +51,17 @@ RUN npm install -g @anthropic-ai/claude-code \
     && npm install -g @moonshot-ai/kimi-code
 
 # Install the Grok Build CLI (xAI) → grok. Unlike the npm CLIs above, Grok ships
-# a curl|bash installer that drops the binary under the invoking user's home
-# (e.g. /root/.local/bin). The container runs agents as the unprivileged `node`
-# user, which can't traverse /root, so copy the resolved binary onto the shared
-# PATH (/usr/local/bin) and verify. [confirm] the installer's output path against
-# a real build if the layer fails — adjust the resolver below to match.
+# a curl|bash installer that drops the binary under the invoking (root) user's
+# home — `/root/.grok/bin/{grok,agent}` — and symlinks it onto /usr/local/bin.
+# The container runs agents as the unprivileged `node` user, which can't traverse
+# /root (mode 0700), so that default symlink would be a dead link for agents.
+# Relocate the install to a world-readable prefix (/opt/grok), re-point the
+# symlinks at it, make it traversable, and verify.
 RUN curl -fsSL https://x.ai/cli/install.sh | bash \
-    && grok_bin="$(command -v grok || true)" \
-    && if [ -z "$grok_bin" ]; then grok_bin="$(find /root /usr/local -name grok -type f 2>/dev/null | head -n1)"; fi \
-    && install -m 0755 "$grok_bin" /usr/local/bin/grok \
+    && mv /root/.grok /opt/grok \
+    && ln -sf /opt/grok/bin/grok /usr/local/bin/grok \
+    && ln -sf /opt/grok/bin/agent /usr/local/bin/agent \
+    && chmod -R a+rX /opt/grok \
     && grok --version
 
 # Pre-install Bun (latest) for agent-authored JS/TS projects — the common case,
