@@ -67,23 +67,12 @@ async function buildAgentBundle() {
 // before upload: (1) rewrite every SF path to be repo-root-relative
 // (`packages/<pkg>/src/...`) so Coveralls maps it across the monorepo without the
 // per-package `src/...` paths colliding, and (2) keep only records under the
-// `keepPrefixes` subtrees (defaults to the package's whole `src/` tree). The
-// vitest tier already scopes to src via `include`, but `bun test --coverage` also
-// instruments loaded test support (test/helpers/*, the bun setup preload) —
-// coverage must report source, not test code.
-//
-// The Bun tier additionally passes a NARROW `keepPrefixes` (its actual subject —
-// the egress proxy path). `bun test` boots the full Hono app via createTestApp,
-// so V8 instruments every transitively-imported src file and emits a mostly-zero
-// DA line for each. Node-V8 (vitest) and Bun-V8 disagree on which physical lines
-// are "executable", so when Coveralls unions the two flags by (file, line) those
-// extra Bun-only zero lines are NOT reconciled against vitest's covered lines —
-// they inflate the denominator and would drag the merged total down by ~14pts.
-// Scoping the Bun report to the files it actually exercises keeps it purely
-// additive (its unique value is proxy.ts, which the Node tier can't drive).
-function normalizeLcov(lcovPath: string, pkg: string, keepPrefixes?: string[]): void {
+// package's `src/` tree. The vitest tier already scopes to src via `include`, but
+// `bun test --coverage` also instruments loaded test support (test/helpers/*, the
+// bun setup preload) — coverage must report source, not test code.
+function normalizeLcov(lcovPath: string, pkg: string): void {
 	if (!existsSync(lcovPath)) return;
-	const prefixes = keepPrefixes ?? [`${pkg}/src/`];
+	const srcPrefix = `${pkg}/src/`;
 	const records = readFileSync(lcovPath, 'utf8')
 		.split(/^end_of_record$/m)
 		.map((rec) => rec.trim())
@@ -91,7 +80,7 @@ function normalizeLcov(lcovPath: string, pkg: string, keepPrefixes?: string[]): 
 		.map((rec) => rec.replace(/^SF:(?!\/|packages\/)(.+)$/m, (_m, rest) => `SF:${pkg}/${rest}`))
 		.filter((rec) => {
 			const sf = rec.match(/^SF:(.+)$/m);
-			return sf ? prefixes.some((p) => sf[1].startsWith(p)) : false;
+			return sf ? sf[1].startsWith(srcPrefix) : false;
 		});
 	writeFileSync(
 		lcovPath,
@@ -157,13 +146,7 @@ async function runBunNativeForPackage(pkg: string): Promise<boolean> {
 	const exitCode = await proc.exited;
 	const duration = Date.now() - start;
 	const passed = exitCode === 0;
-	// Scope the Bun report to the egress subtree it actually drives (proxy TLS
-	// MITM + secret substitution). See normalizeLcov for why the full-app
-	// instrumentation Bun emits would otherwise deflate the merged Coveralls total.
-	if (coverage)
-		normalizeLcov(resolve(ROOT, pkg, 'coverage-bun/lcov.info'), pkg, [
-			`${pkg}/src/services/egress/`,
-		]);
+	if (coverage) normalizeLcov(resolve(ROOT, pkg, 'coverage-bun/lcov.info'), pkg);
 	console.log(
 		`\n${pkg} (Bun-native): ${passed ? 'passed' : 'FAILED'} (${(duration / 1000).toFixed(1)}s)`,
 	);
