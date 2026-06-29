@@ -18,10 +18,11 @@ import { renderApp } from './helpers/render';
 
 const now = () => new Date().toISOString();
 
-function seedConversation(messages: CeoMessage[]) {
+function seedConversation(messages: CeoMessage[], compactedCount = 0) {
 	queryClient.setQueryData(queryKeys.ceoConversation(), {
 		conversation_id: 'test-convo',
 		messages,
+		compacted_count: compactedCount,
 	});
 }
 
@@ -167,6 +168,51 @@ test('each message carries its role eyebrow — "You" for the operator, "CEO · 
 
 	expect(await findByText('You')).toBeTruthy();
 	expect(await findByText('CEO · HQ')).toBeTruthy();
+});
+
+test('shows the "chat compacted" marker at the top once older messages are compacted', async () => {
+	const { findByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+
+	// The retained tail plus a positive compacted_count (older messages summarized
+	// into long-term memory and evicted).
+	seedConversation(
+		[
+			{
+				id: 'a1',
+				role: 'assistant',
+				channel: 'web',
+				status: 'complete',
+				content: 'latest',
+				created_at: now(),
+			},
+		],
+		4,
+	);
+
+	const banner = await findByTestId('ceo-chat-compacted-banner');
+	expect(banner.textContent ?? '').toContain('compacted');
+});
+
+test('shows no compaction marker when nothing has been compacted', async () => {
+	const { findByTestId, findByText, queryByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+
+	seedConversation([
+		{
+			id: 'a1',
+			role: 'assistant',
+			channel: 'web',
+			status: 'complete',
+			content: 'hello there',
+			created_at: now(),
+		},
+	]);
+
+	await findByText('hello there');
+	expect(queryByTestId('ceo-chat-compacted-banner')).toBeNull();
 });
 
 test('the closed launcher button exposes a "Chat with CEO" tooltip on hover', async () => {

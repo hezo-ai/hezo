@@ -727,6 +727,12 @@ export class CeoSessionManager {
 		const advanced = after !== null && (before === null || after.updated_at !== before);
 		if (advanced) {
 			await markCompacted(this.deps.db, flush.evictIds);
+			// Tell every mirrored chatbox to drop the evicted messages and show the
+			// "chat compacted" marker — the conversation refetch returns just the tail.
+			this.deps.wsManager.broadcast(wsRoom.ceo(), {
+				type: WsMessageType.CeoCompacted,
+				conversationId: session.conversationId,
+			});
 		} else {
 			log.warn('CEO compaction did not update long-term memory; window left intact', {
 				session: session.sessionId,

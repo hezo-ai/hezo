@@ -28,13 +28,25 @@ ceoChatRoutes.get('/ceo/conversation', async (c) => {
 	// The chatbox shows the active window — the non-compacted messages. Older
 	// messages have been summarized into long-term memory and dropped. The window
 	// is bounded by compaction, so the full active set is returned (no limit).
-	const messages = await c.get('db').query(
+	const db = c.get('db');
+	const messages = await db.query(
 		`SELECT ${MESSAGE_COLUMNS} FROM ceo_messages
 			 WHERE conversation_id = $1 AND compacted_at IS NULL
 			 ORDER BY created_at ASC`,
 		[conversationId],
 	);
-	return ok(c, { conversation_id: conversationId, messages: messages.rows });
+	// How many older messages were compacted away — drives the "chat compacted"
+	// marker the chatbox shows at the top of the window.
+	const compacted = await db.query<{ count: number }>(
+		`SELECT COUNT(*)::int AS count FROM ceo_messages
+			 WHERE conversation_id = $1 AND compacted_at IS NOT NULL`,
+		[conversationId],
+	);
+	return ok(c, {
+		conversation_id: conversationId,
+		messages: messages.rows,
+		compacted_count: compacted.rows[0]?.count ?? 0,
+	});
 });
 
 ceoChatRoutes.get('/ceo/messages', async (c) => {

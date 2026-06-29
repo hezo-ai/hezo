@@ -282,11 +282,14 @@ its current memory plus the whole window and asks it to fold the durable points 
 the `update_chat_memory` MCP tool — the agent does the summarization, there is **no server-side
 LLM call**. Eviction is gated on the agent actually advancing its memory: only then does the
 server mark all but the latest few messages (`CHAT_WINDOW_RETAIN_MESSAGES`) `compacted_at`,
-resetting the window to a short tail (a no-op or aborted run loses nothing). Compaction is
-preempted by a new user turn (it shares the per-session prompt file). The `GET /api/ceo/conversation`
-chatbox view and each turn's transcript filter `compacted_at IS NULL`, so scrolling up tops out
-at the window boundary. The store generalizes to any chat-enabled agent; the operator can review
-and edit it on the agent's **Chat history** tab
+resetting the window to a short tail (a no-op or aborted run loses nothing). Compaction runs in
+the background and is preempted by a new user turn (it shares the per-session prompt file), so the
+chat is never blocked. The `GET /api/ceo/conversation` chatbox view and each turn's transcript
+filter `compacted_at IS NULL`, so scrolling up tops out at the window boundary. On a successful
+compaction the server broadcasts `CeoCompacted` on the `ceo:global` room; every open chatbox
+refetches and drops the evicted messages live, rendering a "chat compacted" marker (driven by the
+response's `compacted_count`) where the oldest messages were. The store generalizes to any
+chat-enabled agent; the operator can review and edit it on the agent's **Chat history** tab
 (`GET/PUT /api/projects/:projectId/agents/:agentId/chat-memory`).
 
 HQ also exposes the standard **assets library** — the one internal-project surface that
