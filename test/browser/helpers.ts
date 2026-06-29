@@ -150,9 +150,16 @@ export async function resolveProjectSlugForTeam(
 }
 
 /**
- * Force-close a planning task by terminating any active Captain run, then
- * marking the task done. Retries because the wakeup cron can spin up a new
- * run between the terminate and the close.
+ * Force-close a planning task to clear the board for a test.
+ *
+ * Marking it `done` is guarded by `assertNoOutstandingActivity` — it 400s while
+ * the Captain has an active run on the task, and the 1Hz e2e wakeup cron
+ * re-dispatches that run faster than a terminate-then-close loop can win on a
+ * loaded CI runner (the source of the shard flake). `cancelled` is **not**
+ * guarded and is terminal, so it closes the task and, being terminal, stops the
+ * cron from spawning any further runs on it — deterministic, no race. Any run
+ * still active is then terminated best-effort to free the CI worker promptly
+ * (no new one can replace it now that the task is terminal).
  */
 async function closePlanningTask(
 	page: Page,
@@ -160,49 +167,50 @@ async function closePlanningTask(
 	taskId: string,
 	headers: Record<string, string>,
 ): Promise<void> {
+	const cancelRes = await page.request.patch(`/api/projects/${projectSlug}/tasks/${taskId}`, {
+		headers,
+		data: { status: 'cancelled' },
+	});
+	if (!cancelRes.ok()) {
+		throw new Error(
+			`closePlanningTask: failed to cancel ${taskId} — ${cancelRes.status()} ${await cancelRes.text()}`,
+		);
+	}
+
+	// Drain any run still active on the now-terminal task so it can't linger in the
+	// agent queue or hold a worker. Because the task is terminal the cron won't
+	// dispatch a replacement, so this converges quickly: terminate, then poll until
+	// no queued/running run remains for this task.
 	const deadline = Date.now() + 15_000;
-	let lastError = '';
 	while (Date.now() < deadline) {
 		const taskRes = await page.request.get(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 			headers,
 		});
-		const task = (
-			(await taskRes.json()) as { data?: { status: string; assignee_id: string | null } }
-		).data;
-		if (!task) throw new Error('closePlanningTask: task not found');
-		if (task.status === 'done' || task.status === 'cancelled') return;
+		const task = ((await taskRes.json()) as { data?: { assignee_id: string | null } }).data;
+		if (!task?.assignee_id) return;
 
-		if (task.assignee_id) {
-			const runsRes = await page.request.get(
-				`/api/projects/${projectSlug}/agents/${task.assignee_id}/heartbeat-runs`,
+		const runsRes = await page.request.get(
+			`/api/projects/${projectSlug}/agents/${task.assignee_id}/heartbeat-runs`,
+			{ headers },
+		);
+		const runs =
+			(
+				(await runsRes.json()) as {
+					data?: Array<{ id: string; status: string; task_id: string | null }>;
+				}
+			).data ?? [];
+		const active = runs.filter(
+			(r) => r.task_id === taskId && (r.status === 'queued' || r.status === 'running'),
+		);
+		if (active.length === 0) return;
+		for (const run of active) {
+			await page.request.post(
+				`/api/projects/${projectSlug}/agents/${task.assignee_id}/heartbeat-runs/${run.id}/terminate`,
 				{ headers },
 			);
-			const runs =
-				(
-					(await runsRes.json()) as {
-						data?: Array<{ id: string; status: string; task_id: string | null }>;
-					}
-				).data ?? [];
-			for (const run of runs) {
-				if (run.task_id !== taskId) continue;
-				if (run.status === 'queued' || run.status === 'running') {
-					await page.request.post(
-						`/api/projects/${projectSlug}/agents/${task.assignee_id}/heartbeat-runs/${run.id}/terminate`,
-						{ headers },
-					);
-				}
-			}
 		}
-
-		const patchRes = await page.request.patch(`/api/projects/${projectSlug}/tasks/${taskId}`, {
-			headers,
-			data: { status: 'done' },
-		});
-		if (patchRes.ok()) return;
-		lastError = `${patchRes.status()} ${await patchRes.text()}`;
-		await new Promise((r) => setTimeout(r, 250));
+		await new Promise((r) => setTimeout(r, 200));
 	}
-	throw new Error(`closePlanningTask: failed to close ${taskId} within 15s — ${lastError}`);
 }
 
 /**
