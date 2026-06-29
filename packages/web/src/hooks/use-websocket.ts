@@ -188,6 +188,7 @@ export function useInvalidateOnReconnect(connected: boolean): void {
 	useEffect(() => {
 		if (!connected) return;
 		if (hadConnected.current) {
+			console.warn('[DBG] RECONNECT-NUKE invalidateQueries()');
 			queryClient.invalidateQueries();
 		}
 		hadConnected.current = true;
@@ -238,6 +239,7 @@ export function useShellWebSockets(teams: TeamRoom[] | undefined): void {
 				? resolveProjectSlugByIdOnly(index, row)
 				: resolveProjectSlugForRow(index, row);
 
+			console.warn(`[DBG] WSINVAL t=${table} cid=${cid ?? 'SKIP'} pid=${row.project_id ?? '-'}`);
 			if (cid) {
 				invalidateQueriesForRowChange(queryClient, cid, table, row);
 				if (table === 'member_agents') {

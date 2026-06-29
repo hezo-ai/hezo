@@ -108,6 +108,7 @@ export function useInfiniteTasks(
 				page: String(pageParam),
 				per_page: String(perPage),
 			};
+			console.warn(`[DBG] QFN proj=${projectId} page=${pageParam} f=${JSON.stringify(filters)}`);
 			return api.getPaginated<Task>(`/api/projects/${projectId}/tasks`, params);
 		},
 		getNextPageParam: (lastPage) => {
