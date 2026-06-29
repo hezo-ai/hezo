@@ -40,7 +40,9 @@ function readDismissed(): Dismissal | null {
  * background; when this instance can apply-and-restart (a supervised compiled
  * binary), the caller is a superuser, and the binary is staged, an "Install &
  * restart" button — after a confirmation that warns about the master-key
- * re-unlock — restarts onto it instantly. While the background download is still
+ * re-unlock — restarts onto it instantly. The new version number links to its
+ * GitHub release page so the user can read the release notes. While the
+ * background download is still
  * in flight the banner stays hidden; if staging errored on a self-applying
  * instance it offers a "Retry download" button (with the GitHub Release as a
  * secondary link), and for any instance that can't self-apply it falls back to the
@@ -110,8 +112,21 @@ export function UpdateBanner() {
 			className="shrink-0 flex flex-col sm:flex-row sm:items-center gap-2 px-4 py-2.5 text-[13px] bg-accent-soft text-accent-soft-fg border-b border-border"
 		>
 			<span className="flex-1">
-				Hezo <span className="font-semibold">{latest}</span> is available — you're on {data.current}
-				.
+				Hezo{' '}
+				{data.url ? (
+					<a
+						href={data.url}
+						target="_blank"
+						rel="noreferrer"
+						data-testid="update-version-link"
+						className="font-semibold underline underline-offset-2 hover:no-underline"
+					>
+						{latest}
+					</a>
+				) : (
+					<span className="font-semibold">{latest}</span>
+				)}{' '}
+				is available — you're on {data.current}.
 			</span>
 			<div className="flex items-center gap-2 sm:gap-3">
 				{showInstall ? (
