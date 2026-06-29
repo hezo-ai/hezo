@@ -46,13 +46,13 @@ export function ActionComment({ comment, projectId }: Props) {
 			<div className="flex items-center gap-2 text-sm">
 				<GitBranch className="w-4 h-4 text-info-soft-fg" />
 				<span>
-					This project has no designated repository yet. Add a repo URL in project settings, then
+					This project has no designated repository yet. Add a repo on the Git settings page, then
 					this ticket will resume.
 				</span>
 			</div>
 			<div>
-				<Link to="/projects/$projectId/settings" params={{ projectId }}>
-					<Button size="sm">Open project settings</Button>
+				<Link to="/projects/$projectId/git" params={{ projectId }}>
+					<Button size="sm">Open Git settings</Button>
 				</Link>
 			</div>
 		</div>

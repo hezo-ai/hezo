@@ -73,7 +73,7 @@ test('GITHUB_REPO_EXISTS surfaces a link-existing affordance that flips the moda
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/settings',
+		to: '/projects/$projectId/git',
 		params: { projectId: projectSlug },
 	});
 

@@ -3,7 +3,6 @@ import { createFileRoute, redirect } from '@tanstack/react-router';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { ProjectBudgetPanel } from '../../../../components/budget/project-budget-panel';
-import { GitHubSection } from '../../../../components/github-section';
 import { ProjectIconSection } from '../../../../components/project-icon-section';
 import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
@@ -144,8 +143,6 @@ function ProjectSettingsPage() {
 					</div>
 				</section>
 			)}
-
-			<GitHubSection projectId={projectId} />
 		</div>
 	);
 }

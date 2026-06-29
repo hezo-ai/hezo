@@ -34,8 +34,9 @@ test('the project menu leads with Inbox, lists the project pages, and has a Team
 	expect(within(nav).getByRole('link', { name: 'Documents' })).toBeTruthy();
 	expect(within(nav).getByRole('link', { name: 'Assets' })).toBeTruthy();
 	expect(within(nav).getByRole('link', { name: 'Settings' })).toBeTruthy();
-	// Container and Activity now nest under Settings — hidden until it (or one of
-	// them) is the active route.
+	// Git, Container and Activity now nest under Settings — hidden until it (or
+	// one of them) is the active route.
+	expect(within(nav).queryByRole('link', { name: 'Git' })).toBeNull();
 	expect(within(nav).queryByRole('link', { name: 'Container' })).toBeNull();
 	expect(within(nav).queryByRole('link', { name: 'Activity' })).toBeNull();
 
@@ -50,7 +51,7 @@ test('the project menu leads with Inbox, lists the project pages, and has a Team
 	expect(queryByTestId('project-sidebar-back')).toBeNull();
 });
 
-test('Container and Activity nest under Settings, disclosed when Settings is the active route', async () => {
+test('Git, Container and Activity nest under Settings, disclosed when Settings is the active route', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
 	const { container, findByTestId, router } = await renderApp({
@@ -68,17 +69,19 @@ test('Container and Activity nest under Settings, disclosed when Settings is the
 		params: { projectId: projectSlug },
 	});
 	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	expect(within(getNav(container)).queryByRole('link', { name: 'Git' })).toBeNull();
 	expect(within(getNav(container)).queryByRole('link', { name: 'Container' })).toBeNull();
 	expect(within(getNav(container)).queryByRole('link', { name: 'Activity' })).toBeNull();
 
-	// Selecting Settings discloses Container and Activity beneath it.
+	// Selecting Settings discloses Git, Container and Activity beneath it.
 	await router.navigate({
 		to: '/projects/$projectId/settings',
 		params: { projectId: projectSlug },
 	});
 	await waitFor(() =>
-		expect(within(getNav(container)).getByRole('link', { name: 'Container' })).toBeTruthy(),
+		expect(within(getNav(container)).getByRole('link', { name: 'Git' })).toBeTruthy(),
 	);
+	expect(within(getNav(container)).getByRole('link', { name: 'Container' })).toBeTruthy();
 	expect(within(getNav(container)).getByRole('link', { name: 'Activity' })).toBeTruthy();
 	expect(within(getNav(container)).getByRole('link', { name: 'Settings' })).toBeTruthy();
 
