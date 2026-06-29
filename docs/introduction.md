@@ -42,6 +42,10 @@ agent can't hurt you. A few guarantees sit underneath everything:
 
 - **Spin up a team per project** from a template, or reuse an existing team's setup
   for a new project. See [Projects & teams](/docs/concepts/projects-and-teams).
+- **Structure the team to the work — and restructure it as the work changes.** Compose a
+  team's roster, reporting lines, and roles, evolve them while a project runs, and carry a
+  structure you've tuned forward to the next project. See
+  [Team structure](/docs/concepts/team-structure).
 - **Chat with the CEO in real time** to scope work, create projects, hire new agents, edit
   system prompts, and adjust settings — all from one conversation, with replies streaming
   back as it works. See [Roles & the CEO](/docs/concepts/roles-and-coordination).
