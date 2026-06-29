@@ -42,12 +42,13 @@ test('Add provider modal shows provider cards incl. xAI (no Moonshot, no OAuth)'
 	await user.click(getByRole('button', { name: 'Add provider' }));
 
 	const dialog = await findByRole('dialog');
-	// The picker step renders one selectable card per provider (aria-label is
-	// "<name> · <runtime>"), including the new xAI / Grok Build entry.
+	// The picker step renders one selectable card per provider (each card's
+	// accessible name is just the provider name), including the xAI entry.
 	for (const name of ['Anthropic', 'OpenAI', 'Google', 'OpenRouter', 'Kimi', 'xAI']) {
 		expect(within(dialog).getByRole('button', { name: new RegExp(name) })).toBeTruthy();
 	}
-	expect(within(dialog).getByRole('button', { name: /xAI · Grok Build/ })).toBeTruthy();
+	// Cards show only the logo + name now — the runtime label is no longer on them.
+	expect(queryAllByText('Grok Build').length).toBe(0);
 	expect(queryAllByText('Moonshot').length).toBe(0);
 	expect(queryAllByRole('button', { name: /OAuth/i }).length).toBe(0);
 });
@@ -61,7 +62,7 @@ test('Add provider modal: pick xAI card → API-key form → Back returns to the
 	await user.click(getByRole('button', { name: 'Add provider' }));
 
 	const dialog = await findByRole('dialog');
-	await user.click(within(dialog).getByRole('button', { name: /xAI · Grok Build/ }));
+	await user.click(within(dialog).getByRole('button', { name: /xAI/ }));
 
 	// Configure step: title flips and an API-key field appears (xAI is key-only,
 	// so there's no subscription toggle).
@@ -84,7 +85,7 @@ test('adds an xAI API key via the card flow', async () => {
 	await user.click(getByRole('button', { name: 'Add provider' }));
 
 	const dialog = await findByRole('dialog');
-	await user.click(within(dialog).getByRole('button', { name: /xAI · Grok Build/ }));
+	await user.click(within(dialog).getByRole('button', { name: /xAI/ }));
 
 	const nameInput = within(dialog).getByLabelText('Name') as HTMLInputElement;
 	fireEvent.change(nameInput, { target: { value: 'My Grok' } });
@@ -121,35 +122,28 @@ test('sidebar Settings link navigates to /settings and renders the AI providers 
 });
 
 test('can add an Anthropic API key via the settings UI', async () => {
-	const { container, findByRole, findByText, user } = await renderApp({
+	const { container, findByRole, findByText, getByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {
-			// Clear the default seeded provider so the gate modal renders and the
-			// "Enter API key" affordance is reachable.
+			// Clear the default seeded provider so the gate (card grid) renders.
 			await clearAiProviders();
 		},
 	});
 
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
 
-	// Find the Anthropic card inside the gate modal (p-4 padding).
-	const modalCards = Array.from(
-		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-md.p-4'),
-	);
-	const anthropicCard = modalCards.find((el) => el.textContent?.includes('Anthropic'));
-	expect(anthropicCard).toBeTruthy();
-
-	await user.click(within(anthropicCard!).getByRole('button', { name: 'Enter API key' }));
-	const keyInput = anthropicCard!.querySelector('input[type="password"]') as HTMLInputElement;
+	// Pick the Anthropic card from the grid, then fill its API-key form.
+	await user.click(getByRole('button', { name: 'Anthropic' }));
+	const keyInput = container.querySelector('input[type="password"]') as HTMLInputElement;
 	fireEvent.change(keyInput, { target: { value: 'sk-ant-component-test-1234567890' } });
-	await user.click(within(anthropicCard!).getByRole('button', { name: 'Save' }));
+	await user.click(getByRole('button', { name: 'Save' }));
 
 	// Once a provider is configured the gate drops and the settings page renders.
 	await findByText('active', undefined, { timeout: 15_000 });
 });
 
 test('offers Claude Code subscription (setup-token) paste flow for Anthropic', async () => {
-	const { container, findByRole, findByText, user } = await renderApp({
+	const { container, findAllByText, findByRole, findByText, getByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {
 			await clearAiProviders();
@@ -158,26 +152,19 @@ test('offers Claude Code subscription (setup-token) paste flow for Anthropic', a
 
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
 
-	const modalCards = Array.from(
-		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-md.p-4'),
-	);
-	const anthropicCard = modalCards.find((el) => el.textContent?.includes('Anthropic'));
-	expect(anthropicCard).toBeTruthy();
-
-	await user.click(
-		within(anthropicCard!).getByRole('button', { name: /Use Claude Code subscription/i }),
-	);
-	const setupHits = await within(anthropicCard!).findAllByText(/setup-token/i);
+	await user.click(getByRole('button', { name: 'Anthropic' }));
+	await user.click(getByRole('button', { name: /Claude Code subscription/i }));
+	const setupHits = await findAllByText(/setup-token/i);
 	expect(setupHits.length).toBeGreaterThan(0);
-	const textarea = anthropicCard!.querySelector('textarea') as HTMLTextAreaElement;
+	const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
 	fireEvent.change(textarea, { target: { value: 'sk-ant-oat01-component-test-token' } });
-	await user.click(within(anthropicCard!).getByRole('button', { name: 'Save' }));
+	await user.click(getByRole('button', { name: 'Save' }));
 
 	await findByText('Subscription', undefined, { timeout: 15_000 });
 });
 
 test('offers Kimi Code subscription paste flow for Kimi', async () => {
-	const { container, findByRole, findByText, user } = await renderApp({
+	const { container, findAllByText, findByRole, findByText, getByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {
 			await clearAiProviders();
@@ -186,16 +173,11 @@ test('offers Kimi Code subscription paste flow for Kimi', async () => {
 
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
 
-	const modalCards = Array.from(
-		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-md.p-4'),
-	);
-	const kimiCard = modalCards.find((el) => el.textContent?.includes('Kimi'));
-	expect(kimiCard).toBeTruthy();
-
-	await user.click(within(kimiCard!).getByRole('button', { name: /Use Kimi Code subscription/i }));
-	const loginHits = await within(kimiCard!).findAllByText(/kimi login/i);
+	await user.click(getByRole('button', { name: 'Kimi' }));
+	await user.click(getByRole('button', { name: /Kimi Code subscription/i }));
+	const loginHits = await findAllByText(/kimi login/i);
 	expect(loginHits.length).toBeGreaterThan(0);
-	const textarea = kimiCard!.querySelector('textarea') as HTMLTextAreaElement;
+	const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
 	fireEvent.change(textarea, {
 		target: {
 			value: JSON.stringify({
@@ -206,13 +188,13 @@ test('offers Kimi Code subscription paste flow for Kimi', async () => {
 			}),
 		},
 	});
-	await user.click(within(kimiCard!).getByRole('button', { name: 'Save' }));
+	await user.click(getByRole('button', { name: 'Save' }));
 
 	await findByText('Subscription', undefined, { timeout: 15_000 });
 });
 
 test('offers Codex subscription paste flow for OpenAI', async () => {
-	const { container, findByRole, findByText, user } = await renderApp({
+	const { container, findAllByText, findByRole, findByText, getByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {
 			await clearAiProviders();
@@ -221,26 +203,21 @@ test('offers Codex subscription paste flow for OpenAI', async () => {
 
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
 
-	const modalCards = Array.from(
-		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-md.p-4'),
-	);
-	const openaiCard = modalCards.find((el) => el.textContent?.includes('OpenAI'));
-	expect(openaiCard).toBeTruthy();
-
-	await user.click(within(openaiCard!).getByRole('button', { name: /Use Codex subscription/i }));
-	const codexHits = await within(openaiCard!).findAllByText(/codex login/i);
+	await user.click(getByRole('button', { name: 'OpenAI' }));
+	await user.click(getByRole('button', { name: /Codex subscription/i }));
+	const codexHits = await findAllByText(/codex login/i);
 	expect(codexHits.length).toBeGreaterThan(0);
-	const textarea = openaiCard!.querySelector('textarea') as HTMLTextAreaElement;
+	const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
 	fireEvent.change(textarea, {
 		target: { value: JSON.stringify({ tokens: { refresh_token: 'rt-component-paste' } }) },
 	});
-	await user.click(within(openaiCard!).getByRole('button', { name: 'Save' }));
+	await user.click(getByRole('button', { name: 'Save' }));
 
 	await findByText('Subscription', undefined, { timeout: 15_000 });
 });
 
 test('offers Gemini subscription paste flow for Google', async () => {
-	const { container, findByRole, findByText, user } = await renderApp({
+	const { container, findAllByText, findByRole, findByText, getByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {
 			await clearAiProviders();
@@ -249,16 +226,11 @@ test('offers Gemini subscription paste flow for Google', async () => {
 
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
 
-	const modalCards = Array.from(
-		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-md.p-4'),
-	);
-	const googleCard = modalCards.find((el) => el.textContent?.includes('Google'));
-	expect(googleCard).toBeTruthy();
-
-	await user.click(within(googleCard!).getByRole('button', { name: /Use Gemini subscription/i }));
-	const oauthHits = await within(googleCard!).findAllByText(/oauth_creds\.json/i);
+	await user.click(getByRole('button', { name: 'Google' }));
+	await user.click(getByRole('button', { name: /Gemini subscription/i }));
+	const oauthHits = await findAllByText(/oauth_creds\.json/i);
 	expect(oauthHits.length).toBeGreaterThan(0);
-	const textarea = googleCard!.querySelector('textarea') as HTMLTextAreaElement;
+	const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
 	fireEvent.change(textarea, {
 		target: {
 			value: JSON.stringify({
@@ -270,7 +242,7 @@ test('offers Gemini subscription paste flow for Google', async () => {
 			}),
 		},
 	});
-	await user.click(within(googleCard!).getByRole('button', { name: 'Save' }));
+	await user.click(getByRole('button', { name: 'Save' }));
 
 	await findByText('Subscription', undefined, { timeout: 15_000 });
 });
@@ -411,7 +383,7 @@ test('adds a subscription credential via the Add modal', async () => {
 	await user.click(getByRole('button', { name: 'Add provider' }));
 
 	const dialog = await findByRole('dialog');
-	await user.click(within(dialog).getByRole('button', { name: /OpenAI · Codex/ }));
+	await user.click(within(dialog).getByRole('button', { name: /OpenAI/ }));
 	await user.click(within(dialog).getByRole('button', { name: /Codex subscription/i }));
 
 	// "codex login" appears in both a step and the footer, so match all.
@@ -427,7 +399,7 @@ test('adds a subscription credential via the Add modal', async () => {
 });
 
 test('blocks the app when no provider is configured and drops once one is added', async () => {
-	const { container, findByRole, queryAllByRole, user } = await renderApp({
+	const { container, findByRole, getByRole, queryAllByRole, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			await clearAiProviders();
@@ -437,16 +409,11 @@ test('blocks the app when no provider is configured and drops once one is added'
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
 	expect(queryAllByRole('heading', { name: 'AI providers' }).length).toBe(0);
 
-	const modalCards = Array.from(
-		container.querySelectorAll<HTMLElement>('div.border.border-border.rounded-md.p-4'),
-	);
-	const anthropicCard = modalCards.find((el) => el.textContent?.includes('Anthropic'));
-	expect(anthropicCard).toBeTruthy();
-
-	await user.click(within(anthropicCard!).getByRole('button', { name: 'Enter API key' }));
-	const keyInput = anthropicCard!.querySelector('input[type="password"]') as HTMLInputElement;
+	// Pick the Anthropic card from the grid, then fill its API-key form.
+	await user.click(getByRole('button', { name: 'Anthropic' }));
+	const keyInput = container.querySelector('input[type="password"]') as HTMLInputElement;
 	fireEvent.change(keyInput, { target: { value: 'sk-ant-gate-component-12345' } });
-	await user.click(within(anthropicCard!).getByRole('button', { name: 'Save' }));
+	await user.click(getByRole('button', { name: 'Save' }));
 
 	// Gate drops once the provider lands and the app shell renders.
 	await waitFor(
