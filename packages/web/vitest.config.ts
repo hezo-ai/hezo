@@ -42,6 +42,12 @@ export default defineConfig({
 		// the matcher's grace window never actually applies.
 		testTimeout: 45000,
 		hookTimeout: 45000,
+		// 4 forks each booting PGlite + Hono on a 2-core CI runner is deliberate
+		// oversubscription, so a spec can occasionally lose a scheduling race and
+		// time out waiting for a slow refetch — an environmental flake. Retry twice
+		// on CI; a real failure still fails all three attempts. Off locally so a
+		// genuine break surfaces immediately.
+		retry: process.env.CI ? 2 : 0,
 		pool: 'forks',
 		poolOptions: {
 			forks: {

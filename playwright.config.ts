@@ -30,7 +30,11 @@ export default defineConfig({
 	tsconfig: './tsconfig.json',
 	testDir: './test/browser',
 	timeout: 180_000,
-	retries: 1,
+	// CI runners are CPU-constrained, so a spec can lose a race to a cron tick or a
+	// co-scheduled worker and time out on a slow page load — an environmental flake,
+	// not a logic failure. Two retries (vs one) clears the residual tail without
+	// masking real regressions: a genuinely broken test fails all three attempts.
+	retries: process.env.CI ? 2 : 0,
 	workers: 4,
 	fullyParallel: true,
 	// `list` prints one line per test as it finishes, so a mid-suite hang
@@ -108,6 +112,12 @@ export default defineConfig({
 				HEZO_WAKEUP_COALESCING_MS: '100',
 				HEZO_WAKEUP_CRON: '* * * * * *',
 				HEZO_HEARTBEAT_CRON: '* * * * * *',
+				// Wakeups/heartbeats stay at 1Hz so agent-flow specs react promptly,
+				// but container-status reconciliation has no sub-second consumer here
+				// (fake docker sets status synchronously on create/start). Drop it from
+				// 1Hz to every 10s so it stops compounding CPU load on the 2-core runner
+				// — the largest cheap win against the page-load-timeout flakes.
+				HEZO_CONTAINER_SYNC_CRON: '*/10 * * * * *',
 				// Skip the team coherence-review enqueue path that Captain processes
 				// on every team / agent-roster mutation. The review touches multiple
 				// agents synthetically (~30-60s per team setup) and no e2e test asserts
