@@ -15,7 +15,15 @@ executionLocksRoutes.get('/projects/:projectId/tasks/:taskId/lock', async (c) =>
 
 	const result = await db.query(
 		`SELECT el.id, el.task_id, el.member_id, el.lock_type, el.locked_at,
-		        COALESCE(ma.title, m.display_name) AS member_name
+		        COALESCE(ma.title, m.display_name) AS member_name,
+		        (
+		          SELECT hr.id FROM heartbeat_runs hr
+		          WHERE hr.task_id = el.task_id
+		            AND hr.member_id = el.member_id
+		            AND hr.status = 'running'
+		          ORDER BY hr.started_at DESC NULLS LAST, hr.created_at DESC
+		          LIMIT 1
+		        ) AS run_id
 		 FROM execution_locks el
 		 JOIN members m ON m.id = el.member_id
 		 LEFT JOIN member_agents ma ON ma.id = el.member_id

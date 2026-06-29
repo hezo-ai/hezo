@@ -113,13 +113,15 @@ function RunningAgentRow({
 	run: { runId: string; commentId: string } | undefined;
 }) {
 	const [open, setOpen] = useState(false);
-	// Reuse the run page's terminate flow verbatim. runId is empty when no run
-	// comment has landed yet — the terminate control isn't rendered in that case,
-	// so the mutation can never fire with it.
+	// Reuse the run page's terminate flow verbatim. The active run id comes from
+	// the lock (populated the moment the run is `running`) and falls back to the
+	// run comment; the terminate control isn't rendered while it's empty, so the
+	// mutation can never fire without it.
+	const runId = lock.run_id ?? run?.runId ?? '';
 	const terminateMutation = useTerminateRun({
 		projectId,
 		agentId: lock.member_id,
-		runId: run?.runId ?? '',
+		runId,
 		taskId,
 	});
 
@@ -166,7 +168,7 @@ function RunningAgentRow({
 				) : (
 					<Loader2 className="w-3.5 h-3.5 animate-spin text-info" aria-label="Running" />
 				)}
-				{run && (
+				{runId && (
 					<Tooltip content="Terminate run">
 						<button
 							type="button"
@@ -181,7 +183,7 @@ function RunningAgentRow({
 					</Tooltip>
 				)}
 			</div>
-			{run && (
+			{runId && (
 				<ConfirmDialog
 					open={open}
 					onOpenChange={setOpen}
