@@ -13,16 +13,6 @@ import { CreateTaskDialog } from './create-task-dialog';
 import { SidebarNav, type SidebarNavSection } from './sidebar-nav';
 import { Tooltip } from './ui/tooltip';
 
-const TEAM_COLLAPSED_KEY = 'hezo:sidebar:team-collapsed';
-
-function readTeamCollapsed(): boolean {
-	try {
-		return localStorage.getItem(TEAM_COLLAPSED_KEY) === '1';
-	} catch {
-		return false;
-	}
-}
-
 /**
  * The project menu: the persistent panel shown beside the project rail whenever
  * a project is active. Inbox leads as its own section; the project's pages
@@ -37,7 +27,6 @@ export function ProjectSidebar() {
 	const health = useContainerHealth(project);
 	const { data: inboxCount } = useInboxUnreadCount(projectId);
 	const { data: agents } = useAgents(projectId);
-	const [teamCollapsed, setTeamCollapsed] = useState(readTeamCollapsed);
 	const [createTaskOpen, setCreateTaskOpen] = useState(false);
 	// Goals are a project concept only (HQ has none). Use the open_goal_count carried on the
 	// project index payload (the same source as open_task_count) rather than a separate per-page
@@ -46,15 +35,6 @@ export function ProjectSidebar() {
 	const hasNoGoals = !isInternalProject && project != null && (project.open_goal_count ?? 0) === 0;
 
 	if (!active) return null;
-
-	const toggleTeam = () =>
-		setTeamCollapsed((v) => {
-			const next = !v;
-			try {
-				localStorage.setItem(TEAM_COLLAPSED_KEY, next ? '1' : '0');
-			} catch {}
-			return next;
-		});
 
 	const isInternal = project?.is_internal ?? false;
 	const projectParams = { projectId };
@@ -205,9 +185,6 @@ export function ProjectSidebar() {
 			title: 'Team',
 			titleTo: '/projects/$projectId/agents',
 			titleParams: projectParams,
-			collapsible: true,
-			collapsed: teamCollapsed,
-			onToggle: toggleTeam,
 			onAdd: () => navigate({ to: '/projects/$projectId/agents/hire', params: projectParams }),
 			addLabel: 'Hire a new agent',
 			items: [
@@ -244,7 +221,7 @@ export function ProjectSidebar() {
 	];
 
 	return (
-		<div className="flex flex-col h-full">
+		<div className="flex flex-col h-full min-h-0">
 			<div className="px-2.5 pt-1.5 pb-1 flex items-center gap-1 min-w-0">
 				<Link
 					to="/projects/$projectId"
@@ -278,7 +255,7 @@ export function ProjectSidebar() {
 					</Tooltip>
 				)}
 			</div>
-			<div className="flex-1">
+			<div className="flex-1 min-h-0 overflow-y-auto">
 				<SidebarNav sections={sections} />
 			</div>
 			<CreateTaskDialog
