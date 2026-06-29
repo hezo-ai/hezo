@@ -142,6 +142,33 @@ export function resolveProjectSlugForRow(
 	return byProjectId?.slug ?? teamUserProject?.slug;
 }
 
+/**
+ * Strict project resolution: map a row to its project by `project_id` alone,
+ * with no `team_id` fallback. Used for high-frequency, inherently project-scoped
+ * tables ([[PROJECT_STRICT_TABLES]]) where the team fallback would misattribute
+ * one project's activity to another and thrash its caches.
+ */
+export function resolveProjectSlugByIdOnly(
+	index: Project[],
+	row: Record<string, unknown>,
+): string | undefined {
+	const projectUuid = row.project_id as string | undefined;
+	return projectUuid ? index.find((p) => p.id === projectUuid)?.slug : undefined;
+}
+
+/**
+ * Tables whose row-change broadcasts must resolve to their own project by
+ * `project_id` only (never the team fallback). These fire often during agent
+ * activity, so a misattributed invalidation storms an unrelated project's
+ * queries. Their broadcasts carry `project_id`; a row without one is skipped.
+ */
+const PROJECT_STRICT_TABLES = new Set([
+	'tasks',
+	'task_comments',
+	'heartbeat_runs',
+	'agent_wakeup_requests',
+]);
+
 interface TeamRoom {
 	id: string;
 	slug: string;
@@ -200,7 +227,16 @@ export function useShellWebSockets(teams: TeamRoom[] | undefined): void {
 
 			// Resolve the project slug the change maps to from the cached index.
 			const index = queryClient.getQueryData<Project[]>(queryKeys.projects.all()) ?? [];
-			const cid = resolveProjectSlugForRow(index, row);
+			// High-frequency, project-scoped tables must resolve by their own
+			// `project_id` only — never the `team_id` fallback. That fallback maps a
+			// row to the team's first non-internal project, so a run/wakeup in *any*
+			// project on the team would invalidate *every* team project's task list,
+			// producing a refetch storm (and breaking infinite-scroll pagination,
+			// which never settles while it's being re-fetched). Skip when the row
+			// carries no resolvable project.
+			const cid = PROJECT_STRICT_TABLES.has(table)
+				? resolveProjectSlugByIdOnly(index, row)
+				: resolveProjectSlugForRow(index, row);
 
 			if (cid) {
 				invalidateQueriesForRowChange(queryClient, cid, table, row);

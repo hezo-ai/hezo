@@ -534,17 +534,19 @@ export class JobManager {
 			member_id: string;
 			team_id: string;
 			task_id: string | null;
+			project_id: string | null;
 			cost_cents: number;
 			input_tokens: number;
 			output_tokens: number;
 		}>(
-			`UPDATE heartbeat_runs
+			`UPDATE heartbeat_runs hr
 			 SET status = $1::heartbeat_run_status,
 			     finished_at = COALESCE(finished_at, now()),
 			     error = COALESCE(error, $2),
 			     exit_code = COALESCE(exit_code, -1)
 			 WHERE status IN ($3::heartbeat_run_status, $4::heartbeat_run_status)
-			 RETURNING id, member_id, team_id, task_id, cost_cents, input_tokens, output_tokens`,
+			 RETURNING id, member_id, team_id, task_id, cost_cents, input_tokens, output_tokens,
+			           (SELECT t.project_id FROM tasks t WHERE t.id = hr.task_id) AS project_id`,
 			[
 				HeartbeatRunStatus.Failed,
 				'Server restarted while run in flight',
@@ -570,6 +572,7 @@ export class JobManager {
 				id: run.id,
 				member_id: run.member_id,
 				task_id: run.task_id,
+				project_id: run.project_id,
 				status: HeartbeatRunStatus.Failed,
 				error: 'Server restarted while run in flight',
 			});
