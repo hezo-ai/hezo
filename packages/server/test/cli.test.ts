@@ -27,6 +27,32 @@ describe('parseConfig', () => {
 		expect(config.logLevel).toBe('info');
 		expect(config.keepOldContainers).toBe(false);
 		expect(config.containerBindHost).toBe('127.0.0.1');
+		expect(config.telemetry.enabled).toBe(true);
+		expect(config.telemetry.endpoint).toBe('https://hezo.ai/api/telemetry');
+	});
+
+	it('disables telemetry with --disable-telemetry', () => {
+		const config = parseConfig(argv('--disable-telemetry'), EMPTY_ENV);
+		expect(config.telemetry.enabled).toBe(false);
+	});
+
+	it('disables telemetry with HEZO_TELEMETRY_ENABLED=0', () => {
+		const config = parseConfig(argv(), { HEZO_TELEMETRY_ENABLED: '0' });
+		expect(config.telemetry.enabled).toBe(false);
+	});
+
+	it('lets HEZO_TELEMETRY_ENABLED override the --disable-telemetry flag', () => {
+		const config = parseConfig(argv('--disable-telemetry'), { HEZO_TELEMETRY_ENABLED: '1' });
+		expect(config.telemetry.enabled).toBe(true);
+	});
+
+	it('overrides the telemetry endpoint via flag and env', () => {
+		expect(
+			parseConfig(argv('--telemetry-endpoint', 'https://x.test/t'), EMPTY_ENV).telemetry.endpoint,
+		).toBe('https://x.test/t');
+		expect(
+			parseConfig(argv(), { HEZO_TELEMETRY_ENDPOINT: 'https://env.test/t' }).telemetry.endpoint,
+		).toBe('https://env.test/t');
 	});
 
 	it('parses --port', () => {

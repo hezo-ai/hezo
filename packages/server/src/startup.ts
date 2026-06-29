@@ -116,6 +116,12 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	mkdirSync(config.dataDir, { recursive: true });
 	log.info(`Using data directory: ${config.dataDir}`);
 
+	if (config.telemetry?.enabled) {
+		log.info(
+			'Anonymous usage telemetry is enabled — aggregate counts only (no names, content, or costs). Disable with --disable-telemetry or HEZO_TELEMETRY_ENABLED=0.',
+		);
+	}
+
 	// `db` may be replaced by a fresh handle if migrations run against a copy and
 	// swap it in, so it's a `let` — every consumer below uses the post-migration handle.
 	setStartupPhase('database');
@@ -270,6 +276,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		connectivityStatus,
 		connectivityProbe,
 		pricing,
+		telemetry: config.telemetry,
 	});
 	const ceoSessionManager = new CeoSessionManager({
 		db,

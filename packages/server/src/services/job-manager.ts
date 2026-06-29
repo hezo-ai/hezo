@@ -64,6 +64,7 @@ import type { PricingService } from './pricing';
 import { ensureRepoSetupAction } from './repo-setup';
 import { getProjectConcurrency, isTaskBusyInDb } from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
+import { reportTelemetry } from './telemetry';
 import { ensureUpdateStaged, isSupervisedWorker } from './updater';
 import { absorbQueuedTaskWakeups, assignmentWakeupAlreadyServed, createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
@@ -143,6 +144,8 @@ export interface JobManagerDeps {
 	connectivityStatus?: ContainerConnectivityStatus;
 	connectivityProbe?: () => Promise<ProbeResult>;
 	pricing?: PricingService;
+	/** Anonymous daily usage telemetry. Omitted/disabled → the cron is not registered. */
+	telemetry?: { enabled: boolean; endpoint: string };
 }
 
 const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
@@ -152,6 +155,9 @@ const INBOX_ARCHIVE_CRON = process.env.HEZO_INBOX_ARCHIVE_CRON ?? '0 0 3 * * *';
 // Daily check for a newer release; when auto-update is enabled and one is found,
 // download+verify+stage it so an operator "Update & restart" is instant.
 const UPDATE_CHECK_CRON = process.env.HEZO_UPDATE_CHECK_CRON ?? '0 0 4 * * *';
+// Anonymous daily usage telemetry report — runs at 5am UTC, after the update
+// check, when telemetry is enabled (opt-out, default on).
+const TELEMETRY_CRON = process.env.HEZO_TELEMETRY_CRON ?? '0 0 5 * * *';
 // How often to re-evaluate budget-paused agents. Spend is summed over rolling
 // UTC windows, so a daily/weekly/monthly window rolling over silently frees an
 // agent's budget with no event — this sweep notices and lifts the reactive
@@ -417,6 +423,13 @@ export class JobManager {
 			log: cronLog,
 			onTick: () => this.guarded('update-check', () => this.checkForUpdate()),
 		});
+		if (this.deps.telemetry?.enabled) {
+			this.cron.createJob('telemetry', {
+				cron: TELEMETRY_CRON,
+				log: cronLog,
+				onTick: () => this.guarded('telemetry', () => this.runTelemetry()),
+			});
+		}
 		log.info('Job manager started.');
 	}
 
@@ -2270,5 +2283,11 @@ export class JobManager {
 	private async checkForUpdate(): Promise<void> {
 		if (!isSupervisedWorker()) return;
 		await ensureUpdateStaged(this.deps.dataDir, getLatestInfo);
+	}
+
+	private async runTelemetry(): Promise<void> {
+		const t = this.deps.telemetry;
+		if (!t?.enabled) return;
+		await reportTelemetry(this.deps.db, { endpoint: t.endpoint });
 	}
 }

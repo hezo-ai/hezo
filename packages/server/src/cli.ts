@@ -8,6 +8,7 @@ import {
 	validateMnemonic,
 } from '@hezo/shared';
 import { Command } from 'commander';
+import { DEFAULT_TELEMETRY_ENDPOINT } from './services/telemetry';
 import { HEZO_VERSION } from './version';
 
 export type LogLevelName = 'debug' | 'info' | 'warn' | 'error';
@@ -30,6 +31,16 @@ export interface HezoConfig {
 	 * and firewall-restrict the port range to the docker bridge.
 	 */
 	containerBindHost: string;
+	/**
+	 * Anonymous daily usage telemetry. On by default (opt-out): once a day the
+	 * server POSTs aggregate counts (projects, tasks, tokens, AI-provider mix,
+	 * version) — no names, content, or costs — to `endpoint`, keyed by a random
+	 * per-install id. Disabled with `--disable-telemetry` / `HEZO_TELEMETRY_ENABLED=0`.
+	 */
+	telemetry: {
+		enabled: boolean;
+		endpoint: string;
+	};
 }
 
 function resolveDataDir(raw: string): string {
@@ -185,6 +196,14 @@ export function parseConfig(
 			'--container-bind-host <host>',
 			'Interface the egress proxy and SSH bridge bind to so agent containers can reach them. Default 127.0.0.1 (works with Docker Desktop). On native-Linux Docker set 0.0.0.0 (or the bridge gateway IP) and firewall-restrict the egress port range to the docker bridge. (env: HEZO_CONTAINER_BIND_HOST)',
 		)
+		.option(
+			'--disable-telemetry',
+			'Disable anonymous daily usage telemetry (aggregate counts only — no names, content, or costs). On by default. (env: HEZO_TELEMETRY_ENABLED=0)',
+		)
+		.option(
+			'--telemetry-endpoint <url>',
+			`Override the telemetry collection endpoint (default ${DEFAULT_TELEMETRY_ENDPOINT}). (env: HEZO_TELEMETRY_ENDPOINT)`,
+		)
 		.parse(argv);
 
 	const cli = program.opts();
@@ -214,6 +233,14 @@ export function parseConfig(
 
 	const masterKeyRaw = pick('HEZO_MASTER_KEY', cli.masterKey);
 
+	// Telemetry defaults ON. The env var (when set) wins; otherwise the only way
+	// to disable via CLI is the explicit `--disable-telemetry` flag.
+	const telemetryEnabled = ((): boolean => {
+		const e = env.HEZO_TELEMETRY_ENABLED;
+		if (e !== undefined && e !== '') return parseBool(e);
+		return cli.disableTelemetry !== true;
+	})();
+
 	return {
 		port: parsePort(pick('HEZO_PORT', cli.port) ?? String(DEFAULT_PORT)),
 		dataDir: resolveDataDir(pick('HEZO_DATA_DIR', cli.dataDir) ?? DEFAULT_DATA_DIR),
@@ -227,5 +254,10 @@ export function parseConfig(
 		logLevel: parseLogLevel(pick('HEZO_LOG_LEVEL', cli.logLevel) ?? 'info'),
 		keepOldContainers: pickBool('HEZO_KEEP_OLD_CONTAINERS', cli.keepOldContainers),
 		containerBindHost: pick('HEZO_CONTAINER_BIND_HOST', cli.containerBindHost) ?? '127.0.0.1',
+		telemetry: {
+			enabled: telemetryEnabled,
+			endpoint:
+				pick('HEZO_TELEMETRY_ENDPOINT', cli.telemetryEndpoint) ?? DEFAULT_TELEMETRY_ENDPOINT,
+		},
 	};
 }
