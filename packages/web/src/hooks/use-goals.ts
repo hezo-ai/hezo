@@ -81,6 +81,10 @@ export function useCreateGoal(projectId: string) {
 			api.post<GoalWithProject>(`/api/projects/${projectId}/goals`, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.goals(projectId) });
+			// open_goal_count (which drives the sidebar "no goals yet" dot) is carried on both the
+			// project index and the detail payload — refresh both so the dot clears at once.
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
 		},
 	});
 }
@@ -118,6 +122,10 @@ export function useArchiveGoal(projectId: string) {
 			api.delete<GoalWithProject>(`/api/projects/${projectId}/goals/${goalId}`),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.goals(projectId) });
+			// Archiving the last goal must bring the sidebar "no goals yet" dot back — refresh the
+			// project index and detail, which both carry open_goal_count.
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
 		},
 	});
 }

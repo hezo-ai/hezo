@@ -42,8 +42,8 @@ export function ProjectSidebar() {
 	const [createTaskOpen, setCreateTaskOpen] = useState(false);
 	const [createGoalOpen, setCreateGoalOpen] = useState(false);
 	// Goals are a project concept only (HQ has none). Use the open_goal_count carried on the
-	// project-detail payload rather than a separate per-page goals fetch — the dot shows only
-	// once the project has loaded and reports zero active goals.
+	// project index payload (the same source as open_task_count) rather than a separate per-page
+	// goals fetch — the dot shows only once the project has loaded and reports zero active goals.
 	const isInternalProject = project?.is_internal ?? false;
 	const hasNoGoals = !isInternalProject && project != null && (project.open_goal_count ?? 0) === 0;
 
