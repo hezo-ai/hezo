@@ -268,6 +268,47 @@ test('the Progress nav item shows the "no goals yet" dot only until the project 
 	});
 });
 
+test('creating a goal clears the sidebar "no goals yet" dot', async () => {
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+	const { findByTestId, queryByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Goal Creation' });
+			projectSlug = project.slug;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
+	});
+	// The dot is present while the project has no goals.
+	await findByTestId('project-sidebar-goals-empty-dot', undefined, { timeout: 15_000 });
+
+	// Create a goal from the Progress page's "New goal" button. The sidebar persists across
+	// project routes, so its dot reflects the new goal once the project index invalidates.
+	await router.navigate({
+		to: '/projects/$projectId/goals',
+		params: { projectId: projectSlug },
+	});
+	await user.click(await findByTestId('goals-empty-create', undefined, { timeout: 15_000 }));
+	// The dialog renders into a portal on document.body; the name field has an explicit id.
+	const nameInput = await waitFor(() => {
+		const el = document.body.querySelector<HTMLInputElement>('#goal-name');
+		if (!el) throw new Error('goal-name input not mounted');
+		return el;
+	});
+	await user.type(nameInput, 'Reach 100 customers');
+	await user.click(within(document.body).getByRole('button', { name: 'Create' }));
+
+	// Creating a goal invalidates the project index, so the dot clears without a manual refresh.
+	await waitFor(() => expect(queryByTestId('project-sidebar-goals-empty-dot')).toBeNull(), {
+		timeout: 15_000,
+	});
+});
+
 test('the Container nav item shows a provisioning spinner while the container is creating', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
