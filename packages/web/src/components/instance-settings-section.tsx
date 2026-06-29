@@ -17,7 +17,7 @@ export function InstanceSettingsSection() {
 	return (
 		<section>
 			<div className="mb-4">
-				<h2 className="text-base font-medium">Instance</h2>
+				<h2 className="text-base font-medium">General</h2>
 				<p className="text-[13px] text-text-2 mt-1">
 					Public base URL of this Hezo instance, used to build absolute links to tasks and documents
 					in external channels (e.g. Telegram). Captured automatically the first time the instance

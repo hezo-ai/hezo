@@ -50,9 +50,6 @@ export const queryKeys = {
 		all: (projectKey: string, opts: KeyParam) => ['inbox-mentions', projectKey, opts],
 	},
 
-	/** Cross-project task index, keyed by the sorted set of project slugs. */
-	tasksAll: (slugs: string[]) => ['tasks', 'all', slugs],
-
 	// ---- project-scoped (keyed by project slug) ----
 	projects: {
 		all: () => ['projects'],

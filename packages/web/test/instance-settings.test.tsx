@@ -14,7 +14,7 @@ async function fetchBaseUrl(): Promise<string | null> {
 test('instance base URL saves from /settings and echoes the normalized origin', async () => {
 	const { findByTestId, findByRole, user } = await renderApp({ initialPath: '/settings' });
 
-	await findByRole('heading', { name: 'Instance' });
+	await findByRole('heading', { name: 'General' });
 	const input = (await findByTestId('instance-base-url-input')) as HTMLInputElement;
 	expect(input.value).toBe('');
 

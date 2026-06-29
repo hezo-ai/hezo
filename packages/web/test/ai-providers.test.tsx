@@ -97,7 +97,7 @@ test('adds an xAI API key via the card flow', async () => {
 	await findByText('My Grok', undefined, { timeout: 15_000 });
 });
 
-test('sidebar Settings link navigates to /settings and renders the AI providers section', async () => {
+test('sidebar Settings link reaches Settings and the AI providers subpage', async () => {
 	const { findByRole, findByText, getAllByRole, router, user } = await renderApp({
 		initialPath: `/teams/${DEFAULT_TEAM_SLUG}/tasks`,
 	});
@@ -117,6 +117,16 @@ test('sidebar Settings link navigates to /settings and renders the AI providers 
 		timeout: 10_000,
 	});
 	await findByRole('heading', { name: 'Settings' });
+
+	// AI providers is now its own subpage reached from the Settings nav.
+	const aiLink = getAllByRole('link', { name: 'AI providers' }).find(
+		(l) => l.getAttribute('href') === '/settings/ai-providers',
+	);
+	if (!aiLink) throw new Error('AI providers nav link not found');
+	await user.click(aiLink);
+	await waitFor(() => expect(router.state.location.pathname).toBe('/settings/ai-providers'), {
+		timeout: 10_000,
+	});
 	await findByRole('heading', { name: 'AI providers' });
 	await findByText('Anthropic');
 });

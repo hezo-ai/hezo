@@ -2,7 +2,6 @@ import { ApiKeyStatus } from '@hezo/shared';
 import { createFileRoute } from '@tanstack/react-router';
 import { Check, Copy, Loader2, Plus, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
-import { SettingsBreadcrumb } from '../../components/settings-breadcrumb';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { type Column, DataTable } from '../../components/ui/data-table';
@@ -247,12 +246,7 @@ function ApiKeysPage() {
 			</>
 		);
 
-	return (
-		<div className="max-w-[900px] w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
-			<SettingsBreadcrumb label="API keys" />
-			{content}
-		</div>
-	);
+	return <div className="max-w-[900px]">{content}</div>;
 }
 
 export const Route = createFileRoute('/settings/api-keys')({

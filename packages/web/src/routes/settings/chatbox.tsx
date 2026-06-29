@@ -8,7 +8,6 @@ import {
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
-import { SettingsBreadcrumb } from '../../components/settings-breadcrumb';
 import { Button } from '../../components/ui/button';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { Input } from '../../components/ui/input';
@@ -83,12 +82,7 @@ function ChatboxSettingsPage() {
 			</>
 		);
 
-	return (
-		<div className="max-w-[900px] w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
-			<SettingsBreadcrumb label="Chatbox" />
-			{content}
-		</div>
-	);
+	return <div className="max-w-[900px]">{content}</div>;
 }
 
 function HistoryLimitForm({ settings }: { settings: InstanceSettings }) {
