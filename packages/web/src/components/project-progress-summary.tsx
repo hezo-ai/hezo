@@ -3,8 +3,8 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useProjectProgress } from '../hooks/use-projects';
 import { MarkdownProse } from './markdown-prose';
 
-/** Collapsed height for the summary — a few lines, enough to show the lead bold key points. */
-const COLLAPSED_MAX_HEIGHT = 88; // px
+/** Collapsed height for the summary — just the bold lead line plus the first line of narrative. */
+const COLLAPSED_MAX_HEIGHT = 64; // px
 
 function formatUpdated(iso: string): string {
 	const d = new Date(iso);
