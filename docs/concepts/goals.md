@@ -22,14 +22,14 @@ Open **Progress** in the project menu (just under **Inbox**). Top to bottom it s
 - a **project progress summary** the Captain keeps current — a short blurb of what's done,
   what's in progress, and what's still to do. It opens collapsed (showing the Captain's
   headline points); expand it for the full narrative, which may link a few key tasks.
-- your **goals**, each as a panel with its progress, health, and a sparkline. Click a goal to
-  open its own page.
+- your **goals**, each as a panel showing its progress, health, and latest status. Click a
+  panel to open the goal's own page, where its full progress chart and history live.
 - the recent **goal heartbeat runs** for the project.
 
 ## Setting a goal
 
-From the **Progress** page choose **Create Goal** (or use **New goal** next to Progress in the
-menu). A goal has:
+From the **Progress** page choose **Create Goal** (or **New goal** in the page header). A goal
+has:
 
 - **Goal name** — the objective in a line (e.g. "Reach 100 active customers").
 - **Measurement** — the precise definition of *how you'll know the goal is achieved* (e.g.

@@ -1,4 +1,4 @@
-import { WakeupSource } from '@hezo/shared';
+import { HeartbeatRunKind, WakeupSource } from '@hezo/shared';
 import type { HeartbeatRun } from '../hooks/use-heartbeat-runs';
 
 export interface TriggerLabel {
@@ -32,6 +32,12 @@ export function formatTriggerReason(run: HeartbeatRun, teamSlug: string): Trigge
 	const source = run.trigger_source;
 	const taskId = run.trigger_comment_task_identifier ?? run.task_identifier;
 	const actor = run.trigger_actor_slug;
+
+	// Goal-check runs are the Captain's periodic progress assessment. They have no task and
+	// reuse the heartbeat wakeup, so describe them by what the run does, not the raw source.
+	if (run.kind === HeartbeatRunKind.GoalCheck) {
+		return { source, text: 'Automation: goals and progress report' };
+	}
 
 	switch (source) {
 		case WakeupSource.Mention: {

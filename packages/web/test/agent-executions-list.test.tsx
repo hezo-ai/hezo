@@ -27,6 +27,7 @@ function makeRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {
 		team_id: 't-1',
 		wakeup_id: null,
 		task_id: 'task-1',
+		kind: 'task',
 		task_identifier: 'DEMO-1',
 		task_title: 'Do the thing',
 		project_id: 'p-1',

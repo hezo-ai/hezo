@@ -327,6 +327,7 @@ export async function listGoalCheckRuns(
 	// fan-out, no GROUP BY.
 	const r = await db.query<GoalCheckRunSummary>(
 		`SELECT hr.id, hr.status, hr.created_at, hr.started_at, hr.finished_at,
+		        hr.member_id, ma.title AS agent_title, ma.slug AS agent_slug,
 		        COALESCE((
 		          SELECT json_agg(g.title ORDER BY g.title)
 		          FROM goal_run_updates gru
@@ -334,6 +335,7 @@ export async function listGoalCheckRuns(
 		          WHERE gru.run_id = hr.id
 		        ), '[]'::json) AS updated_goal_titles
 		 FROM heartbeat_runs hr
+		 JOIN member_agents ma ON ma.id = hr.member_id
 		 WHERE hr.kind = $1
 		   AND hr.task_id IS NULL
 		   AND hr.team_id = (SELECT team_id FROM projects WHERE id = $2)
@@ -358,6 +360,7 @@ export async function listGoalRunActivity(
 ): Promise<GoalRunActivity[]> {
 	const r = await db.query<GoalRunActivity>(
 		`SELECT hr.id, hr.status, hr.created_at, hr.started_at, hr.finished_at,
+		        hr.member_id, ma.slug AS agent_slug,
 		        (
 		          SELECT json_build_object(
 		                   'progress_percent', gru.progress_percent,
@@ -385,6 +388,7 @@ export async function listGoalRunActivity(
 		          ) ct
 		        ), '[]'::json) AS commented_tasks
 		 FROM heartbeat_runs hr
+		 JOIN member_agents ma ON ma.id = hr.member_id
 		 WHERE hr.kind = $1
 		   AND hr.task_id IS NULL
 		   AND hr.team_id = (SELECT team_id FROM projects WHERE id = $3)

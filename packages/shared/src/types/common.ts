@@ -687,6 +687,10 @@ export interface GoalCheckRunSummary {
 	created_at: string;
 	started_at: string | null;
 	finished_at: string | null;
+	/** The Captain member that ran this goal-check, for linking to its run in the agent's run list. */
+	member_id: string;
+	agent_title: string;
+	agent_slug: string;
 	/** Titles of the goals this run updated (empty = ran but changed nothing). */
 	updated_goal_titles: string[];
 }
@@ -710,6 +714,9 @@ export interface GoalRunActivity {
 	created_at: string;
 	started_at: string | null;
 	finished_at: string | null;
+	/** The Captain member that ran this goal-check, for linking to its run in the agent's run list. */
+	member_id: string;
+	agent_slug: string;
 	/** The progress snapshot this run recorded for the goal, or null if it only created/commented. */
 	progress: { progress_percent: number; health: GoalHealth; status_blurb: string } | null;
 	/** Tasks this run created that are linked to the goal. */

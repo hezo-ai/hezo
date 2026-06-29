@@ -21,6 +21,11 @@ interface SidebarNavItem {
 	action?: SidebarNavItemAction;
 }
 
+// A small bordered "+" chip, used both as an inline suffix to a row label (Tasks)
+// and a section title (Team). Round border with padding so it reads as a button.
+const ADD_CHIP_CLASSES =
+	'inline-flex shrink-0 items-center rounded-md border border-border p-0.5 text-text-3 transition-colors hover:border-border-strong hover:bg-surface-2 hover:text-text-1 cursor-pointer';
+
 function ItemAction({ action }: { action: SidebarNavItemAction }) {
 	return (
 		<Tooltip content={action.label} side="right">
@@ -33,9 +38,9 @@ function ItemAction({ action }: { action: SidebarNavItemAction }) {
 				}}
 				data-testid={action.testId}
 				aria-label={action.label}
-				className="mr-1 shrink-0 rounded-sm p-0.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1 cursor-pointer"
+				className={`ml-2 ${ADD_CHIP_CLASSES}`}
 			>
-				<Plus className="w-3.5 h-3.5" />
+				<Plus className="w-3 h-3" />
 			</button>
 		</Tooltip>
 	);
@@ -127,8 +132,6 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 									params={item.params ?? {}}
 									data-testid={item.testId}
 									className={`flex items-center text-left text-[12px] ${paddingClass} rounded-md transition-colors ${
-										item.action ? 'flex-1 min-w-0' : ''
-									} ${
 										isActive
 											? 'text-text-1 font-medium bg-surface-2'
 											: 'text-text-2 hover:text-text-1 hover:bg-surface-2'
@@ -139,14 +142,32 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 								</Link>
 							);
 							// Plain items render exactly as before (no wrapper). An item with an
-							// inline action sits beside its "+" on one row; items with sub-items
-							// wrap so the disclosure can sit beneath the parent.
+							// inline action puts its bordered "+" right after the label (the count,
+							// if any, stays pinned to the far right); items with sub-items wrap so
+							// the disclosure can sit beneath the parent.
 							if (!item.subItems?.length) {
 								if (item.action) {
 									return (
-										<div key={key} className="flex items-center">
-											{link}
+										<div
+											key={key}
+											className={`group flex items-center text-[12px] ${paddingClass} rounded-md transition-colors ${
+												isActive ? 'bg-surface-2' : 'hover:bg-surface-2'
+											}`}
+										>
+											<Link
+												to={item.to}
+												params={item.params ?? {}}
+												data-testid={item.testId}
+												className={`text-left transition-colors ${
+													isActive
+														? 'text-text-1 font-medium'
+														: 'text-text-2 group-hover:text-text-1'
+												}`}
+											>
+												{item.label}
+											</Link>
 											<ItemAction action={item.action} />
+											<CountBadge value={item.count} />
 										</div>
 									);
 								}
@@ -211,19 +232,21 @@ function SectionHeader({ section }: { section: SidebarNavSection }) {
 			<button
 				type="button"
 				onClick={section.onAdd}
-				className="text-text-3 hover:text-text-1 transition-colors p-0.5 -m-0.5 cursor-pointer shrink-0"
+				className={`ml-2 ${ADD_CHIP_CLASSES}`}
 				aria-label={section.addLabel ?? 'Add'}
 			>
-				<Plus className="w-3.5 h-3.5" />
+				<Plus className="w-3 h-3" />
 			</button>
 		</Tooltip>
 	);
 
+	// Title hugs its text so the "+" can sit right after it as a suffix; the
+	// collapse chevron is pinned to the far right.
 	const titleNode = section.titleTo ? (
 		<Link
 			to={section.titleTo}
 			params={section.titleParams ?? {}}
-			className={`${TITLE_TEXT_CLASSES} flex-1 text-left hover:text-text-1 transition-colors`}
+			className={`${TITLE_TEXT_CLASSES} text-left hover:text-text-1 transition-colors`}
 		>
 			{section.title}
 		</Link>
@@ -231,13 +254,13 @@ function SectionHeader({ section }: { section: SidebarNavSection }) {
 		<button
 			type="button"
 			onClick={section.onToggle}
-			className={`${TITLE_TEXT_CLASSES} flex items-center justify-between flex-1 text-left hover:text-text-1 transition-colors cursor-pointer gap-2`}
+			className={`${TITLE_TEXT_CLASSES} flex items-center text-left hover:text-text-1 transition-colors cursor-pointer gap-2`}
 		>
 			<span>{section.title}</span>
 			{chevron}
 		</button>
 	) : (
-		<span className={`${TITLE_TEXT_CLASSES} flex-1`}>{section.title}</span>
+		<span className={TITLE_TEXT_CLASSES}>{section.title}</span>
 	);
 
 	const trailingChevron = section.titleTo && section.collapsible && (
@@ -252,14 +275,10 @@ function SectionHeader({ section }: { section: SidebarNavSection }) {
 	);
 
 	return (
-		<div className="flex items-center justify-between px-2.5 pt-2.5 pb-0.5 gap-2">
+		<div className="flex items-center px-2.5 pt-2.5 pb-0.5">
 			{titleNode}
-			{(addButton || trailingChevron) && (
-				<div className="flex items-center gap-1.5">
-					{addButton}
-					{trailingChevron}
-				</div>
-			)}
+			{addButton}
+			{trailingChevron && <div className="ml-auto flex items-center">{trailingChevron}</div>}
 		</div>
 	);
 }

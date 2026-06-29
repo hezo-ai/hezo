@@ -1,17 +1,13 @@
-import {
-	GOAL_CHECK_FREQUENCY_LABELS,
-	type GoalCheckRunSummary,
-	type GoalWithProject,
-	HeartbeatRunStatus,
-} from '@hezo/shared';
+import { GOAL_CHECK_FREQUENCY_LABELS, type GoalWithProject } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { Archive, ArchiveRestore, Pencil, Plus, Target } from 'lucide-react';
 import { useState } from 'react';
 import { useGoalRuns, useGoals, useUpdateGoal } from '../hooks/use-goals';
+import { RunCommentBody } from './comment-renderers/run-comment';
 import { CreateGoalDialog } from './create-goal-dialog';
 import { GoalHealthPill } from './goal-health-pill';
-import { GoalProgressChart } from './goal-progress-chart';
 import { GoalSmartGuidance } from './goal-smart-guidance';
+import { LazyMount } from './lazy-mount';
 import { ProjectProgressSummary } from './project-progress-summary';
 import { Button } from './ui/button';
 import { EmptyState } from './ui/empty-state';
@@ -29,18 +25,6 @@ function formatTargetDate(iso: string): string {
 	return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-function formatRunTime(run: GoalCheckRunSummary): string {
-	const iso = run.finished_at ?? run.started_at ?? run.created_at;
-	const d = new Date(iso);
-	if (Number.isNaN(d.getTime())) return iso;
-	return d.toLocaleString(undefined, {
-		month: 'short',
-		day: 'numeric',
-		hour: 'numeric',
-		minute: '2-digit',
-	});
-}
-
 function GoalPanel({
 	projectId,
 	goal,
@@ -54,10 +38,13 @@ function GoalPanel({
 	const isArchived = !!goal.archived_at;
 	const percent = Math.max(0, Math.min(100, Math.round(goal.progress_percent)));
 
+	// The whole card is a stretched link to the goal's detail page (its expanded view).
+	// `before:absolute before:inset-0` makes the card surface clickable; the edit/archive
+	// buttons sit above it (`relative z-10`) so they stay independently clickable.
 	return (
 		<div
 			data-testid="goal-panel"
-			className={`flex flex-col gap-3 rounded-md border border-border bg-surface p-4 ${
+			className={`relative flex flex-col gap-3 rounded-md border border-border bg-surface p-4 transition-colors hover:border-border-strong ${
 				isArchived ? 'opacity-70' : ''
 			}`}
 		>
@@ -66,14 +53,15 @@ function GoalPanel({
 					to="/projects/$projectId/goals/$goalId"
 					params={{ projectId, goalId: goal.id }}
 					data-testid="goal-open"
-					className="flex min-w-0 flex-col gap-1.5 group"
+					aria-label={`Open goal ${goal.title}`}
+					className="flex min-w-0 flex-col gap-1.5 before:absolute before:inset-0 before:rounded-md"
 				>
-					<h3 className="text-sm font-semibold text-text-1 break-words group-hover:underline">
+					<h3 className="text-sm font-semibold text-text-1 break-words hover:underline">
 						{goal.title}
 					</h3>
 					<GoalHealthPill health={goal.health} testId="goal-health-pill" />
 				</Link>
-				<div className="flex shrink-0 items-center gap-0.5">
+				<div className="relative z-10 flex shrink-0 items-center gap-0.5">
 					<button
 						type="button"
 						onClick={() => onEdit(goal)}
@@ -111,25 +99,14 @@ function GoalPanel({
 				</div>
 			</div>
 
-			<GoalProgressChart history={goal.history} size="compact" />
-
 			{goal.status_blurb && (
-				<p className="text-[13px] text-text-2 leading-relaxed break-words">{goal.status_blurb}</p>
-			)}
-
-			{goal.measurement && (
-				<p className="text-xs text-text-3 leading-relaxed break-words">
-					<span className="font-medium text-text-2">Achieved when:</span> {goal.measurement}
-				</p>
-			)}
-			{goal.actions && (
-				<p className="text-xs text-text-3 leading-relaxed break-words">
-					<span className="font-medium text-text-2">Actions:</span> {goal.actions}
+				<p className="text-[13px] text-text-2 leading-relaxed break-words line-clamp-3">
+					{goal.status_blurb}
 				</p>
 			)}
 
 			<div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-3">
-				<span>{GOAL_CHECK_FREQUENCY_LABELS[goal.check_frequency]}</span>
+				<span>Checked {GOAL_CHECK_FREQUENCY_LABELS[goal.check_frequency]}</span>
 				{goal.target_date && <span>Deadline: {formatTargetDate(goal.target_date)}</span>}
 				{isArchived && <span className="text-text-2">Archived</span>}
 			</div>
@@ -154,17 +131,26 @@ function GoalChecksFooter({ projectId }: { projectId: string }) {
 						<li
 							key={run.id}
 							data-testid="goal-check-run"
-							className="flex flex-col gap-0.5 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+							className="flex flex-col gap-1.5 px-3 py-2.5"
 						>
-							<span className="text-[13px] text-text-2">
-								{formatRunTime(run)}
-								{run.status !== HeartbeatRunStatus.Succeeded && (
-									<span className="ml-2 text-text-3">({run.status})</span>
-								)}
-							</span>
-							<span className="text-xs text-text-3 break-words">
-								{updated ? `Updated goals: ${run.updated_goal_titles.join(', ')}` : 'No changes'}
-							</span>
+							{/* Collapsible run card — the same summary/expand/log UI as an agent run on a task. */}
+							<LazyMount minHeight={32} testId="goal-check-run-lazy">
+								<RunCommentBody
+									projectId={projectId}
+									runId={run.id}
+									agentId={run.member_id}
+									agentTitle={run.agent_title}
+									agentSlug={run.agent_slug}
+									actorName={null}
+									createdAt={run.created_at}
+									inline
+								/>
+							</LazyMount>
+							{updated && (
+								<p className="text-xs text-text-3 break-words" data-testid="goal-check-run-goals">
+									Updated goals: {run.updated_goal_titles.join(', ')}
+								</p>
+							)}
 						</li>
 					);
 				})}

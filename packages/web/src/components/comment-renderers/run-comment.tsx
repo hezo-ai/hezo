@@ -122,7 +122,7 @@ function RunRetryButton({
 	);
 }
 
-function RunCommentBody({
+export function RunCommentBody({
 	projectId,
 	runId,
 	agentId,
@@ -142,7 +142,9 @@ function RunCommentBody({
 	agentSlug: string;
 	actorName: string | null;
 	createdAt: string;
-	publicId: string;
+	/** Comment public id for the timestamp permalink. Absent for runs with no anchoring
+	 * comment (e.g. goal-check runs), which render a plain timestamp instead. */
+	publicId?: string;
 	taskId?: string;
 	retryableRunId?: string | null;
 	inline?: boolean;
@@ -236,11 +238,17 @@ function RunCommentBody({
 					)}
 				</span>
 			)}
-			<CommentTimestampLink
-				publicId={publicId}
-				createdAt={createdAt}
-				className="truncate min-w-0"
-			/>
+			{publicId ? (
+				<CommentTimestampLink
+					publicId={publicId}
+					createdAt={createdAt}
+					className="truncate min-w-0"
+				/>
+			) : (
+				<span className="text-[11px] text-text-3 truncate min-w-0">
+					{new Date(createdAt).toLocaleString()}
+				</span>
+			)}
 		</span>
 	);
 

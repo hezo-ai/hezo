@@ -1,4 +1,4 @@
-import type { WakeupSource } from '@hezo/shared';
+import type { HeartbeatRunKind, WakeupSource } from '@hezo/shared';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryKeys } from '../lib/query-keys';
@@ -9,6 +9,7 @@ export interface HeartbeatRun {
 	team_id: string;
 	wakeup_id: string | null;
 	task_id: string | null;
+	kind: HeartbeatRunKind;
 	task_identifier: string | null;
 	task_title: string | null;
 	project_id: string | null;
