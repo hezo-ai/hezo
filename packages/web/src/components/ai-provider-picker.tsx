@@ -1,118 +1,52 @@
-import { AI_PROVIDER_INFO, AiAuthMethod, AiProvider } from '@hezo/shared';
-import { ClipboardPaste, Key, Loader2 } from 'lucide-react';
+import { AI_PROVIDER_INFO, type AiProvider } from '@hezo/shared';
+import { ArrowLeft } from 'lucide-react';
 import { useState } from 'react';
-import { useCreateAiProvider } from '../hooks/use-ai-providers';
-import { PROVIDER_LOGOS, ProviderLogo } from './provider-logos';
-import { SubscriptionPasteForm } from './subscription-paste-form';
-import { Badge } from './ui/badge';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
+import { ProviderCardGrid } from './provider-card-grid';
+import { ADD_PROVIDER_ORDER, ProviderConfigForm } from './provider-config-form';
+import { ProviderLogo } from './provider-logos';
 
-const PROVIDERS = [
-	AiProvider.DeepSeek,
-	AiProvider.ZAi,
-	AiProvider.Anthropic,
-	AiProvider.OpenAI,
-	AiProvider.Google,
-	AiProvider.OpenRouter,
-	AiProvider.Kimi,
-	AiProvider.XAi,
-] as const;
-
+/**
+ * Onboarding AI-provider setup: a grid of provider cards. Picking one drills
+ * into the shared {@link ProviderConfigForm}; "Back" returns to the full card
+ * view. The surrounding welcome heading + step indicator are supplied by the
+ * setup wizard, so this component renders only the grid and the form — the same
+ * picker the settings modal reuses without that onboarding chrome.
+ */
 export function AiProviderPicker() {
-	return (
-		<div className="space-y-3">
-			{PROVIDERS.map((provider) => (
-				<ProviderCard key={provider} provider={provider} />
-			))}
-		</div>
-	);
-}
+	const [provider, setProvider] = useState<AiProvider | null>(null);
 
-function ProviderCard({ provider }: { provider: AiProvider }) {
+	if (!provider) {
+		return <ProviderCardGrid providers={ADD_PROVIDER_ORDER} onSelect={setProvider} />;
+	}
+
 	const info = AI_PROVIDER_INFO[provider];
-	const [showKeyForm, setShowKeyForm] = useState(false);
-	const [showPasteForm, setShowPasteForm] = useState(false);
-	const [apiKey, setApiKey] = useState('');
-	const createProvider = useCreateAiProvider();
-
-	async function handleSubmitKey(e: React.FormEvent) {
-		e.preventDefault();
-		await createProvider.mutateAsync({ provider, api_key: apiKey });
-		setApiKey('');
-		setShowKeyForm(false);
-	}
-
-	async function handleSubmitPaste(authJson: string) {
-		await createProvider.mutateAsync({
-			provider,
-			api_key: authJson,
-			auth_method: AiAuthMethod.Subscription,
-		});
-		setShowPasteForm(false);
-	}
-
 	return (
-		<div className="border border-border rounded-md p-4">
-			<div className="flex items-center justify-between mb-2">
-				<div className="flex items-center gap-2">
-					{PROVIDER_LOGOS[provider] && (
-						<span className="flex h-6 w-6 items-center justify-center text-text-1">
-							<ProviderLogo provider={provider} className="h-5 w-5" />
-						</span>
-					)}
-					<span className="text-[13px] font-medium">{info.name}</span>
-					<Badge color="neutral" className="ml-1">
-						{info.runtimeLabel}
-					</Badge>
+		<div className="flex flex-col gap-4">
+			<div className="flex items-center gap-2">
+				<button
+					type="button"
+					onClick={() => setProvider(null)}
+					className="text-text-2 hover:text-text-1 p-2 -m-2"
+					aria-label="Back"
+				>
+					<ArrowLeft className="w-4 h-4" />
+				</button>
+				<span className="flex h-6 w-6 items-center justify-center text-text-1">
+					<ProviderLogo provider={provider} className="h-5 w-5" />
+				</span>
+				<div className="flex flex-col">
+					<span className="text-sm font-medium text-text-1">Connect {info.name}</span>
+					<span className="text-xs text-text-3">{info.runtimeLabel}</span>
 				</div>
 			</div>
 
-			{showKeyForm ? (
-				<form onSubmit={handleSubmitKey} className="flex flex-col sm:flex-row gap-2 mt-2">
-					<Input
-						type="password"
-						placeholder={info.keyPlaceholder}
-						value={apiKey}
-						onChange={(e) => setApiKey(e.target.value)}
-						required
-						className="flex-1"
-					/>
-					<Button type="submit" size="sm" disabled={createProvider.isPending}>
-						{createProvider.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
-						Save
-					</Button>
-					<Button type="button" variant="secondary" size="sm" onClick={() => setShowKeyForm(false)}>
-						Cancel
-					</Button>
-				</form>
-			) : showPasteForm ? (
-				<SubscriptionPasteForm
-					provider={provider}
-					onSubmit={handleSubmitPaste}
-					onCancel={() => setShowPasteForm(false)}
-					pending={createProvider.isPending}
-				/>
-			) : (
-				<div className="flex gap-2 mt-2">
-					{info.supportsSubscription && (
-						<Button variant="secondary" size="sm" onClick={() => setShowPasteForm(true)}>
-							<ClipboardPaste className="w-3 h-3" />
-							Use {info.runtimeLabel} subscription
-						</Button>
-					)}
-					<Button variant="secondary" size="sm" onClick={() => setShowKeyForm(true)}>
-						<Key className="w-3 h-3" />
-						Enter API key
-					</Button>
-				</div>
-			)}
-
-			{createProvider.error && (
-				<p className="text-[13px] text-danger mt-2">
-					{(createProvider.error as { message?: string }).message || 'Failed to save'}
-				</p>
-			)}
+			<ProviderConfigForm
+				key={provider}
+				provider={provider}
+				submitLabel="Save"
+				onCancel={() => setProvider(null)}
+				onDone={() => setProvider(null)}
+			/>
 		</div>
 	);
 }

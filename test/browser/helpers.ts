@@ -442,7 +442,8 @@ export async function dismissAiProviderModal(page: Page) {
 		return;
 	}
 
-	await page.getByRole('button', { name: 'Enter API key' }).first().click();
+	// Pick the Anthropic card from the grid, then fill its API-key form.
+	await page.getByRole('button', { name: 'Anthropic' }).first().click();
 	await page.locator('input[type="password"]').first().fill('sk-ant-e2e-test-key');
 	await page.getByRole('button', { name: 'Save' }).first().click();
 
