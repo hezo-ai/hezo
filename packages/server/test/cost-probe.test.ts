@@ -1,0 +1,165 @@
+import { AgentRuntime, AiProvider } from '@hezo/shared';
+import { describe, expect, it } from 'vitest';
+import {
+	buildProbeInvocation,
+	DEFAULT_PROBE_PROMPT,
+	extractReportedCost,
+	probeKeyEnv,
+	probeVerdict,
+	wrapProbeExecCmd,
+} from '../src/services/cost-probe';
+
+const line = (e: unknown) => `${JSON.stringify(e)}\n`;
+
+describe('cost-probe › probeKeyEnv', () => {
+	it('derives a collision-free env var from the provider slug', () => {
+		expect(probeKeyEnv(AiProvider.DeepSeek)).toBe('HEZO_PROBE_KEY_DEEPSEEK');
+		expect(probeKeyEnv(AiProvider.XAi)).toBe('HEZO_PROBE_KEY_X_AI');
+		expect(probeKeyEnv(AiProvider.OpenRouter)).toBe('HEZO_PROBE_KEY_OPENROUTER');
+	});
+});
+
+describe('cost-probe › buildProbeInvocation', () => {
+	it('builds the DeepSeek (Claude Code) invocation with the provider env and stream flags', () => {
+		const inv = buildProbeInvocation(AiProvider.DeepSeek, { apiKey: 'sk-deepseek' });
+		expect(inv.runtime).toBe(AgentRuntime.ClaudeCode);
+		expect(inv.promptMode).toBe('stdin');
+		// Provider env mirrors buildProviderEnv: base URL, model defaults, quiet env,
+		// the credential under DeepSeek's auth-token var, plus the prompt.
+		expect(inv.env).toContain('ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic');
+		expect(inv.env).toContain('ANTHROPIC_AUTH_TOKEN=sk-deepseek');
+		expect(inv.env).toContain('DISABLE_TELEMETRY=1');
+		expect(inv.env).toContain(`PROMPT=${DEFAULT_PROBE_PROMPT}`);
+		// Never leak the key onto the native Anthropic var for a third-party endpoint.
+		expect(inv.env.some((e) => e.startsWith('ANTHROPIC_API_KEY='))).toBe(false);
+		// CLI argv mirrors the production assembly.
+		expect(inv.cmd).toEqual([
+			'claude',
+			'--output-format',
+			'stream-json',
+			'--verbose',
+			'--dangerously-skip-permissions',
+			'--disallowedTools',
+			'WebFetch',
+			'ExitPlanMode',
+			'--model',
+			'deepseek-v4-flash',
+			'-p',
+		]);
+	});
+
+	it('builds the OpenAI (Codex) invocation with the exec subcommand and stdin positional', () => {
+		const inv = buildProbeInvocation(AiProvider.OpenAI, { apiKey: 'sk-openai' });
+		expect(inv.runtime).toBe(AgentRuntime.Codex);
+		expect(inv.env).toContain('OPENAI_API_KEY=sk-openai');
+		expect(inv.cmd).toEqual([
+			'codex',
+			'exec',
+			'--json',
+			'--dangerously-bypass-approvals-and-sandbox',
+			'--model',
+			'gpt-4o-mini',
+			'-',
+		]);
+	});
+
+	it('strips the DeepSeek [1m] tag from an overridden model (Claude Code re-appends it)', () => {
+		const inv = buildProbeInvocation(AiProvider.DeepSeek, {
+			apiKey: 'k',
+			model: 'deepseek-v4-pro[1m]',
+		});
+		expect(inv.cmd).toContain('--model');
+		expect(inv.cmd[inv.cmd.indexOf('--model') + 1]).toBe('deepseek-v4-pro');
+	});
+
+	it('qualifies an OpenRouter model with the opencode provider key', () => {
+		const inv = buildProbeInvocation(AiProvider.OpenRouter, { apiKey: 'k', model: 'x-ai/grok' });
+		expect(inv.runtime).toBe(AgentRuntime.OpenCode);
+		expect(inv.cmd[0]).toBe('opencode');
+		expect(inv.cmd).toContain('run');
+		expect(inv.cmd[inv.cmd.indexOf('--model') + 1]).toBe('openrouter/x-ai/grok');
+	});
+
+	it('passes no --model flag for Kimi (it resolves the model from config)', () => {
+		const inv = buildProbeInvocation(AiProvider.Kimi, { apiKey: 'k', model: 'whatever' });
+		expect(inv.cmd).not.toContain('--model');
+		expect(inv.promptMode).toBe('arg');
+	});
+
+	it('honors a custom prompt', () => {
+		const inv = buildProbeInvocation(AiProvider.DeepSeek, { apiKey: 'k', prompt: 'ping' });
+		expect(inv.env).toContain('PROMPT=ping');
+	});
+});
+
+describe('cost-probe › wrapProbeExecCmd', () => {
+	it('pipes the prompt on stdin for stdin-mode runtimes', () => {
+		expect(wrapProbeExecCmd(['claude', '-p'], 'stdin')).toEqual([
+			'sh',
+			'-c',
+			'printf %s "$PROMPT" | "$@"',
+			'sh',
+			'claude',
+			'-p',
+		]);
+	});
+
+	it('appends the prompt as the trailing arg for arg-mode runtimes', () => {
+		expect(wrapProbeExecCmd(['grok', '-p'], 'arg')).toEqual([
+			'sh',
+			'-c',
+			'exec "$@" "$PROMPT"',
+			'sh',
+			'grok',
+			'-p',
+		]);
+	});
+});
+
+describe('cost-probe › extractReportedCost', () => {
+	it('reads a Claude Code total_cost_usd and tokens from the result event', () => {
+		const stdout =
+			line({ type: 'system', subtype: 'init', model: 'deepseek-v4-pro', tools: [] }) +
+			line({
+				type: 'result',
+				subtype: 'success',
+				total_cost_usd: 0.4567,
+				usage: { input_tokens: 100, output_tokens: 50 },
+			});
+		const r = extractReportedCost(AgentRuntime.ClaudeCode, stdout);
+		expect(r.reportedCostUsd).toBe(0.4567);
+		expect(r.inputTokens).toBe(100);
+		expect(r.outputTokens).toBe(50);
+		expect(r.costEvent).not.toBeNull();
+		expect(probeVerdict(r, 0)).toBe('cost-emitted');
+	});
+
+	it('reports null cost but real tokens when the runtime emits no cost (Codex)', () => {
+		const stdout =
+			line({ type: 'thread.started', model: 'gpt-4o-mini' }) +
+			line({ type: 'turn.completed', usage: { input_tokens: 1000, output_tokens: 100 } });
+		const r = extractReportedCost(AgentRuntime.Codex, stdout);
+		expect(r.reportedCostUsd).toBeNull();
+		expect(r.inputTokens).toBe(1000);
+		expect(r.outputTokens).toBe(100);
+		expect(probeVerdict(r, 0)).toBe('tokens-only');
+	});
+
+	it('reads a generic runtime cost field', () => {
+		const stdout = line({
+			type: 'result',
+			cost: 0.1,
+			usage: { input_tokens: 10, output_tokens: 5 },
+		});
+		const r = extractReportedCost(AgentRuntime.OpenCode, stdout);
+		expect(r.reportedCostUsd).toBe(0.1);
+		expect(probeVerdict(r, 0)).toBe('cost-emitted');
+	});
+
+	it('classifies a crashed run with no output as no-output', () => {
+		const r = extractReportedCost(AgentRuntime.ClaudeCode, '');
+		expect(r.reportedCostUsd).toBeNull();
+		expect(r.inputTokens).toBe(0);
+		expect(probeVerdict(r, 1)).toBe('no-output');
+	});
+});

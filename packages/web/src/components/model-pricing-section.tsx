@@ -12,7 +12,7 @@ import {
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { type Column, DataTable } from './ui/data-table';
-import { InfoTooltip } from './ui/info-tooltip';
+import { HelpDialog } from './ui/help-dialog';
 import { Input } from './ui/input';
 import { Tooltip } from './ui/tooltip';
 
@@ -165,18 +165,47 @@ export function ModelPricingSection() {
 				<div>
 					<div className="flex items-center gap-1.5">
 						<h2 className="text-base font-medium">Model pricing</h2>
-						<InfoTooltip
-							label="About model pricing"
-							content="Per-model token rates used to compute the dollar cost of every agent run. Rows auto-refresh from the public LiteLLM feed; add a manual override for a model the feed lacks (or to correct one) — overrides win."
-							data-testid="model-pricing-info"
-						/>
+						<HelpDialog
+							title="How run costs are calculated"
+							triggerLabel="How run costs are calculated"
+							data-testid="model-pricing-help"
+						>
+							<div className="flex flex-col gap-3 text-sm text-text-2 leading-relaxed">
+								<p>
+									Every agent run's dollar cost comes from one of two sources, in order of
+									preference:
+								</p>
+								<ol className="flex flex-col gap-2 list-decimal pl-5">
+									<li>
+										<span className="font-semibold text-text-1">Reported by the run.</span> When a
+										run's runtime reports an authoritative cost (e.g. Claude Code's{' '}
+										<span className="font-mono">total_cost_usd</span>), Hezo uses that figure
+										directly — it already reflects the provider's real billing, including any
+										peak/off-peak pricing.
+									</li>
+									<li>
+										<span className="font-semibold text-text-1">Computed from this table.</span>{' '}
+										When a run reports no cost — for example DeepSeek, which runs through the Claude
+										Code runtime against a third-party endpoint the CLI can't price — Hezo
+										multiplies the run's token counts by these per-model rates.
+									</li>
+								</ol>
+								<p>
+									Rows auto-refresh from the public <span className="font-mono">LiteLLM</span> and{' '}
+									<span className="font-mono">llm-prices</span> feeds. Add a manual override for a
+									model the feeds lack (or to correct one) — overrides win.
+								</p>
+							</div>
+						</HelpDialog>
 					</div>
 					<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
-						Per-token rates that turn a run's token counts into a dollar cost, across every runtime.
-						Feed rows refresh from <span className="font-mono">LiteLLM</span>; a manual override
-						wins for that model — use it for ids the feed doesn't carry (e.g.{' '}
-						<span className="font-mono">deepseek-v4-pro</span>
-						).
+						The fallback for pricing an agent run: when a run's runtime doesn't report its own cost,
+						these per-token rates turn its token counts into a dollar cost, across every runtime.
+						When a run <em>does</em> report a cost (e.g. via{' '}
+						<span className="font-mono">total_cost_usd</span>), Hezo prefers that. Feed rows refresh
+						from <span className="font-mono">LiteLLM</span>; a manual override wins for that model —
+						use it for ids the feed doesn't carry (e.g.{' '}
+						<span className="font-mono">deepseek-v4-pro</span>).
 					</p>
 				</div>
 				<div className="flex items-center gap-2 shrink-0">
