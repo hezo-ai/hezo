@@ -93,14 +93,14 @@ test('setup_repo resolved without a result identifier shows "(unknown)"', async 
 	expect((await findByTestId('action-complete')).textContent).toContain('(unknown)');
 });
 
-test('setup_repo unresolved with projectId renders the setup-repo prompt and settings link', async () => {
+test('setup_repo unresolved with projectId renders the setup-repo prompt and Git settings link', async () => {
 	const { findByTestId } = renderNode(
 		<ActionComment comment={actionComment({ kind: 'setup_repo' })} projectId="proj" />,
 	);
 	const prompt = await findByTestId('action-setup-repo');
 	expect(prompt.textContent).toContain('no designated repository');
 	const link = prompt.querySelector('a') as HTMLAnchorElement;
-	expect(link.getAttribute('href')).toContain('/projects/proj/settings');
+	expect(link.getAttribute('href')).toContain('/projects/proj/git');
 });
 
 test('setup_repo unresolved without projectId renders the unavailable fallback', async () => {
