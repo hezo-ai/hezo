@@ -272,7 +272,7 @@ test('the Progress nav item shows the "no goals yet" dot only until the project 
 	});
 });
 
-test('creating a goal from the sidebar clears the "no goals yet" dot', async () => {
+test('creating a goal clears the sidebar "no goals yet" dot', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
 	const { findByTestId, queryByTestId, user, router } = await renderApp({
@@ -291,8 +291,13 @@ test('creating a goal from the sidebar clears the "no goals yet" dot', async () 
 	// The dot is present while the project has no goals.
 	await findByTestId('project-sidebar-goals-empty-dot', undefined, { timeout: 15_000 });
 
-	// Open the sidebar "New goal" action and create a goal.
-	await user.click(await findByTestId('project-sidebar-new-goal', undefined, { timeout: 15_000 }));
+	// Create a goal from the Progress page's "New goal" button. The sidebar persists across
+	// project routes, so its dot reflects the new goal once the project index invalidates.
+	await router.navigate({
+		to: '/projects/$projectId/goals',
+		params: { projectId: projectSlug },
+	});
+	await user.click(await findByTestId('goals-empty-create', undefined, { timeout: 15_000 }));
 	// The dialog renders into a portal on document.body; the name field has an explicit id.
 	const nameInput = await waitFor(() => {
 		const el = document.body.querySelector<HTMLInputElement>('#goal-name');
