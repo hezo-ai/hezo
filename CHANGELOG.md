@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.9.0 - 2026-06-29
+
+### Features
+
+- **goals:** skip by deadline as well as cadence in Captain heartbeat ([#462](https://github.com/hezo-ai/hezo/pull/462))
+- **ai:** add xAI Grok Build as a runtime + provider, redesign provider form as logo cards ([#460](https://github.com/hezo-ai/hezo/pull/460))
+- **goals:** add Progress page with project summary, goal detail page, and per-goal run feed ([#459](https://github.com/hezo-ai/hezo/pull/459))
+
+### Bug Fixes
+
+- **updater:** self-heal stuck staging and lengthen download timeout ([#461](https://github.com/hezo-ai/hezo/pull/461))
+
+### Documentation
+
+- add Team shapes concept page ([#465](https://github.com/hezo-ai/hezo/pull/465))
+
+### Tests
+
+- raise coverage above 90% and add Coveralls badge ([#464](https://github.com/hezo-ai/hezo/pull/464))
+
+### Other
+
+- Fix project rail active ring and reposition mobile nav close button ([#463](https://github.com/hezo-ai/hezo/pull/463))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.8.0...0.9.0
+
 ## 0.8.0 - 2026-06-27
 
 ### Features
