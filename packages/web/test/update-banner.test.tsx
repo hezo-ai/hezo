@@ -61,6 +61,13 @@ test('non-superuser / non-supervised falls back to a release download link', () 
 	expect(link.getAttribute('href')).toBe('https://github.com/hezo-ai/hezo/releases/0.2.0');
 });
 
+test('the version number links to its GitHub release page', () => {
+	const { getByTestId } = renderBanner();
+	const link = getByTestId('update-version-link') as HTMLAnchorElement;
+	expect(link.textContent).toBe('0.2.0');
+	expect(link.getAttribute('href')).toBe('https://github.com/hezo-ai/hezo/releases/0.2.0');
+});
+
 test('supervised + superuser shows an "Install & restart" button when staged', () => {
 	const { getByTestId } = renderBanner({ state: UpdateState.Staged });
 	const button = getByTestId('update-restart-button');
