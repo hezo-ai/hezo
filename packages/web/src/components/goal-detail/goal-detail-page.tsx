@@ -7,6 +7,7 @@ import { Link } from '@tanstack/react-router';
 import { Archive, ArchiveRestore, ChevronRight, Pencil } from 'lucide-react';
 import { useState } from 'react';
 import { useGoal, useGoalHistory, useGoalRunActivity, useUpdateGoal } from '../../hooks/use-goals';
+import { agentPageParams } from '../agent-link';
 import { CreateGoalDialog } from '../create-goal-dialog';
 import { GoalHealthPill } from '../goal-health-pill';
 import { GoalProgressChart } from '../goal-progress-chart';
@@ -57,16 +58,31 @@ function TaskChip({ projectId, identifier }: { projectId: string; identifier: st
 }
 
 function GoalRunRow({ projectId, run }: { projectId: string; run: GoalRunActivity }) {
+	// The whole row is a stretched link to this run in the Captain's run list. Task chips
+	// sit above the overlay (`relative z-10`) so they remain independently clickable.
+	const runLinkParams = { ...agentPageParams(projectId, run.agent_slug), runId: run.id };
 	return (
-		<li data-testid="goal-run" className="flex flex-col gap-1.5 px-3 py-2.5">
+		<li
+			data-testid="goal-run"
+			className="relative flex flex-col gap-1.5 px-3 py-2.5 transition-colors hover:bg-surface-2"
+		>
 			<div className="flex flex-wrap items-center gap-2">
-				<span className="text-[13px] text-text-2">{formatRunTime(run)}</span>
+				<Link
+					to="/projects/$projectId/agents/$agentId/executions/$runId"
+					params={runLinkParams}
+					data-testid="goal-run-open"
+					aria-label="Open run"
+					className="text-[13px] text-text-2 hover:underline before:absolute before:inset-0"
+				>
+					{formatRunTime(run)}
+				</Link>
 				{run.status !== HeartbeatRunStatus.Succeeded && (
 					<Badge color={RUN_STATUS_COLOR[run.status] ?? 'neutral'}>{run.status}</Badge>
 				)}
 				{run.progress && (
-					<span className="text-xs text-text-3">
-						{run.progress.progress_percent}% · {run.progress.health}
+					<span className="flex items-center gap-1.5 text-xs text-text-3">
+						<span>{run.progress.progress_percent}%</span>
+						<GoalHealthPill health={run.progress.health} />
 					</span>
 				)}
 			</div>
@@ -76,7 +92,7 @@ function GoalRunRow({ projectId, run }: { projectId: string; run: GoalRunActivit
 				</p>
 			)}
 			{run.created_tasks.length > 0 && (
-				<p className="text-xs text-text-3">
+				<p className="relative z-10 self-start text-xs text-text-3">
 					Created{' '}
 					{run.created_tasks.map((t, i) => (
 						<span key={t.id}>
@@ -87,7 +103,7 @@ function GoalRunRow({ projectId, run }: { projectId: string; run: GoalRunActivit
 				</p>
 			)}
 			{run.commented_tasks.length > 0 && (
-				<p className="text-xs text-text-3">
+				<p className="relative z-10 self-start text-xs text-text-3">
 					Commented on{' '}
 					{run.commented_tasks.map((t, i) => (
 						<span key={t.id}>

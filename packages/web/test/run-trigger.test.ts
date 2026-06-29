@@ -1,4 +1,4 @@
-import { WakeupSource } from '@hezo/shared';
+import { HeartbeatRunKind, WakeupSource } from '@hezo/shared';
 import { expect, test } from 'vitest';
 import type { HeartbeatRun } from '../src/hooks/use-heartbeat-runs';
 import { formatTriggerReason } from '../src/lib/run-trigger';
@@ -14,6 +14,7 @@ function run(overrides: Partial<HeartbeatRun>): HeartbeatRun {
 		team_id: 't-1',
 		wakeup_id: null,
 		task_id: 'task-1',
+		kind: HeartbeatRunKind.Task,
 		task_identifier: 'ACME-7',
 		task_title: 'Do the thing',
 		project_id: 'p-1',
@@ -173,6 +174,14 @@ test('automation falls back to the reason field, then to bare label', () => {
 		TEAM,
 	);
 	expect(nonString.text).toBe('Automation');
+});
+
+test('a goal-check run is labelled as the goals-and-progress automation regardless of source', () => {
+	const label = formatTriggerReason(
+		run({ kind: HeartbeatRunKind.GoalCheck, trigger_source: WakeupSource.Automation }),
+		TEAM,
+	);
+	expect(label.text).toBe('Automation: goals and progress report');
 });
 
 test('heartbeat is a fixed label', () => {

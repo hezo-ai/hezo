@@ -256,3 +256,47 @@ export async function seedRunningAgent(
 
 	return { runId, lockId, commentId };
 }
+
+/**
+ * Seed a completed Captain goal-check run (the heartbeat run with no task, kind
+ * 'goal_check') and, when a goal is given, the progress snapshot it recorded. Mirrors
+ * what `tryDispatchGoalCheck` + `recordGoalProgress` produce, so the Progress page and
+ * goal detail run feed render against real rows.
+ */
+export async function seedGoalCheckRun(
+	workspace: SeededWorkspace,
+	opts: {
+		goal?: SeededGoal;
+		progressPercent?: number;
+		health?: string;
+		statusBlurb?: string;
+	} = {},
+): Promise<{ runId: string }> {
+	const { db } = getTestContext();
+	const captain = workspace.agents.find((a) => a.slug === 'captain');
+	if (!captain) throw new Error('seedGoalCheckRun: captain agent missing');
+
+	const runRes = await db.query<{ id: string }>(
+		`INSERT INTO heartbeat_runs (member_id, team_id, status, kind, started_at, finished_at)
+		 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, 'goal_check'::heartbeat_run_kind, now(), now())
+		 RETURNING id`,
+		[captain.id, workspace.team.id],
+	);
+	const runId = runRes.rows[0].id;
+
+	if (opts.goal) {
+		await db.query(
+			`INSERT INTO goal_run_updates (run_id, goal_id, progress_percent, health, status_blurb)
+			 VALUES ($1, $2, $3, $4::goal_health, $5)`,
+			[
+				runId,
+				opts.goal.id,
+				opts.progressPercent ?? 25,
+				opts.health ?? 'on_track',
+				opts.statusBlurb ?? '',
+			],
+		);
+	}
+
+	return { runId };
+}

@@ -250,6 +250,9 @@ describe('goals service', () => {
 		const summary = runs.find((r) => r.id === runId);
 		expect(summary).toBeTruthy();
 		expect(summary?.updated_goal_titles).toContain('Track me');
+		// The run carries its Captain so the UI can link to the run in the agent's run list.
+		expect(summary?.member_id).toBe(captainMemberId);
+		expect(summary?.agent_slug).toBe('captain');
 	});
 
 	it('rejects a pending health on recordGoalProgress', async () => {

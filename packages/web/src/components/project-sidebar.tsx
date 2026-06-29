@@ -9,7 +9,6 @@ import { useInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useProjectMeta } from '../hooks/use-projects';
 import { agentPageParams } from './agent-link';
 import { AgentStatusLabel } from './agent-status-label';
-import { CreateGoalDialog } from './create-goal-dialog';
 import { CreateTaskDialog } from './create-task-dialog';
 import { SidebarNav, type SidebarNavSection } from './sidebar-nav';
 import { Tooltip } from './ui/tooltip';
@@ -40,7 +39,6 @@ export function ProjectSidebar() {
 	const { data: agents } = useAgents(projectId);
 	const [teamCollapsed, setTeamCollapsed] = useState(readTeamCollapsed);
 	const [createTaskOpen, setCreateTaskOpen] = useState(false);
-	const [createGoalOpen, setCreateGoalOpen] = useState(false);
 	// Goals are a project concept only (HQ has none). Use the open_goal_count carried on the
 	// project-detail payload rather than a separate per-page goals fetch — the dot shows only
 	// once the project has loaded and reports zero active goals.
@@ -130,11 +128,6 @@ export function ProjectSidebar() {
 			</span>
 		),
 		testId: 'project-sidebar-progress',
-		action: {
-			onClick: () => setCreateGoalOpen(true),
-			label: 'New goal',
-			testId: 'project-sidebar-new-goal',
-		},
 	};
 
 	const projectPages = [
@@ -284,11 +277,6 @@ export function ProjectSidebar() {
 				projectId={projectId}
 				open={createTaskOpen}
 				onOpenChange={setCreateTaskOpen}
-			/>
-			<CreateGoalDialog
-				projectId={projectId}
-				open={createGoalOpen}
-				onOpenChange={setCreateGoalOpen}
 			/>
 		</div>
 	);

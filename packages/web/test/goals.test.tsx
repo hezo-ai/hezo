@@ -1,6 +1,12 @@
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
-import { seedGoal, seedProject, seedProjectProgress, seedWorkspace } from './helpers/seed';
+import {
+	seedGoal,
+	seedGoalCheckRun,
+	seedProject,
+	seedProjectProgress,
+	seedWorkspace,
+} from './helpers/seed';
 
 // Component-tier proof for the Progress (goals) page: seed a team + project (no goals),
 // navigate to the goals route, and assert the empty-state hero renders with its
@@ -51,6 +57,67 @@ test('Progress page renders the Captain progress summary above the goals', async
 	// The bold lead key point renders from markdown, and the goal panel shows below.
 	await findByText('Auth shipped.');
 	await findByText('Reach 100 customers');
+});
+
+test('the goal detail run feed renders the health as a coloured pill and links to the run', async () => {
+	let projectSlug = '';
+	let goalId = '';
+	const { findByTestId, getByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Run Feed Demo' });
+			projectSlug = project.slug;
+			const goal = await seedGoal(ws, project, {
+				title: 'Reach launch',
+				measurement: 'launched',
+			});
+			goalId = goal.id;
+			await seedGoalCheckRun(ws, {
+				goal,
+				progressPercent: 40,
+				health: 'on_track',
+				statusBlurb: 'Tracking nicely',
+			});
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/goals/$goalId',
+		params: { projectId: projectSlug, goalId },
+	});
+
+	// The run row renders the health as the same pill used in goal meta ("On track"),
+	// not the raw enum, and links to the run in the Captain's run list.
+	await findByTestId('goal-run', undefined, { timeout: 10_000 });
+	const open = getByTestId('goal-run-open') as HTMLAnchorElement;
+	expect(open.getAttribute('href')).toMatch(/\/agents\/captain\/executions\//);
+	expect(getByTestId('goal-run').textContent).toContain('On track');
+	expect(getByTestId('goal-run').textContent).not.toContain('on_track');
+});
+
+test('the Progress page goal-check footer renders runs as collapsible run cards', async () => {
+	let projectSlug = '';
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Footer Demo' });
+			projectSlug = project.slug;
+			const goal = await seedGoal(ws, project, { title: 'Ship beta', measurement: 'beta live' });
+			await seedGoalCheckRun(ws, { goal, statusBlurb: 'Going well' });
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/goals',
+		params: { projectId: projectSlug },
+	});
+
+	// Each goal-check run renders the same collapsible run card used for agent runs on a
+	// task — its summary header (with the expand toggle) is the tell.
+	await findByTestId('goal-check-run', undefined, { timeout: 10_000 });
+	await findByTestId('run-comment-header', undefined, { timeout: 10_000 });
 });
 
 test('the Goals header help button opens the SMART guidance modal', async () => {
