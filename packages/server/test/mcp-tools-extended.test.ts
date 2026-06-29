@@ -139,9 +139,19 @@ async function callToolAs(
 	});
 	expect(res.status).toBe(200);
 	const body = (await res.json()) as {
-		result: { content: Array<{ type: string; text: string }> };
+		result?: { content: Array<{ type: string; text: string }> };
+		error?: { message: string };
 	};
-	return JSON.parse(body.result.content[0].text);
+	// A schema-validation failure comes back as a non-JSON MCP error string
+	// ("MCP error -32602: Input validation error: ...") in the result content (or a
+	// JSON-RPC error). Surface either as { error } so callers assert uniformly.
+	if (!body.result) return { error: body.error?.message ?? 'unknown error' };
+	const text = body.result.content[0].text;
+	try {
+		return JSON.parse(text);
+	} catch {
+		return { error: text };
+	}
 }
 
 type ToolResult = Record<string, unknown> & { error?: string };

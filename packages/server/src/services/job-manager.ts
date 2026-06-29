@@ -157,6 +157,15 @@ const UPDATE_CHECK_CRON = process.env.HEZO_UPDATE_CHECK_CRON ?? '0 0 4 * * *';
 // agent's budget with no event — this sweep notices and lifts the reactive
 // pause so the heartbeat scheduler (which skips paused agents) resumes it.
 const BUDGET_RESUME_CRON = process.env.HEZO_BUDGET_RESUME_CRON ?? '*/30 * * * * *';
+// Container status reconciliation and orphaned-run detection. These run on a
+// fixed wall-clock tick rather than reacting to an event, so they keep firing
+// even while nothing is happening. The defaults (1s / 30s) keep the dashboard
+// snappy in production, but on a CPU-starved CI runner three 1Hz crons
+// (wakeups, heartbeats, container-sync) compound into sustained load that
+// slows page loads enough to time out browser/component specs. Both are env-
+// configurable so the E2E server can dial them down — see playwright.config.ts.
+const CONTAINER_SYNC_CRON = process.env.HEZO_CONTAINER_SYNC_CRON ?? '* * * * * *';
+const ORPHAN_DETECTION_CRON = process.env.HEZO_ORPHAN_DETECTION_CRON ?? '*/30 * * * * *';
 // The reactive budget pauses, which the heartbeat scheduler must not wake (the
 // budget-resume sweep lifts them back to `idle` once the window rolls over).
 // Disabled agents are filtered separately via `admin_status`. Postgres array
@@ -384,12 +393,12 @@ export class JobManager {
 			onTick: () => this.guarded('heartbeats', () => this.processScheduledHeartbeats()),
 		});
 		this.cron.createJob('orphan-detection', {
-			cron: '*/30 * * * * *',
+			cron: ORPHAN_DETECTION_CRON,
 			log: cronLog,
 			onTick: () => this.guarded('orphan-detection', () => this.detectOrphanedRuns()),
 		});
 		this.cron.createJob('container-sync', {
-			cron: '* * * * * *',
+			cron: CONTAINER_SYNC_CRON,
 			log: cronLog,
 			onTick: () => this.guarded('container-sync', () => this.syncContainerStatuses()),
 		});

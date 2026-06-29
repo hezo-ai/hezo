@@ -483,6 +483,27 @@ function tool(
 	});
 }
 
+/**
+ * Recover the static types `server.tool` erases. The SDK validates `args`
+ * against the tool's zod shape (presence + type) and rejects bad input with a
+ * JSON-RPC error before the handler runs, but it then hands the handler an
+ * untyped `Record<string, unknown>`. Re-parsing against the same shape returns a
+ * typed object and, in practice, never throws (the SDK already enforced it).
+ *
+ * The point is branch reduction: without it, handlers re-derive every field with
+ * a `typeof args.x === 'string' ? args.x : default` ternary, and the non-string
+ * arm is unreachable for schema-required fields — dead branches that dragged
+ * coverage down across the tool surface. Reading `input.x` off the typed result
+ * deletes them. Genuinely value-dependent guards (an *empty* required string, a
+ * cross-field rule) stay in the handler, since `z.string()` still admits `""`.
+ */
+function typedArgs<S extends z.ZodRawShape>(
+	shape: S,
+	args: Record<string, unknown>,
+): z.infer<z.ZodObject<S>> {
+	return z.object(shape).parse(args);
+}
+
 const MAX_BATCH_CREATE_TASKS = 50;
 const MAX_BATCH_AGENT_SYSTEM_PROMPTS = 50;
 
@@ -1574,40 +1595,45 @@ export function registerTools(
 		db,
 	);
 
+	const createProjectShape = {
+		name: z.string().trim().min(1, 'name is required').describe('Project name'),
+		description: z
+			.string()
+			.trim()
+			.min(1, 'description is required')
+			.describe('Project description'),
+		task_prefix: z
+			.string()
+			.optional()
+			.describe('Optional 2-4 char uppercase ticket prefix; derived from the name when omitted'),
+		initial_project_plan: z
+			.string()
+			.optional()
+			.describe('Optional project plan document (markdown), seeded as project-plan.md'),
+		template_id: z
+			.string()
+			.optional()
+			.describe(
+				'Team-type template id (from list_team_templates). Mutually exclusive with source_team_id; defaults to Blank when neither is given.',
+			),
+		source_team_id: z
+			.string()
+			.optional()
+			.describe(
+				'Existing team to clone into a fresh template. Mutually exclusive with template_id.',
+			),
+		intake_task_id: z
+			.string()
+			.optional()
+			.describe(
+				'The HQ project-intake ticket this fulfils; it is closed with a completion note on success.',
+			),
+	} satisfies z.ZodRawShape;
 	tool(
 		server,
 		'create_project',
 		'Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in the intake conversation — a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen team-type template (pass template_id from list_team_templates, or source_team_id to clone an existing team; defaults to Blank), creates the project, its planning ticket, and the initial CEO coherence/setup ticket the planning ticket is blocked on, then provisions the container. The coherence/setup ticket is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned coherence_task_identifier) to capture the concrete setup you agreed in intake — the exact roles to hire, any system-prompt rewrites, and the reporting structure — then call start_team_setup(project) to begin the run. When intake_task_id is given, the intake conversation is closed with a completion note. Returns the new project plus its planning and coherence ticket identifiers.',
-		{
-			name: z.string().describe('Project name'),
-			description: z.string().describe('Project description'),
-			task_prefix: z
-				.string()
-				.optional()
-				.describe('Optional 2-4 char uppercase ticket prefix; derived from the name when omitted'),
-			initial_project_plan: z
-				.string()
-				.optional()
-				.describe('Optional project plan document (markdown), seeded as project-plan.md'),
-			template_id: z
-				.string()
-				.optional()
-				.describe(
-					'Team-type template id (from list_team_templates). Mutually exclusive with source_team_id; defaults to Blank when neither is given.',
-				),
-			source_team_id: z
-				.string()
-				.optional()
-				.describe(
-					'Existing team to clone into a fresh template. Mutually exclusive with template_id.',
-				),
-			intake_task_id: z
-				.string()
-				.optional()
-				.describe(
-					'The HQ project-intake ticket this fulfils; it is closed with a completion note on success.',
-				),
-		},
+		createProjectShape,
 		async (args, db, auth) => {
 			if (auth.type !== AuthType.Agent) {
 				return { error: 'create_project is only callable by agents' };
@@ -1620,10 +1646,11 @@ export function registerTools(
 				return { error: 'Only the CEO can create projects' };
 			}
 
-			const name = typeof args.name === 'string' ? args.name.trim() : '';
-			const description = typeof args.description === 'string' ? args.description.trim() : '';
-			if (!name) return { error: 'name is required' };
-			if (!description) return { error: 'description is required' };
+			// The SDK validated args against createProjectShape, so name/description
+			// are already trimmed, non-empty strings (`.trim().min(1)`) and optionals
+			// are `string | undefined` — no per-field ternaries or empty-checks here.
+			const input = typedArgs(createProjectShape, args);
+			const { name, description } = input;
 			if (!containerDeps) {
 				return { error: 'Project creation is not available in this context' };
 			}
@@ -1631,10 +1658,7 @@ export function registerTools(
 			// Idempotency: if this fulfils an intake ticket, that ticket must still be
 			// open — otherwise a re-run (e.g. after a timeout) would create a second
 			// project + team. Check before creating anything.
-			const intakeTaskId =
-				typeof args.intake_task_id === 'string' && args.intake_task_id.trim()
-					? args.intake_task_id.trim()
-					: undefined;
+			const intakeTaskId = input.intake_task_id?.trim() || undefined;
 			let intakeTeamId: string | undefined;
 			if (intakeTaskId) {
 				const intake = await db.query<{ status: string; team_id: string }>(
@@ -1653,11 +1677,10 @@ export function registerTools(
 				{
 					name,
 					description,
-					templateId: typeof args.template_id === 'string' ? args.template_id : undefined,
-					sourceTeamId: typeof args.source_team_id === 'string' ? args.source_team_id : undefined,
-					taskPrefix: typeof args.task_prefix === 'string' ? args.task_prefix : undefined,
-					initialProjectPlan:
-						typeof args.initial_project_plan === 'string' ? args.initial_project_plan : null,
+					templateId: input.template_id,
+					sourceTeamId: input.source_team_id,
+					taskPrefix: input.task_prefix,
+					initialProjectPlan: input.initial_project_plan ?? null,
 					actorType: 'agent',
 					actorMemberId: auth.memberId,
 					// CEO-created: the coherence/setup ticket is created unassigned and
@@ -2897,7 +2920,12 @@ export function registerTools(
 		{
 			project: projectArg(),
 			agent_id: z.string().describe('Target agent — its slug (e.g. "engineer") or member ID'),
-			summary: z.string().describe('The new summary, ≤1000 chars'),
+			summary: z
+				.string()
+				.trim()
+				.min(1, 'summary must be non-empty')
+				.max(1000, 'summary too long (max 1000)')
+				.describe('The new summary, ≤1000 chars'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -2908,11 +2936,10 @@ export function registerTools(
 				return { error: 'Access denied' };
 			}
 
-			const summary = String(args.summary ?? '').trim();
-			if (summary.length === 0) return { error: 'summary must be non-empty' };
-			if (summary.length > 1000) {
-				return { error: `summary too long (${summary.length} chars; max 1000)` };
-			}
+			// Length/non-empty enforced by the schema; the SDK rejects violations
+			// before the handler. `.trim()` in the schema means the stored value is
+			// already trimmed.
+			const summary = (args.summary as string).trim();
 
 			// Accept a slug or member ID; the team_id filter scopes the write so an HQ
 			// agent (resolveAgentId's fallback) can't be summarised through this team.
@@ -2945,7 +2972,12 @@ export function registerTools(
 		'Save the team-level collaboration summary for a team (≤4000 chars, plain prose, may span paragraphs). Only callable by the Captain of that team.',
 		{
 			project: projectArg(),
-			summary: z.string().describe('The new team summary, ≤4000 chars'),
+			summary: z
+				.string()
+				.trim()
+				.min(1, 'summary must be non-empty')
+				.max(4000, 'summary too long (max 4000)')
+				.describe('The new team summary, ≤4000 chars'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -2956,11 +2988,8 @@ export function registerTools(
 				return { error: 'Access denied: only the Captain can update the team summary' };
 			}
 
-			const summary = String(args.summary ?? '').trim();
-			if (summary.length === 0) return { error: 'summary must be non-empty' };
-			if (summary.length > 4000) {
-				return { error: `summary too long (${summary.length} chars; max 4000)` };
-			}
+			// Length/non-empty enforced by the schema; `.trim()` already trimmed it.
+			const summary = (args.summary as string).trim();
 
 			await db.query('UPDATE teams SET summary = $1, updated_at = now() WHERE id = $2', [
 				summary,
@@ -2979,15 +3008,16 @@ export function registerTools(
 		{
 			reason: z
 				.string()
-				.min(1)
+				.trim()
+				.min(1, 'reason must be non-empty')
 				.describe('One-line explanation of why there is nothing to do this run.'),
 		},
 		async (args, db, auth) => {
 			if (auth.type !== AuthType.Agent || !auth.runId) {
 				return { error: 'report_no_work is only available within an agent run' };
 			}
-			const reason = String(args.reason ?? '').trim();
-			if (reason.length === 0) return { error: 'reason must be non-empty' };
+			// Non-empty (after trim) enforced by the schema.
+			const reason = (args.reason as string).trim();
 			await markRunReportedNoWork(db, auth.runId, reason);
 			return { ok: true };
 		},
@@ -3001,7 +3031,12 @@ export function registerTools(
 		{
 			project: projectArg(),
 			agent_id: z.string().describe('Target agent — its slug (e.g. "engineer") or member ID'),
-			content: z.string().describe('The new team_context, ≤6000 chars'),
+			content: z
+				.string()
+				.trim()
+				.min(1, 'content must be non-empty')
+				.max(6000, 'content too long (max 6000)')
+				.describe('The new team_context, ≤6000 chars'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -3012,11 +3047,8 @@ export function registerTools(
 				return { error: 'Access denied: only the Captain can update agent team contexts' };
 			}
 
-			const content = String(args.content ?? '').trim();
-			if (content.length === 0) return { error: 'content must be non-empty' };
-			if (content.length > 6000) {
-				return { error: `content too long (${content.length} chars; max 6000)` };
-			}
+			// Length/non-empty enforced by the schema; `.trim()` already trimmed it.
+			const content = (args.content as string).trim();
 
 			// Accept a slug or member ID; the team_id filter scopes the write so an HQ
 			// agent (resolveAgentId's fallback) can't be written through this team.
@@ -3165,6 +3197,8 @@ export function registerTools(
 			project: projectArg(),
 			agent: z
 				.string()
+				.trim()
+				.min(1, 'agent is required')
 				.describe(
 					'Target agent — its slug (e.g. "engineer") or member ID. Must be a member of this project\'s team.',
 				),
@@ -3193,8 +3227,8 @@ export function registerTools(
 				};
 			}
 
-			const ref = String(args.agent ?? '').trim();
-			if (!ref) return { error: 'agent is required' };
+			// agent non-empty enforced by the schema.
+			const ref = (args.agent as string).trim();
 			const target = await db.query<{ id: string; slug: string }>(
 				`SELECT ma.id, ma.slug FROM member_agents ma
 				 JOIN members m ON m.id = ma.id
@@ -3851,6 +3885,8 @@ export function registerTools(
 			project: projectArg(),
 			name: z
 				.string()
+				.trim()
+				.min(1, 'name is required')
 				.describe('Server identifier — used as the MCP descriptor name and as the unique key.'),
 			kind: z.enum(['saas', 'local']).describe('saas = HTTP MCP, local = stdio MCP'),
 			config: z
@@ -3860,11 +3896,11 @@ export function registerTools(
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
-			const name = String(args.name ?? '').trim();
+			// name non-empty enforced by the schema; kind is a schema enum.
+			const name = (args.name as string).trim();
 			const kind = args.kind as 'saas' | 'local';
 			const config = args.config as Record<string, unknown>;
 
-			if (!name) return { error: 'name is required' };
 			if (kind === 'saas') {
 				if (!config?.url || typeof config.url !== 'string') {
 					return { error: 'saas connections require config.url (string)' };
