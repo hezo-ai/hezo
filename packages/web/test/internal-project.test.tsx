@@ -7,10 +7,9 @@ import { seedWorkspace } from './helpers/seed';
 // HQ is the only internal project: the instance-wide coordination project that
 // hosts the CEO and Coach. Its slug is HQ_PROJECT_SLUG and `is_internal` is
 // true, so it gets the restricted sidebar (no Budget, no Settings) and the
-// coordination info tooltip beside its name. It DOES expose Documents — where
-// the chatbox memory (chat-memory.md) is viewed/edited — and Assets — where the
-// CEO saves files it produces for the operator in chat. The settings route
-// still redirects to tasks.
+// coordination info tooltip beside its name. It DOES expose Documents and Assets
+// — where the CEO saves files it produces for the operator in chat. The settings
+// route still redirects to tasks.
 
 test('HQ task list does not show the project progress bar', async () => {
 	const { findAllByRole, queryByTestId, router } = await renderApp({

@@ -33,21 +33,22 @@ export const DEFAULT_TEAM_NAME = 'Team';
 export const DEFAULT_TEAM_TEMPLATE_NAME = 'Blank';
 
 /**
- * Reserved project-doc filename for the chatbox's persistent memory. A single
- * undeletable doc seeded in the HQ project; its full contents are injected into
- * every chatbox (CEO) turn so durable preferences survive the rolling message
- * window. Maintained by the agent via `write_project_doc` and editable by the
- * operator in the docs UI.
- */
-export const CHAT_MEMORY_SLUG = 'chat-memory.md';
-
-/**
- * How many recent chatbox messages are replayed into each turn's prompt.
+ * High-water mark, in bytes, for a chatbox's active (non-compacted) message
+ * window. When the window's combined message content exceeds this, the chat
+ * agent compacts the whole window into its long-term memory and all but the
+ * latest few messages are evicted, resetting the window to a short tail.
  * Operator-adjustable in global settings; clamped to [MIN, MAX].
  */
-export const DEFAULT_CHAT_HISTORY_LIMIT = 80;
-export const CHAT_HISTORY_LIMIT_MIN = 10;
-export const CHAT_HISTORY_LIMIT_MAX = 500;
+export const DEFAULT_MAX_CHAT_HISTORY_SIZE = 40 * 1024;
+export const MAX_CHAT_HISTORY_SIZE_MIN = 8 * 1024;
+export const MAX_CHAT_HISTORY_SIZE_MAX = 256 * 1024;
+
+/**
+ * The "latest few" messages kept in the active window after a compaction flush.
+ * Internal constant (not an operator setting): everything older than this tail
+ * is summarized into long-term memory and dropped from the chatbox.
+ */
+export const CHAT_WINDOW_RETAIN_MESSAGES = 6;
 
 /**
  * Default heartbeat interval for newly created agents and agent types, in

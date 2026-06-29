@@ -23,8 +23,8 @@ the agents as they work:
   reach for.
 - **Per team** — [preferences](#team-preferences): custom instructions applied to every
   agent on a team.
-- **The CEO's** — its [chatbox memory](#chatbox-memory) of your standing preferences and
-  guidelines.
+- **The CEO's** — its [long-term chat memory](#long-term-chat-memory) of your standing
+  preferences and guidelines, kept automatically.
 
 ## What an agent carries into every run
 
@@ -34,8 +34,8 @@ cached to go stale. Context reaches the agent in one of two ways:
 
 - **In full** — short, always-relevant text is injected verbatim: the current task's
   **rules**, **description**, and **progress summary**; the team's **preferences**; and, for
-  the CEO, its **chatbox memory**. These are small and central, so the agent always has them
-  in view.
+  the CEO, its **long-term chat memory**. These are small and central, so the agent always has
+  them in view.
 - **As a manifest** — larger libraries are surfaced as a *table of contents* rather than
   pasted in whole. The agent sees an index of what exists and pulls the full item only when
   it's relevant: **project documents** are listed by filename, title, and last-updated date
@@ -51,7 +51,7 @@ cached to go stale. Context reaches the agent in one of two ways:
 | Project documents | One project | Manifest, full text on demand | You and agents |
 | Skills | Whole instance | Manifest, full text on demand | You and agents |
 | Team preferences | One team | In full, every run | You |
-| Chatbox memory | The CEO | In full, every chat turn | You and the CEO |
+| Long-term chat memory | The CEO | In full, every chat turn | The CEO (automatically) and you |
 
 For how rules, the progress summary, and the thread work together on a single task — and
 how an agent uses them to pick up where the last run left off — see
@@ -94,29 +94,28 @@ is snapshotted and restorable from the agent's settings — to a team's
 [**skills**](/docs/concepts/skills#version-history--restore), your reusable cross-team
 know-how. Whatever your agents change, you can see what changed and put it back.
 
-## Chatbox memory
+## Long-term chat memory
 
-The CEO keeps a single, permanent memory document — its **chatbox memory**, the file
-`chat-memory.md` — so your standing preferences and guidelines carry across every
-conversation. Its full contents are injected into **every** chat turn, so anything recorded
-there survives even after older messages scroll out of the conversation window.
+The CEO remembers your conversations **automatically** — you never have to tell it to remember
+anything. The chatbox keeps recent messages live, up to a size cap. When the conversation grows
+past that cap, the CEO summarizes the whole window into its **long-term memory** and the older
+messages drop out of the live chat — so scrolling up tops out at what's still in the window. That
+long-term memory is fed back into **every** chat turn, so the gist of past exchanges survives even
+after the raw messages scroll away.
 
-Tell the CEO once how you like things done — "always run a plan past me before provisioning a
-team", "we deploy on Fridays", "default new services to TypeScript" — and it records the
-durable facts there, then reads them back on every turn. Live data such as project lists and
-rosters is deliberately *not* memorised — that's always read fresh from Hezo, so it can never
-go stale.
+What it keeps is durable, standing knowledge — how you like things done ("always run a plan past
+me before provisioning a team", "we deploy on Fridays"), decisions, and the gist of off-project
+threads. Live data such as project lists and rosters is deliberately *not* memorised — that's
+always read fresh from Hezo, so it can never go stale.
 
-You're not limited to dictating to the CEO. The chatbox memory is a document you can **read
-and edit yourself**: it lives in the
-[HQ](/docs/concepts/projects-and-teams#hq--the-home-team) project's documents (and is
-explained under **Settings → Chatbox**), so you can seed it with preferences up front or
-prune stale entries later. It's permanent — it can't be deleted. See
-[Roles & the CEO](/docs/concepts/roles-and-coordination).
+You can **review and edit** the long-term memory yourself on the CEO's **Chat history** tab (on
+its agent page), so you can seed it with preferences up front or prune stale entries later. The
+size of the live window — how much recent conversation is kept before it's compacted — is set
+under **Settings → Chatbox**. See [Roles & the CEO](/docs/concepts/roles-and-coordination).
 
 ## Team preferences
 
-Where the chatbox memory steers the CEO, a team's **preferences** steer that team's workers.
+Where the CEO's long-term chat memory steers the CEO, a team's **preferences** steer that team's workers.
 Preferences are free-form **custom instructions applied to every agent on the team** —
 house conventions, tone, standing do's and don'ts — set from the team's settings and injected
 in full into each agent's prompt on every run. They're the lighter-weight choice when the
@@ -137,8 +136,8 @@ right place is what keeps it findable and applied at the right moment:
 - **Reusable, project-independent know-how** (how to use an MCP server, a release
   checklist, a house style) → a **[skill](/docs/concepts/skills)**.
 - **A standing instruction for every agent on a team** → that team's **preferences**.
-- **Your durable preferences for how the CEO works with you** → the CEO's **chatbox
-  memory**.
+- **Your durable preferences for how the CEO works with you** → the CEO's **long-term chat
+  memory** (kept automatically).
 
 When in doubt, keep task-specific status in the summary, how-to-work constraints in the
 rules, and anything the wider team will need again in a document or a skill.

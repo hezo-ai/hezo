@@ -212,6 +212,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	},
 
 	// Agent prompts & context
+	update_chat_memory: {
+		category: 'Agent prompts & context',
+		returns:
+			"`{ written: true, updated_at }`. Overwrites the calling agent's long-term chat memory wholesale (no append; no revision history).",
+		auth: 'An agent updating its own memory only.',
+	},
 	get_agent_system_prompt: {
 		category: 'Agent prompts & context',
 		returns:

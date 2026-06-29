@@ -1,9 +1,9 @@
 import {
-	CHAT_HISTORY_LIMIT_MAX,
-	CHAT_HISTORY_LIMIT_MIN,
-	CHAT_MEMORY_SLUG,
-	DEFAULT_CHAT_HISTORY_LIMIT,
+	CEO_AGENT_SLUG,
+	DEFAULT_MAX_CHAT_HISTORY_SIZE,
 	HQ_PROJECT_SLUG,
+	MAX_CHAT_HISTORY_SIZE_MAX,
+	MAX_CHAT_HISTORY_SIZE_MIN,
 } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
@@ -18,6 +18,14 @@ import {
 } from '../../hooks/use-instance-settings';
 import { useMe } from '../../hooks/use-me';
 import type { ApiError } from '../../lib/api';
+
+const MIN_KB = Math.round(MAX_CHAT_HISTORY_SIZE_MIN / 1024);
+const MAX_KB = Math.round(MAX_CHAT_HISTORY_SIZE_MAX / 1024);
+const DEFAULT_KB = Math.round(DEFAULT_MAX_CHAT_HISTORY_SIZE / 1024);
+
+function toKb(bytes: number): number {
+	return Math.round(bytes / 1024);
+}
 
 function ChatboxSettingsPage() {
 	const { data: me } = useMe();
@@ -35,48 +43,50 @@ function ChatboxSettingsPage() {
 						<h1 className="text-[22px] font-medium">Chatbox</h1>
 						<InfoTooltip
 							label="About the chatbox"
-							content="Settings for the assistant chatbox — how much conversation it keeps in context and how its persistent memory works."
+							content="Settings for the assistant chatbox — how much conversation it keeps live before older messages are compacted into long-term memory."
 							data-testid="chatbox-info"
 						/>
 					</div>
 					<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
-						The chatbox is your direct line to the assistant. These settings control how much of the
-						conversation it keeps in working context each turn, and explain its persistent memory.
+						The chatbox is your direct line to the assistant. These settings control how large the
+						live conversation window grows before it is compacted, and explain its automatic
+						long-term memory.
 					</p>
 				</div>
 
 				<section className="border border-border rounded-md p-4 bg-surface mb-4">
-					<label className="block text-[13px] font-medium mb-1" htmlFor="chat-history-limit-input">
-						Conversation history window
+					<label className="block text-[13px] font-medium mb-1" htmlFor="chat-history-size-input">
+						Conversation window size (KB)
 					</label>
 					<p className="text-[13px] text-text-2 mb-2.5 max-w-[680px]">
-						How many of the most recent chatbox messages are replayed into the assistant's context
-						on each turn. A larger window keeps more of the recent conversation in view but costs
-						more tokens per reply; older messages beyond the window scroll out of context (durable
-						facts belong in the chatbox memory below). Must be between {CHAT_HISTORY_LIMIT_MIN} and{' '}
-						{CHAT_HISTORY_LIMIT_MAX}; defaults to {DEFAULT_CHAT_HISTORY_LIMIT}.
+						The maximum size, in kilobytes, of the live message window the assistant keeps verbatim
+						and replays into its context each turn. When the window grows past this, the assistant
+						summarizes the whole window into long-term memory and all but the latest few messages
+						are dropped from the chatbox. A larger window keeps more recent conversation in view but
+						costs more tokens per reply. Must be between {MIN_KB} and {MAX_KB} KB; defaults to{' '}
+						{DEFAULT_KB} KB.
 					</p>
-					{settings === undefined ? null : <HistoryLimitForm settings={settings} />}
+					{settings === undefined ? null : <HistorySizeForm settings={settings} />}
 				</section>
 
 				<section className="border border-border rounded-md p-4 bg-surface">
-					<h2 className="text-[13px] font-medium mb-1">Chatbox memory</h2>
+					<h2 className="text-[13px] font-medium mb-1">Long-term memory</h2>
 					<p className="text-[13px] text-text-2 max-w-[680px]">
-						The chatbox keeps a single persistent memory document,{' '}
-						<span className="font-mono">{CHAT_MEMORY_SLUG}</span>, whose full contents are injected
-						into every chat turn — so it survives even after older messages scroll out of the
-						history window above. The assistant records durable operator preferences, standing
-						guidelines, and anything you explicitly ask it to remember; it does not store live
-						project, ticket, or comment data there (that is always read fresh). You can review and
-						edit this document directly — it lives in the{' '}
+						When the window fills, the assistant summarizes the older messages into a durable
+						long-term memory and drops them from the chatbox — so standing facts survive even as
+						messages scroll out. That memory is fed back into every chat turn, and it captures
+						durable operator preferences, decisions, and the gist of off-project threads (never live
+						project or task data, which is always read fresh). It's maintained automatically — you
+						never have to tell the assistant to remember anything. You can review and edit it on the
+						assistant's{' '}
 						<Link
-							to="/projects/$projectId/documents"
-							params={{ projectId: HQ_PROJECT_SLUG }}
+							to="/projects/$projectId/agents/$agentId/chat-history"
+							params={{ projectId: HQ_PROJECT_SLUG, agentId: CEO_AGENT_SLUG }}
 							className="text-accent hover:underline"
 						>
-							HQ project documents
+							Chat history
 						</Link>{' '}
-						and cannot be deleted.
+						tab.
 					</p>
 				</section>
 			</>
@@ -85,51 +95,45 @@ function ChatboxSettingsPage() {
 	return <div className="max-w-[900px]">{content}</div>;
 }
 
-function HistoryLimitForm({ settings }: { settings: InstanceSettings }) {
+function HistorySizeForm({ settings }: { settings: InstanceSettings }) {
 	const updateSettings = useUpdateInstanceSettings();
-	const [value, setValue] = useState(String(settings.chat_history_limit));
+	const [value, setValue] = useState(String(toKb(settings.max_chat_history_size)));
 	const [error, setError] = useState<string | null>(null);
 
 	async function handleSave() {
 		setError(null);
-		const parsed = Number.parseInt(value, 10);
-		if (
-			Number.isNaN(parsed) ||
-			parsed < CHAT_HISTORY_LIMIT_MIN ||
-			parsed > CHAT_HISTORY_LIMIT_MAX
-		) {
-			setError(
-				`Enter a whole number between ${CHAT_HISTORY_LIMIT_MIN} and ${CHAT_HISTORY_LIMIT_MAX}.`,
-			);
+		const kb = Number.parseInt(value, 10);
+		if (Number.isNaN(kb) || kb < MIN_KB || kb > MAX_KB) {
+			setError(`Enter a whole number of KB between ${MIN_KB} and ${MAX_KB}.`);
 			return;
 		}
 		try {
-			const result = await updateSettings.mutateAsync({ chat_history_limit: parsed });
-			setValue(String(result.chat_history_limit));
+			const result = await updateSettings.mutateAsync({ max_chat_history_size: kb * 1024 });
+			setValue(String(toKb(result.max_chat_history_size)));
 		} catch (e) {
 			setError((e as ApiError).message);
 		}
 	}
 
-	const dirty = value.trim() !== String(settings.chat_history_limit);
+	const dirty = value.trim() !== String(toKb(settings.max_chat_history_size));
 
 	return (
 		<>
 			<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
 				<Input
-					id="chat-history-limit-input"
-					data-testid="chat-history-limit-input"
+					id="chat-history-size-input"
+					data-testid="chat-history-size-input"
 					type="number"
 					inputMode="numeric"
-					min={CHAT_HISTORY_LIMIT_MIN}
-					max={CHAT_HISTORY_LIMIT_MAX}
+					min={MIN_KB}
+					max={MAX_KB}
 					value={value}
 					onChange={(e) => setValue(e.target.value)}
 					className="sm:w-40"
 				/>
 				<Button
 					size="sm"
-					data-testid="chat-history-limit-save"
+					data-testid="chat-history-size-save"
 					onClick={handleSave}
 					disabled={!dirty || updateSettings.isPending}
 				>
@@ -137,7 +141,7 @@ function HistoryLimitForm({ settings }: { settings: InstanceSettings }) {
 				</Button>
 			</div>
 			{error && (
-				<p className="text-[13px] text-danger mt-1.5" data-testid="chat-history-limit-error">
+				<p className="text-[13px] text-danger mt-1.5" data-testid="chat-history-size-error">
 					{error}
 				</p>
 			)}

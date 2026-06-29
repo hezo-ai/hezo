@@ -43,6 +43,7 @@ import { Route as ProjectsProjectIdAgentsHireRouteImport } from './routes/projec
 import { Route as ProjectsProjectIdAgentsAgentIdRouteRouteImport } from './routes/projects/$projectId/agents/$agentId/route'
 import { Route as ProjectsProjectIdAgentsAgentIdIndexRouteImport } from './routes/projects/$projectId/agents/$agentId/index'
 import { Route as ProjectsProjectIdAgentsAgentIdSettingsRouteImport } from './routes/projects/$projectId/agents/$agentId/settings'
+import { Route as ProjectsProjectIdAgentsAgentIdChatHistoryRouteImport } from './routes/projects/$projectId/agents/$agentId/chat-history'
 import { Route as ProjectsProjectIdAgentsAgentIdExecutionsIndexRouteImport } from './routes/projects/$projectId/agents/$agentId/executions/index'
 import { Route as ProjectsProjectIdAgentsAgentIdExecutionsRunIdRouteImport } from './routes/projects/$projectId/agents/$agentId/executions/$runId'
 
@@ -233,6 +234,12 @@ const ProjectsProjectIdAgentsAgentIdSettingsRoute =
     path: '/settings',
     getParentRoute: () => ProjectsProjectIdAgentsAgentIdRouteRoute,
   } as any)
+const ProjectsProjectIdAgentsAgentIdChatHistoryRoute =
+  ProjectsProjectIdAgentsAgentIdChatHistoryRouteImport.update({
+    id: '/chat-history',
+    path: '/chat-history',
+    getParentRoute: () => ProjectsProjectIdAgentsAgentIdRouteRoute,
+  } as any)
 const ProjectsProjectIdAgentsAgentIdExecutionsIndexRoute =
   ProjectsProjectIdAgentsAgentIdExecutionsIndexRouteImport.update({
     id: '/executions/',
@@ -279,6 +286,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/inbox/': typeof ProjectsProjectIdInboxIndexRoute
   '/projects/$projectId/settings/': typeof ProjectsProjectIdSettingsIndexRoute
   '/projects/$projectId/tasks/': typeof ProjectsProjectIdTasksIndexRoute
+  '/projects/$projectId/agents/$agentId/chat-history': typeof ProjectsProjectIdAgentsAgentIdChatHistoryRoute
   '/projects/$projectId/agents/$agentId/settings': typeof ProjectsProjectIdAgentsAgentIdSettingsRoute
   '/projects/$projectId/agents/$agentId/': typeof ProjectsProjectIdAgentsAgentIdIndexRoute
   '/projects/$projectId/agents/$agentId/executions/$runId': typeof ProjectsProjectIdAgentsAgentIdExecutionsRunIdRoute
@@ -314,6 +322,7 @@ export interface FileRoutesByTo {
   '/projects/$projectId/inbox': typeof ProjectsProjectIdInboxIndexRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsIndexRoute
   '/projects/$projectId/tasks': typeof ProjectsProjectIdTasksIndexRoute
+  '/projects/$projectId/agents/$agentId/chat-history': typeof ProjectsProjectIdAgentsAgentIdChatHistoryRoute
   '/projects/$projectId/agents/$agentId/settings': typeof ProjectsProjectIdAgentsAgentIdSettingsRoute
   '/projects/$projectId/agents/$agentId': typeof ProjectsProjectIdAgentsAgentIdIndexRoute
   '/projects/$projectId/agents/$agentId/executions/$runId': typeof ProjectsProjectIdAgentsAgentIdExecutionsRunIdRoute
@@ -353,6 +362,7 @@ export interface FileRoutesById {
   '/projects/$projectId/inbox/': typeof ProjectsProjectIdInboxIndexRoute
   '/projects/$projectId/settings/': typeof ProjectsProjectIdSettingsIndexRoute
   '/projects/$projectId/tasks/': typeof ProjectsProjectIdTasksIndexRoute
+  '/projects/$projectId/agents/$agentId/chat-history': typeof ProjectsProjectIdAgentsAgentIdChatHistoryRoute
   '/projects/$projectId/agents/$agentId/settings': typeof ProjectsProjectIdAgentsAgentIdSettingsRoute
   '/projects/$projectId/agents/$agentId/': typeof ProjectsProjectIdAgentsAgentIdIndexRoute
   '/projects/$projectId/agents/$agentId/executions/$runId': typeof ProjectsProjectIdAgentsAgentIdExecutionsRunIdRoute
@@ -393,6 +403,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/inbox/'
     | '/projects/$projectId/settings/'
     | '/projects/$projectId/tasks/'
+    | '/projects/$projectId/agents/$agentId/chat-history'
     | '/projects/$projectId/agents/$agentId/settings'
     | '/projects/$projectId/agents/$agentId/'
     | '/projects/$projectId/agents/$agentId/executions/$runId'
@@ -428,6 +439,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/inbox'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/tasks'
+    | '/projects/$projectId/agents/$agentId/chat-history'
     | '/projects/$projectId/agents/$agentId/settings'
     | '/projects/$projectId/agents/$agentId'
     | '/projects/$projectId/agents/$agentId/executions/$runId'
@@ -466,6 +478,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/inbox/'
     | '/projects/$projectId/settings/'
     | '/projects/$projectId/tasks/'
+    | '/projects/$projectId/agents/$agentId/chat-history'
     | '/projects/$projectId/agents/$agentId/settings'
     | '/projects/$projectId/agents/$agentId/'
     | '/projects/$projectId/agents/$agentId/executions/$runId'
@@ -721,6 +734,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdAgentsAgentIdSettingsRouteImport
       parentRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRoute
     }
+    '/projects/$projectId/agents/$agentId/chat-history': {
+      id: '/projects/$projectId/agents/$agentId/chat-history'
+      path: '/chat-history'
+      fullPath: '/projects/$projectId/agents/$agentId/chat-history'
+      preLoaderRoute: typeof ProjectsProjectIdAgentsAgentIdChatHistoryRouteImport
+      parentRoute: typeof ProjectsProjectIdAgentsAgentIdRouteRoute
+    }
     '/projects/$projectId/agents/$agentId/executions/': {
       id: '/projects/$projectId/agents/$agentId/executions/'
       path: '/executions'
@@ -765,6 +785,7 @@ const SettingsRouteRouteWithChildren = SettingsRouteRoute._addFileChildren(
 )
 
 interface ProjectsProjectIdAgentsAgentIdRouteRouteChildren {
+  ProjectsProjectIdAgentsAgentIdChatHistoryRoute: typeof ProjectsProjectIdAgentsAgentIdChatHistoryRoute
   ProjectsProjectIdAgentsAgentIdSettingsRoute: typeof ProjectsProjectIdAgentsAgentIdSettingsRoute
   ProjectsProjectIdAgentsAgentIdIndexRoute: typeof ProjectsProjectIdAgentsAgentIdIndexRoute
   ProjectsProjectIdAgentsAgentIdExecutionsRunIdRoute: typeof ProjectsProjectIdAgentsAgentIdExecutionsRunIdRoute
@@ -773,6 +794,8 @@ interface ProjectsProjectIdAgentsAgentIdRouteRouteChildren {
 
 const ProjectsProjectIdAgentsAgentIdRouteRouteChildren: ProjectsProjectIdAgentsAgentIdRouteRouteChildren =
   {
+    ProjectsProjectIdAgentsAgentIdChatHistoryRoute:
+      ProjectsProjectIdAgentsAgentIdChatHistoryRoute,
     ProjectsProjectIdAgentsAgentIdSettingsRoute:
       ProjectsProjectIdAgentsAgentIdSettingsRoute,
     ProjectsProjectIdAgentsAgentIdIndexRoute:

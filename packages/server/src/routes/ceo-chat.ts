@@ -25,14 +25,16 @@ ceoChatRoutes.get('/ceo/conversation', async (c) => {
 	if (!manager) return err(c, 'UNAVAILABLE', 'CEO chat is not available', 503);
 	const conversationId = await manager.getConversationId();
 
-	const limit = clampLimit(c.req.query('limit'));
+	// The chatbox shows the active window — the non-compacted messages. Older
+	// messages have been summarized into long-term memory and dropped. The window
+	// is bounded by compaction, so the full active set is returned (no limit).
 	const messages = await c.get('db').query(
 		`SELECT ${MESSAGE_COLUMNS} FROM ceo_messages
-			 WHERE conversation_id = $1
-			 ORDER BY created_at DESC LIMIT $2`,
-		[conversationId, limit],
+			 WHERE conversation_id = $1 AND compacted_at IS NULL
+			 ORDER BY created_at ASC`,
+		[conversationId],
 	);
-	return ok(c, { conversation_id: conversationId, messages: messages.rows.reverse() });
+	return ok(c, { conversation_id: conversationId, messages: messages.rows });
 });
 
 ceoChatRoutes.get('/ceo/messages', async (c) => {
@@ -48,13 +50,13 @@ ceoChatRoutes.get('/ceo/messages', async (c) => {
 	const rows = before
 		? await c.get('db').query(
 				`SELECT ${MESSAGE_COLUMNS} FROM ceo_messages
-				 WHERE conversation_id = $1 AND created_at < $2
+				 WHERE conversation_id = $1 AND compacted_at IS NULL AND created_at < $2
 				 ORDER BY created_at DESC LIMIT $3`,
 				[conversationId, before, limit],
 			)
 		: await c.get('db').query(
 				`SELECT ${MESSAGE_COLUMNS} FROM ceo_messages
-				 WHERE conversation_id = $1
+				 WHERE conversation_id = $1 AND compacted_at IS NULL
 				 ORDER BY created_at DESC LIMIT $2`,
 				[conversationId, limit],
 			);

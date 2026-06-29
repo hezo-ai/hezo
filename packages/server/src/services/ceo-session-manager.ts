@@ -9,15 +9,14 @@ import {
 	CeoMessageRole,
 	CeoMessageStatus,
 	CeoSessionStatus,
-	CHAT_MEMORY_SLUG,
+	CHAT_WINDOW_RETAIN_MESSAGES,
 	DEFAULT_TEAM_ID,
-	DocumentType,
 	PROVIDER_RUNTIME_ADAPTERS,
 	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
 import { trackBackground } from '../lib/background';
-import { getChatHistoryLimit } from '../lib/system-meta';
+import { getMaxChatHistorySize } from '../lib/system-meta';
 import { logger } from '../logger';
 import { signCeoSessionJwt } from '../middleware/auth';
 import {
@@ -33,12 +32,13 @@ import {
 	createAgentChatParser,
 } from './agent-stream-parser';
 import { getProviderCredentialAndModel } from './ai-provider-keys';
+import { getChatMemory, loadActiveWindow, markCompacted, selectFlush } from './chat-memory';
 import { formatContainerConnectivityMessage } from './container-connectivity-preflight';
 import { CONNECTIVITY_STALE_MS, shouldAbortForConnectivity } from './container-connectivity-status';
 import type { ContainerLogStreamer } from './container-logs';
 import { type ContainerRunUser, resolveContainerRunUser } from './container-user';
 import { type ContainerDeps, ensureProjectContainerRunning } from './containers';
-import { getAgentSystemPrompt, getDocument } from './documents';
+import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication } from './effort';
 import { resolveRuntimeForTask } from './runtime-resolver';
 import type { BridgeRunnerArgs } from './ssh-agent';
@@ -61,17 +61,11 @@ Because you roam across every project here, there is **no per-project "Project S
 
 Because this chat is human-facing, refer to projects, tickets, teams, docs, and teammates by their bare slug, identifier, or name (e.g. the project todo6, ticket TO-1, prd.md, @@captain) — never paste raw UUIDs. Tools accept the same slugs and identifiers you use with the operator, so you never need a UUID. Write entity references bare, never wrapped in backticks: bare references render as clickable links in the chat, while backticked ones render as inert code and break the link. Keep replies focused and skip ceremony.
 
-## Chatbox memory
+## Long-term memory
 
-Your context carries a **Chatbox memory** block (below the guide, above the conversation). It is the persisted contents of \`chat-memory.md\` in the hq project, injected in full on every turn, so anything recorded there survives once older messages scroll out of the conversation window.
+Your context carries a **Long-term memory** block (below the guide, above the conversation) — your durable notes across this chat, maintained automatically. The recent conversation is kept verbatim in a rolling window; when it grows past its size cap the whole window is summarized into this long-term memory and the older messages drop out of the window, so the gist of past exchanges survives even after the raw messages scroll away.
 
-Use it for **durable, standing knowledge only**:
-
-- **Record:** operator preferences and guidelines (how they like things done, tone, defaults, recurring decisions), and **anything the operator explicitly asks you to remember** — record that regardless of what it is.
-- **Summarize off-project conversations:** keep a short running summary of any substantial thread that isn't tied to a Hezo project — ad-hoc research, advice, a one-off thing you built for the operator (e.g. "explored 3D engines for a browser game, recommended Babylon.js, built a demo at assets/babylon-demo.html"). Unlike project state, these chats are stored nowhere else, so once the messages scroll out of the window they are lost unless the gist is captured here. Update the summary as such a thread develops, and keep it rough — a line or two per topic, not a transcript.
-- **Do NOT record:** live data you can already fetch each turn — project/ticket/comment contents or status, rosters, counts, or any metadata about them. That is rebuilt into your context from the live database every turn; copying it into memory only goes stale. The roster and the tools are the source of truth for state, not this memory.
-
-When something belongs in memory, update it by **rewriting the whole document via \`write_project_doc\` (project: hq, filename: chat-memory.md)** — read the current memory block, merge the new fact in, and write the full result back. Do not blindly append; keep it short, curated, and free of stale entries. There is no separate "remember" tool — \`write_project_doc\` is how you maintain it.
+You don't need a "remember" instruction from the operator and there's no manual save step for ordinary chat — the system compacts the window into memory for you. When a compaction is due you'll be handed the window and asked to fold its durable points into memory with \`update_chat_memory\`; you may also call that tool yourself any time you want to record something standing. Keep memory short and curated — **durable, standing knowledge only** (operator preferences, decisions, the gist of off-project threads), never live data you can re-fetch each turn (project/ticket/comment state, rosters, counts). That is rebuilt into your context every turn; copying it into memory only goes stale.
 
 ## Producing files for the operator
 
@@ -82,14 +76,46 @@ When the operator asks you to produce a file directly in this chat — an HTML d
 Do **NOT** write the file loose into the workspace (e.g. \`/workspace/demo.html\`) and hand the operator that path — \`/workspace\` lives inside the agent container, not on their machine, so they cannot open it and the file is invisible to them. The asset library is the only durable, operator-reachable home for files you produce here. For a binary deliverable the library can't author (a generated image or PDF), say so rather than pointing at a container path.`;
 
 /**
- * Render the persistent chatbox-memory data block injected into every turn. The
- * curation rules live in CHAT_GUIDE; this is just the current contents (or a
- * placeholder when empty so the agent knows the facility exists).
+ * Render the long-term memory data block injected into every turn. The curation
+ * rules live in CHAT_GUIDE; this is just the current contents (or a placeholder
+ * when empty so the agent knows the facility exists).
  */
-export function formatChatMemoryBlock(content: string): string {
+export function formatLongTermMemoryBlock(content: string): string {
 	const trimmed = content.trim();
 	const body = trimmed === '' ? '_(nothing recorded yet)_' : trimmed;
-	return `## Chatbox memory\n\nPersisted across the conversation (from ${CHAT_MEMORY_SLUG} in hq). Maintain it with write_project_doc — see the guidance above.\n\n${body}`;
+	return `## Long-term memory\n\nMaintained automatically across this chat — see the guidance above. Update it with update_chat_memory.\n\n${body}`;
+}
+
+/**
+ * Prompt for a headless compaction run. The agent gets its current long-term
+ * memory and the full active window, and must rewrite memory (via
+ * `update_chat_memory`) to fold in the window's durable points — not reply to
+ * the operator. The window's raw messages are about to be evicted, so anything
+ * worth keeping has to land in memory now.
+ */
+export function buildCompactionPrompt(currentMemory: string, windowTranscript: string): string {
+	const mem = currentMemory.trim() === '' ? '_(empty)_' : currentMemory.trim();
+	return `# Compact your chat memory
+
+This is a maintenance step, not a reply to the operator. The recent conversation window below has grown past its size cap and is about to be trimmed — all but the last few messages will be dropped from the live chat. Before that happens, update your **long-term memory** so nothing durable is lost.
+
+Call the \`update_chat_memory\` tool with the FULL revised memory markdown (it replaces the stored memory wholesale — there is no append). Merge the window's durable points into the existing memory below; keep it short, curated, and free of stale or duplicate entries.
+
+Record **durable, standing knowledge only**:
+- Operator preferences, guidelines, defaults, tone, and recurring decisions.
+- A rough running gist of any substantial off-project thread (ad-hoc research, advice, a one-off you built for the operator) — a line or two per topic, not a transcript. These chats are stored nowhere else, so capture the gist or it is lost.
+
+Do **NOT** record live data you can re-fetch each turn — project/ticket/comment state, rosters, counts. That goes stale; the tools are the source of truth.
+
+Do not reply to the operator and do not produce any other output — just call update_chat_memory once with the merged result, then stop.
+
+## Current long-term memory
+
+${mem}
+
+## Conversation window to fold in
+
+${windowTranscript}`;
 }
 
 export interface CeoSessionDeps extends RunnerDeps {
@@ -119,15 +145,6 @@ interface CurrentTurn {
 	promise: Promise<void>;
 }
 
-interface CeoMessageRow {
-	id: string;
-	role: string;
-	channel: string;
-	status: string;
-	content: string;
-	created_at: string;
-}
-
 /**
  * Owns the single persistent CEO chat session. Unlike a one-shot task run, the
  * session keeps warm resources (egress proxy, ssh socket, MCP token, runtime
@@ -146,6 +163,10 @@ export class CeoSessionManager {
 	// and spawn their own session/turn. With sends serialized, the interrupt guard in
 	// `sendTurn` correctly aborts the prior turn and only the latest one streams.
 	private turnLock: Promise<unknown> = Promise.resolve();
+	// An in-flight background compaction run (a headless exec that has the agent
+	// fold the window into long-term memory). A new user turn preempts it.
+	private compaction: Promise<void> | null = null;
+	private compactionAbort: AbortController | null = null;
 
 	constructor(private readonly deps: CeoSessionDeps) {}
 
@@ -219,6 +240,14 @@ export class CeoSessionManager {
 		const session = await this.ensureSession();
 		const channel = input.channel ?? CeoChannel.Web;
 
+		// A user turn preempts any in-flight background compaction so the shared
+		// prompt file and container exec are free, and so the new message is part
+		// of the window the next compaction summarizes.
+		if (this.compactionAbort) {
+			this.compactionAbort.abort('interrupted');
+			await this.compaction?.catch(() => undefined);
+		}
+
 		// Interrupt an in-flight reply: abort it and wait for it to finalize
 		// (the run loop persists the partial as `interrupted`) so the next turn's
 		// prompt includes it.
@@ -252,7 +281,8 @@ export class CeoSessionManager {
 		const abort = new AbortController();
 		const promise = this.runTurn(session, assistantMessageId, abort);
 		this.current = { assistantMessageId, abort, promise };
-		trackBackground(promise);
+		// After the reply settles, compact the window if it has grown past the cap.
+		trackBackground(promise.then(() => this.maybeCompact()));
 
 		return { userMessageId, assistantMessageId };
 	}
@@ -541,7 +571,7 @@ export class CeoSessionManager {
 		};
 
 		try {
-			const prompt = await this.composePrompt(session, assistantMessageId);
+			const prompt = await this.composePrompt(session);
 			mkdirSync(dirname(session.promptHostPath), { recursive: true });
 			writeFileSync(session.promptHostPath, prompt);
 
@@ -584,7 +614,7 @@ export class CeoSessionManager {
 		}
 	}
 
-	private async composePrompt(session: LiveSession, excludeMessageId: string): Promise<string> {
+	private async composePrompt(session: LiveSession): Promise<string> {
 		const stored = await getAgentSystemPrompt(this.deps.db, DEFAULT_TEAM_ID, session.ceoMemberId);
 		const resolved = await resolveSystemPrompt(this.deps.db, stored, {
 			teamId: DEFAULT_TEAM_ID,
@@ -598,37 +628,110 @@ export class CeoSessionManager {
 			embedDocs: true,
 		});
 
-		const memoryDoc = await getDocument(this.deps.db, {
-			type: DocumentType.ProjectDoc,
-			teamId: DEFAULT_TEAM_ID,
-			projectId: session.projectId,
-			slug: CHAT_MEMORY_SLUG,
-		});
+		const memory = await getChatMemory(this.deps.db, session.ceoMemberId);
 
-		const historyLimit = await getChatHistoryLimit(this.deps.db);
-		const history = await this.deps.db.query<CeoMessageRow>(
-			`SELECT id, role, channel, status, content, created_at FROM ceo_messages
-			 WHERE conversation_id = $1 AND id != $2
-			 ORDER BY created_at DESC LIMIT $3`,
-			[session.conversationId, excludeMessageId, historyLimit],
-		);
-		const transcript = history.rows
-			.reverse()
-			.filter((r) => r.content.trim() !== '')
-			.map((r) => `${roleLabel(r.role)}: ${r.content}`)
-			.join('\n\n');
+		// The full active (non-compacted) window IS the short-term memory — its size
+		// is bounded by compaction, so there's no per-turn message limit here.
+		const window = await loadActiveWindow(this.deps.db, session.conversationId);
+		const transcript = window.map((r) => `${roleLabel(r.role)}: ${r.content}`).join('\n\n');
 
 		return [
 			resolved,
 			session.promptDirective ?? '',
 			CHAT_GUIDE,
-			formatChatMemoryBlock(memoryDoc?.content ?? ''),
+			formatLongTermMemoryBlock(memory?.content ?? ''),
 			'## Conversation so far',
 			transcript,
 			'Reply to the latest operator message as the CEO.',
 		]
 			.filter((s) => s.trim() !== '')
 			.join('\n\n');
+	}
+
+	/**
+	 * Compact the active window if it has grown past the byte cap. Runs in the
+	 * background after a reply settles; skipped when a newer turn is already in
+	 * flight (it will retry after that turn) or when a compaction is already
+	 * running. The agent does the summarization — this just orchestrates.
+	 */
+	private async maybeCompact(): Promise<void> {
+		const session = this.live;
+		if (!session) return;
+		if (this.current || this.compaction) return;
+		const abort = new AbortController();
+		this.compactionAbort = abort;
+		const run = this.runCompaction(session, abort);
+		this.compaction = run;
+		try {
+			await run;
+		} catch (e) {
+			log.error('CEO chat compaction failed', e);
+		} finally {
+			if (this.compactionAbort === abort) this.compactionAbort = null;
+			if (this.compaction === run) this.compaction = null;
+		}
+	}
+
+	/**
+	 * Headless compaction run: hand the agent the whole active window and have it
+	 * fold the durable points into long-term memory via `update_chat_memory`, then
+	 * evict all but the latest few messages. No `ceo_message`, no broadcast — the
+	 * operator sees nothing. Eviction is gated on the agent actually advancing its
+	 * memory this run, so a no-op (or aborted) run loses nothing.
+	 */
+	private async runCompaction(session: LiveSession, abort: AbortController): Promise<void> {
+		const window = await loadActiveWindow(this.deps.db, session.conversationId);
+		const maxBytes = await getMaxChatHistorySize(this.deps.db);
+		const flush = selectFlush(
+			window.map((m) => ({
+				id: m.id,
+				bytes: Buffer.byteLength(m.content, 'utf8'),
+				line: `${roleLabel(m.role)}: ${m.content}`,
+			})),
+			maxBytes,
+			CHAT_WINDOW_RETAIN_MESSAGES,
+		);
+		if (!flush.overCap || flush.evictIds.length === 0) return;
+
+		const memory = await getChatMemory(this.deps.db, session.ceoMemberId);
+		const before = memory?.updated_at ?? null;
+		const prompt = buildCompactionPrompt(memory?.content ?? '', flush.windowTranscript);
+		mkdirSync(dirname(session.promptHostPath), { recursive: true });
+		writeFileSync(session.promptHostPath, prompt);
+		try {
+			const execId = await this.deps.docker.execCreate(session.containerId, {
+				Cmd: session.execCmd,
+				Env: session.env,
+				WorkingDir: CHAT_WORKING_DIR,
+				User: session.runUser.name,
+				AttachStdout: true,
+				AttachStderr: true,
+			});
+			// Drain output; the reply text is irrelevant — the memory write is the
+			// real product, landed via the update_chat_memory MCP tool.
+			await this.deps.docker.execStart(execId, { signal: abort.signal, onChunk: () => undefined });
+		} catch (e) {
+			// A new user turn preempts compaction (shared prompt file) — that's a
+			// clean stop, not a failure; nothing is evicted and it retries later.
+			if (abort.signal.aborted) return;
+			throw e;
+		} finally {
+			rmSync(session.promptHostPath, { force: true });
+		}
+		if (abort.signal.aborted) return;
+
+		// Gate eviction on the agent having written memory this run (any
+		// update_chat_memory call bumps updated_at). If it didn't, leave the window
+		// intact — the next reply re-triggers compaction.
+		const after = await getChatMemory(this.deps.db, session.ceoMemberId);
+		const advanced = after !== null && (before === null || after.updated_at !== before);
+		if (advanced) {
+			await markCompacted(this.deps.db, flush.evictIds);
+		} else {
+			log.warn('CEO compaction did not update long-term memory; window left intact', {
+				session: session.sessionId,
+			});
+		}
 	}
 
 	private async checkHealth(): Promise<void> {

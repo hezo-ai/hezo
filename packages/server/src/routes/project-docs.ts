@@ -1,8 +1,6 @@
 import {
 	ApprovalType,
 	AuthType,
-	CHAT_MEMORY_SLUG,
-	DEFAULT_TEAM_ID,
 	DocumentType,
 	isMarkdownDocSlug,
 	repoNameFromIdentifier,
@@ -145,12 +143,6 @@ projectDocsRoutes.delete('/projects/:projectId/docs/:filename', async (c) => {
 	const filename = c.req.param('filename');
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
-
-	// The chatbox memory doc lives only in the HQ project (the default team) and
-	// is permanent — block deletion by any principal.
-	if (teamId === DEFAULT_TEAM_ID && filename === CHAT_MEMORY_SLUG) {
-		return err(c, 'FORBIDDEN', `'${filename}' is the chatbox memory and cannot be deleted`, 403);
-	}
 
 	const actorMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
 	const removed = await deleteDocument(

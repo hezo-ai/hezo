@@ -90,7 +90,8 @@ every project, task, and roster.
 The chat is also the control surface for the things that are awkward to click through:
 scoping work, reorganising a team, or changing how an agent behaves. State what you want
 in plain language; the CEO proposes the change and asks you to approve anything that
-matters. Standing preferences and guidelines you ask it to remember persist in the CEO's
-[chatbox memory](/docs/concepts/documents-and-memory#chatbox-memory) — a `chat-memory.md`
-document injected into every turn — so you don't repeat yourself. Just tell the CEO what to
-remember and it records it there; you can also read and edit that memory yourself.
+matters. Standing preferences and guidelines persist in the CEO's
+[long-term chat memory](/docs/concepts/documents-and-memory#long-term-chat-memory), which it
+maintains **automatically** as your conversations are compacted — so you don't repeat
+yourself and never have to tell it to remember. You can review and edit that memory yourself
+on the CEO's **Chat history** tab.

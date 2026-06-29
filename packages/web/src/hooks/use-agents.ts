@@ -39,6 +39,8 @@ export interface Agent {
 	created_at: string;
 	/** True for HQ agents (CEO/Coach) surfaced as virtual members of this project. */
 	is_instance?: boolean;
+	/** True when the agent has a live chatbox (and thus a Chat history tab). CEO only today. */
+	chat_enabled?: boolean;
 }
 
 export interface AgentSystemPromptDoc {

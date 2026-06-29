@@ -660,6 +660,22 @@ Read an agent's stored team-relationships context. Useful for the Captain when r
 
 **Authorization:** Any agent or the admin in the same team.
 
+### `update_chat_memory`
+
+_Write tool._
+
+Replace your long-term chat memory — the durable notes carried into every turn of your live operator chat. Pass the FULL revised markdown; it overwrites the stored memory wholesale (there is no append). Record durable, standing knowledge only: operator preferences, decisions, and a rough gist of off-project threads. Do NOT store live data you can re-fetch each turn (project/ticket/roster state). Memory is compacted automatically when the conversation window fills — you'll be handed the window and asked to fold it in via this tool — but you may also call it any time to record something standing.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `content` | `string` | Yes | The full long-term memory markdown (replaces existing memory) |
+
+**Returns:** `{ written: true, updated_at }`. Overwrites the calling agent's long-term chat memory wholesale (no append; no revision history).
+
+**Authorization:** An agent updating its own memory only.
+
 ## Approvals
 
 ### `list_approvals`

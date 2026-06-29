@@ -7,16 +7,18 @@ import { ExpandableText } from '../../../../../components/ui/expandable-text';
 import { useAgent } from '../../../../../hooks/use-agents';
 import { agentRuntimeStatusMeta } from '../../../../../lib/status-meta';
 
-const tabs = [
-	{
-		label: 'Executions',
-		to: '/projects/$projectId/agents/$agentId/executions' as const,
-	},
-	{
-		label: 'Settings',
-		to: '/projects/$projectId/agents/$agentId/settings' as const,
-	},
-];
+const executionsTab = {
+	label: 'Executions',
+	to: '/projects/$projectId/agents/$agentId/executions' as const,
+};
+const chatHistoryTab = {
+	label: 'Chat history',
+	to: '/projects/$projectId/agents/$agentId/chat-history' as const,
+};
+const settingsTab = {
+	label: 'Settings',
+	to: '/projects/$projectId/agents/$agentId/settings' as const,
+};
 
 function AgentLayout() {
 	const { projectId, agentId } = Route.useParams();
@@ -25,6 +27,12 @@ function AgentLayout() {
 	const params = { projectId, agentId };
 
 	if (isLoading || !agent) return <div className="text-text-2">Loading...</div>;
+
+	// The Chat history tab (long-term compacted memory) shows only for chat-enabled
+	// agents — those with a live chatbox. Today that is just the CEO.
+	const tabs = agent.chat_enabled
+		? [executionsTab, chatHistoryTab, settingsTab]
+		: [executionsTab, settingsTab];
 
 	return (
 		<div className="max-w-3xl">
