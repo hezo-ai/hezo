@@ -119,8 +119,21 @@ async function call(
 			id: 1,
 		}),
 	});
-	const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-	return JSON.parse(body.result.content[0].text) as Record<string, unknown>;
+	const body = (await res.json()) as {
+		result?: { content: Array<{ text: string }> };
+		error?: { message: string };
+	};
+	// A schema-validation failure comes back not as JSON but as an MCP error string
+	// ("MCP error -32602: Input validation error: ...") in the result content (or, in
+	// some transports, a JSON-RPC error). Surface either as { error } so callers
+	// assert on it uniformly alongside the handlers' own in-band { error } results.
+	if (!body.result) return { error: body.error?.message ?? 'unknown error' };
+	const text = body.result.content[0].text;
+	try {
+		return JSON.parse(text) as Record<string, unknown>;
+	} catch {
+		return { error: text };
+	}
 }
 
 // Admin (non-agent) create_task requires an assignee; an agent caller defaults
@@ -547,14 +560,16 @@ describe('create_project / start_team_setup authorization', () => {
 		const ceoId = await instanceCeoId(db);
 		const t = await agentToken(ceoId, DEFAULT_TEAM_ID);
 		const r = await call(t, 'create_project', { name: '   ', description: 'Y' });
-		expect(r.error).toBe('name is required');
+		// Now enforced by the schema (`.trim().min(1)`); the SDK rejects it before the
+		// handler with a JSON-RPC validation error carrying the field message.
+		expect(r.error).toContain('name is required');
 	});
 
 	it('create_project: missing description', async () => {
 		const ceoId = await instanceCeoId(db);
 		const t = await agentToken(ceoId, DEFAULT_TEAM_ID);
 		const r = await call(t, 'create_project', { name: 'Has Name', description: '  ' });
-		expect(r.error).toBe('description is required');
+		expect(r.error).toContain('description is required');
 	});
 
 	it('start_team_setup only callable by agents', async () => {

@@ -1596,8 +1596,12 @@ export function registerTools(
 	);
 
 	const createProjectShape = {
-		name: z.string().describe('Project name'),
-		description: z.string().describe('Project description'),
+		name: z.string().trim().min(1, 'name is required').describe('Project name'),
+		description: z
+			.string()
+			.trim()
+			.min(1, 'description is required')
+			.describe('Project description'),
 		task_prefix: z
 			.string()
 			.optional()
@@ -1642,15 +1646,11 @@ export function registerTools(
 				return { error: 'Only the CEO can create projects' };
 			}
 
-			// The SDK validated args against createProjectShape (presence + type), so
-			// optionals are already `string | undefined` and required fields are
-			// strings — no per-field `typeof` ternaries. Only the value-level guards
-			// (`z.string()` still admits "") stay below.
+			// The SDK validated args against createProjectShape, so name/description
+			// are already trimmed, non-empty strings (`.trim().min(1)`) and optionals
+			// are `string | undefined` — no per-field ternaries or empty-checks here.
 			const input = typedArgs(createProjectShape, args);
-			const name = input.name.trim();
-			const description = input.description.trim();
-			if (!name) return { error: 'name is required' };
-			if (!description) return { error: 'description is required' };
+			const { name, description } = input;
 			if (!containerDeps) {
 				return { error: 'Project creation is not available in this context' };
 			}
@@ -2920,7 +2920,12 @@ export function registerTools(
 		{
 			project: projectArg(),
 			agent_id: z.string().describe('Target agent — its slug (e.g. "engineer") or member ID'),
-			summary: z.string().describe('The new summary, ≤1000 chars'),
+			summary: z
+				.string()
+				.trim()
+				.min(1, 'summary must be non-empty')
+				.max(1000, 'summary too long (max 1000)')
+				.describe('The new summary, ≤1000 chars'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -2931,11 +2936,10 @@ export function registerTools(
 				return { error: 'Access denied' };
 			}
 
-			const summary = String(args.summary ?? '').trim();
-			if (summary.length === 0) return { error: 'summary must be non-empty' };
-			if (summary.length > 1000) {
-				return { error: `summary too long (${summary.length} chars; max 1000)` };
-			}
+			// Length/non-empty enforced by the schema; the SDK rejects violations
+			// before the handler. `.trim()` in the schema means the stored value is
+			// already trimmed.
+			const summary = (args.summary as string).trim();
 
 			// Accept a slug or member ID; the team_id filter scopes the write so an HQ
 			// agent (resolveAgentId's fallback) can't be summarised through this team.
@@ -2968,7 +2972,12 @@ export function registerTools(
 		'Save the team-level collaboration summary for a team (≤4000 chars, plain prose, may span paragraphs). Only callable by the Captain of that team.',
 		{
 			project: projectArg(),
-			summary: z.string().describe('The new team summary, ≤4000 chars'),
+			summary: z
+				.string()
+				.trim()
+				.min(1, 'summary must be non-empty')
+				.max(4000, 'summary too long (max 4000)')
+				.describe('The new team summary, ≤4000 chars'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -2979,11 +2988,8 @@ export function registerTools(
 				return { error: 'Access denied: only the Captain can update the team summary' };
 			}
 
-			const summary = String(args.summary ?? '').trim();
-			if (summary.length === 0) return { error: 'summary must be non-empty' };
-			if (summary.length > 4000) {
-				return { error: `summary too long (${summary.length} chars; max 4000)` };
-			}
+			// Length/non-empty enforced by the schema; `.trim()` already trimmed it.
+			const summary = (args.summary as string).trim();
 
 			await db.query('UPDATE teams SET summary = $1, updated_at = now() WHERE id = $2', [
 				summary,
@@ -3002,15 +3008,16 @@ export function registerTools(
 		{
 			reason: z
 				.string()
-				.min(1)
+				.trim()
+				.min(1, 'reason must be non-empty')
 				.describe('One-line explanation of why there is nothing to do this run.'),
 		},
 		async (args, db, auth) => {
 			if (auth.type !== AuthType.Agent || !auth.runId) {
 				return { error: 'report_no_work is only available within an agent run' };
 			}
-			const reason = String(args.reason ?? '').trim();
-			if (reason.length === 0) return { error: 'reason must be non-empty' };
+			// Non-empty (after trim) enforced by the schema.
+			const reason = (args.reason as string).trim();
 			await markRunReportedNoWork(db, auth.runId, reason);
 			return { ok: true };
 		},
@@ -3024,7 +3031,12 @@ export function registerTools(
 		{
 			project: projectArg(),
 			agent_id: z.string().describe('Target agent — its slug (e.g. "engineer") or member ID'),
-			content: z.string().describe('The new team_context, ≤6000 chars'),
+			content: z
+				.string()
+				.trim()
+				.min(1, 'content must be non-empty')
+				.max(6000, 'content too long (max 6000)')
+				.describe('The new team_context, ≤6000 chars'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -3035,11 +3047,8 @@ export function registerTools(
 				return { error: 'Access denied: only the Captain can update agent team contexts' };
 			}
 
-			const content = String(args.content ?? '').trim();
-			if (content.length === 0) return { error: 'content must be non-empty' };
-			if (content.length > 6000) {
-				return { error: `content too long (${content.length} chars; max 6000)` };
-			}
+			// Length/non-empty enforced by the schema; `.trim()` already trimmed it.
+			const content = (args.content as string).trim();
 
 			// Accept a slug or member ID; the team_id filter scopes the write so an HQ
 			// agent (resolveAgentId's fallback) can't be written through this team.
@@ -3188,6 +3197,8 @@ export function registerTools(
 			project: projectArg(),
 			agent: z
 				.string()
+				.trim()
+				.min(1, 'agent is required')
 				.describe(
 					'Target agent — its slug (e.g. "engineer") or member ID. Must be a member of this project\'s team.',
 				),
@@ -3216,8 +3227,8 @@ export function registerTools(
 				};
 			}
 
-			const ref = String(args.agent ?? '').trim();
-			if (!ref) return { error: 'agent is required' };
+			// agent non-empty enforced by the schema.
+			const ref = (args.agent as string).trim();
 			const target = await db.query<{ id: string; slug: string }>(
 				`SELECT ma.id, ma.slug FROM member_agents ma
 				 JOIN members m ON m.id = ma.id
@@ -3874,6 +3885,8 @@ export function registerTools(
 			project: projectArg(),
 			name: z
 				.string()
+				.trim()
+				.min(1, 'name is required')
 				.describe('Server identifier — used as the MCP descriptor name and as the unique key.'),
 			kind: z.enum(['saas', 'local']).describe('saas = HTTP MCP, local = stdio MCP'),
 			config: z
@@ -3883,11 +3896,11 @@ export function registerTools(
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
-			const name = String(args.name ?? '').trim();
+			// name non-empty enforced by the schema; kind is a schema enum.
+			const name = (args.name as string).trim();
 			const kind = args.kind as 'saas' | 'local';
 			const config = args.config as Record<string, unknown>;
 
-			if (!name) return { error: 'name is required' };
 			if (kind === 'saas') {
 				if (!config?.url || typeof config.url !== 'string') {
 					return { error: 'saas connections require config.url (string)' };

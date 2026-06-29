@@ -114,8 +114,21 @@ async function call(
 			id: 1,
 		}),
 	});
-	const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-	return JSON.parse(body.result.content[0].text) as Record<string, unknown>;
+	const body = (await res.json()) as {
+		result?: { content: Array<{ text: string }> };
+		error?: { message: string };
+	};
+	// A schema-validation failure comes back not as JSON but as an MCP error string
+	// ("MCP error -32602: Input validation error: ...") in the result content (or, in
+	// some transports, a JSON-RPC error). Surface either as { error } so callers
+	// assert on it uniformly alongside the handlers' own in-band { error } results.
+	if (!body.result) return { error: body.error?.message ?? 'unknown error' };
+	const text = body.result.content[0].text;
+	try {
+		return JSON.parse(text) as Record<string, unknown>;
+	} catch {
+		return { error: text };
+	}
 }
 
 const admin = (toolName: string, args: Record<string, unknown> = {}) => call(token, toolName, args);
