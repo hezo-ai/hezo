@@ -118,31 +118,6 @@ export function useInfiniteTasks(
 	});
 }
 
-export interface GlobalTask extends Task {
-	team_slug: string;
-	team_name: string;
-}
-
-/** Aggregates tasks across every visible project the user can see (the global "All Tasks"). */
-export function useAllTasks(projects: { slug: string; teamSlug: string; teamName: string }[]) {
-	const slugs = projects.map((p) => p.slug).sort();
-	return useQuery({
-		queryKey: queryKeys.tasksAll(slugs),
-		queryFn: async (): Promise<GlobalTask[]> => {
-			const perProject = await Promise.all(
-				projects.map(async (p) => {
-					const { data: rows } = await api.getPaginated<Task>(`/api/projects/${p.slug}/tasks`, {
-						per_page: '200',
-					});
-					return rows.map((task) => ({ ...task, team_slug: p.teamSlug, team_name: p.teamName }));
-				}),
-			);
-			return perProject.flat();
-		},
-		enabled: projects.length > 0,
-	});
-}
-
 export function useTask(projectId: string, taskId: string) {
 	return useQuery({
 		queryKey: queryKeys.projects.task(projectId, taskId),

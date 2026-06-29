@@ -12,9 +12,12 @@ test.describe('app header + project rail responsiveness', () => {
 		await page.goto('/home');
 
 		await expect(page.getByTestId('app-header')).toBeVisible({ timeout: 15000 });
-		// Admin (superuser) instance shortcuts live in the header's top-right group.
-		await expect(page.getByTestId('app-header-skills')).toBeVisible();
+		// The header's top-right group: Inbox + Settings (Skills now lives in the
+		// Settings sidebar, and the All Tasks view was removed).
 		await expect(page.getByTestId('app-header-settings')).toBeVisible();
+		await expect(page.getByTestId('app-header-inbox')).toBeVisible();
+		await expect(page.getByTestId('app-header-skills')).toHaveCount(0);
+		await expect(page.getByTestId('app-header-all-tasks')).toHaveCount(0);
 		// The avatar rail is inline at ≥768; the hamburger is hidden at ≥1024.
 		await expect(page.getByTestId('project-rail')).toBeVisible();
 		await expect(page.getByTestId('mobile-nav-toggle')).toBeHidden();

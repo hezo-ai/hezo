@@ -3,7 +3,6 @@ import { ExternalLink, Loader2, Pencil, Plus, Search, Trash2 } from 'lucide-reac
 import { useEffect, useState } from 'react';
 import { MarkdownEditor } from '../../components/markdown-editor';
 import { RevisionsPanel } from '../../components/revisions-panel';
-import { SettingsBreadcrumb } from '../../components/settings-breadcrumb';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
@@ -264,12 +263,7 @@ function InstanceSkillsPage() {
 			</>
 		);
 
-	return (
-		<div className="max-w-[900px] w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
-			<SettingsBreadcrumb label="Skills" />
-			{content_}
-		</div>
-	);
+	return <div className="max-w-[900px]">{content_}</div>;
 }
 
 /**

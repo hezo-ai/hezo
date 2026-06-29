@@ -1,7 +1,6 @@
 import { Link } from '@tanstack/react-router';
-import { BookOpen, FolderKanban, Inbox, Search, Settings } from 'lucide-react';
+import { Inbox, Search, Settings } from 'lucide-react';
 import { useGlobalInboxUnreadCount } from '../hooks/use-inbox-count';
-import { useMe } from '../hooks/use-me';
 import { CountOverlayBadge } from './ui/count-overlay-badge';
 import { Logo } from './ui/logo';
 import { ThemeSwitcher } from './ui/theme-switcher';
@@ -11,9 +10,9 @@ const iconLinkClass =
 
 /**
  * The global top header: instance-wide navigation. Only Home sits at the
- * top-left; everything else (Inbox, All Tasks, the Admin-only Skills
- * shortcut, Settings, and the theme switcher) lives in the top-right group.
- * Connectors and Credentials are reached through the Settings sidebar.
+ * top-left; everything else (Inbox, Settings, and the theme switcher) lives in
+ * the top-right group. Skills, Connectors, and Credentials are reached through
+ * the Settings sidebar.
  * Below `lg` the navigation is a side drawer, so the logo doubles as the drawer
  * toggle; at `lg`+ the rail/sidebar are persistent and the logo links home.
  */
@@ -24,7 +23,6 @@ export function AppHeader({
 	onOpenDrawer: () => void;
 	onOpenSearch: () => void;
 }) {
-	const { data: me } = useMe();
 	const inboxUnread = useGlobalInboxUnreadCount();
 
 	return (
@@ -79,26 +77,6 @@ export function AppHeader({
 						<CountOverlayBadge count={inboxUnread} testId="app-header-inbox-badge" />
 					</span>
 				</Link>
-				<Link
-					to="/home/tasks"
-					aria-label="All Tasks"
-					title="All Tasks"
-					data-testid="app-header-all-tasks"
-					className={iconLinkClass}
-				>
-					<FolderKanban className="w-4 h-4" />
-				</Link>
-				{me?.is_superuser && (
-					<Link
-						to="/settings/skills"
-						aria-label="Skills"
-						title="Skills"
-						data-testid="app-header-skills"
-						className={iconLinkClass}
-					>
-						<BookOpen className="w-4 h-4" />
-					</Link>
-				)}
 				<Link
 					to="/settings"
 					aria-label="Settings"

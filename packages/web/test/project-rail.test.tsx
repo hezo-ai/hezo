@@ -190,7 +190,7 @@ test('rail avatars badge each project with its outstanding inbox count', async (
 
 test('the mobile drawer rail exposes a Home button that the desktop rail omits', async () => {
 	const { findByTestId, queryByTestId, getByTestId, user, router } = await renderApp({
-		initialPath: '/home/tasks',
+		initialPath: '/home',
 		seed: async () => {
 			await seedWorkspace();
 		},

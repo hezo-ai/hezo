@@ -1,6 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { AuditLogTable } from '../../components/audit-log-table';
-import { SettingsBreadcrumb } from '../../components/settings-breadcrumb';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { useInstanceAuditLog } from '../../hooks/use-audit-log';
 import { useMe } from '../../hooks/use-me';
@@ -35,12 +34,7 @@ function InstanceAuditLogPage() {
 			</>
 		);
 
-	return (
-		<div className="max-w-[1000px] w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
-			<SettingsBreadcrumb label="Activity" />
-			{body}
-		</div>
-	);
+	return <div className="max-w-[1000px]">{body}</div>;
 }
 
 export const Route = createFileRoute('/settings/audit-log')({
