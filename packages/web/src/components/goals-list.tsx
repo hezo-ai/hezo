@@ -15,6 +15,7 @@ import { GoalSmartGuidance } from './goal-smart-guidance';
 import { ProjectProgressSummary } from './project-progress-summary';
 import { Button } from './ui/button';
 import { EmptyState } from './ui/empty-state';
+import { HelpDialog } from './ui/help-dialog';
 
 interface GoalsListProps {
 	projectId: string;
@@ -243,8 +244,22 @@ export function GoalsList({ projectId }: GoalsListProps) {
 		<div>
 			<ProjectProgressSummary projectId={projectId} />
 			<div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-				<div className="flex items-center gap-3">
+				<div className="flex items-center gap-1.5">
 					<h1 className="text-lg font-semibold text-text-1">Goals</h1>
+					<HelpDialog
+						title="What makes a good goal?"
+						triggerLabel="What makes a good goal?"
+						data-testid="goals-help"
+					>
+						<div className="flex flex-col gap-3">
+							<p className="text-sm text-text-2 leading-relaxed">
+								Goals are the outcomes the Captain steers the team toward. Write each one so
+								progress is unambiguous — strong goals follow the{' '}
+								<span className="font-semibold">SMART</span> framework:
+							</p>
+							<GoalSmartGuidance className="border-0 bg-transparent p-0" />
+						</div>
+					</HelpDialog>
 					<ViewFilter view={view} onChange={setView} />
 				</div>
 				<Button onClick={() => setCreateOpen(true)} data-testid="goals-new-goal">
@@ -252,16 +267,6 @@ export function GoalsList({ projectId }: GoalsListProps) {
 					New goal
 				</Button>
 			</div>
-
-			<details
-				className="mb-4 rounded-md border border-border bg-surface px-3 py-2"
-				data-testid="goals-smart-disclosure"
-			>
-				<summary className="cursor-pointer text-xs text-text-2 select-none">
-					What makes a good goal? (SMART)
-				</summary>
-				<GoalSmartGuidance className="mt-2 border-0 bg-transparent p-0" />
-			</details>
 
 			{goals.length === 0 ? (
 				<div className="py-12 text-center text-[13px] text-text-3" data-testid="goals-empty-view">
