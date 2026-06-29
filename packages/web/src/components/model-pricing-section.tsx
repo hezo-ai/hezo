@@ -1,13 +1,6 @@
-import { createFileRoute } from '@tanstack/react-router';
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useState } from 'react';
-import { Badge } from '../../components/ui/badge';
-import { Button } from '../../components/ui/button';
-import { type Column, DataTable } from '../../components/ui/data-table';
-import { InfoTooltip } from '../../components/ui/info-tooltip';
-import { Input } from '../../components/ui/input';
-import { Tooltip } from '../../components/ui/tooltip';
-import { useMe } from '../../hooks/use-me';
+import { useMe } from '../hooks/use-me';
 import {
 	type CreateOverridePayload,
 	type ModelPricingRow,
@@ -15,7 +8,13 @@ import {
 	useDeleteModelPricingOverride,
 	useModelPricing,
 	useRefreshModelPricing,
-} from '../../hooks/use-model-pricing';
+} from '../hooks/use-model-pricing';
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
+import { type Column, DataTable } from './ui/data-table';
+import { InfoTooltip } from './ui/info-tooltip';
+import { Input } from './ui/input';
+import { Tooltip } from './ui/tooltip';
 
 const PER_MILLION = 1_000_000;
 
@@ -34,7 +33,12 @@ function parsePerMillion(value: string): number | undefined {
 	return n / PER_MILLION;
 }
 
-function ModelPricingPage() {
+/**
+ * Model pricing management, rendered below the AI providers table on the
+ * AI providers settings page. Superuser-only: returns null for board users so
+ * the page they *can* reach (for the provider list) doesn't show a dead panel.
+ */
+export function ModelPricingSection() {
 	const { data: me } = useMe();
 	const { data: rows = [] } = useModelPricing();
 	const createOverride = useCreateModelPricingOverride();
@@ -152,113 +156,105 @@ function ModelPricingPage() {
 		},
 	];
 
-	const content =
-		me && !me.is_superuser ? (
-			<p className="text-[13px] text-text-2">
-				Model pricing is managed by the Admin. You don't have access to this page.
-			</p>
-		) : (
-			<>
-				<div className="flex items-start justify-between gap-3 mb-4">
-					<div>
-						<div className="flex items-center gap-1.5">
-							<h1 className="text-[22px] font-medium">Model pricing</h1>
-							<InfoTooltip
-								label="About model pricing"
-								content="Per-model token rates used to compute the dollar cost of every agent run. Rows auto-refresh from the public LiteLLM feed; add a manual override for a model the feed lacks (or to correct one) — overrides win."
-								data-testid="model-pricing-info"
-							/>
-						</div>
-						<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
-							Per-token rates that turn a run's token counts into a dollar cost, across every
-							runtime. Feed rows refresh from <span className="font-mono">LiteLLM</span>; a manual
-							override wins for that model — use it for ids the feed doesn't carry (e.g.{' '}
-							<span className="font-mono">deepseek-v4-pro</span>
-							).
-						</p>
-					</div>
-					<div className="flex items-center gap-2 shrink-0">
-						<Button
-							variant="secondary"
-							size="sm"
-							onClick={() => refresh.mutate()}
-							disabled={refresh.isPending}
-						>
-							<RefreshCw className={`w-3 h-3 ${refresh.isPending ? 'animate-spin' : ''}`} /> Refresh
-						</Button>
-						<Button
-							variant="secondary"
-							size="sm"
-							onClick={() => (showForm ? resetForm() : setShowForm(true))}
-						>
-							<Plus className="w-3 h-3" /> Override
-						</Button>
-					</div>
-				</div>
+	// Board users can reach the AI providers page but don't manage pricing.
+	if (me && !me.is_superuser) return null;
 
-				{showForm && (
-					<form onSubmit={handleSubmit} className="flex flex-col gap-2 mb-4">
-						<Input
-							placeholder="Model id (e.g. deepseek-v4-pro)"
-							value={modelId}
-							onChange={(e) => setModelId(e.target.value)}
-							required
+	return (
+		<section className="mt-10 pt-8 border-t border-border">
+			<div className="flex items-start justify-between gap-3 mb-4">
+				<div>
+					<div className="flex items-center gap-1.5">
+						<h2 className="text-base font-medium">Model pricing</h2>
+						<InfoTooltip
+							label="About model pricing"
+							content="Per-model token rates used to compute the dollar cost of every agent run. Rows auto-refresh from the public LiteLLM feed; add a manual override for a model the feed lacks (or to correct one) — overrides win."
+							data-testid="model-pricing-info"
 						/>
-						<div className="flex flex-col sm:flex-row gap-2">
-							<Input
-								placeholder="Input $ / Mtok"
-								value={input}
-								onChange={(e) => setInput(e.target.value)}
-								required
-								className="flex-1"
-							/>
-							<Input
-								placeholder="Output $ / Mtok"
-								value={output}
-								onChange={(e) => setOutput(e.target.value)}
-								required
-								className="flex-1"
-							/>
-						</div>
-						<div className="flex flex-col sm:flex-row gap-2">
-							<Input
-								placeholder="Cache read $ / Mtok (optional)"
-								value={cacheRead}
-								onChange={(e) => setCacheRead(e.target.value)}
-								className="flex-1"
-							/>
-							<Input
-								placeholder="Cache write $ / Mtok (optional)"
-								value={cacheCreation}
-								onChange={(e) => setCacheCreation(e.target.value)}
-								className="flex-1"
-							/>
-						</div>
-						{error && <p className="text-[13px] text-danger">{error}</p>}
-						<div className="flex gap-2">
-							<Button type="submit" size="sm" disabled={createOverride.isPending}>
-								Save override
-							</Button>
-							<Button type="button" variant="secondary" size="sm" onClick={resetForm}>
-								Cancel
-							</Button>
-						</div>
-					</form>
-				)}
-
-				{!rows.length ? (
-					<p className="text-[13px] text-text-2">
-						No pricing rows yet. Refresh from the feed, or add a manual override above.
+					</div>
+					<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
+						Per-token rates that turn a run's token counts into a dollar cost, across every runtime.
+						Feed rows refresh from <span className="font-mono">LiteLLM</span>; a manual override
+						wins for that model — use it for ids the feed doesn't carry (e.g.{' '}
+						<span className="font-mono">deepseek-v4-pro</span>
+						).
 					</p>
-				) : (
-					<DataTable columns={columns} data={rows} rowKey={(row) => row.id} />
-				)}
-			</>
-		);
+				</div>
+				<div className="flex items-center gap-2 shrink-0">
+					<Button
+						variant="secondary"
+						size="sm"
+						onClick={() => refresh.mutate()}
+						disabled={refresh.isPending}
+					>
+						<RefreshCw className={`w-3 h-3 ${refresh.isPending ? 'animate-spin' : ''}`} /> Refresh
+					</Button>
+					<Button
+						variant="secondary"
+						size="sm"
+						onClick={() => (showForm ? resetForm() : setShowForm(true))}
+					>
+						<Plus className="w-3 h-3" /> Override
+					</Button>
+				</div>
+			</div>
 
-	return <div className="max-w-[900px]">{content}</div>;
+			{showForm && (
+				<form onSubmit={handleSubmit} className="flex flex-col gap-2 mb-4">
+					<Input
+						placeholder="Model id (e.g. deepseek-v4-pro)"
+						value={modelId}
+						onChange={(e) => setModelId(e.target.value)}
+						required
+					/>
+					<div className="flex flex-col sm:flex-row gap-2">
+						<Input
+							placeholder="Input $ / Mtok"
+							value={input}
+							onChange={(e) => setInput(e.target.value)}
+							required
+							className="flex-1"
+						/>
+						<Input
+							placeholder="Output $ / Mtok"
+							value={output}
+							onChange={(e) => setOutput(e.target.value)}
+							required
+							className="flex-1"
+						/>
+					</div>
+					<div className="flex flex-col sm:flex-row gap-2">
+						<Input
+							placeholder="Cache read $ / Mtok (optional)"
+							value={cacheRead}
+							onChange={(e) => setCacheRead(e.target.value)}
+							className="flex-1"
+						/>
+						<Input
+							placeholder="Cache write $ / Mtok (optional)"
+							value={cacheCreation}
+							onChange={(e) => setCacheCreation(e.target.value)}
+							className="flex-1"
+						/>
+					</div>
+					{error && <p className="text-[13px] text-danger">{error}</p>}
+					<div className="flex gap-2">
+						<Button type="submit" size="sm" disabled={createOverride.isPending}>
+							Save override
+						</Button>
+						<Button type="button" variant="secondary" size="sm" onClick={resetForm}>
+							Cancel
+						</Button>
+					</div>
+				</form>
+			)}
+
+			{!rows.length ? (
+				<p className="text-[13px] text-text-2">
+					No pricing rows yet. Refresh from the feed, or add a manual override above.
+				</p>
+			) : (
+				<DataTable columns={columns} data={rows} rowKey={(row) => row.id} />
+			)}
+		</section>
+	);
 }
-
-export const Route = createFileRoute('/settings/model-pricing')({
-	component: ModelPricingPage,
-});
