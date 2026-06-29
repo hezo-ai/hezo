@@ -132,10 +132,6 @@ function TaskListSection({
 }
 
 export function TaskList({ projectId }: TaskListProps) {
-	useEffect(() => {
-		console.warn(`[DBG] MOUNT TaskList ${projectId}`);
-		return () => console.warn(`[DBG] UNMOUNT TaskList ${projectId}`);
-	}, [projectId]);
 	const navigate = useNavigate();
 	const project = useProjectMeta(projectId);
 	const showProjectProgress = project != null && !project.is_internal;

@@ -115,8 +115,21 @@ export function invalidateQueriesForRowChange(
 	const keyMapper = TABLE_TO_QUERY_KEY[table];
 	if (!keyMapper) return;
 	for (const key of keyMapper(projectSlug, row)) {
-		queryClient.invalidateQueries({ queryKey: key });
+		// The project-index key (`['projects']`) is the exact key of the project
+		// list query, but it is also a prefix of every project-scoped query
+		// (`['projects', <slug>, ...]`). React Query invalidation is prefix-match by
+		// default, so a fuzzy invalidation here would refetch EVERY project's task
+		// list, comments, etc. on any single project's change — a cross-project
+		// refetch storm. The mappers include it only to refresh the index (task
+		// counts in the rail), so invalidate it exactly.
+		const exact = isProjectIndexKey(key);
+		queryClient.invalidateQueries({ queryKey: key, exact });
 	}
+}
+
+/** True for the project-index key `['projects']` (see invalidate exact-match note). */
+function isProjectIndexKey(key: QueryKey): boolean {
+	return Array.isArray(key) && key.length === 1 && key[0] === 'projects';
 }
 
 /**
@@ -188,7 +201,6 @@ export function useInvalidateOnReconnect(connected: boolean): void {
 	useEffect(() => {
 		if (!connected) return;
 		if (hadConnected.current) {
-			console.warn('[DBG] RECONNECT-NUKE invalidateQueries()');
 			queryClient.invalidateQueries();
 		}
 		hadConnected.current = true;
@@ -239,7 +251,6 @@ export function useShellWebSockets(teams: TeamRoom[] | undefined): void {
 				? resolveProjectSlugByIdOnly(index, row)
 				: resolveProjectSlugForRow(index, row);
 
-			console.warn(`[DBG] WSINVAL t=${table} cid=${cid ?? 'SKIP'} pid=${row.project_id ?? '-'}`);
 			if (cid) {
 				invalidateQueriesForRowChange(queryClient, cid, table, row);
 				if (table === 'member_agents') {
@@ -269,7 +280,7 @@ export function useShellWebSockets(teams: TeamRoom[] | undefined): void {
 		const room = wsRoom.projects();
 		joinRoom(room);
 		const unsubscribe = subscribe(WsMessageType.ProjectsChanged, () => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all(), exact: true });
 			queryClient.invalidateQueries({ queryKey: queryKeys.projectIntakes() });
 		});
 		return () => {
