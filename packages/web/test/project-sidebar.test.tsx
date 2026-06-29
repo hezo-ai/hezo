@@ -97,10 +97,10 @@ test('Git, Container and Activity nest under Settings, disclosed when Settings i
 	expect(within(getNav(container)).getByRole('link', { name: 'Container' })).toBeTruthy();
 });
 
-test('the Team section collapses and expands, hiding the agent list', async () => {
+test('the Team section is always expanded — no collapse/expand toggle', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
-	const { container, findByTestId, user, router } = await renderApp({
+	const { container, findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			ws = await seedWorkspace();
@@ -118,13 +118,9 @@ test('the Team section collapses and expands, hiding the agent list', async () =
 		timeout: 20_000,
 	});
 
-	const collapse = within(getNav(container)).getByRole('button', { name: 'Collapse' });
-	await user.click(collapse);
-	await waitFor(() => expect(within(getNav(container)).queryByText('Captain')).toBeNull());
-
-	const expand = within(getNav(container)).getByRole('button', { name: 'Expand' });
-	await user.click(expand);
-	await waitFor(() => expect(within(getNav(container)).queryByText('Captain')).toBeTruthy());
+	// The agent list is permanently visible — the collapse/expand affordance is gone.
+	expect(within(getNav(container)).queryByRole('button', { name: 'Collapse' })).toBeNull();
+	expect(within(getNav(container)).queryByRole('button', { name: 'Expand' })).toBeNull();
 });
 
 test('HQ agents appear in the Team section as global members linking to the HQ project', async () => {
