@@ -36,6 +36,8 @@ Starts the server on port 3100 with hot reload. In dev, PGlite data persists at 
 | `--log-level <level>` | `info` | Logging verbosity: `debug`, `info`, `warn`, `error` (env: `HEZO_LOG_LEVEL`) |
 | `--keep-old-containers` | `false` | Keep old project containers instead of removing them, for debugging (env: `HEZO_KEEP_OLD_CONTAINERS`) |
 | `--container-bind-host <host>` | `127.0.0.1` | Interface the egress proxy and SSH bridge bind to so agent containers can reach them. On native-Linux Docker the boot connectivity check auto-rebinds them to the detected bridge gateway IP; set this only to pin a specific interface (env: `HEZO_CONTAINER_BIND_HOST`) |
+| `--disable-telemetry` | telemetry on | Turn off the anonymous daily usage report (aggregate counts only — no names, content, or costs). On by default (env: `HEZO_TELEMETRY_ENABLED=0`) |
+| `--telemetry-endpoint <url>` | `https://hezo.ai/api/telemetry` | Where the daily usage report is sent; point at your own collector to keep data in-house (env: `HEZO_TELEMETRY_ENDPOINT`) |
 | `--version` | — | Print the Hezo version and exit (also `hezo version`) |
 
 ## Master Key

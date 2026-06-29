@@ -906,6 +906,21 @@ on Apple Silicon an unsigned replacement may still be Gatekeeper-blocked. Window
 relies on the rename-trick and is not exercised by CI (manual validation). The supervisor keeps
 running its own old code until a full process restart — only the worker is refreshed.
 
+**Anonymous usage telemetry.** `services/telemetry.ts` builds a daily aggregate snapshot of the
+whole install — counts of teams/projects/agents, tasks by status, tasks completed and agent-run
+input/output token sums over the last 24h, and the per-provider run mix — plus the version and
+`os`/`arch`. It carries a random per-install id persisted in `system_meta.instance_id`
+(generated lazily via `getOrCreateInstanceId`, `ON CONFLICT DO NOTHING` so it is stable). It
+deliberately excludes every name, prompt/content field, repo detail, user identity, and any
+`cost_cents`/monetary figure. The `JobManager` `telemetry` cron (`HEZO_TELEMETRY_CRON`, default
+`0 0 5 * * *`) is registered only when `config.telemetry.enabled` (opt-out — on by default,
+disabled by `--disable-telemetry` / `HEZO_TELEMETRY_ENABLED=0`). `reportTelemetry` POSTs the JSON
+to `config.telemetry.endpoint` (default `https://hezo.ai/api/telemetry`) with a direct `fetch` +
+5s timeout — like the update check, server-originated outbound calls do **not** route through the
+agent egress proxy — and fails soft (warn + swallow) so it never disrupts a run. The collector
+(a Cloudflare Pages Function backed by D1 in the website repo) stamps the receipt date and
+upserts one row per `(instance_id, UTC day)`; aggregates are shown at `hezo.ai/stats`.
+
 ---
 
 ## 13. API surface (summarized)

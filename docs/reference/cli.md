@@ -30,6 +30,7 @@ hezo --master-key "<phrase>"     # set up or unlock without the web gate
 hezo --web-url https://hezo.example.com   # public base URL for sign-in redirects
 hezo --no-open                   # don't open the web app in your browser on start
 hezo --container-bind-host 0.0.0.0  # native-Linux Docker: let agent containers reach the egress proxy/SSH bridge
+hezo --disable-telemetry         # turn off the anonymous daily usage report (on by default)
 ```
 
 On **native-Linux Docker**, agent containers reach the host over the bridge gateway, so the
