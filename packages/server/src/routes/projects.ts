@@ -109,6 +109,7 @@ projectsRoutes.get('/projects', async (c) => {
        (SELECT count(*) FROM members m WHERE m.team_id = p.team_id AND m.member_type = $${agentTypeIdx})::int AS agent_count,
        (SELECT count(*) FROM repos r WHERE r.project_id = p.id)::int AS repo_count,
        (SELECT count(*) FROM tasks i WHERE i.project_id = p.id AND i.status NOT IN (${ts.placeholders}))::int AS open_task_count,
+       (SELECT count(*) FROM goals g WHERE g.project_id = p.id AND g.archived_at IS NULL)::int AS open_goal_count,
        (SELECT count(*) FROM member_agents ma JOIN members mm ON mm.id = ma.id
           WHERE mm.team_id = p.team_id AND ma.runtime_status = 'active'::agent_runtime_status)::int
           AS running_agents_count,

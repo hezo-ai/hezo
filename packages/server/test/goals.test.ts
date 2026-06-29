@@ -121,6 +121,13 @@ describe('goals REST CRUD', () => {
 		expect((await res.json()).data.open_goal_count).toBe(1);
 	});
 
+	it('exposes the active goal count on the project index (drives the sidebar dot)', async () => {
+		const res = await app.request('/api/projects', { headers: authHeader(token) });
+		expect(res.status).toBe(200);
+		const project = (await res.json()).data.find((p: { slug: string }) => p.slug === projectSlug);
+		expect(project.open_goal_count).toBe(1);
+	});
+
 	it('archives a goal and hides it from the default list', async () => {
 		const del = await app.request(`/api/projects/${projectSlug}/goals/${goalId}`, {
 			method: 'DELETE',
