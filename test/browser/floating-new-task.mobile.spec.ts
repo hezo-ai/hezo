@@ -41,7 +41,13 @@ test.describe('Floating new-task button responsiveness', () => {
 		await page.getByTestId('mobile-nav-toggle').click();
 		await expect(page.getByTestId('mobile-nav-drawer')).toBeVisible();
 		await expect(floating).toBeHidden();
-		await page.getByTestId('mobile-nav-close').click();
+		// No close button — clicking the background overlay (right of the panel) dismisses it.
+		await page
+			.getByTestId('mobile-nav-drawer')
+			.getByRole('button', { name: 'Close navigation' })
+			.click({
+				position: { x: 350, y: 400 },
+			});
 		await expect(floating).toBeVisible();
 
 		// …and it hides while the CEO chat is open.

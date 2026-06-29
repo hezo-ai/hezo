@@ -6,7 +6,6 @@ import {
 	useMatches,
 	useNavigate,
 } from '@tanstack/react-router';
-import { X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppHeader } from '../components/app-header';
 import { CeoChatWidget } from '../components/ceo-chat/ceo-chat-widget';
@@ -216,15 +215,6 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 								<ProjectSidebar />
 							</div>
 						)}
-						<button
-							type="button"
-							aria-label="Close navigation"
-							onClick={() => setDrawerOpen(false)}
-							data-testid="mobile-nav-close"
-							className="absolute top-2 right-2 z-10 w-9 h-9 rounded-md flex items-center justify-center text-text-2 hover:text-text-1 hover:bg-surface-2 transition-colors"
-						>
-							<X className="w-4 h-4" />
-						</button>
 					</div>
 				</div>
 			)}

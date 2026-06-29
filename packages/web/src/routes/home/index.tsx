@@ -420,24 +420,11 @@ function HomePage() {
 	const hasProject = projects.length > 0;
 	const hasIntake = !!intake;
 	const showWelcome = !hasProject && !hasIntake;
-	const now = new Date();
-	const dateLabel = now
-		.toLocaleString(undefined, {
-			weekday: 'short',
-			day: 'numeric',
-			month: 'short',
-			hour: '2-digit',
-			minute: '2-digit',
-		})
-		.toLowerCase();
 
 	return (
 		<div className="max-w-7xl mx-auto w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
 			<div className="mb-5 flex items-baseline justify-between gap-3">
 				<h1 className="text-[22px] md:text-[28px] font-semibold tracking-[-0.02em]">Home</h1>
-				<span className="font-mono text-[12px] text-text-3" data-testid="home-date">
-					{dateLabel}
-				</span>
 			</div>
 
 			{showWelcome && <WelcomeCard onCreate={() => setCreateOpen(true)} />}

@@ -28,8 +28,7 @@ test('home shows the dashboard with an active project card carrying live stats',
 
 	await router.navigate({ to: '/home' });
 
-	// Date header + Active section render.
-	await findByTestId('home-date', undefined, { timeout: 15_000 });
+	// Active section renders.
 	const active = await findByTestId('home-active', undefined, { timeout: 15_000 });
 	expect(active.textContent).toContain(ref.name);
 
