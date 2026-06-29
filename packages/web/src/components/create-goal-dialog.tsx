@@ -5,11 +5,13 @@ import {
 } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Loader2, X } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { useCreateGoal, useUpdateGoal } from '../hooks/use-goals';
 import { GoalSmartGuidance } from './goal-smart-guidance';
 import { Button } from './ui/button';
 import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
+import { InfoTooltip } from './ui/info-tooltip';
 import { Input } from './ui/input';
 
 interface CreateGoalDialogProps {
@@ -22,6 +24,38 @@ interface CreateGoalDialogProps {
 
 const textareaClass =
 	'rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-1 outline-none focus:border-border-strong';
+
+/**
+ * A field label row pairing the label text with an info tooltip suffix icon. Renders a `<span>` by
+ * default (for fields whose control is wrapped by an outer `<label>`); pass `htmlFor` to render an
+ * explicit `<label htmlFor>` instead (for controls that aren't a plain DOM element child).
+ */
+function FieldLabel({
+	children,
+	tooltip,
+	tooltipLabel,
+	htmlFor,
+}: {
+	children: ReactNode;
+	tooltip: ReactNode;
+	tooltipLabel: string;
+	htmlFor?: string;
+}) {
+	const className = 'flex items-center gap-1.5 text-sm text-text-2';
+	const inner = (
+		<>
+			{children}
+			<InfoTooltip label={tooltipLabel} content={tooltip} />
+		</>
+	);
+	return htmlFor ? (
+		<label htmlFor={htmlFor} className={className}>
+			{inner}
+		</label>
+	) : (
+		<span className={className}>{inner}</span>
+	);
+}
 
 export function CreateGoalDialog({ projectId, open, onOpenChange, goal }: CreateGoalDialogProps) {
 	const isEdit = !!goal;
@@ -94,16 +128,30 @@ export function CreateGoalDialog({ projectId, open, onOpenChange, goal }: Create
 					<form onSubmit={handleSubmit} className="flex flex-col gap-4">
 						<GoalSmartGuidance />
 
-						<Input
-							label="Goal name"
-							value={title}
-							onChange={(e) => setTitle(e.target.value)}
-							placeholder="e.g. Reach 100 paying customers"
-							required
-						/>
+						<div className="flex flex-col gap-1.5">
+							<FieldLabel
+								htmlFor="goal-name"
+								tooltipLabel="About goal name"
+								tooltip="A short, outcome-focused name for the goal — what success looks like, not the work to get there."
+							>
+								Goal name
+							</FieldLabel>
+							<Input
+								id="goal-name"
+								value={title}
+								onChange={(e) => setTitle(e.target.value)}
+								placeholder="e.g. Reach 100 paying customers"
+								required
+							/>
+						</div>
 
 						<label className="flex flex-col gap-1.5">
-							<span className="text-sm text-text-2">Measurement</span>
+							<FieldLabel
+								tooltipLabel="About measurement"
+								tooltip="How will you know this goal is achieved? Be precise — this is the bar the Captain measures progress against."
+							>
+								Measurement
+							</FieldLabel>
 							<textarea
 								value={measurement}
 								onChange={(e) => setMeasurement(e.target.value)}
@@ -114,9 +162,12 @@ export function CreateGoalDialog({ projectId, open, onOpenChange, goal }: Create
 						</label>
 
 						<label className="flex flex-col gap-1.5">
-							<span className="text-sm text-text-2">
+							<FieldLabel
+								tooltipLabel="About suggested actions"
+								tooltip="Optional — specific actions or checks the Captain should take toward this goal (e.g. run a weekly cron-style check of the signup funnel)."
+							>
 								Suggested actions <span className="text-text-3">(optional)</span>
-							</span>
+							</FieldLabel>
 							<textarea
 								value={actions}
 								onChange={(e) => setActions(e.target.value)}
@@ -128,7 +179,12 @@ export function CreateGoalDialog({ projectId, open, onOpenChange, goal }: Create
 
 						<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 							<label className="flex flex-col gap-1.5">
-								<span className="text-sm text-text-2">Check frequency</span>
+								<FieldLabel
+									tooltipLabel="About check frequency"
+									tooltip="How often the Captain re-checks progress on this goal and acts on it."
+								>
+									Check frequency
+								</FieldLabel>
 								<select
 									value={checkFrequency}
 									onChange={(e) => setCheckFrequency(e.target.value as GoalCheckFrequency)}
@@ -143,9 +199,12 @@ export function CreateGoalDialog({ projectId, open, onOpenChange, goal }: Create
 							</label>
 
 							<label className="flex flex-col gap-1.5">
-								<span className="text-sm text-text-2">
+								<FieldLabel
+									tooltipLabel="About deadline"
+									tooltip="Optional — a target date for reaching this goal. Leave blank for an open-ended goal."
+								>
 									Deadline <span className="text-text-3">(optional)</span>
-								</span>
+								</FieldLabel>
 								<input
 									type="date"
 									value={targetDate}

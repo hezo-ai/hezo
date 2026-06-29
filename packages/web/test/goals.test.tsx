@@ -53,6 +53,66 @@ test('Progress page renders the Captain progress summary above the goals', async
 	await findByText('Reach 100 customers');
 });
 
+test('the Goals header help button opens the SMART guidance modal', async () => {
+	let projectSlug = '';
+	const { findByTestId, findByText, queryByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Help Demo' });
+			projectSlug = project.slug;
+			await seedGoal(ws, project, { title: 'Ship it', measurement: 'shipped' });
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/goals',
+		params: { projectId: projectSlug },
+	});
+
+	// The guidance is not inline — it lives behind the help button.
+	const help = await findByTestId('goals-help', undefined, { timeout: 10_000 });
+	expect(queryByText(/Goals are the outcomes the Captain steers/)).toBeNull();
+
+	await user.click(help);
+
+	// The modal renders its title and the SMART guidance body.
+	await findByText('What makes a good goal?');
+	await findByText(/Goals are the outcomes the Captain steers/);
+});
+
+test('the goal create form renders an info tooltip for every field', async () => {
+	let projectSlug = '';
+	const { findByTestId, getByLabelText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Tooltip Demo' });
+			projectSlug = project.slug;
+			await seedGoal(ws, project, { title: 'Ship it', measurement: 'shipped' });
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/goals',
+		params: { projectId: projectSlug },
+	});
+
+	const newGoal = await findByTestId('goals-new-goal', undefined, { timeout: 10_000 });
+	await user.click(newGoal);
+
+	// Every field in the form carries an info-tooltip suffix button (queried by its aria-label).
+	for (const label of [
+		'About goal name',
+		'About measurement',
+		'About suggested actions',
+		'About check frequency',
+		'About deadline',
+	]) {
+		expect(getByLabelText(label)).toBeTruthy();
+	}
+});
+
 test('clicking a goal opens its page with breadcrumbs, run feed, and edit modal', async () => {
 	let projectSlug = '';
 	const { findByText, findByTestId, getByTestId, user, router } = await renderApp({
