@@ -138,4 +138,56 @@ describe('execution locks', () => {
 			headers: authHeader(token),
 		});
 	});
+
+	it("surfaces the agent's active run id on the lock (and null without one)", async () => {
+		// Acquire a lock with no running run — run_id is null.
+		await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/lock`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ member_id: agentId }),
+		});
+
+		let res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/lock`, {
+			headers: authHeader(token),
+		});
+		let lock = (await res.json()).data.locks.find(
+			(l: { member_id: string }) => l.member_id === agentId,
+		);
+		expect(lock.run_id).toBeNull();
+
+		// A running heartbeat run for this member+task now surfaces on the lock.
+		const runRes = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+			 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())
+			 RETURNING id`,
+			[agentId, teamId, taskId],
+		);
+		const runId = runRes.rows[0].id;
+
+		res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/lock`, {
+			headers: authHeader(token),
+		});
+		lock = (await res.json()).data.locks.find(
+			(l: { member_id: string }) => l.member_id === agentId,
+		);
+		expect(lock.run_id).toBe(runId);
+
+		// A finished run no longer counts as the active run.
+		await db.query(
+			`UPDATE heartbeat_runs SET status = 'cancelled'::heartbeat_run_status WHERE id = $1`,
+			[runId],
+		);
+		res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/lock`, {
+			headers: authHeader(token),
+		});
+		lock = (await res.json()).data.locks.find(
+			(l: { member_id: string }) => l.member_id === agentId,
+		);
+		expect(lock.run_id).toBeNull();
+
+		await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/lock`, {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
+	});
 });

@@ -89,6 +89,64 @@ test('terminates the running run via the confirm dialog', async () => {
 	);
 });
 
+test('terminates a running agent even before its run comment lands', async () => {
+	// The lock surfaces the active run id, so the terminate control is available
+	// the moment the agent is `running` — without waiting for the run comment.
+	const seeded = { projectSlug: '', taskId: '', agentId: '', runId: '' };
+	const { findByTestId, findByText, getByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async (ctx) => {
+			const ws = await seedWorkspace();
+			const captain = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
+			const agent = ws.agents.find((a) => a.id !== captain.id) ?? ws.agents[0];
+			const project = await seedProject(ws, { name: 'No Comment Demo' });
+			const task = await seedTask(ws, project, {
+				title: 'No Comment Task',
+				assignee_id: captain.id,
+			});
+			// Seed a running heartbeat run + lock, but deliberately NO run comment.
+			const runRes = await ctx.db.query<{ id: string }>(
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+				 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())
+				 RETURNING id`,
+				[agent.id, ws.team.id, task.id],
+			);
+			await ctx.db.query(
+				`INSERT INTO execution_locks (task_id, member_id, lock_type) VALUES ($1, $2, 'read')`,
+				[task.id, agent.id],
+			);
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+			seeded.agentId = agent.id;
+			seeded.runId = runRes.rows[0].id;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	const terminate = await findByTestId(`terminate-running-agent-${seeded.agentId}`, undefined, {
+		timeout: 15_000,
+	});
+	await user.click(terminate);
+
+	await findByText('Terminate this run?');
+	await user.click(getByTestId('confirm-dialog-confirm'));
+
+	await waitFor(
+		async () => {
+			const r = await getTestContext().db.query<{ status: string }>(
+				'SELECT status FROM heartbeat_runs WHERE id = $1',
+				[seeded.runId],
+			);
+			expect(r.rows[0]?.status).toBe('cancelled');
+		},
+		{ timeout: 15_000 },
+	);
+});
+
 test('lists running agents above queued agents', async () => {
 	const seeded = { projectSlug: '', taskId: '', runningAgentId: '', wakeupId: '' };
 	const { findByTestId, router } = await renderApp({

@@ -8,6 +8,11 @@ export interface ExecutionLock {
 	member_id: string;
 	member_name: string;
 	locked_at: string;
+	/** Id of the agent's active (`running`) heartbeat run on this task, when one
+	 * exists. Lets the UI offer "terminate" the moment the agent is running,
+	 * before its run comment has landed. Null between lock acquisition and the
+	 * run flipping to `running`. */
+	run_id?: string | null;
 }
 
 export interface ExecutionLockState {
