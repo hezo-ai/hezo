@@ -1,5 +1,4 @@
-import { waitFor } from '@testing-library/react';
-import { expect, test } from 'vitest';
+import { test } from 'vitest';
 import { renderApp } from './helpers/render';
 
 async function seedOverride(
@@ -14,9 +13,9 @@ async function seedOverride(
 	if (res.status !== 201) throw new Error(`seed override failed: ${res.status}`);
 }
 
-test('lists a seeded override and creates a new one via the form', async () => {
-	const { findByText, getByRole, getByPlaceholderText, user } = await renderApp({
-		initialPath: '/settings/model-pricing',
+test('model pricing renders below the AI providers table and creates an override', async () => {
+	const { findByText, findByRole, getByRole, getByPlaceholderText, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
 		seed: async (ctx) => {
 			await seedOverride(ctx, {
 				model_id: 'seeded-model',
@@ -26,8 +25,10 @@ test('lists a seeded override and creates a new one via the form', async () => {
 		},
 	});
 
-	// Heading + the seeded override (and its $/Mtok rendering) show.
-	await findByText('Model pricing', { selector: 'h1' });
+	// The merged page leads with the AI providers section, then the model
+	// pricing section below it.
+	await findByRole('heading', { name: 'AI providers' });
+	await findByRole('heading', { name: 'Model pricing' });
 	await findByText('seeded-model');
 	await findByText('$3.00');
 
@@ -40,21 +41,4 @@ test('lists a seeded override and creates a new one via the form', async () => {
 
 	// The new override appears after the invalidate + refetch.
 	await findByText('deepseek-v4-pro');
-});
-
-test('settings page shows the superuser Model pricing link and navigates to it', async () => {
-	const { findByRole, getAllByRole, user, router } = await renderApp({ initialPath: '/settings' });
-
-	await findByRole('heading', { name: 'Settings' });
-	const link = await waitFor(() => {
-		const found = getAllByRole('link', { name: 'Model pricing' }).find(
-			(l) => l.getAttribute('href') === '/settings/model-pricing',
-		);
-		expect(found).toBeTruthy();
-		return found as HTMLElement;
-	});
-	await user.click(link);
-
-	expect(router.state.location.pathname).toBe('/settings/model-pricing');
-	await findByRole('heading', { name: 'Model pricing' });
 });
