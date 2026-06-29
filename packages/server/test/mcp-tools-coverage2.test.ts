@@ -396,24 +396,8 @@ describe('update_agent_system_prompt authorization', () => {
 });
 
 describe('set_agent_summary branches', () => {
-	it('empty summary is rejected', async () => {
-		const r = await admin('set_agent_summary', {
-			project: projectSlug,
-			agent_id: 'engineer',
-			summary: '   ',
-		});
-		expect(r.error).toContain('non-empty');
-	});
-
-	it('over-long summary is rejected', async () => {
-		const r = await admin('set_agent_summary', {
-			project: projectSlug,
-			agent_id: 'engineer',
-			summary: 'x'.repeat(1001),
-		});
-		expect(r.error).toContain('too long');
-	});
-
+	// Empty / over-long summary rejection is now schema-enforced (.trim().min(1)
+	// .max(1000)) and covered by mcp-tools-extended.test.ts — not re-tested here.
 	it('unknown agent errors', async () => {
 		const r = await admin('set_agent_summary', {
 			project: projectSlug,
@@ -440,20 +424,8 @@ describe('set_team_summary / set_agent_team_context authorization', () => {
 		expect(r.error).toContain('Access denied');
 	});
 
-	it('set_team_summary rejects an empty summary for the Captain', async () => {
-		const t = await agentToken(captainId, teamId);
-		const r = await call(t, 'set_team_summary', { project: projectSlug, summary: '   ' });
-		expect(r.error).toContain('non-empty');
-	});
-
-	it('set_team_summary rejects an over-long summary', async () => {
-		const t = await agentToken(captainId, teamId);
-		const r = await call(t, 'set_team_summary', {
-			project: projectSlug,
-			summary: 'x'.repeat(4001),
-		});
-		expect(r.error).toContain('too long');
-	});
+	// set_team_summary empty/over-long rejection is schema-enforced and covered by
+	// mcp-tools-extended.test.ts; only the authorization branch is unique here.
 
 	it('set_agent_team_context denies a non-Captain agent', async () => {
 		const t = await agentToken(engineerId, teamId);
@@ -465,15 +437,8 @@ describe('set_team_summary / set_agent_team_context authorization', () => {
 		expect(r.error).toContain('Access denied');
 	});
 
-	it('set_agent_team_context rejects over-long content for the Captain', async () => {
-		const t = await agentToken(captainId, teamId);
-		const r = await call(t, 'set_agent_team_context', {
-			project: projectSlug,
-			agent_id: 'engineer',
-			content: 'x'.repeat(6001),
-		});
-		expect(r.error).toContain('too long');
-	});
+	// Over-long content rejection is schema-enforced (.max(6000)) and covered by
+	// mcp-tools-extended.test.ts.
 
 	it('get_agent_team_context returns the stored context', async () => {
 		const t = await agentToken(captainId, teamId);
