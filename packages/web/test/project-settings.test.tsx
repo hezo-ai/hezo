@@ -269,7 +269,7 @@ test('State A — no GitHub connection: shows Connect GitHub CTA', async () => {
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/settings',
+		to: '/projects/$projectId/git',
 		params: { projectId: projectSlug },
 	});
 

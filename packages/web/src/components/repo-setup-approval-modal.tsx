@@ -39,11 +39,11 @@ export function RepoSetupApprovalModal({
 		});
 	}
 
-	function openSettings() {
+	function openGitSettings() {
 		if (!projectSlug) return;
 		onOpenChange(false);
 		navigate({
-			to: '/projects/$projectId/settings',
+			to: '/projects/$projectId/git',
 			params: { projectId: projectSlug },
 		});
 	}
@@ -104,7 +104,7 @@ export function RepoSetupApprovalModal({
 						</Button>
 						<Button
 							size="sm"
-							onClick={openSettings}
+							onClick={openGitSettings}
 							disabled={!projectSlug}
 							data-testid="repo-setup-approval-cta"
 						>

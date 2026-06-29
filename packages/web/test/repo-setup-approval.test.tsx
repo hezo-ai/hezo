@@ -134,7 +134,7 @@ test('clicking a ticket row navigates to the comment with a brief highlight', as
 	expect(router.state.location.pathname).toBe(expectedPrefix);
 });
 
-test('CTA navigates to the project settings page', async () => {
+test('CTA navigates to the project Git settings page', async () => {
 	let seed!: SeededBlocked;
 
 	const { findAllByTestId, findByRole, user, router } = await renderApp({
@@ -159,7 +159,7 @@ test('CTA navigates to the project settings page', async () => {
 	await screen.findByTestId('repo-setup-approval-modal', undefined, { timeout: 10_000 });
 	await user.click(await screen.findByTestId('repo-setup-approval-cta'));
 
-	const expected = `/projects/${seed.projectSlug}/settings`;
+	const expected = `/projects/${seed.projectSlug}/git`;
 	await new Promise((r) => setTimeout(r, 500));
 	expect(router.state.location.pathname).toBe(expected);
 	await findByRole('heading', { name: 'GitHub' }, { timeout: 15_000 });

@@ -1,7 +1,7 @@
 // Wizard-flow coverage for the Phase 13 repo-setup picker: the successful
 // "Link existing" and "Create new" paths against the GitHub simulator, plus
-// the designated-repo lock (no delete affordance) on the project settings
-// page. Component tier per the decision tree — pure form/dialog/mutation
+// the designated-repo lock (no delete affordance) on the project's Git
+// settings page. Component tier per the decision tree — pure form/dialog/mutation
 // behavior, no real layout, viewport, or WebSocket dependency.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -117,7 +117,7 @@ test('link-existing flow links the repo and auto-designates the first repo', asy
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/settings',
+		to: '/projects/$projectId/git',
 		params: { projectId: projectSlug },
 	});
 
@@ -159,7 +159,7 @@ test('create-new flow creates the repo on GitHub and auto-designates it', async 
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/settings',
+		to: '/projects/$projectId/git',
 		params: { projectId: projectSlug },
 	});
 
@@ -215,7 +215,7 @@ test('designated repo shows a lock with no delete affordance; extras stay deleta
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/settings',
+		to: '/projects/$projectId/git',
 		params: { projectId: projectSlug },
 	});
 

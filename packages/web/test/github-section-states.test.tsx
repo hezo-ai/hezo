@@ -1,8 +1,8 @@
 // Coverage for components/github-section.tsx beyond the disconnected CTA that
 // project-settings.test.tsx already hits: the connected state, the repo list
 // (web link + designated lock + deletable rows), the reauth/needs-permissions
-// banner, and the startConnect error path. Rendered through the project settings
-// page. The OAuth-connection / scope-status / repos / mcp-connections endpoints
+// banner, and the startConnect error path. Rendered through the project's Git
+// settings page. The OAuth-connection / scope-status / repos / mcp-connections endpoints
 // are fetch-mocked (matching agent-executions-project.test.tsx) because seeding a
 // realistic GitHub OAuth connection + repos against the real backend is heavy and
 // orthogonal to what this component renders. Component tier — no real layout/WS.
@@ -115,7 +115,7 @@ async function renderSettings(mock: Parameters<typeof installGitHubMock>[0]) {
 		},
 	});
 	await helpers.router.navigate({
-		to: '/projects/$projectId/settings',
+		to: '/projects/$projectId/git',
 		params: { projectId: seeded.projectSlug },
 	});
 	return { ...helpers, seeded };

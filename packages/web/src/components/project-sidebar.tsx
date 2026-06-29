@@ -108,6 +108,14 @@ export function ProjectSidebar() {
 		label: 'Activity',
 		testId: 'project-sidebar-activity',
 	};
+	// Git (GitHub today; GitLab/others later) discloses under Settings on a
+	// normal project, like Container and Activity. HQ has no Git page.
+	const gitPage = {
+		to: '/projects/$projectId/git',
+		params: projectParams,
+		label: 'Git',
+		testId: 'project-sidebar-git',
+	};
 
 	// Progress (the project's goals + Captain-maintained summary) leads under Inbox; it's a
 	// normal-project concept, so HQ (internal) has none.
@@ -178,9 +186,9 @@ export function ProjectSidebar() {
 						params: projectParams,
 						label: 'Settings',
 						testId: 'project-sidebar-settings',
-						// Container and Activity disclose under Settings when it (or one of
-						// them) is the active route.
-						subItems: [containerPage, activityPage],
+						// Git, Container and Activity disclose under Settings when it (or one
+						// of them) is the active route.
+						subItems: [gitPage, containerPage, activityPage],
 					},
 				]),
 	];
