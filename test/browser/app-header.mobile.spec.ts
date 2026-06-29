@@ -45,7 +45,10 @@ test.describe('app header + project rail responsiveness', () => {
 		await expect(drawer).toBeVisible();
 		await expect(drawer.getByTestId('project-rail')).toBeVisible();
 
-		await page.getByTestId('mobile-nav-close').click();
+		// No close button — clicking the background overlay (right of the panel) dismisses it.
+		await drawer.getByRole('button', { name: 'Close navigation' }).click({
+			position: { x: 350, y: 400 },
+		});
 		await expect(drawer).toBeHidden();
 	});
 });
