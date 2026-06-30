@@ -47,6 +47,15 @@ If you do want a public URL, terminate HTTPS with a reverse proxy (see
 front (your proxy's auth, an identity-aware proxy, or an SSO gateway). Never publish the
 raw Hezo port directly.
 
+## Install Hezo on your phone
+
+Hezo is a Progressive Web App, so you can add it to your home screen and run it
+full-screen like a native app. Open Hezo in your mobile browser and it offers an
+**Install** prompt; on iPhone/iPad, use Safari's **Share → Add to Home Screen**. This
+needs a secure context — an **HTTPS** URL (a Cloudflare Tunnel or reverse proxy) or
+`localhost` (an SSH tunnel) — so the install option won't appear over a plain‑HTTP private
+address.
+
 ## Rule of thumb
 
 Prefer a private network (Tailscale/WireGuard) or an authenticated tunnel. Treat a

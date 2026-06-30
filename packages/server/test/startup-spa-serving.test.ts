@@ -47,6 +47,17 @@ describe('buildApp SPA serving (filesystem fallback)', () => {
 		expect(res.headers.get('Content-Type')).toBe('image/svg+xml');
 	});
 
+	it.runIf(hasDist)('serves the PWA manifest with the manifest content-type', async () => {
+		// manifest.webmanifest ships in web/dist; extname '.webmanifest' must map to
+		// 'application/manifest+json' or Chrome rejects the manifest and the app is
+		// not installable.
+		const res = await ctx.app.request('/manifest.webmanifest');
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Content-Type')).toContain('application/manifest+json');
+		const body = (await res.json()) as { display?: string };
+		expect(body.display).toBe('standalone');
+	});
+
 	it.runIf(hasDist)(
 		'falls back to index.html for an unknown SPA route (client-side routing)',
 		async () => {

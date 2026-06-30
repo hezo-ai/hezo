@@ -15,6 +15,7 @@ const MIME: Record<string, string> = {
 	'.js': 'application/javascript; charset=utf-8',
 	'.mjs': 'application/javascript; charset=utf-8',
 	'.json': 'application/json; charset=utf-8',
+	'.webmanifest': 'application/manifest+json; charset=utf-8',
 	'.map': 'application/json; charset=utf-8',
 	'.txt': 'text/plain; charset=utf-8',
 	'.svg': 'image/svg+xml',
