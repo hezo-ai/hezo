@@ -12,15 +12,16 @@ import { Input } from './ui/input';
 
 // Display order mirrors the catalogue order used elsewhere in the app. Shared by
 // every surface that renders the provider card grid (onboarding + settings).
+// OpenRouter (OpenCode runtime) is intentionally omitted from the picker for now
+// — the plumbing stays in place, but it's hidden until we've confirmed whether
+// its runs report cost in output.
 export const ADD_PROVIDER_ORDER: readonly AiProvider[] = [
 	AiProvider.DeepSeek,
 	AiProvider.ZAi,
 	AiProvider.Anthropic,
 	AiProvider.OpenAI,
 	AiProvider.Google,
-	AiProvider.OpenRouter,
 	AiProvider.Kimi,
-	AiProvider.XAi,
 ];
 
 /**

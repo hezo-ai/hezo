@@ -26,15 +26,16 @@
  * — and the agent stops normally.
  */
 
-import { AgentRuntime, AiProvider, KIMI_CODING_BASE_URL, XAI_API_BASE_URL } from '@hezo/shared';
+import { AgentRuntime, AiProvider } from '@hezo/shared';
 
 export const STOP_HOOK_JUDGE_MODEL_ANTHROPIC = 'claude-sonnet-4-6';
 export const STOP_HOOK_JUDGE_MODEL_DEEPSEEK = 'deepseek-v4-pro';
 export const STOP_HOOK_JUDGE_MODEL_ZAI = 'GLM-4.7';
 export const STOP_HOOK_JUDGE_MODEL_OPENAI = 'gpt-4o-mini';
 export const STOP_HOOK_JUDGE_MODEL_GOOGLE = 'gemini-1.5-flash';
-export const STOP_HOOK_JUDGE_MODEL_KIMI = 'kimi-for-coding';
-export const STOP_HOOK_JUDGE_MODEL_XAI = 'grok-4-fast';
+// Kimi runs on Claude Code against Moonshot's Anthropic-compatible endpoint, so
+// the native `type:"prompt"` Stop hook judges with Moonshot's own model.
+export const STOP_HOOK_JUDGE_MODEL_KIMI = 'kimi-k2.7-code';
 
 /**
  * Judge model for the Claude Code `type:"prompt"` Stop hook, keyed by provider.
@@ -49,6 +50,7 @@ export const CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER: Partial<Record<AiProvider, str
 	[AiProvider.Anthropic]: STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
 	[AiProvider.DeepSeek]: STOP_HOOK_JUDGE_MODEL_DEEPSEEK,
 	[AiProvider.ZAi]: STOP_HOOK_JUDGE_MODEL_ZAI,
+	[AiProvider.Kimi]: STOP_HOOK_JUDGE_MODEL_KIMI,
 };
 
 /**
@@ -195,13 +197,13 @@ main().catch(() => {});
 /**
  * Judge specs for the runtimes that need a Node command script (their hook
  * runner can't make the sub-LLM call itself). Claude Code is absent — it uses
- * the native `type:"prompt"` Stop hook via `buildClaudeCodeSettings`. Adding a
- * fourth command-hook provider is one entry here, not a new build function.
+ * the native `type:"prompt"` Stop hook via `buildClaudeCodeSettings`. Adding another
+ * command-hook provider is one entry here, not a new build function.
  */
 /**
  * Build a JudgeRuntimeSpec for any OpenAI-compatible Chat Completions upstream
- * (Codex/OpenAI, Grok/xAI). Only the base URL, key env, model, and stdin field
- * names vary — the request/response shape is identical.
+ * (Codex/OpenAI). Only the base URL, key env, model, and stdin field names vary
+ * — the request/response shape is identical.
  */
 function openAiCompatJudgeSpec(opts: {
 	baseUrl: string;
@@ -239,21 +241,6 @@ const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
 		apiKeyEnvVars: ['OPENAI_API_KEY'],
 		model: STOP_HOOK_JUDGE_MODEL_OPENAI,
 		inputFields: ['last_assistant_message'],
-	}),
-	// Grok `Stop` hook → xAI's OpenAI-compatible Chat Completions. Grok's Stop
-	// stdin payload shape is undocumented (beta), so probe the common field
-	// names; the judge fails open if none is present.
-	[AgentRuntime.Grok]: openAiCompatJudgeSpec({
-		baseUrl: XAI_API_BASE_URL,
-		apiKeyEnvVars: ['XAI_API_KEY'],
-		model: STOP_HOOK_JUDGE_MODEL_XAI,
-		inputFields: [
-			'last_assistant_message',
-			'final_message',
-			'last_message',
-			'prompt_response',
-			'message',
-		],
 	}),
 	// Gemini `AfterAgent` hook → Google Generative AI, judging `prompt_response`.
 	[AgentRuntime.Gemini]: {
@@ -293,94 +280,10 @@ export function buildCodexJudgeScript(): string {
 }
 
 /**
- * Node script that runs inside the Grok Build container as the `Stop` hook
- * command. Reads the hook input JSON from stdin and asks xAI's
- * OpenAI-compatible Chat Completions API to judge completeness, blocking the
- * stop by writing `{"decision":"block","reason":...}` to stdout. Fails open
- * (exit 0, no output) without `XAI_API_KEY` or a recognisable final message.
- */
-export function buildGrokJudgeScript(): string {
-	return buildJudgeScript(JUDGE_SPECS[AgentRuntime.Grok] as JudgeRuntimeSpec);
-}
-
-/**
  * Node script that runs inside the Gemini container as the `AfterAgent`
  * hook command. Reads the AfterAgent input JSON from stdin and asks the
  * Google Generative AI API to judge completeness on `prompt_response`.
  */
 export function buildGeminiJudgeScript(): string {
 	return buildJudgeScript(JUDGE_SPECS[AgentRuntime.Gemini] as JudgeRuntimeSpec);
-}
-
-/**
- * Node script that runs inside the Kimi container as the `[[hooks]]`
- * `event = "Stop"` command. Kimi's hook protocol differs from Codex/Gemini: a
- * judge that wants to keep the agent working exits with code 2 and writes the
- * reason to stderr (Kimi feeds stderr back to the model as a correction). Exit
- * 0 with empty stdout lets the turn end.
- *
- * Kimi's Stop stdin payload isn't documented to carry the final assistant
- * message, so the script probes a list of candidate fields and fails open (exit
- * 0) when none is present — never blocking a run it cannot evaluate. The judge
- * calls Kimi's OpenAI-compatible coding endpoint (`KIMI_BASE_URL`) with
- * `KIMI_API_KEY`; absent either, it fails open like the other runtimes.
- */
-export function buildKimiJudgeScript(): string {
-	return `#!/usr/bin/env node
-const SYSTEM_PROMPT = ${JSON.stringify(STOP_HOOK_RULES)};
-const JUDGE_MODEL = ${JSON.stringify(STOP_HOOK_JUDGE_MODEL_KIMI)};
-const apiKey = process.env.KIMI_API_KEY;
-const baseUrl = (process.env.KIMI_BASE_URL || ${JSON.stringify(KIMI_CODING_BASE_URL)}).replace(/\\/$/, '');
-// Candidate fields that might carry the agent's final message across kimi versions.
-const MESSAGE_FIELDS = ['last_assistant_message', 'final_message', 'last_message', 'prompt_response', 'message'];
-
-async function readStdin() {
-	let buf = '';
-	for await (const chunk of process.stdin) buf += chunk;
-	return buf;
-}
-
-async function main() {
-	if (!apiKey) return; // no api key — fail open
-	const raw = await readStdin();
-	if (!raw.trim()) return;
-	let input;
-	try { input = JSON.parse(raw); } catch { return; }
-	let message;
-	for (const f of MESSAGE_FIELDS) {
-		if (typeof input[f] === 'string' && input[f].trim()) { message = input[f]; break; }
-	}
-	if (!message) return; // no final message available — fail open
-
-	let verdict;
-	try {
-		const res = await fetch(baseUrl + '/chat/completions', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
-			body: JSON.stringify({
-				model: JUDGE_MODEL,
-				messages: [
-					{ role: 'system', content: SYSTEM_PROMPT },
-					{ role: 'user', content: "Agent's final response:\\n" + message },
-				],
-				response_format: { type: 'json_object' },
-				temperature: 0,
-			}),
-			signal: AbortSignal.timeout(25_000),
-		});
-		if (!res.ok) return;
-		const data = await res.json();
-		const text = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
-		if (!text) return;
-		verdict = JSON.parse(text);
-	} catch { return; }
-
-	if (verdict && verdict.decision === 'block' && typeof verdict.reason === 'string' && verdict.reason.length > 0) {
-		process.stderr.write(verdict.reason);
-		process.exit(2);
-	}
-}
-
-main().catch(() => {});
-`;
 }

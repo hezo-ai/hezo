@@ -2,9 +2,8 @@ import type { McpHttpDescriptor, McpStdioDescriptor } from './types';
 
 /**
  * Shared TOML rendering helpers for the runtime MCP adapters whose CLIs read a
- * `config.toml` (Codex, Grok, Kimi). Centralised here so the three adapters
- * share one escaper / key sanitiser / MCP-server block renderer instead of
- * keeping divergent copies.
+ * `config.toml` (Codex). Centralised here so the escaper / key sanitiser /
+ * MCP-server block renderer live in one place.
  */
 
 export const TOML_KEY_RE = /^[A-Za-z0-9_-]+$/;
@@ -44,19 +43,13 @@ export function safeName(name: string): string {
 	return cleaned.length > 0 ? cleaned : '_';
 }
 
-/** Render a name as a TOML table-key segment: bare when it only uses
- *  `[A-Za-z0-9_-]`, otherwise a quoted basic string (e.g. `"managed:kimi-code"`). */
-export function tomlTableKey(name: string): string {
-	return TOML_KEY_RE.test(name) ? name : escapeTomlBasicString(name);
-}
-
 export function bearerEnvVarName(descriptorName: string): string {
 	return `HEZO_MCP_BEARER_TOKEN_${safeName(descriptorName).toUpperCase()}`;
 }
 
 /**
- * Render an `[mcp_servers.<name>]` block for an HTTP MCP server, the shape both
- * the Codex and Grok CLIs expect. Bearer tokens are referenced by env-var name
+ * Render an `[mcp_servers.<name>]` block for an HTTP MCP server, the shape the
+ * Codex CLI expects. Bearer tokens are referenced by env-var name
  * (`bearer_token_env_var`) rather than inlined; the caller exports the matching
  * `HEZO_MCP_BEARER_TOKEN_*` env entry.
  */

@@ -4,7 +4,6 @@ import {
 	validateAnthropicOauthToken,
 	validateCodexAuthJson,
 	validateGeminiAuthJson,
-	validateKimiAuthJson,
 	validateSubscriptionBlob,
 } from '../src/services/subscription-auth';
 
@@ -120,40 +119,6 @@ describe('validateAnthropicOauthToken', () => {
 	});
 });
 
-describe('validateKimiAuthJson', () => {
-	it('rejects non-JSON input', () => {
-		const result = validateKimiAuthJson('not-json');
-		expect(result.ok).toBe(false);
-		expect(result.error).toContain('valid JSON');
-	});
-
-	it('rejects blobs without access_token', () => {
-		const result = validateKimiAuthJson(JSON.stringify({ refresh_token: 'rt' }));
-		expect(result.ok).toBe(false);
-		expect(result.error).toContain('access_token');
-	});
-
-	it('rejects blobs without refresh_token (e.g. a logged-out tombstone)', () => {
-		const result = validateKimiAuthJson(
-			JSON.stringify({ access_token: '', refresh_token: '', expires_at: 0 }),
-		);
-		expect(result.ok).toBe(false);
-	});
-
-	it('accepts the shape written by `kimi login`', () => {
-		const blob = {
-			access_token: 'kc-access',
-			refresh_token: 'kc-refresh',
-			expires_at: 1813110988251,
-			token_type: 'Bearer',
-			scope: 'kimi-code',
-			expires_in: 3600,
-		};
-		const result = validateKimiAuthJson(JSON.stringify(blob));
-		expect(result.ok).toBe(true);
-	});
-});
-
 describe('validateSubscriptionBlob', () => {
 	it('dispatches Anthropic to the OAuth-token validator', () => {
 		const ok = validateSubscriptionBlob(AiProvider.Anthropic, 'sk-ant-oat01-token');
@@ -179,19 +144,16 @@ describe('validateSubscriptionBlob', () => {
 		expect(bad.ok).toBe(false);
 	});
 
-	it('dispatches Kimi to the kimi validator', () => {
-		const ok = validateSubscriptionBlob(
-			AiProvider.Kimi,
-			JSON.stringify({ access_token: 'a', refresh_token: 'r' }),
-		);
-		expect(ok.ok).toBe(true);
-		const bad = validateSubscriptionBlob(AiProvider.Kimi, '{}');
-		expect(bad.ok).toBe(false);
-	});
-
-	it('rejects providers that have no subscription support', () => {
+	it('rejects providers that have no subscription support (incl. Kimi)', () => {
 		const result = validateSubscriptionBlob(AiProvider.DeepSeek, '{}');
 		expect(result.ok).toBe(false);
 		expect(result.error).toContain('does not support subscription');
+		// Kimi runs on Claude Code against Moonshot (api-key only) — no subscription.
+		const kimi = validateSubscriptionBlob(
+			AiProvider.Kimi,
+			JSON.stringify({ access_token: 'a', refresh_token: 'r' }),
+		);
+		expect(kimi.ok).toBe(false);
+		expect(kimi.error).toContain('does not support subscription');
 	});
 });

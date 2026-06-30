@@ -4,10 +4,8 @@ import {
 	buildClaudeCodeSettings,
 	buildCodexJudgeScript,
 	buildGeminiJudgeScript,
-	buildGrokJudgeScript,
 	buildJudgeScriptForRuntime,
-	buildKimiJudgeScript,
-	STOP_HOOK_JUDGE_MODEL_XAI,
+	STOP_HOOK_JUDGE_MODEL_KIMI,
 	STOP_HOOK_PROMPT,
 	STOP_HOOK_RULES,
 } from '../src/services/stop-hook-prompt';
@@ -27,10 +25,6 @@ describe('stop-hook judge spec registry', () => {
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toBe(buildGeminiJudgeScript());
 	});
 
-	it('Grok runtime builds the same script as buildGrokJudgeScript', () => {
-		expect(buildJudgeScriptForRuntime(AgentRuntime.Grok)).toBe(buildGrokJudgeScript());
-	});
-
 	it('Claude Code has no command-script judge (uses the native prompt hook)', () => {
 		expect(buildJudgeScriptForRuntime(AgentRuntime.ClaudeCode)).toBeNull();
 	});
@@ -44,14 +38,14 @@ describe('stop-hook judge spec registry', () => {
 		);
 	});
 
-	it('Grok script targets xAI with the Grok judge model and XAI_API_KEY', () => {
-		const script = buildGrokJudgeScript();
-		expect(script).toContain('api.x.ai/v1/chat/completions');
-		expect(script).toContain('XAI_API_KEY');
-		expect(script).toContain(STOP_HOOK_JUDGE_MODEL_XAI);
-		// Grok's Stop payload shape is undocumented, so the judge probes several
-		// candidate fields rather than a single one.
-		expect(script).toContain('last_assistant_message');
+	it('Kimi judges via the native Claude Code prompt hook with the Moonshot model', () => {
+		// Kimi runs on Claude Code (no command script), so it resolves to null in the
+		// registry and judges via buildClaudeCodeSettings with Moonshot's own model.
+		expect(buildJudgeScriptForRuntime(AgentRuntime.ClaudeCode)).toBeNull();
+		expect(STOP_HOOK_JUDGE_MODEL_KIMI).toBe('kimi-k2.7-code');
+		expect(buildClaudeCodeSettings(AiProvider.Kimi).hooks.Stop[0].hooks[0].model).toBe(
+			STOP_HOOK_JUDGE_MODEL_KIMI,
+		);
 	});
 });
 
@@ -89,7 +83,5 @@ describe('stop-hook rules require add_task_blocker for cross-ticket waits', () =
 	it('every command-script judge embeds the same rule', () => {
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain('add_task_blocker');
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain('add_task_blocker');
-		expect(buildJudgeScriptForRuntime(AgentRuntime.Grok)).toContain('add_task_blocker');
-		expect(buildKimiJudgeScript()).toContain('add_task_blocker');
 	});
 });

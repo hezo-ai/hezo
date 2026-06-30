@@ -1,4 +1,4 @@
-import { test } from 'vitest';
+import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 
 async function seedOverride(
@@ -41,4 +41,21 @@ test('model pricing renders below the AI providers table and creates an override
 
 	// The new override appears after the invalidate + refetch.
 	await findByText('deepseek-v4-pro');
+});
+
+test('the Model pricing help dialog explains that reported cost is preferred over the table', async () => {
+	const { findByTestId, findByText, queryByText, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+	});
+
+	// The explanation lives behind the help button, not inline.
+	const help = await findByTestId('model-pricing-help', undefined, { timeout: 10_000 });
+	expect(queryByText('How run costs are calculated')).toBeNull();
+
+	await user.click(help);
+
+	// The modal states the precedence: runtime-reported cost wins, table is the fallback.
+	await findByText('How run costs are calculated');
+	await findByText(/Reported by the run/);
+	await findByText(/Computed from this table/);
 });

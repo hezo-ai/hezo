@@ -152,15 +152,30 @@ describe('buildProviderEnv', () => {
 		expect(env).toContain('ANTHROPIC_AUTH_TOKEN=ds-key');
 	});
 
-	it('emits staticEnv with NO quiet env for a non-Claude-Code provider (Kimi)', () => {
+	it('emits the Moonshot staticEnv + quiet env for Kimi (Claude Code runtime)', () => {
 		const env = buildProviderEnv(AiProvider.Kimi, {
 			value: 'kimi-key',
 			authMethod: AiAuthMethod.ApiKey,
 		});
-		// Kimi runs on the Kimi runtime, not Claude Code → no DISABLE_* quiet flags.
+		// Kimi now runs on Claude Code against Moonshot's Anthropic-compatible endpoint
+		// → quiet env present, plus the Moonshot base URL + model defaults.
+		expect(env).toContain('DISABLE_TELEMETRY=1');
+		expect(env).toContain('ANTHROPIC_BASE_URL=https://api.moonshot.ai/anthropic');
+		expect(env).toContain('ANTHROPIC_DEFAULT_SONNET_MODEL=kimi-k2.7-code');
+		expect(env).toContain('ENABLE_TOOL_SEARCH=false');
+		expect(env).toContain('CLAUDE_CODE_AUTO_COMPACT_WINDOW=262144');
+		// Kimi's api-key var is ANTHROPIC_AUTH_TOKEN (Moonshot endpoint).
+		expect(env).toContain('ANTHROPIC_AUTH_TOKEN=kimi-key');
+	});
+
+	it('emits staticEnv with NO quiet env for a non-Claude-Code provider (OpenRouter)', () => {
+		const env = buildProviderEnv(AiProvider.OpenRouter, {
+			value: 'or-key',
+			authMethod: AiAuthMethod.ApiKey,
+		});
+		// OpenRouter runs on the OpenCode runtime, not Claude Code → no DISABLE_* flags.
 		expect(env.some((e) => e.startsWith('DISABLE_TELEMETRY='))).toBe(false);
-		expect(env).toContain('KIMI_BASE_URL=https://api.kimi.com/coding/v1');
-		expect(env).toContain('KIMI_API_KEY=kimi-key');
+		expect(env).toContain('OPENROUTER_API_KEY=or-key');
 	});
 
 	it('emits just the credential var for a provider with neither quiet env nor staticEnv (OpenAI api-key)', () => {
@@ -169,6 +184,16 @@ describe('buildProviderEnv', () => {
 			authMethod: AiAuthMethod.ApiKey,
 		});
 		expect(env).toEqual(['OPENAI_API_KEY=sk-openai']);
+	});
+
+	it('stamps the Gemini workspace-trust env + GEMINI_API_KEY for a Google api-key credential', () => {
+		const env = buildProviderEnv(AiProvider.Google, {
+			value: 'AIza-google',
+			authMethod: AiAuthMethod.ApiKey,
+		});
+		// Gemini runs headless in /workspace, which the CLI treats as untrusted unless
+		// told otherwise; the runtime env trusts it so --yolo keeps auto-approving.
+		expect(env).toEqual(['GEMINI_CLI_TRUST_WORKSPACE=true', 'GEMINI_API_KEY=AIza-google']);
 	});
 });
 

@@ -346,7 +346,7 @@ describe('Gemini — message/tool/result edge arms', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Generic parser (OpenCode / Kimi / Grok) — field-probe arms
+// Generic parser (OpenCode) — field-probe arms
 // ---------------------------------------------------------------------------
 
 describe('generic parser — extractGenericText arms', () => {
@@ -424,25 +424,25 @@ describe('generic parser — extractGenericTool arms', () => {
 
 describe('generic parser — usage/error/terminal arms', () => {
 	it('prefers the tokens object when usage is absent', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Kimi, () => 0);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode, () => 0);
 		feed(parser, [{ type: 'metrics', tokens: { input: 12, output: 4 } }]);
 		expect(parser.getUsage()).toEqual({ inputTokens: 12, outputTokens: 4, costCents: 0 });
 	});
 
 	it('falls back to the stats object for usage', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Kimi, () => 0);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode, () => 0);
 		feed(parser, [{ type: 'metrics', stats: { prompt: 7, candidates: 2 } }]);
 		expect(parser.getUsage()).toEqual({ inputTokens: 7, outputTokens: 2, costCents: 0 });
 	});
 
 	it('returns null usage when there is no usage object and no cost', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Kimi);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		feed(parser, [{ type: 'message', text: 'just text' }]);
 		expect(parser.getUsage()).toBeNull();
 	});
 
 	it('returns null usage when a usage object is present but all-zero', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Kimi);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		feed(parser, [{ type: 'metrics', usage: { input_tokens: 0, output_tokens: 0 } }]);
 		expect(parser.getUsage()).toBeNull();
 	});
@@ -480,24 +480,24 @@ describe('generic parser — usage/error/terminal arms', () => {
 	});
 
 	it('matches a generic error type and renders a [tool-error] line', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Grok);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		expect(feed(parser, [{ type: 'run_failed', error: 'whoops' }])).toBe('[tool-error] whoops\n');
 	});
 
 	it('drops an error-typed event when there is no error message to show', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Grok);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		expect(feed(parser, [{ type: 'failed' }])).toBe('');
 	});
 
 	it('renders thinking text for a think-typed event', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Grok);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		expect(feed(parser, [{ type: 'thinking', thinking: 'pondering' }])).toBe(
 			'[thinking] pondering\n',
 		);
 	});
 
 	it('drops a reasoning-typed event with no text', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Grok);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		expect(feed(parser, [{ type: 'reasoning' }])).toBe('');
 	});
 
@@ -522,7 +522,7 @@ describe('generic parser — usage/error/terminal arms', () => {
 	});
 
 	it('ignores a non-finite number when probing usage fields', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Kimi);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		// Infinity/NaN aren't finite → firstNumber skips them; no other tokens → null.
 		feed(parser, [{ type: 'metrics', usage: { input_tokens: Number.POSITIVE_INFINITY } }]);
 		expect(parser.getUsage()).toBeNull();
@@ -730,7 +730,7 @@ describe('chat parser — remaining arms', () => {
 	});
 
 	it('generic chat records model and captures usage but yields no text', () => {
-		const parser = createAgentChatParser(AgentRuntime.Kimi);
+		const parser = createAgentChatParser(AgentRuntime.OpenCode);
 		const out = parser.onStdout(
 			line({ type: 'usage', model: 'k', usage: { input_tokens: 4, output_tokens: 1 } }),
 		);

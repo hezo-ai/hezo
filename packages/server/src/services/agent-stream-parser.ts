@@ -35,6 +35,48 @@ export type PriceModelFn = (model: string | undefined, tokens: CostTokens) => nu
 
 const NO_PRICE: PriceModelFn = () => 0;
 
+/**
+ * Field names a runtime may use to report a run's already-computed dollar cost
+ * on its terminal event. Shared so every runtime parser — and the `cost-probe`
+ * diagnostic — look for the same set.
+ */
+export const COST_FIELDS = ['total_cost_usd', 'cost_usd', 'cost'] as const;
+
+/**
+ * Extract a runtime-reported run cost (USD) from a terminal event, or `null`
+ * when the runtime didn't emit one. Probes the event's top level first, then the
+ * conventional nested `usage`/`stats`/`tokens` objects. Only positive, finite
+ * values count — a `0` means "not reported", not "free".
+ */
+export function findReportedCostUsd(raw: unknown): number | null {
+	if (!isRecord(raw)) return null;
+	const top = firstNumber(raw, COST_FIELDS);
+	if (top > 0) return top;
+	for (const key of ['usage', 'stats', 'tokens']) {
+		const nested = raw[key];
+		if (isRecord(nested)) {
+			const n = firstNumber(nested, COST_FIELDS);
+			if (n > 0) return n;
+		}
+	}
+	return null;
+}
+
+/**
+ * A run's cost in cents: prefer the runtime's own reported dollar cost when it
+ * emitted a positive one (it already reflects the provider's real billing,
+ * including any time-of-day/peak rates), otherwise fall back to the pricing
+ * table via the runtime-specific `fallback`. Applied uniformly across every
+ * runtime parser so an accurate reported number is never discarded.
+ */
+export function resolveCostCents(
+	reportedCostUsd: number | null | undefined,
+	fallback: () => number,
+): number {
+	if (reportedCostUsd && reportedCostUsd > 0) return Math.round(reportedCostUsd * 100);
+	return fallback();
+}
+
 export interface AgentStreamParser {
 	onStdout(chunk: string): string;
 	onStderr(chunk: string): string;
@@ -85,16 +127,13 @@ export function createAgentStreamParser(
 			return createCodexParser(price);
 		case AgentRuntime.Gemini:
 			return createGeminiParser(price);
-		// OpenCode (`run --format json`), Kimi (`--output-format stream-json`) and
-		// Grok (`--output-format streaming-json`) all emit JSONL but with shapes
-		// that vary across versions and aren't fully documented. The generic parser
-		// is lenient — it renders recognizable assistant text / tool activity and
+		// OpenCode (`run --format json`) emits JSONL but with shapes that vary
+		// across versions and aren't fully documented. The generic parser is
+		// lenient — it renders recognizable assistant text / tool activity and
 		// captures token usage from whatever terminal event carries it, dropping
-		// anything it doesn't recognize so the log stays clean. Tighten into bespoke
-		// parsers once a real run's events are captured (see PR notes).
+		// anything it doesn't recognize so the log stays clean. Tighten into a
+		// bespoke parser once a real run's events are captured (see PR notes).
 		case AgentRuntime.OpenCode:
-		case AgentRuntime.Kimi:
-		case AgentRuntime.Grok:
 			return createGenericJsonlParser(price);
 		default:
 			return createPassthroughParser();
@@ -231,7 +270,6 @@ export function createAgentChatParser(runtime: AgentRuntime): AgentChatParser {
 		case AgentRuntime.Gemini:
 			return createGeminiChatParser();
 		case AgentRuntime.OpenCode:
-		case AgentRuntime.Kimi:
 			return createGenericChatParser();
 		default:
 			return { onStdout: () => [], flush: () => [], getUsage: () => null };
@@ -444,22 +482,30 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 			const input = regularInput + cacheCreation + cacheRead;
 			const output = u.output_tokens ?? 0;
 			const costUsd = event.total_cost_usd ?? 0;
-			usage = {
-				inputTokens: input,
-				outputTokens: output,
-				costCents: price(modelId, {
+			// Claude Code reports the run's dollar cost on `total_cost_usd` — including
+			// for third-party Anthropic-compatible endpoints like DeepSeek (confirmed via
+			// the cost probe: api.deepseek.com/anthropic returns it). Prefer it (it
+			// reflects the provider's real billing, incl. any peak/off-peak pricing); fall
+			// back to the table only when it's absent/zero (e.g. an interrupted run, or an
+			// endpoint that returns no cost).
+			const costCents = resolveCostCents(event.total_cost_usd, () =>
+				price(modelId, {
 					inputTokens: regularInput,
 					cacheCreationTokens: cacheCreation,
 					cacheReadTokens: cacheRead,
 					outputTokens: output,
 				}),
-			};
+			);
+			usage = { inputTokens: input, outputTokens: output, costCents };
 			const duration = event.duration_ms ?? 0;
 			const turns = event.num_turns ?? 0;
 			const status = event.is_error ? 'error' : (event.subtype ?? 'success');
 			if (event.is_error) terminalError = classifyRuntimeError(event.result) ?? terminalError;
+			// Show the runtime's own figure at full precision when it reported one,
+			// else the table-derived cents we actually persisted.
+			const displayUsd = costUsd > 0 ? costUsd : costCents / 100;
 			out.push(
-				`[done] ${status} turns=${turns} duration=${duration}ms tokens=${input}/${output} cost=$${costUsd.toFixed(4)}`,
+				`[done] ${status} turns=${turns} duration=${duration}ms tokens=${input}/${output} cost=$${displayUsd.toFixed(4)}`,
 			);
 			return out;
 		}
@@ -533,14 +579,17 @@ function createCodexParser(price: PriceModelFn): AgentStreamParser {
 			const output = (u.output_tokens ?? 0) + (u.reasoning_output_tokens ?? 0);
 			// `input_tokens` already includes `cached_input_tokens`; price the cached
 			// portion at the (discounted) cache-read rate, the rest at full input.
+			// Prefer a cost Codex reported itself, if any, over the table estimate.
 			usage = {
 				inputTokens: input,
 				outputTokens: output,
-				costCents: price(modelId, {
-					inputTokens: Math.max(0, input - cached),
-					cacheReadTokens: cached,
-					outputTokens: output,
-				}),
+				costCents: resolveCostCents(findReportedCostUsd(raw), () =>
+					price(modelId, {
+						inputTokens: Math.max(0, input - cached),
+						cacheReadTokens: cached,
+						outputTokens: output,
+					}),
+				),
 			};
 			const status = type === 'turn.failed' ? 'error' : 'success';
 			return [`[done] ${status} turns=${turns} tokens=${input}/${output}`];
@@ -662,7 +711,10 @@ function createGeminiParser(price: PriceModelFn): AgentStreamParser {
 
 		if (type === 'result') {
 			const { input, output } = sumGeminiTokens(event.stats);
-			const costCents = priceGeminiModels(event.stats, price);
+			// Prefer a cost Gemini reported itself, if any, over the per-model table sum.
+			const costCents = resolveCostCents(findReportedCostUsd(raw), () =>
+				priceGeminiModels(event.stats, price),
+			);
 			usage = { inputTokens: input, outputTokens: output, costCents };
 			const status = event.error ? 'error' : 'success';
 			return [`[done] ${status} tokens=${input}/${output}`];
@@ -719,14 +771,14 @@ function priceGeminiModels(stats: GeminiStats | undefined, price: PriceModelFn):
 }
 
 // ---------------------------------------------------------------------------
-// Generic JSONL parser (OpenCode, Kimi)
+// Generic JSONL parser (OpenCode)
 //
-// These CLIs emit JSONL whose event shapes vary by version and aren't fully
+// This CLI emits JSONL whose event shapes vary by version and aren't fully
 // documented, so rather than guess a single rigid schema this parser probes a
 // broad set of conventional field names. It renders assistant text, tool
 // activity, thinking, and errors when recognizable, and captures token usage
 // from whatever terminal event carries it. Unknown events are dropped so the
-// log stays clean. Replace with bespoke parsers once a real run is captured.
+// log stays clean. Replace with a bespoke parser once a real run is captured.
 // ---------------------------------------------------------------------------
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -741,7 +793,7 @@ function firstString(obj: Record<string, unknown>, keys: string[]): string | und
 	return undefined;
 }
 
-function firstNumber(obj: Record<string, unknown>, keys: string[]): number {
+function firstNumber(obj: Record<string, unknown>, keys: readonly string[]): number {
 	for (const k of keys) {
 		const v = obj[k];
 		if (typeof v === 'number' && Number.isFinite(v)) return v;
@@ -795,23 +847,23 @@ function extractGenericUsage(
 	modelId: string | undefined,
 ): AgentRunUsage | null {
 	const u = [event.usage, event.tokens, event.stats].find(isRecord);
-	const costUsd = firstNumber(event, ['total_cost_usd', 'cost_usd', 'cost']);
-	if (!u && costUsd === 0) return null;
+	const reportedCostUsd = findReportedCostUsd(event);
+	if (!u && reportedCostUsd === null) return null;
 	const bag = u ?? {};
 	const input = firstNumber(bag, ['input_tokens', 'prompt_tokens', 'prompt', 'input']);
 	const cached = firstNumber(bag, ['cached_input_tokens', 'cache_read_input_tokens', 'cached']);
 	const output =
 		firstNumber(bag, ['output_tokens', 'completion_tokens', 'candidates', 'output']) +
 		firstNumber(bag, ['reasoning_output_tokens', 'thoughts']);
-	if (input === 0 && output === 0 && costUsd === 0) return null;
-	const costCents =
-		costUsd > 0
-			? Math.round(costUsd * 100)
-			: price(modelId, {
-					inputTokens: Math.max(0, input - cached),
-					cacheReadTokens: cached,
-					outputTokens: output,
-				});
+	if (input === 0 && output === 0 && reportedCostUsd === null) return null;
+	// Prefer a cost the runtime reported itself over the table estimate.
+	const costCents = resolveCostCents(reportedCostUsd, () =>
+		price(modelId, {
+			inputTokens: Math.max(0, input - cached),
+			cacheReadTokens: cached,
+			outputTokens: output,
+		}),
+	);
 	return { inputTokens: input, outputTokens: output, costCents };
 }
 

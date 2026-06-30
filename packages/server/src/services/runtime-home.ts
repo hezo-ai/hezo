@@ -51,7 +51,7 @@ export interface SubscriptionLayout {
 	/**
 	 * Path (relative to the per-run home dir) where the runtime CLI reads its
 	 * subscription credential file. Present only for providers whose subscription
-	 * credential is delivered as a file mount (Codex, Gemini, Kimi). Omitted for
+	 * credential is delivered as a file mount (Codex, Gemini). Omitted for
 	 * providers that need only a config home dir (the credential, if any, is
 	 * delivered via env var — e.g. Anthropic's CLAUDE_CODE_OAUTH_TOKEN). When
 	 * omitted, `buildSubscriptionMount` writes no file and returns null.
@@ -76,14 +76,14 @@ export const SUBSCRIPTION_LAYOUTS: Partial<Record<AiProvider, SubscriptionLayout
 		envVarName: 'GEMINI_CLI_HOME',
 		rotates: false,
 	},
-	// Claude Code-driven providers (Anthropic, DeepSeek, Z.ai) need a per-run
-	// config dir so the runner can drop a settings.json with the Stop hook the
-	// agent CLI loads via `--settings`. The envVarName is a Hezo-internal
+	// Claude Code-driven providers (Anthropic, DeepSeek, Z.ai, Kimi) need a
+	// per-run config dir so the runner can drop a settings.json with the Stop hook
+	// the agent CLI loads via `--settings`. The envVarName is a Hezo-internal
 	// marker, not consumed by Claude Code itself; HOME is intentionally not
 	// overridden so git/ssh keep finding the container's default $HOME. No
 	// authFileRelative: Anthropic subscription is delivered via the
 	// CLAUDE_CODE_OAUTH_TOKEN env var (see PROVIDER_RUNTIME_ADAPTERS), and
-	// DeepSeek/Z.ai have no subscription path at all.
+	// DeepSeek/Z.ai/Kimi are api-key only (credential via ANTHROPIC_AUTH_TOKEN).
 	[AiProvider.Anthropic]: {
 		dirName: 'claude-code-anthropic',
 		envVarName: 'HEZO_CLAUDE_CONFIG_DIR',
@@ -99,6 +99,11 @@ export const SUBSCRIPTION_LAYOUTS: Partial<Record<AiProvider, SubscriptionLayout
 		envVarName: 'HEZO_CLAUDE_CONFIG_DIR',
 		rotates: false,
 	},
+	[AiProvider.Kimi]: {
+		dirName: 'claude-code-kimi',
+		envVarName: 'HEZO_CLAUDE_CONFIG_DIR',
+		rotates: false,
+	},
 	// OpenCode (OpenRouter) needs a per-run dir to host `opencode.json`. The
 	// envVarName is a Hezo-internal marker; the OpenCode adapter points the CLI at
 	// the config file via an explicit `OPENCODE_CONFIG=<dir>/opencode.json` env
@@ -107,19 +112,6 @@ export const SUBSCRIPTION_LAYOUTS: Partial<Record<AiProvider, SubscriptionLayout
 		dirName: 'opencode',
 		envVarName: 'HEZO_OPENCODE_CONFIG_DIR',
 		rotates: false,
-	},
-	// Kimi reads its config dir from KIMI_CODE_HOME, so the home-mount env entry
-	// configures the CLI directly; the kimi adapter writes config.toml + mcp.json
-	// into this dir. For subscription auth the managed-Kimi-Code OAuth credential
-	// is materialised at `<KIMI_CODE_HOME>/credentials/kimi-code.json` — the exact
-	// path the CLI reads (verified against @moonshot-ai/kimi-code) — and the kimi
-	// adapter writes a `[providers."managed:kimi-code".oauth]` ref pointing at it.
-	// The CLI rotates the refresh token in place each run, so rotates: true.
-	[AiProvider.Kimi]: {
-		dirName: 'kimi',
-		authFileRelative: 'credentials/kimi-code.json',
-		envVarName: 'KIMI_CODE_HOME',
-		rotates: true,
 	},
 };
 

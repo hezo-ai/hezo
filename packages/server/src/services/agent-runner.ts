@@ -9,6 +9,7 @@ import {
 	CommentContentType,
 	ContainerStatus,
 	claudeCodeModelArg,
+	GEMINI_RUNTIME_ENV,
 	HeartbeatRunKind,
 	HeartbeatRunStatus,
 	opencodeModelArg,
@@ -189,6 +190,11 @@ export function buildProviderEnv(provider: AiProvider, credential: AiProviderCre
 	const out: string[] = [];
 	if (adapter.runtime === AgentRuntime.ClaudeCode) {
 		for (const [key, value] of Object.entries(CLAUDE_CODE_QUIET_ENV)) {
+			out.push(`${key}=${value}`);
+		}
+	}
+	if (adapter.runtime === AgentRuntime.Gemini) {
+		for (const [key, value] of Object.entries(GEMINI_RUNTIME_ENV)) {
 			out.push(`${key}=${value}`);
 		}
 	}
@@ -399,11 +405,6 @@ export async function buildRuntimeInvocation(
 		hostHomeDir: homeMount?.hostDir ?? null,
 		containerHomeDir: homeMount?.containerDir ?? null,
 		provider,
-		authMethod: credential.authMethod,
-		// Kimi takes its provider credential and model from config.toml rather than
-		// env, so the adapter needs them directly (api-key auth only).
-		providerApiKey: credential.authMethod === AiAuthMethod.ApiKey ? credential.value : undefined,
-		model: modelOverride,
 	});
 	validateInjection(adapter, mcpInjection);
 
@@ -482,9 +483,7 @@ export async function buildRuntimeInvocation(
 			cliModel = opencodeModelArg(provider, modelOverride);
 		}
 	}
-	// Kimi resolves its model from config.toml (default_model), so it takes no
-	// --model flag; every other runtime accepts one.
-	const modelArgs = cliModel && runtimeType !== AgentRuntime.Kimi ? ['--model', cliModel] : [];
+	const modelArgs = cliModel ? ['--model', cliModel] : [];
 
 	const cmd = [
 		cliCommand,

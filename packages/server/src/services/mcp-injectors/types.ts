@@ -1,4 +1,4 @@
-import type { AiAuthMethod, AiProvider } from '@hezo/shared';
+import type { AiProvider } from '@hezo/shared';
 
 /**
  * Normalized MCP server descriptor passed by the agent runner. Per-runtime
@@ -81,26 +81,6 @@ export interface McpAdapterContext {
 	 * that don't need it; the Claude Code adapter falls back to the Anthropic judge.
 	 */
 	provider?: AiProvider;
-	/**
-	 * Auth method for this run's provider credential. The Kimi adapter uses it to
-	 * choose between an api-key provider block (`api_key = …`) and the managed
-	 * OAuth provider block (`[providers."managed:kimi-code".oauth]`) in config.toml.
-	 * Defaults to api-key semantics when absent.
-	 */
-	authMethod?: AiAuthMethod;
-	/**
-	 * Resolved provider API key (api-key auth only). Most runtimes receive the
-	 * credential via container env (`buildProviderEnv`); the Kimi adapter needs it
-	 * to write `api_key` into the provider block of `config.toml`, since the kimi
-	 * CLI takes its provider credential from the config file, not the environment.
-	 */
-	providerApiKey?: string;
-	/**
-	 * Resolved model id for this run (the user's `default_model`, or null). The
-	 * Kimi adapter declares it as a `[models.<id>]` block and sets `default_model`,
-	 * because the kimi CLI only accepts models declared in config.
-	 */
-	model?: string | null;
 }
 
 export interface RuntimeMcpAdapter {

@@ -1859,9 +1859,9 @@ describe('runAgent', () => {
 				},
 				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 			});
-			// Wire pricing so the run's cost is computed from the table (a manual
-			// override keeps the expected value deterministic, independent of the
-			// bundled snapshot's real rates).
+			// Wire a deterministic table path (a manual override, independent of the
+			// bundled snapshot). This run also reports total_cost_usd, which is
+			// preferred over the table — the override is kept to prove precedence.
 			const pricing = new PricingService(db);
 			await upsertManualRate(db, {
 				model_id: 'claude-opus-4-7',
@@ -1900,9 +1900,10 @@ describe('runAgent', () => {
 
 			expect(row.rows[0].input_tokens).toBe(1200);
 			expect(row.rows[0].output_tokens).toBe(350);
-			// Computed from the table, not total_cost_usd (0.1234 → would have been 12c):
-			// 1200*0.0001 + 350*0.0002 = 0.12 + 0.07 = 0.19 → 19 cents.
-			expect(row.rows[0].cost_cents).toBe(19);
+			// total_cost_usd (0.1234) is reported, so it is preferred over the table:
+			// round(0.1234 * 100) = 12 cents. (The table would have computed
+			// 1200*0.0001 + 350*0.0002 = 0.19 → 19c — kept to prove precedence.)
+			expect(row.rows[0].cost_cents).toBe(12);
 		});
 
 		it('falls back to /workspace when no repos are linked', async () => {
@@ -2175,28 +2176,25 @@ describe('runAgent', () => {
 			).toBeNull();
 		});
 
-		it('writes kimi-code.json to a per-run path, points KIMI_CODE_HOME at it, and rotates', () => {
-			const dataDir = `/tmp/kimi-mount-${Date.now()}`;
-			const runId = 'run-kimi-1';
-			const kimiBlob = JSON.stringify({
-				access_token: 'kc-access',
-				refresh_token: 'kc-refresh',
-				expires_at: 1813110988251,
-				token_type: 'Bearer',
+		it('returns null mount for Kimi (api-key on Claude Code, credential via env var)', () => {
+			// Kimi now runs through Claude Code against Moonshot's Anthropic-compatible
+			// endpoint with an api key delivered via ANTHROPIC_AUTH_TOKEN — there is no
+			// subscription file to mount.
+			expect(
+				buildSubscriptionMount('/tmp', 'co', 'pj', 'r1', AiProvider.Kimi, {
+					value: 'sk-kimi',
+					authMethod: AiAuthMethod.ApiKey,
+				}),
+			).toBeNull();
+			// The provider env carries the Moonshot endpoint + auth token + quiet env.
+			const env = buildProviderEnv(AiProvider.Kimi, {
+				value: 'sk-kimi',
+				authMethod: AiAuthMethod.ApiKey,
 			});
-			const mount = buildSubscriptionMount(dataDir, 'co', 'pj', runId, AiProvider.Kimi, {
-				value: kimiBlob,
-				authMethod: AiAuthMethod.Subscription,
-			});
-			expect(mount).not.toBeNull();
-			expect(mount!.rotates).toBe(true);
-			expect(mount!.envEntries).toEqual([
-				`KIMI_CODE_HOME=/workspace/.hezo/subscription/kimi/${runId}`,
-			]);
-			// The CLI reads the OAuth credential from <KIMI_CODE_HOME>/credentials/kimi-code.json.
-			expect(mount!.hostAuthFile.endsWith('/credentials/kimi-code.json')).toBe(true);
-			expect(existsSync(mount!.hostAuthFile)).toBe(true);
-			expect(readFileSync(mount!.hostAuthFile, 'utf8')).toBe(kimiBlob);
+			expect(env).toContain('ANTHROPIC_BASE_URL=https://api.moonshot.ai/anthropic');
+			expect(env).toContain('ANTHROPIC_AUTH_TOKEN=sk-kimi');
+			expect(env).toContain('ENABLE_TOOL_SEARCH=false');
+			expect(env).toContain('DISABLE_TELEMETRY=1');
 		});
 
 		it('runAgent injects CODEX_HOME and stages auth.json on host', async () => {

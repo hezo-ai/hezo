@@ -33,6 +33,7 @@
 		"build:release": "bun run scripts/build.ts --release",
 		"check": "bunx biome check .",
 		"check:fix": "bunx biome check --write .",
+		"cost-probe": "bun run scripts/cost-probe.ts",
 		"dev": "bun run scripts/dev.ts",
 		"release": "bun run scripts/release.ts",
 		"test": "bun run scripts/test.ts",

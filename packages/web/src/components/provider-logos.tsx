@@ -13,12 +13,6 @@ import type { FC } from 'react';
 
 type LogoProps = { className?: string };
 
-const XAiLogo: FC<LogoProps> = ({ className }) => (
-	<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
-		<path d="M3 3h4.4l4.1 5.9L15.9 3h4.4l-6.4 9 6.6 9h-4.4l-4.4-6.3L7.1 21H2.7l6.7-9.4z" />
-	</svg>
-);
-
 const AnthropicLogo: FC<LogoProps> = ({ className }) => (
 	<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
 		<path d="M9.3 4h5.4l5.5 16h-3.7l-1.12-3.45H8.62L7.5 20H3.8L9.3 4zm.42 9.45h4.56L12 6.6l-2.28 6.85z" />
@@ -32,7 +26,6 @@ const GoogleLogo: FC<LogoProps> = ({ className }) => (
 );
 
 export const PROVIDER_LOGOS: Partial<Record<AiProvider, FC<LogoProps>>> = {
-	[Provider.XAi]: XAiLogo,
 	[Provider.Anthropic]: AnthropicLogo,
 	[Provider.Google]: GoogleLogo,
 };

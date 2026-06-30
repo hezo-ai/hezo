@@ -33,7 +33,7 @@ async function postProvider(body: Record<string, unknown>) {
 	});
 }
 
-test('Add provider modal shows provider cards incl. xAI (no Moonshot, no OAuth)', async () => {
+test('Add provider modal shows provider cards (no xAI/OpenRouter, no Moonshot, no OAuth)', async () => {
 	const { findByRole, getByRole, queryAllByText, queryAllByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 	});
@@ -43,58 +43,17 @@ test('Add provider modal shows provider cards incl. xAI (no Moonshot, no OAuth)'
 
 	const dialog = await findByRole('dialog');
 	// The picker step renders one selectable card per provider (each card's
-	// accessible name is just the provider name), including the xAI entry.
-	for (const name of ['Anthropic', 'OpenAI', 'Google', 'OpenRouter', 'Kimi', 'xAI']) {
+	// accessible name is just the provider name).
+	for (const name of ['Anthropic', 'OpenAI', 'Google', 'DeepSeek', 'Kimi']) {
 		expect(within(dialog).getByRole('button', { name: new RegExp(name) })).toBeTruthy();
 	}
+	// xAI (dropped) and OpenRouter (hidden for now) are not offered.
+	expect(within(dialog).queryByRole('button', { name: /xAI/ })).toBeNull();
+	expect(within(dialog).queryByRole('button', { name: /OpenRouter/ })).toBeNull();
 	// Cards show only the logo + name now — the runtime label is no longer on them.
 	expect(queryAllByText('Grok Build').length).toBe(0);
 	expect(queryAllByText('Moonshot').length).toBe(0);
 	expect(queryAllByRole('button', { name: /OAuth/i }).length).toBe(0);
-});
-
-test('Add provider modal: pick xAI card → API-key form → Back returns to the grid', async () => {
-	const { findByRole, getByRole, queryByLabelText, user } = await renderApp({
-		initialPath: '/settings/ai-providers',
-	});
-
-	await findByRole('heading', { name: 'AI providers' });
-	await user.click(getByRole('button', { name: 'Add provider' }));
-
-	const dialog = await findByRole('dialog');
-	await user.click(within(dialog).getByRole('button', { name: /xAI/ }));
-
-	// Configure step: title flips and an API-key field appears (xAI is key-only,
-	// so there's no subscription toggle).
-	await within(dialog).findByText('Connect xAI');
-	expect(within(dialog).getByLabelText('API key')).toBeTruthy();
-	expect(within(dialog).queryByRole('button', { name: /subscription/i })).toBeNull();
-
-	// Back arrow returns to the card grid (form fields gone, cards back).
-	await user.click(within(dialog).getByRole('button', { name: 'Back' }));
-	expect(queryByLabelText('API key')).toBeNull();
-	expect(within(dialog).getByRole('button', { name: /Anthropic/ })).toBeTruthy();
-});
-
-test('adds an xAI API key via the card flow', async () => {
-	const { findByRole, findByText, getByRole, user } = await renderApp({
-		initialPath: '/settings/ai-providers',
-	});
-
-	await findByRole('heading', { name: 'AI providers' });
-	await user.click(getByRole('button', { name: 'Add provider' }));
-
-	const dialog = await findByRole('dialog');
-	await user.click(within(dialog).getByRole('button', { name: /xAI/ }));
-
-	const nameInput = within(dialog).getByLabelText('Name') as HTMLInputElement;
-	fireEvent.change(nameInput, { target: { value: 'My Grok' } });
-	const keyInput = within(dialog).getByLabelText('API key') as HTMLInputElement;
-	fireEvent.change(keyInput, { target: { value: 'xai-component-test-123' } });
-
-	await user.click(within(dialog).getByRole('button', { name: 'Add provider' }));
-
-	await findByText('My Grok', undefined, { timeout: 15_000 });
 });
 
 test('sidebar Settings link reaches Settings and the AI providers subpage', async () => {
@@ -173,8 +132,8 @@ test('offers Claude Code subscription (setup-token) paste flow for Anthropic', a
 	await findByText('Subscription', undefined, { timeout: 15_000 });
 });
 
-test('offers Kimi Code subscription paste flow for Kimi', async () => {
-	const { container, findAllByText, findByRole, findByText, getByRole, user } = await renderApp({
+test('Kimi offers only an API-key form (no subscription, runs on Claude Code/Moonshot)', async () => {
+	const { container, findByRole, findByText, getByRole, queryByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {
 			await clearAiProviders();
@@ -184,23 +143,14 @@ test('offers Kimi Code subscription paste flow for Kimi', async () => {
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
 
 	await user.click(getByRole('button', { name: 'Kimi' }));
-	await user.click(getByRole('button', { name: /Kimi Code subscription/i }));
-	const loginHits = await findAllByText(/kimi login/i);
-	expect(loginHits.length).toBeGreaterThan(0);
-	const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
-	fireEvent.change(textarea, {
-		target: {
-			value: JSON.stringify({
-				access_token: 'kc-access',
-				refresh_token: 'kc-refresh',
-				expires_at: 1813110988251,
-				token_type: 'Bearer',
-			}),
-		},
-	});
+	// Kimi is api-key only now — no subscription toggle, no `kimi login` flow.
+	expect(queryByRole('button', { name: /subscription/i })).toBeNull();
+	const keyInput = container.querySelector('input[type="password"]') as HTMLInputElement;
+	expect(keyInput).toBeTruthy();
+	fireEvent.change(keyInput, { target: { value: 'sk-kimi-component-test' } });
 	await user.click(getByRole('button', { name: 'Save' }));
 
-	await findByText('Subscription', undefined, { timeout: 15_000 });
+	await findByText('active', undefined, { timeout: 15_000 });
 });
 
 test('offers Codex subscription paste flow for OpenAI', async () => {

@@ -6,8 +6,6 @@ export const AgentRuntime = {
 	Codex: 'codex',
 	Gemini: 'gemini',
 	OpenCode: 'opencode',
-	Kimi: 'kimi',
-	Grok: 'grok',
 } as const;
 export type AgentRuntime = (typeof AgentRuntime)[keyof typeof AgentRuntime];
 
@@ -934,7 +932,6 @@ export const AiProvider = {
 	ZAi: 'z_ai',
 	OpenRouter: 'openrouter',
 	Kimi: 'kimi',
-	XAi: 'x_ai',
 } as const;
 export type AiProvider = (typeof AiProvider)[keyof typeof AiProvider];
 
@@ -985,19 +982,15 @@ export const CLAUDE_CODE_QUIET_ENV = {
 } as const;
 
 /**
- * Kimi Code's OpenAI-compatible coding endpoint. Used both as the
- * `[providers.kimi-for-coding].base_url` the kimi adapter writes into
- * config.toml and as the upstream the in-container Stop-hook judge calls.
+ * The Gemini CLI refuses to run in an "untrusted" folder and silently downgrades
+ * `--yolo` to manual tool approval, which hangs a headless run; Hezo agents run
+ * headless in `/workspace`. Trusting the workspace is the documented headless
+ * setting (https://geminicli.com/docs/cli/trusted-folders). Applied to every
+ * Gemini-runtime provider, mirroring `CLAUDE_CODE_QUIET_ENV` for Claude Code.
  */
-export const KIMI_CODING_BASE_URL = 'https://api.kimi.com/coding/v1';
-
-/**
- * xAI's OpenAI-compatible API base. The `grok` CLI talks to xAI natively via
- * `XAI_API_KEY`, so no base-url env is injected for runs; this constant is used
- * by the provider verify/models endpoint and by the in-container Stop-hook
- * judge, which calls `${XAI_API_BASE_URL}/chat/completions`.
- */
-export const XAI_API_BASE_URL = 'https://api.x.ai/v1';
+export const GEMINI_RUNTIME_ENV = {
+	GEMINI_CLI_TRUST_WORKSPACE: 'true',
+} as const;
 
 export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapter> = {
 	[AiProvider.Anthropic]: {
@@ -1017,7 +1010,11 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 	},
 	[AiProvider.Google]: {
 		runtime: AgentRuntime.Gemini,
-		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'GOOGLE_API_KEY' },
+		// The Gemini CLI authenticates the Gemini API from GEMINI_API_KEY; it does
+		// NOT treat a bare GOOGLE_API_KEY as an auth method (that needs
+		// GOOGLE_GENAI_USE_VERTEXAI), and errors "set an Auth method … or specify
+		// GEMINI_API_KEY". The in-container Stop-hook judge reads either name.
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'GEMINI_API_KEY' },
 	},
 	[AiProvider.DeepSeek]: {
 		runtime: AgentRuntime.ClaudeCode,
@@ -1049,23 +1046,23 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		runtime: AgentRuntime.OpenCode,
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'OPENROUTER_API_KEY' },
 	},
-	// Kimi Code CLI takes its provider api_key/base_url from config.toml (written
-	// by the kimi MCP adapter). KIMI_API_KEY is still exported so the in-container
-	// Stop-hook judge can call the same upstream; KIMI_BASE_URL points it at the
-	// coding endpoint.
+	// Kimi (Moonshot) runs through Claude Code against Moonshot's
+	// Anthropic-compatible endpoint — the same pattern as DeepSeek/Z.ai — so
+	// Claude Code computes `total_cost_usd` for the run. ENABLE_TOOL_SEARCH and
+	// CLAUDE_CODE_AUTO_COMPACT_WINDOW are Moonshot's documented Claude Code
+	// settings (https://platform.kimi.ai/docs/guide/agent-support).
 	[AiProvider.Kimi]: {
-		runtime: AgentRuntime.Kimi,
+		runtime: AgentRuntime.ClaudeCode,
 		staticEnv: {
-			KIMI_BASE_URL: KIMI_CODING_BASE_URL,
+			ANTHROPIC_BASE_URL: 'https://api.moonshot.ai/anthropic',
+			ANTHROPIC_DEFAULT_OPUS_MODEL: 'kimi-k2.7-code',
+			ANTHROPIC_DEFAULT_SONNET_MODEL: 'kimi-k2.7-code',
+			ANTHROPIC_DEFAULT_HAIKU_MODEL: 'kimi-k2.7-code',
+			CLAUDE_CODE_SUBAGENT_MODEL: 'kimi-k2.7-code',
+			ENABLE_TOOL_SEARCH: 'false',
+			CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
 		},
-		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'KIMI_API_KEY' },
-	},
-	// Grok Build's `grok` CLI authenticates to xAI natively via XAI_API_KEY and
-	// targets api.x.ai with no base-url override; only the credential env is
-	// injected. The in-container Stop-hook judge reads the same XAI_API_KEY.
-	[AiProvider.XAi]: {
-		runtime: AgentRuntime.Grok,
-		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'XAI_API_KEY' },
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
 	},
 };
 
@@ -1077,8 +1074,7 @@ const PROVIDER_UPSTREAM_HOSTS: Record<AiProvider, readonly string[]> = {
 	[AiProvider.DeepSeek]: ['api.deepseek.com'],
 	[AiProvider.ZAi]: ['api.z.ai'],
 	[AiProvider.OpenRouter]: ['openrouter.ai'],
-	[AiProvider.Kimi]: ['api.kimi.com'],
-	[AiProvider.XAi]: ['api.x.ai'],
+	[AiProvider.Kimi]: ['api.moonshot.ai'],
 };
 
 /**
@@ -1161,26 +1157,20 @@ export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 	[AgentRuntime.Codex]: 'codex',
 	[AgentRuntime.Gemini]: 'gemini',
 	[AgentRuntime.OpenCode]: 'opencode',
-	[AgentRuntime.Kimi]: 'kimi',
-	[AgentRuntime.Grok]: 'grok',
 };
 
 /**
  * How each CLI receives the task prompt. Most runtimes read it from stdin (the
  * runner redirects `< $HEZO_PROMPT_FILE`); OpenCode (`opencode run <message>`)
- * and Kimi (`kimi --prompt <text>`) take it as a trailing argument instead, so
- * the exec wrapper appends `"$(cat $HEZO_PROMPT_FILE)"` for them. The mode is
- * threaded to the container via `HEZO_PROMPT_MODE`.
+ * takes it as a trailing argument instead, so the exec wrapper appends
+ * `"$(cat $HEZO_PROMPT_FILE)"` for it. The mode is threaded to the container
+ * via `HEZO_PROMPT_MODE`.
  */
 export const RUNTIME_PROMPT_DELIVERY: Record<AgentRuntime, 'stdin' | 'arg'> = {
 	[AgentRuntime.ClaudeCode]: 'stdin',
 	[AgentRuntime.Codex]: 'stdin',
 	[AgentRuntime.Gemini]: 'stdin',
 	[AgentRuntime.OpenCode]: 'arg',
-	[AgentRuntime.Kimi]: 'arg',
-	// `grok -p "<prompt>"` takes the prompt as the trailing arg (like Kimi), not
-	// on stdin. The exec wrapper appends `"$(cat $HEZO_PROMPT_FILE)"`.
-	[AgentRuntime.Grok]: 'arg',
 };
 
 /**
@@ -1193,15 +1183,6 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
 	[AgentRuntime.Codex]: ['--dangerously-bypass-approvals-and-sandbox'],
 	[AgentRuntime.Gemini]: ['--yolo'],
 	[AgentRuntime.OpenCode]: ['--dangerously-skip-permissions'],
-	// Kimi's `--yolo`/`--auto` flags are rejected when combined with `--prompt`
-	// ("Cannot combine --prompt with --yolo"); auto-approval in non-interactive
-	// prompt mode comes from `default_yolo = true` in config.toml (written by the
-	// kimi MCP adapter) instead.
-	[AgentRuntime.Kimi]: [],
-	// Grok's headless `-p` mode runs autonomously (it auto-approves its own
-	// execution plan when no TTY is attached), so no extra approval flag is
-	// needed. (If a future beta requires one, add it here.)
-	[AgentRuntime.Grok]: [],
 };
 
 /**
@@ -1221,8 +1202,6 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
 	[AgentRuntime.Codex]: [],
 	[AgentRuntime.Gemini]: [],
 	[AgentRuntime.OpenCode]: [],
-	[AgentRuntime.Kimi]: [],
-	[AgentRuntime.Grok]: [],
 };
 
 /**
@@ -1238,13 +1217,9 @@ export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
 	[AgentRuntime.ClaudeCode]: ['--output-format', 'stream-json', '--verbose'],
 	[AgentRuntime.Codex]: ['--json'],
 	[AgentRuntime.Gemini]: ['--output-format', 'stream-json'],
-	// OpenCode `run --format json` emits raw JSON events; Kimi `--output-format
-	// stream-json` emits JSONL. Both terminal events carry token usage.
+	// OpenCode `run --format json` emits raw JSON events whose terminal event
+	// carries token usage.
 	[AgentRuntime.OpenCode]: ['--format', 'json'],
-	[AgentRuntime.Kimi]: ['--output-format', 'stream-json'],
-	// Grok emits newline-delimited JSON events via `--output-format
-	// streaming-json` (note: `streaming-json`, not Claude's `stream-json`).
-	[AgentRuntime.Grok]: ['--output-format', 'streaming-json'],
 };
 
 /**
@@ -1258,8 +1233,6 @@ export const RUNTIME_HEADLESS_PREFIX_ARGS: Record<AgentRuntime, readonly string[
 	[AgentRuntime.Gemini]: [],
 	// `opencode run …` gates non-interactive execution behind the `run` subcommand.
 	[AgentRuntime.OpenCode]: ['run'],
-	[AgentRuntime.Kimi]: [],
-	[AgentRuntime.Grok]: [],
 };
 
 /**
@@ -1274,13 +1247,6 @@ export const RUNTIME_HEADLESS_SUFFIX_ARGS: Record<AgentRuntime, readonly string[
 	[AgentRuntime.Gemini]: [],
 	// OpenCode takes the prompt as a positional `message` (appended in arg mode).
 	[AgentRuntime.OpenCode]: [],
-	// Kimi runs one prompt non-interactively via `--prompt <text>`; the exec
-	// wrapper appends the prompt as the trailing arg in arg mode. (There is no
-	// `--print` flag — the CLI rejects it.)
-	[AgentRuntime.Kimi]: ['--prompt'],
-	// `grok -p <text>` runs one prompt in headless print mode; the exec wrapper
-	// appends the prompt as the trailing arg (arg-mode delivery).
-	[AgentRuntime.Grok]: ['-p'],
 };
 
 export interface AiProviderVerifyEndpoint {
@@ -1363,23 +1329,12 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 	},
 	[AiProvider.Kimi]: {
 		name: 'Kimi',
-		runtimeLabel: 'Kimi Code',
-		supportsSubscription: true,
+		runtimeLabel: 'Claude Code',
 		keyPlaceholder: 'sk-...',
+		// Moonshot's OpenAI-compatible catalog. Drives both key verification and
+		// the default-model dropdown; returns the standard `data[]` shape.
 		verifyEndpoint: {
-			url: `${KIMI_CODING_BASE_URL}/models`,
-			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
-		},
-	},
-	[AiProvider.XAi]: {
-		name: 'xAI',
-		runtimeLabel: 'Grok Build',
-		keyPrefix: 'xai-',
-		keyPlaceholder: 'xai-...',
-		// xAI's OpenAI-compatible catalog. Drives both key verification and the
-		// default-model dropdown; returns the standard `data[]` shape.
-		verifyEndpoint: {
-			url: `${XAI_API_BASE_URL}/models`,
+			url: 'https://api.moonshot.ai/v1/models',
 			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
 		},
 	},

@@ -206,15 +206,6 @@ describe('AI providers subscription auth', () => {
 		expiry_date: 1745780000000,
 	});
 
-	const validKimiBlob = JSON.stringify({
-		access_token: 'kc-access',
-		refresh_token: 'kc-refresh',
-		expires_at: 1813110988251,
-		token_type: 'Bearer',
-		scope: 'kimi-code',
-		expires_in: 3600,
-	});
-
 	it('rejects subscription auth for deepseek (no subscription support)', async () => {
 		const res = await app.request('/api/ai-providers', {
 			method: 'POST',
@@ -370,30 +361,32 @@ describe('AI providers subscription auth', () => {
 		expect(stored?.auth_method).toBe('subscription');
 	});
 
-	it('rejects a kimi blob missing refresh_token', async () => {
+	it('rejects subscription auth for kimi (Claude Code/Moonshot is api-key only)', async () => {
 		const res = await app.request('/api/ai-providers', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				provider: 'kimi',
-				api_key: JSON.stringify({ access_token: 'only-access' }),
+				api_key: JSON.stringify({ access_token: 'a', refresh_token: 'r' }),
 				auth_method: 'subscription',
 			}),
 		});
 		expect(res.status).toBe(400);
 		const body = await res.json();
-		expect(body.error.code).toBe('INVALID_SUBSCRIPTION_BLOB');
+		// Kimi no longer advertises subscription support, so the route rejects the
+		// auth method outright before any blob validation.
+		expect(body.error.code).toBe('UNSUPPORTED_AUTH_METHOD');
 	});
 
-	it('stores a valid kimi-code.json blob for kimi', async () => {
+	it('stores an api-key credential for kimi', async () => {
 		await db.query('DELETE FROM ai_provider_configs');
 		const res = await app.request('/api/ai-providers', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				provider: 'kimi',
-				api_key: validKimiBlob,
-				auth_method: 'subscription',
+				api_key: 'sk-kimi-key',
+				auth_method: 'api_key',
 				label: 'kimi-pro',
 			}),
 		});
@@ -404,7 +397,7 @@ describe('AI providers subscription auth', () => {
 		const stored = (body.data as Array<{ provider: string; auth_method: string }>).find(
 			(r) => r.provider === 'kimi',
 		);
-		expect(stored?.auth_method).toBe('subscription');
+		expect(stored?.auth_method).toBe('api_key');
 	});
 });
 

@@ -78,7 +78,7 @@ describe('agent-stream-parser', () => {
 		expect(out).toContain('[tool-error] ENOENT: missing file');
 	});
 
-	it('captures usage and computes cost from the pricing table (not total_cost_usd)', () => {
+	it('prefers the runtime-reported total_cost_usd over the pricing table', () => {
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
 		// The model arrives on the init event; the parser needs it to price the run.
 		parser.onStdout(
@@ -99,17 +99,79 @@ describe('agent-stream-parser', () => {
 			},
 		};
 		const out = parser.onStdout(`${JSON.stringify(event)}\n`);
-		// total_cost_usd is still echoed in the log line as a cross-check…
 		expect(out).toContain('[done] success turns=3 duration=2000ms tokens=150/50 cost=$0.4567');
 
 		const usage = parser.getUsage();
 		expect(usage).not.toBeNull();
 		expect(usage?.inputTokens).toBe(150);
 		expect(usage?.outputTokens).toBe(50);
-		// …but the persisted cost is computed from the table, pricing the cache
-		// buckets separately: 100*0.001 + 30*0.0001 + 20*0.002 + 50*0.002
-		//   = 0.1 + 0.003 + 0.04 + 0.1 = 0.243 → 24 cents (not the 46c of total_cost_usd).
+		// total_cost_usd (0.4567) is reported, so it wins over the 24c the table would
+		// have computed: round(0.4567 * 100) = 46 cents.
+		expect(usage?.costCents).toBe(46);
+	});
+
+	it('falls back to the pricing table when Claude Code reports no total_cost_usd', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
+		parser.onStdout(
+			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-x', tools: [] })}\n`,
+		);
+		// No total_cost_usd on the terminal event (e.g. an interrupted run) — price from
+		// the table using the token buckets.
+		const event = {
+			type: 'result',
+			subtype: 'success',
+			duration_ms: 2000,
+			num_turns: 3,
+			is_error: false,
+			usage: {
+				input_tokens: 100,
+				output_tokens: 50,
+				cache_creation_input_tokens: 20,
+				cache_read_input_tokens: 30,
+			},
+		};
+		const out = parser.onStdout(`${JSON.stringify(event)}\n`);
+
+		const usage = parser.getUsage();
+		// Cost computed from the table, pricing the cache buckets separately:
+		//   100*0.001 + 30*0.0001 + 20*0.002 + 50*0.002 = 0.243 → 24 cents.
 		expect(usage?.costCents).toBe(24);
+		// The [done] line shows the table-derived figure we actually persisted.
+		expect(out).toContain('tokens=150/50 cost=$0.2400');
+	});
+
+	it('uses the DeepSeek-via-Claude-Code total_cost_usd from a real run result event', () => {
+		// Captured from a real `cost-probe --provider deepseek` run: DeepSeek's
+		// Anthropic-compatible endpoint returns total_cost_usd, so the Claude Code
+		// runtime surfaces it and we persist it verbatim. `deepseek-v4-flash` is not in
+		// the pricing table here, so without the reported cost this would price to $0 —
+		// proving the run-output cost is what's used.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
+		parser.onStdout(
+			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'deepseek-v4-flash', tools: [] })}\n`,
+		);
+		const event = {
+			type: 'result',
+			subtype: 'success',
+			is_error: false,
+			duration_ms: 3276,
+			num_turns: 1,
+			result: 'ok',
+			total_cost_usd: 0.100855,
+			usage: {
+				input_tokens: 20096,
+				cache_creation_input_tokens: 0,
+				cache_read_input_tokens: 0,
+				output_tokens: 15,
+			},
+		};
+		const out = parser.onStdout(`${JSON.stringify(event)}\n`);
+		const usage = parser.getUsage();
+		expect(usage?.inputTokens).toBe(20096);
+		expect(usage?.outputTokens).toBe(15);
+		// round(0.100855 * 100) = 10 cents.
+		expect(usage?.costCents).toBe(10);
+		expect(out).toContain('tokens=20096/15 cost=$0.1009');
 	});
 
 	it('accumulates running usage from assistant turns before the terminal result', () => {
@@ -244,6 +306,20 @@ describe('agent-stream-parser', () => {
 			expect(usage?.costCents).toBe(0);
 		});
 
+		it('prefers a runtime-reported cost over the pricing table', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex, price);
+			parser.onStdout(`${JSON.stringify({ type: 'thread.started', model: 'codex-x' })}\n`);
+			parser.onStdout(
+				`${JSON.stringify({
+					type: 'turn.completed',
+					total_cost_usd: 0.5,
+					usage: { input_tokens: 1000, output_tokens: 100 },
+				})}\n`,
+			);
+			// 0.5 USD reported → 50 cents, regardless of the table.
+			expect(parser.getUsage()?.costCents).toBe(50);
+		});
+
 		it('marks a failed turn as error', () => {
 			const parser = createAgentStreamParser(AgentRuntime.Codex);
 			const event = { type: 'turn.failed', usage: { input_tokens: 10, output_tokens: 2 } };
@@ -316,6 +392,21 @@ describe('agent-stream-parser', () => {
 			expect(usage?.inputTokens).toBe(24939);
 			expect(usage?.outputTokens).toBe(174);
 			expect(usage?.costCents).toBe(0);
+		});
+
+		it('prefers a runtime-reported cost over the per-model table sum', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Gemini, price);
+			parser.onStdout(
+				`${JSON.stringify({
+					type: 'result',
+					total_cost_usd: 0.5,
+					stats: {
+						models: { 'gemini-2.5-pro': { tokens: { prompt: 1_000_000, candidates: 200_000 } } },
+					},
+				})}\n`,
+			);
+			// 0.5 USD reported → 50 cents, regardless of the per-model table sum.
+			expect(parser.getUsage()?.costCents).toBe(50);
 		});
 
 		it('sums usage across multiple models', () => {
@@ -403,7 +494,7 @@ describe('agent-stream-parser', () => {
 	});
 });
 
-describe('agent-stream-parser — generic (opencode / kimi)', () => {
+describe('agent-stream-parser — generic (opencode)', () => {
 	it('renders assistant text from a loosely-shaped event', () => {
 		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		const out = parser.onStdout(
@@ -413,7 +504,7 @@ describe('agent-stream-parser — generic (opencode / kimi)', () => {
 	});
 
 	it('skips user-role messages', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Kimi);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		const out = parser.onStdout(
 			`${JSON.stringify({ type: 'message', role: 'user', text: 'the prompt' })}\n`,
 		);
@@ -430,7 +521,7 @@ describe('agent-stream-parser — generic (opencode / kimi)', () => {
 	});
 
 	it('captures token usage and prices it from a terminal event', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Kimi, price);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode, price);
 		parser.onStdout(`${JSON.stringify({ type: 'init', model: 'gemini-2.5-flash' })}\n`);
 		const out = parser.onStdout(
 			`${JSON.stringify({
