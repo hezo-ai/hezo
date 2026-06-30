@@ -75,6 +75,12 @@ export interface ProbeInvocation {
 	env: string[];
 	/** How the prompt reaches the CLI — stdin pipe or trailing arg. */
 	promptMode: 'stdin' | 'arg';
+	/**
+	 * Shell commands run inside the container before the CLI, to stage any
+	 * credential/config files a runtime needs beyond env vars (e.g. Codex's
+	 * `$CODEX_HOME/auth.json`). Empty for runtimes that authenticate from env.
+	 */
+	setup: string[];
 }
 
 export interface BuildProbeInvocationOpts {
@@ -96,10 +102,27 @@ export function buildProbeInvocation(
 	const model = opts.model ?? PROBE_DEFAULT_MODELS[provider] ?? '';
 	const prompt = opts.prompt ?? DEFAULT_PROBE_PROMPT;
 
+	// Most runtimes authenticate from env alone. Codex is the exception: `codex exec`
+	// reads its credential from `$CODEX_HOME/auth.json`, and a bare `OPENAI_API_KEY`
+	// env run falls back to ChatGPT mode (401 on /v1/responses). Stage the key the
+	// canonical `codex login --api-key` way. (The auth method doesn't change whether
+	// the run output carries a cost — which is all the probe measures.)
+	const extraEnv: string[] = [];
+	const setup: string[] = [];
+	if (runtime === AgentRuntime.Codex) {
+		const codexHome = '/tmp/hezo-probe-codex';
+		extraEnv.push(
+			`CODEX_HOME=${codexHome}`,
+			`CODEX_AUTH_JSON=${JSON.stringify({ OPENAI_API_KEY: opts.apiKey })}`,
+		);
+		setup.push('mkdir -p "$CODEX_HOME"', 'printf %s "$CODEX_AUTH_JSON" > "$CODEX_HOME/auth.json"');
+	}
+
 	// Provider env: base URL + model defaults + credential env — exactly what a
 	// real run receives (api-key auth; the probe always uses a pasted key).
 	const env = [
 		...buildProviderEnv(provider, { value: opts.apiKey, authMethod: AiAuthMethod.ApiKey }),
+		...extraEnv,
 		`PROMPT=${prompt}`,
 	];
 
@@ -122,7 +145,15 @@ export function buildProbeInvocation(
 		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtime],
 	];
 
-	return { provider, runtime, model, cmd, env, promptMode: RUNTIME_PROMPT_DELIVERY[runtime] };
+	return {
+		provider,
+		runtime,
+		model,
+		cmd,
+		env,
+		promptMode: RUNTIME_PROMPT_DELIVERY[runtime],
+		setup,
+	};
 }
 
 /**
@@ -132,8 +163,13 @@ export function buildProbeInvocation(
  * argv. (Production reads the prompt from a mounted file; the probe sources it
  * from the `PROMPT` env var instead, which is irrelevant to cost reporting.)
  */
-export function wrapProbeExecCmd(cmd: string[], promptMode: 'stdin' | 'arg'): string[] {
-	const script = promptMode === 'arg' ? 'exec "$@" "$PROMPT"' : 'printf %s "$PROMPT" | "$@"';
+export function wrapProbeExecCmd(
+	cmd: string[],
+	promptMode: 'stdin' | 'arg',
+	setup: string[] = [],
+): string[] {
+	const promptClause = promptMode === 'arg' ? 'exec "$@" "$PROMPT"' : 'printf %s "$PROMPT" | "$@"';
+	const script = [...setup, promptClause].join('\n');
 	return ['sh', '-c', script, 'sh', ...cmd];
 }
 

@@ -106,7 +106,7 @@ async function probeProvider(docker: DockerClient, provider: AiProvider): Promis
 		}));
 		await docker.startContainer(id);
 		const execId = await docker.execCreate(id, {
-			Cmd: wrapProbeExecCmd(inv.cmd, inv.promptMode),
+			Cmd: wrapProbeExecCmd(inv.cmd, inv.promptMode, inv.setup),
 			Env: inv.env,
 			WorkingDir: '/workspace',
 			User: 'node',

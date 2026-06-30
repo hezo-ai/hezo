@@ -46,6 +46,8 @@ describe('cost-probe › buildProbeInvocation', () => {
 			'deepseek-v4-flash',
 			'-p',
 		]);
+		// Claude Code authenticates from env alone — no credential file to stage.
+		expect(inv.setup).toEqual([]);
 	});
 
 	it('builds the OpenAI (Codex) invocation with the exec subcommand and stdin positional', () => {
@@ -60,6 +62,14 @@ describe('cost-probe › buildProbeInvocation', () => {
 			'--model',
 			'gpt-4o-mini',
 			'-',
+		]);
+		// Codex authenticates from $CODEX_HOME/auth.json (a bare OPENAI_API_KEY env run
+		// falls back to ChatGPT mode and 401s), so the probe stages the key there.
+		expect(inv.env).toContain('CODEX_HOME=/tmp/hezo-probe-codex');
+		expect(inv.env).toContain('CODEX_AUTH_JSON={"OPENAI_API_KEY":"sk-openai"}');
+		expect(inv.setup).toEqual([
+			'mkdir -p "$CODEX_HOME"',
+			'printf %s "$CODEX_AUTH_JSON" > "$CODEX_HOME/auth.json"',
 		]);
 	});
 
@@ -112,6 +122,23 @@ describe('cost-probe › wrapProbeExecCmd', () => {
 			'sh',
 			'grok',
 			'-p',
+		]);
+	});
+
+	it('runs setup commands before the CLI when credential staging is needed', () => {
+		expect(
+			wrapProbeExecCmd(['codex', 'exec', '-'], 'stdin', [
+				'mkdir -p "$CODEX_HOME"',
+				'printf %s "$CODEX_AUTH_JSON" > "$CODEX_HOME/auth.json"',
+			]),
+		).toEqual([
+			'sh',
+			'-c',
+			'mkdir -p "$CODEX_HOME"\nprintf %s "$CODEX_AUTH_JSON" > "$CODEX_HOME/auth.json"\nprintf %s "$PROMPT" | "$@"',
+			'sh',
+			'codex',
+			'exec',
+			'-',
 		]);
 	});
 });
