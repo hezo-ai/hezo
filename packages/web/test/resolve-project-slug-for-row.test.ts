@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import type { Project } from '../src/hooks/use-projects';
-import { resolveProjectSlugForRow } from '../src/hooks/use-websocket';
+import { resolveProjectSlugByIdOnly, resolveProjectSlugForRow } from '../src/hooks/use-websocket';
 
 // resolveProjectSlugForRow only reads id/slug/team_id/is_internal; cast minimal
 // fixtures rather than spelling out every Project field.
@@ -44,5 +44,29 @@ describe('resolveProjectSlugForRow', () => {
 		// A pre-fix comment-family row (only task_id) is unresolvable — exactly why
 		// the broadcast must inject project_id.
 		expect(resolveProjectSlugForRow(index, { task_id: 't1' })).toBeUndefined();
+	});
+});
+
+describe('resolveProjectSlugByIdOnly', () => {
+	test('resolves an ordinary project from project_id', () => {
+		expect(resolveProjectSlugByIdOnly(index, { project_id: 'ops-proj' })).toBe('operations');
+	});
+
+	test('NEVER falls back to team_id — a team-wide row is unresolvable', () => {
+		// This is the whole point: a heartbeat_runs/agent_wakeup_requests row carrying
+		// only team_id must NOT resolve to the team's first non-internal project, or
+		// every project's task list would invalidate on any project's run (the storm
+		// that stalled infinite-scroll). It resolves only by its own project_id.
+		expect(resolveProjectSlugByIdOnly(index, { team_id: 'ops-team' })).toBeUndefined();
+		expect(
+			resolveProjectSlugByIdOnly(index, { team_id: 'ops-team', task_id: 't1' }),
+		).toBeUndefined();
+	});
+
+	test('resolves the run to its own project, not the team default', () => {
+		// A run in ops invalidates ops; a run elsewhere on the team does not touch ops.
+		expect(resolveProjectSlugByIdOnly(index, { project_id: 'ops-proj', team_id: 'hq-team' })).toBe(
+			'operations',
+		);
 	});
 });

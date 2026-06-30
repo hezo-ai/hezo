@@ -12,6 +12,7 @@ import {
 	HeartbeatRunStatus,
 	INSTANCE_AGENT_SLUGS,
 	TaskPriority,
+	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 	WakeupSkipReason,
 	WakeupSource,
@@ -533,17 +534,19 @@ export class JobManager {
 			member_id: string;
 			team_id: string;
 			task_id: string | null;
+			project_id: string | null;
 			cost_cents: number;
 			input_tokens: number;
 			output_tokens: number;
 		}>(
-			`UPDATE heartbeat_runs
+			`UPDATE heartbeat_runs hr
 			 SET status = $1::heartbeat_run_status,
 			     finished_at = COALESCE(finished_at, now()),
 			     error = COALESCE(error, $2),
 			     exit_code = COALESCE(exit_code, -1)
 			 WHERE status IN ($3::heartbeat_run_status, $4::heartbeat_run_status)
-			 RETURNING id, member_id, team_id, task_id, cost_cents, input_tokens, output_tokens`,
+			 RETURNING id, member_id, team_id, task_id, cost_cents, input_tokens, output_tokens,
+			           (SELECT t.project_id FROM tasks t WHERE t.id = hr.task_id) AS project_id`,
 			[
 				HeartbeatRunStatus.Failed,
 				'Server restarted while run in flight',
@@ -569,6 +572,7 @@ export class JobManager {
 				id: run.id,
 				member_id: run.member_id,
 				task_id: run.task_id,
+				project_id: run.project_id,
 				status: HeartbeatRunStatus.Failed,
 				error: 'Server restarted while run in flight',
 			});
@@ -1822,7 +1826,71 @@ export class JobManager {
 		// changes its status — `done` is now the final completed state (there is
 		// no `closed`), so the task stays `done` after the Coach run.
 
+		await this.enqueueDeferredContinuationWakeup(memberId, agentSlug, taskId, teamId, result);
+
 		await this.chainNextTaskWakeup(memberId, agentSlug, taskId, teamId);
+	}
+
+	/**
+	 * Re-engage an agent on its *own* task within seconds when a productive run
+	 * left work unfinished, instead of stranding it until the next scheduled
+	 * heartbeat (which can be up to `heartbeat_interval_min` — 12h+ — away). A
+	 * `queued` wakeup is claimed by `processWakeups` on its next tick regardless
+	 * of the heartbeat cadence, so this is the fast path for "I deferred more of
+	 * my own work to a later run".
+	 *
+	 * Only fires for a run that genuinely advanced the work and still owns more of
+	 * it. The gate is deliberately stricter than `result.success` (which counts a
+	 * `report_no_work` run as success) so an idle no-op never re-arms itself:
+	 * - the run produced output AND did not report no-work — a no-op or an
+	 *   explicit "nothing to do" must not loop the agent every few seconds;
+	 * - the task is still `in_progress` and still assigned to this member — a
+	 *   handoff to QA sets `review`, a close sets a terminal status, both of which
+	 *   mean the work is no longer this agent's to continue;
+	 * - this run did not hand the work to someone else — an active `@`-mention or
+	 *   reassignment enqueues a wakeup for a *different* member on this task, which
+	 *   is the real "ball passed on" signal even when status/assignee are
+	 *   unchanged. The peer's reply brings this agent back via the comment path.
+	 */
+	private async enqueueDeferredContinuationWakeup(
+		memberId: string,
+		agentSlug: string,
+		taskId: string,
+		teamId: string,
+		result: RunResult,
+	): Promise<void> {
+		const { db } = this.deps;
+		if (!result.success || !result.heartbeatRunId) return;
+
+		const gate = await db.query<{ eligible: boolean }>(
+			`SELECT (
+			   r.produced_output
+			   AND NOT r.reported_no_work
+			   AND t.status = $3::task_status
+			   AND t.assignee_id = $2::uuid
+			   AND NOT EXISTS (
+			     SELECT 1 FROM agent_wakeup_requests w
+			     WHERE (w.payload->>'task_id')::uuid = $4::uuid
+			       AND w.member_id <> $2::uuid
+			       AND w.created_at >= r.started_at
+			   )
+			 ) AS eligible
+			 FROM heartbeat_runs r
+			 JOIN tasks t ON t.id = $4::uuid
+			 WHERE r.id = $1::uuid`,
+			[result.heartbeatRunId, memberId, TaskStatus.InProgress, taskId],
+		);
+		if (!gate.rows[0]?.eligible) return;
+
+		try {
+			await createWakeup(db, memberId, teamId, WakeupSource.Timer, {
+				task_id: taskId,
+				reason: 'deferred_continuation',
+				previous_run_id: result.heartbeatRunId,
+			});
+		} catch (e) {
+			log.error(`Failed to enqueue continuation wakeup for agent ${ref(agentSlug, memberId)}:`, e);
+		}
 	}
 
 	/**

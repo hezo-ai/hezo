@@ -167,7 +167,7 @@ export function useCreateProjectWithTeam() {
 			task_prefix?: string;
 		}) => api.post<ProjectWithTeamResponse>('/api/projects', data),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all(), exact: true });
 			// Cloning a team mints a new reusable template — refresh the catalog.
 			queryClient.invalidateQueries({ queryKey: queryKeys.teamTemplates() });
 		},
@@ -201,7 +201,8 @@ export function useUpdateProject(projectId: string) {
 export function useDeleteProject() {
 	return useMutation({
 		mutationFn: (projectId: string) => api.delete(`/api/projects/${projectId}`),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() }),
+		onSuccess: () =>
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all(), exact: true }),
 	});
 }
 
@@ -228,7 +229,7 @@ function applyIconToCaches(projectId: string, icon: ProjectIconResponse) {
 		),
 	);
 	// Reconcile against the server (e.g. exact timestamps) without blocking the UI.
-	queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
+	queryClient.invalidateQueries({ queryKey: queryKeys.projects.all(), exact: true });
 	queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
 }
 

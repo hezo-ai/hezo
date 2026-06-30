@@ -11,12 +11,14 @@ import { queryKeys } from '../src/lib/query-keys';
  */
 function recordingClient() {
 	const keys: unknown[][] = [];
+	const calls: { queryKey: unknown[]; exact?: boolean }[] = [];
 	const client = {
-		invalidateQueries: ({ queryKey }: { queryKey: unknown[] }) => {
+		invalidateQueries: ({ queryKey, exact }: { queryKey: unknown[]; exact?: boolean }) => {
 			keys.push(queryKey);
+			calls.push({ queryKey, exact });
 		},
 	} as unknown as QueryClient;
-	return { client, keys };
+	return { client, keys, calls };
 }
 
 const SLUG = 'ops';
@@ -82,5 +84,24 @@ describe('invalidateQueriesForRowChange uses the queryKeys factory', () => {
 		const { client, keys } = recordingClient();
 		invalidateQueriesForRowChange(client, SLUG, 'nonexistent', {});
 		expect(keys).toHaveLength(0);
+	});
+
+	test('the project-index key is invalidated EXACTLY, but per-project keys stay fuzzy', () => {
+		// Regression: `['projects']` is the index query key AND a prefix of every
+		// `['projects', <slug>, ...]` query. A fuzzy invalidation of it refetches
+		// every project's task list on any one project's change (the cross-project
+		// refetch storm). It must be invalidated with exact:true; the per-project
+		// keys (e.g. tasks(cid)) must stay fuzzy so they still prefix-cover their
+		// own sub-queries (taskComments, progress-summary).
+		const { client, calls } = recordingClient();
+		invalidateQueriesForRowChange(client, SLUG, 'tasks', {});
+		const indexCall = calls.find(
+			(c) => Array.isArray(c.queryKey) && c.queryKey.length === 1 && c.queryKey[0] === 'projects',
+		);
+		expect(indexCall?.exact).toBe(true);
+		const tasksCall = calls.find(
+			(c) => JSON.stringify(c.queryKey) === JSON.stringify(queryKeys.projects.tasks(SLUG)),
+		);
+		expect(tasksCall?.exact).toBeFalsy();
 	});
 });

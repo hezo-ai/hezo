@@ -35,7 +35,13 @@ export async function terminateHeartbeatRun(
 		team_id: string;
 		task_id: string | null;
 		member_id: string;
-	}>('SELECT status, team_id, task_id, member_id FROM heartbeat_runs WHERE id = $1', [runId]);
+		project_id: string | null;
+	}>(
+		`SELECT hr.status, hr.team_id, hr.task_id, hr.member_id,
+		        (SELECT t.project_id FROM tasks t WHERE t.id = hr.task_id) AS project_id
+		   FROM heartbeat_runs hr WHERE hr.id = $1`,
+		[runId],
+	);
 	const row = lookup.rows[0];
 	if (!row) return { terminated: false, taskId: null };
 	if (row.status !== HeartbeatRunStatus.Running && row.status !== HeartbeatRunStatus.Queued) {
@@ -75,6 +81,7 @@ export async function terminateHeartbeatRun(
 			id: runId,
 			task_id: row.task_id,
 			team_id: row.team_id,
+			project_id: row.project_id,
 			member_id: row.member_id,
 			status: HeartbeatRunStatus.Cancelled,
 		});
@@ -124,6 +131,14 @@ export async function cancelCoachWorkForTask(
 	const coachId = coach.rows[0]?.id;
 	if (!coachId) return;
 
+	// Resolve the task's project so realtime invalidation scopes to it (the client
+	// resolves agent_wakeup_requests strictly by project_id, never the team).
+	const projectRow = await db.query<{ project_id: string }>(
+		'SELECT project_id FROM tasks WHERE id = $1',
+		[taskId],
+	);
+	const projectId = projectRow.rows[0]?.project_id ?? null;
+
 	// Retire still-queued Coach wakeups for this task.
 	const cancelled = await db.query<{ id: string }>(
 		`UPDATE agent_wakeup_requests
@@ -139,6 +154,7 @@ export async function cancelCoachWorkForTask(
 			id: row.id,
 			team_id: teamId,
 			task_id: taskId,
+			project_id: projectId,
 			member_id: coachId,
 			status: WakeupStatus.Cancelled,
 		});

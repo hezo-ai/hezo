@@ -125,7 +125,9 @@ test('run detail page streams synthetic agent logs', async ({ page, context }) =
 	});
 	await expect(taskLink).toBeVisible();
 	await taskLink.click();
-	await expect(page).toHaveURL(new RegExp(`/tasks/${task.identifier.toLowerCase()}$`));
+	// The link may carry a `#comment-<id>` scroll anchor to the run's inline
+	// comment, so allow an optional hash after the identifier.
+	await expect(page).toHaveURL(new RegExp(`/tasks/${task.identifier.toLowerCase()}(?:#.*)?$`));
 });
 
 test('task page renders completed run as a collapsed inline comment with summary', async ({

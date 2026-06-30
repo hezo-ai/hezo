@@ -210,7 +210,15 @@ jobs:
 
   test-browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 25
+    # Sharded across runners the same way the vitest tiers are: Playwright splits
+    # its suite into thirds (`--shard <i>/3`), so wall time drops to roughly a
+    # third versus the single-runner run. fail-fast off so one shard failing
+    # still lets the others report.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -231,11 +239,11 @@ jobs:
         run: bunx playwright install --with-deps chromium
       - if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: bunx playwright install-deps chromium
-      - run: bun run test --browser
+      - run: bun run test --browser --shard ${{ matrix.shard }}/3
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: |
             playwright-report/
             test-results/
@@ -266,6 +274,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: '[ "${{ needs.test-shared.result }}" = "success" ]'
+
+  test-browser-complete:
+    if: always()
+    needs: test-browser
+    runs-on: ubuntu-latest
+    steps:
+      - run: '[ "${{ needs.test-browser.result }}" = "success" ]'
 
   # Closes the Coveralls parallel build once every shard/tier has uploaded, so
   # Coveralls merges them into a single coverage total for the commit. Runs
