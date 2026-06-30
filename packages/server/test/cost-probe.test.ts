@@ -73,6 +73,24 @@ describe('cost-probe › buildProbeInvocation', () => {
 		]);
 	});
 
+	it('builds the Google (Gemini) invocation with GEMINI_API_KEY, not GOOGLE_API_KEY', () => {
+		const inv = buildProbeInvocation(AiProvider.Google, { apiKey: 'g-key' });
+		expect(inv.runtime).toBe(AgentRuntime.Gemini);
+		// The Gemini CLI authenticates from GEMINI_API_KEY; a bare GOOGLE_API_KEY is
+		// not accepted as an auth method.
+		expect(inv.env).toContain('GEMINI_API_KEY=g-key');
+		expect(inv.env.some((e) => e.startsWith('GOOGLE_API_KEY='))).toBe(false);
+		expect(inv.cmd).toEqual([
+			'gemini',
+			'--output-format',
+			'stream-json',
+			'--yolo',
+			'--model',
+			'gemini-2.5-flash',
+		]);
+		expect(inv.setup).toEqual([]);
+	});
+
 	it('strips the DeepSeek [1m] tag from an overridden model (Claude Code re-appends it)', () => {
 		const inv = buildProbeInvocation(AiProvider.DeepSeek, {
 			apiKey: 'k',

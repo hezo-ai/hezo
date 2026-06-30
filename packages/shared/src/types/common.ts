@@ -1017,7 +1017,11 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 	},
 	[AiProvider.Google]: {
 		runtime: AgentRuntime.Gemini,
-		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'GOOGLE_API_KEY' },
+		// The Gemini CLI authenticates the Gemini API from GEMINI_API_KEY; it does
+		// NOT treat a bare GOOGLE_API_KEY as an auth method (that needs
+		// GOOGLE_GENAI_USE_VERTEXAI), and errors "set an Auth method … or specify
+		// GEMINI_API_KEY". The in-container Stop-hook judge reads either name.
+		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'GEMINI_API_KEY' },
 	},
 	[AiProvider.DeepSeek]: {
 		runtime: AgentRuntime.ClaudeCode,
