@@ -271,9 +271,10 @@ describe('CeoSessionManager', () => {
 		expect(prompt).toContain('assets/<filename>');
 		// Scope the deliverable to the relevant project, not HQ by default.
 		expect(prompt).toContain('the project the work belongs to');
-		// Off-project conversations get a rough summary in chat memory (they live
-		// nowhere else once the window scrolls).
-		expect(prompt).toContain('Summarize off-project conversations');
+		// Off-project conversations get a rough summary in the auto-maintained
+		// long-term memory (they live nowhere else once the window scrolls).
+		expect(prompt).toContain('off-project threads');
+		expect(prompt).toContain('update_chat_memory');
 
 		await manager.stop();
 	});

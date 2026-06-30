@@ -369,11 +369,12 @@ describe('CeoSessionManager — lifecycle branches', () => {
 		expect(count.rows[0].n).toBe(1);
 	});
 
-	test('formatChatMemoryBlock shows a placeholder when empty and the body when present', async () => {
-		const { formatChatMemoryBlock } = await import('../src/services/ceo-session-manager');
-		expect(formatChatMemoryBlock('   ')).toContain('nothing recorded yet');
-		const withBody = formatChatMemoryBlock('Operator prefers terse replies');
+	test('formatLongTermMemoryBlock shows a placeholder when empty and the body when present', async () => {
+		const { formatLongTermMemoryBlock } = await import('../src/services/ceo-session-manager');
+		expect(formatLongTermMemoryBlock('   ')).toContain('nothing recorded yet');
+		const withBody = formatLongTermMemoryBlock('Operator prefers terse replies');
 		expect(withBody).toContain('Operator prefers terse replies');
+		expect(withBody).toContain('## Long-term memory');
 		expect(withBody).not.toContain('nothing recorded yet');
 	});
 });

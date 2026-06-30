@@ -78,6 +78,7 @@ import {
 import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
 import { deleteAsset, readAsset, writeAsset } from '../services/asset-storage';
+import { upsertChatMemory } from '../services/chat-memory';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 import type { ContainerDeps } from '../services/containers';
 import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
@@ -173,6 +174,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'set_agent_reports_to',
 	'write_project_asset',
 	'write_project_doc',
+	'update_chat_memory',
 	'propose_skill',
 	'create_skill',
 	'add_mcp_connection',
@@ -3502,6 +3504,25 @@ export function registerTools(
 				},
 			});
 			return { written: true, id: doc.id, filename: doc.slug };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'update_chat_memory',
+		"Replace your long-term chat memory — the durable notes carried into every turn of your live operator chat. Pass the FULL revised markdown; it overwrites the stored memory wholesale (there is no append). Record durable, standing knowledge only: operator preferences, decisions, and a rough gist of off-project threads. Do NOT store live data you can re-fetch each turn (project/ticket/roster state). Memory is compacted automatically when the conversation window fills — you'll be handed the window and asked to fold it in via this tool — but you may also call it any time to record something standing.",
+		{
+			content: z.string().describe('The full long-term memory markdown (replaces existing memory)'),
+		},
+		async (args, db, auth) => {
+			if (auth.type !== AuthType.Agent || !auth.memberId) {
+				return {
+					error: 'update_chat_memory can only be called by an agent updating its own memory',
+				};
+			}
+			const mem = await upsertChatMemory(db, auth.memberId, args.content as string);
+			return { written: true, updated_at: mem.updated_at };
 		},
 		db,
 	);

@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { CHAT_MEMORY_SLUG, HEZO_DOCS_URL } from '@hezo/shared';
+import { HEZO_DOCS_URL } from '@hezo/shared';
 import { terminalStatusParams } from '../lib/sql';
 import { buildHezoDocsBlock } from './docs-bundle';
 
@@ -300,12 +300,9 @@ export async function resolveSystemPrompt(
 		let docsText =
 			'No project documentation available yet. Project docs live in the database, not the filesystem — there is no /workspace/.hezo/project-docs path. Author project context with write_project_doc rather than writing a file to disk.';
 		if (ctx.projectId) {
-			// chat-memory.md (HQ) is injected in full into the chatbox prompt, so it
-			// is excluded from the manifest — listing it would tell the agent to
-			// read_project_doc something it already has verbatim.
 			const docs = await db.query<{ filename: string; title: string; updated_at: string }>(
-				"SELECT slug AS filename, title, updated_at FROM documents WHERE type = 'project_doc' AND project_id = $1 AND slug != $2 ORDER BY slug",
-				[ctx.projectId, CHAT_MEMORY_SLUG],
+				"SELECT slug AS filename, title, updated_at FROM documents WHERE type = 'project_doc' AND project_id = $1 ORDER BY slug",
+				[ctx.projectId],
 			);
 			if (docs.rows.length > 0) {
 				const lines = docs.rows

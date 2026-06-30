@@ -1,3 +1,4 @@
+import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
 	type AiProvider,
@@ -33,12 +34,14 @@ import { buildUpdateSet, isFkViolation, terminalStatusParams, withTransaction } 
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
+import { requireAdminEquivalent } from '../middleware/auth';
 import { setAgentAdminStatus } from '../services/agent-admin';
 import {
 	AgentSystemPromptError,
 	fetchAgentSystemPromptForBatch,
 	type SystemPromptMode,
 } from '../services/agent-system-prompts';
+import { getChatMemory, upsertChatMemory } from '../services/chat-memory';
 import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import {
 	getDocument,
@@ -546,6 +549,7 @@ agentsRoutes.get('/projects/:projectId/agents/:agentId', async (c) => {
 	const result = await db.query(
 		`SELECT ${AGENT_BASE_COLUMNS},
 			(m.team_id <> $2) AS is_instance,
+			EXISTS (SELECT 1 FROM ceo_conversations cc WHERE cc.member_id = m.id) AS chat_enabled,
 			(SELECT ma2.title FROM member_agents ma2 WHERE ma2.id = ma.reports_to) AS reports_to_title,
 			(SELECT count(*) FROM tasks i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts2.placeholders}))::int AS assigned_task_count
 		 FROM members m
@@ -555,6 +559,46 @@ agentsRoutes.get('/projects/:projectId/agents/:agentId', async (c) => {
 	);
 
 	return ok(c, result.rows[0]);
+});
+
+// The agent's long-term chat memory (the compacted history shown on the Chat
+// history tab). Only chat-enabled agents — those with a conversation — have one;
+// today that is just the CEO.
+async function isChatEnabledAgent(db: PGlite, memberId: string): Promise<boolean> {
+	const r = await db.query('SELECT 1 FROM ceo_conversations WHERE member_id = $1 LIMIT 1', [
+		memberId,
+	]);
+	return r.rows.length > 0;
+}
+
+agentsRoutes.get('/projects/:projectId/agents/:agentId/chat-memory', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
+	if (!(await isChatEnabledAgent(db, agentId))) {
+		return err(c, 'NOT_FOUND', 'Agent has no chat memory', 404);
+	}
+	const memory = await getChatMemory(db, agentId);
+	return ok(c, { content: memory?.content ?? '', updated_at: memory?.updated_at ?? null });
+});
+
+agentsRoutes.put('/projects/:projectId/agents/:agentId/chat-memory', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
+	if (!(await isChatEnabledAgent(db, agentId))) {
+		return err(c, 'NOT_FOUND', 'Agent has no chat memory', 404);
+	}
+	const body = await c.req.json<{ content?: unknown }>().catch(() => ({}) as { content?: unknown });
+	if (typeof body.content !== 'string') {
+		return err(c, 'INVALID_REQUEST', 'content must be a string', 400);
+	}
+	const mem = await upsertChatMemory(db, agentId, body.content);
+	return ok(c, { content: mem.content, updated_at: mem.updated_at });
 });
 
 agentsRoutes.get('/projects/:projectId/agents/:agentId/system-prompt', async (c) => {

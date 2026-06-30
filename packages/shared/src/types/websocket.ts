@@ -10,6 +10,7 @@ export enum WsMessageType {
 	CeoMessageStart = 'ceo_message_start',
 	CeoMessageDelta = 'ceo_message_delta',
 	CeoMessageComplete = 'ceo_message_complete',
+	CeoCompacted = 'ceo_compacted',
 	ProjectsChanged = 'projects_changed',
 	Error = 'error',
 }
@@ -123,6 +124,18 @@ export interface WsCeoMessageCompleteMessage {
 	costCents: number;
 }
 
+/**
+ * Older messages were compacted into long-term memory and evicted from the
+ * active window. Carries no payload beyond the conversation: every mirrored
+ * surface reacts by refetching the conversation, which now returns only the
+ * retained tail (plus a `compacted_count`), so the chatbox drops the old
+ * messages and shows the "chat compacted" marker at the top.
+ */
+export interface WsCeoCompactedMessage {
+	type: WsMessageType.CeoCompacted;
+	conversationId: string;
+}
+
 export type WsServerMessage =
 	| WsRowChangeMessage
 	| WsAgentLifecycleMessage
@@ -132,6 +145,7 @@ export type WsServerMessage =
 	| WsCeoMessageStartMessage
 	| WsCeoMessageDeltaMessage
 	| WsCeoMessageCompleteMessage
+	| WsCeoCompactedMessage
 	| WsProjectsChangedMessage
 	| WsConnectedMessage
 	| WsErrorMessage;

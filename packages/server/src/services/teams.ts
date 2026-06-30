@@ -1,6 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
-	CHAT_MEMORY_SLUG,
 	DEFAULT_TEAM_ID,
 	DEFAULT_TEAM_NAME,
 	DEFAULT_TEAM_SLUG,
@@ -174,11 +173,6 @@ export async function seedDefaultTeam(deps: CreateTeamDeps): Promise<void> {
 		]);
 	});
 
-	// The chatbox memory doc lives in the HQ project. Ensure it exists rather than
-	// assuming it — startup also calls this so instances created before this
-	// feature self-heal.
-	await ensureChatMemoryDoc(db);
-
 	await ensureInstanceCeo(db, DEFAULT_TEAM_ID);
 	await ensureInstanceCoach(db, DEFAULT_TEAM_ID);
 
@@ -187,29 +181,4 @@ export async function seedDefaultTeam(deps: CreateTeamDeps): Promise<void> {
 	// unlocked — provisioning needs secrets/egress that aren't available here.
 
 	log.info(`Seeded HQ team (${DEFAULT_TEAM_SLUG}) with CEO + Coach`);
-}
-
-/**
- * Ensure the chatbox memory doc (chat-memory.md) exists in the HQ project. A
- * single undeletable project_doc whose full body is injected into every chatbox
- * turn, seeded empty. Idempotent and called on every startup so instances
- * created before this feature — or any where it was removed — self-heal.
- */
-export async function ensureChatMemoryDoc(db: PGlite): Promise<void> {
-	const proj = await db.query<{ id: string }>(
-		'SELECT id FROM projects WHERE team_id = $1 AND is_internal = true',
-		[DEFAULT_TEAM_ID],
-	);
-	const projectId = proj.rows[0]?.id;
-	if (!projectId) return;
-	const existing = await db.query(
-		"SELECT 1 FROM documents WHERE project_id = $1 AND slug = $2 AND type = 'project_doc'",
-		[projectId, CHAT_MEMORY_SLUG],
-	);
-	if (existing.rows.length > 0) return;
-	await db.query(
-		`INSERT INTO documents (project_id, team_id, type, slug, title, content)
-		 VALUES ($1, $2, 'project_doc', $3, 'Chatbox memory', '')`,
-		[projectId, DEFAULT_TEAM_ID, CHAT_MEMORY_SLUG],
-	);
 }

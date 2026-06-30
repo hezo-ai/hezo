@@ -3,6 +3,7 @@ import {
 	ArrowRight,
 	Check,
 	Copy,
+	History,
 	Loader2,
 	Maximize2,
 	MessageSquare,
@@ -42,7 +43,7 @@ interface CeoChatWidgetProps {
 export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
 	const setOpen = onOpenChange;
 	const [expanded, setExpanded] = useState(false);
-	const { messages, send, streaming, sending, loaded, unread } = useCeoChat(open);
+	const { messages, send, streaming, sending, loaded, unread, compactedCount } = useCeoChat(open);
 	const hq = useHqProject();
 	const hqHealth = useContainerHealth(hq);
 	// The CEO can only act while the HQ container is up. When it isn't, the chat
@@ -259,11 +260,25 @@ export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
 									Loading…
 								</div>
 							)}
-							{loaded && messages.length === 0 && (
+							{loaded && messages.length === 0 && compactedCount === 0 && (
 								<p className="px-1 py-6 text-center text-[13px] text-text-2">
 									Say hello to the CEO. Ask about anything, including active projects,
 									notifications, task blockers, etc
 								</p>
+							)}
+							{loaded && compactedCount > 0 && (
+								<div
+									data-testid="ceo-chat-compacted-banner"
+									className="flex items-center gap-2 px-1 pt-1 text-[11px] text-text-3"
+									title="Older messages were summarized into the CEO's long-term memory and removed from the live chat."
+								>
+									<span className="h-px flex-1 bg-border" />
+									<span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-0.5">
+										<History className="h-3 w-3" aria-hidden="true" />
+										Earlier messages compacted into memory
+									</span>
+									<span className="h-px flex-1 bg-border" />
+								</div>
 							)}
 							{messages.map((m) => (
 								<MessageBubble key={m.id} message={m} />

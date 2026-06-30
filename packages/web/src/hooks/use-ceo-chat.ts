@@ -27,6 +27,8 @@ export interface CeoMessage {
 interface ConversationData {
 	conversation_id: string;
 	messages: CeoMessage[];
+	/** How many older messages have been compacted into long-term memory. */
+	compacted_count: number;
 }
 
 /**
@@ -156,10 +158,17 @@ export function useCeoChat(active: boolean) {
 				});
 			}
 		});
+		// Older messages were compacted into long-term memory and evicted. Refetch
+		// the conversation so the chatbox drops them (leaving the retained tail) and
+		// picks up the new compacted_count that drives the "chat compacted" marker.
+		const offCompacted = subscribe(WsMessageType.CeoCompacted, () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.ceoConversation() });
+		});
 		return () => {
 			offStart();
 			offDelta();
 			offComplete();
+			offCompacted();
 		};
 	}, [subscribe, queryClient]);
 
@@ -216,5 +225,8 @@ export function useCeoChat(active: boolean) {
 		sending: pending !== null,
 		loaded: !query.isPending,
 		unread,
+		// >0 once older messages have been compacted into long-term memory; drives
+		// the "chat compacted" marker at the top of the window.
+		compactedCount: query.data?.compacted_count ?? 0,
 	};
 }

@@ -1,8 +1,8 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
-	CHAT_HISTORY_LIMIT_MAX,
-	CHAT_HISTORY_LIMIT_MIN,
-	DEFAULT_CHAT_HISTORY_LIMIT,
+	DEFAULT_MAX_CHAT_HISTORY_SIZE,
+	MAX_CHAT_HISTORY_SIZE_MAX,
+	MAX_CHAT_HISTORY_SIZE_MIN,
 } from '@hezo/shared';
 
 /**
@@ -11,7 +11,7 @@ import {
  */
 
 export const INSTANCE_BASE_URL_KEY = 'instance_base_url';
-export const CHAT_HISTORY_LIMIT_KEY = 'chat_history_limit';
+export const MAX_CHAT_HISTORY_SIZE_KEY = 'max_chat_history_size';
 
 export async function getSystemMeta(db: PGlite, key: string): Promise<string | null> {
 	const result = await db.query<{ value: string }>('SELECT value FROM system_meta WHERE key = $1', [
@@ -33,30 +33,36 @@ export async function deleteSystemMeta(db: PGlite, key: string): Promise<void> {
 }
 
 /**
- * Clamp an arbitrary number to the allowed chat-history-window range. Exported
- * so the settings route validates with the same bounds the reader enforces.
+ * Clamp an arbitrary number to the allowed chat-history byte-cap range.
+ * Exported so the settings route validates with the same bounds the reader
+ * enforces.
  */
-export function clampChatHistoryLimit(value: number): number {
-	if (!Number.isFinite(value)) return DEFAULT_CHAT_HISTORY_LIMIT;
-	return Math.min(CHAT_HISTORY_LIMIT_MAX, Math.max(CHAT_HISTORY_LIMIT_MIN, Math.round(value)));
+export function clampMaxChatHistorySize(value: number): number {
+	if (!Number.isFinite(value)) return DEFAULT_MAX_CHAT_HISTORY_SIZE;
+	return Math.min(
+		MAX_CHAT_HISTORY_SIZE_MAX,
+		Math.max(MAX_CHAT_HISTORY_SIZE_MIN, Math.round(value)),
+	);
 }
 
 /**
- * How many recent chatbox messages to replay into each turn's prompt. Falls
- * back to the default when unset or malformed, and clamps stored values to the
+ * The high-water byte cap for a chatbox's active message window: once the
+ * window's combined content exceeds this, the chat agent compacts it into
+ * long-term memory and all but the latest few messages are evicted. Falls back
+ * to the default when unset or malformed, and clamps stored values to the
  * allowed range so a stale out-of-bounds row can never blow up a turn.
  */
-export async function getChatHistoryLimit(db: PGlite): Promise<number> {
-	const raw = await getSystemMeta(db, CHAT_HISTORY_LIMIT_KEY);
-	if (raw === null) return DEFAULT_CHAT_HISTORY_LIMIT;
+export async function getMaxChatHistorySize(db: PGlite): Promise<number> {
+	const raw = await getSystemMeta(db, MAX_CHAT_HISTORY_SIZE_KEY);
+	if (raw === null) return DEFAULT_MAX_CHAT_HISTORY_SIZE;
 	const parsed = Number.parseInt(raw, 10);
-	if (Number.isNaN(parsed)) return DEFAULT_CHAT_HISTORY_LIMIT;
-	return clampChatHistoryLimit(parsed);
+	if (Number.isNaN(parsed)) return DEFAULT_MAX_CHAT_HISTORY_SIZE;
+	return clampMaxChatHistorySize(parsed);
 }
 
-export async function setChatHistoryLimit(db: PGlite, value: number): Promise<number> {
-	const clamped = clampChatHistoryLimit(value);
-	await setSystemMeta(db, CHAT_HISTORY_LIMIT_KEY, String(clamped));
+export async function setMaxChatHistorySize(db: PGlite, value: number): Promise<number> {
+	const clamped = clampMaxChatHistorySize(value);
+	await setSystemMeta(db, MAX_CHAT_HISTORY_SIZE_KEY, String(clamped));
 	return clamped;
 }
 

@@ -5,12 +5,12 @@ import { queryKeys } from '../lib/query-keys';
 
 export interface InstanceSettings {
 	base_url: string | null;
-	chat_history_limit: number;
+	max_chat_history_size: number;
 }
 
 export type InstanceSettingsUpdate = Partial<{
 	base_url: string | null;
-	chat_history_limit: number;
+	max_chat_history_size: number;
 }>;
 
 export function useInstanceSettings() {

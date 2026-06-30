@@ -1,5 +1,4 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { CHAT_MEMORY_SLUG, HQ_PROJECT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -115,18 +114,7 @@ describe('PUT /projects/:projectId/docs/:filename — validation + PRD approval'
 	});
 });
 
-describe('DELETE /projects/:projectId/docs/:filename — chat-memory guard', () => {
-	it('403s when deleting the HQ chatbox memory doc', async () => {
-		// The chatbox memory doc only lives in HQ (the default team) at the fixed
-		// 'hq' project slug. Attempt the protected delete against it.
-		const res = await app.request(`/api/projects/${HQ_PROJECT_SLUG}/docs/${CHAT_MEMORY_SLUG}`, {
-			method: 'DELETE',
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(403);
-		expect((await res.json()).error.code).toBe('FORBIDDEN');
-	});
-
+describe('DELETE /projects/:projectId/docs/:filename — missing doc', () => {
 	it('404s when deleting a doc that does not exist', async () => {
 		const res = await app.request(`/api/projects/${projectId}/docs/never-existed.md`, {
 			method: 'DELETE',
