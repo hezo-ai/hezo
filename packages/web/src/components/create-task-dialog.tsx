@@ -2,9 +2,9 @@ import { CAPTAIN_AGENT_SLUG } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useNavigate } from '@tanstack/react-router';
 import { ChevronDown, Loader2, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
-import { useProjectMeta } from '../hooks/use-projects';
+import { useAllVisibleProjects, useProjectMeta } from '../hooks/use-projects';
 import { useCreateTask } from '../hooks/use-tasks';
 import { MarkdownEditor } from './markdown-editor';
 import { Button } from './ui/button';
@@ -12,21 +12,49 @@ import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
 import { Input } from './ui/input';
 
 interface CreateTaskDialogProps {
-	projectId: string;
+	/** Fixed target project (slug). Pass this OR `selectProject`, not both. */
+	projectId?: string;
+	/** Show a project picker as the first field instead of targeting a fixed
+	 *  `projectId` — used by the global mobile "+" so a task can be filed into any
+	 *  project. The picked project then drives the assignee list. */
+	selectProject?: boolean;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }
 
-export function CreateTaskDialog({ projectId, open, onOpenChange }: CreateTaskDialogProps) {
+export function CreateTaskDialog({
+	projectId,
+	selectProject,
+	open,
+	onOpenChange,
+}: CreateTaskDialogProps) {
 	const [title, setTitle] = useState('');
 	const [description, setDescription] = useState('');
 	const [assigneeId, setAssigneeId] = useState('');
 	const [priority, setPriority] = useState('medium');
 	const [moreOpen, setMoreOpen] = useState(false);
-	const project = useProjectMeta(projectId);
-	const { data: agents } = useAgents(projectId);
-	const createTask = useCreateTask(projectId);
+	const [pickedProjectId, setPickedProjectId] = useState('');
+
+	// With `selectProject` the picker drives the target; otherwise the fixed prop does.
+	const effectiveProjectId = selectProject ? pickedProjectId : (projectId ?? '');
+
+	const { projects } = useAllVisibleProjects();
+	const project = useProjectMeta(effectiveProjectId);
+	const { data: agents } = useAgents(effectiveProjectId);
+	const createTask = useCreateTask(effectiveProjectId);
 	const navigate = useNavigate();
+
+	// On open, seed the picker with the passed/active project (only when it's a
+	// user-visible project) and clear any stale assignee. Rising-edge only, so a
+	// pick already in progress is never reset while the dialog stays open.
+	const prevOpenRef = useRef(false);
+	useEffect(() => {
+		if (selectProject && open && !prevOpenRef.current) {
+			setPickedProjectId(projectId && projects.some((p) => p.slug === projectId) ? projectId : '');
+			setAssigneeId('');
+		}
+		prevOpenRef.current = open;
+	}, [open, selectProject, projectId, projects]);
 
 	const isInternalProject = project?.is_internal ?? false;
 	const captainAgent = useMemo(() => agents?.find((a) => a.slug === CAPTAIN_AGENT_SLUG), [agents]);
@@ -39,7 +67,7 @@ export function CreateTaskDialog({ projectId, open, onOpenChange }: CreateTaskDi
 	}, [agents, captainAgent, isInternalProject]);
 
 	const priorityLabel = priority.charAt(0).toUpperCase() + priority.slice(1);
-	const summaryLabel = `${priorityLabel} priority · ${project?.name ?? projectId}`;
+	const summaryLabel = `${priorityLabel} priority · ${project?.name ?? 'No project'}`;
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
@@ -55,7 +83,7 @@ export function CreateTaskDialog({ projectId, open, onOpenChange }: CreateTaskDi
 		navigate({
 			to: '/projects/$projectId/tasks/$taskId',
 			params: {
-				projectId: result.project_slug ?? projectId,
+				projectId: result.project_slug ?? effectiveProjectId,
 				taskId: result.identifier.toLowerCase(),
 			},
 		});
@@ -80,6 +108,30 @@ export function CreateTaskDialog({ projectId, open, onOpenChange }: CreateTaskDi
 					</div>
 
 					<form onSubmit={handleSubmit} className="flex flex-col gap-4">
+						{selectProject && (
+							<label className="flex flex-col gap-1.5">
+								<span className="text-sm text-text-2">Project *</span>
+								<select
+									value={pickedProjectId}
+									onChange={(e) => {
+										// Switching projects invalidates the chosen assignee (a
+										// different roster), so clear it in the same update.
+										setPickedProjectId(e.target.value);
+										setAssigneeId('');
+									}}
+									required
+									data-testid="create-task-project"
+									className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-1 outline-none focus:border-border-strong"
+								>
+									<option value="">Select project</option>
+									{projects.map((p) => (
+										<option key={p.id} value={p.slug}>
+											{p.name}
+										</option>
+									))}
+								</select>
+							</label>
+						)}
 						<Input
 							label="Title"
 							value={title}
@@ -87,7 +139,7 @@ export function CreateTaskDialog({ projectId, open, onOpenChange }: CreateTaskDi
 							required
 						/>
 						<MarkdownEditor
-							projectId={projectId}
+							projectId={effectiveProjectId}
 							projectSlug={project?.slug}
 							label="Description"
 							ariaLabel="Description"
@@ -104,6 +156,7 @@ export function CreateTaskDialog({ projectId, open, onOpenChange }: CreateTaskDi
 								value={assigneeId}
 								onChange={(e) => setAssigneeId(e.target.value)}
 								required
+								data-testid="create-task-assignee"
 								className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-1 outline-none focus:border-border-strong"
 							>
 								<option value="">Select assignee</option>
@@ -159,7 +212,12 @@ export function CreateTaskDialog({ projectId, open, onOpenChange }: CreateTaskDi
 							<Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
 								Cancel
 							</Button>
-							<Button type="submit" disabled={!title.trim() || !assigneeId || createTask.isPending}>
+							<Button
+								type="submit"
+								disabled={
+									!effectiveProjectId || !title.trim() || !assigneeId || createTask.isPending
+								}
+							>
 								{createTask.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
 								Create
 							</Button>
