@@ -39,6 +39,7 @@ const program = new Command()
 	.option('--model <model>', 'Override the probe model (applies to all selected providers)')
 	.option('--prompt <text>', 'Override the probe prompt')
 	.option('--build', 'Build the agent-base image if it is missing (else fail fast)')
+	.option('--rebuild', 'Remove and rebuild the agent-base image (replaces a stale one)')
 	.option('--keep', 'Leave the probe container running for debugging (no auto-remove)')
 	.option('--timeout <seconds>', 'Abort a run that hangs past this many seconds', '120')
 	.option('--raw', 'Dump the full captured stdout/stderr (to inspect a runtime’s event shapes)')
@@ -51,6 +52,7 @@ const opts = program.opts<{
 	model?: string;
 	prompt?: string;
 	build?: boolean;
+	rebuild?: boolean;
 	keep?: boolean;
 	timeout?: string;
 	raw?: boolean;
@@ -219,8 +221,15 @@ async function main(): Promise<void> {
 	const docker = new DockerClient();
 	if (!(await docker.ping())) fail('cannot reach the Docker daemon (is Docker running?).');
 
+	// --rebuild forces a fresh build, replacing a stale image (e.g. one built
+	// before a runtime CLI was added to the Dockerfile).
+	if (opts.rebuild) {
+		console.log(`Removing ${MANAGED_AGENT_BASE_IMAGE} to force a rebuild…`);
+		await docker.removeImage(MANAGED_AGENT_BASE_IMAGE, true).catch(() => {});
+	}
+
 	if (!(await docker.imageExists(MANAGED_AGENT_BASE_IMAGE))) {
-		if (!opts.build) {
+		if (!opts.build && !opts.rebuild) {
 			fail(
 				`image ${MANAGED_AGENT_BASE_IMAGE} not found. Re-run with --build, or build it:\n` +
 					`  docker build -t ${MANAGED_AGENT_BASE_IMAGE} -f docker/Dockerfile.agent-base docker`,
