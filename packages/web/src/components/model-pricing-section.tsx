@@ -185,8 +185,7 @@ export function ModelPricingSection() {
 									</li>
 									<li>
 										<span className="font-semibold text-text-1">Computed from this table.</span>{' '}
-										When a run reports no cost — for example DeepSeek, which runs through the Claude
-										Code runtime against a third-party endpoint the CLI can't price — Hezo
+										When a run reports no cost — some runtimes emit only token counts — Hezo
 										multiplies the run's token counts by these per-model rates.
 									</li>
 								</ol>

@@ -486,10 +486,12 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 			const input = regularInput + cacheCreation + cacheRead;
 			const output = u.output_tokens ?? 0;
 			const costUsd = event.total_cost_usd ?? 0;
-			// Claude Code reports the run's dollar cost on `total_cost_usd`. Prefer it
-			// (it reflects the provider's real billing) and fall back to the table only
-			// when it's absent/zero — e.g. a third-party Anthropic-compatible endpoint
-			// the CLI can't price.
+			// Claude Code reports the run's dollar cost on `total_cost_usd` — including
+			// for third-party Anthropic-compatible endpoints like DeepSeek (confirmed via
+			// the cost probe: api.deepseek.com/anthropic returns it). Prefer it (it
+			// reflects the provider's real billing, incl. any peak/off-peak pricing); fall
+			// back to the table only when it's absent/zero (e.g. an interrupted run, or an
+			// endpoint that returns no cost).
 			const costCents = resolveCostCents(event.total_cost_usd, () =>
 				price(modelId, {
 					inputTokens: regularInput,

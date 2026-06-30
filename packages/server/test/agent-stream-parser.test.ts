@@ -110,13 +110,13 @@ describe('agent-stream-parser', () => {
 		expect(usage?.costCents).toBe(46);
 	});
 
-	it('falls back to the pricing table when no cost is reported (e.g. DeepSeek via Claude Code)', () => {
+	it('falls back to the pricing table when Claude Code reports no total_cost_usd', () => {
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
 		parser.onStdout(
 			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-x', tools: [] })}\n`,
 		);
-		// No total_cost_usd — Claude Code can't price a third-party Anthropic-compatible
-		// endpoint (DeepSeek/Z.ai), so the run output carries tokens but no cost.
+		// No total_cost_usd on the terminal event (e.g. an interrupted run) — price from
+		// the table using the token buckets.
 		const event = {
 			type: 'result',
 			subtype: 'success',
@@ -138,6 +138,40 @@ describe('agent-stream-parser', () => {
 		expect(usage?.costCents).toBe(24);
 		// The [done] line shows the table-derived figure we actually persisted.
 		expect(out).toContain('tokens=150/50 cost=$0.2400');
+	});
+
+	it('uses the DeepSeek-via-Claude-Code total_cost_usd from a real run result event', () => {
+		// Captured from a real `cost-probe --provider deepseek` run: DeepSeek's
+		// Anthropic-compatible endpoint returns total_cost_usd, so the Claude Code
+		// runtime surfaces it and we persist it verbatim. `deepseek-v4-flash` is not in
+		// the pricing table here, so without the reported cost this would price to $0 —
+		// proving the run-output cost is what's used.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
+		parser.onStdout(
+			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'deepseek-v4-flash', tools: [] })}\n`,
+		);
+		const event = {
+			type: 'result',
+			subtype: 'success',
+			is_error: false,
+			duration_ms: 3276,
+			num_turns: 1,
+			result: 'ok',
+			total_cost_usd: 0.100855,
+			usage: {
+				input_tokens: 20096,
+				cache_creation_input_tokens: 0,
+				cache_read_input_tokens: 0,
+				output_tokens: 15,
+			},
+		};
+		const out = parser.onStdout(`${JSON.stringify(event)}\n`);
+		const usage = parser.getUsage();
+		expect(usage?.inputTokens).toBe(20096);
+		expect(usage?.outputTokens).toBe(15);
+		// round(0.100855 * 100) = 10 cents.
+		expect(usage?.costCents).toBe(10);
+		expect(out).toContain('tokens=20096/15 cost=$0.1009');
 	});
 
 	it('accumulates running usage from assistant turns before the terminal result', () => {
