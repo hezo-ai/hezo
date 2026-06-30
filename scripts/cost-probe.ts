@@ -40,6 +40,7 @@ const program = new Command()
 	.option('--prompt <text>', 'Override the probe prompt')
 	.option('--build', 'Build the agent-base image if it is missing (else fail fast)')
 	.option('--keep', 'Leave the probe container running for debugging (no auto-remove)')
+	.option('--timeout <seconds>', 'Abort a run that hangs past this many seconds', '120')
 	.option('--json', 'Emit machine-readable JSON instead of the formatted report')
 	.parse();
 
@@ -50,8 +51,11 @@ const opts = program.opts<{
 	prompt?: string;
 	build?: boolean;
 	keep?: boolean;
+	timeout?: string;
 	json?: boolean;
 }>();
+
+const timeoutMs = Math.max(1, Number.parseInt(opts.timeout ?? '120', 10) || 120) * 1000;
 
 function fail(msg: string): never {
 	console.error(`cost-probe: ${msg}`);
@@ -79,6 +83,7 @@ interface ProbeOutcome {
 	model: string;
 	verdict: ProbeVerdict;
 	exitCode: number;
+	timedOut: boolean;
 	reportedCostUsd: number | null;
 	inputTokens: number;
 	outputTokens: number;
@@ -113,16 +118,41 @@ async function probeProvider(docker: DockerClient, provider: AiProvider): Promis
 			AttachStdout: true,
 			AttachStderr: true,
 		});
-		const { stdout, stderr } = await docker.execStart(execId);
-		const { ExitCode } = await docker.execInspect(execId);
+
+		// Accumulate output via onChunk so a hung run that we abort on timeout still
+		// yields whatever it emitted (e.g. an error/usage event), and abort the exec
+		// stream when the deadline passes so the probe never hangs.
+		let stdout = '';
+		let stderr = '';
+		const ctrl = new AbortController();
+		const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+		let timedOut = false;
+		let exitCode = -1;
+		try {
+			await docker.execStart(execId, {
+				signal: ctrl.signal,
+				onChunk: (c) => {
+					if (c.stream === 'stdout') stdout += c.text;
+					else stderr += c.text;
+				},
+			});
+			exitCode = (await docker.execInspect(execId)).ExitCode;
+		} catch (err) {
+			if (ctrl.signal.aborted) timedOut = true;
+			else throw err;
+		} finally {
+			clearTimeout(timer);
+		}
+
 		const cost = extractReportedCost(inv.runtime, stdout);
 		const stderrTail = stderr.trim().split('\n').slice(-4).join('\n');
 		return {
 			provider,
 			runtime: inv.runtime,
 			model: inv.model || '(runtime default)',
-			verdict: probeVerdict(cost, ExitCode),
-			exitCode: ExitCode,
+			verdict: probeVerdict(cost, timedOut ? -1 : exitCode),
+			exitCode,
+			timedOut,
 			reportedCostUsd: cost.reportedCostUsd,
 			inputTokens: cost.inputTokens,
 			outputTokens: cost.outputTokens,
@@ -148,7 +178,9 @@ function printOutcome(o: ProbeOutcome): void {
 			? `$${o.reportedCostUsd?.toFixed(6)} reported`
 			: o.verdict === 'tokens-only'
 				? `tokens ${o.inputTokens}/${o.outputTokens}, no cost field`
-				: `exit ${o.exitCode}`;
+				: o.timedOut
+					? `timed out after ${timeoutMs / 1000}s`
+					: `exit ${o.exitCode}`;
 	console.log(`  verdict: ${VERDICT_LABEL[o.verdict]} — ${detail}`);
 	console.log(`  tokens : in=${o.inputTokens} out=${o.outputTokens}`);
 	const shown = o.costEvent ?? o.lastEvent;
