@@ -183,7 +183,9 @@ function printOutcome(o: ProbeOutcome): void {
 		o.verdict === 'cost-emitted'
 			? `$${o.reportedCostUsd?.toFixed(6)} reported`
 			: o.verdict === 'tokens-only'
-				? `tokens ${o.inputTokens}/${o.outputTokens}, no cost field`
+				? o.inputTokens === 0 && o.outputTokens === 0
+					? 'ran, but reported no cost or token usage'
+					: `tokens ${o.inputTokens}/${o.outputTokens}, no cost field`
 				: o.timedOut
 					? `timed out after ${timeoutMs / 1000}s`
 					: `exit ${o.exitCode}`;
