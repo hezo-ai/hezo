@@ -2016,6 +2016,10 @@ function broadcastHeartbeatRunChange(
 		id: runId,
 		task_id: ctx.taskId,
 		team_id: ctx.teamId,
+		// Carry the project so the client invalidates the run's *own* project, not
+		// whichever project the team_id fallback happens to resolve to. Without it a
+		// run in any project on the team invalidates every team project's task list.
+		project_id: ctx.projectId,
 		member_id: ctx.memberId,
 		status,
 	});
@@ -2098,6 +2102,7 @@ export async function createHeartbeatRun(
 			broadcastRowChange(broadcast.wsManager, wsRoom.team(broadcast.teamId), 'tasks', 'UPDATE', {
 				id: task.id,
 				team_id: broadcast.teamId,
+				project_id: broadcast.projectId,
 				status: TaskStatus.InProgress,
 			});
 		}

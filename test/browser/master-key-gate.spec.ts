@@ -25,6 +25,9 @@ async function startGateServer(opts: { reset: boolean }): Promise<void> {
 		String(GATE_SERVER_PORT),
 		'--data-dir',
 		dataDir,
+		// Suppress the desktop browser auto-open — it fires on local macOS/Windows
+		// runs (CI/headless already skip it) and would pop a tab mid-test.
+		'--no-open',
 	];
 	if (opts.reset) args.push('--reset');
 	server = spawn('bun', args, {

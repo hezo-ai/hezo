@@ -128,6 +128,7 @@ queuedWakeupsRoutes.post(
 			id: wakeupId,
 			team_id: teamId,
 			task_id: taskId,
+			project_id: c.get('projectId') as string,
 			member_id: row.member_id,
 			status: WakeupStatus.Cancelled,
 		});
