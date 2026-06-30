@@ -116,6 +116,14 @@ describe('cost-probe › buildProbeInvocation', () => {
 		expect(inv.promptMode).toBe('arg');
 	});
 
+	it('passes no --model flag for xAI/Grok even with an override (CLI rejects api.x.ai ids)', () => {
+		const inv = buildProbeInvocation(AiProvider.XAi, { apiKey: 'k', model: 'grok-4-fast' });
+		expect(inv.runtime).toBe(AgentRuntime.Grok);
+		expect(inv.cmd).not.toContain('--model');
+		expect(inv.cmd).toEqual(['grok', '--output-format', 'streaming-json', '-p']);
+		expect(inv.promptMode).toBe('arg');
+	});
+
 	it('stages a Kimi config.toml with the api key + declared model', () => {
 		const inv = buildProbeInvocation(AiProvider.Kimi, { apiKey: 'k-key' });
 		expect(inv.runtime).toBe(AgentRuntime.Kimi);

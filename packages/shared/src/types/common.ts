@@ -1298,6 +1298,18 @@ export const RUNTIME_HEADLESS_SUFFIX_ARGS: Record<AgentRuntime, readonly string[
 	[AgentRuntime.Grok]: ['-p'],
 };
 
+/**
+ * Runtimes whose CLI does NOT take a `--model` flag, so the runner never passes
+ * one. Kimi declares its model in config.toml (`default_model`); the Grok CLI's
+ * `--model` accepts only its own ids (e.g. `grok-build-0.1`), not the api.x.ai
+ * ids Hezo's model picker surfaces, and rejects them outright — so Grok runs use
+ * the CLI's default model (a configured model override is ignored for Grok).
+ */
+export const RUNTIMES_WITHOUT_MODEL_ARG: ReadonlySet<AgentRuntime> = new Set([
+	AgentRuntime.Kimi,
+	AgentRuntime.Grok,
+]);
+
 export interface AiProviderVerifyEndpoint {
 	url: string | ((apiKey: string) => string);
 	headers: Record<string, string> | ((apiKey: string) => Record<string, string>);

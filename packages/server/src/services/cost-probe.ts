@@ -34,6 +34,7 @@ import {
 	RUNTIME_HEADLESS_SUFFIX_ARGS,
 	RUNTIME_PROMPT_DELIVERY,
 	RUNTIME_STREAM_ARGS,
+	RUNTIMES_WITHOUT_MODEL_ARG,
 } from '@hezo/shared';
 import { buildProviderEnv } from './agent-runner';
 import { createAgentStreamParser, findReportedCostUsd } from './agent-stream-parser';
@@ -183,9 +184,10 @@ export function buildProbeInvocation(
 		if (runtime === AgentRuntime.ClaudeCode) cliModel = claudeCodeModelArg(provider, model);
 		else if (runtime === AgentRuntime.OpenCode) cliModel = opencodeModelArg(provider, model);
 	}
-	// Kimi resolves its model from config.toml, so it takes no --model flag; every
-	// other runtime accepts one (matches agent-runner.ts:485-487).
-	const modelArgs = cliModel && runtime !== AgentRuntime.Kimi ? ['--model', cliModel] : [];
+	// Some runtimes take no --model flag (Kimi reads it from config.toml; Grok's CLI
+	// rejects api.x.ai ids and uses its default) — see RUNTIMES_WITHOUT_MODEL_ARG.
+	const modelArgs =
+		cliModel && !RUNTIMES_WITHOUT_MODEL_ARG.has(runtime) ? ['--model', cliModel] : [];
 
 	const cmd = [
 		RUNTIME_COMMANDS[runtime],

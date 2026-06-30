@@ -22,6 +22,7 @@ import {
 	RUNTIME_HEADLESS_SUFFIX_ARGS,
 	RUNTIME_PROMPT_DELIVERY,
 	RUNTIME_STREAM_ARGS,
+	RUNTIMES_WITHOUT_MODEL_ARG,
 	repoNameFromIdentifier,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
@@ -488,9 +489,11 @@ export async function buildRuntimeInvocation(
 			cliModel = opencodeModelArg(provider, modelOverride);
 		}
 	}
-	// Kimi resolves its model from config.toml (default_model), so it takes no
-	// --model flag; every other runtime accepts one.
-	const modelArgs = cliModel && runtimeType !== AgentRuntime.Kimi ? ['--model', cliModel] : [];
+	// Some runtimes take no --model flag (Kimi reads its model from config.toml;
+	// the Grok CLI rejects the api.x.ai model ids and uses its own default) — see
+	// RUNTIMES_WITHOUT_MODEL_ARG. Every other runtime accepts one.
+	const modelArgs =
+		cliModel && !RUNTIMES_WITHOUT_MODEL_ARG.has(runtimeType) ? ['--model', cliModel] : [];
 
 	const cmd = [
 		cliCommand,
