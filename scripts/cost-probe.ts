@@ -41,6 +41,7 @@ const program = new Command()
 	.option('--build', 'Build the agent-base image if it is missing (else fail fast)')
 	.option('--keep', 'Leave the probe container running for debugging (no auto-remove)')
 	.option('--timeout <seconds>', 'Abort a run that hangs past this many seconds', '120')
+	.option('--raw', 'Dump the full captured stdout/stderr (to inspect a runtime’s event shapes)')
 	.option('--json', 'Emit machine-readable JSON instead of the formatted report')
 	.parse();
 
@@ -52,6 +53,7 @@ const opts = program.opts<{
 	build?: boolean;
 	keep?: boolean;
 	timeout?: string;
+	raw?: boolean;
 	json?: boolean;
 }>();
 
@@ -90,6 +92,8 @@ interface ProbeOutcome {
 	costEvent: Record<string, unknown> | null;
 	lastEvent: Record<string, unknown> | null;
 	stderrTail: string;
+	rawStdout: string;
+	rawStderr: string;
 }
 
 async function probeProvider(docker: DockerClient, provider: AiProvider): Promise<ProbeOutcome> {
@@ -159,6 +163,8 @@ async function probeProvider(docker: DockerClient, provider: AiProvider): Promis
 			costEvent: cost.costEvent,
 			lastEvent: cost.lastEvent,
 			stderrTail,
+			rawStdout: stdout,
+			rawStderr: stderr,
 		};
 	} finally {
 		if (id && !opts.keep) await docker.removeContainer(id, true).catch(() => {});
@@ -190,6 +196,11 @@ function printOutcome(o: ProbeOutcome): void {
 	}
 	if (o.verdict === 'no-output' && o.stderrTail) {
 		console.log(`  stderr : ${o.stderrTail.replace(/\n/g, '\n           ')}`);
+	}
+	if (opts.raw) {
+		console.log(
+			`  ┌─ raw stdout ─\n${o.rawStdout || '(empty)'}\n  ├─ raw stderr ─\n${o.rawStderr || '(empty)'}\n  └─`,
+		);
 	}
 }
 
@@ -236,7 +247,16 @@ async function main(): Promise<void> {
 	if (opts.json) {
 		console.log(
 			JSON.stringify(
-				outcomes.map(({ costEvent: _c, lastEvent: _l, stderrTail: _s, ...rest }) => rest),
+				outcomes.map(
+					({
+						costEvent: _c,
+						lastEvent: _l,
+						stderrTail: _s,
+						rawStdout: _ro,
+						rawStderr: _re,
+						...rest
+					}) => rest,
+				),
 				null,
 				2,
 			),
