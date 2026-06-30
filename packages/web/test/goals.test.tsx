@@ -5,6 +5,7 @@ import {
 	seedGoalCheckRun,
 	seedProject,
 	seedProjectProgress,
+	seedTask,
 	seedWorkspace,
 } from './helpers/seed';
 
@@ -213,4 +214,104 @@ test('clicking a goal opens its page with breadcrumbs, run feed, and edit modal'
 	// Editing reuses the create/edit modal.
 	await user.click(getByTestId('goal-edit'));
 	await findByText('Edit Goal');
+});
+
+test('Project progress shows only the bold lead line until expanded', async () => {
+	let projectSlug = '';
+	const { findByText, findByTestId, queryByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Collapse Demo' });
+			projectSlug = project.slug;
+			await seedGoal(ws, project, { title: 'Ship v1', measurement: 'v1 live' });
+			// A representative two-paragraph summary: bold lead line, then a narrative body.
+			await seedProjectProgress(
+				project,
+				'**Auth shipped, payments next.**\n\nThe login flow is live and analytics land later this week.',
+			);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/goals',
+		params: { projectId: projectSlug },
+	});
+
+	await findByTestId('project-progress-summary', undefined, { timeout: 10_000 });
+	// Collapsed: the bold lead renders, the narrative body does not.
+	await findByText('Auth shipped, payments next.');
+	expect(queryByText(/analytics land later this week/)).toBeNull();
+
+	// Show more reveals the body; the lead stays put.
+	await user.click(await findByTestId('project-progress-toggle'));
+	await findByText(/analytics land later this week/);
+	await findByText('Auth shipped, payments next.');
+});
+
+test('Project progress header opens a help dialog explaining how it updates', async () => {
+	let projectSlug = '';
+	const { findByText, findByTestId, queryByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Help Demo' });
+			projectSlug = project.slug;
+			await seedGoal(ws, project, { title: 'Ship v1', measurement: 'v1 live' });
+			await seedProjectProgress(project, '**On track.**\n\nMost of the work is done.');
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/goals',
+		params: { projectId: projectSlug },
+	});
+
+	// The explanation lives behind the question-mark help button, not inline.
+	const help = await findByTestId('project-progress-help', undefined, { timeout: 10_000 });
+	expect(queryByText(/reviews progress across the project/)).toBeNull();
+
+	await user.click(help);
+
+	// The dialog explains what it is and that the Captain refreshes it during goal-check runs.
+	await findByText('About project progress');
+	await findByText(/reviews progress across the project/);
+});
+
+test('the goal run feed hides the status summary until expanded, keeping task chips visible', async () => {
+	let projectSlug = '';
+	let goalId = '';
+	let createdIdentifier = '';
+	const { findByText, findByTestId, queryByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Blurb Demo' });
+			projectSlug = project.slug;
+			const goal = await seedGoal(ws, project, { title: 'Ship beta', measurement: 'beta live' });
+			goalId = goal.id;
+			const task = await seedTask(ws, project, { title: 'Wire up auth' });
+			createdIdentifier = task.identifier;
+			await seedGoalCheckRun(ws, {
+				goal,
+				statusBlurb: 'Auth is the last blocker before beta.',
+				createdTasks: [task],
+			});
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/goals/$goalId',
+		params: { projectId: projectSlug, goalId },
+	});
+
+	await findByTestId('goal-run', undefined, { timeout: 10_000 });
+	// Collapsed: the created-task chip shows, but the status summary stays hidden.
+	await findByText(createdIdentifier);
+	expect(queryByText(/Auth is the last blocker/)).toBeNull();
+
+	// Expanding the run reveals the summary; the task chip is still there.
+	await user.click(await findByTestId('goal-run-expand'));
+	await findByText(/Auth is the last blocker/);
+	await findByText(createdIdentifier);
 });

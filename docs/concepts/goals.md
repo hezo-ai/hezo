@@ -72,7 +72,8 @@ has moved over time, so you can see momentum (or a stall) at a glance.
 These goal checks are **not** done inside a task — they're standalone Captain runs. The recent
 goal checks for the whole project appear at the bottom of the **Progress** page. Each goal's own
 page also has a **Goal heartbeat runs** section showing just the runs that did something for *that*
-goal — the progress it set, plus any tasks it created or commented on toward the goal.
+goal — the progress it set and any tasks it created or commented on toward the goal show inline,
+and each run expands to reveal the status summary it recorded.
 
 During the same run the Captain also refreshes the **project progress summary** shown at the top
 of the Progress page, so that headline stays in step with the goal estimates.
