@@ -57,7 +57,10 @@ export const PROBE_DEFAULT_MODELS: Partial<Record<AiProvider, string>> = {
 	openai: 'gpt-4o-mini',
 	google: 'gemini-2.5-flash',
 	openrouter: 'openai/gpt-4o-mini',
-	x_ai: 'grok-4-fast',
+	// No xAI entry: the grok CLI's `--model` takes CLI-specific ids (run
+	// `grok models`) that differ from the API model ids (e.g. `grok-4-fast`, which
+	// is valid for the judge's api.x.ai call but not the CLI). Let the CLI use its
+	// default; pass `--model <id>` to probe a specific one.
 	// Kimi takes no --model flag; the model is declared in the config.toml the probe
 	// stages (see buildKimiProbeConfig). Its built-in coding model id.
 	kimi: 'kimi-for-coding',
