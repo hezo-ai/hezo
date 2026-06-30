@@ -65,7 +65,7 @@ describe('cost-probe › buildProbeInvocation', () => {
 		]);
 		// Codex authenticates from $CODEX_HOME/auth.json (a bare OPENAI_API_KEY env run
 		// falls back to ChatGPT mode and 401s), so the probe stages the key there.
-		expect(inv.env).toContain('CODEX_HOME=/tmp/hezo-probe-codex');
+		expect(inv.env).toContain('CODEX_HOME=/home/node/.codex');
 		expect(inv.env).toContain('CODEX_AUTH_JSON={"OPENAI_API_KEY":"sk-openai"}');
 		expect(inv.setup).toEqual([
 			'mkdir -p "$CODEX_HOME"',

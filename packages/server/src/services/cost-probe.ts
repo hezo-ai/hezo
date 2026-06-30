@@ -110,7 +110,11 @@ export function buildProbeInvocation(
 	const extraEnv: string[] = [];
 	const setup: string[] = [];
 	if (runtime === AgentRuntime.Codex) {
-		const codexHome = '/tmp/hezo-probe-codex';
+		// Under the agent-base run-user's home, not /tmp: Codex refuses to create its
+		// helper binaries under a temporary dir ("Refusing to create helper binaries
+		// under temporary dir"). `/home/node` is the node user's writable home in the
+		// node:24-slim agent-base image (the probe execs as `node`).
+		const codexHome = '/home/node/.codex';
 		extraEnv.push(
 			`CODEX_HOME=${codexHome}`,
 			`CODEX_AUTH_JSON=${JSON.stringify({ OPENAI_API_KEY: opts.apiKey })}`,
