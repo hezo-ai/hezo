@@ -226,4 +226,15 @@ describe('cost-probe › extractReportedCost', () => {
 		expect(r.inputTokens).toBe(0);
 		expect(probeVerdict(r, 1)).toBe('no-output');
 	});
+
+	it('classifies a clean run that emitted output but no cost/usage as no-usage', () => {
+		// Real xAI/Grok shape: a text event + an end event, no usage or cost.
+		const stdout =
+			line({ type: 'text', data: 'ok' }) + line({ type: 'end', stopReason: 'EndTurn' });
+		const r = extractReportedCost(AgentRuntime.Grok, stdout);
+		expect(r.reportedCostUsd).toBeNull();
+		expect(r.inputTokens).toBe(0);
+		expect(r.outputTokens).toBe(0);
+		expect(probeVerdict(r, 0)).toBe('no-usage');
+	});
 });

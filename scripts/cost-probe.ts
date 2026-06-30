@@ -176,6 +176,7 @@ async function probeProvider(docker: DockerClient, provider: AiProvider): Promis
 const VERDICT_LABEL: Record<ProbeVerdict, string> = {
 	'cost-emitted': 'COST EMITTED',
 	'tokens-only': 'TOKENS ONLY',
+	'no-usage': 'NO COST/USAGE',
 	'no-output': 'NO USABLE OUTPUT',
 };
 
@@ -185,12 +186,12 @@ function printOutcome(o: ProbeOutcome): void {
 		o.verdict === 'cost-emitted'
 			? `$${o.reportedCostUsd?.toFixed(6)} reported`
 			: o.verdict === 'tokens-only'
-				? o.inputTokens === 0 && o.outputTokens === 0
+				? `tokens ${o.inputTokens}/${o.outputTokens}, no cost field`
+				: o.verdict === 'no-usage'
 					? 'ran, but reported no cost or token usage'
-					: `tokens ${o.inputTokens}/${o.outputTokens}, no cost field`
-				: o.timedOut
-					? `timed out after ${timeoutMs / 1000}s`
-					: `exit ${o.exitCode}`;
+					: o.timedOut
+						? `timed out after ${timeoutMs / 1000}s`
+						: `exit ${o.exitCode}`;
 	console.log(`  verdict: ${VERDICT_LABEL[o.verdict]} — ${detail}`);
 	console.log(`  tokens : in=${o.inputTokens} out=${o.outputTokens}`);
 	const shown = o.costEvent ?? o.lastEvent;

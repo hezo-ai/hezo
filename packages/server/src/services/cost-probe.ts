@@ -284,12 +284,14 @@ export function extractReportedCost(runtime: AgentRuntime, stdout: string): Prob
 	};
 }
 
-export type ProbeVerdict = 'cost-emitted' | 'tokens-only' | 'no-output';
+export type ProbeVerdict = 'cost-emitted' | 'tokens-only' | 'no-usage' | 'no-output';
 
 /** Classify a probe run for the summary line. */
 export function probeVerdict(result: ProbeCostResult, exitCode: number): ProbeVerdict {
 	if (result.reportedCostUsd !== null) return 'cost-emitted';
 	if (result.inputTokens > 0 || result.outputTokens > 0) return 'tokens-only';
-	// A clean run that produced usage but no cost still beats a crashed one.
-	return exitCode === 0 && result.lastEvent ? 'tokens-only' : 'no-output';
+	// Ran cleanly and produced output, but emitted no cost and no token usage
+	// (e.g. Kimi, xAI/Grok) — these can't be priced from output or the table.
+	if (exitCode === 0 && result.lastEvent) return 'no-usage';
+	return 'no-output';
 }
