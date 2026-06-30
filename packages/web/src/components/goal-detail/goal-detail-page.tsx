@@ -58,9 +58,12 @@ function TaskChip({ projectId, identifier }: { projectId: string; identifier: st
 }
 
 function GoalRunRow({ projectId, run }: { projectId: string; run: GoalRunActivity }) {
-	// The whole row is a stretched link to this run in the Captain's run list. Task chips
-	// sit above the overlay (`relative z-10`) so they remain independently clickable.
+	// The whole row is a stretched link to this run in the Captain's run list. The expand
+	// toggle and task chips sit above the overlay (`relative z-10`) so they stay clickable.
 	const runLinkParams = { ...agentPageParams(projectId, run.agent_slug), runId: run.id };
+	const [expanded, setExpanded] = useState(false);
+	const blurb = run.progress?.status_blurb;
+	const blurbId = `goal-run-blurb-${run.id}`;
 	return (
 		<li
 			data-testid="goal-run"
@@ -85,10 +88,32 @@ function GoalRunRow({ projectId, run }: { projectId: string; run: GoalRunActivit
 						<GoalHealthPill health={run.progress.health} />
 					</span>
 				)}
+				{/* The status summary is hidden by default; the chevron reveals it inline. Task
+				    chips below stay visible in both states. */}
+				{blurb && (
+					<button
+						type="button"
+						onClick={() => setExpanded((v) => !v)}
+						aria-expanded={expanded}
+						aria-controls={blurbId}
+						aria-label={expanded ? 'Hide progress summary' : 'Show progress summary'}
+						data-testid="goal-run-expand"
+						className="relative z-10 ml-auto flex shrink-0 items-center text-text-3 transition-colors hover:text-text-1"
+					>
+						<svg
+							aria-hidden="true"
+							className={`h-3 w-3 transition-transform ${expanded ? 'rotate-90' : ''}`}
+							viewBox="0 0 16 16"
+							fill="currentColor"
+						>
+							<path d="M6 3l5 5-5 5V3z" />
+						</svg>
+					</button>
+				)}
 			</div>
-			{run.progress?.status_blurb && (
-				<p className="text-[13px] text-text-2 leading-relaxed break-words">
-					{run.progress.status_blurb}
+			{blurb && expanded && (
+				<p id={blurbId} className="text-[13px] text-text-2 leading-relaxed break-words">
+					{blurb}
 				</p>
 			)}
 			{run.created_tasks.length > 0 && (

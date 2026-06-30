@@ -270,6 +270,11 @@ export async function seedGoalCheckRun(
 		progressPercent?: number;
 		health?: string;
 		statusBlurb?: string;
+		/**
+		 * Attribute these existing tasks to the run as goal-linked "created" tasks, so the run's
+		 * `created_tasks` activity is populated the way `tryDispatchGoalCheck` + `create_task` produce.
+		 */
+		createdTasks?: SeededTask[];
 	} = {},
 ): Promise<{ runId: string }> {
 	const { db } = getTestContext();
@@ -296,6 +301,16 @@ export async function seedGoalCheckRun(
 				opts.statusBlurb ?? '',
 			],
 		);
+	}
+
+	if (opts.goal && opts.createdTasks?.length) {
+		for (const t of opts.createdTasks) {
+			await db.query(`UPDATE tasks SET goal_id = $1, created_by_run_id = $2 WHERE id = $3`, [
+				opts.goal.id,
+				runId,
+				t.id,
+			]);
+		}
 	}
 
 	return { runId };
