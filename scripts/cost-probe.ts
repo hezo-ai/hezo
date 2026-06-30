@@ -38,6 +38,10 @@ const program = new Command()
 	.option('--all', 'Probe every provider that has a HEZO_PROBE_KEY_<PROVIDER> env var set')
 	.option('--model <model>', 'Override the probe model (applies to all selected providers)')
 	.option('--prompt <text>', 'Override the probe prompt')
+	.option(
+		'--anthropic-base-url <url>',
+		'Validate via Claude Code against an Anthropic-compatible endpoint (use with --model), e.g. Kimi at https://api.moonshot.ai/anthropic',
+	)
 	.option('--build', 'Build the agent-base image if it is missing (else fail fast)')
 	.option('--rebuild', 'Remove and rebuild the agent-base image (replaces a stale one)')
 	.option('--keep', 'Leave the probe container running for debugging (no auto-remove)')
@@ -51,6 +55,7 @@ const opts = program.opts<{
 	all?: boolean;
 	model?: string;
 	prompt?: string;
+	anthropicBaseUrl?: string;
 	build?: boolean;
 	rebuild?: boolean;
 	keep?: boolean;
@@ -105,6 +110,7 @@ async function probeProvider(docker: DockerClient, provider: AiProvider): Promis
 		apiKey,
 		model: opts.model,
 		prompt: opts.prompt,
+		anthropicBaseUrl: opts.anthropicBaseUrl,
 	});
 	const name = `hezo-cost-probe-${randomBytes(4).toString('hex')}`;
 	let id: string | null = null;
@@ -210,6 +216,9 @@ function printOutcome(o: ProbeOutcome): void {
 }
 
 async function main(): Promise<void> {
+	if (opts.anthropicBaseUrl && !opts.model) {
+		fail('--anthropic-base-url requires --model (the endpoint has no default model).');
+	}
 	const providers = resolveProviders();
 
 	// Partition by whether a key is present so --all silently skips the rest.

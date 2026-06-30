@@ -23,6 +23,7 @@ import {
 	AgentRuntime,
 	AiAuthMethod,
 	type AiProvider,
+	CLAUDE_CODE_QUIET_ENV,
 	claudeCodeModelArg,
 	KIMI_CODING_BASE_URL,
 	opencodeModelArg,
@@ -121,6 +122,14 @@ export interface BuildProbeInvocationOpts {
 	apiKey: string;
 	model?: string;
 	prompt?: string;
+	/**
+	 * Validation override: ignore the provider's normal runtime and instead drive
+	 * the **Claude Code** runtime against this Anthropic-compatible base URL (the
+	 * DeepSeek/Z.ai pattern). Used to check whether a third-party endpoint returns
+	 * `total_cost_usd` through Claude Code — e.g. Kimi via `api.moonshot.ai/anthropic`
+	 * — without changing the production adapter. Requires `model`.
+	 */
+	anthropicBaseUrl?: string;
 }
 
 /**
@@ -132,9 +141,18 @@ export function buildProbeInvocation(
 	provider: AiProvider,
 	opts: BuildProbeInvocationOpts,
 ): ProbeInvocation {
+	const prompt = opts.prompt ?? DEFAULT_PROBE_PROMPT;
+	if (opts.anthropicBaseUrl) {
+		return buildClaudeCodeEndpointProbe(
+			provider,
+			opts.apiKey,
+			opts.anthropicBaseUrl,
+			opts.model ?? '',
+			prompt,
+		);
+	}
 	const runtime = PROVIDER_TO_RUNTIME[provider];
 	const model = opts.model ?? PROBE_DEFAULT_MODELS[provider] ?? '';
-	const prompt = opts.prompt ?? DEFAULT_PROBE_PROMPT;
 
 	// Most runtimes authenticate from env alone. Codex is the exception: `codex exec`
 	// reads its credential from `$CODEX_HOME/auth.json`, and a bare `OPENAI_API_KEY`
@@ -207,6 +225,54 @@ export function buildProbeInvocation(
 		env,
 		promptMode: RUNTIME_PROMPT_DELIVERY[runtime],
 		setup,
+	};
+}
+
+/**
+ * Validation override (see `BuildProbeInvocationOpts.anthropicBaseUrl`): build a
+ * Claude Code invocation pointed at an arbitrary Anthropic-compatible endpoint,
+ * using `provider`'s probe key. Same shape DeepSeek/Z.ai use, so it surfaces
+ * `total_cost_usd` if the endpoint returns one.
+ */
+function buildClaudeCodeEndpointProbe(
+	provider: AiProvider,
+	apiKey: string,
+	baseUrl: string,
+	model: string,
+	prompt: string,
+): ProbeInvocation {
+	const runtime = AgentRuntime.ClaudeCode;
+	const env = [
+		...Object.entries(CLAUDE_CODE_QUIET_ENV).map(([k, v]) => `${k}=${v}`),
+		`ANTHROPIC_BASE_URL=${baseUrl}`,
+		...(model
+			? [
+					`ANTHROPIC_DEFAULT_OPUS_MODEL=${model}`,
+					`ANTHROPIC_DEFAULT_SONNET_MODEL=${model}`,
+					`ANTHROPIC_DEFAULT_HAIKU_MODEL=${model}`,
+					`CLAUDE_CODE_SUBAGENT_MODEL=${model}`,
+				]
+			: []),
+		`ANTHROPIC_AUTH_TOKEN=${apiKey}`,
+		`PROMPT=${prompt}`,
+	];
+	const cmd = [
+		RUNTIME_COMMANDS[runtime],
+		...RUNTIME_HEADLESS_PREFIX_ARGS[runtime],
+		...RUNTIME_STREAM_ARGS[runtime],
+		...RUNTIME_AUTO_APPROVE_ARGS[runtime],
+		...RUNTIME_DISALLOWED_TOOLS_ARGS[runtime],
+		...(model ? ['--model', model] : []),
+		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtime],
+	];
+	return {
+		provider,
+		runtime,
+		model,
+		cmd,
+		env,
+		promptMode: RUNTIME_PROMPT_DELIVERY[runtime],
+		setup: [],
 	};
 }
 

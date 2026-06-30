@@ -141,6 +141,36 @@ describe('cost-probe › buildProbeInvocation', () => {
 		]);
 	});
 
+	it('builds a Claude Code invocation against an arbitrary Anthropic endpoint (--anthropic-base-url)', () => {
+		// Validation override: run Kimi's key through Claude Code against Moonshot's
+		// Anthropic-compatible endpoint (the DeepSeek/Z.ai shape that reports cost).
+		const inv = buildProbeInvocation(AiProvider.Kimi, {
+			apiKey: 'moonshot-key',
+			model: 'kimi-k2.7-code',
+			anthropicBaseUrl: 'https://api.moonshot.ai/anthropic',
+		});
+		expect(inv.runtime).toBe(AgentRuntime.ClaudeCode);
+		expect(inv.promptMode).toBe('stdin');
+		expect(inv.env).toContain('ANTHROPIC_BASE_URL=https://api.moonshot.ai/anthropic');
+		expect(inv.env).toContain('ANTHROPIC_AUTH_TOKEN=moonshot-key');
+		expect(inv.env).toContain('ANTHROPIC_DEFAULT_SONNET_MODEL=kimi-k2.7-code');
+		expect(inv.env).toContain('DISABLE_TELEMETRY=1');
+		expect(inv.setup).toEqual([]);
+		expect(inv.cmd).toEqual([
+			'claude',
+			'--output-format',
+			'stream-json',
+			'--verbose',
+			'--dangerously-skip-permissions',
+			'--disallowedTools',
+			'WebFetch',
+			'ExitPlanMode',
+			'--model',
+			'kimi-k2.7-code',
+			'-p',
+		]);
+	});
+
 	it('honors a custom prompt', () => {
 		const inv = buildProbeInvocation(AiProvider.DeepSeek, { apiKey: 'k', prompt: 'ping' });
 		expect(inv.env).toContain('PROMPT=ping');
