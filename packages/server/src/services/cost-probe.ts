@@ -24,6 +24,7 @@ import {
 	AiAuthMethod,
 	type AiProvider,
 	claudeCodeModelArg,
+	KIMI_CODING_BASE_URL,
 	opencodeModelArg,
 	PROVIDER_TO_RUNTIME,
 	RUNTIME_AUTO_APPROVE_ARGS,
@@ -36,6 +37,7 @@ import {
 } from '@hezo/shared';
 import { buildProviderEnv } from './agent-runner';
 import { createAgentStreamParser, findReportedCostUsd } from './agent-stream-parser';
+import { escapeTomlBasicString } from './mcp-injectors/toml';
 
 /** The env var a probe reads a provider's API key from, e.g. `HEZO_PROBE_KEY_DEEPSEEK`. */
 export function probeKeyEnv(provider: AiProvider): string {
@@ -56,13 +58,41 @@ export const PROBE_DEFAULT_MODELS: Partial<Record<AiProvider, string>> = {
 	google: 'gemini-2.5-flash',
 	openrouter: 'openai/gpt-4o-mini',
 	x_ai: 'grok-4-fast',
-	// Kimi resolves its model (and api key) from config.toml written by its MCP
-	// adapter, which the probe doesn't run, so no --model is passed; a Kimi probe
-	// is best-effort and may report no usable output.
+	// Kimi takes no --model flag; the model is declared in the config.toml the probe
+	// stages (see buildKimiProbeConfig). Its built-in coding model id.
+	kimi: 'kimi-for-coding',
 };
 
 /** A trivial, deterministic prompt that elicits a one-token reply. */
 export const DEFAULT_PROBE_PROMPT = 'Reply with exactly the word: ok';
+
+/**
+ * The minimal api-key `config.toml` Kimi needs to run: a custom provider block
+ * carrying the inline api key + base URL, and a declared model set as
+ * `default_model` (Kimi only accepts models declared in config), with
+ * `default_yolo` for non-interactive approval. This is the auth/model subset of
+ * the kimi MCP adapter's `buildConfigToml` (no MCP servers / Stop hook — neither
+ * affects whether the run reports a cost).
+ */
+export function buildKimiProbeConfig(apiKey: string, model: string): string {
+	const raw = model.trim() || 'kimi-for-coding';
+	const key = raw.replace(/[^A-Za-z0-9_-]/g, '_') || 'kimi-for-coding';
+	return `${[
+		[`default_model = ${escapeTomlBasicString(key)}`, 'default_yolo = true'].join('\n'),
+		[
+			'[providers.kimi-for-coding]',
+			'type = "kimi"',
+			`base_url = ${escapeTomlBasicString(KIMI_CODING_BASE_URL)}`,
+			`api_key = ${escapeTomlBasicString(apiKey)}`,
+		].join('\n'),
+		[
+			`[models.${key}]`,
+			'provider = "kimi-for-coding"',
+			`model = ${escapeTomlBasicString(raw)}`,
+			'max_context_size = 262144',
+		].join('\n'),
+	].join('\n\n')}\n`;
+}
 
 export interface ProbeInvocation {
 	provider: AiProvider;
@@ -120,6 +150,21 @@ export function buildProbeInvocation(
 			`CODEX_AUTH_JSON=${JSON.stringify({ OPENAI_API_KEY: opts.apiKey })}`,
 		);
 		setup.push('mkdir -p "$CODEX_HOME"', 'printf %s "$CODEX_AUTH_JSON" > "$CODEX_HOME/auth.json"');
+	}
+	if (runtime === AgentRuntime.Kimi) {
+		// Kimi takes no --model flag and reads its api key + model from
+		// `$KIMI_CODE_HOME/config.toml` (not env), erroring "No model configured"
+		// without it. Stage a minimal api-key config (the subset of the kimi MCP
+		// adapter's config.toml that authentication needs).
+		const kimiHome = '/home/node/.kimi-code';
+		extraEnv.push(
+			`KIMI_CODE_HOME=${kimiHome}`,
+			`KIMI_CONFIG_TOML=${buildKimiProbeConfig(opts.apiKey, model)}`,
+		);
+		setup.push(
+			'mkdir -p "$KIMI_CODE_HOME"',
+			'printf %s "$KIMI_CONFIG_TOML" > "$KIMI_CODE_HOME/config.toml"',
+		);
 	}
 
 	// Provider env: base URL + model defaults + credential env — exactly what a

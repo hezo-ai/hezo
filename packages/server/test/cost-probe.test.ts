@@ -116,6 +116,23 @@ describe('cost-probe › buildProbeInvocation', () => {
 		expect(inv.promptMode).toBe('arg');
 	});
 
+	it('stages a Kimi config.toml with the api key + declared model', () => {
+		const inv = buildProbeInvocation(AiProvider.Kimi, { apiKey: 'k-key' });
+		expect(inv.runtime).toBe(AgentRuntime.Kimi);
+		expect(inv.env).toContain('KIMI_CODE_HOME=/home/node/.kimi-code');
+		const toml = inv.env.find((e) => e.startsWith('KIMI_CONFIG_TOML='));
+		expect(toml).toBeDefined();
+		// Kimi reads its key + model from config, not env; the staged config carries both.
+		expect(toml).toContain('default_model = "kimi-for-coding"');
+		expect(toml).toContain('default_yolo = true');
+		expect(toml).toContain('base_url = "https://api.kimi.com/coding/v1"');
+		expect(toml).toContain('api_key = "k-key"');
+		expect(inv.setup).toEqual([
+			'mkdir -p "$KIMI_CODE_HOME"',
+			'printf %s "$KIMI_CONFIG_TOML" > "$KIMI_CODE_HOME/config.toml"',
+		]);
+	});
+
 	it('honors a custom prompt', () => {
 		const inv = buildProbeInvocation(AiProvider.DeepSeek, { apiKey: 'k', prompt: 'ping' });
 		expect(inv.env).toContain('PROMPT=ping');

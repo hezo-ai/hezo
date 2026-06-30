@@ -368,7 +368,7 @@ Per-run cost is computed in `agent-stream-parser.ts`. Every runtime parser now *
 
 - **Keys** come from `HEZO_PROBE_KEY_<PROVIDER>` env vars (uppercased `AiProvider` slug, e.g. `HEZO_PROBE_KEY_DEEPSEEK`) — never commit them. Example: `export HEZO_PROBE_KEY_DEEPSEEK=… && bun run cost-probe --provider deepseek --build` (or `--all` for every provider with a key set).
 - **Keep it current with the provider roster.** Because the invocation is built from the shared `RUNTIME_*` / `PROVIDER_RUNTIME_ADAPTERS` maps, a new provider is auto-covered — except for its `PROBE_DEFAULT_MODELS` entry (a cheap model to keep probes near-free) in `packages/server/src/services/cost-probe.ts`. Add that and run the probe for the new provider to record its behaviour. The pure pieces (invocation assembly + cost extraction) are unit-tested in `packages/server/test/cost-probe.test.ts`.
-- Kimi resolves its model/key from a `config.toml` the probe doesn't write, so a Kimi probe is best-effort and may report no usable output.
+- Some runtimes need credential/config files beyond env vars; the probe stages the minimal subset in-container before the run (Codex `auth.json` under `CODEX_HOME`; Kimi a `config.toml` under `KIMI_CODE_HOME`). When adding a provider on a new runtime, check whether it authenticates from env alone or needs similar staging.
 
 ## Browser automation inside the container
 
