@@ -17,28 +17,26 @@ and your agents run on the models you choose.
 | **Anthropic** | Claude | Claude Code | API key or subscription |
 | **OpenAI** | ChatGPT / GPT | Codex | API key or subscription |
 | **Google** | Gemini | Gemini | API key or subscription |
-| **Kimi** (Moonshot) | Kimi | Kimi Code | API key or subscription |
+| **Kimi** (Moonshot) | Kimi | Claude Code | API key |
 | **DeepSeek** | DeepSeek | Claude Code | API key |
 | **Z.ai** | GLM | Claude Code | API key |
-| **OpenRouter** | Many, via one key | OpenCode | API key |
-| **xAI** | Grok | Grok Build | API key |
 
 Each provider is driven through its **native command-line runtime** inside the agent's
 container — so you get each model's first-party agentic tooling, not a lowest-common-
-denominator wrapper.
+denominator wrapper. (Kimi runs through Claude Code against Moonshot's
+Anthropic-compatible endpoint.)
 
 ## Local models (on the roadmap)
 
-The **OpenCode** runtime that powers OpenRouter can also drive **local, self-hosted
-models** (for example via Ollama or any OpenAI-compatible endpoint), so you could run
-agents entirely on your own hardware with no per-token cost. **This isn't available in
-Hezo yet** — today OpenCode is wired to OpenRouter only. First-class local-model support
-is planned; this page will be updated when it ships.
+First-class support for **local, self-hosted models** (for example via Ollama or any
+OpenAI-compatible endpoint), so you could run agents entirely on your own hardware with
+no per-token cost, is planned. **This isn't available in Hezo yet** — this page will be
+updated when it ships.
 
 ## API key or subscription
 
 Most providers accept either a plain **API key** or, where supported, a **subscription
-sign-in** (for example Claude Pro/Max, ChatGPT, Gemini, or Kimi) — so you can put an
+sign-in** (for example Claude Pro/Max, ChatGPT, or Gemini) — so you can put an
 existing plan to work instead of paying per token. You choose the method when you
 connect the provider.
 
@@ -52,6 +50,6 @@ tasks and a frontier model for the hard ones, or simply having a fallback.
 
 By default the agents on a team share the team's model, but you can **override the model
 for any individual agent.** One agent can run on Claude while another on the same team
-runs on Gemini or a model from OpenRouter — whatever fits its job. Set it when you hire
+runs on Gemini or DeepSeek — whatever fits its job. Set it when you hire
 the agent or any time afterward from its settings. See
 [Hiring & customizing agents](/docs/concepts/hiring-and-agents).

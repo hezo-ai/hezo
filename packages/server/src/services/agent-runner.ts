@@ -22,7 +22,6 @@ import {
 	RUNTIME_HEADLESS_SUFFIX_ARGS,
 	RUNTIME_PROMPT_DELIVERY,
 	RUNTIME_STREAM_ARGS,
-	RUNTIMES_WITHOUT_MODEL_ARG,
 	repoNameFromIdentifier,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
@@ -406,11 +405,6 @@ export async function buildRuntimeInvocation(
 		hostHomeDir: homeMount?.hostDir ?? null,
 		containerHomeDir: homeMount?.containerDir ?? null,
 		provider,
-		authMethod: credential.authMethod,
-		// Kimi takes its provider credential and model from config.toml rather than
-		// env, so the adapter needs them directly (api-key auth only).
-		providerApiKey: credential.authMethod === AiAuthMethod.ApiKey ? credential.value : undefined,
-		model: modelOverride,
 	});
 	validateInjection(adapter, mcpInjection);
 
@@ -489,11 +483,7 @@ export async function buildRuntimeInvocation(
 			cliModel = opencodeModelArg(provider, modelOverride);
 		}
 	}
-	// Some runtimes take no --model flag (Kimi reads its model from config.toml;
-	// the Grok CLI rejects the api.x.ai model ids and uses its own default) — see
-	// RUNTIMES_WITHOUT_MODEL_ARG. Every other runtime accepts one.
-	const modelArgs =
-		cliModel && !RUNTIMES_WITHOUT_MODEL_ARG.has(runtimeType) ? ['--model', cliModel] : [];
+	const modelArgs = cliModel ? ['--model', cliModel] : [];
 
 	const cmd = [
 		cliCommand,

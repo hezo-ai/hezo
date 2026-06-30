@@ -187,7 +187,7 @@ describe('gemini renderEvent branches', () => {
 	});
 });
 
-describe('generic parser (opencode/kimi/grok) branches', () => {
+describe('generic parser (opencode) branches', () => {
 	it('renders thinking, errors, nested text, and a terminal done line', () => {
 		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		expect(feed(parser, [{ type: 'reasoning', text: 'hmm' }])).toContain('[thinking] hmm');
@@ -200,7 +200,7 @@ describe('generic parser (opencode/kimi/grok) branches', () => {
 	});
 
 	it('skips user/tool role events and non-record lines', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Kimi);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		expect(feed(parser, [{ role: 'user', text: 'hi' }])).toBe('');
 		// A bare JSON value parses OK but isn't a record → renderEvent drops it.
 		expect(parser.onStdout('42\n')).toBe('');
@@ -216,7 +216,7 @@ describe('generic parser (opencode/kimi/grok) branches', () => {
 			});
 			return 7;
 		};
-		const parser = createAgentStreamParser(AgentRuntime.Kimi, price);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode, price);
 		feed(parser, [
 			{
 				type: 'usage',

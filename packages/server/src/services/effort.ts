@@ -104,15 +104,10 @@ export function applyEffortToRuntime(
 				extraEnv: [`GEMINI_REASONING_EFFORT=${effort}`],
 				promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
 			};
-		// OpenCode (`--variant`) and Kimi expose model-dependent reasoning knobs
-		// whose accepted values aren't stable across versions, so steer effort
-		// through the prompt directive — the portable lever every runtime honors.
-		// Grok exposes reasoning effort per-model via the xAI API, but the `grok`
-		// CLI's flag/env for it isn't documented (beta), so steer via the prompt
-		// directive too until confirmed.
+		// OpenCode (`--variant`) exposes model-dependent reasoning knobs whose
+		// accepted values aren't stable across versions, so steer effort through the
+		// prompt directive — the portable lever every runtime honors.
 		case AgentRuntime.OpenCode:
-		case AgentRuntime.Kimi:
-		case AgentRuntime.Grok:
 			return { extraArgs: [], extraEnv: [], promptDirective: GENERIC_PROMPT_DIRECTIVE[effort] };
 	}
 }

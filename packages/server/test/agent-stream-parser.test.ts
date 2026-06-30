@@ -494,7 +494,7 @@ describe('agent-stream-parser', () => {
 	});
 });
 
-describe('agent-stream-parser — generic (opencode / kimi)', () => {
+describe('agent-stream-parser — generic (opencode)', () => {
 	it('renders assistant text from a loosely-shaped event', () => {
 		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		const out = parser.onStdout(
@@ -504,7 +504,7 @@ describe('agent-stream-parser — generic (opencode / kimi)', () => {
 	});
 
 	it('skips user-role messages', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Kimi);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		const out = parser.onStdout(
 			`${JSON.stringify({ type: 'message', role: 'user', text: 'the prompt' })}\n`,
 		);
@@ -521,7 +521,7 @@ describe('agent-stream-parser — generic (opencode / kimi)', () => {
 	});
 
 	it('captures token usage and prices it from a terminal event', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Kimi, price);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode, price);
 		parser.onStdout(`${JSON.stringify({ type: 'init', model: 'gemini-2.5-flash' })}\n`);
 		const out = parser.onStdout(
 			`${JSON.stringify({

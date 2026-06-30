@@ -127,16 +127,13 @@ export function createAgentStreamParser(
 			return createCodexParser(price);
 		case AgentRuntime.Gemini:
 			return createGeminiParser(price);
-		// OpenCode (`run --format json`), Kimi (`--output-format stream-json`) and
-		// Grok (`--output-format streaming-json`) all emit JSONL but with shapes
-		// that vary across versions and aren't fully documented. The generic parser
-		// is lenient — it renders recognizable assistant text / tool activity and
+		// OpenCode (`run --format json`) emits JSONL but with shapes that vary
+		// across versions and aren't fully documented. The generic parser is
+		// lenient — it renders recognizable assistant text / tool activity and
 		// captures token usage from whatever terminal event carries it, dropping
-		// anything it doesn't recognize so the log stays clean. Tighten into bespoke
-		// parsers once a real run's events are captured (see PR notes).
+		// anything it doesn't recognize so the log stays clean. Tighten into a
+		// bespoke parser once a real run's events are captured (see PR notes).
 		case AgentRuntime.OpenCode:
-		case AgentRuntime.Kimi:
-		case AgentRuntime.Grok:
 			return createGenericJsonlParser(price);
 		default:
 			return createPassthroughParser();
@@ -273,7 +270,6 @@ export function createAgentChatParser(runtime: AgentRuntime): AgentChatParser {
 		case AgentRuntime.Gemini:
 			return createGeminiChatParser();
 		case AgentRuntime.OpenCode:
-		case AgentRuntime.Kimi:
 			return createGenericChatParser();
 		default:
 			return { onStdout: () => [], flush: () => [], getUsage: () => null };
@@ -775,14 +771,14 @@ function priceGeminiModels(stats: GeminiStats | undefined, price: PriceModelFn):
 }
 
 // ---------------------------------------------------------------------------
-// Generic JSONL parser (OpenCode, Kimi)
+// Generic JSONL parser (OpenCode)
 //
-// These CLIs emit JSONL whose event shapes vary by version and aren't fully
+// This CLI emits JSONL whose event shapes vary by version and aren't fully
 // documented, so rather than guess a single rigid schema this parser probes a
 // broad set of conventional field names. It renders assistant text, tool
 // activity, thinking, and errors when recognizable, and captures token usage
 // from whatever terminal event carries it. Unknown events are dropped so the
-// log stays clean. Replace with bespoke parsers once a real run is captured.
+// log stays clean. Replace with a bespoke parser once a real run is captured.
 // ---------------------------------------------------------------------------
 
 function isRecord(v: unknown): v is Record<string, unknown> {

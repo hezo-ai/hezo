@@ -17,16 +17,18 @@ describe('providerDirectUpstreamHosts', () => {
 		expect(providerDirectUpstreamHosts(AiProvider.Anthropic)).toEqual(['api.anthropic.com']);
 	});
 
-	it('routes OpenRouter and Kimi traffic direct to their upstreams', () => {
+	it('routes OpenRouter direct and Kimi via its Moonshot endpoint host', () => {
 		expect(providerDirectUpstreamHosts(AiProvider.OpenRouter)).toEqual(['openrouter.ai']);
-		expect(providerDirectUpstreamHosts(AiProvider.Kimi)).toEqual(['api.kimi.com']);
+		// Kimi runs on Claude Code against Moonshot's Anthropic-compatible endpoint,
+		// so the direct host is derived from ANTHROPIC_BASE_URL.
+		expect(providerDirectUpstreamHosts(AiProvider.Kimi)).toEqual(['api.moonshot.ai']);
 	});
 });
 
 describe('provider → runtime mapping', () => {
-	it('drives OpenRouter through OpenCode and Kimi through the kimi runtime', () => {
+	it('drives OpenRouter through OpenCode and Kimi through Claude Code', () => {
 		expect(PROVIDER_TO_RUNTIME[AiProvider.OpenRouter]).toBe(AgentRuntime.OpenCode);
-		expect(PROVIDER_TO_RUNTIME[AiProvider.Kimi]).toBe(AgentRuntime.Kimi);
+		expect(PROVIDER_TO_RUNTIME[AiProvider.Kimi]).toBe(AgentRuntime.ClaudeCode);
 	});
 });
 

@@ -201,7 +201,7 @@ describe('agent-chat-parser — Gemini', () => {
 	});
 });
 
-describe('agent-chat-parser — generic (OpenCode / Kimi)', () => {
+describe('agent-chat-parser — generic (OpenCode)', () => {
 	it('renders assistant text and tool activity, skipping user-role events', () => {
 		const parser = createAgentChatParser(AgentRuntime.OpenCode);
 		const events = feed(parser, [
@@ -213,9 +213,9 @@ describe('agent-chat-parser — generic (OpenCode / Kimi)', () => {
 	});
 
 	it('captures usage from a terminal event carrying tokens', () => {
-		const parser = createAgentChatParser(AgentRuntime.Kimi);
+		const parser = createAgentChatParser(AgentRuntime.OpenCode);
 		feed(parser, [
-			{ type: 'init', model: 'kimi-for-coding' },
+			{ type: 'init', model: 'opencode-model' },
 			{ type: 'result', usage: { input_tokens: 300, output_tokens: 60 } },
 		]);
 		expect(parser.getUsage()).toEqual({ inputTokens: 300, outputTokens: 60, costCents: 0 });

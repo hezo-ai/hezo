@@ -37,7 +37,7 @@ if [ -n "${HTTPS_PROXY:-}" ]; then
 fi
 
 # Deliver the prompt either on stdin (default) or as a trailing arg when
-# HEZO_PROMPT_MODE=arg (OpenCode `run <message>`, Kimi `--prompt <text>`).
+# HEZO_PROMPT_MODE=arg (OpenCode `run <message>`).
 if [ -n "${HEZO_PROMPT_FILE:-}" ] && [ -r "$HEZO_PROMPT_FILE" ]; then
     if [ "${HEZO_PROMPT_MODE:-stdin}" = arg ]; then
         "$@" "$(cat "$HEZO_PROMPT_FILE")"

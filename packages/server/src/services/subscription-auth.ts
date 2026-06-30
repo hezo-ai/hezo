@@ -14,11 +14,6 @@
  *   scope, expiry_date }`. The refresh token is stable and reusable, so no
  *   rotation persistence is needed; we materialise the file fresh per run.
  *
- * - **Kimi (Kimi Code)** — `~/.kimi-code/credentials/kimi-code.json` written by
- *   `kimi login` (device-code flow), shape `{ access_token, refresh_token,
- *   expires_at, token_type, scope, expires_in }`. The CLI rotates the refresh
- *   token in place each run, so Hezo serialises runs and persists it back.
- *
  * Anthropic (Claude Code) subscription is the exception: it is **not** a pasted
  * JSON file but a single long-lived OAuth token from `claude setup-token`,
  * delivered via the CLAUDE_CODE_OAUTH_TOKEN env var rather than a file mount.
@@ -113,46 +108,6 @@ export function validateAnthropicOauthToken(raw: string): SubscriptionValidation
 	return { ok: true };
 }
 
-export interface KimiAuthBlob {
-	access_token: string;
-	refresh_token: string;
-	expires_at?: number;
-	token_type?: string;
-	scope?: string;
-	expires_in?: number;
-	[key: string]: unknown;
-}
-
-/**
- * Validates the Kimi Code subscription credential — the contents of
- * `~/.kimi-code/credentials/kimi-code.json` written by `kimi login`. Requires a
- * non-empty `access_token` (the CLI treats an empty one as logged-out) and
- * `refresh_token` (needed to refresh/rotate across runs).
- */
-export function validateKimiAuthJson(raw: string): SubscriptionValidation {
-	const parsed = parseJsonObject(raw, 'kimi-code.json');
-	if (!parsed.ok) return parsed;
-
-	const access = parsed.value.access_token;
-	const refresh = parsed.value.refresh_token;
-	if (typeof access !== 'string' || access.length === 0) {
-		return {
-			ok: false,
-			error:
-				'kimi-code.json is missing access_token — sign in again with `kimi login` and re-copy the file',
-		};
-	}
-	if (typeof refresh !== 'string' || refresh.length === 0) {
-		return {
-			ok: false,
-			error:
-				'kimi-code.json is missing refresh_token — sign in again with `kimi login` and re-copy the file',
-		};
-	}
-
-	return { ok: true };
-}
-
 export function validateSubscriptionBlob(
 	provider: AiProvider,
 	raw: string,
@@ -164,8 +119,6 @@ export function validateSubscriptionBlob(
 			return validateCodexAuthJson(raw);
 		case AiProvider.Google:
 			return validateGeminiAuthJson(raw);
-		case AiProvider.Kimi:
-			return validateKimiAuthJson(raw);
 		default:
 			return { ok: false, error: `${provider} does not support subscription auth` };
 	}

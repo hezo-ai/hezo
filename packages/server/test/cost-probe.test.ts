@@ -14,7 +14,7 @@ const line = (e: unknown) => `${JSON.stringify(e)}\n`;
 describe('cost-probe › probeKeyEnv', () => {
 	it('derives a collision-free env var from the provider slug', () => {
 		expect(probeKeyEnv(AiProvider.DeepSeek)).toBe('HEZO_PROBE_KEY_DEEPSEEK');
-		expect(probeKeyEnv(AiProvider.XAi)).toBe('HEZO_PROBE_KEY_X_AI');
+		expect(probeKeyEnv(AiProvider.Kimi)).toBe('HEZO_PROBE_KEY_KIMI');
 		expect(probeKeyEnv(AiProvider.OpenRouter)).toBe('HEZO_PROBE_KEY_OPENROUTER');
 	});
 });
@@ -110,35 +110,20 @@ describe('cost-probe › buildProbeInvocation', () => {
 		expect(inv.cmd[inv.cmd.indexOf('--model') + 1]).toBe('openrouter/x-ai/grok');
 	});
 
-	it('passes no --model flag for Kimi (it resolves the model from config)', () => {
-		const inv = buildProbeInvocation(AiProvider.Kimi, { apiKey: 'k', model: 'whatever' });
-		expect(inv.cmd).not.toContain('--model');
-		expect(inv.promptMode).toBe('arg');
-	});
-
-	it('passes no --model flag for xAI/Grok even with an override (CLI rejects api.x.ai ids)', () => {
-		const inv = buildProbeInvocation(AiProvider.XAi, { apiKey: 'k', model: 'grok-4-fast' });
-		expect(inv.runtime).toBe(AgentRuntime.Grok);
-		expect(inv.cmd).not.toContain('--model');
-		expect(inv.cmd).toEqual(['grok', '--output-format', 'streaming-json', '-p']);
-		expect(inv.promptMode).toBe('arg');
-	});
-
-	it('stages a Kimi config.toml with the api key + declared model', () => {
-		const inv = buildProbeInvocation(AiProvider.Kimi, { apiKey: 'k-key' });
-		expect(inv.runtime).toBe(AgentRuntime.Kimi);
-		expect(inv.env).toContain('KIMI_CODE_HOME=/home/node/.kimi-code');
-		const toml = inv.env.find((e) => e.startsWith('KIMI_CONFIG_TOML='));
-		expect(toml).toBeDefined();
-		// Kimi reads its key + model from config, not env; the staged config carries both.
-		expect(toml).toContain('default_model = "kimi-for-coding"');
-		expect(toml).toContain('default_yolo = true');
-		expect(toml).toContain('base_url = "https://api.kimi.com/coding/v1"');
-		expect(toml).toContain('api_key = "k-key"');
-		expect(inv.setup).toEqual([
-			'mkdir -p "$KIMI_CODE_HOME"',
-			'printf %s "$KIMI_CONFIG_TOML" > "$KIMI_CODE_HOME/config.toml"',
-		]);
+	it('builds the Kimi (Claude Code/Moonshot) invocation from env alone — no staging', () => {
+		// Kimi now runs through Claude Code against Moonshot's Anthropic-compatible
+		// endpoint (the DeepSeek/Z.ai shape), authenticating from ANTHROPIC_AUTH_TOKEN.
+		const inv = buildProbeInvocation(AiProvider.Kimi, { apiKey: 'sk-kimi' });
+		expect(inv.runtime).toBe(AgentRuntime.ClaudeCode);
+		expect(inv.promptMode).toBe('stdin');
+		expect(inv.env).toContain('ANTHROPIC_BASE_URL=https://api.moonshot.ai/anthropic');
+		expect(inv.env).toContain('ANTHROPIC_AUTH_TOKEN=sk-kimi');
+		expect(inv.env).toContain('ENABLE_TOOL_SEARCH=false');
+		expect(inv.env).toContain('DISABLE_TELEMETRY=1');
+		expect(inv.cmd).toContain('--model');
+		expect(inv.cmd[inv.cmd.indexOf('--model') + 1]).toBe('kimi-k2.7-code');
+		// Claude Code authenticates from env alone — no credential file to stage.
+		expect(inv.setup).toEqual([]);
 	});
 
 	it('builds a Claude Code invocation against an arbitrary Anthropic endpoint (--anthropic-base-url)', () => {
@@ -190,13 +175,13 @@ describe('cost-probe › wrapProbeExecCmd', () => {
 	});
 
 	it('appends the prompt as the trailing arg for arg-mode runtimes', () => {
-		expect(wrapProbeExecCmd(['grok', '-p'], 'arg')).toEqual([
+		expect(wrapProbeExecCmd(['opencode', 'run'], 'arg')).toEqual([
 			'sh',
 			'-c',
 			'exec "$@" "$PROMPT"',
 			'sh',
-			'grok',
-			'-p',
+			'opencode',
+			'run',
 		]);
 	});
 
@@ -266,10 +251,11 @@ describe('cost-probe › extractReportedCost', () => {
 	});
 
 	it('classifies a clean run that emitted output but no cost/usage as no-usage', () => {
-		// Real xAI/Grok shape: a text event + an end event, no usage or cost.
+		// A generic runtime whose output carries a text event + an end event, with
+		// no usage or cost field — can't be priced from output or the table.
 		const stdout =
 			line({ type: 'text', data: 'ok' }) + line({ type: 'end', stopReason: 'EndTurn' });
-		const r = extractReportedCost(AgentRuntime.Grok, stdout);
+		const r = extractReportedCost(AgentRuntime.OpenCode, stdout);
 		expect(r.reportedCostUsd).toBeNull();
 		expect(r.inputTokens).toBe(0);
 		expect(r.outputTokens).toBe(0);

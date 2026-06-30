@@ -87,32 +87,6 @@ export const SUBSCRIPTION_INSTRUCTIONS: Partial<Record<AiProvider, ProviderInstr
 		placeholder:
 			'{"access_token":"ya29....","refresh_token":"1//...","scope":"...","token_type":"Bearer","expiry_date":1234567890}',
 	},
-	[AiProvider.Kimi]: {
-		title: 'How to get your Kimi subscription auth file',
-		steps: [
-			<>
-				Install the Kimi Code CLI on your local machine:{' '}
-				<code>npm install -g @moonshot-ai/kimi-code</code>.
-			</>,
-			<>
-				Run <code>kimi login</code> and complete the device-code sign-in in your browser with the
-				Kimi account whose subscription you want to use.
-			</>,
-			<>
-				Open <code>~/.kimi-code/credentials/kimi-code.json</code> (macOS/Linux).
-			</>,
-			<>Copy the entire contents of that file and paste them into the box below.</>,
-		],
-		footer: (
-			<>
-				Heads up: this credential auto-rotates each time Hezo runs Kimi. Don't keep using the same
-				login on your laptop afterwards — pick one or the other, otherwise the refresh token will
-				desync. To stop, remove the credential here and re-run <code>kimi login</code> locally.
-			</>
-		),
-		placeholder:
-			'{"access_token":"...","refresh_token":"...","expires_at":1234567890000,"token_type":"Bearer"}',
-	},
 };
 
 /** The gray, provider-specific "how to get your subscription credential" box. */

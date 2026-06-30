@@ -2176,28 +2176,25 @@ describe('runAgent', () => {
 			).toBeNull();
 		});
 
-		it('writes kimi-code.json to a per-run path, points KIMI_CODE_HOME at it, and rotates', () => {
-			const dataDir = `/tmp/kimi-mount-${Date.now()}`;
-			const runId = 'run-kimi-1';
-			const kimiBlob = JSON.stringify({
-				access_token: 'kc-access',
-				refresh_token: 'kc-refresh',
-				expires_at: 1813110988251,
-				token_type: 'Bearer',
+		it('returns null mount for Kimi (api-key on Claude Code, credential via env var)', () => {
+			// Kimi now runs through Claude Code against Moonshot's Anthropic-compatible
+			// endpoint with an api key delivered via ANTHROPIC_AUTH_TOKEN — there is no
+			// subscription file to mount.
+			expect(
+				buildSubscriptionMount('/tmp', 'co', 'pj', 'r1', AiProvider.Kimi, {
+					value: 'sk-kimi',
+					authMethod: AiAuthMethod.ApiKey,
+				}),
+			).toBeNull();
+			// The provider env carries the Moonshot endpoint + auth token + quiet env.
+			const env = buildProviderEnv(AiProvider.Kimi, {
+				value: 'sk-kimi',
+				authMethod: AiAuthMethod.ApiKey,
 			});
-			const mount = buildSubscriptionMount(dataDir, 'co', 'pj', runId, AiProvider.Kimi, {
-				value: kimiBlob,
-				authMethod: AiAuthMethod.Subscription,
-			});
-			expect(mount).not.toBeNull();
-			expect(mount!.rotates).toBe(true);
-			expect(mount!.envEntries).toEqual([
-				`KIMI_CODE_HOME=/workspace/.hezo/subscription/kimi/${runId}`,
-			]);
-			// The CLI reads the OAuth credential from <KIMI_CODE_HOME>/credentials/kimi-code.json.
-			expect(mount!.hostAuthFile.endsWith('/credentials/kimi-code.json')).toBe(true);
-			expect(existsSync(mount!.hostAuthFile)).toBe(true);
-			expect(readFileSync(mount!.hostAuthFile, 'utf8')).toBe(kimiBlob);
+			expect(env).toContain('ANTHROPIC_BASE_URL=https://api.moonshot.ai/anthropic');
+			expect(env).toContain('ANTHROPIC_AUTH_TOKEN=sk-kimi');
+			expect(env).toContain('ENABLE_TOOL_SEARCH=false');
+			expect(env).toContain('DISABLE_TELEMETRY=1');
 		});
 
 		it('runAgent injects CODEX_HOME and stages auth.json on host', async () => {
