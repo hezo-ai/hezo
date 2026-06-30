@@ -98,7 +98,7 @@ export default defineConfig({
 	],
 	webServer: [
 		{
-			command: `bun run src/index.ts -- --port ${SERVER_PORT} --data-dir ${TEST_DATA_DIR} --reset`,
+			command: `bun run src/index.ts -- --port ${SERVER_PORT} --data-dir ${TEST_DATA_DIR} --reset --no-open`,
 			cwd: './packages/server',
 			// `Bun.serve` opens the port before `startup()` finishes registering
 			// routes, so a port-only check races against route mounting and the

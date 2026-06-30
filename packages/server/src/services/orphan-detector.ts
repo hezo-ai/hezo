@@ -32,12 +32,14 @@ export async function detectOrphans(
 		member_id: string;
 		team_id: string;
 		task_id: string | null;
+		project_id: string | null;
 		process_loss_retry_count: number;
 	}>(
-		`SELECT id, member_id, team_id, task_id, process_loss_retry_count
-		 FROM heartbeat_runs
-		 WHERE status = $1::heartbeat_run_status
-		   AND started_at < now() - ($2 || ' seconds')::interval`,
+		`SELECT hr.id, hr.member_id, hr.team_id, hr.task_id, hr.process_loss_retry_count,
+		        (SELECT t.project_id FROM tasks t WHERE t.id = hr.task_id) AS project_id
+		 FROM heartbeat_runs hr
+		 WHERE hr.status = $1::heartbeat_run_status
+		   AND hr.started_at < now() - ($2 || ' seconds')::interval`,
 		[HeartbeatRunStatus.Running, String(SAFETY_WINDOW_SECONDS)],
 	);
 
@@ -69,6 +71,7 @@ export async function detectOrphans(
 			id: run.id,
 			member_id: run.member_id,
 			task_id: run.task_id,
+			project_id: run.project_id,
 			status: HeartbeatRunStatus.Failed,
 			error: 'Orphaned: process no longer running',
 		});

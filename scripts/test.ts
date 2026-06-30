@@ -177,6 +177,10 @@ async function runBrowserTests(): Promise<boolean> {
 	if (!(await buildWebBundle())) return false;
 	const playwrightArgs = ['playwright', 'test'];
 	if (pattern) playwrightArgs.push(pattern);
+	// Fan the browser suite across CI runners the same way the vitest tiers shard.
+	// Playwright distributes its tests across the shards; `--pass-with-no-tests`
+	// keeps a shard that lands zero tests green instead of erroring.
+	if (shard) playwrightArgs.push(`--shard=${shard}`, '--pass-with-no-tests');
 	const proc = Bun.spawn(['bunx', ...playwrightArgs], {
 		cwd: ROOT,
 		stdout: 'inherit',

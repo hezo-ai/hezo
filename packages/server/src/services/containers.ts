@@ -902,6 +902,7 @@ export async function failProjectRuns(
 			id: run.id,
 			member_id: run.member_id,
 			task_id: run.task_id,
+			project_id: projectId,
 			status: HeartbeatRunStatus.Failed,
 			error: reason,
 		});

@@ -120,7 +120,8 @@ export async function recordStatusChange(
 	}
 	const r = await db.query<Record<string, unknown>>(
 		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
-		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
+		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
+		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
 		[taskId, authorId, authorApiKeyId, CommentContentType.System, JSON.stringify(content)],
 	);
 	if (r.rows[0] && wsManager) {
@@ -142,7 +143,8 @@ export async function recordRunTerminated(
 	const text = `${actorName} terminated agent run — ${reason}`;
 	const r = await db.query<Record<string, unknown>>(
 		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
-		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
+		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
+		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
 		[
 			taskId,
 			actorMemberId,
@@ -177,7 +179,8 @@ export async function recordWakeupCancelled(
 	const text = `${actorName} cancelled queued run for ${agentName}`;
 	const r = await db.query<Record<string, unknown>>(
 		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
-		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
+		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
+		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
 		[
 			taskId,
 			actorMemberId,
@@ -213,7 +216,8 @@ export async function recordTitleChange(
 	const text = `${actorName} renamed from "${oldTitle}" to "${newTitle}"`;
 	const r = await db.query<Record<string, unknown>>(
 		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
-		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
+		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
+		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
 		[
 			taskId,
 			actorMemberId,
@@ -252,7 +256,8 @@ export async function recordAssigneeChange(
 	const text = `${actorName} reassigned from ${fromName} to ${toName}`;
 	const r = await db.query<Record<string, unknown>>(
 		`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
-		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
+		 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
+		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
 		[
 			taskId,
 			actorMemberId,
@@ -320,7 +325,8 @@ export async function recordTaskLinks(
 		const linkText = `Linked from ${sourceIdentifier} by ${actor.name}`;
 		const r = await db.query<Record<string, unknown>>(
 			`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, content_type, content)
-			 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb) RETURNING *`,
+			 VALUES ($1, $2, $3, $4::comment_content_type, $5::jsonb)
+		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
 			[
 				target.id,
 				actorMemberId,
