@@ -817,6 +817,18 @@ on rollback; successes are confirmed by the UI change itself.
 Every UI change must work at all three, and its browser test must verify mobile
 (`AGENTS.md` › UX).
 
+**PWA / installability.** The SPA ships a web manifest (`packages/web/public/manifest.webmanifest`,
+`display: standalone`, brand icons under `public/icons/`) and a deliberately **network-only**
+service worker (`public/sw.js`, registered from `main.tsx` via `lib/register-sw.ts`). The worker
+caches nothing — its only job is to satisfy the browsers' installability criteria so they offer
+"Add to Home Screen"; a caching worker could pin clients to a stale build and fight the
+self-update/restart flow. On mobile, `PwaInstallPrompt` (rendered in the shell, gated `lg:hidden`)
+surfaces a dismissible bottom card: Chrome/Android replays the captured `beforeinstallprompt` for a
+one-tap install (`useInstallPrompt`), while iOS Safari — which has no programmatic prompt — shows
+the manual Share → Add to Home Screen steps. Already-installed (standalone) and recently-dismissed
+states stay silent. Serving requires `.webmanifest` → `application/manifest+json` in both static MIME
+maps (`startup.ts`, `scripts/bundle-static.ts`).
+
 ---
 
 ## 12. Build, release, migrations & upgrades

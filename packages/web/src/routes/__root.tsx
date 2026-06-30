@@ -14,6 +14,7 @@ import { GlobalSearchDialog } from '../components/global-search-dialog';
 import { MasterKeyGate } from '../components/master-key-gate';
 import { ProjectRail } from '../components/project-rail';
 import { ProjectSidebar } from '../components/project-sidebar';
+import { PwaInstallPrompt } from '../components/pwa-install-prompt';
 import { MasterKeyStep, SetupGate } from '../components/setup/setup-wizard';
 import { StartingScreen } from '../components/starting-screen';
 import { UpdateBanner } from '../components/update-banner';
@@ -123,6 +124,7 @@ function ShellLayout() {
 			<ShellChrome drawerOpen={drawerOpen} setDrawerOpen={setDrawerOpen} />
 			<FloatingNewTaskButton hidden={drawerOpen || chatOpen} />
 			<CeoChatWidget open={chatOpen} onOpenChange={setChatOpen} />
+			<PwaInstallPrompt />
 		</>
 	);
 }

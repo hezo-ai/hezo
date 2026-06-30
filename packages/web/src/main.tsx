@@ -2,6 +2,7 @@ import { createRouter, Navigate, RouterProvider } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Toaster } from './components/ui/toast';
+import { registerServiceWorker } from './lib/register-sw';
 import { ThemeProvider } from './lib/theme';
 import { routeTree } from './routeTree.gen';
 import './index.css';
@@ -31,3 +32,7 @@ createRoot(document.getElementById('root') as HTMLElement).render(
 		</ThemeProvider>
 	</StrictMode>,
 );
+
+// Register the PWA service worker so the app becomes installable (it does no
+// caching — see public/sw.js). Best-effort; never blocks app startup.
+registerServiceWorker();
