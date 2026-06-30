@@ -54,6 +54,16 @@ export default defineConfig({
 		trace: 'retain-on-failure',
 		screenshot: 'only-on-failure',
 		video: 'retain-on-failure',
+		// The app registers a PWA service worker (packages/web/public/sw.js) on
+		// localhost, which is a secure context — so without this it activates in the
+		// E2E preview build too. A SW with a fetch handler re-issues requests from
+		// inside the worker, and those bypass Playwright's `page.route()` mocks,
+		// silently breaking every spec that stubs an API response (e.g.
+		// mockRunComment in task-detail.mobile.spec.ts) the moment the SW wins its
+		// activation race with page load. We never assert on the SW itself (the
+		// install-prompt spec dispatches a synthetic `beforeinstallprompt`), so block
+		// service workers in tests to keep route mocking deterministic.
+		serviceWorkers: 'block',
 	},
 	projects: [
 		{
