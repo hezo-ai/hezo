@@ -80,6 +80,8 @@ describe('cost-probe › buildProbeInvocation', () => {
 		// not accepted as an auth method.
 		expect(inv.env).toContain('GEMINI_API_KEY=g-key');
 		expect(inv.env.some((e) => e.startsWith('GOOGLE_API_KEY='))).toBe(false);
+		// /workspace is untrusted to the Gemini CLI unless we say otherwise.
+		expect(inv.env).toContain('GEMINI_CLI_TRUST_WORKSPACE=true');
 		expect(inv.cmd).toEqual([
 			'gemini',
 			'--output-format',

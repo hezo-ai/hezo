@@ -985,6 +985,17 @@ export const CLAUDE_CODE_QUIET_ENV = {
 } as const;
 
 /**
+ * The Gemini CLI refuses to run in an "untrusted" folder and silently downgrades
+ * `--yolo` to manual tool approval, which hangs a headless run; Hezo agents run
+ * headless in `/workspace`. Trusting the workspace is the documented headless
+ * setting (https://geminicli.com/docs/cli/trusted-folders). Applied to every
+ * Gemini-runtime provider, mirroring `CLAUDE_CODE_QUIET_ENV` for Claude Code.
+ */
+export const GEMINI_RUNTIME_ENV = {
+	GEMINI_CLI_TRUST_WORKSPACE: 'true',
+} as const;
+
+/**
  * Kimi Code's OpenAI-compatible coding endpoint. Used both as the
  * `[providers.kimi-for-coding].base_url` the kimi adapter writes into
  * config.toml and as the upstream the in-container Stop-hook judge calls.

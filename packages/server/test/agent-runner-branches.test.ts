@@ -170,6 +170,16 @@ describe('buildProviderEnv', () => {
 		});
 		expect(env).toEqual(['OPENAI_API_KEY=sk-openai']);
 	});
+
+	it('stamps the Gemini workspace-trust env + GEMINI_API_KEY for a Google api-key credential', () => {
+		const env = buildProviderEnv(AiProvider.Google, {
+			value: 'AIza-google',
+			authMethod: AiAuthMethod.ApiKey,
+		});
+		// Gemini runs headless in /workspace, which the CLI treats as untrusted unless
+		// told otherwise; the runtime env trusts it so --yolo keeps auto-approving.
+		expect(env).toEqual(['GEMINI_CLI_TRUST_WORKSPACE=true', 'GEMINI_API_KEY=AIza-google']);
+	});
 });
 
 // --------------------------------------------------------------------------

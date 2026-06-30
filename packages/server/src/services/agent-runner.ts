@@ -9,6 +9,7 @@ import {
 	CommentContentType,
 	ContainerStatus,
 	claudeCodeModelArg,
+	GEMINI_RUNTIME_ENV,
 	HeartbeatRunKind,
 	HeartbeatRunStatus,
 	opencodeModelArg,
@@ -189,6 +190,11 @@ export function buildProviderEnv(provider: AiProvider, credential: AiProviderCre
 	const out: string[] = [];
 	if (adapter.runtime === AgentRuntime.ClaudeCode) {
 		for (const [key, value] of Object.entries(CLAUDE_CODE_QUIET_ENV)) {
+			out.push(`${key}=${value}`);
+		}
+	}
+	if (adapter.runtime === AgentRuntime.Gemini) {
+		for (const [key, value] of Object.entries(GEMINI_RUNTIME_ENV)) {
 			out.push(`${key}=${value}`);
 		}
 	}
