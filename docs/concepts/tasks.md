@@ -57,6 +57,20 @@ The practical upshot: keep discussion, decisions, and hand-offs on the task. Wha
 lands in the thread is inherited by the next agent that picks the task up — so the
 conversation compounds instead of evaporating between runs.
 
+## Cancelling or redirecting work
+
+Plans change — a task gets superseded, folded into another, or dropped. When a manager
+decides one of their team's **in-progress** tasks should be cancelled or consolidated, Hezo
+doesn't yank it away mid-flight. The manager hands it back to the agent doing the work,
+which winds down cleanly first — tidying up whatever it produced (for engineering work, that
+means closing an open pull request and removing its branch) so nothing is left orphaned — or
+makes the case that the work is effectively finished and should be kept on the task. Only
+then is the task cancelled. This keeps a cancelled task from stranding half-finished
+artifacts that no one owns.
+
+You and the CEO are the exception: an admin or the CEO can cancel any task outright, at any
+time, without that hand-back.
+
 ## Review on completion
 
 When work finishes, the **Coach** reviews completed tasks across your projects,
