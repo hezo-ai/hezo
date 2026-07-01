@@ -361,6 +361,19 @@ describe('buildTaskPrompt', () => {
 		expect(out).toContain('BR-2 — Ref (done)');
 	});
 
+	it('reply handoff makes an announced plan due — execute it or explicitly revise it', async () => {
+		const { WakeupSource } = await import('@hezo/shared');
+		const out = buildTaskPrompt(
+			'SYS',
+			makeTask(),
+			{ source: WakeupSource.Reply },
+			{ replyContext: reply },
+		);
+		expect(out).toContain('that announced plan is now due');
+		expect(out).toContain('explicitly revising or retracting it');
+		expect(out).toContain('Do not merely acknowledge the answer');
+	});
+
 	it('renders the mention handoff when source=mention', async () => {
 		const { WakeupSource } = await import('@hezo/shared');
 		const out = buildTaskPrompt(

@@ -87,6 +87,44 @@ describe('stop-hook rules require add_task_blocker for cross-ticket waits', () =
 });
 
 /**
+ * An agent that announced a plan in the thread ("I will delegate…", "once this
+ * decision lands I'll update X and Y") must not stop after silently doing less —
+ * rule 9 blocks the silent scope reduction while accepting an explicit
+ * reconciling wrap-up. Shared verbatim across every runtime's judge.
+ */
+describe('stop-hook rules block announced-plan abandonment', () => {
+	it('blocks closing with an announced plan neither executed nor revised', () => {
+		expect(STOP_HOOK_RULES).toContain('announced a plan or next step on this ticket');
+		expect(STOP_HOOK_RULES).toContain('silent scope reduction');
+		expect(STOP_HOOK_RULES).toContain('explicitly revising or retracting the plan');
+	});
+
+	it('targets explicit self-commitments, not options the agent merely discussed', () => {
+		expect(STOP_HOOK_RULES).toContain('explicit self-commitments only');
+		expect(STOP_HOOK_RULES).toContain('without committing do NOT count');
+	});
+
+	it('an explicit reconciling wrap-up satisfies the rule', () => {
+		expect(STOP_HOOK_RULES).toContain('fully satisfies this rule');
+		expect(STOP_HOOK_RULES).toContain('never for legitimately revising scope in the thread');
+	});
+
+	it('report_no_work carve-out spans rules 1-9', () => {
+		expect(STOP_HOOK_RULES).toContain('block rules 1-9');
+		expect(STOP_HOOK_RULES).not.toContain('block rules 1-8');
+	});
+
+	it('every runtime judge embeds the rule', () => {
+		expect(STOP_HOOK_PROMPT).toContain('silent scope reduction');
+		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
+			'silent scope reduction',
+		);
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain('silent scope reduction');
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain('silent scope reduction');
+	});
+});
+
+/**
  * B2: each command-hook judge must emit the decision value that actually makes
  * ITS runtime continue the agent, and must not loop the agent indefinitely.
  * Codex's `Stop` hook continues on `block`; Gemini's `AfterAgent` hook continues

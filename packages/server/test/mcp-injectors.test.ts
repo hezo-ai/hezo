@@ -41,6 +41,13 @@ describe('MCP_ADAPTERS', () => {
 			expect(STOP_HOOK_RULES).toContain('A new TOP-LEVEL task with NO such blocker edge');
 			expect(STOP_HOOK_RULES).toContain('is still NOT an acceptable deferral');
 		});
+
+		it('rule 9 accepts the rule-3 structural routes as carrying an announced plan out', () => {
+			// Executing an announced delegation via sub-tasks / blocked_by / self-comment
+			// IS carrying it out — the plan-abandonment rule must not contradict rule 3's
+			// legitimate deferral paths.
+			expect(STOP_HOOK_RULES).toContain('structural routes rule 3 accepts');
+		});
 	});
 
 	it('every adapter produces a valid injection for a single Hezo descriptor', () => {
