@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.10.0 - 2026-07-01
+
+### Features
+
+- **goals:** rename goal-check heartbeat to "progress update", add manual Run now ([#492](https://github.com/hezo-ai/hezo/pull/492))
+- **agents:** let agents edit their own run comments; stop duplicate wrap-ups ([#491](https://github.com/hezo-ai/hezo/pull/491))
+- **web:** global mobile create-task button with project selector ([#486](https://github.com/hezo-ai/hezo/pull/486))
+- **web:** collapse goal-run + project-progress summaries, add progress help ([#485](https://github.com/hezo-ai/hezo/pull/485))
+- **web:** offer mobile PWA install prompt ([#484](https://github.com/hezo-ai/hezo/pull/484))
+- **web:** move GitHub to a dedicated Git settings subpage ([#474](https://github.com/hezo-ai/hezo/pull/474))
+- **web:** refine goals UI, run trigger labels, and sidebar add buttons ([#475](https://github.com/hezo-ai/hezo/pull/475))
+- **web:** add goal-form field tooltips and a reusable help dialog ([#473](https://github.com/hezo-ai/hezo/pull/473))
+- redesign settings nav and drop All Tasks/Skills top-nav shortcuts ([#471](https://github.com/hezo-ai/hezo/pull/471))
+- **web:** redesign AI provider setup as a logo card grid ([#469](https://github.com/hezo-ai/hezo/pull/469))
+- remove mobile sidemenu close button and homepage time display ([#470](https://github.com/hezo-ai/hezo/pull/470))
+- link update banner version to its GitHub release page ([#467](https://github.com/hezo-ai/hezo/pull/467))
+- add anonymous daily usage telemetry (opt-out) ([#468](https://github.com/hezo-ai/hezo/pull/468))
+
+### Bug Fixes
+
+- prevent spurious failed run on dev-server restart from worktree mount race ([#494](https://github.com/hezo-ai/hezo/pull/494))
+- **agents:** wait for deployment readiness before verifying a deployed URL ([#493](https://github.com/hezo-ai/hezo/pull/493))
+- **agents:** remove deferred-continuation auto-queue that re-ran agents needlessly ([#490](https://github.com/hezo-ai/hezo/pull/490))
+- **agents:** hand back active tasks before cancelling; never leave a PR/branch orphaned ([#489](https://github.com/hezo-ai/hezo/pull/489))
+- **test:** scope container cleanup to test containers; harden worktree prep ([#488](https://github.com/hezo-ai/hezo/pull/488))
+- **server:** strip NUL bytes from container output before persisting ([#487](https://github.com/hezo-ai/hezo/pull/487))
+- **agents:** resume deferred in-progress work in seconds, not the heartbeat interval ([#480](https://github.com/hezo-ai/hezo/pull/480))
+- **web:** make full Tasks/Team rows clickable and pin the team menu open ([#479](https://github.com/hezo-ai/hezo/pull/479))
+- **web:** make running-agent trash a terminate button without waiting on run comment ([#478](https://github.com/hezo-ai/hezo/pull/478))
+- **web:** clear the Progress "no goals yet" dot once a project has a goal ([#476](https://github.com/hezo-ai/hezo/pull/476))
+
+### Documentation
+
+- note that sharded CI jobs gate branch protection via their *-complete rollup ([#483](https://github.com/hezo-ai/hezo/pull/483))
+
+### Other
+
+- Prefer runtime-reported cost; add cost-source probe; switch Kimi to Claude Code, drop xAI/Grok, hide OpenRouter ([#481](https://github.com/hezo-ai/hezo/pull/481))
+- Automatic agent-driven chat memory with byte-bounded compaction ([#482](https://github.com/hezo-ai/hezo/pull/482))
+- Narrow collapsed project progress to header + first line ([#477](https://github.com/hezo-ai/hezo/pull/477))
+- Merge model pricing into AI providers settings page ([#472](https://github.com/hezo-ai/hezo/pull/472))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.9.0...0.10.0
+
 ## 0.9.0 - 2026-06-29
 
 ### Features
