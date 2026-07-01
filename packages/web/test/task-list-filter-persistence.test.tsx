@@ -148,6 +148,6 @@ test('one project does not inherit another project filters', async () => {
 
 	// The collapsed summary reflects the default selection, not Alpha's.
 	const summary = await findByTestId('task-filter-toggle');
-	await waitFor(() => expect(summary.textContent).toContain('Open tasks'));
+	await waitFor(() => expect(summary.textContent).toContain('Open & done'));
 	expect(summary.textContent).not.toContain('Status: Done');
 });
