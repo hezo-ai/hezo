@@ -65,7 +65,8 @@ just counting finished tasks — and records three things:
 - a **health** — a coloured pill that reads at a glance: **on track** (green), **at risk**
   (amber), or **off track** (red); a brand-new goal shows **not assessed** (grey) until its
   first check,
-- a **status blurb** — a short paragraph on where the goal stands and what's needed next.
+- a **status blurb** — a short paragraph on where the goal stands and what's needed next. Any
+  tasks or pull requests it references become links you can click straight through to.
 
 Because each check is recorded, every goal shows a **progress chart** of how its percentage
 has moved over time, so you can see momentum (or a stall) at a glance.

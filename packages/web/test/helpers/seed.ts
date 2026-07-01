@@ -130,15 +130,22 @@ export async function seedGoal(
 		actions?: string;
 		check_frequency?: string;
 		target_date?: string;
+		/** Captain-written narrative. No create/update API field exists, so set it directly. */
+		statusBlurb?: string;
 	},
 ): Promise<SeededGoal> {
-	const { apiBase } = getTestContext();
+	const { apiBase, db } = getTestContext();
+	const { statusBlurb, ...createInput } = input;
 	const res = await apiBase(`/api/projects/${project.slug}/goals`, {
 		method: 'POST',
 		headers: workspace.headers,
-		body: JSON.stringify(input),
+		body: JSON.stringify(createInput),
 	});
-	return ((await res.json()) as { data: SeededGoal }).data;
+	const goal = ((await res.json()) as { data: SeededGoal }).data;
+	if (statusBlurb !== undefined) {
+		await db.query(`UPDATE goals SET status_blurb = $1 WHERE id = $2`, [statusBlurb, goal.id]);
+	}
+	return goal;
 }
 
 /** Set a project's Captain-maintained progress summary directly (no agent run needed). */

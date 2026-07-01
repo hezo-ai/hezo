@@ -11,6 +11,7 @@ import { agentPageParams } from '../agent-link';
 import { CreateGoalDialog } from '../create-goal-dialog';
 import { GoalHealthPill } from '../goal-health-pill';
 import { GoalProgressChart } from '../goal-progress-chart';
+import { MarkdownProse } from '../markdown-prose';
 import { Badge, type BadgeColor } from '../ui/badge';
 
 interface GoalDetailPageProps {
@@ -112,9 +113,13 @@ function GoalRunRow({ projectId, run }: { projectId: string; run: GoalRunActivit
 				)}
 			</div>
 			{blurb && expanded && (
-				<p id={blurbId} className="text-[13px] text-text-2 leading-relaxed break-words">
-					{blurb}
-				</p>
+				// `relative z-10` lifts the blurb's task/PR links above the row's stretched
+				// "open run" overlay so they stay clickable; the wrapping id preserves aria-controls.
+				<div id={blurbId} className="relative z-10 break-words">
+					<MarkdownProse projectId={projectId} projectSlug={projectId}>
+						{blurb}
+					</MarkdownProse>
+				</div>
 			)}
 			{run.created_tasks.length > 0 && (
 				<p className="relative z-10 self-start text-xs text-text-3">
@@ -259,9 +264,11 @@ export function GoalDetailPage({ projectId, goalId }: GoalDetailPageProps) {
 			</div>
 
 			{goal.status_blurb && (
-				<p className="mb-4 text-[13px] leading-relaxed text-text-2 break-words">
-					{goal.status_blurb}
-				</p>
+				<div className="mb-4 break-words">
+					<MarkdownProse projectId={projectId} projectSlug={projectId}>
+						{goal.status_blurb}
+					</MarkdownProse>
+				</div>
 			)}
 
 			<dl className="mb-2 flex flex-col gap-3 rounded-md border border-border bg-surface p-4 text-[13px]">

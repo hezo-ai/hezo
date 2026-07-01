@@ -217,6 +217,46 @@ test('clicking a goal opens its page with breadcrumbs, run feed, and edit modal'
 	await findByText('Edit Goal');
 });
 
+test('the goal detail blurb linkifies task identifiers and markdown PR links', async () => {
+	let projectSlug = '';
+	let goalId = '';
+	let taskIdentifier = '';
+	const { findByTestId, findByRole, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Link Demo' });
+			projectSlug = project.slug;
+			const task = await seedTask(ws, project, { title: 'Doc review' });
+			taskIdentifier = task.identifier;
+			// The blurb renders as markdown: a bare task identifier auto-links, and a markdown
+			// link to a PR renders as an external anchor.
+			const goal = await seedGoal(ws, project, {
+				title: 'Reach 10k stars',
+				measurement: '10k GitHub stars',
+				statusBlurb: `Blocked on ${task.identifier}, resolved via [PR #502](https://github.com/acme/repo/pull/502).`,
+			});
+			goalId = goal.id;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/goals/$goalId',
+		params: { projectId: projectSlug, goalId },
+	});
+
+	// The bare identifier resolves to an in-app task link (slug + lowercased identifier).
+	const taskLink = await findByTestId('task-mention-link', undefined, { timeout: 10_000 });
+	expect(taskLink.getAttribute('href')).toBe(
+		`/projects/${projectSlug}/tasks/${taskIdentifier.toLowerCase()}`,
+	);
+
+	// The markdown PR link opens GitHub in a new tab.
+	const prLink = await findByRole('link', { name: 'PR #502' });
+	expect(prLink.getAttribute('href')).toBe('https://github.com/acme/repo/pull/502');
+	expect(prLink.getAttribute('target')).toBe('_blank');
+});
+
 test('Project progress shows only the bold lead line until expanded', async () => {
 	let projectSlug = '';
 	const { findByText, findByTestId, queryByText, user, router } = await renderApp({

@@ -297,6 +297,9 @@ describe('buildProgressUpdatePrompt', () => {
 		const out = buildProgressUpdatePrompt('SYS', { goals: [goal()] });
 		expect(out.startsWith('SYS')).toBe(true);
 		expect(out).toContain('1 goal is due for a progress check');
+		// The status_blurb guidance tells the Captain it renders as markdown and to link PRs.
+		expect(out).toContain('The blurb renders as markdown');
+		expect(out).toContain('[PR #502](https://github.com/owner/repo/pull/502)');
 		expect(out).toContain('### Ship v2  `g1`');
 		expect(out).toContain('deadline 2026-12-31');
 		expect(out).toContain('- Last status: Halfway there');
