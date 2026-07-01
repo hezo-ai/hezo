@@ -1,3 +1,5 @@
+import { stripNulBytes } from '../lib/sql';
+
 const SOCKET_PATH = '/var/run/docker.sock';
 const API_VERSION = 'v1.44';
 
@@ -421,8 +423,8 @@ function demuxDockerStream(raw: Uint8Array): { stdout: string; stderr: string } 
 
 	const decoder = new TextDecoder();
 	return {
-		stdout: decoder.decode(concatUint8Arrays(stdout)),
-		stderr: decoder.decode(concatUint8Arrays(stderr)),
+		stdout: stripNulBytes(decoder.decode(concatUint8Arrays(stdout))),
+		stderr: stripNulBytes(decoder.decode(concatUint8Arrays(stderr))),
 	};
 }
 
@@ -446,7 +448,7 @@ async function streamDockerExec(
 			if (buffer.length < 8 + size) break;
 			const payload = buffer.slice(8, 8 + size);
 			buffer = buffer.slice(8 + size);
-			const text = decoder.decode(payload);
+			const text = stripNulBytes(decoder.decode(payload));
 			const stream: 'stdout' | 'stderr' = streamType === 2 ? 'stderr' : 'stdout';
 			if (stream === 'stdout') stdoutParts.push(text);
 			else stderrParts.push(text);

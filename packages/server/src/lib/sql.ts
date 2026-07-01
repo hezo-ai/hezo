@@ -59,6 +59,16 @@ export function buildUpdateSet(fields: UpdateFieldSpec[], startIdx = 1): UpdateS
 	return { clauses, params, nextIdx: idx };
 }
 
+/**
+ * Remove NUL (0x00) bytes from decoded text. Postgres `text`/`jsonb` columns reject NUL
+ * on write, and NUL is valid UTF-8 so `TextDecoder` passes it through unchanged —
+ * container output carrying binary noise must be scrubbed before it can be persisted.
+ */
+export function stripNulBytes(text: string): string {
+	const NUL = String.fromCharCode(0);
+	return text.includes(NUL) ? text.split(NUL).join('') : text;
+}
+
 const PG_FK_VIOLATION = '23503';
 const PG_UNIQUE_VIOLATION = '23505';
 

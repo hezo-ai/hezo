@@ -1,4 +1,5 @@
 import { WsMessageType } from '@hezo/shared';
+import { stripNulBytes } from '../lib/sql';
 import type { DockerClient } from './docker';
 import type { LogStreamBroker } from './log-stream-broker';
 
@@ -134,7 +135,7 @@ export class ContainerLogStreamer {
 					buffer = buffer.slice(8 + frameSize);
 
 					const stream: 'stdout' | 'stderr' = streamType === 2 ? 'stderr' : 'stdout';
-					const text = decoder.decode(payload);
+					const text = stripNulBytes(decoder.decode(payload));
 
 					batchLines.push({ stream, text });
 					scheduleBatch();
