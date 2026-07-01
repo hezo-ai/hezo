@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { HeartbeatRunStatus, TaskStatus, WakeupStatus } from '@hezo/shared';
+import { CommentContentType, HeartbeatRunStatus, TaskStatus, WakeupStatus } from '@hezo/shared';
 
 export const MAX_SUB_TASK_DEPTH = 2;
 
@@ -123,4 +123,35 @@ export async function assertNoOutstandingActivity(
 	}
 
 	return { ok: true };
+}
+
+// An active `@admin` mention is a question parked on a human; the ticket is not
+// done while it has no answer. "Answered" is computed from the comment
+// timeline: a human text comment on the same task posted after the mention
+// comment (humans post with author_member_id NULL; the content-type filter
+// keeps NULL-author system/run comments from counting as replies). read_at is
+// deliberately ignored — reading is not answering. Enforced for agent callers
+// only: a human closing a ticket is itself the human's decision.
+export async function assertNoUnansweredAdminMentions(db: PGlite, taskId: string): Promise<Check> {
+	const r = await db.query<{ public_id: string }>(
+		`SELECT tc.public_id
+		 FROM admin_mentions am
+		 JOIN task_comments tc ON tc.id = am.comment_id
+		 WHERE am.task_id = $1
+		   AND NOT EXISTS (
+		     SELECT 1 FROM task_comments reply
+		     WHERE reply.task_id = am.task_id
+		       AND reply.content_type = $2::comment_content_type
+		       AND reply.author_member_id IS NULL
+		       AND reply.created_at > tc.created_at
+		   )
+		 ORDER BY tc.created_at ASC
+		 LIMIT 1`,
+		[taskId, CommentContentType.Text],
+	);
+	if (r.rows.length === 0) return { ok: true };
+	return {
+		ok: false,
+		message: `Cannot mark this ticket done — an @admin question on it (comment ${r.rows[0].public_id}) has not been answered by a human yet. Keep the ticket in_progress or move it to review and end your turn; the admin's reply on this ticket wakes you automatically. Ask before closing — never mark a ticket done while an @admin ask is still open.`,
+	};
 }

@@ -212,10 +212,16 @@ interface FireAdminMentionParams {
 async function fireAdminMention(params: FireAdminMentionParams): Promise<void> {
 	const { db, teamId, taskId, commentId, authorUserId, wsManager } = params;
 
+	// Recipients: the team's admin member_users ∪ all superusers. Teams created
+	// by the CEO's create_project have no human members at all, so without the
+	// superuser leg an @admin ask on them would fan out to nobody and vanish
+	// silently. UNION dedupes a superuser who is also a team admin.
 	const adminUsers = await db.query<{ user_id: string }>(
 		`SELECT mu.user_id FROM member_users mu
 		 JOIN members m ON m.id = mu.id
-		 WHERE m.team_id = $1 AND mu.role = 'admin'`,
+		 WHERE m.team_id = $1 AND mu.role = 'admin'
+		 UNION
+		 SELECT id AS user_id FROM users WHERE is_superuser = true`,
 		[teamId],
 	);
 	if (adminUsers.rows.length === 0) return;

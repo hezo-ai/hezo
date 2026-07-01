@@ -20,7 +20,11 @@ import {
 } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import { assertRunTaskScope } from '../lib/run-scope';
-import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/task-relationships';
+import {
+	assertChildrenAllClosed,
+	assertNoOutstandingActivity,
+	assertNoUnansweredAdminMentions,
+} from '../lib/task-relationships';
 import { buildTaskListOrderBy, parseTaskListSort } from '../lib/task-sort';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -492,6 +496,14 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		const activityCheck = await assertNoOutstandingActivity(db, taskId, callerMemberId);
 		if (!activityCheck.ok) {
 			return err(c, 'INVALID_REQUEST', activityCheck.message, 400);
+		}
+		// Agents cannot close over an unanswered @admin ask; a human closing
+		// the task is itself the human's decision, so humans bypass this.
+		if (callerMemberId !== null) {
+			const adminAskCheck = await assertNoUnansweredAdminMentions(db, taskId);
+			if (!adminAskCheck.ok) {
+				return err(c, 'INVALID_REQUEST', adminAskCheck.message, 400);
+			}
 		}
 	}
 
