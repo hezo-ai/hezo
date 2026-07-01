@@ -809,6 +809,43 @@ describe('provisionContainer broadcasting', () => {
 		expect(hostConfig.MemorySwap).toBeUndefined();
 	});
 
+	it('labels containers as test containers only when HEZO_TEST_CONTAINERS is set', async () => {
+		const project = (
+			await db.query<ProjectRow>('SELECT * FROM projects WHERE id = $1', [projectId])
+		).rows[0];
+
+		const provisionWith = async (envValue: string | undefined) => {
+			const prev = process.env.HEZO_TEST_CONTAINERS;
+			if (envValue === undefined) delete process.env.HEZO_TEST_CONTAINERS;
+			else process.env.HEZO_TEST_CONTAINERS = envValue;
+			const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
+			const docker = createStubDocker({
+				imageExists: vi.fn().mockResolvedValue(false),
+				pullImage: vi.fn().mockResolvedValue(undefined),
+				createContainer: vi.fn().mockResolvedValue({ Id: 'labelled-container' }),
+				startContainer: vi.fn().mockResolvedValue(undefined),
+			});
+			try {
+				await db.query(
+					'UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1',
+					[projectId],
+				);
+				await provisionContainer({ db, docker, dataDir }, project, 'container-sync-co');
+				return docker.createContainer.mock.calls[0][1].Labels as Record<string, string>;
+			} finally {
+				if (prev === undefined) delete process.env.HEZO_TEST_CONTAINERS;
+				else process.env.HEZO_TEST_CONTAINERS = prev;
+			}
+		};
+
+		const labelled = await provisionWith('1');
+		expect(labelled['hezo.test']).toBe('1');
+		expect(labelled['hezo.project']).toBe(project.slug);
+
+		const unlabelled = await provisionWith(undefined);
+		expect(unlabelled['hezo.test']).toBeUndefined();
+	});
+
 	it('keeps bind mounts stable on rename; container name adopts the new slug', async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
 		const makeMockDocker = () =>

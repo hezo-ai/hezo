@@ -192,6 +192,17 @@ export const UpdateState = {
 } as const;
 export type UpdateState = (typeof UpdateState)[keyof typeof UpdateState];
 
+/**
+ * Docker label stamped on agent containers provisioned during a test run. The test
+ * harness scopes its container cleanup to this label so it only ever removes
+ * test-spawned containers — never a developer's running dev-server containers, which
+ * share the same `hezo-<slug>-…` name prefix. The provisioner applies the label when
+ * TEST_CONTAINERS_ENV is set in its environment.
+ */
+export const TEST_CONTAINER_LABEL_KEY = 'hezo.test';
+export const TEST_CONTAINER_LABEL_VALUE = '1';
+export const TEST_CONTAINERS_ENV = 'HEZO_TEST_CONTAINERS';
+
 export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 export const ATTACHMENT_SIGNED_URL_TTL_SECONDS = 3600;
 

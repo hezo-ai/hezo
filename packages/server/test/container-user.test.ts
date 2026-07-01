@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
 	chownToRunUser,
 	clearContainerRunUserCache,
+	mkdirInContainer,
 	resolveContainerRunUser,
 } from '../src/services/container-user';
 import type { DockerClient } from '../src/services/docker';
@@ -148,5 +149,28 @@ describe('chownToRunUser', () => {
 		await expect(
 			chownToRunUser(docker, 'cid', { name: 'node', uid: 1000, gid: 1000 }, ['/workspace']),
 		).resolves.toBeUndefined();
+	});
+});
+
+describe('mkdirInContainer', () => {
+	it('runs `mkdir -p` in-container as root for the given paths', async () => {
+		const { docker, calls } = fakeDocker({});
+		await mkdirInContainer(docker, 'cid', ['/worktrees/TO-9', '/worktrees/TO-10']);
+		const mkdir = calls.find((c) => c.Cmd?.[2]?.startsWith('mkdir -p'));
+		expect(mkdir).toBeDefined();
+		expect(mkdir?.User).toBe('root');
+		expect(mkdir?.Cmd[2]).toContain("'/worktrees/TO-9'");
+		expect(mkdir?.Cmd[2]).toContain("'/worktrees/TO-10'");
+	});
+
+	it('is a no-op with no paths', async () => {
+		const { docker, calls } = fakeDocker({});
+		await mkdirInContainer(docker, 'cid', []);
+		expect(calls.filter((c) => c.Cmd?.[2]?.startsWith('mkdir'))).toHaveLength(0);
+	});
+
+	it('never throws when the mkdir exec fails', async () => {
+		const { docker } = fakeDocker({ throwOnExec: true });
+		await expect(mkdirInContainer(docker, 'cid', ['/worktrees/TO-9'])).resolves.toBeUndefined();
 	});
 });

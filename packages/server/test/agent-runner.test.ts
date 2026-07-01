@@ -1044,13 +1044,15 @@ describe('runAgent', () => {
 			);
 			const repoId = repoRes.rows[0].id;
 
-			// Prep runs `git …` in the container; the agent CLI exec is anything else.
-			// The mock git execs "succeed" but produce no real checkout on disk, so the
-			// worktree can't be prepared and the run must fail before the agent runs.
+			// Prep runs `git …` and `sh -c …` helpers in the container (repo sync,
+			// worktree-root mkdir/chown, run-user probe); the agent CLI exec is the
+			// runtime binary — neither `git` nor `sh`. The mock git execs "succeed" but
+			// produce no real checkout on disk, so the worktree can't be prepared and the
+			// run must fail before the agent runs.
 			let agentExecCreated = false;
 			const docker = createMockDocker({
 				execCreate: async (_id: string, opts: { Cmd: string[] }) => {
-					if (opts.Cmd[0] !== 'git') agentExecCreated = true;
+					if (opts.Cmd[0] !== 'git' && opts.Cmd[0] !== 'sh') agentExecCreated = true;
 					return 'exec-wt-fail';
 				},
 			});

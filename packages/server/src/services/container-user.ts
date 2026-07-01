@@ -103,6 +103,37 @@ function shSingleQuote(s: string): string {
 }
 
 /**
+ * Create directories **inside the container** (as root, `mkdir -p`). A host-side
+ * `mkdirSync` in a bind mount is not always immediately visible in the container —
+ * bind-mount propagation lags on macOS Docker Desktop, most visibly right after a
+ * container reprovision — so an in-container `git worktree add` can fail with ENOENT
+ * on a path the host just created. Creating the directory from inside the container
+ * guarantees it exists in the container's namespace (and writes through the live bind
+ * to the host). Best-effort: a failure logs one warning and never throws; the git
+ * operation that follows surfaces the actionable error if the path truly can't be made.
+ */
+export async function mkdirInContainer(
+	docker: DockerClient,
+	containerId: string,
+	containerPaths: string[],
+): Promise<void> {
+	if (containerPaths.length === 0) return;
+	const targets = containerPaths.map(shSingleQuote).join(' ');
+	try {
+		const { exitCode, stderr } = await execCapture(docker, containerId, `mkdir -p ${targets}`);
+		if (exitCode !== 0) {
+			log.warn(`mkdir -p exited ${exitCode} for [${containerPaths.join(', ')}]: ${stderr.trim()}`);
+		}
+	} catch (e) {
+		log.warn(
+			`mkdir -p failed for [${containerPaths.join(', ')}]: ${
+				e instanceof Error ? e.message : String(e)
+			}`,
+		);
+	}
+}
+
+/**
  * Give the container's run-user ownership of paths the host created in a bind mount
  * that the run-user must read or write. The chown runs **inside the container as
  * root** (the base image's default user), so it needs no host privilege and works

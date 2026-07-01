@@ -4,6 +4,9 @@ import type { PGlite } from '@electric-sql/pglite';
 import {
 	ContainerStatus,
 	HeartbeatRunStatus,
+	TEST_CONTAINER_LABEL_KEY,
+	TEST_CONTAINER_LABEL_VALUE,
+	TEST_CONTAINERS_ENV,
 	WakeupSource,
 	WsMessageType,
 	wsRoom,
@@ -278,7 +281,15 @@ export async function provisionContainer(
 		// down by stored `container_id`, never by name, so when it is retained
 		// (keep-old) the fresh name still avoids a create-time conflict.
 		const containerName = `hezo-${project.slug}-${project.id.slice(0, 8)}-${randomBytes(4).toString('hex')}`;
-		const containerLabels = { 'hezo.team': teamSlug, 'hezo.project': project.slug };
+		const containerLabels: Record<string, string> = {
+			'hezo.team': teamSlug,
+			'hezo.project': project.slug,
+		};
+		// Mark containers spawned by a test run so the test harness's cleanup can scope
+		// itself to them and never delete a developer's live dev-server containers.
+		if (process.env[TEST_CONTAINERS_ENV] === '1') {
+			containerLabels[TEST_CONTAINER_LABEL_KEY] = TEST_CONTAINER_LABEL_VALUE;
+		}
 		const extraHosts = ['host.docker.internal:host-gateway'];
 
 		const env: string[] = [];
