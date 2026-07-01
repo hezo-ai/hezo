@@ -442,6 +442,37 @@ describe('template resolver', () => {
 		expect(result).toContain('findings below for you to consolidate and route');
 	});
 
+	it('requires verifying a wake exists before declaring you are waiting on a teammate', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// The core discipline: don't assume the other agent will pick it up — confirm a
+		// real wake (assigned task, blocked_by edge, or an active @<slug>) actually exists.
+		expect(result).toContain(
+			"Before you state you're waiting on — or expecting — a teammate to act, confirm something will actually wake them",
+		);
+		expect(result).toContain("never assume they'll pick it up");
+		// The exact stranded-handoff shape from the report: a prose "waiting for the
+		// marketing lead" that wakes no one.
+		expect(result).toContain('waiting for the marketing lead to review');
+		// When unsure whether a channel exists, default to an active mention.
+		expect(result).toContain('If none of the three exists — or you are unsure whether one does');
+		// It must NOT tell agents to @ on top of a structural wake — that's the redundant-wakeup antipattern.
+		expect(result).toContain('reference them `@@<slug>` instead');
+	});
+
+	it('completion handoff forbids ending a run waiting on a teammate with no wake created', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		expect(result).toContain(
+			"Never end a run stating you're waiting on a named teammate without first creating the wake",
+		);
+	});
+
+	it('no-work wait state only applies when a real wake was actually created', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// A re-woken agent that finds its earlier "waiting on X" was only prose must post
+		// the active mention now rather than calling report_no_work.
+		expect(result).toContain('This wait state applies **only** if you genuinely created a wake');
+	});
+
 	it('Run Context carries no project line when no project is set', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('## Run Context');
