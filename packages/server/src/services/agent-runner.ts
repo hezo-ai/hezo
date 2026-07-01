@@ -53,7 +53,7 @@ import {
 import {
 	type ContainerRunUser,
 	chownToRunUser,
-	mkdirInContainer,
+	ensureContainerDirReady,
 	resolveContainerRunUser,
 } from './container-user';
 import { syncContainerStatus } from './containers';
@@ -62,7 +62,7 @@ import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import type { EgressProxy } from './egress';
 import {
-	ensureTaskWorktree,
+	ensureTaskWorktreeWithRetry,
 	fastForwardLocalDefault,
 	fetchRepo,
 	getWorktreeHead,
@@ -1364,12 +1364,13 @@ async function prepareWorktrees(
 		const taskWorktreeRoot = join(worktreesRoot, task.identifier);
 		const containerWorktreeRoot = `${CONTAINER_WORKTREES_ROOT}/${task.identifier}`;
 		mkdirSync(taskWorktreeRoot, { recursive: true });
-		// Also create the root from inside the container. The host mkdir above may not
-		// be visible in the container yet (bind-mount propagation lag, most visibly
-		// right after a reprovision), and the chown below is skipped for a root
-		// run-user — so without this the in-container `git worktree add` can fail with
-		// ENOENT on the worktree path.
-		await mkdirInContainer(deps.docker, project.container_id, [containerWorktreeRoot]);
+		// Also create the root from inside the container and confirm it is visible
+		// there. The host mkdir above may not have propagated into the container yet
+		// (bind-mount propagation lag, most visibly right after a reprovision), and the
+		// chown below is skipped for a root run-user — so without this the in-container
+		// `git worktree add` can fail with ENOENT on the worktree path. The readiness
+		// check retries until the dir stats as present in the container's namespace.
+		await ensureContainerDirReady(deps.docker, project.container_id, containerWorktreeRoot);
 		// Give the run-user ownership so the in-container `git worktree add` (run as
 		// the run-user) can populate it. No-op when the run-user is root.
 		await chownToRunUser(deps.docker, project.container_id, runUser, [containerWorktreeRoot]);
@@ -1411,7 +1412,18 @@ async function prepareWorktrees(
 			if (ffWarn) emitSystem('stderr', `${repoName}: ${ffWarn}`);
 
 			emitSystem('stdout', `git worktree ${repoName}...`);
-			const wt = await ensureTaskWorktree(executor, repoLoc, wtLocOf(repoName), branchName);
+			const wt = await ensureTaskWorktreeWithRetry(
+				executor,
+				repoLoc,
+				wtLocOf(repoName),
+				branchName,
+				async () => {
+					// A transient bind-mount ENOENT right after a reprovision — re-assert the
+					// worktree root is visible in-container before git retries the add.
+					await ensureContainerDirReady(deps.docker, project.container_id, containerWorktreeRoot);
+					emitSystem('stderr', `git worktree ${repoName}: mount not ready, retrying`);
+				},
+			);
 			if (!wt.success) {
 				worktreeErrors.set(repo.id, wt.error ?? 'unknown');
 				emitSystem('stderr', `git worktree for ${repoName} failed: ${wt.error ?? 'unknown'}`);

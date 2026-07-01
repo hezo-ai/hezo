@@ -7,9 +7,11 @@ import {
 	cloneRepo,
 	createWorktree,
 	ensureTaskWorktree,
+	ensureTaskWorktreeWithRetry,
 	fastForwardLocalDefault,
 	fetchRepo,
 	getRemoteDefaultBranch,
+	isTransientMountError,
 	mergeDefaultIntoWorktree,
 	pruneWorktrees,
 	type RepoLoc,
@@ -448,5 +450,126 @@ describe('mergeDefaultIntoWorktree catches a resumed worktree up to trunk', () =
 		expect(sha(worktreePath)).toBe(agentTip);
 		expect(execSync('git status --porcelain', { cwd: worktreePath }).toString().trim()).toBe('');
 		expect(readFileSync(join(worktreePath, 'conflict.txt'), 'utf-8')).not.toContain('<<<<<<<');
+	});
+});
+
+// The first `git worktree add` right after a container reprovision can fail with a
+// transient bind-mount ENOENT — the freshly-created worktree parent not yet visible
+// in the container's mount namespace. ensureTaskWorktreeWithRetry re-asserts the dir
+// (via onRetry) and retries, turning what today surfaces as a whole failed run into
+// an in-run retry — while a genuine git failure still fails fast and is never masked.
+describe('ensureTaskWorktreeWithRetry retries transient mount ENOENT', () => {
+	// Wraps a real HostGitExecutor, failing the first `failFirst` `worktree add`
+	// calls with a scripted stderr and delegating everything else to real git.
+	class FlakyWorktreeAdd implements GitExecutor {
+		addCalls = 0;
+		constructor(
+			private readonly inner: GitExecutor,
+			private readonly failFirst: number,
+			private readonly stderr: string,
+		) {}
+		async exec(args: string[], opts: GitExecOpts): Promise<GitExecResult> {
+			if (args[0] === 'worktree' && args[1] === 'add') {
+				this.addCalls++;
+				if (this.addCalls <= this.failFirst) {
+					return { exitCode: 128, stdout: '', stderr: this.stderr };
+				}
+			}
+			return this.inner.exec(args, opts);
+		}
+	}
+
+	const ENOENT_STDERR =
+		"fatal: could not open '/worktrees/TO-10/todos/.git' for writing: No such file or directory";
+
+	function freshClone(name: string): { repoDir: string; worktreePath: string } {
+		const projectDir = join(testDir, name);
+		const repoDir = join(projectDir, 'workspace', 'todos');
+		const worktreePath = join(projectDir, 'worktrees', 'TO-10', 'todos');
+		mkdirSync(join(projectDir, 'workspace'), { recursive: true });
+		run(`git clone ${bareRepoDir} ${repoDir}`);
+		configure(repoDir, 'Test');
+		return { repoDir, worktreePath };
+	}
+
+	it('recovers when the first worktree add fails transiently, then succeeds', async () => {
+		const { repoDir, worktreePath } = freshClone('retry-transient');
+		const flaky = new FlakyWorktreeAdd(exec, 1, ENOENT_STDERR);
+		let retries = 0;
+		const res = await ensureTaskWorktreeWithRetry(
+			flaky,
+			repoLoc(repoDir),
+			wtLoc(worktreePath),
+			'hezo/TO-10',
+			async () => {
+				retries++;
+			},
+			{ retries: 3, delayMs: 0 },
+		);
+		expect(res.success).toBe(true);
+		expect(res.created).toBe(true);
+		expect(retries).toBe(1); // one onRetry (re-assert dir) before the successful add
+		expect(flaky.addCalls).toBe(2); // failed once, then a real add succeeded
+		expect(existsSync(join(worktreePath, '.git'))).toBe(true);
+	});
+
+	it('does not retry a genuine (non-transient) failure — fails fast, not masked', async () => {
+		const { repoDir, worktreePath } = freshClone('retry-genuine');
+		const flaky = new FlakyWorktreeAdd(exec, 99, 'fatal: not a git repository');
+		let retries = 0;
+		const res = await ensureTaskWorktreeWithRetry(
+			flaky,
+			repoLoc(repoDir),
+			wtLoc(worktreePath),
+			'hezo/TO-10',
+			async () => {
+				retries++;
+			},
+			{ retries: 3, delayMs: 0 },
+		);
+		expect(res.success).toBe(false);
+		expect(res.error).toContain('not a git repository');
+		expect(retries).toBe(0); // predicate rejected it — no retries
+		expect(flaky.addCalls).toBe(1); // exactly one attempt, no wasted work
+	});
+
+	it('surfaces the original ENOENT after the bounded cap when the mount never settles', async () => {
+		const { repoDir, worktreePath } = freshClone('retry-stuck');
+		const flaky = new FlakyWorktreeAdd(exec, 99, ENOENT_STDERR);
+		let retries = 0;
+		const res = await ensureTaskWorktreeWithRetry(
+			flaky,
+			repoLoc(repoDir),
+			wtLoc(worktreePath),
+			'hezo/TO-10',
+			async () => {
+				retries++;
+			},
+			{ retries: 3, delayMs: 0 },
+		);
+		expect(res.success).toBe(false);
+		expect(res.error).toContain('No such file or directory'); // surfaced, not swallowed
+		expect(retries).toBe(2); // retries - 1 onRetry invocations
+		expect(flaky.addCalls).toBe(3); // exactly `retries` attempts, bounded
+	});
+});
+
+describe('isTransientMountError', () => {
+	it('matches the bind-mount ENOENT signatures', () => {
+		expect(
+			isTransientMountError(
+				"fatal: could not open '/worktrees/TO-1/r/.git' for writing: No such file or directory",
+			),
+		).toBe(true);
+		expect(isTransientMountError('fatal: No such file or directory')).toBe(true);
+		expect(isTransientMountError('open /worktrees/x: ENOENT')).toBe(true);
+	});
+
+	it('rejects genuine git failures and Hezo markers so they fail fast', () => {
+		expect(isTransientMountError('fatal: not a git repository')).toBe(false);
+		expect(isTransientMountError('CONFLICT (add/add): Merge conflict in conflict.txt')).toBe(false);
+		expect(isTransientMountError('repo is not cloned')).toBe(false);
+		expect(isTransientMountError(undefined)).toBe(false);
+		expect(isTransientMountError('')).toBe(false);
 	});
 });

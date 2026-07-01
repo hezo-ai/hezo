@@ -587,11 +587,15 @@ export async function stopContainerGracefully(
 }
 
 /**
- * Verify that the container's `/workspace` bind mount is reachable from inside.
- * Docker Desktop on macOS can leave a container in a state where it inspects as
- * Running but its bind mounts have gone stale — `docker exec` then fails with
- * "current working directory is outside of container mount namespace root". Doing
- * a cheap exec catches that case where `inspectContainer` cannot.
+ * Verify that the container's `/workspace` and `/worktrees` bind mounts are
+ * reachable — and that `/worktrees` is writable — from inside. Docker Desktop on
+ * macOS can leave a container in a state where it inspects as Running but its bind
+ * mounts have gone stale: `docker exec` then fails with "current working directory
+ * is outside of container mount namespace root", or a freshly-provisioned mount is
+ * present-but-not-yet-writable. A cheap in-container probe catches both, where
+ * `inspectContainer` cannot. `/worktrees` is exercised with a create+remove
+ * because it is the mount an agent run writes first (its per-task worktree) and
+ * the one whose lag surfaces as a spurious worktree-prep failure.
  */
 export async function verifyContainerWorkspace(
 	docker: DockerClient,
@@ -599,7 +603,11 @@ export async function verifyContainerWorkspace(
 ): Promise<boolean> {
 	try {
 		const execId = await docker.execCreate(containerId, {
-			Cmd: ['ls', '/workspace'],
+			Cmd: [
+				'sh',
+				'-c',
+				'ls /workspace && d=/worktrees/.hezo-mount-probe && mkdir -p "$d" && rmdir "$d"',
+			],
 			AttachStdout: true,
 			AttachStderr: true,
 		});

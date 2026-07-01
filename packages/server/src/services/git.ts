@@ -446,6 +446,64 @@ export async function ensureTaskWorktree(
 	return addTaskWorktree(executor, repo, wt, branchName);
 }
 
+const WORKTREE_PREP_RETRIES = 3;
+const WORKTREE_PREP_DELAY_MS = 250;
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * A worktree-prep git failure that looks like transient bind-mount propagation
+ * lag — the freshly-created worktree parent not yet visible in the container's
+ * mount namespace — rather than a genuine git error. Right after a container
+ * reprovision on macOS Docker Desktop the first `git worktree add` can fail with
+ * `could not open '.../.git' for writing: No such file or directory`; a retry a
+ * beat later succeeds. Deliberately narrow: real failures (`not a git
+ * repository`, merge/auth errors, and Hezo's own `not cloned` marker) fall
+ * through so they still fail fast and are never masked.
+ */
+export function isTransientMountError(error: string | undefined): boolean {
+	if (!error) return false;
+	const e = error.toLowerCase();
+	return (
+		e.includes('no such file or directory') ||
+		(e.includes('could not open') && e.includes('for writing')) ||
+		e.includes('enoent')
+	);
+}
+
+/**
+ * {@link ensureTaskWorktree} wrapped in a bounded retry for the transient
+ * mount-propagation ENOENT above. On a transient failure it waits, invokes
+ * `onRetry` (the caller re-asserts the worktree parent is visible in-container
+ * and emits a run-log breadcrumb), then retries. A non-transient failure returns
+ * immediately (fail fast); a transient that never clears returns the original
+ * error after the cap (surfaced, not swallowed).
+ */
+export async function ensureTaskWorktreeWithRetry(
+	executor: GitExecutor,
+	repo: RepoLoc,
+	wt: WorktreeLoc,
+	branchName: string,
+	onRetry: () => Promise<void>,
+	opts: { retries?: number; delayMs?: number } = {},
+): Promise<{ success: boolean; created: boolean; error?: string }> {
+	const retries = opts.retries ?? WORKTREE_PREP_RETRIES;
+	const gap = opts.delayMs ?? WORKTREE_PREP_DELAY_MS;
+	let result = await ensureTaskWorktree(executor, repo, wt, branchName);
+	for (
+		let attempt = 1;
+		attempt < retries && !result.success && isTransientMountError(result.error);
+		attempt++
+	) {
+		await sleep(gap);
+		await onRetry();
+		result = await ensureTaskWorktree(executor, repo, wt, branchName);
+	}
+	return result;
+}
+
 export async function pruneWorktrees(executor: GitExecutor, repo: RepoLoc): Promise<void> {
 	await executor.exec(['worktree', 'prune', '--expire', 'now'], {
 		cwd: repo.containerPath,

@@ -427,6 +427,21 @@ subdirectory per linked repo. For each task the runner creates a `git worktree` 
 across runs and torn down on terminal status. The working dir resolves to the designated
 repo's worktree (falling back to `/workspace`).
 
+Because Docker Desktop bind-mount propagation can lag right after a container reprovision (a
+path the host just `mkdirSync`'d briefly stats as missing inside the container), the runner
+hardens worktree prep against a transient `ENOENT`: it (i) confirms the `/worktrees/<task>`
+root is visible in-container with a bounded `mkdir -p && test -d` readiness check
+(`ensureContainerDirReady`, `services/container-user.ts`) before building any worktree, and
+(ii) retries `git worktree add` a few times when it fails with a transient mount-propagation
+signature — "could not open … for writing: No such file or directory"
+(`ensureTaskWorktreeWithRetry` + `isTransientMountError`, `git.ts`); genuine git failures
+(`not a git repository`, merge/auth errors, the `not cloned` marker) fall through and fail
+fast. Relatedly, the startup stale-mount repair (`repairStaleContainerMounts`, which rebuilds a
+container whose bind mounts went stale across a server restart) probes **both** `/workspace`
+reachability and `/worktrees` writability (a create+remove probe) in `verifyContainerWorkspace`,
+so a stale `/worktrees` is caught too — without this, a run could dispatch into a container whose
+`/worktrees` mount was not yet usable and fail worktree prep on the first attempt.
+
 **All git runs in the container — the host runs none.** Hezo's only prerequisite is Docker;
 there is no host `git`. Every repo/worktree operation (clone, fetch, `worktree add`, …) runs
 via `docker exec` in the project container (which ships git 2.51), driven from TypeScript on

@@ -46,6 +46,10 @@ async function execCapture(
 	return { exitCode: ExitCode, stdout, stderr };
 }
 
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function probe(
 	docker: DockerClient,
 	containerId: string,
@@ -131,6 +135,47 @@ export async function mkdirInContainer(
 			}`,
 		);
 	}
+}
+
+const DIR_READY_RETRIES = 5;
+const DIR_READY_DELAY_MS = 100;
+
+/**
+ * Ensure a directory exists **and is visible** inside the container, retrying to
+ * absorb bind-mount propagation lag. Right after a container (re)provision on
+ * macOS Docker Desktop, a path the host just `mkdirSync`'d — or even one a prior
+ * in-container `mkdir -p` created — can briefly stat as missing in the container's
+ * mount namespace, so a follow-on `git worktree add` fails with ENOENT. Each
+ * attempt runs `mkdir -p <path> && test -d <path>` as root: the `test -d`
+ * re-stats through the live bind, so a `mkdir` that returns 0 before the entry is
+ * visible on a later stat still loops. Best-effort: returns `false` (never
+ * throws) if the path is never confirmed, logging one warning — the git op that
+ * follows surfaces the actionable error if the path truly can't be made.
+ */
+export async function ensureContainerDirReady(
+	docker: DockerClient,
+	containerId: string,
+	containerPath: string,
+	opts: { retries?: number; delayMs?: number } = {},
+): Promise<boolean> {
+	const retries = opts.retries ?? DIR_READY_RETRIES;
+	const delayMs = opts.delayMs ?? DIR_READY_DELAY_MS;
+	const target = shSingleQuote(containerPath);
+	for (let attempt = 0; attempt < retries; attempt++) {
+		try {
+			const { exitCode } = await execCapture(
+				docker,
+				containerId,
+				`mkdir -p ${target} && test -d ${target}`,
+			);
+			if (exitCode === 0) return true;
+		} catch {
+			// A docker exec error is itself transient right after (re)provision; retry.
+		}
+		if (attempt < retries - 1) await delay(delayMs);
+	}
+	log.warn(`mkdir/verify did not confirm ${containerPath} in container after ${retries} attempts`);
+	return false;
 }
 
 /**
