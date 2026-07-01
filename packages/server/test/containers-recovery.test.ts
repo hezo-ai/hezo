@@ -8,6 +8,7 @@ import {
 	type ContainerDeps,
 	failProjectRuns,
 	requeueContainerKilledRuns,
+	verifyContainerWorkspace,
 	wakeAgentsWithPendingWork,
 } from '../src/services/containers';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
@@ -284,5 +285,44 @@ describe('wakeAgentsWithPendingWork', () => {
 			orig.rows[0].status,
 			taskId,
 		]);
+	});
+});
+
+describe('verifyContainerWorkspace', () => {
+	// A docker whose single exec captures the probe Cmd and returns a scripted exit
+	// code — extends createStubDocker per the inline-mock rule.
+	function probeDocker(exitCode: number) {
+		let captured: string[] = [];
+		const docker = createStubDocker({
+			execCreate: async (_id: string, config: { Cmd: string[] }) => {
+				captured = config.Cmd;
+				return 'exec-1';
+			},
+			execInspect: async () => ({ ExitCode: exitCode, Running: false, Pid: 0 }),
+		});
+		return { docker, cmd: () => captured };
+	}
+
+	it('probes both /workspace and /worktrees writability and passes on exit 0', async () => {
+		const { docker, cmd } = probeDocker(0);
+		expect(await verifyContainerWorkspace(docker, 'cid')).toBe(true);
+		const script = cmd()[2] ?? '';
+		expect(script).toContain('/workspace');
+		// A stale /worktrees is now caught too — not just /workspace.
+		expect(script).toContain('/worktrees');
+	});
+
+	it('fails (→ triggers a rebuild) when the probe exits non-zero', async () => {
+		const { docker } = probeDocker(1);
+		expect(await verifyContainerWorkspace(docker, 'cid')).toBe(false);
+	});
+
+	it('returns false (never throws) when the exec itself fails', async () => {
+		const docker = createStubDocker({
+			execCreate: async () => {
+				throw new Error('current working directory is outside of container mount namespace root');
+			},
+		});
+		await expect(verifyContainerWorkspace(docker, 'cid')).resolves.toBe(false);
 	});
 });
