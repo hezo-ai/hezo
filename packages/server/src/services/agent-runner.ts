@@ -50,7 +50,12 @@ import {
 	type ProbeResult,
 	shouldAbortForConnectivity,
 } from './container-connectivity-status';
-import { type ContainerRunUser, chownToRunUser, resolveContainerRunUser } from './container-user';
+import {
+	type ContainerRunUser,
+	chownToRunUser,
+	mkdirInContainer,
+	resolveContainerRunUser,
+} from './container-user';
 import { syncContainerStatus } from './containers';
 import type { DockerClient, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
@@ -1357,13 +1362,17 @@ async function prepareWorktrees(
 		const workspaceRoot = getWorkspacePath(deps.dataDir, project.team_id, project.id);
 		const worktreesRoot = getWorktreesPath(deps.dataDir, project.team_id, project.id);
 		const taskWorktreeRoot = join(worktreesRoot, task.identifier);
+		const containerWorktreeRoot = `${CONTAINER_WORKTREES_ROOT}/${task.identifier}`;
 		mkdirSync(taskWorktreeRoot, { recursive: true });
-		// The host just created this task's worktree root (root-owned); give the
-		// run-user ownership so the in-container `git worktree add` (run as the
-		// run-user) can populate it. No-op when the run-user is root.
-		await chownToRunUser(deps.docker, project.container_id, runUser, [
-			`${CONTAINER_WORKTREES_ROOT}/${task.identifier}`,
-		]);
+		// Also create the root from inside the container. The host mkdir above may not
+		// be visible in the container yet (bind-mount propagation lag, most visibly
+		// right after a reprovision), and the chown below is skipped for a root
+		// run-user — so without this the in-container `git worktree add` can fail with
+		// ENOENT on the worktree path.
+		await mkdirInContainer(deps.docker, project.container_id, [containerWorktreeRoot]);
+		// Give the run-user ownership so the in-container `git worktree add` (run as
+		// the run-user) can populate it. No-op when the run-user is root.
+		await chownToRunUser(deps.docker, project.container_id, runUser, [containerWorktreeRoot]);
 
 		const branchName = `hezo/${task.identifier}`;
 		const repoLocOf = (name: string): RepoLoc => ({

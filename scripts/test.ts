@@ -1,10 +1,20 @@
 #!/usr/bin/env bun
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import {
+	TEST_CONTAINER_LABEL_KEY,
+	TEST_CONTAINER_LABEL_VALUE,
+	TEST_CONTAINERS_ENV,
+} from '@hezo/shared';
 import { Command } from 'commander';
 import { ensureBundles } from './ensure-bundles';
 
 const ROOT = resolve(import.meta.dir, '..');
+
+// Any server this run spawns (e.g. the Playwright e2e server) must label the
+// containers it provisions as test containers so the cleanup below can scope to
+// them. Inherited by child processes.
+process.env[TEST_CONTAINERS_ENV] = '1';
 
 const defaultConcurrency = 10;
 
@@ -251,10 +261,22 @@ async function main() {
 
 async function cleanupDockerContainers() {
 	try {
-		const ps = Bun.spawn(['docker', 'ps', '-aq', '--filter', 'name=^hezo-'], {
-			stdout: 'pipe',
-			stderr: 'pipe',
-		});
+		// Scope strictly to containers this test run provisioned (labelled by the
+		// provisioner). A bare `name=^hezo-` filter also matches a developer's live
+		// dev-server containers and would delete them.
+		const ps = Bun.spawn(
+			[
+				'docker',
+				'ps',
+				'-aq',
+				'--filter',
+				`label=${TEST_CONTAINER_LABEL_KEY}=${TEST_CONTAINER_LABEL_VALUE}`,
+			],
+			{
+				stdout: 'pipe',
+				stderr: 'pipe',
+			},
+		);
 		const ids = (await new Response(ps.stdout).text()).trim();
 		await ps.exited;
 
