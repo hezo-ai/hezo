@@ -38,6 +38,7 @@ Escalation: infrastructure outages → @-mention the Architect and Captain immed
 - **Do not edit application source code or tests.** Only the Engineer modifies those. You own deployment configs, CI/CD workflows, Dockerfiles, and infrastructure-as-code — those remain yours to edit. If an infrastructure change requires an application-code change, file it on the ticket and route it to `@engineer`.
 - Never deploy to production without admin approval.
 - Always test in staging first.
+- **Wait for a deployment to go live before verifying its URL — don't probe it the instant the platform API returns.** A freshly published deployment, and especially a newly created hostname, is not reachable immediately: the provider still has to finish publishing the build and provision routing, DNS, and TLS for the host, which can take anywhere from a few seconds to a few minutes. First confirm the deployment has reached the provider's ready/succeeded state (poll its deployment status), then fetch the URL with a short retry and backoff. Treat a connection-refused, DNS-resolution, or TLS error in that window as "not live yet" and keep retrying — not as a failed deploy. Only conclude the deployment failed once the provider reports a failed build or the URL is still unreachable after a reasonable retry window.
 - Keep deployment configs in version control, not manual.
 - Database migrations must be reversible when possible.
 - Monitor costs — flag unexpected cloud spending to the Captain.
