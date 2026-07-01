@@ -66,6 +66,34 @@ test.describe('Floating new-task button responsiveness', () => {
 		await expect(page.getByRole('heading', { name: 'Create Task' })).toBeVisible();
 	});
 
+	test('project-menu "+" chips (Tasks, Team) are hidden on mobile, shown on desktop', async ({
+		page,
+		sharedWorkspace,
+	}) => {
+		const { token } = sharedWorkspace;
+		const project = await createProjectAndClearPlanning(page, '', token, {
+			name: uniqueName('Menu Plus'),
+			description: 'E2E project-menu plus chips.',
+		});
+
+		// --- Mobile: open the nav drawer; the "+" chips are too easy to fat-finger,
+		// so they're `hidden md:inline-flex` — present in the DOM but not visible. ---
+		await page.setViewportSize({ width: 375, height: 800 });
+		await page.goto(`/projects/${project.slug}/tasks`);
+		await waitForPageLoad(page);
+
+		await page.getByTestId('mobile-nav-toggle').click();
+		const drawer = page.getByTestId('mobile-nav-drawer');
+		await expect(drawer).toBeVisible();
+		await expect(drawer.getByTestId('project-sidebar-new-task')).toBeHidden();
+		await expect(drawer.getByRole('button', { name: 'Hire a new agent' })).toBeHidden();
+
+		// --- Desktop: the persistent menu shows both chips. ---
+		await page.setViewportSize({ width: 1280, height: 900 });
+		await expect(page.getByTestId('project-sidebar-new-task')).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Hire a new agent' })).toBeVisible();
+	});
+
 	test('the filter bar and its icon create button share one row on mobile', async ({
 		page,
 		sharedWorkspace,
