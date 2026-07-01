@@ -88,10 +88,13 @@ test.describe('Floating new-task button responsiveness', () => {
 		await expect(drawer.getByTestId('project-sidebar-new-task')).toBeHidden();
 		await expect(drawer.getByRole('button', { name: 'Hire a new agent' })).toBeHidden();
 
-		// --- Desktop: the persistent menu shows both chips. ---
+		// --- Desktop: the persistent menu shows both chips. Scope to the persistent
+		// sidebar (content-well): the drawer opened above stays mounted (just
+		// `lg:hidden`), so the project menu — and its chips' testids — exist twice. ---
 		await page.setViewportSize({ width: 1280, height: 900 });
-		await expect(page.getByTestId('project-sidebar-new-task')).toBeVisible();
-		await expect(page.getByRole('button', { name: 'Hire a new agent' })).toBeVisible();
+		const persistentMenu = page.getByTestId('content-well');
+		await expect(persistentMenu.getByTestId('project-sidebar-new-task')).toBeVisible();
+		await expect(persistentMenu.getByRole('button', { name: 'Hire a new agent' })).toBeVisible();
 	});
 
 	test('the filter bar and its icon create button share one row on mobile', async ({
