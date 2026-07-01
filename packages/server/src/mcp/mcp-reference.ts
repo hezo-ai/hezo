@@ -103,7 +103,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		category: 'Projects',
 		returns:
 			'`{ summary, updated_at }` after replacing the project’s progress summary (shown at the top of the Progress page). Returns `{ error }` if the project is HQ/internal (no progress summary) or the call is not from within an agent run.',
-		auth: 'Captain only, and only from within a goal-check agent run.',
+		auth: 'Captain only, and only from within a progress-update agent run.',
 	},
 
 	// Tasks
@@ -156,7 +156,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		category: 'Goals',
 		returns:
 			'The updated goal row (with the new `progress_percent`, `health`, `status_blurb`, and a refreshed `last_checked_at`). Appends a point to the goal’s progress history keyed to the calling run. Returns `{ error }` if the goal is not in the project or the inputs are invalid.',
-		auth: 'Captain only, and only from within a goal-check agent run (the run records the history point).',
+		auth: 'Captain only, and only from within a progress-update agent run (the run records the history point).',
 	},
 
 	// Comments & reactions

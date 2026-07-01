@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 
 export interface Toast {
 	id: number;
-	variant: 'error';
+	variant: 'error' | 'info';
 	message: string;
 }
 
@@ -31,6 +31,10 @@ function dismiss(id: number) {
 export const toast = {
 	error(message: string) {
 		return push({ variant: 'error', message });
+	},
+	/** A neutral, non-alarming notice (e.g. "nothing to do") — styled distinctly from errors. */
+	info(message: string) {
+		return push({ variant: 'info', message });
 	},
 	dismiss,
 };

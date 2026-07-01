@@ -149,7 +149,7 @@ function GoalRunsFeed({ projectId, goalId }: { projectId: string; goalId: string
 	return (
 		<section data-testid="goal-runs" className="mt-8">
 			<h2 className="mb-2 px-0.5 text-[11px] font-medium uppercase tracking-wider text-text-3">
-				Goal heartbeat runs
+				Progress update runs
 			</h2>
 			{isLoading ? (
 				<div className="py-6 text-center text-[13px] text-text-3">Loading...</div>
@@ -158,7 +158,7 @@ function GoalRunsFeed({ projectId, goalId }: { projectId: string; goalId: string
 					data-testid="goal-runs-empty"
 					className="rounded-md border border-border bg-surface px-3 py-6 text-center text-[13px] text-text-3"
 				>
-					No goal-check activity yet.
+					No progress-update activity yet.
 				</div>
 			) : (
 				<ul className="flex flex-col divide-y divide-border rounded-md border border-border bg-surface">

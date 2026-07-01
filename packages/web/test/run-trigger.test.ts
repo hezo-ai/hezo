@@ -176,9 +176,9 @@ test('automation falls back to the reason field, then to bare label', () => {
 	expect(nonString.text).toBe('Automation');
 });
 
-test('a goal-check run is labelled as the goals-and-progress automation regardless of source', () => {
+test('a progress-update run is labelled as the goals-and-progress automation regardless of source', () => {
 	const label = formatTriggerReason(
-		run({ kind: HeartbeatRunKind.GoalCheck, trigger_source: WakeupSource.Automation }),
+		run({ kind: HeartbeatRunKind.ProgressUpdate, trigger_source: WakeupSource.Automation }),
 		TEAM,
 	);
 	expect(label.text).toBe('Automation: goals and progress report');

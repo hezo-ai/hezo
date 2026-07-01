@@ -209,7 +209,7 @@ describe('recordGoalProgress validation branches', () => {
 		const run = await db.query<{ id: string }>(
 			`INSERT INTO heartbeat_runs (team_id, member_id, status, kind)
 			 VALUES ($1, (SELECT id FROM member_agents WHERE slug = 'ceo' LIMIT 1),
-			         'succeeded'::heartbeat_run_status, 'goal_check'::heartbeat_run_kind)
+			         'succeeded'::heartbeat_run_status, 'progress_update'::heartbeat_run_kind)
 			 RETURNING id`,
 			[teamId],
 		);

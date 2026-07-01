@@ -28,7 +28,7 @@ import { ref } from '../lib/log-ref';
 import { logger } from '../logger';
 import { getLatestInfo } from '../routes/updates';
 import {
-	type GoalCheckContext,
+	type ProgressUpdateContext,
 	type RunnerDeps,
 	type RunResult,
 	recordRunCostAndEnforce,
@@ -108,7 +108,7 @@ interface RunningTask {
 export interface LiveRun {
 	runId: string;
 	memberId: string;
-	/** Null for goal-check runs, which are not tied to a task. */
+	/** Null for progress-update runs, which are not tied to a task. */
 	taskId: string | null;
 	projectId: string;
 	teamId: string;
@@ -127,6 +127,24 @@ export type DispatchNowResult =
 				| 'not_queued'
 				| 'not_found';
 	  };
+
+/** Why a progress-update ("Run now") dispatch did or didn't start. `no_captain`/`captain_disabled`/
+ * `no_project` only arise on the manual `dispatchProgressUpdateNow` path; the scheduled heartbeat
+ * path only produces the others. */
+export type ProgressUpdateDispatchReason =
+	| 'no_project'
+	| 'no_captain'
+	| 'captain_disabled'
+	| 'no_due_goals'
+	| 'agent_busy'
+	| 'project_at_capacity'
+	| 'container_down'
+	| 'over_budget'
+	| 'launch_conflict';
+
+export type ProgressUpdateDispatchResult =
+	| { dispatched: true }
+	| { dispatched: false; reason: ProgressUpdateDispatchReason };
 
 export interface JobManagerDeps {
 	db: PGlite;
@@ -1339,11 +1357,11 @@ export class JobManager {
 			task = payloadTask.rows[0];
 		} else {
 			// The Captain's periodic heartbeat first checks whether any of the project's
-			// goals are due for a progress assessment. If so, it runs one goal-check run
-			// (no task, kind=goal_check) and yields this activation; ordinary task work
+			// goals are due for a progress assessment. If so, it runs one progress-update run
+			// (no task, kind=progress_update) and yields this activation; ordinary task work
 			// resumes on the next heartbeat. Goals not yet due are skipped entirely.
 			if (agent.rows[0].slug === CAPTAIN_AGENT_SLUG) {
-				const dispatched = await this.tryDispatchGoalCheck(
+				const result = await this.tryDispatchProgressUpdate(
 					memberId,
 					teamId,
 					{
@@ -1358,7 +1376,10 @@ export class JobManager {
 					wakeupId,
 					wakeupPayload,
 				);
-				if (dispatched) return;
+				// Yield this activation when a progress-update run launched, or when a concurrent
+				// one already holds the key (the wakeup was requeued to retry). Any other reason
+				// (no due goals, over budget, …) falls through to normal task selection.
+				if (result.dispatched || result.reason === 'launch_conflict') return;
 			}
 
 			// Instance agents (CEO/Coach) select across every team; everyone else is
@@ -1829,12 +1850,14 @@ export class JobManager {
 	}
 
 	/**
-	 * If the Captain has goals due for a check, launch one goal-check run (no task) covering
-	 * all of them and return true so the caller yields this activation. Returns false when there
-	 * are no due goals or the run can't start right now (in which case the caller falls through
-	 * to normal task selection; the goals stay due and re-surface next heartbeat).
+	 * If the Captain has goals due for a check, launch one progress-update run (no task) covering
+	 * all of them. Returns `{ dispatched: true }` so the scheduled caller yields this activation;
+	 * returns `{ dispatched: false, reason }` when there are no due goals or the run can't start
+	 * right now (the scheduled caller then falls through to normal task selection and the goals
+	 * stay due for the next heartbeat). Shared by the scheduled heartbeat and the manual
+	 * `dispatchProgressUpdateNow` ("Run now") path.
 	 */
-	private async tryDispatchGoalCheck(
+	private async tryDispatchProgressUpdate(
 		memberId: string,
 		teamId: string,
 		agentRow: {
@@ -1848,7 +1871,7 @@ export class JobManager {
 		},
 		wakeupId: string | undefined,
 		wakeupPayload: Record<string, unknown>,
-	): Promise<boolean> {
+	): Promise<ProgressUpdateDispatchResult> {
 		const { db, docker, masterKeyManager, serverPort } = this.deps;
 
 		// The Captain's project is its team's single non-internal project.
@@ -1870,22 +1893,28 @@ export class JobManager {
 			[teamId],
 		);
 		const projectRow = project.rows[0];
-		if (!projectRow) return false;
+		if (!projectRow) return { dispatched: false, reason: 'no_project' };
 
 		const dueGoals = await getDueGoals(db, projectRow.id);
-		if (dueGoals.length === 0) return false;
+		if (dueGoals.length === 0) return { dispatched: false, reason: 'no_due_goals' };
 
-		// Don't start a goal check while the Captain is already running in this project, the
+		// Don't start a progress update while the Captain is already running in this project, the
 		// project is at capacity, the container isn't up, or the Captain/project is over budget.
-		// Fall through (return false) — the goals remain due for the next heartbeat.
-		if (await this.isAgentBusyInProject(memberId, projectRow.id)) return false;
-		if (await this.isProjectAtCapacity(projectRow.id)) return false;
-		if (!projectRow.container_id || projectRow.container_status !== ContainerStatus.Running) {
-			return false;
+		// The scheduled caller falls through — the goals remain due for the next heartbeat.
+		if (await this.isAgentBusyInProject(memberId, projectRow.id)) {
+			return { dispatched: false, reason: 'agent_busy' };
 		}
-		if (await checkOverBudget(db, memberId, projectRow.id)) return false;
+		if (await this.isProjectAtCapacity(projectRow.id)) {
+			return { dispatched: false, reason: 'project_at_capacity' };
+		}
+		if (!projectRow.container_id || projectRow.container_status !== ContainerStatus.Running) {
+			return { dispatched: false, reason: 'container_down' };
+		}
+		if (await checkOverBudget(db, memberId, projectRow.id)) {
+			return { dispatched: false, reason: 'over_budget' };
+		}
 
-		const goalCheck: GoalCheckContext = {
+		const progressUpdate: ProgressUpdateContext = {
 			goals: dueGoals.map((g) => ({
 				id: g.id as string,
 				title: g.title as string,
@@ -1925,7 +1954,7 @@ export class JobManager {
 			pricing: this.deps.pricing,
 		};
 		const timeoutMs = agentRow.run_timeout_min * 60 * 1000;
-		const key = `goalcheck:${memberId}:${projectRow.id}`;
+		const key = `progressupdate:${memberId}:${projectRow.id}`;
 		this.acquireProjectRun(projectRow.id);
 
 		const launched = this.launchTask(
@@ -1960,25 +1989,25 @@ export class JobManager {
 							});
 						},
 						wakeupId,
-						goalCheck,
+						progressUpdate,
 					);
 					if (registeredRunId) this.unregisterLiveRun(registeredRunId);
-					await this.onGoalCheckComplete(memberId, teamId, wakeupId, result);
+					await this.onProgressUpdateComplete(memberId, teamId, wakeupId, result);
 					return result;
 				} catch (err) {
 					log.error(
-						`Background goal-check run for Captain ${ref('captain', memberId)} failed:`,
+						`Background progress-update run for Captain ${ref('captain', memberId)} failed:`,
 						err,
 					);
 					if (registeredRunId) this.unregisterLiveRun(registeredRunId);
-					await this.onGoalCheckComplete(memberId, teamId, wakeupId, {
+					await this.onProgressUpdateComplete(memberId, teamId, wakeupId, {
 						success: false,
 						exitCode: -1,
 						stdout: '',
 						stderr: err instanceof Error ? err.message : String(err),
 						durationMs: 0,
 						heartbeatRunId: registeredRunId,
-					}).catch((e) => log.error('Goal-check completion bookkeeping failed:', e));
+					}).catch((e) => log.error('Progress-update completion bookkeeping failed:', e));
 					return null;
 				} finally {
 					this.releaseProjectRun(projectRow.id);
@@ -1989,17 +2018,19 @@ export class JobManager {
 		);
 
 		if (!launched) {
-			// A concurrent dispatch holds this key; undo the status flip and re-queue.
+			// A concurrent dispatch holds this key; undo the status flip and re-queue. On the
+			// scheduled path the requeued wakeup retries; on the manual path wakeupId is undefined
+			// so requeueWakeup no-ops and the caller surfaces the conflict.
 			this.releaseProjectRun(projectRow.id);
 			await setAgentIdleIfNoActiveRuns(db, memberId, teamId, undefined, this.deps.wsManager);
 			await this.requeueWakeup(wakeupId);
-			return true;
+			return { dispatched: false, reason: 'launch_conflict' };
 		}
-		return true;
+		return { dispatched: true };
 	}
 
-	/** Trimmed completion bookkeeping for a goal-check run: no task lock, badge, or chain. */
-	private async onGoalCheckComplete(
+	/** Trimmed completion bookkeeping for a progress-update run: no task lock, badge, or chain. */
+	private async onProgressUpdateComplete(
 		memberId: string,
 		teamId: string,
 		wakeupId: string | undefined,
@@ -2019,6 +2050,71 @@ export class JobManager {
 				[result.success ? WakeupStatus.Completed : WakeupStatus.Failed, wakeupId],
 			);
 		}
+	}
+
+	/**
+	 * Manually trigger the Captain's progress-update run for a project on demand (the Goals page
+	 * "Run now" button). Reuses the exact scheduled logic (`tryDispatchProgressUpdate` → due-goal
+	 * selection, gating and launch) so a manual run is identical to a heartbeat-scheduled one. No
+	 * wakeup id is passed: `runAgent` synthesises an on-demand wakeup, so there is no queued row for
+	 * the 5s cron to double-dispatch. Returns the discriminated result the route maps to HTTP.
+	 */
+	async dispatchProgressUpdateNow(
+		projectId: string,
+		triggeredBy?: { member_id: string; name: string } | null,
+	): Promise<ProgressUpdateDispatchResult> {
+		const { db } = this.deps;
+
+		const proj = await db.query<{ team_id: string }>('SELECT team_id FROM projects WHERE id = $1', [
+			projectId,
+		]);
+		const teamId = proj.rows[0]?.team_id;
+		if (!teamId) return { dispatched: false, reason: 'no_project' };
+
+		// Resolve the project team's Captain — the only role that runs progress updates.
+		const captain = await db.query<{
+			id: string;
+			title: string;
+			slug: string;
+			admin_status: string;
+			default_effort: string;
+			model_override_provider: AiProvider | null;
+			model_override_model: string | null;
+			run_timeout_min: number;
+		}>(
+			`SELECT ma.id, ma.title, ma.slug, ma.admin_status, ma.default_effort,
+			        ma.run_timeout_min, ma.model_override_provider, ma.model_override_model
+			 FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.slug = $2
+			 LIMIT 1`,
+			[teamId, CAPTAIN_AGENT_SLUG],
+		);
+		const captainRow = captain.rows[0];
+		if (!captainRow) return { dispatched: false, reason: 'no_captain' };
+		if (captainRow.admin_status !== AgentAdminStatus.Enabled) {
+			return { dispatched: false, reason: 'captain_disabled' };
+		}
+
+		return this.tryDispatchProgressUpdate(
+			captainRow.id,
+			teamId,
+			{
+				id: captainRow.id,
+				title: captainRow.title,
+				slug: captainRow.slug,
+				default_effort: captainRow.default_effort,
+				model_override_provider: captainRow.model_override_provider,
+				model_override_model: captainRow.model_override_model,
+				run_timeout_min: captainRow.run_timeout_min,
+			},
+			undefined,
+			{
+				source: WakeupSource.OnDemand,
+				trigger: 'progress_update_now',
+				...(triggeredBy ? { triggered_by: triggeredBy } : {}),
+			},
+		);
 	}
 
 	private async postFailurePing(

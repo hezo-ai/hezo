@@ -14,7 +14,7 @@ import {
 	type AgentAttachment,
 	acquireCredentialLock,
 	buildCoachReviewPrompt,
-	buildGoalCheckPrompt,
+	buildProgressUpdatePrompt,
 	buildProviderEnv,
 	buildTaskPrompt,
 	formatReactionLine,
@@ -274,10 +274,10 @@ describe('formatReactionLine', () => {
 });
 
 // --------------------------------------------------------------------------
-// buildGoalCheckPrompt — singular/plural, optional target_date / status_blurb /
+// buildProgressUpdatePrompt — singular/plural, optional target_date / status_blurb /
 // actions, and the measurement-empty fallback.
 // --------------------------------------------------------------------------
-describe('buildGoalCheckPrompt', () => {
+describe('buildProgressUpdatePrompt', () => {
 	function goal(overrides: Record<string, unknown> = {}) {
 		return {
 			id: 'g1',
@@ -294,7 +294,7 @@ describe('buildGoalCheckPrompt', () => {
 	}
 
 	it('uses singular phrasing and renders all optional fields for one goal', () => {
-		const out = buildGoalCheckPrompt('SYS', { goals: [goal()] });
+		const out = buildProgressUpdatePrompt('SYS', { goals: [goal()] });
 		expect(out.startsWith('SYS')).toBe(true);
 		expect(out).toContain('1 goal is due for a progress check');
 		expect(out).toContain('### Ship v2  `g1`');
@@ -305,7 +305,7 @@ describe('buildGoalCheckPrompt', () => {
 	});
 
 	it('uses plural phrasing and omits optional lines when fields are empty/null', () => {
-		const out = buildGoalCheckPrompt('SYS', {
+		const out = buildProgressUpdatePrompt('SYS', {
 			goals: [
 				goal({ target_date: null, status_blurb: '', actions: '', measurement: '' }),
 				goal({ id: 'g2', title: 'Second', target_date: null, status_blurb: '', actions: '' }),

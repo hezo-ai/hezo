@@ -2,12 +2,12 @@ import type { PGlite } from '@electric-sql/pglite';
 import {
 	GoalCheckFrequency as Freq,
 	type GoalCheckFrequency,
-	type GoalCheckRunSummary,
 	type GoalHealth,
 	type GoalRunActivity,
 	type GoalWithProject,
 	GoalHealth as Health,
 	HeartbeatRunKind,
+	type ProgressUpdateRunSummary,
 	wsRoom,
 } from '@hezo/shared';
 import { broadcastRowChange } from '../lib/broadcast';
@@ -262,8 +262,8 @@ export async function getDueGoals(db: PGlite, projectId: string): Promise<GoalRo
 }
 
 /**
- * Record one goal's progress snapshot from a goal-check run: update the live goal and append a
- * history row keyed to the run. `runId` is the goal-check run; the (run_id, goal_id) link is
+ * Record one goal's progress snapshot from a progress-update run: update the live goal and append a
+ * history row keyed to the run. `runId` is the progress-update run; the (run_id, goal_id) link is
  * what the Goals page reads to annotate "this run updated goals X, Y".
  */
 export async function recordGoalProgress(
@@ -314,18 +314,18 @@ export async function recordGoalProgress(
 }
 
 /**
- * The goal-check runs for a project, newest first, each annotated with the titles of the goals
+ * The progress-update runs for a project, newest first, each annotated with the titles of the goals
  * it updated. Shown at the bottom of the Goals page.
  */
-export async function listGoalCheckRuns(
+export async function listProgressUpdateRuns(
 	db: PGlite,
 	projectId: string,
 	limit = 50,
-): Promise<GoalCheckRunSummary[]> {
-	// Goal-check runs are team-scoped (Captain runs with no task); a project maps 1:1 to its
+): Promise<ProgressUpdateRunSummary[]> {
+	// Progress-update runs are team-scoped (Captain runs with no task); a project maps 1:1 to its
 	// team, so filter by the project's team. The title list is a correlated subquery — no join
 	// fan-out, no GROUP BY.
-	const r = await db.query<GoalCheckRunSummary>(
+	const r = await db.query<ProgressUpdateRunSummary>(
 		`SELECT hr.id, hr.status, hr.created_at, hr.started_at, hr.finished_at,
 		        hr.member_id, ma.title AS agent_title, ma.slug AS agent_slug,
 		        COALESCE((
@@ -341,13 +341,13 @@ export async function listGoalCheckRuns(
 		   AND hr.team_id = (SELECT team_id FROM projects WHERE id = $2)
 		 ORDER BY hr.created_at DESC
 		 LIMIT $3`,
-		[HeartbeatRunKind.GoalCheck, projectId, limit],
+		[HeartbeatRunKind.ProgressUpdate, projectId, limit],
 	);
 	return r.rows;
 }
 
 /**
- * The goal-check runs that did something for one specific goal, newest first — shown at the bottom
+ * The progress-update runs that did something for one specific goal, newest first — shown at the bottom
  * of the goal detail page. A run qualifies if it estimated this goal's progress, created task(s)
  * linked to it, or commented on goal-linked task(s). Each run carries its progress snapshot plus the
  * tasks it created and the goal-linked tasks it commented on.
@@ -402,7 +402,7 @@ export async function listGoalRunActivity(
 		   )
 		 ORDER BY hr.created_at DESC
 		 LIMIT $4`,
-		[HeartbeatRunKind.GoalCheck, goalId, projectId, limit],
+		[HeartbeatRunKind.ProgressUpdate, goalId, projectId, limit],
 	);
 	return r.rows;
 }

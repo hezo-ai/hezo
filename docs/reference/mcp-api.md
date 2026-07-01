@@ -96,7 +96,7 @@ Create a new team (superuser only)
 
 _Write tool._
 
-Replace the project's progress summary shown at the top of the Progress page. Only the Captain does this, and only from within a goal-check run. Keep it a concise summary, not a backlog: lead with the key points in **bold**, then a short narrative of what is done, what is in progress, and what is still to do. You may reference a few of the most relevant tickets by their bare identifier (e.g. BE-2) — link sparingly. This overwrites the whole summary, so include everything that should remain.
+Replace the project's progress summary shown at the top of the Progress page. Only the Captain does this, and only from within a progress-update run. Keep it a concise summary, not a backlog: lead with the key points in **bold**, then a short narrative of what is done, what is in progress, and what is still to do. You may reference a few of the most relevant tickets by their bare identifier (e.g. BE-2) — link sparingly. This overwrites the whole summary, so include everything that should remain.
 
 **Parameters:**
 
@@ -107,7 +107,7 @@ Replace the project's progress summary shown at the top of the Progress page. On
 
 **Returns:** `{ summary, updated_at }` after replacing the project’s progress summary (shown at the top of the Progress page). Returns `{ error }` if the project is HQ/internal (no progress summary) or the call is not from within an agent run.
 
-**Authorization:** Captain only, and only from within a goal-check agent run.
+**Authorization:** Captain only, and only from within a progress-update agent run.
 
 ### `create_project`
 
@@ -329,7 +329,7 @@ List a project's goals (the objectives the Captain tracks). Each goal has a titl
 
 _Write tool._
 
-Record your current assessment of a goal's progress. Only the Captain does this, and only from within a goal-check run. Pass progress_percent (0-100, your honest estimate — do not lower it without a reason in the blurb), health (on_track / at_risk / off_track, weighing progress against the target_date), and a one-paragraph status_blurb explaining where the goal stands and what is needed next. This updates the goal's live status and appends a point to its progress history; the goal then won't be re-surfaced for checking until its cadence elapses again.
+Record your current assessment of a goal's progress. Only the Captain does this, and only from within a progress-update run. Pass progress_percent (0-100, your honest estimate — do not lower it without a reason in the blurb), health (on_track / at_risk / off_track, weighing progress against the target_date), and a one-paragraph status_blurb explaining where the goal stands and what is needed next. This updates the goal's live status and appends a point to its progress history; the goal then won't be re-surfaced for checking until its cadence elapses again.
 
 **Parameters:**
 
@@ -343,7 +343,7 @@ Record your current assessment of a goal's progress. Only the Captain does this,
 
 **Returns:** The updated goal row (with the new `progress_percent`, `health`, `status_blurb`, and a refreshed `last_checked_at`). Appends a point to the goal’s progress history keyed to the calling run. Returns `{ error }` if the goal is not in the project or the inputs are invalid.
 
-**Authorization:** Captain only, and only from within a goal-check agent run (the run records the history point).
+**Authorization:** Captain only, and only from within a progress-update agent run (the run records the history point).
 
 ## Comments & reactions
 

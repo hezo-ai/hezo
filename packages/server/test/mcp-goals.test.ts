@@ -186,10 +186,10 @@ describe('MCP project progress + goal run activity', () => {
 		const agent = await mintAgentToken(db, masterKeyManager, captainAgentId, teamId, null, {
 			projectId,
 		});
-		// The scheduler tags goal-check runs with kind='goal_check'; mintAgentToken makes a
-		// generic task-kind run, so mark it to mirror a real goal-check run.
+		// The scheduler tags progress-update runs with kind='progress_update'; mintAgentToken makes a
+		// generic task-kind run, so mark it to mirror a real progress-update run.
 		await db.query(
-			`UPDATE heartbeat_runs SET kind = 'goal_check'::heartbeat_run_kind WHERE id = $1`,
+			`UPDATE heartbeat_runs SET kind = 'progress_update'::heartbeat_run_kind WHERE id = $1`,
 			[agent.runId],
 		);
 		const task = (

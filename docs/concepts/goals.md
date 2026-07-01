@@ -24,12 +24,13 @@ Open **Progress** in the project menu (just under **Inbox**). Top to bottom it s
   headline points); expand it for the full narrative, which may link a few key tasks.
 - your **goals**, each as a panel showing its progress, health, and latest status. Click a
   panel to open the goal's own page, where its full progress chart and history live.
-- the recent **goal heartbeat runs** for the project.
+- the recent **progress update runs** for the project, with a **Run now** button to trigger one
+  on demand.
 
 ## Setting a goal
 
-From the **Progress** page choose **Create Goal** (or **New goal** in the page header). A goal
-has:
+From the **Progress** page choose **Create Goal** (or the **New goal** card shown alongside your
+goals). A goal has:
 
 - **Goal name** — the objective in a line (e.g. "Reach 100 active customers").
 - **Measurement** — the precise definition of *how you'll know the goal is achieved* (e.g.
@@ -53,7 +54,7 @@ same form.
 ## How the Captain tracks progress
 
 On the Captain's heartbeat, it looks at which goals are **due** for a check and runs a single
-**goal check** covering all of them at once. A goal is due when its **check frequency** has come
+**progress update** covering all of them at once. A goal is due when its **check frequency** has come
 round (last checked longer ago than its cadence, or never checked) **or** once its **deadline**
 has passed — a goal past its deadline is always checked and never skipped while it stays active.
 Goals that aren't due on either count are skipped. For each due goal the Captain assesses real
@@ -69,11 +70,15 @@ just counting finished tasks — and records three things:
 Because each check is recorded, every goal shows a **progress chart** of how its percentage
 has moved over time, so you can see momentum (or a stall) at a glance.
 
-These goal checks are **not** done inside a task — they're standalone Captain runs. The recent
-goal checks for the whole project appear at the bottom of the **Progress** page. Each goal's own
-page also has a **Goal heartbeat runs** section showing just the runs that did something for *that*
-goal — the progress it set and any tasks it created or commented on toward the goal show inline,
-and each run expands to reveal the status summary it recorded.
+These progress updates are **not** done inside a task — they're standalone Captain runs. The recent
+progress update runs for the whole project appear at the bottom of the **Progress** page. Each goal's
+own page also has a **Progress update runs** section showing just the runs that did something for
+*that* goal — the progress it set and any tasks it created or commented on toward the goal show
+inline, and each run expands to reveal the status summary it recorded.
+
+You don't have to wait for the schedule: the **Run now** button next to **Progress update runs** on
+the Progress page triggers a progress update immediately. It runs the same check the heartbeat would —
+assessing whichever goals are currently due — so if nothing is due yet it simply reports that.
 
 During the same run the Captain also refreshes the **project progress summary** shown at the top
 of the Progress page, so that headline stays in step with the goal estimates.
@@ -91,8 +96,8 @@ When the Captain decides a goal needs a push, it either **comments on an existin
 task** to steer or unblock it, or **files new tasks** through the normal delegation flow and
 links them to the goal. But it doesn't create work for its own sake: if tasks already in the
 backlog or in flight will advance the goal, the Captain leaves the board alone. The point of a
-goal check is to judge whether the project is on course — not to manufacture busywork every time
-a goal comes due. The Captain never re-opens a closed task; if something needs redoing it files
+progress update is to judge whether the project is on course — not to manufacture busywork every
+time a goal comes due. The Captain never re-opens a closed task; if something needs redoing it files
 a fresh task that points back at the original.
 
 The estimate is exactly that — an estimate, made by the Captain. Treat the **blurb** as the

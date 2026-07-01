@@ -34,8 +34,8 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('createHeartbeatRun for goal-check (null task)', () => {
-	it('creates a kind=goal_check run with no task and no Run comment', async () => {
+describe('createHeartbeatRun for progress-update (null task)', () => {
+	it('creates a kind=progress_update run with no task and no Run comment', async () => {
 		const wakeup = await db.query<{ id: string }>(
 			`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload)
 			 VALUES ($1, $2, $3::wakeup_source, 'claimed'::wakeup_status, '{}'::jsonb)
@@ -60,7 +60,7 @@ describe('createHeartbeatRun for goal-check (null task)', () => {
 			broadcast,
 			wakeup.rows[0].id,
 			null,
-			HeartbeatRunKind.GoalCheck,
+			HeartbeatRunKind.ProgressUpdate,
 		);
 
 		const run = await db.query<{ task_id: string | null; kind: string }>(
@@ -68,9 +68,9 @@ describe('createHeartbeatRun for goal-check (null task)', () => {
 			[runId],
 		);
 		expect(run.rows[0].task_id).toBeNull();
-		expect(run.rows[0].kind).toBe('goal_check');
+		expect(run.rows[0].kind).toBe('progress_update');
 
-		// No task comment was written (a goal-check run has no task to anchor one).
+		// No task comment was written (a progress-update run has no task to anchor one).
 		const commentsAfter = await db.query<{ c: number }>(
 			`SELECT count(*)::int AS c FROM task_comments`,
 		);

@@ -1,0 +1,13 @@
+-- Rename the `heartbeat_run_kind` enum value 'goal_check' -> 'progress_update'.
+--
+-- The Captain's no-task run that estimates progress across a project's due goals
+-- was historically called a "goal-check" run; it is now the "progress-update" run
+-- everywhere (UI label "Progress update runs", `HeartbeatRunKind.ProgressUpdate`).
+-- This renames the stored enum value so the DB matches the code.
+--
+-- ALTER TYPE ... RENAME VALUE (Postgres 10+, PGlite is PG16) renames the label in
+-- place: every existing `heartbeat_runs.kind = 'goal_check'` row transparently reads
+-- as 'progress_update' afterwards, with no row rewrite and no data loss. Unlike
+-- ADD VALUE it carries no in-transaction usage restriction, so it is safe under the
+-- runner's per-migration BEGIN/COMMIT.
+ALTER TYPE heartbeat_run_kind RENAME VALUE 'goal_check' TO 'progress_update';

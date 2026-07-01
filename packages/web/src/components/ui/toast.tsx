@@ -4,6 +4,8 @@ import { toast, useToasts } from '../../hooks/use-toast';
 
 const ERROR_DURATION_MS = 6000;
 
+const TOAST_TITLES = { error: 'Something went wrong', info: 'Heads up' } as const;
+
 export function Toaster() {
 	const toasts = useToasts();
 
@@ -15,11 +17,17 @@ export function Toaster() {
 					onOpenChange={(open) => {
 						if (!open) toast.dismiss(t.id);
 					}}
-					className="border border-danger bg-surface text-text-1 rounded-md shadow-md px-3 py-2.5 flex items-start gap-3 data-[state=open]:animate-in data-[state=open]:slide-in-from-right-2 data-[state=closed]:animate-out data-[state=closed]:fade-out"
+					className={`border bg-surface text-text-1 rounded-md shadow-md px-3 py-2.5 flex items-start gap-3 data-[state=open]:animate-in data-[state=open]:slide-in-from-right-2 data-[state=closed]:animate-out data-[state=closed]:fade-out ${
+						t.variant === 'error' ? 'border-danger' : 'border-border'
+					}`}
 				>
 					<div className="flex-1 min-w-0">
-						<RadixToast.Title className="text-[13px] font-medium text-danger mb-0.5">
-							Something went wrong
+						<RadixToast.Title
+							className={`text-[13px] font-medium mb-0.5 ${
+								t.variant === 'error' ? 'text-danger' : 'text-text-1'
+							}`}
+						>
+							{TOAST_TITLES[t.variant]}
 						</RadixToast.Title>
 						<RadixToast.Description className="text-[13px] text-text-2 break-words">
 							{t.message}

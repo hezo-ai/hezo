@@ -8,12 +8,14 @@ import {
 	GoalError,
 	getGoal,
 	getGoalHistory,
-	listGoalCheckRuns,
 	listGoalRunActivity,
 	listGoals,
+	listProgressUpdateRuns,
 	type UpdateGoalInput,
 	updateGoal,
 } from '../services/goals';
+import type { ProgressUpdateDispatchReason } from '../services/job-manager';
+import { resolveActorName } from '../services/task-events';
 
 export const goalsRoutes = new Hono<Env>();
 
@@ -31,7 +33,7 @@ goalsRoutes.get('/projects/:projectId/goals', async (c) => {
 // Registered before /goals/:goalId so "runs" isn't captured as a goal id.
 goalsRoutes.get('/projects/:projectId/goals/runs', async (c) => {
 	const projectId = c.get('projectId') as string;
-	const runs = await listGoalCheckRuns(c.get('db'), projectId);
+	const runs = await listProgressUpdateRuns(c.get('db'), projectId);
 	return ok(c, runs);
 });
 
@@ -53,6 +55,44 @@ goalsRoutes.post('/projects/:projectId/goals', async (c) => {
 	}
 });
 
+const PROGRESS_UPDATE_MESSAGES: Record<ProgressUpdateDispatchReason, string> = {
+	no_project: 'Project not found.',
+	no_captain: 'This project has no Captain to run progress updates.',
+	captain_disabled: 'The Captain is currently disabled.',
+	no_due_goals: 'No goals are due for a progress update right now.',
+	agent_busy: 'The Captain is already running in this project.',
+	project_at_capacity: 'This project is at its concurrent-run limit.',
+	container_down: 'The project container is not running yet.',
+	over_budget: 'The Captain or project is over its budget.',
+	launch_conflict: 'A progress-update run is already starting.',
+};
+
+// Manually run the Captain's progress-update ("Run now" on the Goals page). Reuses the scheduled
+// logic: it assesses the goals currently due and refreshes the project progress summary. "Nothing
+// due" is a valid no-op (200), not an error.
+goalsRoutes.post('/projects/:projectId/goals/run-now', async (c) => {
+	const teamId = c.get('teamId') as string;
+	const projectId = c.get('projectId') as string;
+	const db = c.get('db');
+
+	const actorMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
+	const triggeredBy = actorMemberId
+		? { member_id: actorMemberId, name: await resolveActorName(db, actorMemberId) }
+		: null;
+
+	const result = await c.get('jobManager').dispatchProgressUpdateNow(projectId, triggeredBy);
+	if (result.dispatched) return ok(c, { dispatched: true });
+
+	if (result.reason === 'no_due_goals') {
+		return ok(c, { dispatched: false, reason: result.reason });
+	}
+	const message = PROGRESS_UPDATE_MESSAGES[result.reason];
+	if (result.reason === 'no_project' || result.reason === 'no_captain') {
+		return err(c, 'NOT_FOUND', message, 404);
+	}
+	return err(c, 'CONFLICT', message, 409);
+});
+
 goalsRoutes.get('/projects/:projectId/goals/:goalId', async (c) => {
 	const projectId = c.get('projectId') as string;
 	const goal = await getGoal(c.get('db'), projectId, c.req.param('goalId'));
@@ -67,7 +107,7 @@ goalsRoutes.get('/projects/:projectId/goals/:goalId/history', async (c) => {
 	return ok(c, history);
 });
 
-// The goal-check runs that did something for this goal (progress estimate, created tasks,
+// The progress-update runs that did something for this goal (progress estimate, created tasks,
 // commented tasks) — shown at the bottom of the goal detail page.
 goalsRoutes.get('/projects/:projectId/goals/:goalId/runs', async (c) => {
 	const projectId = c.get('projectId') as string;

@@ -33,9 +33,9 @@ export function formatTriggerReason(run: HeartbeatRun, teamSlug: string): Trigge
 	const taskId = run.trigger_comment_task_identifier ?? run.task_identifier;
 	const actor = run.trigger_actor_slug;
 
-	// Goal-check runs are the Captain's periodic progress assessment. They have no task and
+	// Progress-update runs are the Captain's periodic progress assessment. They have no task and
 	// reuse the heartbeat wakeup, so describe them by what the run does, not the raw source.
-	if (run.kind === HeartbeatRunKind.GoalCheck) {
+	if (run.kind === HeartbeatRunKind.ProgressUpdate) {
 		return { source, text: 'Automation: goals and progress report' };
 	}
 

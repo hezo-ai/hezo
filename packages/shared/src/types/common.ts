@@ -575,11 +575,11 @@ export const HeartbeatRunStatus = {
 } as const;
 export type HeartbeatRunStatus = (typeof HeartbeatRunStatus)[keyof typeof HeartbeatRunStatus];
 
-/** Classifies a heartbeat run. 'task' is the normal task-scoped run; 'goal_check' is a
+/** Classifies a heartbeat run. 'task' is the normal task-scoped run; 'progress_update' is a
  * Captain run with no task that estimates progress across the project's due goals. */
 export const HeartbeatRunKind = {
 	Task: 'task',
-	GoalCheck: 'goal_check',
+	ProgressUpdate: 'progress_update',
 } as const;
 export type HeartbeatRunKind = (typeof HeartbeatRunKind)[keyof typeof HeartbeatRunKind];
 
@@ -640,9 +640,9 @@ export const GOAL_SMART_GUIDANCE: ReadonlyArray<{ letter: string; label: string;
 	{ letter: 'T', label: 'Time-bound', hint: 'Give it a deadline to work toward.' },
 ];
 
-/** One point in a goal's progress history — a snapshot recorded by a goal-check run. */
+/** One point in a goal's progress history — a snapshot recorded by a progress-update run. */
 export interface GoalHistoryPoint {
-	/** ISO timestamp of the recording goal-check run. */
+	/** ISO timestamp of the recording progress-update run. */
 	t: string;
 	percent: number;
 	health: GoalHealth;
@@ -678,7 +678,7 @@ export interface GoalWithProject extends Goal {
 	history: GoalHistoryPoint[];
 }
 
-/** A single goal's progress snapshot taken during one goal-check run. */
+/** A single goal's progress snapshot taken during one progress-update run. */
 export interface GoalRunUpdate {
 	id: string;
 	run_id: string;
@@ -689,14 +689,14 @@ export interface GoalRunUpdate {
 	created_at: string;
 }
 
-/** A goal-check run as shown in the Goals page footer, annotated with which goals it touched. */
-export interface GoalCheckRunSummary {
+/** A progress-update run as shown in the Goals page footer, annotated with which goals it touched. */
+export interface ProgressUpdateRunSummary {
 	id: string;
 	status: HeartbeatRunStatus;
 	created_at: string;
 	started_at: string | null;
 	finished_at: string | null;
-	/** The Captain member that ran this goal-check, for linking to its run in the agent's run list. */
+	/** The Captain member that ran this progress-update, for linking to its run in the agent's run list. */
 	member_id: string;
 	agent_title: string;
 	agent_slug: string;
@@ -704,7 +704,7 @@ export interface GoalCheckRunSummary {
 	updated_goal_titles: string[];
 }
 
-/** A task touched by a goal-check run, shown in the goal detail page's per-goal run feed. */
+/** A task touched by a progress-update run, shown in the goal detail page's per-goal run feed. */
 export interface GoalRunTaskRef {
 	id: string;
 	identifier: string;
@@ -713,7 +713,7 @@ export interface GoalRunTaskRef {
 }
 
 /**
- * One goal-check run that did something for a specific goal, shown at the bottom of the goal
+ * One progress-update run that did something for a specific goal, shown at the bottom of the goal
  * detail page: it estimated the goal's progress, created task(s) for it, and/or commented on
  * goal-linked task(s).
  */
@@ -723,7 +723,7 @@ export interface GoalRunActivity {
 	created_at: string;
 	started_at: string | null;
 	finished_at: string | null;
-	/** The Captain member that ran this goal-check, for linking to its run in the agent's run list. */
+	/** The Captain member that ran this progress-update, for linking to its run in the agent's run list. */
 	member_id: string;
 	agent_slug: string;
 	/** The progress snapshot this run recorded for the goal, or null if it only created/commented. */

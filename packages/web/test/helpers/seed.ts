@@ -258,12 +258,12 @@ export async function seedRunningAgent(
 }
 
 /**
- * Seed a completed Captain goal-check run (the heartbeat run with no task, kind
- * 'goal_check') and, when a goal is given, the progress snapshot it recorded. Mirrors
- * what `tryDispatchGoalCheck` + `recordGoalProgress` produce, so the Progress page and
+ * Seed a completed Captain progress-update run (the heartbeat run with no task, kind
+ * 'progress_update') and, when a goal is given, the progress snapshot it recorded. Mirrors
+ * what `tryDispatchProgressUpdate` + `recordGoalProgress` produce, so the Progress page and
  * goal detail run feed render against real rows.
  */
-export async function seedGoalCheckRun(
+export async function seedProgressUpdateRun(
 	workspace: SeededWorkspace,
 	opts: {
 		goal?: SeededGoal;
@@ -272,18 +272,18 @@ export async function seedGoalCheckRun(
 		statusBlurb?: string;
 		/**
 		 * Attribute these existing tasks to the run as goal-linked "created" tasks, so the run's
-		 * `created_tasks` activity is populated the way `tryDispatchGoalCheck` + `create_task` produce.
+		 * `created_tasks` activity is populated the way `tryDispatchProgressUpdate` + `create_task` produce.
 		 */
 		createdTasks?: SeededTask[];
 	} = {},
 ): Promise<{ runId: string }> {
 	const { db } = getTestContext();
 	const captain = workspace.agents.find((a) => a.slug === 'captain');
-	if (!captain) throw new Error('seedGoalCheckRun: captain agent missing');
+	if (!captain) throw new Error('seedProgressUpdateRun: captain agent missing');
 
 	const runRes = await db.query<{ id: string }>(
 		`INSERT INTO heartbeat_runs (member_id, team_id, status, kind, started_at, finished_at)
-		 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, 'goal_check'::heartbeat_run_kind, now(), now())
+		 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, 'progress_update'::heartbeat_run_kind, now(), now())
 		 RETURNING id`,
 		[captain.id, workspace.team.id],
 	);

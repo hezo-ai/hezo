@@ -143,7 +143,7 @@ export function RunCommentBody({
 	actorName: string | null;
 	createdAt: string;
 	/** Comment public id for the timestamp permalink. Absent for runs with no anchoring
-	 * comment (e.g. goal-check runs), which render a plain timestamp instead. */
+	 * comment (e.g. progress-update runs), which render a plain timestamp instead. */
 	publicId?: string;
 	taskId?: string;
 	retryableRunId?: string | null;

@@ -522,7 +522,7 @@ async function buildRunContext(
 	bridge: BridgeRunnerArgs | null,
 	egress: EgressEnvDescriptor | null,
 	runUser: ContainerRunUser,
-	goalCheck: GoalCheckContext | null,
+	progressUpdate: ProgressUpdateContext | null,
 ): Promise<RunContext> {
 	// The run is scoped to the project's team (the "run team"). For normal agents
 	// this equals the agent's home team; for instance agents (CEO/Coach) that
@@ -584,10 +584,10 @@ async function buildRunContext(
 			: null;
 	const spawnedFrom = task ? await loadSpawnedFromTask(deps.db, task) : null;
 	let basePrompt: string;
-	if (goalCheck) {
-		basePrompt = buildGoalCheckPrompt(resolvedPrompt, goalCheck);
+	if (progressUpdate) {
+		basePrompt = buildProgressUpdatePrompt(resolvedPrompt, progressUpdate);
 	} else if (isCoachReview) {
-		// task is non-null on every non-goal-check path (enforced by runAgent).
+		// task is non-null on every non-progress-update path (enforced by runAgent).
 		basePrompt = await buildCoachReviewPrompt(deps.db, resolvedPrompt, task as TaskInfo, runTeamId);
 	} else {
 		basePrompt = buildTaskPrompt(resolvedPrompt, task as TaskInfo, wakeupPayload, {
@@ -623,7 +623,7 @@ async function buildRunContext(
 		egress,
 		extraEnv: task
 			? [`HEZO_TASK_ID=${task.id}`, `HEZO_TASK_IDENTIFIER=${task.identifier}`]
-			: ['HEZO_GOAL_CHECK=1'],
+			: ['HEZO_PROGRESS_UPDATE=1'],
 	});
 
 	return {
@@ -683,7 +683,7 @@ export async function runAgent(
 	signal?: AbortSignal,
 	onRunRegistered?: (heartbeatRunId: string) => void,
 	wakeupId?: string,
-	goalCheck?: GoalCheckContext | null,
+	progressUpdate?: ProgressUpdateContext | null,
 ): Promise<RunResult> {
 	const startTime = Date.now();
 
@@ -710,7 +710,7 @@ export async function runAgent(
 		runBroadcast,
 		effectiveWakeupId,
 		extractTriggeredBy(wakeupPayload),
-		goalCheck ? HeartbeatRunKind.GoalCheck : HeartbeatRunKind.Task,
+		progressUpdate ? HeartbeatRunKind.ProgressUpdate : HeartbeatRunKind.Task,
 	);
 	onRunRegistered?.(heartbeatRunId);
 	await emitRunStarted(deps, heartbeatRunId, agent, task, project, effectiveWakeupId);
@@ -904,7 +904,7 @@ export async function runAgent(
 
 		// Human-friendly label for run-scoped logs (egress proxy, ssh-agent),
 		// since a run has no friendly identifier of its own.
-		const runLabel = task ? `${agent.slug}/${task.identifier}` : `${agent.slug}/goal-check`;
+		const runLabel = task ? `${agent.slug}/${task.identifier}` : `${agent.slug}/progress-update`;
 
 		// Detect the container's run-user once (cached). Drives every --user exec, the
 		// ssh socket owner, and the chowns that give the run-user ownership of the
@@ -999,7 +999,7 @@ export async function runAgent(
 			bridge,
 			egressEnv,
 			runUser,
-			goalCheck ?? null,
+			progressUpdate ?? null,
 		);
 
 		const hostPromptPath = getHostPromptPath(
@@ -1089,7 +1089,7 @@ export async function runAgent(
 		try {
 			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
-			// Goal-check runs only call MCP tools; they need no code worktree.
+			// Progress-update runs only call MCP tools; they need no code worktree.
 			const prep = task
 				? await prepareWorktrees(deps, project, task, bridge, runUser, emit, signal)
 				: {
@@ -1605,8 +1605,8 @@ export interface BuildTaskPromptContext {
 	spawnedFrom?: SpawnedFromTask | null;
 }
 
-/** One due goal handed to the Captain in a goal-check run. */
-export interface GoalCheckGoal {
+/** One due goal handed to the Captain in a progress-update run. */
+export interface ProgressUpdateGoal {
 	id: string;
 	title: string;
 	measurement: string;
@@ -1618,17 +1618,20 @@ export interface GoalCheckGoal {
 	target_date: string | null;
 }
 
-export interface GoalCheckContext {
-	goals: GoalCheckGoal[];
+export interface ProgressUpdateContext {
+	goals: ProgressUpdateGoal[];
 }
 
 /**
- * The user-message body for a Captain goal-check run. Lists every due goal with its current
+ * The user-message body for a Captain progress-update run. Lists every due goal with its current
  * estimate and instructs the Captain to assess each and call `update_goal_progress`. No task is
  * attached — the run exists only to refresh goal status.
  */
-export function buildGoalCheckPrompt(systemPrompt: string, ctx: GoalCheckContext): string {
-	const parts = [systemPrompt, '', '---', '', '## Goal Check', ''];
+export function buildProgressUpdatePrompt(
+	systemPrompt: string,
+	ctx: ProgressUpdateContext,
+): string {
+	const parts = [systemPrompt, '', '---', '', '## Progress Update', ''];
 	parts.push(
 		`${ctx.goals.length} goal${ctx.goals.length === 1 ? ' is' : 's are'} due for a progress check. ` +
 			'For each goal below, assess real progress toward the objective — read the relevant tickets, ' +
@@ -2008,7 +2011,7 @@ export interface HeartbeatRunBroadcast {
 	events?: DomainEventBus;
 	teamId: string;
 	projectId?: string;
-	/** Null for goal-check runs, which are not tied to a task. */
+	/** Null for progress-update runs, which are not tied to a task. */
 	taskId: string | null;
 	memberId: string;
 }
@@ -2057,7 +2060,7 @@ export async function createHeartbeatRun(
 		);
 		const runId = runResult.rows[0].id;
 
-		// Goal-check runs have no task — no Run comment to anchor and no status to flip.
+		// Progress-update runs have no task — no Run comment to anchor and no status to flip.
 		if (!task) return { runId, statusFlippedToInProgress: false };
 
 		await db.query(
