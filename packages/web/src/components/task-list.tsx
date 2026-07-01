@@ -275,7 +275,7 @@ export function TaskList({ projectId }: TaskListProps) {
 	const statusLabel: string | null = (() => {
 		if (statusValues.length === 0) return 'No statuses';
 		if (statusValues.length === ALL_STATUSES.length) return 'All statuses';
-		if (isDefaultTodoSelection(statusValues)) return 'Open tasks';
+		if (isDefaultTodoSelection(statusValues)) return 'Open & done';
 		if (statusValues.length === 1) return `Status: ${formatTaskStatus(statusValues[0])}`;
 		return `${statusValues.length} statuses`;
 	})();
