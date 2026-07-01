@@ -4,9 +4,12 @@ import {
 	buildUpdateSet,
 	isFkViolation,
 	isUniqueViolation,
+	stripNulBytes,
 	terminalStatusParams,
 	withTransaction,
 } from '../src/lib/sql';
+
+const NUL = String.fromCharCode(0);
 
 // withTransaction only depends on db.query for BEGIN/COMMIT/ROLLBACK, so a tiny
 // fake suffices to exercise both the commit and rollback branches without a DB.
@@ -87,6 +90,23 @@ describe('buildUpdateSet', () => {
 			params: [],
 			nextIdx: 1,
 		});
+	});
+});
+
+describe('stripNulBytes', () => {
+	it('removes embedded NUL bytes that Postgres text/jsonb columns reject', () => {
+		expect(stripNulBytes(`a${NUL}b${NUL}c`)).toBe('abc');
+		expect(stripNulBytes(`${NUL}lead and trail${NUL}`)).toBe('lead and trail');
+	});
+
+	it('preserves surrounding text and other control characters', () => {
+		expect(stripNulBytes(`line1\n\tline2${NUL} end`)).toBe('line1\n\tline2 end');
+	});
+
+	it('returns the input unchanged when there is no NUL', () => {
+		const clean = 'plain log output\nwith newlines';
+		expect(stripNulBytes(clean)).toBe(clean);
+		expect(stripNulBytes('')).toBe('');
 	});
 });
 

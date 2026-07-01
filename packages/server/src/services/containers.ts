@@ -12,7 +12,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import { trackBackground } from '../lib/background';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { ref } from '../lib/log-ref';
-import { terminalStatusParams } from '../lib/sql';
+import { stripNulBytes, terminalStatusParams } from '../lib/sql';
 import { logger } from '../logger';
 import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
 import type { ContainerLogStreamer } from './container-logs';
@@ -200,7 +200,7 @@ export async function captureContainerLogs(
 			chunks.push(decoder.decode(raw.slice(offset, offset + frameSize)));
 			offset += frameSize;
 		}
-		let combined = chunks.join('');
+		let combined = stripNulBytes(chunks.join(''));
 		if (combined.length > LAST_LOGS_CAP_BYTES) {
 			combined = combined.slice(-LAST_LOGS_CAP_BYTES);
 		}
