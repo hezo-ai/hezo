@@ -163,6 +163,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'add_reaction',
 	'remove_reaction',
 	'create_comment',
+	'update_comment',
 	'request_credential',
 	'register_connector',
 	'resolve_approval',
@@ -2190,6 +2191,113 @@ export function registerTools(
 					.join(' ');
 				if (warning) return { ...r.rows[0], warning };
 			}
+			return r.rows[0];
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'update_comment',
+		'Edit the text of a comment you posted earlier in THIS run — use it to fix a mistake (a typo, a broken reference, wrong markdown) instead of posting a correction as a new comment. You can only edit a text comment authored by your current run; comments from earlier runs, other agents, or humans are not editable. Editing re-runs the same notification side effects create_comment does, but idempotently: a teammate already notified by this comment is not woken again, while a mention you ADD in the edit (e.g. a bare @<agent-slug> that replaces a backticked, inert one) wakes that teammate for the first time — so fixing a missed mention by editing works. Same reference rules as create_comment: reference tickets and project docs by their bare identifier/filename, teammates with @<agent-slug>, skills by their slug, and never wrap any of these in backticks.',
+		{
+			project: projectArg(),
+			task_id: z.string().describe('Task identifier or UUID the comment belongs to'),
+			comment_id: z
+				.string()
+				.uuid()
+				.describe('UUID of the comment to edit, as returned by create_comment or list_comments.'),
+			content: z.string().describe('The replacement comment text (overwrites the existing body).'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveTaskScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId, taskId } = scope;
+			if (auth.type !== AuthType.Agent || !auth.runId) {
+				return { error: 'Only an agent run can edit a comment' };
+			}
+			const existing = await db.query<{
+				content_type: string;
+				author_member_id: string | null;
+				created_by_run_id: string | null;
+				parent_comment_id: string | null;
+			}>(
+				`SELECT content_type, author_member_id, created_by_run_id, parent_comment_id
+				 FROM task_comments WHERE id = $1 AND task_id = $2`,
+				[args.comment_id, taskId],
+			);
+			if (existing.rows.length === 0) {
+				return { error: 'Comment not found on this task' };
+			}
+			const row = existing.rows[0];
+			// Scoped to the caller's own comments from the current run: an agent can
+			// tidy up what it just posted, but never rewrite history it did not author.
+			if (row.created_by_run_id !== auth.runId || row.author_member_id !== auth.memberId) {
+				return { error: 'You can only edit a comment you posted during this run' };
+			}
+			if (row.content_type !== CommentContentType.Text) {
+				return { error: 'Only text comments can be edited' };
+			}
+			const content = { text: args.content };
+			const r = await db.query<{ id: string; public_id: string }>(
+				`UPDATE task_comments SET content = $1::jsonb WHERE id = $2 RETURNING *`,
+				[JSON.stringify(content), args.comment_id],
+			);
+			broadcastCommentFamilyChange(
+				wsManager,
+				teamId,
+				scope.projectId,
+				'task_comments',
+				'UPDATE',
+				r.rows[0],
+			);
+			// Re-run the create-time side effects against the new text. Every one is
+			// keyed to the comment (or the mention/reply pair), so a target already
+			// woken by this comment is deduped while a reference the edit *adds* —
+			// a mention or a task link that was previously backticked and inert —
+			// fires for the first time. That is what makes "fix it by editing"
+			// behave the same as posting it correctly the first time.
+			await fireCommentWakeups({
+				db,
+				taskId,
+				teamId,
+				commentId: args.comment_id as string,
+				content,
+				contentType: CommentContentType.Text,
+				authorMemberId: auth.memberId,
+				authorRunId: auth.runId,
+				parentCommentId: row.parent_comment_id,
+				wsManager,
+			}).catch((e) => log.error('Failed to fire wakeups for edited comment:', e));
+			trackBackground(
+				recordTaskLinks(
+					db,
+					teamId,
+					taskId,
+					args.content as string,
+					auth.memberId,
+					apiKeyIdFromAuth(auth),
+					wsManager,
+				).catch((e) => log.error('Failed to record task links from edited comment:', e)),
+			);
+			const [teammateWarning, backtickWarning] = await Promise.all([
+				buildUnlinkedMentionWarning(db, teamId, auth.memberId, args.content as string).catch(
+					(e) => {
+						log.error('Failed to check edited comment for unlinked teammate references:', e);
+						return null;
+					},
+				),
+				buildBacktickedEntityWarning(db, teamId, scope.projectId, args.content as string).catch(
+					(e) => {
+						log.error('Failed to check edited comment for backticked entity references:', e);
+						return null;
+					},
+				),
+			]);
+			const warning = [teammateWarning, backtickWarning]
+				.filter((w): w is string => Boolean(w))
+				.join(' ');
+			if (warning) return { ...r.rows[0], warning };
 			return r.rows[0];
 		},
 		db,

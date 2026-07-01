@@ -85,3 +85,27 @@ describe('stop-hook rules require add_task_blocker for cross-ticket waits', () =
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain('add_task_blocker');
 	});
 });
+
+/**
+ * B2: each command-hook judge must emit the decision value that actually makes
+ * ITS runtime continue the agent, and must not loop the agent indefinitely.
+ * Codex's `Stop` hook continues on `block`; Gemini's `AfterAgent` hook continues
+ * on `deny` and ignores `block`, so emitting `block` there is a silent no-op.
+ */
+describe('stop-hook command judges emit the runtime-correct decision and guard the loop', () => {
+	it('Codex emits decision "block" (its Stop-hook continuation value)', () => {
+		expect(buildCodexJudgeScript()).toContain('decision: "block"');
+	});
+
+	it('Gemini emits decision "deny" (AfterAgent ignores "block")', () => {
+		const script = buildGeminiJudgeScript();
+		expect(script).toContain('decision: "deny"');
+		expect(script).not.toContain('decision: "block"');
+	});
+
+	it('both short-circuit once already continued (stop_hook_active) so the judge cannot loop', () => {
+		for (const script of [buildCodexJudgeScript(), buildGeminiJudgeScript()]) {
+			expect(script).toContain('stop_hook_active');
+		}
+	});
+});

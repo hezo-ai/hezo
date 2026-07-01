@@ -310,6 +310,24 @@ describe('template resolver', () => {
 		expect(result).toContain('Format as proper markdown');
 	});
 
+	it('scopes inline code to code tokens and forbids backticking linkable references', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// The old wording told agents to backtick "filenames and identifiers",
+		// which conflicts with the bare-reference rule and renders links inert.
+		expect(result).not.toContain('`inline code` for filenames and identifiers');
+		expect(result).toContain('Use `inline code` only for literal code tokens');
+		expect(result).toContain('backticks make all of these inert');
+	});
+
+	it('anti-repost rule points at update_comment and covers gate continuations', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// A formatting-only fix must be an in-place edit, not a reposted copy.
+		expect(result).toContain('edit it in place with `update_comment`');
+		expect(result).toContain('never repost a reformatted or reworded copy');
+		// Being continued by the completeness gate is not licence to re-summarize.
+		expect(result).toContain('Being re-woken by the completeness gate');
+	});
+
 	it('completion handoff guidance covers mark-done, auto-wake, and no-mention rules', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('### Completion Handoff');
