@@ -23,8 +23,11 @@ interface SidebarNavItem {
 
 // A small bordered "+" chip, used both as an inline suffix to a row label (Tasks)
 // and a section title (Team). Round border with padding so it reads as a button.
+// Hidden on mobile (`<md`): the drawer's tap targets are too easy to hit by
+// accident, so the "+" only appears from tablet up. Mobile users create tasks via
+// the floating new-task button and hire from the Team page's "Hire agent" button.
 const ADD_CHIP_CLASSES =
-	'inline-flex shrink-0 items-center rounded-md border border-border p-0.5 text-text-3 transition-colors hover:border-border-strong hover:bg-surface-2 hover:text-text-1 cursor-pointer';
+	'hidden md:inline-flex shrink-0 items-center rounded-md border border-border p-0.5 text-text-3 transition-colors hover:border-border-strong hover:bg-surface-2 hover:text-text-1 cursor-pointer';
 
 function ItemAction({ action }: { action: SidebarNavItemAction }) {
 	return (
