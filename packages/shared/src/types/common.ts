@@ -553,6 +553,7 @@ export const WakeupSkipReason = {
 	ProjectAtCapacity: 'project_at_capacity',
 	AgentRunning: 'agent_running',
 	OverBudget: 'over_budget',
+	ContainerDown: 'container_down',
 } as const;
 export type WakeupSkipReason = (typeof WakeupSkipReason)[keyof typeof WakeupSkipReason];
 

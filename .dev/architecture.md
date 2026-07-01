@@ -155,7 +155,16 @@ status flip, and code worktree. They fire on the Captain's heartbeat when goals 
 (`JobManager.tryDispatchProgressUpdate` → `getDueGoals`), and can also be triggered on demand from
 the Goals page's **Run now** button (`POST /projects/:projectId/goals/run-now` →
 `JobManager.dispatchProgressUpdateNow`, which resolves the project's Captain and reuses the same
-due-goal logic). Token usage is flushed to the
+due-goal logic). If **Run now** hits a *transient* conflict — the Captain is already running, the
+project is at its concurrency limit, the container is still coming up, or a launch race — the run is
+**queued** rather than erroring: a task-less `agent_wakeup_requests` row tagged
+`payload.trigger='progress_update_now'` (deduped per Captain by `createProgressUpdateWakeup`, so
+"Run now" is idempotent) that the 5s dispatcher retries until the Captain frees up. This trigger tag
+also makes such a wakeup guard against fall-through: when it is finally dispatched, `activateAgent`
+runs *only* the progress update — it never lets the Captain pick up ordinary task work — and completes
+the wakeup as a no-op if nothing is due by then. A queued run is listed/cancelled through
+`GET`/`POST /projects/:projectId/goals/queued-run[/:wakeupId/cancel]` (scheduled heartbeat checks
+carry no trigger tag, so they are never surfaced or cancellable here). Token usage is flushed to the
 row *during* the run (alongside the log), so a run the server kills mid-flight still
 reports the tokens/cost it burned instead of `0`; `usage_partial` flags such a snapshot
 until a clean completion supersedes it. `agent_task_sessions` persists

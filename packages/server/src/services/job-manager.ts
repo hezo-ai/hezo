@@ -66,7 +66,12 @@ import { getProjectConcurrency, isTaskBusyInDb } from './run-concurrency';
 import type { SshAgentServer } from './ssh-agent';
 import { reportTelemetry } from './telemetry';
 import { ensureUpdateStaged, isSupervisedWorker } from './updater';
-import { absorbQueuedTaskWakeups, assignmentWakeupAlreadyServed, createWakeup } from './wakeup';
+import {
+	absorbQueuedTaskWakeups,
+	assignmentWakeupAlreadyServed,
+	createProgressUpdateWakeup,
+	createWakeup,
+} from './wakeup';
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('job-manager');
@@ -142,9 +147,17 @@ export type ProgressUpdateDispatchReason =
 	| 'over_budget'
 	| 'launch_conflict';
 
-export type ProgressUpdateDispatchResult =
+/** Outcome of a single dispatch attempt (`tryDispatchProgressUpdate`). Never queues. */
+export type TryProgressUpdateResult =
 	| { dispatched: true }
 	| { dispatched: false; reason: ProgressUpdateDispatchReason };
+
+/** What the manual `dispatchProgressUpdateNow` path returns to the route: a single
+ * attempt outcome, or — for a transient conflict — a queued wakeup that runs when
+ * the Captain frees up. */
+export type ProgressUpdateDispatchResult =
+	| TryProgressUpdateResult
+	| { queued: true; wakeupId: string };
 
 export interface JobManagerDeps {
 	db: PGlite;
@@ -1380,6 +1393,44 @@ export class JobManager {
 				// one already holds the key (the wakeup was requeued to retry). Any other reason
 				// (no due goals, over budget, …) falls through to normal task selection.
 				if (result.dispatched || result.reason === 'launch_conflict') return;
+
+				// A manually-queued progress-update wakeup ("Run now" while the Captain was
+				// busy) must NEVER fall through to task selection — the user asked for a
+				// progress assessment, not for the Captain to start unrelated task work.
+				// Handle every non-launched outcome here and always return. (The wakeup was
+				// already claimed by the dispatcher, so the transient branch must re-queue it,
+				// not just stamp a skip reason — otherwise it would stick in `claimed`.)
+				if (wakeupPayload?.trigger === 'progress_update_now' && wakeupId) {
+					if (
+						result.reason === 'agent_busy' ||
+						result.reason === 'project_at_capacity' ||
+						result.reason === 'container_down'
+					) {
+						// Still transient — re-queue so a later cron tick retries once the
+						// Captain frees / the container comes up / capacity clears.
+						const skipReason =
+							result.reason === 'project_at_capacity'
+								? WakeupSkipReason.ProjectAtCapacity
+								: result.reason === 'container_down'
+									? WakeupSkipReason.ContainerDown
+									: WakeupSkipReason.AgentRunning;
+						await db.query(
+							`UPDATE agent_wakeup_requests
+							 SET status = $1::wakeup_status, claimed_at = NULL,
+							     last_skipped_at = now(), last_skipped_reason = $2
+							 WHERE id = $3`,
+							[WakeupStatus.Queued, skipReason, wakeupId],
+						);
+					} else {
+						// Terminal by dispatch time (goals no longer due, or over budget): the
+						// queued run is a no-op. Complete it so it doesn't spin forever.
+						await db.query(
+							`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
+							[WakeupStatus.Completed, wakeupId],
+						);
+					}
+					return;
+				}
 			}
 
 			// Instance agents (CEO/Coach) select across every team; everyone else is
@@ -1871,7 +1922,7 @@ export class JobManager {
 		},
 		wakeupId: string | undefined,
 		wakeupPayload: Record<string, unknown>,
-	): Promise<ProgressUpdateDispatchResult> {
+	): Promise<TryProgressUpdateResult> {
 		const { db, docker, masterKeyManager, serverPort } = this.deps;
 
 		// The Captain's project is its team's single non-internal project.
@@ -2096,7 +2147,9 @@ export class JobManager {
 			return { dispatched: false, reason: 'captain_disabled' };
 		}
 
-		return this.tryDispatchProgressUpdate(
+		// First attempt is synchronous: when the Captain is free this launches
+		// immediately (run card appears at once), exactly as before.
+		const result = await this.tryDispatchProgressUpdate(
 			captainRow.id,
 			teamId,
 			{
@@ -2115,6 +2168,53 @@ export class JobManager {
 				...(triggeredBy ? { triggered_by: triggeredBy } : {}),
 			},
 		);
+
+		// A transient conflict (Captain already running, project at capacity,
+		// container still coming up, or a launch race) is queued rather than
+		// surfaced as an error: the 5s dispatcher retries the wakeup and the run
+		// fires once the Captain frees up. Terminal reasons (no project/captain,
+		// disabled, over budget, nothing due) fall through unchanged.
+		if (
+			!result.dispatched &&
+			(result.reason === 'agent_busy' ||
+				result.reason === 'project_at_capacity' ||
+				result.reason === 'container_down' ||
+				result.reason === 'launch_conflict')
+		) {
+			const projRow = await db.query<{ id: string }>(
+				'SELECT id FROM projects WHERE team_id = $1 AND is_internal = false LIMIT 1',
+				[teamId],
+			);
+			const projectRowId = projRow.rows[0]?.id;
+			// Guarded by tryDispatchProgressUpdate already resolving the project, but
+			// stay defensive: without a project id we can't queue, so surface the reason.
+			if (projectRowId) {
+				const wakeupId = await createProgressUpdateWakeup(
+					db,
+					captainRow.id,
+					teamId,
+					projectRowId,
+					WakeupSource.OnDemand,
+					triggeredBy,
+				);
+				broadcastRowChange(
+					this.deps.wsManager,
+					wsRoom.team(teamId),
+					'agent_wakeup_requests',
+					'INSERT',
+					{
+						id: wakeupId,
+						team_id: teamId,
+						project_id: projectRowId,
+						member_id: captainRow.id,
+						status: WakeupStatus.Queued,
+					},
+				);
+				return { queued: true, wakeupId };
+			}
+		}
+
+		return result;
 	}
 
 	private async postFailurePing(

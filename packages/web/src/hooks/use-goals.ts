@@ -59,6 +59,24 @@ export function useGoalRuns(projectId: string) {
 	});
 }
 
+export interface QueuedProgressRun {
+	id: string;
+	created_at: string;
+	triggered_by: { member_id: string; name: string } | null;
+}
+
+/**
+ * The single queued manual progress-update run for this project, if any — created when "Run now" is
+ * clicked while the Captain is already busy. `queued` is null when nothing is waiting.
+ */
+export function useGoalQueuedRun(projectId: string) {
+	return useQuery({
+		queryKey: queryKeys.projects.goalQueuedRun(projectId),
+		queryFn: () =>
+			api.get<{ queued: QueuedProgressRun | null }>(`/api/projects/${projectId}/goals/queued-run`),
+	});
+}
+
 /** The progress-update runs that did something for one goal — shown at the bottom of its detail page. */
 export function useGoalRunActivity(projectId: string, goalId: string) {
 	return useQuery({
@@ -139,11 +157,18 @@ export function useArchiveGoal(projectId: string) {
 export function useRunProgressUpdateNow(projectId: string) {
 	return useMutation({
 		mutationFn: () =>
-			api.post<{ dispatched: boolean; reason?: string }>(
+			api.post<{ dispatched?: boolean; queued?: boolean; reason?: string }>(
 				`/api/projects/${projectId}/goals/run-now`,
 				{},
 			),
 		onSuccess: (data) => {
+			// The Captain was busy, so the run was queued instead of erroring — it fires
+			// automatically once the Captain frees up. Surface the queued row live.
+			if (data.queued) {
+				toast.info('Progress update queued — it will run when the Captain is free.');
+				queryClient.invalidateQueries({ queryKey: queryKeys.projects.goalQueuedRun(projectId) });
+				return;
+			}
 			if (!data.dispatched) {
 				toast.info(
 					data.reason === 'no_due_goals'
@@ -158,6 +183,24 @@ export function useRunProgressUpdateNow(projectId: string) {
 		},
 		onError: (error: { message?: string }) => {
 			toast.error(error?.message ?? 'Failed to start progress update');
+		},
+	});
+}
+
+/** Cancel the queued manual progress-update run (the "Run now"-while-busy row on the Goals page). */
+export function useCancelQueuedProgressRun(projectId: string) {
+	return useMutation({
+		mutationFn: (wakeupId: string) =>
+			api.post<{ cancelled: boolean }>(
+				`/api/projects/${projectId}/goals/queued-run/${wakeupId}/cancel`,
+				{},
+			),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.goalQueuedRun(projectId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.goalRuns(projectId) });
+		},
+		onError: (error: { message?: string }) => {
+			toast.error(error?.message ?? 'Failed to cancel queued progress update');
 		},
 	});
 }

@@ -80,6 +80,11 @@ You don't have to wait for the schedule: the **Run now** button next to **Progre
 the Progress page triggers a progress update immediately. It runs the same check the heartbeat would —
 assessing whichever goals are currently due — so if nothing is due yet it simply reports that.
 
+If the Captain is already busy when you press **Run now**, the progress update is **queued** instead
+of failing — it starts automatically as soon as the Captain is free. A queued run shows up as a
+"Queued — waiting for the Captain to finish" row in the **Progress update runs** section, and you can
+cancel it from there while it's still waiting.
+
 During the same run the Captain also refreshes the **project progress summary** shown at the top
 of the Progress page, so that headline stays in step with the goal estimates.
 

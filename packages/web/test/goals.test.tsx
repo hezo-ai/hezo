@@ -1,3 +1,4 @@
+import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import {
@@ -361,8 +362,46 @@ test('the Progress page shows a Run now button beside the progress update runs l
 	await findByText('Progress update runs');
 	const runNow = await findByTestId('progress-update-run-now', undefined, { timeout: 10_000 });
 	expect(runNow.textContent).toContain('Run now');
-	// Clicking fires the run-now mutation against the in-process backend (no running container in
-	// tests → a handled 409); it must not throw and the button stays in the DOM.
+	// Clicking fires the run-now mutation against the in-process backend. The goal is due but there
+	// is no running container in tests (a transient conflict), so the run is queued rather than
+	// erroring — the queued row appears.
 	await user.click(runNow);
 	await findByTestId('progress-update-run-now');
+});
+
+test('Run now queues when the Captain is busy, and the queued run can be cancelled', async () => {
+	let projectSlug = '';
+	const { findByTestId, findByText, queryByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Queue Demo' });
+			projectSlug = project.slug;
+			// A freshly-seeded goal is immediately due; no running container in tests means the run
+			// is queued instead of started.
+			await seedGoal(ws, project, { title: 'Ship it', measurement: 'shipped' });
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/goals',
+		params: { projectId: projectSlug },
+	});
+
+	const runNow = await findByTestId('progress-update-run-now', undefined, { timeout: 10_000 });
+	await user.click(runNow);
+
+	// The queued row appears (driven by the real backend queuing the wakeup).
+	const queuedRow = await findByTestId('progress-update-queued-row', undefined, {
+		timeout: 10_000,
+	});
+	expect(queuedRow.textContent).toContain('Queued');
+
+	// Cancelling opens the confirm dialog, then removes the queued row.
+	await user.click(await findByTestId('cancel-queued-progress-run'));
+	await user.click(await findByText('Cancel run'));
+
+	await waitFor(() => expect(queryByTestId('progress-update-queued-row')).toBeNull(), {
+		timeout: 10_000,
+	});
 });

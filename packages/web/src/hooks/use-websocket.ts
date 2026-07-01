@@ -52,6 +52,10 @@ const TABLE_TO_QUERY_KEY: Record<
 		const keys: QueryKey[] = [queryKeys.projects.tasks(cid)];
 		if (row.task_id) {
 			keys.push(queryKeys.projects.taskQueuedWakeups(cid, row.task_id as string));
+		} else {
+			// A task-less wakeup is the Captain's queued progress-update run — refresh
+			// the Goals page's queued row so it appears/clears live.
+			keys.push(queryKeys.projects.goalQueuedRun(cid));
 		}
 		return keys;
 	},
