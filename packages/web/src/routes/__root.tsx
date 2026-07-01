@@ -43,7 +43,7 @@ function Spinner() {
 }
 
 function AppShell() {
-	const { data: status, isPending, isFetching, isError, error, refetch } = useStatus();
+	const { data: status, isPending, isError, error, refetch } = useStatus();
 	const navigate = useNavigate();
 
 	useEffect(() => {
@@ -58,7 +58,13 @@ function AppShell() {
 		return <StartingScreen phase={status.phase} message={status.message} detail={status.detail} />;
 	}
 
-	if (isPending || isFetching) return <Spinner />;
+	// Only the FIRST load (no status yet) shows the full-screen spinner. Background
+	// refetches — notably React Query's refetch-on-reconnect, which fires on every
+	// mobile network blip (radio waking on app-switch, cell↔wifi handoffs, signal
+	// dips) — must NOT unmount the shell, or the whole app blanks to a spinner and
+	// remounts, which reads as a spontaneous full-page refresh. `isPending` already
+	// covers the initial load and the retry-while-no-data window.
+	if (isPending) return <Spinner />;
 
 	if (isError || !status || !status.masterKeyState) {
 		const message =
