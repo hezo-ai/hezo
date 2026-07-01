@@ -127,6 +127,15 @@ export function buildClaudeCodeSettings(provider: AiProvider): ClaudeCodeSetting
  * field, API call, and response extraction differ.
  */
 interface JudgeRuntimeSpec {
+	/**
+	 * The `decision` value the hook must emit to make THIS runtime keep the
+	 * agent working. Codex's `Stop` hook continues on `block` (the reason
+	 * becomes the continuation prompt); Gemini's `AfterAgent` hook continues on
+	 * `deny` (the reason becomes a correction prompt) and ignores `block`
+	 * outright. This is the runtime's wire value, distinct from the judge LLM's
+	 * own `block`/`allow` verdict.
+	 */
+	blockDecision: string;
 	/** API key env var(s), checked in order; first non-empty wins. */
 	apiKeyEnvVars: string[];
 	/**
@@ -169,6 +178,10 @@ async function main() {
 	if (!raw.trim()) return;
 	let input;
 	try { input = JSON.parse(raw); } catch { return; }
+	// The turn was already continued once by this hook — allow the stop now so a
+	// persistent judge can't loop the agent indefinitely (re-waking it into
+	// redundant reposts / repeated work). Both runtimes flag this on stdin.
+	if (input && input.stop_hook_active) return;
 	let message;
 	for (const f of MESSAGE_FIELDS) {
 		if (typeof input[f] === 'string' && input[f].trim()) { message = input[f]; break; }
@@ -186,7 +199,7 @@ async function main() {
 	} catch { return; }
 
 	if (verdict && verdict.decision === 'block' && typeof verdict.reason === 'string' && verdict.reason.length > 0) {
-		process.stdout.write(JSON.stringify({ decision: 'block', reason: verdict.reason }));
+		process.stdout.write(JSON.stringify({ decision: ${JSON.stringify(spec.blockDecision)}, reason: verdict.reason }));
 	}
 }
 
@@ -213,6 +226,8 @@ function openAiCompatJudgeSpec(opts: {
 }): JudgeRuntimeSpec {
 	const url = `${opts.baseUrl.replace(/\/$/, '')}/chat/completions`;
 	return {
+		// Codex's `Stop` hook continues the turn on `block`.
+		blockDecision: 'block',
 		apiKeyEnvVars: opts.apiKeyEnvVars,
 		inputFields: opts.inputFields,
 		model: opts.model,
@@ -244,6 +259,8 @@ const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
 	}),
 	// Gemini `AfterAgent` hook → Google Generative AI, judging `prompt_response`.
 	[AgentRuntime.Gemini]: {
+		// AfterAgent forces a corrective retry on `deny` and ignores `block`.
+		blockDecision: 'deny',
 		apiKeyEnvVars: ['GOOGLE_API_KEY', 'GEMINI_API_KEY'],
 		inputFields: ['prompt_response'],
 		model: STOP_HOOK_JUDGE_MODEL_GOOGLE,
