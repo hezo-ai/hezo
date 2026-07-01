@@ -2,7 +2,7 @@
 	"name": "hezo",
 	"description": "A whole AI workforce. Self-hosted and secure.",
 	"private": true,
-	"license": "AGPL-3.0-or-later",
+	"license": "MIT",
 	"packageManager": "bun@1.3.9",
 	"workspaces": [
 		"packages/*"

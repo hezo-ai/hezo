@@ -8,7 +8,7 @@
   
 [![Update hezo submodule](https://github.com/hezo-ai/hezo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hezo-ai/main/actions/workflows/main.yml)
 [![Coverage Status](https://coveralls.io/repos/github/hezo-ai/hezo/badge.svg?branch=main)](https://coveralls.io/github/hezo-ai/hezo?branch=main)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](./LICENSE.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE.md)
 
 </div>
 
@@ -192,6 +192,6 @@ Questions and bug reports are welcome via
 
 Copyright (C) 2026 [Ramesh Nair](https://hiddentao.com).
 
-Hezo is licensed under the [GNU Affero General Public License v3.0 or later](./LICENSE.md).
+Hezo is licensed under the [MIT License](./LICENSE.md).
 
 X: [@taoofdev](https://x.com/taoofdev)
