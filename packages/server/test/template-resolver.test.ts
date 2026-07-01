@@ -67,6 +67,15 @@ describe('template resolver', () => {
 		expect(result).toContain('already handed this ticket off');
 	});
 
+	it('appends the cancellation hand-back rule with the admin/CEO carve-out', async () => {
+		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
+		// A manager must hand an active task back to wind down, not cancel it out from under
+		// the assignee.
+		expect(result).toContain('hand it back to wind down first');
+		// ...except the human admin and the CEO, who may cancel unilaterally.
+		expect(result).toContain('without recourse');
+	});
+
 	it('resolves {{team_description}} to team description', async () => {
 		const result = await resolveSystemPrompt(db, 'Desc: {{team_description}}', {
 			teamId,
