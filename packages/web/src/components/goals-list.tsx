@@ -273,6 +273,17 @@ export function GoalsList({ projectId }: GoalsListProps) {
 					</HelpDialog>
 					<ViewFilter view={view} onChange={setView} />
 				</div>
+				{view === 'active' && (
+					<Button
+						size="sm"
+						onClick={() => setCreateOpen(true)}
+						data-testid="goals-new-goal"
+						aria-label="New goal"
+						title="New goal"
+					>
+						<Plus className="w-4 h-4" />
+					</Button>
+				)}
 			</div>
 
 			{goals.length === 0 ? (
@@ -281,19 +292,6 @@ export function GoalsList({ projectId }: GoalsListProps) {
 				</div>
 			) : (
 				<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-					{/* An add-goal card sits inline with the goals so the affordance is hard to miss. */}
-					{view === 'active' && (
-						<button
-							type="button"
-							onClick={() => setCreateOpen(true)}
-							data-testid="goals-new-goal"
-							aria-label="New goal"
-							className="flex min-h-[132px] flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border bg-surface p-4 text-text-3 transition-colors hover:border-border-strong hover:bg-surface-2 hover:text-text-1"
-						>
-							<Plus className="h-5 w-5" />
-							<span className="text-sm font-medium">New goal</span>
-						</button>
-					)}
 					{goals.map((goal) => (
 						<GoalPanel key={goal.id} projectId={projectId} goal={goal} onEdit={setEditingGoal} />
 					))}

@@ -316,7 +316,7 @@ test('the goal run feed hides the status summary until expanded, keeping task ch
 	await findByText(createdIdentifier);
 });
 
-test('the New goal card sits in the goals grid and opens the create dialog', async () => {
+test('the New goal button sits on the Goals header line and opens the create dialog', async () => {
 	let projectSlug = '';
 	const { findByTestId, findByText, user, router } = await renderApp({
 		initialPath: '/',
@@ -324,7 +324,7 @@ test('the New goal card sits in the goals grid and opens the create dialog', asy
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Add Card Demo' });
 			projectSlug = project.slug;
-			// A goal already exists, so the grid (with the inline add-card) renders, not the hero.
+			// A goal already exists, so the list header (with the add button) renders, not the hero.
 			await seedGoal(ws, project, { title: 'Ship it', measurement: 'shipped' });
 		},
 	});
@@ -334,10 +334,10 @@ test('the New goal card sits in the goals grid and opens the create dialog', asy
 		params: { projectId: projectSlug },
 	});
 
-	// The add affordance is a card in the list (same testid the header button used to carry).
-	const addCard = await findByTestId('goals-new-goal', undefined, { timeout: 10_000 });
-	expect(addCard.textContent).toContain('New goal');
-	await user.click(addCard);
+	// The add affordance is a small "+" button right-aligned on the Goals header line.
+	const addButton = await findByTestId('goals-new-goal', undefined, { timeout: 10_000 });
+	expect(addButton.getAttribute('aria-label')).toBe('New goal');
+	await user.click(addButton);
 	await findByText('Create Goal');
 });
 
