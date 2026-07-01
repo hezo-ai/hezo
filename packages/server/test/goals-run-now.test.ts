@@ -51,7 +51,7 @@ describe('POST /projects/:projectId/goals/run-now', () => {
 		expect(body.reason).toBe('no_due_goals');
 	});
 
-	it('resolves the Captain and reaches run-gating (409) when a goal is due but the container is down', async () => {
+	it('queues the run (200, queued) when a goal is due but the container is down', async () => {
 		// A freshly created goal has never been checked, so it is immediately due.
 		const create = await app.request(`/api/projects/${projectSlug}/goals`, {
 			method: 'POST',
@@ -70,9 +70,61 @@ describe('POST /projects/:projectId/goals/run-now', () => {
 			body: '{}',
 		});
 		// Past the "nothing due" check it hits run-gating — the test project has no running
-		// container — so it is a 409 (not a 200 no-op and not a 404), proving the Captain and the
-		// due goal were both resolved.
-		expect(res.status).toBe(409);
-		expect((await res.json()).error.message).toBeTruthy();
+		// container (a transient conflict) — so instead of a 409 the run is queued to fire once
+		// the Captain is free. Proves the Captain and the due goal were both resolved.
+		expect(res.status).toBe(200);
+		const body = (await res.json()).data;
+		expect(body.queued).toBe(true);
+		expect(body.wakeup_id).toBeTruthy();
+
+		// A single queued progress-update wakeup was created for the Captain.
+		const queued = await db.query<{ payload: Record<string, unknown> }>(
+			`SELECT payload FROM agent_wakeup_requests
+			 WHERE id = $1 AND status = 'queued'::wakeup_status`,
+			[body.wakeup_id],
+		);
+		expect(queued.rows.length).toBe(1);
+		expect(queued.rows[0].payload.trigger).toBe('progress_update_now');
+		expect(queued.rows[0].payload.project_id).toBeTruthy();
+
+		// It surfaces via the project-scoped queued-run endpoint.
+		const list = await app.request(`/api/projects/${projectSlug}/goals/queued-run`, {
+			headers: authHeader(token),
+		});
+		expect(list.status).toBe(200);
+		expect((await list.json()).data.queued.id).toBe(body.wakeup_id);
+
+		// "Run now" again is idempotent — same wakeup, no second row.
+		const again = await app.request(`/api/projects/${projectSlug}/goals/run-now`, {
+			method: 'POST',
+			headers: jsonHeaders(),
+			body: '{}',
+		});
+		expect((await again.json()).data.wakeup_id).toBe(body.wakeup_id);
+		const count = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM agent_wakeup_requests
+			 WHERE status = 'queued'::wakeup_status AND payload->>'trigger' = 'progress_update_now'`,
+		);
+		expect(count.rows[0].c).toBe(1);
+
+		// Cancelling removes it from the queue.
+		const cancel = await app.request(
+			`/api/projects/${projectSlug}/goals/queued-run/${body.wakeup_id}/cancel`,
+			{ method: 'POST', headers: jsonHeaders(), body: '{}' },
+		);
+		expect(cancel.status).toBe(200);
+		expect((await cancel.json()).data.cancelled).toBe(true);
+
+		const afterCancel = await app.request(`/api/projects/${projectSlug}/goals/queued-run`, {
+			headers: authHeader(token),
+		});
+		expect((await afterCancel.json()).data.queued).toBe(null);
+
+		// Cancelling an already-cancelled run is a 409.
+		const recancel = await app.request(
+			`/api/projects/${projectSlug}/goals/queued-run/${body.wakeup_id}/cancel`,
+			{ method: 'POST', headers: jsonHeaders(), body: '{}' },
+		);
+		expect(recancel.status).toBe(409);
 	});
 });

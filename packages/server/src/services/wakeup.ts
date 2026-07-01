@@ -66,6 +66,52 @@ export async function createWakeup(
 }
 
 /**
+ * Idempotently create the Captain's manual ("Run now") progress-update wakeup.
+ *
+ * Unlike a task wakeup, a progress-update wakeup is task-less, so `createWakeup`
+ * would coalesce it onto the Captain's *scheduled* task-less heartbeat wakeup
+ * (same member, `task_id IS NULL`) — merging the two and blurring the
+ * `progress_update_now` marker. This helper never coalesces: it returns any
+ * existing still-queued progress wakeup for the Captain (so clicking "Run now"
+ * twice yields one row) or inserts a fresh, uniquely-keyed one. The
+ * `progress_update_now:<captain>` idempotency key both dedups and lets the
+ * list/cancel routes target the row precisely.
+ */
+export async function createProgressUpdateWakeup(
+	db: PGlite,
+	captainMemberId: string,
+	teamId: string,
+	projectId: string,
+	source: WakeupSource,
+	triggeredBy?: { member_id: string; name: string } | null,
+): Promise<string> {
+	const idempotencyKey = `progress_update_now:${captainMemberId}`;
+
+	const existing = await db.query<{ id: string }>(
+		`SELECT id FROM agent_wakeup_requests
+		 WHERE member_id = $1 AND status = $2::wakeup_status
+		   AND payload->>'trigger' = 'progress_update_now'
+		 LIMIT 1`,
+		[captainMemberId, WakeupStatus.Queued],
+	);
+	if (existing.rows.length > 0) return existing.rows[0].id;
+
+	const payload = {
+		source,
+		trigger: 'progress_update_now',
+		project_id: projectId,
+		...(triggeredBy ? { triggered_by: triggeredBy } : {}),
+	};
+	const result = await db.query<{ id: string }>(
+		`INSERT INTO agent_wakeup_requests (member_id, team_id, source, payload, idempotency_key)
+		 VALUES ($1, $2, $3::wakeup_source, $4::jsonb, $5)
+		 RETURNING id`,
+		[captainMemberId, teamId, source, JSON.stringify(payload), idempotencyKey],
+	);
+	return result.rows[0].id;
+}
+
+/**
  * Retire every still-queued wakeup for one agent + task except the one that is
  * driving the run that is about to start. A run reads the full task context at
  * boot, so any trigger already queued when it starts is served by that run;

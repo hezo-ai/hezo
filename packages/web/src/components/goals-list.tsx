@@ -1,8 +1,24 @@
 import { GOAL_CHECK_FREQUENCY_LABELS, type GoalWithProject } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
-import { Archive, ArchiveRestore, Pencil, Plus, RotateCw, Target } from 'lucide-react';
+import {
+	Archive,
+	ArchiveRestore,
+	Clock,
+	Pencil,
+	Plus,
+	RotateCw,
+	Target,
+	Trash2,
+} from 'lucide-react';
 import { useState } from 'react';
-import { useGoalRuns, useGoals, useRunProgressUpdateNow, useUpdateGoal } from '../hooks/use-goals';
+import {
+	useCancelQueuedProgressRun,
+	useGoalQueuedRun,
+	useGoalRuns,
+	useGoals,
+	useRunProgressUpdateNow,
+	useUpdateGoal,
+} from '../hooks/use-goals';
 import { RunCommentBody } from './comment-renderers/run-comment';
 import { CreateGoalDialog } from './create-goal-dialog';
 import { GoalHealthPill } from './goal-health-pill';
@@ -10,8 +26,10 @@ import { GoalSmartGuidance } from './goal-smart-guidance';
 import { LazyMount } from './lazy-mount';
 import { ProjectProgressSummary } from './project-progress-summary';
 import { Button } from './ui/button';
+import { ConfirmDialog } from './ui/confirm-dialog';
 import { EmptyState } from './ui/empty-state';
 import { HelpDialog } from './ui/help-dialog';
+import { Tooltip } from './ui/tooltip';
 
 interface GoalsListProps {
 	projectId: string;
@@ -114,10 +132,54 @@ function GoalPanel({
 	);
 }
 
+function QueuedProgressRunRow({ projectId, wakeupId }: { projectId: string; wakeupId: string }) {
+	const [open, setOpen] = useState(false);
+	const cancel = useCancelQueuedProgressRun(projectId);
+
+	return (
+		<div
+			data-testid="progress-update-queued-row"
+			className="mb-2 flex items-center justify-between gap-2 rounded-md border border-border bg-surface px-3 py-2.5"
+		>
+			<div className="flex min-w-0 items-center gap-2 text-[13px] text-text-2">
+				<Clock className="h-3.5 w-3.5 shrink-0 text-text-3" />
+				<span className="truncate">Queued — waiting for the Captain to finish</span>
+			</div>
+			<Tooltip content="Cancel queued progress update">
+				<button
+					type="button"
+					onClick={() => setOpen(true)}
+					aria-label="Cancel queued progress update"
+					data-testid="cancel-queued-progress-run"
+					disabled={cancel.isPending}
+					className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-danger transition-colors hover:bg-danger/10"
+				>
+					<Trash2 className="h-3.5 w-3.5" />
+				</button>
+			</Tooltip>
+			<ConfirmDialog
+				open={open}
+				onOpenChange={setOpen}
+				title="Cancel queued progress update?"
+				description="The queued progress update will be removed and won't run."
+				confirmLabel="Cancel run"
+				cancelLabel="Keep queued"
+				variant="danger"
+				loading={cancel.isPending}
+				onConfirm={async () => {
+					await cancel.mutateAsync(wakeupId);
+				}}
+			/>
+		</div>
+	);
+}
+
 function ProgressUpdatesFooter({ projectId }: { projectId: string }) {
 	const { data: runs } = useGoalRuns(projectId);
+	const { data: queued } = useGoalQueuedRun(projectId);
 	const runNow = useRunProgressUpdateNow(projectId);
 	const hasRuns = !!runs && runs.length > 0;
+	const queuedRun = queued?.queued ?? null;
 
 	return (
 		<section data-testid="progress-updates" className="mt-8">
@@ -137,6 +199,7 @@ function ProgressUpdatesFooter({ projectId }: { projectId: string }) {
 					{runNow.isPending ? 'Running…' : 'Run now'}
 				</Button>
 			</div>
+			{queuedRun && <QueuedProgressRunRow projectId={projectId} wakeupId={queuedRun.id} />}
 			{!hasRuns ? (
 				<div
 					data-testid="progress-updates-empty"

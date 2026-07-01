@@ -98,6 +98,7 @@ export const queryKeys = {
 		goal: (slug: string, goalId: string) => ['projects', slug, 'goals', goalId],
 		goalHistory: (slug: string, goalId: string) => ['projects', slug, 'goals', goalId, 'history'],
 		goalRuns: (slug: string) => ['projects', slug, 'goals', 'runs'],
+		goalQueuedRun: (slug: string) => ['projects', slug, 'goals', 'queued-run'],
 		goalRunsForGoal: (slug: string, goalId: string) => ['projects', slug, 'goals', goalId, 'runs'],
 		progress: (slug: string) => ['projects', slug, 'progress'],
 
