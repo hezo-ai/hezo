@@ -1,17 +1,18 @@
 import type {
 	GoalCheckFrequency,
-	GoalCheckRunSummary,
 	GoalHistoryPoint,
 	GoalRunActivity,
 	GoalWithProject,
+	ProgressUpdateRunSummary,
 } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 import { useOptimisticMutation } from './use-optimistic-mutation';
+import { toast } from './use-toast';
 
-export type { GoalCheckRunSummary, GoalRunActivity, GoalWithProject };
+export type { GoalRunActivity, GoalWithProject, ProgressUpdateRunSummary };
 
 interface UseGoalsOptions {
 	includeArchived?: boolean;
@@ -50,15 +51,15 @@ export function useGoalHistory(projectId: string, goalId: string) {
 	});
 }
 
-/** The goal-check runs for this project (newest-first as returned by the server). */
+/** The progress-update runs for this project (newest-first as returned by the server). */
 export function useGoalRuns(projectId: string) {
 	return useQuery({
 		queryKey: queryKeys.projects.goalRuns(projectId),
-		queryFn: () => api.get<GoalCheckRunSummary[]>(`/api/projects/${projectId}/goals/runs`),
+		queryFn: () => api.get<ProgressUpdateRunSummary[]>(`/api/projects/${projectId}/goals/runs`),
 	});
 }
 
-/** The goal-check runs that did something for one goal — shown at the bottom of its detail page. */
+/** The progress-update runs that did something for one goal — shown at the bottom of its detail page. */
 export function useGoalRunActivity(projectId: string, goalId: string) {
 	return useQuery({
 		queryKey: queryKeys.projects.goalRunsForGoal(projectId, goalId),
@@ -126,6 +127,37 @@ export function useArchiveGoal(projectId: string) {
 			// project index and detail, which both carry open_goal_count.
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
+		},
+	});
+}
+
+/**
+ * Manually run the Captain's progress-update on demand ("Run now" on the Goals page). The run is
+ * long-running/async, so this is invalidate + refetch — the new run surfaces via the runs query and
+ * the WebSocket. A 200 with `dispatched:false` (e.g. nothing due) is a neutral notice, not an error.
+ */
+export function useRunProgressUpdateNow(projectId: string) {
+	return useMutation({
+		mutationFn: () =>
+			api.post<{ dispatched: boolean; reason?: string }>(
+				`/api/projects/${projectId}/goals/run-now`,
+				{},
+			),
+		onSuccess: (data) => {
+			if (!data.dispatched) {
+				toast.info(
+					data.reason === 'no_due_goals'
+						? 'No goals are due for a progress update right now.'
+						: 'No progress update was started.',
+				);
+				return;
+			}
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.goalRuns(projectId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.goals(projectId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.progress(projectId) });
+		},
+		onError: (error: { message?: string }) => {
+			toast.error(error?.message ?? 'Failed to start progress update');
 		},
 	});
 }

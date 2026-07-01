@@ -2,7 +2,7 @@ import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import {
 	seedGoal,
-	seedGoalCheckRun,
+	seedProgressUpdateRun,
 	seedProject,
 	seedProjectProgress,
 	seedTask,
@@ -74,7 +74,7 @@ test('the goal detail run feed renders the health as a coloured pill and links t
 				measurement: 'launched',
 			});
 			goalId = goal.id;
-			await seedGoalCheckRun(ws, {
+			await seedProgressUpdateRun(ws, {
 				goal,
 				progressPercent: 40,
 				health: 'on_track',
@@ -97,7 +97,7 @@ test('the goal detail run feed renders the health as a coloured pill and links t
 	expect(getByTestId('goal-run').textContent).not.toContain('on_track');
 });
 
-test('the Progress page goal-check footer renders runs as collapsible run cards', async () => {
+test('the Progress page progress-update footer renders runs as collapsible run cards', async () => {
 	let projectSlug = '';
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -106,7 +106,7 @@ test('the Progress page goal-check footer renders runs as collapsible run cards'
 			const project = await seedProject(ws, { name: 'Footer Demo' });
 			projectSlug = project.slug;
 			const goal = await seedGoal(ws, project, { title: 'Ship beta', measurement: 'beta live' });
-			await seedGoalCheckRun(ws, { goal, statusBlurb: 'Going well' });
+			await seedProgressUpdateRun(ws, { goal, statusBlurb: 'Going well' });
 		},
 	});
 
@@ -115,9 +115,9 @@ test('the Progress page goal-check footer renders runs as collapsible run cards'
 		params: { projectId: projectSlug },
 	});
 
-	// Each goal-check run renders the same collapsible run card used for agent runs on a
+	// Each progress-update run renders the same collapsible run card used for agent runs on a
 	// task — its summary header (with the expand toggle) is the tell.
-	await findByTestId('goal-check-run', undefined, { timeout: 10_000 });
+	await findByTestId('progress-update-run', undefined, { timeout: 10_000 });
 	await findByTestId('run-comment-header', undefined, { timeout: 10_000 });
 });
 
@@ -208,8 +208,8 @@ test('clicking a goal opens its page with breadcrumbs, run feed, and edit modal'
 	await findByTestId('goal-breadcrumb');
 	await findByText('Achieved when');
 	await findByText('public beta is live');
-	await findByText('Goal heartbeat runs');
-	await findByText('No goal-check activity yet.');
+	await findByText('Progress update runs');
+	await findByText('No progress-update activity yet.');
 
 	// Editing reuses the create/edit modal.
 	await user.click(getByTestId('goal-edit'));
@@ -273,7 +273,7 @@ test('Project progress header opens a help dialog explaining how it updates', as
 
 	await user.click(help);
 
-	// The dialog explains what it is and that the Captain refreshes it during goal-check runs.
+	// The dialog explains what it is and that the Captain refreshes it during progress-update runs.
 	await findByText('About project progress');
 	await findByText(/reviews progress across the project/);
 });
@@ -292,7 +292,7 @@ test('the goal run feed hides the status summary until expanded, keeping task ch
 			goalId = goal.id;
 			const task = await seedTask(ws, project, { title: 'Wire up auth' });
 			createdIdentifier = task.identifier;
-			await seedGoalCheckRun(ws, {
+			await seedProgressUpdateRun(ws, {
 				goal,
 				statusBlurb: 'Auth is the last blocker before beta.',
 				createdTasks: [task],
@@ -314,4 +314,55 @@ test('the goal run feed hides the status summary until expanded, keeping task ch
 	await user.click(await findByTestId('goal-run-expand'));
 	await findByText(/Auth is the last blocker/);
 	await findByText(createdIdentifier);
+});
+
+test('the New goal card sits in the goals grid and opens the create dialog', async () => {
+	let projectSlug = '';
+	const { findByTestId, findByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Add Card Demo' });
+			projectSlug = project.slug;
+			// A goal already exists, so the grid (with the inline add-card) renders, not the hero.
+			await seedGoal(ws, project, { title: 'Ship it', measurement: 'shipped' });
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/goals',
+		params: { projectId: projectSlug },
+	});
+
+	// The add affordance is a card in the list (same testid the header button used to carry).
+	const addCard = await findByTestId('goals-new-goal', undefined, { timeout: 10_000 });
+	expect(addCard.textContent).toContain('New goal');
+	await user.click(addCard);
+	await findByText('Create Goal');
+});
+
+test('the Progress page shows a Run now button beside the progress update runs label', async () => {
+	let projectSlug = '';
+	const { findByTestId, findByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Run Now Demo' });
+			projectSlug = project.slug;
+			await seedGoal(ws, project, { title: 'Ship it', measurement: 'shipped' });
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/goals',
+		params: { projectId: projectSlug },
+	});
+
+	await findByText('Progress update runs');
+	const runNow = await findByTestId('progress-update-run-now', undefined, { timeout: 10_000 });
+	expect(runNow.textContent).toContain('Run now');
+	// Clicking fires the run-now mutation against the in-process backend (no running container in
+	// tests → a handled 409); it must not throw and the button stays in the DOM.
+	await user.click(runNow);
+	await findByTestId('progress-update-run-now');
 });

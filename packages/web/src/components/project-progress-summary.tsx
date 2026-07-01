@@ -47,7 +47,7 @@ function ProjectProgressHelp() {
 				</p>
 				<p>
 					It updates on its own — there's nothing to edit by hand. Each time the Captain runs a
-					goal-check heartbeat, it reviews progress across the project's goals and tasks and
+					progress-update heartbeat, it reviews progress across the project's goals and tasks and
 					rewrites this summary. The <span className="font-medium text-text-1">Updated</span> time
 					shows when it last changed.
 				</p>

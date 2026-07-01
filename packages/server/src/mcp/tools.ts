@@ -970,7 +970,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_goal_progress',
-		"Record your current assessment of a goal's progress. Only the Captain does this, and only from within a goal-check run. Pass progress_percent (0-100, your honest estimate — do not lower it without a reason in the blurb), health (on_track / at_risk / off_track, weighing progress against the target_date), and a one-paragraph status_blurb explaining where the goal stands and what is needed next. This updates the goal's live status and appends a point to its progress history; the goal then won't be re-surfaced for checking until its cadence elapses again.",
+		"Record your current assessment of a goal's progress. Only the Captain does this, and only from within a progress-update run. Pass progress_percent (0-100, your honest estimate — do not lower it without a reason in the blurb), health (on_track / at_risk / off_track, weighing progress against the target_date), and a one-paragraph status_blurb explaining where the goal stands and what is needed next. This updates the goal's live status and appends a point to its progress history; the goal then won't be re-surfaced for checking until its cadence elapses again.",
 		{
 			project: projectArg(),
 			goal_id: z.string().describe('UUID of the goal to update.'),
@@ -1022,7 +1022,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_project_progress',
-		"Replace the project's progress summary shown at the top of the Progress page. Only the Captain does this, and only from within a goal-check run. Keep it a concise summary, not a backlog: lead with the key points in **bold**, then a short narrative of what is done, what is in progress, and what is still to do. You may reference a few of the most relevant tickets by their bare identifier (e.g. BE-2) — link sparingly. This overwrites the whole summary, so include everything that should remain.",
+		"Replace the project's progress summary shown at the top of the Progress page. Only the Captain does this, and only from within a progress-update run. Keep it a concise summary, not a backlog: lead with the key points in **bold**, then a short narrative of what is done, what is in progress, and what is still to do. You may reference a few of the most relevant tickets by their bare identifier (e.g. BE-2) — link sparingly. This overwrites the whole summary, so include everything that should remain.",
 		{
 			project: projectArg(),
 			summary: z
@@ -2116,7 +2116,7 @@ export function registerTools(
 			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const authorApiKeyId = apiKeyIdFromAuth(auth);
 			// Attribute the comment to the run that wrote it (only on the agent-run path) so the
-			// goal detail page can show "this goal-check run commented on task X".
+			// goal detail page can show "this progress-update run commented on task X".
 			const createdByRunId = auth.type === AuthType.Agent ? (auth.runId ?? null) : null;
 			const content = { text: args.content };
 			// RETURNING * includes public_id (the timestamp slug for comment links),

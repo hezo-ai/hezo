@@ -121,15 +121,15 @@ the `is_internal` HQ project has none, enforced in the service). Each carries a 
 default daily), an admin-set `archived_at` (NULL = active; there is **no** achieved status),
 and the Captain-maintained snapshot — `progress_percent` (0–100), a `goal_health` enum
 (`pending`/`on_track`/`at_risk`/`off_track`), a `status_blurb`, and `last_checked_at`. The
-Captain refreshes these on its heartbeat via a **goal-check run** (below). `goal_run_updates`
+Captain refreshes these on its heartbeat via a **progress-update run** (below). `goal_run_updates`
 is the per-run progress history (one row per goal touched by a run, snapshotting
-percent/health/blurb) — the source of each goal's progress chart and the project-wide goal-check
+percent/health/blurb) — the source of each goal's progress chart and the project-wide progress-update
 list on the Progress page. `tasks.goal_id` optionally links a ticket to the goal it advances
 (traceability only; it does **not** gate or alter how the task runs), and `tasks.created_by_run_id`
 / `task_comments.created_by_run_id` attribute a ticket or comment to the run that produced it.
 Together these back the goal detail page's per-goal **run activity** feed (`listGoalRunActivity`):
-the goal-check runs that estimated *that* goal, created tickets linked to it, or commented on its
-linked tickets. During a goal-check run the Captain may comment on an in-flight ticket instead of
+the progress-update runs that estimated *that* goal, created tickets linked to it, or commented on its
+linked tickets. During a progress-update run the Captain may comment on an in-flight ticket instead of
 filing a new one, and it can never re-open a terminal ticket (blocked in both the REST and MCP
 update paths — only the admin can). A separate Captain-maintained **project progress summary**
 (`projects.progress_summary` + `progress_summary_updated_at`, set via the `update_project_progress`
@@ -149,9 +149,13 @@ single shared catalog keyed by a globally-unique name (`secrets.name` /
 idempotency keys and `coalesced_count` merging (§ 5). `heartbeat_runs` is one row per
 execution (status, timing, tokens, cost, captured logs, `wakeup_id` provenance, the
 success-gate flags `produced_output`/`reported_no_work`). A `kind` enum distinguishes a
-normal `task` run from a `goal_check` run (the Captain's task-less goal assessment —
-`task_id IS NULL`); goal-check runs reuse the full run lifecycle but skip the task comment,
-status flip, and code worktree. Token usage is flushed to the
+normal `task` run from a `progress_update` run (the Captain's task-less goal assessment —
+`task_id IS NULL`); progress-update runs reuse the full run lifecycle but skip the task comment,
+status flip, and code worktree. They fire on the Captain's heartbeat when goals are due
+(`JobManager.tryDispatchProgressUpdate` → `getDueGoals`), and can also be triggered on demand from
+the Goals page's **Run now** button (`POST /projects/:projectId/goals/run-now` →
+`JobManager.dispatchProgressUpdateNow`, which resolves the project's Captain and reuses the same
+due-goal logic). Token usage is flushed to the
 row *during* the run (alongside the log), so a run the server kills mid-flight still
 reports the tokens/cost it burned instead of `0`; `usage_partial` flags such a snapshot
 until a clean completion supersedes it. `agent_task_sessions` persists

@@ -41,7 +41,7 @@ const TABLE_TO_QUERY_KEY: Record<
 				);
 			}
 		}
-		// A goal-check run (a heartbeat run with no task) updates the Goals page's
+		// A progress-update run (a heartbeat run with no task) updates the Goals page's
 		// runs footer; refresh it live.
 		if (!row.task_id) {
 			keys.push(queryKeys.projects.goalRuns(cid));

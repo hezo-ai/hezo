@@ -7,9 +7,9 @@ import {
 	createGoal,
 	type GoalError,
 	getDueGoals,
-	listGoalCheckRuns,
 	listGoalRunActivity,
 	listGoals,
+	listProgressUpdateRuns,
 	recordGoalProgress,
 } from '../src/services/goals';
 import { getProjectProgress, updateProjectProgress } from '../src/services/projects';
@@ -222,10 +222,10 @@ describe('goals service', () => {
 			[teamId, projectId],
 		);
 		const goalRowId = goal.rows[0].id;
-		// A Captain goal-check run with no task.
+		// A Captain progress-update run with no task.
 		const run = await db.query<{ id: string }>(
 			`INSERT INTO heartbeat_runs (team_id, member_id, status, kind)
-			 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, 'goal_check'::heartbeat_run_kind)
+			 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, 'progress_update'::heartbeat_run_kind)
 			 RETURNING id`,
 			[teamId, captainMemberId],
 		);
@@ -252,8 +252,8 @@ describe('goals service', () => {
 		expect(tracked?.history).toHaveLength(1);
 		expect(tracked?.history[0].percent).toBe(35);
 
-		// The goal-check run shows up annotated with the goal title.
-		const runs = await listGoalCheckRuns(db, projectId);
+		// The progress-update run shows up annotated with the goal title.
+		const runs = await listProgressUpdateRuns(db, projectId);
 		const summary = runs.find((r) => r.id === runId);
 		expect(summary).toBeTruthy();
 		expect(summary?.updated_goal_titles).toContain('Track me');
@@ -269,7 +269,7 @@ describe('goals service', () => {
 		);
 		const run = await db.query<{ id: string }>(
 			`INSERT INTO heartbeat_runs (team_id, member_id, status, kind)
-			 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, 'goal_check'::heartbeat_run_kind)
+			 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, 'progress_update'::heartbeat_run_kind)
 			 RETURNING id`,
 			[teamId, captainMemberId],
 		);
@@ -292,10 +292,10 @@ describe('goals service', () => {
 describe('listGoalRunActivity', () => {
 	let taskSeq = 5000;
 
-	async function newGoalCheckRun(): Promise<string> {
+	async function newProgressUpdateRun(): Promise<string> {
 		const r = await db.query<{ id: string }>(
 			`INSERT INTO heartbeat_runs (team_id, member_id, status, kind)
-			 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, 'goal_check'::heartbeat_run_kind)
+			 VALUES ($1, $2, 'succeeded'::heartbeat_run_status, 'progress_update'::heartbeat_run_kind)
 			 RETURNING id`,
 			[teamId, captainMemberId],
 		);
@@ -332,12 +332,12 @@ describe('listGoalRunActivity', () => {
 		);
 	}
 
-	it('returns goal-check runs that estimated, created tasks for, or commented on the goal', async () => {
+	it('returns progress-update runs that estimated, created tasks for, or commented on the goal', async () => {
 		const goalA = await newGoal('Feed goal A');
 		const goalB = await newGoal('Feed goal B');
 
 		// Run A: estimates goalA, creates one task for it, and comments on another goalA task.
-		const runA = await newGoalCheckRun();
+		const runA = await newProgressUpdateRun();
 		await recordGoalProgress(
 			db,
 			{
@@ -354,7 +354,7 @@ describe('listGoalRunActivity', () => {
 		await comment(commented.id, runA);
 
 		// Run B touches only goalB — must not surface for goalA.
-		const runB = await newGoalCheckRun();
+		const runB = await newProgressUpdateRun();
 		await recordGoalProgress(
 			db,
 			{
@@ -385,7 +385,7 @@ describe('listGoalRunActivity', () => {
 
 	it('includes a run that only created a task for the goal, with null progress', async () => {
 		const goal = await newGoal('Feed goal C');
-		const run = await newGoalCheckRun();
+		const run = await newProgressUpdateRun();
 		const created = await newTask({ goalId: goal, runId: run });
 
 		const activity = await listGoalRunActivity(db, projectId, goal);

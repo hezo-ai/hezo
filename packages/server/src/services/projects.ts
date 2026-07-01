@@ -26,7 +26,7 @@ export async function getProjectProgress(
 }
 
 /**
- * Replace a project's progress summary (Captain, during goal-check runs). Rejected for HQ/internal
+ * Replace a project's progress summary (Captain, during progress-update runs). Rejected for HQ/internal
  * projects, which have no Progress page. Broadcasts a projects UPDATE so open Progress pages refresh.
  */
 export async function updateProjectProgress(

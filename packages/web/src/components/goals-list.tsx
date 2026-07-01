@@ -1,8 +1,8 @@
 import { GOAL_CHECK_FREQUENCY_LABELS, type GoalWithProject } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
-import { Archive, ArchiveRestore, Pencil, Plus, Target } from 'lucide-react';
+import { Archive, ArchiveRestore, Pencil, Plus, RotateCw, Target } from 'lucide-react';
 import { useState } from 'react';
-import { useGoalRuns, useGoals, useUpdateGoal } from '../hooks/use-goals';
+import { useGoalRuns, useGoals, useRunProgressUpdateNow, useUpdateGoal } from '../hooks/use-goals';
 import { RunCommentBody } from './comment-renderers/run-comment';
 import { CreateGoalDialog } from './create-goal-dialog';
 import { GoalHealthPill } from './goal-health-pill';
@@ -114,47 +114,72 @@ function GoalPanel({
 	);
 }
 
-function GoalChecksFooter({ projectId }: { projectId: string }) {
-	const { data: runs, isLoading } = useGoalRuns(projectId);
-
-	if (isLoading || !runs || runs.length === 0) return null;
+function ProgressUpdatesFooter({ projectId }: { projectId: string }) {
+	const { data: runs } = useGoalRuns(projectId);
+	const runNow = useRunProgressUpdateNow(projectId);
+	const hasRuns = !!runs && runs.length > 0;
 
 	return (
-		<section data-testid="goal-checks" className="mt-8">
-			<h2 className="text-[11px] font-medium uppercase tracking-wider text-text-3 mb-2 px-0.5">
-				Goal heartbeat runs
-			</h2>
-			<ul className="flex flex-col divide-y divide-border rounded-md border border-border bg-surface">
-				{runs.map((run) => {
-					const updated = run.updated_goal_titles.length > 0;
-					return (
-						<li
-							key={run.id}
-							data-testid="goal-check-run"
-							className="flex flex-col gap-1.5 px-3 py-2.5"
-						>
-							{/* Collapsible run card — the same summary/expand/log UI as an agent run on a task. */}
-							<LazyMount minHeight={32} testId="goal-check-run-lazy">
-								<RunCommentBody
-									projectId={projectId}
-									runId={run.id}
-									agentId={run.member_id}
-									agentTitle={run.agent_title}
-									agentSlug={run.agent_slug}
-									actorName={null}
-									createdAt={run.created_at}
-									inline
-								/>
-							</LazyMount>
-							{updated && (
-								<p className="text-xs text-text-3 break-words" data-testid="goal-check-run-goals">
-									Updated goals: {run.updated_goal_titles.join(', ')}
-								</p>
-							)}
-						</li>
-					);
-				})}
-			</ul>
+		<section data-testid="progress-updates" className="mt-8">
+			<div className="mb-2 flex items-center justify-between gap-2 px-0.5">
+				<h2 className="text-[11px] font-medium uppercase tracking-wider text-text-3">
+					Progress update runs
+				</h2>
+				<Button
+					variant="secondary"
+					size="sm"
+					onClick={() => runNow.mutate()}
+					disabled={runNow.isPending}
+					data-testid="progress-update-run-now"
+					title="Run the Captain's progress update now"
+				>
+					<RotateCw className={`h-3.5 w-3.5 ${runNow.isPending ? 'animate-spin' : ''}`} />
+					{runNow.isPending ? 'Running…' : 'Run now'}
+				</Button>
+			</div>
+			{!hasRuns ? (
+				<div
+					data-testid="progress-updates-empty"
+					className="rounded-md border border-border bg-surface px-3 py-6 text-center text-[13px] text-text-3"
+				>
+					No progress updates yet.
+				</div>
+			) : (
+				<ul className="flex flex-col divide-y divide-border rounded-md border border-border bg-surface">
+					{runs.map((run) => {
+						const updated = run.updated_goal_titles.length > 0;
+						return (
+							<li
+								key={run.id}
+								data-testid="progress-update-run"
+								className="flex flex-col gap-1.5 px-3 py-2.5"
+							>
+								{/* Collapsible run card — the same summary/expand/log UI as an agent run on a task. */}
+								<LazyMount minHeight={32} testId="progress-update-run-lazy">
+									<RunCommentBody
+										projectId={projectId}
+										runId={run.id}
+										agentId={run.member_id}
+										agentTitle={run.agent_title}
+										agentSlug={run.agent_slug}
+										actorName={null}
+										createdAt={run.created_at}
+										inline
+									/>
+								</LazyMount>
+								{updated && (
+									<p
+										className="text-xs text-text-3 break-words"
+										data-testid="progress-update-run-goals"
+									>
+										Updated goals: {run.updated_goal_titles.join(', ')}
+									</p>
+								)}
+							</li>
+						);
+					})}
+				</ul>
+			)}
 		</section>
 	);
 }
@@ -248,10 +273,6 @@ export function GoalsList({ projectId }: GoalsListProps) {
 					</HelpDialog>
 					<ViewFilter view={view} onChange={setView} />
 				</div>
-				<Button onClick={() => setCreateOpen(true)} data-testid="goals-new-goal">
-					<Plus className="w-4 h-4" />
-					New goal
-				</Button>
 			</div>
 
 			{goals.length === 0 ? (
@@ -260,13 +281,26 @@ export function GoalsList({ projectId }: GoalsListProps) {
 				</div>
 			) : (
 				<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+					{/* An add-goal card sits inline with the goals so the affordance is hard to miss. */}
+					{view === 'active' && (
+						<button
+							type="button"
+							onClick={() => setCreateOpen(true)}
+							data-testid="goals-new-goal"
+							aria-label="New goal"
+							className="flex min-h-[132px] flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border bg-surface p-4 text-text-3 transition-colors hover:border-border-strong hover:bg-surface-2 hover:text-text-1"
+						>
+							<Plus className="h-5 w-5" />
+							<span className="text-sm font-medium">New goal</span>
+						</button>
+					)}
 					{goals.map((goal) => (
 						<GoalPanel key={goal.id} projectId={projectId} goal={goal} onEdit={setEditingGoal} />
 					))}
 				</div>
 			)}
 
-			<GoalChecksFooter projectId={projectId} />
+			<ProgressUpdatesFooter projectId={projectId} />
 
 			<CreateGoalDialog projectId={projectId} open={createOpen} onOpenChange={setCreateOpen} />
 			<CreateGoalDialog
