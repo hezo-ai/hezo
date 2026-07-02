@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDataPreservationHarness, type DataPreservationHarness } from './helpers/migrate';
 
-const TARGET = '011_document_review_comments.sql';
+const TARGET = '012_document_review_comments.sql';
 
-describe('011_document_review_comments migration', () => {
+describe('012_document_review_comments migration', () => {
 	let h: DataPreservationHarness;
 	let teamId: string;
 	let projectId: string;

@@ -6,10 +6,12 @@ import {
 	AgentAdminStatus,
 	ApprovalStatus,
 	ApprovalType,
+	ASSET_MAX_FOLDER_DEPTH,
 	ATTACHMENT_EXTENSIONS,
 	ATTACHMENT_MAX_BYTES,
 	AuditActorType,
 	AuthType,
+	assetBasename,
 	CAPTAIN_AGENT_SLUG,
 	CAPTAIN_SETTABLE_GOAL_HEALTH,
 	CEO_AGENT_SLUG,
@@ -28,7 +30,7 @@ import {
 	INSTANCE_AGENT_SLUGS,
 	isAgentAuthorableAssetMime,
 	isMarkdownDocSlug,
-	normalizeAssetFilename,
+	normalizeAssetPath,
 	REQUIRED_SYSTEM_PROMPT_VARS,
 	ReactionKind,
 	requiredSystemPromptVarsError,
@@ -66,6 +68,7 @@ import {
 } from '../lib/resolve';
 import { assertRunTaskScope } from '../lib/run-scope';
 import { deriveSkillSummary } from '../lib/skill-summary';
+import { isUniqueViolation } from '../lib/sql';
 import {
 	assertChildrenAllClosed,
 	assertNoOutstandingActivity,
@@ -84,7 +87,7 @@ import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
 import { deleteAsset, readAsset, writeAsset } from '../services/asset-storage';
 import { upsertChatMemory } from '../services/chat-memory';
-import { fireCommentWakeups } from '../services/comment-wakeups';
+import { fireAdminMention, fireCommentWakeups } from '../services/comment-wakeups';
 import type { ContainerDeps } from '../services/containers';
 import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import { listReviewComments } from '../services/document-review';
@@ -171,6 +174,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'create_comment',
 	'update_comment',
 	'request_credential',
+	'request_asset_deletion',
 	'register_connector',
 	'resolve_approval',
 	'update_agent_system_prompt',
@@ -180,6 +184,8 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'set_agent_team_context',
 	'set_agent_reports_to',
 	'write_project_asset',
+	'move_project_asset',
+	'copy_project_asset',
 	'write_project_doc',
 	'update_chat_memory',
 	'propose_skill',
@@ -2934,7 +2940,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_agent_system_prompts',
-		`Read multiple agent system prompts in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}). Per-item \`mode\` chooses the resolution depth: \`placeholders\` (default) substitutes \`{{…}}\` with real values and stops, matching get_agent_system_prompt's default; \`preview\` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; \`raw\` returns the stored template untouched. Use this to compare prompts across the team in one round-trip — e.g. Captain auditing how team_context renders for every agent. For a single prompt, use get_agent_system_prompt.`,
+		`Read multiple agent system prompts in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}). Per-item \`mode\` chooses the resolution depth: \`placeholders\` (default) substitutes \`{{…}}\` with real values and stops, matching get_agent_system_prompt's default; \`preview\` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; \`raw\` returns the stored template untouched. Use this to compare prompts across the team in one round-trip — e.g. Captain auditing how team_context renders for every agent. SIZE: a single \`preview\` fills most of the 64KB result cap (result_too_large), so batch multiple items only as \`raw\`/\`placeholders\` and fetch previews one at a time. For a single prompt, use get_agent_system_prompt.`,
 		{
 			project: projectArg(),
 			items: z
@@ -3460,10 +3466,14 @@ export function registerTools(
 		db,
 	);
 
+	// Shared error copy for tools that take an asset path.
+	const assetPathError = (raw: string) =>
+		`Invalid asset path '${raw}': up to ${ASSET_MAX_FOLDER_DEPTH} folder levels, each segment starting with a letter or digit (e.g. "launch/images/hero.png").`;
+
 	tool(
 		server,
 		'list_project_assets',
-		"List the project's assets — files in the assets library (UI mockups, wireframes, diagrams, PDFs, and generated markdown such as blog posts or reports). Reference one in a comment or doc as `assets/<filename>` (e.g. assets/login-mockup.png), no backticks. You can author text-based assets (.html, .svg, .txt, .md) with write_project_asset; binary assets (images, PDFs) are human-uploaded.",
+		"List the project's assets — files in the assets library (UI mockups, wireframes, diagrams, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. You can author text-based assets with write_project_asset and reorganize with move_project_asset / copy_project_asset; deletion is admin-gated via request_asset_deletion. Binary assets (images, PDFs, media) are human-uploaded.",
 		{
 			project: projectArg(),
 		},
@@ -3495,10 +3505,14 @@ export function registerTools(
 	tool(
 		server,
 		'write_project_asset',
-		'Save a text-based file to the project assets library so a human can open it (an interactive HTML mockup, an SVG diagram, a plain-text export, or a markdown deliverable such as a blog post or report). Allowed extensions: .html, .svg, .txt, .md. Re-saving the same filename overwrites it, so the reference stays stable. Returns the reference string to drop into a comment as `assets/<filename>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.',
+		'Save a text-based file to the project assets library so a human can open it (an interactive HTML mockup, an SVG diagram, a plain-text export, a script, or a markdown deliverable such as a blog post or report). Allowed extensions: .html, .svg, .txt, .md, plus script/text formats stored as plain text (.sh, .py, .js, .ts, .json, .csv, .yaml, .yml). The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.svg") — folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets — after a move, write to the new full path or you will fork the file). Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.',
 		{
 			project: projectArg(),
-			filename: z.string().describe('Filename to write (e.g. "ui-mockups.html")'),
+			filename: z
+				.string()
+				.describe(
+					'Path to write, optionally foldered (e.g. "ui-mockups.html", "scripts/check.sh")',
+				),
 			content: z.string().describe('File content'),
 		},
 		async (args, db, auth) => {
@@ -3506,15 +3520,16 @@ export function registerTools(
 			if ('error' in scope) return scope;
 
 			const { teamId, projectId } = scope;
-			const filename = normalizeAssetFilename(args.filename as string);
-			const ext = extensionOf(filename);
+			const filename = normalizeAssetPath(args.filename as string);
+			if (filename === null) return { error: assetPathError(args.filename as string) };
+			const ext = extensionOf(assetBasename(filename));
 			const contentType = ext
 				? ATTACHMENT_EXTENSIONS[ext as keyof typeof ATTACHMENT_EXTENSIONS]
 				: undefined;
 			if (!contentType || !isAgentAuthorableAssetMime(contentType)) {
 				return {
 					error:
-						'Asset must be a text-based file: .html, .svg, or .txt. Other types are human-uploaded.',
+						'Asset must be a text-based file: .html, .svg, .txt, .md, or a script/text format (.sh, .py, .js, .ts, .json, .csv, .yaml, .yml). Other types are human-uploaded.',
 				};
 			}
 
@@ -3545,6 +3560,12 @@ export function registerTools(
 			if (result.replacedAssetId) {
 				await deleteAsset(dataDir, teamId, projectId, result.replacedAssetId).catch(() => {});
 			}
+			broadcastRowChange(wsManager, wsRoom.team(teamId), 'assets', 'INSERT', {
+				id: result.id,
+				team_id: teamId,
+				project_id: projectId,
+				original_filename: result.original_filename,
+			});
 			return { written: true, id: result.id, reference: `assets/${result.original_filename}` };
 		},
 		db,
@@ -3553,17 +3574,20 @@ export function registerTools(
 	tool(
 		server,
 		'read_project_asset',
-		'Read a project asset\'s contents by filename (e.g. "ui-mockups.html") — the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, markdown deliverables). Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a read-only container path under /workspace/.hezo/assets/ to open directly. For markdown project docs use read_project_doc instead.',
+		'Read a project asset\'s contents by path (e.g. "ui-mockups.html" or "scripts/check.sh") — the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a read-only container path under /workspace/.hezo/assets/ to open directly. For markdown project docs use read_project_doc instead.',
 		{
 			project: projectArg(),
-			filename: z.string().describe('Asset filename to read (e.g. "ui-mockups.html")'),
+			filename: z
+				.string()
+				.describe('Asset path to read (e.g. "ui-mockups.html", "launch/images/hero.png")'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 
 			const { teamId, projectId } = scope;
-			const filename = normalizeAssetFilename(args.filename as string);
+			const filename = normalizeAssetPath(args.filename as string);
+			if (filename === null) return { error: assetPathError(args.filename as string) };
 
 			const found = await db.query<{
 				id: string;
@@ -3597,6 +3621,274 @@ export function registerTools(
 				filename: asset.original_filename,
 				content_type: asset.content_type,
 				content: buf.toString('utf-8'),
+			};
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'move_project_asset',
+		'Move or rename a project asset within the assets library: change its folder (up to 2 levels deep), its filename, or both — folders spring into existence when the first asset lands in them and vanish with their last one. The stored file does not change, so the destination must keep the same extension. Moves never overwrite: if the destination path is taken the call fails. IMPORTANT: existing text references to the old `assets/<path>` in comments and docs are NOT rewritten — they degrade to plain text — so update the places that cite the old path, and prefer organizing assets early over moving them later. Agents cannot delete assets (deletion is admin-gated via request_asset_deletion); moving something obsolete into an archive folder is the self-serve alternative.',
+		{
+			project: projectArg(),
+			from: z.string().describe('Current asset path (e.g. "hero.png" or "launch/hero.png")'),
+			to: z.string().describe('Destination path (e.g. "launch/images/hero.png")'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const from = normalizeAssetPath(args.from as string);
+			if (from === null) return { error: assetPathError(args.from as string) };
+			const to = normalizeAssetPath(args.to as string);
+			if (to === null) return { error: assetPathError(args.to as string) };
+			if (from === to) return { error: 'Source and destination are the same path.' };
+			const fromExt = extensionOf(assetBasename(from));
+			if (extensionOf(assetBasename(to)) !== fromExt) {
+				return {
+					error: `Destination must keep the '.${fromExt ?? ''}' extension — the stored file type does not change on a move. Use copy_project_asset or a fresh write_project_asset for format changes.`,
+				};
+			}
+			const found = await db.query<{ id: string }>(
+				'SELECT id FROM assets WHERE project_id = $1 AND original_filename = $2',
+				[scope.projectId, from],
+			);
+			if (found.rows.length === 0) return { error: `Asset 'assets/${from}' not found` };
+			const assetId = found.rows[0].id;
+			try {
+				await db.query('UPDATE assets SET original_filename = $1 WHERE id = $2', [to, assetId]);
+			} catch (e) {
+				if (isUniqueViolation(e)) {
+					return {
+						error: `Destination 'assets/${to}' already exists — moves never overwrite. Pick a different name, or request deletion of the existing asset first.`,
+					};
+				}
+				throw e;
+			}
+			broadcastRowChange(wsManager, wsRoom.team(scope.teamId), 'assets', 'UPDATE', {
+				id: assetId,
+				team_id: scope.teamId,
+				project_id: scope.projectId,
+				original_filename: to,
+			});
+			return {
+				moved: true,
+				id: assetId,
+				from: `assets/${from}`,
+				reference: `assets/${to}`,
+				note: 'Existing text references to the old path no longer link — update comments/docs that cite it.',
+			};
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'copy_project_asset',
+		'Copy a project asset to a new path in the assets library (any type, including binary). The copy is a new asset with its own id; the source is untouched and existing references keep pointing at it. Copies never overwrite: if the destination path is taken the call fails. Use it to duplicate a template before editing, or to stage related files into a folder.',
+		{
+			project: projectArg(),
+			from: z.string().describe('Source asset path (e.g. "templates/report.md")'),
+			to: z.string().describe('Destination path (e.g. "2026-q3/report.md")'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const from = normalizeAssetPath(args.from as string);
+			if (from === null) return { error: assetPathError(args.from as string) };
+			const to = normalizeAssetPath(args.to as string);
+			if (to === null) return { error: assetPathError(args.to as string) };
+			if (from === to) return { error: 'Source and destination are the same path.' };
+			const found = await db.query<{ id: string; content_type: string }>(
+				'SELECT id, content_type FROM assets WHERE project_id = $1 AND original_filename = $2',
+				[scope.projectId, from],
+			);
+			if (found.rows.length === 0) return { error: `Asset 'assets/${from}' not found` };
+			const source = found.rows[0];
+
+			const { teamId, projectId } = scope;
+			const buf = await readAsset(dataDir, teamId, projectId, source.id);
+			const assetId = crypto.randomUUID();
+			const { byteSize, sha256 } = await writeAsset(
+				dataDir,
+				teamId,
+				projectId,
+				assetId,
+				new Blob([new Uint8Array(buf)]),
+			);
+			const uploadedBy = auth.type === AuthType.Agent ? auth.memberId : null;
+			let inserted: { id: string; original_filename: string };
+			try {
+				const r = await db.query<{ id: string; original_filename: string }>(
+					`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id)
+					 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+					 RETURNING id, original_filename`,
+					[assetId, teamId, projectId, source.content_type, byteSize, sha256, to, uploadedBy],
+				);
+				inserted = r.rows[0];
+			} catch (e) {
+				await deleteAsset(dataDir, teamId, projectId, assetId).catch(() => {});
+				if (isUniqueViolation(e)) {
+					return {
+						error: `Destination 'assets/${to}' already exists — copies never overwrite. Pick a different name.`,
+					};
+				}
+				throw e;
+			}
+			events?.emit({
+				type: 'asset.created',
+				teamId,
+				projectId,
+				actorType: actorTypeFromAuth(auth),
+				actorMemberId: uploadedBy,
+				actorApiKeyId: apiKeyIdFromAuth(auth),
+				assetId: inserted.id,
+				filename: inserted.original_filename,
+				taskId: auth.type === AuthType.Agent ? auth.taskId : null,
+				runId: auth.type === AuthType.Agent ? auth.runId : null,
+			});
+			broadcastRowChange(wsManager, wsRoom.team(teamId), 'assets', 'INSERT', {
+				id: inserted.id,
+				team_id: teamId,
+				project_id: projectId,
+				original_filename: inserted.original_filename,
+			});
+			return { copied: true, id: inserted.id, reference: `assets/${to}` };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'request_asset_deletion',
+		'Ask a human admin to approve deleting one or more project assets. Deletion is destructive, so agents can never delete directly — this posts an approval card on the task; an admin approves or denies it, on approval the backend deletes the assets (rows, attachments, and stored bytes; no further agent action needed), and you are woken with the outcome. Stop any work that depends on the deletion and wait. Everything short of deletion — create, overwrite, read, list, copy, move — is self-serve; consider moving obsolete-but-maybe-valuable assets into an archive folder (move_project_asset) instead of requesting deletion.',
+		{
+			project: projectArg(),
+			task_id: z
+				.string()
+				.describe(
+					'Task identifier or UUID — the approval card is posted here (usually your current task)',
+				),
+			filenames: z
+				.array(z.string())
+				.min(1)
+				.describe(
+					'Asset paths to delete — full paths exactly as list_project_assets returns them (e.g. ["drafts/old-v1.md", "old-logo.png"])',
+				),
+			reason: z
+				.string()
+				.describe('Why these assets should be deleted — shown to the approving admin'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveTaskScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId, projectId, taskId } = scope;
+
+			const raw = args.filenames as string[];
+			const paths: string[] = [];
+			for (const f of raw) {
+				const normalized = normalizeAssetPath(f);
+				if (normalized === null) return { error: assetPathError(f) };
+				if (!paths.includes(normalized)) paths.push(normalized);
+			}
+			const found = await db.query<{ id: string; original_filename: string }>(
+				'SELECT id, original_filename FROM assets WHERE project_id = $1 AND original_filename = ANY($2::text[])',
+				[projectId, paths],
+			);
+			const foundByPath = new Map(found.rows.map((r) => [r.original_filename, r.id]));
+			const missing = paths.filter((p) => !foundByPath.has(p));
+			if (missing.length > 0) {
+				return {
+					error: `Not found: ${missing.map((p) => `assets/${p}`).join(', ')} — nothing was requested (all-or-nothing). Check list_project_assets for the exact paths.`,
+				};
+			}
+			const assets = paths.map((p) => ({ id: foundByPath.get(p) as string, path: p }));
+			const idsKey = assets
+				.map((a) => a.id)
+				.sort()
+				.join(',');
+
+			// Idempotency: an identical pending request on this task is reused, so a
+			// retried run doesn't stack duplicate approval cards.
+			const pendingRows = await db.query<{
+				id: string;
+				content: { assets?: Array<{ id: string }> };
+			}>(
+				`SELECT id, content FROM task_comments
+				 WHERE task_id = $1
+				   AND content_type = 'asset_deletion_request'::comment_content_type
+				   AND chosen_option IS NULL
+				 ORDER BY created_at ASC`,
+				[taskId],
+			);
+			for (const row of pendingRows.rows) {
+				const existingIds = (row.content.assets ?? [])
+					.map((a) => a.id)
+					.sort()
+					.join(',');
+				if (existingIds === idsKey) {
+					return { comment_id: row.id, status: 'pending', reused: true };
+				}
+			}
+
+			const reason = args.reason as string;
+			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const refs = assets.map((a) => `assets/${a.path}`).join(', ');
+			const content = {
+				assets,
+				reason,
+				// The inbox snippet builder reads content.text; keep it human-readable.
+				text: `Requested deletion of ${assets.length} asset${assets.length === 1 ? '' : 's'}: ${refs} — ${reason}`,
+			};
+			const inserted = await db.query<{ id: string }>(
+				`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+				 VALUES ($1, $2, 'asset_deletion_request'::comment_content_type, $3::jsonb)
+				 RETURNING *`,
+				[taskId, authorMemberId, JSON.stringify(content)],
+			);
+			broadcastCommentFamilyChange(
+				wsManager,
+				teamId,
+				projectId,
+				'task_comments',
+				'INSERT',
+				inserted.rows[0] as unknown as Record<string, unknown>,
+			);
+
+			// Deletion requests must reach a human who can act — raise the admin
+			// inbox badge even though the card carries no literal @admin text.
+			try {
+				await fireAdminMention({
+					db,
+					teamId,
+					taskId,
+					commentId: inserted.rows[0].id,
+					authorUserId: null,
+					wsManager,
+				});
+			} catch (e) {
+				log.error('Failed to fan out asset-deletion admin mention:', e);
+			}
+
+			events?.emit({
+				type: 'asset.deletion_requested',
+				teamId,
+				projectId,
+				actorType: actorTypeFromAuth(auth),
+				actorMemberId: authorMemberId,
+				actorApiKeyId: apiKeyIdFromAuth(auth),
+				commentId: inserted.rows[0].id,
+				taskId,
+				assetIds: assets.map((a) => a.id),
+				filenames: assets.map((a) => a.path),
+			});
+
+			return {
+				comment_id: inserted.rows[0].id,
+				status: 'pending',
+				reused: false,
+				assets: assets.map((a) => `assets/${a.path}`),
+				note: 'An admin must approve the deletion. Stop work that depends on it and wait — you will be woken with the outcome.',
 			};
 		},
 		db,

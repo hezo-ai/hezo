@@ -4,8 +4,9 @@ import { ADMIN_MENTION_SLUG } from '../constants.js';
  * Canonical mention/reference syntax shared by every surface that parses or
  * renders entity references (the web remark plugin, the server-side channel
  * renderer, candidate extraction for resolve endpoints). The syntax itself is
- * documented for agents in agents/_partials/common/linking-syntax.md — bare
- * identifiers, never wrapped in backticks.
+ * documented for agents in the Link forms block of SHARED_INSTRUCTIONS
+ * (packages/server/src/services/template-resolver.ts) — bare identifiers,
+ * never wrapped in backticks.
  */
 
 export const PASSIVE_AGENT_RE_SRC = String.raw`(?<![\w@])@@([a-z][\w-]*)(?![\w/])`;
@@ -27,10 +28,16 @@ export const COMMENT_LINK_RE_SRC = String.raw`(?<![\w-])([A-Z][A-Z0-9]{1,3}-\d+)
 // ordinary sentence punctuation after a filename still links.
 export const FILENAME_RE_SRC = String.raw`(?<![\w/.-])([a-z0-9][\w-]*\.[a-z0-9]+)(?![\w/-]|\.[a-z0-9])`;
 // Asset references are path-prefixed (`assets/<name>.<ext>`) and may contain
-// uppercase (e.g. a task identifier embedded in the name). The leading `assets/`
-// keeps them from colliding with the bare project-doc filenames above. Same
+// uppercase (e.g. a task identifier embedded in the name). Assets can live in
+// folders up to ASSET_MAX_FOLDER_DEPTH (2) levels deep, so up to two
+// `<segment>/` parts may precede the filename. The folder group is
+// NON-CAPTURING to keep the combined regex's capture layout stable
+// (`parseMentionMatch` reads the asset as group 7). A third folder level fails
+// the whole match — the filename part cannot contain `/` — so over-deep paths
+// render as plain text rather than half-linking. The leading `assets/` keeps
+// them from colliding with the bare project-doc filenames above. Same
 // trailing-boundary rule as filenames: a sentence-ending `.` still links.
-export const ASSET_RE_SRC = String.raw`(?<![\w/.-])assets/([A-Za-z0-9][\w.-]*\.[A-Za-z0-9]+)(?![\w/-]|\.[A-Za-z0-9])`;
+export const ASSET_RE_SRC = String.raw`(?<![\w/.-])assets/((?:[A-Za-z0-9][\w.-]*/){0,2}[A-Za-z0-9][\w.-]*\.[A-Za-z0-9]+)(?![\w/-]|\.[A-Za-z0-9])`;
 
 /**
  * Combined mention regex. Capture-group layout (consumed by
@@ -81,7 +88,7 @@ export interface MentionCandidates {
 	tasks: string[];
 	/** Exact-case bare filenames (project docs / KB slugs). */
 	filenames: string[];
-	/** Exact-case asset filenames (without the `assets/` prefix). */
+	/** Exact-case asset paths (without the `assets/` prefix; may contain folders). */
 	assets: string[];
 	/** Lowercased agent slugs from @/@@ mentions; `@admin` is excluded. */
 	agents: string[];

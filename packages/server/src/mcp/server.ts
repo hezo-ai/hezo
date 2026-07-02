@@ -177,10 +177,12 @@ export async function handleMcpRequest(c: Context<Env>): Promise<Response> {
  * Multipart binary upload for the MCP surface. JSON-RPC can't carry a file, so
  * external callers (API key) and agent runs (run JWT) POST `multipart/form-data`
  * here with a `file` field — plus an optional `project` field for an instance
- * principal that must name the project it's acting in. The bytes are stored as a
- * project asset through the same path as the REST upload, so the result is
- * retrievable via the existing `list_project_assets` / `read_project_asset` tools
- * (and the per-run `/workspace/.hezo/assets` mount).
+ * principal that must name the project it's acting in, and an optional `folder`
+ * field to place the asset inside a library folder (up to 2 levels, e.g.
+ * `scripts` or `launch/images`). The bytes are stored as a project asset through
+ * the same path as the REST upload, so the result is retrievable via the
+ * existing `list_project_assets` / `read_project_asset` tools (and the per-run
+ * `/workspace/.hezo/assets` mount).
  */
 export async function handleMcpAssetUpload(c: Context<Env>): Promise<Response> {
 	const auth = await authenticateRequest(c);
@@ -203,6 +205,7 @@ export async function handleMcpAssetUpload(c: Context<Env>): Promise<Response> {
 		typeof form.project === 'string' && form.project.trim().length > 0
 			? form.project.trim()
 			: undefined;
+	const folder = typeof form.folder === 'string' ? form.folder : undefined;
 
 	const scope = await resolveScope(c.get('db'), auth, { project });
 	if ('error' in scope) {
@@ -212,5 +215,5 @@ export async function handleMcpAssetUpload(c: Context<Env>): Promise<Response> {
 	// storeUploadedAsset reads c.get('auth'); /mcp isn't under authMiddleware, so
 	// seed the context from the MCP-authenticated principal.
 	c.set('auth', auth);
-	return storeUploadedAsset(c, scope.teamId, scope.projectId, file as File);
+	return storeUploadedAsset(c, scope.teamId, scope.projectId, file as File, null, folder);
 }

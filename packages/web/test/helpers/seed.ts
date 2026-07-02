@@ -164,11 +164,13 @@ export interface SeededAsset {
 	url: string;
 }
 
-/** Upload a file to the project assets library via the real API. */
+/** Upload a file to the project assets library via the real API. A `folder`
+ * places it inside a library folder (a `/` in `filename` itself would be
+ * stripped by the server's basename normalization). */
 export async function seedAsset(
 	workspace: SeededWorkspace,
 	project: SeededProject,
-	input: { filename: string; contentType?: string; bytes?: Uint8Array },
+	input: { filename: string; contentType?: string; bytes?: Uint8Array; folder?: string },
 ): Promise<SeededAsset> {
 	const { apiBase } = getTestContext();
 	const bytes = input.bytes ?? new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]);
@@ -179,6 +181,7 @@ export async function seedAsset(
 			type: input.contentType ?? 'image/png',
 		}),
 	);
+	if (input.folder) fd.set('folder', input.folder);
 	const res = await apiBase(`/api/projects/${project.slug}/assets`, {
 		method: 'POST',
 		// No Content-Type header: let fetch set the multipart boundary.

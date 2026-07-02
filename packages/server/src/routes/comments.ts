@@ -1,8 +1,8 @@
-import { AuthType, CommentContentType, WakeupSource } from '@hezo/shared';
+import { AuthType, CommentContentType, WakeupSource, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { encrypt } from '../crypto/encryption';
 import { signAssetUrl } from '../lib/asset-urls';
-import { broadcastCommentFamilyChange } from '../lib/broadcast';
+import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
 import { validateCredentialValue } from '../lib/credential-validator';
 import {
 	apiKeyIdFromAuth,
@@ -14,6 +14,7 @@ import { err, ok } from '../lib/response';
 import { withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
+import { deleteAsset } from '../services/asset-storage';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 import { parseEffortFromCommentBody } from '../services/effort';
 import {
@@ -495,6 +496,203 @@ commentsRoutes.post(
 			requestingAgentId,
 		});
 		return ok(c, { secret_id: secretId, comment_id: commentId });
+	},
+);
+
+/**
+ * Resolve an agent-filed asset-deletion request: approve (the backend deletes
+ * the assets — rows, cascading attachments, and stored bytes — no agent run
+ * involved) or deny. Either way the comment's `chosen_option` records the
+ * outcome, a system comment lands on the task, the requesting agent is woken,
+ * and the request's inbox mentions are marked read.
+ */
+commentsRoutes.post(
+	'/projects/:projectId/tasks/:taskId/comments/:commentId/resolve-asset-deletion',
+	async (c) => {
+		const teamId = c.get('teamId') as string;
+		const projectId = c.get('projectId') as string;
+		const auth = c.get('auth');
+		// Deletion is destructive and admin-gated by design — an agent (even the
+		// requester) must never be able to resolve its own request.
+		if (auth.type === AuthType.Agent) {
+			return err(c, 'FORBIDDEN', 'Only the admin can resolve asset deletion requests', 403);
+		}
+		const db = c.get('db');
+		const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
+		if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
+		const commentId = c.req.param('commentId');
+
+		const body = await c.req.json<{ approve?: boolean }>();
+		if (typeof body.approve !== 'boolean') {
+			return err(c, 'INVALID_REQUEST', 'approve (boolean) is required', 400);
+		}
+
+		const existing = await db.query<{
+			content: { assets?: Array<{ id?: string; path?: string }> };
+			content_type: string;
+			chosen_option: Record<string, unknown> | null;
+			author_member_id: string | null;
+		}>(
+			'SELECT content, content_type, chosen_option, author_member_id FROM task_comments WHERE id = $1 AND task_id = $2',
+			[commentId, taskId],
+		);
+		if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Comment not found', 404);
+		const row = existing.rows[0];
+		if (row.content_type !== CommentContentType.AssetDeletionRequest) {
+			return err(c, 'INVALID_REQUEST', 'Comment is not an asset deletion request', 400);
+		}
+		if (row.chosen_option !== null) {
+			return err(c, 'INVALID_REQUEST', 'Deletion request already resolved', 400);
+		}
+
+		const requestedAssets = (row.content.assets ?? []).filter(
+			(a): a is { id: string; path: string } =>
+				typeof a.id === 'string' && typeof a.path === 'string',
+		);
+		const requestedIds = requestedAssets.map((a) => a.id);
+		const requestingAgentId = row.author_member_id;
+		const resolvedAt = new Date().toISOString();
+
+		let deletedIds: string[] = [];
+		let deletedPaths: string[] = [];
+		let updatedComment: Record<string, unknown>;
+
+		if (body.approve) {
+			const result = await withTransaction(db, async () => {
+				// Delete by id, re-selecting first: an asset may have been renamed or
+				// separately deleted since the request. Renamed assets still delete
+				// (the admin approved the request-time snapshot; the system comment
+				// reports current paths); already-gone ids are recorded, not errored.
+				const current = await db.query<{ id: string; original_filename: string }>(
+					'SELECT id, original_filename FROM assets WHERE id = ANY($1::uuid[]) AND team_id = $2 AND project_id = $3',
+					[requestedIds, teamId, projectId],
+				);
+				const ids = current.rows.map((r) => r.id);
+				const paths = current.rows.map((r) => r.original_filename);
+				if (ids.length > 0) {
+					// Attachment joins cascade with the rows.
+					await db.query('DELETE FROM assets WHERE id = ANY($1::uuid[])', [ids]);
+				}
+				const missing = requestedIds.length - ids.length;
+
+				const updated = await db.query(
+					`UPDATE task_comments SET chosen_option = $1::jsonb WHERE id = $2 RETURNING *`,
+					[
+						JSON.stringify({ status: 'approved', resolved_at: resolvedAt, deleted_asset_ids: ids }),
+						commentId,
+					],
+				);
+
+				const summary =
+					`Asset deletion approved: ${ids.length} deleted` +
+					(paths.length > 0 ? ` (${paths.map((p) => `assets/${p}`).join(', ')})` : '') +
+					(missing > 0 ? `; ${missing} no longer existed` : '');
+				await db.query(
+					`INSERT INTO task_comments (task_id, content_type, content)
+					 VALUES ($1, 'system'::comment_content_type, $2::jsonb)`,
+					[taskId, JSON.stringify({ text: summary })],
+				);
+				return { ids, paths, updated: updated.rows[0] as Record<string, unknown> };
+			});
+			deletedIds = result.ids;
+			deletedPaths = result.paths;
+			updatedComment = result.updated;
+
+			// Blob removal is best-effort after commit (same posture as the admin
+			// DELETE route); a leftover file is unreachable without its row.
+			for (const id of deletedIds) {
+				try {
+					await deleteAsset(c.get('dataDir'), teamId, projectId, id);
+				} catch (e) {
+					log.error('Failed to delete asset blob after approval:', e);
+				}
+			}
+		} else {
+			updatedComment = await withTransaction(db, async () => {
+				const updated = await db.query(
+					`UPDATE task_comments SET chosen_option = $1::jsonb WHERE id = $2 RETURNING *`,
+					[JSON.stringify({ status: 'denied', resolved_at: resolvedAt }), commentId],
+				);
+				const refs = requestedAssets.map((a) => `assets/${a.path}`).join(', ');
+				await db.query(
+					`INSERT INTO task_comments (task_id, content_type, content)
+					 VALUES ($1, 'system'::comment_content_type, $2::jsonb)`,
+					[taskId, JSON.stringify({ text: `Asset deletion denied: ${refs}` })],
+				);
+				return updated.rows[0] as Record<string, unknown>;
+			});
+		}
+
+		// Clear the request's inbox mentions — resolving IS acting on them.
+		try {
+			await db.query(
+				'UPDATE admin_mentions SET read_at = COALESCE(read_at, now()) WHERE comment_id = $1',
+				[commentId],
+			);
+			broadcastChange(c, wsRoom.team(teamId), 'admin_mentions', 'UPDATE', {
+				comment_id: commentId,
+				team_id: teamId,
+				project_id: projectId,
+			});
+		} catch (e) {
+			log.error('Failed to mark asset-deletion mentions read:', e);
+		}
+
+		// Wake the requesting agent with the outcome (mirrors fulfill-credential).
+		if (requestingAgentId) {
+			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
+				requestingAgentId,
+			]);
+			if (isAgent.rows.length > 0) {
+				try {
+					await createWakeup(db, requestingAgentId, teamId, WakeupSource.AssetDeletionResolved, {
+						task_id: taskId,
+						comment_id: commentId,
+						status: body.approve ? 'approved' : 'denied',
+						deleted: deletedPaths,
+					});
+				} catch (e) {
+					log.error('Failed to create asset_deletion_resolved wakeup:', e);
+				}
+			}
+		}
+
+		broadcastCommentFamilyChange(
+			c.get('wsManager'),
+			teamId,
+			projectId,
+			'task_comments',
+			'UPDATE',
+			updatedComment,
+		);
+		if (deletedIds.length > 0) {
+			for (const id of deletedIds) {
+				broadcastChange(c, wsRoom.team(teamId), 'assets', 'DELETE', {
+					id,
+					team_id: teamId,
+					project_id: projectId,
+				});
+			}
+			const actor = await resolveActor(db, auth, teamId);
+			c.get('events').emit({
+				type: 'asset.deleted',
+				teamId,
+				projectId,
+				actorType: actor.actorType,
+				actorMemberId: actor.actorMemberId,
+				actorApiKeyId: actor.actorApiKeyId,
+				assetIds: deletedIds,
+				filenames: deletedPaths,
+				via: 'deletion_request',
+				taskId,
+			});
+		}
+
+		return ok(c, {
+			comment_id: commentId,
+			status: body.approve ? 'approved' : 'denied',
+			deleted_asset_ids: deletedIds,
+		});
 	},
 );
 

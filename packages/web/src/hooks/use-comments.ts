@@ -179,6 +179,30 @@ export function useRemoveReaction(projectId: string, taskId: string) {
 	});
 }
 
+/**
+ * Approve or deny an agent-filed asset deletion request. Response-driven —
+ * never optimistic: approval permanently deletes assets server-side, so the
+ * card must only flip once the server confirms. Refreshes the thread, the
+ * assets library, and the inbox badge (the request's mentions are marked read).
+ */
+export function useResolveAssetDeletion(projectId: string, taskId: string) {
+	return useMutation({
+		mutationFn: ({ commentId, approve }: { commentId: string; approve: boolean }) =>
+			api.post(
+				`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/resolve-asset-deletion`,
+				{ approve },
+			),
+		onSuccess: () => {
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.projects.taskComments(projectId, taskId),
+			});
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.assets(projectId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.inboxCount(projectId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.inboxMentions(projectId) });
+		},
+	});
+}
+
 export function useFulfillCredential(projectId: string, taskId: string) {
 	return useMutation({
 		mutationFn: ({

@@ -1,6 +1,7 @@
 import { CommentContentType } from '@hezo/shared';
 import type { ComponentType } from 'react';
 import { ActionComment } from './action-comment';
+import { AssetDeletionRequestComment } from './asset-deletion-request-comment';
 import type { CommentData, CommentDataOf } from './comment-data';
 import { ConnectRequiredComment } from './connect-required-comment';
 import { CredentialRequestComment } from './credential-request-comment';
@@ -66,6 +67,9 @@ const renderers: RendererRegistry = {
 	[CommentContentType.ConnectRequired]: ({ comment, projectId }) => (
 		<ConnectRequiredComment comment={comment} projectId={projectId} />
 	),
+	[CommentContentType.AssetDeletionRequest]: ({ comment, projectId, taskId }) => (
+		<AssetDeletionRequestComment comment={comment} projectId={projectId} taskId={taskId} />
+	),
 };
 
 export function CommentRenderer(props: RenderProps) {
@@ -104,6 +108,10 @@ function dispatch(props: RenderProps) {
 		}
 		case CommentContentType.ConnectRequired: {
 			const C = renderers[CommentContentType.ConnectRequired];
+			return <C {...props} comment={comment} />;
+		}
+		case CommentContentType.AssetDeletionRequest: {
+			const C = renderers[CommentContentType.AssetDeletionRequest];
 			return <C {...props} comment={comment} />;
 		}
 		default: {

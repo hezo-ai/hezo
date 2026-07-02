@@ -136,6 +136,20 @@ const AUDIT_MAPPERS: AuditMappers = {
 			task_id: event.taskId ?? null,
 			run_id: event.runId ?? null,
 		}),
+	'asset.deletion_requested': (event) =>
+		row(event, AuditAction.Requested, AuditEntityType.Asset, event.assetIds[0] ?? null, {
+			comment_id: event.commentId,
+			task_id: event.taskId,
+			asset_ids: event.assetIds,
+			filenames: event.filenames,
+		}),
+	'asset.deleted': (event) =>
+		row(event, AuditAction.Deleted, AuditEntityType.Asset, event.assetIds[0] ?? null, {
+			asset_ids: event.assetIds,
+			filenames: event.filenames,
+			via: event.via,
+			task_id: event.taskId ?? null,
+		}),
 	'document.created': mapDocument,
 	'document.updated': mapDocument,
 	'document.deleted': mapDocument,

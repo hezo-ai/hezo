@@ -115,7 +115,11 @@ export function DocsLibrary({
 	}
 
 	return (
-		<div className="grid grid-cols-1 md:grid-cols-[240px_1fr] md:gap-6 md:min-h-[500px]">
+		/* minmax(0,1fr) — a bare 1fr track has an `auto` minimum, so wide doc
+		   content (tables, code) would push the column past the viewport and
+		   side-scroll the doc list out of view instead of scrolling inside the
+		   pane. */
+		<div className="grid grid-cols-1 md:grid-cols-[240px_minmax(0,1fr)] md:gap-6 md:min-h-[500px]">
 			<aside
 				className={`md:border-r md:border-border md:pr-6 ${
 					showRightPane ? 'hidden md:block' : 'block'

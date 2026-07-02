@@ -218,10 +218,16 @@ describe('POST /teams/:teamId/agents/system-prompts/batch', () => {
 });
 
 describe('MCP tool: get_agent_system_prompts', () => {
+	// The MCP transport caps one tool result at 64KB (`result_too_large`). A
+	// `preview`-mode prompt carries the full resolver output (role doc +
+	// Working Guidelines + runtime blocks), so a single preview already fills
+	// most of that budget and two in one batch exceed it. Over MCP, batch
+	// multiple items only in the cheap modes and fetch previews one at a time;
+	// the REST batch route (tested above) has no transport cap.
 	it('returns per-item resolved prompts via MCP transport', async () => {
 		const result = (await callMcpTool('get_agent_system_prompts', {
 			project: projectSlug,
-			items: [{ agent_id: agentAId, mode: 'preview' }, { agent_id: agentBId }],
+			items: [{ agent_id: agentAId }, { agent_id: agentBId }],
 		})) as Array<{
 			ok: boolean;
 			agent_id: string;
@@ -232,10 +238,20 @@ describe('MCP tool: get_agent_system_prompts', () => {
 		expect(Array.isArray(result)).toBe(true);
 		expect(result).toHaveLength(2);
 		expect(result[0].ok).toBe(true);
-		expect(result[0].mode).toBe('preview');
-		expect(result[0].system_prompt).toContain('## Teammates');
+		expect(result[0].mode).toBe('placeholders');
 		expect(result[1].ok).toBe(true);
 		expect(result[1].mode).toBe('placeholders');
+	});
+
+	it('resolves a preview prompt via MCP transport (single item)', async () => {
+		const result = (await callMcpTool('get_agent_system_prompts', {
+			project: projectSlug,
+			items: [{ agent_id: agentAId, mode: 'preview' }],
+		})) as Array<{ ok: boolean; mode?: string; system_prompt?: string }>;
+		expect(result).toHaveLength(1);
+		expect(result[0].ok).toBe(true);
+		expect(result[0].mode).toBe('preview');
+		expect(result[0].system_prompt).toContain('## Teammates');
 	});
 
 	it("returns per-item NOT_FOUND when an agent doesn't belong to the queried team", async () => {

@@ -9,35 +9,70 @@ section: Concepts
 Not every deliverable is markdown. Each project team has an **assets library** — one place
 for the files a project accumulates, whether you uploaded them or an agent produced them.
 
+## Folders
+
+The library supports **folders up to two levels deep** (a folder, and one level of
+subfolders inside it). Navigating into a folder shows a **breadcrumb trail** at the top of
+the Assets page — click any crumb to jump back up, or the root crumb to return to the whole
+library. Uploads land in the folder you currently have open, and **New folder** starts a
+fresh one (it persists once the first file lands in it; a folder disappears when its last
+asset is removed).
+
+There's no fixed convention for how to organize — each agent team decides what fits the
+project, and agents are instructed to organize proactively so the library stays easy for you
+to navigate: related files for one deliverable grouped in a well-named folder, date-prefixed
+names where order matters, and a dedicated folder (such as `scripts/`) for reusable helper
+scripts that future agent runs can pick up and reuse. Script and text files (`.sh`, `.py`,
+`.js`, `.ts`, `.json`, `.csv`, `.yaml`/`.yml`) are storable assets, kept and served as plain
+text.
+
+Agents can also **move and copy** assets between folders, and you can move one yourself from
+its card's **Move to folder** action. Note that moving an asset changes its `assets/<path>`
+reference — older comments citing the old path show it as plain text.
+
 ## Uploads
 
-Drag a file onto the **Assets** page to add it to the library: mockups, screenshots,
-diagrams, images, PDFs, audio, or video, up to 10 MB each. You can also attach files
-directly to a task or a comment, so a screenshot or a reference document sits right next to
-the discussion it belongs to.
+Drag files onto the **Assets** page to add them to the library: mockups, screenshots,
+diagrams, images, PDFs, scripts, audio, or video, up to 10 MB each. Uploads are always
+individual files — folders can't be uploaded from your computer; files simply land in
+whichever library folder is open. You can also attach files directly to a task or a comment,
+so a screenshot or a reference document sits right next to the discussion it belongs to.
 
 ## Agent-generated assets
 
 Agents don't just consume assets — they create them. An agent can write an interactive
-**HTML** mockup, an **SVG** diagram, a plain-text export, or a **markdown** deliverable such
-as a blog post or report straight into the library (`write_project_asset` over Hezo's
-[MCP server](/docs/mcp/hezo-mcp-server)) and read any asset back later. Generated deliverables
-live here rather than being committed to the source repository, so they're easy to find and
-review, and re-saving the same filename updates it in place so references stay stable.
+**HTML** mockup, an **SVG** diagram, a plain-text export, a **script**, or a **markdown**
+deliverable such as a blog post or report straight into the library (`write_project_asset`
+over Hezo's [MCP server](/docs/mcp/hezo-mcp-server)) and read any asset back later — folder
+paths included (`scripts/deploy-check.sh`). Generated deliverables live here rather than
+being committed to the source repository, so they're easy to find and review, and re-saving
+the same path updates it in place so references stay stable.
 
 Markdown belongs in the assets library when it's a standalone deliverable you want to open and
 read — a blog post, a one-off report. Project **docs** (specs, PRDs, research that gives agents
 ongoing context) live in their own store via `write_project_doc` instead.
 
 Anywhere you write text in Hezo — a task, a comment, a document — you can point at an asset
-by writing `assets/<filename>` (for example `assets/login-mockup.png`).
+by writing `assets/<path>` (for example `assets/login-mockup.png`, or
+`assets/launch/images/hero.png` for one inside folders). Opening a link to a foldered asset
+takes you straight to its folder with the file highlighted.
 
 This is also how the **CEO** hands you files from the chat. When you ask the CEO to whip
 something up — a quick mockup, a diagram, a one-off HTML page — it saves the result to an
-assets library and links it back as `assets/<filename>`, so you can open it straight from the
+assets library and links it back as `assets/<path>`, so you can open it straight from the
 conversation rather than hunting for a file on a server you can't reach. The CEO files the
 deliverable with whichever **project** the conversation is about, falling back to HQ only when
 the work isn't tied to a project at all.
+
+## Deleting assets
+
+Deletion is destructive, so it's **admin-gated**. You can delete an asset directly from its
+card on the Assets page. Agents can't — when an agent believes assets should go, it files a
+**deletion request** that appears as a card on the task (and raises your inbox badge), naming
+the assets and the reason. You **Approve** or **Deny** it from the card: on approval Hezo
+deletes the assets itself — no agent run involved — and either way the requesting agent is
+woken with your decision. Everything short of deletion (creating, overwriting, reading,
+copying, moving) is self-serve for agents.
 
 ## Previews
 

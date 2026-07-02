@@ -117,6 +117,14 @@ export interface ConnectRequiredContent {
 	skill_doc_slug?: string;
 }
 
+export interface AssetDeletionRequestContent {
+	/** Request-time snapshot of the assets to delete (id + full path). */
+	assets?: Array<{ id: string; path: string }>;
+	reason?: string;
+	/** Human-readable one-liner (feeds the inbox snippet). */
+	text?: string;
+}
+
 /**
  * Discriminated map: content shape per `content_type`. Adding a new
  * `CommentContentType` here is a compile error in the renderer registry
@@ -130,6 +138,7 @@ export type CommentContentByType = {
 	[CommentContentType.Action]: ActionContent;
 	[CommentContentType.CredentialRequest]: CredentialRequestContent;
 	[CommentContentType.ConnectRequired]: ConnectRequiredContent;
+	[CommentContentType.AssetDeletionRequest]: AssetDeletionRequestContent;
 };
 
 /**
@@ -154,6 +163,13 @@ export interface ActionChosen {
 	resolved_at?: string;
 }
 
+export interface AssetDeletionRequestChosen {
+	status: 'approved' | 'denied' | (string & Record<never, never>);
+	resolved_at?: string;
+	/** Ids actually deleted on approval (assets gone before resolution are omitted). */
+	deleted_asset_ids?: string[];
+}
+
 export type CommentChosenByType = {
 	[CommentContentType.Text]: null;
 	[CommentContentType.Preview]: null;
@@ -162,4 +178,5 @@ export type CommentChosenByType = {
 	[CommentContentType.Action]: ActionChosen | null;
 	[CommentContentType.CredentialRequest]: CredentialRequestChosen | null;
 	[CommentContentType.ConnectRequired]: null;
+	[CommentContentType.AssetDeletionRequest]: AssetDeletionRequestChosen | null;
 };

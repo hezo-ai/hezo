@@ -96,6 +96,9 @@ const TABLE_TO_QUERY_KEY: Record<
 	// `docs(cid)` = ['projects', slug, 'docs'] is a prefix of every per-doc key,
 	// including the review-comments one, so one invalidation refreshes them all.
 	document_review_comments: (cid) => [queryKeys.projects.docs(cid)],
+	// Agent-driven uploads, moves/copies, and approved deletions live-refresh an
+	// open Assets page; broadcasts carry project_id (and team_id).
+	assets: (cid) => [queryKeys.projects.assets(cid)],
 	secrets: (cid) => [queryKeys.projects.secrets(cid)],
 	mcp_connections: (cid, row) => {
 		const keys: QueryKey[] = [queryKeys.projects.mcpConnections(cid)];

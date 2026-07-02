@@ -32,8 +32,11 @@ const REVIEW_MARK_CLASSES =
 const REVIEW_MARK_ACTIVE_CLASSES =
 	'cursor-pointer rounded-[3px] px-px bg-accent/30 text-text-1 ring-2 ring-ring [box-shadow:inset_0_-1.5px_0_0_color-mix(in_oklab,var(--color-accent)_45%,transparent)]';
 
+// break-words wraps long unbreakable strings (URLs, paths) inside the prose
+// column instead of widening it; tables opt back out so cell tokens stay whole
+// and the table scrolls in its overflow wrapper (see the `table` component).
 const PROSE_CLASSES =
-	'prose prose-sm max-w-none text-sm text-text-1 [&_a]:text-info-soft-fg [&_h1]:text-text-1 [&_h2]:text-text-1 [&_h3]:text-text-1 [&_h4]:text-text-1 [&_strong]:text-text-1 [&_code]:text-info-soft-fg [&_code]:bg-surface-3 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-surface-3 [&_pre]:border [&_pre]:border-border [&_blockquote]:text-text-1 [&_blockquote]:border-l-border-strong [&_blockquote_p]:text-text-1 [&_p:last-child]:mb-0 [&_p:first-child]:mt-0 [&_hr]:my-6';
+	'prose prose-sm max-w-none break-words [&_table]:[overflow-wrap:normal] text-sm text-text-1 [&_a]:text-info-soft-fg [&_h1]:text-text-1 [&_h2]:text-text-1 [&_h3]:text-text-1 [&_h4]:text-text-1 [&_strong]:text-text-1 [&_code]:text-info-soft-fg [&_code]:bg-surface-3 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-surface-3 [&_pre]:border [&_pre]:border-border [&_blockquote]:text-text-1 [&_blockquote]:border-l-border-strong [&_blockquote_p]:text-text-1 [&_p:last-child]:mb-0 [&_p:first-child]:mt-0 [&_hr]:my-6';
 
 interface MarkdownProseProps {
 	children: string;
@@ -434,6 +437,15 @@ export function MarkdownProse({
 					</a>
 				);
 			},
+			// A wide table would otherwise widen the prose container itself (tables
+			// have no intrinsic overflow handling, unlike `pre`), pushing the whole
+			// page into horizontal scroll; the wrapper keeps the scrollbar on the
+			// table alone.
+			table: (props) => (
+				<div className="overflow-x-auto">
+					<table>{props.children}</table>
+				</div>
+			),
 		};
 	}, [projectId, instance, openPreview, activeReviewId, onReviewHighlightClick]);
 
