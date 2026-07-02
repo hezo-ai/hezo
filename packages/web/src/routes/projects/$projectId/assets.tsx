@@ -8,7 +8,9 @@ import {
 import * as Dialog from '@radix-ui/react-dialog';
 import { createFileRoute } from '@tanstack/react-router';
 import {
+	Check,
 	Code,
+	Copy,
 	ExternalLink,
 	FileAudio,
 	File as FileIcon,
@@ -31,6 +33,7 @@ import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
 import { dialogContentClassName, dialogOverlayClassName } from '../../../components/ui/dialog';
 import { EmptyState } from '../../../components/ui/empty-state';
 import { Input } from '../../../components/ui/input';
+import { Tooltip } from '../../../components/ui/tooltip';
 import {
 	type ProjectAsset,
 	useDeleteProjectAsset,
@@ -40,6 +43,7 @@ import {
 } from '../../../hooks/use-project-assets';
 import type { ApiError } from '../../../lib/api';
 import { allFolders, folderCrumbs, groupAssets } from '../../../lib/asset-folders';
+import { copyToClipboard } from '../../../lib/clipboard';
 
 interface AssetsSearch {
 	file?: string;
@@ -175,12 +179,21 @@ function ProjectAssetsPage() {
 	return (
 		<div>
 			<div className="flex flex-wrap items-start justify-between gap-2 mb-4">
+				{/* Root shows the page title + blurb; inside a folder the breadcrumb
+				    takes its place so the header stays a single orienting row. */}
 				<div className="min-w-0">
-					<h1 className="text-base font-semibold text-text-1">Assets</h1>
-					<p className="text-[13px] text-text-2">
-						Mockups, wireframes, and other uploads, organized in folders. Reference one in a comment
-						or doc as <code className="text-info-soft-fg">assets/&lt;path&gt;</code>.
-					</p>
+					{currentFolder === '' ? (
+						<>
+							<h1 className="text-base font-semibold text-text-1">Assets</h1>
+							<p className="text-[13px] text-text-2">
+								Mockups, wireframes, and other uploads, organized in folders.
+							</p>
+						</>
+					) : (
+						<div className="flex min-h-[26px] items-center">
+							<Breadcrumb segments={crumbs} data-testid="assets-breadcrumb" />
+						</div>
+					)}
 				</div>
 				<div className="flex items-center gap-2">
 					{folderDepth < ASSET_MAX_FOLDER_DEPTH && (
@@ -221,12 +234,6 @@ function ProjectAssetsPage() {
 					}}
 				/>
 			</div>
-
-			{currentFolder !== '' && (
-				<div className="mb-3">
-					<Breadcrumb segments={crumbs} data-testid="assets-breadcrumb" />
-				</div>
-			)}
 
 			{errors.length > 0 && (
 				<div className="mb-3 flex flex-wrap gap-1.5">
@@ -618,6 +625,44 @@ function MoveAssetDialog({
 	);
 }
 
+/**
+ * Copies an asset's canonical `assets/<path>` reference — the exact string that
+ * linkifies in comments and docs — to the clipboard, swapping its icon to a
+ * check for 1.5s as confirmation (mirrors the comment/log copy affordances).
+ */
+function CopyReferenceButton({ reference }: { reference: string }) {
+	const [copied, setCopied] = useState(false);
+	const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(() => {
+		return () => {
+			if (timeoutRef.current) clearTimeout(timeoutRef.current);
+		};
+	}, []);
+
+	const handleCopy = async () => {
+		if (await copyToClipboard(reference)) {
+			setCopied(true);
+			if (timeoutRef.current) clearTimeout(timeoutRef.current);
+			timeoutRef.current = setTimeout(() => setCopied(false), 1500);
+		}
+	};
+
+	return (
+		<Tooltip content={copied ? 'Copied!' : 'Copy link'}>
+			<button
+				type="button"
+				className="p-1 text-text-3 hover:text-text-1"
+				onClick={handleCopy}
+				aria-label={copied ? 'Reference copied' : 'Copy reference link'}
+				data-testid="asset-copy-link"
+			>
+				{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+			</button>
+		</Tooltip>
+	);
+}
+
 function AssetCard({
 	asset,
 	highlighted,
@@ -696,34 +741,41 @@ function AssetCard({
 					<div className="text-[11px] text-text-3">{formatBytes(asset.byte_size)}</div>
 				</div>
 				<div className="flex shrink-0 items-center gap-0.5">
-					<a
-						href={asset.url}
-						target="_blank"
-						rel="noopener noreferrer"
-						className="p-1 text-text-3 hover:text-text-1"
-						aria-label="Open in new tab"
-						data-testid="asset-popout"
-					>
-						<ExternalLink className="h-3.5 w-3.5" />
-					</a>
-					<button
-						type="button"
-						className="p-1 text-text-3 hover:text-text-1"
-						onClick={onMove}
-						aria-label="Move to folder"
-						data-testid="asset-move"
-					>
-						<FolderInput className="h-3.5 w-3.5" />
-					</button>
-					<button
-						type="button"
-						className="p-1 text-text-3 hover:text-danger"
-						onClick={onDelete}
-						aria-label="Delete asset"
-						data-testid="asset-delete"
-					>
-						<Trash2 className="h-3.5 w-3.5" />
-					</button>
+					<Tooltip content="Open in new tab">
+						<a
+							href={asset.url}
+							target="_blank"
+							rel="noopener noreferrer"
+							className="p-1 text-text-3 hover:text-text-1"
+							aria-label="Open in new tab"
+							data-testid="asset-popout"
+						>
+							<ExternalLink className="h-3.5 w-3.5" />
+						</a>
+					</Tooltip>
+					<CopyReferenceButton reference={`assets/${asset.original_filename}`} />
+					<Tooltip content="Move to folder">
+						<button
+							type="button"
+							className="p-1 text-text-3 hover:text-text-1"
+							onClick={onMove}
+							aria-label="Move to folder"
+							data-testid="asset-move"
+						>
+							<FolderInput className="h-3.5 w-3.5" />
+						</button>
+					</Tooltip>
+					<Tooltip content="Delete asset">
+						<button
+							type="button"
+							className="p-1 text-text-3 hover:text-danger"
+							onClick={onDelete}
+							aria-label="Delete asset"
+							data-testid="asset-delete"
+						>
+							<Trash2 className="h-3.5 w-3.5" />
+						</button>
+					</Tooltip>
 				</div>
 			</div>
 		</li>

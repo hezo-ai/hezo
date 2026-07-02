@@ -278,6 +278,46 @@ test('asset cards label with the basename while keeping the full path for toolin
 	expect(card?.querySelector('[title="reports/q3/chart.png"]')).not.toBeNull();
 });
 
+test('inside a folder the page title and blurb give way to the breadcrumb', async () => {
+	let ctx!: { projectSlug: string };
+	const {
+		findByText,
+		findByTestId,
+		getByRole,
+		queryByRole,
+		queryByText,
+		queryByTestId,
+		user,
+		router,
+	} = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Chrome' });
+			await seedAsset(ws, project, { filename: 'inside.png', folder: 'launch' });
+			ctx = { projectSlug: project.slug };
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/assets',
+		params: { projectId: ctx.projectSlug },
+	});
+
+	// Root: the page heading + blurb are visible and there is no breadcrumb yet.
+	await findByText(/Mockups, wireframes, and other uploads/);
+	expect(getByRole('heading', { level: 1, name: 'Assets' })).not.toBeNull();
+	expect(queryByTestId('assets-breadcrumb')).toBeNull();
+
+	// Drill into the folder: the heading + blurb are replaced by the breadcrumb.
+	await user.click(await findByTestId('asset-folder-card'));
+	await findByTestId('assets-breadcrumb');
+	await waitFor(() => {
+		expect(queryByText(/Mockups, wireframes, and other uploads/)).toBeNull();
+	});
+	expect(queryByRole('heading', { level: 1, name: 'Assets' })).toBeNull();
+});
+
 test('a script upload through the picker succeeds and stores text/plain', async () => {
 	let ctx!: { projectSlug: string };
 	const { findByText, findByTestId, user, router, container } = await renderApp({
