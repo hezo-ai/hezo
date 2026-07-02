@@ -1032,6 +1032,25 @@ Copy a project asset to a new path in the assets library (any type, including bi
 
 **Returns:** `{ copied: true, id, reference: "assets/<path>" }` — a new asset with its own id, any type including binary. Returns `{ error }` when the source is missing, the destination exists (copies never overwrite), or a path is invalid.
 
+### `request_asset_deletion`
+
+_Write tool._
+
+Ask a human admin to approve deleting one or more project assets. Deletion is destructive, so agents can never delete directly — this posts an approval card on the task; an admin approves or denies it, on approval the backend deletes the assets (rows, attachments, and stored bytes; no further agent action needed), and you are woken with the outcome. Stop any work that depends on the deletion and wait. Everything short of deletion — create, overwrite, read, list, copy, move — is self-serve; consider moving obsolete-but-maybe-valuable assets into an archive folder (move_project_asset) instead of requesting deletion.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `task_id` | `string` | Yes | Task identifier or UUID — the approval card is posted here (usually your current task) |
+| `filenames` | `string[]` | Yes | Asset paths to delete — full paths exactly as list_project_assets returns them (e.g. ["drafts/old-v1.md", "old-logo.png"]) |
+| `reason` | `string` | Yes | Why these assets should be deleted — shown to the approving admin |
+
+**Returns:** `{ comment_id, status: "pending", assets, note }`, or `{ ..., reused: true }` when an identical pending request already exists on the task, or `{ error }` when any path is missing or invalid (all-or-nothing). Posts an approval card on the named task and raises the admin inbox.
+
+**Authorization:** Resolution is admin-only: a human approves or denies the card in the web app; on approval the backend deletes the assets and the requesting agent is woken with the outcome.
+
 ### `read_project_doc`
 
 _Read-only._

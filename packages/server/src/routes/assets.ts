@@ -245,8 +245,8 @@ assetsRoutes.delete('/projects/:projectId/assets/:assetId', async (c) => {
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 	const assetId = c.req.param('assetId');
 
-	const found = await db.query<{ id: string }>(
-		'SELECT id FROM assets WHERE id = $1 AND team_id = $2 AND project_id = $3',
+	const found = await db.query<{ id: string; original_filename: string }>(
+		'SELECT id, original_filename FROM assets WHERE id = $1 AND team_id = $2 AND project_id = $3',
 		[assetId, teamId, projectId],
 	);
 	if (found.rows.length === 0) return err(c, 'NOT_FOUND', 'Asset not found', 404);
@@ -254,6 +254,19 @@ assetsRoutes.delete('/projects/:projectId/assets/:assetId', async (c) => {
 	// Removes the row; `comment_attachments` rows cascade. Then drop the blob.
 	await db.query('DELETE FROM assets WHERE id = $1', [assetId]);
 	await deleteAsset(c.get('dataDir'), teamId, projectId, assetId);
+
+	const actorMemberId = await resolveActorMemberId(db, auth, teamId);
+	c.get('events').emit({
+		type: 'asset.deleted',
+		teamId,
+		projectId,
+		actorType: actorTypeFromAuth(auth),
+		actorMemberId,
+		actorApiKeyId: apiKeyIdFromAuth(auth),
+		assetIds: [assetId],
+		filenames: [found.rows[0].original_filename],
+		via: 'admin_delete',
+	});
 
 	broadcastChange(c, wsRoom.team(teamId), 'assets', 'DELETE', {
 		id: assetId,

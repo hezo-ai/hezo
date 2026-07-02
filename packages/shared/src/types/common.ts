@@ -132,6 +132,7 @@ export const CommentContentType = {
 	Action: 'action',
 	CredentialRequest: 'credential_request',
 	ConnectRequired: 'connect_required',
+	AssetDeletionRequest: 'asset_deletion_request',
 } as const;
 export type CommentContentType = (typeof CommentContentType)[keyof typeof CommentContentType];
 
@@ -639,6 +640,7 @@ export const WakeupSource = {
 	Mention: 'mention',
 	Automation: 'automation',
 	CredentialProvided: 'credential_provided',
+	AssetDeletionResolved: 'asset_deletion_resolved',
 	Comment: 'comment',
 	Reply: 'reply',
 	Heartbeat: 'heartbeat',

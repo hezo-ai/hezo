@@ -387,6 +387,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		returns:
 			'`{ copied: true, id, reference: "assets/<path>" }` — a new asset with its own id, any type including binary. Returns `{ error }` when the source is missing, the destination exists (copies never overwrite), or a path is invalid.',
 	},
+	request_asset_deletion: {
+		category: 'Project docs & assets',
+		returns:
+			'`{ comment_id, status: "pending", assets, note }`, or `{ ..., reused: true }` when an identical pending request already exists on the task, or `{ error }` when any path is missing or invalid (all-or-nothing). Posts an approval card on the named task and raises the admin inbox.',
+		auth: 'Resolution is admin-only: a human approves or denies the card in the web app; on approval the backend deletes the assets and the requesting agent is woken with the outcome.',
+	},
 
 	// Costs
 	get_costs: {

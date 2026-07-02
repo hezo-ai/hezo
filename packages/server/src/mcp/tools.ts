@@ -87,7 +87,7 @@ import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
 import { deleteAsset, readAsset, writeAsset } from '../services/asset-storage';
 import { upsertChatMemory } from '../services/chat-memory';
-import { fireCommentWakeups } from '../services/comment-wakeups';
+import { fireAdminMention, fireCommentWakeups } from '../services/comment-wakeups';
 import type { ContainerDeps } from '../services/containers';
 import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import {
@@ -173,6 +173,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'create_comment',
 	'update_comment',
 	'request_credential',
+	'request_asset_deletion',
 	'register_connector',
 	'resolve_approval',
 	'update_agent_system_prompt',
@@ -3752,6 +3753,142 @@ export function registerTools(
 				original_filename: inserted.original_filename,
 			});
 			return { copied: true, id: inserted.id, reference: `assets/${to}` };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'request_asset_deletion',
+		'Ask a human admin to approve deleting one or more project assets. Deletion is destructive, so agents can never delete directly — this posts an approval card on the task; an admin approves or denies it, on approval the backend deletes the assets (rows, attachments, and stored bytes; no further agent action needed), and you are woken with the outcome. Stop any work that depends on the deletion and wait. Everything short of deletion — create, overwrite, read, list, copy, move — is self-serve; consider moving obsolete-but-maybe-valuable assets into an archive folder (move_project_asset) instead of requesting deletion.',
+		{
+			project: projectArg(),
+			task_id: z
+				.string()
+				.describe(
+					'Task identifier or UUID — the approval card is posted here (usually your current task)',
+				),
+			filenames: z
+				.array(z.string())
+				.min(1)
+				.describe(
+					'Asset paths to delete — full paths exactly as list_project_assets returns them (e.g. ["drafts/old-v1.md", "old-logo.png"])',
+				),
+			reason: z
+				.string()
+				.describe('Why these assets should be deleted — shown to the approving admin'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveTaskScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId, projectId, taskId } = scope;
+
+			const raw = args.filenames as string[];
+			const paths: string[] = [];
+			for (const f of raw) {
+				const normalized = normalizeAssetPath(f);
+				if (normalized === null) return { error: assetPathError(f) };
+				if (!paths.includes(normalized)) paths.push(normalized);
+			}
+			const found = await db.query<{ id: string; original_filename: string }>(
+				'SELECT id, original_filename FROM assets WHERE project_id = $1 AND original_filename = ANY($2::text[])',
+				[projectId, paths],
+			);
+			const foundByPath = new Map(found.rows.map((r) => [r.original_filename, r.id]));
+			const missing = paths.filter((p) => !foundByPath.has(p));
+			if (missing.length > 0) {
+				return {
+					error: `Not found: ${missing.map((p) => `assets/${p}`).join(', ')} — nothing was requested (all-or-nothing). Check list_project_assets for the exact paths.`,
+				};
+			}
+			const assets = paths.map((p) => ({ id: foundByPath.get(p) as string, path: p }));
+			const idsKey = assets
+				.map((a) => a.id)
+				.sort()
+				.join(',');
+
+			// Idempotency: an identical pending request on this task is reused, so a
+			// retried run doesn't stack duplicate approval cards.
+			const pendingRows = await db.query<{
+				id: string;
+				content: { assets?: Array<{ id: string }> };
+			}>(
+				`SELECT id, content FROM task_comments
+				 WHERE task_id = $1
+				   AND content_type = 'asset_deletion_request'::comment_content_type
+				   AND chosen_option IS NULL
+				 ORDER BY created_at ASC`,
+				[taskId],
+			);
+			for (const row of pendingRows.rows) {
+				const existingIds = (row.content.assets ?? [])
+					.map((a) => a.id)
+					.sort()
+					.join(',');
+				if (existingIds === idsKey) {
+					return { comment_id: row.id, status: 'pending', reused: true };
+				}
+			}
+
+			const reason = args.reason as string;
+			const authorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const refs = assets.map((a) => `assets/${a.path}`).join(', ');
+			const content = {
+				assets,
+				reason,
+				// The inbox snippet builder reads content.text; keep it human-readable.
+				text: `Requested deletion of ${assets.length} asset${assets.length === 1 ? '' : 's'}: ${refs} — ${reason}`,
+			};
+			const inserted = await db.query<{ id: string }>(
+				`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+				 VALUES ($1, $2, 'asset_deletion_request'::comment_content_type, $3::jsonb)
+				 RETURNING *`,
+				[taskId, authorMemberId, JSON.stringify(content)],
+			);
+			broadcastCommentFamilyChange(
+				wsManager,
+				teamId,
+				projectId,
+				'task_comments',
+				'INSERT',
+				inserted.rows[0] as unknown as Record<string, unknown>,
+			);
+
+			// Deletion requests must reach a human who can act — raise the admin
+			// inbox badge even though the card carries no literal @admin text.
+			try {
+				await fireAdminMention({
+					db,
+					teamId,
+					taskId,
+					commentId: inserted.rows[0].id,
+					authorUserId: null,
+					wsManager,
+				});
+			} catch (e) {
+				log.error('Failed to fan out asset-deletion admin mention:', e);
+			}
+
+			events?.emit({
+				type: 'asset.deletion_requested',
+				teamId,
+				projectId,
+				actorType: actorTypeFromAuth(auth),
+				actorMemberId: authorMemberId,
+				actorApiKeyId: apiKeyIdFromAuth(auth),
+				commentId: inserted.rows[0].id,
+				taskId,
+				assetIds: assets.map((a) => a.id),
+				filenames: assets.map((a) => a.path),
+			});
+
+			return {
+				comment_id: inserted.rows[0].id,
+				status: 'pending',
+				reused: false,
+				assets: assets.map((a) => `assets/${a.path}`),
+				note: 'An admin must approve the deletion. Stop work that depends on it and wait — you will be woken with the outcome.',
+			};
 		},
 		db,
 	);
