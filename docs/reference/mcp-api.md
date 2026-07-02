@@ -1055,7 +1055,7 @@ Ask a human admin to approve deleting one or more project assets. Deletion is de
 
 _Read-only._
 
-Read a markdown project doc by filename (e.g. "spec.md") — the high-level project context (PRDs, specs, architecture decisions, research) that list_project_docs returns; the full body comes back inline as `content`. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so do not reach for the Read/cat file tools — always load a doc through this tool by its bare filename. For non-markdown assets (mockups, wireframes, diagrams) use read_project_asset instead.
+Read a markdown project doc by filename (e.g. "spec.md") — the high-level project context (PRDs, specs, architecture decisions, research) that list_project_docs returns; the full body comes back inline as `content`. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so do not reach for the Read/cat file tools — always load a doc through this tool by its bare filename. When the admin has left review feedback on the doc, the result includes `review_comments` — each anchors a `comment` to a `quote` (an exact text snippet; `occurrence` disambiguates repeated snippets). Action them when asked to. IMPORTANT: any write to the doc deletes ALL of its review comments, so capture every comment from this result BEFORE your first write_project_doc call — after one write they are gone. For non-markdown assets (mockups, wireframes, diagrams) use read_project_asset instead.
 
 **Parameters:**
 
@@ -1064,13 +1064,13 @@ Read a markdown project doc by filename (e.g. "spec.md") — the high-level proj
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filename` | `string` | Yes | Filename to read (e.g. "spec.md") |
 
-**Returns:** `{ filename, content }` (the full markdown body), or `{ error }` if the file is not found.
+**Returns:** `{ filename, content }` (the full markdown body), plus `review_comments: [{ id, quote, occurrence, comment, created_at }]` when the admin has left pending review feedback on the doc (each comment anchors to an exact `quote` snippet; `occurrence` disambiguates repeats). Any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found.
 
 ### `write_project_doc`
 
 _Write tool._
 
-Write a project documentation file. Project docs are markdown only — the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead — reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.
+Write a project documentation file. Project docs are markdown only — the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) — a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned — every content-changing write records a revision, so many partial writes bury the history in noise. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead — reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.
 
 **Parameters:**
 
@@ -1080,7 +1080,7 @@ Write a project documentation file. Project docs are markdown only — the filen
 | `filename` | `string` | Yes | Markdown filename to write (e.g. "spec.md") |
 | `content` | `string` | Yes | File content (markdown) |
 
-**Returns:** `{ written: true, id, filename }`, or `{ error }` if the filename is not `.md`.
+**Returns:** `{ written: true, id, filename }`, or `{ error }` if the filename is not `.md`. Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history.
 
 ## Costs
 

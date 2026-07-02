@@ -20,6 +20,12 @@ interface HelpDialogProps {
 	className?: string;
 	/** Width of the modal. Defaults to `md`. */
 	size?: keyof typeof dialogContentClassName;
+	/**
+	 * Trigger rendering: the default circled `HelpCircle` icon, or a bare "?"
+	 * text glyph with no circle/border — for surfaces where the ring reads as
+	 * visual noise (e.g. next to a floating toolbar).
+	 */
+	variant?: 'icon' | 'glyph';
 	'data-testid'?: string;
 }
 
@@ -36,6 +42,7 @@ export function HelpDialog({
 	tooltip,
 	className,
 	size = 'md',
+	variant = 'icon',
 	'data-testid': testId,
 }: HelpDialogProps) {
 	const [open, setOpen] = useState(false);
@@ -47,7 +54,13 @@ export function HelpDialog({
 				data-testid={testId}
 				className={`shrink-0 text-text-3 hover:text-text-1 transition-colors ${className ?? ''}`}
 			>
-				<HelpCircle className="w-3.5 h-3.5" />
+				{variant === 'glyph' ? (
+					<span className="text-[15px] font-semibold leading-none" aria-hidden>
+						?
+					</span>
+				) : (
+					<HelpCircle className="w-3.5 h-3.5" />
+				)}
 			</button>
 		</Dialog.Trigger>
 	);

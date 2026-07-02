@@ -176,6 +176,13 @@ export const queryKeys = {
 			filename,
 			'revisions',
 		],
+		docReviewComments: (slug: string, filename: string | null) => [
+			'projects',
+			slug,
+			'docs',
+			filename,
+			'review-comments',
+		],
 		docsResolve: (slug: string, key: KeyParam) => ['projects', slug, 'docs', 'resolve', key],
 		preferences: (slug: string) => ['projects', slug, 'preferences'],
 		preferencesRevisions: (slug: string) => ['projects', slug, 'preferences', 'revisions'],

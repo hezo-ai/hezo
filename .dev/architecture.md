@@ -196,7 +196,18 @@ interrupted run still counts against budgets.
 
 **Docs, skills, assets.** `documents` is one table backing three Markdown kinds by
 `type` (`project_doc`, `team_preferences`, `agent_system_prompt`), each with partial
-unique scoping and full revision history in `document_revisions`. `skills` is the
+unique scoping and full revision history in `document_revisions`.
+`document_review_comments` holds the admin's view-mode highlight feedback on a project
+doc: each row anchors a `comment` to an exact `quote` + `occurrence` (nth match) over the
+document's rendered text stream, plus the `doc_updated_at` it was authored against
+(creates carry the client's `updated_at` and 409 on mismatch). Review comments are
+**version-scoped**: any content-changing write — admin PUT, agent `write_project_doc`, or
+a revision restore — deletes all of them inside the same transaction
+(`services/documents.ts`), so anchors can never go stale; a no-op save keeps them.
+Agents read them via `read_project_doc` (returned alongside `content`); the web renders
+them as `<mark>` highlights with margin icons on the three view surfaces (preview route,
+task-sidebar panel, Documents tab view mode) via a rehype plugin
+(`packages/web/src/lib/rehype-review-highlights.ts`). `skills` is the
 instance/team reference store (manifest-injected into runs, full-text-searchable) with
 `skill_revisions` history. `assets` + `task_attachments`/`comment_attachments` handle
 uploaded files (bytes on local disk keyed by asset UUID, served over HMAC-signed URLs with

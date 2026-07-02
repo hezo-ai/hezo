@@ -79,6 +79,38 @@ last changed — and the agent opens the ones it needs with `read_project_doc`. 
 updating a document immediately makes it discoverable to the whole team, without bloating
 anyone's prompt.
 
+## Reviewing documents
+
+When you're reading a document — on the Documents page, in the task-sidebar preview, or in
+its own tab — you can leave **review comments** on it, Google-Docs style. There are two
+ways to comment:
+
+- **Select any text** — a floating **Comment** button appears next to your selection; click
+  it, write your feedback, and the selected text stays highlighted.
+- **Hover a line** (on a pointer device) — a comment icon appears in the right margin;
+  clicking it highlights the entire line and attaches your comment to it.
+
+Each comment shows as an icon in the right margin, level with its highlighted text. Click a
+highlight or its icon to **edit or delete** that comment. The toolbar above the document
+shows a comment count plus two actions — **action this review** (a clipboard button that
+copies a ready-made handoff you can paste into a task comment or a new task's description
+when assigning the work to an agent) and **clear review** (a trash button that deletes every
+comment after confirmation). The **?** button next to the toolbar opens a short in-app guide
+to all of this.
+
+Agents read pending review comments directly: `read_project_doc` returns them alongside the
+document content, each one anchored to the exact text you highlighted. So the flow is —
+leave your comments, hand the review to an agent (paste the copied handoff into a task and
+assign it), and the agent actions each comment against the document.
+
+**A review applies to the current version of the document only.** Any update to the
+document — whether you edit it or an agent does — automatically deletes all of its review
+comments: the review is consumed by the revision that addresses it. Agents are told to
+capture every comment before their first write and to make one consolidated update. Review
+comments apply to project documents only — not to markdown files uploaded to the
+[assets library](/docs/concepts/assets), and not to the repo-backed `AGENTS.md` entry on
+the Documents page.
+
 ## Version history
 
 Every change to a document is versioned. The Documents page shows the full **revision

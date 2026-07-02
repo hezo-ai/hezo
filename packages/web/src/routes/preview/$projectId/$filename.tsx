@@ -1,5 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { MarkdownProse } from '../../../components/markdown-prose';
+import { ReviewHelp } from '../../../components/document-review/review-help';
+import { ReviewToolbarActions } from '../../../components/document-review/review-toolbar-actions';
+import { ReviewableDocument } from '../../../components/document-review/reviewable-document';
 import { useProjectDoc } from '../../../hooks/use-project-docs';
 
 function DocPreviewPage() {
@@ -16,10 +18,30 @@ function DocPreviewPage() {
 
 	return (
 		<div className="h-screen overflow-auto bg-surface">
+			<div className="sticky top-0 z-10 flex items-center justify-center gap-2 px-4 pt-3">
+				<div
+					className="flex items-center gap-2 rounded-[10px] border border-border bg-surface/85 px-2.5 py-1 shadow-sm backdrop-blur-md"
+					data-testid="preview-review-toolbar"
+				>
+					<span
+						className="max-w-[45vw] truncate font-mono text-[13px] text-text-1"
+						title={filename}
+					>
+						{filename}
+					</span>
+					<span className="h-4 w-px shrink-0 bg-border" aria-hidden />
+					<ReviewToolbarActions projectId={projectId} filename={filename} />
+				</div>
+				<ReviewHelp />
+			</div>
 			<div className="max-w-3xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
-				<MarkdownProse projectId={projectId} projectSlug={projectId}>
-					{doc.content || '_(empty)_'}
-				</MarkdownProse>
+				<ReviewableDocument
+					projectId={projectId}
+					projectSlug={projectId}
+					filename={filename}
+					content={doc.content || '_(empty)_'}
+					docUpdatedAt={doc.updated_at}
+				/>
 			</div>
 		</div>
 	);
