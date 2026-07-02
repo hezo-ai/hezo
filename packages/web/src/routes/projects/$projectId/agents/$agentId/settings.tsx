@@ -359,7 +359,7 @@ function ModelOverride({ provider, model, onProviderChange, onModelChange }: Mod
 						<option value="">Use instance default</option>
 						{availableProviders.map((p) => (
 							<option key={p} value={p}>
-								{AI_PROVIDER_INFO[p].name}
+								{AI_PROVIDER_INFO[p]?.name ?? p}
 							</option>
 						))}
 					</select>

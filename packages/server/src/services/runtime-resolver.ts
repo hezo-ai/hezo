@@ -42,12 +42,16 @@ export async function resolveRuntimeForTask(
 		return { runtime: taskRuntimeType, provider: row.provider };
 	}
 
+	// Constrain to providers the running binary still supports: a stale row for
+	// a since-removed provider (e.g. `x_ai`) must not shadow valid configs.
+	const known = Object.keys(PROVIDER_TO_RUNTIME);
+	const placeholders = known.map((_, i) => `$${i + 2}::ai_provider`).join(', ');
 	const providers = await db.query<{ provider: AiProvider }>(
 		`SELECT provider FROM ai_provider_configs
-		 WHERE status = $1
+		 WHERE status = $1 AND provider IN (${placeholders})
 		 ORDER BY is_default DESC, created_at ASC
 		 LIMIT 1`,
-		[AiProviderStatus.Active],
+		[AiProviderStatus.Active, ...known],
 	);
 	const first = providers.rows[0];
 	if (!first) return null;
