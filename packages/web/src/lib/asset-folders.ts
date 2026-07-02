@@ -66,3 +66,46 @@ export function folderCrumbs(folder: string): Array<{ name: string; path: string
 	const segments = folder.split('/');
 	return segments.map((name, i) => ({ name, path: segments.slice(0, i + 1).join('/') }));
 }
+
+/** Nesting depth: 0 at the library root, 1 for a top-level folder, 2 for a subfolder. */
+export function folderDepth(path: string): number {
+	return path === '' ? 0 : path.split('/').length;
+}
+
+/**
+ * Indentation level for the folder-picker tree: the library root and every
+ * top-level folder sit flush-left (0); each nested level steps in one more, so
+ * `launch/art` renders one indent under `launch`.
+ */
+export function folderIndentLevel(path: string): number {
+	const depth = folderDepth(path);
+	return depth === 0 ? 0 : depth - 1;
+}
+
+/** The folder's own trailing segment (its display name); '' is the library root. */
+export function folderLeafName(path: string): string {
+	if (path === '') return '';
+	const slash = path.lastIndexOf('/');
+	return slash < 0 ? path : path.slice(slash + 1);
+}
+
+/**
+ * Filter a sorted folder list to those matching `query` (case-insensitive
+ * substring on the full path), keeping each match's ancestors so the indented
+ * tree still reads coherently while searching (a matched subfolder never
+ * appears orphaned from its parent). An empty query returns the list intact.
+ */
+export function filterFolderTree(folders: string[], query: string): string[] {
+	const q = query.trim().toLowerCase();
+	if (!q) return folders;
+	const keep = new Set<string>();
+	for (const folder of folders) {
+		if (!folder.toLowerCase().includes(q)) continue;
+		keep.add(folder);
+		const segments = folder.split('/');
+		for (let i = 1; i < segments.length; i += 1) {
+			keep.add(segments.slice(0, i).join('/'));
+		}
+	}
+	return folders.filter((folder) => keep.has(folder));
+}
