@@ -127,6 +127,7 @@ function ProjectDocumentsPage() {
 					isPending={updateDoc.isPending}
 				/>
 			}
+			review={file && !isAgentsMd ? { filename: file, docUpdatedAt: doc?.updated_at } : null}
 			viewerExtras={
 				file && !isAgentsMd ? (
 					<ProjectDocRevisionsPanel projectId={projectId} filename={file} />

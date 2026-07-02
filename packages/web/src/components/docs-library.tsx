@@ -1,5 +1,8 @@
 import { ArrowLeft, ExternalLink, FileText, Loader2, Plus, Trash2 } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { ReviewHelp } from './document-review/review-help';
+import { ReviewToolbarActions } from './document-review/review-toolbar-actions';
+import { ReviewableDocument } from './document-review/reviewable-document';
 import { MarkdownProse } from './markdown-prose';
 import { MentionTextarea } from './mention-textarea';
 import { Button } from './ui/button';
@@ -40,6 +43,13 @@ interface DocsLibraryProps {
 	/** Banner rendered above the selected doc (view and edit), e.g. for protected docs. */
 	viewerBanner?: ReactNode;
 
+	/**
+	 * Review-comment support for the selected doc (view mode only). Set for real
+	 * project docs — never for the repo-backed AGENTS.md entry, which has no
+	 * document row to hang comments on. Requires projectId/projectSlug.
+	 */
+	review?: { filename: string; docUpdatedAt?: string } | null;
+
 	emptyTitle?: string;
 	emptyDescription?: string;
 
@@ -64,6 +74,7 @@ export function DocsLibrary({
 	getPopOutUrl,
 	viewerExtras,
 	viewerBanner,
+	review,
 	emptyTitle = 'No documents yet',
 	emptyDescription,
 	projectId,
@@ -191,6 +202,12 @@ export function DocsLibrary({
 							<div className="flex items-center gap-2 shrink-0">
 								{mode === 'view' ? (
 									<>
+										{review && projectId && (
+											<>
+												<ReviewToolbarActions projectId={projectId} filename={review.filename} />
+												<ReviewHelp />
+											</>
+										)}
 										{popOutUrl && (
 											<Button
 												variant="ghost"
@@ -232,9 +249,19 @@ export function DocsLibrary({
 						</div>
 
 						{mode === 'view' ? (
-							<MarkdownProse projectId={projectId} projectSlug={projectSlug}>
-								{docContent || '_(empty)_'}
-							</MarkdownProse>
+							review && projectId && projectSlug ? (
+								<ReviewableDocument
+									projectId={projectId}
+									projectSlug={projectSlug}
+									filename={review.filename}
+									content={docContent || '_(empty)_'}
+									docUpdatedAt={review.docUpdatedAt}
+								/>
+							) : (
+								<MarkdownProse projectId={projectId} projectSlug={projectSlug}>
+									{docContent || '_(empty)_'}
+								</MarkdownProse>
+							)
 						) : (
 							<MentionTextarea
 								projectId={projectId}

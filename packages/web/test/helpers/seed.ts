@@ -188,6 +188,47 @@ export async function seedAsset(
 	return ((await res.json()) as { data: SeededAsset }).data;
 }
 
+export interface SeededDocument {
+	id: string;
+	filename: string;
+	updated_at: string;
+}
+
+/** Create (or overwrite) a markdown project doc via the real API. */
+export async function seedDocument(
+	workspace: SeededWorkspace,
+	project: SeededProject,
+	input: { filename: string; content: string },
+): Promise<SeededDocument> {
+	const { apiBase } = getTestContext();
+	const res = await apiBase(`/api/projects/${project.slug}/docs/${input.filename}`, {
+		method: 'PUT',
+		headers: workspace.headers,
+		body: JSON.stringify({ content: input.content }),
+	});
+	return ((await res.json()) as { data: SeededDocument }).data;
+}
+
+/** Leave a review comment on a project doc via the real API. */
+export async function seedReviewComment(
+	workspace: SeededWorkspace,
+	project: SeededProject,
+	filename: string,
+	input: { quote: string; occurrence?: number; comment: string },
+): Promise<{ id: string }> {
+	const { apiBase } = getTestContext();
+	const res = await apiBase(`/api/projects/${project.slug}/docs/${filename}/review-comments`, {
+		method: 'POST',
+		headers: workspace.headers,
+		body: JSON.stringify({
+			quote: input.quote,
+			occurrence: input.occurrence ?? 0,
+			comment: input.comment,
+		}),
+	});
+	return ((await res.json()) as { data: { id: string } }).data;
+}
+
 export async function seedComment(
 	workspace: SeededWorkspace,
 	task: SeededTask,

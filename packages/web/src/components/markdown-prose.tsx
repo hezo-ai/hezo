@@ -7,6 +7,7 @@ import { useAgents } from '../hooks/use-agents';
 import { useDocMentions, useInstanceMentions } from '../hooks/use-mentions';
 import { useTaskMentions } from '../hooks/use-tasks';
 import { docPreviewPath } from '../lib/doc-preview';
+import { type ReviewAnnotation, rehypeReviewHighlights } from '../lib/rehype-review-highlights';
 import { type CommentRefTask, remarkCommentRefs } from '../lib/remark-comment-refs';
 import {
 	type AgentMentionData,
@@ -24,6 +25,12 @@ import { useOpenPreview } from './task-detail/preview-context';
 import { Tooltip } from './ui/tooltip';
 
 type RemarkPlugin = Parameters<typeof Markdown>[0]['remarkPlugins'];
+type RehypePlugin = Parameters<typeof Markdown>[0]['rehypePlugins'];
+
+const REVIEW_MARK_CLASSES =
+	'cursor-pointer rounded-[3px] px-px bg-accent/15 text-text-1 transition-colors hover:bg-accent/25 [box-shadow:inset_0_-1.5px_0_0_color-mix(in_oklab,var(--color-accent)_45%,transparent)]';
+const REVIEW_MARK_ACTIVE_CLASSES =
+	'cursor-pointer rounded-[3px] px-px bg-accent/30 text-text-1 ring-2 ring-ring [box-shadow:inset_0_-1.5px_0_0_color-mix(in_oklab,var(--color-accent)_45%,transparent)]';
 
 const PROSE_CLASSES =
 	'prose prose-sm max-w-none text-sm text-text-1 [&_a]:text-info-soft-fg [&_h1]:text-text-1 [&_h2]:text-text-1 [&_h3]:text-text-1 [&_h4]:text-text-1 [&_strong]:text-text-1 [&_code]:text-info-soft-fg [&_code]:bg-surface-3 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-surface-3 [&_pre]:border [&_pre]:border-border [&_blockquote]:text-text-1 [&_blockquote]:border-l-border-strong [&_blockquote_p]:text-text-1 [&_p:last-child]:mb-0 [&_p:first-child]:mt-0 [&_hr]:my-6';
@@ -47,6 +54,16 @@ interface MarkdownProseProps {
 	 * log view.
 	 */
 	commentRefTask?: CommentRefTask;
+	/**
+	 * Document-review highlights: each annotation's quote renders wrapped in a
+	 * clickable `<mark data-review-id>` (see rehype-review-highlights). Only set
+	 * by the review-enabled document view surfaces.
+	 */
+	reviewAnnotations?: ReviewAnnotation[];
+	/** Click handler for a review highlight (open its comment editor). */
+	onReviewHighlightClick?: (id: string) => void;
+	/** The annotation whose highlight renders in the active (editing) style. */
+	activeReviewId?: string | null;
 }
 
 export function MarkdownProse({
@@ -57,6 +74,9 @@ export function MarkdownProse({
 	projectSlug,
 	instance,
 	commentRefTask,
+	reviewAnnotations,
+	onReviewHighlightClick,
+	activeReviewId,
 }: MarkdownProseProps) {
 	const { data: agents } = useAgents(projectId ?? '');
 	const taskCandidates = useMemo(() => extractTaskCandidates(children), [children]);
@@ -174,12 +194,44 @@ export function MarkdownProse({
 		commentRefTask,
 	]);
 
+	const rehypePlugins = useMemo<RehypePlugin>(() => {
+		if (!reviewAnnotations || reviewAnnotations.length === 0) return undefined;
+		return [[rehypeReviewHighlights, { annotations: reviewAnnotations }]];
+	}, [reviewAnnotations]);
+
 	const components = useMemo<Components>(() => {
 		// Mention links render whenever a scope is active: project scope carries
 		// the route's projectId; instance scope (CEO chat) derives each link's
 		// project from the per-entity data attributes instead.
 		const mentionsEnabled = Boolean(projectId) || instance === true;
 		return {
+			mark: (props) => {
+				const attrs = props as { 'data-review-id'?: string; children?: ReactNode };
+				const reviewId = attrs['data-review-id'];
+				if (!reviewId) return <mark>{props.children}</mark>;
+				return (
+					// biome-ignore lint/a11y/useSemanticElements: a <button> cannot wrap arbitrary inline prose (invalid nesting, breaks text flow); the mark carries role/tabIndex/keydown instead
+					<mark
+						data-review-id={reviewId}
+						data-testid="review-highlight"
+						className={
+							reviewId === activeReviewId ? REVIEW_MARK_ACTIVE_CLASSES : REVIEW_MARK_CLASSES
+						}
+						onClick={() => onReviewHighlightClick?.(reviewId)}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								onReviewHighlightClick?.(reviewId);
+							}
+						}}
+						// biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: the highlight is genuinely interactive (opens its comment editor) and a real <button> cannot wrap inline prose; full keyboard support is provided
+						role="button"
+						tabIndex={0}
+					>
+						{props.children}
+					</mark>
+				);
+			},
 			a: (props) => {
 				const attrs = props as {
 					'data-mention-admin'?: string;
@@ -383,14 +435,14 @@ export function MarkdownProse({
 				);
 			},
 		};
-	}, [projectId, instance, openPreview]);
+	}, [projectId, instance, openPreview, activeReviewId, onReviewHighlightClick]);
 
 	return (
 		<div
 			className={className ? `${PROSE_CLASSES} ${className}` : PROSE_CLASSES}
 			data-testid={testId}
 		>
-			<Markdown remarkPlugins={remarkPlugins} components={components}>
+			<Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components}>
 				{children}
 			</Markdown>
 		</div>

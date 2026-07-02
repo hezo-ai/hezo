@@ -34,6 +34,7 @@ import { authRoutes } from './routes/auth';
 import { ceoChatRoutes } from './routes/ceo-chat';
 import { commentsRoutes } from './routes/comments';
 import { costsRoutes } from './routes/costs';
+import { documentReviewRoutes } from './routes/document-review';
 import { executionLocksRoutes } from './routes/execution-locks';
 import { goalsRoutes } from './routes/goals';
 import { healthRoutes } from './routes/health';
@@ -519,6 +520,7 @@ export function buildApp(
 	app.route('/api', preferencesRoutes);
 	app.route('/api', uiStateRoutes);
 	app.route('/api', projectDocsRoutes);
+	app.route('/api', documentReviewRoutes);
 	app.route('/api', mentionsRoutes);
 	app.route('/api', aiProvidersRoutes);
 	app.route('/api', instanceSettingsRoutes);

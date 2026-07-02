@@ -1,7 +1,9 @@
 import { ExternalLink, X } from 'lucide-react';
 import { useProjectDoc } from '../../hooks/use-project-docs';
 import { docPreviewPath } from '../../lib/doc-preview';
-import { MarkdownProse } from '../markdown-prose';
+import { ReviewHelp } from '../document-review/review-help';
+import { ReviewToolbarActions } from '../document-review/review-toolbar-actions';
+import { ReviewableDocument } from '../document-review/reviewable-document';
 import type { PreviewItem } from './preview-context';
 
 function formatBytes(bytes?: number): string {
@@ -51,6 +53,8 @@ export function PreviewPanel({ item, onClose }: PreviewPanelProps) {
 					open in new tab
 					<ExternalLink className="h-3 w-3" />
 				</a>
+				<ReviewToolbarActions projectId={item.projectId} filename={item.filename} />
+				<ReviewHelp />
 				<button
 					type="button"
 					onClick={onClose}
@@ -68,6 +72,7 @@ export function PreviewPanel({ item, onClose }: PreviewPanelProps) {
 				<PreviewBody
 					item={item}
 					docContent={docQuery.data?.content}
+					docUpdatedAt={docQuery.data?.updated_at}
 					docLoading={docQuery.isLoading}
 				/>
 			</div>
@@ -78,19 +83,25 @@ export function PreviewPanel({ item, onClose }: PreviewPanelProps) {
 function PreviewBody({
 	item,
 	docContent,
+	docUpdatedAt,
 	docLoading,
 }: {
 	item: PreviewItem;
 	docContent?: string;
+	docUpdatedAt?: string;
 	docLoading: boolean;
 }) {
 	if (docLoading) return <div className="p-3 text-[13px] text-text-3">Loading…</div>;
 	if (!docContent) return <div className="p-3 text-[13px] text-text-3">No content to preview.</div>;
 	return (
 		<div className="p-3" data-testid="preview-doc-body">
-			<MarkdownProse projectId={item.projectId} projectSlug={item.projectSlug}>
-				{docContent}
-			</MarkdownProse>
+			<ReviewableDocument
+				projectId={item.projectId}
+				projectSlug={item.projectSlug}
+				filename={item.filename}
+				content={docContent}
+				docUpdatedAt={docUpdatedAt}
+			/>
 		</div>
 	);
 }

@@ -93,6 +93,9 @@ const TABLE_TO_QUERY_KEY: Record<
 				return [];
 		}
 	},
+	// `docs(cid)` = ['projects', slug, 'docs'] is a prefix of every per-doc key,
+	// including the review-comments one, so one invalidation refreshes them all.
+	document_review_comments: (cid) => [queryKeys.projects.docs(cid)],
 	secrets: (cid) => [queryKeys.projects.secrets(cid)],
 	mcp_connections: (cid, row) => {
 		const keys: QueryKey[] = [queryKeys.projects.mcpConnections(cid)];

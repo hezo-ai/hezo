@@ -64,6 +64,13 @@ export default defineConfig({
 		// install-prompt spec dispatches a synthetic `beforeinstallprompt`), so block
 		// service workers in tests to keep route mocking deterministic.
 		serviceWorkers: 'block',
+		// Cloud/devcontainer images pre-install a Chromium at a fixed path that may
+		// not match this Playwright version's expected browser revision. When set,
+		// launch that binary instead of the revisioned download; unset (CI, local
+		// dev) this is a no-op.
+		launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+			? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+			: {},
 	},
 	projects: [
 		{

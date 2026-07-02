@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { type AuditActorType, DocumentType, wsRoom } from '@hezo/shared';
 import type { DomainEventBus } from '../events/bus';
-import { broadcastRowChange } from '../lib/broadcast';
+import { broadcastCommentFamilyChange, broadcastRowChange } from '../lib/broadcast';
 import { withTransaction } from '../lib/sql';
 import type { WebSocketManager } from './ws';
 
@@ -183,6 +183,7 @@ export async function upsertDocument(
 
 	const action: 'INSERT' | 'UPDATE' = existing.rows.length === 0 ? 'INSERT' : 'UPDATE';
 
+	let clearedReviewComments = false;
 	const row = await withTransaction(db, async () => {
 		if (existing.rows.length === 0) {
 			return await insertDocument(db, input);
@@ -197,6 +198,7 @@ export async function upsertDocument(
 				input.authorMemberId,
 				input.authorApiKeyId ?? null,
 			);
+			clearedReviewComments = await wipeReviewComments(db, prior.id);
 		}
 		const updateResult = await db.query<DocumentRow>(
 			`UPDATE documents
@@ -217,6 +219,7 @@ export async function upsertDocument(
 		action,
 		row as unknown as Record<string, unknown>,
 	);
+	if (clearedReviewComments) broadcastReviewCommentsCleared(wsManager, row);
 	emitDocumentEvent(
 		input.audit,
 		action === 'INSERT' ? 'document.created' : 'document.updated',
@@ -224,6 +227,34 @@ export async function upsertDocument(
 		input.authorMemberId,
 	);
 	return row;
+}
+
+/**
+ * Review comments are version-scoped: any content change consumes the pending
+ * review (see services/document-review.ts). Runs inside the caller's document
+ * transaction so the wipe commits atomically with the edit itself. Returns
+ * whether anything was deleted so the caller can broadcast after commit.
+ */
+async function wipeReviewComments(db: PGlite, documentId: string): Promise<boolean> {
+	const wiped = await db.query<{ id: string }>(
+		'DELETE FROM document_review_comments WHERE document_id = $1 RETURNING id',
+		[documentId],
+	);
+	return wiped.rows.length > 0;
+}
+
+function broadcastReviewCommentsCleared(
+	wsManager: WebSocketManager | undefined,
+	row: DocumentRow,
+): void {
+	broadcastCommentFamilyChange(
+		wsManager,
+		row.team_id,
+		row.project_id ?? '',
+		'document_review_comments',
+		'DELETE',
+		{ document_id: row.id, cleared: true },
+	);
 }
 
 async function insertDocument(db: PGlite, input: UpsertDocumentInput): Promise<DocumentRow> {
@@ -348,6 +379,7 @@ export async function restoreRevision(
 	);
 	if (target.rows.length === 0) return null;
 
+	let clearedReviewComments = false;
 	const row = await withTransaction(db, async () => {
 		await recordRevision(
 			db,
@@ -357,6 +389,9 @@ export async function restoreRevision(
 			input.restoredByMemberId,
 			input.restoredByApiKeyId ?? null,
 		);
+		if (doc.rows[0].content !== target.rows[0].content) {
+			clearedReviewComments = await wipeReviewComments(db, input.documentId);
+		}
 		const updated = await db.query<DocumentRow>(
 			`UPDATE documents
 			 SET content = $1,
@@ -375,6 +410,7 @@ export async function restoreRevision(
 		'UPDATE',
 		row as unknown as Record<string, unknown>,
 	);
+	if (clearedReviewComments) broadcastReviewCommentsCleared(wsManager, row);
 	emitDocumentEvent(input.audit, 'document.updated', row, input.restoredByMemberId);
 	return row;
 }
