@@ -70,7 +70,9 @@ async function setupDocumentsPage(opts?: {
 		params: { projectId: setup.project.slug },
 		search: { file: setup.filename },
 	});
-	await utils.findByText(opts?.ready ?? 'Alpha paragraph with target text inside.', { exact: false });
+	await utils.findByText(opts?.ready ?? 'Alpha paragraph with target text inside.', {
+		exact: false,
+	});
 	return { ...utils, ...setup };
 }
 
