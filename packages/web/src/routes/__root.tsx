@@ -116,10 +116,13 @@ function ShellLayout() {
 	const matches = useMatches();
 	const bare = matches.some((m) => m.staticData?.bare);
 
-	// Drawer + chat open state live here so the floating new-task button can hide
-	// itself whenever either of those full-screen surfaces takes over the corner.
+	// Drawer + chat + install-card state live here so the floating new-task
+	// button can hide itself whenever another surface takes over the corner —
+	// the full-width PWA install card pins to the same bottom edge and would
+	// otherwise cover the button.
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [chatOpen, setChatOpen] = useState(false);
+	const [installCardVisible, setInstallCardVisible] = useState(false);
 
 	// Bare routes (e.g. the standalone document preview) render full-viewport
 	// without the header, project rail, or mobile drawer.
@@ -128,9 +131,9 @@ function ShellLayout() {
 	return (
 		<>
 			<ShellChrome drawerOpen={drawerOpen} setDrawerOpen={setDrawerOpen} />
-			<FloatingNewTaskButton hidden={drawerOpen || chatOpen} />
+			<FloatingNewTaskButton hidden={drawerOpen || chatOpen || installCardVisible} />
 			<CeoChatWidget open={chatOpen} onOpenChange={setChatOpen} />
-			<PwaInstallPrompt />
+			<PwaInstallPrompt onVisibleChange={setInstallCardVisible} />
 		</>
 	);
 }

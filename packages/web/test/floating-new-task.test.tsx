@@ -1,7 +1,17 @@
-import { screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedProject, seedWorkspace } from './helpers/seed';
+
+/** A stand-in for the non-standard `beforeinstallprompt` event (Android path). */
+class FakeBeforeInstallPromptEvent extends Event {
+	platforms = ['web'];
+	userChoice = Promise.resolve({ outcome: 'accepted' as const, platform: 'web' });
+	prompt = () => Promise.resolve();
+	constructor() {
+		super('beforeinstallprompt');
+	}
+}
 
 async function renderOnProjectTasks() {
 	let projectSlug = '';
@@ -49,6 +59,26 @@ test('the floating new-task button is hidden while the CEO chat is open', async 
 
 	// Closing the chat brings it back.
 	await user.click(await findByTestId('ceo-chat-close'));
+	await findByTestId('floating-new-task');
+});
+
+test('the floating new-task button is hidden while the PWA install card shows', async () => {
+	const { findByTestId, queryByTestId, user } = await renderOnProjectTasks();
+
+	// Present to start with.
+	await findByTestId('floating-new-task');
+
+	// The install card pins to the same bottom edge and covers the corner — the
+	// floating button must hide while it shows.
+	act(() => {
+		window.dispatchEvent(new FakeBeforeInstallPromptEvent());
+	});
+	await findByTestId('pwa-install-prompt');
+	await waitFor(() => expect(queryByTestId('floating-new-task')).toBeNull());
+
+	// Dismissing the card brings it back.
+	await user.click(await findByTestId('pwa-install-dismiss'));
+	await waitFor(() => expect(queryByTestId('pwa-install-prompt')).toBeNull());
 	await findByTestId('floating-new-task');
 });
 
