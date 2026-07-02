@@ -28,11 +28,11 @@ import {
 import { buildTaskListOrderBy, parseTaskListSort } from '../lib/task-sort';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
+import { getProjectTaskListPhaseBanner } from '../services/project-task-list-phase-banner';
 import { removeTaskWorktrees } from '../services/repo-sync';
 import { cancelCoachWorkForTask, terminateRunsForTask } from '../services/run-termination';
 import { triggerStatusAutomations } from '../services/task-automation';
 import { recordAssigneeChange, recordTaskLinks, recordTitleChange } from '../services/task-events';
-import { getTaskProgressSummary } from '../services/task-progress-summary';
 import {
 	type CreateTaskCaller,
 	CreateTaskError,
@@ -228,10 +228,10 @@ tasksRoutes.get('/projects/:projectId/tasks', async (c) => {
 	return c.json({ data: result.rows, meta: buildMeta(page, perPage, total) });
 });
 
-tasksRoutes.get('/projects/:projectId/tasks/progress-summary', async (c) => {
+tasksRoutes.get('/projects/:projectId/tasks/phase-banner', async (c) => {
 	const projectId = c.get('projectId') as string;
-	const summary = await getTaskProgressSummary(c.get('db'), projectId);
-	return c.json({ data: summary });
+	const state = await getProjectTaskListPhaseBanner(c.get('db'), projectId);
+	return c.json({ data: state });
 });
 
 tasksRoutes.post('/projects/:projectId/tasks', async (c) => {
