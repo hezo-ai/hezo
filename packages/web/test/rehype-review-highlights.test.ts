@@ -146,4 +146,99 @@ describe('applyReviewHighlights', () => {
 		applyReviewHighlights(tree, [ann('li1', 'second item')]);
 		expect(marks(tree).map(textContent)).toEqual(['second item']);
 	});
+
+	// A GFM table's hast interleaves whitespace-only "\n" text nodes between its
+	// structural elements (table/thead/tbody/tr). The browser never renders those
+	// as text, so the DOM selection stream concatenates cells with no separator
+	// ("RuleScope"); the highlight walk must skip them or a cross-cell quote can
+	// never match its hast counterpart ("Rule\nScope"). These build a table shaped
+	// like `mdast-util-to-hast` output to lock that in.
+	const gfmTable = (rows: string[][], head: string[]) =>
+		el(
+			'table',
+			text('\n'),
+			el(
+				'thead',
+				text('\n'),
+				el('tr', text('\n'), ...head.flatMap((h) => [el('th', text(h)), text('\n')])),
+			),
+			text('\n'),
+			el(
+				'tbody',
+				text('\n'),
+				...rows.flatMap((cells) => [
+					el('tr', text('\n'), ...cells.flatMap((v) => [el('td', text(v)), text('\n')])),
+					text('\n'),
+				]),
+			),
+		);
+
+	it('matches a quote spanning a table cell boundary, skipping the inter-cell whitespace', () => {
+		// DOM renders the two header cells as adjacent text "RuleScope"; the quote
+		// captured from such a selection must resolve despite the "\n" nodes in hast.
+		const tree = root(gfmTable([['Never use X', 'All components']], ['Rule', 'Scope']));
+		const matched = applyReviewHighlights(tree, [ann('t1', 'RuleScope')]);
+
+		expect(matched).toEqual(new Set(['t1']));
+		// One mark per cell, sharing the id (the boundary splits the run in two).
+		expect(marks(tree).map(textContent)).toEqual(['Rule', 'Scope']);
+	});
+
+	it('matches a quote spanning a table row boundary', () => {
+		// Selection dragged from the last cell of one row into the first of the next.
+		const tree = root(
+			gfmTable(
+				[
+					['Never use X', 'All components'],
+					['Export static', 'utils/export.ts'],
+				],
+				['Rule', 'Scope'],
+			),
+		);
+		const matched = applyReviewHighlights(tree, [ann('t2', 'All componentsExport static')]);
+
+		expect(matched).toEqual(new Set(['t2']));
+		expect(marks(tree).map(textContent)).toEqual(['All components', 'Export static']);
+	});
+
+	it('leaves the table whitespace nodes intact (matching only, no reflow)', () => {
+		// Skipping the "\n" nodes from the match STREAM must not remove them from the
+		// tree — the rendered table is unchanged, only anchoring is fixed.
+		const tree = root(gfmTable([['a', 'b']], ['H1', 'H2']));
+		const before = textContent(tree);
+		applyReviewHighlights(tree, [ann('t3', 'H1H2')]);
+		expect(textContent(tree)).toBe(before);
+	});
+
+	it('counts occurrences correctly across cells despite the whitespace nodes', () => {
+		// "dup" appears in two separate cells; the phantom "\n" nodes must not shift
+		// the occurrence count, so occurrence:1 still targets the SECOND cell.
+		const tree = root(
+			gfmTable(
+				[
+					['alpha dup', 'x'],
+					['beta dup', 'y'],
+				],
+				['Key', 'Val'],
+			),
+		);
+		applyReviewHighlights(tree, [ann('t4', 'dup', 1)]);
+
+		const m = marks(tree);
+		expect(m.length).toBe(1);
+		expect(textContent(m[0])).toBe('dup');
+
+		// The wrapped "dup" is the second one: the "beta dup" cell now holds the
+		// mark, while the first cell ("alpha dup") is untouched.
+		const cells: Node[] = [];
+		const walkCells = (n: Node) => {
+			if (n.tagName === 'td') cells.push(n);
+			for (const c of n.children ?? []) walkCells(c);
+		};
+		walkCells(tree);
+		const alpha = cells.find((c) => textContent(c) === 'alpha dup');
+		const beta = cells.find((c) => textContent(c) === 'beta dup');
+		expect(alpha?.children?.some((c) => c.tagName === 'mark')).toBe(false);
+		expect(beta?.children?.some((c) => c.tagName === 'mark')).toBe(true);
+	});
 });
