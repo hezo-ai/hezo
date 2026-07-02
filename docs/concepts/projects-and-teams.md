@@ -83,7 +83,8 @@ and the Captain is told to use it as the starting point for planning.
 How it's used depends on the team:
 
 - On a **software development** team, the project plan is the input the Product Lead turns
-  into the formal PRD, which then feeds the spec and implementation work.
+  into the formal PRD. On UI-bearing work the UI is designed and approved first, and the
+  technical spec and implementation are then planned against that approved design.
 - On a **blank** (or other non-software) team, the Captain uses the project plan directly
   as the plan — there's no PRD step.
 
