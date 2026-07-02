@@ -1650,8 +1650,10 @@ export function buildProgressUpdatePrompt(
 			'comments, and repo state; do not just count tasks. Then call `update_goal_progress` once per ' +
 			'goal with a fresh `progress_percent` (0-100), a `health` (on_track / at_risk / off_track, ' +
 			'weighing progress against any target date), and a one-paragraph `status_blurb` describing where ' +
-			'the goal stands and the next step needed. Do not lower a percentage without explaining why in ' +
-			'the blurb. When a goal needs a push, you can either comment on an existing in-flight ticket ' +
+			'the goal stands and the next step needed. The blurb renders as markdown on the Progress page — ' +
+			'reference tasks by their identifier (e.g. `HM-51`, which auto-links) and link PRs or other URLs ' +
+			'as markdown links (e.g. `[PR #502](https://github.com/owner/repo/pull/502)`). Do not lower a ' +
+			'percentage without explaining why in the blurb. When a goal needs a push, you can either comment on an existing in-flight ticket ' +
 			'(`create_comment`) to steer or unblock it, or file new task(s) (with `goal_id` set) when a ' +
 			'concrete next step is actually missing — existing backlog or in-flight work often already ' +
 			'covers the goal. Never re-open a closed ticket (done/cancelled are terminal and the system will ' +
