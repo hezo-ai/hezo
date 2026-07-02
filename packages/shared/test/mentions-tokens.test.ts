@@ -88,6 +88,82 @@ describe('parseMentionMatch via buildMentionRegex', () => {
 	});
 });
 
+describe('foldered asset references', () => {
+	const tokens = (input: string): MentionToken[] => {
+		const out: MentionToken[] = [];
+		const re = buildMentionRegex();
+		let m = re.exec(input);
+		while (m !== null) {
+			out.push(parseMentionMatch(m));
+			m = re.exec(input);
+		}
+		return out;
+	};
+
+	it('links one- and two-level folder paths', () => {
+		expect(tokens('see assets/blog/hero.png')).toEqual([
+			{ kind: 'asset', raw: 'assets/blog/hero.png', filename: 'blog/hero.png' },
+		]);
+		expect(tokens('see assets/blog/images/hero.png')).toEqual([
+			{ kind: 'asset', raw: 'assets/blog/images/hero.png', filename: 'blog/images/hero.png' },
+		]);
+	});
+
+	it('yields no token at all for over-deep paths (fail-clean)', () => {
+		// Three folder levels: the whole reference must stay plain text — no
+		// partial match of a shorter prefix, no bare-filename match of the tail.
+		expect(tokens('see assets/a/b/c/d.png here')).toEqual([]);
+	});
+
+	it('handles dotted folder names', () => {
+		expect(tokens('assets/blog.v2/readme.md')).toEqual([
+			{ kind: 'asset', raw: 'assets/blog.v2/readme.md', filename: 'blog.v2/readme.md' },
+		]);
+	});
+
+	it('still links when the foldered reference ends a sentence', () => {
+		expect(tokens('Ship assets/launch/plan.md.')).toEqual([
+			{ kind: 'asset', raw: 'assets/launch/plan.md', filename: 'launch/plan.md' },
+		]);
+	});
+
+	it('does not link a path continuing past the filename', () => {
+		expect(tokens('weird assets/x/y.png/more')).toEqual([]);
+	});
+
+	it('keeps the combined-regex capture layout for every token kind', () => {
+		// Regression guard: the folder part of ASSET_RE_SRC must be non-capturing
+		// or every group index in parseMentionMatch shifts.
+		const input = '@@bob @alice IN-42 TO-7#comment-20261009112345 readme.md assets/blog/hero.png';
+		const byKind = Object.fromEntries(tokens(input).map((t) => [t.kind, t]));
+		expect(byKind.passive_agent).toMatchObject({ slug: 'bob' });
+		expect(byKind.agent).toMatchObject({ slug: 'alice' });
+		expect(byKind.task).toMatchObject({ identifier: 'in-42' });
+		expect(byKind.comment).toMatchObject({
+			taskIdentifier: 'to-7',
+			commentId: '20261009112345',
+		});
+		expect(byKind.filename).toMatchObject({ filename: 'readme.md' });
+		expect(byKind.asset).toMatchObject({ filename: 'blog/hero.png' });
+	});
+
+	it('flows paths through candidate extraction', () => {
+		const c = extractMentionCandidates('review assets/launch/2026-07-02-post.md please');
+		expect(c.assets).toEqual(['launch/2026-07-02-post.md']);
+		const docs = extractDocCandidates('see assets/blog/hero.png', 'Ops');
+		expect(docs.assets).toEqual([{ project_slug: 'ops', filename: 'blog/hero.png' }]);
+		const ticked = extractBacktickedMentionCandidates('wrapped `assets/blog/hero.png` ref');
+		expect(ticked.assets).toEqual(['blog/hero.png']);
+	});
+
+	it('rewrites foldered assets via transformMentionsOutsideCode', () => {
+		const out = transformMentionsOutsideCode('see assets/blog/hero.png', (t) =>
+			t.kind === 'asset' ? `[${t.filename}]` : null,
+		);
+		expect(out).toBe('see [blog/hero.png]');
+	});
+});
+
 describe('extractMentionCandidates', () => {
 	it('extracts deduped, normalized references and skips code', () => {
 		const input = [

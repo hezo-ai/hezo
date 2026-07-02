@@ -3,7 +3,9 @@ import {
 	AgentEffort,
 	AgentRuntimeStatus,
 	AiProvider,
+	assetBasename,
 	assetContentDisposition,
+	assetFolder,
 	assetServeCsp,
 	CredentialKind,
 	claudeCodeModelArg,
@@ -18,10 +20,14 @@ import {
 	isMarkdownDocSlug,
 	isReactionKind,
 	normalizeAssetFilename,
+	normalizeAssetFolder,
+	normalizeAssetPath,
 	opencodeModelArg,
 	parseProviderModels,
 	providerDirectUpstreamHosts,
 	ReactionKind,
+	resolveAttachmentContentType,
+	splitAssetPath,
 	TaskStatus,
 } from '../src/types/common';
 
@@ -82,6 +88,76 @@ describe('asset / attachment helpers', () => {
 		expect(normalizeAssetFilename('foo/bar baz.png')).toBe('bar-baz.png');
 		expect(normalizeAssetFilename('..\\weird@@name!.txt')).toBe('weird-name.txt');
 		expect(normalizeAssetFilename('////')).toBe('file');
+	});
+
+	it('normalizeAssetPath keeps folders up to two levels', () => {
+		expect(normalizeAssetPath('hero.png')).toBe('hero.png');
+		expect(normalizeAssetPath('blog/hero.png')).toBe('blog/hero.png');
+		expect(normalizeAssetPath('blog/images/hero.png')).toBe('blog/images/hero.png');
+		expect(normalizeAssetPath('a/b/c/d.png')).toBeNull();
+	});
+
+	it('normalizeAssetPath cleans segments and drops literal empties', () => {
+		expect(normalizeAssetPath('My Folder!/hero image.png')).toBe('My-Folder/hero-image.png');
+		expect(normalizeAssetPath('a//b.png')).toBe('a/b.png');
+		expect(normalizeAssetPath('/blog/hero.png/')).toBe('blog/hero.png');
+		expect(normalizeAssetPath('blog\\hero.png')).toBe('blog/hero.png');
+		// A segment that evaporates after cleanup rejects the whole path instead
+		// of silently relocating the file.
+		expect(normalizeAssetPath('###/hero.png')).toBeNull();
+		expect(normalizeAssetPath('blog/###')).toBeNull();
+		expect(normalizeAssetPath('')).toBeNull();
+		expect(normalizeAssetPath('///')).toBeNull();
+	});
+
+	it('normalizeAssetFolder treats empty as root and bounds depth', () => {
+		expect(normalizeAssetFolder('')).toBe('');
+		expect(normalizeAssetFolder('/')).toBe('');
+		expect(normalizeAssetFolder('blog')).toBe('blog');
+		expect(normalizeAssetFolder('blog/images')).toBe('blog/images');
+		expect(normalizeAssetFolder('a/b/c')).toBeNull();
+		expect(normalizeAssetFolder('Launch Plan')).toBe('Launch-Plan');
+		expect(normalizeAssetFolder('###')).toBeNull();
+	});
+
+	it('splitAssetPath / assetFolder / assetBasename', () => {
+		expect(splitAssetPath('a/b/c.png')).toEqual({ folder: 'a/b', basename: 'c.png' });
+		expect(splitAssetPath('c.png')).toEqual({ folder: '', basename: 'c.png' });
+		expect(assetFolder('blog/hero.png')).toBe('blog');
+		expect(assetFolder('hero.png')).toBe('');
+		expect(assetBasename('blog/images/hero.png')).toBe('hero.png');
+		expect(assetBasename('hero.png')).toBe('hero.png');
+	});
+
+	it('resolveAttachmentContentType coerces text/plain-mapped extensions', () => {
+		expect(resolveAttachmentContentType('run.js', 'text/javascript')).toBe('text/plain');
+		expect(resolveAttachmentContentType('data.json', 'application/json')).toBe('text/plain');
+		expect(resolveAttachmentContentType('rows.csv', 'text/csv')).toBe('text/plain');
+		expect(resolveAttachmentContentType('deploy.sh', '')).toBe('text/plain');
+		expect(resolveAttachmentContentType('conf.yaml', 'application/octet-stream')).toBe(
+			'text/plain',
+		);
+	});
+
+	it('resolveAttachmentContentType keeps the original posture elsewhere', () => {
+		// Declared allowlisted type wins.
+		expect(resolveAttachmentContentType('photo.png', 'image/png')).toBe('image/png');
+		// Blank / octet-stream falls back to the extension's canonical type.
+		expect(resolveAttachmentContentType('notes.md', '')).toBe('text/markdown');
+		expect(resolveAttachmentContentType('notes.md', 'application/octet-stream')).toBe(
+			'text/markdown',
+		);
+		// A specific disallowed declared type is suspicious → reject.
+		expect(resolveAttachmentContentType('photo.png', 'application/x-msdownload')).toBeNull();
+		// Unsupported extension → reject.
+		expect(resolveAttachmentContentType('virus.exe', 'text/plain')).toBeNull();
+		expect(resolveAttachmentContentType('noext', 'text/plain')).toBeNull();
+	});
+
+	it('script extensions are allowlisted attachments', () => {
+		for (const name of ['a.sh', 'a.py', 'a.js', 'a.ts', 'a.json', 'a.csv', 'a.yaml', 'a.yml']) {
+			expect(isAllowedAttachmentExtension(name)).toBe(true);
+		}
 	});
 
 	it('extensionOf', () => {

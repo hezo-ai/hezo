@@ -21,6 +21,9 @@ describe('mention paths', () => {
 	it('url-encodes filenames in doc and asset paths', () => {
 		expect(projectDocPath('ops', 'my file.md')).toBe('/projects/ops/documents?file=my%20file.md');
 		expect(assetPath('ops', 'a&b.png')).toBe('/projects/ops/assets?file=a%26b.png');
+		// Folder separators percent-encode too; the assets page decodes the search
+		// param back to the full path.
+		expect(assetPath('ops', 'blog/hero.png')).toBe('/projects/ops/assets?file=blog%2Fhero.png');
 	});
 
 	it('builds agent and inbox paths', () => {

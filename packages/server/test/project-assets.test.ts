@@ -60,16 +60,22 @@ async function uploadProjectAsset(
 	filename: string,
 	mime: string,
 	bytes: Uint8Array,
+	folder?: string,
 ): Promise<Response> {
 	const fd = new FormData();
 	const copy = new Uint8Array(bytes.byteLength);
 	copy.set(bytes);
 	fd.set('file', new File([copy.buffer], filename, { type: mime }));
+	if (folder !== undefined) fd.set('folder', folder);
 	return app.request(`/api/projects/${projectId}/assets`, {
 		method: 'POST',
 		headers: { ...authHeader(token) },
 		body: fd,
 	});
+}
+
+function diskPath(assetId: string): string {
+	return join(dataDir, 'teams', teamId, 'projects', projectId, 'assets', assetId);
 }
 
 async function uploadTaskAsset(filename: string, mime: string, bytes: Uint8Array): Promise<string> {
@@ -513,5 +519,397 @@ describe('MCP asset upload (POST /mcp/assets)', () => {
 		fd.set('file', new File([buildPng(10)], 'nope.png', { type: 'image/png' }));
 		const res = await app.request('/mcp/assets', { method: 'POST', body: fd });
 		expect(res.status).toBe(401);
+	});
+
+	it('places an upload into a folder via the folder form field', async () => {
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+			{
+				projectId,
+			},
+		);
+		const fd = new FormData();
+		const png = buildPng(21);
+		const copy = new Uint8Array(png.byteLength);
+		copy.set(png);
+		fd.set('file', new File([copy.buffer], 'chart.png', { type: 'image/png' }));
+		fd.set('folder', 'reports/q3');
+		const res = await app.request('/mcp/assets', {
+			method: 'POST',
+			headers: { ...authHeader(agentToken) },
+			body: fd,
+		});
+		expect(res.status).toBe(201);
+		expect((await res.json()).data.original_filename).toBe('reports/q3/chart.png');
+	});
+});
+
+describe('foldered uploads (REST)', () => {
+	it('stores the upload under the folder and keeps the reference path', async () => {
+		const res = await uploadProjectAsset('hero.png', 'image/png', buildPng(30), 'launch');
+		expect(res.status).toBe(201);
+		const body = await res.json();
+		expect(body.data.original_filename).toBe('launch/hero.png');
+
+		// The blob is keyed by asset id — folders never touch the disk layout.
+		expect(existsSync(diskPath(body.data.id))).toBe(true);
+	});
+
+	it('normalizes folder segments like filenames', async () => {
+		const res = await uploadProjectAsset(
+			'n.png',
+			'image/png',
+			buildPng(31),
+			'My Campaign!/Sub Dir',
+		);
+		expect(res.status).toBe(201);
+		expect((await res.json()).data.original_filename).toBe('My-Campaign/Sub-Dir/n.png');
+	});
+
+	it('rejects a folder nested deeper than two levels', async () => {
+		const res = await uploadProjectAsset('deep.png', 'image/png', buildPng(32), 'a/b/c');
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.code).toBe('INVALID_FOLDER');
+	});
+
+	it('auto-suffixes a collision within the folder, not the folder name', async () => {
+		const first = await uploadProjectAsset('logo.png', 'image/png', buildPng(33), 'brand');
+		const second = await uploadProjectAsset('logo.png', 'image/png', buildPng(34), 'brand');
+		expect((await first.json()).data.original_filename).toBe('brand/logo.png');
+		const secondName = (await second.json()).data.original_filename;
+		expect(secondName).toMatch(/^brand\/logo-[0-9a-z]+\.png$/);
+	});
+
+	it('same basename in different folders coexists without suffixing', async () => {
+		const a = await uploadProjectAsset('shared.png', 'image/png', buildPng(35), 'one');
+		const b = await uploadProjectAsset('shared.png', 'image/png', buildPng(36), 'two');
+		expect((await a.json()).data.original_filename).toBe('one/shared.png');
+		expect((await b.json()).data.original_filename).toBe('two/shared.png');
+	});
+
+	it('serves a foldered asset with a basename-only download filename and nosniff', async () => {
+		const res = await uploadProjectAsset('poster.png', 'image/png', buildPng(37), 'launch/art');
+		const body = await res.json();
+		const served = await app.request(body.data.url);
+		expect(served.status).toBe(200);
+		expect(served.headers.get('content-disposition')).toContain('filename="poster.png"');
+		expect(served.headers.get('content-disposition')).not.toContain('launch');
+		expect(served.headers.get('x-content-type-options')).toBe('nosniff');
+	});
+});
+
+describe('script/text asset uploads', () => {
+	it('stores a .js upload declaring text/javascript as inert text/plain', async () => {
+		const res = await uploadProjectAsset(
+			'runner.js',
+			'text/javascript',
+			new TextEncoder().encode('console.log(1)'),
+		);
+		expect(res.status).toBe(201);
+		const body = await res.json();
+		expect(body.data.content_type).toBe('text/plain');
+
+		const served = await app.request(body.data.url);
+		expect(served.headers.get('content-type')).toBe('text/plain');
+		expect(served.headers.get('x-content-type-options')).toBe('nosniff');
+		expect(served.headers.get('content-disposition')).toContain('inline');
+	});
+
+	it('accepts the script/text extension family', async () => {
+		const cases: Array<[string, string]> = [
+			['deploy.sh', 'application/x-sh'],
+			['tool.py', 'text/x-python'],
+			['data.json', 'application/json'],
+			['conf.yaml', ''],
+			['rows.csv', 'text/csv'],
+		];
+		for (const [name, mime] of cases) {
+			const res = await uploadProjectAsset(name, mime, new TextEncoder().encode('x'));
+			expect(res.status, `${name} should upload`).toBe(201);
+			expect((await res.json()).data.content_type).toBe('text/plain');
+		}
+	});
+});
+
+describe('foldered agent-authored assets', () => {
+	async function agentToken(): Promise<string> {
+		const { token: t } = await mintAgentToken(db, masterKeyManager, agentId, teamId, taskId);
+		return t;
+	}
+
+	it('writes a script into a folder and reads it back by path', async () => {
+		const t = await agentToken();
+		const written = await callToolViaMcp(t, 'write_project_asset', {
+			project: projectId,
+			filename: 'scripts/check.sh',
+			content: '#!/bin/sh\necho ok\n',
+		});
+		expect(written.written).toBe(true);
+		expect(written.reference).toBe('assets/scripts/check.sh');
+
+		const read = await callToolViaMcp(t, 'read_project_asset', {
+			project: projectId,
+			filename: 'scripts/check.sh',
+		});
+		expect(read.content).toBe('#!/bin/sh\necho ok\n');
+		expect(read.content_type).toBe('text/plain');
+	});
+
+	it('overwrite matching is path-exact: root and foldered names are different assets', async () => {
+		const t = await agentToken();
+		await callToolViaMcp(t, 'write_project_asset', {
+			project: projectId,
+			filename: 'fork.html',
+			content: '<h1>root</h1>',
+		});
+		await callToolViaMcp(t, 'write_project_asset', {
+			project: projectId,
+			filename: 'blog/fork.html',
+			content: '<h1>foldered</h1>',
+		});
+		const rows = await db.query<{ original_filename: string }>(
+			`SELECT original_filename FROM assets
+			 WHERE project_id = $1 AND original_filename IN ('fork.html', 'blog/fork.html')
+			 ORDER BY original_filename`,
+			[projectId],
+		);
+		expect(rows.rows.map((r) => r.original_filename)).toEqual(['blog/fork.html', 'fork.html']);
+	});
+
+	it('rejects an over-deep path with a clear error', async () => {
+		const t = await agentToken();
+		const res = await callToolViaMcp(t, 'write_project_asset', {
+			project: projectId,
+			filename: 'a/b/c/too-deep.md',
+			content: 'x',
+		});
+		expect(res.written).toBeUndefined();
+		expect(String(res.error)).toMatch(/folder levels/i);
+	});
+});
+
+describe('move_project_asset', () => {
+	async function agentToken(): Promise<string> {
+		const { token: t } = await mintAgentToken(db, masterKeyManager, agentId, teamId, taskId);
+		return t;
+	}
+
+	it('moves an asset into a folder without touching the blob', async () => {
+		const up = await (await uploadProjectAsset('movable.png', 'image/png', buildPng(40))).json();
+		expect(existsSync(diskPath(up.data.id))).toBe(true);
+
+		const res = await callToolViaMcp(await agentToken(), 'move_project_asset', {
+			project: projectId,
+			from: 'movable.png',
+			to: 'archive/movable.png',
+		});
+		expect(res.moved).toBe(true);
+		expect(res.id).toBe(up.data.id);
+		expect(res.reference).toBe('assets/archive/movable.png');
+
+		const row = await db.query<{ original_filename: string }>(
+			'SELECT original_filename FROM assets WHERE id = $1',
+			[up.data.id],
+		);
+		expect(row.rows[0].original_filename).toBe('archive/movable.png');
+		// Same blob, same key — a move is metadata-only.
+		expect(existsSync(diskPath(up.data.id))).toBe(true);
+	});
+
+	it('moves back to the root', async () => {
+		await uploadProjectAsset('rooted.png', 'image/png', buildPng(41), 'tmp');
+		const res = await callToolViaMcp(await agentToken(), 'move_project_asset', {
+			project: projectId,
+			from: 'tmp/rooted.png',
+			to: 'rooted.png',
+		});
+		expect(res.moved).toBe(true);
+		expect(res.reference).toBe('assets/rooted.png');
+	});
+
+	it('errors when the source is missing', async () => {
+		const res = await callToolViaMcp(await agentToken(), 'move_project_asset', {
+			project: projectId,
+			from: 'ghost.png',
+			to: 'somewhere/ghost.png',
+		});
+		expect(String(res.error)).toContain("'assets/ghost.png' not found");
+	});
+
+	it('never overwrites: destination taken errors', async () => {
+		await uploadProjectAsset('occupied.png', 'image/png', buildPng(42), 'spot');
+		await uploadProjectAsset('mover.png', 'image/png', buildPng(43));
+		// Rename mover.png onto the occupied path.
+		const res = await callToolViaMcp(await agentToken(), 'move_project_asset', {
+			project: projectId,
+			from: 'mover.png',
+			to: 'spot/occupied.png',
+		});
+		expect(String(res.error)).toMatch(/already exists.*never overwrite/i);
+	});
+
+	it('rejects an extension change', async () => {
+		await uploadProjectAsset('typed.png', 'image/png', buildPng(44));
+		const res = await callToolViaMcp(await agentToken(), 'move_project_asset', {
+			project: projectId,
+			from: 'typed.png',
+			to: 'typed.jpg',
+		});
+		expect(String(res.error)).toMatch(/keep the '\.png' extension/i);
+	});
+
+	it('rejects an over-deep destination', async () => {
+		await uploadProjectAsset('depth.png', 'image/png', buildPng(45));
+		const res = await callToolViaMcp(await agentToken(), 'move_project_asset', {
+			project: projectId,
+			from: 'depth.png',
+			to: 'a/b/c/depth.png',
+		});
+		expect(String(res.error)).toMatch(/folder levels/i);
+	});
+});
+
+describe('copy_project_asset', () => {
+	async function agentToken(): Promise<string> {
+		const { token: t } = await mintAgentToken(db, masterKeyManager, agentId, teamId, taskId);
+		return t;
+	}
+
+	it('copies bytes to a new asset id, leaving the source intact', async () => {
+		const up = await (
+			await uploadProjectAsset('template.png', 'image/png', buildPng(50), 'templates')
+		).json();
+
+		const res = await callToolViaMcp(await agentToken(), 'copy_project_asset', {
+			project: projectId,
+			from: 'templates/template.png',
+			to: 'q3/template.png',
+		});
+		expect(res.copied).toBe(true);
+		expect(res.reference).toBe('assets/q3/template.png');
+		expect(res.id).not.toBe(up.data.id);
+
+		// Both rows exist; bytes are identical but independently stored.
+		const rows = await db.query<{ id: string; sha256: string }>(
+			`SELECT id, sha256 FROM assets WHERE project_id = $1
+			 AND original_filename IN ('templates/template.png', 'q3/template.png')`,
+			[projectId],
+		);
+		expect(rows.rows).toHaveLength(2);
+		expect(rows.rows[0].sha256).toBe(rows.rows[1].sha256);
+		const { readFileSync } = await import('node:fs');
+		expect(readFileSync(diskPath(res.id as string))).toEqual(readFileSync(diskPath(up.data.id)));
+	});
+
+	it('never overwrites: destination taken errors and leaves no orphan blob', async () => {
+		await uploadProjectAsset('dst.png', 'image/png', buildPng(51), 'busy');
+		await uploadProjectAsset('src.png', 'image/png', buildPng(52));
+		const res = await callToolViaMcp(await agentToken(), 'copy_project_asset', {
+			project: projectId,
+			from: 'src.png',
+			to: 'busy/dst.png',
+		});
+		expect(String(res.error)).toMatch(/already exists.*never overwrite/i);
+	});
+
+	it('errors when the source is missing', async () => {
+		const res = await callToolViaMcp(await agentToken(), 'copy_project_asset', {
+			project: projectId,
+			from: 'nope/none.png',
+			to: 'anywhere/none.png',
+		});
+		expect(String(res.error)).toContain("'assets/nope/none.png' not found");
+	});
+});
+
+describe('admin move endpoint (PATCH /projects/:projectId/assets/:assetId)', () => {
+	it('moves an asset into a folder and returns the refreshed row', async () => {
+		const up = await (await uploadProjectAsset('sortme.png', 'image/png', buildPng(60))).json();
+		const res = await app.request(`/api/projects/${projectId}/assets/${up.data.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ folder: 'sorted/bin' }),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.original_filename).toBe('sorted/bin/sortme.png');
+		expect(body.data.url).toMatch(/^\/api\/assets\//);
+		expect(body.data.comment_attachment_count).toBe(0);
+	});
+
+	it('moves back to the root with an empty folder', async () => {
+		const up = await (
+			await uploadProjectAsset('backhome.png', 'image/png', buildPng(61), 'away')
+		).json();
+		const res = await app.request(`/api/projects/${projectId}/assets/${up.data.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ folder: '' }),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.original_filename).toBe('backhome.png');
+	});
+
+	it('409s when the destination path is taken', async () => {
+		await uploadProjectAsset('clash.png', 'image/png', buildPng(62), 'crowded');
+		const loose = await (await uploadProjectAsset('clash.png', 'image/png', buildPng(63))).json();
+		const res = await app.request(`/api/projects/${projectId}/assets/${loose.data.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ folder: 'crowded' }),
+		});
+		expect(res.status).toBe(409);
+	});
+
+	it('rejects agents and invalid folders', async () => {
+		const up = await (await uploadProjectAsset('fixed.png', 'image/png', buildPng(64))).json();
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			taskId,
+		);
+		const agentRes = await app.request(`/api/projects/${projectId}/assets/${up.data.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ folder: 'anywhere' }),
+		});
+		expect(agentRes.status).toBe(403);
+
+		const badRes = await app.request(`/api/projects/${projectId}/assets/${up.data.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ folder: 'a/b/c' }),
+		});
+		expect(badRes.status).toBe(400);
+	});
+});
+
+describe('foldered asset mention resolution', () => {
+	it('resolves assets/<folder>/<name> composites with a signed url', async () => {
+		await uploadProjectAsset('find-me.png', 'image/png', buildPng(70), 'nested/deep');
+		const projectSlug = (
+			await db.query<{ slug: string }>('SELECT slug FROM projects WHERE id = $1', [projectId])
+		).rows[0].slug;
+
+		const res = await app.request(`/api/projects/${projectId}/docs/resolve`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				assets: [{ project_slug: projectSlug, filename: 'nested/deep/find-me.png' }],
+			}),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()).data as {
+			assets: Array<{ filename: string; signed_url: string }>;
+		};
+		expect(body.assets).toHaveLength(1);
+		expect(body.assets[0].filename).toBe('nested/deep/find-me.png');
+		expect(body.assets[0].signed_url).toMatch(/^\/api\/assets\//);
 	});
 });

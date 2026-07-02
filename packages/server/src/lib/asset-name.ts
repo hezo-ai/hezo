@@ -3,8 +3,12 @@ import type { PGlite } from '@electric-sql/pglite';
 import { isUniqueViolation } from './sql';
 
 function splitExtension(name: string): { base: string; ext: string } {
+	// The extension lives in the basename: a dot inside a folder segment
+	// (`blog.v2/readme`) must never be treated as one, or a collision suffix
+	// would land mid-path and silently rename the folder.
+	const slash = name.lastIndexOf('/');
 	const dot = name.lastIndexOf('.');
-	if (dot <= 0) return { base: name, ext: '' };
+	if (dot <= slash + 1) return { base: name, ext: '' };
 	return { base: name.slice(0, dot), ext: name.slice(dot) };
 }
 

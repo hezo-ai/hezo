@@ -959,7 +959,7 @@ List project documentation files (PRD, spec, implementation plan, etc.)
 
 _Read-only._
 
-List the project's assets — files in the assets library (UI mockups, wireframes, diagrams, PDFs, and generated markdown such as blog posts or reports). Reference one in a comment or doc as `assets/<filename>` (e.g. assets/login-mockup.png), no backticks. You can author text-based assets (.html, .svg, .txt, .md) with write_project_asset; binary assets (images, PDFs) are human-uploaded.
+List the project's assets — files in the assets library (UI mockups, wireframes, diagrams, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. You can author text-based assets with write_project_asset and reorganize with move_project_asset / copy_project_asset; deletion is admin-gated via request_asset_deletion. Binary assets (images, PDFs, media) are human-uploaded.
 
 **Parameters:**
 
@@ -967,38 +967,70 @@ List the project's assets — files in the assets library (UI mockups, wireframe
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 
-**Returns:** `{ files: [{ id, filename, content_type, created_at }] }` — the project asset files.
+**Returns:** `{ files: [{ id, filename, content_type, created_at }] }` — the project asset files. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`).
 
 ### `write_project_asset`
 
 _Write tool._
 
-Save a text-based file to the project assets library so a human can open it (an interactive HTML mockup, an SVG diagram, a plain-text export, or a markdown deliverable such as a blog post or report). Allowed extensions: .html, .svg, .txt, .md. Re-saving the same filename overwrites it, so the reference stays stable. Returns the reference string to drop into a comment as `assets/<filename>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.
+Save a text-based file to the project assets library so a human can open it (an interactive HTML mockup, an SVG diagram, a plain-text export, a script, or a markdown deliverable such as a blog post or report). Allowed extensions: .html, .svg, .txt, .md, plus script/text formats stored as plain text (.sh, .py, .js, .ts, .json, .csv, .yaml, .yml). The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.svg") — folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets — after a move, write to the new full path or you will fork the file). Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `filename` | `string` | Yes | Filename to write (e.g. "ui-mockups.html") |
+| `filename` | `string` | Yes | Path to write, optionally foldered (e.g. "ui-mockups.html", "scripts/check.sh") |
 | `content` | `string` | Yes | File content |
 
-**Returns:** `{ written: true, id, reference: "assets/<filename>" }`, or `{ error }` if the type is not text-based (`.html`, `.svg`, `.txt`, `.md`) or exceeds 10 MB. Re-saving the same filename overwrites it.
+**Returns:** `{ written: true, id, reference: "assets/<path>" }`, or `{ error }` if the type is not text-based (`.html`, `.svg`, `.txt`, `.md`, or a script/text format: `.sh`, `.py`, `.js`, `.ts`, `.json`, `.csv`, `.yaml`, `.yml`), the path is invalid (max 2 folder levels), or the content exceeds 10 MB. Re-saving the same path overwrites it; matching is path-exact.
 
 ### `read_project_asset`
 
 _Read-only._
 
-Read a project asset's contents by filename (e.g. "ui-mockups.html") — the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, markdown deliverables). Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a read-only container path under /workspace/.hezo/assets/ to open directly. For markdown project docs use read_project_doc instead.
+Read a project asset's contents by path (e.g. "ui-mockups.html" or "scripts/check.sh") — the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a read-only container path under /workspace/.hezo/assets/ to open directly. For markdown project docs use read_project_doc instead.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `filename` | `string` | Yes | Asset filename to read (e.g. "ui-mockups.html") |
+| `filename` | `string` | Yes | Asset path to read (e.g. "ui-mockups.html", "launch/images/hero.png") |
 
-**Returns:** For a text asset, `{ filename, content_type, content }`. For a binary asset, `{ filename, content_type, byte_size, binary: true, path }` (a read-only container path). Returns `{ error }` if not found.
+**Returns:** For a text asset, `{ filename, content_type, content }`. For a binary asset, `{ filename, content_type, byte_size, binary: true, path }` (a read-only container path). Returns `{ error }` if not found — match the full path, folder prefix included.
+
+### `move_project_asset`
+
+_Write tool._
+
+Move or rename a project asset within the assets library: change its folder (up to 2 levels deep), its filename, or both — folders spring into existence when the first asset lands in them and vanish with their last one. The stored file does not change, so the destination must keep the same extension. Moves never overwrite: if the destination path is taken the call fails. IMPORTANT: existing text references to the old `assets/<path>` in comments and docs are NOT rewritten — they degrade to plain text — so update the places that cite the old path, and prefer organizing assets early over moving them later. Agents cannot delete assets (deletion is admin-gated via request_asset_deletion); moving something obsolete into an archive folder is the self-serve alternative.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `from` | `string` | Yes | Current asset path (e.g. "hero.png" or "launch/hero.png") |
+| `to` | `string` | Yes | Destination path (e.g. "launch/images/hero.png") |
+
+**Returns:** `{ moved: true, id, from, reference: "assets/<path>", note }`, or `{ error }` when the source is missing, the destination exists (moves never overwrite), the extension changes, or a path is invalid. Metadata-only — the stored bytes do not move. Existing text references to the old path are not rewritten.
+
+### `copy_project_asset`
+
+_Write tool._
+
+Copy a project asset to a new path in the assets library (any type, including binary). The copy is a new asset with its own id; the source is untouched and existing references keep pointing at it. Copies never overwrite: if the destination path is taken the call fails. Use it to duplicate a template before editing, or to stage related files into a folder.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `from` | `string` | Yes | Source asset path (e.g. "templates/report.md") |
+| `to` | `string` | Yes | Destination path (e.g. "2026-q3/report.md") |
+
+**Returns:** `{ copied: true, id, reference: "assets/<path>" }` — a new asset with its own id, any type including binary. Returns `{ error }` when the source is missing, the destination exists (copies never overwrite), or a path is invalid.
 
 ### `read_project_doc`
 

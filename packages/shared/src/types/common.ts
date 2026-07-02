@@ -259,6 +259,18 @@ export const ATTACHMENT_EXTENSIONS = {
 	mp4: 'video/mp4',
 	webm: 'video/webm',
 	mov: 'video/quicktime',
+	// Script/config/text formats store and serve as inert text/plain: browsers
+	// never execute text/plain (the asset serving route also sends nosniff), so
+	// a `.js` or `.sh` asset is readable and downloadable but can never run on
+	// our origin. Lets teams keep e.g. a scripts/ folder of reusable helpers.
+	sh: 'text/plain',
+	py: 'text/plain',
+	js: 'text/plain',
+	ts: 'text/plain',
+	json: 'text/plain',
+	csv: 'text/plain',
+	yaml: 'text/plain',
+	yml: 'text/plain',
 } as const;
 export type AttachmentExtension = keyof typeof ATTACHMENT_EXTENSIONS;
 
@@ -312,17 +324,89 @@ export function isAgentAuthorableAssetMime(mime: string): boolean {
 	return AGENT_AUTHORABLE_ASSET_MIME.has(mime);
 }
 
-// Normalize an uploaded filename into a link-safe identity. This is the name an
-// asset is referenced by (`assets/<name>.<ext>`) so it must match the mention
-// parser's asset rule: start with an alphanumeric, then `[A-Za-z0-9._-]`.
-export function normalizeAssetFilename(name: string): string {
-	const base = name.split(/[/\\]/).pop() ?? name;
-	const cleaned = base
+// Clean one path segment (a folder name or a basename) into its link-safe
+// form: start with an alphanumeric, then `[A-Za-z0-9._-]`. Returns '' when
+// nothing survives so callers can decide between a fallback and a rejection.
+function normalizeAssetSegment(segment: string): string {
+	return segment
 		.replace(/[^A-Za-z0-9._-]+/g, '-')
 		.replace(/-+/g, '-')
 		.replace(/^[._-]+/, '')
+		.replace(/[._-]+$/, '')
 		.replace(/-(\.[^.]*)$/, '$1');
+}
+
+// Normalize an uploaded filename into a link-safe identity. This is the name an
+// asset is referenced by (`assets/<name>.<ext>`) so it must match the mention
+// parser's asset rule: start with an alphanumeric, then `[A-Za-z0-9._-]`. Any
+// directory prefix is stripped — use `normalizeAssetPath` when a folder path
+// should survive.
+export function normalizeAssetFilename(name: string): string {
+	const base = name.split(/[/\\]/).pop() ?? name;
+	const cleaned = normalizeAssetSegment(base);
 	return cleaned.length > 0 ? cleaned : 'file';
+}
+
+// Assets can live in folders nested up to this many levels below the library
+// root (`sub/subsub/file.ext` is the deepest valid path).
+export const ASSET_MAX_FOLDER_DEPTH = 2;
+
+/**
+ * Normalize a full asset path (`folder/sub/name.ext`) into its link-safe form.
+ * Character-level issues are cleaned per segment (same rules as
+ * `normalizeAssetFilename`); literal empty segments (`a//b.png`,
+ * leading/trailing slashes) are dropped and backslashes act as separators.
+ * Structural violations are rejected rather than repaired: more than
+ * ASSET_MAX_FOLDER_DEPTH folder segments, or any segment with nothing left
+ * after cleanup, returns null (silently relocating a file because its folder
+ * name evaporated would surprise the caller).
+ */
+export function normalizeAssetPath(raw: string): string | null {
+	const parts = raw.split(/[/\\]/).filter((s) => s.length > 0);
+	if (parts.length === 0) return null;
+	if (parts.length - 1 > ASSET_MAX_FOLDER_DEPTH) return null;
+	const segments: string[] = [];
+	for (const part of parts) {
+		const cleaned = normalizeAssetSegment(part);
+		if (cleaned.length === 0) return null;
+		segments.push(cleaned);
+	}
+	return segments.join('/');
+}
+
+/**
+ * Normalize a folder path (0..ASSET_MAX_FOLDER_DEPTH segments, no basename).
+ * An empty string (or only separators) is the library root and returns ''.
+ * Returns null when a segment is unusable or the folder is nested too deep.
+ */
+export function normalizeAssetFolder(raw: string): string | null {
+	const parts = raw.split(/[/\\]/).filter((s) => s.length > 0);
+	if (parts.length === 0) return '';
+	if (parts.length > ASSET_MAX_FOLDER_DEPTH) return null;
+	const segments: string[] = [];
+	for (const part of parts) {
+		const cleaned = normalizeAssetSegment(part);
+		if (cleaned.length === 0) return null;
+		segments.push(cleaned);
+	}
+	return segments.join('/');
+}
+
+/** Split 'a/b/c.png' into { folder: 'a/b', basename: 'c.png' }; folder '' at root. */
+export function splitAssetPath(path: string): { folder: string; basename: string } {
+	const slash = path.lastIndexOf('/');
+	if (slash < 0) return { folder: '', basename: path };
+	return { folder: path.slice(0, slash), basename: path.slice(slash + 1) };
+}
+
+/** The folder portion of an asset path ('' when the asset sits at the root). */
+export function assetFolder(path: string): string {
+	return splitAssetPath(path).folder;
+}
+
+/** The final segment of an asset path (the display filename). */
+export function assetBasename(path: string): string {
+	return splitAssetPath(path).basename;
 }
 
 // Project docs are markdown-only. Other file types live in the assets library.
@@ -343,6 +427,31 @@ export function isAllowedAttachmentExtension(filename: string): boolean {
 
 export function isAllowedAttachmentMime(mime: string): boolean {
 	return ATTACHMENT_MIME_ALLOWLIST.has(mime);
+}
+
+/**
+ * Resolve the content type to store for an uploaded asset, or null when the
+ * upload must be rejected. Extensions that map to text/plain always store
+ * text/plain regardless of what the uploader declared (browsers send
+ * `text/javascript` for `.js`, `application/json` for `.json`, `text/csv` for
+ * `.csv`, … — storing the inert type is the point, and the serving route's
+ * nosniff header prevents re-interpretation). Other extensions keep the
+ * original posture: a declared allowlisted type wins, a blank or
+ * `application/octet-stream` declaration falls back to the extension's
+ * canonical type, and a specific disallowed declared type is rejected (a
+ * `.png` claiming `application/x-msdownload` is suspicious).
+ */
+export function resolveAttachmentContentType(
+	filename: string,
+	declaredType: string,
+): string | null {
+	const ext = extensionOf(filename);
+	const extMime = ext ? ATTACHMENT_EXTENSIONS[ext as AttachmentExtension] : undefined;
+	if (extMime === undefined) return null;
+	if (extMime === 'text/plain') return 'text/plain';
+	const declared = declaredType === 'application/octet-stream' ? '' : declaredType;
+	const contentType = declared || extMime;
+	return isAllowedAttachmentMime(contentType) ? contentType : null;
 }
 
 export interface CommentAttachment {
