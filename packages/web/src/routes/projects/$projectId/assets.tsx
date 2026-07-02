@@ -276,13 +276,14 @@ function ProjectAssetsPage() {
 					<ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
 						{grouped.folders.map((folder) => (
 							<li key={folder.path}>
-								{/* A folder reads as a small stack of cards: two lips peek above
-								    the top card so it's unmistakable next to the flat, white file
-								    cards. The top card keeps the file card's exact footprint (h-28
-								    media + p-2 footer) so folders and files stay the same size;
-								    the lips are absolutely positioned in the grid gap and add no
-								    layout height. Folders keep the grey surface-2 fill (and its
-								    dark-mode counterpart); file cards use the lighter surface. */}
+								{/* A folder reads as a small stack of cards: two darker lips
+								    (surface-3, strong border, elevated) peek above the raised top
+								    card so it's unmistakable next to the flat, white file cards.
+								    The top card keeps the file card's exact footprint (h-28 media
+								    + p-2 footer) so folders and files stay the same size; the lips
+								    are absolutely positioned in the grid gap and add no layout
+								    height. Folders keep the grey surface-2 fill (and its dark-mode
+								    counterpart); file cards use the lighter surface. */}
 								<button
 									type="button"
 									data-testid="asset-folder-card"
@@ -292,13 +293,13 @@ function ProjectAssetsPage() {
 								>
 									<span
 										aria-hidden="true"
-										className="absolute inset-x-4 -top-2 h-6 rounded-t-md border border-border bg-surface-2 transition-colors group-hover:border-border-strong group-hover:bg-surface-3"
+										className="absolute inset-x-5 -top-2 h-5 rounded-t-md border border-border-strong bg-surface-3 shadow-sm"
 									/>
 									<span
 										aria-hidden="true"
-										className="absolute inset-x-2 -top-1 h-6 rounded-t-md border border-border bg-surface-2 transition-colors group-hover:border-border-strong group-hover:bg-surface-3"
+										className="absolute inset-x-2.5 -top-1 h-5 rounded-t-md border border-border-strong bg-surface-3 shadow-sm"
 									/>
-									<span className="relative flex flex-col overflow-hidden rounded-md border border-border bg-surface-2 transition-colors group-hover:border-border-strong group-hover:bg-surface-3">
+									<span className="relative flex flex-col overflow-hidden rounded-md border border-border bg-surface-2 shadow-md transition group-hover:border-border-strong group-hover:shadow-lg">
 										<span className="flex h-28 items-center justify-center">
 											<Folder className="h-16 w-16 text-text-3" />
 										</span>
