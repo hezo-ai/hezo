@@ -26,17 +26,17 @@ export function AiProviderPicker() {
 				<button
 					type="button"
 					onClick={() => setProvider(null)}
-					className="text-text-2 hover:text-text-1 p-2 -m-2"
+					className="shrink-0 text-text-2 hover:text-text-1 p-2 -m-2"
 					aria-label="Back"
 				>
 					<ArrowLeft className="w-4 h-4" />
 				</button>
-				<span className="flex h-6 w-6 items-center justify-center text-text-1">
+				<span className="flex h-6 w-6 shrink-0 items-center justify-center text-text-1">
 					<ProviderLogo provider={provider} className="h-5 w-5" />
 				</span>
-				<div className="flex flex-col">
-					<span className="text-sm font-medium text-text-1">Connect {info.name}</span>
-					<span className="text-xs text-text-3">{info.runtimeLabel}</span>
+				<div className="flex min-w-0 flex-col">
+					<span className="truncate text-sm font-medium text-text-1">Connect {info.name}</span>
+					<span className="truncate text-xs text-text-3">{info.runtimeLabel}</span>
 				</div>
 			</div>
 

@@ -7,8 +7,9 @@ import type { FC } from 'react';
  * Each logo is a self-contained monochrome inline SVG using `currentColor`, so
  * it inherits the card's text colour and themes correctly in light/dark. Only
  * providers whose mark can be reproduced cleanly get an SVG here; everything
- * else falls back to a big-font wordmark via {@link ProviderLogo}. Drop a new
- * entry in this map to give another provider a real logo.
+ * else falls back to a compact monogram (the provider's initial) via
+ * {@link ProviderLogo}. Drop a new entry in this map to give another provider a
+ * real logo.
  */
 
 type LogoProps = { className?: string };
@@ -36,15 +37,23 @@ interface ProviderLogoProps {
 }
 
 /**
- * Render a provider's brand mark, or — when no SVG is registered — its name as
- * a big-font wordmark. Used on the provider-picker cards.
+ * Render a provider's brand mark, sized to fill the slot the caller sizes via
+ * `className` (e.g. `h-5 w-5`). Providers with a registered SVG show it; the
+ * rest fall back to a compact monogram of the provider's initial that fits the
+ * same box. The full provider name is shown as a large wordmark only on the
+ * card grid, which has room for it (see {@link ProviderCardGrid}) — squeezing a
+ * wordmark into a small slot (the picker header) overflows and overlaps its
+ * neighbours, so the fallback stays a single-letter badge here.
  */
 export function ProviderLogo({ provider, className }: ProviderLogoProps) {
 	const Logo = PROVIDER_LOGOS[provider];
 	if (Logo) return <Logo className={className} />;
 	return (
-		<span className="text-lg font-bold leading-none tracking-tight text-center sm:text-xl">
-			{AI_PROVIDER_INFO[provider].name}
+		<span
+			aria-hidden="true"
+			className={`flex items-center justify-center rounded-[5px] bg-surface-3 text-[13px] font-bold uppercase leading-none text-text-1 ${className ?? ''}`}
+		>
+			{AI_PROVIDER_INFO[provider].name.charAt(0)}
 		</span>
 	);
 }

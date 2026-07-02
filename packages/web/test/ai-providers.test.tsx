@@ -56,6 +56,32 @@ test('Add provider modal shows provider cards (no xAI/OpenRouter, no Moonshot, n
 	expect(queryAllByRole('button', { name: /OAuth/i }).length).toBe(0);
 });
 
+test('drilling into a logo-less provider shows a monogram, not an overflowing wordmark, and Back returns to the picker', async () => {
+	const { findByRole, getByRole, getByText, queryByText, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			// Clear the default seeded provider so the gate renders the picker grid.
+			await clearAiProviders();
+		},
+	});
+
+	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
+
+	// DeepSeek has no registered brand SVG, so its logo slot hits the fallback.
+	await user.click(getByRole('button', { name: 'DeepSeek' }));
+
+	// The header names the provider once, in the "Connect …" label. The logo slot
+	// renders a compact initial — not the full-name wordmark that used to overflow
+	// the small (24px) icon box, overlap the label, and cover the Back button.
+	getByText('Connect DeepSeek');
+	expect(queryByText('DeepSeek', { exact: true })).toBeNull();
+
+	// Back is reachable and returns to the card grid, so the provider that was
+	// only listed there (its own card) is selectable again.
+	await user.click(getByRole('button', { name: 'Back' }));
+	await findByRole('button', { name: 'DeepSeek' });
+});
+
 test('sidebar Settings link reaches Settings and the AI providers subpage', async () => {
 	const { findByRole, findByText, getAllByRole, router, user } = await renderApp({
 		initialPath: `/teams/${DEFAULT_TEAM_SLUG}/tasks`,
