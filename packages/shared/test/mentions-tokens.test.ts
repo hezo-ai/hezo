@@ -36,6 +36,49 @@ describe('parseMentionMatch via buildMentionRegex', () => {
 		expect(byKind.asset).toMatchObject({ kind: 'asset', filename: 'diagram.png' });
 	});
 
+	it('matches a filename ending a sentence (trailing period)', () => {
+		const kinds = (input: string): MentionToken[] => {
+			const out: MentionToken[] = [];
+			const re = buildMentionRegex();
+			let m = re.exec(input);
+			while (m !== null) {
+				out.push(parseMentionMatch(m));
+				m = re.exec(input);
+			}
+			return out;
+		};
+		expect(kinds('Remove architecture-guidelines.md.')).toEqual([
+			{
+				kind: 'filename',
+				raw: 'architecture-guidelines.md',
+				filename: 'architecture-guidelines.md',
+			},
+		]);
+		// Two filenames, the second sentence-final.
+		expect(kinds('See prd.md, and readme.md.').map((t) => t.raw)).toEqual(['prd.md', 'readme.md']);
+		// Sentence-final asset reference.
+		expect(kinds('See assets/diagram.png.')).toEqual([
+			{ kind: 'asset', raw: 'assets/diagram.png', filename: 'diagram.png' },
+		]);
+	});
+
+	it('does not match a filename that continues into another path or name segment', () => {
+		const raws = (input: string): string[] => {
+			const out: string[] = [];
+			const re = buildMentionRegex();
+			let m = re.exec(input);
+			while (m !== null) {
+				out.push(m[0]);
+				m = re.exec(input);
+			}
+			return out;
+		};
+		// A path continuation (`foo.md/bar`) and a further extension segment
+		// (`foo.md.bak`) both stay plain text — the trailing dot leads into more.
+		expect(raws('path foo.md/bar')).toEqual([]);
+		expect(raws('archive foo.md.bak here')).toEqual([]);
+	});
+
 	it('returns a fresh regex instance each call', () => {
 		const a = buildMentionRegex();
 		const b = buildMentionRegex();

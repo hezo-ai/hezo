@@ -20,11 +20,17 @@ export const TASK_RE_SRC = String.raw`(?<![\w-])([A-Z][A-Z0-9]{1,3}-\d+)(?![\w-]
 // matching branch at a position, so otherwise TASK_RE_SRC consumes the bare
 // `IN-42` prefix and the `#comment-...` suffix is left dangling.
 export const COMMENT_LINK_RE_SRC = String.raw`(?<![\w-])([A-Z][A-Z0-9]{1,3}-\d+)#comment-(\d{14}(?:-\d+)?)(?![\w-])`;
-export const FILENAME_RE_SRC = String.raw`(?<![\w/.-])([a-z0-9][\w-]*\.[a-z0-9]+)(?![\w/.-])`;
+// The trailing boundary rejects a filename that continues into another path or
+// name segment (`foo.md/bar`, `foo.md.bak`) but NOT one followed by a bare `.`
+// that ends a sentence (`Remove architecture-guidelines.md.`) — a dot only
+// blocks the match when it leads into a further alphanumeric segment, so
+// ordinary sentence punctuation after a filename still links.
+export const FILENAME_RE_SRC = String.raw`(?<![\w/.-])([a-z0-9][\w-]*\.[a-z0-9]+)(?![\w/-]|\.[a-z0-9])`;
 // Asset references are path-prefixed (`assets/<name>.<ext>`) and may contain
 // uppercase (e.g. a task identifier embedded in the name). The leading `assets/`
-// keeps them from colliding with the bare project-doc filenames above.
-export const ASSET_RE_SRC = String.raw`(?<![\w/.-])assets/([A-Za-z0-9][\w.-]*\.[A-Za-z0-9]+)(?![\w/.-])`;
+// keeps them from colliding with the bare project-doc filenames above. Same
+// trailing-boundary rule as filenames: a sentence-ending `.` still links.
+export const ASSET_RE_SRC = String.raw`(?<![\w/.-])assets/([A-Za-z0-9][\w.-]*\.[A-Za-z0-9]+)(?![\w/-]|\.[A-Za-z0-9])`;
 
 /**
  * Combined mention regex. Capture-group layout (consumed by
