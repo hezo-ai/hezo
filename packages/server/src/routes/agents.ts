@@ -1,17 +1,21 @@
 import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
+	AgentRuntimeStatus,
 	type AiProvider,
 	ALL_AI_PROVIDERS,
 	AuthType,
 	CAPTAIN_AGENT_SLUG,
+	CEO_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
 	DEFAULT_TEAM_ID,
 	DocumentType,
+	HeartbeatRunStatus,
 	hasFixedReportsTo,
 	INSTANCE_AGENT_SLUGS,
 	isAgentEffort,
+	isBudgetPauseStatus,
 	isReservedAgentSlug,
 	MemberType,
 	requiredSystemPromptVarsError,
@@ -1063,15 +1067,16 @@ agentsRoutes.get('/projects/:projectId/org-chart', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
+	const ORG_COLUMNS = `m.id, ma.title, ma.slug, ma.role_description, ma.runtime_status, ma.admin_status, ma.reports_to`;
 	const result = await db.query(
-		`SELECT m.id, ma.title, ma.slug, ma.role_description, ma.runtime_status, ma.admin_status, ma.reports_to
+		`SELECT ${ORG_COLUMNS}
      FROM members m
      JOIN member_agents ma ON ma.id = m.id
      WHERE m.team_id = $1`,
 		[teamId],
 	);
 
-	const agents = result.rows as {
+	type OrgAgentRow = {
 		id: string;
 		title: string;
 		slug: string;
@@ -1079,9 +1084,46 @@ agentsRoutes.get('/projects/:projectId/org-chart', async (c) => {
 		runtime_status: string;
 		admin_status: string;
 		reports_to: string | null;
-	}[];
-	type AgentNode = (typeof agents)[number] & { children: AgentNode[] };
-	const byId = new Map(agents.map((a) => [a.id, { ...a, children: [] as AgentNode[] }]));
+	};
+	const agents = result.rows as OrgAgentRow[];
+	type AgentNode = OrgAgentRow & { children: AgentNode[] };
+	const byId = new Map<string, AgentNode>(
+		agents.map((a) => [a.id, { ...a, children: [] as AgentNode[] }]),
+	);
+
+	// The instance CEO manages every team's Captain but lives in HQ, so the
+	// team-scoped query above never returns it (except when this project *is* HQ,
+	// where it is already a member). Pull it in so the chart renders the real
+	// reporting line CEO → Captain → … instead of a headless Captain at the root.
+	const ceoResult = await db.query(
+		`SELECT ${ORG_COLUMNS}
+     FROM members m
+     JOIN member_agents ma ON ma.id = m.id
+     WHERE ma.slug = $1
+     LIMIT 1`,
+		[CEO_AGENT_SLUG],
+	);
+	const ceoRow = ceoResult.rows[0] as OrgAgentRow | undefined;
+	if (ceoRow && !byId.has(ceoRow.id)) {
+		byId.set(ceoRow.id, { ...ceoRow, children: [] });
+	}
+
+	// The CEO works across every project, so its global runtime_status may read
+	// 'active' because of a run in another team. Scope the "running" indicator to
+	// the current team: show active only when the CEO has an in-flight run *here*.
+	// Its global budget-pause / disabled states are left untouched.
+	const ceoNode = ceoRow ? byId.get(ceoRow.id) : undefined;
+	if (ceoNode && !isBudgetPauseStatus(ceoNode.runtime_status)) {
+		const runningHere = await db.query(
+			`SELECT 1 FROM heartbeat_runs
+       WHERE member_id = $1 AND team_id = $2
+         AND status IN ($3::heartbeat_run_status, $4::heartbeat_run_status)
+       LIMIT 1`,
+			[ceoNode.id, teamId, HeartbeatRunStatus.Running, HeartbeatRunStatus.Queued],
+		);
+		ceoNode.runtime_status =
+			runningHere.rows.length > 0 ? AgentRuntimeStatus.Active : AgentRuntimeStatus.Idle;
+	}
 
 	const roots: AgentNode[] = [];
 	for (const agent of byId.values()) {

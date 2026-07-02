@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { HQ_PROJECT_SLUG } from '@hezo/shared';
+import { DEFAULT_TEAM_ID, HQ_PROJECT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
@@ -372,22 +372,68 @@ describe('agents CRUD', () => {
 		expect(agent.admin_status).toBe('enabled');
 	});
 
-	it('returns org chart with runtime_status and admin_status', async () => {
+	it('returns the org chart with the CEO at the root and the Captain nested under it', async () => {
 		const res = await app.request(`/api/projects/${projectSlug}/org-chart`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.admin).toBeDefined();
-		expect(body.data.admin.children.length).toBeGreaterThan(0);
-		const captain = body.data.admin.children.find(
-			(c: Record<string, unknown>) => c.title === 'Captain',
+		// The instance CEO manages the Captain, so it heads the chart even though it
+		// lives in HQ rather than this team.
+		const ceo = body.data.admin.children.find((c: Record<string, unknown>) => c.slug === 'ceo');
+		expect(ceo).toBeDefined();
+		expect(ceo).toHaveProperty('runtime_status');
+		expect(ceo).toHaveProperty('admin_status');
+		const captain = (ceo.children as Array<Record<string, unknown>>).find(
+			(c) => c.title === 'Captain',
 		);
 		expect(captain).toBeDefined();
 		expect(captain).toHaveProperty('runtime_status');
 		expect(captain).toHaveProperty('admin_status');
 		expect(captain).toHaveProperty('role_description');
-		expect(captain.children.length).toBeGreaterThan(0);
+		expect((captain!.children as unknown[]).length).toBeGreaterThan(0);
+	});
+
+	it("scopes the CEO's running indicator to the current team", async () => {
+		const ceoRow = await db.query<{ id: string }>(
+			`SELECT id FROM member_agents WHERE slug = 'ceo' LIMIT 1`,
+		);
+		const ceoId = ceoRow.rows[0].id;
+
+		// The CEO is globally 'active' because of a run in another team (HQ) — not
+		// this one — so its node here must not read as active.
+		await db.query(
+			`UPDATE member_agents SET runtime_status = 'active'::agent_runtime_status WHERE id = $1`,
+			[ceoId],
+		);
+		await db.query(
+			`INSERT INTO heartbeat_runs (team_id, member_id, status)
+			 VALUES ($1, $2, 'running'::heartbeat_run_status)`,
+			[DEFAULT_TEAM_ID, ceoId],
+		);
+
+		let res = await app.request(`/api/projects/${projectSlug}/org-chart`, {
+			headers: authHeader(token),
+		});
+		let ceo = (await res.json()).data.admin.children.find(
+			(c: Record<string, unknown>) => c.slug === 'ceo',
+		);
+		expect(ceo.runtime_status).not.toBe('active');
+
+		// Now the CEO is running on a task in *this* team.
+		await db.query(
+			`INSERT INTO heartbeat_runs (team_id, member_id, status)
+			 VALUES ($1, $2, 'running'::heartbeat_run_status)`,
+			[teamId, ceoId],
+		);
+		res = await app.request(`/api/projects/${projectSlug}/org-chart`, {
+			headers: authHeader(token),
+		});
+		ceo = (await res.json()).data.admin.children.find(
+			(c: Record<string, unknown>) => c.slug === 'ceo',
+		);
+		expect(ceo.runtime_status).toBe('active');
 	});
 
 	it('rejects duplicate agent slug', async () => {
