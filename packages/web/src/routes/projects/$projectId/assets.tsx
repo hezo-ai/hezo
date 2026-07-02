@@ -276,31 +276,44 @@ function ProjectAssetsPage() {
 					<ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
 						{grouped.folders.map((folder) => (
 							<li key={folder.path}>
-								{/* Folder cards mirror the file card's shape (h-28 media region +
-								    p-2 footer) so both read as one grid of equal-sized cards.
-								    Folders keep the grey surface-2 fill; file cards use the
-								    lighter surface so the two are never the same colour. */}
+								{/* A folder reads as a small stack of cards: two lips peek above
+								    the top card so it's unmistakable next to the flat, white file
+								    cards. The top card keeps the file card's exact footprint (h-28
+								    media + p-2 footer) so folders and files stay the same size;
+								    the lips are absolutely positioned in the grid gap and add no
+								    layout height. Folders keep the grey surface-2 fill (and its
+								    dark-mode counterpart); file cards use the lighter surface. */}
 								<button
 									type="button"
 									data-testid="asset-folder-card"
 									data-folder={folder.path}
 									onClick={() => openFolder(folder.path)}
-									className="flex w-full flex-col overflow-hidden rounded-md border border-border bg-surface-2 text-left transition-colors hover:border-border-strong hover:bg-surface-3"
+									className="group relative block w-full text-left"
 								>
-									<div className="flex h-28 items-center justify-center">
-										<Folder className="h-8 w-8 text-text-3" />
-									</div>
-									<div className="p-2">
-										<div
-											className="truncate text-[12px] font-medium text-text-1"
-											title={folder.path}
-										>
-											{folder.name}
-										</div>
-										<div className="text-[11px] text-text-3">
-											{folder.count} file{folder.count === 1 ? '' : 's'}
-										</div>
-									</div>
+									<span
+										aria-hidden="true"
+										className="absolute inset-x-4 -top-2 h-6 rounded-t-md border border-border bg-surface-2 transition-colors group-hover:border-border-strong group-hover:bg-surface-3"
+									/>
+									<span
+										aria-hidden="true"
+										className="absolute inset-x-2 -top-1 h-6 rounded-t-md border border-border bg-surface-2 transition-colors group-hover:border-border-strong group-hover:bg-surface-3"
+									/>
+									<span className="relative flex flex-col overflow-hidden rounded-md border border-border bg-surface-2 transition-colors group-hover:border-border-strong group-hover:bg-surface-3">
+										<span className="flex h-28 items-center justify-center">
+											<Folder className="h-16 w-16 text-text-3" />
+										</span>
+										<span className="block p-2">
+											<span
+												className="block truncate text-[12px] font-medium text-text-1"
+												title={folder.path}
+											>
+												{folder.name}
+											</span>
+											<span className="block text-[11px] text-text-3">
+												{folder.count} file{folder.count === 1 ? '' : 's'}
+											</span>
+										</span>
+									</span>
 								</button>
 							</li>
 						))}
