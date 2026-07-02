@@ -551,7 +551,8 @@ rendering for the Codex config lives in `mcp-injectors/toml.ts`.
 
 **Completeness stop-hook.** Every run is gated by a judge that fires when the agent tries
 to end its turn and **blocks** it (keeping the same headless exec alive) when it's bailing
-on failing tests, calling problems "out of scope", or deferring without filing a sub-task.
+on failing tests, calling problems "out of scope", deferring without filing a sub-task, or
+abandoning a plan it announced in the thread without revising it there.
 The rule body (`STOP_HOOK_RULES` in `stop-hook-prompt.ts`) is identical across runtimes;
 judge models are hardcoded per provider (Anthropic `claude-sonnet-4-6` / DeepSeek
 `deepseek-v4-pro` / Z.ai `GLM-4.7` / Kimi `kimi-k2.7-code` / OpenAI `gpt-4o-mini` /

@@ -336,6 +336,18 @@ describe('template resolver', () => {
 		expect(result).toContain('do not `@`-mention any agent in that comment');
 	});
 
+	it('completion handoff requires reconciling an announced plan before closing', async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+		// An agent that announced a fan-out, got the unblocking answer, then silently
+		// did a fraction and closed leaves readers unable to tell scope-collapse from
+		// dropped work — the wrap-up must reconcile the announced plan.
+		expect(result).toContain('Reconcile your announced plan before you close');
+		expect(result).toContain('indistinguishable from dropping work');
+		expect(result).toContain('not merely acknowledging the answer');
+		// Announcing a delegation in the thread is the decision, made and published.
+		expect(result).toContain('Announcing in the thread that you will delegate');
+	});
+
 	it('tells agents not to park a done deliverable as blocked and to spin off the gated tail', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain(
