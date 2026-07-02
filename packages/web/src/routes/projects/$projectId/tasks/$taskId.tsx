@@ -212,10 +212,10 @@ function TaskDetailPage() {
 				</div>
 			</div>
 
-			{/* Sits above the persistent CEO chat launcher (fixed bottom-right) so
-			    the two floating controls don't overlap / intercept each other. */}
+			{/* Desktop/tablet: a floating round button sitting above the persistent CEO
+			    chat launcher (fixed bottom-right) so the two controls don't overlap. */}
 			<div
-				className="sticky bottom-20 z-30 flex justify-end pointer-events-none"
+				className="hidden lg:flex sticky bottom-20 z-30 justify-end pointer-events-none"
 				aria-hidden={atBottom}
 			>
 				<button
@@ -229,6 +229,22 @@ function TaskDetailPage() {
 					<ArrowDown className="w-4 h-4" />
 				</button>
 			</div>
+
+			{/* Mobile: a rectangular button pinned bottom-centre, sitting between the
+			    floating new-task (bottom-left) and CEO chat (bottom-right) launchers.
+			    `bg-inverse` renders black in light theme and the theme-appropriate
+			    inverse fill in dark theme, matching the chat launcher. */}
+			<button
+				type="button"
+				onClick={scrollToBottom}
+				data-testid="task-scroll-to-bottom-mobile"
+				aria-label="Scroll to bottom"
+				aria-hidden={atBottom}
+				tabIndex={atBottom ? -1 : 0}
+				className={`lg:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex h-9 items-center justify-center gap-1 rounded-lg bg-inverse px-4 text-xs text-inverse-fg shadow-lg transition-opacity hover:opacity-90 ${atBottom ? 'invisible pointer-events-none opacity-0' : ''}`}
+			>
+				<ArrowDown className="h-4 w-4" />
+			</button>
 		</>
 	);
 }
