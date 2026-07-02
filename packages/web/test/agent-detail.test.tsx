@@ -184,6 +184,52 @@ test('agent settings tab edits the title and persists across reload', async () =
 	);
 });
 
+test('Captain settings disables the Reports To field with a fixed-line hint', async () => {
+	let teamSlug = '';
+	let captainId = '';
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			teamSlug = ws.internalSlug;
+			captainId = ws.agents.find((a) => a.slug === 'captain')!.id;
+		},
+	});
+	await router.navigate({
+		to: '/projects/$projectId/agents/$agentId/settings',
+		params: { projectId: teamSlug, agentId: captainId },
+	});
+
+	const hint = await findByTestId('reports-to-locked-hint');
+	expect(hint.textContent).toMatch(/Captain always reports to the CEO/);
+	const select = hint.closest('label')!.querySelector('select') as HTMLSelectElement;
+	expect(select.disabled).toBe(true);
+});
+
+test('ordinary agent settings leaves the Reports To field editable', async () => {
+	let teamSlug = '';
+	let engineerId = '';
+	const { findByText, queryByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			teamSlug = ws.internalSlug;
+			engineerId = ws.agents.find((a) => a.slug === 'engineer')!.id;
+		},
+	});
+	await router.navigate({
+		to: '/projects/$projectId/agents/$agentId/settings',
+		params: { projectId: teamSlug, agentId: engineerId },
+	});
+
+	// Wait for the settings form to render, then assert the select is enabled and
+	// carries no fixed-line hint.
+	const label = await findByText('Reports To');
+	const select = label.closest('label')!.querySelector('select') as HTMLSelectElement;
+	expect(select.disabled).toBe(false);
+	expect(queryByTestId('reports-to-locked-hint')).toBeNull();
+});
+
 test('agent header shows a live next-heartbeat countdown when the agent has work', async () => {
 	let projectSlug = '';
 	let agentId = '';

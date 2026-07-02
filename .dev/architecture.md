@@ -272,7 +272,12 @@ project.
   agent via the hire approval handler (resolving the manager slug → member id). An
   existing agent's manager is set/changed with the **`set_agent_reports_to`** MCP tool
   (Captain or HQ coordinator; rejects self-reports and cycles) — the structural analogue
-  of the descriptive `team_context` blob. Each proposal is also mirrored as a `hire_proposal` action comment on the
+  of the descriptive `team_context` blob. Three roles have **structurally-fixed reporting
+  lines that cannot be changed** (`hasFixedReportsTo` / `FIXED_REPORTS_TO_SLUGS` in
+  `@hezo/shared`): the Captain always reports to the CEO, and the CEO and Coach report to
+  the admin (no agent). The lock is enforced on every write path — the REST
+  `PATCH /projects/:projectId/agents/:agentId` handler and the `set_agent_reports_to`
+  tool both reject a re-point of these roles, and the settings UI disables the field. Each proposal is also mirrored as a `hire_proposal` action comment on the
   linked ticket (`services/hire-proposal-comment.ts`), which flips to hired/denied on
   resolution and re-wakes the requester; the approval no longer auto-closes the ticket —
   the requester (the CEO) closes it once setup is complete. Retiring/reinstating an agent is the `set_agent_status` MCP tool (gated to

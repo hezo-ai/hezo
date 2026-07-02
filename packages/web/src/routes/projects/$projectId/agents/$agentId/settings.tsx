@@ -3,6 +3,8 @@ import {
 	AI_PROVIDER_INFO,
 	type AiProvider,
 	type BudgetWindowsCents,
+	CAPTAIN_AGENT_SLUG,
+	hasFixedReportsTo,
 } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Loader2, Power, PowerOff } from 'lucide-react';
@@ -92,6 +94,10 @@ function AgentSettingsPage() {
 
 	const otherAgents =
 		agents?.filter((a) => a.id !== agentId && a.admin_status !== AgentAdminStatus.Disabled) ?? [];
+
+	// Captain, CEO, and Coach have structurally-fixed reporting lines (Captain → CEO;
+	// CEO/Coach → admin) that must not be user-editable — mirrors the server guard.
+	const reportsToLocked = hasFixedReportsTo(agent.slug);
 
 	async function handleSave(e: React.FormEvent) {
 		e.preventDefault();
@@ -192,7 +198,8 @@ function AgentSettingsPage() {
 					<select
 						value={reportsTo}
 						onChange={(e) => setReportsTo(e.target.value)}
-						className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-1 outline-none focus:border-border-strong"
+						disabled={reportsToLocked}
+						className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-1 outline-none focus:border-border-strong disabled:opacity-60 disabled:cursor-not-allowed"
 					>
 						<option value="">None (Admin)</option>
 						{otherAgents.map((a) => (
@@ -201,6 +208,13 @@ function AgentSettingsPage() {
 							</option>
 						))}
 					</select>
+					{reportsToLocked && (
+						<span data-testid="reports-to-locked-hint" className="text-xs text-text-2 italic">
+							{agent.slug === CAPTAIN_AGENT_SLUG
+								? 'The Captain always reports to the CEO; this reporting line is fixed.'
+								: 'This role reports to the admin; its reporting line is fixed.'}
+						</span>
+					)}
 				</label>
 
 				<div className="flex flex-col gap-1.5">

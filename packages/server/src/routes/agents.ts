@@ -4,10 +4,12 @@ import {
 	type AiProvider,
 	ALL_AI_PROVIDERS,
 	AuthType,
+	CAPTAIN_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
 	DEFAULT_TEAM_ID,
 	DocumentType,
+	hasFixedReportsTo,
 	INSTANCE_AGENT_SLUGS,
 	isAgentEffort,
 	isReservedAgentSlug,
@@ -778,6 +780,30 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 		return err(c, 'INVALID_REQUEST', `Invalid default_effort: ${body.default_effort}`, 400);
 	}
 
+	// Structurally-fixed reporting lines (Captain → CEO, CEO/Coach → admin) are
+	// immutable. Reject any PATCH that moves one off its stored value; a no-op
+	// resubmission of the current value (as the settings form always sends) passes.
+	// The fetched current value is reused below as priorReportsTo.
+	let priorReportsTo: string | null | undefined;
+	if (body.reports_to !== undefined) {
+		const cur = await db.query<{ slug: string; reports_to: string | null }>(
+			'SELECT slug, reports_to FROM member_agents WHERE id = $1',
+			[agentId],
+		);
+		priorReportsTo = cur.rows[0]?.reports_to ?? null;
+		const slug = cur.rows[0]?.slug;
+		if (slug && hasFixedReportsTo(slug) && (body.reports_to ?? null) !== priorReportsTo) {
+			return err(
+				c,
+				'INVALID_REQUEST',
+				slug === CAPTAIN_AGENT_SLUG
+					? 'The Captain always reports to the CEO; its reporting line cannot be changed'
+					: 'This role reports to the admin; its reporting line cannot be changed',
+				400,
+			);
+		}
+	}
+
 	// A supplied system prompt must keep the required substitution variables.
 	// Instance singletons (CEO/Coach) are exempt — they have no in-team manager,
 	// so the {{reports_to}} requirement does not apply to them.
@@ -898,15 +924,6 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 			[agentId],
 		);
 		return ok(c, result.rows[0]);
-	}
-
-	let priorReportsTo: string | null | undefined;
-	if (body.reports_to !== undefined) {
-		const prior = await db.query<{ reports_to: string | null }>(
-			'SELECT reports_to FROM member_agents WHERE id = $1',
-			[agentId],
-		);
-		priorReportsTo = prior.rows[0]?.reports_to ?? null;
 	}
 
 	if (body.title?.trim()) {

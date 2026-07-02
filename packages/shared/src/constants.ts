@@ -17,6 +17,21 @@ export const RESERVED_AGENT_SLUGS = [ADMIN_MENTION_SLUG] as const;
 export function isReservedAgentSlug(slug: string): boolean {
 	return (RESERVED_AGENT_SLUGS as readonly string[]).includes(slug);
 }
+
+/**
+ * Roles whose reporting line is structurally fixed and must never be user-editable:
+ * the Captain always reports to the CEO; the CEO and Coach report to the admin (no
+ * agent). Enforced across every write path (REST PATCH, MCP `set_agent_reports_to`)
+ * and disabled in the settings UI.
+ */
+export const FIXED_REPORTS_TO_SLUGS = [
+	CAPTAIN_AGENT_SLUG,
+	CEO_AGENT_SLUG,
+	COACH_AGENT_SLUG,
+] as const;
+export function hasFixedReportsTo(slug: string): boolean {
+	return (FIXED_REPORTS_TO_SLUGS as readonly string[]).includes(slug);
+}
 /**
  * The single instance-level coordination project, living in the HQ (default)
  * team. There is exactly one across the instance — it hosts the CEO + Coach and

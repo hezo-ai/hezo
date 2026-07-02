@@ -24,6 +24,7 @@ import {
 	extractBacktickedMentionCandidates,
 	type GoalHealth,
 	getConnectorCapability,
+	hasFixedReportsTo,
 	INSTANCE_AGENT_SLUGS,
 	isAgentAuthorableAssetMime,
 	isMarkdownDocSlug,
@@ -3222,7 +3223,7 @@ export function registerTools(
 	tool(
 		server,
 		'set_agent_reports_to',
-		"Set or change the manager an agent reports to — the structural reporting line in the org chart that gates delegation. Work can only be assigned to/from an agent along this line, so an agent whose manager is unset can't be delegated to or hand work down. Use this to wire up reporting structure (e.g. after hiring specialists, point them at their lead) or fix it during a coherence review. Pass the target agent and its new manager (both by slug or member ID); pass an empty reports_to to clear the line. Callable by the team's Captain or an HQ instance agent (CEO/Coach) acting in the team.",
+		"Set or change the manager an agent reports to — the structural reporting line in the org chart that gates delegation. Work can only be assigned to/from an agent along this line, so an agent whose manager is unset can't be delegated to or hand work down. Use this to wire up reporting structure (e.g. after hiring specialists, point them at their lead) or fix it during a coherence review. Pass the target agent and its new manager (both by slug or member ID); pass an empty reports_to to clear the line. Callable by the team's Captain or an HQ instance agent (CEO/Coach) acting in the team. The Captain, CEO, and Coach have fixed reporting lines (Captain → CEO; CEO/Coach → admin) that cannot be changed.",
 		{
 			project: projectArg(),
 			agent_id: z.string().describe('Target agent — its slug (e.g. "engineer") or member ID'),
@@ -3250,6 +3251,14 @@ export function registerTools(
 				[agentId, teamId],
 			);
 			if (target.rows.length === 0) return { error: 'Agent not found in this team' };
+
+			// Structurally-fixed lines are immutable: the Captain always reports to the
+			// CEO; the CEO and Coach report to the admin. These cannot be re-pointed.
+			if (hasFixedReportsTo(target.rows[0].slug)) {
+				return {
+					error: `The ${target.rows[0].slug} reporting line is fixed and cannot be changed`,
+				};
+			}
 
 			const raw = String(args.reports_to ?? '').trim();
 			let managerId: string | null = null;
