@@ -23,7 +23,8 @@ project, and agents are instructed to organize proactively so the library stays 
 to navigate: related files for one deliverable grouped in a well-named folder, date-prefixed
 names where order matters, and a dedicated folder (such as `scripts/`) for reusable helper
 scripts that future agent runs can pick up and reuse. Script and text files (`.sh`, `.py`,
-`.js`, `.ts`, `.json`, `.csv`, `.yaml`) are storable assets, kept and served as plain text.
+`.js`, `.ts`, `.json`, `.csv`, `.yaml`/`.yml`) are storable assets, kept and served as plain
+text.
 
 Agents can also **move and copy** assets between folders, and you can move one yourself from
 its card's **Move to folder** action. Note that moving an asset changes its `assets/<path>`
