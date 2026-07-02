@@ -305,10 +305,14 @@ project.
   tool both reject a re-point of these roles, and the settings UI disables the field. Each proposal is also mirrored as a `hire_proposal` action comment on the
   linked ticket (`services/hire-proposal-comment.ts`), which flips to hired/denied on
   resolution and re-wakes the requester; the approval no longer auto-closes the ticket —
-  the requester (the CEO) closes it once setup is complete. Retiring/reinstating an agent is the `set_agent_status` MCP tool (gated to
-  the team's Captain or an HQ coordinator), which runs the same `setAgentAdminStatus`
-  service as the REST disable/enable routes — it can't disable a Captain or an instance
-  agent. On a new team the CEO's initial coherence/setup pass **blocks** the Captain's
+  the requester (the CEO) closes it once setup is complete. Retiring/reinstating an agent runs through the `setAgentAdminStatus`
+  service, shared by the `set_agent_status` MCP tool (gated to the team's Captain or an HQ
+  coordinator) and the REST disable/enable routes (admin web UI). The **instance singletons
+  (CEO/Coach) cannot be disabled through any path** — the MCP tool rejects it and the REST
+  `POST .../agents/:agentId/disable` route returns `403` for their slugs (`INSTANCE_AGENT_SLUGS`),
+  since the whole instance depends on them for cross-project coordination and review. A
+  team's Captain is likewise protected from agent-initiated disabling, but an admin may
+  still retire one from the web UI. On a new team the CEO's initial coherence/setup pass **blocks** the Captain's
   planning task. It **auto-runs** on the direct (form) creation path; on the CEO-assisted
   path the CEO authors the concrete setup plan into it and then starts it with
   `start_team_setup` (see Creation flows).

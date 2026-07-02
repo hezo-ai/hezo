@@ -66,8 +66,10 @@ settings in the web app, or just by asking the CEO. Retiring stops the agent fro
 scheduled and unassigns it from any open tasks, but keeps all of its history, so it's
 fully reversible: reinstate (enable) it at any time and it picks work back up on its
 heartbeat. The CEO actions this directly once you confirm, which is handy after a
-project's direction changes and several roles no longer fit. (A team's Captain and the
-global CEO and Coach can't be retired this way.)
+project's direction changes and several roles no longer fit. (A team's Captain can't be
+retired by the CEO — only an admin can, from the web app. The global CEO and Coach run
+coordination and review across every project, so they're essential and can't be retired
+at all.)
 
 ## Other settings
 

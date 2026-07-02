@@ -230,6 +230,28 @@ test('ordinary agent settings leaves the Reports To field editable', async () =>
 	expect(queryByTestId('reports-to-locked-hint')).toBeNull();
 });
 
+test('instance agent (CEO) settings shows an essential-role note and no disable button', async () => {
+	let teamSlug = '';
+	let ceoId = '';
+	const { findByText, queryByRole, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			teamSlug = ws.internalSlug;
+			// CEO/Coach surface as HQ virtual members of every project's roster.
+			ceoId = ws.agents.find((a) => a.slug === 'ceo')!.id;
+		},
+	});
+	await router.navigate({
+		to: '/projects/$projectId/agents/$agentId/settings',
+		params: { projectId: teamSlug, agentId: ceoId },
+	});
+
+	// The essential HQ role explains it's always active — and offers no disable button.
+	await findByText(/essential HQ role/i);
+	expect(queryByRole('button', { name: /Disable agent/i })).toBeNull();
+});
+
 test('agent header shows a live next-heartbeat countdown when the agent has work', async () => {
 	let projectSlug = '';
 	let agentId = '';
