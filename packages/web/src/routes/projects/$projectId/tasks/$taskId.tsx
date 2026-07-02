@@ -1,6 +1,6 @@
 import type { AgentEffort } from '@hezo/shared';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
-import { ArrowDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { jumpToComment } from '../../../../components/comment-renderers';
 import { CommentComposer } from '../../../../components/task-detail/comment-composer';
@@ -16,6 +16,7 @@ import { SubTasksSection } from '../../../../components/task-detail/sub-tasks-se
 import { TaskHeader } from '../../../../components/task-detail/task-header';
 import { TaskSidebar } from '../../../../components/task-detail/task-sidebar';
 import { TaskSummary } from '../../../../components/task-detail/task-summary';
+import { Tooltip } from '../../../../components/ui/tooltip';
 import { useAgents } from '../../../../hooks/use-agents';
 import { type Comment, useComments, useCreateComment } from '../../../../hooks/use-comments';
 import { useExecutionLock } from '../../../../hooks/use-execution-locks';
@@ -212,40 +213,68 @@ function TaskDetailPage() {
 				</div>
 			</div>
 
-			{/* Desktop/tablet: a floating round button sitting above the persistent CEO
-			    chat launcher (fixed bottom-right) so the two controls don't overlap. */}
+			{/* Desktop/tablet: the same thin pill, centred over the content column and
+			    pinned to the bottom of the viewport. The mirror grid matches the main
+			    content grid above so the pill lines up with the content column, never
+			    the sidebar (whichever width the preview panel is using). */}
 			<div
-				className="hidden lg:flex sticky bottom-20 z-30 justify-end pointer-events-none"
 				aria-hidden={atBottom}
+				className={`hidden lg:grid sticky bottom-4 z-30 gap-5 pointer-events-none ${preview ? 'lg:grid-cols-[1fr_360px]' : 'lg:grid-cols-[1fr_190px]'}`}
 			>
-				<button
-					type="button"
-					onClick={scrollToBottom}
-					data-testid="task-scroll-to-bottom"
-					aria-label="Scroll to bottom"
-					tabIndex={atBottom ? -1 : 0}
-					className={`w-9 h-9 rounded-full border border-border bg-surface text-text-2 hover:text-text-1 shadow-md flex items-center justify-center ${atBottom ? 'invisible' : 'pointer-events-auto'}`}
-				>
-					<ArrowDown className="w-4 h-4" />
-				</button>
+				<div className="flex justify-center">
+					<ScrollToBottomButton
+						onClick={scrollToBottom}
+						atBottom={atBottom}
+						testId="task-scroll-to-bottom"
+						positionClassName="pointer-events-auto"
+					/>
+				</div>
 			</div>
 
-			{/* Mobile: a rectangular button pinned bottom-centre, sitting between the
-			    floating new-task (bottom-left) and CEO chat (bottom-right) launchers.
-			    `bg-inverse` renders black in light theme and the theme-appropriate
-			    inverse fill in dark theme, matching the chat launcher. */}
+			{/* Mobile: the same pill pinned bottom-centre, sitting between the floating
+			    new-task (bottom-left) and CEO chat (bottom-right) launchers. */}
+			<ScrollToBottomButton
+				onClick={scrollToBottom}
+				atBottom={atBottom}
+				testId="task-scroll-to-bottom-mobile"
+				positionClassName="lg:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40"
+			/>
+		</>
+	);
+}
+
+/**
+ * A thin "jump to latest" pill: a downward chevron on the theme's inverse fill
+ * (black in light theme, the light inverse in dark theme, matching the CEO chat
+ * launcher). Shared by the desktop (content-centred) and mobile (bottom-centre)
+ * placements — `positionClassName` supplies the positioning. Hides itself and
+ * leaves the tab order once the thread is scrolled to the bottom.
+ */
+function ScrollToBottomButton({
+	onClick,
+	atBottom,
+	testId,
+	positionClassName,
+}: {
+	onClick: () => void;
+	atBottom: boolean;
+	testId: string;
+	positionClassName: string;
+}) {
+	return (
+		<Tooltip content="Scroll to bottom">
 			<button
 				type="button"
-				onClick={scrollToBottom}
-				data-testid="task-scroll-to-bottom-mobile"
+				onClick={onClick}
+				data-testid={testId}
 				aria-label="Scroll to bottom"
 				aria-hidden={atBottom}
 				tabIndex={atBottom ? -1 : 0}
-				className={`lg:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex h-7 items-center justify-center gap-1 rounded-md bg-inverse px-4 text-xs text-inverse-fg shadow-lg transition-opacity hover:opacity-90 ${atBottom ? 'invisible pointer-events-none opacity-0' : ''}`}
+				className={`flex h-6 items-center justify-center rounded-md bg-inverse px-5 text-inverse-fg shadow-lg transition-opacity hover:opacity-90 ${positionClassName} ${atBottom ? 'invisible pointer-events-none opacity-0' : ''}`}
 			>
-				<ArrowDown className="h-4 w-4" />
+				<ChevronDown className="h-4 w-4" />
 			</button>
-		</>
+		</Tooltip>
 	);
 }
 
