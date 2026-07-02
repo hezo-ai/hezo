@@ -174,13 +174,30 @@ describe('set_agent_reports_to', () => {
 		});
 		expect(self.error).toContain('cannot report to itself');
 
-		// engineer→captain now; making the captain report to the engineer closes a loop.
+		// engineer→captain now. Point the architect at the engineer, then closing the
+		// loop by pointing the engineer back at the architect is rejected as a cycle.
+		// (Uses two ordinary roles — the Captain's own line is fixed, see below.)
+		const link = await callTool(await captainToken(), 'set_agent_reports_to', {
+			project: projectSlug,
+			agent_id: 'architect',
+			reports_to: 'engineer',
+		});
+		expect(link.error).toBeUndefined();
 		const cycle = await callTool(await captainToken(), 'set_agent_reports_to', {
+			project: projectSlug,
+			agent_id: 'engineer',
+			reports_to: 'architect',
+		});
+		expect(cycle.error).toContain('cycle');
+	});
+
+	it('refuses to re-point a structurally-fixed reporting line (Captain)', async () => {
+		const result = await callTool(await captainToken(), 'set_agent_reports_to', {
 			project: projectSlug,
 			agent_id: 'captain',
 			reports_to: 'engineer',
 		});
-		expect(cycle.error).toContain('cycle');
+		expect(result.error).toContain('fixed');
 	});
 
 	it('an empty reports_to clears the reporting line', async () => {
@@ -215,5 +232,41 @@ describe('set_agent_reports_to', () => {
 			reports_to: 'captain',
 		});
 		expect(result.error).toContain('Access denied');
+	});
+});
+
+describe('REST PATCH locks fixed reporting lines', () => {
+	async function patchReportsTo(agentId: string, reportsTo: string | null) {
+		return app.request(`/api/projects/${projectSlug}/agents/${agentId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ reports_to: reportsTo }),
+		});
+	}
+
+	it("rejects changing the Captain's reports_to to another agent", async () => {
+		const res = await patchReportsTo(captainId, engineerId);
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.message).toContain('Captain');
+	});
+
+	it("allows a no-op resubmission of the Captain's current reports_to", async () => {
+		const cur = await db.query<{ reports_to: string | null }>(
+			'SELECT reports_to FROM member_agents WHERE id = $1',
+			[captainId],
+		);
+		const res = await patchReportsTo(captainId, cur.rows[0].reports_to);
+		expect(res.status).toBe(200);
+	});
+
+	it('still allows re-pointing an ordinary worker agent', async () => {
+		const res = await patchReportsTo(engineerId, captainId);
+		expect(res.status).toBe(200);
+		const row = await db.query<{ reports_to: string | null }>(
+			'SELECT reports_to FROM member_agents WHERE id = $1',
+			[engineerId],
+		);
+		expect(row.rows[0].reports_to).toBe(captainId);
 	});
 });

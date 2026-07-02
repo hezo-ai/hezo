@@ -521,7 +521,7 @@ Declare that, after evaluating the current task this run, there is genuinely not
 
 _Write tool._
 
-Set or change the manager an agent reports to — the structural reporting line in the org chart that gates delegation. Work can only be assigned to/from an agent along this line, so an agent whose manager is unset can't be delegated to or hand work down. Use this to wire up reporting structure (e.g. after hiring specialists, point them at their lead) or fix it during a coherence review. Pass the target agent and its new manager (both by slug or member ID); pass an empty reports_to to clear the line. Callable by the team's Captain or an HQ instance agent (CEO/Coach) acting in the team.
+Set or change the manager an agent reports to — the structural reporting line in the org chart that gates delegation. Work can only be assigned to/from an agent along this line, so an agent whose manager is unset can't be delegated to or hand work down. Use this to wire up reporting structure (e.g. after hiring specialists, point them at their lead) or fix it during a coherence review. Pass the target agent and its new manager (both by slug or member ID); pass an empty reports_to to clear the line. Callable by the team's Captain or an HQ instance agent (CEO/Coach) acting in the team. The Captain, CEO, and Coach have fixed reporting lines (Captain → CEO; CEO/Coach → admin) that cannot be changed.
 
 **Parameters:**
 
@@ -531,7 +531,7 @@ Set or change the manager an agent reports to — the structural reporting line 
 | `agent_id` | `string` | Yes | Target agent — its slug (e.g. "engineer") or member ID |
 | `reports_to` | `string` | Yes | The new manager — an existing agent's slug (or member ID) on this team. Pass an empty string to clear the reporting line. |
 
-**Returns:** `{ applied: true, agent, reports_to }` (`reports_to` is null when cleared), or `{ error }` if the agent/manager is not in the team, the manager is the agent itself, or the link would create a reporting cycle.
+**Returns:** `{ applied: true, agent, reports_to }` (`reports_to` is null when cleared), or `{ error }` if the agent/manager is not in the team, the target is the Captain/CEO/Coach (whose reporting lines are fixed), the manager is the agent itself, or the link would create a reporting cycle.
 
 **Authorization:** The team's Captain, or an HQ instance agent (CEO/Coach) acting in the team.
 

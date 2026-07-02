@@ -267,7 +267,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	set_agent_reports_to: {
 		category: 'Agents & hiring',
 		returns:
-			'`{ applied: true, agent, reports_to }` (`reports_to` is null when cleared), or `{ error }` if the agent/manager is not in the team, the manager is the agent itself, or the link would create a reporting cycle.',
+			'`{ applied: true, agent, reports_to }` (`reports_to` is null when cleared), or `{ error }` if the agent/manager is not in the team, the target is the Captain/CEO/Coach (whose reporting lines are fixed), the manager is the agent itself, or the link would create a reporting cycle.',
 		auth: "The team's Captain, or an HQ instance agent (CEO/Coach) acting in the team.",
 	},
 
