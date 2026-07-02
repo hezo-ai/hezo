@@ -285,22 +285,44 @@ function ProjectAssetsPage() {
 					<ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
 						{grouped.folders.map((folder) => (
 							<li key={folder.path}>
+								{/* A folder reads as a small stack of cards: two darker lips
+								    (surface-3, strong border, elevated) peek above the raised top
+								    card so it's unmistakable next to the flat, white file cards.
+								    The top card keeps the file card's exact footprint (h-28 media
+								    + p-2 footer) so folders and files stay the same size; the lips
+								    are absolutely positioned in the grid gap and add no layout
+								    height. Folders keep the grey surface-2 fill (and its dark-mode
+								    counterpart); file cards use the lighter surface. */}
 								<button
 									type="button"
 									data-testid="asset-folder-card"
 									data-folder={folder.path}
 									onClick={() => openFolder(folder.path)}
-									className="flex w-full flex-col items-center justify-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-6 transition-colors hover:border-border-strong hover:bg-surface-3"
+									className="group relative block w-full text-left"
 								>
-									<Folder className="h-8 w-8 text-text-3" />
 									<span
-										className="w-full truncate text-center text-[12px] font-medium text-text-1"
-										title={folder.path}
-									>
-										{folder.name}
-									</span>
-									<span className="text-[11px] text-text-3">
-										{folder.count} file{folder.count === 1 ? '' : 's'}
+										aria-hidden="true"
+										className="absolute inset-x-5 -top-2 h-5 rounded-t-md border border-border-strong bg-surface-3 shadow-sm"
+									/>
+									<span
+										aria-hidden="true"
+										className="absolute inset-x-2.5 -top-1 h-5 rounded-t-md border border-border-strong bg-surface-3 shadow-sm"
+									/>
+									<span className="relative flex flex-col overflow-hidden rounded-md border border-border bg-surface-2 shadow-md transition group-hover:border-border-strong group-hover:shadow-lg">
+										<span className="flex h-28 items-center justify-center">
+											<Folder className="h-16 w-16 text-text-3" />
+										</span>
+										<span className="block p-2">
+											<span
+												className="block truncate text-[12px] font-medium text-text-1"
+												title={folder.path}
+											>
+												{folder.name}
+											</span>
+											<span className="block text-[11px] text-text-3">
+												{folder.count} file{folder.count === 1 ? '' : 's'}
+											</span>
+										</span>
 									</span>
 								</button>
 							</li>
@@ -869,7 +891,7 @@ function AssetCard({
 			ref={ref}
 			data-testid="asset-card"
 			data-filename={asset.original_filename}
-			className={`flex flex-col overflow-hidden rounded-md border bg-surface-2 ${
+			className={`flex flex-col overflow-hidden rounded-md border bg-surface ${
 				highlighted ? 'border-info' : 'border-border'
 			}`}
 		>
