@@ -2,7 +2,7 @@
 
 Tickets labelled `planning` (titled "Draft execution plan for …") are **epics for the plan itself** — not parents of implementation work.
 
-**Allowed sub-tasks** (set `parent_task_id` to the planning ticket): planning artefacts only — research, PRD, spec, design, and anything else whose output is read *before* building.
+**Allowed sub-tasks** (set `parent_task_id` to the planning ticket): planning artefacts only — research, PRD, design, spec, and anything else whose output is read *before* building.
 
 **Never nest under the planning ticket** — leave `parent_task_id` unset (top-level ticket):
 
