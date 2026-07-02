@@ -6,6 +6,7 @@ import type { Env } from '../src/lib/types';
 import {
 	absorbQueuedTaskWakeups,
 	assignmentWakeupAlreadyServed,
+	createProgressUpdateWakeup,
 	createWakeup,
 } from '../src/services/wakeup';
 import { safeClose } from './helpers';
@@ -153,6 +154,34 @@ describe('wakeup service', () => {
 		});
 
 		expect(id2).toBe(id1);
+	});
+
+	it('never coalesces a task-less wakeup onto a queued manual progress-update run', async () => {
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+		// The Captain's queued "Run now" row (task-less, marker-carrying).
+		const manualId = await createProgressUpdateWakeup(
+			db,
+			agentId,
+			teamId,
+			randomUUID(),
+			'on_demand',
+		);
+
+		// A scheduled heartbeat firing while the manual run is queued must get its
+		// own row — claiming the manual row would activate it with the heartbeat's
+		// local payload and bypass the progress-update dispatch guard.
+		const heartbeatId = await createWakeup(db, agentId, teamId, 'heartbeat', {
+			reason: 'scheduled_heartbeat',
+		});
+		expect(heartbeatId).not.toBe(manualId);
+
+		const manual = await db.query<{ payload: Record<string, unknown>; status: string }>(
+			'SELECT payload, status FROM agent_wakeup_requests WHERE id = $1',
+			[manualId],
+		);
+		expect(manual.rows[0].status).toBe('queued');
+		expect(manual.rows[0].payload.trigger).toBe('progress_update_now');
 	});
 
 	it('respects idempotency keys', async () => {

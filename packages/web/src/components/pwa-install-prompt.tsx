@@ -1,7 +1,17 @@
 import { Share, X } from 'lucide-react';
+import { useEffect } from 'react';
 import { useInstallPrompt } from '../hooks/use-install-prompt';
 import { Button } from './ui/button';
 import { Logo } from './ui/logo';
+
+interface PwaInstallPromptProps {
+	/**
+	 * Reports whether the card is currently showing, so the shell can hide the
+	 * floating new-task button — both pin to the bottom of the mobile viewport,
+	 * and the full-width card would otherwise cover the button.
+	 */
+	onVisibleChange?: (visible: boolean) => void;
+}
 
 /**
  * Mobile-only, dismissible "install Hezo to your home screen" card pinned to the
@@ -13,8 +23,13 @@ import { Logo } from './ui/logo';
  * programmatic prompt — it shows the manual Share → Add to Home Screen steps.
  * Dismissal is remembered (see {@link useInstallPrompt}) so it doesn't nag.
  */
-export function PwaInstallPrompt() {
+export function PwaInstallPrompt({ onVisibleChange }: PwaInstallPromptProps = {}) {
 	const { platform, promptInstall, dismiss } = useInstallPrompt();
+
+	const visible = platform !== null;
+	useEffect(() => {
+		onVisibleChange?.(visible);
+	}, [visible, onVisibleChange]);
 
 	if (!platform) return null;
 

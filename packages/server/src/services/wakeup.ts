@@ -24,10 +24,16 @@ export async function createWakeup(
 	// target task. A single pending run picks up everything that accumulated
 	// since it was queued, so an agent never needs more than one queued wakeup
 	// per task — regardless of how far apart the triggers arrive.
+	//
+	// Marker-carrying wakeups (`payload.trigger`, e.g. the Captain's queued
+	// manual progress-update run) are never coalesce targets: callers activate
+	// with their own local payload, so absorbing the marked row would strand its
+	// marker and let the claim bypass the trigger's dedicated dispatch path.
 	const taskId = typeof payload.task_id === 'string' ? payload.task_id : null;
 	const coalesceResult = await db.query<{ id: string; payload: Record<string, unknown> }>(
 		`SELECT id, payload FROM agent_wakeup_requests
 		 WHERE member_id = $1 AND status = $2::wakeup_status
+		   AND payload->>'trigger' IS NULL
 		   AND (($3::text IS NULL AND payload->>'task_id' IS NULL)
 		     OR payload->>'task_id' = $3::text)
 		 ORDER BY created_at DESC LIMIT 1`,
@@ -73,9 +79,12 @@ export async function createWakeup(
  * (same member, `task_id IS NULL`) — merging the two and blurring the
  * `progress_update_now` marker. This helper never coalesces: it returns any
  * existing still-queued progress wakeup for the Captain (so clicking "Run now"
- * twice yields one row) or inserts a fresh, uniquely-keyed one. The
- * `progress_update_now:<captain>` idempotency key both dedups and lets the
- * list/cancel routes target the row precisely.
+ * twice yields one row) or inserts a fresh, uniquely-keyed one. The reverse
+ * direction is covered in `createWakeup`, whose coalesce query skips
+ * marker-carrying rows — so a scheduled heartbeat can never claim (and then
+ * mis-dispatch) the queued manual run. The `progress_update_now:<captain>`
+ * idempotency key both dedups and lets the list/cancel routes target the row
+ * precisely.
  */
 export async function createProgressUpdateWakeup(
 	db: PGlite,

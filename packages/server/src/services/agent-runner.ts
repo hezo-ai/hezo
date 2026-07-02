@@ -856,7 +856,13 @@ export async function runAgent(
 	let runtimeType: AgentRuntime;
 	if (agent.model_override_provider) {
 		provider = agent.model_override_provider;
-		runtimeType = PROVIDER_RUNTIME_ADAPTERS[provider].runtime;
+		const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
+		if (!adapter) {
+			return finalizeFailure(
+				`This agent's model override references provider "${provider}", which is no longer supported. Clear the override in the agent's settings.`,
+			);
+		}
+		runtimeType = adapter.runtime;
 	} else {
 		const resolved = await resolveRuntimeForTask(deps.db, task?.runtime_type ?? null);
 		if (!resolved) {

@@ -140,6 +140,9 @@ export default defineConfig({
 				// Pricing still seeds from the bundled snapshot (offline); skip the
 				// boot-time refresh so e2e doesn't make an outbound feed fetch.
 				HEZO_SKIP_PRICING_REFRESH: '1',
+				// Telemetry defaults on; a CI run crossing the daily cron window
+				// would fire a real outbound report. Tests never phone home.
+				HEZO_TELEMETRY_ENABLED: '0',
 			},
 		},
 		{

@@ -171,7 +171,11 @@ also makes such a wakeup guard against fall-through: when it is finally dispatch
 runs *only* the progress update — it never lets the Captain pick up ordinary task work — and completes
 the wakeup as a no-op if nothing is due by then. A queued run is listed/cancelled through
 `GET`/`POST /projects/:projectId/goals/queued-run[/:wakeupId/cancel]` (scheduled heartbeat checks
-carry no trigger tag, so they are never surfaced or cancellable here). Token usage is flushed to the
+carry no trigger tag, so they are never surfaced or cancellable here). The isolation is
+two-way: `createProgressUpdateWakeup` never coalesces onto a heartbeat wakeup, and
+`createWakeup`'s generic coalescing skips marker-carrying (`payload.trigger`) rows — so a
+scheduled heartbeat firing while a manual run is queued gets its own row instead of
+claiming (and then mis-dispatching) the queued manual run. Token usage is flushed to the
 row *during* the run (alongside the log), so a run the server kills mid-flight still
 reports the tokens/cost it burned instead of `0`; `usage_partial` flags such a snapshot
 until a clean completion supersedes it. `agent_task_sessions` persists
