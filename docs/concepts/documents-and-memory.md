@@ -91,12 +91,13 @@ ways to comment:
   clicking it highlights the entire line and attaches your comment to it.
 
 Each comment shows as an icon in the right margin, level with its highlighted text. Click a
-highlight or its icon to **edit or delete** that comment. The toolbar above the document
-shows a comment count plus two actions — **action this review** (a clipboard button that
-copies a ready-made handoff you can paste into a task comment or a new task's description
-when assigning the work to an agent) and **clear review** (a trash button that deletes every
-comment after confirmation). The **?** button next to the toolbar opens a short in-app guide
-to all of this.
+highlight or its icon to **edit or delete** that comment. The review controls are grouped
+together into their own **review toolbar** above the document — set apart from the document's
+own edit and delete actions so the two don't get mixed up. It shows a comment count plus two
+actions — **action this review** (a clipboard button that copies a ready-made handoff you can
+paste into a task comment or a new task's description when assigning the work to an agent) and
+**clear review** (a trash button that deletes every comment after confirmation) — alongside a
+**?** button that opens a short in-app guide to all of this.
 
 Agents read pending review comments directly: `read_project_doc` returns them alongside the
 document content, each one anchored to the exact text you highlighted. So the flow is —
