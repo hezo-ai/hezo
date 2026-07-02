@@ -3412,8 +3412,15 @@ export function registerTools(
 				COACH_AGENT_SLUG,
 			];
 			if (status === AgentAdminStatus.Disabled && protectedSlugs.includes(slug)) {
+				// The HQ instance singletons (CEO/Coach) are essential to the whole
+				// instance and cannot be disabled through any path — not even the admin
+				// web UI. The Captain is protected from agent-initiated disabling here,
+				// but the admin may still retire one from the web UI if truly needed.
+				const isInstance = (INSTANCE_AGENT_SLUGS as readonly string[]).includes(slug);
 				return {
-					error: `The ${slug} role is essential and cannot be retired with this tool; the admin can disable it from the web UI if truly needed.`,
+					error: isInstance
+						? `The ${slug} role is essential to the instance and cannot be disabled.`
+						: `The ${slug} role is essential and cannot be retired with this tool; the admin can disable it from the web UI if truly needed.`,
 				};
 			}
 

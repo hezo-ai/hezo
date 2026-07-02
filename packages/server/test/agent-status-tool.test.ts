@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { CAPTAIN_AGENT_SLUG, DEFAULT_TEAM_ID } from '@hezo/shared';
+import { CAPTAIN_AGENT_SLUG, DEFAULT_TEAM_ID, HQ_PROJECT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -232,6 +232,24 @@ describe('MCP tool set_agent_status', () => {
 		});
 		expect(result.error).toContain('cannot be retired');
 		expect(await adminStatusOf(CAPTAIN_AGENT_SLUG)).toBe('enabled');
+	});
+
+	it.each([
+		'ceo',
+		'coach',
+	])('refuses to disable the HQ instance %s (essential singleton)', async (slug) => {
+		const result = await callTool(await ceoChatToken(), 'set_agent_status', {
+			project: HQ_PROJECT_SLUG,
+			agent: slug,
+			status: 'disabled',
+		});
+		expect(result.error).toContain('essential to the instance');
+		const r = await db.query<{ admin_status: string }>(
+			`SELECT ma.admin_status FROM member_agents ma JOIN members m ON m.id = ma.id
+				 WHERE m.team_id = $1 AND ma.slug = $2`,
+			[DEFAULT_TEAM_ID, slug],
+		);
+		expect(r.rows[0].admin_status).toBe('enabled');
 	});
 
 	it('errors when the agent is already in the requested state', async () => {
