@@ -241,7 +241,7 @@ function TaskDetailPage() {
 				aria-label="Scroll to bottom"
 				aria-hidden={atBottom}
 				tabIndex={atBottom ? -1 : 0}
-				className={`lg:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex h-9 items-center justify-center gap-1 rounded-lg bg-inverse px-4 text-xs text-inverse-fg shadow-lg transition-opacity hover:opacity-90 ${atBottom ? 'invisible pointer-events-none opacity-0' : ''}`}
+				className={`lg:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex h-7 items-center justify-center gap-1 rounded-md bg-inverse px-4 text-xs text-inverse-fg shadow-lg transition-opacity hover:opacity-90 ${atBottom ? 'invisible pointer-events-none opacity-0' : ''}`}
 			>
 				<ArrowDown className="h-4 w-4" />
 			</button>
