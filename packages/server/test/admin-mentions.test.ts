@@ -533,6 +533,123 @@ describe('reserved agent slug "admin"', () => {
 	});
 });
 
+describe('@admin fan-out reaches superusers', () => {
+	it('notifies superusers on a team with no human members, and they can read it via the inbox', async () => {
+		// A CEO-created team has zero human member_users rows — before the
+		// superuser leg was added the fan-out silently no-oped on such teams.
+		const teamRes = await createTestTeam(db, { name: 'Ceo Made Co' });
+		const team2 = (await teamRes.json()).data.id;
+		const projectRes = await createTestProject(db, team2, { name: 'Ceo Made Project' });
+		const project2 = (await projectRes.json()).data;
+		await db.query(
+			`DELETE FROM member_users WHERE id IN
+			   (SELECT id FROM members WHERE team_id = $1 AND member_type = 'user')`,
+			[team2],
+		);
+		await db.query(`DELETE FROM members WHERE team_id = $1 AND member_type = 'user'`, [team2]);
+
+		const agentsRes = await app.request(`/api/projects/${project2.slug}/agents`, {
+			headers: authHeader(token),
+		});
+		const captain2 = ((await agentsRes.json()).data as Array<{ id: string; slug: string }>).find(
+			(a) => a.slug === 'captain',
+		)!.id;
+		const meta = await db.query<{ task_prefix: string; number: number }>(
+			`SELECT p.task_prefix, next_project_task_number(p.id) AS number
+			 FROM projects p WHERE p.id = $1`,
+			[project2.id],
+		);
+		const task2 = (
+			await db.query<{ id: string }>(
+				`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
+				 VALUES ($1, $2, $3, $4, $5, 'Memberless team ask', 'in_progress'::task_status, 'medium'::task_priority, '[]'::jsonb)
+				 RETURNING id`,
+				[
+					team2,
+					project2.id,
+					captain2,
+					meta.rows[0].number,
+					`${meta.rows[0].task_prefix}-${meta.rows[0].number}`,
+				],
+			)
+		).rows[0].id;
+
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			captain2,
+			team2,
+			task2,
+		);
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				params: {
+					name: 'create_comment',
+					arguments: { project: project2.id, task_id: task2, content: '@admin — anyone there?' },
+				},
+				id: 1,
+			}),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			result: { content: Array<{ type: string; text: string }> };
+		};
+		const commentId = (JSON.parse(body.result.content[0].text) as { id: string }).id;
+
+		const rows = await mentionsForComment(commentId);
+		// The superuser is the only recipient; the other team's non-superuser
+		// admin must not be pulled in.
+		expect(rows.map((r) => r.user_id)).toEqual([testAdminUserId]);
+		expect(rows.some((r) => r.user_id === secondAdminUserId)).toBe(false);
+
+		// The superuser reads it through the inbox of a project they are not a
+		// member of (superuser access to every team).
+		const inboxRes = await app.request(`/api/projects/${project2.slug}/inbox/mentions`, {
+			headers: authHeader(token),
+		});
+		expect(inboxRes.status).toBe(200);
+		const inbox = (await inboxRes.json()).data as Array<{ comment_id: string }>;
+		expect(inbox.some((m) => m.comment_id === commentId)).toBe(true);
+	});
+
+	it('dedupes a superuser who is also a team admin to one row', async () => {
+		const taskIdLocal = await insertTask(captainId, 'Dedupe check');
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			architectId,
+			teamId,
+			taskIdLocal,
+		);
+		const commentId = await mcpComment(agentToken, taskIdLocal, '@admin — dedupe?');
+		const rows = await mentionsForComment(commentId);
+		expect(rows.filter((r) => r.user_id === testAdminUserId).length).toBe(1);
+	});
+
+	it('includes a superuser who is only a plain member of the team', async () => {
+		await db.query('UPDATE users SET is_superuser = true WHERE id = $1', [nonBoardUserId]);
+		try {
+			const taskIdLocal = await insertTask(captainId, 'Second superuser check');
+			const { token: agentToken } = await mintAgentToken(
+				db,
+				masterKeyManager,
+				architectId,
+				teamId,
+				taskIdLocal,
+			);
+			const commentId = await mcpComment(agentToken, taskIdLocal, '@admin — who hears this?');
+			const rows = await mentionsForComment(commentId);
+			expect(rows.some((r) => r.user_id === nonBoardUserId)).toBe(true);
+		} finally {
+			await db.query('UPDATE users SET is_superuser = false WHERE id = $1', [nonBoardUserId]);
+		}
+	});
+});
+
 describe('archiveOldInboxItems sweep', () => {
 	async function seedMention(readAtSql: string): Promise<string> {
 		const taskIdLocal = await insertTask(captainId, `Sweep ${Math.random()}`);

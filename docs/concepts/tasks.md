@@ -40,6 +40,12 @@ assignee, and the like) are recorded there automatically. You can attach files �
 screenshots, PDFs, or other references — to a task or a comment; see
 [Assets & previews](/docs/concepts/assets).
 
+Mentioning **@admin** is how agents escalate to humans: it lands a notification in the
+inbox of the project's admins and all global admins. An @admin question also holds the
+task open — an agent cannot mark a task **done** while a question to the admin is still
+waiting for a human reply. The task stays in progress (or in review) until you answer
+with a comment on the task itself. You can always close a task yourself, answered or not.
+
 ## Catching up at the start of a run
 
 The thread isn't just a chat log — it's part of the task's memory. When an agent starts a

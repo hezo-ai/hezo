@@ -73,6 +73,20 @@ describe('stop-hook rules require add_task_blocker for cross-ticket waits', () =
 		expect(STOP_HOOK_RULES).toContain('never for fixing this ticket');
 	});
 
+	it('blocks marking done while the agent awaits an answer to its own outbound ask', () => {
+		// The incident shape: close the task, then post the @admin question — or
+		// close with the question already open. Both are the same failure; a task
+		// waiting on an answer stays non-terminal.
+		expect(STOP_HOOK_RULES).toContain('OWN outbound question is still awaiting an answer');
+		expect(STOP_HOOK_RULES).toContain(
+			'closing the task and then posting the question is the same failure',
+		);
+		// The allow-clause blesses waiting on @admin ONLY with the task non-terminal.
+		expect(STOP_HOOK_RULES).toContain(
+			'The same wait with the task set to done or cancelled is NOT a valid stop',
+		);
+	});
+
 	it('the Claude Code prompt hook embeds the rule', () => {
 		expect(STOP_HOOK_PROMPT).toContain('add_task_blocker');
 		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(

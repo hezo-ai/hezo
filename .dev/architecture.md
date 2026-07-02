@@ -114,6 +114,13 @@ an agent-maintained `progress_summary`. Numbering is atomic via `project_task_co
 on run completion), `preview`, `action`,
 `connect_required`, `credential_request`. Each comment carries a `public_id` slug for
 `#comment-<id>` deep-links. `comment_reactions` holds emoji reactions.
+Marking a task `done` is gated in both update paths (REST PATCH and MCP `update_task`,
+shared helpers in `lib/task-relationships.ts`): every sub-task terminal, no outstanding
+pinged-agent activity by others (active runs, pending mention/comment/reply wakeups), and —
+for **agent callers only** — no active `@admin` mention on the task lacking a later human
+`text` comment (an unanswered ask holds the task in a non-terminal status until a human
+replies on the task or closes it themselves; reading the mention does not count).
+`cancelled` is deliberately ungated.
 
 **Goals.** `goals` are per-project objectives the Captain tracks (`project_id NOT NULL`;
 the `is_internal` HQ project has none, enforced in the service). Each carries a SMART
@@ -205,7 +212,10 @@ picked image to a square PNG ≤512×512 before upload (`PUT`/`DELETE` on the sa
 NULL marks an instance-level action; never updated/deleted by the app),
 `api_keys` (instance-scoped MCP credential, sha256-hashed `hezo_` prefix, `status`
 pending/approved — admin-minted keys are born approved, self-registered ones await admin
-approval), `invites`, `admin_mentions` (board inbox),
+approval), `invites`, `admin_mentions` (board inbox — one row per recipient for each
+active `@admin` text comment; recipients are the task team's `role='admin'` member_users
+plus **all superusers** — CEO-created teams have no human members, so the superuser leg is
+what guarantees delivery — author excluded, deduped by `(comment_id, user_id)`),
 `instance_user_roles`, `notification_preferences`. `plugins`/`plugin_state`/`plugin_jobs`
 are scaffolding for a future plugin runtime — present but not yet exercised.
 

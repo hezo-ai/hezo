@@ -67,6 +67,17 @@ describe('template resolver', () => {
 		expect(result).toContain('already handed this ticket off');
 	});
 
+	it('appends the ask-before-closing completion rule', async () => {
+		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
+		// Never mark done while an active mention you posted awaits an answer —
+		// and never close first and ask after.
+		expect(result).toContain('ask BEFORE closing, never close-then-ask');
+		// The server-enforced half: done is rejected while an @admin ask lacks a
+		// later human reply.
+		expect(result).toContain('has no later human reply');
+		expect(result).toContain('the only correct state to wait in');
+	});
+
 	it('appends the cancellation hand-back rule with the admin/CEO carve-out', async () => {
 		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
 		// A manager must hand an active task back to wind down, not cancel it out from under

@@ -54,7 +54,7 @@ import {
 	wakeIfReady,
 	wouldCreateCycle,
 } from '../lib/dependencies';
-import { detectUnlinkedTeammateReferences } from '../lib/mentions';
+import { detectUnlinkedTeammateReferences, extractMentionSlugs } from '../lib/mentions';
 import {
 	actorTypeFromAuth,
 	apiKeyIdFromAuth,
@@ -65,7 +65,11 @@ import {
 } from '../lib/resolve';
 import { assertRunTaskScope } from '../lib/run-scope';
 import { deriveSkillSummary } from '../lib/skill-summary';
-import { assertChildrenAllClosed, assertNoOutstandingActivity } from '../lib/task-relationships';
+import {
+	assertChildrenAllClosed,
+	assertNoOutstandingActivity,
+	assertNoUnansweredAdminMentions,
+} from '../lib/task-relationships';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
 import { setAgentAdminStatus } from '../services/agent-admin';
@@ -304,6 +308,32 @@ async function buildBacktickedEntityWarning(
 		(hasAgents
 			? ' For a teammate, @<slug> also wakes them on this ticket; use @@<slug> to refer without notifying.'
 			: '')
+	);
+}
+
+/**
+ * Returns a warning when an agent posts an active mention (an ask) on a task
+ * that is already terminal, or null otherwise. A done/cancelled task reads as
+ * finished, so an ask parked on it is easy to miss — the correct move was to
+ * ask before closing and keep the task in_progress/review while waiting.
+ * Best-effort and non-blocking, exactly like the builders above.
+ */
+async function buildTerminalTaskAskWarning(
+	db: PGlite,
+	taskId: string,
+	content: string,
+): Promise<string | null> {
+	if (extractMentionSlugs(content).length === 0) return null;
+	const r = await db.query<{ status: string }>(
+		'SELECT status::text AS status FROM tasks WHERE id = $1',
+		[taskId],
+	);
+	const status = r.rows[0]?.status;
+	if (!status || !(TERMINAL_TASK_STATUSES as readonly string[]).includes(status)) return null;
+	return (
+		`Note: this task is already ${status} (terminal). An ask posted on a closed task is easy ` +
+		`to miss — if you still need an answer or action, ask on an open task instead; next time ` +
+		`ask BEFORE closing and keep the task in_progress or review until the answer lands.`
 	);
 }
 
@@ -1135,7 +1165,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_task',
-		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` — that is the final completed state and wakes Coach to review the ticket for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
+		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` — that is the final completed state and wakes Coach to review the ticket for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Setting `done` is rejected for agent callers while the task has an @admin question no human has answered yet — keep the task `in_progress` or move it to `review` until the admin replies. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug — no @ prefix. Do not wrap any of these in backticks — that makes them inert.',
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -1200,6 +1230,12 @@ export function registerTools(
 				const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 				const activityCheck = await assertNoOutstandingActivity(db, taskId, callerMemberId);
 				if (!activityCheck.ok) return { error: activityCheck.message };
+				// Agents cannot close over an unanswered @admin ask; humans (and
+				// API keys — admin-equivalent) can always close through it.
+				if (callerMemberId !== null) {
+					const adminAskCheck = await assertNoUnansweredAdminMentions(db, taskId);
+					if (!adminAskCheck.ok) return { error: adminAskCheck.message };
+				}
 			}
 
 			if (args.status !== undefined) {
@@ -2176,7 +2212,7 @@ export function registerTools(
 			// already-persisted comment on this check.
 			if (authorMemberId) {
 				const commentText = args.content as string;
-				const [teammateWarning, backtickWarning] = await Promise.all([
+				const [teammateWarning, backtickWarning, terminalAskWarning] = await Promise.all([
 					buildUnlinkedMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
 						log.error('Failed to check comment for unlinked teammate references:', e);
 						return null;
@@ -2185,8 +2221,12 @@ export function registerTools(
 						log.error('Failed to check comment for backticked entity references:', e);
 						return null;
 					}),
+					buildTerminalTaskAskWarning(db, taskId, commentText).catch((e) => {
+						log.error('Failed to check comment for asks on a terminal task:', e);
+						return null;
+					}),
 				]);
-				const warning = [teammateWarning, backtickWarning]
+				const warning = [teammateWarning, backtickWarning, terminalAskWarning]
 					.filter((w): w is string => Boolean(w))
 					.join(' ');
 				if (warning) return { ...r.rows[0], warning };
