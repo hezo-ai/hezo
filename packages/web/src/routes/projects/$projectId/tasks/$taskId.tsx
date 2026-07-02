@@ -62,8 +62,10 @@ function TaskDetailPage() {
 	const [commentEffort, setCommentEffort] = useState<AgentEffort | null>(null);
 	const [replyTarget, setReplyTarget] = useState<Comment | null>(null);
 	// A doc clicked in a comment opens in the preview panel: an in-grid column at
-	// lg+, and its own full-screen overlay (above the main content and the meta
-	// drawer) below lg. It is independent of the meta side rail.
+	// lg+ that widens on the roomier xl/2xl breakpoints (up to 2× its base width)
+	// so wide screens get a more readable document view, and its own full-screen
+	// overlay (above the main content and the meta drawer) below lg. It is
+	// independent of the meta side rail.
 	const [preview, setPreview] = useState<PreviewItem | null>(null);
 	// The meta side rail is a collapsed-by-default drawer on mobile, toggled by
 	// the chevron. It is independent of the preview panel — opening/closing a
@@ -102,7 +104,7 @@ function TaskDetailPage() {
 	return (
 		<>
 			<div
-				className={`grid grid-cols-1 gap-5 ${preview ? 'lg:grid-cols-[1fr_360px]' : 'lg:grid-cols-[1fr_190px]'}`}
+				className={`grid grid-cols-1 gap-5 ${preview ? 'lg:grid-cols-[1fr_360px] xl:grid-cols-[1fr_520px] 2xl:grid-cols-[1fr_720px]' : 'lg:grid-cols-[1fr_190px]'}`}
 			>
 				<PreviewProvider value={openPreview}>
 					<div className="min-w-0">
@@ -218,7 +220,7 @@ function TaskDetailPage() {
 			    the sidebar (whichever width the preview panel is using). */}
 			<div
 				aria-hidden={atBottom}
-				className={`hidden lg:grid sticky bottom-4 z-30 gap-5 pointer-events-none ${preview ? 'lg:grid-cols-[1fr_360px]' : 'lg:grid-cols-[1fr_190px]'}`}
+				className={`hidden lg:grid sticky bottom-4 z-30 gap-5 pointer-events-none ${preview ? 'lg:grid-cols-[1fr_360px] xl:grid-cols-[1fr_520px] 2xl:grid-cols-[1fr_720px]' : 'lg:grid-cols-[1fr_190px]'}`}
 			>
 				<div className="flex justify-center">
 					<ScrollToBottomButton

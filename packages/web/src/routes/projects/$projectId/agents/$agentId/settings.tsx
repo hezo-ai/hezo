@@ -5,6 +5,7 @@ import {
 	type BudgetWindowsCents,
 	CAPTAIN_AGENT_SLUG,
 	hasFixedReportsTo,
+	INSTANCE_AGENT_SLUGS,
 } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Loader2, Power, PowerOff } from 'lucide-react';
@@ -98,6 +99,10 @@ function AgentSettingsPage() {
 	// Captain, CEO, and Coach have structurally-fixed reporting lines (Captain → CEO;
 	// CEO/Coach → admin) that must not be user-editable — mirrors the server guard.
 	const reportsToLocked = hasFixedReportsTo(agent.slug);
+
+	// The HQ instance singletons (CEO/Coach) are essential to the instance and can
+	// never be disabled — mirrors the server guard on the disable route.
+	const isInstanceAgent = (INSTANCE_AGENT_SLUGS as readonly string[]).includes(agent.slug);
 
 	async function handleSave(e: React.FormEvent) {
 		e.preventDefault();
@@ -295,11 +300,18 @@ function AgentSettingsPage() {
 			<div className="mt-8 pt-6 border-t border-border-subtle">
 				<div className="text-sm font-medium mb-1">Agent status</div>
 				<div className="text-xs text-text-2 mb-3">
-					{agent.admin_status === AgentAdminStatus.Enabled
-						? 'Disabling unassigns this agent from open tasks and stops it from being scheduled.'
-						: 'This agent is disabled and cannot be assigned new work. Enable to resume scheduling.'}
+					{isInstanceAgent
+						? agent.admin_status === AgentAdminStatus.Enabled
+							? 'This is an essential HQ role that runs coordination and review across every project. It is always active and cannot be disabled.'
+							: 'This essential HQ role is currently disabled. Re-enable it to restore cross-project coordination and review.'
+						: agent.admin_status === AgentAdminStatus.Enabled
+							? 'Disabling unassigns this agent from open tasks and stops it from being scheduled.'
+							: 'This agent is disabled and cannot be assigned new work. Enable to resume scheduling.'}
 				</div>
-				{agent.admin_status === AgentAdminStatus.Enabled && (
+				{/* The HQ instance singletons (CEO/Coach) can never be disabled — the disable
+				    button is hidden for them — but if one is somehow disabled, the admin can
+				    still re-enable it to recover. */}
+				{!isInstanceAgent && agent.admin_status === AgentAdminStatus.Enabled && (
 					<Button
 						variant="secondary"
 						size="sm"

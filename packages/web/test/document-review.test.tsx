@@ -95,6 +95,42 @@ test('renders seeded review comments as highlights with margin icons and a count
 	expect((await findByTestId('review-count-chip')).textContent).toContain('2');
 });
 
+test('groups the review-comment controls in a bordered cluster, apart from the document actions', async () => {
+	const { findByTestId, getByTestId, getByRole } = await setupDocumentsPage({
+		comments: [{ quote: 'target text', comment: 'Group me' }],
+	});
+
+	// Wait for the comments query to resolve (count chip appears) so every review
+	// control is mounted before we assert on the grouping.
+	const chip = await findByTestId('review-count-chip');
+	const toolbar = getByTestId('review-toolbar');
+
+	// The review-comment controls — count, action-this-review, clear-review and
+	// the "?" help — all live inside the one grouped cluster.
+	expect(toolbar.contains(chip)).toBe(true);
+	for (const testid of ['review-action-open', 'review-clear', 'review-help']) {
+		expect(toolbar.querySelector(`[data-testid="${testid}"]`)).toBeTruthy();
+	}
+
+	// The cluster is visually contained (rounded, bordered, tinted background) so
+	// it reads as one group distinct from the actions beside it.
+	expect(toolbar.className).toContain('rounded-lg');
+	expect(toolbar.className).toContain('border');
+	expect(toolbar.className).toContain('bg-surface-2');
+
+	// The document-level meta actions sit OUTSIDE the review cluster — that
+	// separation is the whole point. In particular the two trash icons (clear the
+	// review vs. delete the document) now live in different groups.
+	const popout = getByTestId('doc-popout');
+	const editButton = getByRole('button', { name: 'Edit' });
+	const deleteDoc = getByRole('button', { name: 'Delete document' });
+	expect(toolbar.contains(popout)).toBe(false);
+	expect(toolbar.contains(editButton)).toBe(false);
+	expect(toolbar.contains(deleteDoc)).toBe(false);
+	// The clear-review trash, by contrast, is inside the cluster.
+	expect(toolbar.contains(getByTestId('review-clear'))).toBe(true);
+});
+
 test('clicking a margin icon opens the editor and saving updates the comment', async () => {
 	const { container, findByTestId, user } = await setupDocumentsPage({
 		comments: [{ quote: 'target text', comment: 'Original comment' }],

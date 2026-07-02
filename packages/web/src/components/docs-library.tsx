@@ -1,6 +1,5 @@
 import { ArrowLeft, ExternalLink, FileText, Loader2, Plus, Trash2 } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { ReviewHelp } from './document-review/review-help';
 import { ReviewToolbarActions } from './document-review/review-toolbar-actions';
 import { ReviewableDocument } from './document-review/reviewable-document';
 import { MarkdownProse } from './markdown-prose';
@@ -207,10 +206,7 @@ export function DocsLibrary({
 								{mode === 'view' ? (
 									<>
 										{review && projectId && (
-											<>
-												<ReviewToolbarActions projectId={projectId} filename={review.filename} />
-												<ReviewHelp />
-											</>
+											<ReviewToolbarActions projectId={projectId} filename={review.filename} />
 										)}
 										{popOutUrl && (
 											<Button

@@ -4,11 +4,20 @@ import { useClearDocReviewComments, useDocReviewComments } from '../../hooks/use
 import { ConfirmDialog } from '../ui/confirm-dialog';
 import { Tooltip } from '../ui/tooltip';
 import { ActionReviewDialog } from './action-review-dialog';
+import { ReviewHelp } from './review-help';
 
 interface ReviewToolbarActionsProps {
 	/** Route-param project slug (query keys + API paths). */
 	projectId: string;
 	filename: string;
+	/**
+	 * `'grouped'` (default) wraps the controls in a tinted, rounded container so
+	 * the review-comment tools read as one self-contained cluster, clearly set
+	 * apart from the document-level actions (edit / delete / open-in-new-tab)
+	 * sitting beside them in the same header. `'inline'` drops the container for
+	 * surfaces that already supply their own (the standalone preview toolbar).
+	 */
+	variant?: 'grouped' | 'inline';
 }
 
 const ICON_BUTTON_CLASSES =
@@ -16,18 +25,29 @@ const ICON_BUTTON_CLASSES =
 
 /**
  * The review actions for a document view surface: comment count, "Action this
- * review" (agent handoff dialog) and "Clear review" (confirm-gated delete of
- * every comment). Dropped into each surface's header/toolbar.
+ * review" (agent handoff dialog), "Clear review" (confirm-gated delete of every
+ * comment) and the "?" help affordance. These belong together as the document's
+ * review-comment toolbar, kept visually distinct from the document's own
+ * meta-level actions. Dropped into each surface's header/toolbar.
  */
-export function ReviewToolbarActions({ projectId, filename }: ReviewToolbarActionsProps) {
+export function ReviewToolbarActions({
+	projectId,
+	filename,
+	variant = 'grouped',
+}: ReviewToolbarActionsProps) {
 	const { data: comments } = useDocReviewComments(projectId, filename);
 	const clearMutation = useClearDocReviewComments(projectId, filename);
 	const [actionOpen, setActionOpen] = useState(false);
 	const [confirmClearOpen, setConfirmClearOpen] = useState(false);
 	const count = comments?.length ?? 0;
 
+	const containerClasses =
+		variant === 'grouped'
+			? 'flex shrink-0 items-center gap-1 rounded-lg border border-border bg-surface-2 px-1.5 py-0.5'
+			: 'flex shrink-0 items-center gap-1';
+
 	return (
-		<div className="flex shrink-0 items-center gap-1">
+		<div className={containerClasses} data-testid="review-toolbar">
 			{count > 0 && (
 				<span
 					className="inline-flex items-center gap-1 rounded-full bg-neutral-soft px-2 py-0.5 text-[11px] font-medium text-neutral-soft-fg"
@@ -62,6 +82,7 @@ export function ReviewToolbarActions({ projectId, filename }: ReviewToolbarActio
 					<Trash2 className="h-4 w-4" />
 				</button>
 			</Tooltip>
+			<ReviewHelp className="rounded-md p-1 leading-none hover:bg-surface-3" />
 			<ActionReviewDialog
 				open={actionOpen}
 				onOpenChange={setActionOpen}

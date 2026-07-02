@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { DEFAULT_TEAM_ID } from '@hezo/shared';
+import { DEFAULT_TEAM_ID, HQ_PROJECT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
@@ -350,6 +350,26 @@ describe('agents CRUD', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.admin_status).toBe('disabled');
+	});
+
+	it.each([
+		'ceo',
+		'coach',
+	])('refuses to disable the HQ instance %s, even for the admin', async (slug) => {
+		const res = await app.request(`/api/projects/${HQ_PROJECT_SLUG}/agents/${slug}/disable`, {
+			method: 'POST',
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(403);
+		const body = await res.json();
+		expect(body.error.code).toBe('FORBIDDEN');
+
+		// The instance agent stays enabled after the rejected attempt.
+		const listRes = await app.request(`/api/projects/${HQ_PROJECT_SLUG}/agents`, {
+			headers: authHeader(token),
+		});
+		const agent = (await listRes.json()).data.find((a: Record<string, unknown>) => a.slug === slug);
+		expect(agent.admin_status).toBe('enabled');
 	});
 
 	it('returns the org chart with the CEO at the root and the Captain nested under it', async () => {

@@ -1010,6 +1010,23 @@ agentsRoutes.post('/projects/:projectId/agents/:agentId/disable', async (c) => {
 	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
+	// The HQ instance singletons (CEO/Coach) run all cross-project coordination and
+	// review, so the instance can't function without them — they must never be
+	// disabled, even by the admin from the web UI. The MCP `set_agent_status` tool
+	// already blocks agents from disabling them; this closes the admin/REST path too.
+	const meta = await db.query<{ slug: string }>('SELECT slug FROM member_agents WHERE id = $1', [
+		agentId,
+	]);
+	const slug = meta.rows[0]?.slug;
+	if (slug && (INSTANCE_AGENT_SLUGS as readonly string[]).includes(slug)) {
+		return err(
+			c,
+			'FORBIDDEN',
+			`The ${slug} role is essential to the instance and cannot be disabled`,
+			403,
+		);
+	}
+
 	const actor = await resolveActor(db, c.get('auth'), teamId);
 	const result = await setAgentAdminStatus(
 		{ db, wsManager: c.get('wsManager'), events: c.get('events') },
