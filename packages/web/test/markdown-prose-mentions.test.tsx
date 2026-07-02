@@ -52,6 +52,42 @@ test('a bare doc-style reference resolving to a skill renders a KB-doc link to t
 	expect(link.textContent).toContain('runbook.md');
 });
 
+test('a project-doc reference ending a sentence (trailing period) still renders a doc link', async () => {
+	// Regression: a doc filename immediately followed by a sentence-ending period
+	// (`Remove architecture-guidelines.md.`) used to fall out of the mention regex
+	// because its trailing boundary rejected any following `.`, leaving the
+	// filename as plain text instead of a clickable doc link.
+	const seeded = { projectSlug: '', taskId: '' };
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Doc Mention Project' });
+			const task = await seedTask(ws, project, { title: 'Doc Mention Task' });
+			const { apiBase } = getTestContext();
+			await apiBase(`/api/projects/${project.slug}/docs/architecture-guidelines.md`, {
+				method: 'PUT',
+				headers: ws.headers,
+				body: JSON.stringify({ content: '# Architecture Guidelines' }),
+			});
+			await seedComment(ws, task, 'Remove architecture-guidelines.md.');
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	// In a comment thread the doc mention opens in the preview panel, so it renders
+	// as a preview button (not an href anchor) — the presence of the mention
+	// element is what proves the filename linkified instead of staying plain text.
+	const link = await findByTestId('doc-mention-link', undefined, { timeout: 20_000 });
+	expect(link.textContent).toContain('architecture-guidelines.md');
+});
+
 test('@admin in a comment renders an inbox mention link scoped to the project', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
 	const { findByTestId, router } = await renderApp({
