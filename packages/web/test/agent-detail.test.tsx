@@ -5,9 +5,9 @@ import { queryClient } from '../src/lib/query-client';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
-test('team org chart renders with status legend', async () => {
+test('team org chart renders the CEO at the head with a status legend', async () => {
 	let teamSlug = '';
-	const { findByText, router } = await renderApp({
+	const { findByText, findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -17,6 +17,11 @@ test('team org chart renders with status legend', async () => {
 	await router.navigate({ to: '/projects/$projectId/agents', params: { projectId: teamSlug } });
 	await findByText('You (Admin)', undefined, { timeout: 15_000 });
 	await findByText('Active', undefined, { timeout: 15_000 });
+	// The instance CEO heads the chart (the Captain reports to it) even though it
+	// lives in HQ. Scope to the chart itself — the CEO also shows in the global-
+	// agents rail.
+	const chart = await findByTestId('team-org-chart');
+	await within(chart).findByText('CEO', undefined, { timeout: 15_000 });
 });
 
 test('agent detail page defaults to Executions tab and exposes Settings tab', async () => {
