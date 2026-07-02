@@ -27,6 +27,18 @@ const DOC_CONTENT = [
 	'Beta paragraph repeats token foo bar foo here.',
 ].join('\n');
 
+// A doc whose reviewable content is a GFM table — the structural case where the
+// hast text stream (with "\n" nodes between rows/cells) diverges from the DOM
+// text stream a selection walks, unless the highlight plugin skips them.
+const TABLE_DOC_CONTENT = [
+	'# Security Rules',
+	'',
+	'| Rule | Scope |',
+	'| --- | --- |',
+	'| Never use raw HTML | All components |',
+	'| Export is static | utils/export.ts |',
+].join('\n');
+
 interface Setup {
 	ws: SeededWorkspace;
 	project: SeededProject;
@@ -34,16 +46,19 @@ interface Setup {
 }
 
 async function setupDocumentsPage(opts?: {
+	content?: string;
+	ready?: string;
 	comments?: Array<{ quote: string; occurrence?: number; comment: string }>;
 }) {
 	let setup!: Setup;
+	const content = opts?.content ?? DOC_CONTENT;
 	const utils = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: uniqueName('Review Project') });
 			const filename = `spec-${Math.random().toString(36).slice(2, 8)}.md`;
-			await seedDocument(ws, project, { filename, content: DOC_CONTENT });
+			await seedDocument(ws, project, { filename, content });
 			for (const c of opts?.comments ?? []) {
 				await seedReviewComment(ws, project, filename, c);
 			}
@@ -55,7 +70,9 @@ async function setupDocumentsPage(opts?: {
 		params: { projectId: setup.project.slug },
 		search: { file: setup.filename },
 	});
-	await utils.findByText('Alpha paragraph with target text inside.', { exact: false });
+	await utils.findByText(opts?.ready ?? 'Alpha paragraph with target text inside.', {
+		exact: false,
+	});
 	return { ...utils, ...setup };
 }
 
@@ -294,6 +311,57 @@ test('selecting text raises the comment pill and saving creates an anchored comm
 	await waitFor(() => {
 		const mark = container.querySelector('mark[data-review-id]');
 		expect(mark?.textContent).toBe('target text');
+	});
+});
+
+test('selecting across table cells anchors a comment that renders as a highlight', async () => {
+	// Regression: a review comment left on a markdown table showed neither the
+	// highlight nor the margin icon. The browser drops the whitespace-only "\n"
+	// nodes between a table's rows/cells, so a cross-cell selection captured
+	// "RuleScope" while the highlight plugin saw "Rule\nScope" and never matched.
+	const { container, findByTestId, user } = await setupDocumentsPage({
+		content: TABLE_DOC_CONTENT,
+		ready: 'Never use raw HTML',
+	});
+
+	// Select from the start of the "Rule" header cell across into the "Scope" one.
+	const headers = Array.from(container.querySelectorAll('th'));
+	const ruleText = headers.find((th) => th.textContent === 'Rule')?.firstChild as Text;
+	const scopeText = headers.find((th) => th.textContent === 'Scope')?.firstChild as Text;
+	expect(ruleText).toBeTruthy();
+	expect(scopeText).toBeTruthy();
+
+	const range = document.createRange();
+	range.setStart(ruleText, 0);
+	range.setEnd(scopeText, 'Scope'.length);
+	const selection = window.getSelection();
+	selection?.removeAllRanges();
+	selection?.addRange(range);
+	document.dispatchEvent(new Event('selectionchange'));
+
+	const pill = await findByTestId('review-selection-pill');
+	fireEvent.mouseDown(pill);
+
+	await user.type(
+		(await findByTestId('review-editor-textarea')) as HTMLTextAreaElement,
+		'These headers need clarifying',
+	);
+	await user.click(await findByTestId('review-editor-save'));
+
+	// The DOM stream concatenates the two cells with no separator.
+	await waitFor(async () => {
+		const rows = await reviewCommentRows();
+		expect(rows.length).toBe(1);
+		expect(rows[0].quote).toBe('RuleScope');
+		expect(rows[0].occurrence).toBe(0);
+	});
+
+	// The anchor resolves back to a highlight (one mark per spanned cell) AND a
+	// margin icon — the two things the bug suppressed.
+	await waitFor(() => {
+		const marks = Array.from(container.querySelectorAll('mark[data-review-id]'));
+		expect(marks.map((m) => m.textContent)).toEqual(['Rule', 'Scope']);
+		expect(container.querySelectorAll('[data-testid="review-margin-icon"]').length).toBe(1);
 	});
 });
 

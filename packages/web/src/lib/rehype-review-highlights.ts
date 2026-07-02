@@ -13,6 +13,15 @@
  * across rare hast/DOM divergences (e.g. a quote spanning a mention rewritten
  * by remark-mentions) — an unmatched quote simply renders no highlight.
  *
+ * Tables are the one structural exception: `mdast-util-to-hast` interleaves
+ * whitespace-only "\n" text nodes between a table's structural elements
+ * (`table`/`thead`/`tbody`/`tfoot`/`tr`), but the browser (and React) never
+ * render whitespace-only text as a direct child of those elements — the DOM
+ * text walk therefore never sees them. We skip exactly those nodes here so the
+ * hast stream stays byte-identical to the DOM stream; without it, any selection
+ * spanning a cell or row boundary produces a quote the plugin can never match
+ * (e.g. DOM "AB" vs hast "A\nB"), and the comment renders no highlight.
+ *
  * There is no `rehype-raw` in this app: these element nodes are injected into
  * the tree directly, never parsed from HTML strings, so no raw-HTML surface is
  * opened.
@@ -54,10 +63,28 @@ function isText(node: HastChild): node is HastText & HastChild {
 	return node.type === 'text' && typeof (node as HastText).value === 'string';
 }
 
+/**
+ * Table-section elements whose whitespace-only text children the browser drops
+ * (a `<table>` may not hold rendered text between its rows/sections). Cells
+ * (`td`/`th`) and `caption` keep their text, so they are deliberately absent.
+ */
+const TABLE_STRUCTURAL_TAGS = new Set(['table', 'thead', 'tbody', 'tfoot', 'tr', 'colgroup']);
+
+function isDroppedTableWhitespace(parent: HastParent, node: HastText): boolean {
+	return (
+		parent.tagName !== undefined &&
+		TABLE_STRUCTURAL_TAGS.has(parent.tagName) &&
+		node.value.trim() === ''
+	);
+}
+
 function collectTextRefs(parent: HastParent, refs: TextRef[], offset: { value: number }): void {
 	if (!parent.children) return;
 	for (const child of parent.children) {
 		if (isText(child)) {
+			// The DOM never renders this node (see the table note above), so leave it
+			// out of the stream to keep hast and DOM offsets aligned.
+			if (isDroppedTableWhitespace(parent, child)) continue;
 			refs.push({ parent, node: child, start: offset.value });
 			offset.value += child.value.length;
 			continue;
