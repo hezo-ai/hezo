@@ -60,17 +60,15 @@ function TaskDetailPage() {
 	// leave effort unset on submit and let the server resolve the agent default.
 	const [commentEffort, setCommentEffort] = useState<AgentEffort | null>(null);
 	const [replyTarget, setReplyTarget] = useState<Comment | null>(null);
-	// A doc/asset clicked in a comment opens in the right-rail preview panel
-	// (replacing the metadata sidebar until closed).
+	// A doc clicked in a comment opens in the preview panel: an in-grid column at
+	// lg+, and its own full-screen overlay (above the main content and the meta
+	// drawer) below lg. It is independent of the meta side rail.
 	const [preview, setPreview] = useState<PreviewItem | null>(null);
-	// On mobile the right rail is a collapsed-by-default drawer. Opening a preview
-	// (a doc/asset clicked in a comment) must also open the drawer, otherwise the
-	// preview would render off-screen behind the collapsed rail.
+	// The meta side rail is a collapsed-by-default drawer on mobile, toggled by
+	// the chevron. It is independent of the preview panel — opening/closing a
+	// preview must not affect it (otherwise closing a doc reveals the meta panel).
 	const [sidebarOpen, setSidebarOpen] = useState(false);
-	const openPreview = (item: PreviewItem | null) => {
-		setPreview(item);
-		if (item) setSidebarOpen(true);
-	};
+	const openPreview = (item: PreviewItem) => setPreview(item);
 	const commentFormRef = useRef<HTMLFormElement>(null);
 	const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -185,31 +183,32 @@ function TaskDetailPage() {
 						className="lg:hidden fixed inset-0 z-40 bg-[var(--overlay)] cursor-default"
 					/>
 				)}
-				{/* Mobile: a fixed right-side drawer. Desktop: `lg:contents` makes this
-				    wrapper generate no box, so TaskSidebar/PreviewPanel become the direct
-				    grid child again — preserving the in-grid sticky column unchanged. */}
+				{/* Task meta side panel. Mobile: a fixed right-side drawer toggled by the
+				    chevron. Desktop: `lg:contents` makes this wrapper generate no box, so
+				    TaskSidebar becomes the direct grid child (in-grid sticky column). While
+				    a preview is open the sidebar column yields to the preview on desktop
+				    (`lg:hidden`); on mobile the preview is its own overlay above this. */}
 				<div
 					data-testid="task-rail"
 					className={`fixed top-0 right-0 z-40 h-full w-[280px] max-w-[85vw] overflow-y-auto bg-surface p-4 shadow-xl transition-transform duration-200 ${
 						sidebarOpen ? 'translate-x-0' : 'translate-x-full'
-					} lg:contents`}
+					} ${preview ? 'lg:hidden' : 'lg:contents'}`}
 				>
-					{preview ? (
-						<PreviewPanel item={preview} onClose={() => setPreview(null)} />
-					) : (
-						<TaskSidebar
-							task={task}
-							projectId={projectId}
-							agents={agents}
-							lock={lock}
-							comments={comments}
-							updateTask={updateTask}
-							commentEffort={commentEffort}
-							setCommentEffort={setCommentEffort}
-							scrollToBottom={scrollToBottom}
-						/>
-					)}
+					<TaskSidebar
+						task={task}
+						projectId={projectId}
+						agents={agents}
+						lock={lock}
+						comments={comments}
+						updateTask={updateTask}
+						commentEffort={commentEffort}
+						setCommentEffort={setCommentEffort}
+						scrollToBottom={scrollToBottom}
+					/>
 				</div>
+				{/* Document preview: its own layer. Mobile: a full-screen overlay above
+				    the main content and the meta drawer. Desktop: the in-grid column 2. */}
+				{preview && <PreviewPanel item={preview} onClose={() => setPreview(null)} />}
 			</div>
 
 			{/* Sits above the persistent CEO chat launcher (fixed bottom-right) so

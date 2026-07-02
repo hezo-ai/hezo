@@ -31,7 +31,7 @@ export function PreviewPanel({ item, onClose }: PreviewPanelProps) {
 	return (
 		<aside
 			data-testid="preview-panel"
-			className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-surface lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)]"
+			className="fixed inset-0 z-[60] flex min-h-0 flex-col overflow-hidden bg-surface lg:inset-auto lg:z-auto lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:rounded-lg lg:border lg:border-border"
 		>
 			<div className="flex items-center gap-2 border-b border-border bg-surface-2 px-3 py-2">
 				<span
