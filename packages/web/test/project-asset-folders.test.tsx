@@ -232,10 +232,14 @@ test('the move dialog re-homes an asset into another folder', async () => {
 		return el as HTMLElement;
 	});
 
-	// Pick the existing `homes` folder option and confirm.
-	const option = dialog.querySelector('[data-testid="asset-move-option"][data-folder="homes"]');
-	expect(option).not.toBeNull();
-	await user.click(option as HTMLElement);
+	// Open the folder search dropdown, then pick the existing `homes` folder.
+	await user.click(dialog.querySelector('[data-testid="asset-move-folder-input"]') as HTMLElement);
+	const option = await waitFor(() => {
+		const el = dialog.querySelector('[data-testid="asset-move-option"][data-folder="homes"]');
+		expect(el).not.toBeNull();
+		return el as HTMLElement;
+	});
+	await user.click(option);
 	await user.click(dialog.querySelector('[data-testid="asset-move-confirm"]') as HTMLElement);
 
 	// After the refetch the asset is gone from the root and lives under homes/.
@@ -250,6 +254,78 @@ test('the move dialog re-homes an asset into another folder', async () => {
 	await waitFor(() => {
 		expect(container.querySelector('[data-filename="homes/wanderer.png"]')).not.toBeNull();
 	});
+});
+
+test('the move dialog folder dropdown indents subfolders and filters by search', async () => {
+	let ctx!: { projectSlug: string };
+	const { findByText, findByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Nested' });
+			await seedAsset(ws, project, { filename: 'loose.png' });
+			await seedAsset(ws, project, { filename: 'hero.png', folder: 'launch' });
+			await seedAsset(ws, project, { filename: 'poster.png', folder: 'launch/art' });
+			await seedAsset(ws, project, { filename: 'brief.png', folder: 'reports' });
+			ctx = { projectSlug: project.slug };
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/assets',
+		params: { projectId: ctx.projectSlug },
+	});
+	await findByText('loose.png');
+
+	// Open the move dialog on the loose root asset.
+	await user.click(await findByTestId('asset-move'));
+	const dialog = await waitFor(() => {
+		const el = document.body.querySelector('[data-testid="asset-move-dialog"]');
+		expect(el).not.toBeNull();
+		return el as HTMLElement;
+	});
+
+	// Opening the search dropdown lists the root plus every folder.
+	const input = dialog.querySelector('[data-testid="asset-move-folder-input"]') as HTMLInputElement;
+	await user.click(input);
+	await waitFor(() => {
+		expect(
+			dialog.querySelector('[data-testid="asset-move-option"][data-folder=""]'),
+		).not.toBeNull();
+	});
+	const launch = dialog.querySelector(
+		'[data-testid="asset-move-option"][data-folder="launch"]',
+	) as HTMLElement;
+	const art = dialog.querySelector(
+		'[data-testid="asset-move-option"][data-folder="launch/art"]',
+	) as HTMLElement;
+	expect(launch).not.toBeNull();
+	expect(art).not.toBeNull();
+	expect(
+		dialog.querySelector('[data-testid="asset-move-option"][data-folder="reports"]'),
+	).not.toBeNull();
+
+	// Nesting: top-level folders sit flush (indent 0), the subfolder steps in one
+	// level and shows only its own segment as the label.
+	expect(launch.getAttribute('data-indent')).toBe('0');
+	expect(art.getAttribute('data-indent')).toBe('1');
+	expect(art.textContent).toContain('art');
+
+	// Searching narrows to matches, keeping a matched subfolder's parent for context
+	// and dropping unrelated folders and the root.
+	await user.type(input, 'art');
+	await waitFor(() => {
+		expect(
+			dialog.querySelector('[data-testid="asset-move-option"][data-folder="reports"]'),
+		).toBeNull();
+	});
+	expect(
+		dialog.querySelector('[data-testid="asset-move-option"][data-folder="launch/art"]'),
+	).not.toBeNull();
+	expect(
+		dialog.querySelector('[data-testid="asset-move-option"][data-folder="launch"]'),
+	).not.toBeNull();
+	expect(dialog.querySelector('[data-testid="asset-move-option"][data-folder=""]')).toBeNull();
 });
 
 test('asset cards label with the basename while keeping the full path for tooling', async () => {
