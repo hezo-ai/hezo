@@ -162,6 +162,50 @@ test('a foldered assets/<folder>/<name> reference links; an over-deep path stays
 	expect(anchors.some((a) => a.textContent?.includes('a/b/c/d.png'))).toBe(false);
 });
 
+test('the copy-link button copies the asset reference (assets/<path>) to the clipboard', async () => {
+	let ctx!: { projectSlug: string };
+	const { findByText, findByTestId, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Refs' });
+			await seedAsset(ws, project, { filename: 'hero.png', folder: 'blog/images' });
+			ctx = { projectSlug: project.slug };
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/assets',
+		params: { projectId: ctx.projectSlug },
+		search: { folder: 'blog/images' },
+	});
+	await findByText('hero.png');
+
+	const writes: string[] = [];
+	const originalDesc = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+	Object.defineProperty(navigator, 'clipboard', {
+		configurable: true,
+		value: {
+			writeText: async (t: string) => {
+				writes.push(t);
+			},
+		},
+	});
+	try {
+		const copyBtn = await findByTestId('asset-copy-link');
+		expect(copyBtn.getAttribute('aria-label')).toBe('Copy reference link');
+		await user.click(copyBtn);
+		// The full foldered path is included so the copied string linkifies verbatim
+		// in a comment or doc.
+		expect(writes).toEqual(['assets/blog/images/hero.png']);
+		// The icon swaps to a check — the aria-label flips to "Reference copied".
+		await waitFor(() => expect(copyBtn.getAttribute('aria-label')).toBe('Reference copied'));
+	} finally {
+		if (originalDesc) Object.defineProperty(navigator, 'clipboard', originalDesc);
+		else delete (navigator as { clipboard?: unknown }).clipboard;
+	}
+});
+
 test('uploading a file through the picker adds it to the library', async () => {
 	let ctx!: { projectSlug: string };
 	const { findByText, findByTestId, user, router } = await renderApp({

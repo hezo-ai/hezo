@@ -54,8 +54,10 @@ ongoing context) live in their own store via `write_project_doc` instead.
 
 Anywhere you write text in Hezo — a task, a comment, a document — you can point at an asset
 by writing `assets/<path>` (for example `assets/login-mockup.png`, or
-`assets/launch/images/hero.png` for one inside folders). Opening a link to a foldered asset
-takes you straight to its folder with the file highlighted.
+`assets/launch/images/hero.png` for one inside folders). You don't have to type it out: each
+asset card has a **Copy link** action that copies its exact `assets/<path>` reference to your
+clipboard, ready to paste. Opening a link to a foldered asset takes you straight to its folder
+with the file highlighted.
 
 This is also how the **CEO** hands you files from the chat. When you ask the CEO to whip
 something up — a quick mockup, a diagram, a one-off HTML page — it saves the result to an
