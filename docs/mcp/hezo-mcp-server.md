@@ -109,13 +109,16 @@ For a complete, tool-by-tool description of every parameter and return value, se
 A binary file (an image, a PDF, …) can't ride inside a JSON-RPC tool call. To upload one,
 POST it as `multipart/form-data` to `/mcp/assets` with the same `Authorization: Bearer`
 header and a `file` field — add an optional `project` field when you're acting across
-projects:
+projects, and an optional `folder` field to place the asset inside a library folder (up to
+two levels deep):
 
 ```sh
 curl -X POST http://localhost:3100/mcp/assets \
   -H "Authorization: Bearer hezo_your_api_key" \
-  -F file=@diagram.png
+  -F file=@diagram.png \
+  -F folder=launch/images
 ```
 
 The response returns the stored asset and a signed read URL, and the file then shows up in
-the `list_project_assets` and `read_project_asset` tools.
+the `list_project_assets` and `read_project_asset` tools under its full path
+(`launch/images/diagram.png`).
