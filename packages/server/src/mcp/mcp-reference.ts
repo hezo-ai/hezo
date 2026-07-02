@@ -364,17 +364,34 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	},
 	list_project_assets: {
 		category: 'Project docs & assets',
-		returns: '`{ files: [{ id, filename, content_type, created_at }] }` — the project asset files.',
+		returns:
+			'`{ files: [{ id, filename, content_type, created_at }] }` — the project asset files. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`).',
 	},
 	read_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'For a text asset, `{ filename, content_type, content }`. For a binary asset, `{ filename, content_type, byte_size, binary: true, path }` (a read-only container path). Returns `{ error }` if not found.',
+			'For a text asset, `{ filename, content_type, content }`. For a binary asset, `{ filename, content_type, byte_size, binary: true, path }` (a read-only container path). Returns `{ error }` if not found — match the full path, folder prefix included.',
 	},
 	write_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ written: true, id, reference: "assets/<filename>" }`, or `{ error }` if the type is not text-based (`.html`, `.svg`, `.txt`, `.md`) or exceeds 10 MB. Re-saving the same filename overwrites it.',
+			'`{ written: true, id, reference: "assets/<path>" }`, or `{ error }` if the type is not text-based (`.html`, `.svg`, `.txt`, `.md`, or a script/text format: `.sh`, `.py`, `.js`, `.ts`, `.json`, `.csv`, `.yaml`, `.yml`), the path is invalid (max 2 folder levels), or the content exceeds 10 MB. Re-saving the same path overwrites it; matching is path-exact.',
+	},
+	move_project_asset: {
+		category: 'Project docs & assets',
+		returns:
+			'`{ moved: true, id, from, reference: "assets/<path>", note }`, or `{ error }` when the source is missing, the destination exists (moves never overwrite), the extension changes, or a path is invalid. Metadata-only — the stored bytes do not move. Existing text references to the old path are not rewritten.',
+	},
+	copy_project_asset: {
+		category: 'Project docs & assets',
+		returns:
+			'`{ copied: true, id, reference: "assets/<path>" }` — a new asset with its own id, any type including binary. Returns `{ error }` when the source is missing, the destination exists (copies never overwrite), or a path is invalid.',
+	},
+	request_asset_deletion: {
+		category: 'Project docs & assets',
+		returns:
+			'`{ comment_id, status: "pending", assets, note }`, or `{ ..., reused: true }` when an identical pending request already exists on the task, or `{ error }` when any path is missing or invalid (all-or-nothing). Posts an approval card on the named task and raises the admin inbox.',
+		auth: 'Resolution is admin-only: a human approves or denies the card in the web app; on approval the backend deletes the assets and the requesting agent is woken with the outcome.',
 	},
 
 	// Costs

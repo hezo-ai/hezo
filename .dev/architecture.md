@@ -199,10 +199,24 @@ interrupted run still counts against budgets.
 unique scoping and full revision history in `document_revisions`. `skills` is the
 instance/team reference store (manifest-injected into runs, full-text-searchable) with
 `skill_revisions` history. `assets` + `task_attachments`/`comment_attachments` handle
-uploaded files (bytes on local disk, served over HMAC-signed URLs); agents can also author
-text-based assets directly (`write_project_asset` — HTML, SVG, plain text, and markdown such
-as a blog post), and the web app renders markdown assets with a rich preview plus a
-view-source toggle. `project_icons`
+uploaded files (bytes on local disk keyed by asset UUID, served over HMAC-signed URLs with
+`nosniff` and a basename-only download filename); agents can also author text-based assets
+directly (`write_project_asset` — HTML, SVG, plain text/scripts, and markdown such as a blog
+post; script extensions like `.sh`/`.py`/`.js` store as inert `text/plain`), and the web app
+renders markdown assets with a rich preview plus a view-source toggle. **Folders are implicit
+path prefixes** inside `assets.original_filename` (up to 2 levels, e.g. `launch/hero.png`) —
+no folder table, `UNIQUE(project_id, original_filename)` keys the full path, and blobs never
+move on a rename: `move_project_asset`/`copy_project_asset` (MCP) and
+`PATCH /api/projects/:id/assets/:assetId` (the web Move dialog, human-only) reorganize
+metadata only, erroring on destination collision. **Deletion is admin-gated**: agents call
+`request_asset_deletion`, which posts an `asset_deletion_request` task comment (snapshot of
+asset ids + paths + reason) and fans out `admin_mentions` rows so the inbox badge rises; a
+human resolves it via `POST …/comments/:commentId/resolve-asset-deletion` (agents get 403) —
+approve deletes rows + blobs server-side (re-selecting by id so renames/races are tolerated),
+deny keeps everything; both record `chosen_option`, post a system comment, mark the request's
+mentions read, and wake the requester (`asset_deletion_resolved`). `asset.created`,
+`asset.deletion_requested`, and `asset.deleted` domain events feed the audit log; asset
+row-changes broadcast on the team room so the Assets page live-refreshes. `project_icons`
 (1:1 with `projects`, `ON DELETE CASCADE`) holds an optional per-project icon image —
 unlike assets the **bytes live in the DB** (a `BYTEA` column) in a dedicated table so the
 hot `projects.*` list query never pulls the blob; it is rendered in the project rail and
@@ -1031,7 +1045,8 @@ interface agents drive — tasks, comments, approvals, credentials — and exter
 can drive it too, with an **API key** (minted by an admin, or obtained by
 **self-registration** — pending admin approval, then admin-equivalent across every
 project/team; § 10). It also exposes `POST /mcp/assets` (multipart) for binary uploads,
-since JSON-RPC can't carry a file. **API keys authenticate the MCP surface only**; REST is
+since JSON-RPC can't carry a file — with optional `project` and `folder` fields (the
+latter placing the asset in a library folder, up to 2 levels). **API keys authenticate the MCP surface only**; REST is
 the user-JWT (human/browser) surface. `GET /SKILL.md` serves the
 manifest that teaches an external agent how to use it — including the connect/register
 flow — and `GET /llms.txt` points to it. The matching **human** reference — a full

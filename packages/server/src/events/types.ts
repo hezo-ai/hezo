@@ -64,6 +64,22 @@ export type DomainEvent =
 	  } & Scope &
 			Actor)
 	| ({
+			type: 'asset.deletion_requested';
+			commentId: string;
+			taskId: string;
+			assetIds: string[];
+			filenames: string[];
+	  } & Scope &
+			Actor)
+	| ({
+			type: 'asset.deleted';
+			assetIds: string[];
+			filenames: string[];
+			via: 'admin_delete' | 'deletion_request';
+			taskId?: string | null;
+	  } & Scope &
+			Actor)
+	| ({
 			type: 'document.created' | 'document.updated' | 'document.deleted';
 			documentId: string | null;
 			documentType: string;

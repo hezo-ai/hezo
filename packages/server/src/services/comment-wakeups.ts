@@ -200,7 +200,7 @@ async function fireExplicitReplyWakeup(ctx: ReplyWakeupCtx): Promise<void> {
 	}
 }
 
-interface FireAdminMentionParams {
+export interface FireAdminMentionParams {
 	db: PGlite;
 	teamId: string;
 	taskId: string;
@@ -209,7 +209,13 @@ interface FireAdminMentionParams {
 	wsManager?: WebSocketManager;
 }
 
-async function fireAdminMention(params: FireAdminMentionParams): Promise<void> {
+/**
+ * Fan an actionable comment out to the humans who can act on it: unread
+ * `admin_mentions` rows for the team's admin users ∪ all superusers (deduped),
+ * raising the inbox badge. Exported for flows that must reach an admin without
+ * literal `@admin` text in a comment body (e.g. asset-deletion requests).
+ */
+export async function fireAdminMention(params: FireAdminMentionParams): Promise<void> {
 	const { db, teamId, taskId, commentId, authorUserId, wsManager } = params;
 
 	// Recipients: the team's admin member_users ∪ all superusers. Teams created
