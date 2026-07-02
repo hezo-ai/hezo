@@ -56,7 +56,8 @@ small **anonymous** usage report once a day. It is **on by default** and easy to
 
 **What's sent** — aggregate counts only:
 
-- a random per-install id (a UUID generated on first report; not tied to you, your machine, or your data),
+- a random per-install id (a UUID generated on first report — it lets reports from the same
+  install be counted once across days; it is not derived from you, your machine, or your data),
 - the Hezo version, operating system, and CPU architecture,
 - totals: number of teams, projects, and agents,
 - task counts by status, and how many tasks were completed in the last 24 hours,

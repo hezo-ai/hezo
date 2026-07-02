@@ -29,8 +29,8 @@ Open **Progress** in the project menu (just under **Inbox**). Top to bottom it s
 
 ## Setting a goal
 
-From the **Progress** page choose **Create Goal** (or the **New goal** card shown alongside your
-goals). A goal has:
+From the **Progress** page choose **Create Goal** (or the **+** button in the Goals header). A
+goal has:
 
 - **Goal name** — the objective in a line (e.g. "Reach 100 active customers").
 - **Measurement** — the precise definition of *how you'll know the goal is achieved* (e.g.

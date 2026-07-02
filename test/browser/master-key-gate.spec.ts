@@ -40,6 +40,8 @@ async function startGateServer(opts: { reset: boolean }): Promise<void> {
 			// No boot key — the whole point is exercising the in-browser setup.
 			// (Empty string reads as unset in the CLI's env resolution.)
 			HEZO_MASTER_KEY: '',
+			// Tests never phone home (matches the playwright.config.ts webServer).
+			HEZO_TELEMETRY_ENABLED: '0',
 		},
 		stdio: 'ignore',
 	});
