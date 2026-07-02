@@ -92,7 +92,7 @@ describe('invalidateQueriesForRowChange uses the queryKeys factory', () => {
 		// every project's task list on any one project's change (the cross-project
 		// refetch storm). It must be invalidated with exact:true; the per-project
 		// keys (e.g. tasks(cid)) must stay fuzzy so they still prefix-cover their
-		// own sub-queries (taskComments, progress-summary).
+		// own sub-queries (taskComments, phase-banner).
 		const { client, calls } = recordingClient();
 		invalidateQueriesForRowChange(client, SLUG, 'tasks', {});
 		const indexCall = calls.find(

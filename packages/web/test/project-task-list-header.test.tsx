@@ -11,12 +11,9 @@ import {
 
 // Component tier (happy-dom). ProjectTaskListHeader renders the onboarding phase
 // banner when the project has an OPEN `team-coherence-review` task (the CEO is
-// still onboarding the team). The progress-bar branch is intentionally disabled
-// in the source (SHOW_TASK_PROGRESS_BAR=false) and already covered by
-// task-progress-summary.test.tsx; this file covers the phase-banner path, which
-// those tests don't reach.
+// still onboarding the team). It is the header's only responsibility.
 //
-// The banner is pure content driven by the real /tasks/progress-summary route —
+// The banner is pure content driven by the real /tasks/phase-banner route —
 // no real layout / WebSocket / viewport behaviour — so it stays component-tier.
 
 /** Label a seeded task as an OPEN team-coherence-review so phase_banner fires. */
@@ -77,8 +74,6 @@ test('does NOT render the banner once the coherence-review task is done', async 
 	await waitFor(() => {
 		expect(queryByTestId('project-task-list-phase-banner-onboarding')).toBeNull();
 	});
-	// And the (disabled) progress bar stays hidden too.
-	expect(queryByTestId('task-progress-bar')).toBeNull();
 });
 
 test('does NOT render the banner for a plain project with no coherence-review task', async () => {
