@@ -1,5 +1,4 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { ReviewHelp } from '../../../components/document-review/review-help';
 import { ReviewToolbarActions } from '../../../components/document-review/review-toolbar-actions';
 import { ReviewableDocument } from '../../../components/document-review/reviewable-document';
 import { useProjectDoc } from '../../../hooks/use-project-docs';
@@ -30,9 +29,8 @@ function DocPreviewPage() {
 						{filename}
 					</span>
 					<span className="h-4 w-px shrink-0 bg-border" aria-hidden />
-					<ReviewToolbarActions projectId={projectId} filename={filename} />
+					<ReviewToolbarActions projectId={projectId} filename={filename} variant="inline" />
 				</div>
-				<ReviewHelp />
 			</div>
 			<div className="max-w-3xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
 				<ReviewableDocument

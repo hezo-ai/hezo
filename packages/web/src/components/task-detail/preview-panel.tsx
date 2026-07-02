@@ -1,7 +1,6 @@
 import { ExternalLink, X } from 'lucide-react';
 import { useProjectDoc } from '../../hooks/use-project-docs';
 import { docPreviewPath } from '../../lib/doc-preview';
-import { ReviewHelp } from '../document-review/review-help';
 import { ReviewToolbarActions } from '../document-review/review-toolbar-actions';
 import { ReviewableDocument } from '../document-review/reviewable-document';
 import type { PreviewItem } from './preview-context';
@@ -54,7 +53,6 @@ export function PreviewPanel({ item, onClose }: PreviewPanelProps) {
 					<ExternalLink className="h-3 w-3" />
 				</a>
 				<ReviewToolbarActions projectId={item.projectId} filename={item.filename} />
-				<ReviewHelp />
 				<button
 					type="button"
 					onClick={onClose}
