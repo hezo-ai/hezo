@@ -1,6 +1,6 @@
 {
 	"name": "hezo",
-	"description": "A whole AI workforce. Self-hosted and secure.",
+	"description": "Your own AI workforce. Self-hosted and secure.",
 	"private": true,
 	"license": "MIT",
 	"packageManager": "bun@1.3.9",
