@@ -276,23 +276,31 @@ function ProjectAssetsPage() {
 					<ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
 						{grouped.folders.map((folder) => (
 							<li key={folder.path}>
+								{/* Folder cards mirror the file card's shape (h-28 media region +
+								    p-2 footer) so both read as one grid of equal-sized cards.
+								    Folders keep the grey surface-2 fill; file cards use the
+								    lighter surface so the two are never the same colour. */}
 								<button
 									type="button"
 									data-testid="asset-folder-card"
 									data-folder={folder.path}
 									onClick={() => openFolder(folder.path)}
-									className="flex w-full flex-col items-center justify-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-6 transition-colors hover:border-border-strong hover:bg-surface-3"
+									className="flex w-full flex-col overflow-hidden rounded-md border border-border bg-surface-2 text-left transition-colors hover:border-border-strong hover:bg-surface-3"
 								>
-									<Folder className="h-8 w-8 text-text-3" />
-									<span
-										className="w-full truncate text-center text-[12px] font-medium text-text-1"
-										title={folder.path}
-									>
-										{folder.name}
-									</span>
-									<span className="text-[11px] text-text-3">
-										{folder.count} file{folder.count === 1 ? '' : 's'}
-									</span>
+									<div className="flex h-28 items-center justify-center">
+										<Folder className="h-8 w-8 text-text-3" />
+									</div>
+									<div className="p-2">
+										<div
+											className="truncate text-[12px] font-medium text-text-1"
+											title={folder.path}
+										>
+											{folder.name}
+										</div>
+										<div className="text-[11px] text-text-3">
+											{folder.count} file{folder.count === 1 ? '' : 's'}
+										</div>
+									</div>
 								</button>
 							</li>
 						))}
@@ -702,7 +710,7 @@ function AssetCard({
 			ref={ref}
 			data-testid="asset-card"
 			data-filename={asset.original_filename}
-			className={`flex flex-col overflow-hidden rounded-md border bg-surface-2 ${
+			className={`flex flex-col overflow-hidden rounded-md border bg-surface ${
 				highlighted ? 'border-info' : 'border-border'
 			}`}
 		>
