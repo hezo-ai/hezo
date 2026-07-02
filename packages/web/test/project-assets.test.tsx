@@ -123,6 +123,45 @@ test('an assets/<name> reference in a task comment opens in a new tab, not the p
 	expect(container.querySelector('[data-testid="preview-panel"]')).toBeNull();
 });
 
+test('a foldered assets/<folder>/<name> reference links; an over-deep path stays plain text', async () => {
+	let ctx!: { projectSlug: string; taskId: string };
+	const { findByTestId, findByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Foldered Mentions' });
+			await seedAsset(ws, project, { filename: 'hero.png', folder: 'blog/images' });
+			const task = await seedTask(ws, project, { title: 'Write the post' });
+			await seedComment(
+				ws,
+				task,
+				'Use assets/blog/images/hero.png but never assets/a/b/c/d.png anywhere.',
+			);
+			ctx = { projectSlug: project.slug, taskId: task.id };
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: ctx.projectSlug, taskId: ctx.taskId },
+	});
+
+	// The 2-level path resolves and links to the signed URL.
+	const link = (await findByTestId('asset-mention-link', undefined, {
+		timeout: 15_000,
+	})) as HTMLAnchorElement;
+	expect(link.textContent).toContain('assets/blog/images/hero.png');
+	expect(link.getAttribute('href')).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
+
+	// The 3-level path never parses as an asset reference — plain prose text
+	// (the valid mention contributes its link + external-icon anchors; none of
+	// the anchors carry the over-deep path).
+	const comment = await findByText(/never assets\/a\/b\/c\/d\.png anywhere/);
+	const anchors = Array.from(comment.querySelectorAll('a'));
+	expect(anchors.length).toBeGreaterThan(0);
+	expect(anchors.some((a) => a.textContent?.includes('a/b/c/d.png'))).toBe(false);
+});
+
 test('uploading a file through the picker adds it to the library', async () => {
 	let ctx!: { projectSlug: string };
 	const { findByText, findByTestId, user, router } = await renderApp({

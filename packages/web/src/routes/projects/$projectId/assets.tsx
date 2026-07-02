@@ -1,4 +1,11 @@
-import { isMarkdownAssetMime } from '@hezo/shared';
+import {
+	ASSET_MAX_FOLDER_DEPTH,
+	assetBasename,
+	assetFolder,
+	isMarkdownAssetMime,
+	normalizeAssetFolder,
+} from '@hezo/shared';
+import * as Dialog from '@radix-ui/react-dialog';
 import { createFileRoute } from '@tanstack/react-router';
 import {
 	Code,
@@ -7,26 +14,36 @@ import {
 	File as FileIcon,
 	FileText,
 	FileVideo,
+	Folder,
+	FolderInput,
+	FolderPlus,
 	Image as ImageIcon,
 	Loader2,
 	Trash2,
 	Upload,
+	X,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MarkdownAssetDialog } from '../../../components/markdown-asset-dialog';
+import { Breadcrumb, type BreadcrumbSegment } from '../../../components/ui/breadcrumb';
 import { Button } from '../../../components/ui/button';
 import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
+import { dialogContentClassName, dialogOverlayClassName } from '../../../components/ui/dialog';
 import { EmptyState } from '../../../components/ui/empty-state';
+import { Input } from '../../../components/ui/input';
 import {
 	type ProjectAsset,
 	useDeleteProjectAsset,
+	useMoveProjectAsset,
 	useProjectAssets,
 	useUploadProjectAsset,
 } from '../../../hooks/use-project-assets';
 import type { ApiError } from '../../../lib/api';
+import { allFolders, folderCrumbs, groupAssets } from '../../../lib/asset-folders';
 
 interface AssetsSearch {
 	file?: string;
+	folder?: string;
 }
 
 interface ErrorChip {
@@ -60,17 +77,33 @@ function formatBytes(bytes: number): string {
 
 function ProjectAssetsPage() {
 	const { projectId } = Route.useParams();
-	const { file: focusFile } = Route.useSearch();
+	const { file: focusFile, folder: folderParam } = Route.useSearch();
+	const navigate = Route.useNavigate();
 	const { data: assets, isLoading } = useProjectAssets(projectId);
 	const upload = useUploadProjectAsset(projectId);
 	const del = useDeleteProjectAsset(projectId);
+
+	// An explicit ?folder wins; otherwise a ?file deep-link opens its containing
+	// folder; otherwise the root. Navigation always sets ?folder (and drops
+	// ?file), so breadcrumbs can leave a deep-linked file's folder.
+	const currentFolder = folderParam ?? (focusFile ? assetFolder(focusFile) : '');
+	const folderDepth = currentFolder === '' ? 0 : currentFolder.split('/').length;
+
+	const openFolder = useCallback(
+		(path: string) => {
+			navigate({ search: path ? { folder: path } : {} });
+		},
+		[navigate],
+	);
 
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [isDragActive, setIsDragActive] = useState(false);
 	const dragDepth = useRef(0);
 	const [errors, setErrors] = useState<ErrorChip[]>([]);
 	const [pendingDelete, setPendingDelete] = useState<ProjectAsset | null>(null);
+	const [pendingMove, setPendingMove] = useState<ProjectAsset | null>(null);
 	const [viewMarkdown, setViewMarkdown] = useState<ProjectAsset | null>(null);
+	const [newFolderOpen, setNewFolderOpen] = useState(false);
 
 	const pushError = useCallback((filename: string, message: string) => {
 		const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -81,14 +114,20 @@ function ProjectAssetsPage() {
 	const handleFiles = useCallback(
 		async (files: File[]) => {
 			for (const file of files) {
+				// A directory dragged from the OS arrives as an extensionless "file";
+				// folders can't be uploaded — files land in the folder that's open.
+				if (!file.type && !file.name.includes('.')) {
+					pushError(file.name, 'Folders can’t be uploaded — upload files individually');
+					continue;
+				}
 				try {
-					await upload.mutateAsync(file);
+					await upload.mutateAsync({ file, folder: currentFolder });
 				} catch (e) {
 					pushError(file.name, (e as ApiError)?.message ?? 'Upload failed');
 				}
 			}
 		},
-		[upload, pushError],
+		[upload, pushError, currentFolder],
 	);
 
 	const onDragEnter = useCallback((e: React.DragEvent) => {
@@ -120,6 +159,18 @@ function ProjectAssetsPage() {
 	);
 
 	const deleteCount = pendingDelete?.comment_attachment_count ?? 0;
+	const grouped = groupAssets(assets ?? [], currentFolder);
+	const folderIsEmpty =
+		currentFolder !== '' && grouped.folders.length === 0 && grouped.items.length === 0;
+
+	const crumbs: BreadcrumbSegment[] = [
+		{ key: '', label: 'Assets', onNavigate: () => openFolder('') },
+		...folderCrumbs(currentFolder).map((c) => ({
+			key: c.path,
+			label: c.name,
+			onNavigate: () => openFolder(c.path),
+		})),
+	];
 
 	return (
 		<div>
@@ -127,23 +178,36 @@ function ProjectAssetsPage() {
 				<div className="min-w-0">
 					<h1 className="text-base font-semibold text-text-1">Assets</h1>
 					<p className="text-[13px] text-text-2">
-						Mockups, wireframes, and other uploads. Reference one in a comment or doc as{' '}
-						<code className="text-info-soft-fg">assets/&lt;filename&gt;</code>.
+						Mockups, wireframes, and other uploads, organized in folders. Reference one in a comment
+						or doc as <code className="text-info-soft-fg">assets/&lt;path&gt;</code>.
 					</p>
 				</div>
-				<Button
-					size="sm"
-					onClick={() => inputRef.current?.click()}
-					disabled={upload.isPending}
-					data-testid="asset-upload-button"
-				>
-					{upload.isPending ? (
-						<Loader2 className="w-3.5 h-3.5 animate-spin" />
-					) : (
-						<Upload className="w-3.5 h-3.5" />
+				<div className="flex items-center gap-2">
+					{folderDepth < ASSET_MAX_FOLDER_DEPTH && (
+						<Button
+							size="sm"
+							variant="secondary"
+							onClick={() => setNewFolderOpen(true)}
+							data-testid="asset-new-folder-button"
+						>
+							<FolderPlus className="w-3.5 h-3.5" />
+							New folder
+						</Button>
 					)}
-					Upload
-				</Button>
+					<Button
+						size="sm"
+						onClick={() => inputRef.current?.click()}
+						disabled={upload.isPending}
+						data-testid="asset-upload-button"
+					>
+						{upload.isPending ? (
+							<Loader2 className="w-3.5 h-3.5 animate-spin" />
+						) : (
+							<Upload className="w-3.5 h-3.5" />
+						)}
+						Upload
+					</Button>
+				</div>
 				<input
 					ref={inputRef}
 					type="file"
@@ -157,6 +221,12 @@ function ProjectAssetsPage() {
 					}}
 				/>
 			</div>
+
+			{currentFolder !== '' && (
+				<div className="mb-3">
+					<Breadcrumb segments={crumbs} data-testid="assets-breadcrumb" />
+				</div>
+			)}
 
 			{errors.length > 0 && (
 				<div className="mb-3 flex flex-wrap gap-1.5">
@@ -189,14 +259,43 @@ function ProjectAssetsPage() {
 						title="No assets yet"
 						description="Drag files here or use Upload to add mockups, wireframes, and other files."
 					/>
+				) : folderIsEmpty ? (
+					<EmptyState
+						icon={<Folder className="w-10 h-10" />}
+						title="This folder is empty"
+						description="Drop files here or use Upload — the folder persists once a file lands in it."
+					/>
 				) : (
 					<ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-						{assets.map((asset) => (
+						{grouped.folders.map((folder) => (
+							<li key={folder.path}>
+								<button
+									type="button"
+									data-testid="asset-folder-card"
+									data-folder={folder.path}
+									onClick={() => openFolder(folder.path)}
+									className="flex w-full flex-col items-center justify-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-6 transition-colors hover:border-border-strong hover:bg-surface-3"
+								>
+									<Folder className="h-8 w-8 text-text-3" />
+									<span
+										className="w-full truncate text-center text-[12px] font-medium text-text-1"
+										title={folder.path}
+									>
+										{folder.name}
+									</span>
+									<span className="text-[11px] text-text-3">
+										{folder.count} file{folder.count === 1 ? '' : 's'}
+									</span>
+								</button>
+							</li>
+						))}
+						{grouped.items.map((asset) => (
 							<AssetCard
 								key={asset.id}
 								asset={asset}
 								highlighted={focusFile === asset.original_filename}
 								onDelete={() => setPendingDelete(asset)}
+								onMove={() => setPendingMove(asset)}
 								onView={() => setViewMarkdown(asset)}
 							/>
 						))}
@@ -209,7 +308,9 @@ function ProjectAssetsPage() {
 						data-testid="asset-drop-overlay"
 					>
 						<Upload className="h-5 w-5 text-text-3" />
-						<p className="text-[13px] text-text-3">Drop to upload</p>
+						<p className="text-[13px] text-text-3">
+							Drop to upload{currentFolder ? ` into ${currentFolder}` : ''}
+						</p>
 					</div>
 				)}
 			</div>
@@ -242,6 +343,25 @@ function ProjectAssetsPage() {
 				}}
 			/>
 
+			<NewFolderDialog
+				open={newFolderOpen}
+				onOpenChange={setNewFolderOpen}
+				currentFolder={currentFolder}
+				onCreate={openFolder}
+			/>
+
+			{pendingMove && (
+				<MoveAssetDialog
+					projectId={projectId}
+					asset={pendingMove}
+					assets={assets ?? []}
+					open={pendingMove !== null}
+					onOpenChange={(open) => {
+						if (!open) setPendingMove(null);
+					}}
+				/>
+			)}
+
 			{viewMarkdown && (
 				<MarkdownAssetDialog
 					asset={viewMarkdown}
@@ -256,15 +376,259 @@ function ProjectAssetsPage() {
 	);
 }
 
+/**
+ * "New folder" navigates into a virtual empty folder — implicit path folders
+ * only exist once an asset lands in them, so nothing persists until the first
+ * upload (the empty state says as much).
+ */
+function NewFolderDialog({
+	open,
+	onOpenChange,
+	currentFolder,
+	onCreate,
+}: {
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	currentFolder: string;
+	onCreate: (path: string) => void;
+}) {
+	const [name, setName] = useState('');
+	const [error, setError] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (open) {
+			setName('');
+			setError(null);
+		}
+	}, [open]);
+
+	function submit() {
+		const target = currentFolder ? `${currentFolder}/${name}` : name;
+		const normalized = name.trim() === '' ? null : normalizeAssetFolder(target);
+		if (!normalized) {
+			setError(
+				`Folder names start with a letter or digit and nest at most ${ASSET_MAX_FOLDER_DEPTH} levels deep.`,
+			);
+			return;
+		}
+		onOpenChange(false);
+		onCreate(normalized);
+	}
+
+	return (
+		<Dialog.Root open={open} onOpenChange={onOpenChange}>
+			<Dialog.Portal>
+				<Dialog.Overlay className={dialogOverlayClassName} />
+				<Dialog.Content
+					className={dialogContentClassName.sm}
+					aria-describedby={undefined}
+					data-testid="asset-new-folder-dialog"
+				>
+					<div className="mb-4 flex items-center justify-between">
+						<Dialog.Title className="text-base font-semibold">New folder</Dialog.Title>
+						<Dialog.Close asChild>
+							<button
+								type="button"
+								className="p-2 -m-2 text-text-2 hover:text-text-1"
+								aria-label="Close"
+							>
+								<X className="h-4 w-4" />
+							</button>
+						</Dialog.Close>
+					</div>
+					<form
+						onSubmit={(e) => {
+							e.preventDefault();
+							submit();
+						}}
+					>
+						<Input
+							label={currentFolder ? `Folder name (inside ${currentFolder})` : 'Folder name'}
+							value={name}
+							onChange={(e) => {
+								setName(e.target.value);
+								setError(null);
+							}}
+							placeholder="launch-campaign"
+							data-testid="asset-new-folder-input"
+							// biome-ignore lint/a11y/noAutofocus: single-field dialog
+							autoFocus
+						/>
+						{error && (
+							<p className="mt-1.5 text-[12px] text-danger" data-testid="asset-new-folder-error">
+								{error}
+							</p>
+						)}
+						<p className="mt-2 text-[12px] text-text-3">
+							The folder persists once the first file is uploaded into it.
+						</p>
+						<div className="mt-4 flex justify-end gap-2">
+							<Button
+								type="button"
+								size="sm"
+								variant="secondary"
+								onClick={() => onOpenChange(false)}
+							>
+								Cancel
+							</Button>
+							<Button type="submit" size="sm" data-testid="asset-new-folder-create">
+								Create
+							</Button>
+						</div>
+					</form>
+				</Dialog.Content>
+			</Dialog.Portal>
+		</Dialog.Root>
+	);
+}
+
+/** Admin "Move to folder" — PATCHes the asset's folder; 409 on collision. */
+function MoveAssetDialog({
+	projectId,
+	asset,
+	assets,
+	open,
+	onOpenChange,
+}: {
+	projectId: string;
+	asset: ProjectAsset;
+	assets: ProjectAsset[];
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+}) {
+	const move = useMoveProjectAsset(projectId);
+	const from = assetFolder(asset.original_filename);
+	const [selected, setSelected] = useState(from);
+	const [newName, setNewName] = useState('');
+	const [error, setError] = useState<string | null>(null);
+	const folders = allFolders(assets);
+
+	const options = ['', ...folders];
+	const targetFromNewName = newName.trim() !== '';
+
+	async function submit() {
+		let target = selected;
+		if (targetFromNewName) {
+			const normalized = normalizeAssetFolder(newName);
+			if (normalized === null || normalized === '') {
+				setError(
+					`Folder names start with a letter or digit and nest at most ${ASSET_MAX_FOLDER_DEPTH} levels deep.`,
+				);
+				return;
+			}
+			target = normalized;
+		}
+		try {
+			await move.mutateAsync({ assetId: asset.id, folder: target });
+			onOpenChange(false);
+		} catch (e) {
+			setError((e as ApiError)?.message ?? 'Move failed');
+		}
+	}
+
+	return (
+		<Dialog.Root open={open} onOpenChange={onOpenChange}>
+			<Dialog.Portal>
+				<Dialog.Overlay className={dialogOverlayClassName} />
+				<Dialog.Content
+					className={dialogContentClassName.sm}
+					aria-describedby={undefined}
+					data-testid="asset-move-dialog"
+				>
+					<div className="mb-1 flex items-center justify-between">
+						<Dialog.Title className="text-base font-semibold">Move to folder</Dialog.Title>
+						<Dialog.Close asChild>
+							<button
+								type="button"
+								className="p-2 -m-2 text-text-2 hover:text-text-1"
+								aria-label="Close"
+							>
+								<X className="h-4 w-4" />
+							</button>
+						</Dialog.Close>
+					</div>
+					<p className="mb-3 truncate text-[13px] text-text-2" title={asset.original_filename}>
+						{asset.original_filename}
+					</p>
+					<div className="flex max-h-48 flex-col gap-1 overflow-y-auto">
+						{options.map((path) => {
+							const active = !targetFromNewName && selected === path;
+							return (
+								<button
+									key={path === '' ? '(root)' : path}
+									type="button"
+									aria-pressed={active}
+									data-testid="asset-move-option"
+									data-folder={path}
+									onClick={() => {
+										setSelected(path);
+										setNewName('');
+										setError(null);
+									}}
+									className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-[13px] transition-colors ${
+										active
+											? 'border-accent bg-surface-3 text-text-1'
+											: 'border-border bg-surface-2 text-text-2 hover:text-text-1 hover:bg-surface-3'
+									}`}
+								>
+									<Folder className="h-3.5 w-3.5 shrink-0 text-text-3" />
+									{path === '' ? 'Assets (root)' : path}
+									{path === from && (
+										<span className="ml-auto text-[11px] text-text-3">current</span>
+									)}
+								</button>
+							);
+						})}
+					</div>
+					<div className="mt-3">
+						<Input
+							label="Or a new folder"
+							value={newName}
+							onChange={(e) => {
+								setNewName(e.target.value);
+								setError(null);
+							}}
+							placeholder="archive"
+							data-testid="asset-move-new-folder"
+						/>
+					</div>
+					{error && (
+						<p className="mt-1.5 text-[12px] text-danger" data-testid="asset-move-error">
+							{error}
+						</p>
+					)}
+					<div className="mt-4 flex justify-end gap-2">
+						<Button type="button" size="sm" variant="secondary" onClick={() => onOpenChange(false)}>
+							Cancel
+						</Button>
+						<Button
+							type="button"
+							size="sm"
+							onClick={submit}
+							disabled={move.isPending}
+							data-testid="asset-move-confirm"
+						>
+							{move.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
+							Move
+						</Button>
+					</div>
+				</Dialog.Content>
+			</Dialog.Portal>
+		</Dialog.Root>
+	);
+}
+
 function AssetCard({
 	asset,
 	highlighted,
 	onDelete,
+	onMove,
 	onView,
 }: {
 	asset: ProjectAsset;
 	highlighted: boolean;
 	onDelete: () => void;
+	onMove: () => void;
 	onView: () => void;
 }) {
 	const ref = useRef<HTMLLIElement>(null);
@@ -275,6 +639,7 @@ function AssetCard({
 	const isImage = asset.content_type.startsWith('image/');
 	const isHtml = asset.content_type === 'text/html';
 	const isMarkdown = isMarkdownAssetMime(asset.content_type);
+	const basename = assetBasename(asset.original_filename);
 	const thumbnail = isImage ? (
 		<img src={asset.url} alt={asset.original_filename} className="h-full w-full object-cover" />
 	) : isHtml ? (
@@ -326,7 +691,7 @@ function AssetCard({
 						className="truncate text-[12px] font-medium text-text-1"
 						title={asset.original_filename}
 					>
-						{asset.original_filename}
+						{basename}
 					</div>
 					<div className="text-[11px] text-text-3">{formatBytes(asset.byte_size)}</div>
 				</div>
@@ -341,6 +706,15 @@ function AssetCard({
 					>
 						<ExternalLink className="h-3.5 w-3.5" />
 					</a>
+					<button
+						type="button"
+						className="p-1 text-text-3 hover:text-text-1"
+						onClick={onMove}
+						aria-label="Move to folder"
+						data-testid="asset-move"
+					>
+						<FolderInput className="h-3.5 w-3.5" />
+					</button>
 					<button
 						type="button"
 						className="p-1 text-text-3 hover:text-danger"
@@ -359,6 +733,7 @@ function AssetCard({
 export const Route = createFileRoute('/projects/$projectId/assets')({
 	validateSearch: (search: Record<string, unknown>): AssetsSearch => ({
 		file: typeof search.file === 'string' ? search.file : undefined,
+		folder: typeof search.folder === 'string' ? search.folder : undefined,
 	}),
 	// HQ (the internal coordination project) exposes Assets too: it's where the
 	// CEO saves files it produces for the operator in chat (write_project_asset),

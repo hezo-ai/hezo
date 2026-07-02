@@ -93,6 +93,9 @@ const TABLE_TO_QUERY_KEY: Record<
 				return [];
 		}
 	},
+	// Agent-driven uploads, moves/copies, and approved deletions live-refresh an
+	// open Assets page; broadcasts carry project_id (and team_id).
+	assets: (cid) => [queryKeys.projects.assets(cid)],
 	secrets: (cid) => [queryKeys.projects.secrets(cid)],
 	mcp_connections: (cid, row) => {
 		const keys: QueryKey[] = [queryKeys.projects.mcpConnections(cid)];
