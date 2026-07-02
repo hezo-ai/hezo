@@ -95,6 +95,76 @@ test.describe('Task detail — mobile layout (390px)', () => {
 	});
 });
 
+test.describe('Task detail — document preview panel (mobile, 390px)', () => {
+	// Seed a doc + a comment mentioning it, then assert the preview panel is its
+	// own full-screen overlay layered ABOVE the meta side rail — and that closing
+	// it does NOT reveal the meta sidebar (the drawer stays collapsed).
+	async function createProjectTaskWithDocMention(page: Page, token: string) {
+		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+		const { project, task } = await createProjectAndTask(page, token, 'Mobile Doc Preview');
+
+		const docRes = await page.request.put(`/api/projects/${project.slug}/docs/prd.md`, {
+			headers,
+			data: { content: '# Product Requirements\n\nAn unmistakable document body.' },
+		});
+		if (!docRes.ok()) throw new Error(`seed prd.md failed: ${docRes.status()}`);
+
+		const commentRes = await page.request.post(
+			`/api/projects/${project.slug}/tasks/${task.id}/comments`,
+			{
+				headers,
+				data: { content_type: 'text', content: { text: 'Please review prd.md before we ship.' } },
+			},
+		);
+		if (!commentRes.ok()) throw new Error(`seed comment failed: ${commentRes.status()}`);
+
+		return { project, task };
+	}
+
+	test('doc preview is a full-screen overlay above the sidebar; closing it does not reveal the meta panel', async ({
+		page,
+		freshWorkspace,
+	}) => {
+		const { token } = freshWorkspace;
+		const { project, task } = await createProjectTaskWithDocMention(page, token);
+
+		await page.goto(`/projects/${project.slug}/tasks/${task.identifier.toLowerCase()}`);
+		await waitForPageLoad(page);
+		await expect(page.getByRole('heading', { name: 'Mobile Task' })).toBeVisible({
+			timeout: 20000,
+		});
+
+		// The meta rail starts collapsed off-screen.
+		const rail = page.getByTestId('task-rail');
+		const toggle = page.getByTestId('task-sidebar-toggle');
+		await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+		expect((await rail.boundingBox())?.x ?? 0).toBeGreaterThanOrEqual(360);
+
+		// Open the doc from its mention in the comment.
+		const mention = page.getByTestId('doc-mention-link').first();
+		await expect(mention).toBeVisible({ timeout: 15000 });
+		await mention.click();
+
+		// The preview is its own full-screen overlay covering the viewport, and the
+		// meta sidebar is not shown behind it.
+		const preview = page.getByTestId('preview-panel');
+		await expect(preview).toBeInViewport();
+		const previewBox = await preview.boundingBox();
+		expect(previewBox).not.toBeNull();
+		expect(previewBox!.x).toBeLessThan(8);
+		expect(previewBox!.width).toBeGreaterThan(360);
+		await expect(page.getByTestId('task-sidebar')).not.toBeInViewport();
+
+		// Close the preview — the bug was that this revealed the meta sidebar.
+		await page.getByTestId('preview-close').click();
+		await expect(preview).toHaveCount(0);
+		await expect(page.getByTestId('task-sidebar')).not.toBeInViewport();
+		// The meta drawer is still collapsed off-screen and the toggle untouched.
+		expect((await rail.boundingBox())?.x ?? 0).toBeGreaterThanOrEqual(360);
+		await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+	});
+});
+
 // Render a completed run comment cheaply by mocking the comments + heartbeat-run
 // responses — no real agent runtime needed (cribbed from agent-run-logs.spec.ts).
 async function mockRunComment(page: Page, token: string) {
