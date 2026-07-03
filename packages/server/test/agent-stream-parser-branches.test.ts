@@ -112,13 +112,25 @@ describe('Claude Code — assistant usage edge arms', () => {
 				message: { role: 'assistant', usage: { input_tokens: 999, output_tokens: 999 } },
 			},
 		]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 5, outputTokens: 2, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 5,
+			outputTokens: 2,
+			cacheReadTokens: 0,
+			cacheCreationTokens: 0,
+			costCents: 0,
+		});
 	});
 
 	it('handles assistant usage fields all defaulting to zero', () => {
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
 		feed(parser, [{ type: 'assistant', message: { role: 'assistant', usage: {} } }]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 0, outputTokens: 0, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheCreationTokens: 0,
+			costCents: 0,
+		});
 	});
 
 	it('ignores an assistant event with no message', () => {
@@ -147,7 +159,7 @@ describe('Claude Code — user/result edge arms', () => {
 	it('uses subtype as status on a successful result and defaults duration/turns/cost to zero', () => {
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
 		const out = feed(parser, [{ type: 'result', subtype: 'success', is_error: false, usage: {} }]);
-		expect(out).toBe('[done] success turns=0 duration=0ms tokens=0/0 cost=$0.0000\n');
+		expect(out).toBe('[done] success turns=0 duration=0ms tokens=0/0 cache=0/0 cost=$0.0000\n');
 	});
 
 	it('falls back to status=success when result has neither is_error nor subtype', () => {
@@ -161,7 +173,13 @@ describe('Claude Code — user/result edge arms', () => {
 		const out = feed(parser, [{ type: 'result', is_error: true, result: 'weird custom failure' }]);
 		expect(out).toContain('[done] error turns=0');
 		expect(parser.getTerminalError()).toBe('weird custom failure');
-		expect(parser.getUsage()).toEqual({ inputTokens: 0, outputTokens: 0, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheCreationTokens: 0,
+			costCents: 0,
+		});
 	});
 
 	it('ignores an entirely unknown top-level event type', () => {
@@ -184,7 +202,12 @@ describe('Codex — thread.started + item edge arms', () => {
 		const parser = createAgentStreamParser(AgentRuntime.Codex);
 		const out = feed(parser, [{ type: 'turn.completed' }]);
 		expect(out).toBe('[done] success turns=1 tokens=0/0\n');
-		expect(parser.getUsage()).toEqual({ inputTokens: 0, outputTokens: 0, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			costCents: 0,
+		});
 	});
 
 	it('renders a command with output but no command string (cmd empty arm)', () => {
@@ -318,7 +341,12 @@ describe('Gemini — message/tool/result edge arms', () => {
 		const parser = createAgentStreamParser(AgentRuntime.Gemini);
 		const out = feed(parser, [{ type: 'result' }]);
 		expect(out).toBe('[done] success tokens=0/0\n');
-		expect(parser.getUsage()).toEqual({ inputTokens: 0, outputTokens: 0, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			costCents: 0,
+		});
 	});
 
 	it('drops an error event with no extractable message', () => {
@@ -341,7 +369,12 @@ describe('Gemini — message/tool/result edge arms', () => {
 				},
 			},
 		]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 10, outputTokens: 3, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 10,
+			outputTokens: 3,
+			cacheReadTokens: 0,
+			costCents: 0,
+		});
 	});
 });
 
@@ -426,13 +459,23 @@ describe('generic parser — usage/error/terminal arms', () => {
 	it('prefers the tokens object when usage is absent', () => {
 		const parser = createAgentStreamParser(AgentRuntime.OpenCode, () => 0);
 		feed(parser, [{ type: 'metrics', tokens: { input: 12, output: 4 } }]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 12, outputTokens: 4, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 12,
+			outputTokens: 4,
+			cacheReadTokens: 0,
+			costCents: 0,
+		});
 	});
 
 	it('falls back to the stats object for usage', () => {
 		const parser = createAgentStreamParser(AgentRuntime.OpenCode, () => 0);
 		feed(parser, [{ type: 'metrics', stats: { prompt: 7, candidates: 2 } }]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 7, outputTokens: 2, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 7,
+			outputTokens: 2,
+			cacheReadTokens: 0,
+			costCents: 0,
+		});
 	});
 
 	it('returns null usage when there is no usage object and no cost', () => {
@@ -447,22 +490,14 @@ describe('generic parser — usage/error/terminal arms', () => {
 		expect(parser.getUsage()).toBeNull();
 	});
 
-	it('captures cost from total_cost_usd even with no token object present', () => {
+	it('ignores cost-only events (no tokens → no usage, reported figures are never used)', () => {
 		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
-		feed(parser, [{ type: 'usage', total_cost_usd: 0.5 }]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 0, outputTokens: 0, costCents: 50 });
-	});
-
-	it('reads cost from the cost_usd field', () => {
-		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
-		feed(parser, [{ type: 'usage', cost_usd: 0.1 }]);
-		expect(parser.getUsage()?.costCents).toBe(10);
-	});
-
-	it('reads cost from the bare cost field', () => {
-		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
-		feed(parser, [{ type: 'usage', cost: 0.02 }]);
-		expect(parser.getUsage()?.costCents).toBe(2);
+		feed(parser, [
+			{ type: 'usage', total_cost_usd: 0.5 },
+			{ type: 'usage', cost_usd: 0.1 },
+			{ type: 'usage', cost: 0.02 },
+		]);
+		expect(parser.getUsage()).toBeNull();
 	});
 
 	it('records the model from a model field for later pricing', () => {
@@ -518,7 +553,12 @@ describe('generic parser — usage/error/terminal arms', () => {
 		// type doesn't match GENERIC_TERMINAL_RE → usage captured, no done line emitted.
 		const out = feed(parser, [{ type: 'usage', usage: { input_tokens: 3, output_tokens: 9 } }]);
 		expect(out).toBe('');
-		expect(parser.getUsage()).toEqual({ inputTokens: 3, outputTokens: 9, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 3,
+			outputTokens: 9,
+			cacheReadTokens: 0,
+			costCents: 0,
+		});
 	});
 
 	it('ignores a non-finite number when probing usage fields', () => {
@@ -683,7 +723,13 @@ describe('chat parser — remaining arms', () => {
 	it('Claude chat handles a result with an explicit empty usage object', () => {
 		const parser = createAgentChatParser(AgentRuntime.ClaudeCode);
 		parser.onStdout(line({ type: 'result', usage: {} }));
-		expect(parser.getUsage()).toEqual({ inputTokens: 0, outputTokens: 0, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheCreationTokens: 0,
+			costCents: 0,
+		});
 	});
 
 	it('Codex chat reads an item via the message field when text is absent', () => {
@@ -735,7 +781,12 @@ describe('chat parser — remaining arms', () => {
 			line({ type: 'usage', model: 'k', usage: { input_tokens: 4, output_tokens: 1 } }),
 		);
 		expect(out).toEqual([]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 4, outputTokens: 1, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 4,
+			outputTokens: 1,
+			cacheReadTokens: 0,
+			costCents: 0,
+		});
 	});
 
 	it('generic chat maps a tool event to a tool-activity hint', () => {

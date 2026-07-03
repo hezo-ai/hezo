@@ -184,15 +184,27 @@ per-task session state for compaction across heartbeats. `ceo_sessions` /
 chat-enabled agent's automatically-maintained long-term memory (§ 4).
 
 **Costs & budgets.** `cost_entries` is the immutable per-run spend ledger, attributed to
-the AI provider config that produced it — **never** team-scoped. `model_pricing` holds
-per-model token rates (a bundled LiteLLM snapshot refreshed from the public feed, with
-`source='manual'` operator overrides winning). Budgets are **windowed and computed on
-demand**: limits live as `daily_/weekly_/monthly_budget_cents` on `member_agents` and
-`projects` (0 = unlimited; there is **no team budget**), and spend is summed from
-`cost_entries` over rolling UTC windows — no counter, no reset event (§ 5). A run killed
-mid-flight never reaches the run-completion cost record, so `reconcileOnStartup` charges
-its surviving partial `cost_cents` on reboot (shared `recordRunCostAndEnforce`) — an
-interrupted run still counts against budgets.
+the AI provider config that produced it — **never** team-scoped. Every run (and CEO chat
+turn) is priced **from the `model_pricing` table**: the stream parser splits usage into
+four buckets (regular input, cache read, cache creation, output) and multiplies by the
+model's per-token rates; the cache split is persisted on
+`heartbeat_runs.cache_read_tokens`/`cache_creation_tokens` (subsets of the all-buckets
+`input_tokens` aggregate). Runtime-reported dollar figures (e.g. Claude Code's
+`total_cost_usd`) are **ignored** — they are client-side estimates from the CLI's own
+rate card, which for third-party Anthropic-compatible endpoints (DeepSeek/Z.ai/Kimi)
+prices tokens at Anthropic rates, ~an order of magnitude high. `model_pricing` holds
+per-model token rates: a bundled LiteLLM snapshot refreshed from the public
+llm-prices.com + LiteLLM feeds, with hand-verified `CURATED_RATES`
+(`services/pricing/curated-rates.ts`) overriding both feeds wherever listed, and
+`source='manual'` operator overrides winning over everything. The cost probe
+(`bun run cost-probe`) reports reported-vs-table divergence per provider as a
+table-staleness diagnostic. Budgets are **windowed and computed on demand**: limits live
+as `daily_/weekly_/monthly_budget_cents` on `member_agents` and `projects` (0 =
+unlimited; there is **no team budget**), and spend is summed from `cost_entries` over
+rolling UTC windows — no counter, no reset event (§ 5). A run killed mid-flight never
+reaches the run-completion cost record, so `reconcileOnStartup` charges its surviving
+partial `cost_cents` on reboot (shared `recordRunCostAndEnforce`) — an interrupted run
+still counts against budgets.
 
 **Docs, skills, assets.** `documents` is one table backing three Markdown kinds by
 `type` (`project_doc`, `team_preferences`, `agent_system_prompt`), each with partial

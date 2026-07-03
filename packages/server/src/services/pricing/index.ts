@@ -1,3 +1,4 @@
+export { CURATED_RATES } from './curated-rates';
 export {
 	type FetchLike,
 	fetchLiteLlmPricing,

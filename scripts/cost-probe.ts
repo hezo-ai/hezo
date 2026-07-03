@@ -94,8 +94,13 @@ interface ProbeOutcome {
 	exitCode: number;
 	timedOut: boolean;
 	reportedCostUsd: number | null;
+	tableCostUsd: number | null;
+	reportedVsTableRatio: number | null;
+	modelId: string | null;
 	inputTokens: number;
 	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
 	costEvent: Record<string, unknown> | null;
 	lastEvent: Record<string, unknown> | null;
 	stderrTail: string;
@@ -166,8 +171,13 @@ async function probeProvider(docker: DockerClient, provider: AiProvider): Promis
 			exitCode,
 			timedOut,
 			reportedCostUsd: cost.reportedCostUsd,
+			tableCostUsd: cost.tableCostUsd,
+			reportedVsTableRatio: cost.reportedVsTableRatio,
+			modelId: cost.modelId,
 			inputTokens: cost.inputTokens,
 			outputTokens: cost.outputTokens,
+			cacheReadTokens: cost.cacheReadTokens,
+			cacheCreationTokens: cost.cacheCreationTokens,
 			costEvent: cost.costEvent,
 			lastEvent: cost.lastEvent,
 			stderrTail,
@@ -199,7 +209,33 @@ function printOutcome(o: ProbeOutcome): void {
 						? `timed out after ${timeoutMs / 1000}s`
 						: `exit ${o.exitCode}`;
 	console.log(`  verdict: ${VERDICT_LABEL[o.verdict]} — ${detail}`);
-	console.log(`  tokens : in=${o.inputTokens} out=${o.outputTokens}`);
+	console.log(
+		`  tokens : in=${o.inputTokens} out=${o.outputTokens} cache=${o.cacheReadTokens}/${o.cacheCreationTokens}`,
+	);
+	if (o.tableCostUsd !== null) {
+		const ratio =
+			o.reportedVsTableRatio !== null
+				? ` — reported is ${o.reportedVsTableRatio.toFixed(1)}x the table`
+				: '';
+		console.log(
+			`  table  : $${o.tableCostUsd.toFixed(6)} (${o.modelId ?? 'unknown model'})${ratio}`,
+		);
+		if (
+			o.reportedVsTableRatio !== null &&
+			(o.reportedVsTableRatio > 2 || o.reportedVsTableRatio < 0.5)
+		) {
+			console.log(
+				'           ⚠ large divergence: the runtime priced this run with the wrong rate card,',
+			);
+			console.log(
+				'           or the table entry is stale — verify against the provider pricing page.',
+			);
+		}
+	} else if (o.modelId) {
+		console.log(
+			`  table  : no rate for "${o.modelId}" — a real run would record $0 (add a curated/manual rate)`,
+		);
+	}
 	const shown = o.costEvent ?? o.lastEvent;
 	if (shown) {
 		const json = JSON.stringify(shown);
@@ -289,13 +325,18 @@ async function main(): Promise<void> {
 
 	console.log('\n── summary ──');
 	for (const o of outcomes) {
-		console.log(`  ${o.provider.padEnd(11)} ${VERDICT_LABEL[o.verdict]}`);
+		const ratio =
+			o.reportedVsTableRatio !== null
+				? ` (reported ${o.reportedVsTableRatio.toFixed(1)}x table)`
+				: '';
+		console.log(`  ${o.provider.padEnd(11)} ${VERDICT_LABEL[o.verdict]}${ratio}`);
 	}
-	const emitted = outcomes.filter((o) => o.verdict === 'cost-emitted').map((o) => o.provider);
 	console.log(
-		emitted.length > 0
-			? `\nReturn cost in run output: ${emitted.join(', ')} — prefer it over the pricing table.`
-			: '\nNo probed provider returned cost in run output — the pricing table is the source of truth.',
+		'\nRun cost is always recorded from the pricing table; a runtime-reported figure is a\n' +
+			'client-side estimate and is ignored. A reported-vs-table ratio far from 1 usually means\n' +
+			'the runtime priced the run with the wrong rate card (expected for third-party\n' +
+			'Anthropic-compatible endpoints) — but if the runtime was pricing its own provider, check\n' +
+			'the table entry against the official pricing page and add a curated rate if stale.',
 	);
 }
 

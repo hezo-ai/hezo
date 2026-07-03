@@ -1170,10 +1170,11 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'OPENROUTER_API_KEY' },
 	},
 	// Kimi (Moonshot) runs through Claude Code against Moonshot's
-	// Anthropic-compatible endpoint — the same pattern as DeepSeek/Z.ai — so
-	// Claude Code computes `total_cost_usd` for the run. ENABLE_TOOL_SEARCH and
-	// CLAUDE_CODE_AUTO_COMPACT_WINDOW are Moonshot's documented Claude Code
-	// settings (https://platform.kimi.ai/docs/guide/agent-support).
+	// Anthropic-compatible endpoint — the same pattern as DeepSeek/Z.ai. (Claude
+	// Code's self-reported `total_cost_usd` prices such runs with its own
+	// Anthropic rate card and is ignored; costs come from the pricing table.)
+	// ENABLE_TOOL_SEARCH and CLAUDE_CODE_AUTO_COMPACT_WINDOW are Moonshot's
+	// documented Claude Code settings (https://platform.kimi.ai/docs/guide/agent-support).
 	[AiProvider.Kimi]: {
 		runtime: AgentRuntime.ClaudeCode,
 		staticEnv: {

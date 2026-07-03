@@ -221,6 +221,48 @@ describe('cost-probe › extractReportedCost', () => {
 		expect(probeVerdict(r, 0)).toBe('cost-emitted');
 	});
 
+	it('prices the run against the snapshot table and reports the reported-vs-table ratio', () => {
+		// A million cache-miss input tokens on deepseek-v4-pro cost $0.435 at the
+		// curated official rate. Claude Code reporting $4.35 for the same run is a
+		// 10x divergence — the diagnostic the probe exists to surface.
+		const stdout =
+			line({ type: 'system', subtype: 'init', model: 'deepseek-v4-pro[1m]', tools: [] }) +
+			line({
+				type: 'result',
+				subtype: 'success',
+				total_cost_usd: 4.35,
+				usage: { input_tokens: 1_000_000, output_tokens: 0 },
+			});
+		const r = extractReportedCost(AgentRuntime.ClaudeCode, stdout);
+		expect(r.modelId).toBe('deepseek-v4-pro[1m]');
+		expect(r.tableCostUsd).toBeCloseTo(0.44, 2); // cents-rounded $0.435
+		expect(r.reportedVsTableRatio).not.toBeNull();
+		expect(r.reportedVsTableRatio ?? 0).toBeGreaterThan(9);
+		expect(r.reportedVsTableRatio ?? 0).toBeLessThan(11);
+	});
+
+	it('carries the cache buckets and reports null table cost for an unpriced model', () => {
+		const stdout =
+			line({ type: 'system', subtype: 'init', model: 'not-a-real-model-xyz', tools: [] }) +
+			line({
+				type: 'result',
+				subtype: 'success',
+				total_cost_usd: 0.5,
+				usage: {
+					input_tokens: 100,
+					cache_read_input_tokens: 900,
+					cache_creation_input_tokens: 50,
+					output_tokens: 10,
+				},
+			});
+		const r = extractReportedCost(AgentRuntime.ClaudeCode, stdout);
+		expect(r.inputTokens).toBe(1050);
+		expect(r.cacheReadTokens).toBe(900);
+		expect(r.cacheCreationTokens).toBe(50);
+		expect(r.tableCostUsd).toBeNull();
+		expect(r.reportedVsTableRatio).toBeNull();
+	});
+
 	it('reports null cost but real tokens when the runtime emits no cost (Codex)', () => {
 		const stdout =
 			line({ type: 'thread.started', model: 'gpt-4o-mini' }) +

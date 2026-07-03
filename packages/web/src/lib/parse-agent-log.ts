@@ -71,6 +71,9 @@ export interface DoneBlock {
 	durationMs: number | null;
 	inputTokens: number | null;
 	outputTokens: number | null;
+	/** Cache-read / cache-write subsets of the input tokens; null on older logs. */
+	cacheReadTokens: number | null;
+	cacheCreationTokens: number | null;
 	costUsd: number | null;
 }
 
@@ -129,6 +132,7 @@ function parseDone(id: number, text: string): DoneBlock {
 	const turns = /\bturns=(\d+)/.exec(text)?.[1];
 	const duration = /\bduration=(\d+)ms/.exec(text)?.[1];
 	const tokens = /\btokens=(\d+)\/(\d+)/.exec(text);
+	const cache = /\bcache=(\d+)\/(\d+)/.exec(text);
 	const cost = /\bcost=\$([\d.]+)/.exec(text)?.[1];
 	return {
 		type: 'done',
@@ -138,6 +142,8 @@ function parseDone(id: number, text: string): DoneBlock {
 		durationMs: duration ? Number(duration) : null,
 		inputTokens: tokens ? Number(tokens[1]) : null,
 		outputTokens: tokens ? Number(tokens[2]) : null,
+		cacheReadTokens: cache ? Number(cache[1]) : null,
+		cacheCreationTokens: cache ? Number(cache[2]) : null,
 		costUsd: cost ? Number(cost) : null,
 	};
 }

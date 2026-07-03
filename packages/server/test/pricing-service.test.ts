@@ -2,8 +2,10 @@ import type { PGlite } from '@electric-sql/pglite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FetchLike, LlmPricesFeed } from '../src/services/pricing';
 import {
+	CURATED_RATES,
 	countModelPricing,
 	LLM_PRICES_URL,
+	loadSnapshotRates,
 	mergeRates,
 	normalizeModelId,
 	PricingService,
@@ -156,7 +158,8 @@ describe('PricingService', () => {
 				'claude-opus-4-8': { input_cost_per_token: 0.000005, output_cost_per_token: 0.000025 },
 			}),
 		);
-		expect(count).toBe(2);
+		// The two stub models plus the curated built-in rows merged into every refresh.
+		expect(count).toBe(2 + CURATED_RATES.length);
 		// New feed model is now priced: 1M input @ $0.00001 = $10 → 1000c.
 		expect(svc.costCents('new-model-x', { inputTokens: M, outputTokens: 0 })).toBe(1000);
 		// Manual override survives the refresh.
@@ -191,17 +194,17 @@ describe('PricingService', () => {
 					updated_at: 'now',
 					prices: [
 						// New model LiteLLM lacks; quoted per million tokens.
-						{ id: 'deepseek-v4-pro', input: 1.74, output: 3.48, input_cached: 0.145 },
+						{ id: 'newmodel-9', input: 1.74, output: 3.48, input_cached: 0.145 },
 						// Same model as LiteLLM, with a different (winning) input price.
 						{ id: 'claude-x', input: 6, output: 30 },
 					],
 				},
 			),
 		);
-		// DeepSeek V4 Pro comes from llm-prices: 1M input @ $1.74/M → 174c.
-		expect(svc.costCents('deepseek-v4-pro', { inputTokens: M, outputTokens: 0 })).toBe(174);
+		// The new model comes from llm-prices: 1M input @ $1.74/M → 174c.
+		expect(svc.costCents('newmodel-9', { inputTokens: M, outputTokens: 0 })).toBe(174);
 		// The id the CLI actually reports (context-tagged) resolves to the same rate.
-		expect(svc.costCents('deepseek-v4-pro[1m]', { inputTokens: M, outputTokens: 0 })).toBe(174);
+		expect(svc.costCents('newmodel-9[1m]', { inputTokens: M, outputTokens: 0 })).toBe(174);
 		// On the overlap, llm-prices' input price wins: 1M input @ $6/M → 600c.
 		expect(svc.costCents('claude-x', { inputTokens: M, outputTokens: 0 })).toBe(600);
 		// …but cache-creation, absent from llm-prices, is backfilled from LiteLLM:
@@ -209,6 +212,62 @@ describe('PricingService', () => {
 		expect(
 			svc.costCents('claude-x', { inputTokens: 0, cacheCreationTokens: M, outputTokens: 0 }),
 		).toBe(625);
+	});
+
+	it('curated rates override wrong feed values for DeepSeek v4 (regression)', async () => {
+		// Both public feeds mis-list deepseek-v4-pro (llm-prices/LiteLLM carry
+		// $1.74/M input — 4x the official $0.435/M — and a 40x cache-read rate).
+		// The curated built-in rates must win over both feeds on refresh.
+		const svc = new PricingService(db);
+		await svc.init();
+		await svc.refresh(
+			stubFeeds(
+				{
+					'deepseek-v4-pro': {
+						input_cost_per_token: 0.00000174,
+						output_cost_per_token: 0.00000348,
+						cache_read_input_token_cost: 1.45e-7,
+					},
+				},
+				{
+					updated_at: 'now',
+					prices: [{ id: 'deepseek-v4-pro', input: 1.74, output: 3.48, input_cached: 0.145 }],
+				},
+			),
+		);
+		// Official rate: 1M input (cache miss) @ $0.435/M → 43.5 → 44c, not 174c.
+		expect(svc.costCents('deepseek-v4-pro', { inputTokens: M, outputTokens: 0 })).toBe(44);
+		// The context-tagged id the CLI reports resolves to the same curated rate.
+		expect(svc.costCents('deepseek-v4-pro[1m]', { inputTokens: M, outputTokens: 0 })).toBe(44);
+		// Cache reads bill at the official cache-hit price: 1M @ $0.003625/M → 0c
+		// (rounded); 10M reads → $0.03625 → 4c. The wrong feed rate would give 145c.
+		expect(
+			svc.costCents('deepseek-v4-pro', {
+				inputTokens: 0,
+				cacheReadTokens: 10 * M,
+				outputTokens: 0,
+			}),
+		).toBe(4);
+		// A manual operator row still beats the curated rate.
+		await upsertManualRate(db, {
+			model_id: 'deepseek-v4-pro',
+			input_per_token: 0.000001,
+			output_per_token: 0.000001,
+		});
+		await svc.reload();
+		expect(svc.costCents('deepseek-v4-pro', { inputTokens: M, outputTokens: 0 })).toBe(100);
+	});
+});
+
+describe('loadSnapshotRates', () => {
+	it('applies every curated override on top of the bundled snapshot', () => {
+		// The seed path (first boot / offline) must already carry the corrected
+		// rates — a fresh instance never prices DeepSeek/GLM/Kimi runs off the
+		// stale snapshot values (or, for models the snapshot lacks, at $0).
+		const byId = new Map(loadSnapshotRates().map((r) => [r.modelId.toLowerCase(), r]));
+		for (const curated of CURATED_RATES) {
+			expect(byId.get(curated.modelId.toLowerCase())).toEqual(curated);
+		}
 	});
 });
 

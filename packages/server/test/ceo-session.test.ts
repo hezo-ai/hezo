@@ -13,6 +13,7 @@ import { signCeoSessionJwt, verifyToken } from '../src/middleware/auth';
 import { CeoSessionManager } from '../src/services/ceo-session-manager';
 import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import { PricingService, upsertManualRate } from '../src/services/pricing';
 import { getWorkspacePath } from '../src/services/workspace';
 import type { WsSocket } from '../src/services/ws';
 import { WebSocketManager } from '../src/services/ws';
@@ -121,7 +122,11 @@ async function seedProviderAndContainer(ctx: ServerTestContext): Promise<string>
 	return proj.rows[0].id;
 }
 
-function makeManager(ctx: ServerTestContext, docker: ReturnType<typeof createStubDocker>) {
+function makeManager(
+	ctx: ServerTestContext,
+	docker: ReturnType<typeof createStubDocker>,
+	pricing?: PricingService,
+) {
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
@@ -133,6 +138,7 @@ function makeManager(ctx: ServerTestContext, docker: ReturnType<typeof createStu
 		dataDir: ctx.dataDir,
 		wsManager,
 		logs,
+		pricing,
 	});
 	return { manager, wsManager };
 }
@@ -191,6 +197,63 @@ describe('CeoSessionManager', () => {
 		const deltas = captured.events.filter((e) => e.type === 'ceo_message_delta');
 		expect(deltas.some((d) => d.text === 'Hi there')).toBe(true);
 		expect(captured.events.some((e) => e.type === 'ceo_message_complete')).toBe(true);
+
+		await manager.stop();
+	});
+
+	test('prices a chat turn from the table, ignoring the runtime-reported cost', async () => {
+		// Same policy as agent runs: Claude Code's total_cost_usd is a client-side
+		// estimate (wrong rate card for third-party endpoints like DeepSeek), so the
+		// turn's cost comes from the pricing table via the four token buckets.
+		const frames =
+			claudeLine({ type: 'system', subtype: 'init', model: 'deepseek-v4-pro[1m]', tools: [] }) +
+			assistantText('Costed reply') +
+			claudeLine({
+				type: 'result',
+				usage: { input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 9000 },
+				total_cost_usd: 3.5,
+			});
+		const docker = createStubDocker({
+			execCreate: async () => 'exec-1',
+			execStart: async (
+				_execId: string,
+				opts: { onChunk?: (c: ExecLogChunk) => void | Promise<void> },
+			) => {
+				await opts.onChunk?.({ stream: 'stdout', text: frames });
+				return { stdout: '', stderr: '' };
+			},
+		});
+		const pricing = new PricingService(ctx.db);
+		await upsertManualRate(ctx.db, {
+			model_id: 'deepseek-v4-pro',
+			input_per_token: 0.0001,
+			output_per_token: 0.0002,
+			cache_read_per_token: 0.00001,
+		});
+		await pricing.reload();
+		const { manager } = makeManager(ctx, docker, pricing);
+
+		const { assistantMessageId } = await manager.sendTurn({ text: 'How much?' });
+		await poll(async () => {
+			const r = await ctx.db.query<{ status: string }>(
+				'SELECT status FROM ceo_messages WHERE id = $1',
+				[assistantMessageId],
+			);
+			return r.rows[0]?.status === CeoMessageStatus.Complete;
+		});
+
+		const asst = await ctx.db.query<{
+			input_tokens: number;
+			output_tokens: number;
+			cost_cents: number;
+		}>('SELECT input_tokens, output_tokens, cost_cents FROM ceo_messages WHERE id = $1', [
+			assistantMessageId,
+		]);
+		expect(Number(asst.rows[0].input_tokens)).toBe(10000);
+		expect(Number(asst.rows[0].output_tokens)).toBe(500);
+		// 1000*0.0001 + 9000*0.00001 + 500*0.0002 = 0.29 → 29 cents, not the
+		// reported 3.5 USD → 350.
+		expect(asst.rows[0].cost_cents).toBe(29);
 
 		await manager.stop();
 	});

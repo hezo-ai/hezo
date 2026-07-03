@@ -11,12 +11,16 @@ lets you cap spend at both the agent and the project level.
 
 ## Cost tracking
 
-Each agent run records what it cost, based on the tokens it used and the pricing for
-the model it ran on. Costs roll up two ways — **per agent** and **per project** — so
-you can see exactly where spend is going from the budget view.
+Each agent run records what it cost, computed from the tokens it used — including the
+cheaper cached-input tokens, which dominate long agent sessions — multiplied by the
+per-token pricing for the model it ran on. Costs roll up two ways — **per agent** and
+**per project** — so you can see exactly where spend is going from the budget view.
 
-Model pricing is built in and can be adjusted, so your reports reflect the rates you
-actually pay.
+Model pricing is built in (refreshed from public pricing feeds, with hand-verified
+rates for models the feeds get wrong) and can be adjusted with your own overrides from
+the AI providers page, so your reports reflect the rates you actually pay. Recorded
+costs are estimates computed from this pricing table — for authoritative billing,
+check your provider's usage dashboard.
 
 ## Budget windows
 

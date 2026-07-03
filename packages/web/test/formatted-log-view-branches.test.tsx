@@ -160,7 +160,7 @@ test('result block (no matching pending tool): success result renders neutral, e
 });
 
 test('done block: success status renders a green badge with turns/duration/tokens/cost', async () => {
-	const { getByText } = await renderLog({
+	const { getByText, queryByText } = await renderLog({
 		lines: lines('[done] success turns=5 duration=2500ms tokens=1200/3400 cost=$0.1234'),
 	});
 	expect(getByText('success')).toBeTruthy();
@@ -172,6 +172,24 @@ test('done block: success status renders a green badge with turns/duration/token
 	expect(getByText(/3,400 out/)).toBeTruthy();
 	// cost toFixed(2).
 	expect(getByText('$0.12')).toBeTruthy();
+	// No cache= token on the line → no cache span.
+	expect(queryByText(/cached/)).toBeNull();
+});
+
+test('done block: renders the cache split when the line carries cache=read/write', async () => {
+	const { getByText } = await renderLog({
+		lines: lines('[done] success turns=5 tokens=1200/3400 cache=1000/150 cost=$0.1234'),
+	});
+	expect(getByText(/1,000 cached/)).toBeTruthy();
+	expect(getByText(/150 written/)).toBeTruthy();
+});
+
+test('done block: omits the cache-write part when only reads are present', async () => {
+	const { getByText, queryByText } = await renderLog({
+		lines: lines('[done] success tokens=1200/3400 cache=1000/0 cost=$0.1234'),
+	});
+	expect(getByText(/1,000 cached/)).toBeTruthy();
+	expect(queryByText(/written/)).toBeNull();
 });
 
 test('done block: an error status renders the red badge and omits the optional metrics', async () => {

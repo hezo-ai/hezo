@@ -1,4 +1,4 @@
-import { AgentRuntime } from '@hezo/shared';
+import { AgentRuntime, costCentsFromRate } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import {
 	type AgentChatTurnEvent,
@@ -51,9 +51,22 @@ describe('agent-chat-parser — Claude Code', () => {
 		expect(events).toEqual([{ toolActivity: 'tool' }]);
 	});
 
-	it('captures usage from the terminal result, summing cache buckets into input', () => {
-		const parser = createAgentChatParser(AgentRuntime.ClaudeCode);
+	it('captures usage from the terminal result, pricing from the table and ignoring total_cost_usd', () => {
+		const parser = createAgentChatParser(AgentRuntime.ClaudeCode, (model, tokens) =>
+			model === 'claude-x'
+				? costCentsFromRate(
+						{
+							inputPerToken: 0.001,
+							outputPerToken: 0.002,
+							cacheReadPerToken: 0.0001,
+							cacheCreationPerToken: 0.002,
+						},
+						tokens,
+					)
+				: 0,
+		);
 		feed(parser, [
+			{ type: 'system', subtype: 'init', model: 'claude-x', tools: [] },
 			{
 				type: 'result',
 				total_cost_usd: 0.25,
@@ -65,13 +78,27 @@ describe('agent-chat-parser — Claude Code', () => {
 				},
 			},
 		]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 150, outputTokens: 50, costCents: 25 });
+		// 100*0.001 + 30*0.0001 + 20*0.002 + 50*0.002 = 0.243 → 24 cents, not the
+		// reported 25 (the CLI's own figure is a client-side estimate and is ignored).
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 150,
+			outputTokens: 50,
+			cacheReadTokens: 30,
+			cacheCreationTokens: 20,
+			costCents: 24,
+		});
 	});
 
 	it('handles a result event with no usage object (defaults to zero)', () => {
 		const parser = createAgentChatParser(AgentRuntime.ClaudeCode);
 		feed(parser, [{ type: 'result' }]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 0, outputTokens: 0, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheCreationTokens: 0,
+			costCents: 0,
+		});
 	});
 
 	it('reports null usage before any terminal event', () => {
@@ -191,7 +218,12 @@ describe('agent-chat-parser — Gemini', () => {
 				},
 			},
 		]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 1000, outputTokens: 120, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 1000,
+			outputTokens: 120,
+			cacheReadTokens: 0,
+			costCents: 0,
+		});
 	});
 
 	it('drops whitespace-only assistant messages', () => {
@@ -218,7 +250,12 @@ describe('agent-chat-parser — generic (OpenCode)', () => {
 			{ type: 'init', model: 'opencode-model' },
 			{ type: 'result', usage: { input_tokens: 300, output_tokens: 60 } },
 		]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 300, outputTokens: 60, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 300,
+			outputTokens: 60,
+			cacheReadTokens: 0,
+			costCents: 0,
+		});
 	});
 
 	it('drops non-object lines and unrecognized events', () => {

@@ -43,7 +43,7 @@ test('model pricing renders below the AI providers table and creates an override
 	await findByText('deepseek-v4-pro');
 });
 
-test('the Model pricing help dialog explains that reported cost is preferred over the table', async () => {
+test('the Model pricing help dialog explains that costs always come from the table', async () => {
 	const { findByTestId, findByText, queryByText, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 	});
@@ -54,8 +54,9 @@ test('the Model pricing help dialog explains that reported cost is preferred ove
 
 	await user.click(help);
 
-	// The modal states the precedence: runtime-reported cost wins, table is the fallback.
+	// The modal states the policy: every run is priced from this table; the
+	// runtimes' own reported figures are client-side estimates and are ignored.
 	await findByText('How run costs are calculated');
-	await findByText(/Reported by the run/);
-	await findByText(/Computed from this table/);
+	await findByText(/is computed from this table/);
+	await findByText(/ignores reported figures/);
 });

@@ -11,8 +11,11 @@
  * Both normalize to per-token `ParsedRate` rows. `mergeRates` blends them:
  * llm-prices values win where present (the curated/current source), LiteLLM
  * supplies any model llm-prices omits and backfills the cache-creation cost it
- * doesn't carry. The committed snapshot seeds the table offline / on first boot.
+ * doesn't carry. `CURATED_RATES` (hand-verified against official pricing pages)
+ * override both feeds wherever they list a model. The committed snapshot seeds
+ * the table offline / on first boot.
  */
+import { CURATED_RATES } from './curated-rates';
 import snapshot from './litellm-snapshot.json';
 
 /** The community-maintained LiteLLM dataset. Per-token costs. */
@@ -171,7 +174,8 @@ export async function fetchLlmPrices(
 	return parseLlmPrices(data);
 }
 
-/** Rates from the committed snapshot — seeds the table on first boot / offline. */
+/** Rates from the committed snapshot (with curated overrides applied) — seeds
+ * the table on first boot / offline. */
 export function loadSnapshotRates(): ParsedRate[] {
-	return parseLiteLlmPricing(snapshot as Record<string, LiteLlmEntry>);
+	return mergeRates(CURATED_RATES, parseLiteLlmPricing(snapshot as Record<string, LiteLlmEntry>));
 }

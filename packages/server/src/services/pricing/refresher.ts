@@ -5,6 +5,7 @@
  */
 import type { PGlite } from '@electric-sql/pglite';
 import { logger } from '../../logger';
+import { CURATED_RATES } from './curated-rates';
 import {
 	type FetchLike,
 	fetchLiteLlmPricing,
@@ -17,10 +18,11 @@ import { upsertFeedRates } from './repo';
 const log = logger.child('pricing');
 
 /**
- * Fetch both feeds, merge (llm-prices wins, LiteLLM fills gaps + cache-creation),
- * and upsert the combined `source='litellm'` rows. Tolerant of a single feed
- * being unavailable — as long as one returns rows the refresh proceeds; only a
- * total outage throws. Returns the merged row count.
+ * Fetch both feeds, merge (llm-prices wins, LiteLLM fills gaps + cache-creation,
+ * curated hand-verified rates override both), and upsert the combined
+ * `source='litellm'` rows. Tolerant of a single feed being unavailable — as
+ * long as one returns rows the refresh proceeds; only a total outage throws.
+ * Returns the merged row count.
  */
 export async function refreshPricingFromFeed(db: PGlite, fetchImpl?: FetchLike): Promise<number> {
 	const [llmPrices, litellm] = await Promise.allSettled([
@@ -32,7 +34,10 @@ export async function refreshPricingFromFeed(db: PGlite, fetchImpl?: FetchLike):
 			`pricing feeds unavailable: ${(litellm.reason as Error)?.message}; ${(llmPrices.reason as Error)?.message}`,
 		);
 	}
-	const rates = mergeRates(ratesOf(llmPrices, 'llm-prices'), ratesOf(litellm, 'LiteLLM'));
+	const rates = mergeRates(
+		CURATED_RATES,
+		mergeRates(ratesOf(llmPrices, 'llm-prices'), ratesOf(litellm, 'LiteLLM')),
+	);
 	await upsertFeedRates(db, rates);
 	return rates.length;
 }

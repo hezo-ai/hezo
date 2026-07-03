@@ -3,6 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
+import { CURATED_RATES } from '../src/services/pricing';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp } from './helpers/app';
 
@@ -120,7 +121,9 @@ describe('model pricing API', () => {
 				headers: authHeader(token),
 			});
 			expect(res.status).toBe(200);
-			expect((await res.json()).data.refreshed).toBe(2);
+			// The two stub feed models plus the curated built-in overrides that merge
+			// into every refresh.
+			expect((await res.json()).data.refreshed).toBe(2 + CURATED_RATES.length);
 		} finally {
 			globalThis.fetch = original;
 		}

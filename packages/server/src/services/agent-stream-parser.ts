@@ -16,6 +16,15 @@
  * emitted `[done] … tokens=<in>/<out>` line matches the contract the web
  * client parses in `parse-agent-log.ts`, so the log viewer's Done block shows
  * tokens uniformly across runtimes.
+ *
+ * Cost policy: a run's cost is ALWAYS computed from the model pricing table
+ * (the injected `price` fn) using the four token buckets. Runtimes also emit
+ * their own dollar figures (e.g. Claude Code's `total_cost_usd`), but those
+ * are client-side estimates from the CLI's built-in rate card — for
+ * third-party endpoints (DeepSeek/Z.ai/Kimi behind ANTHROPIC_BASE_URL) that
+ * card is the wrong provider's and the number is off by an order of
+ * magnitude. Reported figures are therefore ignored everywhere; the
+ * cost-probe still scans for them purely as a table-accuracy diagnostic.
  */
 import { AgentRuntime, type CostTokens } from '@hezo/shared';
 
@@ -23,6 +32,10 @@ export interface AgentRunUsage {
 	inputTokens: number;
 	outputTokens: number;
 	costCents: number;
+	/** Cache-read subset of `inputTokens`, when the runtime reports the split. */
+	cacheReadTokens?: number;
+	/** Cache-write (creation) subset of `inputTokens`, when reported. */
+	cacheCreationTokens?: number;
 }
 
 /**
@@ -34,48 +47,6 @@ export interface AgentRunUsage {
 export type PriceModelFn = (model: string | undefined, tokens: CostTokens) => number;
 
 const NO_PRICE: PriceModelFn = () => 0;
-
-/**
- * Field names a runtime may use to report a run's already-computed dollar cost
- * on its terminal event. Shared so every runtime parser — and the `cost-probe`
- * diagnostic — look for the same set.
- */
-export const COST_FIELDS = ['total_cost_usd', 'cost_usd', 'cost'] as const;
-
-/**
- * Extract a runtime-reported run cost (USD) from a terminal event, or `null`
- * when the runtime didn't emit one. Probes the event's top level first, then the
- * conventional nested `usage`/`stats`/`tokens` objects. Only positive, finite
- * values count — a `0` means "not reported", not "free".
- */
-export function findReportedCostUsd(raw: unknown): number | null {
-	if (!isRecord(raw)) return null;
-	const top = firstNumber(raw, COST_FIELDS);
-	if (top > 0) return top;
-	for (const key of ['usage', 'stats', 'tokens']) {
-		const nested = raw[key];
-		if (isRecord(nested)) {
-			const n = firstNumber(nested, COST_FIELDS);
-			if (n > 0) return n;
-		}
-	}
-	return null;
-}
-
-/**
- * A run's cost in cents: prefer the runtime's own reported dollar cost when it
- * emitted a positive one (it already reflects the provider's real billing,
- * including any time-of-day/peak rates), otherwise fall back to the pricing
- * table via the runtime-specific `fallback`. Applied uniformly across every
- * runtime parser so an accurate reported number is never discarded.
- */
-export function resolveCostCents(
-	reportedCostUsd: number | null | undefined,
-	fallback: () => number,
-): number {
-	if (reportedCostUsd && reportedCostUsd > 0) return Math.round(reportedCostUsd * 100);
-	return fallback();
-}
 
 export interface AgentStreamParser {
 	onStdout(chunk: string): string;
@@ -261,26 +232,34 @@ function createJsonlEventReader<T>(render: (event: unknown) => T[]): {
 	};
 }
 
-export function createAgentChatParser(runtime: AgentRuntime): AgentChatParser {
+export function createAgentChatParser(
+	runtime: AgentRuntime,
+	price: PriceModelFn = NO_PRICE,
+): AgentChatParser {
 	switch (runtime) {
 		case AgentRuntime.ClaudeCode:
-			return createClaudeChatParser();
+			return createClaudeChatParser(price);
 		case AgentRuntime.Codex:
 			return createCodexChatParser();
 		case AgentRuntime.Gemini:
 			return createGeminiChatParser();
 		case AgentRuntime.OpenCode:
-			return createGenericChatParser();
+			return createGenericChatParser(price);
 		default:
 			return { onStdout: () => [], flush: () => [], getUsage: () => null };
 	}
 }
 
-function createClaudeChatParser(): AgentChatParser {
+function createClaudeChatParser(price: PriceModelFn): AgentChatParser {
 	let usage: AgentRunUsage | null = null;
+	let modelId: string | undefined;
 	const render = (raw: unknown): AgentChatTurnEvent[] => {
 		const event = raw as ClaudeStreamEvent;
 		const out: AgentChatTurnEvent[] = [];
+		if (event.type === 'system' && event.subtype === 'init') {
+			modelId = event.model ?? undefined;
+			return out;
+		}
 		if (event.type === 'assistant' && event.message) {
 			for (const block of normalizeContent(event.message.content)) {
 				if (block.type === 'text') {
@@ -294,13 +273,23 @@ function createClaudeChatParser(): AgentChatParser {
 		}
 		if (event.type === 'result') {
 			const u = event.usage ?? {};
+			const regularInput = u.input_tokens ?? 0;
+			const cacheCreation = u.cache_creation_input_tokens ?? 0;
+			const cacheRead = u.cache_read_input_tokens ?? 0;
+			const output = u.output_tokens ?? 0;
+			// Same policy as the run parser: the CLI's own total_cost_usd is a
+			// client-side estimate, so the turn is priced from the table.
 			usage = {
-				inputTokens:
-					(u.input_tokens ?? 0) +
-					(u.cache_creation_input_tokens ?? 0) +
-					(u.cache_read_input_tokens ?? 0),
-				outputTokens: u.output_tokens ?? 0,
-				costCents: Math.round((event.total_cost_usd ?? 0) * 100),
+				inputTokens: regularInput + cacheCreation + cacheRead,
+				outputTokens: output,
+				cacheReadTokens: cacheRead,
+				cacheCreationTokens: cacheCreation,
+				costCents: price(modelId, {
+					inputTokens: regularInput,
+					cacheCreationTokens: cacheCreation,
+					cacheReadTokens: cacheRead,
+					outputTokens: output,
+				}),
 			};
 		}
 		return out;
@@ -353,8 +342,8 @@ function createGeminiChatParser(): AgentChatParser {
 		}
 		if (type === 'tool_use') return [{ toolActivity: event.name ?? 'tool' }];
 		if (type === 'result') {
-			const { input, output } = sumGeminiTokens(event.stats);
-			usage = { inputTokens: input, outputTokens: output, costCents: 0 };
+			const { input, output, cached } = sumGeminiTokens(event.stats);
+			usage = { inputTokens: input, outputTokens: output, cacheReadTokens: cached, costCents: 0 };
 		}
 		return [];
 	};
@@ -439,6 +428,8 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 				usage = {
 					inputTokens: run.input + run.cacheCreation + run.cacheRead,
 					outputTokens: run.output,
+					cacheReadTokens: run.cacheRead,
+					cacheCreationTokens: run.cacheCreation,
 					costCents: price(modelId, {
 						inputTokens: run.input,
 						cacheCreationTokens: run.cacheCreation,
@@ -478,34 +469,34 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 			const cacheCreation = u.cache_creation_input_tokens ?? 0;
 			const cacheRead = u.cache_read_input_tokens ?? 0;
 			// Displayed aggregate keeps every input token; cost prices the buckets
-			// separately (cache read ~0.1x, cache creation ~1.25x of base input).
+			// separately (cache reads discounted, cache writes at a premium where the
+			// provider charges one).
 			const input = regularInput + cacheCreation + cacheRead;
 			const output = u.output_tokens ?? 0;
-			const costUsd = event.total_cost_usd ?? 0;
-			// Claude Code reports the run's dollar cost on `total_cost_usd` — including
-			// for third-party Anthropic-compatible endpoints like DeepSeek (confirmed via
-			// the cost probe: api.deepseek.com/anthropic returns it). Prefer it (it
-			// reflects the provider's real billing, incl. any peak/off-peak pricing); fall
-			// back to the table only when it's absent/zero (e.g. an interrupted run, or an
-			// endpoint that returns no cost).
-			const costCents = resolveCostCents(event.total_cost_usd, () =>
-				price(modelId, {
-					inputTokens: regularInput,
-					cacheCreationTokens: cacheCreation,
-					cacheReadTokens: cacheRead,
-					outputTokens: output,
-				}),
-			);
-			usage = { inputTokens: input, outputTokens: output, costCents };
+			// Claude Code also emits its own `total_cost_usd`, but that figure is a
+			// client-side estimate from the CLI's built-in (Anthropic) rate card — for
+			// third-party Anthropic-compatible endpoints it prices e.g. DeepSeek tokens
+			// at Sonnet long-context rates, ~18x the provider's real billing. Cost is
+			// therefore always taken from the pricing table.
+			const costCents = price(modelId, {
+				inputTokens: regularInput,
+				cacheCreationTokens: cacheCreation,
+				cacheReadTokens: cacheRead,
+				outputTokens: output,
+			});
+			usage = {
+				inputTokens: input,
+				outputTokens: output,
+				cacheReadTokens: cacheRead,
+				cacheCreationTokens: cacheCreation,
+				costCents,
+			};
 			const duration = event.duration_ms ?? 0;
 			const turns = event.num_turns ?? 0;
 			const status = event.is_error ? 'error' : (event.subtype ?? 'success');
 			if (event.is_error) terminalError = classifyRuntimeError(event.result) ?? terminalError;
-			// Show the runtime's own figure at full precision when it reported one,
-			// else the table-derived cents we actually persisted.
-			const displayUsd = costUsd > 0 ? costUsd : costCents / 100;
 			out.push(
-				`[done] ${status} turns=${turns} duration=${duration}ms tokens=${input}/${output} cost=$${displayUsd.toFixed(4)}`,
+				`[done] ${status} turns=${turns} duration=${duration}ms tokens=${input}/${output} cache=${cacheRead}/${cacheCreation} cost=$${(costCents / 100).toFixed(4)}`,
 			);
 			return out;
 		}
@@ -579,20 +570,19 @@ function createCodexParser(price: PriceModelFn): AgentStreamParser {
 			const output = (u.output_tokens ?? 0) + (u.reasoning_output_tokens ?? 0);
 			// `input_tokens` already includes `cached_input_tokens`; price the cached
 			// portion at the (discounted) cache-read rate, the rest at full input.
-			// Prefer a cost Codex reported itself, if any, over the table estimate.
 			usage = {
 				inputTokens: input,
 				outputTokens: output,
-				costCents: resolveCostCents(findReportedCostUsd(raw), () =>
-					price(modelId, {
-						inputTokens: Math.max(0, input - cached),
-						cacheReadTokens: cached,
-						outputTokens: output,
-					}),
-				),
+				cacheReadTokens: cached,
+				costCents: price(modelId, {
+					inputTokens: Math.max(0, input - cached),
+					cacheReadTokens: cached,
+					outputTokens: output,
+				}),
 			};
 			const status = type === 'turn.failed' ? 'error' : 'success';
-			return [`[done] ${status} turns=${turns} tokens=${input}/${output}`];
+			const cache = cached > 0 ? ` cache=${cached}/0` : '';
+			return [`[done] ${status} turns=${turns} tokens=${input}/${output}${cache}`];
 		}
 
 		if (type === 'item.completed' && event.item) {
@@ -710,14 +700,12 @@ function createGeminiParser(price: PriceModelFn): AgentStreamParser {
 		}
 
 		if (type === 'result') {
-			const { input, output } = sumGeminiTokens(event.stats);
-			// Prefer a cost Gemini reported itself, if any, over the per-model table sum.
-			const costCents = resolveCostCents(findReportedCostUsd(raw), () =>
-				priceGeminiModels(event.stats, price),
-			);
-			usage = { inputTokens: input, outputTokens: output, costCents };
+			const { input, output, cached } = sumGeminiTokens(event.stats);
+			const costCents = priceGeminiModels(event.stats, price);
+			usage = { inputTokens: input, outputTokens: output, cacheReadTokens: cached, costCents };
 			const status = event.error ? 'error' : 'success';
-			return [`[done] ${status} tokens=${input}/${output}`];
+			const cache = cached > 0 ? ` cache=${cached}/0` : '';
+			return [`[done] ${status} tokens=${input}/${output}${cache}`];
 		}
 
 		if (type === 'error') {
@@ -736,16 +724,22 @@ function createGeminiParser(price: PriceModelFn): AgentStreamParser {
  * input (the `cached` count is a subset of it, not additive); billed output is
  * the generated `candidates` plus reasoning `thoughts` tokens.
  */
-function sumGeminiTokens(stats: GeminiStats | undefined): { input: number; output: number } {
+function sumGeminiTokens(stats: GeminiStats | undefined): {
+	input: number;
+	output: number;
+	cached: number;
+} {
 	let input = 0;
 	let output = 0;
+	let cached = 0;
 	for (const model of Object.values(stats?.models ?? {})) {
 		const t = model.tokens;
 		if (!t) continue;
 		input += t.prompt ?? 0;
+		cached += t.cached ?? 0;
 		output += (t.candidates ?? 0) + (t.thoughts ?? 0);
 	}
-	return { input, output };
+	return { input, output, cached };
 }
 
 /**
@@ -847,24 +841,19 @@ function extractGenericUsage(
 	modelId: string | undefined,
 ): AgentRunUsage | null {
 	const u = [event.usage, event.tokens, event.stats].find(isRecord);
-	const reportedCostUsd = findReportedCostUsd(event);
-	if (!u && reportedCostUsd === null) return null;
-	const bag = u ?? {};
-	const input = firstNumber(bag, ['input_tokens', 'prompt_tokens', 'prompt', 'input']);
-	const cached = firstNumber(bag, ['cached_input_tokens', 'cache_read_input_tokens', 'cached']);
+	if (!u) return null;
+	const input = firstNumber(u, ['input_tokens', 'prompt_tokens', 'prompt', 'input']);
+	const cached = firstNumber(u, ['cached_input_tokens', 'cache_read_input_tokens', 'cached']);
 	const output =
-		firstNumber(bag, ['output_tokens', 'completion_tokens', 'candidates', 'output']) +
-		firstNumber(bag, ['reasoning_output_tokens', 'thoughts']);
-	if (input === 0 && output === 0 && reportedCostUsd === null) return null;
-	// Prefer a cost the runtime reported itself over the table estimate.
-	const costCents = resolveCostCents(reportedCostUsd, () =>
-		price(modelId, {
-			inputTokens: Math.max(0, input - cached),
-			cacheReadTokens: cached,
-			outputTokens: output,
-		}),
-	);
-	return { inputTokens: input, outputTokens: output, costCents };
+		firstNumber(u, ['output_tokens', 'completion_tokens', 'candidates', 'output']) +
+		firstNumber(u, ['reasoning_output_tokens', 'thoughts']);
+	if (input === 0 && output === 0) return null;
+	const costCents = price(modelId, {
+		inputTokens: Math.max(0, input - cached),
+		cacheReadTokens: cached,
+		outputTokens: output,
+	});
+	return { inputTokens: input, outputTokens: output, cacheReadTokens: cached, costCents };
 }
 
 const GENERIC_TERMINAL_RE = /complete|finish|result|done|stop|\bend\b/i;
@@ -913,7 +902,7 @@ function createGenericJsonlParser(price: PriceModelFn): AgentStreamParser {
 	return createJsonlParser(renderEvent, () => usage);
 }
 
-function createGenericChatParser(): AgentChatParser {
+function createGenericChatParser(price: PriceModelFn): AgentChatParser {
 	let usage: AgentRunUsage | null = null;
 	let modelId: string | undefined;
 	const render = (raw: unknown): AgentChatTurnEvent[] => {
@@ -922,7 +911,7 @@ function createGenericChatParser(): AgentChatParser {
 		const type = typeof event.type === 'string' ? event.type : '';
 		const model = firstString(event, ['model']);
 		if (model) modelId = model;
-		const captured = extractGenericUsage(event, NO_PRICE, modelId);
+		const captured = extractGenericUsage(event, price, modelId);
 		if (captured) usage = captured;
 		const toolName = extractGenericTool(event, type);
 		if (toolName) return [{ toolActivity: toolName }];

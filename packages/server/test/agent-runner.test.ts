@@ -24,7 +24,12 @@ import {
 } from '../src/services/agent-runner';
 import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
-import { PricingService, upsertManualRate } from '../src/services/pricing';
+import {
+	loadSnapshotRates,
+	PricingService,
+	upsertFeedRates,
+	upsertManualRate,
+} from '../src/services/pricing';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
@@ -1862,8 +1867,8 @@ describe('runAgent', () => {
 				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 			});
 			// Wire a deterministic table path (a manual override, independent of the
-			// bundled snapshot). This run also reports total_cost_usd, which is
-			// preferred over the table — the override is kept to prove precedence.
+			// bundled snapshot). The run also reports total_cost_usd, which must be
+			// ignored — cost is always table-priced.
 			const pricing = new PricingService(db);
 			await upsertManualRate(db, {
 				model_id: 'claude-opus-4-7',
@@ -1902,10 +1907,91 @@ describe('runAgent', () => {
 
 			expect(row.rows[0].input_tokens).toBe(1200);
 			expect(row.rows[0].output_tokens).toBe(350);
-			// total_cost_usd (0.1234) is reported, so it is preferred over the table:
-			// round(0.1234 * 100) = 12 cents. (The table would have computed
-			// 1200*0.0001 + 350*0.0002 = 0.19 → 19c — kept to prove precedence.)
-			expect(row.rows[0].cost_cents).toBe(12);
+			// The reported total_cost_usd (0.1234 → 12c) is ignored; the table prices
+			// the run: 1200*0.0001 + 350*0.0002 = 0.19 → 19 cents.
+			expect(row.rows[0].cost_cents).toBe(19);
+		});
+
+		it('prices a DeepSeek run from the curated table, ignoring the inflated reported cost', async () => {
+			// Regression for the DeepSeek cost over-reporting bug: Claude Code's
+			// total_cost_usd for third-party Anthropic-compatible endpoints is its own
+			// client-side estimate at Anthropic rates (~18x DeepSeek's real billing).
+			// This mirrors the real run that surfaced it — model deepseek-v4-pro[1m],
+			// ~4.05M input tokens dominated by cache reads, reported $3.67 — and
+			// asserts the persisted cost is the curated-table figure instead.
+			const events = [
+				{ type: 'system', subtype: 'init', model: 'deepseek-v4-pro[1m]', tools: [] },
+				{
+					type: 'result',
+					subtype: 'success',
+					duration_ms: 421601,
+					num_turns: 49,
+					is_error: false,
+					total_cost_usd: 3.6748,
+					usage: {
+						input_tokens: 80000,
+						cache_read_input_tokens: 3846220,
+						cache_creation_input_tokens: 120000,
+						output_tokens: 11565,
+					},
+				},
+			];
+			const payload = `${events.map((e) => JSON.stringify(e)).join('\n')}\n`;
+			const docker = createMockDocker({
+				execCreate: async () => 'exec-deepseek-cost',
+				execStart: async (_id: string, opts: any) => {
+					if (opts?.onChunk) await opts.onChunk({ stream: 'stdout', text: payload });
+					return { stdout: payload, stderr: '' };
+				},
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			// Seed the bundled snapshot with the curated DeepSeek overrides — the same
+			// rate set a real instance boots with. (Seeded explicitly because earlier
+			// tests in this file already populated the table, which makes init() skip
+			// its seed-if-empty step.)
+			const pricing = new PricingService(db);
+			await upsertFeedRates(db, loadSnapshotRates());
+			await pricing.reload();
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: '/tmp/test-data',
+				logs: new LogStreamBroker(),
+				pricing,
+			};
+
+			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+			const row = await db.query<{
+				input_tokens: number;
+				output_tokens: number;
+				cache_read_tokens: number;
+				cache_creation_tokens: number;
+				cost_cents: number;
+			}>(
+				`SELECT input_tokens::int AS input_tokens, output_tokens::int AS output_tokens,
+				        cache_read_tokens::int AS cache_read_tokens,
+				        cache_creation_tokens::int AS cache_creation_tokens, cost_cents
+				 FROM heartbeat_runs WHERE id = $1`,
+				[result.heartbeatRunId],
+			);
+			expect(row.rows[0].input_tokens).toBe(4046220);
+			expect(row.rows[0].output_tokens).toBe(11565);
+			expect(row.rows[0].cache_read_tokens).toBe(3846220);
+			expect(row.rows[0].cache_creation_tokens).toBe(120000);
+			// Official DeepSeek rates: 80000*4.35e-7 + 3846220*3.625e-9 + 120000*4.35e-7
+			// + 11565*8.7e-7 ≈ $0.111 → 11 cents — not round(3.6748*100) = 367.
+			expect(row.rows[0].cost_cents).toBe(11);
+
+			// The canonical cost event carries the same table-derived figure.
+			const entry = await db.query<{ amount_cents: number }>(
+				'SELECT amount_cents FROM cost_entries WHERE description = $1',
+				[`Agent run ${result.heartbeatRunId}`],
+			);
+			expect(entry.rows).toHaveLength(1);
+			expect(entry.rows[0].amount_cents).toBe(11);
 		});
 
 		it('falls back to /workspace when no repos are linked', async () => {

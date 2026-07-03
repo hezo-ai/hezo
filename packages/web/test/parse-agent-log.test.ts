@@ -121,6 +121,25 @@ test('parses the done summary', () => {
 		durationMs: 34000,
 		inputTokens: 1000,
 		outputTokens: 2000,
+		// Older logs carry no cache split — the fields stay null.
+		cacheReadTokens: null,
+		cacheCreationTokens: null,
+		costUsd: 0.1234,
+	});
+});
+
+test('parses the cache split from the done summary when present', () => {
+	const blocks = parseAgentLog(
+		makeLines([
+			'[done] success turns=12 duration=34000ms tokens=1000/2000 cache=800/50 cost=$0.1234',
+		]),
+	);
+	expect(blocks[0]).toMatchObject<Partial<DoneBlock>>({
+		type: 'done',
+		inputTokens: 1000,
+		outputTokens: 2000,
+		cacheReadTokens: 800,
+		cacheCreationTokens: 50,
 		costUsd: 0.1234,
 	});
 });

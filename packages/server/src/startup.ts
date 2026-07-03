@@ -294,6 +294,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		connectivityStatus,
 		connectivityProbe,
 		containerLogStreamer,
+		pricing,
 	});
 
 	setStartupPhase('workspace');

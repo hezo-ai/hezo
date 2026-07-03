@@ -186,6 +186,15 @@ function ExecutionDetailPage() {
 										{run.input_tokens.toLocaleString()} in · {run.output_tokens.toLocaleString()}{' '}
 										out tokens
 									</span>
+									{run.cache_read_tokens > 0 && (
+										<span className="text-xs text-text-3 whitespace-nowrap tabular-nums">
+											({run.cache_read_tokens.toLocaleString()} cached
+											{run.cache_creation_tokens > 0
+												? ` · ${run.cache_creation_tokens.toLocaleString()} cache write`
+												: ''}
+											)
+										</span>
+									)}
 									{run.usage_partial && (
 										<Tooltip content="The run was interrupted before it finished, so this usage is a partial snapshot of what it consumed.">
 											<span className="text-[11px] font-medium text-warning whitespace-nowrap">

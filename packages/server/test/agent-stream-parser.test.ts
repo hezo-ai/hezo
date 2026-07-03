@@ -78,7 +78,7 @@ describe('agent-stream-parser', () => {
 		expect(out).toContain('[tool-error] ENOENT: missing file');
 	});
 
-	it('prefers the runtime-reported total_cost_usd over the pricing table', () => {
+	it('ignores the runtime-reported total_cost_usd and prices from the table', () => {
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
 		// The model arrives on the init event; the parser needs it to price the run.
 		parser.onStdout(
@@ -99,24 +99,29 @@ describe('agent-stream-parser', () => {
 			},
 		};
 		const out = parser.onStdout(`${JSON.stringify(event)}\n`);
-		expect(out).toContain('[done] success turns=3 duration=2000ms tokens=150/50 cost=$0.4567');
+		// total_cost_usd (0.4567) is the CLI's client-side estimate and is ignored;
+		// the table prices the buckets: 100*0.001 + 30*0.0001 + 20*0.002 + 50*0.002
+		// = 0.243 → 24 cents.
+		expect(out).toContain(
+			'[done] success turns=3 duration=2000ms tokens=150/50 cache=30/20 cost=$0.2400',
+		);
 
 		const usage = parser.getUsage();
 		expect(usage).not.toBeNull();
 		expect(usage?.inputTokens).toBe(150);
 		expect(usage?.outputTokens).toBe(50);
-		// total_cost_usd (0.4567) is reported, so it wins over the 24c the table would
-		// have computed: round(0.4567 * 100) = 46 cents.
-		expect(usage?.costCents).toBe(46);
+		expect(usage?.cacheReadTokens).toBe(30);
+		expect(usage?.cacheCreationTokens).toBe(20);
+		expect(usage?.costCents).toBe(24);
 	});
 
-	it('falls back to the pricing table when Claude Code reports no total_cost_usd', () => {
+	it('prices from the table when Claude Code reports no total_cost_usd', () => {
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
 		parser.onStdout(
 			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-x', tools: [] })}\n`,
 		);
-		// No total_cost_usd on the terminal event (e.g. an interrupted run) — price from
-		// the table using the token buckets.
+		// No total_cost_usd on the terminal event (e.g. an interrupted run) — same
+		// table pricing as always.
 		const event = {
 			type: 'result',
 			subtype: 'success',
@@ -133,19 +138,19 @@ describe('agent-stream-parser', () => {
 		const out = parser.onStdout(`${JSON.stringify(event)}\n`);
 
 		const usage = parser.getUsage();
-		// Cost computed from the table, pricing the cache buckets separately:
-		//   100*0.001 + 30*0.0001 + 20*0.002 + 50*0.002 = 0.243 → 24 cents.
+		// 100*0.001 + 30*0.0001 + 20*0.002 + 50*0.002 = 0.243 → 24 cents.
 		expect(usage?.costCents).toBe(24);
-		// The [done] line shows the table-derived figure we actually persisted.
-		expect(out).toContain('tokens=150/50 cost=$0.2400');
+		expect(out).toContain('tokens=150/50 cache=30/20 cost=$0.2400');
 	});
 
-	it('uses the DeepSeek-via-Claude-Code total_cost_usd from a real run result event', () => {
-		// Captured from a real `cost-probe --provider deepseek` run: DeepSeek's
-		// Anthropic-compatible endpoint returns total_cost_usd, so the Claude Code
-		// runtime surfaces it and we persist it verbatim. `deepseek-v4-flash` is not in
-		// the pricing table here, so without the reported cost this would price to $0 —
-		// proving the run-output cost is what's used.
+	it('ignores the inflated DeepSeek-via-Claude-Code total_cost_usd from a real run result event', () => {
+		// Regression for the DeepSeek cost over-reporting bug. This result event was
+		// captured from a real `cost-probe --provider deepseek` run: Claude Code
+		// emitted total_cost_usd=0.100855 for a ~20k-token deepseek-v4-flash run —
+		// its own client-side estimate at Anthropic rates, ~35x DeepSeek's real
+		// price (~$0.003). The reported figure must be ignored; with the model
+		// missing from this test's table the run prices to $0, proving no fragment
+		// of the reported cost leaks through.
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
 		parser.onStdout(
 			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'deepseek-v4-flash', tools: [] })}\n`,
@@ -169,9 +174,52 @@ describe('agent-stream-parser', () => {
 		const usage = parser.getUsage();
 		expect(usage?.inputTokens).toBe(20096);
 		expect(usage?.outputTokens).toBe(15);
-		// round(0.100855 * 100) = 10 cents.
-		expect(usage?.costCents).toBe(10);
-		expect(out).toContain('tokens=20096/15 cost=$0.1009');
+		expect(usage?.costCents).toBe(0);
+		expect(out).toContain('tokens=20096/15 cache=0/0 cost=$0.0000');
+	});
+
+	it('prices a DeepSeek run from the table when the model has a rate', () => {
+		// Token shape of the real run that surfaced the bug: a 49-turn engineer run
+		// (~4.05M input, overwhelmingly cache reads) for which Claude Code reported
+		// $3.67 while DeepSeek's official rates price it at ~$0.11. The table figure
+		// must win.
+		const deepseekPrice: PriceModelFn = (model, tokens) =>
+			model === 'deepseek-v4-pro'
+				? costCentsFromRate(
+						{
+							inputPerToken: 4.35e-7,
+							outputPerToken: 8.7e-7,
+							cacheReadPerToken: 3.625e-9,
+							cacheCreationPerToken: 4.35e-7,
+						},
+						tokens,
+					)
+				: 0;
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, deepseekPrice);
+		parser.onStdout(
+			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'deepseek-v4-pro', tools: [] })}\n`,
+		);
+		parser.onStdout(
+			`${JSON.stringify({
+				type: 'result',
+				subtype: 'success',
+				is_error: false,
+				total_cost_usd: 3.6748,
+				usage: {
+					input_tokens: 80000,
+					cache_read_input_tokens: 3846220,
+					cache_creation_input_tokens: 120000,
+					output_tokens: 11565,
+				},
+			})}\n`,
+		);
+		const usage = parser.getUsage();
+		// 80000*4.35e-7 + 3846220*3.625e-9 + 120000*4.35e-7 + 11565*8.7e-7
+		// ≈ $0.111 → 11 cents — not round(3.6748*100) = 367.
+		expect(usage?.costCents).toBe(11);
+		expect(usage?.inputTokens).toBe(4046220);
+		expect(usage?.cacheReadTokens).toBe(3846220);
+		expect(usage?.cacheCreationTokens).toBe(120000);
 	});
 
 	it('accumulates running usage from assistant turns before the terminal result', () => {
@@ -306,7 +354,7 @@ describe('agent-stream-parser', () => {
 			expect(usage?.costCents).toBe(0);
 		});
 
-		it('prefers a runtime-reported cost over the pricing table', () => {
+		it('ignores a runtime-reported cost and prices from the table', () => {
 			const parser = createAgentStreamParser(AgentRuntime.Codex, price);
 			parser.onStdout(`${JSON.stringify({ type: 'thread.started', model: 'codex-x' })}\n`);
 			parser.onStdout(
@@ -316,8 +364,8 @@ describe('agent-stream-parser', () => {
 					usage: { input_tokens: 1000, output_tokens: 100 },
 				})}\n`,
 			);
-			// 0.5 USD reported → 50 cents, regardless of the table.
-			expect(parser.getUsage()?.costCents).toBe(50);
+			// The reported 0.5 USD is ignored; table: 1000*1e-5 + 100*3e-5 = 0.013 → 1 cent.
+			expect(parser.getUsage()?.costCents).toBe(1);
 		});
 
 		it('marks a failed turn as error', () => {
@@ -362,7 +410,12 @@ describe('agent-stream-parser', () => {
 			const half = Math.floor(serialized.length / 2);
 			expect(parser.onStdout(serialized.slice(0, half))).toBe('');
 			parser.onStdout(`${serialized.slice(half)}\n`);
-			expect(parser.getUsage()).toEqual({ inputTokens: 5, outputTokens: 7, costCents: 0 });
+			expect(parser.getUsage()).toEqual({
+				inputTokens: 5,
+				outputTokens: 7,
+				cacheReadTokens: 0,
+				costCents: 0,
+			});
 		});
 
 		it('drops unknown events instead of emitting raw JSON', () => {
@@ -394,7 +447,7 @@ describe('agent-stream-parser', () => {
 			expect(usage?.costCents).toBe(0);
 		});
 
-		it('prefers a runtime-reported cost over the per-model table sum', () => {
+		it('ignores a runtime-reported cost and uses the per-model table sum', () => {
 			const parser = createAgentStreamParser(AgentRuntime.Gemini, price);
 			parser.onStdout(
 				`${JSON.stringify({
@@ -405,8 +458,8 @@ describe('agent-stream-parser', () => {
 					},
 				})}\n`,
 			);
-			// 0.5 USD reported → 50 cents, regardless of the per-model table sum.
-			expect(parser.getUsage()?.costCents).toBe(50);
+			// The reported 0.5 USD is ignored; table: 1e6*1e-5 + 2e5*3e-5 = 16.0 → 1600 cents.
+			expect(parser.getUsage()?.costCents).toBe(1600);
 		});
 
 		it('sums usage across multiple models', () => {
@@ -421,7 +474,12 @@ describe('agent-stream-parser', () => {
 				},
 			};
 			parser.onStdout(`${JSON.stringify(event)}\n`);
-			expect(parser.getUsage()).toEqual({ inputTokens: 1200, outputTokens: 160, costCents: 0 });
+			expect(parser.getUsage()).toEqual({
+				inputTokens: 1200,
+				outputTokens: 160,
+				cacheReadTokens: 0,
+				costCents: 0,
+			});
 		});
 
 		it('renders an assistant message and skips the user echo', () => {
@@ -537,17 +595,19 @@ describe('agent-stream-parser — generic (opencode)', () => {
 		expect(usage?.costCents).toBe(1);
 	});
 
-	it('honors a provider-reported usd cost over computed pricing', () => {
+	it('ignores a provider-reported usd cost in favour of computed pricing', () => {
 		const parser = createAgentStreamParser(AgentRuntime.OpenCode, price);
+		parser.onStdout(`${JSON.stringify({ type: 'init', model: 'gemini-2.5-flash' })}\n`);
 		const out = parser.onStdout(
 			`${JSON.stringify({
 				type: 'turn.completed',
 				total_cost_usd: 0.25,
-				usage: { prompt_tokens: 10, completion_tokens: 5 },
+				usage: { prompt_tokens: 1000, completion_tokens: 200 },
 			})}\n`,
 		);
-		expect(out).toBe('[done] success tokens=10/5\n');
-		expect(parser.getUsage()?.costCents).toBe(25);
+		expect(out).toBe('[done] success tokens=1000/200\n');
+		// The reported 0.25 USD is ignored; table: 1000*5e-6 + 200*1e-5 = 0.007 → 1 cent.
+		expect(parser.getUsage()?.costCents).toBe(1);
 	});
 
 	it('drops unrecognized structured events instead of dumping raw JSON', () => {

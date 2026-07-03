@@ -342,6 +342,14 @@ function DoneView({ block }: { block: DoneBlock }) {
 					{(block.outputTokens ?? 0).toLocaleString()} out
 				</span>
 			)}
+			{block.cacheReadTokens != null && block.cacheReadTokens > 0 && (
+				<span className="text-text-3">
+					{block.cacheReadTokens.toLocaleString()} cached
+					{block.cacheCreationTokens != null && block.cacheCreationTokens > 0
+						? ` / ${block.cacheCreationTokens.toLocaleString()} written`
+						: ''}
+				</span>
+			)}
 			{block.costUsd != null && <span className="text-text-2">${block.costUsd.toFixed(2)}</span>}
 		</div>
 	);

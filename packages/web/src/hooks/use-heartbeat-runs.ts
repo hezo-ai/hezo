@@ -23,6 +23,9 @@ export interface HeartbeatRun {
 	error: string | null;
 	input_tokens: number;
 	output_tokens: number;
+	/** Cache-read / cache-write subsets of input_tokens; 0 when the split wasn't recorded. */
+	cache_read_tokens: number;
+	cache_creation_tokens: number;
 	cost_cents: number | null;
 	/** True when the usage above is a mid-run snapshot (the run was interrupted before it finished). */
 	usage_partial: boolean;

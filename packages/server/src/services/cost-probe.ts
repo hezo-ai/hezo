@@ -1,12 +1,18 @@
 /**
- * Cost-source probe — pure core.
+ * Cost probe — pure core.
  *
- * Answers one empirical question per AI provider: **does a real agent run return
- * a usable dollar cost in its output, or must we compute it from the pricing
- * table?** This matters because providers like DeepSeek run *through* the Claude
- * Code runtime against a third-party Anthropic-compatible endpoint, where the CLI
- * may not be able to price the model — so whether `total_cost_usd` comes back is
- * a fact to measure, not assume.
+ * Run costs are always computed from the model pricing table (see
+ * `agent-stream-parser.ts` — runtime-reported dollar figures are ignored, since
+ * they are client-side estimates from the CLI's own rate card). The probe is the
+ * diagnostic that keeps that policy honest: it drives a real one-shot run per
+ * provider and answers **two** empirical questions — does the runtime emit a
+ * cost field at all, and how does that figure compare to what the pricing table
+ * computes for the same tokens? A large reported-vs-table ratio is expected for
+ * third-party Anthropic-compatible endpoints (Claude Code prices DeepSeek tokens
+ * at Anthropic rates, ~18-35x real billing); a ratio far from 1 for a provider
+ * whose runtime prices its *own* models suggests the table is stale instead.
+ * "The field exists" never means "the value matches billing" — validating
+ * against the provider's billing dashboard remains a manual step.
  *
  * This module holds the pure, Docker-free pieces (so they're unit-testable):
  * assembling the faithful runtime invocation for a provider, and extracting the
@@ -17,7 +23,7 @@
  * (`buildProviderEnv`) and the same CLI-arg assembly from the shared `RUNTIME_*`
  * maps — minus the MCP/effort/egress wiring, none of which affects whether a
  * runtime reports a cost. Keep it in lockstep with those maps as providers are
- * added (see AGENTS.md › Provider cost-source probe).
+ * added (see AGENTS.md › Provider cost probe).
  */
 import {
 	AgentRuntime,
@@ -25,6 +31,8 @@ import {
 	type AiProvider,
 	CLAUDE_CODE_QUIET_ENV,
 	claudeCodeModelArg,
+	costCentsFromRate,
+	type ModelRate,
 	opencodeModelArg,
 	PROVIDER_TO_RUNTIME,
 	RUNTIME_AUTO_APPROVE_ARGS,
@@ -36,7 +44,9 @@ import {
 	RUNTIME_STREAM_ARGS,
 } from '@hezo/shared';
 import { buildProviderEnv } from './agent-runner';
-import { createAgentStreamParser, findReportedCostUsd } from './agent-stream-parser';
+import { createAgentStreamParser } from './agent-stream-parser';
+import { loadSnapshotRates } from './pricing/feed';
+import { normalizeModelId } from './pricing/pricing-service';
 
 /** The env var a probe reads a provider's API key from, e.g. `HEZO_PROBE_KEY_DEEPSEEK`. */
 export function probeKeyEnv(provider: AiProvider): string {
@@ -240,27 +250,105 @@ export function wrapProbeExecCmd(
 	return ['sh', '-c', script, 'sh', ...cmd];
 }
 
+/**
+ * Field names a runtime may use to report a run's already-computed dollar cost
+ * on its terminal event. The run path ignores these figures; the probe scans
+ * for them purely as a diagnostic.
+ */
+export const COST_FIELDS = ['total_cost_usd', 'cost_usd', 'cost'] as const;
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+	return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function firstPositiveNumber(obj: Record<string, unknown>, keys: readonly string[]): number {
+	for (const k of keys) {
+		const v = obj[k];
+		if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
+	}
+	return 0;
+}
+
+/**
+ * Extract a runtime-reported run cost (USD) from a terminal event, or `null`
+ * when the runtime didn't emit one. Probes the event's top level first, then the
+ * conventional nested `usage`/`stats`/`tokens` objects. Only positive, finite
+ * values count — a `0` means "not reported", not "free".
+ */
+export function findReportedCostUsd(raw: unknown): number | null {
+	if (!isRecord(raw)) return null;
+	const top = firstPositiveNumber(raw, COST_FIELDS);
+	if (top > 0) return top;
+	for (const key of ['usage', 'stats', 'tokens']) {
+		const nested = raw[key];
+		if (isRecord(nested)) {
+			const n = firstPositiveNumber(nested, COST_FIELDS);
+			if (n > 0) return n;
+		}
+	}
+	return null;
+}
+
 export interface ProbeCostResult {
 	/**
 	 * The runtime's own reported run cost in USD, scanned from the raw stdout
 	 * independent of any pricing table, or `null` when the run output carried no
-	 * cost field. This is the probe's headline answer.
+	 * cost field. Diagnostic only — the run path never uses this figure.
 	 */
 	reportedCostUsd: number | null;
+	/**
+	 * What the pricing table (bundled snapshot + curated overrides) computes for
+	 * the run's token buckets — the figure a real run would record. `null` when
+	 * the model is unknown or unpriced.
+	 */
+	tableCostUsd: number | null;
+	/** `reportedCostUsd / tableCostUsd` when both are positive; `null` otherwise. */
+	reportedVsTableRatio: number | null;
+	/** The model id scanned from the run's session/init event, if any. */
+	modelId: string | null;
 	inputTokens: number;
 	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
 	/** The parsed event that carried the cost, for display; `null` if none. */
 	costEvent: Record<string, unknown> | null;
 	/** The last parsed JSON event seen, for context when no cost was reported. */
 	lastEvent: Record<string, unknown> | null;
 }
 
+/** Price token buckets against the bundled snapshot + curated rates (no DB). */
+function snapshotTableCostUsd(
+	modelId: string | null,
+	tokens: {
+		inputTokens: number;
+		cacheReadTokens: number;
+		cacheCreationTokens: number;
+		outputTokens: number;
+	},
+): number | null {
+	if (!modelId) return null;
+	const byNorm = new Map<string, ModelRate>();
+	for (const r of loadSnapshotRates()) {
+		byNorm.set(normalizeModelId(r.modelId), {
+			inputPerToken: r.inputPerToken,
+			outputPerToken: r.outputPerToken,
+			cacheReadPerToken: r.cacheReadPerToken,
+			cacheCreationPerToken: r.cacheCreationPerToken,
+		});
+	}
+	const rate = byNorm.get(normalizeModelId(modelId));
+	if (!rate) return null;
+	return costCentsFromRate(rate, tokens) / 100;
+}
+
 /**
- * Extract the runtime-reported cost + token usage from a run's captured stdout.
- * Tokens come from the real `agent-stream-parser` (authoritative per runtime);
- * the reported cost is scanned from the raw JSONL with the same
- * `findReportedCostUsd` the parsers use, so the probe and the run path agree on
- * what counts as "a reported cost".
+ * Extract the runtime-reported cost + token usage from a run's captured stdout,
+ * and price the same tokens against the pricing table for comparison. Tokens
+ * come from the real `agent-stream-parser` (authoritative per runtime); the
+ * reported cost is scanned from the raw JSONL. The ratio between the two is the
+ * probe's headline diagnostic: far from 1 means either the runtime's rate card
+ * is the wrong provider's (expected for third-party endpoints) or the table
+ * entry is stale.
  */
 export function extractReportedCost(runtime: AgentRuntime, stdout: string): ProbeCostResult {
 	const parser = createAgentStreamParser(runtime);
@@ -269,6 +357,7 @@ export function extractReportedCost(runtime: AgentRuntime, stdout: string): Prob
 	const usage = parser.getUsage();
 
 	let reportedCostUsd: number | null = null;
+	let modelId: string | null = null;
 	let costEvent: Record<string, unknown> | null = null;
 	let lastEvent: Record<string, unknown> | null = null;
 	for (const line of stdout.split('\n')) {
@@ -280,8 +369,9 @@ export function extractReportedCost(runtime: AgentRuntime, stdout: string): Prob
 		} catch {
 			continue;
 		}
-		if (event && typeof event === 'object' && !Array.isArray(event)) {
-			lastEvent = event as Record<string, unknown>;
+		if (isRecord(event)) {
+			lastEvent = event;
+			if (typeof event.model === 'string' && event.model.trim()) modelId = event.model;
 		}
 		const cost = findReportedCostUsd(event);
 		if (cost !== null) {
@@ -290,10 +380,32 @@ export function extractReportedCost(runtime: AgentRuntime, stdout: string): Prob
 		}
 	}
 
+	const inputTokens = usage?.inputTokens ?? 0;
+	const outputTokens = usage?.outputTokens ?? 0;
+	const cacheReadTokens = usage?.cacheReadTokens ?? 0;
+	const cacheCreationTokens = usage?.cacheCreationTokens ?? 0;
+	// The parser's inputTokens is the all-buckets aggregate; the table prices the
+	// regular (non-cached) remainder plus each cache bucket at its own rate.
+	const tableCostUsd = snapshotTableCostUsd(modelId, {
+		inputTokens: Math.max(0, inputTokens - cacheReadTokens - cacheCreationTokens),
+		cacheReadTokens,
+		cacheCreationTokens,
+		outputTokens,
+	});
+	const reportedVsTableRatio =
+		reportedCostUsd !== null && tableCostUsd !== null && tableCostUsd > 0
+			? reportedCostUsd / tableCostUsd
+			: null;
+
 	return {
 		reportedCostUsd,
-		inputTokens: usage?.inputTokens ?? 0,
-		outputTokens: usage?.outputTokens ?? 0,
+		tableCostUsd,
+		reportedVsTableRatio,
+		modelId,
+		inputTokens,
+		outputTokens,
+		cacheReadTokens,
+		cacheCreationTokens,
 		costEvent,
 		lastEvent,
 	};
