@@ -303,7 +303,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		returns:
 			'`{ approval_id, status }` — creates a skill-proposal approval that writes the skill when approved.',
 	},
-	semantic_search: {
+	full_text_search: {
 		category: 'Skills & search',
 		returns:
 			'`{ results, count }` — full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, and comments.',

@@ -750,7 +750,7 @@ Propose a new skill for the team's skills database (reusable team know-how: MCP 
 
 **Returns:** `{ approval_id, status }` — creates a skill-proposal approval that writes the skill when approved.
 
-### `semantic_search`
+### `full_text_search`
 
 _Read-only._
 

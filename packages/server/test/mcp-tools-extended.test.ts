@@ -1214,7 +1214,7 @@ describe('MCP project docs & assets', () => {
 	});
 });
 
-describe('MCP skills (propose / list / get / create / semantic_search)', () => {
+describe('MCP skills (propose / list / get / create / full_text_search)', () => {
 	it('propose_skill creates a skill_proposal approval', async () => {
 		const result = (await callToolAs(await captainToken(), 'propose_skill', {
 			project: projectId,
@@ -1261,14 +1261,14 @@ describe('MCP skills (propose / list / get / create / semantic_search)', () => {
 		expect(result.error).toContain('Skill not found');
 	});
 
-	it('semantic_search returns ranked results across team content', async () => {
+	it('full_text_search returns ranked results across team content', async () => {
 		await callTool('create_skill', {
 			project: projectId,
 			name: 'Searchable Skill',
 			slug: 'searchable-skill',
 			content: 'A unique zorptacular keyword for full text search.',
 		});
-		const result = (await callTool('semantic_search', {
+		const result = (await callTool('full_text_search', {
 			project: projectId,
 			query: 'zorptacular',
 		})) as { results: unknown[]; count: number };

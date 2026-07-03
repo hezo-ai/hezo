@@ -801,9 +801,9 @@ describe('register_connector branches', () => {
 	});
 });
 
-describe('semantic_search / get_costs branches', () => {
-	it('semantic_search returns results+count', async () => {
-		const r = (await admin('semantic_search', {
+describe('full_text_search / get_costs branches', () => {
+	it('full_text_search returns results+count', async () => {
+		const r = (await admin('full_text_search', {
 			project: projectSlug,
 			query: 'seed',
 		})) as { results: unknown[]; count: number };
