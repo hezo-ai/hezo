@@ -36,6 +36,23 @@ export function useUpdateCheck() {
 }
 
 /**
+ * Force a fresh GitHub release check now (bypassing the server's 1h cache) — the
+ * same upstream check the daily cron runs. Drives the settings "Check for new
+ * version" button; seeds the `updateCheck` query with the result so the version
+ * display reflects it immediately.
+ */
+export function useCheckForUpdate() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: () => api.post<UpdateInfo>('/api/updates/check'),
+		onSuccess: (data) => {
+			queryClient.setQueryData(queryKeys.updateCheck(), data);
+			queryClient.invalidateQueries({ queryKey: queryKeys.updateStatus() });
+		},
+	});
+}
+
+/**
  * Latest-release info plus the staged-update lifecycle and whether this instance
  * can apply-and-restart. Drives the "Install & restart" affordance.
  */

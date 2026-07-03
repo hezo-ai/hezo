@@ -8,7 +8,11 @@ import {
 import { useMe } from '../hooks/use-me';
 import type { ApiError } from '../lib/api';
 import { Button } from './ui/button';
+import { InfoTooltip } from './ui/info-tooltip';
 import { Input } from './ui/input';
+
+const BASE_URL_BLURB =
+	'Public base URL of this Hezo instance, used to build absolute links to tasks and documents in external channels (e.g. Telegram). Captured automatically the first time the instance is unlocked.';
 
 export function InstanceSettingsSection() {
 	const { data: me } = useMe();
@@ -18,16 +22,18 @@ export function InstanceSettingsSection() {
 		<section>
 			<div className="mb-4">
 				<h2 className="text-base font-medium">General</h2>
-				<p className="text-[13px] text-text-2 mt-1">
-					Public base URL of this Hezo instance, used to build absolute links to tasks and documents
-					in external channels (e.g. Telegram). Captured automatically the first time the instance
-					is unlocked.
-				</p>
 			</div>
 			<div className="border border-border rounded-md p-3 bg-surface">
-				<label className="block text-[13px] font-medium mb-1.5" htmlFor="instance-base-url-input">
-					Base URL
-				</label>
+				<div className="flex items-center gap-1.5 mb-1.5">
+					<label className="block text-[13px] font-medium" htmlFor="instance-base-url-input">
+						Base URL
+					</label>
+					<InfoTooltip
+						label="About the base URL"
+						content={BASE_URL_BLURB}
+						data-testid="instance-base-url-info"
+					/>
+				</div>
 				{settings === undefined ? null : me?.is_superuser ? (
 					<BaseUrlForm settings={settings} />
 				) : (

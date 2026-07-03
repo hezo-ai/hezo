@@ -971,7 +971,11 @@ master key) → run the previous binary.
 version from Conventional Commits and opens a `release/<version>` PR; merging fires
 `release-publish.yml`, which tags, cross-compiles, and publishes a GitHub Release (assets
 `hezo-{os}-{arch}[.exe]` + `SHA256SUMS`). The running instance polls
-`GET /api/updates/latest` (cached ~1 h, fails soft) and shows a bottom banner.
+`GET /api/updates/latest` (cached ~1 h, fails soft) and shows a bottom banner. The
+Settings → General page also renders a **Version** section (current version linked to its
+GitHub release, plus a **"Check for new version"** button that calls
+`POST /api/updates/check` — any authed user — to force a fresh GitHub check bypassing the
+1 h cache, the same upstream check the daily cron runs).
 
 **Self-update & supervisor.** A compiled binary with auto-update enabled
 (`isAutoUpdateEnabled()` — compiled, not `HEZO_DISABLE_AUTO_UPDATE`, not in a container)

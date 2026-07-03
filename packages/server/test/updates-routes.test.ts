@@ -51,6 +51,30 @@ describe('update routes (status / download / apply)', () => {
 		expect(body.canApply).toBe(false);
 	});
 
+	it('POST /updates/check forces a fresh check for any authed user, bypassing the cache', async () => {
+		// Warm the cache with an older release, then flip the upstream to a newer one.
+		await app.request('/api/updates/latest', { headers: authHeader(userToken) });
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					tag_name: '10.0.0',
+					html_url: 'https://github.com/hezo-ai/hezo/releases/10.0.0',
+				}),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } },
+			),
+		);
+
+		const res = await app.request('/api/updates/check', {
+			method: 'POST',
+			headers: authHeader(userToken),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		// The forced check bypassed the 1h cache and picked up the newer release.
+		expect(body.latest).toBe('10.0.0');
+		expect(body.updateAvailable).toBe(true);
+	});
+
 	it('POST /updates/download requires superuser', async () => {
 		const res = await app.request('/api/updates/download', {
 			method: 'POST',
