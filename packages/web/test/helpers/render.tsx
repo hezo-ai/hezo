@@ -134,7 +134,11 @@ beforeEach(async () => {
 		// through), so a static "no update available" body keeps the banner inert.
 		// Tests that need a specific version/update seed the query cache directly
 		// (see settings-version.test.tsx), so `current` here is cosmetic.
-		if (path === '/api/updates/latest' || path === '/api/updates/status') {
+		if (
+			path === '/api/updates/latest' ||
+			path === '/api/updates/status' ||
+			path === '/api/updates/check'
+		) {
 			const base = { current: '0.0.0-test', latest: null, updateAvailable: false, url: null };
 			const body =
 				path === '/api/updates/status'

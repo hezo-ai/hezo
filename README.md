@@ -22,7 +22,7 @@
   · <a href="./docs/introduction.md">Docs</a>
   · <a href="https://hezo.ai">Website</a>
   · <a href="https://github.com/hezo-ai/hezo">GitHub</a>
-  · <a href="https://x.com/taoofdev">X</a>
+  · <a href="https://x.com/hezo_ai">X</a>
 </p>
 
 <p align="center">
@@ -194,4 +194,4 @@ Copyright (C) 2026 [Ramesh Nair](https://hiddentao.com).
 
 Hezo is licensed under the [MIT License](./LICENSE.md).
 
-X: [@taoofdev](https://x.com/taoofdev)
+X: [@hezo_ai](https://x.com/hezo_ai)

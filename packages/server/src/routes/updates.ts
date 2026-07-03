@@ -75,9 +75,13 @@ async function fetchLatest(): Promise<UpdateInfo> {
 	}
 }
 
-/** Cached latest-release info (1h TTL), shared by the route and the update-check cron. */
-export async function getLatestInfo(): Promise<UpdateInfo> {
-	if (!cache || Date.now() - cache.at >= TTL_MS) {
+/**
+ * Cached latest-release info (1h TTL), shared by the route and the update-check cron.
+ * Pass `force` to bypass the cache and hit GitHub now (the manual "Check for new
+ * version" button) — the fresh result is then cached like any other.
+ */
+export async function getLatestInfo(opts?: { force?: boolean }): Promise<UpdateInfo> {
+	if (opts?.force || !cache || Date.now() - cache.at >= TTL_MS) {
 		cache = { at: Date.now(), data: await fetchLatest() };
 	}
 	return cache.data;
@@ -93,6 +97,11 @@ export function buildUpdatesRoutes(opts: { autoUnlock: boolean }): Hono<Env> {
 
 	// Any authed user: passive "is an update available" check (banner + settings).
 	routes.get('/updates/latest', async (c) => c.json(await getLatestInfo()));
+
+	// Any authed user: force a fresh GitHub check now, bypassing the 1h cache. This
+	// is the same upstream check the daily update-check cron runs; the settings
+	// "Check for new version" button calls it on demand.
+	routes.post('/updates/check', async (c) => c.json(await getLatestInfo({ force: true })));
 
 	// Any authed user: latest info + staged-update lifecycle + auto-unlock hint.
 	routes.get('/updates/status', async (c) => {

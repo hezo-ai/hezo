@@ -2,10 +2,6 @@ import { Link, useLocation } from '@tanstack/react-router';
 import { ChevronDown } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useMe } from '../hooks/use-me';
-import { useUpdateCheck } from '../hooks/use-update-check';
-
-/** Release tags are plain `MAJOR.MINOR.PATCH` (no `v` prefix) — only those have a GitHub tag page. */
-const RELEASE_TAG = /^\d+\.\d+\.\d+$/;
 
 interface NavItem {
 	to: string;
@@ -39,44 +35,6 @@ function itemClass(active: boolean): string {
 			? 'text-text-1 font-medium bg-surface-2'
 			: 'text-text-2 hover:text-text-1 hover:bg-surface-2'
 	}`;
-}
-
-function VersionFooter() {
-	const { data: update } = useUpdateCheck();
-	if (!update?.current) return null;
-	return (
-		<div
-			data-testid="settings-version"
-			className="mt-3 pt-3 px-3 border-t border-border text-[12px] text-text-2"
-		>
-			<div className="italic">
-				version:{' '}
-				{RELEASE_TAG.test(update.current) ? (
-					<a
-						href={`https://github.com/hezo-ai/hezo/releases/tag/${update.current}`}
-						target="_blank"
-						rel="noreferrer"
-						className="hover:underline hover:text-text-1 transition-colors"
-					>
-						{update.current}
-					</a>
-				) : (
-					<span>{update.current}</span>
-				)}
-			</div>
-			<div className="mt-1.5">
-				Got feedback?{' '}
-				<a
-					href="https://x.com/taoofdev"
-					target="_blank"
-					rel="noreferrer"
-					className="hover:underline hover:text-text-1 transition-colors"
-				>
-					@taoofdev
-				</a>
-			</div>
-		</div>
-	);
 }
 
 /**
@@ -163,7 +121,6 @@ export function SettingsSidebar() {
 						{item.label}
 					</Link>
 				))}
-				<VersionFooter />
 			</nav>
 		</>
 	);
