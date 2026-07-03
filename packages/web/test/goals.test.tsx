@@ -217,6 +217,40 @@ test('clicking a goal opens its page with breadcrumbs, run feed, and edit modal'
 	await findByText('Edit Goal');
 });
 
+test('the edit dialog pre-fills the Deadline field from a goal saved with a target date', async () => {
+	let projectSlug = '';
+	const { findByTestId, findByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Deadline Demo' });
+			projectSlug = project.slug;
+			await seedGoal(ws, project, {
+				title: 'Reach 10k stars on GitHub',
+				measurement: '10k GitHub stars',
+				target_date: '2026-09-30',
+			});
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/goals',
+		params: { projectId: projectSlug },
+	});
+
+	// Open the edit dialog from the goal card's pencil button.
+	await user.click(await findByTestId('goal-edit', undefined, { timeout: 10_000 }));
+	await findByText('Edit Goal');
+
+	// The Deadline <input type="date"> must be seeded with the goal's bare calendar date. A SQL
+	// DATE serializes over the API as a UTC-midnight ISO timestamp ("2026-09-30T00:00:00.000Z"),
+	// which a date input can't parse — feeding it raw left the field blank on edit.
+	await waitFor(() => {
+		const dateInput = document.body.querySelector<HTMLInputElement>('input[type="date"]');
+		expect(dateInput?.value).toBe('2026-09-30');
+	});
+});
+
 test('the goal detail blurb linkifies task identifiers and markdown PR links', async () => {
 	let projectSlug = '';
 	let goalId = '';

@@ -26,6 +26,21 @@ const textareaClass =
 	'rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-1 outline-none focus:border-border-strong';
 
 /**
+ * Normalize a goal's `target_date` into the `YYYY-MM-DD` value an `<input type="date">`
+ * requires. `target_date` is a SQL `DATE` that serializes over the API as a UTC-midnight
+ * ISO timestamp (e.g. "2026-09-30T00:00:00.000Z"); feeding that straight into a date input
+ * leaves the field blank because the control only parses a bare calendar date. Take the UTC
+ * calendar day, which is exactly the stored date. Returns '' for a missing/unparseable value.
+ */
+function toDateInputValue(value: string | null | undefined): string {
+	if (!value) return '';
+	if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+	const d = new Date(value);
+	if (Number.isNaN(d.getTime())) return '';
+	return d.toISOString().slice(0, 10);
+}
+
+/**
  * A field label row pairing the label text with an info tooltip suffix icon. Renders a `<span>` by
  * default (for fields whose control is wrapped by an outer `<label>`); pass `htmlFor` to render an
  * explicit `<label htmlFor>` instead (for controls that aren't a plain DOM element child).
@@ -80,7 +95,7 @@ export function CreateGoalDialog({ projectId, open, onOpenChange, goal }: Create
 		setMeasurement(goal?.measurement ?? '');
 		setActions(goal?.actions ?? '');
 		setCheckFrequency((goal?.check_frequency as GoalCheckFrequency) ?? GoalCheckFrequency.Daily);
-		setTargetDate(goal?.target_date ?? '');
+		setTargetDate(toDateInputValue(goal?.target_date));
 	}, [open, goal]);
 
 	async function handleSubmit(e: React.FormEvent) {
