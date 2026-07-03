@@ -16,6 +16,16 @@ const ROOT = resolve(import.meta.dir, '..');
 // them. Inherited by child processes.
 process.env[TEST_CONTAINERS_ENV] = '1';
 
+// Collapse the password-verifier KDF to its cheapest valid cost for every tier
+// this runner spawns. Each createTestApp enrolls a verifier via scrypt; at the
+// production cost (N=2**15) that is ~280ms of pure overhead per test. Setting it
+// here (inherited by child processes) covers the tiers a vitest config can't —
+// notably the Bun-native tier, which `bun test` runs outside any vitest config,
+// yet whose egress suites still boot createTestApp. Honoured only under
+// NODE_ENV=test and clamped to lower-only (see passwordScryptParams in
+// packages/shared/src/crypto/auth.ts); `??=` lets an explicit override win.
+process.env.HEZO_TEST_SCRYPT_LOG_N ??= '1';
+
 const defaultConcurrency = 10;
 
 const program = new Command()
