@@ -467,6 +467,12 @@ document, loaded from its **home** team) is resolved per run by
 `{{team_preferences_context}}`, `{{team_description}}`, `{{team_context}}`,
 `{{current_date}}`, and the CEO-only `{{projects_context}}`), then the resolver appends the
 Run Context / Repository / Project State / Teammates blocks and `SHARED_INSTRUCTIONS`.
+For a task run the runner additionally appends a **Run limits & winding down** block
+(`buildRunLimitsBlock`) stating the run's `run_timeout_min` wall-clock budget and the agent's
++ project's remaining per-window spend (from the budget service), plus a graceful wind-down
+protocol — since the agent can't observe elapsed time or live spend mid-run, it's told the
+size of its run up front so it can make committed (auto-pushed) progress and defer with a
+comment before a hard cut rather than being killed mid-step.
 Every surface that authors or edits a prompt — the hire proposal create/edit
 (`prepareHireProposal`, `PATCH /approvals`), direct agent create + `PATCH /agents`, and the
 `create_hire_proposal` / `update_agent_system_prompt` MCP tools — validates a supplied,
