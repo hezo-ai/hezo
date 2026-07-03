@@ -1,6 +1,7 @@
 import { centsToDollars, HQ_PROJECT_SLUG } from '@hezo/shared';
-import { createFileRoute, redirect } from '@tanstack/react-router';
-import { BarChart3, Users } from 'lucide-react';
+import { createFileRoute, Link, redirect } from '@tanstack/react-router';
+import { BarChart3, Pencil, Users } from 'lucide-react';
+import { agentPageParams } from '../../../components/agent-link';
 import { BudgetCharts } from '../../../components/budget/budget-charts';
 import { ProjectBudgetPanel } from '../../../components/budget/project-budget-panel';
 import { type SpendCell, StackedSpendChart } from '../../../components/budget/stacked-spend-chart';
@@ -150,7 +151,20 @@ function BudgetPage() {
 												{agent.agent_title}
 											</span>
 										</div>
-										{agent.agent_over_budget && <Badge color="danger">Over budget</Badge>}
+										<div className="flex shrink-0 items-center gap-2">
+											{agent.agent_over_budget && <Badge color="danger">Over budget</Badge>}
+											<Link
+												to="/projects/$projectId/agents/$agentId/settings"
+												params={agentPageParams(projectId, agent.agent_slug)}
+												hash="budget"
+												aria-label={`Edit ${agent.agent_title} budget`}
+												title="Edit budget"
+												data-testid={`edit-agent-budget-${agent.agent_slug}`}
+												className="rounded-sm p-1 text-text-3 transition-colors hover:bg-surface-3 hover:text-text-1"
+											>
+												<Pencil className="h-3.5 w-3.5" aria-hidden />
+											</Link>
+										</div>
 									</div>
 									<WindowGrid status={agent} />
 								</div>

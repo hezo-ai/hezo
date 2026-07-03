@@ -94,45 +94,125 @@ test('Budgets page renders per-day breakdown panels by agent and adapter', async
 	});
 });
 
-test('Budget page: editing limits inline updates the spend progress cards', async () => {
+test('Budget page: Project budget header has a single Edit link to the settings budget section', async () => {
 	let teamSlug = '';
-	let projectId = '';
 
-	const { findByTestId, findByRole, user, ctx, router } = await renderApp({
+	const { findByTestId, findByRole, queryByRole, user, router } = await renderApp({
 		initialPath: '/',
+		strictMode: true,
 		seed: async () => {
 			const ws = await seedWorkspace();
-			const project = await seedProject(ws, { name: 'Budget Inline' });
+			await seedProject(ws, { name: 'Budget Link' });
 			teamSlug = ws.internalSlug;
-			projectId = project.id;
 		},
 	});
 
 	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
 
-	// The progress display and the editor are one section: edit limits in place
-	// via the inline per-window pencil.
-	await user.click(await findByRole('button', { name: 'Edit Today cap' }));
-	await user.click(await findByTestId('budget-daily-toggle'));
-	const daily = (await findByTestId('budget-daily')) as HTMLInputElement;
-	await user.clear(daily);
-	await user.type(daily, '20');
-	await user.click(await findByRole('button', { name: 'Save' }));
+	// The per-window pencils are gone — caps are edited from settings now, not here.
+	const editLink = await findByTestId('edit-project-budget-link');
+	expect(queryByRole('button', { name: 'Edit Today cap' })).toBeNull();
+	expect(queryByRole('button', { name: 'Edit This week cap' })).toBeNull();
+	expect(queryByRole('button', { name: 'Edit This month cap' })).toBeNull();
 
-	// The window column (driven by budget-status) reflects the new $20 daily cap — i.e.
-	// editing the cap refreshes the same progress display it lives in.
-	await waitFor(
-		() => {
-			const col = document.querySelector('[data-testid="budget-window-daily"]');
-			expect(col?.textContent ?? '').toContain('$20.00');
+	// The single header Edit affordance points at the project settings budget anchor.
+	const href = editLink.closest('a')?.getAttribute('href') ?? '';
+	expect(href).toContain(`/projects/${teamSlug}/settings`);
+	expect(href).toContain('#budget');
+
+	// Following it lands on the settings page, where the budget caps editor lives.
+	await user.click(editLink);
+	await findByTestId('edit-project-budget', undefined, { timeout: 15_000 });
+	await findByRole('button', { name: 'Edit caps' });
+});
+
+test('Budget page: each agent card links to that agent’s settings budget section', async () => {
+	let teamSlug = '';
+	let agentSlug = '';
+	let agentTitle = '';
+
+	const { findByTestId, findByRole, findByText, user, router } = await renderApp({
+		initialPath: '/',
+		strictMode: true,
+		seed: async () => {
+			const ws = await seedWorkspace();
+			// Every team agent surfaces in the per-agent budget list (spend or not).
+			const agent = ws.agents.find((a) => a.slug === 'engineer') ?? ws.agents[0];
+			agentSlug = agent.slug;
+			agentTitle = agent.title;
+			teamSlug = ws.internalSlug;
 		},
-		{ timeout: 15_000 },
-	);
-	await waitFor(async () => {
-		const row = await ctx.db.query<{ daily_budget_cents: number }>(
-			'SELECT daily_budget_cents FROM projects WHERE id = $1',
-			[projectId],
-		);
-		expect(row.rows[0]?.daily_budget_cents).toBe(2000);
 	});
+
+	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
+
+	// The card carries a single Edit button pointing at the agent's settings budget anchor.
+	const editLink = await findByTestId(`edit-agent-budget-${agentSlug}`, undefined, {
+		timeout: 15_000,
+	});
+	const href = editLink.getAttribute('href') ?? '';
+	expect(href).toContain(`/agents/${agentSlug}/settings`);
+	expect(href).toContain('#budget');
+
+	// Following it lands on that agent's settings page with its budget editor.
+	await user.click(editLink);
+	await findByRole('heading', { name: agentTitle }, { timeout: 15_000 });
+	await findByText('Budget limits');
+});
+
+test('Budget page: project window columns render caps and the binding-window banner appears', async () => {
+	let teamSlug = '';
+
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const { apiBase } = getTestContext();
+			teamSlug = ws.internalSlug;
+			const agent = ws.agents[0];
+
+			// Cap all three project windows so every WindowColumn renders a bar + % (not "no cap").
+			// Caps must satisfy the cross-window floors (weekly ≥ daily×7, monthly ≥ weekly×52/12).
+			const patchRes = await apiBase(`/api/projects/${ws.internalSlug}`, {
+				method: 'PATCH',
+				headers: ws.headers,
+				body: JSON.stringify({
+					daily_budget_cents: 1000,
+					weekly_budget_cents: 10000,
+					monthly_budget_cents: 50000,
+				}),
+			});
+			if (!patchRes.ok) throw new Error(`seed: setting project caps failed (${patchRes.status})`);
+
+			const projects = (await (await apiBase('/api/projects', { headers: ws.headers })).json()) as {
+				data: Array<{ id: string; slug: string }>;
+			};
+			const projectId = projects.data.find((p) => p.slug === ws.internalSlug)?.id;
+
+			// $9 of project spend → daily 90% (the binding window), weekly 45%, monthly 18%.
+			await apiBase(`/api/projects/${ws.internalSlug}/costs`, {
+				method: 'POST',
+				headers: ws.headers,
+				body: JSON.stringify({
+					member_id: agent.id,
+					amount_cents: 900,
+					project_id: projectId,
+					description: 'project spend',
+				}),
+			});
+		},
+	});
+
+	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
+
+	// The daily window renders its $10 cap and 90% usage against the progress bar.
+	const daily = await findByTestId('budget-window-daily', undefined, { timeout: 15_000 });
+	await waitFor(() => {
+		expect(daily.textContent ?? '').toContain('$10.00');
+		expect(daily.textContent ?? '').toContain('90%');
+	});
+
+	// The binding-window banner surfaces the daily window and links to raise its cap.
+	const banner = await findByTestId('binding-window-banner');
+	expect(banner.textContent ?? '').toContain('Raise daily cap');
 });
