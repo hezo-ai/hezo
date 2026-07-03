@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { authHeader } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 // Exercises the SPA-serving catch-all in buildApp() (startup.ts). The compiled
@@ -27,7 +28,11 @@ describe('buildApp SPA serving (filesystem fallback)', () => {
 	afterAll(() => destroyTestContext(ctx));
 
 	it('returns 404 for an unknown /api/ path (not SPA fallback)', async () => {
-		const res = await ctx.app.request('/api/this-route-does-not-exist');
+		// Authenticated: an unknown /api route must 404 (not fall through to the SPA
+		// index.html). Without a token it would 401 at the auth middleware first.
+		const res = await ctx.app.request('/api/this-route-does-not-exist', {
+			headers: authHeader(ctx.token),
+		});
 		expect(res.status).toBe(404);
 		expect(await res.text()).toBe('Not found');
 	});

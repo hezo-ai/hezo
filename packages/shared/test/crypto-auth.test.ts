@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
 	buildLoginMessage,
+	buildPasswordLoginMessage,
+	buildPasswordSetupMessage,
 	buildSetupMessage,
 	buildUnlockMessage,
 	deriveAuthKeyPair,
+	derivePasswordKeyPair,
 	deriveUnlockKey,
+	generatePasswordSalt,
 	signAuthMessage,
 	verifyAuthSignature,
 } from '../src/crypto/auth';
@@ -78,5 +82,57 @@ describe('canonical signed payloads', () => {
 		expect(buildSetupMessage('PUB', 'UNLOCK')).toBe('hezo-auth-v1:setup:PUB:UNLOCK');
 		expect(buildLoginMessage('NONCE')).toBe('hezo-auth-v1:login:NONCE');
 		expect(buildUnlockMessage('NONCE', 'UNLOCK')).toBe('hezo-auth-v1:unlock:NONCE:UNLOCK');
+		expect(buildPasswordLoginMessage('NONCE')).toBe('hezo-auth-v1:password-login:NONCE');
+		expect(buildPasswordSetupMessage('PUB', 'SALT')).toBe('hezo-auth-v1:password-setup:PUB:SALT');
+	});
+});
+
+describe('generatePasswordSalt', () => {
+	it('returns 32-char lowercase hex', () => {
+		expect(generatePasswordSalt()).toMatch(/^[0-9a-f]{32}$/);
+	});
+
+	it('is random (distinct across calls)', () => {
+		expect(generatePasswordSalt()).not.toBe(generatePasswordSalt());
+	});
+});
+
+describe('derivePasswordKeyPair', () => {
+	const SALT = '00112233445566778899aabbccddeeff';
+
+	it('is deterministic for the same password + salt', async () => {
+		const a = await derivePasswordKeyPair('correct horse battery staple', SALT);
+		const b = await derivePasswordKeyPair('correct horse battery staple', SALT);
+		expect(a.privateKey).toEqual(b.privateKey);
+		expect(a.privateKey).toHaveLength(32);
+		expect(a.publicKeyHex).toBe(b.publicKeyHex);
+		expect(a.publicKeyHex).toMatch(/^[0-9a-f]{64}$/);
+	});
+
+	it('differs for a different password', async () => {
+		const a = await derivePasswordKeyPair('password', SALT);
+		const b = await derivePasswordKeyPair('Password', SALT);
+		expect(a.publicKeyHex).not.toBe(b.publicKeyHex);
+	});
+
+	it('differs for a different salt (per-admin separation)', async () => {
+		const a = await derivePasswordKeyPair('password', SALT);
+		const b = await derivePasswordKeyPair('password', 'ffffffffffffffffffffffffffffffff');
+		expect(a.publicKeyHex).not.toBe(b.publicKeyHex);
+	});
+
+	it('produces a keypair whose signatures verify (login round-trip)', async () => {
+		const salt = generatePasswordSalt();
+		const { privateKey, publicKeyHex } = await derivePasswordKeyPair('hunter2!!', salt);
+		const sig = signAuthMessage(privateKey, buildPasswordLoginMessage('deadbeef'));
+		expect(verifyAuthSignature(publicKeyHex, buildPasswordLoginMessage('deadbeef'), sig)).toBe(
+			true,
+		);
+		// A wrong password derives a different key, so its signature fails.
+		const wrong = await derivePasswordKeyPair('hunter3!!', salt);
+		const wrongSig = signAuthMessage(wrong.privateKey, buildPasswordLoginMessage('deadbeef'));
+		expect(verifyAuthSignature(publicKeyHex, buildPasswordLoginMessage('deadbeef'), wrongSig)).toBe(
+			false,
+		);
 	});
 });

@@ -2,6 +2,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
+import { type Migration, runMigrations } from '../../src/db/migrate';
+import { codeMigrations } from '../../src/db/migrations/code';
 import { BASE_SCHEMA } from '../../src/db/schema';
 
 /** Creates a fresh in-memory PGlite instance with base tables for testing. */
@@ -11,19 +13,9 @@ export async function createTestDb(): Promise<PGlite> {
 	return db;
 }
 
-/** Creates a test DB with full migrations applied. */
+/** Creates a test DB with full migrations applied (SQL + code, in one ordered sequence). */
 export async function createTestDbWithMigrations(): Promise<PGlite> {
 	const db = new PGlite();
-
-	// Ensure _migrations table exists (uses IF NOT EXISTS, safe to run before migration)
-	await db.exec(`
-    CREATE TABLE IF NOT EXISTS _migrations (
-      id          SERIAL PRIMARY KEY,
-      filename    TEXT NOT NULL UNIQUE,
-      applied_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-      checksum    TEXT NOT NULL
-    );
-  `);
 
 	// Load migration SQL directly from filesystem. fileURLToPath() (not
 	// .pathname) is required because Vite rewrites import.meta.url to a
@@ -48,26 +40,26 @@ export async function createTestDbWithMigrations(): Promise<PGlite> {
 		? process.env.HEZO_MIGRATIONS_DIR
 		: join(currentDir, '..', '..', 'migrations');
 
+	// Merge SQL files with code migrations into one ordered set, then apply through
+	// the real runMigrations so SQL + code steps run in the same sorted sequence
+	// (code migrations like 013 add columns SQL alone won't) with proper tracking.
+	const migrations: Record<string, Migration> = {};
 	try {
-		const files = readdirSync(migrationsDir)
+		for (const file of readdirSync(migrationsDir)
 			.filter((f: string) => f.endsWith('.sql'))
-			.sort();
-
-		for (const file of files) {
-			let sql = readFileSync(join(migrationsDir, file), 'utf-8');
+			.sort()) {
 			// PGlite loads pgcrypto built-in; strip only that.
-			sql = sql.replace(/CREATE EXTENSION IF NOT EXISTS "pgcrypto";/g, '');
-			try {
-				await db.exec(sql);
-			} catch (e) {
-				console.error(`Migration ${file} failed:`, e);
-				throw e;
-			}
+			migrations[file] = readFileSync(join(migrationsDir, file), 'utf-8').replace(
+				/CREATE EXTENSION IF NOT EXISTS "pgcrypto";/g,
+				'',
+			);
 		}
 	} catch (e) {
 		console.error('Migration loading failed:', e);
 		throw e;
 	}
+	Object.assign(migrations, codeMigrations);
 
+	await runMigrations(db, migrations);
 	return db;
 }

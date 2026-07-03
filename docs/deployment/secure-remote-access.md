@@ -43,9 +43,19 @@ lives only as long as the SSH session.
 ## Public domain + reverse proxy + auth
 
 If you do want a public URL, terminate HTTPS with a reverse proxy (see
-[Deploying to the cloud](/docs/deployment/cloud)) **and** put an authentication layer in
-front (your proxy's auth, an identity-aware proxy, or an SSO gateway). Never publish the
-raw Hezo port directly.
+[Deploying to the cloud](/docs/deployment/cloud)). Never publish the raw Hezo port
+directly.
+
+Hezo authenticates every session with your **admin password**, so a public deployment is
+no longer open by default. The practical setup is to supply the master key non-interactively
+(`HEZO_MASTER_KEY`) so the instance unlocks itself on each restart, while everyone still has
+to sign in with the password to reach the app:
+
+- **Set a strong admin password** and, if you upgraded an existing instance, change the
+  default (`password`) before exposing it. See [Master key & encryption](/docs/security/master-key).
+- For defense in depth you can still add a second authentication layer in front (your
+  proxy's auth, an identity-aware proxy, or an SSO gateway) — recommended for
+  internet-facing deployments.
 
 ## Install Hezo on your phone
 

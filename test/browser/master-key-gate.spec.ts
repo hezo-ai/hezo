@@ -81,13 +81,15 @@ test.afterAll(async () => {
 	rmSync(dataDir, { recursive: true, force: true });
 });
 
-test('first-boot setup wizard, then the locked gate after a restart', async ({ page }) => {
+const PASSWORD = 'e2e-admin-password';
+
+test('setup → password → provider, then restart → unlock → password login', async ({ page }) => {
 	await startGateServer({ reset: true });
 	await page.goto('/');
 
-	// Phase A — unset: the setup wizard's master-key step at mobile viewport.
-	await expect(page.getByTestId('setup-step-master-key')).toBeVisible();
-	await page.getByRole('button', { name: /generate key/i }).click();
+	// Phase A — unset: the pre-active vault setup screen at mobile viewport.
+	await expect(page.getByTestId('master-key-setup')).toBeVisible();
+	await page.getByRole('button', { name: /generate master key/i }).click();
 	const words = page.getByTestId('mnemonic-word');
 	await expect(words).toHaveCount(12);
 	// Each item renders "<n> <word>" — strip the leading position number.
@@ -96,30 +98,42 @@ test('first-boot setup wizard, then the locked gate after a restart', async ({ p
 		.join(' ');
 	await page.getByRole('button', { name: /set key & continue/i }).click();
 
-	// Setup enrolled + unlocked the server; the wizard advances to the
-	// AI-provider step (none configured on this fresh instance).
+	// The unlock reveal plays, then the wizard advances to the dedicated
+	// create-password step (the mnemonic only unlocked — no session yet).
+	await expect(page.getByTestId('setup-step-password')).toBeVisible();
+	await page.getByLabel('Password', { exact: true }).fill(PASSWORD);
+	await page.getByLabel('Confirm password').fill(PASSWORD);
+	await page.getByRole('button', { name: /set password & continue/i }).click();
+
+	// Setting the password mints a session; with no AI provider configured the
+	// wizard resumes at the provider step.
 	await expect(page.getByTestId('setup-step-ai-provider')).toBeVisible();
 	const status = await page.request.get(`http://localhost:${GATE_SERVER_PORT}/api/status`);
-	expect(((await status.json()) as { masterKeyState: string }).masterKeyState).toBe('unlocked');
+	const statusBody = (await status.json()) as { masterKeyState: string; passwordSet: boolean };
+	expect(statusBody.masterKeyState).toBe('unlocked');
+	expect(statusBody.passwordSet).toBe(true);
 
-	// Phase B — restart on the same data dir without a boot key: locked gate.
+	// Phase B — restart on the same data dir without a boot key: locked vault.
 	await stopGateServer();
 	await startGateServer({ reset: false });
 	await page.reload();
 
 	const entry = page.getByLabel(/master key/i);
-	await expect(entry).toBeVisible();
+	await expect(page.getByTestId('master-key-unlock')).toBeVisible();
 
 	// A valid-but-wrong phrase signs with the wrong keypair — server rejects.
 	await entry.fill('legal winner thank year wave sausage worth useful legal winner thank yellow');
 	await page.getByRole('button', { name: /unlock/i }).click();
 	await expect(page.getByText(/signature verification failed/i)).toBeVisible();
 
-	// The phrase captured during setup unlocks; with no AI provider configured
-	// the wizard resumes at the provider step — the post-gate surface.
+	// The captured phrase unlocks. The instance is active but this browser has no
+	// session, so the password login is next — the mnemonic never grants a session.
 	await entry.fill(phrase);
 	await page.getByRole('button', { name: /unlock/i }).click();
+	await expect(page.getByTestId('password-login')).toBeVisible();
+
+	// Sign in with the password set in Phase A → the app (provider step) returns.
+	await page.getByLabel('Password', { exact: true }).fill(PASSWORD);
+	await page.getByRole('button', { name: /sign in/i }).click();
 	await expect(page.getByTestId('setup-step-ai-provider')).toBeVisible();
-	const after = await page.request.get(`http://localhost:${GATE_SERVER_PORT}/api/status`);
-	expect(((await after.json()) as { masterKeyState: string }).masterKeyState).toBe('unlocked');
 });

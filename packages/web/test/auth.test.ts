@@ -1,10 +1,13 @@
 import {
 	buildLoginMessage,
+	buildPasswordLoginMessage,
 	buildSetupMessage,
 	buildUnlockMessage,
 	deriveAuthKeyPair,
+	derivePasswordKeyPair,
 	deriveUnlockKey,
 	generateMnemonic,
+	generatePasswordSalt,
 	verifyAuthSignature,
 } from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -24,7 +27,15 @@ vi.mock('../src/lib/api', () => ({
 	},
 }));
 
-import { authenticateWithMnemonic, checkStatus, isAuthenticated, logout } from '../src/lib/auth';
+import {
+	authenticateWithMnemonic,
+	checkStatus,
+	clearPendingSetupToken,
+	getPendingSetupToken,
+	isAuthenticated,
+	loginWithPassword,
+	logout,
+} from '../src/lib/auth';
 
 const PHRASE = generateMnemonic();
 
@@ -33,6 +44,7 @@ beforeEach(() => {
 	setToken.mockReset();
 	getToken.mockReset();
 	clearToken.mockReset();
+	clearPendingSetupToken();
 });
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -105,12 +117,14 @@ describe('checkStatus', () => {
 });
 
 describe('authenticateWithMnemonic — setup (unset)', () => {
-	test('posts a valid setup payload and stores the returned token', async () => {
+	test('posts a valid setup payload and holds the scoped token (not a session)', async () => {
 		post.mockResolvedValueOnce({ token: 'tok-setup' });
-		const token = await authenticateWithMnemonic(PHRASE, 'unset');
+		await authenticateWithMnemonic(PHRASE, 'unset');
 
-		expect(token).toBe('tok-setup');
-		expect(setToken).toHaveBeenCalledWith('tok-setup');
+		// The mnemonic only unlocks: the token is held in memory for the
+		// create-password step, never stored as a session.
+		expect(getPendingSetupToken()).toBe('tok-setup');
+		expect(setToken).not.toHaveBeenCalled();
 		expect(post).toHaveBeenCalledTimes(1);
 		const [path, payload] = post.mock.calls[0] as [string, Record<string, string>];
 		expect(path).toBe('/api/auth/setup');
@@ -137,9 +151,9 @@ describe('authenticateWithMnemonic — login (unlocked)', () => {
 			.mockResolvedValueOnce({ challenge_id: 'c1', nonce: 'abcd' }) // /api/auth/challenge
 			.mockResolvedValueOnce({ token: 'tok-login' }); // /api/auth/verify
 
-		const token = await authenticateWithMnemonic(PHRASE, 'unlocked');
-		expect(token).toBe('tok-login');
-		expect(setToken).toHaveBeenCalledWith('tok-login');
+		await authenticateWithMnemonic(PHRASE, 'unlocked');
+		expect(getPendingSetupToken()).toBe('tok-login');
+		expect(setToken).not.toHaveBeenCalled();
 
 		expect(post.mock.calls[0][0]).toBe('/api/auth/challenge');
 		const [verifyPath, body] = post.mock.calls[1] as [string, Record<string, string>];
@@ -160,8 +174,8 @@ describe('authenticateWithMnemonic — unlock (locked)', () => {
 			.mockResolvedValueOnce({ challenge_id: 'c2', nonce: 'beef' })
 			.mockResolvedValueOnce({ token: 'tok-unlock' });
 
-		const token = await authenticateWithMnemonic(PHRASE, 'locked');
-		expect(token).toBe('tok-unlock');
+		await authenticateWithMnemonic(PHRASE, 'locked');
+		expect(getPendingSetupToken()).toBe('tok-unlock');
 
 		const body = post.mock.calls[1][1] as Record<string, string>;
 		const unlockKey = deriveUnlockKey(PHRASE);
@@ -182,8 +196,8 @@ describe('authenticateWithMnemonic — unlock-required retry', () => {
 			.mockResolvedValueOnce({ challenge_id: 'c4', nonce: '2222' }) // retry challenge
 			.mockResolvedValueOnce({ token: 'tok-retry' }); // retry verify
 
-		const token = await authenticateWithMnemonic(PHRASE, 'unlocked');
-		expect(token).toBe('tok-retry');
+		await authenticateWithMnemonic(PHRASE, 'unlocked');
+		expect(getPendingSetupToken()).toBe('tok-retry');
 
 		// Second attempt carries the unlock key + unlock-message signature.
 		const retryBody = post.mock.calls[3][1] as Record<string, string>;
@@ -209,6 +223,29 @@ describe('authenticateWithMnemonic — unlock-required retry', () => {
 		});
 		// challenge + failed verify only; no retry challenge.
 		expect(post).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe('loginWithPassword', () => {
+	test('signs the nonce with a password-derived key and stores the session', async () => {
+		const salt = generatePasswordSalt();
+		post
+			.mockResolvedValueOnce({ challenge_id: 'pc1', nonce: 'facef00d', salt }) // password-challenge
+			.mockResolvedValueOnce({ token: 'sess-tok' }); // password-verify
+
+		await loginWithPassword('correct horse battery staple');
+
+		expect(setToken).toHaveBeenCalledWith('sess-tok');
+		expect(post.mock.calls[0][0]).toBe('/api/auth/password-challenge');
+		const [verifyPath, body] = post.mock.calls[1] as [string, Record<string, string>];
+		expect(verifyPath).toBe('/api/auth/password-verify');
+		expect(body.challenge_id).toBe('pc1');
+		// The password is never in the body — only a signature over the nonce.
+		expect(JSON.stringify(body)).not.toContain('correct horse battery staple');
+		const { publicKeyHex } = await derivePasswordKeyPair('correct horse battery staple', salt);
+		expect(
+			verifyAuthSignature(publicKeyHex, buildPasswordLoginMessage('facef00d'), body.signature),
+		).toBe(true);
 	});
 });
 

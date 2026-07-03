@@ -1,13 +1,16 @@
 import {
 	buildLoginMessage,
+	buildPasswordSetupMessage,
 	buildSetupMessage,
 	buildUnlockMessage,
 	deriveAuthKeyPair,
+	derivePasswordKeyPair,
 	deriveUnlockKey,
+	generatePasswordSalt,
 	signAuthMessage,
 } from '@hezo/shared';
 import { expect, type Locator, type Page, type Response } from '@playwright/test';
-import { TEST_MNEMONIC } from './constants';
+import { TEST_MNEMONIC, TEST_PASSWORD } from './constants';
 
 // The phrase never goes over the wire: the Node test process derives the same
 // keys the browser would and runs the challenge-response dance over HTTP.
@@ -17,7 +20,8 @@ const TEST_UNLOCK_KEY = deriveUnlockKey(TEST_MNEMONIC);
 // Bun's webserver starts listening before Hono routes are mounted, so the very
 // first request during cold start can hit the default 404 ("404 Not Found"
 // plain text) and crash res.json(). Retry until we get a real JSON body.
-async function requestToken(page: Page): Promise<string> {
+// Returns the master-key *setup* token (password-setup-scoped, not a session).
+async function requestSetupToken(page: Page): Promise<string> {
 	const deadline = Date.now() + 30_000;
 	let lastError: unknown = null;
 	while (Date.now() < deadline) {
@@ -41,6 +45,29 @@ async function requestToken(page: Page): Promise<string> {
 		await new Promise((resolve) => setTimeout(resolve, 250));
 	}
 	throw lastError ?? new Error('Timed out authenticating via /api/auth');
+}
+
+// Exchange the master-key setup token for a real session by enrolling the test
+// password's verifier — the mnemonic only unlocks; a session is minted only by
+// the password. The password never goes over the wire (only salt + public key +
+// signature). Enrolling is last-write-wins on the verifier but each call returns
+// its own signed session, so parallel workers don't race for a usable token.
+async function requestToken(page: Page): Promise<string> {
+	const setupToken = await requestSetupToken(page);
+	const salt = generatePasswordSalt();
+	const { publicKeyHex, privateKey } = await derivePasswordKeyPair(TEST_PASSWORD, salt);
+	const res = await page.request.post('/api/auth/password', {
+		headers: { Authorization: `Bearer ${setupToken}` },
+		data: {
+			salt,
+			public_key: publicKeyHex,
+			signature: signAuthMessage(privateKey, buildPasswordSetupMessage(publicKeyHex, salt)),
+		},
+	});
+	if (!res.ok()) throw new Error(`Unexpected ${res.status()} from /api/auth/password`);
+	const json = (await res.json()) as { data?: { token: string } };
+	if (!json.data?.token) throw new Error('No session token from /api/auth/password');
+	return json.data.token;
 }
 
 async function setupViaApi(page: Page): Promise<string | null> {

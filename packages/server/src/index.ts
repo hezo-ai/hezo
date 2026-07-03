@@ -9,7 +9,7 @@ import { DbNewerThanAppError, MigrationFailedError } from './db/migrate-errors';
 import { browserAvailable, openBrowser } from './lib/open-browser';
 import type { AuthInfo } from './lib/types';
 import { logger, setLogLevel } from './logger';
-import { canAuthAccessTeam, loadAdminAuth, verifyToken } from './middleware/auth';
+import { canAuthAccessTeam, verifyToken } from './middleware/auth';
 import { getActiveRuntime, setActiveRuntime, shutdownRuntime } from './runtime-control';
 import type { ContainerLogStreamer } from './services/container-logs';
 import { setKeepOldContainers } from './services/containers';
@@ -180,12 +180,6 @@ async function validateToken(token: string): Promise<WsData['auth'] | null> {
 	return auth;
 }
 
-async function validateAnonymous(): Promise<WsData['auth'] | null> {
-	if (!mkmRef || !dbRef) return null;
-	if (mkmRef.getState() !== 'unlocked') return null;
-	return loadAdminAuth(dbRef);
-}
-
 async function canAccessTeam(auth: WsData['auth'], teamId: string): Promise<boolean> {
 	if (!dbRef) return false;
 	// By the time a socket subscribes, `open` has replaced the placeholder with a
@@ -281,7 +275,8 @@ export default {
 			const token = ws.data._token;
 			delete ws.data._token;
 
-			const auth = token ? await validateToken(token) : await validateAnonymous();
+			// No anonymous sockets: a valid session token is required, same as REST.
+			const auth = token ? await validateToken(token) : null;
 			if (!auth) {
 				ws.close(1008, 'Invalid auth');
 				return;

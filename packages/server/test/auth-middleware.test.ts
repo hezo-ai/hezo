@@ -7,7 +7,6 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { AuthInfo, Env } from '../src/lib/types';
 import {
 	canAuthAccessTeam,
-	loadAdminAuth,
 	safeCompareHex,
 	signAdminJwt,
 	signAgentJwt,
@@ -327,16 +326,28 @@ describe('authMiddleware (via HTTP)', () => {
 		expect(verify.status).not.toBe(401);
 	});
 
-	it('allows API requests without auth header (anonymous admin while unlocked)', async () => {
+	it('rejects API requests without an auth header (no anonymous access)', async () => {
 		const res = await app.request('/api/projects');
-		expect(res.status).toBe(200);
+		expect(res.status).toBe(401);
+		const body = await res.json();
+		expect(body.error.code).toBe('UNAUTHORIZED');
 	});
 
-	it('allows API requests with non-Bearer auth header (treated as anonymous)', async () => {
+	it('rejects API requests with a non-Bearer auth header', async () => {
 		const res = await app.request('/api/projects', {
 			headers: { Authorization: 'Basic abc123' },
 		});
-		expect(res.status).toBe(200);
+		expect(res.status).toBe(401);
+	});
+
+	it('rejects a password-setup-scoped token as a session', async () => {
+		const { signPasswordSetupToken } = await import('../src/middleware/auth');
+		const admin = await db.query<{ id: string }>(
+			'SELECT id FROM users WHERE is_superuser = true LIMIT 1',
+		);
+		const scoped = await signPasswordSetupToken(masterKeyManager, admin.rows[0].id);
+		const res = await app.request('/api/projects', { headers: authHeader(scoped) });
+		expect(res.status).toBe(401);
 	});
 
 	it('rejects API requests with invalid token', async () => {
@@ -379,28 +390,6 @@ describe('authMiddleware (via HTTP)', () => {
 		const res = await app.request('/');
 		expect(res.status).not.toBe(401);
 		expect(res.status).not.toBe(403);
-	});
-});
-
-describe('loadAdminAuth', () => {
-	it('returns Admin/superuser auth for the bootstrap admin', async () => {
-		const auth = await loadAdminAuth(db);
-		expect(auth).not.toBeNull();
-		expect(auth!.type).toBe(AuthType.Admin);
-		if (auth!.type === AuthType.Admin) {
-			expect(auth!.isSuperuser).toBe(true);
-			expect(typeof auth!.userId).toBe('string');
-		}
-	});
-
-	it('returns null when no superuser exists', async () => {
-		const { createTestDbWithMigrations } = await import('./helpers/db');
-		const freshDb = await createTestDbWithMigrations();
-		try {
-			expect(await loadAdminAuth(freshDb)).toBeNull();
-		} finally {
-			await safeClose(freshDb);
-		}
 	});
 });
 

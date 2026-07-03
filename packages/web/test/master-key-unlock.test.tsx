@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, expect, test } from 'vitest';
 import { MasterKeyForm } from '../src/components/master-key-gate';
 import { api } from '../src/lib/api';
+import { clearPendingSetupToken, getPendingSetupToken } from '../src/lib/auth';
 // Importing the harness registers its beforeEach: an in-process Hono + PGlite
 // backend (enrolled and unlocked) with fetch rerouted to it. The form is
 // rendered with state="locked", so the client runs the unlock flow — derive
@@ -15,6 +16,7 @@ afterEach(cleanup);
 test('unlock derives keys client-side and completes the challenge dance', async () => {
 	const ctx = getTestContext();
 	api.clearToken();
+	clearPendingSetupToken();
 
 	render(<MasterKeyForm state="locked" embedded />);
 	fireEvent.change(screen.getByLabelText(/master key/i), {
@@ -22,9 +24,12 @@ test('unlock derives keys client-side and completes the challenge dance', async 
 	});
 	fireEvent.click(screen.getByRole('button', { name: /unlock/i }));
 
+	// The mnemonic only unlocks: it yields a password-setup token held in memory,
+	// not a session — so no api token is set, but the scoped token is present.
 	await waitFor(() => {
-		expect(api.getToken()).toBeTruthy();
+		expect(getPendingSetupToken()).toBeTruthy();
 	});
+	expect(api.getToken()).toBeNull();
 	expect(screen.queryByText(/failed|invalid/i)).toBeNull();
 });
 

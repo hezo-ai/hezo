@@ -79,6 +79,7 @@ import {
 } from './services/image-registry';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
+import { adminPasswordIsSet } from './services/password';
 import { PricingService } from './services/pricing';
 import { SshAgentServer } from './services/ssh-agent';
 import { WebSocketManager } from './services/ws';
@@ -437,8 +438,18 @@ export function buildApp(
 
 	// `/api/status` carries master-key state + version. `/` is left to the SPA
 	// catch-all below (the compiled binary serves index.html there).
-	const statusHandler = (c: Context<Env>) =>
-		c.json({ masterKeyState: masterKeyManager.getState(), version: HEZO_VERSION });
+	const statusHandler = async (c: Context<Env>) => {
+		// passwordSet tells the gate whether to show the login screen (true) or the
+		// create-password flow (false). Only meaningful once unlocked; cheap enough
+		// to always compute.
+		const passwordSet =
+			masterKeyManager.getState() === 'unlocked' ? await adminPasswordIsSet(c.get('db')) : false;
+		return c.json({
+			masterKeyState: masterKeyManager.getState(),
+			passwordSet,
+			version: HEZO_VERSION,
+		});
+	};
 	app.get('/api/status', statusHandler);
 
 	// Agent manifest (public). Lists the onboarding tools first, then every MCP
