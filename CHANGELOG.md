@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.11.0 - 2026-07-03
+
+### Features
+
+- **web:** add version display to General settings; move base URL blurb to tooltip ([#528](https://github.com/hezo-ai/hezo/pull/528))
+- **web:** searchable folder dropdown in the asset move dialog ([#523](https://github.com/hezo-ai/hezo/pull/523))
+- **web:** head team chart with CEO, fix connector lines, add hover affordance ([#520](https://github.com/hezo-ai/hezo/pull/520))
+- **agents:** gate tech spec + implementation on UI design first (software team) ([#521](https://github.com/hezo-ai/hezo/pull/521))
+- **assets:** breadcrumb-only header in subfolders, per-asset copy-link + tooltips ([#522](https://github.com/hezo-ai/hezo/pull/522))
+- **web:** widen the task doc preview panel on xl/2xl screens ([#518](https://github.com/hezo-ai/hezo/pull/518))
+- **docs:** add review comments on project documents ([#514](https://github.com/hezo-ai/hezo/pull/514))
+- asset folders, agent copy/move, and admin-approved deletion ([#512](https://github.com/hezo-ai/hezo/pull/512))
+- **web:** mobile scroll-to-bottom button as bottom-centre rectangle ([#511](https://github.com/hezo-ai/hezo/pull/511))
+- **agents:** lock structurally-fixed reporting lines (CEO, Captain, Coach) ([#510](https://github.com/hezo-ai/hezo/pull/510))
+- **goals:** link tasks and PRs in goal status blurbs ([#503](https://github.com/hezo-ai/hezo/pull/503))
+- **tasks:** gate done on unanswered @admin asks and notify superusers of @admin mentions ([#505](https://github.com/hezo-ai/hezo/pull/505))
+- **agents:** require reconciling announced plans before closing a task ([#504](https://github.com/hezo-ai/hezo/pull/504))
+- **goals:** queue manual progress-update run when the Captain is busy ([#501](https://github.com/hezo-ai/hezo/pull/501))
+- **agents:** require verifying a wake before assuming a teammate hand-off ([#499](https://github.com/hezo-ai/hezo/pull/499))
+- **web:** move new-goal affordance to a right-aligned + button in the header ([#497](https://github.com/hezo-ai/hezo/pull/497))
+
+### Bug Fixes
+
+- **web:** strip @@ prefix from unresolved passive mentions ([#526](https://github.com/hezo-ai/hezo/pull/526))
+- **web:** render review-comment highlights on markdown tables ([#525](https://github.com/hezo-ai/hezo/pull/525))
+- **assets:** equal-size cards, folder reads as a labelled stack ([#524](https://github.com/hezo-ai/hezo/pull/524))
+- prevent disabling the HQ instance agents (CEO/Coach) ([#519](https://github.com/hezo-ai/hezo/pull/519))
+- group document review controls into a distinct toolbar cluster ([#517](https://github.com/hezo-ai/hezo/pull/517))
+- **web:** stop logo-less provider wordmark from overflowing the picker header ([#516](https://github.com/hezo-ai/hezo/pull/516))
+- **web:** keep documents page within the viewport for wide doc content ([#513](https://github.com/hezo-ai/hezo/pull/513))
+- link a doc/asset mention that ends a sentence ([#508](https://github.com/hezo-ai/hezo/pull/508))
+- **web:** make mobile document panel its own layer above task sidebar ([#509](https://github.com/hezo-ai/hezo/pull/509))
+- **web:** hide project-menu "+" chips on mobile ([#500](https://github.com/hezo-ai/hezo/pull/500))
+- **web:** stop mobile shell from remounting on background status refetch ([#498](https://github.com/hezo-ai/hezo/pull/498))
+- **web:** relabel misleading "Open tasks" task filter summary ([#496](https://github.com/hezo-ai/hezo/pull/496))
+
+### Refactors
+
+- remove the project task-progress-bar feature ([#515](https://github.com/hezo-ai/hezo/pull/515))
+
+### Chores
+
+- relicense from AGPL-3.0 to MIT ([#502](https://github.com/hezo-ai/hezo/pull/502))
+
+### Other
+
+- Update tagline to "Your own AI workforce. Self-hosted and secure." ([#507](https://github.com/hezo-ai/hezo/pull/507))
+- Fix cross-commit defects found reviewing the last three days of main ([#506](https://github.com/hezo-ai/hezo/pull/506))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.10.0...0.11.0
+
 ## 0.10.0 - 2026-07-01
 
 ### Features
