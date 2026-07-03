@@ -220,7 +220,13 @@ export function DocsLibrary({
 				) : (
 					<div className="flex flex-col">
 						{viewerBanner}
-						<div className="flex items-center justify-between gap-2 mb-4 pb-3 border-b border-border-subtle">
+						{/* Sticky so the document actions (edit / delete / review toolbar)
+						    stay reachable while a long document scrolls. It docks to the top
+						    of the shell <main> scroller; `bg-bg` matches the content
+						    background so scrolled text passes cleanly underneath, and the
+						    z-index sits below the review overlays (selection pill z-20,
+						    editor z-30) so an open comment editor is never hidden. */}
+						<div className="sticky top-0 z-10 flex items-center justify-between gap-2 mb-4 pt-2 pb-3 bg-bg border-b border-border-subtle">
 							<h2 className="text-base font-semibold text-text-1 truncate">
 								{docTitle ?? selectedItem?.label ?? selectedKey}
 							</h2>

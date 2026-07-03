@@ -41,6 +41,16 @@ export function ReviewToolbarActions({
 	const [confirmClearOpen, setConfirmClearOpen] = useState(false);
 	const count = comments?.length ?? 0;
 
+	// Jump to the first review comment in the document. The highlights live in the
+	// rendered body — a sibling surface, not a child of this toolbar — so reach
+	// them through the document. `querySelector` returns the first match in
+	// document order — the topmost comment; `block: 'center'` keeps it clear of the
+	// sticky document-action header docked at the top of the scroller.
+	function scrollToFirstComment() {
+		const first = document.querySelector('mark[data-review-id]');
+		first?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+	}
+
 	const containerClasses =
 		variant === 'grouped'
 			? 'flex shrink-0 items-center gap-1 rounded-lg border border-border bg-surface-2 px-1.5 py-0.5'
@@ -49,14 +59,18 @@ export function ReviewToolbarActions({
 	return (
 		<div className={containerClasses} data-testid="review-toolbar">
 			{count > 0 && (
-				<span
-					className="inline-flex items-center gap-1 rounded-full bg-neutral-soft px-2 py-0.5 text-[11px] font-medium text-neutral-soft-fg"
-					data-testid="review-count-chip"
-					title={`${count} review comment${count === 1 ? '' : 's'}`}
-				>
-					<MessageSquare className="h-3 w-3" />
-					{count}
-				</span>
+				<Tooltip content="Jump to the first review comment">
+					<button
+						type="button"
+						aria-label={`Jump to the first of ${count} review comment${count === 1 ? '' : 's'}`}
+						data-testid="review-count-chip"
+						onClick={scrollToFirstComment}
+						className="inline-flex cursor-pointer items-center gap-1 rounded-full bg-neutral-soft px-2 py-0.5 text-[11px] font-medium text-neutral-soft-fg transition-colors hover:bg-surface-3 hover:text-text-1"
+					>
+						<MessageSquare className="h-3 w-3" />
+						{count}
+					</button>
+				</Tooltip>
 			)}
 			<Tooltip content="Action this review — copy a handoff for an agent">
 				<button
