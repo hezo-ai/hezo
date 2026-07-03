@@ -40,6 +40,24 @@ sign-in** (for example Claude Pro/Max, ChatGPT, or Gemini) — so you can put an
 existing plan to work instead of paying per token. You choose the method when you
 connect the provider.
 
+## Where to get an API key
+
+Each provider issues API keys from its own console. When you connect a provider, the
+form in Hezo walks you through these same steps inline.
+
+| Provider | Create your key at | Billing |
+|---|---|---|
+| **Anthropic** | [Claude Console → API keys](https://platform.claude.com/settings/keys) | Prepaid credits, billed per token |
+| **OpenAI** | [OpenAI Platform → API keys](https://platform.openai.com/api-keys) | Billed per token; add a payment method first (separate from ChatGPT) |
+| **Google** | [Google AI Studio → API keys](https://aistudio.google.com/apikey) | Free tier with strict rate limits; enable billing on the key's Google Cloud project for sustained use |
+| **Kimi** (Moonshot) | [Kimi Open Platform → API keys](https://platform.kimi.ai/console/api-keys) | Prepaid balance |
+| **DeepSeek** | [DeepSeek Platform → API keys](https://platform.deepseek.com/api_keys) | Prepaid balance |
+| **Z.ai** | [Z.ai platform → API keys](https://z.ai/manage-apikey/apikey-list) | Prepaid balance ([billing page](https://z.ai/manage-apikey/billing)) |
+
+Most consoles show a newly created key **only once** — copy it right away and paste it
+into Hezo, which stores it encrypted. Providers billed per token generally need a
+positive balance before agents can run.
+
 ## Use more than one
 
 You can connect **several providers at once** and keep them all available. That's

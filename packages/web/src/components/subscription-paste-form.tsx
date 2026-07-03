@@ -1,10 +1,7 @@
 import { AiProvider } from '@hezo/shared';
-import type { ReactNode } from 'react';
+import { InstructionsBox, type ProviderInstructionContent } from './provider-instructions';
 
-interface ProviderInstructions {
-	title: string;
-	steps: ReactNode[];
-	footer: ReactNode;
+interface ProviderInstructions extends ProviderInstructionContent {
 	placeholder: string;
 }
 
@@ -93,16 +90,5 @@ export const SUBSCRIPTION_INSTRUCTIONS: Partial<Record<AiProvider, ProviderInstr
 export function SubscriptionInstructions({ provider }: { provider: AiProvider }) {
 	const instructions = SUBSCRIPTION_INSTRUCTIONS[provider];
 	if (!instructions) return null;
-	return (
-		<div className="rounded-md border border-border bg-surface-2 p-3 text-[13px] text-text-2">
-			<p className="font-medium text-text-1 mb-2">{instructions.title}</p>
-			<ol className="list-decimal pl-5 space-y-1">
-				{instructions.steps.map((step, i) => (
-					// biome-ignore lint/suspicious/noArrayIndexKey: instruction list is static
-					<li key={i}>{step}</li>
-				))}
-			</ol>
-			<p className="mt-2">{instructions.footer}</p>
-		</div>
-	);
+	return <InstructionsBox content={instructions} />;
 }

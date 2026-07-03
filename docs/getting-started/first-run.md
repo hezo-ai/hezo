@@ -38,7 +38,9 @@ If you ever forget it, reset it with your master key from the sign-in screen. Se
 
 Agents need a model to run. Add at least one **AI provider** — paste an API key (or
 connect a subscription where supported) for Anthropic (Claude), OpenAI (ChatGPT),
-Google (Gemini), DeepSeek, Z.ai, or Kimi.
+Google (Gemini), DeepSeek, Z.ai, or Kimi. Don't have a key yet? The connect form walks
+you through creating one, with links to each provider's key console (also listed in
+[AI model support](/docs/ai-models)).
 
 You can add more than one provider and switch between them later, including giving an
 individual agent its own model. See [AI model support](/docs/ai-models).
