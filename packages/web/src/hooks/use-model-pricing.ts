@@ -4,7 +4,7 @@ import { queryClient } from '../lib/query-client';
 
 // Runtime model pricing is instance-global: per-model token rates used to
 // compute run cost across every team. The Admin (superuser) edits manual
-// overrides; the rest refreshes from the public LiteLLM feed. Mutations
+// overrides; the rest refreshes from the pricepertoken.com catalog. Mutations
 // invalidate + refetch (no optimism — the server validates/normalizes).
 export const MODEL_PRICING_KEY = ['instance', 'model-pricing'] as const;
 
@@ -15,7 +15,7 @@ export interface ModelPricingRow {
 	output_per_token: number;
 	cache_read_per_token: number | null;
 	cache_creation_per_token: number | null;
-	source: 'litellm' | 'manual';
+	source: 'pricepertoken' | 'manual';
 	updated_at: string;
 }
 

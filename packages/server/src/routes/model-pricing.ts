@@ -11,7 +11,7 @@ import {
 	deleteManualRate,
 	listModelPricing,
 	type ManualRateInput,
-	refreshPricingFromFeed,
+	refreshPricingFromPricePerToken,
 	upsertManualRate,
 } from '../services/pricing';
 
@@ -102,7 +102,7 @@ modelPricingRoutes.post('/model-pricing/refresh', async (c) => {
 	const db = c.get('db');
 	const pricing = c.get('pricing');
 	try {
-		const count = pricing ? await pricing.refresh() : await refreshPricingFromFeed(db);
+		const count = pricing ? await pricing.refresh() : await refreshPricingFromPricePerToken(db);
 		return ok(c, { refreshed: count });
 	} catch (e) {
 		return err(c, 'UPSTREAM_ERROR', `Pricing refresh failed: ${(e as Error).message}`, 503);

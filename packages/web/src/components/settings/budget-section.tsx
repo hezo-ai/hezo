@@ -5,7 +5,10 @@ export function BudgetSection({ projectId }: { projectId: string }) {
 	const { data: costs } = useCosts(projectId, { group_by: 'agent' });
 	return (
 		<section>
-			<SectionHeader title="Budget" desc="Spending overview across agents." />
+			<SectionHeader
+				title="Budget"
+				desc="Spending overview across agents. Token costs are computed at non-cached rates, so figures are a conservative upper-bound estimate."
+			/>
 			{costs?.summary?.length === 0 ? (
 				<p className="text-[13px] text-text-3">No spend recorded.</p>
 			) : (

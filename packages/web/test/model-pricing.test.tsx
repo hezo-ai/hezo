@@ -13,13 +13,13 @@ async function seedOverride(
 	if (res.status !== 201) throw new Error(`seed override failed: ${res.status}`);
 }
 
-test('model pricing renders below the AI providers table and creates an override', async () => {
+test('model pricing lists the baked catalog plus overrides and creates an override', async () => {
 	const { findByText, findByRole, getByRole, getByPlaceholderText, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async (ctx) => {
 			await seedOverride(ctx, {
-				model_id: 'seeded-model',
-				input_per_token: 0.000003,
+				model_id: 'seeded-custom-model',
+				input_per_token: 0.000987,
 				output_per_token: 0.000015,
 			});
 		},
@@ -29,21 +29,27 @@ test('model pricing renders below the AI providers table and creates an override
 	// pricing section below it.
 	await findByRole('heading', { name: 'AI providers' });
 	await findByRole('heading', { name: 'Model pricing' });
-	await findByText('seeded-model');
-	await findByText('$3.00');
 
-	// Open the override form and add a model the feed doesn't carry.
+	// The blurb states the single source and the conservative posture.
+	await findByText(/Rates refresh daily from/);
+
+	// The migration-baked catalog renders alongside the seeded manual row.
+	await findByText('claude-opus-4.8', undefined, { timeout: 10_000 });
+	await findByText('seeded-custom-model');
+	await findByText('$987.00');
+
+	// Open the override form and add a model the catalog doesn't carry.
 	await user.click(getByRole('button', { name: 'Override' }));
-	await user.type(getByPlaceholderText('Model id (e.g. deepseek-v4-pro)'), 'deepseek-v4-pro');
+	await user.type(getByPlaceholderText('Model id (e.g. my-custom-model)'), 'my-fine-tune');
 	await user.type(getByPlaceholderText('Input $ / Mtok'), '0.5');
 	await user.type(getByPlaceholderText('Output $ / Mtok'), '1.5');
 	await user.click(getByRole('button', { name: 'Save override' }));
 
 	// The new override appears after the invalidate + refetch.
-	await findByText('deepseek-v4-pro');
+	await findByText('my-fine-tune');
 });
 
-test('the Model pricing help dialog explains that reported cost is preferred over the table', async () => {
+test('the Model pricing help dialog explains table-only pricing and the conservative estimate', async () => {
 	const { findByTestId, findByText, queryByText, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 	});
@@ -54,8 +60,12 @@ test('the Model pricing help dialog explains that reported cost is preferred ove
 
 	await user.click(help);
 
-	// The modal states the precedence: runtime-reported cost wins, table is the fallback.
+	// The modal states the model: the table prices every run (runtime-reported
+	// dollar figures are ignored), and the missing cache rates make recorded
+	// costs a conservative upper bound.
 	await findByText('How run costs are calculated');
-	await findByText(/Reported by the run/);
-	await findByText(/Computed from this table/);
+	await findByText(/Every run is priced from this table/);
+	await findByText(/cached reads and writes are billed at/);
+	// The old (wrong) precedence claim — runtime-reported cost wins — is gone.
+	expect(queryByText(/Reported by the run/)).toBeNull();
 });

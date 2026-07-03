@@ -135,9 +135,10 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	setStartupPhase('seed');
 	await runSeed(db);
 
-	// Runtime model pricing: seed the table from the bundled snapshot if empty,
-	// load it into memory, and (unless disabled) refresh from the live LiteLLM
-	// feed in the background. Drives per-run cost across every runtime.
+	// Runtime model pricing: load the table into memory (migrations bake in a
+	// catalog snapshot, so it's never empty) and, unless disabled, refresh from
+	// the live pricepertoken.com catalog in the background. Drives per-run cost
+	// across every runtime; the job manager re-refreshes daily.
 	setStartupPhase('pricing');
 	const pricing = new PricingService(db);
 	await pricing.init({ refresh: !process.env.HEZO_SKIP_PRICING_REFRESH });

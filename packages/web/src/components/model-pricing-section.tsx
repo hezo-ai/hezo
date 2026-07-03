@@ -172,39 +172,41 @@ export function ModelPricingSection() {
 						>
 							<div className="flex flex-col gap-3 text-sm text-text-2 leading-relaxed">
 								<p>
-									Every agent run's dollar cost comes from one of two sources, in order of
-									preference:
+									<span className="font-semibold text-text-1">
+										Every run is priced from this table.
+									</span>{' '}
+									Hezo multiplies the token counts each runtime reports by these per-model rates.
+									Dollar figures a runtime emits itself (e.g.{' '}
+									<span className="font-mono">total_cost_usd</span>) are ignored — they are
+									client-side estimates from the CLI's own rate card, which is wrong for third-party
+									endpoints.
 								</p>
-								<ol className="flex flex-col gap-2 list-decimal pl-5">
-									<li>
-										<span className="font-semibold text-text-1">Reported by the run.</span> When a
-										run's runtime reports an authoritative cost (e.g. Claude Code's{' '}
-										<span className="font-mono">total_cost_usd</span>), Hezo uses that figure
-										directly — it already reflects the provider's real billing, including any
-										peak/off-peak pricing.
-									</li>
-									<li>
-										<span className="font-semibold text-text-1">Computed from this table.</span>{' '}
-										When a run reports no cost — some runtimes emit only token counts — Hezo
-										multiplies the run's token counts by these per-model rates.
-									</li>
-								</ol>
 								<p>
-									Rows auto-refresh from the public <span className="font-mono">LiteLLM</span> and{' '}
-									<span className="font-mono">llm-prices</span> feeds. Add a manual override for a
-									model the feeds lack (or to correct one) — overrides win.
+									Rates refresh from <span className="font-mono">pricepertoken.com</span> daily and
+									at startup; the Refresh button forces one now.
+								</p>
+								<p>
+									<span className="font-semibold text-text-1">
+										Costs are a conservative upper-bound estimate.
+									</span>{' '}
+									The catalog carries no cache pricing, so cached reads and writes are billed at the
+									full input rate. Providers charge cache reads at a steep discount, so real bills
+									are usually lower than the recorded figures — never higher.
+								</p>
+								<p>
+									A manual override wins over the catalog for its model and <em>can</em> set cache
+									rates — add one for exact billing, to correct a rate, or to price a model the
+									catalog lacks.
 								</p>
 							</div>
 						</HelpDialog>
 					</div>
 					<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
-						The fallback for pricing an agent run: when a run's runtime doesn't report its own cost,
-						these per-token rates turn its token counts into a dollar cost, across every runtime.
-						When a run <em>does</em> report a cost (e.g. via{' '}
-						<span className="font-mono">total_cost_usd</span>), Hezo prefers that. Feed rows refresh
-						from <span className="font-mono">LiteLLM</span>; a manual override wins for that model —
-						use it for ids the feed doesn't carry (e.g.{' '}
-						<span className="font-mono">deepseek-v4-pro</span>).
+						Every agent run is priced from this table: the run's token counts times these per-token
+						rates. Rates refresh daily from <span className="font-mono">pricepertoken.com</span>,
+						which carries no cache pricing — cached reads/writes are billed at the full input rate,
+						so recorded costs are a conservative upper-bound estimate. A manual override wins for
+						its model and can set cache rates for exact billing.
 					</p>
 				</div>
 				<div className="flex items-center gap-2 shrink-0">
@@ -229,7 +231,7 @@ export function ModelPricingSection() {
 			{showForm && (
 				<form onSubmit={handleSubmit} className="flex flex-col gap-2 mb-4">
 					<Input
-						placeholder="Model id (e.g. deepseek-v4-pro)"
+						placeholder="Model id (e.g. my-custom-model)"
 						value={modelId}
 						onChange={(e) => setModelId(e.target.value)}
 						required
@@ -278,7 +280,7 @@ export function ModelPricingSection() {
 
 			{!rows.length ? (
 				<p className="text-[13px] text-text-2">
-					No pricing rows yet. Refresh from the feed, or add a manual override above.
+					No pricing rows yet. Refresh from pricepertoken.com, or add a manual override above.
 				</p>
 			) : (
 				<DataTable columns={columns} data={rows} rowKey={(row) => row.id} />
