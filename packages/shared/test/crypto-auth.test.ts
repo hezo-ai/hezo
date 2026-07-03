@@ -100,39 +100,60 @@ describe('generatePasswordSalt', () => {
 describe('derivePasswordKeyPair', () => {
 	const SALT = '00112233445566778899aabbccddeeff';
 
-	it('is deterministic for the same password + salt', async () => {
-		const a = await derivePasswordKeyPair('correct horse battery staple', SALT);
-		const b = await derivePasswordKeyPair('correct horse battery staple', SALT);
-		expect(a.privateKey).toEqual(b.privateKey);
-		expect(a.privateKey).toHaveLength(32);
-		expect(a.publicKeyHex).toBe(b.publicKeyHex);
-		expect(a.publicKeyHex).toMatch(/^[0-9a-f]{64}$/);
-	});
+	// The password KDF is scrypt at N=2^15 — memory-hard on purpose, ~1-3s per
+	// derivation on a shared CI runner. Tests deriving twice overrun vitest's
+	// 5s default, so each carries an explicit generous timeout.
+	const KDF_TIMEOUT = 30_000;
 
-	it('differs for a different password', async () => {
-		const a = await derivePasswordKeyPair('password', SALT);
-		const b = await derivePasswordKeyPair('Password', SALT);
-		expect(a.publicKeyHex).not.toBe(b.publicKeyHex);
-	});
+	it(
+		'is deterministic for the same password + salt',
+		async () => {
+			const a = await derivePasswordKeyPair('correct horse battery staple', SALT);
+			const b = await derivePasswordKeyPair('correct horse battery staple', SALT);
+			expect(a.privateKey).toEqual(b.privateKey);
+			expect(a.privateKey).toHaveLength(32);
+			expect(a.publicKeyHex).toBe(b.publicKeyHex);
+			expect(a.publicKeyHex).toMatch(/^[0-9a-f]{64}$/);
+		},
+		KDF_TIMEOUT,
+	);
 
-	it('differs for a different salt (per-admin separation)', async () => {
-		const a = await derivePasswordKeyPair('password', SALT);
-		const b = await derivePasswordKeyPair('password', 'ffffffffffffffffffffffffffffffff');
-		expect(a.publicKeyHex).not.toBe(b.publicKeyHex);
-	});
+	it(
+		'differs for a different password',
+		async () => {
+			const a = await derivePasswordKeyPair('password', SALT);
+			const b = await derivePasswordKeyPair('Password', SALT);
+			expect(a.publicKeyHex).not.toBe(b.publicKeyHex);
+		},
+		KDF_TIMEOUT,
+	);
 
-	it('produces a keypair whose signatures verify (login round-trip)', async () => {
-		const salt = generatePasswordSalt();
-		const { privateKey, publicKeyHex } = await derivePasswordKeyPair('hunter2!!', salt);
-		const sig = signAuthMessage(privateKey, buildPasswordLoginMessage('deadbeef'));
-		expect(verifyAuthSignature(publicKeyHex, buildPasswordLoginMessage('deadbeef'), sig)).toBe(
-			true,
-		);
-		// A wrong password derives a different key, so its signature fails.
-		const wrong = await derivePasswordKeyPair('hunter3!!', salt);
-		const wrongSig = signAuthMessage(wrong.privateKey, buildPasswordLoginMessage('deadbeef'));
-		expect(verifyAuthSignature(publicKeyHex, buildPasswordLoginMessage('deadbeef'), wrongSig)).toBe(
-			false,
-		);
-	});
+	it(
+		'differs for a different salt (per-admin separation)',
+		async () => {
+			const a = await derivePasswordKeyPair('password', SALT);
+			const b = await derivePasswordKeyPair('password', 'ffffffffffffffffffffffffffffffff');
+			expect(a.publicKeyHex).not.toBe(b.publicKeyHex);
+		},
+		KDF_TIMEOUT,
+	);
+
+	it(
+		'produces a keypair whose signatures verify (login round-trip)',
+		async () => {
+			const salt = generatePasswordSalt();
+			const { privateKey, publicKeyHex } = await derivePasswordKeyPair('hunter2!!', salt);
+			const sig = signAuthMessage(privateKey, buildPasswordLoginMessage('deadbeef'));
+			expect(verifyAuthSignature(publicKeyHex, buildPasswordLoginMessage('deadbeef'), sig)).toBe(
+				true,
+			);
+			// A wrong password derives a different key, so its signature fails.
+			const wrong = await derivePasswordKeyPair('hunter3!!', salt);
+			const wrongSig = signAuthMessage(wrong.privateKey, buildPasswordLoginMessage('deadbeef'));
+			expect(
+				verifyAuthSignature(publicKeyHex, buildPasswordLoginMessage('deadbeef'), wrongSig),
+			).toBe(false);
+		},
+		KDF_TIMEOUT,
+	);
 });
