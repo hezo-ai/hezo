@@ -66,6 +66,10 @@ test('general section displays team info', async () => {
 	await within(general).findByRole('heading', { name: 'General' });
 	await within(general).findByText(team.name);
 	await within(general).findByText('Build great things');
+
+	// The Budget section discloses the conservative-estimate posture (cache
+	// traffic is billed at the full input rate).
+	await findByText(/conservative upper-bound estimate/);
 });
 
 test('automations section exposes the wake-mentioner toggle and persists the change', async () => {

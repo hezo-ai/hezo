@@ -87,7 +87,8 @@ function BudgetPage() {
 					Budget
 				</h1>
 				<p className="mt-1 text-[13px] text-text-2">
-					Track spend and set caps for this project and its agents.
+					Track spend and set caps for this project and its agents. Token costs are computed at
+					non-cached rates, so figures are a conservative upper-bound estimate.
 				</p>
 			</div>
 

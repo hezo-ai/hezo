@@ -15,8 +15,14 @@ Each agent run records what it cost, based on the tokens it used and the pricing
 the model it ran on. Costs roll up two ways — **per agent** and **per project** — so
 you can see exactly where spend is going from the budget view.
 
-Model pricing is built in and can be adjusted, so your reports reflect the rates you
-actually pay.
+Model pricing ships built in and refreshes daily from
+[pricepertoken.com](https://pricepertoken.com), so rates stay current without any
+setup. Recorded costs are a **conservative upper-bound estimate**: token costs are
+computed at non-cached rates (cached reads and writes are billed at the full input
+rate), and providers charge much less for cache traffic — so your real bill is
+typically lower than the figure Hezo shows, never higher. For exact billing on a
+model (or to correct a rate), add a manual pricing override in Settings — overrides
+win and can include cache rates.
 
 ## Budget windows
 

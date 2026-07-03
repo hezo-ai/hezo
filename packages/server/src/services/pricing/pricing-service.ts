@@ -1,19 +1,20 @@
 /**
  * Runtime model pricing: the in-memory source of truth for run cost.
  *
- * Loads the `model_pricing` table into a sync lookup map on boot (seeding from
- * the bundled snapshot if the table is empty), optionally kicks a background
- * refresh from the live feed, and answers `costCents(model, tokens)` with no
- * per-call DB or network. Operator (`manual`) rows win over feed (`litellm`)
- * rows; an unknown model resolves to `$0` with a one-time warning.
+ * Loads the `model_pricing` table into a sync lookup map on boot, optionally
+ * kicks a background refresh from the pricepertoken.com catalog, and answers
+ * `costCents(model, tokens)` with no per-call DB or network. The table starts
+ * populated — the `014` migration bakes in a catalog snapshot — and stays
+ * current via the boot refresh plus the daily job-manager cron. Operator
+ * (`manual`) rows win over feed (`pricepertoken`) rows; an unknown model
+ * resolves to `$0` with a one-time warning.
  */
 import type { PGlite } from '@electric-sql/pglite';
 import { type CostTokens, costCentsFromRate, type ModelRate } from '@hezo/shared';
 import { trackBackground } from '../../lib/background';
 import { logger } from '../../logger';
-import { loadSnapshotRates } from './feed';
-import { refreshPricingFromFeed } from './refresher';
-import { countModelPricing, listModelPricing, upsertFeedRates } from './repo';
+import { refreshPricingFromPricePerToken } from './refresher';
+import { listModelPricing } from './repo';
 
 const log = logger.child('pricing');
 
@@ -22,7 +23,10 @@ const log = logger.child('pricing');
  * dated, or context-tagged id (`openai/gpt-5`, `claude-opus-4-8-20260205`,
  * `deepseek-v4-pro[1m]`, `glm-4.7[200k]`) while the feed keys the bare base id —
  * strip those so they resolve to the same rate. The context tag is any bracketed
- * window size (`[1m]`, `[2m]`, `[200k]`, …), not only `[1m]`.
+ * window size (`[1m]`, `[2m]`, `[200k]`, …), not only `[1m]`. Version dots
+ * unify to dashes because the catalog and the runtimes disagree on the
+ * separator (`claude-opus-4.8` in the catalog, `claude-opus-4-8` from Claude
+ * Code) — both sides of the lookup normalize, so either spelling resolves.
  */
 export function normalizeModelId(id: string): string {
 	let s = id.toLowerCase().trim();
@@ -30,6 +34,7 @@ export function normalizeModelId(id: string): string {
 	if (slash >= 0) s = s.slice(slash + 1);
 	s = s.replace(/\[[^\]]*\]/g, '');
 	s = s.replace(/-\d{8}$/, '').replace(/-\d{4}-\d{2}-\d{2}$/, '');
+	s = s.replaceAll('.', '-');
 	return s;
 }
 
@@ -71,13 +76,11 @@ export class PricingService {
 	constructor(private readonly db: PGlite) {}
 
 	/**
-	 * Seed-if-empty, load into memory, and (optionally) start the background
-	 * refresh. `refresh` is opt-in so tests and offline boots don't hit the network.
+	 * Load into memory and (optionally) start the background refresh. `refresh`
+	 * is opt-in so tests and offline boots don't hit the network; the table is
+	 * never empty here — the `014` migration bakes in a catalog snapshot.
 	 */
 	async init(opts: { refresh?: boolean } = {}): Promise<void> {
-		if ((await countModelPricing(this.db)) === 0) {
-			await upsertFeedRates(this.db, loadSnapshotRates());
-		}
 		await this.reload();
 		if (opts.refresh) {
 			trackBackground(this.refresh().catch((e) => log.error('initial pricing refresh failed:', e)));
@@ -107,9 +110,11 @@ export class PricingService {
 		this.byNorm = byNorm;
 	}
 
-	/** Refresh from the live feed, then reload the in-memory maps. */
-	async refresh(fetchImpl?: Parameters<typeof refreshPricingFromFeed>[1]): Promise<number> {
-		const count = await refreshPricingFromFeed(this.db, fetchImpl);
+	/** Refresh from the live catalog, then reload the in-memory maps. */
+	async refresh(
+		fetchImpl?: Parameters<typeof refreshPricingFromPricePerToken>[1],
+	): Promise<number> {
+		const count = await refreshPricingFromPricePerToken(this.db, fetchImpl);
 		await this.reload();
 		return count;
 	}

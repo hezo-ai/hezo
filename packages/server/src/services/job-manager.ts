@@ -187,6 +187,9 @@ const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_0
 const WAKEUP_CRON = process.env.HEZO_WAKEUP_CRON ?? '*/5 * * * * *';
 const HEARTBEAT_CRON = process.env.HEZO_HEARTBEAT_CRON ?? '*/5 * * * * *';
 const INBOX_ARCHIVE_CRON = process.env.HEZO_INBOX_ARCHIVE_CRON ?? '0 0 3 * * *';
+// Daily model-pricing refresh from the pricepertoken.com catalog. Failures
+// log and leave the existing rows — the boot-time refresh / next tick retries.
+const PRICING_REFRESH_CRON = process.env.HEZO_PRICING_REFRESH_CRON ?? '0 0 2 * * *';
 // Daily check for a newer release; when auto-update is enabled and one is found,
 // download+verify+stage it so an operator "Update & restart" is instant.
 const UPDATE_CHECK_CRON = process.env.HEZO_UPDATE_CHECK_CRON ?? '0 0 4 * * *';
@@ -458,6 +461,13 @@ export class JobManager {
 			log: cronLog,
 			onTick: () => this.guarded('update-check', () => this.checkForUpdate()),
 		});
+		if (this.deps.pricing) {
+			this.cron.createJob('pricing-refresh', {
+				cron: PRICING_REFRESH_CRON,
+				log: cronLog,
+				onTick: () => this.guarded('pricing-refresh', () => this.refreshPricing()),
+			});
+		}
 		if (this.deps.telemetry?.enabled) {
 			this.cron.createJob('telemetry', {
 				cron: TELEMETRY_CRON,
@@ -2543,6 +2553,12 @@ export class JobManager {
 	private async checkForUpdate(): Promise<void> {
 		if (!isSupervisedWorker()) return;
 		await ensureUpdateStaged(this.deps.dataDir, getLatestInfo);
+	}
+
+	private async refreshPricing(): Promise<void> {
+		if (!this.deps.pricing) return;
+		const count = await this.deps.pricing.refresh();
+		log.info(`Model pricing refreshed from pricepertoken.com (${count} models)`);
 	}
 
 	private async runTelemetry(): Promise<void> {

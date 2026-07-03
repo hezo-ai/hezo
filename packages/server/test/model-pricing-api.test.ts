@@ -5,6 +5,7 @@ import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp } from './helpers/app';
+import { pptModel, stubPricePerTokenFetch } from './helpers/pricing';
 
 let app: Hono<Env>;
 let db: PGlite;
@@ -35,10 +36,17 @@ function post(body: unknown, authToken = token) {
 }
 
 describe('model pricing API', () => {
-	it('lists pricing rows (initially empty)', async () => {
+	it('lists the migration-baked catalog rows', async () => {
 		const res = await app.request('/api/model-pricing', { headers: authHeader(token) });
 		expect(res.status).toBe(200);
-		expect((await res.json()).data).toEqual([]);
+		const rows = (await res.json()).data as Array<{ model_id: string; source: string }>;
+		// The 014 migration bakes the pricepertoken catalog in, so the list is
+		// populated before any refresh has run.
+		expect(rows.length).toBeGreaterThan(400);
+		expect(rows.every((r) => r.source === 'pricepertoken' || r.source === 'manual')).toBe(true);
+		expect(rows.some((r) => r.model_id === 'claude-opus-4.8' && r.source === 'pricepertoken')).toBe(
+			true,
+		);
 	});
 
 	it('creates a manual override and surfaces it in the list', async () => {
@@ -104,16 +112,13 @@ describe('model pricing API', () => {
 		expect(again.status).toBe(404);
 	});
 
-	it('refreshes from the (stubbed) feed', async () => {
+	it('refreshes from the (stubbed) pricepertoken MCP server', async () => {
 		const original = globalThis.fetch;
-		globalThis.fetch = (async () => ({
-			ok: true,
-			status: 200,
-			json: async () => ({
-				'feed-model-a': { input_cost_per_token: 0.00001, output_cost_per_token: 0.00002 },
-				'feed-model-b': { input_cost_per_token: 0.00003, output_cost_per_token: 0.00004 },
-			}),
-		})) as unknown as typeof fetch;
+		const { fetchImpl } = stubPricePerTokenFetch([
+			pptModel('acme-feed-model-a', 'Acme', 10, 20),
+			pptModel('acme-feed-model-b', 'Acme', 30, 40),
+		]);
+		globalThis.fetch = fetchImpl as unknown as typeof fetch;
 		try {
 			const res = await app.request('/api/model-pricing/refresh', {
 				method: 'POST',
@@ -127,6 +132,23 @@ describe('model pricing API', () => {
 
 		const list = await app.request('/api/model-pricing', { headers: authHeader(token) });
 		const rows = (await list.json()).data as Array<{ model_id: string; source: string }>;
-		expect(rows.some((r) => r.model_id === 'feed-model-a' && r.source === 'litellm')).toBe(true);
+		expect(rows.some((r) => r.model_id === 'feed-model-a' && r.source === 'pricepertoken')).toBe(
+			true,
+		);
+	});
+
+	it('returns 503 when the upstream catalog is unavailable', async () => {
+		const original = globalThis.fetch;
+		const { fetchImpl } = stubPricePerTokenFetch([], { status: 502 });
+		globalThis.fetch = fetchImpl as unknown as typeof fetch;
+		try {
+			const res = await app.request('/api/model-pricing/refresh', {
+				method: 'POST',
+				headers: authHeader(token),
+			});
+			expect(res.status).toBe(503);
+		} finally {
+			globalThis.fetch = original;
+		}
 	});
 });

@@ -185,8 +185,13 @@ chat-enabled agent's automatically-maintained long-term memory (§ 4).
 
 **Costs & budgets.** `cost_entries` is the immutable per-run spend ledger, attributed to
 the AI provider config that produced it — **never** team-scoped. `model_pricing` holds
-per-model token rates (a bundled LiteLLM snapshot refreshed from the public feed, with
-`source='manual'` operator overrides winning). Budgets are **windowed and computed on
+per-model token rates from a single source: the pricepertoken.com MCP catalog
+(`get_all_models` over raw JSON-RPC), fetched at boot and daily by the job manager and
+upserted as `source='pricepertoken'`; a migration bakes a catalog snapshot into the
+table so a fresh instance prices runs before its first fetch, and `source='manual'`
+operator overrides win at lookup. The catalog carries no cache rates, so cache
+reads/writes bill at the full input rate — recorded costs are a conservative upper
+bound (a manual override can set cache rates for exact billing). Budgets are **windowed and computed on
 demand**: limits live as `daily_/weekly_/monthly_budget_cents` on `member_agents` and
 `projects` (0 = unlimited; there is **no team budget**), and spend is summed from
 `cost_entries` over rolling UTC windows — no counter, no reset event (§ 5). A run killed

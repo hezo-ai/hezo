@@ -1,11 +1,12 @@
 /**
- * `model_pricing` table access. Feed rows (`source='litellm'`) and operator
- * overrides (`source='manual'`) are upserted on the `(model_id, source)` key;
- * the service decides precedence (manual wins) at read time.
+ * `model_pricing` table access. Feed rows (`source='pricepertoken'`) and
+ * operator overrides (`source='manual'`) are upserted on the
+ * `(model_id, source)` key; the service decides precedence (manual wins) at
+ * read time.
  */
 import type { PGlite } from '@electric-sql/pglite';
 import { withTransaction } from '../../lib/sql';
-import type { ParsedRate } from './feed';
+import type { ParsedRate } from './pricepertoken';
 
 export interface ModelPricingRow {
 	id: string;
@@ -14,7 +15,7 @@ export interface ModelPricingRow {
 	output_per_token: number;
 	cache_read_per_token: number | null;
 	cache_creation_per_token: number | null;
-	source: 'litellm' | 'manual';
+	source: 'pricepertoken' | 'manual';
 	updated_at: string;
 }
 
@@ -40,8 +41,9 @@ export async function listModelPricing(db: PGlite): Promise<ModelPricingRow[]> {
 
 /**
  * Bulk-upsert feed rows. Runs in a single transaction, chunked so a parameter
- * blowout (the feed is ~1.5k models) can't exceed a statement's bind limit.
- * Only touches `source='litellm'` rows — operator overrides are never clobbered.
+ * blowout (the catalog is ~600 models) can't exceed a statement's bind limit.
+ * Only touches `source='pricepertoken'` rows — operator overrides are never
+ * clobbered.
  */
 export async function upsertFeedRates(db: PGlite, rates: ParsedRate[]): Promise<void> {
 	if (rates.length === 0) return;
@@ -53,7 +55,9 @@ export async function upsertFeedRates(db: PGlite, rates: ParsedRate[]): Promise<
 			const params: unknown[] = [];
 			chunk.forEach((rate, j) => {
 				const b = j * 5;
-				values.push(`($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, 'litellm', now())`);
+				values.push(
+					`($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, 'pricepertoken', now())`,
+				);
 				params.push(
 					rate.modelId,
 					rate.inputPerToken,

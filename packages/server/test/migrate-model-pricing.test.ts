@@ -12,7 +12,7 @@ afterEach(async () => {
 	await db.close();
 });
 
-describe('model_pricing baseline schema', () => {
+describe('model_pricing schema (after all migrations)', () => {
 	it('creates the model_pricing table with the expected columns', async () => {
 		const r = await db.query<{ column_name: string }>(
 			`SELECT column_name FROM information_schema.columns WHERE table_name = 'model_pricing'`,
@@ -32,10 +32,17 @@ describe('model_pricing baseline schema', () => {
 		);
 	});
 
+	it('starts populated with the baked pricepertoken catalog', async () => {
+		const r = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM model_pricing WHERE source = 'pricepertoken'`,
+		);
+		expect(r.rows[0].c).toBeGreaterThan(400);
+	});
+
 	it('allows feed and manual rows to coexist for one model_id', async () => {
 		await db.query(
 			`INSERT INTO model_pricing (model_id, input_per_token, output_per_token, source)
-			 VALUES ('m', 1e-6, 2e-6, 'litellm'), ('m', 9e-6, 9e-6, 'manual')`,
+			 VALUES ('m', 1e-6, 2e-6, 'pricepertoken'), ('m', 9e-6, 9e-6, 'manual')`,
 		);
 		const r = await db.query<{ c: number }>(
 			"SELECT COUNT(*)::int AS c FROM model_pricing WHERE model_id = 'm'",
@@ -54,11 +61,24 @@ describe('model_pricing baseline schema', () => {
 		).rejects.toThrow();
 	});
 
-	it('rejects an out-of-domain source via the CHECK constraint', async () => {
+	it('rejects out-of-domain sources via the CHECK constraint', async () => {
 		await expect(
 			db.query(
 				"INSERT INTO model_pricing (model_id, input_per_token, output_per_token, source) VALUES ('x', 1e-6, 2e-6, 'bogus')",
 			),
 		).rejects.toThrow();
+		// The retired feed source is out of the domain post-014.
+		await expect(
+			db.query(
+				"INSERT INTO model_pricing (model_id, input_per_token, output_per_token, source) VALUES ('x', 1e-6, 2e-6, 'litellm')",
+			),
+		).rejects.toThrow();
+	});
+
+	it("defaults source to 'pricepertoken'", async () => {
+		const r = await db.query<{ source: string }>(
+			"INSERT INTO model_pricing (model_id, input_per_token, output_per_token) VALUES ('defaulted', 1e-6, 2e-6) RETURNING source",
+		);
+		expect(r.rows[0].source).toBe('pricepertoken');
 	});
 });
