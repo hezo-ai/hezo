@@ -10,13 +10,25 @@ interface MentionTextareaProps extends TextareaProps {
 	projectSlug?: string;
 	value: string;
 	onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+	/** Class override for the relative wrapper (e.g. `flex-1` so the textarea can
+	 *  grow to fill a flex column). Defaults to `relative`. */
+	containerClassName?: string;
 }
 
 const TOKEN_RE = /@([a-z0-9][\w-]*)?$/i;
 
 export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaProps>(
 	function MentionTextarea(
-		{ projectId, projectSlug, value, onChange, onKeyDown, onBlur, ...rest },
+		{
+			projectId,
+			projectSlug,
+			value,
+			onChange,
+			onKeyDown,
+			onBlur,
+			containerClassName = 'relative',
+			...rest
+		},
 		forwardedRef,
 	) {
 		const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -181,7 +193,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
 		);
 
 		return (
-			<div className="relative">
+			<div className={containerClassName}>
 				<Textarea
 					{...rest}
 					ref={setTextareaRef}

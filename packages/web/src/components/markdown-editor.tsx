@@ -87,6 +87,13 @@ interface MarkdownEditorProps {
 	/** Markdown rendered when there is nothing to preview. */
 	emptyPreviewText?: string;
 	defaultMode?: MarkdownEditorMode;
+	/**
+	 * Grow to fill the available height of a flex column (both the edit textarea
+	 * and the preview). The caller must place this editor in a `flex flex-col`
+	 * parent with a bounded height. Used by the fullscreen create-task dialog so
+	 * the description occupies most of the space.
+	 */
+	fill?: boolean;
 }
 
 const TAB_BASE = 'px-2.5 py-1 rounded';
@@ -122,6 +129,7 @@ export function MarkdownEditor({
 	previewTestId,
 	emptyPreviewText = '',
 	defaultMode = 'edit',
+	fill = false,
 }: MarkdownEditorProps) {
 	const [mode, setMode] = useState<MarkdownEditorMode>(defaultMode);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -154,7 +162,7 @@ export function MarkdownEditor({
 	const previewBody = previewContent ?? value;
 
 	return (
-		<div>
+		<div className={fill ? 'flex min-h-0 flex-1 flex-col' : undefined}>
 			<div className="flex items-center justify-between gap-2 mb-1.5">
 				{label ? <span className={labelClassName}>{label}</span> : <span />}
 				<div
@@ -184,7 +192,7 @@ export function MarkdownEditor({
 			</div>
 
 			{mode === 'edit' ? (
-				<>
+				<div className={fill ? 'flex min-h-0 flex-1 flex-col' : 'contents'}>
 					{chips && chips.length > 0 && (
 						<div className="flex flex-wrap gap-1.5 mb-2">
 							{chips.map((chip) => (
@@ -202,14 +210,16 @@ export function MarkdownEditor({
 						placeholder={placeholder}
 						required={required}
 						rows={rows}
-						className={className}
+						containerClassName={fill ? 'relative flex min-h-0 flex-1 flex-col' : 'relative'}
+						wrapperClassName={fill ? 'flex min-h-0 flex-1 flex-col' : undefined}
+						className={fill ? `min-h-0 flex-1 resize-none ${className ?? ''}` : className}
 					/>
 					{helpText && <p className="text-xs text-text-3 mt-1">{helpText}</p>}
-				</>
+				</div>
 			) : (
 				<div
 					data-testid={previewTestId}
-					className={`${previewClassName} rounded-md border border-border bg-surface-2 px-3 py-2 text-sm`}
+					className={`${fill ? 'min-h-0 flex-1 overflow-y-auto' : previewClassName} rounded-md border border-border bg-surface-2 px-3 py-2 text-sm`}
 				>
 					{isPreviewLoading ? (
 						<div className="text-text-2 text-xs">Resolving…</div>

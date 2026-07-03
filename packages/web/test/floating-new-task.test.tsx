@@ -97,6 +97,37 @@ test('the sidebar "+" next to Tasks opens the create-task dialog', async () => {
 	);
 });
 
+test('the create-task dialog toggles between fullscreen and the default size', async () => {
+	const { findByTestId, user } = await renderOnProjectTasks();
+
+	await user.click(await findByTestId('floating-new-task'));
+
+	// Starts at the default (non-fullscreen) size.
+	const toggle = await findByTestId('create-task-fullscreen');
+	expect(toggle.getAttribute('aria-label')).toBe('Enter fullscreen');
+	const content = document.body.querySelector('[data-fullscreen]');
+	expect(content?.getAttribute('data-fullscreen')).toBe('false');
+
+	// Toggling expands it to fullscreen…
+	await user.click(toggle);
+	await waitFor(() => {
+		expect(document.body.querySelector('[data-fullscreen]')?.getAttribute('data-fullscreen')).toBe(
+			'true',
+		);
+	});
+	expect((await findByTestId('create-task-fullscreen')).getAttribute('aria-label')).toBe(
+		'Exit fullscreen',
+	);
+
+	// …and toggling again collapses it back.
+	await user.click(await findByTestId('create-task-fullscreen'));
+	await waitFor(() => {
+		expect(document.body.querySelector('[data-fullscreen]')?.getAttribute('data-fullscreen')).toBe(
+			'false',
+		);
+	});
+});
+
 test('the floating new-task button is available off a project route and offers a project picker', async () => {
 	const { findByTestId, user } = await renderApp({
 		initialPath: '/home',

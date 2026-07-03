@@ -1,14 +1,18 @@
 import { CAPTAIN_AGENT_SLUG } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useNavigate } from '@tanstack/react-router';
-import { ChevronDown, Loader2, X } from 'lucide-react';
+import { ChevronDown, Loader2, Maximize2, Minimize2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { useAllVisibleProjects, useProjectMeta } from '../hooks/use-projects';
 import { useCreateTask } from '../hooks/use-tasks';
 import { MarkdownEditor } from './markdown-editor';
 import { Button } from './ui/button';
-import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
+import {
+	dialogContentClassName,
+	dialogOverlayClassName,
+	fullscreenContentClassName,
+} from './ui/dialog';
 import { Input } from './ui/input';
 
 interface CreateTaskDialogProps {
@@ -34,6 +38,10 @@ export function CreateTaskDialog({
 	const [priority, setPriority] = useState('medium');
 	const [moreOpen, setMoreOpen] = useState(false);
 	const [pickedProjectId, setPickedProjectId] = useState('');
+	// Fullscreen mode grows the panel to fill the viewport (desktop only — the
+	// dialog is already near-full-screen on mobile) and lets the description
+	// occupy most of the space, mirroring the CEO chat's expand affordance.
+	const [fullscreen, setFullscreen] = useState(false);
 
 	// With `selectProject` the picker drives the target; otherwise the fixed prop does.
 	const effectiveProjectId = selectProject ? pickedProjectId : (projectId ?? '');
@@ -93,21 +101,40 @@ export function CreateTaskDialog({
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
 				<Dialog.Overlay className={dialogOverlayClassName} />
-				<Dialog.Content className={dialogContentClassName.lg}>
-					<div className="flex items-center justify-between mb-4">
+				<Dialog.Content
+					data-fullscreen={fullscreen}
+					className={fullscreen ? fullscreenContentClassName : dialogContentClassName.lg}
+				>
+					<div className="flex items-center justify-between mb-4 shrink-0">
 						<Dialog.Title className="text-lg font-semibold">Create Task</Dialog.Title>
-						<Dialog.Close asChild>
+						<div className="flex items-center gap-1">
+							{/* Fullscreen toggle is desktop-only — the dialog already fills the
+							    screen on mobile, where the toggle would be a no-op. */}
 							<button
 								type="button"
-								className="text-text-2 hover:text-text-1 p-2 -m-2"
-								aria-label="Close"
+								onClick={() => setFullscreen((v) => !v)}
+								aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+								data-testid="create-task-fullscreen"
+								className="hidden text-text-2 hover:text-text-1 p-2 -m-2 sm:block"
 							>
-								<X className="w-4 h-4" />
+								{fullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
 							</button>
-						</Dialog.Close>
+							<Dialog.Close asChild>
+								<button
+									type="button"
+									className="text-text-2 hover:text-text-1 p-2 -m-2"
+									aria-label="Close"
+								>
+									<X className="w-4 h-4" />
+								</button>
+							</Dialog.Close>
+						</div>
 					</div>
 
-					<form onSubmit={handleSubmit} className="flex flex-col gap-4">
+					<form
+						onSubmit={handleSubmit}
+						className={fullscreen ? 'flex min-h-0 flex-1 flex-col gap-4' : 'flex flex-col gap-4'}
+					>
 						{selectProject && (
 							<label className="flex flex-col gap-1.5">
 								<span className="text-sm text-text-2">Project *</span>
@@ -148,6 +175,7 @@ export function CreateTaskDialog({
 							placeholder="Optional"
 							previewClassName="min-h-[72px]"
 							emptyPreviewText="_(nothing to preview)_"
+							fill={fullscreen}
 						/>
 
 						<label className="flex flex-col gap-1.5">
