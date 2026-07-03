@@ -6,3 +6,10 @@
  */
 export const TEST_MNEMONIC =
 	'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+
+/**
+ * The e2e admin password. The mnemonic only unlocks the instance now — a session
+ * is minted only by the password — so helpers exchange the master-key setup token
+ * for a session by enrolling this password's verifier.
+ */
+export const TEST_PASSWORD = 'e2e-admin-password';

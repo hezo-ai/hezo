@@ -76,11 +76,25 @@ describe('password login (challenge-response)', () => {
 	});
 
 	it('throttles after repeated failures, then locks with 429', async () => {
-		for (let i = 0; i < 5; i++) {
-			const res = await passwordLogin('wrong-guess');
-			expect(res.status).toBe(401);
+		// A well-formed but wrong signature fails verification without deriving a
+		// key — the throttle counts failed verifies, so we avoid scrypt here (which
+		// is intentionally slow and, under CI coverage instrumentation, would blow
+		// the test timeout across six logins).
+		const badSig = '00'.repeat(64);
+		async function badVerify(): Promise<Response> {
+			const ch = await ctx.app.request('/api/auth/password-challenge', { method: 'POST' });
+			const { data } = (await ch.json()) as { data: { challenge_id: string } };
+			return ctx.app.request('/api/auth/password-verify', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ challenge_id: data.challenge_id, signature: badSig }),
+			});
 		}
-		const locked = await passwordLogin(ctx.password); // correct, but locked out now
+		for (let i = 0; i < 5; i++) {
+			expect((await badVerify()).status).toBe(401);
+		}
+		// The throttle short-circuits before verifying, so the next attempt is 429.
+		const locked = await badVerify();
 		expect(locked.status).toBe(429);
 		const body = (await locked.json()) as { error: { code: string } };
 		expect(body.error.code).toBe('TOO_MANY_ATTEMPTS');
@@ -98,6 +112,14 @@ describe('password enrollment / change (POST /api/auth/password)', () => {
 	});
 
 	it('changes the password when authenticated with a session, and rotates login', async () => {
+		// Snapshot the seeded verifier so we can restore it by DB write afterward —
+		// re-enrolling would cost another slow scrypt derivation.
+		const orig = (
+			await ctx.db.query<{ password_salt: string; password_public_key: string }>(
+				`SELECT password_salt, password_public_key FROM users WHERE is_superuser = true LIMIT 1`,
+			)
+		).rows[0];
+
 		const newPassword = 'a-brand-new-password';
 		const res = await ctx.app.request('/api/auth/password', {
 			method: 'POST',
@@ -113,25 +135,11 @@ describe('password enrollment / change (POST /api/auth/password)', () => {
 		resetLoginThrottle();
 		expect((await passwordLogin(ctx.password)).status).toBe(401);
 
-		// Restore the seeded password so later tests/order are unaffected.
-		await ctx.app.request('/api/auth/password', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json', ...authHeader(ctx.token) },
-			body: JSON.stringify({
-				salt: ctx.passwordSalt,
-				public_key: (await derivePasswordKeyPair(ctx.password, ctx.passwordSalt)).publicKeyHex,
-				signature: await (async () => {
-					const { publicKeyHex, privateKey } = await derivePasswordKeyPair(
-						ctx.password,
-						ctx.passwordSalt,
-					);
-					return signAuthMessage(
-						privateKey,
-						buildPasswordSetupMessage(publicKeyHex, ctx.passwordSalt),
-					);
-				})(),
-			}),
-		});
+		// Restore the seeded verifier so later tests are unaffected (no scrypt).
+		await ctx.db.query(
+			`UPDATE users SET password_salt = $1, password_public_key = $2 WHERE is_superuser = true`,
+			[orig.password_salt, orig.password_public_key],
+		);
 	});
 
 	it('lets the master key (mnemonic) reset a forgotten password without a session', async () => {
