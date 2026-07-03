@@ -1,25 +1,33 @@
+import { readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { loadAgentRoles } from '../src/db/agent-roles';
 
 /**
  * Guard: the QA Engineer is the pre-merge approval gate for the software-development
  * team. Its role doc MUST require the PR's CI to be green before it approves for
- * merge, and MUST refuse to wave a red check through as an "environment" /
- * "infrastructure" / "flake" issue — the exact failure this gate exists to
- * prevent (a QA agent once approved a PR for merge with red CI, dismissing the
- * failing check as environmental). The Engineer's merge step carries the same
- * CI-green precondition so the merge action itself is gated.
+ * merge, where "green" means every required check has **finished executing** and
+ * concluded `success` — not that a still-running run merely hasn't failed yet, and
+ * not a wave-through of a red check as an "environment"/"infrastructure"/"flake"
+ * issue. These are the two failure modes this gate exists to prevent (a QA agent
+ * approved a PR for merge with red CI dismissed as environmental; another approved
+ * on partial in-flight evidence — a Playwright *install* step passing and e2e
+ * "now executing" — before the CI run had actually completed). The Engineer's
+ * merge step carries the same precondition so the merge action itself is gated.
  *
- * These assertions lock in the behavioural contract so a future prompt edit
- * can't silently drop the CI merge gate. If you intentionally reword the gate,
- * update these substrings — but keep the concept.
+ * We assert against the role-doc source (not the built bundle) so the guard reads
+ * the current source of truth regardless of bundle freshness. If you intentionally
+ * reword the gate, update these substrings — but keep the concept.
  */
+const AGENTS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'agents');
+
+async function readRoleDoc(relPath: string): Promise<string> {
+	return (await readFile(join(AGENTS_DIR, relPath), 'utf-8')).toLowerCase();
+}
+
 describe('software-development team enforces a CI-green merge gate', () => {
 	it('QA role doc requires CI to be green before approving for merge', async () => {
-		const roles = await loadAgentRoles();
-		const qa = roles['software-development/qa-engineer.md'];
-		expect(qa, 'software-development/qa-engineer.md must load').toBeTruthy();
-		const text = qa.toLowerCase();
+		const text = await readRoleDoc('software-development/qa-engineer.md');
 
 		// CI-green is a stated precondition to approval/merge (workflow step + hard rule).
 		expect(text).toContain('ci is green');
@@ -31,14 +39,24 @@ describe('software-development team enforces a CI-green merge gate', () => {
 		expect(text).toContain('flake');
 	});
 
-	it('Engineer merge step is gated on CI being green', async () => {
-		const roles = await loadAgentRoles();
-		const eng = roles['software-development/engineer.md'];
-		expect(eng, 'software-development/engineer.md must load').toBeTruthy();
-		const text = eng.toLowerCase();
+	it('requires all required checks to finish executing before approval (in-progress is not a pass)', async () => {
+		const text = await readRoleDoc('software-development/qa-engineer.md');
+
+		// CI passes only when every required check has *finished executing* — not
+		// when a run merely hasn't failed yet, a sub-step passed, or a stage is
+		// "now executing rather than erroring". An in-progress check is not a pass.
+		expect(text).toContain('finished executing');
+		expect(text).toContain('not a pass');
+		expect(text).toContain('partial signals');
+	});
+
+	it('Engineer merge step is gated on CI being green and having finished', async () => {
+		const text = await readRoleDoc('software-development/engineer.md');
 
 		// The merge step must require green CI before merging, with no environmental exemption.
 		expect(text).toContain('required ci check');
 		expect(text).toContain('never merge a pr with a red');
+		// And it must wait for checks to finish — a still-running check has not passed.
+		expect(text).toContain('finished executing');
 	});
 });
