@@ -1041,7 +1041,14 @@ version from Conventional Commits and opens a `release/<version>` PR; merging fi
 Settings → General page also renders a **Version** section (current version linked to its
 GitHub release, plus a **"Check for new version"** button that calls
 `POST /api/updates/check` — any authed user — to force a fresh GitHub check bypassing the
-1 h cache, the same upstream check the daily cron runs).
+1 h cache, the same upstream check the daily cron runs). When an update is available this
+section mirrors the banner's staged-update lifecycle **in place** — driven by
+`useUpdateStatus({ poll })`, which auto-refetches `GET /api/updates/status` every few seconds
+while the state is `checking`/`downloading`/`applying` so the section advances live without a
+reload: a self-applying instance shows **"Downloading new version…"** while staging, then an
+**"Install & update"** button (same restart confirmation) once `Staged`, or a **"Retry
+download"** on `Error`; an instance that can't self-apply falls back to the **"Download"**
+release link.
 
 **Self-update & supervisor.** A compiled binary with auto-update enabled
 (`isAutoUpdateEnabled()` — compiled, not `HEZO_DISABLE_AUTO_UPDATE`, not in a container)
