@@ -41,6 +41,21 @@ same per-project key. The container reaches it through a tightly-scoped, per-run
 the host — so an agent can clone, fetch, and push during its run without the key ever
 being present inside the sandbox.
 
+## Committed work is never lost
+
+Agent runs are time-limited, and each task works in a throwaway copy of the repository that
+is discarded when the run ends. So that committed work always survives — even if a run is
+cut short or reaches its time limit mid-way — Hezo **pushes every commit to the remote the
+moment it is made**. As soon as an agent commits, that commit is on the task's branch on
+GitHub, so nothing an agent has committed is ever lost with the run.
+
+Each task works on its own branch (`hezo/<task>`), which becomes its pull request, so these
+automatic pushes are always a clean fast-forward and never collide with other work. Only
+*uncommitted* changes are ever at risk, which is why agents are guided to commit early and
+often. One thing to know: because Hezo pushes on every commit, a branch that runs CI on each
+push will build more often than it would with a single end-of-run push — scope CI to pull
+requests if that becomes noisy.
+
 This is the same posture described in [Container isolation](/docs/security/container-isolation):
 the keys that matter most stay on the host, and a compromised agent can use them only
 indirectly, for the operations Hezo performs on its behalf.

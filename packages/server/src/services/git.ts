@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { RepoHostType } from '@hezo/shared';
 import type { GitExecutor } from './git-executor';
@@ -546,4 +546,58 @@ export async function worktreeHasChanges(
 	if (status.exitCode === 0 && status.stdout.trim().length > 0) return true;
 	const headAfter = await getWorktreeHead(executor, wt);
 	return headAfter !== null && headBefore !== null && headAfter !== headBefore;
+}
+
+/**
+ * `post-commit` hook installed into every clone so committed work survives an aborted
+ * or timed-out run. The per-task worktree is ephemeral and the run's hard time limit
+ * discards it on abort, so a commit that only lives in the worktree is lost; pushing
+ * on every commit means committed work always reaches the remote.
+ *
+ * Best-effort and non-fatal by design — git ignores post-commit's exit status, and a
+ * failed push must never break the agent's commit:
+ * - `[ -S "$SSH_AUTH_SOCK" ]` — only push when a live SSH agent socket exists. That
+ *   holds during the agent's own bridged run (where its commits happen) but not during
+ *   Hezo's bare prep git ops, so the prep-time catch-up merge commit
+ *   ({@link mergeDefaultIntoWorktree}) is skipped instead of attempting a doomed,
+ *   unauthenticated push.
+ * - `git push origin HEAD` — task branches (`hezo/<task>`) have no upstream; HEAD
+ *   pushes to the same-named remote branch, always a fast-forward on the single-writer
+ *   per-task branch.
+ * - `--no-verify` — this is a durability checkpoint, not a reviewed push, so it skips
+ *   any pre-push test/lint hook; a WIP commit whose tests are still red must reach the
+ *   remote all the same.
+ */
+export const POST_COMMIT_PUSH_HOOK = `#!/bin/sh
+# Hezo durability hook — installed by ensurePushHook(); do not edit in place.
+# Push each commit to origin immediately so committed work survives an aborted or
+# timed-out run (the per-task worktree is ephemeral). Non-fatal: never break a commit.
+[ -S "$SSH_AUTH_SOCK" ] || exit 0
+git remote get-url origin >/dev/null 2>&1 || exit 0
+git push --no-verify origin HEAD >/dev/null 2>&1 || true
+exit 0
+`;
+
+/**
+ * Install (or refresh) {@link POST_COMMIT_PUSH_HOOK} in a clone's shared git hooks dir.
+ * Idempotent — rewritten on every run so the script stays current. Git resolves
+ * `hooks/` from the common git dir, so this one file fires for commits made in any task
+ * worktree of the clone. A physical hook file coexists with any repo-provided hooks
+ * (unlike a `core.hooksPath` override, which would disable them). Call with the clone's
+ * {@link RepoLoc} (whose `.git` is a real directory), never a worktree loc. Best-effort:
+ * a filesystem failure is swallowed so it never blocks run prep — the agent's own
+ * end-of-run push still lands the work; only the per-commit safeguard is skipped.
+ */
+export function ensurePushHook(clone: RepoLoc): void {
+	const hooksDir = join(clone.hostPath, '.git', 'hooks');
+	const hookPath = join(hooksDir, 'post-commit');
+	try {
+		mkdirSync(hooksDir, { recursive: true });
+		writeFileSync(hookPath, POST_COMMIT_PUSH_HOOK, { mode: 0o755 });
+		// writeFileSync only applies `mode` when creating the file; chmod explicitly so a
+		// refresh over an existing (or umask-narrowed) file is always executable.
+		chmodSync(hookPath, 0o755);
+	} catch {
+		// Non-fatal — see the docstring. Swallowed so run prep never fails on a hook write.
+	}
 }

@@ -62,6 +62,7 @@ import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import type { EgressProxy } from './egress';
 import {
+	ensurePushHook,
 	ensureTaskWorktreeWithRetry,
 	fastForwardLocalDefault,
 	fetchRepo,
@@ -1402,6 +1403,12 @@ async function prepareWorktrees(
 				emitSystem('stderr', `(skipping worktree for ${repoName} — not cloned)`);
 				continue;
 			}
+
+			// Install/refresh the auto-push post-commit hook so every commit the agent
+			// makes this run is pushed to origin immediately — committed work then
+			// survives an aborted or timed-out run instead of dying with the ephemeral
+			// worktree. Idempotent and best-effort (never throws).
+			ensurePushHook(repoLoc);
 
 			emitSystem('stdout', `git fetch ${repoName}...`);
 			const fetchRes = await fetchRepo(executor, repoLoc);

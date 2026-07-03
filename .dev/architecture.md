@@ -550,6 +550,21 @@ fail the run. Only that residual conflict/dirty case is the **agent's** job to r
 merge <default>`; the role prompts cover it). The catch-up runs before the run's pre-commit head
 is captured, so a pure catch-up with no agent work is not mistaken for produced output.
 
+**Commit durability (auto-push).** The per-task worktree is ephemeral — the run's hard time
+limit (`run_timeout_min`) aborts and discards it, so a commit that only lives in the worktree
+would be lost. To make committed work durable, worktree prep installs a `post-commit` hook into
+each clone's shared hooks dir (`ensurePushHook`, `services/git.ts` → `<clone>/.git/hooks/post-commit`),
+so **every commit the agent makes is pushed to `origin` immediately**. The hook is best-effort and
+non-fatal (git ignores `post-commit`'s exit status): it pushes `HEAD` to the same-named remote
+branch (`hezo/<task>` is single-writer, so always a fast-forward), with `--no-verify` (a durability
+checkpoint, not a reviewed push — it skips any pre-push test/lint hook so a WIP commit whose tests
+are still red still reaches the remote), and only when a live `SSH_AUTH_SOCK` exists — true for the
+agent's own bridged commits, false for the bare prep-time catch-up merge, so that merge commit is
+skipped rather than attempting an unauthenticated push. A repo-less workspace, an empty remote, or a
+clone whose `core.hooksPath` is redirected (e.g. husky) simply doesn't fire it. *Uncommitted*
+changes are still not covered — the agent commits to preserve, and the role prompts frame frequent
+committing (not a manual end-of-run push) as the durability action.
+
 **Success gate.** A clean exit (`exit_code = 0`) only counts as `succeeded` if the run
 **produced output** — `produced_output` is set by any write tool (and a post-run worktree
 diff), or the agent explicitly calls `report_no_work`. A clean exit with neither is a
@@ -738,7 +753,9 @@ the TCP listener via the bridge; nothing on the host runs git.
 `argv[0]`): it spawns a `socat UNIX-LISTEN…EXEC:hezo-ssh-bridge` that forwards each
 in-container connection (prefixing the token) to the host TCP listener, then execs the
 agent CLI. The container sees a normal `SSH_AUTH_SOCK` Unix socket and is unaware of the
-relay. The same socket serves both commit signing and `git@github.com:` clone/fetch/push.
+relay. The same socket serves both commit signing and `git@github.com:` clone/fetch/push —
+including the per-commit auto-push fired by the durability `post-commit` hook (§ Agent runtime,
+Commit durability), which is why that hook keys off a live `SSH_AUTH_SOCK`.
 Repo/worktree prep wraps individual git commands with the same `hezo-run-with-bridge` runner;
 cloning outside a run (provision, repo link) allocates a short-lived bridge via
 `withProvisionBridge`.
