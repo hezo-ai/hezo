@@ -6,6 +6,7 @@ import {
 	useAiProviders,
 	useCreateAiProvider,
 } from '../hooks/use-ai-providers';
+import { ApiKeyInstructions } from './api-key-instructions';
 import { SUBSCRIPTION_INSTRUCTIONS, SubscriptionInstructions } from './subscription-paste-form';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -164,13 +165,16 @@ export function ProviderConfigForm({
 					/>
 				</div>
 			) : (
-				<Input
-					label="API key"
-					type="password"
-					placeholder={info.keyPlaceholder}
-					value={apiKey}
-					onChange={(e) => setApiKey(e.target.value)}
-				/>
+				<div className="flex flex-col gap-2">
+					<ApiKeyInstructions provider={provider} />
+					<Input
+						label="API key"
+						type="password"
+						placeholder={info.keyPlaceholder}
+						value={apiKey}
+						onChange={(e) => setApiKey(e.target.value)}
+					/>
+				</div>
 			)}
 
 			{error && <p className="text-[13px] text-danger">{error}</p>}
