@@ -114,10 +114,29 @@ the Documents page.
 
 ## Version history
 
-Every change to a document is versioned. The Documents page shows the full **revision
-history**, and you can **restore** any earlier version with a click. Because you and the
-agents write to the same documents, that history doubles as an audit trail — you can see how
-a spec evolved and roll back a bad edit without losing the thread.
+At the top of every document a compact **details** banner shows, at a glance, when it was
+created, when it last changed, and who last edited it — a person or a named agent.
+
+Every change to a document is versioned, and each version carries a **changelog** — a short note
+describing what changed and why. When an agent updates a document it writes that note as part of
+the change, so the document body stays clean and current while the story of *how* it got there
+lives in the history. (Agents are told to keep change logs out of the document itself and record
+them here instead.)
+
+Open a document's history from the **History** button in its toolbar. Every version is listed
+newest-first, each shown like a comment — who made it, when, and its changelog with the same
+@-mentions and document links you see everywhere else in Hezo. Select any version to view the
+document exactly as it stood then; a banner across the top reminds you you're viewing an earlier
+revision, with **View latest** to jump back. An older revision is read-only — review comments are
+shown and can be added only on the current version.
+
+**Restore** brings an earlier version back as the current one. It never rewrites history:
+restoring adds a *new* version whose content matches the one you picked (with a changelog noting
+the restore), so the full timeline — including whatever you restored past — stays intact.
+Restoring is yours to do: agents can read and write documents, but only you can restore a version.
+
+Because you and the agents write to the same documents, that history doubles as an audit trail —
+you can see how a spec evolved and roll back a bad edit without losing the thread.
 
 This **versioned-and-reversible** guarantee isn't limited to project documents. The same
 applies to **agent system prompts** — every edit, including the

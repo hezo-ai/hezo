@@ -146,15 +146,19 @@ describe('API-key action attribution', () => {
 		expect(statusComment?.author_api_key_id).not.toBeNull();
 	});
 
-	it('attributes a project-doc revision (via MCP) to the API key', async () => {
+	it('attributes a project-doc revision (via MCP) to the API key and records the changelog', async () => {
 		const keyToken = await registerAndApprove('Doc Bot');
-		for (const content of ['v1', 'v2']) {
-			await mcpTool(keyToken, 'write_project_doc', {
-				project: projectSlug,
-				filename: 'notes.md',
-				content,
-			});
-		}
+		await mcpTool(keyToken, 'write_project_doc', {
+			project: projectSlug,
+			filename: 'notes.md',
+			content: 'v1',
+		});
+		await mcpTool(keyToken, 'write_project_doc', {
+			project: projectSlug,
+			filename: 'notes.md',
+			content: 'v2',
+			changelog: 'second draft',
+		});
 		const revRes = await app.request(`/api/projects/${projectSlug}/docs/notes.md/revisions`, {
 			headers: authHeader(token),
 		});
@@ -162,5 +166,7 @@ describe('API-key action attribution', () => {
 		expect(revisions[0].author_type).toBe('api_key');
 		expect(revisions[0].author_name).toBe('Doc Bot');
 		expect(revisions[0].author_api_key_id).not.toBeNull();
+		// The MCP `changelog` param is stored as the revision's change_summary.
+		expect(revisions[0].change_summary).toBe('second draft');
 	});
 });

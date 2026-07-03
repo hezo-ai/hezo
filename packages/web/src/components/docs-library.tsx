@@ -1,8 +1,17 @@
-import { ArrowLeft, ExternalLink, FileText, Loader2, Plus, Trash2 } from 'lucide-react';
+import {
+	ArrowLeft,
+	ExternalLink,
+	FileText,
+	History,
+	Loader2,
+	Pencil,
+	Plus,
+	Trash2,
+} from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { DocumentBody } from './document-review/document-body';
+import type { DocMetadata } from './document-review/document-metadata-banner';
 import { ReviewToolbarActions } from './document-review/review-toolbar-actions';
-import { ReviewableDocument } from './document-review/reviewable-document';
-import { MarkdownProse } from './markdown-prose';
 import { MentionTextarea } from './mention-textarea';
 import { Button } from './ui/button';
 import { ConfirmDialog } from './ui/confirm-dialog';
@@ -49,6 +58,15 @@ interface DocsLibraryProps {
 	 */
 	review?: { filename: string; docUpdatedAt?: string } | null;
 
+	/** Structured metadata banner facts for the selected doc (omit for AGENTS.md). */
+	docMeta?: DocMetadata;
+	/** Rendered above the metadata banner in view mode — e.g. the "viewing revision" banner. */
+	bodyBanner?: ReactNode;
+	/** Opens the revision-history dialog; when set, a History button shows in the toolbar. */
+	onShowHistory?: () => void;
+	/** View-only (an older revision is shown): hides Edit/Delete. */
+	readOnly?: boolean;
+
 	emptyTitle?: string;
 	emptyDescription?: string;
 
@@ -74,6 +92,10 @@ export function DocsLibrary({
 	viewerExtras,
 	viewerBanner,
 	review,
+	docMeta,
+	bodyBanner,
+	onShowHistory,
+	readOnly,
 	emptyTitle = 'No documents yet',
 	emptyDescription,
 	projectId,
@@ -208,6 +230,29 @@ export function DocsLibrary({
 										{review && projectId && (
 											<ReviewToolbarActions projectId={projectId} filename={review.filename} />
 										)}
+										{!readOnly && (
+											<Button
+												variant="ghost"
+												size="sm"
+												onClick={() => setMode('edit')}
+												aria-label="Edit"
+											>
+												<Pencil className="w-3.5 h-3.5" />
+												<span className="hidden sm:inline">Edit</span>
+											</Button>
+										)}
+										{onShowHistory && (
+											<Button
+												variant="ghost"
+												size="sm"
+												onClick={onShowHistory}
+												aria-label="Revision history"
+												data-testid="doc-history"
+											>
+												<History className="w-3.5 h-3.5" />
+												<span className="hidden sm:inline">History</span>
+											</Button>
+										)}
 										{popOutUrl && (
 											<Button
 												variant="ghost"
@@ -219,10 +264,7 @@ export function DocsLibrary({
 												<ExternalLink className="w-3.5 h-3.5" />
 											</Button>
 										)}
-										<Button variant="ghost" size="sm" onClick={() => setMode('edit')}>
-											Edit
-										</Button>
-										{onDelete && selectedItem?.canDelete !== false && (
+										{!readOnly && onDelete && selectedItem?.canDelete !== false && (
 											<Button
 												variant="ghost"
 												size="sm"
@@ -249,19 +291,14 @@ export function DocsLibrary({
 						</div>
 
 						{mode === 'view' ? (
-							review && projectId && projectSlug ? (
-								<ReviewableDocument
-									projectId={projectId}
-									projectSlug={projectSlug}
-									filename={review.filename}
-									content={docContent || '_(empty)_'}
-									docUpdatedAt={review.docUpdatedAt}
-								/>
-							) : (
-								<MarkdownProse projectId={projectId} projectSlug={projectSlug}>
-									{docContent || '_(empty)_'}
-								</MarkdownProse>
-							)
+							<DocumentBody
+								content={docContent || '_(empty)_'}
+								projectId={projectId}
+								projectSlug={projectSlug}
+								meta={docMeta}
+								review={review && projectId && projectSlug ? review : null}
+								topSlot={bodyBanner}
+							/>
 						) : (
 							<MentionTextarea
 								projectId={projectId}

@@ -55,7 +55,7 @@ Once the design is approved (or the gate was skipped), use sub-agents to investi
 - Every spec must include an "Authorization" section specifying who can access each endpoint and what ownership/permission checks are required. No endpoint ships without server-side authorization enforcement and resource ownership verification.
 - Every spec must include a "UI deliverables" section specifying which screens or components are needed for manual browser-based testing of the phase's functionality.
 - Implementation plans must include browser-testable acceptance criteria for each phase — no phase ships backend-only without corresponding UI for manual verification.
-- Keep spec.md, implementation-plan.md, and any other project docs current via `write_project_doc` as implementation progresses and decisions change.
+- Keep spec.md, implementation-plan.md, and any other project docs current via `write_project_doc` as implementation progresses and decisions change — pass a `changelog` on each write describing what changed, and keep change logs in that history rather than in the document body.
 - If you disagree with the Engineer, resolve it in the ticket thread. Escalate to Captain only if you can't agree.
 - Before starting work on a project, read its AGENTS.md for codebase conventions, commands, and constraints. When you discover an operational task or convention that would prevent future mistakes, update the project's AGENTS.md.
 - Review team preferences to align technical decisions with the admin's architectural and design preferences. When you observe a new preference in admin feedback, update the team preferences document via the team preferences API with specific evidence.

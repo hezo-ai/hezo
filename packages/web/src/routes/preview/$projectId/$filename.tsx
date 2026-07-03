@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { DocumentBody } from '../../../components/document-review/document-body';
 import { ReviewToolbarActions } from '../../../components/document-review/review-toolbar-actions';
-import { ReviewableDocument } from '../../../components/document-review/reviewable-document';
 import { useProjectDoc } from '../../../hooks/use-project-docs';
 
 function DocPreviewPage() {
@@ -33,12 +33,17 @@ function DocPreviewPage() {
 				</div>
 			</div>
 			<div className="max-w-3xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
-				<ReviewableDocument
+				<DocumentBody
 					projectId={projectId}
 					projectSlug={projectId}
-					filename={filename}
 					content={doc.content || '_(empty)_'}
-					docUpdatedAt={doc.updated_at}
+					meta={{
+						createdAt: doc.created_at,
+						updatedAt: doc.updated_at,
+						editorName: doc.last_updated_by_name,
+						editorType: doc.last_updated_by_type,
+					}}
+					review={{ filename, docUpdatedAt: doc.updated_at }}
 				/>
 			</div>
 		</div>

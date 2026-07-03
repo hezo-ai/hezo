@@ -51,6 +51,8 @@ export interface DocumentRow {
 
 export interface DocumentRowWithAuthor extends DocumentRow {
 	last_updated_by_name: string | null;
+	/** 'agent' | 'admin' — drives the last-editor badge (docs carry no api_key attribution). */
+	last_updated_by_type: string;
 }
 
 export interface DocumentRevisionRow {
@@ -118,7 +120,8 @@ function scopeWhere(scope: DocumentScope, alias = ''): { sql: string; params: un
 const SELECT_WITH_AUTHOR = `SELECT d.id, d.team_id, d.project_id, d.member_agent_id,
 	        d.type, d.slug, d.title, d.content,
 	        d.last_updated_by_member_id, d.created_at, d.updated_at,
-	        COALESCE(ma.title, m.display_name) AS last_updated_by_name
+	        COALESCE(ma.title, m.display_name) AS last_updated_by_name,
+	        CASE WHEN ma.id IS NOT NULL THEN 'agent' ELSE 'admin' END AS last_updated_by_type
 	 FROM documents d
 	 LEFT JOIN members m ON m.id = d.last_updated_by_member_id
 	 LEFT JOIN member_agents ma ON ma.id = d.last_updated_by_member_id`;
@@ -385,7 +388,7 @@ export async function restoreRevision(
 			db,
 			input.documentId,
 			doc.rows[0].content,
-			`Restored to revision ${input.revisionNumber}`,
+			`Restored content from revision ${input.revisionNumber}`,
 			input.restoredByMemberId,
 			input.restoredByApiKeyId ?? null,
 		);

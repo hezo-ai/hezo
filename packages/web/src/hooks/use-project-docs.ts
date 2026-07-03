@@ -9,6 +9,10 @@ export interface ProjectDoc {
 	filename: string;
 	updated_at: string;
 	content?: string;
+	/** Present on the single-doc GET (and after a save/restore); absent in the list. */
+	created_at?: string;
+	last_updated_by_name?: string | null;
+	last_updated_by_type?: string;
 }
 
 export type ProjectDocRevision = DocumentRevision;
@@ -36,9 +40,18 @@ export function useProjectDoc(projectId: string, filename: string | null) {
 
 export function useUpdateProjectDoc(projectId: string) {
 	return useMutation({
-		mutationFn: ({ filename, content }: { filename: string; content: string }) =>
+		mutationFn: ({
+			filename,
+			content,
+			changeSummary,
+		}: {
+			filename: string;
+			content: string;
+			changeSummary?: string;
+		}) =>
 			api.put<ProjectDoc>(`/api/projects/${projectId}/docs/${filename}`, {
 				content,
+				change_summary: changeSummary,
 			}),
 		onSuccess: (saved, { filename }) => {
 			queryClient.setQueryData<ProjectDoc>(queryKeys.projects.doc(projectId, filename), saved);
