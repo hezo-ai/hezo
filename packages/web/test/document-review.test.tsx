@@ -1,5 +1,5 @@
 import { fireEvent, waitFor } from '@testing-library/react';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import {
 	type SeededProject,
@@ -110,6 +110,40 @@ test('renders seeded review comments as highlights with margin icons and a count
 	// Margin icons (one per comment) and the count chip.
 	expect(container.querySelectorAll('[data-testid="review-margin-icon"]').length).toBe(2);
 	expect((await findByTestId('review-count-chip')).textContent).toContain('2');
+});
+
+test('clicking the count chip scrolls to the first review comment in the document', async () => {
+	const { container, findByTestId, user } = await setupDocumentsPage({
+		comments: [
+			// 'Spec Title' anchors into the H1 (topmost); 'target text' is lower in
+			// the first paragraph. The chip must jump to the FIRST — the topmost.
+			{ quote: 'target text', comment: 'lower comment' },
+			{ quote: 'Spec Title', comment: 'top comment' },
+		],
+	});
+
+	await waitFor(() => {
+		expect(container.querySelectorAll('mark[data-review-id]').length).toBe(2);
+	});
+	const firstMark = container.querySelector('mark[data-review-id]');
+	expect(firstMark?.textContent).toBe('Spec Title');
+
+	// happy-dom's scrollIntoView is a no-op with no layout, so assert the wiring:
+	// the chip scrolls the topmost highlight into view. Real scroll movement +
+	// the sticky-header clearance are covered in test/browser/docs-actions-sticky.spec.ts.
+	const scrolled: Element[] = [];
+	const spy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (
+		this: Element,
+	) {
+		scrolled.push(this);
+	});
+	try {
+		await user.click(await findByTestId('review-count-chip'));
+		expect(scrolled).toHaveLength(1);
+		expect(scrolled[0]).toBe(firstMark);
+	} finally {
+		spy.mockRestore();
+	}
 });
 
 test('groups the review-comment controls in a bordered cluster, apart from the document actions', async () => {
