@@ -156,7 +156,7 @@ const registeredTools: ToolDef[] = [];
 // Tools that persist data. When an agent run invokes one of these and it
 // succeeds, the run has produced output — recorded on the run row so the
 // completion path can distinguish a useful run from a no-op that merely exited
-// cleanly. Read-only tools (list_*/get_*/read_*/semantic_search/test_connector)
+// cleanly. Read-only tools (list_*/get_*/read_*/full_text_search/test_connector)
 // and run-local fetches (fetch_skill_file) are excluded.
 const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'create_team',
@@ -4048,7 +4048,7 @@ export function registerTools(
 	// Full-text search
 	tool(
 		server,
-		'semantic_search',
+		'full_text_search',
 		'Full-text keyword search across the team skills database, tasks, project docs, and task comments. Returns results ranked by relevance (keyword + stemming match).',
 		{
 			project: projectArg(),
