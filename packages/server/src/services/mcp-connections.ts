@@ -49,18 +49,23 @@ export interface McpConnectionRow {
  * so every run sees the same set (no team/project scope).
  */
 export async function loadMcpConnectionsForRun(db: PGlite): Promise<McpConnectionRow[]> {
-	// Filters: skip revoked (user disconnected); skip our connector-flow rows
-	// that haven't completed OAuth yet (saas + created_by_task_id IS NOT NULL
-	// + oauth_connection_id IS NULL). Operator-created saas rows without
-	// created_by_task_id continue to be included regardless of OAuth state
-	// (existing behavior for public MCPs).
+	// Filters: skip revoked (user disconnected); skip saas rows that are known
+	// to want OAuth but haven't completed it (no oauth_connection_id and any of:
+	// agent-requested via the connector flow, discovery already persisted
+	// config.dcr, or an OAuth attempt recorded auth_error) — injecting those
+	// would just 401 on every run. Operator-created rows that never attempted
+	// OAuth carry none of these markers and continue to be included regardless
+	// (existing behavior for public / header-authenticated MCPs).
 	const result = await db.query<McpConnectionRow>(
 		`SELECT id, name, kind::text AS kind,
 		        config, oauth_connection_id, install_status::text AS install_status, install_error,
 		        created_at::text, updated_at::text
 		 FROM mcp_connections
 		 WHERE revoked_at IS NULL
-		   AND NOT (kind = 'saas' AND created_by_task_id IS NOT NULL AND oauth_connection_id IS NULL)
+		   AND NOT (kind = 'saas' AND oauth_connection_id IS NULL
+		            AND (created_by_task_id IS NOT NULL
+		                 OR config ? 'dcr'
+		                 OR auth_error IS NOT NULL))
 		 ORDER BY name ASC`,
 	);
 

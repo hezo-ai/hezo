@@ -41,3 +41,29 @@ export function useDeleteInstanceConnector() {
 		},
 	});
 }
+
+export interface InstanceAuthStartResult {
+	/**
+	 * Authorize URL to open in a popup, or null when the MCP server advertises
+	 * no OAuth (public / header-authenticated) — a normal outcome, not an error.
+	 */
+	auth_url: string | null;
+	reason?: string;
+}
+
+/**
+ * Kick off the DCR OAuth flow for an instance connector. Mirrors the
+ * project-scoped useAuthStart but against the admin surface, and its
+ * `auth_url` is nullable (see InstanceAuthStartResult).
+ */
+export function useInstanceAuthStart() {
+	return useMutation({
+		mutationFn: (id: string) =>
+			api.post<InstanceAuthStartResult>(`/api/mcp-connections/${id}/auth-start`, {}),
+		onSettled: () => {
+			// auth-start mutates the row on both paths (persists config.dcr on
+			// success, auth_error on failure) — refresh statuses either way.
+			queryClient.invalidateQueries({ queryKey: INSTANCE_CONNECTORS_KEY });
+		},
+	});
+}

@@ -825,8 +825,28 @@ the same egress placeholder path as any secret; agents emit
 attempted) or a `provider_id` for a device-flow provider. The tool creates a pending
 `mcp_connections` row and posts a `connect_required` comment with a **Connect** button; a
 human completes the OAuth dance from the task chat or the Connectors page, and a
-`credential_provided` wakeup resumes the agent. Pending/revoked connectors are excluded
-from runs by `loadMcpConnectionsForRun`.
+`credential_provided` wakeup resumes the agent (scoped to the requesting task's own team,
+resolved from the task row — the connect can be completed from any surface).
+
+**Admin connector flow.** The superuser adds connectors manually on the global Settings →
+Connectors page (`POST /api/mcp-connections`, upsert-by-name; re-adding a name replaces
+`config` and clears `auth_error`). The page then auto-probes the new connector via
+`POST /api/mcp-connections/:id/auth-start` (superuser-gated) — the same PRM → DCR walk as
+the project-scoped auth-start, with two differences: there is no team context (the state
+envelope carries `teamId: null`, and the callback skips the team-room broadcasts and
+per-team provider hooks; the settings page refetches off the popup's
+`hezo-oauth-success` postMessage instead), and an MCP server that advertises **no** PRM
+resolves to `{ auth_url: null }` without marking the row failed
+(`PrmUnavailableError` → `no_oauth`) — missing PRM is the normal shape for the page's
+other use case, public / header-authenticated MCPs (`__HEZO_SECRET_*__` placeholders).
+When OAuth *is* advertised, the UI opens the authorize popup automatically on add, and
+every non-active SaaS row keeps a **Connect**/Retry button.
+
+**Run exclusion.** `loadMcpConnectionsForRun` skips revoked rows, plus SaaS rows that are
+known to want OAuth but haven't completed it — no `oauth_connection_id` and any of:
+agent-requested (`created_by_task_id`), discovery persisted `config.dcr`, or an attempt
+recorded `auth_error`. Injecting those would just 401 on every run. Operator rows that
+never attempted OAuth carry none of the markers and are always included.
 
 **MCP connections** (`mcp_connections`, see § 3 scoping). `kind='saas'` carries
 `{ url, headers }` (header values may contain `__HEZO_SECRET_*__`; OAuth-backed rows set
@@ -1128,7 +1148,8 @@ shapes.
 - **Money & governance** — `costs` (project-scoped, `group_by=day` for charts),
   `model-pricing`, `approvals`, `audit-log`.
 - **Integrations & secrets** — `ai-providers`, `secrets`, `mcp-connections`, `oauth`
-  (connectors: ensure / auth-start / device / callbacks), `skills`.
+  (connectors: ensure / auth-start — project-scoped and instance-admin
+  (`/mcp-connections/:id/auth-start`) / device / callbacks), `skills`.
 - **Ops** — `health`, `updates`, `preview` (HMAC-signed file URLs), public assets.
 
 One non-REST surface shares the port: the **MCP endpoint** (`POST /mcp`, Streamable
