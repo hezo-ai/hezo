@@ -64,6 +64,10 @@ mcpConnectionsRoutes.post('/mcp-connections', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'saas connections require config.url (string)', 400);
 	}
 
+	// Re-adding an existing name is a reconfiguration: config is replaced
+	// wholesale (dropping any stale config.dcr for a changed URL) and a
+	// previous OAuth attempt's auth_error is cleared, so the row starts from a
+	// clean slate. An active row keeps oauth_connection_id/activated_at.
 	const result = await db.query(
 		`INSERT INTO mcp_connections (name, display_name, kind, config, install_status)
 		 VALUES ($1, $2, $3::mcp_connection_kind, $4::jsonb, 'installed'::mcp_install_status)
@@ -73,6 +77,7 @@ mcpConnectionsRoutes.post('/mcp-connections', async (c) => {
 		     config = EXCLUDED.config,
 		     install_status = EXCLUDED.install_status,
 		     install_error = NULL,
+		     auth_error = NULL,
 		     updated_at = now()
 		 RETURNING ${CONNECTOR_COLUMNS}`,
 		[body.name.trim(), body.display_name?.trim() ?? null, body.kind, JSON.stringify(body.config)],

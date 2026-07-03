@@ -255,6 +255,12 @@ async function runCommand(
 		if (stdin) {
 			child.stdin?.end(stdin);
 		}
+		// A missing binary emits 'error' (ENOENT) and never 'close' — without
+		// this handler the promise never settles, hasCommand() can't return
+		// false, and the guard-skipped tests time out instead of skipping.
+		child.on('error', () => {
+			resolve({ code: -1, stdout: '', stderr: '' });
+		});
 		child.on('close', (code) => {
 			resolve({
 				code: code ?? -1,

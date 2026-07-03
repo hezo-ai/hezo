@@ -98,6 +98,17 @@ export async function fetchProtectedResourceMetadata(
 }
 
 /**
+ * The MCP server advertises no usable Protected Resource Metadata — neither a
+ * WWW-Authenticate hint nor the well-known document. Per MCP 2025-06-18 an
+ * OAuth-protected server MUST publish PRM, so this most likely means the
+ * server doesn't use OAuth at all (public, or header-authenticated). Callers
+ * that probe speculatively (the admin connectors page) treat this as "no
+ * OAuth", not as a failure; downstream errors (broken AS metadata, DCR
+ * rejection) stay plain Errors because there OAuth *is* advertised but broken.
+ */
+export class PrmUnavailableError extends Error {}
+
+/**
  * Full discovery walk: probe the MCP server, fetch its PRM, then fetch the
  * advertised Authorization Server's metadata. The single entry point used by
  * the auth-start route for a connector.
@@ -111,7 +122,7 @@ export async function discoverMcpAuthorization(
 	try {
 		prm = await fetchProtectedResourceMetadata(prmUrl, fetchFn);
 	} catch (e) {
-		throw new Error(
+		throw new PrmUnavailableError(
 			`Could not discover OAuth endpoints for ${mcpUrl}: WWW-Authenticate had no resource_metadata pointer, and ${prmUrl} failed (${(e as Error).message})`,
 		);
 	}

@@ -580,10 +580,27 @@ describe('loadMcpConnectionsForRun excludes pending/revoked', () => {
 			 VALUES ('operator', $1::mcp_connection_kind, '{"url": "https://public.example/mcp"}'::jsonb, 'installed')`,
 			[McpConnectionKind.Saas],
 		);
+		// Operator rows that are *known* to want OAuth but haven't completed it
+		// are excluded: discovery persisted config.dcr, or an attempt recorded
+		// auth_error. Injecting either would just 401 on every run.
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, install_status)
+			 VALUES ('dcr-pending', $1::mcp_connection_kind,
+			         '{"url": "https://oauth.example/mcp", "dcr": {"client_id": "c1"}}'::jsonb, 'installed')`,
+			[McpConnectionKind.Saas],
+		);
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, auth_error)
+			 VALUES ('oauth-failed', $1::mcp_connection_kind,
+			         '{"url": "https://broken.example/mcp"}'::jsonb, 'installed', 'discovery: boom')`,
+			[McpConnectionKind.Saas],
+		);
 		const { loadMcpConnectionsForRun } = await import('../src/services/mcp-connections');
 		const rows = await loadMcpConnectionsForRun(db);
 		expect(rows.find((r) => r.name === 'operator')).toBeTruthy();
 		expect(rows.find((r) => r.name === 'pending')).toBeUndefined();
+		expect(rows.find((r) => r.name === 'dcr-pending')).toBeUndefined();
+		expect(rows.find((r) => r.name === 'oauth-failed')).toBeUndefined();
 	});
 });
 
