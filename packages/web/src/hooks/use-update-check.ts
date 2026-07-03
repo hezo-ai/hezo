@@ -1,4 +1,4 @@
-import type { UpdateState } from '@hezo/shared';
+import { UpdateState } from '@hezo/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryKeys } from '../lib/query-keys';
@@ -55,14 +55,30 @@ export function useCheckForUpdate() {
 /**
  * Latest-release info plus the staged-update lifecycle and whether this instance
  * can apply-and-restart. Drives the "Install & restart" affordance.
+ *
+ * Pass `{ poll: true }` (the settings Version section) to auto-refetch every few
+ * seconds while the server is mid-flight (`checking`/`downloading`/`applying`), so
+ * the section advances through the lifecycle live without a manual reload. Polling
+ * stops on its own once the state settles (staged/idle/error). The banner leaves it
+ * off — it only needs the terminal state.
  */
-export function useUpdateStatus() {
+export function useUpdateStatus(opts?: { poll?: boolean }) {
 	return useQuery({
 		queryKey: queryKeys.updateStatus(),
 		queryFn: () => api.get<UpdateStatusInfo>('/api/updates/status'),
 		staleTime: 60 * 60 * 1000,
 		gcTime: 60 * 60 * 1000,
 		retry: false,
+		refetchInterval: opts?.poll
+			? (query) => {
+					const state = query.state.data?.state;
+					return state === UpdateState.Checking ||
+						state === UpdateState.Downloading ||
+						state === UpdateState.Applying
+						? 2500
+						: false;
+				}
+			: undefined,
 	});
 }
 
