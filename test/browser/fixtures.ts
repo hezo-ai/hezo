@@ -86,6 +86,20 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 		{ scope: 'worker' },
 	],
 
+	// Every page from the shared fixtures is authenticated by default with the
+	// worker's admin session. The app no longer allows anonymous access, so a bare
+	// page.goto would otherwise land on the password login and never render the
+	// shell. Fixtures that need a specific token (sharedPage) or a fresh auth flow
+	// (freshWorkspace/lightWorkspace) inject their own token on top afterward — the
+	// later addInitScript wins on the next navigation. (The master-key-gate spec
+	// drives its own server via the raw @playwright/test `test`, so it is unaffected.)
+	page: async ({ page, apiToken }, use) => {
+		await page.addInitScript((t: string) => {
+			localStorage.setItem('hezo_token', t);
+		}, apiToken);
+		await use(page);
+	},
+
 	authedPage: async ({ page, apiToken }, use) => {
 		await page.addInitScript((t: string) => {
 			localStorage.setItem('hezo_token', t);
