@@ -42,7 +42,12 @@ import {
 	getProviderCredentialAndModel,
 	updateAiProviderCredential,
 } from './ai-provider-keys';
-import { checkOverBudget, recordRunCost } from './budget';
+import {
+	checkOverBudget,
+	getAgentBudgetStatus,
+	getProjectBudgetStatus,
+	recordRunCost,
+} from './budget';
 import { formatContainerConnectivityMessage } from './container-connectivity-preflight';
 import {
 	CONNECTIVITY_STALE_MS,
@@ -62,6 +67,7 @@ import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
 import type { EgressProxy } from './egress';
 import {
+	ensurePushHook,
 	ensureTaskWorktreeWithRetry,
 	fastForwardLocalDefault,
 	fetchRepo,
@@ -93,7 +99,7 @@ import { resolveRuntimeForTask } from './runtime-resolver';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
 import { validateSubscriptionBlob } from './subscription-auth';
 import { recordStatusChange } from './task-events';
-import { resolveSystemPrompt } from './template-resolver';
+import { buildRunLimitsBlock, resolveSystemPrompt } from './template-resolver';
 import {
 	CONTAINER_WORKSPACE_ROOT,
 	CONTAINER_WORKTREES_ROOT,
@@ -595,6 +601,22 @@ async function buildRunContext(
 			replyContext,
 			spawnedFrom,
 		});
+		// Anticipatory limit awareness: tell the agent up front how much run-time and
+		// budget this run has, plus a graceful wind-down protocol, so it can defer
+		// cleanly before a hard cut instead of being killed mid-step. Committed work is
+		// already auto-pushed, so a clean deferral loses nothing.
+		const limitRow = await deps.db.query<{ run_timeout_min: number }>(
+			'SELECT run_timeout_min FROM member_agents WHERE id = $1',
+			[agent.id],
+		);
+		const runTimeoutMin = limitRow.rows[0]?.run_timeout_min ?? 0;
+		if (runTimeoutMin > 0) {
+			const [agentStatus, projectStatus] = await Promise.all([
+				getAgentBudgetStatus(deps.db, agent.id),
+				getProjectBudgetStatus(deps.db, project.id),
+			]);
+			basePrompt += buildRunLimitsBlock(runTimeoutMin, agentStatus, projectStatus);
+		}
 	}
 	const taskPrompt = effortApplication.promptDirective
 		? `${basePrompt}\n\n${effortApplication.promptDirective}`
@@ -1402,6 +1424,12 @@ async function prepareWorktrees(
 				emitSystem('stderr', `(skipping worktree for ${repoName} — not cloned)`);
 				continue;
 			}
+
+			// Install/refresh the auto-push post-commit hook so every commit the agent
+			// makes this run is pushed to origin immediately — committed work then
+			// survives an aborted or timed-out run instead of dying with the ephemeral
+			// worktree. Idempotent and best-effort (never throws).
+			ensurePushHook(repoLoc);
 
 			emitSystem('stdout', `git fetch ${repoName}...`);
 			const fetchRes = await fetchRepo(executor, repoLoc);

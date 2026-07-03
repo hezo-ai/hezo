@@ -467,6 +467,12 @@ document, loaded from its **home** team) is resolved per run by
 `{{team_preferences_context}}`, `{{team_description}}`, `{{team_context}}`,
 `{{current_date}}`, and the CEO-only `{{projects_context}}`), then the resolver appends the
 Run Context / Repository / Project State / Teammates blocks and `SHARED_INSTRUCTIONS`.
+For a task run the runner additionally appends a **Run limits & winding down** block
+(`buildRunLimitsBlock`) stating the run's `run_timeout_min` wall-clock budget and the agent's
++ project's remaining per-window spend (from the budget service), plus a graceful wind-down
+protocol — since the agent can't observe elapsed time or live spend mid-run, it's told the
+size of its run up front so it can make committed (auto-pushed) progress and defer with a
+comment before a hard cut rather than being killed mid-step.
 Every surface that authors or edits a prompt — the hire proposal create/edit
 (`prepareHireProposal`, `PATCH /approvals`), direct agent create + `PATCH /agents`, and the
 `create_hire_proposal` / `update_agent_system_prompt` MCP tools — validates a supplied,
@@ -549,6 +555,21 @@ leaving the branch exactly as the agent left it; both cases emit a `[system]` wa
 fail the run. Only that residual conflict/dirty case is the **agent's** job to reconcile (`git
 merge <default>`; the role prompts cover it). The catch-up runs before the run's pre-commit head
 is captured, so a pure catch-up with no agent work is not mistaken for produced output.
+
+**Commit durability (auto-push).** The per-task worktree is ephemeral — the run's hard time
+limit (`run_timeout_min`) aborts and discards it, so a commit that only lives in the worktree
+would be lost. To make committed work durable, worktree prep installs a `post-commit` hook into
+each clone's shared hooks dir (`ensurePushHook`, `services/git.ts` → `<clone>/.git/hooks/post-commit`),
+so **every commit the agent makes is pushed to `origin` immediately**. The hook is best-effort and
+non-fatal (git ignores `post-commit`'s exit status): it pushes `HEAD` to the same-named remote
+branch (`hezo/<task>` is single-writer, so always a fast-forward), with `--no-verify` (a durability
+checkpoint, not a reviewed push — it skips any pre-push test/lint hook so a WIP commit whose tests
+are still red still reaches the remote), and only when a live `SSH_AUTH_SOCK` exists — true for the
+agent's own bridged commits, false for the bare prep-time catch-up merge, so that merge commit is
+skipped rather than attempting an unauthenticated push. A repo-less workspace, an empty remote, or a
+clone whose `core.hooksPath` is redirected (e.g. husky) simply doesn't fire it. *Uncommitted*
+changes are still not covered — the agent commits to preserve, and the role prompts frame frequent
+committing (not a manual end-of-run push) as the durability action.
 
 **Success gate.** A clean exit (`exit_code = 0`) only counts as `succeeded` if the run
 **produced output** — `produced_output` is set by any write tool (and a post-run worktree
@@ -738,7 +759,9 @@ the TCP listener via the bridge; nothing on the host runs git.
 `argv[0]`): it spawns a `socat UNIX-LISTEN…EXEC:hezo-ssh-bridge` that forwards each
 in-container connection (prefixing the token) to the host TCP listener, then execs the
 agent CLI. The container sees a normal `SSH_AUTH_SOCK` Unix socket and is unaware of the
-relay. The same socket serves both commit signing and `git@github.com:` clone/fetch/push.
+relay. The same socket serves both commit signing and `git@github.com:` clone/fetch/push —
+including the per-commit auto-push fired by the durability `post-commit` hook (§ Agent runtime,
+Commit durability), which is why that hook keys off a live `SSH_AUTH_SOCK`.
 Repo/worktree prep wraps individual git commands with the same `hezo-run-with-bridge` runner;
 cloning outside a run (provision, repo link) allocates a short-lived bridge via
 `withProvisionBridge`.
