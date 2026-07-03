@@ -1,20 +1,30 @@
-import type { MasterKeyState } from '@hezo/shared';
 import { Loader2 } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { useState } from 'react';
 import { useAiProviderStatus } from '../../hooks/use-ai-providers';
+import { api } from '../../lib/api';
+import { getPendingSetupToken } from '../../lib/auth';
+import { queryClient } from '../../lib/query-client';
+import { queryKeys } from '../../lib/query-keys';
 import { AiProviderPicker } from '../ai-provider-picker';
-import { MasterKeyForm } from '../master-key-gate';
+import { MasterKeyForm, VaultShell } from '../master-key-gate';
+import { PasswordSetForm } from '../password-set-form';
 import { Stepper, type StepStatus } from './stepper';
 
-export type WizardStep = 'master-key' | 'ai-provider' | 'done';
+export type WizardStep = 'password' | 'ai-provider' | 'done';
 
 interface WizardShellProps {
-	currentStep: 'master-key' | 'ai-provider';
+	currentStep: 'password' | 'ai-provider';
 	children: ReactNode;
 }
 
+/**
+ * Onboarding chrome shown AFTER the vault master-key screen. The master key is a
+ * separate pre-active gate, so it's always a completed step here; the two live
+ * steps are creating a password and configuring an AI provider.
+ */
 function WizardShell({ currentStep, children }: WizardShellProps) {
-	const masterKeyStatus: StepStatus = currentStep === 'master-key' ? 'current' : 'complete';
+	const passwordStatus: StepStatus = currentStep === 'password' ? 'current' : 'complete';
 	const aiProviderStatus: StepStatus = currentStep === 'ai-provider' ? 'current' : 'pending';
 	return (
 		<div className="min-h-screen flex flex-col items-center px-4 py-8 sm:py-16 bg-surface">
@@ -25,7 +35,8 @@ function WizardShell({ currentStep, children }: WizardShellProps) {
 				</div>
 				<Stepper
 					steps={[
-						{ label: 'Master key', status: masterKeyStatus },
+						{ label: 'Master key', status: 'complete' },
+						{ label: 'Password', status: passwordStatus },
 						{ label: 'AI provider', status: aiProviderStatus },
 					]}
 				/>
@@ -37,17 +48,60 @@ function WizardShell({ currentStep, children }: WizardShellProps) {
 	);
 }
 
-export function MasterKeyStep({ state }: { state: MasterKeyState }) {
+/** Create/confirm the admin password. On success the session is stored and the gate advances. */
+function PasswordStep() {
 	return (
-		<WizardShell currentStep="master-key">
-			<div data-testid="setup-step-master-key">
-				<h2 className="text-base sm:text-lg font-semibold mb-1">Set Master Key</h2>
-				<p className="text-[13px] text-text-2 mb-5">
-					Your master key is 12 words that encrypt your data. Save them somewhere safe — you'll need
-					them to unlock Hezo on restart.
-				</p>
-				<MasterKeyForm state={state} embedded />
-			</div>
+		<div data-testid="setup-step-password">
+			<h2 className="text-base sm:text-lg font-semibold mb-1">Create an admin password</h2>
+			<p className="text-[13px] text-text-2 mb-5">
+				You'll sign in with this password from now on. If you forget it, you can reset it with your
+				master key.
+			</p>
+			<PasswordSetForm
+				submitLabel="Set password & continue"
+				onSuccess={() => {
+					// Now logged in (session stored) and passwordSet flips true.
+					queryClient.invalidateQueries({ queryKey: queryKeys.status() });
+					queryClient.invalidateQueries({ queryKey: queryKeys.me() });
+				}}
+			/>
+		</div>
+	);
+}
+
+/**
+ * The create-password phase. Needs a credential to enroll the verifier — either
+ * the in-memory password-setup token from the just-completed master-key flow, or
+ * (if that was lost, e.g. a page refresh mid-onboarding) a fresh one obtained by
+ * re-entering the master key.
+ */
+export function CreatePasswordFlow() {
+	const [reentered, setReentered] = useState(0);
+	const hasCredential = getPendingSetupToken() !== null || api.getToken() !== null;
+
+	if (!hasCredential) {
+		return (
+			<VaultShell>
+				<div className="rounded-2xl border border-border-strong bg-surface p-6 sm:p-8 shadow-[var(--elev-lg)]">
+					<div className="mb-5 text-center">
+						<h2 className="text-lg font-semibold text-text-1">Confirm your master key</h2>
+						<p className="mt-1 text-sm text-text-2">
+							Enter your master key to set an admin password for this instance.
+						</p>
+					</div>
+					<MasterKeyForm
+						state="unlocked"
+						embedded
+						onAuthenticated={() => setReentered((n) => n + 1)}
+					/>
+				</div>
+			</VaultShell>
+		);
+	}
+
+	return (
+		<WizardShell currentStep="password" key={reentered}>
+			<PasswordStep />
 		</WizardShell>
 	);
 }
@@ -84,7 +138,7 @@ interface SetupGateProps {
 	children: React.ReactNode;
 }
 
-/** Wraps the app shell: shows the wizard until an AI provider is configured. */
+/** Wraps the app shell: shows the AI-provider wizard until a provider is configured. */
 export function SetupGate({ children }: SetupGateProps) {
 	const step = useWizardStep();
 	if (step === 'loading') {

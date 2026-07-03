@@ -1,5 +1,7 @@
 import {
 	buildLoginMessage,
+	buildPasswordLoginMessage,
+	buildPasswordSetupMessage,
 	buildSetupMessage,
 	buildUnlockMessage,
 	DEFAULT_TEAM_ID,
@@ -18,12 +20,49 @@ import {
 } from '../lib/system-meta';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { signAdminJwt } from '../middleware/auth';
+import {
+	resolvePasswordMutationUserId,
+	signAdminJwt,
+	signPasswordSetupToken,
+} from '../middleware/auth';
+import {
+	getAdminPasswordVerifier,
+	setAdminPasswordVerifier,
+	verifyPasswordSignature,
+} from '../services/password';
 
 const log = logger.child('routes');
 
 const KEY_HEX = /^[0-9a-f]{64}$/;
 const SIGNATURE_HEX = /^[0-9a-f]{128}$/;
+const SALT_HEX = /^[0-9a-f]{32}$/;
+
+// In-memory brute-force throttle for password login. Single admin, so one global
+// counter suffices. Not persisted — a restart clears it, which is fine (a
+// restart re-locks the instance behind the master key anyway).
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_MS = 60_000;
+const loginThrottle = { failures: 0, lockedUntil: 0 };
+
+function loginLockRemainingMs(now: number): number {
+	return loginThrottle.lockedUntil > now ? loginThrottle.lockedUntil - now : 0;
+}
+
+function recordLoginFailure(now: number): void {
+	loginThrottle.failures += 1;
+	if (loginThrottle.failures >= LOGIN_MAX_ATTEMPTS) {
+		// Exponential backoff past the threshold: 1m, 2m, 4m, … (capped at 1h).
+		const overage = loginThrottle.failures - LOGIN_MAX_ATTEMPTS;
+		const backoff = Math.min(LOGIN_LOCKOUT_MS * 2 ** overage, 60 * 60_000);
+		loginThrottle.lockedUntil = now + backoff;
+	}
+}
+
+/** Exported for tests: the throttle is module-global, so specs reset it to stay deterministic. */
+export function resetLoginThrottle(): void {
+	loginThrottle.failures = 0;
+	loginThrottle.lockedUntil = 0;
+}
 
 export const authRoutes = new Hono<Env>();
 
@@ -69,7 +108,7 @@ authRoutes.post('/auth/setup', async (c) => {
 		return err(c, 'ALREADY_SET', 'Master key is already set', 409);
 	}
 
-	return issueAdminSession(c);
+	return issuePasswordSetupToken(c);
 });
 
 // Step 1 of login/unlock: a single-use nonce for the client to sign.
@@ -81,11 +120,13 @@ authRoutes.post('/auth/challenge', (c) => {
 	return ok(c, { challenge_id: challengeId, nonce, expires_in: expiresInSeconds });
 });
 
-// Step 2: verify the Ed25519 signature over the stored nonce and issue a JWT.
-// The client signs buildUnlockMessage(nonce, unlock_key) when it includes the
-// unlock key (server locked), buildLoginMessage(nonce) otherwise. The nonce is
-// never echoed back — the message is reconstructed from the stored copy, so
-// the signature is the sole authenticator.
+// Step 2: verify the Ed25519 signature over the stored nonce and issue a
+// short-lived password-setup token (the mnemonic unlocks + authorizes setting a
+// password, but is not itself a session). The client signs
+// buildUnlockMessage(nonce, unlock_key) when it includes the unlock key (server
+// locked), buildLoginMessage(nonce) otherwise. The nonce is never echoed back —
+// the message is reconstructed from the stored copy, so the signature is the
+// sole authenticator.
 authRoutes.post('/auth/verify', async (c) => {
 	let body: { challenge_id?: string; signature?: string; unlock_key?: string };
 	try {
@@ -141,11 +182,154 @@ authRoutes.post('/auth/verify', async (c) => {
 		}
 	}
 
-	return issueAdminSession(c);
+	return issuePasswordSetupToken(c);
 });
 
-/** Shared tail of setup/verify: capture base URL, ensure superuser, mint JWT. */
-async function issueAdminSession(c: Context<Env>) {
+// --- Password auth (challenge-response; password never leaves the browser) ----
+
+// Login step 1: hand back a nonce to sign + the admin's salt so the client can
+// re-derive its password keypair. 409 until a password verifier is enrolled.
+authRoutes.post('/auth/password-challenge', async (c) => {
+	const masterKeyManager = c.get('masterKeyManager');
+	if (masterKeyManager.getState() !== 'unlocked') {
+		return err(c, 'LOCKED', 'Server is locked. Provide master key to unlock.', 401);
+	}
+	const verifier = await getAdminPasswordVerifier(c.get('db'));
+	if (!verifier) {
+		return err(c, 'PASSWORD_NOT_SET', 'No password set. Set one via the master key.', 409);
+	}
+	const { challengeId, nonce, expiresInSeconds } = c.get('authChallenges').issue();
+	return ok(c, {
+		challenge_id: challengeId,
+		nonce,
+		salt: verifier.salt,
+		expires_in: expiresInSeconds,
+	});
+});
+
+// Login step 2: verify the signature over buildPasswordLoginMessage(nonce)
+// against the stored verifier and mint a session JWT. Throttled globally.
+authRoutes.post('/auth/password-verify', async (c) => {
+	const masterKeyManager = c.get('masterKeyManager');
+	const db = c.get('db');
+	if (masterKeyManager.getState() !== 'unlocked') {
+		return err(c, 'LOCKED', 'Server is locked. Provide master key to unlock.', 401);
+	}
+
+	const now = Date.now();
+	const lockMs = loginLockRemainingMs(now);
+	if (lockMs > 0) {
+		return err(
+			c,
+			'TOO_MANY_ATTEMPTS',
+			`Too many attempts. Try again in ${Math.ceil(lockMs / 1000)}s.`,
+			429,
+		);
+	}
+
+	let body: { challenge_id?: string; signature?: string };
+	try {
+		body = await c.req.json();
+	} catch {
+		return err(c, 'INVALID_REQUEST', 'JSON body required', 400);
+	}
+	const { challenge_id, signature } = body;
+	if (
+		typeof challenge_id !== 'string' ||
+		challenge_id.length === 0 ||
+		typeof signature !== 'string' ||
+		!SIGNATURE_HEX.test(signature)
+	) {
+		return err(c, 'INVALID_REQUEST', 'challenge_id and signature are required', 400);
+	}
+
+	// Consume before verifying: one nonce absorbs a single guess.
+	const challenge = c.get('authChallenges').consume(challenge_id);
+	if (!challenge) {
+		return err(c, 'INVALID_CHALLENGE', 'Unknown, expired, or already used challenge', 401);
+	}
+
+	const verifier = await getAdminPasswordVerifier(db);
+	if (!verifier) {
+		return err(c, 'PASSWORD_NOT_SET', 'No password set. Set one via the master key.', 409);
+	}
+
+	const ok_ = await verifyPasswordSignature(
+		db,
+		buildPasswordLoginMessage(challenge.nonce),
+		signature,
+	);
+	if (!ok_) {
+		recordLoginFailure(now);
+		// Generic message: never reveal whether it was the user or the password.
+		return err(c, 'INVALID_CREDENTIALS', 'Incorrect password', 401);
+	}
+
+	resetLoginThrottle();
+	const token = await signAdminJwt(masterKeyManager, verifier.userId);
+	return ok(c, { token }, 200);
+});
+
+// Set or change the password verifier. Public path but self-authenticating: the
+// bearer must be a full session JWT (logged-in change) or a password-setup-scoped
+// JWT (initial-set / recovery). The password never arrives — only the client-
+// derived { salt, public_key } verifier plus a self-signature proving the client
+// holds the matching private key. Returns a fresh session so the caller is logged
+// in with the password they just set.
+authRoutes.post('/auth/password', async (c) => {
+	const masterKeyManager = c.get('masterKeyManager');
+	const db = c.get('db');
+	if (masterKeyManager.getState() !== 'unlocked') {
+		return err(c, 'LOCKED', 'Server is locked. Provide master key to unlock.', 401);
+	}
+
+	const header = c.req.header('Authorization');
+	if (!header?.startsWith('Bearer ')) {
+		return err(c, 'UNAUTHORIZED', 'Missing authorization header', 401);
+	}
+	const userId = await resolvePasswordMutationUserId(header.slice(7), db, masterKeyManager);
+	if (!userId) {
+		return err(c, 'UNAUTHORIZED', 'Invalid or expired token', 401);
+	}
+
+	let body: { salt?: string; public_key?: string; signature?: string };
+	try {
+		body = await c.req.json();
+	} catch {
+		return err(c, 'INVALID_REQUEST', 'JSON body required', 400);
+	}
+	const { salt, public_key, signature } = body;
+	if (
+		typeof salt !== 'string' ||
+		!SALT_HEX.test(salt) ||
+		typeof public_key !== 'string' ||
+		!KEY_HEX.test(public_key) ||
+		typeof signature !== 'string' ||
+		!SIGNATURE_HEX.test(signature)
+	) {
+		return err(c, 'INVALID_REQUEST', 'salt, public_key, and signature are required', 400);
+	}
+
+	// TOFU self-signature: proves the client holds the private key for the verifier
+	// it's enrolling. Password length/complexity is enforced client-side (the
+	// server never sees the password).
+	if (!verifyAuthSignature(public_key, buildPasswordSetupMessage(public_key, salt), signature)) {
+		return err(c, 'INVALID_SIGNATURE', 'Signature verification failed', 401);
+	}
+
+	await setAdminPasswordVerifier(db, userId, { salt, publicKeyHex: public_key });
+	resetLoginThrottle();
+	const token = await signAdminJwt(masterKeyManager, userId);
+	return ok(c, { token }, 200);
+});
+
+/**
+ * Shared tail of setup/verify: capture base URL, ensure the superuser exists,
+ * and mint a short-lived **password-setup token** (NOT a session). The mnemonic
+ * only unlocks — proving master-key ownership lets the client set a password via
+ * `POST /api/auth/password`, which is the only path that then mints a session.
+ */
+async function issuePasswordSetupToken(c: Context<Env>) {
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
 
@@ -176,7 +360,7 @@ async function issueAdminSession(c: Context<Env>) {
 		await addUserToDefaultTeam(db, userId);
 	}
 
-	const token = await signAdminJwt(masterKeyManager, userId);
+	const token = await signPasswordSetupToken(masterKeyManager, userId);
 	return ok(c, { token }, 200);
 }
 

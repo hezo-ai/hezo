@@ -117,14 +117,14 @@ describe('setup, unlock, and restart flows', () => {
 		expect(rows.rows).toHaveLength(0);
 	});
 
-	it('enrolls, unlocks, and returns a working token', async () => {
+	it('enrolls, unlocks, and returns a password-setup token (not a session)', async () => {
 		const res = await postJson(app, '/api/auth/setup', setupBody());
 		expect(res.status).toBe(200);
 		const { token } = (await res.json()).data;
 
-		const auth = await verifyToken(token, db, masterKeyManager);
-		expect(auth).not.toBeNull();
-		expect(auth?.type).toBe('admin');
+		// The mnemonic only unlocks — setup mints a password-setup-scoped token, not
+		// a session, so verifyToken rejects it as a general credential.
+		expect(await verifyToken(token, db, masterKeyManager)).toBeNull();
 
 		const status = await app.request('/api/status');
 		expect((await status.json()).masterKeyState).toBe('unlocked');
@@ -230,29 +230,24 @@ describe('login flow on an enrolled, unlocked server', () => {
 		expect(await errorCode(res)).toBe('ALREADY_SET');
 	});
 
-	it('logs in via challenge + signature, twice, as the same user', async () => {
+	it('mnemonic verify returns a password-setup token (not a session), repeatably', async () => {
 		const res1 = await loginViaAuthApi(app, mnemonic);
 		expect(res1.status).toBe(200);
 		const token1 = (await res1.json()).data.token;
 
 		const res2 = await loginViaAuthApi(app, mnemonic);
 		expect(res2.status).toBe(200);
-		const token2 = (await res2.json()).data.token;
 
-		const auth1 = await verifyToken(token1, db, masterKeyManager);
-		const auth2 = await verifyToken(token2, db, masterKeyManager);
-		expect(auth1?.type).toBe('admin');
-		expect(auth2?.type).toBe('admin');
-		if (auth1?.type === 'admin' && auth2?.type === 'admin') {
-			expect(auth1.userId).toBe(auth2.userId);
-		}
+		// The mnemonic only unlocks: its token is password-setup-scoped, not a
+		// session, so verifyToken rejects it on general routes.
+		expect(await verifyToken(token1, db, masterKeyManager)).toBeNull();
 	});
 
-	it('the token grants access to protected endpoints', async () => {
+	it('the mnemonic token cannot access protected endpoints (only password setup)', async () => {
 		const res = await loginViaAuthApi(app, mnemonic);
 		const { token } = (await res.json()).data;
 		const projectsRes = await app.request('/api/projects', { headers: authHeader(token) });
-		expect(projectsRes.status).toBe(200);
+		expect(projectsRes.status).toBe(401);
 	});
 
 	it('rejects a replayed challenge', async () => {

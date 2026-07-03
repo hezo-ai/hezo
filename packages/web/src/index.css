@@ -194,6 +194,76 @@ html.dark,
 	--color-neutral-soft-fg: #9a9a96;
 }
 
+/* `.vault-surface` opts a subtree into the "pre-active vault" palette — a deep,
+   cool indigo world used by the master-key screens (setup / unlock) to signal the
+   instance is NOT live yet, distinct from both the normal app and the password
+   login. Always dark regardless of the active theme. Like `.log-surface-dark` it
+   overrides the resolved `--color-*` vars directly (the `@theme` indirection is
+   resolved once at :root/html.dark) plus `--border` for the `*` fallback. The one
+   warm accent (Hezo vermilion) is reserved for the primary action. */
+.vault-surface {
+	--color-bg: oklch(0.108 0.022 264);
+	--color-surface: oklch(0.178 0.027 264);
+	--color-surface-2: oklch(0.22 0.029 264);
+	--color-surface-3: oklch(0.262 0.03 264);
+	--color-border: oklch(0.3 0.028 264);
+	--color-border-strong: oklch(0.39 0.03 264);
+	--border: oklch(0.3 0.028 264);
+
+	--color-text-1: oklch(0.955 0.006 260);
+	--color-text-2: oklch(0.7 0.018 262);
+	--color-text-3: oklch(0.54 0.018 262);
+	--color-inverse: oklch(0.955 0.006 260);
+	--color-inverse-fg: oklch(0.108 0.022 264);
+
+	--color-accent: oklch(0.635 0.205 31);
+	--color-accent-hover: oklch(0.685 0.19 31);
+	--color-accent-soft: oklch(0.3 0.085 28);
+	--color-accent-soft-fg: oklch(0.82 0.13 33);
+
+	--color-warning-soft: oklch(0.28 0.06 82);
+	--color-warning-soft-fg: oklch(0.84 0.12 82);
+	--color-danger: oklch(0.74 0.18 18);
+
+	/* Cool "secured" cyan — a hairline/eyebrow detail only, not the accent. */
+	--vault-seal: oklch(0.72 0.11 205);
+}
+
+/* Vertical-blind unlock reveal: an overlay of vertical strips that collapse
+   upward once the master key is accepted, uncovering the app behind them. The
+   strips are laid out flex-1 (width-agnostic → works at every breakpoint); the
+   stagger comes from a per-strip inline `--i`. The last strip's `animationend`
+   drives the status refetch that swaps the gate out (see master-key-gate.tsx). */
+@keyframes vault-blind {
+	from {
+		transform: scaleY(1);
+	}
+	to {
+		transform: scaleY(0);
+	}
+}
+.vault-reveal {
+	position: fixed;
+	inset: 0;
+	z-index: 60;
+	display: flex;
+	pointer-events: none;
+}
+.vault-reveal-strip {
+	flex: 1 1 0;
+	transform-origin: top;
+	background: linear-gradient(180deg, oklch(0.178 0.027 264), oklch(0.108 0.022 264));
+	border-right: 1px solid oklch(1 0 0 / 0.03);
+	animation: vault-blind 0.5s cubic-bezier(0.7, 0, 0.3, 1) both;
+	animation-delay: calc(var(--i) * 34ms);
+}
+@media (prefers-reduced-motion: reduce) {
+	.vault-reveal-strip {
+		animation-duration: 0.01ms;
+		animation-delay: 0ms;
+	}
+}
+
 @theme {
 	--color-bg: var(--bg);
 	--color-surface: var(--surface);

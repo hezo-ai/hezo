@@ -12,14 +12,16 @@ import { CeoChatWidget } from '../components/ceo-chat/ceo-chat-widget';
 import { FloatingNewTaskButton } from '../components/floating-new-task-button';
 import { GlobalSearchDialog } from '../components/global-search-dialog';
 import { MasterKeyGate } from '../components/master-key-gate';
+import { PasswordLogin } from '../components/password-login';
 import { ProjectRail } from '../components/project-rail';
 import { ProjectSidebar } from '../components/project-sidebar';
 import { PwaInstallPrompt } from '../components/pwa-install-prompt';
-import { MasterKeyStep, SetupGate } from '../components/setup/setup-wizard';
+import { CreatePasswordFlow, SetupGate } from '../components/setup/setup-wizard';
 import { StartingScreen } from '../components/starting-screen';
 import { UpdateBanner } from '../components/update-banner';
 import { SocketProvider } from '../contexts/socket-context';
 import { useActiveProject } from '../hooks/use-active-project';
+import { useMe } from '../hooks/use-me';
 import { useProjectsIndex } from '../hooks/use-projects';
 import { useStatus } from '../hooks/use-status';
 import { useShellWebSockets } from '../hooks/use-websocket';
@@ -45,6 +47,9 @@ function Spinner() {
 function AppShell() {
 	const { data: status, isPending, isError, error, refetch } = useStatus();
 	const navigate = useNavigate();
+	// Session probe: only meaningful (and only fired) once the instance is unlocked.
+	// A 401 here means "unlocked but no valid session → show the password login".
+	const me = useMe({ enabled: status?.masterKeyState === 'unlocked', retry: false });
 
 	useEffect(() => {
 		if (status?.masterKeyState === 'unset' && window.location.pathname !== '/') {
@@ -86,22 +91,34 @@ function AppShell() {
 
 	if (status.masterKeyState !== 'unlocked') {
 		api.clearToken();
-		// Initial setup: render the master-key step inside the wizard chrome so the
-		// stepper makes the two-step flow obvious. On server restart (locked state),
-		// the modal unlock dialog is the right primitive — there's no setup to flow into.
-		if (status.masterKeyState === 'unset') {
-			return <MasterKeyStep state={status.masterKeyState} />;
-		}
+		// Pre-active vault gate. Both first-run setup (unset) and post-restart unlock
+		// (locked) share the same full-screen "vault" treatment to signal the
+		// instance isn't live yet; the master key only unlocks — it never grants a
+		// session. After the unlock reveal, the gate re-evaluates below.
 		return <MasterKeyGate state={status.masterKeyState} />;
 	}
 
-	return (
-		<SocketProvider token={api.getToken()}>
-			<SetupGate>
-				<ShellLayout />
-			</SetupGate>
-		</SocketProvider>
-	);
+	// Unlocked. A session is now required (no anonymous access). A valid session is
+	// only ever minted by the password, so it's proof enough to enter the app.
+	if (me.isPending) return <Spinner />;
+	if (!me.isError) {
+		return (
+			<SocketProvider token={api.getToken()}>
+				<SetupGate>
+					<ShellLayout />
+				</SetupGate>
+			</SocketProvider>
+		);
+	}
+
+	// No valid session. `passwordSet` decides how to get one:
+	if (!status.passwordSet) {
+		// Brand-new instance (or recovery): create the first password, which mints
+		// the first session.
+		return <CreatePasswordFlow />;
+	}
+	// A password exists but this browser has no session → sign in.
+	return <PasswordLogin />;
 }
 
 function ShellLayout() {

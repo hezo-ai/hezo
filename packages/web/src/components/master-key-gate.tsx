@@ -4,34 +4,79 @@ import {
 	normalizeMnemonic,
 	validateMnemonic,
 } from '@hezo/shared';
-import * as Dialog from '@radix-ui/react-dialog';
-import { KeyRound, Loader2, ShieldCheck } from 'lucide-react';
+import { KeyRound, Loader2, Lock, ShieldCheck } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { authenticateWithMnemonic } from '../lib/auth';
 import { copyToClipboard } from '../lib/clipboard';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 import { Button } from './ui/button';
-import { dialogContentClassName } from './ui/dialog';
 import { Logo } from './ui/logo';
+
+const REVEAL_STRIPS = 11;
+
+/**
+ * Full-viewport "pre-active vault" chrome. Always dark (via `.vault-surface`),
+ * visually distinct from the running app so it reads as "the instance is not
+ * live yet". Used by the master-key setup + unlock + recovery screens.
+ */
+export function VaultShell({ children }: { children: ReactNode }) {
+	return (
+		<div className="vault-surface min-h-screen flex flex-col items-center justify-center bg-bg px-4 py-10">
+			<div className="w-full max-w-md">{children}</div>
+		</div>
+	);
+}
+
+/** The vertical-blind reveal overlay; calls `onDone` after the last strip collapses. */
+function UnlockReveal({ onDone }: { onDone: () => void }) {
+	return (
+		<div className="vault-reveal" aria-hidden="true">
+			{Array.from({ length: REVEAL_STRIPS }, (_, i) => (
+				<div
+					// biome-ignore lint/suspicious/noArrayIndexKey: fixed-length decorative strip list
+					key={i}
+					className="vault-reveal-strip"
+					style={{ '--i': i } as React.CSSProperties}
+					onAnimationEnd={i === REVEAL_STRIPS - 1 ? onDone : undefined}
+				/>
+			))}
+		</div>
+	);
+}
 
 interface MasterKeyFormProps {
 	state: MasterKeyState;
 	/** When true, omit the dialog header (caller renders its own page-level heading). */
 	embedded?: boolean;
+	/**
+	 * When provided, called after the master key is accepted instead of the default
+	 * unlock reveal + status refetch. Used by the password-recovery flow, where the
+	 * mnemonic only fetches a password-setup token and the caller advances to the
+	 * create-password step itself.
+	 */
+	onAuthenticated?: () => void;
 }
 
-export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
+export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFormProps) {
 	const [key, setKey] = useState('');
 	const [generatedKey, setGeneratedKey] = useState<string | null>(null);
 	const [error, setError] = useState('');
 	const [loading, setLoading] = useState(false);
 	const [copied, setCopied] = useState(false);
+	const [revealing, setRevealing] = useState(false);
 
 	const isUnset = state === 'unset';
 
 	function handleGenerate() {
 		setGeneratedKey(generateMnemonic());
+	}
+
+	function finishTransition() {
+		// Refetch status (now unlocked) + the session probe so the gate advances.
+		queryClient.invalidateQueries({ queryKey: queryKeys.status() });
+		queryClient.invalidateQueries({ queryKey: queryKeys.me() });
 	}
 
 	async function handleSubmit(e: React.FormEvent) {
@@ -46,11 +91,19 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 		setLoading(true);
 		try {
 			await authenticateWithMnemonic(phrase, state);
-			queryClient.invalidateQueries({ queryKey: queryKeys.status() });
+			if (onAuthenticated) {
+				onAuthenticated();
+				return;
+			}
+			// Play the unlock reveal; the last strip triggers the gate transition.
+			if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+				finishTransition();
+			} else {
+				setRevealing(true);
+			}
 		} catch (err: unknown) {
 			const apiErr = err as { message?: string };
 			setError(apiErr.message || 'Invalid master key');
-		} finally {
 			setLoading(false);
 		}
 	}
@@ -64,24 +117,21 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 
 	return (
 		<>
+			{revealing && <UnlockReveal onDone={finishTransition} />}
 			{!embedded && (
 				<div className="flex flex-col items-center gap-2 mb-6">
 					<Logo size="lg" wordmark className="mb-1" />
-					<div className="p-3 rounded-full bg-surface-2 border border-border">
-						{isUnset ? (
-							<KeyRound className="w-6 h-6 text-text-2" />
-						) : (
-							<ShieldCheck className="w-6 h-6 text-text-2" />
-						)}
+					<div className="p-3 rounded-full bg-surface-2 border border-border-strong text-accent-soft-fg">
+						{isUnset ? <KeyRound className="w-6 h-6" /> : <ShieldCheck className="w-6 h-6" />}
 					</div>
-					<Dialog.Title className="text-lg font-semibold text-text-1">
-						{isUnset ? 'Set Master Key' : 'Unlock Hezo'}
-					</Dialog.Title>
-					<Dialog.Description className="text-sm text-text-2 text-center">
+					<h2 className="text-lg font-semibold text-text-1">
+						{isUnset ? 'Create your master key' : 'Unlock Hezo'}
+					</h2>
+					<p className="text-sm text-text-2 text-center">
 						{isUnset
-							? "Your master key is these 12 words. Save them somewhere safe — you'll need them to unlock Hezo on restart."
-							: 'Enter your 12-word master key to unlock the server.'}
-					</Dialog.Description>
+							? 'This 12-word key unlocks the instance and encrypts everything in it.'
+							: 'The instance is locked. Enter your 12-word master key to bring it back online.'}
+					</p>
 				</div>
 			)}
 
@@ -89,7 +139,7 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 				{isUnset && !generatedKey && (
 					<Button type="button" variant="secondary" onClick={handleGenerate}>
 						<KeyRound className="w-4 h-4" />
-						Generate Key
+						Generate master key
 					</Button>
 				)}
 
@@ -104,9 +154,9 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 									// biome-ignore lint/suspicious/noArrayIndexKey: fixed-length, never-reordered list with possibly-repeating words; position is the stable identity
 									key={index}
 									data-testid="mnemonic-word"
-									className="flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1.5"
+									className="flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-1.5"
 								>
-									<span className="w-4 text-right text-[10px] tabular-nums text-text-2 select-none">
+									<span className="w-4 text-right text-[10px] tabular-nums text-text-3 select-none">
 										{index + 1}
 									</span>
 									<span className="font-mono text-xs text-text-1">{word}</span>
@@ -116,6 +166,16 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 						<Button type="button" variant="ghost" size="sm" onClick={handleCopy}>
 							{copied ? 'Copied!' : 'Copy to clipboard'}
 						</Button>
+						<div className="flex gap-2.5 items-start rounded-md border border-warning-soft-fg/25 bg-warning-soft px-3 py-2.5 text-[12.5px] leading-relaxed text-warning-soft-fg">
+							<Lock className="w-4 h-4 shrink-0 mt-0.5" />
+							<span>
+								<span className="font-semibold text-text-1">
+									Store these words somewhere safe now.
+								</span>{' '}
+								They're the only way to unlock the instance after a restart and to reset a forgotten
+								password. Hezo can't recover them for you.
+							</span>
+						</div>
 					</div>
 				)}
 
@@ -133,7 +193,7 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 							autoComplete="off"
 							autoCapitalize="none"
 							spellCheck={false}
-							className="w-full resize-none rounded-md border border-border bg-surface p-2.5 font-mono text-xs text-text-1 placeholder:text-text-2 focus:outline-none focus:ring-2 focus:ring-info-soft-fg"
+							className="w-full resize-none rounded-md border border-border-strong bg-surface-2 p-2.5 font-mono text-xs text-text-1 placeholder:text-text-3 focus:outline-none focus:ring-2 focus:ring-accent"
 						/>
 					</div>
 				)}
@@ -142,7 +202,7 @@ export function MasterKeyForm({ state, embedded }: MasterKeyFormProps) {
 
 				<Button type="submit" disabled={loading || (isUnset ? !generatedKey : !key.trim())}>
 					{loading && <Loader2 className="w-4 h-4 animate-spin" />}
-					{isUnset ? 'Set Key & Continue' : 'Unlock'}
+					{isUnset ? 'Set key & continue' : 'Unlock'}
 				</Button>
 			</form>
 		</>
@@ -153,16 +213,16 @@ interface MasterKeyGateProps {
 	state: MasterKeyState;
 }
 
-/** Modal wrapper kept for callers that still want the centered overlay variant. */
+/** Full-page vault screen: master-key setup (unset) or unlock-on-restart (locked). */
 export function MasterKeyGate({ state }: MasterKeyGateProps) {
 	return (
-		<Dialog.Root open>
-			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 bg-[var(--overlay)] backdrop-blur-sm" />
-				<Dialog.Content className={dialogContentClassName.md}>
-					<MasterKeyForm state={state} />
-				</Dialog.Content>
-			</Dialog.Portal>
-		</Dialog.Root>
+		<VaultShell>
+			<div
+				data-testid={state === 'unset' ? 'master-key-setup' : 'master-key-unlock'}
+				className="rounded-2xl border border-border-strong bg-surface p-6 sm:p-8 shadow-[var(--elev-lg)]"
+			>
+				<MasterKeyForm state={state} />
+			</div>
+		</VaultShell>
 	);
 }

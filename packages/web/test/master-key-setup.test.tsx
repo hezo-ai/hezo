@@ -11,7 +11,7 @@ afterEach(() => {
 test('setup generates a 12-word master key in a numbered grid', async () => {
 	render(<MasterKeyForm state="unset" embedded />);
 
-	fireEvent.click(screen.getByRole('button', { name: /generate key/i }));
+	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
 
 	const words = await screen.findAllByTestId('mnemonic-word');
 	expect(words).toHaveLength(12);
@@ -36,7 +36,7 @@ test('copy writes the space-joined phrase and toggles the label', async () => {
 	});
 
 	render(<MasterKeyForm state="unset" embedded />);
-	fireEvent.click(screen.getByRole('button', { name: /generate key/i }));
+	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
 	await screen.findAllByTestId('mnemonic-word');
 	fireEvent.click(screen.getByRole('button', { name: /copy to clipboard/i }));
 

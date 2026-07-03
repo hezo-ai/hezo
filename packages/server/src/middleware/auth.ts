@@ -19,13 +19,34 @@ const PUBLIC_PATHS = [
 	'/api/auth/setup',
 	'/api/auth/challenge',
 	'/api/auth/verify',
+	// Password login is challenge-response: fetch a nonce+salt, then verify a
+	// signature. Both are token-keyed and self-authenticating.
+	'/api/auth/password-challenge',
+	'/api/auth/password-verify',
+	// Set/change the password verifier. Public path but self-authenticating: it
+	// accepts either a full session JWT or a password-setup-scoped JWT and checks
+	// the bearer itself (the scoped token is rejected everywhere else).
+	'/api/auth/password',
 	'/',
+	// OAuth provider redirect targets: the browser arrives here from the provider
+	// with no session token; security comes from the signed `state` param, verified
+	// server-side. (Both the generic and the DCR/MCP callback.)
 	'/api/oauth/callback',
+	'/api/oauth/mcp-callback',
 	// API-key self-registration + status polling are token-keyed and do their own
 	// lookup, so they bypass the bearer-token auth middleware.
 	'/api/api-keys/register',
 	'/api/api-keys/status',
 ];
+
+/**
+ * JWT scope for the short-lived token minted by the mnemonic flows (setup /
+ * unlock / recovery). Its ONLY accepted use is `POST /api/auth/password`; it is
+ * rejected as a session everywhere else (see `verifyToken`). This is what keeps
+ * the master key an *unlock* credential, never a general login — a session is
+ * only ever minted by the password.
+ */
+export const PASSWORD_SETUP_SCOPE = 'password_setup';
 
 /**
  * Shared token verification used by HTTP middleware, MCP, and WebSocket auth.
@@ -128,6 +149,10 @@ export async function verifyToken(
 			};
 		}
 		if (payload.user_id) {
+			// A password-setup-scoped token proves master-key ownership but is NOT a
+			// session — it can only reach `/api/auth/password` (which validates it
+			// directly, bypassing this path). Reject it as a general credential.
+			if (payload.scope === PASSWORD_SETUP_SCOPE) return null;
 			const userResult = await db.query<{ is_superuser: boolean }>(
 				'SELECT is_superuser FROM users WHERE id = $1',
 				[payload.user_id],
@@ -151,15 +176,10 @@ export const authMiddleware = createMiddleware<Env>(async (c, next) => {
 	const header = c.req.header('Authorization');
 
 	if (!header?.startsWith('Bearer ')) {
-		// While the server is unlocked, requests without a token are accepted as
-		// the bootstrap admin so the instance is publicly viewable.
-		if (masterKeyManager.getState() === 'unlocked') {
-			const adminAuth = await loadAdminAuth(db);
-			if (adminAuth) {
-				c.set('auth', adminAuth);
-				return next();
-			}
-		}
+		// No anonymous access. Every session is authenticated by the admin
+		// password (JWT); a tokenless request is rejected so the instance is safe
+		// to expose on a public network. (Public, token-keyed endpoints are handled
+		// above via PUBLIC_PATHS.)
 		return c.json(
 			{ error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' } },
 			401,
@@ -198,15 +218,6 @@ export const authMiddleware = createMiddleware<Env>(async (c, next) => {
 	return next();
 });
 
-export async function loadAdminAuth(db: PGlite): Promise<AuthInfo | null> {
-	const result = await db.query<{ id: string }>(
-		'SELECT id FROM users WHERE is_superuser = true LIMIT 1',
-	);
-	const userId = result.rows[0]?.id;
-	if (!userId) return null;
-	return { type: AuthType.Admin, userId, isSuperuser: true };
-}
-
 export async function signAdminJwt(
 	masterKeyManager: { getJwtKey: () => Promise<Buffer> },
 	userId: string,
@@ -215,6 +226,59 @@ export async function signAdminJwt(
 	const secret = jwtKey.toString('base64');
 	const now = Math.floor(Date.now() / 1000);
 	return sign({ user_id: userId, iat: now, exp: now + 86400 * 7 }, secret, 'HS256');
+}
+
+/**
+ * Short-lived, single-purpose token minted by the mnemonic flows (setup / unlock
+ * / recovery). It carries `scope: PASSWORD_SETUP_SCOPE` and is accepted ONLY by
+ * `POST /api/auth/password`; `verifyToken` rejects it as a session everywhere
+ * else, so the master key can never stand in for the password.
+ */
+export async function signPasswordSetupToken(
+	masterKeyManager: { getJwtKey: () => Promise<Buffer> },
+	userId: string,
+): Promise<string> {
+	const jwtKey = await masterKeyManager.getJwtKey();
+	const secret = jwtKey.toString('base64');
+	const now = Math.floor(Date.now() / 1000);
+	return sign(
+		{ user_id: userId, scope: PASSWORD_SETUP_SCOPE, iat: now, exp: now + 600 },
+		secret,
+		'HS256',
+	);
+}
+
+/**
+ * Authorize a password mutation (`POST /api/auth/password`). Accepts a bearer
+ * that is EITHER a full admin session JWT (logged-in change) OR a
+ * password-setup-scoped JWT (initial-set / recovery), and returns the superuser
+ * id it authorizes — or `null` if the token is anything else. Kept separate from
+ * `verifyToken` precisely because that path rejects the scoped token.
+ */
+export async function resolvePasswordMutationUserId(
+	token: string,
+	db: PGlite,
+	masterKeyManager: MasterKeyManager,
+): Promise<string | null> {
+	if (masterKeyManager.getState() !== 'unlocked') return null;
+	try {
+		const jwtKey = await masterKeyManager.getJwtKey();
+		const payload = await verify(token, jwtKey.toString('base64'), 'HS256');
+		const userId = payload.user_id as string | undefined;
+		if (!userId) return null;
+		// Only a full session or the password-setup scope may set a password. Agent
+		// / CEO tokens (member_id/session_id) never can.
+		if (payload.member_id || payload.session_id) return null;
+		if (payload.scope !== undefined && payload.scope !== PASSWORD_SETUP_SCOPE) return null;
+		const result = await db.query<{ is_superuser: boolean }>(
+			'SELECT is_superuser FROM users WHERE id = $1',
+			[userId],
+		);
+		if (!result.rows[0]?.is_superuser) return null;
+		return userId;
+	} catch {
+		return null;
+	}
 }
 
 export async function signAgentJwt(

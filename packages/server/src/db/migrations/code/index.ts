@@ -1,4 +1,5 @@
 import type { CodeMigration } from '../../migrate';
+import { migration013UserPassword } from './013_user_password';
 
 /**
  * Registry of **code migrations** — schema/data migrations whose data transform
@@ -28,4 +29,6 @@ import type { CodeMigration } from '../../migrate';
  * `loadMigrations()` in `startup.ts` merges this with the SQL migrations into a
  * single ordered `Record<string, Migration>` the runner applies.
  */
-export const codeMigrations: Record<string, CodeMigration> = {};
+export const codeMigrations: Record<string, CodeMigration> = {
+	'013_user_password': migration013UserPassword,
+};

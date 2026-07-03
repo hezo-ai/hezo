@@ -8,8 +8,10 @@ import {
 	buildUnlockMessage,
 	CAPTAIN_AGENT_SLUG,
 	deriveAuthKeyPair,
+	derivePasswordKeyPair,
 	deriveUnlockKey,
 	generateMnemonic,
+	generatePasswordSalt,
 	signAuthMessage,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
@@ -119,6 +121,17 @@ export async function createTestApp(opts: { webUrl?: string } = {}) {
 	const userResult = await db.query<{ id: string }>(
 		"INSERT INTO users (display_name, is_superuser) VALUES ('Test Admin', true) RETURNING id",
 	);
+	// Enroll a password verifier so `/api/status` reports passwordSet:true (the web
+	// gate lands on the app rather than the create-password step). The plaintext is
+	// exposed for auth-flow tests that drive the real challenge/verify login.
+	const password = 'test-password';
+	const passwordSalt = generatePasswordSalt();
+	const passwordKeys = await derivePasswordKeyPair(password, passwordSalt);
+	await db.query('UPDATE users SET password_salt = $1, password_public_key = $2 WHERE id = $3', [
+		passwordSalt,
+		passwordKeys.publicKeyHex,
+		userResult.rows[0].id,
+	]);
 	const token = await signAdminJwt(masterKeyManager, userResult.rows[0].id);
 
 	// Seed the HQ team (CEO + Coach + HQ project). Coordination flows (intake,
@@ -133,7 +146,18 @@ export async function createTestApp(opts: { webUrl?: string } = {}) {
 		containerLogStreamer,
 	});
 
-	return { app, db, token, mnemonic, unlockKeyHex, authKeys, masterKeyManager, dataDir };
+	return {
+		app,
+		db,
+		token,
+		mnemonic,
+		unlockKeyHex,
+		authKeys,
+		masterKeyManager,
+		dataDir,
+		password,
+		passwordSalt,
+	};
 }
 
 /**

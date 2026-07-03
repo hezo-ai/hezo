@@ -37,6 +37,8 @@ interface RenderOptions {
 interface TestAppContext {
 	app: Hono;
 	token: string;
+	/** The seeded admin's plaintext password (verifier enrolled in createTestApp). */
+	password: string;
 	/** The 12-word master key phrase the test app was enrolled with. */
 	mnemonic: string;
 	apiBase: (path: string, init?: RequestInit) => Promise<Response>;
@@ -69,6 +71,7 @@ beforeEach(async () => {
 	activeContext = {
 		app: test.app,
 		token: test.token,
+		password: test.password,
 		mnemonic: test.mnemonic,
 		apiBase,
 		db: test.db,

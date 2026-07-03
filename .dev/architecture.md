@@ -815,16 +815,40 @@ keys), so the unlock key transits exactly twice per boot — at setup and at
 unlock-after-restart — always inside an Ed25519-signed payload.
 
 **Bootstrap (challenge-response).** `POST /auth/setup` enrolls the public key + unlock key
-+ canary in one transaction (self-certifying signature, `unset` state only). Routine login
-transmits **zero key material**: `POST /auth/challenge` issues a single-use nonce,
-`POST /auth/verify` returns a JWT after verifying the signature over a reconstructed,
-domain-separated message (`hezo-auth-v1:login:<nonce>`). After a restart the server starts
-**locked**; the first `verify` includes the `unlock_key`. Messages are versioned and
-domain-separated so signatures can't be replayed or cross-purposed; on unlock
-`MasterKeyManager` fires `onUnlock` callbacks that start the `JobManager`.
++ canary in one transaction (self-certifying signature, `unset` state only). The mnemonic
+transmits **zero key material** on routine use: `POST /auth/challenge` issues a single-use
+nonce, `POST /auth/verify` verifies the signature over a reconstructed, domain-separated
+message (`hezo-auth-v1:login:<nonce>`). After a restart the server starts **locked**; the
+first `verify` includes the `unlock_key`. Messages are versioned and domain-separated so
+signatures can't be replayed or cross-purposed; on unlock `MasterKeyManager` fires
+`onUnlock` callbacks that start the `JobManager`.
+
+**The master key only *unlocks*.** It is not a login. `setup` and `verify` return a
+short-lived **password-setup-scoped JWT** (`scope: password_setup`, ~10 min), never a
+session — `verifyToken` rejects that scope on every general route. Its sole power is
+`POST /auth/password`. So proving master-key ownership unlocks the instance and authorizes
+setting a password; a **session** is minted only by the password (below). This is the
+recovery path too: "forgot password" re-enters the master key to obtain the scoped token,
+then sets a new one.
+
+**Password authentication (no anonymous sessions).** Day-to-day access is a per-admin
+**password**, and every session is authenticated — there is **no anonymous access** on
+REST or the WebSocket. The password is low-entropy so it is **never sent to the server**:
+the browser derives an Ed25519 keypair from `scrypt(password, salt)` and the server stores
+only a **verifier** (`users.password_salt` + `users.password_public_key`), never a hash.
+Login mirrors the mnemonic's challenge-response: `POST /auth/password-challenge` returns a
+nonce + the salt; `POST /auth/password-verify` checks the signature over
+`hezo-auth-v1:password-login:<nonce>` and mints a **session JWT**. `POST /auth/password`
+(accepting either a session or the password-setup-scoped token) enrolls a new verifier and
+returns a fresh session. `password-verify` is throttled in memory (single admin → global
+backoff/lockout). `GET /api/status` exposes `passwordSet`, and the web gate uses a
+`GET /api/me` probe to distinguish "unlocked but no session → password login" from a valid
+session. **Existing installations** are migrated (013) with the default password `"password"`
+so operators can sign in immediately after upgrading, then change it.
 
 **Three principals.**
-- **User JWT** (HS256, secret derived from the unlock key) — `Authorization: Bearer <jwt>`.
+- **User JWT** (HS256, secret derived from the unlock key) — `Authorization: Bearer <jwt>`,
+  7-day, minted only by password login / set-password.
 - **API key** — `Authorization: Bearer hezo_<key>`, SHA-256-hashed, **instance-scoped**. The
   external on-ramp, confined to the **MCP endpoint (`POST /mcp`) only** — rejected on REST
   and the WebSocket. One `api_keys` table with a `status` (pending/approved) backs **two

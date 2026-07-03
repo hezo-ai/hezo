@@ -18,11 +18,24 @@ export interface ServerTestContext {
 	unlockKeyHex: string;
 	masterKeyManager: MasterKeyManager;
 	dataDir: string;
+	/** The seeded admin's plaintext password (verifier enrolled in createTestApp). */
+	password: string;
+	/** Salt for the seeded admin's password verifier. */
+	passwordSalt: string;
 }
 
 export async function createTestContext(): Promise<ServerTestContext> {
-	const { app, db, token, mnemonic, unlockKeyHex, masterKeyManager, dataDir } =
-		await createTestApp();
+	const {
+		app,
+		db,
+		token,
+		mnemonic,
+		unlockKeyHex,
+		masterKeyManager,
+		dataDir,
+		password,
+		passwordSalt,
+	} = await createTestApp();
 
 	const server = createServer(async (req, res) => {
 		const url = `http://localhost${req.url}`;
@@ -64,6 +77,8 @@ export async function createTestContext(): Promise<ServerTestContext> {
 		unlockKeyHex,
 		masterKeyManager,
 		dataDir,
+		password,
+		passwordSalt,
 	};
 }
 
