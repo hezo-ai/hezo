@@ -481,12 +481,6 @@ document, loaded from its **home** team) is resolved per run by
 `{{team_preferences_context}}`, `{{team_description}}`, `{{team_context}}`,
 `{{current_date}}`, and the CEO-only `{{projects_context}}`), then the resolver appends the
 Run Context / Repository / Project State / Teammates blocks and `SHARED_INSTRUCTIONS`.
-For a task run the runner additionally appends a **Run limits & winding down** block
-(`buildRunLimitsBlock`) stating the run's `run_timeout_min` wall-clock budget and the agent's
-+ project's remaining per-window spend (from the budget service), plus a graceful wind-down
-protocol — since the agent can't observe elapsed time or live spend mid-run, it's told the
-size of its run up front so it can make committed (auto-pushed) progress and defer with a
-comment before a hard cut rather than being killed mid-step.
 Every surface that authors or edits a prompt — the hire proposal create/edit
 (`prepareHireProposal`, `PATCH /approvals`), direct agent create + `PATCH /agents`, and the
 `create_hire_proposal` / `update_agent_system_prompt` MCP tools — validates a supplied,
@@ -584,6 +578,17 @@ skipped rather than attempting an unauthenticated push. A repo-less workspace, a
 clone whose `core.hooksPath` is redirected (e.g. husky) simply doesn't fire it. *Uncommitted*
 changes are still not covered — the agent commits to preserve, and the role prompts frame frequent
 committing (not a manual end-of-run push) as the durability action.
+
+**Timeout handling (graceful cut).** The `run_timeout_min` timer aborts the run's signal with a
+tagged `'run_timeout'` reason (`JobManager.launchTask`), so the runner finalizes it as `timed_out`
+— distinct from a bare abort (user cancel / shutdown → `cancelled`) and container death
+(`container_*` → `failed`); `runAgent`'s `abortedRunStatus` maps the reason. On a `timed_out` run
+`onAgentComplete` **auto-queues a same-task continuation wakeup** (`queueTimeoutContinuation` →
+`createWakeup(Timer, {reason:'timeout_continuation'})`) so the agent resumes the task on the next
+wakeup pass — committed work is already pushed, so nothing is lost — and it **skips the failure
+ping + next-task chain** that a real failure gets. A loop cap (`MAX_CONSECUTIVE_TIMEOUT_CONTINUATIONS`)
+stops re-queuing once the task times out that many times in a row (a non-timeout run resets the
+streak), so a task that never fits its run window can't loop forever.
 
 **Success gate.** A clean exit (`exit_code = 0`) only counts as `succeeded` if the run
 **produced output** — `produced_output` is set by any write tool (and a post-run worktree

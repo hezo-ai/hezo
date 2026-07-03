@@ -42,12 +42,7 @@ import {
 	getProviderCredentialAndModel,
 	updateAiProviderCredential,
 } from './ai-provider-keys';
-import {
-	checkOverBudget,
-	getAgentBudgetStatus,
-	getProjectBudgetStatus,
-	recordRunCost,
-} from './budget';
+import { checkOverBudget, recordRunCost } from './budget';
 import { formatContainerConnectivityMessage } from './container-connectivity-preflight';
 import {
 	CONNECTIVITY_STALE_MS,
@@ -99,7 +94,7 @@ import { resolveRuntimeForTask } from './runtime-resolver';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
 import { validateSubscriptionBlob } from './subscription-auth';
 import { recordStatusChange } from './task-events';
-import { buildRunLimitsBlock, resolveSystemPrompt } from './template-resolver';
+import { resolveSystemPrompt } from './template-resolver';
 import {
 	CONTAINER_WORKSPACE_ROOT,
 	CONTAINER_WORKTREES_ROOT,
@@ -155,6 +150,8 @@ export interface RunResult {
 	stderr: string;
 	durationMs: number;
 	heartbeatRunId?: string;
+	/** The run ended by hitting its wall-clock time limit; drives an automatic same-task continuation. */
+	timedOut?: boolean;
 }
 
 export interface RunnerDeps {
@@ -601,22 +598,6 @@ async function buildRunContext(
 			replyContext,
 			spawnedFrom,
 		});
-		// Anticipatory limit awareness: tell the agent up front how much run-time and
-		// budget this run has, plus a graceful wind-down protocol, so it can defer
-		// cleanly before a hard cut instead of being killed mid-step. Committed work is
-		// already auto-pushed, so a clean deferral loses nothing.
-		const limitRow = await deps.db.query<{ run_timeout_min: number }>(
-			'SELECT run_timeout_min FROM member_agents WHERE id = $1',
-			[agent.id],
-		);
-		const runTimeoutMin = limitRow.rows[0]?.run_timeout_min ?? 0;
-		if (runTimeoutMin > 0) {
-			const [agentStatus, projectStatus] = await Promise.all([
-				getAgentBudgetStatus(deps.db, agent.id),
-				getProjectBudgetStatus(deps.db, project.id),
-			]);
-			basePrompt += buildRunLimitsBlock(runTimeoutMin, agentStatus, projectStatus);
-		}
 	}
 	const taskPrompt = effortApplication.promptDirective
 		? `${basePrompt}\n\n${effortApplication.promptDirective}`
@@ -664,12 +645,34 @@ async function buildRunContext(
 }
 
 export type ContainerExitAbortReason = 'container_error' | 'container_stopped';
+/**
+ * Reasons the runner tags on a run's AbortSignal. A bare abort — a user cancel via
+ * `cancelTask`, server shutdown, or the stale-dispatch reaper — carries none.
+ */
+export type RunAbortReason = ContainerExitAbortReason | 'run_timeout';
 
-function exitReasonFromSignal(signal?: AbortSignal): ContainerExitAbortReason | null {
-	if (!signal) return null;
-	const reason = signal.reason as unknown;
-	if (reason === 'container_error' || reason === 'container_stopped') return reason;
+function runAbortReason(signal?: AbortSignal): RunAbortReason | null {
+	const reason = signal?.reason as unknown;
+	if (reason === 'container_error' || reason === 'container_stopped' || reason === 'run_timeout')
+		return reason;
 	return null;
+}
+
+/**
+ * Terminal status for an aborted run: a wall-clock timeout is `TimedOut` (and drives an
+ * automatic same-task continuation — see `JobManager.onAgentComplete`), container death is
+ * `Failed`, and a bare abort (user cancel / shutdown) is `Cancelled`.
+ */
+function abortedRunStatus(reason: RunAbortReason | null): HeartbeatRunStatus {
+	if (reason === 'run_timeout') return HeartbeatRunStatus.TimedOut;
+	if (reason) return HeartbeatRunStatus.Failed; // container_error / container_stopped
+	return HeartbeatRunStatus.Cancelled;
+}
+
+/** Error string stamped on an aborted run row — a friendly line for a timeout, else the raw reason. */
+function abortErrorMessage(reason: RunAbortReason | null): string | undefined {
+	if (reason === 'run_timeout') return 'run reached its time limit';
+	return reason ?? undefined;
 }
 
 function extractTriggeredBy(payload: Record<string, unknown> | undefined): TriggeredBy | null {
@@ -824,8 +827,8 @@ export async function runAgent(
 	const finalizeAbort = async (): Promise<RunResult> => {
 		const durationMs = Date.now() - startTime;
 		await deps.logs.end(streamId);
-		const exitReason = exitReasonFromSignal(signal);
-		const status = exitReason ? HeartbeatRunStatus.Failed : HeartbeatRunStatus.Cancelled;
+		const reason = runAbortReason(signal);
+		const status = abortedRunStatus(reason);
 		await updateHeartbeatRun(
 			deps.db,
 			heartbeatRunId,
@@ -833,7 +836,7 @@ export async function runAgent(
 				status,
 				exitCode: -1,
 				durationMs,
-				error: exitReason ?? undefined,
+				error: abortErrorMessage(reason),
 			},
 			runBroadcast,
 		);
@@ -841,9 +844,10 @@ export async function runAgent(
 			success: false,
 			exitCode: -1,
 			stdout: '',
-			stderr: exitReason ?? 'Aborted',
+			stderr: abortErrorMessage(reason) ?? 'Aborted',
 			durationMs,
 			heartbeatRunId,
+			timedOut: reason === 'run_timeout',
 		};
 	};
 
@@ -1236,13 +1240,9 @@ export async function runAgent(
 		} catch (error) {
 			const durationMs = Date.now() - startTime;
 			const isAbort = (error as Error).name === 'AbortError';
-			const exitReason = exitReasonFromSignal(signal);
-			const errorMessage = exitReason ?? (error as Error).message;
-			const status = isAbort
-				? exitReason
-					? HeartbeatRunStatus.Failed
-					: HeartbeatRunStatus.Cancelled
-				: HeartbeatRunStatus.Failed;
+			const reason = runAbortReason(signal);
+			const errorMessage = abortErrorMessage(reason) ?? (error as Error).message;
+			const status = isAbort ? abortedRunStatus(reason) : HeartbeatRunStatus.Failed;
 
 			emit('stderr', `\n[runner] ${errorMessage}\n`);
 
@@ -1270,6 +1270,7 @@ export async function runAgent(
 				stderr: errorMessage,
 				durationMs,
 				heartbeatRunId,
+				timedOut: reason === 'run_timeout',
 			};
 		}
 	} finally {

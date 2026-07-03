@@ -1,7 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { HEZO_DOCS_URL } from '@hezo/shared';
 import { terminalStatusParams } from '../lib/sql';
-import type { EntityBudgetStatus } from './budget';
 import { buildHezoDocsBlock } from './docs-bundle';
 
 /**
@@ -608,71 +607,6 @@ You are not scoped to a single project — you roam across the whole org, so the
 ## Run Context
 
 This run operates inside one project. MCP tools that take a \`project\` argument default to it — omit \`project\` to act here, and only pass another project's slug to reach a different one. Reference tickets by their identifier (e.g. \`${taskIdentifier || 'ABC-12'}\`), never a UUID.${lines.length ? `\n\n${lines.join('\n')}` : ''}`;
-}
-
-const BUDGET_PERIODS: Array<[keyof Omit<EntityBudgetStatus, 'overBudget'>, string]> = [
-	['daily', 'Daily'],
-	['weekly', 'Weekly'],
-	['monthly', 'Monthly'],
-];
-
-function formatUsd(cents: number): string {
-	return `$${(cents / 100).toFixed(2)}`;
-}
-
-/** One line per rolling window that is capped on the agent and/or its project. */
-function budgetWindowLines(
-	agent: EntityBudgetStatus,
-	project: EntityBudgetStatus | null,
-): string[] {
-	const lines: string[] = [];
-	for (const [key, label] of BUDGET_PERIODS) {
-		const a = agent[key];
-		const p = project?.[key] ?? null;
-		const aCapped = a.limitCents > 0;
-		const pCapped = p !== null && p.limitCents > 0;
-		if (!aCapped && !pCapped) continue;
-		const parts: string[] = [];
-		if (aCapped) parts.push(`you ${formatUsd(a.spentCents)}/${formatUsd(a.limitCents)}`);
-		if (pCapped && p) parts.push(`project ${formatUsd(p.spentCents)}/${formatUsd(p.limitCents)}`);
-		lines.push(`  - ${label} — ${parts.join(' · ')}`);
-	}
-	return lines;
-}
-
-/**
- * Anticipatory run-limit guidance appended to the task prompt. An agent can't
- * observe elapsed time or live spend mid-run, so it is told the size of its
- * run-time and budget up front plus a graceful wind-down protocol: make committed
- * progress (every commit auto-pushes, so it survives a hard cut) and, if the work
- * outlasts the run, defer with a short comment before the limit rather than being
- * killed mid-step. Complements the auto-push durability hook and the stop-hook rule
- * that a concrete comment + non-terminal status is a valid deferral. Pure/testable —
- * the caller fetches `run_timeout_min` and the budget status.
- */
-export function buildRunLimitsBlock(
-	runTimeoutMin: number,
-	agentStatus: EntityBudgetStatus,
-	projectStatus: EntityBudgetStatus | null,
-): string {
-	const windowLines = budgetWindowLines(agentStatus, projectStatus);
-	const budgetSection =
-		windowLines.length > 0
-			? `- **Budget.** Your spend is capped per rolling window (spent / cap so far this run):\n${windowLines.join('\n')}\n  When a window is nearly used up, keep this run small and wrap up — a run that tips a window over its cap pauses you until the window resets. Don't start expensive work you can't finish within what's left.`
-			: '- **Budget.** No spend cap is configured for this run.';
-
-	return `
-
----
-
-## Run limits & winding down
-
-This run is time- and budget-bounded — reach a safe stopping point within it rather than gambling one long, uninterruptible step against the limit.
-
-- **Time.** This run has a hard wall-clock limit of **${runTimeoutMin} minutes**, after which it is stopped mid-step. You can't see elapsed time while you work, so make steady, committed progress instead of one long push — every commit is pushed to the remote immediately (see the Repository section), so anything committed survives the cut and only uncommitted changes are lost. If the task is bigger than one run, before you would run out post a short comment listing what remains and stop with the task left non-terminal — your next run resumes from your pushed commits and that comment.
-${budgetSection}
-
-**Winding down near a limit** = commit (it auto-pushes) + a one-line comment on what's left + leave the task non-terminal. That is the correct, expected stop when you're genuinely near a limit — not abandonment. While run-time and budget are still ample, keep driving; don't stop early.`;
 }
 
 interface RepoContextRow {

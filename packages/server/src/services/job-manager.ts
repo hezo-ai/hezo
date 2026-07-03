@@ -77,6 +77,10 @@ import type { WebSocketManager } from './ws';
 const log = logger.child('job-manager');
 
 const MAX_CONSECUTIVE_FAILURE_PINGS = 3;
+// A run cut off by its wall-clock time limit auto-queues a same-task continuation. This caps
+// how many consecutive timeouts we re-queue through before parking the task, so a task that
+// never fits its run window can't loop forever; a non-timeout run in between resets the streak.
+const MAX_CONSECUTIVE_TIMEOUT_CONTINUATIONS = 5;
 const FAILURE_PING_ERROR_MAX_LEN = 500;
 const FAILURE_TERMINAL_STATUSES: HeartbeatRunStatus[] = [
 	HeartbeatRunStatus.Failed,
@@ -475,7 +479,10 @@ export class JobManager {
 
 		const timeoutId = setTimeout(() => {
 			log.warn(`Task ${key} timed out after ${timeoutMs}ms`);
-			ac.abort();
+			// Tagged reason so runAgent finalizes the run as `timed_out` (not `cancelled`) and
+			// onAgentComplete queues a same-task continuation. `cancelTask`/shutdown/the reaper
+			// abort without a reason → `cancelled`; container death aborts `container_*` → `failed`.
+			ac.abort('run_timeout');
 		}, timeoutMs);
 
 		const entry: RunningTask = {
@@ -1882,6 +1889,14 @@ export class JobManager {
 			);
 		}
 
+		// A run cut off by its wall-clock time limit is not a failure. Queue a same-task
+		// continuation so the agent resumes it (committed work is already pushed) and skip the
+		// failure ping + next-task chain, which would mislead or compete with the resume. Only
+		// once the task keeps timing out (the cap) do we fall through to the failure path.
+		if (result.timedOut) {
+			if (await this.queueTimeoutContinuation(memberId, taskId, teamId)) return;
+		}
+
 		if (!result.success && result.heartbeatRunId) {
 			await this.postFailurePing(
 				memberId,
@@ -1898,6 +1913,52 @@ export class JobManager {
 		// no `closed`), so the task stays `done` after the Coach run.
 
 		await this.chainNextTaskWakeup(memberId, agentSlug, taskId, teamId);
+	}
+
+	/**
+	 * After a run hit its wall-clock time limit, queue a same-task continuation so the agent
+	 * picks the task back up on the next wakeup pass (committed work is already pushed by the
+	 * per-commit auto-push hook, so nothing is lost). The `launchTask` finally already kicks
+	 * `processWakeups`, which dispatches this once the task releases. Returns false — declining
+	 * to queue — once the task has hit `MAX_CONSECUTIVE_TIMEOUT_CONTINUATIONS` timeouts in a
+	 * row, so a task that never fits its run window can't re-queue forever; a non-timeout run in
+	 * between resets the streak. The current run's row is already `timed_out` here, so it counts.
+	 */
+	private async queueTimeoutContinuation(
+		memberId: string,
+		taskId: string,
+		teamId: string,
+	): Promise<boolean> {
+		const { db } = this.deps;
+		const recent = await db.query<{ status: HeartbeatRunStatus }>(
+			`SELECT status FROM heartbeat_runs
+			 WHERE member_id = $1 AND task_id = $2
+			 ORDER BY started_at DESC NULLS LAST
+			 LIMIT $3`,
+			[memberId, taskId, MAX_CONSECUTIVE_TIMEOUT_CONTINUATIONS],
+		);
+		if (
+			recent.rows.length >= MAX_CONSECUTIVE_TIMEOUT_CONTINUATIONS &&
+			recent.rows.every((r) => r.status === HeartbeatRunStatus.TimedOut)
+		) {
+			log.warn(
+				`Not queuing timeout continuation for member ${memberId} on task ${taskId}: ${MAX_CONSECUTIVE_TIMEOUT_CONTINUATIONS} consecutive timeouts`,
+			);
+			return false;
+		}
+		try {
+			await createWakeup(db, memberId, teamId, WakeupSource.Timer, {
+				task_id: taskId,
+				reason: 'timeout_continuation',
+			});
+			return true;
+		} catch (e) {
+			log.error(
+				`Failed to queue timeout continuation for member ${memberId} on task ${taskId}:`,
+				e,
+			);
+			return false;
+		}
 	}
 
 	/**
