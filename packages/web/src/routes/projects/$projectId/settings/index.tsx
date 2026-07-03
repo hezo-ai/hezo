@@ -8,11 +8,14 @@ import { Button } from '../../../../components/ui/button';
 import { Input } from '../../../../components/ui/input';
 import { Textarea } from '../../../../components/ui/textarea';
 import { useProject, useUpdateProject } from '../../../../hooks/use-projects';
+import { useScrollToHash } from '../../../../hooks/use-scroll-to-hash';
 
 function ProjectSettingsPage() {
 	const { projectId } = Route.useParams();
 	const { data: project } = useProject(projectId);
 	const updateProject = useUpdateProject(projectId);
+	// Deep link from the Budget page's "Edit" button lands on the budget section.
+	const budgetSectionRef = useScrollToHash('budget');
 
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
@@ -123,7 +126,12 @@ function ProjectSettingsPage() {
 				)}
 			</section>
 
-			<ProjectBudgetPanel projectId={projectId} variant="limits" />
+			<ProjectBudgetPanel
+				projectId={projectId}
+				variant="limits"
+				sectionRef={budgetSectionRef}
+				sectionId="budget"
+			/>
 
 			{project.container_status === 'running' && project.dev_ports?.length > 0 && (
 				<section>

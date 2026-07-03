@@ -94,45 +94,68 @@ test('Budgets page renders per-day breakdown panels by agent and adapter', async
 	});
 });
 
-test('Budget page: editing limits inline updates the spend progress cards', async () => {
+test('Budget page: Project budget header has a single Edit link to the settings budget section', async () => {
 	let teamSlug = '';
-	let projectId = '';
 
-	const { findByTestId, findByRole, user, ctx, router } = await renderApp({
+	const { findByTestId, findByRole, queryByRole, user, router } = await renderApp({
 		initialPath: '/',
+		strictMode: true,
 		seed: async () => {
 			const ws = await seedWorkspace();
-			const project = await seedProject(ws, { name: 'Budget Inline' });
+			await seedProject(ws, { name: 'Budget Link' });
 			teamSlug = ws.internalSlug;
-			projectId = project.id;
 		},
 	});
 
 	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
 
-	// The progress display and the editor are one section: edit limits in place
-	// via the inline per-window pencil.
-	await user.click(await findByRole('button', { name: 'Edit Today cap' }));
-	await user.click(await findByTestId('budget-daily-toggle'));
-	const daily = (await findByTestId('budget-daily')) as HTMLInputElement;
-	await user.clear(daily);
-	await user.type(daily, '20');
-	await user.click(await findByRole('button', { name: 'Save' }));
+	// The per-window pencils are gone — caps are edited from settings now, not here.
+	const editLink = await findByTestId('edit-project-budget-link');
+	expect(queryByRole('button', { name: 'Edit Today cap' })).toBeNull();
+	expect(queryByRole('button', { name: 'Edit This week cap' })).toBeNull();
+	expect(queryByRole('button', { name: 'Edit This month cap' })).toBeNull();
 
-	// The window column (driven by budget-status) reflects the new $20 daily cap — i.e.
-	// editing the cap refreshes the same progress display it lives in.
-	await waitFor(
-		() => {
-			const col = document.querySelector('[data-testid="budget-window-daily"]');
-			expect(col?.textContent ?? '').toContain('$20.00');
+	// The single header Edit affordance points at the project settings budget anchor.
+	const href = editLink.closest('a')?.getAttribute('href') ?? '';
+	expect(href).toContain(`/projects/${teamSlug}/settings`);
+	expect(href).toContain('#budget');
+
+	// Following it lands on the settings page, where the budget caps editor lives.
+	await user.click(editLink);
+	await findByTestId('edit-project-budget', undefined, { timeout: 15_000 });
+	await findByRole('button', { name: 'Edit caps' });
+});
+
+test('Budget page: each agent card links to that agent’s settings budget section', async () => {
+	let teamSlug = '';
+	let agentSlug = '';
+	let agentTitle = '';
+
+	const { findByTestId, findByRole, findByText, user, router } = await renderApp({
+		initialPath: '/',
+		strictMode: true,
+		seed: async () => {
+			const ws = await seedWorkspace();
+			// Every team agent surfaces in the per-agent budget list (spend or not).
+			const agent = ws.agents.find((a) => a.slug === 'engineer') ?? ws.agents[0];
+			agentSlug = agent.slug;
+			agentTitle = agent.title;
+			teamSlug = ws.internalSlug;
 		},
-		{ timeout: 15_000 },
-	);
-	await waitFor(async () => {
-		const row = await ctx.db.query<{ daily_budget_cents: number }>(
-			'SELECT daily_budget_cents FROM projects WHERE id = $1',
-			[projectId],
-		);
-		expect(row.rows[0]?.daily_budget_cents).toBe(2000);
 	});
+
+	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
+
+	// The card carries a single Edit button pointing at the agent's settings budget anchor.
+	const editLink = await findByTestId(`edit-agent-budget-${agentSlug}`, undefined, {
+		timeout: 15_000,
+	});
+	const href = editLink.getAttribute('href') ?? '';
+	expect(href).toContain(`/agents/${agentSlug}/settings`);
+	expect(href).toContain('#budget');
+
+	// Following it lands on that agent's settings page with its budget editor.
+	await user.click(editLink);
+	await findByRole('heading', { name: agentTitle }, { timeout: 15_000 });
+	await findByText('Budget limits');
 });

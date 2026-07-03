@@ -30,6 +30,7 @@ import {
 } from '../../../../../hooks/use-agents';
 import { useAiProviderModels, useAiProviders } from '../../../../../hooks/use-ai-providers';
 import { useBudgetStatus } from '../../../../../hooks/use-costs';
+import { useScrollToHash } from '../../../../../hooks/use-scroll-to-hash';
 
 function AgentSettingsPage() {
 	const { projectId, agentId } = Route.useParams();
@@ -42,6 +43,8 @@ function AgentSettingsPage() {
 	const disableAgent = useDisableAgent(projectId);
 	const enableAgent = useEnableAgent(projectId);
 	const { data: budgetStatus } = useBudgetStatus(projectId);
+	// Deep link from the Budget page's per-agent "Edit" button lands on Budget limits.
+	const budgetSectionRef = useScrollToHash('budget');
 
 	const [title, setTitle] = useState('');
 	const [roleDesc, setRoleDesc] = useState('');
@@ -241,7 +244,7 @@ function AgentSettingsPage() {
 					</p>
 				</div>
 
-				<div className="flex flex-col gap-1.5">
+				<div ref={budgetSectionRef} id="budget" className="flex scroll-mt-20 flex-col gap-1.5">
 					<span className="text-sm text-text-2">Budget limits</span>
 					<BudgetWindowsEditor value={budget} onChange={setBudget} />
 				</div>

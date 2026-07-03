@@ -1,6 +1,7 @@
 import { type BudgetWindowsCents, centsToDollars } from '@hezo/shared';
+import { Link } from '@tanstack/react-router';
 import { Clock, Loader2, Pencil, TriangleAlert } from 'lucide-react';
-import { useState } from 'react';
+import { type Ref, useState } from 'react';
 import {
 	type EntityBudgetStatus,
 	useBudgetStatus,
@@ -57,15 +58,7 @@ function resetCaption(w: WindowKey): string {
 	return `resets ${nm.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' })} 1`;
 }
 
-function WindowColumn({
-	status,
-	windowKey,
-	onEdit,
-}: {
-	status: WindowStatus;
-	windowKey: WindowKey;
-	onEdit: () => void;
-}) {
+function WindowColumn({ status, windowKey }: { status: WindowStatus; windowKey: WindowKey }) {
 	const unlimited = status.limitCents <= 0;
 	const tone = toneFor(status);
 	const p = pctUsed(status);
@@ -84,14 +77,6 @@ function WindowColumn({
 				<span className="font-mono text-[13px] text-text-3">
 					/ {unlimited ? 'no cap' : dollars(status.limitCents)}
 				</span>
-				<button
-					type="button"
-					onClick={onEdit}
-					aria-label={`Edit ${WINDOW_LABELS[windowKey]} cap`}
-					className="ml-0.5 text-text-3 transition-colors hover:text-text-1"
-				>
-					<Pencil className="h-3 w-3" />
-				</button>
 			</div>
 			{!unlimited && (
 				<div className="h-1.5 overflow-hidden rounded-full bg-surface-3">
@@ -178,7 +163,7 @@ function Hero({
 	);
 }
 
-function BindingBanner({ project, onRaise }: { project: EntityBudgetStatus; onRaise: () => void }) {
+function BindingBanner({ project, projectId }: { project: EntityBudgetStatus; projectId: string }) {
 	const windows = (
 		[
 			{ key: 'daily', s: project.daily },
@@ -212,9 +197,16 @@ function BindingBanner({ project, onRaise }: { project: EntityBudgetStatus; onRa
 					about {dollars(remaining)} left {scope}.
 				</p>
 			</div>
-			<Button variant="secondary" size="sm" onClick={onRaise} className="shrink-0">
-				Raise {binding.key} cap
-			</Button>
+			<Link
+				to="/projects/$projectId/settings"
+				params={{ projectId }}
+				hash="budget"
+				className="shrink-0"
+			>
+				<Button variant="secondary" size="sm" className="w-full sm:w-auto">
+					Raise {binding.key} cap
+				</Button>
+			</Link>
 		</div>
 	);
 }
@@ -240,9 +232,14 @@ function LimitCell({ label, cents }: { label: string; cents: number }) {
 export function ProjectBudgetPanel({
 	projectId,
 	variant = 'spend',
+	sectionRef,
+	sectionId,
 }: {
 	projectId: string;
 	variant?: 'spend' | 'limits';
+	/** Anchor hooks so a deep link (`…/settings#budget`) can scroll to this section. */
+	sectionRef?: Ref<HTMLElement>;
+	sectionId?: string;
 }) {
 	const { data: project } = useProject(projectId);
 	const { data: status } = useBudgetStatus(projectId, { enabled: variant === 'spend' });
@@ -272,22 +269,32 @@ export function ProjectBudgetPanel({
 	}
 
 	return (
-		<section>
+		<section ref={sectionRef} id={sectionId} className={sectionId ? 'scroll-mt-20' : undefined}>
 			<SectionHeader
 				icon={Clock}
 				title="Project budget"
 				action={
-					variant === 'limits' &&
-					!editing && (
-						<Button
-							variant="ghost"
-							size="sm"
-							onClick={startEditing}
-							data-testid="edit-project-budget"
-						>
-							<Pencil className="h-3.5 w-3.5" aria-hidden />
-							Edit caps
-						</Button>
+					variant === 'spend' ? (
+						// The Budget page is read-only for caps; editing lives in project
+						// settings. This single header button takes you straight there.
+						<Link to="/projects/$projectId/settings" params={{ projectId }} hash="budget">
+							<Button variant="ghost" size="sm" data-testid="edit-project-budget-link">
+								<Pencil className="h-3.5 w-3.5" aria-hidden />
+								Edit
+							</Button>
+						</Link>
+					) : (
+						!editing && (
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={startEditing}
+								data-testid="edit-project-budget"
+							>
+								<Pencil className="h-3.5 w-3.5" aria-hidden />
+								Edit caps
+							</Button>
+						)
 					)
 				}
 			/>
@@ -326,24 +333,12 @@ export function ProjectBudgetPanel({
 								dailyCap={project.daily_budget_cents}
 							/>
 							<div className="flex flex-1 flex-col divide-y divide-border sm:flex-row sm:divide-x sm:divide-y-0">
-								<WindowColumn
-									windowKey="daily"
-									status={status.project.daily}
-									onEdit={startEditing}
-								/>
-								<WindowColumn
-									windowKey="weekly"
-									status={status.project.weekly}
-									onEdit={startEditing}
-								/>
-								<WindowColumn
-									windowKey="monthly"
-									status={status.project.monthly}
-									onEdit={startEditing}
-								/>
+								<WindowColumn windowKey="daily" status={status.project.daily} />
+								<WindowColumn windowKey="weekly" status={status.project.weekly} />
+								<WindowColumn windowKey="monthly" status={status.project.monthly} />
 							</div>
 						</div>
-						<BindingBanner project={status.project} onRaise={startEditing} />
+						<BindingBanner project={status.project} projectId={projectId} />
 					</>
 				) : (
 					<div className="h-[180px] animate-pulse rounded-lg border border-border bg-surface-2" />
