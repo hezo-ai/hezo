@@ -105,7 +105,7 @@ describe('documents service', () => {
 
 		const revs = await listRevisions(db, doc!.id);
 		expect(revs.length).toBe(3);
-		expect(revs[0].change_summary).toBe('Restored to revision 1');
+		expect(revs[0].change_summary).toBe('Restored content from revision 1');
 		expect(revs[0].content).toBe('third');
 	});
 

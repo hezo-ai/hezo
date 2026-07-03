@@ -361,7 +361,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	write_project_doc: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ written: true, id, filename }`, or `{ error }` if the filename is not `.md`. Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history.',
+			"`{ written: true, id, filename }`, or `{ error }` if the filename is not `.md`. Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `changelog` is stored as that revision's changelog and shown in the document's history — put update/status notes there, not in the document body.",
 	},
 	list_project_assets: {
 		category: 'Project docs & assets',

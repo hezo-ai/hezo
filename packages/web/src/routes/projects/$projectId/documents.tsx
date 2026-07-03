@@ -1,10 +1,11 @@
 import { isMarkdownDocSlug } from '@hezo/shared';
 import { createFileRoute } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { type DocItem, DocsLibrary } from '../../../components/docs-library';
+import { RevisionHistoryDialog } from '../../../components/document-review/revision-history-dialog';
+import { ViewingRevisionBanner } from '../../../components/document-review/viewing-revision-banner';
 import { MarkdownEditor } from '../../../components/markdown-editor';
-import { RevisionsPanel } from '../../../components/revisions-panel';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import {
@@ -18,6 +19,7 @@ import {
 	useUpdateProjectDoc,
 } from '../../../hooks/use-project-docs';
 import { docPreviewPath } from '../../../lib/doc-preview';
+import { buildDocVersionHistory, type DocVersionEntry } from '../../../lib/doc-version-history';
 
 const AGENTS_MD_KEY = '__agents_md__';
 
@@ -42,6 +44,23 @@ function ProjectDocumentsPage() {
 	const isAgentsMd = file === AGENTS_MD_KEY;
 	const filenameForFetch = file && !isAgentsMd ? file : null;
 	const { data: doc, isLoading: isLoadingDoc } = useProjectDoc(projectId, filenameForFetch);
+	const { data: revisions } = useProjectDocRevisions(projectId, filenameForFetch);
+	const restore = useRestoreProjectDocRevision(projectId, file ?? '');
+
+	// Which past version (if any) is being viewed, and whether the history dialog is open.
+	const [viewingRevision, setViewingRevision] = useState<DocVersionEntry | null>(null);
+	const [historyOpen, setHistoryOpen] = useState(false);
+	// Return to the latest version whenever the selected file changes.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset only on file switch
+	useEffect(() => {
+		setViewingRevision(null);
+		setHistoryOpen(false);
+	}, [file]);
+
+	const versionEntries = useMemo(
+		() => (doc && !isAgentsMd ? buildDocVersionHistory(doc, revisions) : []),
+		[doc, revisions, isAgentsMd],
+	);
 
 	const items = useMemo<DocItem[]>(() => {
 		const list: DocItem[] = [];
@@ -65,6 +84,22 @@ function ProjectDocumentsPage() {
 	}, [agentsMd, docs]);
 
 	const docContent = isAgentsMd ? (agentsMd?.content ?? null) : (doc?.content ?? null);
+	const displayContent = viewingRevision ? viewingRevision.content : docContent;
+	const docMeta = isAgentsMd
+		? undefined
+		: viewingRevision
+			? {
+					createdAt: doc?.created_at,
+					updatedAt: viewingRevision.timestamp,
+					editorName: viewingRevision.authorName,
+					editorType: viewingRevision.authorType,
+				}
+			: {
+					createdAt: doc?.created_at,
+					updatedAt: doc?.updated_at,
+					editorName: doc?.last_updated_by_name,
+					editorType: doc?.last_updated_by_type,
+				};
 
 	function selectFile(key: string | null) {
 		navigate({
@@ -88,72 +123,92 @@ function ProjectDocumentsPage() {
 		await deleteDoc.mutateAsync(file);
 	}
 
+	function handleViewRevision(entry: DocVersionEntry) {
+		setViewingRevision(entry.isCurrent ? null : entry);
+		setHistoryOpen(false);
+	}
+
+	async function handleRestore(revisionNumber: number) {
+		await restore.mutateAsync(revisionNumber);
+		setViewingRevision(null);
+	}
+
 	return (
-		<DocsLibrary
-			projectId={projectId}
-			projectSlug={projectId}
-			items={items}
-			isLoadingList={isLoadingList}
-			selectedKey={file ?? null}
-			onSelect={selectFile}
-			docContent={docContent}
-			isLoadingDoc={isLoadingDoc}
-			docTitle={isAgentsMd ? 'AGENTS.md' : (file ?? undefined)}
-			onSave={handleSave}
-			isSaving={updateDoc.isPending || updateAgentsMd.isPending}
-			onDelete={handleDelete}
-			onNewDoc={() => {
-				setIsCreating(true);
-				navigate({
-					search: (prev) => ({ ...(prev as DocumentsSearch), file: undefined }),
-					replace: true,
-				});
-			}}
-			isCreating={isCreating}
-			getPopOutUrl={(key) => (key === AGENTS_MD_KEY ? null : docPreviewPath(projectId, key))}
-			newForm={
-				<NewProjectDocForm
+		<>
+			<DocsLibrary
+				projectId={projectId}
+				projectSlug={projectId}
+				items={items}
+				isLoadingList={isLoadingList}
+				selectedKey={file ?? null}
+				onSelect={selectFile}
+				docContent={displayContent}
+				isLoadingDoc={isLoadingDoc}
+				docTitle={isAgentsMd ? 'AGENTS.md' : (file ?? undefined)}
+				onSave={handleSave}
+				isSaving={updateDoc.isPending || updateAgentsMd.isPending}
+				onDelete={handleDelete}
+				onNewDoc={() => {
+					setIsCreating(true);
+					navigate({
+						search: (prev) => ({ ...(prev as DocumentsSearch), file: undefined }),
+						replace: true,
+					});
+				}}
+				isCreating={isCreating}
+				getPopOutUrl={(key) => (key === AGENTS_MD_KEY ? null : docPreviewPath(projectId, key))}
+				newForm={
+					<NewProjectDocForm
+						projectId={projectId}
+						projectSlug={projectId}
+						onCancel={() => setIsCreating(false)}
+						onCreate={async (filename, content) => {
+							await updateDoc.mutateAsync({ filename, content });
+							setIsCreating(false);
+							navigate({
+								search: (prev) => ({ ...(prev as DocumentsSearch), file: filename }),
+								replace: true,
+							});
+						}}
+						isPending={updateDoc.isPending}
+					/>
+				}
+				review={
+					file && !isAgentsMd && !viewingRevision
+						? { filename: file, docUpdatedAt: doc?.updated_at }
+						: null
+				}
+				docMeta={docMeta}
+				bodyBanner={
+					viewingRevision && viewingRevision.revisionNumber !== null ? (
+						<ViewingRevisionBanner
+							revisionNumber={viewingRevision.revisionNumber}
+							timestamp={viewingRevision.timestamp}
+							authorName={viewingRevision.authorName}
+							onViewLatest={() => setViewingRevision(null)}
+						/>
+					) : undefined
+				}
+				onShowHistory={file && !isAgentsMd ? () => setHistoryOpen(true) : undefined}
+				readOnly={!!viewingRevision}
+				emptyTitle="Select a document"
+				emptyDescription="Choose a project document from the list to view or edit it."
+			/>
+			{file && !isAgentsMd && (
+				<RevisionHistoryDialog
+					open={historyOpen}
+					onOpenChange={setHistoryOpen}
+					filename={file}
+					entries={versionEntries}
 					projectId={projectId}
 					projectSlug={projectId}
-					onCancel={() => setIsCreating(false)}
-					onCreate={async (filename, content) => {
-						await updateDoc.mutateAsync({ filename, content });
-						setIsCreating(false);
-						navigate({
-							search: (prev) => ({ ...(prev as DocumentsSearch), file: filename }),
-							replace: true,
-						});
-					}}
-					isPending={updateDoc.isPending}
+					viewingRevision={viewingRevision?.revisionNumber ?? null}
+					onView={handleViewRevision}
+					onRestore={handleRestore}
+					isRestoring={restore.isPending}
 				/>
-			}
-			review={file && !isAgentsMd ? { filename: file, docUpdatedAt: doc?.updated_at } : null}
-			viewerExtras={
-				file && !isAgentsMd ? (
-					<ProjectDocRevisionsPanel projectId={projectId} filename={file} />
-				) : null
-			}
-			emptyTitle="Select a document"
-			emptyDescription="Choose a project document from the list to view or edit it."
-		/>
-	);
-}
-
-function ProjectDocRevisionsPanel({
-	projectId,
-	filename,
-}: {
-	projectId: string;
-	filename: string;
-}) {
-	const { data: revisions } = useProjectDocRevisions(projectId, filename);
-	const restore = useRestoreProjectDocRevision(projectId, filename);
-	return (
-		<RevisionsPanel
-			revisions={revisions}
-			onRestore={(rev) => restore.mutateAsync(rev)}
-			isRestoring={restore.isPending}
-		/>
+			)}
+		</>
 	);
 }
 

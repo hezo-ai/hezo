@@ -17,6 +17,7 @@ import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { broadcastApprovalChange } from '../services/approval-broadcast';
 import {
+	type DocumentRowWithAuthor,
 	deleteDocument,
 	getDocument,
 	listDocuments,
@@ -26,6 +27,19 @@ import {
 } from '../services/documents';
 
 export const projectDocsRoutes = new Hono<Env>();
+
+/** The single-document API shape — includes the timestamps + last editor the metadata banner renders. */
+function toDocResponse(d: DocumentRowWithAuthor) {
+	return {
+		id: d.id,
+		filename: d.slug,
+		content: d.content,
+		created_at: d.created_at,
+		updated_at: d.updated_at,
+		last_updated_by_name: d.last_updated_by_name,
+		last_updated_by_type: d.last_updated_by_type,
+	};
+}
 
 projectDocsRoutes.get('/projects/:projectId/docs', async (c) => {
 	const teamId = c.get('teamId') as string;
@@ -60,12 +74,7 @@ projectDocsRoutes.get('/projects/:projectId/docs/:filename', async (c) => {
 	});
 	if (!doc) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
 
-	return ok(c, {
-		id: doc.id,
-		filename: doc.slug,
-		content: doc.content,
-		updated_at: doc.updated_at,
-	});
+	return ok(c, toDocResponse(doc));
 });
 
 projectDocsRoutes.put('/projects/:projectId/docs/:filename', async (c) => {
@@ -129,12 +138,17 @@ projectDocsRoutes.put('/projects/:projectId/docs/:filename', async (c) => {
 		},
 	});
 
-	return ok(c, {
-		id: doc.id,
-		filename: doc.slug,
-		content: doc.content,
-		updated_at: doc.updated_at,
+	// Re-read WITH_AUTHOR so the response carries created_at + resolved last editor.
+	const saved = await getDocument(db, {
+		type: DocumentType.ProjectDoc,
+		teamId,
+		projectId,
+		slug: filename,
 	});
+	return ok(
+		c,
+		toDocResponse(saved ?? { ...doc, last_updated_by_name: null, last_updated_by_type: 'admin' }),
+	);
 });
 
 projectDocsRoutes.delete('/projects/:projectId/docs/:filename', async (c) => {
@@ -225,12 +239,18 @@ projectDocsRoutes.post('/projects/:projectId/docs/:filename/restore', async (c) 
 	});
 	if (!restored) return err(c, 'NOT_FOUND', 'Revision not found', 404);
 
-	return ok(c, {
-		id: restored.id,
-		filename: restored.slug,
-		content: restored.content,
-		updated_at: restored.updated_at,
+	const saved = await getDocument(db, {
+		type: DocumentType.ProjectDoc,
+		teamId,
+		projectId,
+		slug: filename,
 	});
+	return ok(
+		c,
+		toDocResponse(
+			saved ?? { ...restored, last_updated_by_name: null, last_updated_by_type: 'admin' },
+		),
+	);
 });
 
 projectDocsRoutes.get('/projects/:projectId/agents-md', async (c) => {

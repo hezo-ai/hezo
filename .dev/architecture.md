@@ -207,7 +207,21 @@ a revision restore — deletes all of them inside the same transaction
 Agents read them via `read_project_doc` (returned alongside `content`); the web renders
 them as `<mark>` highlights with margin icons on the three view surfaces (preview route,
 task-sidebar panel, Documents tab view mode) via a rehype plugin
-(`packages/web/src/lib/rehype-review-highlights.ts`). `skills` is the
+(`packages/web/src/lib/rehype-review-highlights.ts`). Each project-doc revision carries a
+**changelog** (`change_summary`): the web PUT forwards `change_summary` and the MCP
+`write_project_doc` tool takes an optional `changelog`, both stored on the revision recorded for
+the *prior* content; `restoreRevision` writes `Restored content from revision N`. The single-doc
+GET returns `created_at` + a resolved `last_updated_by_name`/`last_updated_by_type`, feeding a
+structured **metadata banner** on the Documents page (created/updated + last editor — no more
+run-on metadata paragraph; a conservative display-only strip hides any legacy leading metadata
+block from the rendered body). A **revision-history dialog** shows each version's changelog
+rendered like a task comment; `buildDocVersionHistory`
+(`packages/web/src/lib/doc-version-history.ts`) pairs each version's content with the changelog
+that *produced* it (a one-step shift, since revisions snapshot prior content), so the current
+head's changelog is the newest revision's `change_summary`. Selecting an older revision renders it
+read-only with the review layer suppressed — review comments exist only for the latest content —
+under a "viewing revision N" banner. Restore stays admin-only (agents 403 on the REST route; no
+MCP restore tool). `skills` is the
 instance/team reference store (manifest-injected into runs, full-text-searchable) with
 `skill_revisions` history. `assets` + `task_attachments`/`comment_attachments` handle
 uploaded files (bytes on local disk keyed by asset UUID, served over HMAC-signed URLs with

@@ -69,12 +69,27 @@ test('can create, view, edit, and delete a project document', async () => {
 	expect(queryByText(filename)).toBeNull();
 });
 
-test('shows revision history and restores a previous version', async () => {
+async function seedDoc(
+	apiBase: (path: string, init: RequestInit) => Promise<Response>,
+	token: string,
+	projectSlug: string,
+	filename: string,
+	writes: { content: string; change_summary?: string }[],
+): Promise<void> {
+	const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+	const docPath = `/api/projects/${projectSlug}/docs/${filename}`;
+	for (const w of writes) {
+		const res = await apiBase(docPath, { method: 'PUT', headers, body: JSON.stringify(w) });
+		if (!res.ok) throw new Error(`write failed: ${res.status}`);
+	}
+}
+
+test('shows revision history via the History dialog and restores a previous version', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
 	const filename = `plan-${Math.random().toString(36).slice(2, 8)}.md`;
 
-	const { findByText, findByTestId, findByRole, user, router } = await renderApp({
+	const { findByText, findByTestId, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async ({ apiBase, token }) => {
 			ws = await seedWorkspace();
@@ -83,21 +98,10 @@ test('shows revision history and restores a previous version', async () => {
 				description: 'Project for testing project doc revisions.',
 			});
 			projectSlug = project.slug;
-
-			const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-			const docPath = `/api/projects/${projectSlug}/docs/${filename}`;
-			const create = await apiBase(docPath, {
-				method: 'PUT',
-				headers,
-				body: JSON.stringify({ content: 'Original plan' }),
-			});
-			if (!create.ok) throw new Error(`create failed: ${create.status}`);
-			const update = await apiBase(docPath, {
-				method: 'PUT',
-				headers,
-				body: JSON.stringify({ content: 'Second draft' }),
-			});
-			if (!update.ok) throw new Error(`update failed: ${update.status}`);
+			await seedDoc(apiBase, token, projectSlug, filename, [
+				{ content: 'Original plan' },
+				{ content: 'Second draft', change_summary: 'polish the plan' },
+			]);
 		},
 	});
 
@@ -109,16 +113,100 @@ test('shows revision history and restores a previous version', async () => {
 
 	await findByText('Second draft', undefined, { timeout: 15_000 });
 
-	await user.click(await findByRole('button', { name: /show revision history/i }));
-
+	// Open the revision-history dialog; the changelog renders like a comment.
+	await user.click(await findByTestId('doc-history'));
+	await findByTestId('revision-history-dialog', undefined, { timeout: 15_000 });
+	await findByText('polish the plan', undefined, { timeout: 15_000 });
 	await findByText(/Rev 1/, undefined, { timeout: 15_000 });
 
-	const restoreButtons = await findByRole('button', { name: /restore/i });
-	await user.click(restoreButtons);
-
+	// Restore the earlier version → a new current version with that content.
+	await user.click(await findByTestId('revision-restore'));
 	await user.click(await findByTestId('confirm-dialog-confirm'));
 
 	await findByText('Original plan', undefined, { timeout: 15_000 });
+});
+
+test('shows the metadata banner and hides a legacy metadata header from the rendered body', async () => {
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+	const filename = `spec-${Math.random().toString(36).slice(2, 8)}.md`;
+
+	const { findByText, findByTestId, queryByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async ({ apiBase, token }) => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, {
+				name: uniqueName('Banner Project'),
+				description: 'Tests the metadata banner and legacy-header strip.',
+			});
+			projectSlug = project.slug;
+			await seedDoc(apiBase, token, projectSlug, filename, [
+				{
+					content:
+						'# Spec\n\n**Status:** experiment-zzz **Author:** bot **Date:** 2026-06-27\n\n## Body\n\nReal spec content.',
+				},
+			]);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/documents',
+		params: { projectId: projectSlug },
+		search: { file: filename } as never,
+	});
+
+	// Body renders, and the structured banner shows (with a Created label)…
+	await findByText('Real spec content.', undefined, { timeout: 15_000 });
+	const banner = await findByTestId('doc-metadata-banner');
+	expect(banner.textContent).toContain('Created');
+	// …while the legacy in-body metadata header is stripped from the rendered view.
+	expect(queryByText(/experiment-zzz/)).toBeNull();
+});
+
+test('viewing an older revision shows the banner, hides Edit, and can return to latest', async () => {
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+	const filename = `hist-${Math.random().toString(36).slice(2, 8)}.md`;
+
+	const { findByText, findByTestId, findByRole, queryByRole, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async ({ apiBase, token }) => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, {
+				name: uniqueName('Viewing Project'),
+				description: 'Tests past-revision viewing + review gating.',
+			});
+			projectSlug = project.slug;
+			await seedDoc(apiBase, token, projectSlug, filename, [
+				{ content: 'Original plan' },
+				{ content: 'Second draft' },
+			]);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/documents',
+		params: { projectId: projectSlug },
+		search: { file: filename } as never,
+	});
+
+	await findByText('Second draft', undefined, { timeout: 15_000 });
+	await findByRole('button', { name: 'Edit' }); // editable on the latest version
+
+	// Open history and view the earlier version.
+	await user.click(await findByTestId('doc-history'));
+	await findByTestId('revision-history-dialog', undefined, { timeout: 15_000 });
+	await user.click(await findByTestId('revision-view'));
+
+	// Viewing an older revision: banner shows, old content renders, Edit is gone.
+	await findByTestId('viewing-revision-banner', undefined, { timeout: 15_000 });
+	await findByText('Original plan', undefined, { timeout: 15_000 });
+	expect(queryByRole('button', { name: 'Edit' })).toBeNull();
+
+	// Return to the latest version — editing is available again.
+	await user.click(await findByTestId('view-latest'));
+	await findByText('Second draft', undefined, { timeout: 15_000 });
+	await findByRole('button', { name: 'Edit' });
 });
 
 test('rejects invalid filename when creating a document', async () => {

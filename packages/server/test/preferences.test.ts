@@ -120,7 +120,7 @@ describe('Team preferences', () => {
 			headers: authHeader(token),
 		});
 		const revs = (await revRes.json()).data;
-		expect(revs[0].change_summary).toBe('Restored to revision 1');
+		expect(revs[0].change_summary).toBe('Restored content from revision 1');
 	});
 
 	it('returns 404 when restoring an unknown revision number', async () => {

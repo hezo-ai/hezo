@@ -1,8 +1,8 @@
 import { ExternalLink, X } from 'lucide-react';
-import { useProjectDoc } from '../../hooks/use-project-docs';
+import { type ProjectDoc, useProjectDoc } from '../../hooks/use-project-docs';
 import { docPreviewPath } from '../../lib/doc-preview';
+import { DocumentBody } from '../document-review/document-body';
 import { ReviewToolbarActions } from '../document-review/review-toolbar-actions';
-import { ReviewableDocument } from '../document-review/reviewable-document';
 import type { PreviewItem } from './preview-context';
 
 function formatBytes(bytes?: number): string {
@@ -67,12 +67,7 @@ export function PreviewPanel({ item, onClose }: PreviewPanelProps) {
 				<div className="border-b border-border px-3 py-1.5 text-[11px] text-text-3">{meta}</div>
 			)}
 			<div className="min-h-0 flex-1 overflow-auto">
-				<PreviewBody
-					item={item}
-					docContent={docQuery.data?.content}
-					docUpdatedAt={docQuery.data?.updated_at}
-					docLoading={docQuery.isLoading}
-				/>
+				<PreviewBody item={item} doc={docQuery.data} docLoading={docQuery.isLoading} />
 			</div>
 		</aside>
 	);
@@ -80,25 +75,29 @@ export function PreviewPanel({ item, onClose }: PreviewPanelProps) {
 
 function PreviewBody({
 	item,
-	docContent,
-	docUpdatedAt,
+	doc,
 	docLoading,
 }: {
 	item: PreviewItem;
-	docContent?: string;
-	docUpdatedAt?: string;
+	doc?: ProjectDoc;
 	docLoading: boolean;
 }) {
 	if (docLoading) return <div className="p-3 text-[13px] text-text-3">Loading…</div>;
-	if (!docContent) return <div className="p-3 text-[13px] text-text-3">No content to preview.</div>;
+	if (!doc?.content)
+		return <div className="p-3 text-[13px] text-text-3">No content to preview.</div>;
 	return (
 		<div className="p-3" data-testid="preview-doc-body">
-			<ReviewableDocument
+			<DocumentBody
 				projectId={item.projectId}
 				projectSlug={item.projectSlug}
-				filename={item.filename}
-				content={docContent}
-				docUpdatedAt={docUpdatedAt}
+				content={doc.content}
+				meta={{
+					createdAt: doc.created_at,
+					updatedAt: doc.updated_at,
+					editorName: doc.last_updated_by_name,
+					editorType: doc.last_updated_by_type,
+				}}
+				review={{ filename: item.filename, docUpdatedAt: doc.updated_at }}
 			/>
 		</div>
 	);

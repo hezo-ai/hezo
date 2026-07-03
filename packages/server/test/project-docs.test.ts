@@ -84,13 +84,18 @@ describe('Project docs (DB-backed)', () => {
 		expect((await res.json()).error.code).toBe('INVALID_REQUEST');
 	});
 
-	it('reads the doc back', async () => {
+	it('reads the doc back with created_at + last editor for the metadata banner', async () => {
 		const res = await app.request(`/api/projects/${projectId}/docs/spec.md`, {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.data.content).toContain('Tech Spec');
+		expect(typeof body.data.created_at).toBe('string');
+		expect(typeof body.data.updated_at).toBe('string');
+		// A human write resolves to the editor's name + the non-agent 'admin' badge.
+		expect(body.data.last_updated_by_type).toBe('admin');
+		expect(body.data.last_updated_by_name).toBe('Test Admin');
 	});
 
 	it('lists docs after creating one', async () => {
@@ -226,7 +231,7 @@ describe('Project doc revisions and restore', () => {
 		});
 		const revBody = await revRes.json();
 		expect(revBody.data.length).toBe(3);
-		expect(revBody.data[0].change_summary).toBe('Restored to revision 1');
+		expect(revBody.data[0].change_summary).toBe('Restored content from revision 1');
 		expect(revBody.data[0].content).toBe('v3');
 	});
 
