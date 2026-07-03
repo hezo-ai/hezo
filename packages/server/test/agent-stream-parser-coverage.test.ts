@@ -235,11 +235,11 @@ describe('generic parser (opencode) branches', () => {
 		expect(seen.at(-1)).toEqual({ input: 40, cacheRead: 10, output: 10 });
 	});
 
-	it('honors a provider-reported usd cost over computed pricing', () => {
+	it('ignores a provider-reported usd cost in favor of computed pricing', () => {
 		const parser = createAgentStreamParser(AgentRuntime.OpenCode, () => 999);
 		feed(parser, [
 			{ type: 'result', total_cost_usd: 0.25, usage: { input_tokens: 1, output_tokens: 1 } },
 		]);
-		expect(parser.getUsage()?.costCents).toBe(25);
+		expect(parser.getUsage()?.costCents).toBe(999);
 	});
 });

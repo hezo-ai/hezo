@@ -52,8 +52,16 @@ describe('agent-chat-parser — Claude Code', () => {
 	});
 
 	it('captures usage from the terminal result, summing cache buckets into input', () => {
-		const parser = createAgentChatParser(AgentRuntime.ClaudeCode);
+		// The price fn receives the model from the init event and the separated
+		// token buckets; the reported total_cost_usd is ignored (same policy as
+		// the run parser — cost always comes from the pricing table).
+		const seen: Array<{ model: string | undefined; tokens: unknown }> = [];
+		const parser = createAgentChatParser(AgentRuntime.ClaudeCode, (model, tokens) => {
+			seen.push({ model, tokens });
+			return 24;
+		});
 		feed(parser, [
+			{ type: 'system', subtype: 'init', model: 'claude-x', tools: [] },
 			{
 				type: 'result',
 				total_cost_usd: 0.25,
@@ -65,7 +73,26 @@ describe('agent-chat-parser — Claude Code', () => {
 				},
 			},
 		]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 150, outputTokens: 50, costCents: 25 });
+		expect(parser.getUsage()).toEqual({ inputTokens: 150, outputTokens: 50, costCents: 24 });
+		expect(seen).toEqual([
+			{
+				model: 'claude-x',
+				tokens: {
+					inputTokens: 100,
+					cacheCreationTokens: 20,
+					cacheReadTokens: 30,
+					outputTokens: 50,
+				},
+			},
+		]);
+	});
+
+	it('records zero cost when no pricing is wired, ignoring the reported figure', () => {
+		const parser = createAgentChatParser(AgentRuntime.ClaudeCode);
+		feed(parser, [
+			{ type: 'result', total_cost_usd: 0.25, usage: { input_tokens: 100, output_tokens: 50 } },
+		]);
+		expect(parser.getUsage()).toEqual({ inputTokens: 100, outputTokens: 50, costCents: 0 });
 	});
 
 	it('handles a result event with no usage object (defaults to zero)', () => {
