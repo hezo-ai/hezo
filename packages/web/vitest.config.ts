@@ -64,6 +64,13 @@ export default defineConfig({
 			HEZO_E2E_SKIP_COHERENCE_REVIEW: '1',
 			HEZO_SKIP_DOCKER: '1',
 			SKIP_AI_KEY_VALIDATION: '1',
+			// Collapse the password-verifier KDF (scrypt) to its cheapest valid cost
+			// so the ~280ms production derivation every createTestApp runs becomes
+			// near-instant. Honoured only under NODE_ENV=test and clamped to
+			// lower-only — see passwordScryptParams in packages/shared/src/crypto/auth.ts.
+			// The client-side password-login path reads the same value, so enrollment
+			// and login stay in lockstep.
+			HEZO_TEST_SCRYPT_LOG_N: '1',
 		},
 		// Off by default so normal runs stay uninstrumented; scripts/test.ts
 		// flips `enabled` on with --coverage. coverage-v8 remaps through the same

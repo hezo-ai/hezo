@@ -12,7 +12,33 @@ const AUTH_KEY_SALT = utf8ToBytes('hezo-auth-key-v1');
 
 // scrypt cost for password-derived keys. Memory-hard so a leaked verifier is
 // expensive to brute-force offline; tuned to stay ~sub-second in the browser.
-const PASSWORD_SCRYPT = { N: 2 ** 15, r: 8, p: 1, dkLen: 32 } as const;
+//
+// Under the test runtime ONLY, HEZO_TEST_SCRYPT_LOG_N lowers N to 2**<log-n> so
+// the otherwise ~280ms derivation every createTestApp runs (once per test's
+// beforeEach) becomes near-instant. Enrollment and login both go through
+// derivePasswordKeyPair, so they read identical params and stay in lockstep
+// within a run. The NODE_ENV==='test' gate means a stray env var can never
+// weaken a real deployment, and the override is clamped to [1, 15] so this path
+// can only ever *lower* the cost, never raise it. Env is read through globalThis
+// so the browser (where `process` is absent, or its NODE_ENV is 'production')
+// falls straight through to the production default.
+const DEFAULT_SCRYPT_LOG_N = 15;
+
+function passwordScryptParams(): { N: number; r: number; p: number; dkLen: number } {
+	let logN = DEFAULT_SCRYPT_LOG_N;
+	// Read env via globalThis so this stays browser-safe and needs no @types/node
+	// (the shared package deliberately ships without Node typings). In a browser
+	// `globalThis.process` is undefined → env is undefined → production default.
+	const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
+		?.env;
+	if (env?.NODE_ENV === 'test') {
+		const override = Number(env.HEZO_TEST_SCRYPT_LOG_N);
+		if (Number.isInteger(override) && override >= 1 && override <= DEFAULT_SCRYPT_LOG_N) {
+			logN = override;
+		}
+	}
+	return { N: 2 ** logN, r: 8, p: 1, dkLen: 32 };
+}
 
 export interface AuthKeyPair {
 	/** 32-byte Ed25519 public key, lowercase hex (64 chars). Safe to share. */
@@ -103,7 +129,11 @@ export async function derivePasswordKeyPair(
 	password: string,
 	saltHex: string,
 ): Promise<AuthKeyPair> {
-	const seed = await scryptAsync(utf8ToBytes(password), hexToBytes(saltHex), PASSWORD_SCRYPT);
+	const seed = await scryptAsync(
+		utf8ToBytes(password),
+		hexToBytes(saltHex),
+		passwordScryptParams(),
+	);
 	return { publicKeyHex: bytesToHex(ed25519.getPublicKey(seed)), privateKey: seed };
 }
 

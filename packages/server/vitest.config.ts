@@ -10,6 +10,14 @@ export default defineConfig({
 		setupFiles: ['test/setup.ts'],
 		testTimeout: 60000,
 		hookTimeout: 60000,
+		// Collapse the password-verifier KDF to its cheapest valid cost (scrypt
+		// N=2**1). Every createTestApp enrolls a verifier; at the production cost
+		// (N=2**15) that is ~280ms of pure overhead per test. Honoured only under
+		// NODE_ENV=test and clamped to lower-only — see passwordScryptParams in
+		// packages/shared/src/crypto/auth.ts.
+		env: {
+			HEZO_TEST_SCRYPT_LOG_N: '1',
+		},
 		pool: 'forks',
 		poolOptions: {
 			forks: {
