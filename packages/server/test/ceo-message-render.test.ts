@@ -120,6 +120,15 @@ describe('renderCeoMessageForChannel', () => {
 			);
 		});
 
+		it('strips the @@ prefix from an unresolved passive mention, keeping the bare slug', async () => {
+			// A passive @@slug that resolves to no agent (unknown, or ambiguous across
+			// teams) still sheds its internal `@@` syntax; an unresolved active @slug
+			// keeps its (readable) prefix as plain text.
+			expect(
+				await renderCeoMessageForChannel(db, 'Handed to @@nobody, cc @ghost', CeoChannel.Telegram),
+			).toBe('Handed to nobody, cc @ghost');
+		});
+
 		it('keeps unknown references and code spans bare in a mixed message', async () => {
 			const mixed = 'RD-901 is real but ZZ-99 is not, and `RD-901` stays code:\n```\nRD-901\n```';
 			expect(await renderCeoMessageForChannel(db, mixed, CeoChannel.Telegram)).toBe(

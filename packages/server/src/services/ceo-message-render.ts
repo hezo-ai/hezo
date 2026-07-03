@@ -90,7 +90,11 @@ export async function renderCeoMessageForChannel(
 					return `[${display}](${baseUrl}${GLOBAL_INBOX_PATH})`;
 				}
 				const a = agents.get(token.slug);
-				return a ? `[${display}](${baseUrl}${agentPath(a.project_slug, token.slug)})` : null;
+				if (a) return `[${display}](${baseUrl}${agentPath(a.project_slug, token.slug)})`;
+				// An unresolved passive `@@slug` still sheds its `@@` authoring prefix and
+				// renders as the bare slug — the double-@ is internal syntax that must
+				// never surface. Active `@slug` keeps its (readable) prefix as plain text.
+				return token.kind === 'passive_agent' ? display : null;
 			}
 		}
 	});

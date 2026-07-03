@@ -186,3 +186,32 @@ test('agent mentions link to the agent home project; HQ singletons resolve to hq
 	expect(agentLink.getAttribute('href')).toBe('/projects/hq/agents/ceo');
 	expect(agentLink.textContent).toBe('ceo');
 });
+
+test('an unresolved passive @@mention sheds its @@ prefix and renders as the bare slug', async () => {
+	// Instance-wide resolution drops references that aren't unique across every team
+	// (an agent slug like `captain` collides — every Startup team has one), so the
+	// passive mention never links. It must still degrade to the bare slug, not leak
+	// the internal `@@` authoring syntax to the reader.
+	const { findByTestId, getByTestId } = await renderApp({
+		initialPath: '/home',
+		seed: async () => {
+			await seedWorkspace();
+		},
+	});
+
+	(await findByTestId('ceo-chat-launcher')).click();
+	await findByTestId('ceo-chat-panel');
+
+	seedCeoReply('HM-70 is with @@nonexistentrole — two focused amendments.');
+
+	const body = await findByTestId('ceo-chat-markdown');
+	await waitFor(() => {
+		if (!getByTestId('ceo-chat-markdown').textContent?.includes('nonexistentrole')) {
+			throw new Error('reply not rendered yet');
+		}
+	});
+	// The `@@` prefix is stripped; the bare slug remains as plain text, not a link.
+	expect(body.textContent).toContain('is with nonexistentrole');
+	expect(body.textContent).not.toContain('@@');
+	expect(body.querySelector('[data-testid="agent-mention-link"]')).toBeNull();
+});
