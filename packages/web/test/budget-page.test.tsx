@@ -159,3 +159,60 @@ test('Budget page: each agent card links to that agent’s settings budget secti
 	await findByRole('heading', { name: agentTitle }, { timeout: 15_000 });
 	await findByText('Budget limits');
 });
+
+test('Budget page: project window columns render caps and the binding-window banner appears', async () => {
+	let teamSlug = '';
+
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const { apiBase } = getTestContext();
+			teamSlug = ws.internalSlug;
+			const agent = ws.agents[0];
+
+			// Cap all three project windows so every WindowColumn renders a bar + % (not "no cap").
+			// Caps must satisfy the cross-window floors (weekly ≥ daily×7, monthly ≥ weekly×52/12).
+			const patchRes = await apiBase(`/api/projects/${ws.internalSlug}`, {
+				method: 'PATCH',
+				headers: ws.headers,
+				body: JSON.stringify({
+					daily_budget_cents: 1000,
+					weekly_budget_cents: 10000,
+					monthly_budget_cents: 50000,
+				}),
+			});
+			if (!patchRes.ok) throw new Error(`seed: setting project caps failed (${patchRes.status})`);
+
+			const projects = (await (await apiBase('/api/projects', { headers: ws.headers })).json()) as {
+				data: Array<{ id: string; slug: string }>;
+			};
+			const projectId = projects.data.find((p) => p.slug === ws.internalSlug)?.id;
+
+			// $9 of project spend → daily 90% (the binding window), weekly 45%, monthly 18%.
+			await apiBase(`/api/projects/${ws.internalSlug}/costs`, {
+				method: 'POST',
+				headers: ws.headers,
+				body: JSON.stringify({
+					member_id: agent.id,
+					amount_cents: 900,
+					project_id: projectId,
+					description: 'project spend',
+				}),
+			});
+		},
+	});
+
+	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
+
+	// The daily window renders its $10 cap and 90% usage against the progress bar.
+	const daily = await findByTestId('budget-window-daily', undefined, { timeout: 15_000 });
+	await waitFor(() => {
+		expect(daily.textContent ?? '').toContain('$10.00');
+		expect(daily.textContent ?? '').toContain('90%');
+	});
+
+	// The binding-window banner surfaces the daily window and links to raise its cap.
+	const banner = await findByTestId('binding-window-banner');
+	expect(banner.textContent ?? '').toContain('Raise daily cap');
+});
