@@ -1862,8 +1862,8 @@ describe('runAgent', () => {
 				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 			});
 			// Wire a deterministic table path (a manual override, independent of the
-			// bundled snapshot). This run also reports total_cost_usd, which is
-			// preferred over the table — the override is kept to prove precedence.
+			// bundled snapshot). This run also reports total_cost_usd, which must be
+			// ignored — cost is always computed from the table over the token buckets.
 			const pricing = new PricingService(db);
 			await upsertManualRate(db, {
 				model_id: 'claude-opus-4-7',
@@ -1902,10 +1902,9 @@ describe('runAgent', () => {
 
 			expect(row.rows[0].input_tokens).toBe(1200);
 			expect(row.rows[0].output_tokens).toBe(350);
-			// total_cost_usd (0.1234) is reported, so it is preferred over the table:
-			// round(0.1234 * 100) = 12 cents. (The table would have computed
-			// 1200*0.0001 + 350*0.0002 = 0.19 → 19c — kept to prove precedence.)
-			expect(row.rows[0].cost_cents).toBe(12);
+			// The reported total_cost_usd (0.1234 → 12c) is discarded; the table prices
+			// the tokens: 1200*0.0001 + 350*0.0002 = 0.19 → 19 cents.
+			expect(row.rows[0].cost_cents).toBe(19);
 		});
 
 		it('falls back to /workspace when no repos are linked', async () => {

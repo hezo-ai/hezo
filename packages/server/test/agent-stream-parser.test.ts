@@ -78,7 +78,7 @@ describe('agent-stream-parser', () => {
 		expect(out).toContain('[tool-error] ENOENT: missing file');
 	});
 
-	it('prefers the runtime-reported total_cost_usd over the pricing table', () => {
+	it('ignores the runtime-reported total_cost_usd and prices from the table', () => {
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
 		// The model arrives on the init event; the parser needs it to price the run.
 		parser.onStdout(
@@ -99,24 +99,24 @@ describe('agent-stream-parser', () => {
 			},
 		};
 		const out = parser.onStdout(`${JSON.stringify(event)}\n`);
-		expect(out).toContain('[done] success turns=3 duration=2000ms tokens=150/50 cost=$0.4567');
 
 		const usage = parser.getUsage();
 		expect(usage).not.toBeNull();
 		expect(usage?.inputTokens).toBe(150);
 		expect(usage?.outputTokens).toBe(50);
-		// total_cost_usd (0.4567) is reported, so it wins over the 24c the table would
-		// have computed: round(0.4567 * 100) = 46 cents.
-		expect(usage?.costCents).toBe(46);
+		// The reported 0.4567 is a client-side estimate and is discarded; the table
+		// prices the buckets: 100*0.001 + 30*0.0001 + 20*0.002 + 50*0.002 = 0.243 → 24c.
+		expect(usage?.costCents).toBe(24);
+		expect(out).toContain('[done] success turns=3 duration=2000ms tokens=150/50 cost=$0.2400');
 	});
 
-	it('falls back to the pricing table when Claude Code reports no total_cost_usd', () => {
+	it('prices from the table when Claude Code reports no total_cost_usd', () => {
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
 		parser.onStdout(
 			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-x', tools: [] })}\n`,
 		);
-		// No total_cost_usd on the terminal event (e.g. an interrupted run) — price from
-		// the table using the token buckets.
+		// No total_cost_usd on the terminal event (e.g. an interrupted run) — pricing
+		// is unchanged, since only the token buckets matter.
 		const event = {
 			type: 'result',
 			subtype: 'success',
@@ -133,19 +133,15 @@ describe('agent-stream-parser', () => {
 		const out = parser.onStdout(`${JSON.stringify(event)}\n`);
 
 		const usage = parser.getUsage();
-		// Cost computed from the table, pricing the cache buckets separately:
-		//   100*0.001 + 30*0.0001 + 20*0.002 + 50*0.002 = 0.243 → 24 cents.
 		expect(usage?.costCents).toBe(24);
-		// The [done] line shows the table-derived figure we actually persisted.
 		expect(out).toContain('tokens=150/50 cost=$0.2400');
 	});
 
-	it('uses the DeepSeek-via-Claude-Code total_cost_usd from a real run result event', () => {
-		// Captured from a real `cost-probe --provider deepseek` run: DeepSeek's
-		// Anthropic-compatible endpoint returns total_cost_usd, so the Claude Code
-		// runtime surfaces it and we persist it verbatim. `deepseek-v4-flash` is not in
-		// the pricing table here, so without the reported cost this would price to $0 —
-		// proving the run-output cost is what's used.
+	it('discards a third-party endpoint total_cost_usd — an unpriced model records $0', () => {
+		// Event shape captured from a real DeepSeek-via-Claude-Code run: the
+		// Anthropic-compatible endpoint returns a total_cost_usd computed with the
+		// CLI's own (wrong-provider) rate card. It must be ignored; with no table
+		// rate for the model the run prices to $0 (fail-low), never to the estimate.
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode, price);
 		parser.onStdout(
 			`${JSON.stringify({ type: 'system', subtype: 'init', model: 'deepseek-v4-flash', tools: [] })}\n`,
@@ -169,9 +165,8 @@ describe('agent-stream-parser', () => {
 		const usage = parser.getUsage();
 		expect(usage?.inputTokens).toBe(20096);
 		expect(usage?.outputTokens).toBe(15);
-		// round(0.100855 * 100) = 10 cents.
-		expect(usage?.costCents).toBe(10);
-		expect(out).toContain('tokens=20096/15 cost=$0.1009');
+		expect(usage?.costCents).toBe(0);
+		expect(out).toContain('tokens=20096/15 cost=$0.0000');
 	});
 
 	it('accumulates running usage from assistant turns before the terminal result', () => {
@@ -306,7 +301,7 @@ describe('agent-stream-parser', () => {
 			expect(usage?.costCents).toBe(0);
 		});
 
-		it('prefers a runtime-reported cost over the pricing table', () => {
+		it('ignores a runtime-reported cost and prices from the table', () => {
 			const parser = createAgentStreamParser(AgentRuntime.Codex, price);
 			parser.onStdout(`${JSON.stringify({ type: 'thread.started', model: 'codex-x' })}\n`);
 			parser.onStdout(
@@ -316,8 +311,9 @@ describe('agent-stream-parser', () => {
 					usage: { input_tokens: 1000, output_tokens: 100 },
 				})}\n`,
 			);
-			// 0.5 USD reported → 50 cents, regardless of the table.
-			expect(parser.getUsage()?.costCents).toBe(50);
+			// The reported 0.5 USD is discarded; the table prices the tokens:
+			// 1000*0.00001 + 100*0.00003 = $0.013 → 1 cent.
+			expect(parser.getUsage()?.costCents).toBe(1);
 		});
 
 		it('marks a failed turn as error', () => {
@@ -394,7 +390,7 @@ describe('agent-stream-parser', () => {
 			expect(usage?.costCents).toBe(0);
 		});
 
-		it('prefers a runtime-reported cost over the per-model table sum', () => {
+		it('ignores a runtime-reported cost and prices the per-model table sum', () => {
 			const parser = createAgentStreamParser(AgentRuntime.Gemini, price);
 			parser.onStdout(
 				`${JSON.stringify({
@@ -405,8 +401,9 @@ describe('agent-stream-parser', () => {
 					},
 				})}\n`,
 			);
-			// 0.5 USD reported → 50 cents, regardless of the per-model table sum.
-			expect(parser.getUsage()?.costCents).toBe(50);
+			// The reported 0.5 USD is discarded; the per-model table sum prices the
+			// tokens: 1e6*0.00001 + 2e5*0.00003 = $16 → 1600 cents.
+			expect(parser.getUsage()?.costCents).toBe(1600);
 		});
 
 		it('sums usage across multiple models', () => {
@@ -537,7 +534,7 @@ describe('agent-stream-parser — generic (opencode)', () => {
 		expect(usage?.costCents).toBe(1);
 	});
 
-	it('honors a provider-reported usd cost over computed pricing', () => {
+	it('ignores a provider-reported usd cost in favor of computed pricing', () => {
 		const parser = createAgentStreamParser(AgentRuntime.OpenCode, price);
 		const out = parser.onStdout(
 			`${JSON.stringify({
@@ -547,7 +544,9 @@ describe('agent-stream-parser — generic (opencode)', () => {
 			})}\n`,
 		);
 		expect(out).toBe('[done] success tokens=10/5\n');
-		expect(parser.getUsage()?.costCents).toBe(25);
+		// No model was announced, so the table prices to 0 — the reported figure
+		// never substitutes for it.
+		expect(parser.getUsage()?.costCents).toBe(0);
 	});
 
 	it('drops unrecognized structured events instead of dumping raw JSON', () => {

@@ -575,7 +575,11 @@ export class CeoSessionManager {
 			mkdirSync(dirname(session.promptHostPath), { recursive: true });
 			writeFileSync(session.promptHostPath, prompt);
 
-			const parser = createAgentChatParser(session.runtimeType);
+			const pricing = this.deps.pricing;
+			const parser = createAgentChatParser(
+				session.runtimeType,
+				pricing ? (model, tokens) => pricing.costCents(model, tokens) : undefined,
+			);
 			const handle = (events: ReturnType<AgentChatParser['onStdout']>) => {
 				for (const ev of events) {
 					if (ev.text) {

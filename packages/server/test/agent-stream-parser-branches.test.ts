@@ -447,22 +447,12 @@ describe('generic parser — usage/error/terminal arms', () => {
 		expect(parser.getUsage()).toBeNull();
 	});
 
-	it('captures cost from total_cost_usd even with no token object present', () => {
+	it('ignores a bare total_cost_usd with no token object present', () => {
+		// A reported dollar figure alone is not usage — tokens are the only
+		// authoritative signal, and cost is always computed from them.
 		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		feed(parser, [{ type: 'usage', total_cost_usd: 0.5 }]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 0, outputTokens: 0, costCents: 50 });
-	});
-
-	it('reads cost from the cost_usd field', () => {
-		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
-		feed(parser, [{ type: 'usage', cost_usd: 0.1 }]);
-		expect(parser.getUsage()?.costCents).toBe(10);
-	});
-
-	it('reads cost from the bare cost field', () => {
-		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
-		feed(parser, [{ type: 'usage', cost: 0.02 }]);
-		expect(parser.getUsage()?.costCents).toBe(2);
+		expect(parser.getUsage()).toBeNull();
 	});
 
 	it('records the model from a model field for later pricing', () => {
