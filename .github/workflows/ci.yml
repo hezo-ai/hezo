@@ -235,6 +235,15 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
+      # Both Playwright install paths below run `apt-get update`, which fails
+      # hard (exit 100) if any pre-configured apt source 403s. The runner image
+      # ships Microsoft's azure-cli/prod repos, which Playwright doesn't need and
+      # which intermittently return 403 — taking the whole browser shard down.
+      # Drop those sources first so an unrelated repo outage can't fail the job.
+      - name: Remove unneeded Microsoft apt sources (avoid 403 flakes)
+        run: |
+          sudo grep -rlZ 'packages\.microsoft\.com' /etc/apt/sources.list.d/ 2>/dev/null \
+            | sudo xargs -0 -r rm -f || true
       - if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: bunx playwright install --with-deps chromium
       - if: steps.playwright-cache.outputs.cache-hit == 'true'
