@@ -14,7 +14,8 @@ export interface ManualOAuthConfig {
 }
 
 export interface StatePayload {
-	teamId: string;
+	/** Team that initiated the flow; null for instance-admin-initiated connects. */
+	teamId: string | null;
 	provider: string;
 	nonce: string;
 	codeVerifier: string;
@@ -28,7 +29,7 @@ export interface StatePayload {
 }
 
 export interface NewStateInput {
-	teamId: string;
+	teamId: string | null;
 	provider: string;
 	redirectUri: string;
 	returnTo: string;

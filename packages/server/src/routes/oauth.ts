@@ -12,6 +12,7 @@ import { requestOrigin } from '../lib/request-origin';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
+import { requireAdminEquivalent } from '../middleware/auth';
 import {
 	type ConnectorRow,
 	getConnector,
@@ -33,7 +34,7 @@ import {
 } from '../services/oauth/connection-store';
 import { registerClient } from '../services/oauth/dcr';
 import { pollDeviceFlow, resolveDeviceAuth, startDeviceFlow } from '../services/oauth/device-flow';
-import { discoverMcpAuthorization } from '../services/oauth/prm-discovery';
+import { discoverMcpAuthorization, PrmUnavailableError } from '../services/oauth/prm-discovery';
 import {
 	buildAuthorizationUrl,
 	discoverMetadata,
@@ -134,17 +135,23 @@ oauthRoutes.get('/oauth/callback', async (c) => {
 			conn.id,
 			payload.mcpConnectionId,
 		]);
-		broadcastChange(c, wsRoom.team(payload.teamId), 'mcp_connections', 'UPDATE', {
-			id: payload.mcpConnectionId,
-			oauth_connection_id: conn.id,
-		});
+		// This flow only starts from the project-scoped auth-code route, so a
+		// team is always present; the guard narrows the now-nullable state type.
+		if (payload.teamId) {
+			broadcastChange(c, wsRoom.team(payload.teamId), 'mcp_connections', 'UPDATE', {
+				id: payload.mcpConnectionId,
+				oauth_connection_id: conn.id,
+			});
+		}
 	}
 
-	broadcastChange(c, wsRoom.team(payload.teamId), 'oauth_connections', 'INSERT', {
-		id: conn.id,
-		provider: conn.provider,
-		provider_account_label: conn.providerAccountLabel,
-	});
+	if (payload.teamId) {
+		broadcastChange(c, wsRoom.team(payload.teamId), 'oauth_connections', 'INSERT', {
+			id: conn.id,
+			provider: conn.provider,
+			provider_account_label: conn.providerAccountLabel,
+		});
+	}
 
 	// The callback is an unauthenticated browser redirect (state is signed), so
 	// the acting member can't be resolved here — attribute to the admin actor.
@@ -254,7 +261,24 @@ oauthRoutes.post('/projects/:projectId/oauth/auth-code/start', async (c) => {
 
 type StartConnectorAuthCodeOutcome =
 	| { kind: 'auth_url'; authUrl: string }
+	| { kind: 'no_oauth'; reason: string }
 	| { kind: 'error'; code: string; message: string; status: 400 | 403 | 404 | 503 };
+
+interface StartConnectorAuthCodeOpts {
+	/** Team that initiated the connect; null for the instance-admin surface. */
+	teamId: string | null;
+	/** Path the callback page navigates to when opened without a popup opener. */
+	returnTo: string;
+	/**
+	 * Resolve an MCP server that advertises no Protected Resource Metadata to
+	 * the `no_oauth` outcome (connector left untouched) instead of a failure.
+	 * The admin connectors page probes every manually-added connector
+	 * speculatively, and public / header-authenticated MCPs legitimately have
+	 * no PRM. Errors past discovery (broken AS metadata, DCR unsupported or
+	 * rejected) still mark the connector failed — there OAuth *is* advertised.
+	 */
+	missingPrmMeansNoOAuth?: boolean;
+}
 
 /**
  * Connector-driven MCP OAuth helper: discovers the MCP server's Authorization
@@ -264,8 +288,8 @@ type StartConnectorAuthCodeOutcome =
  */
 async function startConnectorAuthCode(
 	c: import('hono').Context<Env>,
-	teamId: string,
 	connectorId: string,
+	opts: StartConnectorAuthCodeOpts,
 ): Promise<StartConnectorAuthCodeOutcome> {
 	const db = c.get('db');
 	const masterKeyManager = c.get('masterKeyManager');
@@ -329,6 +353,9 @@ async function startConnectorAuthCode(
 		try {
 			discovery = await discoverMcpAuthorization(config.url);
 		} catch (e) {
+			if (opts.missingPrmMeansNoOAuth && e instanceof PrmUnavailableError) {
+				return { kind: 'no_oauth', reason: (e as Error).message };
+			}
 			await markFailed(db, connector.id, `discovery: ${(e as Error).message}`);
 			return {
 				kind: 'error',
@@ -390,10 +417,10 @@ async function startConnectorAuthCode(
 	const requestedScopes = capability?.scopes ?? scopesSupported;
 
 	const { state, codeChallenge } = await signState(masterKeyManager, {
-		teamId,
+		teamId: opts.teamId,
 		provider: `mcp:${connector.id}`,
 		redirectUri,
-		returnTo: `/projects/${c.req.param('projectId')}/connectors?focus=${connector.id}`,
+		returnTo: opts.returnTo,
 		mcpConnectionId: connector.id,
 		mcpConnectionName: connector.display_name ?? connector.name,
 		manualConfig: {
@@ -429,8 +456,37 @@ oauthRoutes.post('/projects/:projectId/auth-start', async (c) => {
 
 	if (!body.connector_id) return err(c, 'INVALID_REQUEST', 'connector_id is required', 400);
 
-	const result = await startConnectorAuthCode(c, teamId, body.connector_id);
+	const result = await startConnectorAuthCode(c, body.connector_id, {
+		teamId,
+		returnTo: `/projects/${c.req.param('projectId')}/connectors?focus=${body.connector_id}`,
+	});
 	if (result.kind === 'error') return err(c, result.code, result.message, result.status);
+	// Unreachable without `missingPrmMeansNoOAuth`; kept for exhaustiveness.
+	if (result.kind === 'no_oauth') return err(c, 'OAUTH_DISCOVERY_FAILED', result.reason, 503);
+	return ok(c, { auth_url: result.authUrl });
+});
+
+/**
+ * OAuth kickoff for a connector from the instance-admin surface
+ * (`/settings/connectors`). Same DCR walk as the project-scoped auth-start,
+ * with two differences: there is no team context (the state envelope carries
+ * `teamId: null` and the callback skips team-scoped side effects), and an MCP
+ * server that advertises no OAuth resolves to `{ auth_url: null }` instead of
+ * a failure — the admin page probes every manually-added connector, and
+ * header-authenticated / public MCPs legitimately have no PRM.
+ */
+oauthRoutes.post('/mcp-connections/:id/auth-start', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+	const connectorId = c.req.param('id');
+
+	const result = await startConnectorAuthCode(c, connectorId, {
+		teamId: null,
+		returnTo: `/settings/connectors?focus=${connectorId}`,
+		missingPrmMeansNoOAuth: true,
+	});
+	if (result.kind === 'error') return err(c, result.code, result.message, result.status);
+	if (result.kind === 'no_oauth') return ok(c, { auth_url: null, reason: result.reason });
 	return ok(c, { auth_url: result.authUrl });
 });
 
@@ -445,7 +501,6 @@ oauthRoutes.post('/projects/:projectId/auth-start', async (c) => {
 oauthRoutes.get('/oauth/mcp-callback', async (c) => {
 	const masterKeyManager = c.get('masterKeyManager');
 	const db = c.get('db');
-	const docker = c.get('docker');
 
 	const code = c.req.query('code');
 	const stateParam = c.req.query('state');
@@ -832,9 +887,11 @@ async function finalizeConnectorConnection(
 	c: import('hono').Context<Env>,
 	opts: {
 		// teamId is the team that initiated the connect (from the OAuth state /
-		// request context). Connectors are global, but the GitHub key
-		// registration, container push, and wakeup are still per-team.
-		teamId: string;
+		// request context); null when the connect started from the instance-admin
+		// surface. Connectors are global, but the GitHub key registration,
+		// container push, and WS broadcasts are still per-team and are skipped
+		// without one. The wakeup resolves its own team from the requesting task.
+		teamId: string | null;
 		connector: ConnectorRow;
 		capability: ConnectorCapability | undefined;
 		provider: string;
@@ -881,7 +938,10 @@ async function finalizeConnectorConnection(
 	// Provider side effects (e.g. GitHub SSH-key registration) are non-fatal —
 	// the connection itself is already usable; a failed key registration just
 	// degrades git ops and is logged, not surfaced as a connect failure.
-	if (hooks.afterConnect) {
+	// They are per-team, so an instance-admin connect (no team) skips them —
+	// today that's unreachable anyway (GitHub, the only hooked provider, is
+	// device-flow and the device routes are project-scoped).
+	if (hooks.afterConnect && teamId) {
 		await hooks.afterConnect({ db, masterKeyManager, teamId }, accessToken).catch((e) =>
 			log.warn('post-connect side effect failed (non-fatal)', {
 				connector: capability?.id,
@@ -892,27 +952,33 @@ async function finalizeConnectorConnection(
 
 	// Sync push to the parent task's container so the calling agent sees the
 	// MCP on its next tool call; other team containers updated best-effort.
-	try {
-		await pushConnectorToTeamContainers(
-			{ db, docker },
-			{ teamId, connectorId: connector.id, syncTaskId: connector.created_by_task_id },
-		);
-	} catch (e) {
-		log.warn('live-push failed (non-fatal)', { error: (e as Error).message });
+	if (teamId) {
+		try {
+			await pushConnectorToTeamContainers(
+				{ db, docker },
+				{ teamId, connectorId: connector.id, syncTaskId: connector.created_by_task_id },
+			);
+		} catch (e) {
+			log.warn('live-push failed (non-fatal)', { error: (e as Error).message });
+		}
 	}
 
-	await fireCredentialProvidedWakeup(db, connector, teamId);
+	await fireCredentialProvidedWakeup(db, connector);
 
-	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', {
-		id: connector.id,
-		oauth_connection_id: conn.id,
-		status: 'active',
-	});
-	broadcastChange(c, wsRoom.team(teamId), 'oauth_connections', 'INSERT', {
-		id: conn.id,
-		provider: conn.provider,
-		provider_account_label: conn.providerAccountLabel,
-	});
+	// The instance-admin flow has no team room to target; the settings page
+	// refetches off the popup's hezo-oauth-success postMessage instead.
+	if (teamId) {
+		broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', {
+			id: connector.id,
+			oauth_connection_id: conn.id,
+			status: 'active',
+		});
+		broadcastChange(c, wsRoom.team(teamId), 'oauth_connections', 'INSERT', {
+			id: conn.id,
+			provider: conn.provider,
+			provider_account_label: conn.providerAccountLabel,
+		});
+	}
 
 	return { connectionId: conn.id, label: conn.providerAccountLabel };
 }
@@ -920,24 +986,30 @@ async function finalizeConnectorConnection(
 /**
  * Fire a CredentialProvided wakeup on the assignee of the task that requested
  * the connector, if any. Fire-and-forget — the agent's run is inherently async.
+ *
+ * The wakeup's team is resolved from the requesting task itself, not from
+ * whoever completed the connect: connectors are global, so the OAuth dance can
+ * finish from another project's Connectors page or from the instance settings
+ * page (which has no team context at all), while the waiting agent lives in
+ * the task's team.
  */
 async function fireCredentialProvidedWakeup(
 	db: import('@electric-sql/pglite').PGlite,
 	connector: ConnectorRow,
-	teamId: string,
 ): Promise<void> {
 	if (!connector.created_by_task_id) return;
-	const row = await db.query<{ assignee_id: string | null }>(
-		`SELECT assignee_id FROM tasks WHERE id = $1`,
+	const row = await db.query<{ assignee_id: string | null; team_id: string }>(
+		`SELECT assignee_id, team_id FROM tasks WHERE id = $1`,
 		[connector.created_by_task_id],
 	);
 	const assigneeId = row.rows[0]?.assignee_id;
-	if (!assigneeId) return;
+	const taskTeamId = row.rows[0]?.team_id;
+	if (!assigneeId || !taskTeamId) return;
 	trackBackground(
 		createWakeup(
 			db,
 			assigneeId,
-			teamId,
+			taskTeamId,
 			WakeupSource.CredentialProvided,
 			{ connector_id: connector.id, task_id: connector.created_by_task_id },
 			`connector:${connector.id}`,
