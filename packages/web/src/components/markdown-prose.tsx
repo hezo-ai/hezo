@@ -159,9 +159,15 @@ export function MarkdownProse({
 
 	const remarkPlugins = useMemo<RemarkPlugin>(() => {
 		const plugins: NonNullable<RemarkPlugin> = [remarkGfm];
+		// The plugin also runs when the text carries a passive `@@` mention even if
+		// nothing resolved: an unresolved passive mention still needs its internal
+		// `@@` prefix stripped to a bare slug (see remark-mentions splitTextNode), so
+		// gating purely on resolved-map sizes would leak `@@slug` to the reader.
+		const hasPassiveMention = children.includes('@@');
 		if (
 			(projectId || instance) &&
-			(agentsMap.size > 0 ||
+			(hasPassiveMention ||
+				agentsMap.size > 0 ||
 				tasksMap.size > 0 ||
 				kbDocsMap.size > 0 ||
 				projectDocsMap.size > 0 ||
@@ -186,6 +192,7 @@ export function MarkdownProse({
 		if (commentRefTask) plugins.push([remarkCommentRefs, commentRefTask]);
 		return plugins;
 	}, [
+		children,
 		projectId,
 		projectSlug,
 		instance,

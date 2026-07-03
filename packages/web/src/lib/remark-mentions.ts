@@ -135,8 +135,16 @@ function splitTextNode(node: TextNode, opts: Options): MdNode[] {
 	MENTION_RE.lastIndex = 0;
 	let match = MENTION_RE.exec(value);
 	while (match !== null) {
-		const link = buildLink(parseMentionMatch(match), opts);
-		if (!link) {
+		const token = parseMentionMatch(match);
+		const link = buildLink(token, opts);
+		// A passive `@@slug` that can't resolve to a link (unknown agent, or an agent
+		// slug that's ambiguous instance-wide — every Startup team has a `captain`)
+		// still strips its `@@` authoring prefix and degrades to the bare slug as
+		// plain text. The double-@ is internal mention syntax and must never surface
+		// to a reader, matching how the resolved passive form already drops it.
+		const replacement: MdNode | null =
+			link ?? (token.kind === 'passive_agent' ? { type: 'text', value: token.raw.slice(2) } : null);
+		if (!replacement) {
 			match = MENTION_RE.exec(value);
 			continue;
 		}
@@ -145,7 +153,7 @@ function splitTextNode(node: TextNode, opts: Options): MdNode[] {
 		if (start > lastIndex) {
 			parts.push({ type: 'text', value: value.slice(lastIndex, start) });
 		}
-		parts.push(link);
+		parts.push(replacement);
 		lastIndex = end;
 		match = MENTION_RE.exec(value);
 	}
