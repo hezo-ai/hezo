@@ -23,6 +23,11 @@
 #   HEZO_DOMAIN_OVERRIDE   use this domain instead of <public-ip>.sslip.io
 #                          (point an A record at the host first; Caddy gets a cert for it)
 #   HEZO_RELEASE_TAG       pin a release tag (default: latest)
+#   HEZO_IMAGE_BUILD       set to 1 when baking a machine image (e.g. the DigitalOcean
+#                          Marketplace Packer build). Installs and enables everything but
+#                          does NOT start the services or derive the public URL — that is
+#                          deferred to the end user's first boot, so no build-VM URL or
+#                          first-boot sentinel is baked into the snapshot.
 
 set -euo pipefail
 
@@ -223,14 +228,24 @@ if command -v ufw >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-# 8. Start everything
+# 8. Enable (and, outside image builds, start) everything
 # ---------------------------------------------------------------------------
 systemctl daemon-reload
-systemctl enable --now hezo-firstboot.service
-systemctl enable --now caddy
-# Re-run Caddy now that the real site address exists.
-systemctl restart caddy
-systemctl enable --now hezo
 
-log "Done. Once DNS + certificate settle (a few seconds), open the URL from:"
-log "  cat /etc/hezo/hezo.env    # HEZO_WEB_URL=https://<host>.sslip.io"
+if [[ "${HEZO_IMAGE_BUILD:-}" == "1" ]]; then
+	# Machine-image build: enable units for boot but do not start them, and do not
+	# derive a URL. The end user's first boot runs hezo-firstboot (its sentinel is
+	# absent, so it fires) which sets the real <ip>.sslip.io address, then Caddy and
+	# Hezo start. Guard against a baked sentinel/URL just in case.
+	rm -f /var/lib/hezo/.firstboot-done
+	systemctl enable hezo-firstboot.service caddy hezo
+	log "Image build: services enabled for first boot (not started). URL is derived on the user's first boot."
+else
+	systemctl enable --now hezo-firstboot.service
+	systemctl enable --now caddy
+	# Re-run Caddy now that the real site address exists.
+	systemctl restart caddy
+	systemctl enable --now hezo
+	log "Done. Once DNS + certificate settle (a few seconds), open the URL from:"
+	log "  cat /etc/hezo/hezo.env    # HEZO_WEB_URL=https://<host>.sslip.io"
+fi

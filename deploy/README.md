@@ -54,9 +54,11 @@ throwaway VM/droplet:
    laptop hit `https://<ip>.sslip.io/health` (a valid cert proves the Let's Encrypt
    path) and load the root URL to confirm you reach the master-key gate. Destroy it.
 
-## Roadmap — Phase 2 (not built yet)
+## DigitalOcean Marketplace image (Phase 2)
 
-A `marketplace/digitalocean/` Packer template that bakes `provision.sh` into a
-DigitalOcean Marketplace image gives the literal one-click "Create Hezo Droplet"
-button. It's deferred because publishing requires an external DigitalOcean vendor
-account and image review that can't be done from this repo.
+[`marketplace/digitalocean/`](marketplace/digitalocean/README.md) holds a Packer
+template that bakes `provision.sh` into a DigitalOcean snapshot — the literal
+one-click "Create Hezo Droplet" button. The template and build/validation runbook
+are in-repo and buildable today; **publishing** the listing still requires an
+external DigitalOcean vendor account and DO's image review, which can't be done
+from this repo. See that directory's README for the build + submission steps.
