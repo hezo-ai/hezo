@@ -20,6 +20,12 @@ async function openNewProjectDialog() {
 	return { ...utils, ws };
 }
 
+test('the header close button dismisses the dialog (mobile has no Escape key)', async () => {
+	const { user } = await openNewProjectDialog();
+	await user.click(screen.getByRole('button', { name: 'Close' }));
+	await waitFor(() => expect(screen.queryByTestId('create-project-submit')).toBeNull());
+});
+
 test('lists existing teams (not HQ) as cloneable sources and submits source_team_id', async () => {
 	const { user, ws } = await openNewProjectDialog();
 

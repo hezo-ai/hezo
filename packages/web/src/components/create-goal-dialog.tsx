@@ -4,13 +4,13 @@ import {
 	type GoalWithProject,
 } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Loader2, X } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { useCreateGoal, useUpdateGoal } from '../hooks/use-goals';
 import { GoalSmartGuidance } from './goal-smart-guidance';
 import { Button } from './ui/button';
-import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
+import { DialogContent } from './ui/dialog';
 import { InfoTooltip } from './ui/info-tooltip';
 import { Input } from './ui/input';
 
@@ -122,127 +122,113 @@ export function CreateGoalDialog({ projectId, open, onOpenChange, goal }: Create
 
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
-			<Dialog.Portal>
-				<Dialog.Overlay className={dialogOverlayClassName} />
-				<Dialog.Content className={dialogContentClassName.lg}>
-					<div className="flex items-center justify-between mb-4">
-						<Dialog.Title className="text-lg font-semibold">
-							{isEdit ? 'Edit Goal' : 'Create Goal'}
-						</Dialog.Title>
-						<Dialog.Close asChild>
-							<button
-								type="button"
-								className="text-text-2 hover:text-text-1 p-2 -m-2"
-								aria-label="Close"
-							>
-								<X className="w-4 h-4" />
-							</button>
-						</Dialog.Close>
+			<DialogContent size="lg">
+				<Dialog.Title className="text-lg font-semibold mb-4 pr-8">
+					{isEdit ? 'Edit Goal' : 'Create Goal'}
+				</Dialog.Title>
+
+				<form onSubmit={handleSubmit} className="flex flex-col gap-4">
+					<GoalSmartGuidance />
+
+					<div className="flex flex-col gap-1.5">
+						<FieldLabel
+							htmlFor="goal-name"
+							tooltipLabel="About goal name"
+							tooltip="A short, outcome-focused name for the goal — what success looks like, not the work to get there."
+						>
+							Goal name
+						</FieldLabel>
+						<Input
+							id="goal-name"
+							value={title}
+							onChange={(e) => setTitle(e.target.value)}
+							placeholder="e.g. Reach 100 paying customers"
+							required
+						/>
 					</div>
 
-					<form onSubmit={handleSubmit} className="flex flex-col gap-4">
-						<GoalSmartGuidance />
+					<label className="flex flex-col gap-1.5">
+						<FieldLabel
+							tooltipLabel="About measurement"
+							tooltip="How will you know this goal is achieved? Be precise — this is the bar the Captain measures progress against."
+						>
+							Measurement
+						</FieldLabel>
+						<textarea
+							value={measurement}
+							onChange={(e) => setMeasurement(e.target.value)}
+							placeholder="How will you know this goal is achieved? Be precise — this is the bar the Captain measures against."
+							rows={3}
+							className={textareaClass}
+						/>
+					</label>
 
-						<div className="flex flex-col gap-1.5">
-							<FieldLabel
-								htmlFor="goal-name"
-								tooltipLabel="About goal name"
-								tooltip="A short, outcome-focused name for the goal — what success looks like, not the work to get there."
-							>
-								Goal name
-							</FieldLabel>
-							<Input
-								id="goal-name"
-								value={title}
-								onChange={(e) => setTitle(e.target.value)}
-								placeholder="e.g. Reach 100 paying customers"
-								required
-							/>
-						</div>
+					<label className="flex flex-col gap-1.5">
+						<FieldLabel
+							tooltipLabel="About suggested actions"
+							tooltip="Optional — specific actions or checks the Captain should take toward this goal (e.g. run a weekly cron-style check of the signup funnel)."
+						>
+							Suggested actions <span className="text-text-3">(optional)</span>
+						</FieldLabel>
+						<textarea
+							value={actions}
+							onChange={(e) => setActions(e.target.value)}
+							placeholder="Optional — specific actions or checks the Captain should take toward this goal (e.g. run a weekly cron-style check of the signup funnel)."
+							rows={3}
+							className={textareaClass}
+						/>
+					</label>
 
+					<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 						<label className="flex flex-col gap-1.5">
 							<FieldLabel
-								tooltipLabel="About measurement"
-								tooltip="How will you know this goal is achieved? Be precise — this is the bar the Captain measures progress against."
+								tooltipLabel="About check frequency"
+								tooltip="How often the Captain re-checks progress on this goal and acts on it."
 							>
-								Measurement
+								Check frequency
 							</FieldLabel>
-							<textarea
-								value={measurement}
-								onChange={(e) => setMeasurement(e.target.value)}
-								placeholder="How will you know this goal is achieved? Be precise — this is the bar the Captain measures against."
-								rows={3}
-								className={textareaClass}
-							/>
+							<select
+								value={checkFrequency}
+								onChange={(e) => setCheckFrequency(e.target.value as GoalCheckFrequency)}
+								className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-1 outline-none focus:border-border-strong"
+							>
+								{Object.entries(GOAL_CHECK_FREQUENCY_LABELS).map(([value, label]) => (
+									<option key={value} value={value}>
+										{label}
+									</option>
+								))}
+							</select>
 						</label>
 
 						<label className="flex flex-col gap-1.5">
 							<FieldLabel
-								tooltipLabel="About suggested actions"
-								tooltip="Optional — specific actions or checks the Captain should take toward this goal (e.g. run a weekly cron-style check of the signup funnel)."
+								tooltipLabel="About deadline"
+								tooltip="Optional — a target date for reaching this goal. Leave blank for an open-ended goal."
 							>
-								Suggested actions <span className="text-text-3">(optional)</span>
+								Deadline <span className="text-text-3">(optional)</span>
 							</FieldLabel>
-							<textarea
-								value={actions}
-								onChange={(e) => setActions(e.target.value)}
-								placeholder="Optional — specific actions or checks the Captain should take toward this goal (e.g. run a weekly cron-style check of the signup funnel)."
-								rows={3}
-								className={textareaClass}
+							<input
+								type="date"
+								value={targetDate}
+								onChange={(e) => setTargetDate(e.target.value)}
+								className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-1 outline-none focus:border-border-strong"
 							/>
 						</label>
+					</div>
 
-						<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-							<label className="flex flex-col gap-1.5">
-								<FieldLabel
-									tooltipLabel="About check frequency"
-									tooltip="How often the Captain re-checks progress on this goal and acts on it."
-								>
-									Check frequency
-								</FieldLabel>
-								<select
-									value={checkFrequency}
-									onChange={(e) => setCheckFrequency(e.target.value as GoalCheckFrequency)}
-									className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-1 outline-none focus:border-border-strong"
-								>
-									{Object.entries(GOAL_CHECK_FREQUENCY_LABELS).map(([value, label]) => (
-										<option key={value} value={value}>
-											{label}
-										</option>
-									))}
-								</select>
-							</label>
+					{error && <p className="text-sm text-danger">{error.message}</p>}
 
-							<label className="flex flex-col gap-1.5">
-								<FieldLabel
-									tooltipLabel="About deadline"
-									tooltip="Optional — a target date for reaching this goal. Leave blank for an open-ended goal."
-								>
-									Deadline <span className="text-text-3">(optional)</span>
-								</FieldLabel>
-								<input
-									type="date"
-									value={targetDate}
-									onChange={(e) => setTargetDate(e.target.value)}
-									className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-1 outline-none focus:border-border-strong"
-								/>
-							</label>
-						</div>
-
-						{error && <p className="text-sm text-danger">{error.message}</p>}
-
-						<div className="flex justify-end gap-2 mt-2">
-							<Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-								Cancel
-							</Button>
-							<Button type="submit" disabled={!title.trim() || pending}>
-								{pending && <Loader2 className="w-4 h-4 animate-spin" />}
-								{isEdit ? 'Save' : 'Create'}
-							</Button>
-						</div>
-					</form>
-				</Dialog.Content>
-			</Dialog.Portal>
+					<div className="flex justify-end gap-2 mt-2">
+						<Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+							Cancel
+						</Button>
+						<Button type="submit" disabled={!title.trim() || pending}>
+							{pending && <Loader2 className="w-4 h-4 animate-spin" />}
+							{isEdit ? 'Save' : 'Create'}
+						</Button>
+					</div>
+				</form>
+			</DialogContent>
 		</Dialog.Root>
 	);
 }

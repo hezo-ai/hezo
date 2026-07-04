@@ -1,8 +1,8 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { Check, Copy, X } from 'lucide-react';
+import { Check, Copy } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { copyToClipboard } from '../../lib/clipboard';
-import { dialogContentClassName, dialogOverlayClassName } from '../ui/dialog';
+import { DialogContent } from '../ui/dialog';
 import { buildReviewHandoff } from './review-handoff';
 
 interface ActionReviewDialogProps {
@@ -37,49 +37,37 @@ export function ActionReviewDialog({
 
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
-			<Dialog.Portal>
-				<Dialog.Overlay className={dialogOverlayClassName} />
-				<Dialog.Content className={dialogContentClassName.md} data-testid="action-review-dialog">
-					<div className="mb-3 flex items-center justify-between gap-2">
-						<Dialog.Title className="text-base font-semibold">Action this review</Dialog.Title>
-						<Dialog.Close asChild>
-							<button
-								type="button"
-								className="-m-2 p-2 text-text-2 hover:text-text-1"
-								aria-label="Close"
-							>
-								<X className="h-4 w-4" />
-							</button>
-						</Dialog.Close>
-					</div>
-					<Dialog.Description className="mb-3 text-[12.5px] leading-relaxed text-text-2">
-						Paste this handoff into a task comment — or a new task's description — and assign it to
-						the agent who should action the feedback. The agent reads the review comments directly
-						from the document.
-					</Dialog.Description>
-					<div
-						className="whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-3 text-[12.5px] leading-relaxed text-text-1"
-						data-testid="action-review-handoff"
+			<DialogContent size="md" data-testid="action-review-dialog">
+				<Dialog.Title className="mb-3 pr-8 text-base font-semibold">
+					Action this review
+				</Dialog.Title>
+				<Dialog.Description className="mb-3 text-[12.5px] leading-relaxed text-text-2">
+					Paste this handoff into a task comment — or a new task's description — and assign it to
+					the agent who should action the feedback. The agent reads the review comments directly
+					from the document.
+				</Dialog.Description>
+				<div
+					className="whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-3 text-[12.5px] leading-relaxed text-text-1"
+					data-testid="action-review-handoff"
+				>
+					{handoff}
+				</div>
+				<div className="mt-4 flex items-center justify-between gap-2">
+					<span className="text-xs text-text-3">
+						{commentCount} comment{commentCount === 1 ? '' : 's'} · {filename}
+					</span>
+					<button
+						type="button"
+						onClick={handleCopy}
+						aria-label={copied ? 'Copied' : 'Copy handoff'}
+						data-testid="action-review-copy"
+						className="inline-flex h-[26px] cursor-pointer items-center gap-1.5 rounded-sm border border-transparent bg-inverse px-2.5 text-[12.5px] font-medium text-inverse-fg hover:opacity-90"
 					>
-						{handoff}
-					</div>
-					<div className="mt-4 flex items-center justify-between gap-2">
-						<span className="text-xs text-text-3">
-							{commentCount} comment{commentCount === 1 ? '' : 's'} · {filename}
-						</span>
-						<button
-							type="button"
-							onClick={handleCopy}
-							aria-label={copied ? 'Copied' : 'Copy handoff'}
-							data-testid="action-review-copy"
-							className="inline-flex h-[26px] cursor-pointer items-center gap-1.5 rounded-sm border border-transparent bg-inverse px-2.5 text-[12.5px] font-medium text-inverse-fg hover:opacity-90"
-						>
-							{copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-							{copied ? 'Copied' : 'Copy'}
-						</button>
-					</div>
-				</Dialog.Content>
-			</Dialog.Portal>
+						{copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+						{copied ? 'Copied' : 'Copy'}
+					</button>
+				</div>
+			</DialogContent>
 		</Dialog.Root>
 	);
 }

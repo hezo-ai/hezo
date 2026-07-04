@@ -1,7 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { HelpCircle, X } from 'lucide-react';
+import { HelpCircle } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
-import { dialogContentClassName, dialogOverlayClassName } from './dialog';
+import { DialogContent, type DialogSize } from './dialog';
 import { Tooltip } from './tooltip';
 
 interface HelpDialogProps {
@@ -19,7 +19,7 @@ interface HelpDialogProps {
 	/** Trigger button size class for the icon. Defaults to a small (3.5) glyph. */
 	className?: string;
 	/** Width of the modal. Defaults to `md`. */
-	size?: keyof typeof dialogContentClassName;
+	size?: DialogSize;
 	/**
 	 * Trigger rendering: the default circled `HelpCircle` icon, or a bare "?"
 	 * text glyph with no circle/border — for surfaces where the ring reads as
@@ -67,24 +67,10 @@ export function HelpDialog({
 	return (
 		<Dialog.Root open={open} onOpenChange={setOpen}>
 			{tooltip ? <Tooltip content={tooltip}>{trigger}</Tooltip> : trigger}
-			<Dialog.Portal>
-				<Dialog.Overlay className={dialogOverlayClassName} />
-				<Dialog.Content className={dialogContentClassName[size]}>
-					<div className="mb-4 flex items-center justify-between gap-2">
-						<Dialog.Title className="text-lg font-semibold">{title}</Dialog.Title>
-						<Dialog.Close asChild>
-							<button
-								type="button"
-								className="-m-2 p-2 text-text-2 hover:text-text-1"
-								aria-label="Close"
-							>
-								<X className="h-4 w-4" />
-							</button>
-						</Dialog.Close>
-					</div>
-					{children}
-				</Dialog.Content>
-			</Dialog.Portal>
+			<DialogContent size={size}>
+				<Dialog.Title className="mb-4 pr-8 text-lg font-semibold">{title}</Dialog.Title>
+				{children}
+			</DialogContent>
 		</Dialog.Root>
 	);
 }
