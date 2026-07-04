@@ -95,7 +95,8 @@ test('pill works on the standalone (bare) document preview page', async ({
 	await seedDoc(page, projectSlug, token, LONG_CONTENT);
 
 	await page.goto(`/preview/${projectSlug}/${DOC}`);
-	await waitForPageLoad(page);
+	// No waitForPageLoad here: the bare route renders without the shell's <main>,
+	// which that helper gates on. The toolbar is the page's own mounted signal.
 	await expect(page.getByTestId('preview-review-toolbar')).toBeVisible({ timeout: 20000 });
 
 	const button = page.getByTestId('scroll-to-bottom');
