@@ -145,7 +145,7 @@ test.describe('Task detail — initial scroll and scroll-to-bottom button', () =
 		const main = page.locator('main').first();
 		await expect.poll(() => main.evaluate((el) => el.scrollTop), { timeout: 10000 }).toBe(0);
 
-		const button = page.getByTestId('task-scroll-to-bottom');
+		const button = page.getByTestId('scroll-to-bottom');
 		await expect(button).toBeVisible();
 
 		await button.click();
@@ -191,9 +191,9 @@ test.describe('Task detail — initial scroll and scroll-to-bottom button', () =
 		const main = page.locator('main').first();
 		await expect.poll(() => main.evaluate((el) => el.scrollTop), { timeout: 10000 }).toBe(0);
 
-		// The mobile layout swaps the floating round button for a rectangular
-		// button pinned bottom-centre between the new-task and CEO chat launchers.
-		const button = page.getByTestId('task-scroll-to-bottom-mobile');
+		// The same global pill pinned bottom-centre of the content area, clear of
+		// the CEO chat launcher in the corner.
+		const button = page.getByTestId('scroll-to-bottom');
 		await expect(button).toBeVisible();
 		await button.click();
 

@@ -1,6 +1,6 @@
 import type { AgentEffort } from '@hezo/shared';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
-import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { jumpToComment } from '../../../../components/comment-renderers';
 import { CommentComposer } from '../../../../components/task-detail/comment-composer';
@@ -16,7 +16,6 @@ import { SubTasksSection } from '../../../../components/task-detail/sub-tasks-se
 import { TaskHeader } from '../../../../components/task-detail/task-header';
 import { TaskSidebar } from '../../../../components/task-detail/task-sidebar';
 import { TaskSummary } from '../../../../components/task-detail/task-summary';
-import { Tooltip } from '../../../../components/ui/tooltip';
 import { useAgents } from '../../../../hooks/use-agents';
 import { type Comment, useComments, useCreateComment } from '../../../../hooks/use-comments';
 import { useExecutionLock } from '../../../../hooks/use-execution-locks';
@@ -86,7 +85,10 @@ function TaskDetailPage() {
 		setScrollParent(document.querySelector('main'));
 	}, []);
 
-	const { atBottom, scrollToBottom } = useScrollToBottom(scrollParent);
+	// The jump-to-bottom button itself is global (rendered by the shell over
+	// <main> — see __root.tsx); this hook instance only provides scrollToBottom
+	// for the sidebar's close/re-open actions.
+	const { scrollToBottom } = useScrollToBottom(scrollParent);
 
 	if (isLoading || !task)
 		return <div className="text-text-2 text-[13px] py-8 text-center">Loading...</div>;
@@ -102,180 +104,116 @@ function TaskDetailPage() {
 	const taskProjectSlug = task.project_slug ?? projectId;
 
 	return (
-		<>
-			<div
-				className={`grid grid-cols-1 gap-5 ${preview ? 'lg:grid-cols-[1fr_360px] xl:grid-cols-[1fr_520px] 2xl:grid-cols-[1fr_720px]' : 'lg:grid-cols-[1fr_190px]'}`}
-			>
-				<PreviewProvider value={openPreview}>
-					<div className="min-w-0">
-						<LastRunFailedBanner task={task} />
-						<TaskHeader
-							task={task}
-							projectId={projectId}
-							taskId={taskId}
-							taskProjectSlug={taskProjectSlug}
-						/>
+		<div
+			className={`grid grid-cols-1 gap-5 ${preview ? 'lg:grid-cols-[1fr_360px] xl:grid-cols-[1fr_520px] 2xl:grid-cols-[1fr_720px]' : 'lg:grid-cols-[1fr_190px]'}`}
+		>
+			<PreviewProvider value={openPreview}>
+				<div className="min-w-0">
+					<LastRunFailedBanner task={task} />
+					<TaskHeader
+						task={task}
+						projectId={projectId}
+						taskId={taskId}
+						taskProjectSlug={taskProjectSlug}
+					/>
 
-						<TaskSummary
-							task={task}
-							projectId={projectId}
-							taskProjectSlug={taskProjectSlug}
-							updateTask={updateTask}
-						/>
+					<TaskSummary
+						task={task}
+						projectId={projectId}
+						taskProjectSlug={taskProjectSlug}
+						updateTask={updateTask}
+					/>
 
-						<SubTasksSection
-							projectId={projectId}
-							taskId={taskId}
-							parentTaskId={task.id}
-							taskProjectSlug={taskProjectSlug}
-						/>
+					<SubTasksSection
+						projectId={projectId}
+						taskId={taskId}
+						parentTaskId={task.id}
+						taskProjectSlug={taskProjectSlug}
+					/>
 
-						<DependenciesSection projectId={projectId} taskId={taskId} />
+					<DependenciesSection projectId={projectId} taskId={taskId} />
 
-						<div className="border-t border-border pt-4">
-							<div className="flex items-center gap-1.5 mb-4">
-								<h3 className="text-[13px] text-text-1 font-medium">Comments</h3>
-								<span className="bg-surface-2 px-[7px] py-px rounded-full text-[11px] text-text-2">
-									{comments?.length ?? 0}
-								</span>
-							</div>
-
-							<CommentsSection
-								task={task}
-								projectId={projectId}
-								taskId={taskId}
-								taskProjectSlug={taskProjectSlug}
-								scrollParent={scrollParent}
-								onStartReply={startReply}
-							/>
-
-							<CommentComposer
-								task={task}
-								projectId={projectId}
-								taskProjectSlug={taskProjectSlug}
-								createComment={createComment}
-								commentEffort={commentEffort}
-								setCommentEffort={setCommentEffort}
-								replyTarget={replyTarget}
-								setReplyTarget={setReplyTarget}
-								jumpToComment={jumpToComment}
-								commentFormRef={commentFormRef}
-								commentTextareaRef={commentTextareaRef}
-							/>
+					<div className="border-t border-border pt-4">
+						<div className="flex items-center gap-1.5 mb-4">
+							<h3 className="text-[13px] text-text-1 font-medium">Comments</h3>
+							<span className="bg-surface-2 px-[7px] py-px rounded-full text-[11px] text-text-2">
+								{comments?.length ?? 0}
+							</span>
 						</div>
-					</div>
-				</PreviewProvider>
 
-				{/* Right rail: an in-grid sticky column at lg+, a slide-in floating
+						<CommentsSection
+							task={task}
+							projectId={projectId}
+							taskId={taskId}
+							taskProjectSlug={taskProjectSlug}
+							scrollParent={scrollParent}
+							onStartReply={startReply}
+						/>
+
+						<CommentComposer
+							task={task}
+							projectId={projectId}
+							taskProjectSlug={taskProjectSlug}
+							createComment={createComment}
+							commentEffort={commentEffort}
+							setCommentEffort={setCommentEffort}
+							replyTarget={replyTarget}
+							setReplyTarget={setReplyTarget}
+							jumpToComment={jumpToComment}
+							commentFormRef={commentFormRef}
+							commentTextareaRef={commentTextareaRef}
+						/>
+					</div>
+				</div>
+			</PreviewProvider>
+
+			{/* Right rail: an in-grid sticky column at lg+, a slide-in floating
 				    drawer below lg (collapsed by default, toggled by the chevron). */}
+			<button
+				type="button"
+				onClick={() => setSidebarOpen((o) => !o)}
+				data-testid="task-sidebar-toggle"
+				aria-label={sidebarOpen ? 'Collapse task details' : 'Expand task details'}
+				aria-expanded={sidebarOpen}
+				className="lg:hidden fixed right-0 top-1/2 -translate-y-1/2 z-50 h-12 w-7 rounded-l-md border border-r-0 border-border bg-surface text-text-2 hover:text-text-1 shadow-md flex items-center justify-center"
+			>
+				{sidebarOpen ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+			</button>
+			{sidebarOpen && (
 				<button
 					type="button"
-					onClick={() => setSidebarOpen((o) => !o)}
-					data-testid="task-sidebar-toggle"
-					aria-label={sidebarOpen ? 'Collapse task details' : 'Expand task details'}
-					aria-expanded={sidebarOpen}
-					className="lg:hidden fixed right-0 top-1/2 -translate-y-1/2 z-50 h-12 w-7 rounded-l-md border border-r-0 border-border bg-surface text-text-2 hover:text-text-1 shadow-md flex items-center justify-center"
-				>
-					{sidebarOpen ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-				</button>
-				{sidebarOpen && (
-					<button
-						type="button"
-						aria-label="Close task details"
-						onClick={() => setSidebarOpen(false)}
-						className="lg:hidden fixed inset-0 z-40 bg-[var(--overlay)] cursor-default"
-					/>
-				)}
-				{/* Task meta side panel. Mobile: a fixed right-side drawer toggled by the
+					aria-label="Close task details"
+					onClick={() => setSidebarOpen(false)}
+					className="lg:hidden fixed inset-0 z-40 bg-[var(--overlay)] cursor-default"
+				/>
+			)}
+			{/* Task meta side panel. Mobile: a fixed right-side drawer toggled by the
 				    chevron. Desktop: `lg:contents` makes this wrapper generate no box, so
 				    TaskSidebar becomes the direct grid child (in-grid sticky column). While
 				    a preview is open the sidebar column yields to the preview on desktop
 				    (`lg:hidden`); on mobile the preview is its own overlay above this. */}
-				<div
-					data-testid="task-rail"
-					className={`fixed top-0 right-0 z-40 h-full w-[280px] max-w-[85vw] overflow-y-auto bg-surface p-4 shadow-xl transition-transform duration-200 ${
-						sidebarOpen ? 'translate-x-0' : 'translate-x-full'
-					} ${preview ? 'lg:hidden' : 'lg:contents'}`}
-				>
-					<TaskSidebar
-						task={task}
-						projectId={projectId}
-						agents={agents}
-						lock={lock}
-						comments={comments}
-						updateTask={updateTask}
-						commentEffort={commentEffort}
-						setCommentEffort={setCommentEffort}
-						scrollToBottom={scrollToBottom}
-					/>
-				</div>
-				{/* Document preview: its own layer. Mobile: a full-screen overlay above
-				    the main content and the meta drawer. Desktop: the in-grid column 2. */}
-				{preview && <PreviewPanel item={preview} onClose={() => setPreview(null)} />}
-			</div>
-
-			{/* Desktop/tablet: the same thin pill, centred over the content column and
-			    pinned to the bottom of the viewport. The mirror grid matches the main
-			    content grid above so the pill lines up with the content column, never
-			    the sidebar (whichever width the preview panel is using). */}
 			<div
-				aria-hidden={atBottom}
-				className={`hidden lg:grid sticky bottom-4 z-30 gap-5 pointer-events-none ${preview ? 'lg:grid-cols-[1fr_360px] xl:grid-cols-[1fr_520px] 2xl:grid-cols-[1fr_720px]' : 'lg:grid-cols-[1fr_190px]'}`}
+				data-testid="task-rail"
+				className={`fixed top-0 right-0 z-40 h-full w-[280px] max-w-[85vw] overflow-y-auto bg-surface p-4 shadow-xl transition-transform duration-200 ${
+					sidebarOpen ? 'translate-x-0' : 'translate-x-full'
+				} ${preview ? 'lg:hidden' : 'lg:contents'}`}
 			>
-				<div className="flex justify-center">
-					<ScrollToBottomButton
-						onClick={scrollToBottom}
-						atBottom={atBottom}
-						testId="task-scroll-to-bottom"
-						positionClassName="pointer-events-auto"
-					/>
-				</div>
+				<TaskSidebar
+					task={task}
+					projectId={projectId}
+					agents={agents}
+					lock={lock}
+					comments={comments}
+					updateTask={updateTask}
+					commentEffort={commentEffort}
+					setCommentEffort={setCommentEffort}
+					scrollToBottom={scrollToBottom}
+				/>
 			</div>
-
-			{/* Mobile: the same pill pinned bottom-centre, clear of the CEO chat
-			    launcher in the bottom-right corner. */}
-			<ScrollToBottomButton
-				onClick={scrollToBottom}
-				atBottom={atBottom}
-				testId="task-scroll-to-bottom-mobile"
-				positionClassName="lg:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40"
-			/>
-		</>
-	);
-}
-
-/**
- * A thin "jump to latest" pill: a downward chevron on the theme's inverse fill
- * (black in light theme, the light inverse in dark theme, matching the CEO chat
- * launcher). Shared by the desktop (content-centred) and mobile (bottom-centre)
- * placements — `positionClassName` supplies the positioning. Hides itself and
- * leaves the tab order once the thread is scrolled to the bottom.
- */
-function ScrollToBottomButton({
-	onClick,
-	atBottom,
-	testId,
-	positionClassName,
-}: {
-	onClick: () => void;
-	atBottom: boolean;
-	testId: string;
-	positionClassName: string;
-}) {
-	return (
-		<Tooltip content="Scroll to bottom">
-			<button
-				type="button"
-				onClick={onClick}
-				data-testid={testId}
-				aria-label="Scroll to bottom"
-				aria-hidden={atBottom}
-				tabIndex={atBottom ? -1 : 0}
-				className={`flex h-6 items-center justify-center rounded-md bg-inverse px-5 text-inverse-fg shadow-lg transition-opacity hover:opacity-90 ${positionClassName} ${atBottom ? 'invisible pointer-events-none opacity-0' : ''}`}
-			>
-				<ChevronDown className="h-4 w-4" />
-			</button>
-		</Tooltip>
+			{/* Document preview: its own layer. Mobile: a full-screen overlay above
+				    the main content and the meta drawer. Desktop: the in-grid column 2. */}
+			{preview && <PreviewPanel item={preview} onClose={() => setPreview(null)} />}
+		</div>
 	);
 }
 

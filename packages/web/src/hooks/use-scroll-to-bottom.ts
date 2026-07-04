@@ -4,7 +4,9 @@ export function useScrollToBottom(scrollParent: HTMLElement | null): {
 	atBottom: boolean;
 	scrollToBottom: () => void;
 } {
-	const [atBottom, setAtBottom] = useState(false);
+	// Start hidden (`atBottom: true`) so short pages never flash the button
+	// before the first measurement runs.
+	const [atBottom, setAtBottom] = useState(true);
 	useEffect(() => {
 		if (!scrollParent) return;
 		const check = () => {
@@ -16,9 +18,24 @@ export function useScrollToBottom(scrollParent: HTMLElement | null): {
 		scrollParent.addEventListener('scroll', check, { passive: true });
 		const ro = new ResizeObserver(check);
 		ro.observe(scrollParent);
-		for (const child of Array.from(scrollParent.children)) ro.observe(child);
+		const observeChildren = () => {
+			for (const child of Array.from(scrollParent.children)) ro.observe(child);
+		};
+		observeChildren();
+		// The scroll parent can outlive its content: the shell <main> never
+		// unmounts across navigations — the route swap replaces its children. The
+		// ResizeObserver only tracks the elements it was handed, so re-observe (a
+		// no-op for already-observed nodes) and re-measure whenever the child list
+		// changes; otherwise the new page's async content growth goes unseen and
+		// the button state is stale until the next scroll.
+		const mo = new MutationObserver(() => {
+			observeChildren();
+			check();
+		});
+		mo.observe(scrollParent, { childList: true });
 		return () => {
 			scrollParent.removeEventListener('scroll', check);
+			mo.disconnect();
 			ro.disconnect();
 		};
 	}, [scrollParent]);
