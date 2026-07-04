@@ -261,7 +261,7 @@ test.describe('Agent-run meta — mobile (390px)', () => {
 		await expect(runCommentEl.getByTestId('run-comment-actor')).toBeHidden();
 	});
 
-	test('expanded log top bar hides the "Logs" label and line count', async ({
+	test('expanded log top bar hides the status label, "Logs" word, and line count', async ({
 		page,
 		freshWorkspace,
 	}) => {
@@ -280,9 +280,10 @@ test.describe('Agent-run meta — mobile (390px)', () => {
 		// Scope to the log region so we read the toolbar's own label/count, not the
 		// (also-hidden) summary line count that lives in the header above it.
 		const logRegion = runCommentEl.locator('[id^="run-comment-log-"]');
-		// The agent status label still anchors the toolbar; the redundant "Logs"
-		// word and line count are hidden on mobile.
-		await expect(logRegion.getByText(/Product Lead.*succeeded/)).toBeVisible();
+		// On mobile the toolbar is anchored by the status dot alone; the agent
+		// status label, the redundant "Logs" word, and the line count are all
+		// hidden to free up horizontal room for the toolbar buttons.
+		await expect(logRegion.getByText(/Product Lead.*succeeded/)).toBeHidden();
 		await expect(logRegion.getByText('Logs', { exact: true })).toBeHidden();
 		await expect(logRegion.getByText('27 lines', { exact: true })).toBeHidden();
 	});

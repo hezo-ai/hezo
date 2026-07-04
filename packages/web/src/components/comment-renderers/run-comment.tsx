@@ -319,7 +319,7 @@ export function RunCommentBody({
 								<span
 									className={`inline-block w-2 h-2 rounded-full ${runStatusDotClass(status)}`}
 								/>
-								<span>
+								<span className="hidden sm:inline">
 									{agentTitle} — {runStatusLabel(status)}
 								</span>
 							</span>
