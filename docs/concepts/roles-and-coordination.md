@@ -77,9 +77,9 @@ follow its thinking instead of waiting for a finished block of text.
 
 Keep working alongside it: **minimize** the chat to the corner button and a badge appears
 there when a CEO reply lands while you're away — the same unread indicator the inbox uses
-— clearing the moment you reopen it. On a phone, the corner button (like the floating "+"
-new-task button) can be **dragged** anywhere on screen to move it off content it covers;
-it stays where you drop it until the page reloads. When you want more room, **expand** the chat to fill
+— clearing the moment you reopen it. On a phone, the corner button can be **dragged**
+anywhere on screen to move it off content it covers; it stays where you drop it until
+the page reloads. When you want more room, **expand** the chat to fill
 the screen below the top navigation bar; expanding dims the rest of the page into a focused,
 modal view. Collapse it back to the anchored panel when you're done, or press **Escape**
 (or click the dimmed area) to close the chat.

@@ -181,17 +181,18 @@ export function RunCommentBody({
 		? agentPageParams(projectId, agentSlug)
 		: { projectId, agentId };
 
-	// Single non-wrapping row: the agent title and status block keep their width,
-	// the timestamp truncates first under pressure, and the status block clips
-	// last — so the header (and its expand chevron) stay on one horizontal line at
-	// any width, including once the log opens and a scrollbar narrows the row.
+	// Wrapping row: each segment (agent title, status block, timestamp) stays
+	// whole via whitespace-nowrap but flows to the next line when the row runs
+	// out of width, so a narrow mobile viewport never forces the header — and
+	// with it the whole page — wider than the screen. Only a single segment
+	// longer than the full row width truncates (max-w-full).
 	const summaryRow = (
-		<span className="flex flex-1 items-center gap-x-2 min-w-0 overflow-hidden">
+		<span className="flex flex-1 flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
 			<Link
 				to="/projects/$projectId/agents/$agentId"
 				params={agentLinkParams}
 				onClick={(e) => e.stopPropagation()}
-				className="text-xs text-text-2 shrink-0 whitespace-nowrap hover:text-text-1 hover:underline"
+				className="text-xs text-text-2 whitespace-nowrap max-w-full truncate hover:text-text-1 hover:underline"
 			>
 				{agentTitle} run
 			</Link>
@@ -242,10 +243,10 @@ export function RunCommentBody({
 				<CommentTimestampLink
 					publicId={publicId}
 					createdAt={createdAt}
-					className="truncate min-w-0"
+					className="whitespace-nowrap max-w-full truncate"
 				/>
 			) : (
-				<span className="text-[11px] text-text-3 truncate min-w-0">
+				<span className="text-[11px] text-text-3 whitespace-nowrap max-w-full truncate">
 					{new Date(createdAt).toLocaleString()}
 				</span>
 			)}
@@ -255,6 +256,10 @@ export function RunCommentBody({
 	// The expand/collapse toggle. `flex-1` is added only when a sibling Retry
 	// button shares the row; without it the markup stays byte-identical to the
 	// pre-Retry header, so a non-retryable run's clickable geometry is unchanged.
+	// `max-w-full` is load-bearing: a <button> shrink-wraps to its content's
+	// max-content width (form controls ignore block-level auto-fill), so without
+	// it the nowrap header segments widen the button — and the whole page —
+	// past a narrow viewport instead of wrapping inside it.
 	const expandToggle = (
 		<button
 			type="button"
@@ -262,7 +267,7 @@ export function RunCommentBody({
 			aria-expanded={expanded}
 			aria-controls={logRegionId}
 			data-testid="run-comment-header"
-			className={`flex items-center gap-2 min-h-[26px] min-w-0 text-left -mx-1 px-1 rounded-md hover:bg-surface-3 cursor-pointer${
+			className={`flex max-w-full items-center gap-2 min-h-[26px] min-w-0 text-left -mx-1 px-1 rounded-md hover:bg-surface-3 cursor-pointer${
 				canRetry && taskId ? ' flex-1' : ''
 			}`}
 		>

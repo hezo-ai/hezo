@@ -177,6 +177,7 @@ async function mockRunComment(page: Page, token: string) {
 
 	const runComment = {
 		id: 'dddd0000-0000-0000-0000-000000000001',
+		public_id: 'runmock01',
 		task_id: task.id,
 		content_type: 'run',
 		content: {
@@ -259,6 +260,43 @@ test.describe('Agent-run meta — mobile (390px)', () => {
 		await expect(summary.getByTestId('run-comment-line-count')).toBeHidden();
 		await expect(summary.getByTestId('run-comment-cost')).toBeHidden();
 		await expect(runCommentEl.getByTestId('run-comment-actor')).toBeHidden();
+	});
+
+	test('run header wraps on a narrow viewport instead of widening the page', async ({
+		page,
+		freshWorkspace,
+	}) => {
+		const { token } = freshWorkspace;
+		const { project, task } = await mockRunComment(page, token);
+
+		// 375px (not the project default 390) — the width the overflow regression
+		// was reported at: the <button> header shrink-wraps to its content's
+		// max-content width, so without max-w-full + flex-wrap the whole <main>
+		// column scrolled horizontally.
+		await page.setViewportSize({ width: 375, height: 800 });
+		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
+
+		const header = page.getByTestId('run-comment-header');
+		await expect(header).toBeVisible({ timeout: 20_000 });
+		await expect(page.getByTestId('run-comment-summary')).toBeVisible();
+
+		// The page never scrolls horizontally…
+		const overflow = await page.evaluate(() => {
+			const main = document.querySelector('main');
+			return main ? main.scrollWidth - main.clientWidth : -1;
+		});
+		expect(overflow).toBe(0);
+
+		// …because the header stays within the viewport (wrapping its segments),
+		// with the timestamp fully visible rather than clipped.
+		const headerBox = await header.boundingBox();
+		if (!headerBox) throw new Error('Missing layout box');
+		expect(headerBox.x + headerBox.width).toBeLessThanOrEqual(375);
+		const timestamp = header.getByTestId('comment-timestamp-link');
+		await expect(timestamp).toBeVisible();
+		const tsBox = await timestamp.boundingBox();
+		if (!tsBox) throw new Error('Missing layout box');
+		expect(tsBox.x + tsBox.width).toBeLessThanOrEqual(375);
 	});
 
 	test('expanded log top bar hides the status label, "Logs" word, and line count', async ({

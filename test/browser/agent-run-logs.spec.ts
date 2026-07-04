@@ -368,13 +368,17 @@ test('completed run expansion works on mobile viewport', async ({ page }) => {
 	await expect(log).toContainText('[synthetic] line 1');
 });
 
-// #1 (real CSS layout): asserts the summary row and its expand chevron share a
-// single horizontal line via boundingBox y-centres — happy-dom can't lay out
-// the flex row, so this can only be verified in a real browser. Mobile width is
-// the forcing function: the full header (title · status · lines · duration ·
-// timestamp · chevron) is wider than a 375px row, so a wrapping container would
-// drop the chevron to a second line.
-test('completed run header stays on one line when the log expands (mobile)', async ({ page }) => {
+// #1 (real CSS layout): asserts the summary row wraps INSIDE the viewport via
+// boundingBox — happy-dom can't lay out the flex row, so this can only be
+// verified in a real browser. Mobile width is the forcing function: the full
+// header (title · status · duration · timestamp · chevron) is wider than a
+// 375px row. The header <button> shrink-wraps to its content's max-content
+// width (form controls ignore block auto-fill), so without max-w-full +
+// flex-wrap the header would widen <main> past the viewport and the whole
+// page would pan sideways; segments must flow to a second line instead.
+test('completed run header wraps within the viewport when the log expands (mobile)', async ({
+	page,
+}) => {
 	await page.setViewportSize({ width: 375, height: 800 });
 	await authenticate(page);
 	const token = await getToken(page);
@@ -392,23 +396,29 @@ test('completed run header stays on one line when the log expands (mobile)', asy
 	// The chevron is the only <svg> in the header (the status dot is a <span>).
 	const chevron = header.locator('svg');
 
-	const centerY = async (loc: Locator): Promise<number> => {
-		const box = await loc.boundingBox();
-		if (!box) throw new Error('element has no bounding box');
-		return box.y + box.height / 2;
+	const assertNoHorizontalOverflow = async () => {
+		const headerBox = await header.boundingBox();
+		const chevronBox = await chevron.boundingBox();
+		if (!headerBox || !chevronBox) throw new Error('element has no bounding box');
+		// The header (and its chevron) stay inside the 375px viewport…
+		expect(headerBox.x).toBeGreaterThanOrEqual(0);
+		expect(headerBox.x + headerBox.width).toBeLessThanOrEqual(375);
+		expect(chevronBox.x + chevronBox.width).toBeLessThanOrEqual(375);
+		// …and the page's scroll container never scrolls horizontally.
+		const overflow = await page.evaluate(() => {
+			const main = document.querySelector('main');
+			return main ? main.scrollWidth - main.clientWidth : -1;
+		});
+		expect(overflow).toBe(0);
 	};
 
-	// Line height is ~16px (text-xs); a wrapped chevron would sit a full line
-	// below the summary, so an 8px tolerance cleanly separates one line from two.
-	const collapsedDelta = Math.abs((await centerY(chevron)) - (await centerY(summary)));
-	expect(collapsedDelta).toBeLessThan(8);
+	await assertNoHorizontalOverflow();
 
 	// Opening the inline log grows the comment and can introduce a scrollbar that
-	// narrows the row — the header must not reflow onto a second line.
+	// narrows the row — the header must re-wrap inside it, never overflow.
 	await header.click();
 	await expect(runCommentEl.getByTestId('run-comment-log')).toBeVisible();
-	const expandedDelta = Math.abs((await centerY(chevron)) - (await centerY(summary)));
-	expect(expandedDelta).toBeLessThan(8);
+	await assertNoHorizontalOverflow();
 });
 
 // #1 (real CSS layout): the leading inline-event icon must share a vertical

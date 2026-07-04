@@ -1,17 +1,7 @@
-import { act, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedProject, seedWorkspace } from './helpers/seed';
-
-/** A stand-in for the non-standard `beforeinstallprompt` event (Android path). */
-class FakeBeforeInstallPromptEvent extends Event {
-	platforms = ['web'];
-	userChoice = Promise.resolve({ outcome: 'accepted' as const, platform: 'web' });
-	prompt = () => Promise.resolve();
-	constructor() {
-		super('beforeinstallprompt');
-	}
-}
 
 async function renderOnProjectTasks() {
 	let projectSlug = '';
@@ -19,7 +9,7 @@ async function renderOnProjectTasks() {
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			const project = await seedProject(ws, { name: 'Float Project' });
+			const project = await seedProject(ws, { name: 'Header Project' });
 			projectSlug = project.slug;
 		},
 	});
@@ -27,14 +17,14 @@ async function renderOnProjectTasks() {
 		to: '/projects/$projectId/tasks',
 		params: { projectId: projectSlug },
 	});
-	return app;
+	return { ...app, projectSlug };
 }
 
-test('the floating new-task button opens the create-task dialog on a project route', async () => {
+test('the header new-task button opens the create-task dialog on a project route', async () => {
 	const { findByTestId, user } = await renderOnProjectTasks();
 
-	const floating = await findByTestId('floating-new-task');
-	await user.click(floating);
+	const headerButton = await findByTestId('app-header-new-task');
+	await user.click(headerButton);
 
 	// The dialog renders into a Radix portal on document.body.
 	await waitFor(() =>
@@ -46,40 +36,13 @@ test('the floating new-task button opens the create-task dialog on a project rou
 	);
 });
 
-test('the floating new-task button is hidden while the CEO chat is open', async () => {
-	const { findByTestId, queryByTestId, user } = await renderOnProjectTasks();
+test('the dialog project picker defaults to the currently viewed project', async () => {
+	const { findByTestId, user, projectSlug } = await renderOnProjectTasks();
 
-	// Present on a project route to start with.
-	await findByTestId('floating-new-task');
+	await user.click(await findByTestId('app-header-new-task'));
 
-	// Opening the chat takes over the corner — the floating button hides.
-	await user.click(await findByTestId('ceo-chat-launcher'));
-	await findByTestId('ceo-chat-panel');
-	await waitFor(() => expect(queryByTestId('floating-new-task')).toBeNull());
-
-	// Closing the chat brings it back.
-	await user.click(await findByTestId('ceo-chat-close'));
-	await findByTestId('floating-new-task');
-});
-
-test('the floating new-task button is hidden while the PWA install card shows', async () => {
-	const { findByTestId, queryByTestId, user } = await renderOnProjectTasks();
-
-	// Present to start with.
-	await findByTestId('floating-new-task');
-
-	// The install card pins to the same bottom edge and covers the corner — the
-	// floating button must hide while it shows.
-	act(() => {
-		window.dispatchEvent(new FakeBeforeInstallPromptEvent());
-	});
-	await findByTestId('pwa-install-prompt');
-	await waitFor(() => expect(queryByTestId('floating-new-task')).toBeNull());
-
-	// Dismissing the card brings it back.
-	await user.click(await findByTestId('pwa-install-dismiss'));
-	await waitFor(() => expect(queryByTestId('pwa-install-prompt')).toBeNull());
-	await findByTestId('floating-new-task');
+	const projectSelect = (await screen.findByTestId('create-task-project')) as HTMLSelectElement;
+	await waitFor(() => expect(projectSelect.value).toBe(projectSlug));
 });
 
 test('the sidebar "+" next to Tasks opens the create-task dialog', async () => {
@@ -100,7 +63,7 @@ test('the sidebar "+" next to Tasks opens the create-task dialog', async () => {
 test('the create-task dialog toggles between fullscreen and the default size', async () => {
 	const { findByTestId, user } = await renderOnProjectTasks();
 
-	await user.click(await findByTestId('floating-new-task'));
+	await user.click(await findByTestId('app-header-new-task'));
 
 	// Starts at the default (non-fullscreen) size.
 	const toggle = await findByTestId('create-task-fullscreen');
@@ -128,7 +91,7 @@ test('the create-task dialog toggles between fullscreen and the default size', a
 	});
 });
 
-test('the floating new-task button is available off a project route and offers a project picker', async () => {
+test('the header new-task button is available off a project route and offers a project picker', async () => {
 	const { findByTestId, user } = await renderApp({
 		initialPath: '/home',
 		seed: async () => {
@@ -137,9 +100,9 @@ test('the floating new-task button is available off a project route and offers a
 		},
 	});
 
-	// Global now: the button shows even with no project in the route.
-	const floating = await findByTestId('floating-new-task');
-	await user.click(floating);
+	// Global: the button shows even with no project in the route.
+	const headerButton = await findByTestId('app-header-new-task');
+	await user.click(headerButton);
 
 	// The dialog renders into a Radix portal on document.body.
 	await waitFor(() =>
@@ -153,7 +116,7 @@ test('the floating new-task button is available off a project route and offers a
 	await screen.findByTestId('create-task-project');
 });
 
-test('the floating dialog scopes the assignee list to the chosen project', async () => {
+test('the header dialog scopes the assignee list to the chosen project', async () => {
 	let alpha = { slug: '', captain: '' };
 	let beta = { slug: '', captain: '' };
 	const { findByTestId, user } = await renderApp({
@@ -170,7 +133,7 @@ test('the floating dialog scopes the assignee list to the chosen project', async
 		},
 	});
 
-	await user.click(await findByTestId('floating-new-task'));
+	await user.click(await findByTestId('app-header-new-task'));
 	const projectSelect = (await screen.findByTestId('create-task-project')) as HTMLSelectElement;
 	const assignee = (await screen.findByTestId('create-task-assignee')) as HTMLSelectElement;
 
