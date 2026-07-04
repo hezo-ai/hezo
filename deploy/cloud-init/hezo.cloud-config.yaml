@@ -1,0 +1,25 @@
+#cloud-config
+# ---------------------------------------------------------------------------
+# Hezo — portable one-click deploy (cloud-init user-data)
+#
+# Paste this whole file into your VPS provider's "User data" / "Cloud config" /
+# "Startup script" field when creating an Ubuntu server (2 GB RAM+ recommended).
+# Works as-is on DigitalOcean, Hetzner, Vultr, Linode, and AWS Lightsail.
+#
+# On first boot it installs Docker, downloads Hezo, sets up automatic HTTPS via
+# Caddy, and starts Hezo under systemd. After ~2 minutes, open the URL it derives
+# (https://<public-ip>.sslip.io) and finish the short in-browser setup: create
+# your master key, set an admin password, and connect a model.
+#
+# OPTIONAL — use your own domain instead of sslip.io: point an A record at the
+# server, then uncomment and edit the HEZO_DOMAIN_OVERRIDE line under runcmd.
+# ---------------------------------------------------------------------------
+package_update: true
+packages:
+  - curl
+
+runcmd:
+  # To use your own domain, set this before the curl line (A record must point here first):
+  # - [ sh, -c, "echo 'HEZO_DOMAIN_OVERRIDE=hezo.example.com' >> /etc/environment" ]
+  - [ sh, -c, "curl -fsSL https://raw.githubusercontent.com/hezo-ai/hezo/main/deploy/provision.sh -o /root/hezo-provision.sh" ]
+  - [ sh, -c, "set -a; [ -f /etc/environment ] && . /etc/environment; set +a; bash /root/hezo-provision.sh" ]

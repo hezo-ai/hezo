@@ -10,6 +10,11 @@ Running Hezo on an always-on cloud server lets your teams keep working around th
 without your laptop being on. Any VPS that can run Docker works — for example
 DigitalOcean, Hetzner, Fly, Linode, or an EC2 instance.
 
+> **Want the fast path?** [One-click deploy](/docs/deployment/one-click) provisions all
+> of the below for you from a single cloud-init snippet — Docker, the binary, automatic
+> HTTPS, systemd, and the firewall — on DigitalOcean, Hetzner, Vultr, Linode, or
+> Lightsail. This page covers the manual shape if you'd rather set it up yourself.
+
 ## The shape of a cloud deployment
 
 1. **Provision a host with Docker** and install the `hezo` binary
