@@ -44,7 +44,7 @@ function pointerEvent(
 }
 
 function TestFab({ onActivate }: { onActivate: () => void }) {
-	const fab = useDraggableFab('new-task');
+	const fab = useDraggableFab('ceo-chat');
 	return (
 		<button
 			ref={fab.ref}
@@ -78,7 +78,7 @@ describe('style gate', () => {
 
 	test('stored position on portrait mobile → inline px position with anchors neutralized', () => {
 		installMatchMedia(true);
-		setFabPosition('new-task', { xFrac: 0.5, yFrac: 0.25 });
+		setFabPosition('ceo-chat', { xFrac: 0.5, yFrac: 0.25 });
 		const { getByTestId } = render(<TestFab onActivate={() => {}} />);
 		const btn = getByTestId('fab');
 		// happy-dom has no layout, so the button measures via the 48px fallback.
@@ -92,12 +92,12 @@ describe('style gate', () => {
 
 	test('gate off (desktop/landscape) → stored position is ignored, not cleared', () => {
 		installMatchMedia(false);
-		setFabPosition('new-task', { xFrac: 0.5, yFrac: 0.25 });
+		setFabPosition('ceo-chat', { xFrac: 0.5, yFrac: 0.25 });
 		const { getByTestId } = render(<TestFab onActivate={() => {}} />);
 		const btn = getByTestId('fab');
 		expect(btn.style.left).toBe('');
 		expect(btn.style.top).toBe('');
-		expect(getFabPosition('new-task')).toEqual({ xFrac: 0.5, yFrac: 0.25 });
+		expect(getFabPosition('ceo-chat')).toEqual({ xFrac: 0.5, yFrac: 0.25 });
 	});
 });
 
@@ -112,7 +112,7 @@ describe('tap vs drag', () => {
 		fireEvent(document, pointerEvent('pointerup', { clientX: 13, clientY: 13 }));
 		fireEvent.click(btn);
 		expect(onActivate).toHaveBeenCalledTimes(1);
-		expect(getFabPosition('new-task')).toBeNull();
+		expect(getFabPosition('ceo-chat')).toBeNull();
 		expect(btn.style.left).toBe('');
 	});
 
@@ -125,7 +125,7 @@ describe('tap vs drag', () => {
 		fireEvent(document, pointerEvent('pointermove', { clientX: 60, clientY: 90 }));
 		fireEvent(document, pointerEvent('pointerup', { clientX: 60, clientY: 90 }));
 		// The drag committed a position…
-		const committed = getFabPosition('new-task');
+		const committed = getFabPosition('ceo-chat');
 		expect(committed).not.toBeNull();
 		expect(btn.style.left).not.toBe('');
 		// …and the click the browser synthesizes after pointerup is swallowed.
@@ -138,13 +138,13 @@ describe('tap vs drag', () => {
 
 	test('pointercancel reverts to the last committed position', () => {
 		installMatchMedia(true);
-		setFabPosition('new-task', { xFrac: 0, yFrac: 0 });
+		setFabPosition('ceo-chat', { xFrac: 0, yFrac: 0 });
 		const { getByTestId } = render(<TestFab onActivate={() => {}} />);
 		const btn = getByTestId('fab');
 		fireEvent(btn, pointerEvent('pointerdown', { clientX: 10, clientY: 10 }));
 		fireEvent(document, pointerEvent('pointermove', { clientX: 200, clientY: 200 }));
 		fireEvent(document, pointerEvent('pointercancel', { clientX: 200, clientY: 200 }));
-		expect(getFabPosition('new-task')).toEqual({ xFrac: 0, yFrac: 0 });
+		expect(getFabPosition('ceo-chat')).toEqual({ xFrac: 0, yFrac: 0 });
 		expect(btn.style.left).toBe('0px');
 		expect(btn.style.top).toBe('0px');
 	});
@@ -157,7 +157,7 @@ describe('tap vs drag', () => {
 		fireEvent(btn, pointerEvent('pointerdown', { clientX: 10, clientY: 10 }));
 		fireEvent(document, pointerEvent('pointermove', { clientX: 200, clientY: 200 }));
 		fireEvent(document, pointerEvent('pointerup', { clientX: 200, clientY: 200 }));
-		expect(getFabPosition('new-task')).toBeNull();
+		expect(getFabPosition('ceo-chat')).toBeNull();
 		fireEvent.click(btn);
 		expect(onActivate).toHaveBeenCalledTimes(1);
 	});

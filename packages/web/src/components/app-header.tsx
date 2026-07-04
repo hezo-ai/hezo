@@ -1,6 +1,9 @@
 import { Link } from '@tanstack/react-router';
-import { Inbox, Search, Settings } from 'lucide-react';
+import { Inbox, Plus, Search, Settings } from 'lucide-react';
+import { useState } from 'react';
+import { useActiveProject } from '../hooks/use-active-project';
 import { useGlobalInboxUnreadCount } from '../hooks/use-inbox-count';
+import { CreateTaskDialog } from './create-task-dialog';
 import { CountOverlayBadge } from './ui/count-overlay-badge';
 import { Logo } from './ui/logo';
 import { ThemeSwitcher } from './ui/theme-switcher';
@@ -10,9 +13,9 @@ const iconLinkClass =
 
 /**
  * The global top header: instance-wide navigation. Only Home sits at the
- * top-left; everything else (Inbox, Settings, and the theme switcher) lives in
- * the top-right group. Skills, Connectors, and Credentials are reached through
- * the Settings sidebar.
+ * top-left; everything else (New task below lg, Search, Inbox, Settings, and
+ * the theme switcher) lives in the top-right group. Skills, Connectors, and
+ * Credentials are reached through the Settings sidebar.
  * Below `lg` the navigation is a side drawer, so the logo doubles as the drawer
  * toggle; at `lg`+ the rail/sidebar are persistent and the logo links home.
  */
@@ -24,6 +27,12 @@ export function AppHeader({
 	onOpenSearch: () => void;
 }) {
 	const inboxUnread = useGlobalInboxUnreadCount();
+	// The mobile "New task" entry point: a create-task dialog with a project
+	// picker defaulting to the currently viewed project. Scoped `lg:hidden`
+	// because at lg+ the persistent project menu carries its own "+" next to
+	// the Tasks link.
+	const active = useActiveProject();
+	const [newTaskOpen, setNewTaskOpen] = useState(false);
 
 	return (
 		<header
@@ -55,6 +64,24 @@ export function AppHeader({
 			</div>
 
 			<div className="flex items-center gap-0.5">
+				{/* Leftmost of the action group; keeps the accent (primary CTA) fill so
+				    it reads as the create action, not another quiet nav icon. */}
+				<button
+					type="button"
+					onClick={() => setNewTaskOpen(true)}
+					aria-label="New task"
+					title="New task"
+					data-testid="app-header-new-task"
+					className="lg:hidden w-8 h-8 rounded-md flex items-center justify-center bg-accent-solid text-accent-solid-fg hover:bg-accent-hover transition-colors"
+				>
+					<Plus className="w-4 h-4" />
+				</button>
+				<CreateTaskDialog
+					selectProject
+					projectId={active?.slug}
+					open={newTaskOpen}
+					onOpenChange={setNewTaskOpen}
+				/>
 				<button
 					type="button"
 					onClick={onOpenSearch}

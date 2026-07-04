@@ -1,65 +1,53 @@
-// Decision-tree items 1–2: the floating new-task button is viewport-conditional
-// (`lg:hidden`, pinned bottom-left via `fixed`) and the desktop equivalent is the
-// sidebar "+", which only shows once the persistent menu renders at ≥1024.
-// happy-dom can't run the media queries or report fixed-position layout, so this
-// needs real Chromium + setViewportSize.
+// Decision-tree items 1–2: the header new-task button is viewport-conditional
+// (`lg:hidden`) and the desktop equivalent is the sidebar "+", which only shows
+// once the persistent menu renders at ≥1024. happy-dom can't run the media
+// queries or report real layout positions, so this needs real Chromium +
+// setViewportSize.
 import { expect, test } from './fixtures';
 import { createProjectAndClearPlanning, uniqueName, waitForPageLoad } from './helpers';
 
-test.describe('Floating new-task button responsiveness', () => {
-	test('mobile shows the floating "+" bottom-left; desktop hides it for the sidebar "+"', async ({
+test.describe('Header new-task button responsiveness', () => {
+	test('mobile shows the header "+" left of search; desktop hides it for the sidebar "+"', async ({
 		page,
 		sharedWorkspace,
 	}) => {
 		const { token } = sharedWorkspace;
 		const project = await createProjectAndClearPlanning(page, '', token, {
-			name: uniqueName('Floating Task'),
-			description: 'E2E floating new-task button.',
+			name: uniqueName('Header Task'),
+			description: 'E2E header new-task button.',
 		});
 
-		// --- Mobile: floating button visible and pinned to the bottom-left corner. ---
+		// --- Mobile: header button visible, leftmost in the top-right action group. ---
 		await page.setViewportSize({ width: 375, height: 800 });
 		await page.goto(`/projects/${project.slug}/tasks`);
 		await waitForPageLoad(page);
 
-		const floating = page.getByTestId('floating-new-task');
-		await expect(floating).toBeVisible({ timeout: 15000 });
-		const box = await floating.boundingBox();
-		const viewport = page.viewportSize();
-		if (!box || !viewport) throw new Error('Missing layout box');
-		// Anchored to the left half and near the bottom of the viewport.
-		expect(box.x).toBeLessThan(viewport.width / 2);
-		expect(box.y).toBeGreaterThan(viewport.height / 2);
+		const headerButton = page.getByTestId('app-header-new-task');
+		await expect(headerButton).toBeVisible({ timeout: 15000 });
+		const buttonBox = await headerButton.boundingBox();
+		const searchBox = await page.getByTestId('app-header-search').boundingBox();
+		const headerBox = await page.getByTestId('app-header').boundingBox();
+		if (!buttonBox || !searchBox || !headerBox) throw new Error('Missing layout box');
+		// Inside the top nav bar, directly to the left of the search button.
+		expect(buttonBox.y).toBeGreaterThanOrEqual(headerBox.y);
+		expect(buttonBox.y + buttonBox.height).toBeLessThanOrEqual(headerBox.y + headerBox.height + 1);
+		expect(buttonBox.x + buttonBox.width).toBeLessThanOrEqual(searchBox.x + 1);
+		expect(Math.abs(buttonBox.y - searchBox.y)).toBeLessThan(buttonBox.height);
 
-		// Opening it pops the create-task dialog…
-		await floating.click();
+		// The accent (primary CTA) fill, not the quiet icon treatment.
+		const background = await headerButton.evaluate((el) => getComputedStyle(el).backgroundColor);
+		expect(background).not.toBe('rgba(0, 0, 0, 0)');
+
+		// Opening it pops the create-task dialog with the current project preselected.
+		await headerButton.click();
 		await expect(page.getByRole('heading', { name: 'Create Task' })).toBeVisible();
+		await expect(page.getByTestId('create-task-project')).toHaveValue(project.slug);
 		await page.keyboard.press('Escape');
 		await expect(page.getByRole('heading', { name: 'Create Task' })).toBeHidden();
 
-		// …and it hides while the mobile nav drawer is open.
-		await page.getByTestId('mobile-nav-toggle').click();
-		await expect(page.getByTestId('mobile-nav-drawer')).toBeVisible();
-		await expect(floating).toBeHidden();
-		// No close button — clicking the background overlay (right of the panel) dismisses it.
-		await page
-			.getByTestId('mobile-nav-drawer')
-			.getByRole('button', { name: 'Close navigation' })
-			.click({
-				position: { x: 350, y: 400 },
-			});
-		await expect(floating).toBeVisible();
-
-		// …and it hides while the CEO chat is open.
-		await page.getByTestId('ceo-chat-launcher').click();
-		await expect(page.getByTestId('ceo-chat-panel')).toBeVisible();
-		await expect(floating).toBeHidden();
-		await page.getByTestId('ceo-chat-close').click();
-		await expect(floating).toBeVisible();
-
-		// --- Desktop: floating button is gone; the sidebar carries the "+". ---
+		// --- Desktop: header button is gone; the sidebar carries the "+". ---
 		await page.setViewportSize({ width: 1280, height: 900 });
-		await expect(floating).toBeHidden();
+		await expect(headerButton).toBeHidden();
 		const sidebarPlus = page.getByTestId('project-sidebar-new-task');
 		await expect(sidebarPlus).toBeVisible();
 		await sidebarPlus.click();

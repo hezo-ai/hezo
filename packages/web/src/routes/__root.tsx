@@ -9,7 +9,6 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppHeader } from '../components/app-header';
 import { CeoChatWidget } from '../components/ceo-chat/ceo-chat-widget';
-import { FloatingNewTaskButton } from '../components/floating-new-task-button';
 import { GlobalSearchDialog } from '../components/global-search-dialog';
 import { MasterKeyGate } from '../components/master-key-gate';
 import { PasswordLogin } from '../components/password-login';
@@ -133,13 +132,8 @@ function ShellLayout() {
 	const matches = useMatches();
 	const bare = matches.some((m) => m.staticData?.bare);
 
-	// Drawer + chat + install-card state live here so the floating new-task
-	// button can hide itself whenever another surface takes over the corner —
-	// the full-width PWA install card pins to the same bottom edge and would
-	// otherwise cover the button.
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [chatOpen, setChatOpen] = useState(false);
-	const [installCardVisible, setInstallCardVisible] = useState(false);
 
 	// Bare routes (e.g. the standalone document preview) render full-viewport
 	// without the header, project rail, or mobile drawer.
@@ -148,9 +142,8 @@ function ShellLayout() {
 	return (
 		<>
 			<ShellChrome drawerOpen={drawerOpen} setDrawerOpen={setDrawerOpen} />
-			<FloatingNewTaskButton hidden={drawerOpen || chatOpen || installCardVisible} />
 			<CeoChatWidget open={chatOpen} onOpenChange={setChatOpen} />
-			<PwaInstallPrompt onVisibleChange={setInstallCardVisible} />
+			<PwaInstallPrompt />
 		</>
 	);
 }

@@ -1,11 +1,11 @@
 /**
- * In-memory positions for the draggable floating action buttons (the "+"
- * create-task button and the CEO chat launcher) on portrait mobile screens.
+ * In-memory position for the draggable floating action button (the CEO chat
+ * launcher) on portrait mobile screens.
  *
  * Deliberately not persisted: a dragged position is a temporary "get out of my
- * way" adjustment, so it lives in a module-level map — surviving the buttons'
- * unmount/remount cycles (the `hidden` prop, the launcher unmounting while the
- * chat panel is open) but resetting to the default corner on page refresh.
+ * way" adjustment, so it lives in a module-level map — surviving the button's
+ * unmount/remount cycles (the launcher unmounting while the chat panel is
+ * open) but resetting to the default corner on page refresh.
  *
  * Positions are stored as fractions of the *free range* (viewport minus button
  * size) rather than pixels, so a rotation or resize keeps the button at the
@@ -13,7 +13,7 @@
  * from the fractions against the current viewport on every render.
  */
 
-export type FabId = 'new-task' | 'ceo-chat';
+export type FabId = 'ceo-chat';
 
 export interface FabPosition {
 	/** 0 = flush left, 1 = flush right, of `viewportWidth - buttonWidth`. */

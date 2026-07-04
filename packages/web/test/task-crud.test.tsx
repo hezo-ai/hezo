@@ -35,7 +35,7 @@ test('can create a task with required assignee', async () => {
 	});
 
 	// The filter-bar create button is now icon-only; target it by testid (several
-	// "New task" affordances — sidebar "+", floating button — share the label).
+	// "New task" affordances — sidebar "+", app-header button — share the label).
 	const newTaskBtn = await findByTestId('task-list-new-task');
 	await user.click(newTaskBtn);
 

@@ -21,52 +21,46 @@ async function dragTo(
 }
 
 test.describe('Draggable floating buttons (portrait mobile)', () => {
-	test('the "+" button drags anywhere, clamps on-screen, and resets on reload', async ({
+	test('the chat launcher drags anywhere, clamps on-screen, and resets on reload', async ({
 		page,
 		sharedWorkspace,
 	}) => {
 		const { token } = sharedWorkspace;
 		const project = await createProjectAndClearPlanning(page, '', token, {
-			name: uniqueName('Drag Fab'),
-			description: 'E2E draggable new-task button.',
+			name: uniqueName('Drag Clamp'),
+			description: 'E2E draggable chat launcher clamping.',
 		});
 
 		await page.setViewportSize({ width: 375, height: 800 });
 		await page.goto(`/projects/${project.slug}/tasks`);
 		await waitForPageLoad(page);
 
-		const floating = page.getByTestId('floating-new-task');
-		await expect(floating).toBeVisible({ timeout: 15000 });
-		const home = await floating.boundingBox();
+		const launcher = page.getByTestId('ceo-chat-launcher');
+		await expect(launcher).toBeVisible({ timeout: 15000 });
+		const home = await launcher.boundingBox();
 		if (!home) throw new Error('Missing layout box');
 
-		// Drag far past the top-right corner: the button must clamp fully inside
+		// Drag far past the top-left corner: the button must clamp fully inside
 		// the viewport instead of leaving it.
-		await dragTo(page, floating, 900, -100);
-		const dragged = await floating.boundingBox();
+		await dragTo(page, launcher, -100, -100);
+		const dragged = await launcher.boundingBox();
 		if (!dragged) throw new Error('Missing layout box');
 		expect(dragged.x).toBeGreaterThanOrEqual(0);
 		expect(dragged.y).toBeGreaterThanOrEqual(0);
 		expect(dragged.x + dragged.width).toBeLessThanOrEqual(375);
 		expect(dragged.y + dragged.height).toBeLessThanOrEqual(800);
-		// …and it actually left the default bottom-left corner.
-		expect(dragged.x).toBeGreaterThan(home.x + 50);
+		// …and it actually left the default bottom-right corner.
+		expect(dragged.x).toBeLessThan(home.x - 50);
 		expect(dragged.y).toBeLessThan(home.y - 50);
 
-		// The drop must not count as a click — no Create Task dialog.
-		await expect(page.getByRole('heading', { name: 'Create Task' })).toBeHidden();
-
-		// A plain tap afterwards still opens it.
-		await floating.click();
-		await expect(page.getByRole('heading', { name: 'Create Task' })).toBeVisible();
-		await page.keyboard.press('Escape');
-		await expect(page.getByRole('heading', { name: 'Create Task' })).toBeHidden();
+		// The drop must not count as a click — no chat panel.
+		await expect(page.getByTestId('ceo-chat-panel')).toBeHidden();
 
 		// Position is memory-only: a reload puts the button back in its corner.
 		await page.reload();
 		await waitForPageLoad(page);
-		await expect(floating).toBeVisible({ timeout: 15000 });
-		const reloaded = await floating.boundingBox();
+		await expect(launcher).toBeVisible({ timeout: 15000 });
+		const reloaded = await launcher.boundingBox();
 		if (!reloaded) throw new Error('Missing layout box');
 		expect(Math.abs(reloaded.x - home.x)).toBeLessThan(2);
 		expect(Math.abs(reloaded.y - home.y)).toBeLessThan(2);

@@ -232,8 +232,8 @@ function TaskDetailPage() {
 				</div>
 			</div>
 
-			{/* Mobile: the same pill pinned bottom-centre, sitting between the floating
-			    new-task (bottom-left) and CEO chat (bottom-right) launchers. */}
+			{/* Mobile: the same pill pinned bottom-centre, clear of the CEO chat
+			    launcher in the bottom-right corner. */}
 			<ScrollToBottomButton
 				onClick={scrollToBottom}
 				atBottom={atBottom}
