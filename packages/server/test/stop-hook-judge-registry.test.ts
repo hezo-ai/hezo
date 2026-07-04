@@ -123,9 +123,9 @@ describe('stop-hook rules block announced-plan abandonment', () => {
 		expect(STOP_HOOK_RULES).toContain('never for legitimately revising scope in the thread');
 	});
 
-	it('report_no_work carve-out spans rules 1-9', () => {
-		expect(STOP_HOOK_RULES).toContain('block rules 1-9');
-		expect(STOP_HOOK_RULES).not.toContain('block rules 1-8');
+	it('report_no_work carve-out spans rules 1-10', () => {
+		expect(STOP_HOOK_RULES).toContain('block rules 1-10');
+		expect(STOP_HOOK_RULES).not.toContain('block rules 1-9');
 	});
 
 	it('every runtime judge embeds the rule', () => {
@@ -135,6 +135,41 @@ describe('stop-hook rules block announced-plan abandonment', () => {
 		);
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain('silent scope reduction');
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain('silent scope reduction');
+	});
+});
+
+/**
+ * A run's final assistant message is delivered to no one — it is not a comment,
+ * mentions in it are never parsed, and no wake fires. Rule 10 blocks the stop
+ * when the final message is itself the handoff (an active @-mention or
+ * baton-passing address) that was never posted via create_comment, so the
+ * handoff cannot strand with both sides waiting. Shared verbatim across every
+ * runtime's judge.
+ */
+describe('stop-hook rules block handoffs left only in the final message', () => {
+	it('blocks a final-message handoff never posted as a comment', () => {
+		expect(STOP_HOOK_RULES).toContain('never posted to the task thread as a comment');
+		expect(STOP_HOOK_RULES).toContain('delivered to NO ONE');
+		expect(STOP_HOOK_RULES).toContain('exists only in the final message');
+	});
+
+	it('accepts a message that reports an already-posted comment or mentions passively', () => {
+		expect(STOP_HOOK_RULES).toContain('REPORTS an already-posted comment');
+		expect(STOP_HOOK_RULES).toContain('names teammates passively');
+	});
+
+	it('the block reason routes the agent to create_comment without duplicate reposts', () => {
+		expect(STOP_HOOK_RULES).toContain('post the handoff as a create_comment on the current task');
+		expect(STOP_HOOK_RULES).toContain('end the turn without reposting');
+	});
+
+	it('every runtime judge embeds the rule', () => {
+		expect(STOP_HOOK_PROMPT).toContain('delivered to NO ONE');
+		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
+			'delivered to NO ONE',
+		);
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain('delivered to NO ONE');
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain('delivered to NO ONE');
 	});
 });
 
