@@ -381,7 +381,7 @@ test('inside a folder the page title and blurb give way to the breadcrumb', asyn
 	});
 
 	// Root: the page heading + blurb are visible and there is no breadcrumb yet.
-	await findByText(/Mockups, wireframes, and other uploads/);
+	await findByText(/Generated and uploaded assets/);
 	expect(getByRole('heading', { level: 1, name: 'Assets' })).not.toBeNull();
 	expect(queryByTestId('assets-breadcrumb')).toBeNull();
 
@@ -389,7 +389,7 @@ test('inside a folder the page title and blurb give way to the breadcrumb', asyn
 	await user.click(await findByTestId('asset-folder-card'));
 	await findByTestId('assets-breadcrumb');
 	await waitFor(() => {
-		expect(queryByText(/Mockups, wireframes, and other uploads/)).toBeNull();
+		expect(queryByText(/Generated and uploaded assets/)).toBeNull();
 	});
 	expect(queryByRole('heading', { level: 1, name: 'Assets' })).toBeNull();
 });

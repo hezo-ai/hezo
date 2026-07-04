@@ -29,6 +29,7 @@ import {
 	resolveAttachmentContentType,
 	splitAssetPath,
 	TaskStatus,
+	taskUploadsFolder,
 } from '../src/types/common';
 
 describe('enum guards', () => {
@@ -118,6 +119,22 @@ describe('asset / attachment helpers', () => {
 		expect(normalizeAssetFolder('a/b/c')).toBeNull();
 		expect(normalizeAssetFolder('Launch Plan')).toBe('Launch-Plan');
 		expect(normalizeAssetFolder('###')).toBeNull();
+	});
+
+	it('taskUploadsFolder names the folder after the task', () => {
+		expect(taskUploadsFolder('Fix login bug', 'IN-7')).toBe('uploads/Fix-login-bug');
+		// A slash in the title can't add a nesting level.
+		expect(taskUploadsFolder('Fix a/b routing', 'IN-8')).toBe('uploads/Fix-a-b-routing');
+		// The segment stays a valid asset-path segment (starts alphanumeric).
+		expect(taskUploadsFolder('...tidy up', 'IN-9')).toBe('uploads/tidy-up');
+		// A title that evaporates after cleanup falls back to the identifier.
+		expect(taskUploadsFolder('???', 'IN-10')).toBe('uploads/IN-10');
+		// Long titles truncate without leaving a dangling separator.
+		const long = `${'word '.repeat(11)}and more`; // > 60 chars
+		const folder = taskUploadsFolder(long, 'IN-11');
+		expect(folder.length).toBeLessThanOrEqual('uploads/'.length + 60);
+		expect(folder).toMatch(/^uploads\/word-word/);
+		expect(folder).not.toMatch(/[._-]$/);
 	});
 
 	it('splitAssetPath / assetFolder / assetBasename', () => {

@@ -236,7 +236,10 @@ post; script extensions like `.sh`/`.py`/`.js` store as inert `text/plain`), and
 renders markdown assets with a rich preview plus a view-source toggle. **Folders are implicit
 path prefixes** inside `assets.original_filename` (up to 2 levels, e.g. `launch/hero.png`) —
 no folder table, `UNIQUE(project_id, original_filename)` keys the full path, and blobs never
-move on a rename: `move_project_asset`/`copy_project_asset` (MCP) and
+move on a rename. Task-thread attachment uploads (`POST …/tasks/:taskId/assets`) auto-file
+under `uploads/<task-name>` (`taskUploadsFolder` in `@hezo/shared`: the title sanitized to one
+segment, task identifier as fallback), while direct library uploads land in the folder the
+uploader chose. Reorganization: `move_project_asset`/`copy_project_asset` (MCP) and
 `PATCH /api/projects/:id/assets/:assetId` (the web Move dialog, human-only) reorganize
 metadata only, erroring on destination collision. **Deletion is admin-gated**: agents call
 `request_asset_deletion`, which posts an `asset_deletion_request` task comment (snapshot of

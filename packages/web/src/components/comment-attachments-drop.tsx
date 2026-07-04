@@ -1,4 +1,4 @@
-import { ATTACHMENT_MAX_BYTES, isAllowedAttachmentExtension } from '@hezo/shared';
+import { ATTACHMENT_MAX_BYTES, assetBasename, isAllowedAttachmentExtension } from '@hezo/shared';
 import {
 	ExternalLink,
 	FileAudio,
@@ -209,7 +209,9 @@ export function CommentAttachmentsDrop({ projectId, taskId, value, onChange, chi
 									className="flex items-center gap-1 text-text-1 hover:underline"
 									data-testid="comment-attachment-preview"
 								>
-									<span className="max-w-[140px] truncate">{a.original_filename}</span>
+									<span className="max-w-[140px] truncate">
+										{assetBasename(a.original_filename)}
+									</span>
 									<ExternalLink className="h-3 w-3 shrink-0" />
 								</a>
 							</Tooltip>
