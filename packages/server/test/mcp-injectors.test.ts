@@ -48,6 +48,12 @@ describe('MCP_ADAPTERS', () => {
 			// legitimate deferral paths.
 			expect(STOP_HOOK_RULES).toContain('structural routes rule 3 accepts');
 		});
+
+		it('rule 10 blocks a handoff that exists only in the final message', () => {
+			// The final assistant text is delivered to no one — a handoff/@-mention
+			// there must have been posted via create_comment or the stop is blocked.
+			expect(STOP_HOOK_RULES).toContain('exists only in the final message');
+		});
 	});
 
 	it('every adapter produces a valid injection for a single Hezo descriptor', () => {
