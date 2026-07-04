@@ -110,13 +110,11 @@ export function SettingsSidebar() {
 				className="hidden md:flex flex-col gap-0.5 sticky top-0 self-start"
 				data-testid="settings-nav-desktop"
 			>
-				{items.map((item, idx) => (
+				{items.map((item) => (
 					<Link
 						key={item.to}
 						to={item.to}
-						className={`${itemClass(isActive(item.to, pathname))} ${
-							idx === PUBLIC_ITEMS.length ? 'mt-3' : ''
-						}`}
+						className={itemClass(isActive(item.to, pathname))}
 					>
 						{item.label}
 					</Link>
