@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.12.0 - 2026-07-04
+
+### Features
+
+- **assets:** file task-thread uploads under uploads/<task-name> ([#556](https://github.com/hezo-ai/hezo/pull/556))
+- **web:** draggable floating buttons on portrait mobile screens ([#554](https://github.com/hezo-ai/hezo/pull/554))
+- **runs:** stop-hook rule 10 blocks handoffs left only in the final message ([#553](https://github.com/hezo-ai/hezo/pull/553))
+- **deploy:** add digitalocean marketplace packer image ([#548](https://github.com/hezo-ai/hezo/pull/548))
+- **deploy:** one-click / cloud-init deploy for VPS providers ([#547](https://github.com/hezo-ai/hezo/pull/547))
+- **web:** single Edit button for project and per-agent budgets ([#544](https://github.com/hezo-ai/hezo/pull/544))
+- **pricing:** single price source = pricepertoken.com MCP catalog ([#543](https://github.com/hezo-ai/hezo/pull/543))
+- **connectors:** OAuth connect popup for manually-added instance connectors ([#542](https://github.com/hezo-ai/hezo/pull/542))
+- **web:** surface staged-update lifecycle in Settings Version section ([#539](https://github.com/hezo-ai/hezo/pull/539))
+- add fullscreen toggle to create-task dialog ([#538](https://github.com/hezo-ai/hezo/pull/538))
+- **web:** add per-provider API-key instructions to the provider connect form ([#537](https://github.com/hezo-ai/hezo/pull/537))
+- **web:** float document action buttons and jump to first review comment ([#535](https://github.com/hezo-ai/hezo/pull/535))
+- **runner:** re-queue a run after a hard timeout; drop universal run-limits block ([#533](https://github.com/hezo-ai/hezo/pull/533))
+- **auth:** admin password authentication + master-key vault UI ([#531](https://github.com/hezo-ai/hezo/pull/531))
+- **documents:** add revision changelogs, metadata banner, and history viewer ([#532](https://github.com/hezo-ai/hezo/pull/532))
+- **runner:** protect agent work at run limits — auto-push commits + anticipatory run-time/budget awareness ([#530](https://github.com/hezo-ai/hezo/pull/530))
+
+### Bug Fixes
+
+- **web:** remove gap after AI providers in settings nav ([#557](https://github.com/hezo-ai/hezo/pull/557))
+- **web:** hide run status text on mobile in run comment top bar ([#552](https://github.com/hezo-ai/hezo/pull/552))
+- **web:** size the app shell with dvh so the mobile top nav can't scroll off-screen ([#555](https://github.com/hezo-ai/hezo/pull/555))
+- **web:** bake a close button into the shared DialogContent base ([#549](https://github.com/hezo-ai/hezo/pull/549))
+- **web:** pre-fill the goal editor Deadline field from target_date ([#534](https://github.com/hezo-ai/hezo/pull/534))
+
+### Performance
+
+- **test:** cache migrated DB snapshot and lower test scrypt cost ([#545](https://github.com/hezo-ai/hezo/pull/545))
+
+### Refactors
+
+- **mcp:** rename semantic_search tool to full_text_search ([#546](https://github.com/hezo-ai/hezo/pull/546))
+- remove the cost probe; always price runs from the pricing table ([#541](https://github.com/hezo-ai/hezo/pull/541))
+
+### Documentation
+
+- stop encouraging on-disk master key storage; enforce in AGENTS.md ([#550](https://github.com/hezo-ai/hezo/pull/550))
+- **readme:** reflect the past week's features ([#551](https://github.com/hezo-ai/hezo/pull/551))
+
+### Other
+
+- Require green CI before QA approves a PR for merge ([#536](https://github.com/hezo-ai/hezo/pull/536))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.11.0...0.12.0
+
 ## 0.11.0 - 2026-07-03
 
 ### Features
