@@ -63,7 +63,9 @@ test('renders the attachment thumbnails when attachments are present', async () 
 					} as any,
 					{
 						id: 'att2',
-						original_filename: 'notes.pdf',
+						// Task-thread uploads carry their library folder in the path; the
+						// thumb should surface just the file's name.
+						original_filename: 'Uploads/Fix-login/notes.pdf',
 						content_type: 'application/pdf',
 						url: 'https://example.test/notes.pdf',
 						// biome-ignore lint/suspicious/noExplicitAny: minimal attachment shape for the renderer.
@@ -75,6 +77,8 @@ test('renders the attachment thumbnails when attachments are present', async () 
 	expect(await findByTestId('comment-attachments')).toBeTruthy();
 	const thumbs = await findAllByTestId('comment-attachment-thumb');
 	expect(thumbs.length).toBe(2);
+	expect(thumbs[1].getAttribute('data-filename')).toBe('notes.pdf');
+	expect(thumbs[1].getAttribute('aria-label')).toBe('notes.pdf');
 });
 
 test('empty attachments array still renders no attachment row', async () => {

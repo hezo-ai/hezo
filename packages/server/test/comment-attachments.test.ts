@@ -151,7 +151,8 @@ describe('asset upload', () => {
 		const body = await res.json();
 		expect(body.data.id).toMatch(/^[0-9a-f-]{36}$/);
 		expect(body.data.content_type).toBe('image/png');
-		expect(body.data.original_filename).toBe('shot.png');
+		// Task-thread uploads are filed under Uploads/<task-name>.
+		expect(body.data.original_filename).toBe('Uploads/Attachable-Task/shot.png');
 		expect(body.data.byte_size).toBe(bytes.byteLength);
 		expect(body.data.url).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
 
@@ -234,7 +235,7 @@ describe('comment + attachments', () => {
 		expect(created.attachments).toBeDefined();
 		expect(created.attachments).toHaveLength(1);
 		expect(created.attachments[0].id).toBe(assetId);
-		expect(created.attachments[0].original_filename).toBe('doc.pdf');
+		expect(created.attachments[0].original_filename).toBe('Uploads/Attachable-Task/doc.pdf');
 		expect(created.attachments[0].url).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
 
 		const listRes = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {

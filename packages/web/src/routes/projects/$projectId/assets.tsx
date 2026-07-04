@@ -194,7 +194,7 @@ function ProjectAssetsPage() {
 						<>
 							<h1 className="text-base font-semibold text-text-1">Assets</h1>
 							<p className="text-[13px] text-text-2">
-								Mockups, wireframes, and other uploads, organized in folders.
+								Generated and uploaded assets, organised into folders.
 							</p>
 						</>
 					) : (

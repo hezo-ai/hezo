@@ -1,3 +1,4 @@
+import { assetBasename } from '@hezo/shared';
 import { File, FileAudio, FileText, FileVideo, Image as ImageIcon } from 'lucide-react';
 import type { CommentAttachment } from '../hooks/use-comments';
 import { Tooltip } from './ui/tooltip';
@@ -13,15 +14,18 @@ function iconFor(contentType: string) {
 }
 
 export function CommentAttachmentThumb({ attachment }: { attachment: CommentAttachment }) {
+	// Attachments live under a library folder (Uploads/<task-name>); the chip
+	// shows just the file's name while the tooltip keeps the full path.
+	const basename = assetBasename(attachment.original_filename);
 	return (
 		<Tooltip content={attachment.original_filename}>
 			<a
 				href={attachment.url}
 				target="_blank"
 				rel="noopener noreferrer"
-				aria-label={attachment.original_filename}
+				aria-label={basename}
 				data-testid="comment-attachment-thumb"
-				data-filename={attachment.original_filename}
+				data-filename={basename}
 				className="flex h-9 w-9 items-center justify-center rounded-sm border border-border bg-surface-3 text-text-3 hover:border-border-strong hover:text-text-1"
 			>
 				{iconFor(attachment.content_type)}
