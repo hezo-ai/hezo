@@ -9,7 +9,7 @@ import {
 } from '../hooks/use-repos';
 import type { ApiError } from '../lib/api';
 import { Button } from './ui/button';
-import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
+import { DialogContent } from './ui/dialog';
 import { Input } from './ui/input';
 
 interface RepoPickerModalProps {
@@ -120,176 +120,173 @@ export function RepoPickerModal({
 
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
-			<Dialog.Portal>
-				<Dialog.Overlay className={dialogOverlayClassName} />
-				<Dialog.Content className={dialogContentClassName.lg} data-testid="repo-picker-modal">
-					<Dialog.Title className="text-base font-semibold mb-1 flex items-center gap-2">
-						<GitBranch className="size-4" />
-						Set up GitHub repo
-					</Dialog.Title>
-					<Dialog.Description className="text-sm text-text-2 mb-4">
-						Create a new repository for this project in one of your orgs, or pick an existing one.
-					</Dialog.Description>
+			<DialogContent size="lg" data-testid="repo-picker-modal">
+				<Dialog.Title className="text-base font-semibold mb-1 pr-8 flex items-center gap-2">
+					<GitBranch className="size-4" />
+					Set up GitHub repo
+				</Dialog.Title>
+				<Dialog.Description className="text-sm text-text-2 mb-4">
+					Create a new repository for this project in one of your orgs, or pick an existing one.
+				</Dialog.Description>
 
-					<div className="flex gap-1 border-b border-border mb-4">
-						<button
-							type="button"
-							className={`px-3 py-1.5 text-sm border-b-2 transition-colors ${
-								mode === 'create'
-									? 'text-text-1 font-medium border-text-1'
-									: 'text-text-2 border-transparent hover:text-text-1'
-							}`}
-							onClick={() => setMode('create')}
-							data-testid="repo-picker-tab-create"
+				<div className="flex gap-1 border-b border-border mb-4">
+					<button
+						type="button"
+						className={`px-3 py-1.5 text-sm border-b-2 transition-colors ${
+							mode === 'create'
+								? 'text-text-1 font-medium border-text-1'
+								: 'text-text-2 border-transparent hover:text-text-1'
+						}`}
+						onClick={() => setMode('create')}
+						data-testid="repo-picker-tab-create"
+					>
+						Create new
+					</button>
+					<button
+						type="button"
+						className={`px-3 py-1.5 text-sm border-b-2 transition-colors ${
+							mode === 'link'
+								? 'text-text-1 font-medium border-text-1'
+								: 'text-text-2 border-transparent hover:text-text-1'
+						}`}
+						onClick={() => setMode('link')}
+						data-testid="repo-picker-tab-link"
+					>
+						Link existing
+					</button>
+				</div>
+
+				<form onSubmit={handleSubmit} className="space-y-3">
+					<div className="flex flex-col gap-1.5">
+						<label
+							htmlFor="repo-picker-owner"
+							className="text-xs font-medium uppercase tracking-wider text-text-2"
 						>
-							Create new
-						</button>
-						<button
-							type="button"
-							className={`px-3 py-1.5 text-sm border-b-2 transition-colors ${
-								mode === 'link'
-									? 'text-text-1 font-medium border-text-1'
-									: 'text-text-2 border-transparent hover:text-text-1'
-							}`}
-							onClick={() => setMode('link')}
-							data-testid="repo-picker-tab-link"
-						>
-							Link existing
-						</button>
+							Owner
+						</label>
+						{orgsQuery.isLoading ? (
+							<div className="flex items-center gap-2 text-sm text-text-2 py-2">
+								<Loader2 className="size-4 animate-spin" /> Loading…
+							</div>
+						) : (
+							<select
+								id="repo-picker-owner"
+								className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-1 outline-none focus:border-border-strong"
+								value={owner ?? ''}
+								onChange={(e) => setOwner(e.target.value)}
+								data-testid="repo-picker-owner"
+							>
+								{(orgsQuery.data ?? []).map((o) => (
+									<option key={o.login} value={o.login}>
+										{o.login}
+										{o.is_personal ? ' (you)' : ''}
+									</option>
+								))}
+							</select>
+						)}
 					</div>
 
-					<form onSubmit={handleSubmit} className="space-y-3">
-						<div className="flex flex-col gap-1.5">
-							<label
-								htmlFor="repo-picker-owner"
-								className="text-xs font-medium uppercase tracking-wider text-text-2"
-							>
-								Owner
-							</label>
-							{orgsQuery.isLoading ? (
-								<div className="flex items-center gap-2 text-sm text-text-2 py-2">
-									<Loader2 className="size-4 animate-spin" /> Loading…
-								</div>
-							) : (
-								<select
-									id="repo-picker-owner"
-									className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-1 outline-none focus:border-border-strong"
-									value={owner ?? ''}
-									onChange={(e) => setOwner(e.target.value)}
-									data-testid="repo-picker-owner"
-								>
-									{(orgsQuery.data ?? []).map((o) => (
-										<option key={o.login} value={o.login}>
-											{o.login}
-											{o.is_personal ? ' (you)' : ''}
-										</option>
-									))}
-								</select>
-							)}
-						</div>
-
-						{mode === 'link' ? (
-							<>
-								<Input
-									label="Search"
-									placeholder="Filter by name…"
-									value={search}
-									onChange={(e) => setSearch(e.target.value)}
-								/>
-								<div className="flex flex-col gap-1.5">
-									<span className="text-xs font-medium uppercase tracking-wider text-text-2">
-										Repository
-									</span>
-									<div className="rounded-md border border-border bg-surface max-h-64 overflow-y-auto">
-										{reposQuery.isLoading && (
-											<div className="flex items-center gap-2 text-sm text-text-2 px-3 py-3">
-												<Loader2 className="size-4 animate-spin" /> Loading…
-											</div>
-										)}
-										{!reposQuery.isLoading && (reposQuery.data?.length ?? 0) === 0 && (
-											<div className="text-sm text-text-2 px-3 py-3">No repos found.</div>
-										)}
-										{(reposQuery.data ?? []).map((r: GitHubRepoSummary) => (
-											<button
-												type="button"
-												key={r.id}
-												onClick={() => setSelectedRepoFullName(r.full_name)}
-												className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm border-b border-border-subtle last:border-b-0 hover:bg-surface-2 ${
-													selectedRepoFullName === r.full_name ? 'bg-surface-2' : ''
-												}`}
-												data-testid={`repo-picker-row-${r.full_name}`}
-											>
-												<span className="font-mono text-xs">{r.full_name}</span>
-												{r.private && (
-													<span className="flex items-center gap-1 text-text-2 text-xs">
-														<Lock className="size-3" /> private
-													</span>
-												)}
-											</button>
-										))}
-									</div>
-								</div>
-							</>
-						) : (
-							<>
-								<Input
-									label="Repository name"
-									placeholder="my-new-service"
-									value={newRepoName}
-									onChange={(e) => setNewRepoName(e.target.value)}
-									required
-								/>
-								<label className="flex items-center gap-2 text-sm">
-									<input
-										type="checkbox"
-										checked={newRepoPrivate}
-										onChange={(e) => setNewRepoPrivate(e.target.checked)}
-									/>
-									Private repository
-								</label>
-							</>
-						)}
-
-						{createError?.kind === 'generic' && (
-							<div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
-								{createError.message}
-							</div>
-						)}
-						{createError?.kind === 'repo_exists' && (
-							<div
-								className="flex flex-col gap-2 rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger sm:flex-row sm:items-center sm:justify-between"
-								data-testid="repo-picker-exists-banner"
-							>
-								<span>
-									A repository named{' '}
-									<span className="font-mono">
-										{createError.owner}/{createError.name}
-									</span>{' '}
-									already exists on GitHub.
+					{mode === 'link' ? (
+						<>
+							<Input
+								label="Search"
+								placeholder="Filter by name…"
+								value={search}
+								onChange={(e) => setSearch(e.target.value)}
+							/>
+							<div className="flex flex-col gap-1.5">
+								<span className="text-xs font-medium uppercase tracking-wider text-text-2">
+									Repository
 								</span>
-								<Button
-									type="button"
-									variant="secondary"
-									onClick={() => switchToLinkExisting(createError.owner, createError.name)}
-									data-testid="repo-picker-link-existing"
-								>
-									Link existing instead
-								</Button>
+								<div className="rounded-md border border-border bg-surface max-h-64 overflow-y-auto">
+									{reposQuery.isLoading && (
+										<div className="flex items-center gap-2 text-sm text-text-2 px-3 py-3">
+											<Loader2 className="size-4 animate-spin" /> Loading…
+										</div>
+									)}
+									{!reposQuery.isLoading && (reposQuery.data?.length ?? 0) === 0 && (
+										<div className="text-sm text-text-2 px-3 py-3">No repos found.</div>
+									)}
+									{(reposQuery.data ?? []).map((r: GitHubRepoSummary) => (
+										<button
+											type="button"
+											key={r.id}
+											onClick={() => setSelectedRepoFullName(r.full_name)}
+											className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm border-b border-border-subtle last:border-b-0 hover:bg-surface-2 ${
+												selectedRepoFullName === r.full_name ? 'bg-surface-2' : ''
+											}`}
+											data-testid={`repo-picker-row-${r.full_name}`}
+										>
+											<span className="font-mono text-xs">{r.full_name}</span>
+											{r.private && (
+												<span className="flex items-center gap-1 text-text-2 text-xs">
+													<Lock className="size-3" /> private
+												</span>
+											)}
+										</button>
+									))}
+								</div>
 							</div>
-						)}
+						</>
+					) : (
+						<>
+							<Input
+								label="Repository name"
+								placeholder="my-new-service"
+								value={newRepoName}
+								onChange={(e) => setNewRepoName(e.target.value)}
+								required
+							/>
+							<label className="flex items-center gap-2 text-sm">
+								<input
+									type="checkbox"
+									checked={newRepoPrivate}
+									onChange={(e) => setNewRepoPrivate(e.target.checked)}
+								/>
+								Private repository
+							</label>
+						</>
+					)}
 
-						<div className="flex justify-end gap-2 mt-2">
-							<Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
-								Cancel
-							</Button>
-							<Button type="submit" disabled={!canSubmit} data-testid="repo-picker-submit">
-								{createRepo.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-								{mode === 'link' ? 'Link repo' : 'Create repo'}
+					{createError?.kind === 'generic' && (
+						<div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
+							{createError.message}
+						</div>
+					)}
+					{createError?.kind === 'repo_exists' && (
+						<div
+							className="flex flex-col gap-2 rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger sm:flex-row sm:items-center sm:justify-between"
+							data-testid="repo-picker-exists-banner"
+						>
+							<span>
+								A repository named{' '}
+								<span className="font-mono">
+									{createError.owner}/{createError.name}
+								</span>{' '}
+								already exists on GitHub.
+							</span>
+							<Button
+								type="button"
+								variant="secondary"
+								onClick={() => switchToLinkExisting(createError.owner, createError.name)}
+								data-testid="repo-picker-link-existing"
+							>
+								Link existing instead
 							</Button>
 						</div>
-					</form>
-				</Dialog.Content>
-			</Dialog.Portal>
+					)}
+
+					<div className="flex justify-end gap-2 mt-2">
+						<Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+							Cancel
+						</Button>
+						<Button type="submit" disabled={!canSubmit} data-testid="repo-picker-submit">
+							{createRepo.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+							{mode === 'link' ? 'Link repo' : 'Create repo'}
+						</Button>
+					</div>
+				</form>
+			</DialogContent>
 		</Dialog.Root>
 	);
 }

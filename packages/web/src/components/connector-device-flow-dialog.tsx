@@ -9,7 +9,7 @@ import {
 } from '../hooks/use-oauth-connections';
 import { copyToClipboard } from '../lib/clipboard';
 import { Button } from './ui/button';
-import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
+import { DialogContent } from './ui/dialog';
 
 interface ConnectorDeviceFlowDialogProps {
 	open: boolean;
@@ -125,87 +125,80 @@ export function ConnectorDeviceFlowDialog({
 
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
-			<Dialog.Portal>
-				<Dialog.Overlay className={dialogOverlayClassName} />
-				<Dialog.Content
-					data-testid="connector-device-flow-dialog"
-					className={dialogContentClassName.md}
-				>
-					<Dialog.Title className="text-base font-semibold mb-1 flex items-center gap-2">
-						<Plug className="size-4" />
-						Connect {providerLabel}
-					</Dialog.Title>
-					<Dialog.Description className="text-sm text-text-2 mb-4">
-						Authorize Hezo on {providerLabel} by entering the code below on the page that just
-						opened.
-					</Dialog.Description>
+			<DialogContent size="md" data-testid="connector-device-flow-dialog">
+				<Dialog.Title className="text-base font-semibold mb-1 pr-8 flex items-center gap-2">
+					<Plug className="size-4" />
+					Connect {providerLabel}
+				</Dialog.Title>
+				<Dialog.Description className="text-sm text-text-2 mb-4">
+					Authorize Hezo on {providerLabel} by entering the code below on the page that just opened.
+				</Dialog.Description>
 
-					{errorMessage && (
-						<div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger mb-4">
-							{errorMessage}
-						</div>
-					)}
-
-					{!deviceFlow && !errorMessage && (
-						<div className="flex items-center gap-2 text-sm text-text-2">
-							<Loader2 className="size-4 animate-spin" />
-							{statusMessage || 'Starting…'}
-						</div>
-					)}
-
-					{deviceFlow && (
-						<div className="space-y-3">
-							<p className="text-sm">
-								Open{' '}
-								<a
-									href={deviceFlow.verification_uri}
-									target="_blank"
-									rel="noopener"
-									className="underline inline-flex items-center gap-1"
-								>
-									{deviceFlow.verification_uri}
-									<ExternalLink className="size-3" />
-								</a>{' '}
-								and enter this code:
-							</p>
-							<div className="flex flex-wrap items-center gap-2">
-								<div
-									className="font-mono text-2xl tracking-widest select-all"
-									data-testid="connector-device-code"
-								>
-									{deviceFlow.user_code}
-								</div>
-								<Button
-									type="button"
-									variant="ghost"
-									size="sm"
-									onClick={handleCopyCode}
-									aria-label="Copy device code"
-								>
-									{codeCopied ? (
-										<>
-											<Check className="size-4 mr-1.5" />
-											Copied
-										</>
-									) : (
-										<>
-											<Copy className="size-4 mr-1.5" />
-											Copy
-										</>
-									)}
-								</Button>
-							</div>
-							<p className="text-xs text-text-3">{statusMessage}</p>
-						</div>
-					)}
-
-					<div className="flex justify-end mt-6">
-						<Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}>
-							Cancel
-						</Button>
+				{errorMessage && (
+					<div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger mb-4">
+						{errorMessage}
 					</div>
-				</Dialog.Content>
-			</Dialog.Portal>
+				)}
+
+				{!deviceFlow && !errorMessage && (
+					<div className="flex items-center gap-2 text-sm text-text-2">
+						<Loader2 className="size-4 animate-spin" />
+						{statusMessage || 'Starting…'}
+					</div>
+				)}
+
+				{deviceFlow && (
+					<div className="space-y-3">
+						<p className="text-sm">
+							Open{' '}
+							<a
+								href={deviceFlow.verification_uri}
+								target="_blank"
+								rel="noopener"
+								className="underline inline-flex items-center gap-1"
+							>
+								{deviceFlow.verification_uri}
+								<ExternalLink className="size-3" />
+							</a>{' '}
+							and enter this code:
+						</p>
+						<div className="flex flex-wrap items-center gap-2">
+							<div
+								className="font-mono text-2xl tracking-widest select-all"
+								data-testid="connector-device-code"
+							>
+								{deviceFlow.user_code}
+							</div>
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={handleCopyCode}
+								aria-label="Copy device code"
+							>
+								{codeCopied ? (
+									<>
+										<Check className="size-4 mr-1.5" />
+										Copied
+									</>
+								) : (
+									<>
+										<Copy className="size-4 mr-1.5" />
+										Copy
+									</>
+								)}
+							</Button>
+						</div>
+						<p className="text-xs text-text-3">{statusMessage}</p>
+					</div>
+				)}
+
+				<div className="flex justify-end mt-6">
+					<Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}>
+						Cancel
+					</Button>
+				</div>
+			</DialogContent>
 		</Dialog.Root>
 	);
 }

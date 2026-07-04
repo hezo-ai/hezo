@@ -3,7 +3,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { GitBranch, Loader2 } from 'lucide-react';
 import { type Approval, useBlockedTickets } from '../hooks/use-approvals';
 import { Button } from './ui/button';
-import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
+import { DialogContent } from './ui/dialog';
 
 interface RepoSetupApprovalModalProps {
 	approval: Approval;
@@ -50,69 +50,63 @@ export function RepoSetupApprovalModal({
 
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
-			<Dialog.Portal>
-				<Dialog.Overlay className={dialogOverlayClassName} />
-				<Dialog.Content
-					className={dialogContentClassName.lg}
-					data-testid="repo-setup-approval-modal"
-				>
-					<Dialog.Title className="text-base font-semibold mb-1 flex items-center gap-2">
-						<GitBranch className="size-4" />
-						Set up GitHub for {projectName}
-					</Dialog.Title>
-					<Dialog.Description className="text-sm text-text-2 mb-4">
-						{tickets.length === 1
-							? '1 ticket is paused, waiting for a GitHub repository to be configured for this project.'
-							: `${tickets.length} tickets are paused, waiting for a GitHub repository to be configured for this project.`}
-					</Dialog.Description>
+			<DialogContent size="lg" data-testid="repo-setup-approval-modal">
+				<Dialog.Title className="text-base font-semibold mb-1 pr-8 flex items-center gap-2">
+					<GitBranch className="size-4" />
+					Set up GitHub for {projectName}
+				</Dialog.Title>
+				<Dialog.Description className="text-sm text-text-2 mb-4">
+					{tickets.length === 1
+						? '1 ticket is paused, waiting for a GitHub repository to be configured for this project.'
+						: `${tickets.length} tickets are paused, waiting for a GitHub repository to be configured for this project.`}
+				</Dialog.Description>
 
-					<div className="rounded-md border border-border bg-surface max-h-72 overflow-y-auto mb-4">
-						{isLoading ? (
-							<div className="flex items-center gap-2 text-sm text-text-2 px-3 py-3">
-								<Loader2 className="size-4 animate-spin" /> Loading tickets…
-							</div>
-						) : tickets.length === 0 ? (
-							<div className="text-sm text-text-2 px-3 py-3">No blocked tickets.</div>
-						) : (
-							tickets.map((t) => (
-								<button
-									type="button"
-									key={t.comment_id}
-									onClick={() => openTicket(t)}
-									className="flex w-full flex-col gap-0.5 items-start px-3 py-2 text-left border-b border-border-subtle last:border-b-0 hover:bg-surface-2"
-									data-testid={`blocked-ticket-${t.identifier}`}
-								>
-									<div className="flex items-center gap-2 w-full">
-										<span className="font-mono text-xs px-1.5 py-0.5 rounded bg-surface-2 text-text-2 shrink-0">
-											{t.identifier}
-										</span>
-										<span className="text-sm font-medium truncate">{t.title}</span>
-									</div>
-									<div className="flex items-center gap-2 w-full text-xs text-text-2">
-										<span className="truncate">by {t.agent_name ?? 'agent'}</span>
-										<span className="text-text-3">·</span>
-										<span className="italic truncate text-text-3">"{t.snippet}"</span>
-									</div>
-								</button>
-							))
-						)}
-					</div>
+				<div className="rounded-md border border-border bg-surface max-h-72 overflow-y-auto mb-4">
+					{isLoading ? (
+						<div className="flex items-center gap-2 text-sm text-text-2 px-3 py-3">
+							<Loader2 className="size-4 animate-spin" /> Loading tickets…
+						</div>
+					) : tickets.length === 0 ? (
+						<div className="text-sm text-text-2 px-3 py-3">No blocked tickets.</div>
+					) : (
+						tickets.map((t) => (
+							<button
+								type="button"
+								key={t.comment_id}
+								onClick={() => openTicket(t)}
+								className="flex w-full flex-col gap-0.5 items-start px-3 py-2 text-left border-b border-border-subtle last:border-b-0 hover:bg-surface-2"
+								data-testid={`blocked-ticket-${t.identifier}`}
+							>
+								<div className="flex items-center gap-2 w-full">
+									<span className="font-mono text-xs px-1.5 py-0.5 rounded bg-surface-2 text-text-2 shrink-0">
+										{t.identifier}
+									</span>
+									<span className="text-sm font-medium truncate">{t.title}</span>
+								</div>
+								<div className="flex items-center gap-2 w-full text-xs text-text-2">
+									<span className="truncate">by {t.agent_name ?? 'agent'}</span>
+									<span className="text-text-3">·</span>
+									<span className="italic truncate text-text-3">"{t.snippet}"</span>
+								</div>
+							</button>
+						))
+					)}
+				</div>
 
-					<div className="flex justify-end gap-2">
-						<Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}>
-							Close
-						</Button>
-						<Button
-							size="sm"
-							onClick={openGitSettings}
-							disabled={!projectSlug}
-							data-testid="repo-setup-approval-cta"
-						>
-							Set up GitHub
-						</Button>
-					</div>
-				</Dialog.Content>
-			</Dialog.Portal>
+				<div className="flex justify-end gap-2">
+					<Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}>
+						Close
+					</Button>
+					<Button
+						size="sm"
+						onClick={openGitSettings}
+						disabled={!projectSlug}
+						data-testid="repo-setup-approval-cta"
+					>
+						Set up GitHub
+					</Button>
+				</div>
+			</DialogContent>
 		</Dialog.Root>
 	);
 }

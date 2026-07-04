@@ -23,6 +23,15 @@ test('Cmd+K opens the search palette and Escape closes it', async () => {
 	await dialogGone();
 });
 
+test('the close button dismisses the palette (works on mobile, where Escape is unavailable)', async () => {
+	const { user } = await renderApp({ initialPath: '/home' });
+	await user.click(await screen.findByTestId('app-header-search'));
+	expect(await screen.findByTestId('global-search-dialog')).toBeTruthy();
+
+	await user.click(await screen.findByTestId('dialog-close'));
+	await dialogGone();
+});
+
 test('the header search button opens the palette', async () => {
 	const { user } = await renderApp({ initialPath: '/home' });
 	await user.click(await screen.findByTestId('app-header-search'));

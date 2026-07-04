@@ -25,14 +25,13 @@ import {
 	Search,
 	Trash2,
 	Upload,
-	X,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MarkdownAssetDialog } from '../../../components/markdown-asset-dialog';
 import { Breadcrumb, type BreadcrumbSegment } from '../../../components/ui/breadcrumb';
 import { Button } from '../../../components/ui/button';
 import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
-import { dialogContentClassName, dialogOverlayClassName } from '../../../components/ui/dialog';
+import { DialogContent } from '../../../components/ui/dialog';
 import { EmptyState } from '../../../components/ui/empty-state';
 import { Input } from '../../../components/ui/input';
 import { Tooltip } from '../../../components/ui/tooltip';
@@ -455,67 +454,44 @@ function NewFolderDialog({
 
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
-			<Dialog.Portal>
-				<Dialog.Overlay className={dialogOverlayClassName} />
-				<Dialog.Content
-					className={dialogContentClassName.sm}
-					aria-describedby={undefined}
-					data-testid="asset-new-folder-dialog"
+			<DialogContent size="sm" aria-describedby={undefined} data-testid="asset-new-folder-dialog">
+				<Dialog.Title className="text-base font-semibold mb-4 pr-8">New folder</Dialog.Title>
+				<form
+					onSubmit={(e) => {
+						e.preventDefault();
+						submit();
+					}}
 				>
-					<div className="mb-4 flex items-center justify-between">
-						<Dialog.Title className="text-base font-semibold">New folder</Dialog.Title>
-						<Dialog.Close asChild>
-							<button
-								type="button"
-								className="p-2 -m-2 text-text-2 hover:text-text-1"
-								aria-label="Close"
-							>
-								<X className="h-4 w-4" />
-							</button>
-						</Dialog.Close>
-					</div>
-					<form
-						onSubmit={(e) => {
-							e.preventDefault();
-							submit();
+					<Input
+						label={currentFolder ? `Folder name (inside ${currentFolder})` : 'Folder name'}
+						value={name}
+						onChange={(e) => {
+							setName(e.target.value);
+							setError(null);
 						}}
-					>
-						<Input
-							label={currentFolder ? `Folder name (inside ${currentFolder})` : 'Folder name'}
-							value={name}
-							onChange={(e) => {
-								setName(e.target.value);
-								setError(null);
-							}}
-							placeholder="launch-campaign"
-							data-testid="asset-new-folder-input"
-							// biome-ignore lint/a11y/noAutofocus: single-field dialog
-							autoFocus
-						/>
-						{error && (
-							<p className="mt-1.5 text-[12px] text-danger" data-testid="asset-new-folder-error">
-								{error}
-							</p>
-						)}
-						<p className="mt-2 text-[12px] text-text-3">
-							The folder persists once the first file is uploaded into it.
+						placeholder="launch-campaign"
+						data-testid="asset-new-folder-input"
+						// biome-ignore lint/a11y/noAutofocus: single-field dialog
+						autoFocus
+					/>
+					{error && (
+						<p className="mt-1.5 text-[12px] text-danger" data-testid="asset-new-folder-error">
+							{error}
 						</p>
-						<div className="mt-4 flex justify-end gap-2">
-							<Button
-								type="button"
-								size="sm"
-								variant="secondary"
-								onClick={() => onOpenChange(false)}
-							>
-								Cancel
-							</Button>
-							<Button type="submit" size="sm" data-testid="asset-new-folder-create">
-								Create
-							</Button>
-						</div>
-					</form>
-				</Dialog.Content>
-			</Dialog.Portal>
+					)}
+					<p className="mt-2 text-[12px] text-text-3">
+						The folder persists once the first file is uploaded into it.
+					</p>
+					<div className="mt-4 flex justify-end gap-2">
+						<Button type="button" size="sm" variant="secondary" onClick={() => onOpenChange(false)}>
+							Cancel
+						</Button>
+						<Button type="submit" size="sm" data-testid="asset-new-folder-create">
+							Create
+						</Button>
+					</div>
+				</form>
+			</DialogContent>
 		</Dialog.Root>
 	);
 }
@@ -743,73 +719,55 @@ function MoveAssetDialog({
 
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
-			<Dialog.Portal>
-				<Dialog.Overlay className={dialogOverlayClassName} />
-				<Dialog.Content
-					className={dialogContentClassName.sm}
-					aria-describedby={undefined}
-					data-testid="asset-move-dialog"
-				>
-					<div className="mb-1 flex items-center justify-between">
-						<Dialog.Title className="text-base font-semibold">Move to folder</Dialog.Title>
-						<Dialog.Close asChild>
-							<button
-								type="button"
-								className="p-2 -m-2 text-text-2 hover:text-text-1"
-								aria-label="Close"
-							>
-								<X className="h-4 w-4" />
-							</button>
-						</Dialog.Close>
-					</div>
-					<p className="mb-3 truncate text-[13px] text-text-2" title={asset.original_filename}>
-						{asset.original_filename}
-					</p>
-					<FolderCombobox
-						folders={folders}
-						value={targetFromNewName ? null : selected}
-						currentFolder={from}
-						disabled={move.isPending}
-						onSelect={(path) => {
-							setSelected(path);
-							setNewName('');
+			<DialogContent size="sm" aria-describedby={undefined} data-testid="asset-move-dialog">
+				<Dialog.Title className="text-base font-semibold mb-1 pr-8">Move to folder</Dialog.Title>
+				<p className="mb-3 truncate text-[13px] text-text-2" title={asset.original_filename}>
+					{asset.original_filename}
+				</p>
+				<FolderCombobox
+					folders={folders}
+					value={targetFromNewName ? null : selected}
+					currentFolder={from}
+					disabled={move.isPending}
+					onSelect={(path) => {
+						setSelected(path);
+						setNewName('');
+						setError(null);
+					}}
+				/>
+				<div className="mt-3">
+					<Input
+						label="Or a new folder"
+						value={newName}
+						onChange={(e) => {
+							setNewName(e.target.value);
 							setError(null);
 						}}
+						placeholder="archive"
+						data-testid="asset-move-new-folder"
 					/>
-					<div className="mt-3">
-						<Input
-							label="Or a new folder"
-							value={newName}
-							onChange={(e) => {
-								setNewName(e.target.value);
-								setError(null);
-							}}
-							placeholder="archive"
-							data-testid="asset-move-new-folder"
-						/>
-					</div>
-					{error && (
-						<p className="mt-1.5 text-[12px] text-danger" data-testid="asset-move-error">
-							{error}
-						</p>
-					)}
-					<div className="mt-4 flex justify-end gap-2">
-						<Button type="button" size="sm" variant="secondary" onClick={() => onOpenChange(false)}>
-							Cancel
-						</Button>
-						<Button
-							type="button"
-							size="sm"
-							onClick={submit}
-							disabled={move.isPending}
-							data-testid="asset-move-confirm"
-						>
-							{move.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
-							Move
-						</Button>
-					</div>
-				</Dialog.Content>
-			</Dialog.Portal>
+				</div>
+				{error && (
+					<p className="mt-1.5 text-[12px] text-danger" data-testid="asset-move-error">
+						{error}
+					</p>
+				)}
+				<div className="mt-4 flex justify-end gap-2">
+					<Button type="button" size="sm" variant="secondary" onClick={() => onOpenChange(false)}>
+						Cancel
+					</Button>
+					<Button
+						type="button"
+						size="sm"
+						onClick={submit}
+						disabled={move.isPending}
+						data-testid="asset-move-confirm"
+					>
+						{move.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
+						Move
+					</Button>
+				</div>
+			</DialogContent>
 		</Dialog.Root>
 	);
 }

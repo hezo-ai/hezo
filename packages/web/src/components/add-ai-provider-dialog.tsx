@@ -1,10 +1,10 @@
 import { AI_PROVIDER_INFO, type AiProvider } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
-import { ArrowLeft, X } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ProviderCardGrid } from './provider-card-grid';
 import { ADD_PROVIDER_ORDER, ProviderConfigForm } from './provider-config-form';
-import { dialogContentClassName, dialogOverlayClassName } from './ui/dialog';
+import { DialogContent } from './ui/dialog';
 
 interface AddAiProviderDialogProps {
 	open: boolean;
@@ -28,50 +28,36 @@ export function AddAiProviderDialog({ open, onOpenChange }: AddAiProviderDialogP
 
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
-			<Dialog.Portal>
-				<Dialog.Overlay className={dialogOverlayClassName} />
-				<Dialog.Content className={dialogContentClassName.md} aria-describedby={undefined}>
-					<div className="flex items-center justify-between mb-4">
-						<div className="flex items-center gap-2">
-							{provider && info && (
-								<button
-									type="button"
-									onClick={() => setProvider(null)}
-									className="text-text-2 hover:text-text-1 p-2 -m-2"
-									aria-label="Back"
-								>
-									<ArrowLeft className="w-4 h-4" />
-								</button>
-							)}
-							<Dialog.Title className="text-lg font-semibold">
-								{provider && info ? `Connect ${info.name}` : 'Add AI provider'}
-							</Dialog.Title>
-						</div>
-						<Dialog.Close asChild>
-							<button
-								type="button"
-								className="text-text-2 hover:text-text-1 p-2 -m-2"
-								aria-label="Close"
-							>
-								<X className="w-4 h-4" />
-							</button>
-						</Dialog.Close>
-					</div>
-
-					{!provider || !info ? (
-						<ProviderCardGrid providers={ADD_PROVIDER_ORDER} onSelect={setProvider} />
-					) : (
-						<ProviderConfigForm
-							key={provider}
-							provider={provider}
-							showName
-							submitLabel="Add provider"
-							onCancel={() => onOpenChange(false)}
-							onDone={() => onOpenChange(false)}
-						/>
+			<DialogContent size="md" aria-describedby={undefined}>
+				<div className="flex items-center gap-2 mb-4 pr-8">
+					{provider && info && (
+						<button
+							type="button"
+							onClick={() => setProvider(null)}
+							className="text-text-2 hover:text-text-1 p-2 -m-2"
+							aria-label="Back"
+						>
+							<ArrowLeft className="w-4 h-4" />
+						</button>
 					)}
-				</Dialog.Content>
-			</Dialog.Portal>
+					<Dialog.Title className="text-lg font-semibold">
+						{provider && info ? `Connect ${info.name}` : 'Add AI provider'}
+					</Dialog.Title>
+				</div>
+
+				{!provider || !info ? (
+					<ProviderCardGrid providers={ADD_PROVIDER_ORDER} onSelect={setProvider} />
+				) : (
+					<ProviderConfigForm
+						key={provider}
+						provider={provider}
+						showName
+						submitLabel="Add provider"
+						onCancel={() => onOpenChange(false)}
+						onDone={() => onOpenChange(false)}
+					/>
+				)}
+			</DialogContent>
 		</Dialog.Root>
 	);
 }

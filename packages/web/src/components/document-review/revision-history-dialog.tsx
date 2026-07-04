@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { Check, Eye, RotateCcw, X } from 'lucide-react';
+import { Check, Eye, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
 import type { DocVersionEntry } from '../../lib/doc-version-history';
 import { MarkdownProse } from '../markdown-prose';
@@ -7,7 +7,7 @@ import { ActorBadge } from '../ui/actor-badge';
 import { Avatar, getInitials } from '../ui/avatar';
 import { Button } from '../ui/button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
-import { dialogContentClassName, dialogOverlayClassName } from '../ui/dialog';
+import { DialogContent } from '../ui/dialog';
 
 interface RevisionHistoryDialogProps {
 	open: boolean;
@@ -62,105 +62,87 @@ export function RevisionHistoryDialog({
 
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
-			<Dialog.Portal>
-				<Dialog.Overlay className={dialogOverlayClassName} />
-				<Dialog.Content
-					className={dialogContentClassName.lg}
-					aria-describedby={undefined}
-					data-testid="revision-history-dialog"
-				>
-					<div className="mb-4 flex items-center gap-2">
-						<Dialog.Title className="text-base font-semibold">Revision history</Dialog.Title>
-						<span className="font-mono text-[11px] text-text-3">
-							{entries.length} {entries.length === 1 ? 'version' : 'versions'} · {filename}
-						</span>
-						<Dialog.Close asChild>
-							<button
-								type="button"
-								className="-m-2 ml-auto p-2 text-text-2 hover:text-text-1"
-								aria-label="Close"
-							>
-								<X className="h-4 w-4" />
-							</button>
-						</Dialog.Close>
-					</div>
+			<DialogContent size="lg" aria-describedby={undefined} data-testid="revision-history-dialog">
+				<div className="mb-4 flex items-center gap-2 pr-8">
+					<Dialog.Title className="text-base font-semibold">Revision history</Dialog.Title>
+					<span className="font-mono text-[11px] text-text-3">
+						{entries.length} {entries.length === 1 ? 'version' : 'versions'} · {filename}
+					</span>
+				</div>
 
-					<div className="flex flex-col gap-3">
-						{entries.map((e) => {
-							const author = e.authorName || 'Admin';
-							const shown = isShown(e);
-							return (
-								<div key={e.revisionNumber ?? 'current'} className="flex gap-2.5">
-									<Avatar initials={getInitials(author)} size="sm" />
-									<div
-										className={`min-w-0 flex-1 overflow-hidden rounded-md border bg-surface ${
-											e.isCurrent ? 'border-accent-solid/45' : 'border-border'
-										}`}
-									>
-										<div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface-3 px-3 py-2">
-											<span className="text-xs font-medium text-text-1">{author}</span>
-											<ActorBadge actorType={e.authorType} name={e.authorName} />
-											<span
-												className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-													e.isCurrent
-														? 'bg-accent-soft text-accent-soft-fg'
-														: 'bg-surface-2 text-text-3'
-												}`}
-											>
-												{e.isCurrent ? 'Current' : `Rev ${e.revisionNumber}`}
+				<div className="flex flex-col gap-3">
+					{entries.map((e) => {
+						const author = e.authorName || 'Admin';
+						const shown = isShown(e);
+						return (
+							<div key={e.revisionNumber ?? 'current'} className="flex gap-2.5">
+								<Avatar initials={getInitials(author)} size="sm" />
+								<div
+									className={`min-w-0 flex-1 overflow-hidden rounded-md border bg-surface ${
+										e.isCurrent ? 'border-accent-solid/45' : 'border-border'
+									}`}
+								>
+									<div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface-3 px-3 py-2">
+										<span className="text-xs font-medium text-text-1">{author}</span>
+										<ActorBadge actorType={e.authorType} name={e.authorName} />
+										<span
+											className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+												e.isCurrent
+													? 'bg-accent-soft text-accent-soft-fg'
+													: 'bg-surface-2 text-text-3'
+											}`}
+										>
+											{e.isCurrent ? 'Current' : `Rev ${e.revisionNumber}`}
+										</span>
+										<span className="ml-auto text-[11px] tabular-nums text-text-3">
+											{formatWhen(e.timestamp)}
+										</span>
+									</div>
+									<div className="px-3 py-2.5">
+										{e.isInitial || !e.changelog.trim() ? (
+											<p className="text-xs italic text-text-3">Initial version — no changelog.</p>
+										) : (
+											<MarkdownProse projectId={projectId} projectSlug={projectSlug}>
+												{e.changelog}
+											</MarkdownProse>
+										)}
+									</div>
+									<div className="flex items-center gap-1.5 px-3 pb-2.5">
+										{shown ? (
+											<span className="inline-flex items-center gap-1.5 text-xs font-medium text-success-soft-fg">
+												<Check className="h-3.5 w-3.5" /> Currently viewing
 											</span>
-											<span className="ml-auto text-[11px] tabular-nums text-text-3">
-												{formatWhen(e.timestamp)}
-											</span>
-										</div>
-										<div className="px-3 py-2.5">
-											{e.isInitial || !e.changelog.trim() ? (
-												<p className="text-xs italic text-text-3">
-													Initial version — no changelog.
-												</p>
-											) : (
-												<MarkdownProse projectId={projectId} projectSlug={projectSlug}>
-													{e.changelog}
-												</MarkdownProse>
-											)}
-										</div>
-										<div className="flex items-center gap-1.5 px-3 pb-2.5">
-											{shown ? (
-												<span className="inline-flex items-center gap-1.5 text-xs font-medium text-success-soft-fg">
-													<Check className="h-3.5 w-3.5" /> Currently viewing
-												</span>
-											) : (
-												<>
+										) : (
+											<>
+												<Button
+													variant="outline"
+													size="sm"
+													onClick={() => onView(e)}
+													data-testid="revision-view"
+												>
+													<Eye className="h-3.5 w-3.5" />
+													{e.isCurrent ? 'View latest' : 'View this version'}
+												</Button>
+												{onRestore && !e.isCurrent && e.restoreRevisionNumber !== undefined && (
 													<Button
-														variant="outline"
+														variant="ghost"
 														size="sm"
-														onClick={() => onView(e)}
-														data-testid="revision-view"
+														disabled={isRestoring}
+														onClick={() => setPendingRestore(e.restoreRevisionNumber ?? null)}
+														data-testid="revision-restore"
 													>
-														<Eye className="h-3.5 w-3.5" />
-														{e.isCurrent ? 'View latest' : 'View this version'}
+														<RotateCcw className="h-3.5 w-3.5" /> Restore
 													</Button>
-													{onRestore && !e.isCurrent && e.restoreRevisionNumber !== undefined && (
-														<Button
-															variant="ghost"
-															size="sm"
-															disabled={isRestoring}
-															onClick={() => setPendingRestore(e.restoreRevisionNumber ?? null)}
-															data-testid="revision-restore"
-														>
-															<RotateCcw className="h-3.5 w-3.5" /> Restore
-														</Button>
-													)}
-												</>
-											)}
-										</div>
+												)}
+											</>
+										)}
 									</div>
 								</div>
-							);
-						})}
-					</div>
-				</Dialog.Content>
-			</Dialog.Portal>
+							</div>
+						);
+					})}
+				</div>
+			</DialogContent>
 
 			<ConfirmDialog
 				open={pendingRestore !== null}
