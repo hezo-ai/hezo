@@ -38,16 +38,16 @@ hezo
 
 For an always-on instance, run it under your platform's service manager (for example a
 `systemd` unit on Linux) so it restarts on boot. Remember that Hezo starts **locked**
-after a restart — either unlock it from the web app or pass the master key via
-`HEZO_MASTER_KEY` so it can come up unattended (see
-[Deploying to the cloud](/docs/deployment/cloud)).
+after a restart — by design — so you unlock it from the web app's gate each time it comes
+back up. Don't store the master key on the server to skip that step; it's the one secret
+Hezo keeps in memory only (see [Master key & encryption](/docs/security/master-key)).
 
 ### Run as a systemd service (Linux)
 
 On a Linux host, a `systemd` unit gives you **auto-restart** (on crash and on
-boot) and **unattended unlock**. The unit below runs Hezo **as root** — the
-default when no `User=` is set — so the process reaches the Docker socket
-directly, with no need to add a user to the `docker` group.
+boot). The unit below runs Hezo **as root** — the default when no `User=` is set
+— so the process reaches the Docker socket directly, with no need to add a user
+to the `docker` group.
 
 **1. Install the prerequisites.** Make sure Docker is enabled and the `hezo`
 binary is on disk (see [Installation](/docs/getting-started/installation)):
@@ -58,24 +58,26 @@ command -v hezo                        # note the absolute path, e.g. /usr/local
 sudo mkdir -p /var/lib/hezo            # a stable data directory
 ```
 
-**2. Store the master key in a locked-down env file.** Pass the master key
-through the environment, never the `--master-key` flag — a flag is visible in
-`ps` and `systemctl cat`. Create a root-only env file:
+**2. Put non-secret settings in an env file.** Create an env file for the
+service — the data directory and, if the instance is reached via a public URL,
+its address:
 
 ```sh
 sudo install -d -m 700 /etc/hezo
 sudo install -m 600 /dev/null /etc/hezo/hezo.env
 ```
 
-Then add your settings to it (the twelve words come from
-[first-run setup](/docs/getting-started/first-run)):
-
 ```sh
 # /etc/hezo/hezo.env
-HEZO_MASTER_KEY=word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12
 HEZO_DATA_DIR=/var/lib/hezo
 # HEZO_WEB_URL=https://hezo.example.com   # only if reached via a public URL
 ```
+
+> **Never put your master key in this file** (or anywhere else on the server).
+> The master key is deliberately kept in memory only — a copy on disk next to the
+> encrypted data defeats encryption at rest, letting anyone who can read the disk
+> decrypt your vault. Hezo comes up **locked** after each restart on purpose; you
+> unlock it from the browser gate (step 5).
 
 **3. Create the unit** at `/etc/systemd/system/hezo.service`:
 
@@ -112,10 +114,10 @@ systemctl status hezo
 journalctl -u hezo -f          # follow the logs
 ```
 
-> **First run.** Until the master key is in `hezo.env`, Hezo comes up **locked** —
-> open it in the browser to create the key and finish setup, then add the twelve
-> words to the env file and `sudo systemctl restart hezo` so every future restart
-> unlocks unattended.
+**5. Unlock it in the browser.** Hezo comes up **locked** — open it in the browser
+to create your master key and finish setup on first run, and to unlock it again
+after each restart. Keep the twelve words somewhere safe **off** the server; Hezo
+never stores them, so unlocking from the gate is how the instance comes back up.
 
 In-app auto-update continues to work under systemd: Hezo swaps in the new binary
 and relaunches itself internally, so systemd sees one continuously running
@@ -276,11 +278,10 @@ run — for example inside a container — the bar instead links to the GitHub
 release page.)
 
 Because the restart re-locks the instance, **you'll need your 12-word master key
-to unlock Hezo again afterward** — unless you run Hezo with the master key set in
-the environment (`HEZO_MASTER_KEY`), in which case it unlocks itself on restart.
-The confirmation dialog tells you which case applies. In-flight agent runs are
-aborted and recovered automatically, and connected browsers reconnect on their
-own.
+to unlock Hezo again afterward** from the browser gate — that re-lock is by design,
+and unlocking interactively is the secure way back up (don't stash the key on the
+server to avoid it). In-flight agent runs are aborted and recovered automatically,
+and connected browsers reconnect on their own.
 
 Auto-update applies to the self-managed single binary. It is disabled when Hezo
 runs inside a container (update the image instead) and can be turned off with

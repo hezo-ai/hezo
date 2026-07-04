@@ -40,8 +40,8 @@ Run on a custom port with a dedicated data directory:
 hezo --port 8080 --data-dir /var/lib/hezo
 ```
 
-Bring an instance up unattended (for example under a service manager), unlocking it via
-the environment:
+Unlock a single startup non-interactively by passing the master key to that one
+invocation (Hezo normally starts **locked** and you unlock from the browser gate):
 
 ```sh
 HEZO_MASTER_KEY="your twelve word master key phrase here" \
@@ -49,6 +49,11 @@ HEZO_DATA_DIR=/var/lib/hezo \
 HEZO_WEB_URL=https://hezo.example.com \
   hezo
 ```
+
+Pass `HEZO_MASTER_KEY` inline like this only for a one-off launch — **never persist it**
+to an env file, a service definition, or anywhere on the host. The master key is kept in
+memory only so a copy of your disk can't decrypt your data; writing it to disk defeats
+that. See [Master key & encryption](/docs/security/master-key).
 
 ## Anonymous usage telemetry
 
