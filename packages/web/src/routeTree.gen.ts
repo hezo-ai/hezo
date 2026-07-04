@@ -20,6 +20,7 @@ import { Route as SettingsChatboxRouteImport } from './routes/settings/chatbox'
 import { Route as SettingsAuditLogRouteImport } from './routes/settings/audit-log'
 import { Route as SettingsApiKeysRouteImport } from './routes/settings/api-keys'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
+import { Route as SettingsAdminPasswordRouteImport } from './routes/settings/admin-password'
 import { Route as ProjectsProjectIdRouteRouteImport } from './routes/projects/$projectId/route'
 import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
 import { Route as HomeInboxIndexRouteImport } from './routes/home/inbox/index'
@@ -100,6 +101,11 @@ const SettingsApiKeysRoute = SettingsApiKeysRouteImport.update({
 const SettingsAiProvidersRoute = SettingsAiProvidersRouteImport.update({
   id: '/ai-providers',
   path: '/ai-providers',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsAdminPasswordRoute = SettingsAdminPasswordRouteImport.update({
+  id: '/admin-password',
+  path: '/admin-password',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
 const ProjectsProjectIdRouteRoute = ProjectsProjectIdRouteRouteImport.update({
@@ -257,6 +263,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRouteRouteWithChildren
   '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
+  '/settings/admin-password': typeof SettingsAdminPasswordRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/api-keys': typeof SettingsApiKeysRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
@@ -294,6 +301,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/settings/admin-password': typeof SettingsAdminPasswordRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/api-keys': typeof SettingsApiKeysRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
@@ -333,6 +341,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRouteRouteWithChildren
   '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
+  '/settings/admin-password': typeof SettingsAdminPasswordRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/api-keys': typeof SettingsApiKeysRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
@@ -374,6 +383,7 @@ export interface FileRouteTypes {
     | '/'
     | '/settings'
     | '/projects/$projectId'
+    | '/settings/admin-password'
     | '/settings/ai-providers'
     | '/settings/api-keys'
     | '/settings/audit-log'
@@ -411,6 +421,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/settings/admin-password'
     | '/settings/ai-providers'
     | '/settings/api-keys'
     | '/settings/audit-log'
@@ -449,6 +460,7 @@ export interface FileRouteTypes {
     | '/'
     | '/settings'
     | '/projects/$projectId'
+    | '/settings/admin-password'
     | '/settings/ai-providers'
     | '/settings/api-keys'
     | '/settings/audit-log'
@@ -571,6 +583,13 @@ declare module '@tanstack/react-router' {
       path: '/ai-providers'
       fullPath: '/settings/ai-providers'
       preLoaderRoute: typeof SettingsAiProvidersRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/admin-password': {
+      id: '/settings/admin-password'
+      path: '/admin-password'
+      fullPath: '/settings/admin-password'
+      preLoaderRoute: typeof SettingsAdminPasswordRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/projects/$projectId': {
@@ -759,6 +778,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface SettingsRouteRouteChildren {
+  SettingsAdminPasswordRoute: typeof SettingsAdminPasswordRoute
   SettingsAiProvidersRoute: typeof SettingsAiProvidersRoute
   SettingsApiKeysRoute: typeof SettingsApiKeysRoute
   SettingsAuditLogRoute: typeof SettingsAuditLogRoute
@@ -770,6 +790,7 @@ interface SettingsRouteRouteChildren {
 }
 
 const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
+  SettingsAdminPasswordRoute: SettingsAdminPasswordRoute,
   SettingsAiProvidersRoute: SettingsAiProvidersRoute,
   SettingsApiKeysRoute: SettingsApiKeysRoute,
   SettingsAuditLogRoute: SettingsAuditLogRoute,

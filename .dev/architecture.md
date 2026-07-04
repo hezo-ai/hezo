@@ -912,11 +912,19 @@ Login mirrors the mnemonic's challenge-response: `POST /auth/password-challenge`
 nonce + the salt; `POST /auth/password-verify` checks the signature over
 `hezo-auth-v1:password-login:<nonce>` and mints a **session JWT**. `POST /auth/password`
 (accepting either a session or the password-setup-scoped token) enrolls a new verifier and
-returns a fresh session. `password-verify` is throttled in memory (single admin → global
-backoff/lockout). `GET /api/status` exposes `passwordSet`, and the web gate uses a
+returns a fresh session. A **session-authenticated change** while a verifier is already
+enrolled must additionally prove the *current* password: the body carries
+`current_challenge_id` + `current_signature` — a `password-challenge` nonce signed with the
+keypair derived from the current password — verified against the stored verifier before it
+is replaced (a stolen session alone can't rotate the password). Setup-scoped bearers
+(master-key recovery) and first enrollment are exempt. `password-verify` and the
+current-password proof share one in-memory throttle (single admin → global
+backoff/lockout), so the change endpoint can't be used to brute-force around the login
+lockout. `GET /api/status` exposes `passwordSet`, and the web gate uses a
 `GET /api/me` probe to distinguish "unlocked but no session → password login" from a valid
 session. **Existing installations** are migrated (013) with the default password `"password"`
-so operators can sign in immediately after upgrading, then change it.
+so operators can sign in immediately after upgrading, then change it (**Settings → Admin
+password** while signed in).
 
 **Three principals.**
 - **User JWT** (HS256, secret derived from the unlock key) — `Authorization: Bearer <jwt>`,

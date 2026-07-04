@@ -252,14 +252,16 @@ export async function signPasswordSetupToken(
  * Authorize a password mutation (`POST /api/auth/password`). Accepts a bearer
  * that is EITHER a full admin session JWT (logged-in change) OR a
  * password-setup-scoped JWT (initial-set / recovery), and returns the superuser
- * id it authorizes — or `null` if the token is anything else. Kept separate from
- * `verifyToken` precisely because that path rejects the scoped token.
+ * id it authorizes plus which of the two it was — or `null` if the token is
+ * anything else. Kept separate from `verifyToken` precisely because that path
+ * rejects the scoped token. `isSetupScoped` lets the route exempt master-key
+ * recovery from the current-password proof a session-authenticated change needs.
  */
 export async function resolvePasswordMutationUserId(
 	token: string,
 	db: PGlite,
 	masterKeyManager: MasterKeyManager,
-): Promise<string | null> {
+): Promise<{ userId: string; isSetupScoped: boolean } | null> {
 	if (masterKeyManager.getState() !== 'unlocked') return null;
 	try {
 		const jwtKey = await masterKeyManager.getJwtKey();
@@ -275,7 +277,7 @@ export async function resolvePasswordMutationUserId(
 			[userId],
 		);
 		if (!result.rows[0]?.is_superuser) return null;
-		return userId;
+		return { userId, isSetupScoped: payload.scope === PASSWORD_SETUP_SCOPE };
 	} catch {
 		return null;
 	}

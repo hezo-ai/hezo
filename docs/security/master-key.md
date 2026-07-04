@@ -72,13 +72,16 @@ encryption. You unlock the instance from the browser gate after each restart, an
 still has to sign in with the password to reach the app. See
 [Secure remote access](/docs/deployment/secure-remote-access).
 
+**Changing your password?** While signed in, go to **Settings → Admin password**, enter
+your current password and the new one twice, and save. Your session stays signed in.
+
 **Forgot your password?** Reset it with your master key: on the sign-in screen choose
 **Forgot password? Use your master key**, enter the twelve words, and set a new one. The
 master key is the ultimate authority, so it's also your password-recovery path.
 
 > **Upgrading an existing instance?** Your admin account is given the default password
-> `password` so you can sign in right away — **change it immediately**, especially before
-> exposing the instance to a network.
+> `password` so you can sign in right away — **change it immediately** in
+> **Settings → Admin password**, especially before exposing the instance to a network.
 
 ## What's encrypted
 
@@ -91,7 +94,8 @@ The master key protects all confidential data at rest, including:
 
 ## Recovery
 
-A forgotten **password** is easy to recover — reset it with your master key (above).
+A forgotten **password** is easy to recover — reset it with your master key (above). A
+password you still know can be changed any time in **Settings → Admin password**.
 
 A lost **master key** is different: there is intentionally **no backdoor.** If you lose it,
 the encrypted data can't be recovered — your only path forward is to reset the instance and
