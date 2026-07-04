@@ -1,6 +1,7 @@
 import { Plus } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
+import { useDraggableFab } from '../hooks/use-draggable-fab';
 import { CreateTaskDialog } from './create-task-dialog';
 import { Tooltip } from './ui/tooltip';
 
@@ -26,21 +27,28 @@ interface FloatingNewTaskButtonProps {
  * menu is always visible and carries its own "+" next to the Tasks link, so a
  * floating duplicate there would be redundant. It renders on every mobile route
  * (project-scoped or not) — the dialog's picker supplies the target project.
+ *
+ * On portrait mobile screens the button is draggable (via `useDraggableFab`)
+ * so it can be moved off content it would otherwise cover.
  */
 export function FloatingNewTaskButton({ hidden }: FloatingNewTaskButtonProps) {
 	const active = useActiveProject();
 	const [open, setOpen] = useState(false);
+	const fab = useDraggableFab('new-task');
 
 	return (
 		<>
 			{!hidden && (
 				<Tooltip content="New task" side="right">
 					<button
+						ref={fab.ref}
 						type="button"
 						onClick={() => setOpen(true)}
+						{...fab.handlers}
+						style={fab.style}
 						data-testid="floating-new-task"
 						aria-label="New task"
-						className="lg:hidden fixed bottom-4 left-4 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-accent-solid text-accent-solid-fg shadow-lg transition-colors hover:bg-accent-hover"
+						className="lg:hidden fixed bottom-4 left-4 z-40 flex h-12 w-12 touch-none items-center justify-center rounded-full bg-accent-solid text-accent-solid-fg shadow-lg transition-colors hover:bg-accent-hover"
 					>
 						<Plus className="h-6 w-6" />
 					</button>

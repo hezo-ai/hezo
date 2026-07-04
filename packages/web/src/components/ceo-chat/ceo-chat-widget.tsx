@@ -13,6 +13,7 @@ import {
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { type CeoMessage, useCeoChat } from '../../hooks/use-ceo-chat';
 import { useContainerHealth } from '../../hooks/use-container-health';
+import { useDraggableFab } from '../../hooks/use-draggable-fab';
 import { useHqProject } from '../../hooks/use-projects';
 import { copyToClipboard } from '../../lib/clipboard';
 import { HqContainerNotice } from '../hq-container-notice';
@@ -27,7 +28,8 @@ function fitTextareaToContent(el: HTMLTextAreaElement): void {
 }
 
 /**
- * Floating chat with the CEO, pinned bottom-right. Talks to the single global CEO
+ * Floating chat with the CEO, pinned bottom-right (on portrait mobile screens
+ * the launcher can be dragged elsewhere). Talks to the single global CEO
  * conversation; messages stream in over the `ceo:global` WebSocket room. Sending a
  * new message while a reply is in flight interrupts it (handled server-side) and
  * starts a fresh turn. The CEO is the instance-level singleton living in the HQ
@@ -43,6 +45,9 @@ interface CeoChatWidgetProps {
 export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
 	const setOpen = onOpenChange;
 	const [expanded, setExpanded] = useState(false);
+	// Draggable launcher on portrait mobile screens (the panel itself never
+	// moves). Must be called before the `if (!open)` early return below.
+	const fab = useDraggableFab('ceo-chat');
 	const { messages, send, streaming, sending, loaded, unread, compactedCount } = useCeoChat(open);
 	const hq = useHqProject();
 	const hqHealth = useContainerHealth(hq);
@@ -143,11 +148,14 @@ export function CeoChatWidget({ open, onOpenChange }: CeoChatWidgetProps) {
 		return (
 			<Tooltip content="Chat with CEO" side="left">
 				<button
+					ref={fab.ref}
 					type="button"
 					onClick={() => setOpen(true)}
+					{...fab.handlers}
+					style={fab.style}
 					data-testid="ceo-chat-launcher"
 					aria-label={unread > 0 ? `Chat with the CEO (${unread} unread)` : 'Chat with the CEO'}
-					className="fixed bottom-4 right-4 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-inverse text-inverse-fg shadow-lg hover:opacity-90"
+					className="fixed bottom-4 right-4 z-50 flex h-12 w-12 touch-none items-center justify-center rounded-full bg-inverse text-inverse-fg shadow-lg hover:opacity-90"
 				>
 					<MessageSquare className="h-5 w-5" />
 					{/* Unread CEO replies overlay the launcher, mirroring the inbox icon. */}
