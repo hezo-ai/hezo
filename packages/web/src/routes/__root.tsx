@@ -201,7 +201,14 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 	}, [pathname, hash]);
 
 	return (
-		<div className="h-screen flex flex-col overflow-hidden">
+		// dvh, not vh: on mobile, 100vh is the LARGE viewport (URL bar collapsed).
+		// With the URL bar expanded the shell then overflows the visual viewport,
+		// giving the root scroller ~56px of real scroll range — over-scrolling past
+		// the bottom of <main> chains to the root and pushes the app header
+		// off-screen, and it stays hidden until <main> is scrolled back to its very
+		// top. 100dvh tracks the URL bar, so the root never has overflow and the
+		// header can't leave the screen.
+		<div className="h-dvh flex flex-col overflow-hidden">
 			<AppHeader
 				onOpenDrawer={() => setDrawerOpen(true)}
 				onOpenSearch={() => setSearchOpen(true)}
