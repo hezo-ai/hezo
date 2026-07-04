@@ -40,11 +40,16 @@ test('doc mention in a task comment opens the preview panel, not a new tab', asy
 
 	await user.click(mention);
 
-	// The panel opens with the document, its rendered body, and an open-in-new-tab link.
+	// The panel opens with the document, its rendered body, and an icon-only
+	// open-in-new-tab link sitting immediately before the close button.
 	await findByTestId('preview-panel');
 	expect((await findByTestId('preview-panel-filename')).textContent).toBe('prd.md');
 	await findByText(/unmistakable document body/i);
 	const openTab = (await findByTestId('preview-open-tab')) as HTMLAnchorElement;
 	expect(openTab.getAttribute('target')).toBe('_blank');
 	expect(openTab.getAttribute('href')).toContain('/preview/');
+	expect(openTab.getAttribute('aria-label')).toBe('Open in new tab');
+	expect(openTab.textContent).toBe('');
+	const close = await findByTestId('preview-close');
+	expect(openTab.nextElementSibling).toBe(close);
 });

@@ -3,6 +3,7 @@ import { type ProjectDoc, useProjectDoc } from '../../hooks/use-project-docs';
 import { docPreviewPath } from '../../lib/doc-preview';
 import { DocumentBody } from '../document-review/document-body';
 import { ReviewToolbarActions } from '../document-review/review-toolbar-actions';
+import { Tooltip } from '../ui/tooltip';
 import type { PreviewItem } from './preview-context';
 
 function formatBytes(bytes?: number): string {
@@ -42,17 +43,19 @@ export function PreviewPanel({ item, onClose }: PreviewPanelProps) {
 				>
 					{item.filename}
 				</span>
-				<a
-					href={openUrl}
-					target="_blank"
-					rel="noopener noreferrer"
-					className="inline-flex shrink-0 items-center gap-1 text-[11px] text-info-soft-fg hover:underline"
-					data-testid="preview-open-tab"
-				>
-					open in new tab
-					<ExternalLink className="h-3 w-3" />
-				</a>
 				<ReviewToolbarActions projectId={item.projectId} filename={item.filename} />
+				<Tooltip content="Open in new tab">
+					<a
+						href={openUrl}
+						target="_blank"
+						rel="noopener noreferrer"
+						aria-label="Open in new tab"
+						className="shrink-0 rounded-md p-1 text-text-3 transition-colors hover:bg-surface-3 hover:text-text-1"
+						data-testid="preview-open-tab"
+					>
+						<ExternalLink className="h-4 w-4" />
+					</a>
+				</Tooltip>
 				<button
 					type="button"
 					onClick={onClose}
