@@ -1,11 +1,18 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { useState } from 'react';
 import { DocumentBody } from '../../../components/document-review/document-body';
 import { ReviewToolbarActions } from '../../../components/document-review/review-toolbar-actions';
+import { ScrollToBottomButton } from '../../../components/scroll-to-bottom-button';
 import { useProjectDoc } from '../../../hooks/use-project-docs';
+import { useScrollToBottom } from '../../../hooks/use-scroll-to-bottom';
 
 function DocPreviewPage() {
 	const { projectId, filename } = Route.useParams();
 	const { data: doc, isLoading, isError } = useProjectDoc(projectId, filename);
+	// This bare route renders outside the app shell, so it carries its own
+	// scroll-to-bottom pill wired to its own full-viewport scroller.
+	const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+	const { atBottom, scrollToBottom } = useScrollToBottom(scroller);
 
 	if (isLoading) {
 		return <CenteredMessage>Loading…</CenteredMessage>;
@@ -16,7 +23,7 @@ function DocPreviewPage() {
 	}
 
 	return (
-		<div className="h-screen overflow-auto bg-surface">
+		<div ref={setScroller} className="h-screen overflow-auto bg-surface">
 			<div className="sticky top-0 z-10 flex items-center justify-center gap-2 px-4 pt-3">
 				<div
 					className="flex items-center gap-2 rounded-[10px] border border-border bg-surface/85 px-2.5 py-1 shadow-sm backdrop-blur-md"
@@ -46,6 +53,12 @@ function DocPreviewPage() {
 					review={{ filename, docUpdatedAt: doc.updated_at }}
 				/>
 			</div>
+			<ScrollToBottomButton
+				onClick={scrollToBottom}
+				atBottom={atBottom}
+				testId="scroll-to-bottom"
+				positionClassName="fixed bottom-4 left-1/2 -translate-x-1/2 z-30"
+			/>
 		</div>
 	);
 }

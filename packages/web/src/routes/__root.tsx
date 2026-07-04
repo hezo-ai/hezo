@@ -6,7 +6,7 @@ import {
 	useMatches,
 	useNavigate,
 } from '@tanstack/react-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppHeader } from '../components/app-header';
 import { CeoChatWidget } from '../components/ceo-chat/ceo-chat-widget';
 import { GlobalSearchDialog } from '../components/global-search-dialog';
@@ -15,6 +15,7 @@ import { PasswordLogin } from '../components/password-login';
 import { ProjectRail } from '../components/project-rail';
 import { ProjectSidebar } from '../components/project-sidebar';
 import { PwaInstallPrompt } from '../components/pwa-install-prompt';
+import { ScrollToBottomButton } from '../components/scroll-to-bottom-button';
 import { CreatePasswordFlow, SetupGate } from '../components/setup/setup-wizard';
 import { StartingScreen } from '../components/starting-screen';
 import { UpdateBanner } from '../components/update-banner';
@@ -22,6 +23,7 @@ import { SocketProvider } from '../contexts/socket-context';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useMe } from '../hooks/use-me';
 import { useProjectsIndex } from '../hooks/use-projects';
+import { useScrollToBottom } from '../hooks/use-scroll-to-bottom';
 import { useStatus } from '../hooks/use-status';
 import { useShellWebSockets } from '../hooks/use-websocket';
 import { api } from '../lib/api';
@@ -157,6 +159,16 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 	const [searchOpen, setSearchOpen] = useState(false);
 	const active = useActiveProject();
 	const mainRef = useRef<HTMLElement>(null);
+	// The scroll-to-bottom hook needs the <main> element as state (a ref never
+	// re-runs its effect), so a stable callback ref feeds both. Stable identity
+	// matters: an inline ref would be re-invoked (null, then el) on every render
+	// and thrash the state.
+	const [mainEl, setMainEl] = useState<HTMLElement | null>(null);
+	const attachMain = useCallback((el: HTMLElement | null) => {
+		mainRef.current = el;
+		setMainEl(el);
+	}, []);
+	const { atBottom, scrollToBottom } = useScrollToBottom(mainEl);
 	const pathname = useLocation({ select: (l) => l.pathname });
 	const hash = useLocation({ select: (l) => l.hash });
 	const lastPathnameRef = useRef(pathname);
@@ -223,9 +235,23 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 							<ProjectSidebar />
 						</div>
 					)}
-					<main ref={mainRef} className="flex-1 min-w-0 overflow-auto relative">
-						<Outlet />
-					</main>
+					{/* The relative wrapper hosts the scroll-to-bottom pill as a sibling
+					    of the scroller, so the pill stays pinned over the content area
+					    (never scrolling with it) on ANY page whose long-form content
+					    overflows <main> — task threads, documents, settings, etc. */}
+					<div className="relative flex flex-col flex-1 min-w-0 overflow-hidden">
+						<main ref={attachMain} className="flex-1 min-w-0 overflow-auto relative">
+							<Outlet />
+						</main>
+						{/* Bottom-centre of the content area: clear of the CEO chat
+						    launcher (bottom-right) at every breakpoint. */}
+						<ScrollToBottomButton
+							onClick={scrollToBottom}
+							atBottom={atBottom}
+							testId="scroll-to-bottom"
+							positionClassName="absolute bottom-4 left-1/2 -translate-x-1/2 z-30"
+						/>
+					</div>
 				</div>
 			</div>
 			{drawerOpen && (
