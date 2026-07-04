@@ -111,11 +111,7 @@ export function SettingsSidebar() {
 				data-testid="settings-nav-desktop"
 			>
 				{items.map((item) => (
-					<Link
-						key={item.to}
-						to={item.to}
-						className={itemClass(isActive(item.to, pathname))}
-					>
+					<Link key={item.to} to={item.to} className={itemClass(isActive(item.to, pathname))}>
 						{item.label}
 					</Link>
 				))}
