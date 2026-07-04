@@ -394,7 +394,7 @@ export function normalizeAssetFolder(raw: string): string | null {
 }
 
 /** Top-level library folder that collects files uploaded through task threads. */
-export const ASSET_UPLOADS_FOLDER = 'Uploads';
+export const ASSET_UPLOADS_FOLDER = 'uploads';
 
 // Keeps per-task folder names readable on folder cards and in `assets/<path>`
 // references even when the task title runs long.
@@ -402,7 +402,7 @@ const TASK_UPLOADS_SEGMENT_MAX_LENGTH = 60;
 
 /**
  * Library folder for files uploaded through a task's thread:
- * `Uploads/<task-name>`. The task's title becomes a single link-safe segment
+ * `uploads/<task-name>`. The task's title becomes a single link-safe segment
  * (slashes flattened first so a title can't add nesting levels), truncated to
  * a card-friendly length; when nothing survives cleanup the task identifier
  * (e.g. `IN-42`) stands in.

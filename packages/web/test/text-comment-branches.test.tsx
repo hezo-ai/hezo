@@ -65,7 +65,7 @@ test('renders the attachment thumbnails when attachments are present', async () 
 						id: 'att2',
 						// Task-thread uploads carry their library folder in the path; the
 						// thumb should surface just the file's name.
-						original_filename: 'Uploads/Fix-login/notes.pdf',
+						original_filename: 'uploads/Fix-login/notes.pdf',
 						content_type: 'application/pdf',
 						url: 'https://example.test/notes.pdf',
 						// biome-ignore lint/suspicious/noExplicitAny: minimal attachment shape for the renderer.

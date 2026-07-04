@@ -178,7 +178,7 @@ assetsRoutes.post(
 		const upload = await readUploadForm(c);
 		if (!upload) return err(c, 'INVALID_REQUEST', 'Missing file field', 400);
 
-		// Task-thread attachments are filed under Uploads/<task-name> so the
+		// Task-thread attachments are filed under uploads/<task-name> so the
 		// library groups each task's uploads without manual sorting.
 		return storeUploadedAsset(
 			c,

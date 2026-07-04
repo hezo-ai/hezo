@@ -37,7 +37,7 @@ diagrams, images, PDFs, scripts, audio, or video, up to 10 MB each. Uploads are 
 individual files — folders can't be uploaded from your computer; files simply land in
 whichever library folder is open. You can also attach files directly to a task or a comment,
 so a screenshot or a reference document sits right next to the discussion it belongs to —
-those attachments are filed in the library under an **Uploads** folder, in a subfolder named
+those attachments are filed in the library under an **uploads** folder, in a subfolder named
 after the task, so each task's files stay grouped without any manual sorting.
 
 ## Agent-generated assets
