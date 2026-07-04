@@ -26,8 +26,12 @@ DigitalOcean, Hetzner, Fly, Linode, or an EC2 instance.
    hezo --data-dir /var/lib/hezo
    ```
 
-3. **Bring it up unattended** by supplying the master key through the environment, so
-   the server unlocks on boot instead of waiting at the gate:
+3. **Unlock it from the browser.** After boot Hezo starts **locked** — open its gate
+   and enter your twelve-word master key to unlock the instance. This is by design:
+   the master key is kept in memory only and is never stored on the server, so a stolen
+   disk image can't decrypt your vault. If you need to unlock a single startup without
+   the browser, you can pass the key to that one invocation — but don't bake it into a
+   file or service definition:
 
    ```sh
    HEZO_MASTER_KEY="your twelve word master key phrase here" hezo --data-dir /var/lib/hezo

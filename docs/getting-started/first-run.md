@@ -21,9 +21,11 @@ for you on first run.
   fresh. See [Master key & encryption](/docs/security/master-key).
 
 After every restart, Hezo starts **locked**: agents can't run and secrets can't be
-read until you provide the phrase again on the unlock screen. You can also supply it
-non-interactively with `--master-key` / the `HEZO_MASTER_KEY` environment variable —
-useful for servers (see [Deploying to the cloud](/docs/deployment/cloud)).
+read until you provide the phrase again on the unlock screen. This is by design — unlock
+it from the browser each time. You can pass it to a single startup non-interactively with
+`--master-key` / the `HEZO_MASTER_KEY` environment variable, but don't store the phrase on
+the server (see [Deploying to the cloud](/docs/deployment/cloud) and
+[Master key & encryption](/docs/security/master-key)).
 
 ## 2. Set an admin password
 

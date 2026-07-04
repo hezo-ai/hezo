@@ -47,9 +47,10 @@ If you do want a public URL, terminate HTTPS with a reverse proxy (see
 directly.
 
 Hezo authenticates every session with your **admin password**, so a public deployment is
-no longer open by default. The practical setup is to supply the master key non-interactively
-(`HEZO_MASTER_KEY`) so the instance unlocks itself on each restart, while everyone still has
-to sign in with the password to reach the app:
+no longer open by default. Access is gated by that password on every request; the master
+key's job is separate — it unlocks the instance's encryption, and you provide it from the
+browser gate after each restart. **Don't store the master key on the server** to skip the
+unlock; keeping it in memory only is what protects the vault if the host is compromised.
 
 - **Set a strong admin password** and, if you upgraded an existing instance, change the
   default (`password`) before exposing it. See [Master key & encryption](/docs/security/master-key).

@@ -85,8 +85,9 @@ if [[ ! -f "${ENV_FILE}" ]]; then
 	cat >"${ENV_FILE}" <<EOF
 HEZO_DATA_DIR=${DATA_DIR}
 # HEZO_WEB_URL is written by hezo-firstboot on first boot (see /usr/local/sbin/hezo-firstboot.sh).
-# After first-run setup you may add your 12-word master key here so reboots unlock unattended:
-# HEZO_MASTER_KEY=word1 word2 ... word12
+# Do NOT put your master key in this file. Hezo keeps it in memory only and comes up locked
+# after each restart by design; unlock it from the browser gate. A copy of the key on disk
+# next to the encrypted data would let anyone who reads this box decrypt your vault.
 EOF
 fi
 

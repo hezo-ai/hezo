@@ -34,9 +34,26 @@ Hezo has a simple gate around your secrets:
 - **Unlocked** — you've provided the correct phrase; Hezo can decrypt secrets and
   agents run normally.
 
-You unlock from the web app's gate screen, or non-interactively with the `--master-key`
-flag / `HEZO_MASTER_KEY` environment variable when running on a server (see
-[Deploying to the cloud](/docs/deployment/cloud)).
+You unlock from the web app's gate screen. On a server you can also unlock a **single
+startup** non-interactively by passing the `--master-key` flag / `HEZO_MASTER_KEY`
+environment variable to that one invocation (see
+[Deploying to the cloud](/docs/deployment/cloud)) — but don't persist the phrase to disk
+to do it (see [Keep it off the server](#keep-it-off-the-server) below).
+
+## Keep it off the server
+
+The master key's protection comes entirely from where it *isn't*: it lives in memory only
+and is **never written to disk**, so the encrypted data directory is useless to anyone who
+copies it without the phrase. **Don't undo that by storing the key on the server yourself** —
+not in an env file (`/etc/hezo/hezo.env`), the systemd unit, a shell profile, a same-host
+secrets file, or a note in the repo. A copy of the phrase sitting next to the encrypted
+vault means a stolen disk image, a leaked backup, or anyone who can read the box can decrypt
+everything — exactly what encryption at rest is meant to prevent.
+
+That Hezo comes up **locked** after every restart is the feature, not an inconvenience:
+unlock it from the browser gate each time. If you genuinely must automate one launch, you
+can pass `HEZO_MASTER_KEY` to that single invocation, but treat the phrase like a crypto
+wallet seed — keep the only durable copy somewhere safe **off** the server.
 
 ## Your password vs. the master key
 
@@ -49,9 +66,10 @@ The master key and your password do two different jobs:
   with it. Your password (like the master key) never leaves your browser — Hezo stores only
   a verifier it can check a login against, never the password itself.
 
-This split is what lets you run Hezo on a public network safely: set `HEZO_MASTER_KEY` on
-the server so it unlocks automatically on every restart, and everyone still has to sign in
-with the password to reach the app. See
+This split is what lets you run Hezo on a public network safely: access is gated by the
+admin password on every request, while the master key stays purely about unlocking
+encryption. You unlock the instance from the browser gate after each restart, and everyone
+still has to sign in with the password to reach the app. See
 [Secure remote access](/docs/deployment/secure-remote-access).
 
 **Forgot your password?** Reset it with your master key: on the sign-in screen choose

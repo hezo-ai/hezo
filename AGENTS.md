@@ -323,6 +323,12 @@ Wrap any multi-write sequence that must succeed/fail together in `BEGIN`/`COMMIT
 
 Never expose raw secrets, private keys, or signing keys via endpoints or logs. Use asymmetric crypto for cross-service verification, encrypt sensitive data at rest, and use `timingSafeEqual` for all hash/token/signature comparisons (never `===`).
 
+### Never encourage storing the master key on a system
+
+The **master key** is the one secret Hezo deliberately keeps **in memory only, never written to disk** — that in-memory-only invariant is what makes encryption-at-rest meaningful (anyone who can read the data directory *and* a persisted copy of the key can decrypt the entire vault). **Never encourage a user to store the master key anywhere on a system** — not in an env file, a `HEZO_MASTER_KEY=` line persisted to disk, a systemd/service definition, a config file, a shell profile, a same-host secrets file, or a code comment. This holds on every surface an agent produces: `docs/**`, `.dev/`, READMEs, CLI/`--help` text, deploy scripts (`deploy/**`), and agent replies. The secure default is to **unlock interactively** from the web gate — after any restart Hezo comes up **locked** by design, and that is the intended, secure behaviour, not a gap to paper over.
+
+`HEZO_MASTER_KEY` / `--master-key` are real and may be documented as the mechanism for a **single, non-interactive startup** (e.g. passed inline to one invocation) — but never as a place to *persist* the key. Whenever you touch a surface that mentions unattended unlock, frame it as "unlock from the browser" or "pass it for one startup without saving it," and warn against writing the phrase to disk. Treat "add your master key to the env file so reboots unlock unattended" as a security bug to fix, not a convenience to document.
+
 ### Credentials
 
 Agents reference secrets by **placeholder**, never by literal value. The pattern is `__HEZO_SECRET_<NAME>__` in any header or URL the agent emits; the egress proxy substitutes the real value at request time. Background and full lifecycle: `.dev/architecture.md` (§ Credentials, egress & secrets).
