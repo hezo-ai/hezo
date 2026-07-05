@@ -249,6 +249,46 @@ jobs:
       - name: Bun-native pg driver test
         run: cd packages/server && bun test ./test/bun/database-pg-driver.bun.test.ts
 
+  # External S3 driver conformance: the asset-storage suites run their env-gated
+  # external leg against a real MinIO, proving the S3AssetStore driver behaves
+  # identically to the always-on in-process-sim legs. The Bun-native S3 client
+  # test also runs here — the client rides the runtime's own fetch/crypto.subtle,
+  # which a Node-only vitest run can't vouch for. Single (non-matrix) job: no
+  # *-complete rollup needed. Not (yet) in the main ruleset's required checks.
+  test-s3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      minio:
+        image: bitnami/minio:latest
+        env:
+          MINIO_ROOT_USER: hezo
+          MINIO_ROOT_PASSWORD: hezo-secret-key
+          MINIO_DEFAULT_BUCKETS: hezo-test
+        ports:
+          - 9000:9000
+    env:
+      HEZO_TEST_ASSET_STORAGE_URL: "s3://hezo:hezo-secret-key@localhost:9000/hezo-test?tls=false&pathStyle=true"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      # Service containers can't override the image command, so readiness is
+      # polled from the runner (the mapped health endpoint) instead of a
+      # container health-cmd.
+      - name: Wait for MinIO
+        run: timeout 60 bash -c 'until curl -sf http://127.0.0.1:9000/minio/health/ready; do sleep 1; done'
+      - run: bun run test --package server --pattern asset-storage
+      - name: Bun-native S3 client test
+        run: cd packages/server && bun test ./test/bun/asset-s3-client.bun.test.ts
+
   test-browser:
     runs-on: ubuntu-latest
     timeout-minutes: 25

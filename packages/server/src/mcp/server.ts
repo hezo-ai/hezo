@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Context } from 'hono';
+import type { AssetStore } from '../assets/store';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
@@ -29,6 +30,8 @@ export function initMcpServer(
 	wsManager?: WebSocketManager,
 	events?: DomainEventBus,
 	containerDeps?: ContainerDeps,
+	assetStore?: AssetStore,
+	serverPort?: number,
 ): ToolDef[] {
 	mcpServer = new McpServer({ name: 'hezo', version: '0.1.0' });
 	toolDefs = registerTools(
@@ -39,6 +42,8 @@ export function initMcpServer(
 		wsManager,
 		events,
 		containerDeps,
+		assetStore,
+		serverPort,
 	);
 	return toolDefs;
 }
@@ -181,8 +186,8 @@ export async function handleMcpRequest(c: Context<Env>): Promise<Response> {
  * field to place the asset inside a library folder (up to 2 levels, e.g.
  * `scripts` or `launch/images`). The bytes are stored as a project asset through
  * the same path as the REST upload, so the result is retrievable via the
- * existing `list_project_assets` / `read_project_asset` tools (and the per-run
- * `/workspace/.hezo/assets` mount).
+ * existing `list_project_assets` / `read_project_asset` tools (binary contents
+ * come back as a signed download URL).
  */
 export async function handleMcpAssetUpload(c: Context<Env>): Promise<Response> {
 	const auth = await authenticateRequest(c);

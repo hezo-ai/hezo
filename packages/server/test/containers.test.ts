@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
 	ensureProjectWorkspace,
-	getAssetsPath,
 	getPreviewsPath,
 	getProjectDir,
 	getWorkspacePath,
@@ -26,7 +25,6 @@ describe('workspace filesystem', () => {
 		expect(existsSync(join(projectDir, 'workspace'))).toBe(true);
 		expect(existsSync(join(projectDir, 'worktrees'))).toBe(true);
 		expect(existsSync(join(projectDir, '.previews'))).toBe(true);
-		expect(existsSync(join(projectDir, 'assets'))).toBe(true);
 	});
 
 	it('is idempotent', () => {
@@ -64,7 +62,6 @@ describe('workspace filesystem', () => {
 
 		expect(getWorkspacePath(testDataDir, 'acme', 'api')).toBe(join(dir, 'workspace'));
 		expect(getWorktreesPath(testDataDir, 'acme', 'api')).toBe(join(dir, 'worktrees'));
-		expect(getAssetsPath(testDataDir, 'acme', 'api')).toBe(join(dir, 'assets'));
 
 		const wtPath = getWorktreePath(testDataDir, 'acme', 'api', 'frontend', 'feat-auth', 'abc12345');
 		expect(wtPath).toBe(join(dir, 'worktrees', 'frontend-feat-auth-agent-abc12345'));

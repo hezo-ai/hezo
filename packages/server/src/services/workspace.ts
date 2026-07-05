@@ -32,7 +32,7 @@ export function ensureProjectWorkspace(dataDir: string, teamId: string, projectI
 		throw new Error('dataDir, teamId, and projectId are required');
 	}
 	const projectDir = getProjectDir(dataDir, teamId, projectId);
-	for (const sub of ['workspace', 'worktrees', '.previews', 'assets']) {
+	for (const sub of ['workspace', 'worktrees', '.previews']) {
 		mkdirSync(join(projectDir, sub), { recursive: true });
 	}
 	return projectDir;
@@ -63,19 +63,6 @@ export function getProjectDir(dataDir: string, teamId: string, projectId: string
 
 export function getWorkspacePath(dataDir: string, teamId: string, projectId: string): string {
 	return join(getProjectDir(dataDir, teamId, projectId), 'workspace');
-}
-
-export function getAssetsPath(dataDir: string, teamId: string, projectId: string): string {
-	return join(getProjectDir(dataDir, teamId, projectId), 'assets');
-}
-
-export function getAssetPath(
-	dataDir: string,
-	teamId: string,
-	projectId: string,
-	assetId: string,
-): string {
-	return join(getAssetsPath(dataDir, teamId, projectId), assetId);
 }
 
 export function getWorktreesPath(dataDir: string, teamId: string, projectId: string): string {

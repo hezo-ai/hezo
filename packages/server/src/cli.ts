@@ -23,6 +23,14 @@ export interface HezoConfig {
 	 * `redactDatabaseUrl` in `lib/db-info.ts`) and never passed into `buildApp`.
 	 */
 	databaseUrl?: string;
+	/**
+	 * S3-compatible asset storage URL (`--asset-storage-url` /
+	 * `HEZO_ASSET_STORAGE_URL`). Unset → asset blobs on the local filesystem
+	 * under `<dataDir>/assets`. The raw value carries credentials: it must never
+	 * be logged or exposed un-redacted (see `redactAssetStorageUrl` in
+	 * `lib/asset-storage-info.ts`) and never passed into `buildApp`.
+	 */
+	assetStorageUrl?: string;
 	masterKey?: { unlockKeyHex: string; publicKeyHex: string };
 	webUrl: string;
 	reset: boolean;
@@ -299,6 +307,10 @@ export function parseConfig(
 			'External Postgres connection string (postgres://user:password@host:5432/db). Omit to use the embedded database under the data directory. (env: HEZO_DATABASE_URL)',
 		)
 		.option(
+			'--asset-storage-url <url>',
+			'S3-compatible object storage for asset files (s3://ACCESS_KEY:SECRET@endpoint/bucket[/prefix]?region=…&pathStyle=…). Works with AWS S3, MinIO, R2, Spaces, B2, and any other S3-compatible store. Omit to store assets on the local filesystem under the data directory. (env: HEZO_ASSET_STORAGE_URL)',
+		)
+		.option(
 			'--master-key <phrase>',
 			'The 12-word master key phrase for setup/unlock (env: HEZO_MASTER_KEY)',
 		)
@@ -376,6 +388,7 @@ export function parseConfig(
 		port: parsePort(pick('HEZO_PORT', cli.port) ?? String(DEFAULT_PORT)),
 		dataDir: resolveDataDir(pick('HEZO_DATA_DIR', cli.dataDir) ?? DEFAULT_DATA_DIR),
 		databaseUrl,
+		assetStorageUrl: pick('HEZO_ASSET_STORAGE_URL', cli.assetStorageUrl),
 		masterKey: masterKeyRaw ? parseMasterKey(masterKeyRaw) : undefined,
 		webUrl: pick('HEZO_WEB_URL', cli.webUrl) ?? '',
 		reset,

@@ -68,6 +68,16 @@ conversation rather than hunting for a file on a server you can't reach. The CEO
 deliverable with whichever **project** the conversation is about, falling back to HQ only when
 the work isn't tied to a project at all.
 
+## Where asset files live
+
+Asset files are stored by the server in its configured **asset storage**: the local data
+directory by default, or any **S3-compatible bucket** when one is configured (see
+[Storing assets in S3-compatible object storage](/docs/deployment/configuration)). Either
+way, everyone — you in the browser, and agents through their tools — reads assets through
+Hezo's signed URLs, so a bucket never needs to be publicly accessible and agents never
+depend on server disk paths. The active backend is shown under **Settings → General →
+Asset storage**.
+
 ## Archiving & deleting assets
 
 Assets are retired by **archiving** — a reversible soft delete. An archived asset drops out

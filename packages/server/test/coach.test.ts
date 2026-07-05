@@ -258,9 +258,18 @@ describe('Coach review prompt builder', () => {
 			assetId,
 		]);
 
-		const prompt = await buildCoachReviewPrompt(db, 'SYS', taskRow.rows[0], teamId);
+		const prompt = await buildCoachReviewPrompt(
+			db,
+			'SYS',
+			taskRow.rows[0],
+			teamId,
+			masterKeyManager,
+			3100,
+		);
 		expect(prompt).toContain('attachment: crash.log');
-		expect(prompt).toContain(`/workspace/.hezo/assets/${assetId}`);
+		expect(prompt).toContain(
+			`download: http://host.docker.internal:3100/api/assets/${assetId}?exp=`,
+		);
 	});
 
 	it('seeded coach system prompt contains the summary-comment rule from the partial', async () => {

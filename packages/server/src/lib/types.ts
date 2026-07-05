@@ -1,4 +1,5 @@
 import type { AuthType } from '@hezo/shared';
+import type { AssetStore } from '../assets/store';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
@@ -48,6 +49,7 @@ export type AuthInfo =
 export type Env = {
 	Variables: {
 		db: Db;
+		assetStore: AssetStore;
 		masterKeyManager: MasterKeyManager;
 		authChallenges: AuthChallengeStore;
 		docker: DockerClient;

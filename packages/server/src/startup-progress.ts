@@ -15,6 +15,7 @@ export type StartupPhaseId =
 	| 'database'
 	| 'migrations'
 	| 'seed'
+	| 'asset-storage'
 	| 'pricing'
 	| 'workspace'
 	| 'ready'
@@ -33,6 +34,7 @@ const PHASE_MESSAGES: Record<StartupPhaseId, string> = {
 	database: 'Opening the database…',
 	migrations: 'Running database migrations…',
 	seed: 'Preparing data…',
+	'asset-storage': 'Connecting to asset storage…',
 	pricing: 'Loading model pricing…',
 	workspace: 'Setting up your workspace…',
 	ready: 'Ready',

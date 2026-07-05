@@ -19,6 +19,7 @@
 		"@hezo/shared": "workspace:*",
 		"@hiddentao/logger": "^1.3.3",
 		"@modelcontextprotocol/sdk": "^1.29.0",
+		"aws4fetch": "^1.0.20",
 		"commander": "^14.0.3",
 		"cron-async": "^1.2.1",
 		"hono": "^4",

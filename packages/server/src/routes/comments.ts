@@ -14,7 +14,6 @@ import { err, ok } from '../lib/response';
 import { withTransaction } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { deleteAsset } from '../services/asset-storage';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 import { parseEffortFromCommentBody } from '../services/effort';
 import {
@@ -599,10 +598,10 @@ commentsRoutes.post(
 			updatedComment = result.updated;
 
 			// Blob removal is best-effort after commit (same posture as the admin
-			// DELETE route); a leftover file is unreachable without its row.
+			// DELETE route); a leftover blob is unreachable without its row.
 			for (const id of deletedIds) {
 				try {
-					await deleteAsset(c.get('dataDir'), teamId, projectId, id);
+					await c.get('assetStore').delete(projectId, id);
 				} catch (e) {
 					log.error('Failed to delete asset blob after approval:', e);
 				}

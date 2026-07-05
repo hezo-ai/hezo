@@ -569,6 +569,21 @@ projectsRoutes.delete('/projects/:projectId', async (c) => {
 		),
 	);
 
+	// Blob removal is best-effort after the row delete below (the rows are the
+	// source of truth). deleteProjectAssets also sweeps orphaned blobs whose
+	// rows were already gone.
+	await trackBackground(
+		c
+			.get('assetStore')
+			.deleteProjectAssets(projectId)
+			.catch((error) => {
+				log.error(
+					`Failed to delete asset blobs for project ${ref(existing.rows[0].slug, projectId)}:`,
+					error,
+				);
+			}),
+	);
+
 	await db.query('DELETE FROM projects WHERE id = $1', [projectId]);
 	broadcastChange(c, wsRoom.team(teamId), 'projects', 'DELETE', { id: projectId });
 	return c.json({ data: null }, 200);

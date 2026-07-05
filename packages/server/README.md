@@ -31,6 +31,7 @@ Starts the server on port 3100 with hot reload. In dev, PGlite data persists at 
 | `--port <n>` | `3100` | HTTP listen port (env: `HEZO_PORT`) |
 | `--data-dir <path>` | `~/.hezo` | Data directory for the embedded database and assets (env: `HEZO_DATA_DIR`) |
 | `--database-url <url>` | — | External Postgres connection string; omit for the embedded database (env: `HEZO_DATABASE_URL`) |
+| `--asset-storage-url <url>` | — | S3-compatible object storage for asset files (`s3://KEY:SECRET@endpoint/bucket[/prefix]`); omit to store assets under the data directory (env: `HEZO_ASSET_STORAGE_URL`) |
 | `--master-key <phrase>` | — | Twelve-word master key to set up/unlock on startup (env: `HEZO_MASTER_KEY`) |
 | `--web-url <url>` | same origin | Public base URL for sign-in redirects (env: `HEZO_WEB_URL`) |
 | `--reset` | `false` | Start fresh (existing `pgdata` is renamed aside, not deleted) (env: `HEZO_RESET`) |

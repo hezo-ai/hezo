@@ -29,6 +29,15 @@ backups, more headroom, or your own operational tooling — point Hezo at it wit
 [Using an external Postgres](/docs/deployment/configuration)). The data directory is still
 used for workspaces, uploaded assets, and keys; only the database rows move.
 
+Uploaded **asset files** work the same way: they live under `<data-dir>/assets/` by
+default, or in any **S3-compatible bucket** when you set `--asset-storage-url` /
+`HEZO_ASSET_STORAGE_URL` (see
+[Storing assets in S3-compatible object storage](/docs/deployment/configuration)). With a
+bucket configured, asset bytes live only with your storage provider — stored as plain
+objects (enable the provider's server-side encryption if you want them encrypted at
+rest) and always served through Hezo's signed URLs, so the bucket stays private. The
+active backend is shown under **Settings → General → Asset storage**.
+
 Be clear-eyed about what changes: **your business content — tasks, comments, documents —
 is stored as ordinary database rows**, so with an external database that content lives
 with your database provider and travels the network. Hezo checks the server version at

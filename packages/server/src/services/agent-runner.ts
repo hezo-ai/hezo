@@ -31,6 +31,7 @@ import {
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
+import { signAgentAssetUrl } from '../lib/asset-urls';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
@@ -591,7 +592,14 @@ async function buildRunContext(
 		basePrompt = buildProgressUpdatePrompt(resolvedPrompt, progressUpdate);
 	} else if (isCoachReview) {
 		// task is non-null on every non-progress-update path (enforced by runAgent).
-		basePrompt = await buildCoachReviewPrompt(deps.db, resolvedPrompt, task as TaskInfo, runTeamId);
+		basePrompt = await buildCoachReviewPrompt(
+			deps.db,
+			resolvedPrompt,
+			task as TaskInfo,
+			runTeamId,
+			deps.masterKeyManager,
+			deps.serverPort,
+		);
 	} else {
 		basePrompt = buildTaskPrompt(resolvedPrompt, task as TaskInfo, wakeupPayload, {
 			mentionContext,
@@ -1595,14 +1603,15 @@ export interface AgentAttachment {
 	original_filename: string;
 	content_type: string;
 	byte_size: number;
-	path: string;
+	/** Absolute signed download URL fetchable from inside the run container. */
+	url: string;
 }
-
-export const AGENT_ATTACHMENT_DIR = '/workspace/.hezo/assets';
 
 export async function loadAgentAttachmentsForComments(
 	db: Db,
 	commentIds: string[],
+	masterKeyManager: MasterKeyManager,
+	serverPort: number,
 ): Promise<Map<string, AgentAttachment[]>> {
 	if (commentIds.length === 0) return new Map();
 	const rows = await db.query<{
@@ -1627,7 +1636,7 @@ export async function loadAgentAttachmentsForComments(
 			original_filename: row.original_filename,
 			content_type: row.content_type,
 			byte_size: row.byte_size,
-			path: `${AGENT_ATTACHMENT_DIR}/${row.id}`,
+			url: await signAgentAssetUrl(row.id, masterKeyManager, serverPort),
 		});
 		out.set(row.comment_id, list);
 	}
@@ -1963,6 +1972,8 @@ export async function buildCoachReviewPrompt(
 	systemPrompt: string,
 	task: TaskInfo,
 	teamId: string,
+	masterKeyManager: MasterKeyManager,
+	serverPort: number,
 ): Promise<string> {
 	const comments = await db.query<{
 		id: string;
@@ -1999,7 +2010,12 @@ export async function buildCoachReviewPrompt(
 	);
 
 	const commentIds = comments.rows.map((c) => c.id);
-	const attachmentsByComment = await loadAgentAttachmentsForComments(db, commentIds);
+	const attachmentsByComment = await loadAgentAttachmentsForComments(
+		db,
+		commentIds,
+		masterKeyManager,
+		serverPort,
+	);
 
 	const commentLog = comments.rows
 		.map((c) => {
@@ -2009,7 +2025,7 @@ export async function buildCoachReviewPrompt(
 			const reactionLine = formatReactionLine(reactionsByComment.get(c.id));
 			const attachmentLines = (attachmentsByComment.get(c.id) ?? []).map(
 				(a) =>
-					`  attachment: ${a.original_filename} (${a.content_type}, ${a.byte_size} bytes) → ${a.path}`,
+					`  attachment: ${a.original_filename} (${a.content_type}, ${a.byte_size} bytes) → download: ${a.url}`,
 			);
 			const extra = [reactionLine, ...attachmentLines].filter((l): l is string => l !== null);
 			return extra.length > 0 ? `${base}\n${extra.join('\n')}` : base;

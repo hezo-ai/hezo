@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { AuthType } from '@hezo/shared';
 import { app } from './app';
+import { AssetStorageError } from './assets/errors';
 import { parseConfig, runBackup, runRestore, runVersion } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
 import { PgDataCorruptError } from './db/client';
@@ -204,6 +205,7 @@ void (async () => {
 		const result = await startup(config);
 		if (thisStartupGeneration !== startupGeneration) {
 			log.warn('Ignoring stale startup completion after reload');
+			await result.assetStore.close();
 			await result.db.close();
 			return;
 		}
@@ -244,7 +246,8 @@ void (async () => {
 			err instanceof DbNewerThanAppError ||
 			err instanceof MigrationFailedError ||
 			err instanceof ExternalDbError ||
-			err instanceof ExternalMigrationFailedError
+			err instanceof ExternalMigrationFailedError ||
+			err instanceof AssetStorageError
 		) {
 			log.error(`\n${err.message}\n`);
 			process.exit(1);

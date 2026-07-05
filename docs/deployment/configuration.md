@@ -16,9 +16,10 @@ handy for baking defaults into a service definition while still overriding per r
 | Flag | Environment variable | Default | Description |
 |---|---|---|---|
 | `--port <port>` | `HEZO_PORT` | `3100` | Port the server and web app listen on (1–65535). |
-| `--data-dir <path>` | `HEZO_DATA_DIR` | `~/.hezo/` | Where Hezo stores its database, encrypted secrets, and assets. Still required with an external database — workspaces, assets, and keys live here. |
+| `--data-dir <path>` | `HEZO_DATA_DIR` | `~/.hezo/` | Where Hezo stores its database, encrypted secrets, and assets. Still required with an external database or S3 asset storage — workspaces and keys live here. |
 | `--database-url <url>` | `HEZO_DATABASE_URL` | — | Connection string for an [external Postgres](#using-an-external-postgres) (`postgres://user:password@host:5432/hezo`). Omit to use the embedded database under the data directory (the default). |
 | — | `HEZO_DATABASE_POOL_SIZE` | `10` | Connection-pool size for the external database (2–100). Ignored for the embedded database. |
+| `--asset-storage-url <url>` | `HEZO_ASSET_STORAGE_URL` | — | [S3-compatible object storage](#storing-assets-in-s3-compatible-object-storage) for asset files (`s3://KEY:SECRET@endpoint/bucket[/prefix]`). Omit to store assets on the local filesystem under the data directory (the default). |
 | `--master-key <phrase>` | `HEZO_MASTER_KEY` | — | The twelve-word master key, to set up or unlock without the web gate. |
 | `--web-url <url>` | `HEZO_WEB_URL` | same origin | Public base URL, used so account sign-ins redirect back correctly. |
 | `--reset` | `HEZO_RESET` | off | Start fresh with an empty **embedded** database (the existing `pgdata` is renamed aside, not deleted). Not applicable with `--database-url` — recreate an external database with your provider's tools. |
@@ -93,6 +94,64 @@ Requirements and recommendations:
 - `hezo backup` / `hezo restore` work against an external database too — including
   **moving an existing embedded instance to hosted Postgres** (and back). See
   [Backup & recovery](/docs/deployment/backup-and-recovery).
+
+## Storing assets in S3-compatible object storage
+
+By default, uploaded [asset](/docs/concepts/assets) files (task attachments and the
+project assets library) live on the local filesystem under `<data-dir>/assets/`. To keep
+them in a bucket instead — for managed durability, or to keep the host closer to
+stateless — point Hezo at any **S3-compatible** store:
+
+```sh
+HEZO_ASSET_STORAGE_URL="s3://ACCESS_KEY:SECRET@s3.eu-west-1.amazonaws.com/my-bucket/hezo-assets?region=eu-west-1" \
+  hezo --data-dir /var/lib/hezo
+```
+
+One URL carries the whole configuration:
+
+```
+s3://ACCESS_KEY:SECRET@endpoint[:port]/bucket[/prefix]?region=…&pathStyle=…&tls=…
+```
+
+- **`endpoint`** — the storage host. AWS S3, MinIO, Cloudflare R2, DigitalOcean Spaces,
+  Backblaze B2, and anything else that speaks the S3 API all work; only the S3 protocol
+  is supported (no provider-native APIs).
+- **`bucket[/prefix]`** — the bucket, plus an optional key prefix if the bucket is shared
+  with other data. Objects are stored as `[prefix/]<project-id>/<asset-id>`.
+- **`region`** — defaults to `us-east-1` (many S3-compatible stores accept any value).
+- **`pathStyle`** — defaults to `true` for custom endpoints (MinIO and friends) and
+  `false` (virtual-hosted addressing) for `*.amazonaws.com`.
+- **`tls`** — defaults to `true`; set `tls=false` only for local/dev endpoints.
+- Percent-encode any `/`, `+`, or `@` characters inside the access key or secret.
+
+At startup Hezo verifies it can reach the bucket with the given credentials and exits
+with guidance if it can't. The active backend (with credentials occluded) is shown under
+**Settings → General → Asset storage**.
+
+Recommendations:
+
+- **Use TLS and a private bucket.** Asset bytes are served through the Hezo server with
+  signed URLs — the bucket never needs to be publicly readable. Assets are stored as
+  plain objects, so enable your provider's server-side encryption if you want them
+  encrypted at rest.
+- **One Hezo server per bucket/prefix.** Two live servers sharing a prefix is not
+  supported (same posture as the database).
+- The URL carries credentials: prefer the environment variable over the flag (flags are
+  visible in the process list), and never commit it to a repo.
+
+### Switching an existing instance
+
+The local layout under `<data-dir>/assets/` and the bucket key layout are identical
+(`<project-id>/<asset-id>`), so moving is a plain sync with any S3 tool. To move to a
+bucket:
+
+1. Stop the server (upgrade it and start it once first, if you're coming from an older
+   version — the first start moves any old-layout assets into `<data-dir>/assets/`).
+2. Copy the tree into the bucket, e.g.
+   `aws s3 sync /var/lib/hezo/assets/ s3://my-bucket/hezo-assets/` (or `rclone sync`).
+3. Start the server with `HEZO_ASSET_STORAGE_URL` set.
+
+Moving back to local storage is the same sync in reverse, then start without the URL.
 
 ## Anonymous usage telemetry
 

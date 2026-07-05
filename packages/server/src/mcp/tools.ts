@@ -44,12 +44,15 @@ import {
 } from '@hezo/shared';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { LocalAssetStore } from '../assets/drivers/local';
+import type { AssetStore } from '../assets/store';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
 import { isCoach, isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
 import { upsertProjectAsset } from '../lib/asset-name';
+import { signAgentAssetUrl } from '../lib/asset-urls';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { trackBackground } from '../lib/background';
 import { broadcastCommentFamilyChange, broadcastRowChange } from '../lib/broadcast';
@@ -80,7 +83,7 @@ import {
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
 import { setAgentAdminStatus } from '../services/agent-admin';
-import { AGENT_ATTACHMENT_DIR, loadAgentAttachmentsForComments } from '../services/agent-runner';
+import { loadAgentAttachmentsForComments } from '../services/agent-runner';
 import {
 	AgentSystemPromptError,
 	fetchAgentSystemPromptForBatch,
@@ -88,7 +91,6 @@ import {
 } from '../services/agent-system-prompts';
 import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
-import { deleteAsset, readAsset, writeAsset } from '../services/asset-storage';
 import { upsertChatMemory } from '../services/chat-memory';
 import { fireCommentWakeups } from '../services/comment-wakeups';
 import type { ContainerDeps } from '../services/containers';
@@ -746,8 +748,16 @@ export function registerTools(
 	wsManager?: WebSocketManager,
 	events?: DomainEventBus,
 	containerDeps?: ContainerDeps,
+	assetStore?: AssetStore,
+	serverPort?: number,
 ): ToolDef[] {
 	registeredTools.length = 0;
+	// Startup always passes the selected store; the fallback covers direct
+	// callers (reference generation, tests) that register without running
+	// handlers or with a plain local data dir.
+	const assets = assetStore ?? new LocalAssetStore(dataDir);
+	// Port for agent-facing download URLs (host.docker.internal origin).
+	const agentPort = serverPort ?? 0;
 
 	// Teams
 	tool(
@@ -2014,7 +2024,12 @@ export function registerTools(
 			const viewerMemberId = await resolveActorMemberId(db, auth, teamId);
 			const reactionsByComment = await loadReactionsForTask(db, taskId, viewerMemberId);
 			const commentIds = r.rows.map((row) => row.id as string);
-			const attachmentsByComment = await loadAgentAttachmentsForComments(db, commentIds);
+			const attachmentsByComment = await loadAgentAttachmentsForComments(
+				db,
+				commentIds,
+				masterKeyManager,
+				agentPort,
+			);
 			const enriched: Record<string, unknown>[] = r.rows.map((row) => ({
 				...row,
 				reactions: reactionsByComment.get(row.id as string) ?? [],
@@ -3597,7 +3612,7 @@ export function registerTools(
 			}
 
 			const assetId = crypto.randomUUID();
-			const { byteSize, sha256 } = await writeAsset(dataDir, teamId, projectId, assetId, blob);
+			const { byteSize, sha256 } = await assets.write(projectId, assetId, blob);
 			const uploadedBy = auth.type === AuthType.Agent ? auth.memberId : null;
 			let result: Awaited<ReturnType<typeof upsertProjectAsset>>;
 			try {
@@ -3612,11 +3627,11 @@ export function registerTools(
 					uploadedByMemberId: uploadedBy,
 				});
 			} catch (e) {
-				await deleteAsset(dataDir, teamId, projectId, assetId).catch(() => {});
+				await assets.delete(projectId, assetId).catch(() => {});
 				throw e;
 			}
 			if (result.replacedAssetId) {
-				await deleteAsset(dataDir, teamId, projectId, result.replacedAssetId).catch(() => {});
+				await assets.delete(projectId, result.replacedAssetId).catch(() => {});
 			}
 			broadcastRowChange(wsManager, wsRoom.team(teamId), 'assets', 'INSERT', {
 				id: result.id,
@@ -3632,7 +3647,7 @@ export function registerTools(
 	tool(
 		server,
 		'read_project_asset',
-		"Read a project asset's contents by path (e.g. \"ui-mockups.html\" or \"scripts/check.sh\") — the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a read-only container path under /workspace/.hezo/assets/ to open directly. Archived assets are not readable by default — set filter: 'archived' or 'all' to read one. For markdown project docs use read_project_doc instead.",
+		"Read a project asset's contents by path (e.g. \"ui-mockups.html\" or \"scripts/check.sh\") — the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a signed download `url` — fetch it with a plain `curl -fsSL '<url>' -o /tmp/<filename>` (no auth header needed; the URL is valid for 24h, re-call this tool for a fresh one). Archived assets are not readable by default — set filter: 'archived' or 'all' to read one. For markdown project docs use read_project_doc instead.",
 		{
 			project: projectArg(),
 			filename: z
@@ -3644,7 +3659,7 @@ export function registerTools(
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 
-			const { teamId, projectId } = scope;
+			const { projectId } = scope;
 			const filename = normalizeAssetPath(args.filename as string);
 			if (filename === null) return { error: assetPathError(args.filename as string) };
 
@@ -3671,8 +3686,9 @@ export function registerTools(
 				};
 			}
 
-			// Text-based assets are returned inline; binary assets are left on the
-			// read-only bind mount for the agent to open directly.
+			// Text-based assets are returned inline; binary assets get a signed
+			// download URL the agent fetches itself (curl) — blobs are never on the
+			// container filesystem.
 			const isText =
 				asset.content_type.startsWith('text/') || asset.content_type === 'image/svg+xml';
 			if (!isText) {
@@ -3681,12 +3697,12 @@ export function registerTools(
 					content_type: asset.content_type,
 					byte_size: Number(asset.byte_size),
 					binary: true,
-					path: `${AGENT_ATTACHMENT_DIR}/${asset.id}`,
+					url: await signAgentAssetUrl(asset.id, masterKeyManager, agentPort),
 					...(archived ? { archived: true } : {}),
 				};
 			}
 
-			const buf = await readAsset(dataDir, teamId, projectId, asset.id);
+			const buf = await assets.read(projectId, asset.id);
 			return {
 				filename: asset.original_filename,
 				content_type: asset.content_type,
@@ -3792,11 +3808,9 @@ export function registerTools(
 			const source = found.rows[0];
 
 			const { teamId, projectId } = scope;
-			const buf = await readAsset(dataDir, teamId, projectId, source.id);
+			const buf = await assets.read(projectId, source.id);
 			const assetId = crypto.randomUUID();
-			const { byteSize, sha256 } = await writeAsset(
-				dataDir,
-				teamId,
+			const { byteSize, sha256 } = await assets.write(
 				projectId,
 				assetId,
 				new Blob([new Uint8Array(buf)]),
@@ -3812,7 +3826,7 @@ export function registerTools(
 				);
 				inserted = r.rows[0];
 			} catch (e) {
-				await deleteAsset(dataDir, teamId, projectId, assetId).catch(() => {});
+				await assets.delete(projectId, assetId).catch(() => {});
 				if (isUniqueViolation(e)) {
 					return {
 						error: `Destination 'assets/${to}' already exists — copies never overwrite. Pick a different name.`,

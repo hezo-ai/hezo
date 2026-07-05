@@ -244,7 +244,8 @@ under a "viewing revision N" banner. Restore stays admin-only (agents 403 on the
 MCP restore tool). `skills` is the
 instance/team reference store (manifest-injected into runs, full-text-searchable) with
 `skill_revisions` history. `assets` + `task_attachments`/`comment_attachments` handle
-uploaded files (bytes on local disk keyed by asset UUID, served over HMAC-signed URLs with
+uploaded files (blobs in the configured **asset store** keyed by `projectId/assetId` — see
+§ Asset storage below — served over HMAC-signed URLs with
 `nosniff` and a basename-only download filename); agents can also author text-based assets
 directly (`write_project_asset` — HTML, SVG, plain text/scripts, and markdown such as a blog
 post; script extensions like `.sh`/`.py`/`.js` store as inert `text/plain`), and the web app
@@ -1115,6 +1116,37 @@ computes a redacted `StorageInfo` once (`redactDatabaseUrl` in `src/lib/db-info.
 credentials occluded, query params dropped except `sslmode`) and only that is passed to
 `buildApp`, surfaced at the superuser-only `GET /api/database-info` for the Settings →
 General Database card.
+
+**Asset storage.** Asset blobs (task attachments + the project assets library) live behind
+the `AssetStore` interface (`src/assets/store.ts`:
+`write`/`read`/`delete`/`deleteProjectAssets`/`close`, keyed `projectId/assetId` — teams
+are 1:1 with projects so nothing team-scoped appears in a key, and a blob is immutable per
+asset id since overwrites mint a new id). Drivers live in `src/assets/drivers/` and are
+constructed only by `src/assets/open.ts:openAssetStorage()` at startup: **local** (default;
+`<dataDir>/assets/<projectId>/<assetId>`) and **s3** (`--asset-storage-url` /
+`HEZO_ASSET_STORAGE_URL`, one `s3://KEY:SECRET@endpoint/bucket[/prefix]?region=…&pathStyle=…&tls=…`
+URL) — a thin SigV4 client over `aws4fetch` (`src/assets/s3-client.ts`, exactly
+PutObject/GetObject/DeleteObject/ListObjectsV2/DeleteObjects; deliberately S3-compatible-only,
+no provider-native drivers) with a ListObjectsV2 preflight + bounded retry at startup and a
+typed `AssetStorageError` printed verbatim + exit on failure. In S3 mode the host filesystem
+holds no asset bytes at all; both layouts share the same relative `<projectId>/<assetId>`
+shape so switching backends is a plain directory↔bucket sync. On local-driver open, a
+one-time idempotent fs-only relocation (`relocateLegacyAssetBlobs`) renames blobs written by
+pre-abstraction versions (`teams/<t>/projects/<p>/assets/<id>`) into the new layout. The raw
+URL never reaches request-reachable state (mirrors the DB posture): startup computes a
+redacted `AssetStorageInfo` once (`redactAssetStorageUrl` in `src/lib/asset-storage-info.ts`
+— credentials occluded, query params dropped except `region`/`pathStyle`/`tls`), surfaced at
+the superuser-only `GET /api/asset-storage-info` for the Settings → General Asset-storage
+card. **Agents access assets exclusively through the API** — the assets dir is *not*
+bind-mounted into containers. Binary contents come back from `read_project_asset` (and
+task-thread attachment lines in run prompts / `list_comments`) as absolute signed download
+URLs on the `http://host.docker.internal:<serverPort>` origin (the same NO_PROXY'd origin as
+the MCP endpoint, so a plain in-container `curl` works), signed with the long agent TTL
+(`AGENT_ASSET_URL_TTL_SECONDS`, 24 h; `lib/asset-urls.ts:signAgentAssetUrl`). Project
+deletion sweeps blobs via `deleteProjectAssets` (S3: paginated list + 1000-key batch
+deletes, which also collects orphans). The in-process S3 sim
+(`test/helpers/s3-sim.ts`) backs the driver-conformance and integration suites; the
+`test-s3` CI job runs the env-gated leg against real MinIO.
 
 **Backup/restore.** The operator format is the **portable logical backup**
 (`src/db/logical-backup.ts`): gzipped JSONL carrying the applied-migration set plus every

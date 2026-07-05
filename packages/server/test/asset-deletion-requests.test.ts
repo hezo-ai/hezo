@@ -101,7 +101,7 @@ async function resolveDeletion(
 }
 
 function diskPath(assetId: string): string {
-	return join(dataDir, 'teams', teamId, 'projects', projectId, 'assets', assetId);
+	return join(dataDir, 'assets', projectId, assetId);
 }
 
 /** The audit observer writes via trackBackground — poll briefly for the row. */

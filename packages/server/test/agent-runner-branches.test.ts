@@ -8,6 +8,7 @@
 import { AiAuthMethod, AiProvider } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import {
@@ -34,6 +35,7 @@ import { authHeader, createTestApp, createTestProject, createTestTeam } from './
 let app: Hono<Env>;
 let db: Db;
 let adminToken: string;
+let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let projectId: string;
 let projectSlug: string;
@@ -45,6 +47,7 @@ beforeAll(async () => {
 	app = ctx.app;
 	db = ctx.db;
 	adminToken = ctx.token;
+	masterKeyManager = ctx.masterKeyManager;
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(adminToken) });
 	const typeId = (await typesRes.json()).data.find(
@@ -500,11 +503,11 @@ describe('buildTaskPrompt', () => {
 // --------------------------------------------------------------------------
 describe('loadAgentAttachmentsForComments', () => {
 	it('returns an empty map for no comment ids without querying', async () => {
-		const out = await loadAgentAttachmentsForComments(db, []);
+		const out = await loadAgentAttachmentsForComments(db, [], masterKeyManager, 3100);
 		expect(out.size).toBe(0);
 	});
 
-	it('groups attachments by comment id with a container-relative asset path', async () => {
+	it('groups attachments by comment id with a signed download url', async () => {
 		const comment = await db.query<{ id: string }>(
 			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 			 VALUES ($1, NULL, 'text', $2::jsonb) RETURNING id`,
@@ -522,14 +525,16 @@ describe('loadAgentAttachmentsForComments', () => {
 			assetId,
 		]);
 
-		const out = await loadAgentAttachmentsForComments(db, [commentId]);
+		const out = await loadAgentAttachmentsForComments(db, [commentId], masterKeyManager, 3100);
 		const list = out.get(commentId) as AgentAttachment[];
 		expect(list).toBeDefined();
 		expect(list.length).toBe(1);
 		expect(list[0].original_filename).toBe('diagram.png');
 		expect(list[0].content_type).toBe('image/png');
 		expect(list[0].byte_size).toBe(2048);
-		expect(list[0].path).toBe(`/workspace/.hezo/assets/${assetId}`);
+		expect(list[0].url).toMatch(
+			new RegExp(`^http://host\\.docker\\.internal:3100/api/assets/${assetId}\\?exp=\\d+&sig=`),
+		);
 
 		await db.query('DELETE FROM comment_attachments WHERE comment_id = $1', [commentId]);
 		await db.query('DELETE FROM assets WHERE id = $1', [assetId]);
@@ -852,6 +857,8 @@ describe('buildCoachReviewPrompt', () => {
 				progress_summary: 'All done',
 			}),
 			teamId,
+			masterKeyManager,
+			3100,
 		);
 
 		expect(out).toContain('### Rules');

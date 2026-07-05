@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import {
 	ATTACHMENT_EXTENSIONS,
 	ATTACHMENT_MAX_BYTES,
@@ -16,6 +15,7 @@ import {
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { AssetNotFoundError, AttachmentTooLargeError } from '../assets/store';
 import { insertAssetWithUniqueName } from '../lib/asset-name';
 import { signAssetUrl, verifyAssetUrl } from '../lib/asset-urls';
 import { broadcastChange } from '../lib/broadcast';
@@ -31,8 +31,6 @@ import { err, ok } from '../lib/response';
 import { isUniqueViolation } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
-import { AttachmentTooLargeError, deleteAsset, writeAsset } from '../services/asset-storage';
-import { getAssetPath } from '../services/workspace';
 
 const log = logger.child('routes');
 
@@ -78,34 +76,43 @@ export async function storeUploadedAsset(
 	}
 
 	const db = c.get('db');
+	const store = c.get('assetStore');
 	const assetId = randomUUID();
 	let byteSize: number;
 	let sha256: string;
 	try {
-		const result = await writeAsset(c.get('dataDir'), teamId, projectId, assetId, file);
+		const result = await store.write(projectId, assetId, file);
 		byteSize = result.byteSize;
 		sha256 = result.sha256;
 	} catch (e) {
 		if (e instanceof AttachmentTooLargeError) {
 			return err(c, 'TOO_LARGE', 'Attachment exceeds 10 MB', 400);
 		}
-		log.error('Failed to write asset to disk:', e);
+		log.error('Failed to store asset blob:', e);
 		return err(c, 'INTERNAL_ERROR', 'Failed to store attachment', 500);
 	}
 
 	const auth = c.get('auth');
 	const uploadedBy = await resolveActorMemberId(db, auth, teamId);
 	const base = normalizeAssetFilename(file.name);
-	const asset = await insertAssetWithUniqueName(db, {
-		assetId,
-		teamId,
-		projectId,
-		contentType,
-		byteSize,
-		sha256,
-		desiredName: normalizedFolder ? `${normalizedFolder}/${base}` : base,
-		uploadedByMemberId: uploadedBy,
-	});
+	let asset: Awaited<ReturnType<typeof insertAssetWithUniqueName>>;
+	try {
+		asset = await insertAssetWithUniqueName(db, {
+			assetId,
+			teamId,
+			projectId,
+			contentType,
+			byteSize,
+			sha256,
+			desiredName: normalizedFolder ? `${normalizedFolder}/${base}` : base,
+			uploadedByMemberId: uploadedBy,
+		});
+	} catch (e) {
+		// The blob was already stored; without its row it is unreachable, so drop
+		// it rather than leave an orphan (matters more when the store is a bucket).
+		await store.delete(projectId, assetId).catch(() => {});
+		throw e;
+	}
 
 	const isAgent = auth.type === AuthType.Agent;
 	c.get('events').emit({
@@ -268,7 +275,7 @@ assetsRoutes.delete('/projects/:projectId/assets/:assetId', async (c) => {
 
 	// Removes the row; `comment_attachments` rows cascade. Then drop the blob.
 	await db.query('DELETE FROM assets WHERE id = $1', [assetId]);
-	await deleteAsset(c.get('dataDir'), teamId, projectId, assetId);
+	await c.get('assetStore').delete(projectId, assetId);
 
 	const actorMemberId = await resolveActorMemberId(db, auth, teamId);
 	c.get('events').emit({
@@ -444,10 +451,9 @@ publicAssetsRoutes.get('/api/assets/:assetId', async (c) => {
 		content_type: string;
 		original_filename: string;
 		byte_size: number;
-		team_id: string;
 		project_id: string;
 	}>(
-		`SELECT content_type, original_filename, byte_size, team_id, project_id
+		`SELECT content_type, original_filename, byte_size, project_id
 		 FROM assets
 		 WHERE id = $1`,
 		[assetId],
@@ -455,15 +461,20 @@ publicAssetsRoutes.get('/api/assets/:assetId', async (c) => {
 	if (row.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'Asset not found', 404);
 	}
-	const { content_type, original_filename, team_id, project_id } = row.rows[0];
+	const { content_type, original_filename, project_id } = row.rows[0];
 
-	const diskPath = getAssetPath(c.get('dataDir'), team_id, project_id, assetId);
 	let buf: Buffer;
 	try {
-		buf = await readFile(diskPath);
+		buf = await c.get('assetStore').read(project_id, assetId);
 	} catch (e) {
-		log.error(`Failed to read asset ${ref(original_filename, assetId)} from disk:`, e);
-		return err(c, 'NOT_FOUND', 'Asset file missing', 404);
+		if (e instanceof AssetNotFoundError) {
+			log.error(`Asset blob missing for ${ref(original_filename, assetId)}`);
+			return err(c, 'NOT_FOUND', 'Asset file missing', 404);
+		}
+		// A storage/transport failure (e.g. the object store is unreachable) is
+		// not a 404 — the asset exists; we just can't fetch it right now.
+		log.error(`Failed to read asset ${ref(original_filename, assetId)}:`, e);
+		return err(c, 'INTERNAL_ERROR', 'Failed to read asset', 500);
 	}
 
 	// Foldered assets keep the folder in `original_filename`; the download

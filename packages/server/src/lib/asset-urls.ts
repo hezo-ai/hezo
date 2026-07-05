@@ -22,6 +22,30 @@ export async function signAssetUrl(
 	return `/api/assets/${assetId}?exp=${exp}&sig=${sig}`;
 }
 
+/**
+ * Agent-facing asset URLs are long-lived: a run can span hours and an agent
+ * may fetch an attachment late in it. An expired URL is always recoverable —
+ * the agent re-calls `read_project_asset` / `list_comments` for a fresh one —
+ * and each URL grants exactly one asset, far tighter than the whole-project
+ * read-only bind mount it replaced.
+ */
+export const AGENT_ASSET_URL_TTL_SECONDS = 24 * 60 * 60;
+
+/**
+ * Absolute, signed download URL usable from inside an agent container. Agents
+ * reach the host over `host.docker.internal:<serverPort>` — the same origin as
+ * the MCP endpoint — which the per-run egress proxy exempts via NO_PROXY, so a
+ * plain `curl <url>` works with no proxy or auth header.
+ */
+export async function signAgentAssetUrl(
+	assetId: string,
+	masterKeyManager: MasterKeyManager,
+	serverPort: number,
+): Promise<string> {
+	const path = await signAssetUrl(assetId, masterKeyManager, AGENT_ASSET_URL_TTL_SECONDS);
+	return `http://host.docker.internal:${serverPort}${path}`;
+}
+
 export async function verifyAssetUrl(
 	assetId: string,
 	exp: number,
