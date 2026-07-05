@@ -33,6 +33,81 @@ export function buildGitSshUrl(hostType: RepoHostType, repoIdentifier: string): 
 	return `git@${host}:${repoIdentifier}.git`;
 }
 
+function escapeRegExp(s: string): string {
+	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Whether a configured remote URL points at the given repo (`owner/repo`) on the
+ * given host. Accepts the scp-style SSH form Hezo writes plus the `ssh://` and
+ * `http(s)://` forms a human may have configured by hand — a different repo or a
+ * different host is a mismatch.
+ */
+export function remoteUrlMatchesRepo(
+	url: string,
+	repoIdentifier: string,
+	hostType: RepoHostType = RepoHostType.GitHub,
+): boolean {
+	const host = SSH_HOSTS[hostType];
+	if (!host) return false;
+	const h = escapeRegExp(host);
+	const id = escapeRegExp(repoIdentifier);
+	const forms = new RegExp(
+		`^(?:git@${h}:|ssh://git@${h}(?::\\d+)?/|https?://(?:[^/@]+@)?${h}/)${id}(?:\\.git)?/?$`,
+		'i',
+	);
+	return forms.test(url.trim());
+}
+
+export type OriginRemote =
+	/** `origin` is configured and its URL was read. */
+	| { status: 'configured'; url: string }
+	/** Git positively reported no `origin` (or that the dir is not a git repo). */
+	| { status: 'missing' }
+	/** No definitive answer — exec transport failure, or zero-exit with no URL. */
+	| { status: 'indeterminate' };
+
+/**
+ * Reads a clone's `origin` remote URL. `missing` is reserved for git's own
+ * definitive answers — "No such remote" (an agent's bare `git init` in the
+ * reserved workspace directory) or "not a git repository" (a corrupt `.git`) —
+ * both healed by the same adopt-in-place path. Anything else that isn't a
+ * readable URL is `indeterminate`: a docker-exec transport failure or a stubbed
+ * executor's empty zero-exit is no evidence of misconfiguration, and must never
+ * license "repairing" a possibly-healthy clone.
+ */
+export async function getOriginRemote(executor: GitExecutor, repo: RepoLoc): Promise<OriginRemote> {
+	const res = await executor.exec(['remote', 'get-url', 'origin'], {
+		cwd: repo.containerPath,
+		timeout: 30_000,
+	});
+	if (res.exitCode !== 0) {
+		return /no such remote|not a git repository/i.test(res.stderr)
+			? { status: 'missing' }
+			: { status: 'indeterminate' };
+	}
+	const url = res.stdout.trim();
+	return url.length > 0 ? { status: 'configured', url } : { status: 'indeterminate' };
+}
+
+/**
+ * Repoints a clone's `origin` at the repo it is supposed to track. Purely a
+ * config change — branches, commits, and the working tree are untouched; the
+ * next `git fetch --prune` replaces the stale `origin/*` tracking refs.
+ */
+export async function setOriginUrl(
+	executor: GitExecutor,
+	url: string,
+	repo: RepoLoc,
+): Promise<{ success: boolean; error?: string }> {
+	const res = await executor.exec(['remote', 'set-url', 'origin', url], {
+		cwd: repo.containerPath,
+		timeout: 30_000,
+	});
+	if (res.exitCode !== 0) return { success: false, error: formatGitError(res.stderr) };
+	return { success: true };
+}
+
 export async function cloneRepo(
 	executor: GitExecutor,
 	repoIdentifier: string,
@@ -77,7 +152,13 @@ export async function connectExistingRepo(
 	const init = await executor.exec(['init', '-b', 'main'], { cwd, timeout: 30_000 });
 	if (init.exitCode !== 0) return fail(formatGitError(init.stderr));
 
-	const remote = await executor.exec(['remote', 'add', 'origin', url], { cwd, timeout: 30_000 });
+	// A repaired repo can already carry an `origin` (e.g. one recorded in
+	// `.git/config` before the repo broke) — fall back to set-url so the connect
+	// is idempotent instead of dying on "remote origin already exists".
+	let remote = await executor.exec(['remote', 'add', 'origin', url], { cwd, timeout: 30_000 });
+	if (remote.exitCode !== 0) {
+		remote = await executor.exec(['remote', 'set-url', 'origin', url], { cwd, timeout: 30_000 });
+	}
 	if (remote.exitCode !== 0) return fail(formatGitError(remote.stderr));
 
 	// A remote with no refs has no commits yet — keep the existing files as the
@@ -131,7 +212,11 @@ export async function fetchRepo(
 	executor: GitExecutor,
 	repo: RepoLoc,
 ): Promise<{ success: boolean; error?: string }> {
-	const { exitCode, stderr } = await executor.exec(['fetch', '--all', '--prune'], {
+	// Fetch `origin` by name, not `--all`: with no remotes configured (a stray
+	// `git init` in the reserved directory) `--all` exits 0 having fetched
+	// nothing, and the broken clone reads as "up to date". Naming origin makes
+	// that state fail loudly instead.
+	const { exitCode, stderr } = await executor.exec(['fetch', '--prune', 'origin'], {
 		cwd: repo.containerPath,
 		needsSsh: true,
 		timeout: 60_000,
@@ -374,7 +459,8 @@ async function releaseBranchFromWorktrees(
  * existing remote branch is tracked, otherwise a **new** branch is created off the
  * latest fetched remote default branch (`origin/<default>`) so every task starts
  * from current trunk. Only when no default branch resolves (an empty remote) does
- * it fall back to HEAD.
+ * it fall back to HEAD — and when HEAD is unborn too (nothing to base a worktree
+ * on) it fails with an actionable error rather than git's opaque one.
  */
 async function addTaskWorktree(
 	executor: GitExecutor,
@@ -409,9 +495,28 @@ async function addTaskWorktree(
 		];
 	} else {
 		const def = await getRemoteDefaultBranch(executor, repo);
-		args = def
-			? ['worktree', 'add', '-b', branchName, wt.containerPath, `origin/${def}`]
-			: ['worktree', 'add', '-b', branchName, wt.containerPath];
+		if (def) {
+			args = ['worktree', 'add', '-b', branchName, wt.containerPath, `origin/${def}`];
+		} else {
+			// No remote default branch resolves (an empty remote). Basing the new
+			// branch on HEAD only works when HEAD points at a commit — an unborn HEAD
+			// (a clone of an empty repo, or a stray `git init`) makes git (< 2.42) die
+			// with the opaque "failed to resolve HEAD as a valid ref", so surface the
+			// actionable story instead.
+			const head = await executor.exec(['rev-parse', '--verify', '--quiet', 'HEAD'], {
+				cwd,
+				timeout: 30_000,
+			});
+			if (head.exitCode !== 0) {
+				return {
+					success: false,
+					created: false,
+					error:
+						'clone has no commits and no remote default branch — push an initial commit to the remote and retry (it is fetched on the next run)',
+				};
+			}
+			args = ['worktree', 'add', '-b', branchName, wt.containerPath];
+		}
 	}
 
 	const result = await executor.exec(args, { cwd, timeout: 30_000 });

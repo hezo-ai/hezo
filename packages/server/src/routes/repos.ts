@@ -231,7 +231,12 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 					cloneStatus = 'failed';
 					cloneError = failed.error;
 					log.error(`Failed to clone ${repoIdentifier}:`, cloneError);
-				} else if (syncRes.cloned.includes(repoName)) {
+				} else if (
+					syncRes.cloned.includes(repoName) ||
+					// A pre-existing dir whose broken git state was healed (origin
+					// added/repointed) — setup produced a usable checkout, same as a clone.
+					syncRes.repaired.includes(repoName)
+				) {
 					cloneStatus = 'cloned';
 				}
 			} else {
