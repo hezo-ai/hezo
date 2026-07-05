@@ -535,6 +535,151 @@ describe('AI providers default model', () => {
 	});
 });
 
+describe('AI providers rename', () => {
+	let firstId: string;
+	let secondId: string;
+
+	beforeAll(async () => {
+		globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+		await db.query('DELETE FROM ai_provider_configs');
+
+		const first = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'anthropic',
+				api_key: 'sk-ant-rename-a',
+				label: 'anthropic-a',
+			}),
+		});
+		firstId = (await first.json()).data.id;
+
+		const second = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'anthropic',
+				api_key: 'sk-ant-rename-b',
+				label: 'anthropic-b',
+			}),
+		});
+		secondId = (await second.json()).data.id;
+	});
+
+	it('PATCH renames a config (trimmed) and the list reflects it', async () => {
+		const res = await app.request(`/api/ai-providers/${firstId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ label: '  anthropic-renamed  ' }),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.updated).toBe(true);
+		expect(body.data.label).toBe('anthropic-renamed');
+
+		const list = await app.request('/api/ai-providers', { headers: authHeader(token) });
+		const row = ((await list.json()).data as Array<{ id: string; label: string }>).find(
+			(r) => r.id === firstId,
+		);
+		expect(row?.label).toBe('anthropic-renamed');
+	});
+
+	it('rejects an empty or whitespace-only label', async () => {
+		for (const label of ['', '   ']) {
+			const res = await app.request(`/api/ai-providers/${firstId}`, {
+				method: 'PATCH',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ label }),
+			});
+			expect(res.status).toBe(400);
+			expect((await res.json()).error.code).toBe('INVALID_REQUEST');
+		}
+	});
+
+	it('rejects a label already used by another config of the same provider', async () => {
+		const res = await app.request(`/api/ai-providers/${firstId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ label: 'anthropic-b' }),
+		});
+		expect(res.status).toBe(409);
+		expect((await res.json()).error.code).toBe('DUPLICATE');
+	});
+
+	it('allows the same label across different providers', async () => {
+		const created = await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'openai',
+				api_key: 'sk-openai-rename',
+				label: 'openai-rename-me',
+			}),
+		});
+		const openaiId = (await created.json()).data.id;
+
+		const res = await app.request(`/api/ai-providers/${openaiId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ label: 'anthropic-b' }),
+		});
+		expect(res.status).toBe(200);
+	});
+
+	it('renames and sets default_model in one PATCH', async () => {
+		const res = await app.request(`/api/ai-providers/${secondId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ label: 'anthropic-b2', default_model: 'claude-opus-4-7' }),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.label).toBe('anthropic-b2');
+		expect(body.data.default_model).toBe('claude-opus-4-7');
+
+		const list = await app.request('/api/ai-providers', { headers: authHeader(token) });
+		const row = (
+			(await list.json()).data as Array<{ id: string; label: string; default_model: string }>
+		).find((r) => r.id === secondId);
+		expect(row?.label).toBe('anthropic-b2');
+		expect(row?.default_model).toBe('claude-opus-4-7');
+	});
+
+	it('a label-only rename preserves default_model', async () => {
+		const res = await app.request(`/api/ai-providers/${secondId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ label: 'anthropic-b3' }),
+		});
+		expect(res.status).toBe(200);
+
+		const list = await app.request('/api/ai-providers', { headers: authHeader(token) });
+		const row = (
+			(await list.json()).data as Array<{ id: string; label: string; default_model: string }>
+		).find((r) => r.id === secondId);
+		expect(row?.label).toBe('anthropic-b3');
+		expect(row?.default_model).toBe('claude-opus-4-7');
+	});
+
+	it('returns 404 when renaming an unknown config', async () => {
+		const res = await app.request('/api/ai-providers/00000000-0000-0000-0000-000000000000', {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ label: 'ghost' }),
+		});
+		expect(res.status).toBe(404);
+	});
+
+	it('rejects non-superusers', async () => {
+		const res = await app.request(`/api/ai-providers/${firstId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(nonSuperuserToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ label: 'sneaky' }),
+		});
+		expect(res.status).toBe(403);
+	});
+});
+
 describe('AI providers models endpoint', () => {
 	let configId: string;
 

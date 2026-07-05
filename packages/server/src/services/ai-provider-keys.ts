@@ -2,7 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { type AiAuthMethod, type AiProvider, AiProviderStatus } from '@hezo/shared';
 import { decrypt, encrypt } from '../crypto/encryption';
 import type { MasterKeyManager } from '../crypto/master-key';
-import { withTransaction } from '../lib/sql';
+import { buildUpdateSet, withTransaction } from '../lib/sql';
 
 export interface AiProviderCredential {
 	value: string;
@@ -138,17 +138,28 @@ export async function listAiProviders(db: PGlite): Promise<AiProviderConfig[]> {
 	return result.rows;
 }
 
-export async function setProviderDefaultModel(
+export interface AiProviderConfigUpdate {
+	label?: string;
+	defaultModel?: string | null;
+}
+
+export async function updateAiProviderConfig(
 	db: PGlite,
 	configId: string,
-	model: string | null,
+	fields: AiProviderConfigUpdate,
 ): Promise<boolean> {
+	const { clauses, params, nextIdx } = buildUpdateSet([
+		{ column: 'label', value: fields.label },
+		{ column: 'default_model', value: fields.defaultModel },
+	]);
+	if (clauses.length === 0) return false;
+
 	const result = await db.query<{ id: string }>(
 		`UPDATE ai_provider_configs
-		 SET default_model = $1, updated_at = now()
-		 WHERE id = $2
+		 SET ${clauses.join(', ')}, updated_at = now()
+		 WHERE id = $${nextIdx}
 		 RETURNING id`,
-		[model, configId],
+		[...params, configId],
 	);
 	return result.rows.length > 0;
 }
