@@ -1,4 +1,4 @@
-import { waitFor } from '@testing-library/react';
+import { fireEvent, waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedProject, seedWorkspace } from './helpers/seed';
@@ -215,4 +215,65 @@ test('Budget page: project window columns render caps and the binding-window ban
 	// The binding-window banner surfaces the daily window and links to raise its cap.
 	const banner = await findByTestId('binding-window-banner');
 	expect(banner.textContent ?? '').toContain('Raise daily cap');
+});
+
+test('Budget page: saving an agent cap edit refreshes the status (no stale cache)', async () => {
+	let teamSlug = '';
+	let agentSlug = '';
+	let headers: Record<string, string> = {};
+
+	const { findByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const { apiBase } = getTestContext();
+			const agent = ws.agents.find((a) => a.slug === 'engineer') ?? ws.agents[0];
+			agentSlug = agent.slug;
+			teamSlug = ws.internalSlug;
+			headers = ws.headers;
+			await apiBase(`/api/projects/${ws.internalSlug}/agents/${agent.id}`, {
+				method: 'PATCH',
+				headers: ws.headers,
+				body: JSON.stringify({ monthly_budget_cents: 3000 }),
+			});
+		},
+	});
+
+	// Populate the budget-status cache with the old $30 monthly cap.
+	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
+	const row = await findByTestId(`agent-budget-row-${agentSlug}`, undefined, { timeout: 15_000 });
+	await waitFor(() => expect(row.textContent ?? '').toContain('$30.00'));
+
+	// Raise the monthly cap to $50 through the agent settings form.
+	await router.navigate({
+		to: '/projects/$projectId/agents/$agentId/settings',
+		params: { projectId: teamSlug, agentId: agentSlug },
+	});
+	const monthlyInput = await findByTestId('budget-monthly', undefined, { timeout: 15_000 });
+	await user.clear(monthlyInput);
+	await user.type(monthlyInput, '50');
+	// happy-dom does not implicit-submit a form on click of a submit button;
+	// dispatch the submit event directly.
+	fireEvent.submit(monthlyInput.closest('form')!);
+
+	// Wait for the save to land server-side before navigating back, so the only
+	// question left is whether the client cache refetches.
+	await waitFor(
+		async () => {
+			const { apiBase } = getTestContext();
+			const res = await apiBase(`/api/projects/${teamSlug}/agents/${agentSlug}`, { headers });
+			const body = (await res.json()) as { data?: { monthly_budget_cents?: number } };
+			expect(body.data?.monthly_budget_cents).toBe(5000);
+		},
+		{ timeout: 10_000 },
+	);
+
+	// Back on the Budget page the card must show the new cap right away — the
+	// mutation invalidates budget-status; without that, the 60s staleTime would
+	// keep serving the old $30 cap from cache.
+	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
+	const updated = await findByTestId(`agent-budget-row-${agentSlug}`, undefined, {
+		timeout: 15_000,
+	});
+	await waitFor(() => expect(updated.textContent ?? '').toContain('$50.00'));
 });

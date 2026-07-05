@@ -2,12 +2,7 @@ import { type BudgetWindowsCents, centsToDollars } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { Clock, Loader2, Pencil, TriangleAlert } from 'lucide-react';
 import { type Ref, useState } from 'react';
-import {
-	type EntityBudgetStatus,
-	useBudgetStatus,
-	useDailyCostSeries,
-	type WindowStatus,
-} from '../../hooks/use-costs';
+import { type EntityBudgetStatus, useBudgetStatus, type WindowStatus } from '../../hooks/use-costs';
 import { useProject, useUpdateProject } from '../../hooks/use-projects';
 import { Button } from '../ui/button';
 import { SectionHeader } from '../ui/section-header';
@@ -93,42 +88,7 @@ function WindowColumn({ status, windowKey }: { status: WindowStatus; windowKey: 
 	);
 }
 
-/** Month-to-date sparkline of daily project spend; days over the daily cap go red. */
-function Sparkline({ projectId, dailyCap }: { projectId: string; dailyCap: number }) {
-	const { data } = useDailyCostSeries(projectId);
-	const month = new Date().toISOString().slice(0, 7);
-	const points = (data?.summary ?? []).filter((d) => d.day.startsWith(month));
-	if (points.length === 0) return <div className="h-10" aria-hidden />;
-	const max = Math.max(...points.map((p) => p.total_cents), 1);
-	return (
-		<div className="flex h-10 items-end gap-[3px]" aria-hidden>
-			{points.map((p) => {
-				const over = dailyCap > 0 && p.total_cents >= dailyCap;
-				const h = Math.max(Math.round((p.total_cents / max) * 100), 5);
-				return (
-					<div
-						key={p.day}
-						className={`flex-1 rounded-sm ${over ? 'bg-danger' : 'bg-surface-3'}`}
-						style={{ height: `${h}%` }}
-						title={`${p.day}: ${dollars(p.total_cents)}`}
-					/>
-				);
-			})}
-		</div>
-	);
-}
-
-function Hero({
-	projectId,
-	monthly,
-	runsThisMonth,
-	dailyCap,
-}: {
-	projectId: string;
-	monthly: WindowStatus;
-	runsThisMonth: number;
-	dailyCap: number;
-}) {
+function Hero({ monthly, runsThisMonth }: { monthly: WindowStatus; runsThisMonth: number }) {
 	const now = new Date();
 	const monthLong = now.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
 	const monthShort = now.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
@@ -154,7 +114,6 @@ function Hero({
 			<span className="text-[12px] text-text-3">
 				{runsThisMonth} {runsThisMonth === 1 ? 'run' : 'runs'} · ≈ {dollars(Math.round(avg))} / run
 			</span>
-			<Sparkline projectId={projectId} dailyCap={dailyCap} />
 			<span className="inline-flex w-fit items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-1 text-[11px] text-text-2">
 				<span className="h-1.5 w-1.5 rounded-full bg-info" />
 				projected ≈ {dollars(projected)} by {monthShort} {daysInMonth}
@@ -326,12 +285,7 @@ export function ProjectBudgetPanel({
 				status ? (
 					<>
 						<div className="flex flex-col divide-y divide-border rounded-lg border border-border bg-surface shadow-xs lg:flex-row lg:divide-x lg:divide-y-0">
-							<Hero
-								projectId={projectId}
-								monthly={status.project.monthly}
-								runsThisMonth={status.runsThisMonth}
-								dailyCap={project.daily_budget_cents}
-							/>
+							<Hero monthly={status.project.monthly} runsThisMonth={status.runsThisMonth} />
 							<div className="flex flex-1 flex-col divide-y divide-border sm:flex-row sm:divide-x sm:divide-y-0">
 								<WindowColumn windowKey="daily" status={status.project.daily} />
 								<WindowColumn windowKey="weekly" status={status.project.weekly} />

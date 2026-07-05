@@ -80,6 +80,23 @@ describe('invalidateQueriesForRowChange uses the queryKeys factory', () => {
 		expect(keys).toContainEqual(queryKeys.projects.tasks(SLUG));
 	});
 
+	test('member_agents row change invalidates agents AND budget status', () => {
+		// Agent rows carry the per-agent budget caps; the Budget page's status
+		// query must refetch when one changes (e.g. a cap edit or budget pause).
+		const { client, keys } = recordingClient();
+		invalidateQueriesForRowChange(client, SLUG, 'member_agents', {});
+		expect(keys).toContainEqual(queryKeys.projects.agents(SLUG));
+		expect(keys).toContainEqual(queryKeys.projects.budgetStatus(SLUG));
+	});
+
+	test('cost_entries row change invalidates costs AND budget status', () => {
+		// New spend moves both the cost charts and the spend-vs-cap status.
+		const { client, keys } = recordingClient();
+		invalidateQueriesForRowChange(client, SLUG, 'cost_entries', {});
+		expect(keys).toContainEqual(['projects', SLUG, 'costs']);
+		expect(keys).toContainEqual(queryKeys.projects.budgetStatus(SLUG));
+	});
+
 	test('unknown table is a no-op', () => {
 		const { client, keys } = recordingClient();
 		invalidateQueriesForRowChange(client, SLUG, 'nonexistent', {});

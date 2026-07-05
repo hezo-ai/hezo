@@ -105,9 +105,13 @@ export function useUpdateAgent(projectId: string, agentId: string) {
 		queryKeys.projects.agent(projectId, agentId),
 		{
 			omitOptimistic: ['system_prompt', 'system_prompt_change_summary'],
+			// budgetStatus carries the per-agent window limits the Budget page reads,
+			// so a cap edit here must refetch it (staleTime would otherwise serve the
+			// old caps for up to a minute).
 			invalidateOnSettled: [
 				queryKeys.projects.agents(projectId),
 				queryKeys.projects.agentSystemPrompt(projectId, agentId),
+				queryKeys.projects.budgetStatus(projectId),
 			],
 			errorMessage: 'Failed to update agent',
 		},
