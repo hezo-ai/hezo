@@ -1173,6 +1173,49 @@ describe('MCP project docs & assets', () => {
 		expect(result.error).toContain('not found');
 	});
 
+	it('docs carry a lifecycle status, set via set_project_doc_status', async () => {
+		await callTool('write_project_doc', {
+			project: projectId,
+			filename: 'status-doc.md',
+			content: '# Status',
+		});
+
+		// New docs start in planning; read + list both surface it.
+		const read = (await callTool('read_project_doc', {
+			project: projectId,
+			filename: 'status-doc.md',
+		})) as { status?: string };
+		expect(read.status).toBe('planning');
+		const listed = (await callTool('list_project_docs', { project: projectId })) as {
+			files: Array<{ filename: string; status: string }>;
+		};
+		expect(listed.files.find((f) => f.filename === 'status-doc.md')?.status).toBe('planning');
+
+		const updated = (await callTool('set_project_doc_status', {
+			project: projectId,
+			filename: 'status-doc.md',
+			status: 'approved',
+		})) as { updated?: boolean; status?: string; error?: string };
+		expect(updated.error).toBeUndefined();
+		expect(updated.updated).toBe(true);
+		expect(updated.status).toBe('approved');
+
+		const reread = (await callTool('read_project_doc', {
+			project: projectId,
+			filename: 'status-doc.md',
+		})) as { status?: string };
+		expect(reread.status).toBe('approved');
+	});
+
+	it('set_project_doc_status errors for an unknown file', async () => {
+		const result = (await callTool('set_project_doc_status', {
+			project: projectId,
+			filename: 'missing.md',
+			status: 'approved',
+		})) as ToolResult;
+		expect(result.error).toContain('not found');
+	});
+
 	it('list_project_assets returns the assets written via write_project_asset', async () => {
 		await callTool('write_project_asset', {
 			project: projectId,

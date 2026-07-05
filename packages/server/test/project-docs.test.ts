@@ -185,6 +185,74 @@ describe('Project docs (DB-backed)', () => {
 	});
 });
 
+describe('Project doc status', () => {
+	const filename = 'status-doc.md';
+
+	it('new docs start in planning', async () => {
+		const res = await app.request(`/api/projects/${projectId}/docs/${filename}`, {
+			method: 'PUT',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: '# Status doc' }),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).data.status).toBe('planning');
+	});
+
+	it('list items include the status', async () => {
+		const res = await app.request(`/api/projects/${projectId}/docs`, {
+			headers: authHeader(token),
+		});
+		const body = await res.json();
+		const item = body.data.find((d: any) => d.filename === filename);
+		expect(item.status).toBe('planning');
+	});
+
+	it('PATCH sets the status without touching content or the last editor', async () => {
+		const before = await (
+			await app.request(`/api/projects/${projectId}/docs/${filename}`, {
+				headers: authHeader(token),
+			})
+		).json();
+
+		const res = await app.request(`/api/projects/${projectId}/docs/${filename}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'approved' }),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.data.status).toBe('approved');
+		expect(body.data.content).toBe(before.data.content);
+		expect(body.data.last_updated_by_name).toBe(before.data.last_updated_by_name);
+		expect(body.data.last_updated_by_type).toBe(before.data.last_updated_by_type);
+
+		// A status flip is metadata, not a content edit — no revision recorded.
+		const revRes = await app.request(`/api/projects/${projectId}/docs/${filename}/revisions`, {
+			headers: authHeader(token),
+		});
+		expect((await revRes.json()).data.length).toBe(0);
+	});
+
+	it('rejects an unknown status with 400', async () => {
+		const res = await app.request(`/api/projects/${projectId}/docs/${filename}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'shipped' }),
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error.code).toBe('INVALID_REQUEST');
+	});
+
+	it('returns 404 when the doc does not exist', async () => {
+		const res = await app.request(`/api/projects/${projectId}/docs/missing.md`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'approved' }),
+		});
+		expect(res.status).toBe(404);
+	});
+});
+
 describe('Project doc revisions and restore', () => {
 	const filename = 'revisioned.md';
 

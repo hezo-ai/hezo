@@ -21,6 +21,7 @@ import {
 	CredentialKind,
 	credentialKindRequiresAllowedHosts,
 	DEFAULT_TEAM_ID,
+	DocumentStatus,
 	DocumentType,
 	extensionOf,
 	extractBacktickedMentionCandidates,
@@ -95,6 +96,7 @@ import {
 	getAgentSystemPrompt,
 	getDocument,
 	listDocuments,
+	setDocumentStatus,
 	upsertDocument,
 } from '../services/documents';
 import { listGoals, recordGoalProgress } from '../services/goals';
@@ -187,6 +189,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'move_project_asset',
 	'copy_project_asset',
 	'write_project_doc',
+	'set_project_doc_status',
 	'update_chat_memory',
 	'propose_skill',
 	'create_skill',
@@ -3466,6 +3469,7 @@ export function registerTools(
 					id: d.id,
 					filename: d.slug,
 					title: d.title,
+					status: d.status,
 					updated_at: d.updated_at,
 				})),
 			};
@@ -3920,10 +3924,12 @@ export function registerTools(
 			});
 			if (!doc) return { error: `File '${args.filename}' not found` };
 			const reviewComments = await listReviewComments(db, doc.id);
-			if (reviewComments.length === 0) return { filename: doc.slug, content: doc.content };
+			if (reviewComments.length === 0)
+				return { filename: doc.slug, content: doc.content, status: doc.status };
 			return {
 				filename: doc.slug,
 				content: doc.content,
+				status: doc.status,
 				review_comments: reviewComments.map((r) => ({
 					id: r.id,
 					quote: r.quote,
@@ -3980,6 +3986,44 @@ export function registerTools(
 				},
 			});
 			return { written: true, id: doc.id, filename: doc.slug };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'set_project_doc_status',
+		'Set the lifecycle status of a project doc: "planning" (still being drafted/iterated) or "approved" (signed off as the current source of truth). Status is metadata shown in the doc header — changing it does not touch the content and records no revision. New docs start in planning.',
+		{
+			project: projectArg(),
+			filename: z.string().describe('Doc filename (e.g. "spec.md")'),
+			status: z
+				.enum(Object.values(DocumentStatus) as [string, ...string[]])
+				.describe('New status: "planning" or "approved"'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const row = await setDocumentStatus(
+				db,
+				wsManager,
+				{
+					type: DocumentType.ProjectDoc,
+					teamId: scope.teamId,
+					projectId: scope.projectId,
+					slug: args.filename as string,
+				},
+				args.status as DocumentStatus,
+				callerMemberId,
+				{
+					events,
+					actorType: actorTypeFromAuth(auth),
+					actorApiKeyId: apiKeyIdFromAuth(auth),
+				},
+			);
+			if (!row) return { error: `File '${args.filename}' not found` };
+			return { updated: true, filename: row.slug, status: row.status };
 		},
 		db,
 	);

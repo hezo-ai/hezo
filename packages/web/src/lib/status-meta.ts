@@ -1,6 +1,8 @@
 import {
 	AgentRuntimeStatus,
 	ApprovalType,
+	DocumentStatus,
+	formatDocumentStatus,
 	formatTaskStatus,
 	TaskPriority,
 	TaskStatus,
@@ -41,6 +43,21 @@ export function taskStatusColor(status: string): BadgeColor {
 /** Color + label for a task status (label sourced from the shared label map). */
 export function taskStatusMeta(status: string): BadgeMeta {
 	return { color: taskStatusColor(status), label: formatTaskStatus(status) };
+}
+
+const DOCUMENT_STATUS_COLORS: Record<DocumentStatus, BadgeColor> = {
+	[DocumentStatus.Planning]: 'warning',
+	[DocumentStatus.Approved]: 'success',
+};
+
+/** Badge color for a document status, defaulting to neutral for unknown values. */
+export function documentStatusColor(status: string): BadgeColor {
+	return DOCUMENT_STATUS_COLORS[status as DocumentStatus] ?? 'neutral';
+}
+
+/** Color + label for a document status (label sourced from the shared label map). */
+export function documentStatusMeta(status: string): BadgeMeta {
+	return { color: documentStatusColor(status), label: formatDocumentStatus(status) };
 }
 
 // Priority maps to the spec's semantic tints: urgent = danger, high = warning,

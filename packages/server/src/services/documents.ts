@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { type AuditActorType, DocumentType, wsRoom } from '@hezo/shared';
+import { type AuditActorType, type DocumentStatus, DocumentType, wsRoom } from '@hezo/shared';
 import type { DomainEventBus } from '../events/bus';
 import { broadcastCommentFamilyChange, broadcastRowChange } from '../lib/broadcast';
 import { withTransaction } from '../lib/sql';
@@ -44,6 +44,7 @@ export interface DocumentRow {
 	slug: string;
 	title: string;
 	content: string;
+	status: DocumentStatus;
 	last_updated_by_member_id: string | null;
 	created_at: string;
 	updated_at: string;
@@ -118,7 +119,7 @@ function scopeWhere(scope: DocumentScope, alias = ''): { sql: string; params: un
 // Explicit column list — the generated search_tsv column (full-text index) is
 // server-internal and never serialized to API responses.
 const SELECT_WITH_AUTHOR = `SELECT d.id, d.team_id, d.project_id, d.member_agent_id,
-	        d.type, d.slug, d.title, d.content,
+	        d.type, d.slug, d.title, d.content, d.status,
 	        d.last_updated_by_member_id, d.created_at, d.updated_at,
 	        COALESCE(ma.title, m.display_name) AS last_updated_by_name,
 	        CASE WHEN ma.id IS NOT NULL THEN 'agent' ELSE 'admin' END AS last_updated_by_type
@@ -229,6 +230,37 @@ export async function upsertDocument(
 		row,
 		input.authorMemberId,
 	);
+	return row;
+}
+
+/**
+ * Sets the lifecycle status of a document. A status flip is metadata, not a
+ * content edit — it records no revision and leaves last_updated_by_member_id
+ * untouched so the "Last edited by" attribution stays honest.
+ */
+export async function setDocumentStatus(
+	db: PGlite,
+	wsManager: WebSocketManager | undefined,
+	scope: DocumentScope,
+	status: DocumentStatus,
+	actorMemberId: string | null,
+	audit?: DocumentAuditContext,
+): Promise<DocumentRow | null> {
+	const where = scopeWhere(scope, '');
+	const result = await db.query<DocumentRow>(
+		`UPDATE documents SET status = $${where.params.length + 1} WHERE ${where.sql} RETURNING *`,
+		[...where.params, status],
+	);
+	if (result.rows.length === 0) return null;
+	const row = result.rows[0];
+	broadcastRowChange(
+		wsManager,
+		wsRoom.team(row.team_id),
+		'documents',
+		'UPDATE',
+		row as unknown as Record<string, unknown>,
+	);
+	emitDocumentEvent(audit, 'document.updated', row, actorMemberId);
 	return row;
 }
 

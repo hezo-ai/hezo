@@ -23,21 +23,22 @@ async function seedDoc(
 
 test('the New Document form rejects non-markdown filenames', async () => {
 	let ctx!: { projectSlug: string };
-	const { findByText, findByPlaceholderText, getByRole, user, router } = await renderApp({
-		initialPath: '/',
-		seed: async () => {
-			const ws = await seedWorkspace();
-			const project = await seedProject(ws, { name: 'MD Only' });
-			ctx = { projectSlug: project.slug };
-		},
-	});
+	const { findByText, findByRole, findByPlaceholderText, getByRole, user, router } =
+		await renderApp({
+			initialPath: '/',
+			seed: async () => {
+				const ws = await seedWorkspace();
+				const project = await seedProject(ws, { name: 'MD Only' });
+				ctx = { projectSlug: project.slug };
+			},
+		});
 
 	await router.navigate({
 		to: '/projects/$projectId/documents',
 		params: { projectId: ctx.projectSlug },
 	});
 
-	await user.click(await findByText('New document'));
+	await user.click(await findByRole('button', { name: 'New document' }));
 	await user.type(await findByPlaceholderText('notes.md'), 'mockup.html');
 	await user.click(getByRole('button', { name: 'Create' }));
 

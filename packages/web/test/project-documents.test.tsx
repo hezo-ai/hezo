@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { getTestContext, renderApp } from './helpers/render';
+import { renderApp } from './helpers/render';
 import { type SeededWorkspace, seedProject, seedWorkspace } from './helpers/seed';
 
 function uniqueName(base: string): string {
@@ -163,6 +163,53 @@ test('shows the metadata banner and hides a legacy metadata header from the rend
 	expect(queryByText(/experiment-zzz/)).toBeNull();
 });
 
+test('shows the document status in the banner and updates it via the dropdown', async () => {
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+	const filename = `status-${Math.random().toString(36).slice(2, 8)}.md`;
+
+	const { findByText, findByLabelText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async ({ apiBase, token }) => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, {
+				name: uniqueName('Status Project'),
+				description: 'Tests the document status dropdown.',
+			});
+			projectSlug = project.slug;
+			await seedDoc(apiBase, token, projectSlug, filename, [{ content: 'Doc body' }]);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/documents',
+		params: { projectId: projectSlug },
+		search: { file: filename } as never,
+	});
+
+	await findByText('Doc body', undefined, { timeout: 15_000 });
+
+	// New docs start in Planning; the banner renders an editable dropdown.
+	const statusSelect = (await findByLabelText('Document status')) as HTMLSelectElement;
+	expect(statusSelect.value).toBe('planning');
+
+	await user.selectOptions(statusSelect, 'approved');
+	// Optimistic update — the select reflects the new value immediately.
+	expect(statusSelect.value).toBe('approved');
+
+	// The server processed the mutation: the DB row carries the new status.
+	const { db } = getTestContext();
+	await new Promise((r) => setTimeout(r, 300));
+	const row = await db.query<{ status: string }>(
+		`SELECT status FROM documents WHERE slug = $1 AND type = 'project_doc'`,
+		[filename],
+	);
+	expect(row.rows[0].status).toBe('approved');
+
+	// The doc list entry surfaces the status label.
+	await findByText(/Approved · Updated/, undefined, { timeout: 15_000 });
+});
+
 test('viewing an older revision shows the banner, hides Edit, and can return to latest', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
@@ -207,6 +254,56 @@ test('viewing an older revision shows the banner, hides Edit, and can return to 
 	await user.click(await findByTestId('view-latest'));
 	await findByText('Second draft', undefined, { timeout: 15_000 });
 	await findByRole('button', { name: 'Edit' });
+});
+
+test('search input filters the document list as you type', async () => {
+	let ws!: SeededWorkspace;
+	let projectSlug = '';
+
+	const { findByText, findByLabelText, queryByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async ({ apiBase, token }) => {
+			ws = await seedWorkspace();
+			const project = await seedProject(ws, {
+				name: uniqueName('Search Project'),
+				description: 'Tests filtering the doc list from the sidebar search input.',
+			});
+			projectSlug = project.slug;
+			await seedDoc(apiBase, token, projectSlug, 'analytics-workflow.md', [
+				{ content: 'Analytics' },
+			]);
+			await seedDoc(apiBase, token, projectSlug, 'brand-style-guide.md', [{ content: 'Brand' }]);
+			await seedDoc(apiBase, token, projectSlug, 'content-calendar.md', [{ content: 'Calendar' }]);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/documents',
+		params: { projectId: projectSlug },
+	});
+
+	// All three docs are listed before any filtering.
+	await findByText('analytics-workflow.md', undefined, { timeout: 15_000 });
+	await findByText('brand-style-guide.md');
+	await findByText('content-calendar.md');
+
+	const search = await findByLabelText('Search documents');
+	await user.type(search, 'brand');
+
+	await findByText('brand-style-guide.md');
+	expect(queryByText('analytics-workflow.md')).toBeNull();
+	expect(queryByText('content-calendar.md')).toBeNull();
+
+	// A query matching nothing shows the empty-filter message…
+	await user.clear(search);
+	await user.type(search, 'zzz-no-match');
+	await findByText('No matching documents');
+
+	// …and clearing the query restores the full list.
+	await user.clear(search);
+	await findByText('analytics-workflow.md');
+	await findByText('brand-style-guide.md');
+	await findByText('content-calendar.md');
 });
 
 test('rejects invalid filename when creating a document', async () => {

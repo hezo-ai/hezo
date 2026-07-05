@@ -953,7 +953,7 @@ List project documentation files (PRD, spec, implementation plan, etc.)
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 
-**Returns:** `{ files: [{ id, filename, title, updated_at }] }` — the markdown project docs.
+**Returns:** `{ files: [{ id, filename, title, status, updated_at }] }` — the markdown project docs. `status` is the doc's lifecycle status (`planning` or `approved`).
 
 ### `list_project_assets`
 
@@ -1064,7 +1064,7 @@ Read a markdown project doc by filename (e.g. "spec.md") — the high-level proj
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filename` | `string` | Yes | Filename to read (e.g. "spec.md") |
 
-**Returns:** `{ filename, content }` (the full markdown body), plus `review_comments: [{ id, quote, occurrence, comment, created_at }]` when the admin has left pending review feedback on the doc (each comment anchors to an exact `quote` snippet; `occurrence` disambiguates repeats). Any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found.
+**Returns:** `{ filename, content, status }` (the full markdown body plus the doc's lifecycle status, `planning` or `approved`), plus `review_comments: [{ id, quote, occurrence, comment, created_at }]` when the admin has left pending review feedback on the doc (each comment anchors to an exact `quote` snippet; `occurrence` disambiguates repeats). Any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found.
 
 ### `write_project_doc`
 
@@ -1082,6 +1082,22 @@ Write a project documentation file. Project docs are markdown only — the filen
 | `changelog` | `string` | No | Markdown summary of what changed in THIS update and why — recorded as the revision's changelog and shown in the document's revision history. Put update/status notes here, never in the document body. Reference tickets/docs/agents by bare identifier as in content. |
 
 **Returns:** `{ written: true, id, filename }`, or `{ error }` if the filename is not `.md`. Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `changelog` is stored as that revision's changelog and shown in the document's history — put update/status notes there, not in the document body.
+
+### `set_project_doc_status`
+
+_Write tool._
+
+Set the lifecycle status of a project doc: "planning" (still being drafted/iterated) or "approved" (signed off as the current source of truth). Status is metadata shown in the doc header — changing it does not touch the content and records no revision. New docs start in planning.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `filename` | `string` | Yes | Doc filename (e.g. "spec.md") |
+| `status` | `planning` \| `approved` | Yes | New status: "planning" or "approved" |
+
+**Returns:** `{ updated: true, filename, status }`, or `{ error }` if the file is not found. Status is metadata only — no content change, no revision recorded.
 
 ## Costs
 

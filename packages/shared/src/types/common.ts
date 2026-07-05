@@ -930,6 +930,21 @@ export const DocumentType = {
 } as const;
 export type DocumentType = (typeof DocumentType)[keyof typeof DocumentType];
 
+export const DocumentStatus = {
+	Planning: 'planning',
+	Approved: 'approved',
+} as const;
+export type DocumentStatus = (typeof DocumentStatus)[keyof typeof DocumentStatus];
+
+export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {
+	[DocumentStatus.Planning]: 'Planning',
+	[DocumentStatus.Approved]: 'Approved',
+};
+
+export function formatDocumentStatus(status: string): string {
+	return DOCUMENT_STATUS_LABELS[status as DocumentStatus] ?? status;
+}
+
 export const AuditActorType = {
 	Admin: 'admin',
 	Agent: 'agent',

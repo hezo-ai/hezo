@@ -71,13 +71,23 @@ every agent can reach them without cluttering the codebase. You read and edit an
 from the **Documents** page in the web app, and agents read and write the same files as they
 work (`list_project_docs`, `read_project_doc`, and `write_project_doc` over Hezo's
 [MCP server](/docs/mcp/hezo-mcp-server)). A document is referenced by its plain filename —
-for example `spec.md` — so links stay stable as the work evolves.
+for example `spec.md` — so links stay stable as the work evolves. The document list sits
+beside the reader, with a **search box** at the top that filters the list as you type and a
+**+** button next to it for creating a new document — both stay in view while you scroll
+the list.
 
 Agents don't carry every document's full text on every run. Instead each run includes a
 **manifest** — a table of contents listing each document's filename, title, and when it
 last changed — and the agent opens the ones it needs with `read_project_doc`. So adding or
 updating a document immediately makes it discoverable to the whole team, without bloating
 anyone's prompt.
+
+Every project document also carries a **status** — **Planning** (still being drafted and
+iterated) or **Approved** (signed off as the current source of truth) — shown in the
+details banner at the top of the document and next to each entry in the Documents list.
+New documents start in Planning. You change the status from the dropdown in the banner;
+agents set it with `set_project_doc_status`. The status is metadata only: changing it
+doesn't touch the document's content and records no version.
 
 ## Reviewing documents
 
@@ -116,8 +126,9 @@ the Documents page.
 
 ## Version history
 
-At the top of every document a compact **details** banner shows, at a glance, when it was
-created, when it last changed, and who last edited it — a person or a named agent.
+At the top of every document a compact **details** banner shows, at a glance, its status
+(Planning or Approved), when it was created, when it last changed, and who last edited
+it — a person or a named agent.
 
 Every change to a document is versioned, and each version carries a **changelog** — a short note
 describing what changed and why. When an agent updates a document it writes that note as part of

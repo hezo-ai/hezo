@@ -32,7 +32,7 @@ test('documents sidebar stays pinned while the page scrolls on desktop', async (
 	// The filename heading confirms the doc loaded and its content is rendered.
 	await expect(page.getByRole('heading', { name: 'longdoc.md' })).toBeVisible({ timeout: 20000 });
 
-	const newDocButton = page.getByRole('button', { name: /New document/ });
+	const newDocButton = page.getByRole('button', { name: 'New document' });
 	await expect(newDocButton).toBeVisible();
 	const before = await newDocButton.boundingBox();
 	expect(before).not.toBeNull();
@@ -59,5 +59,50 @@ test('documents sidebar stays pinned while the page scrolls on desktop', async (
 		expect(after.y).toBeGreaterThanOrEqual(before.y - 1);
 		// And it sits within the app header + a small offset of the top.
 		expect(after.y).toBeLessThan(120);
+	}
+});
+
+test('sidebar search header stays fixed while the doc list itself scrolls', async ({
+	page,
+	freshWorkspace,
+}) => {
+	const { projectSlug, token } = freshWorkspace;
+	await page.setViewportSize({ width: 1280, height: 800 });
+
+	// Seed enough docs that the sidebar list overflows its own md scroller
+	// (max-h ≈ viewport minus header), so scrolling to the last entry scrolls
+	// the list — not the page.
+	const count = 40;
+	for (let i = 0; i < count; i++) {
+		const res = await page.request.put(
+			`/api/projects/${projectSlug}/docs/doc-${String(i).padStart(2, '0')}.md`,
+			{
+				headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+				data: { content: `Doc ${i}` },
+			},
+		);
+		expect(res.ok()).toBe(true);
+	}
+
+	await page.goto(`/projects/${projectSlug}/documents`);
+	await waitForPageLoad(page);
+
+	const searchInput = page.getByRole('searchbox', { name: 'Search documents' });
+	await expect(searchInput).toBeVisible();
+	await expect(page.getByText('doc-00.md')).toBeVisible();
+
+	const before = await searchInput.boundingBox();
+	expect(before).not.toBeNull();
+
+	// Scroll the last doc into view — with 40 rows this must scroll the list's
+	// own overflow-y-auto container.
+	await page.getByText(`doc-${count - 1}.md`).scrollIntoViewIfNeeded();
+	await expect(page.getByText(`doc-${count - 1}.md`)).toBeVisible();
+
+	// The search header did not move: it lives above the list's scroller.
+	const after = await searchInput.boundingBox();
+	expect(after).not.toBeNull();
+	if (before && after) {
+		expect(Math.abs(after.y - before.y)).toBeLessThanOrEqual(1);
 	}
 });
