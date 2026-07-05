@@ -33,10 +33,11 @@ interface TaskHeaderProps {
  */
 export function TaskHeader({ task, projectId, taskId, taskProjectSlug }: TaskHeaderProps) {
 	// Ancestors come back root-first, excluding the current task, so the
-	// breadcrumb reads `root → … → parent → current`. Sub-tasks are capped at two
-	// levels deep, so at most two links precede the current identifier. They share
-	// the current task's project (sub-tasks inherit the parent's project), so the
-	// current task's slug is the right link target.
+	// breadcrumb reads `Tasks → root → … → parent → current`. Sub-tasks are
+	// capped at two levels deep, so at most two ancestor links precede the
+	// current identifier. They share the current task's project (sub-tasks
+	// inherit the parent's project), so the current task's slug is the right
+	// link target — for the task-list crumb too.
 	const { data: ancestors } = useTaskAncestors(projectId, taskId);
 	return (
 		<>
@@ -45,6 +46,17 @@ export function TaskHeader({ task, projectId, taskId, taskProjectSlug }: TaskHea
 				className="mb-1 flex flex-wrap items-center gap-x-1 text-[13px] font-mono text-text-2"
 				data-testid="task-breadcrumb"
 			>
+				<span className="flex items-center gap-x-1">
+					<Link
+						to="/projects/$projectId/tasks"
+						params={{ projectId: taskProjectSlug }}
+						className="hover:text-text-1 hover:underline transition-colors"
+						data-testid="task-breadcrumb-tasks"
+					>
+						Tasks
+					</Link>
+					<ChevronRight className="w-3 h-3 shrink-0 text-text-3" />
+				</span>
 				{ancestors?.map((ancestor) => (
 					<span key={ancestor.id} className="flex items-center gap-x-1">
 						<Link
