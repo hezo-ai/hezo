@@ -258,15 +258,6 @@ jobs:
   test-s3:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    services:
-      minio:
-        image: bitnami/minio:latest
-        env:
-          MINIO_ROOT_USER: hezo
-          MINIO_ROOT_PASSWORD: hezo-secret-key
-          MINIO_DEFAULT_BUCKETS: hezo-test
-        ports:
-          - 9000:9000
     env:
       HEZO_TEST_ASSET_STORAGE_URL: "s3://hezo:hezo-secret-key@localhost:9000/hezo-test?tls=false&pathStyle=true"
     steps:
@@ -280,11 +271,19 @@ jobs:
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
-      # Service containers can't override the image command, so readiness is
-      # polled from the runner (the mapped health endpoint) instead of a
-      # container health-cmd.
-      - name: Wait for MinIO
-        run: timeout 60 bash -c 'until curl -sf http://127.0.0.1:9000/minio/health/ready; do sleep 1; done'
+      # A plain docker run, not a service container: services can't override
+      # the image command and minio/minio requires `server /data`.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=hezo -e MINIO_ROOT_PASSWORD=hezo-secret-key \
+            minio/minio:latest server /data
+          timeout 60 bash -c 'until curl -sf http://127.0.0.1:9000/minio/health/ready; do sleep 1; done'
+      - name: Create test bucket
+        env:
+          AWS_ACCESS_KEY_ID: hezo
+          AWS_SECRET_ACCESS_KEY: hezo-secret-key
+        run: aws --endpoint-url http://127.0.0.1:9000 --region us-east-1 s3 mb s3://hezo-test
       - run: bun run test --package server --pattern asset-storage
       - name: Bun-native S3 client test
         run: cd packages/server && bun test ./test/bun/asset-s3-client.bun.test.ts
