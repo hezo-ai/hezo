@@ -57,8 +57,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # The Dockerfile builds git 2.51.0 from source (~5–10 min cold); the gha
-      # layer cache keeps unchanged-Dockerfile runs cheap.
+      # The agent-base image installs everything (incl. git) from Debian
+      # packages, so a cold build is quick; the gha layer cache keeps
+      # unchanged-Dockerfile runs cheaper still.
       - uses: docker/build-push-action@v6
         with:
           context: docker
