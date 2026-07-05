@@ -243,13 +243,14 @@ export async function provisionContainer(
 		const workspacePath = join(projectDir, 'workspace');
 		const worktreesPath = join(projectDir, 'worktrees');
 		const previewsPath = join(projectDir, '.previews');
-		const assetsPath = join(projectDir, 'assets');
 
+		// Assets are deliberately NOT mounted: blobs live in the configured asset
+		// store (local dir or S3-compatible bucket) and agents fetch them over
+		// signed download URLs from the asset tools, never the filesystem.
 		const binds = [
 			`${workspacePath}:/workspace:rw`,
 			`${worktreesPath}:/worktrees:rw`,
 			`${previewsPath}:/workspace/.previews:rw`,
-			`${assetsPath}:/workspace/.hezo/assets:ro`,
 		];
 		if (deps.egressCAPath) {
 			binds.push(`${deps.egressCAPath}:${CONTAINER_CA_PATH}:ro`);

@@ -14,6 +14,7 @@ import {
 	signAuthMessage,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
+import type { AssetStore } from '../../src/assets/store';
 import { encrypt } from '../../src/crypto/encryption';
 import { MasterKeyManager } from '../../src/crypto/master-key';
 import { loadAgentRoles } from '../../src/db/agent-roles';
@@ -75,7 +76,7 @@ export function createStubDocker<T extends Record<string, unknown>>(
  */
 export { encrypt };
 
-export async function createTestApp(opts: { webUrl?: string } = {}) {
+export async function createTestApp(opts: { webUrl?: string; assetStore?: AssetStore } = {}) {
 	const db = await createTestDbWithMigrations();
 	const masterKeyManager = new MasterKeyManager();
 	const mnemonic = generateMnemonic();
@@ -117,6 +118,9 @@ export async function createTestApp(opts: { webUrl?: string } = {}) {
 		null,
 		containerLogStreamer,
 		events,
+		undefined,
+		undefined,
+		opts.assetStore,
 	);
 	const userResult = await db.query<{ id: string }>(
 		"INSERT INTO users (display_name, is_superuser) VALUES ('Test Admin', true) RETURNING id",

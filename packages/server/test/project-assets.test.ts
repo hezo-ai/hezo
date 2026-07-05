@@ -75,7 +75,7 @@ async function uploadProjectAsset(
 }
 
 function diskPath(assetId: string): string {
-	return join(dataDir, 'teams', teamId, 'projects', projectId, 'assets', assetId);
+	return join(dataDir, 'assets', projectId, assetId);
 }
 
 async function uploadTaskAsset(filename: string, mime: string, bytes: Uint8Array): Promise<string> {
@@ -150,7 +150,7 @@ describe('project asset upload', () => {
 		expect(body.data.content_type).toBe('image/png');
 		expect(body.data.url).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
 
-		const onDisk = join(dataDir, 'teams', teamId, 'projects', projectId, 'assets', body.data.id);
+		const onDisk = join(dataDir, 'assets', projectId, body.data.id);
 		expect(existsSync(onDisk)).toBe(true);
 	});
 
@@ -248,7 +248,7 @@ describe('agent-authored assets (write_project_asset)', () => {
 		);
 		expect(row.rows).toHaveLength(1);
 		expect(row.rows[0].content_type).toBe('text/html');
-		const onDisk = join(dataDir, 'teams', teamId, 'projects', projectId, 'assets', row.rows[0].id);
+		const onDisk = join(dataDir, 'assets', projectId, row.rows[0].id);
 		expect(existsSync(onDisk)).toBe(true);
 	});
 
@@ -314,15 +314,7 @@ describe('agent-authored assets (write_project_asset)', () => {
 		expect(rows.rows[0].id).toBe(second.id);
 		// The replaced asset's bytes are cleaned off disk.
 		expect(first.id).not.toBe(second.id);
-		const oldDisk = join(
-			dataDir,
-			'teams',
-			teamId,
-			'projects',
-			projectId,
-			'assets',
-			first.id as string,
-		);
+		const oldDisk = join(dataDir, 'assets', projectId, first.id as string);
 		expect(existsSync(oldDisk)).toBe(false);
 	});
 
@@ -398,7 +390,7 @@ describe('project asset deletion', () => {
 		const { id } = (
 			await uploadProjectAsset('delete-me.png', 'image/png', buildPng(12)).then((r) => r.json())
 		).data;
-		const onDisk = join(dataDir, 'teams', teamId, 'projects', projectId, 'assets', id);
+		const onDisk = join(dataDir, 'assets', projectId, id);
 		expect(existsSync(onDisk)).toBe(true);
 
 		const res = await app.request(`/api/projects/${projectId}/assets/${id}`, {
@@ -454,7 +446,7 @@ describe('MCP asset upload (POST /mcp/assets)', () => {
 		expect(body.data.content_type).toBe('image/png');
 		expect(body.data.url).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
 
-		const onDisk = join(dataDir, 'teams', teamId, 'projects', projectId, 'assets', body.data.id);
+		const onDisk = join(dataDir, 'assets', projectId, body.data.id);
 		expect(existsSync(onDisk)).toBe(true);
 
 		// Visible to the agent through the existing read tools.
@@ -465,9 +457,13 @@ describe('MCP asset upload (POST /mcp/assets)', () => {
 
 		const read = (await callToolViaMcp(agentToken, 'read_project_asset', {
 			filename: 'diagram.png',
-		})) as { binary?: boolean; path?: string };
+		})) as { binary?: boolean; url?: string };
 		expect(read.binary).toBe(true);
-		expect(read.path).toContain('/workspace/.hezo/assets/');
+		// Binary contents come back as an absolute signed download URL the agent
+		// curls from inside its container — never a filesystem path.
+		expect(read.url).toMatch(
+			/^http:\/\/host\.docker\.internal:\d+\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/,
+		);
 	});
 
 	it('an external API key uploads via MCP (naming the project)', async () => {

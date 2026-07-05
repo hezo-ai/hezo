@@ -7,15 +7,17 @@ function fakeRuntime() {
 	const ceoSessionManager = { stop: vi.fn(async () => {}) };
 	const egressProxy = { releaseAll: vi.fn(async () => {}) };
 	const sshAgentServer = { releaseAll: vi.fn(async () => {}) };
+	const assetStore = { close: vi.fn(async () => {}) };
 	const db = { close: vi.fn(async () => {}) };
 	const result = {
 		jobManager,
 		ceoSessionManager,
 		egressProxy,
 		sshAgentServer,
+		assetStore,
 		db,
 	} as unknown as StartupResult;
-	return { result, jobManager, ceoSessionManager, egressProxy, sshAgentServer, db };
+	return { result, jobManager, ceoSessionManager, egressProxy, sshAgentServer, assetStore, db };
 }
 
 describe('active runtime accessors', () => {
@@ -29,7 +31,7 @@ describe('active runtime accessors', () => {
 
 describe('shutdownRuntime', () => {
 	it('stops every subsystem and closes the db on the first call, then is idempotent', async () => {
-		const { result, jobManager, ceoSessionManager, egressProxy, sshAgentServer, db } =
+		const { result, jobManager, ceoSessionManager, egressProxy, sshAgentServer, assetStore, db } =
 			fakeRuntime();
 
 		await shutdownRuntime(result);
@@ -37,6 +39,7 @@ describe('shutdownRuntime', () => {
 		expect(ceoSessionManager.stop).toHaveBeenCalledTimes(1);
 		expect(egressProxy.releaseAll).toHaveBeenCalledTimes(1);
 		expect(sshAgentServer.releaseAll).toHaveBeenCalledTimes(1);
+		expect(assetStore.close).toHaveBeenCalledTimes(1);
 		expect(db.close).toHaveBeenCalledTimes(1);
 
 		// Second call short-circuits via the shuttingDown guard — no extra teardown.

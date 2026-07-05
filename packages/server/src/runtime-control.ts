@@ -29,5 +29,6 @@ export async function shutdownRuntime(result: StartupResult): Promise<void> {
 	await result.ceoSessionManager.stop();
 	await result.egressProxy.releaseAll();
 	await result.sshAgentServer.releaseAll();
+	await result.assetStore.close();
 	await result.db.close();
 }

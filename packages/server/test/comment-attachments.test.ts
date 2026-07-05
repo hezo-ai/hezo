@@ -156,7 +156,7 @@ describe('asset upload', () => {
 		expect(body.data.byte_size).toBe(bytes.byteLength);
 		expect(body.data.url).toMatch(/^\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
 
-		const onDisk = join(dataDir, 'teams', teamId, 'projects', projectId, 'assets', body.data.id);
+		const onDisk = join(dataDir, 'assets', projectId, body.data.id);
 		expect(existsSync(onDisk)).toBe(true);
 		const written = readFileSync(onDisk);
 		expect(createHash('sha256').update(written).digest('hex')).toBe(expectedSha);

@@ -27,6 +27,7 @@ their environment-variable equivalents. The most common:
 hezo --port 8080                 # listen on a different port
 hezo --data-dir /var/lib/hezo    # use a specific data directory
 hezo --database-url postgres://user:pass@host:5432/hezo   # use an external Postgres instead of the embedded database
+hezo --asset-storage-url "s3://KEY:SECRET@endpoint/bucket"   # store asset files in S3-compatible object storage
 hezo --master-key "<phrase>"     # set up or unlock without the web gate
 hezo --web-url https://hezo.example.com   # public base URL for sign-in redirects
 hezo --no-open                   # don't open the web app in your browser on start
@@ -38,6 +39,12 @@ By default the database is embedded and lives under the data directory. With
 `--database-url` (or `HEZO_DATABASE_URL`) Hezo runs against an external PostgreSQL 14+
 instead — see [Using an external Postgres](/docs/deployment/configuration) for
 requirements (TLS, latency, pooling).
+
+Uploaded asset files live under the data directory by default. With
+`--asset-storage-url` (or `HEZO_ASSET_STORAGE_URL`) they live in any S3-compatible
+bucket instead — see
+[Storing assets in S3-compatible object storage](/docs/deployment/configuration) for the
+URL format and how to move an existing instance.
 
 On **native-Linux Docker**, agent containers reach the host over the bridge gateway, so the
 host firewall must allow the Docker bridge to reach Hezo's ports. The boot connectivity check

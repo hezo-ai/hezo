@@ -991,7 +991,7 @@ Save a text-based file to the project assets library so a human can open it (an 
 
 _Read-only._
 
-Read a project asset's contents by path (e.g. "ui-mockups.html" or "scripts/check.sh") — the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a read-only container path under /workspace/.hezo/assets/ to open directly. Archived assets are not readable by default — set filter: 'archived' or 'all' to read one. For markdown project docs use read_project_doc instead.
+Read a project asset's contents by path (e.g. "ui-mockups.html" or "scripts/check.sh") — the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a signed download `url` — fetch it with a plain `curl -fsSL '<url>' -o /tmp/<filename>` (no auth header needed; the URL is valid for 24h, re-call this tool for a fresh one). Archived assets are not readable by default — set filter: 'archived' or 'all' to read one. For markdown project docs use read_project_doc instead.
 
 **Parameters:**
 
@@ -1001,7 +1001,7 @@ Read a project asset's contents by path (e.g. "ui-mockups.html" or "scripts/chec
 | `filename` | `string` | Yes | Asset path to read (e.g. "ui-mockups.html", "launch/images/hero.png") |
 | `filter` | `active` \| `archived` \| `all` | No | Which archive states to consider: 'active' (default — archived items are excluded), 'archived' (only archived), or 'all'. |
 
-**Returns:** For a text asset, `{ filename, content_type, content }`. For a binary asset, `{ filename, content_type, byte_size, binary: true, path }` (a read-only container path). Returns `{ error }` if not found — match the full path, folder prefix included — or if the asset's archive state doesn't match `filter` (default `'active'`, so archived assets need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).
+**Returns:** For a text asset, `{ filename, content_type, content }`. For a binary asset, `{ filename, content_type, byte_size, binary: true, url }` — a signed download URL valid for 24h; fetch it with plain `curl` (no auth header), and re-call the tool for a fresh one if it expires. Returns `{ error }` if not found — match the full path, folder prefix included — or if the asset's archive state doesn't match `filter` (default `'active'`, so archived assets need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).
 
 ### `move_project_asset`
 

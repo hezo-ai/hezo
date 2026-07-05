@@ -28,6 +28,8 @@ export const queryKeys = {
 	instanceSettings: () => ['instance', 'settings'],
 	/** Storage backend metadata (server-side redacted) for the General settings page. */
 	databaseInfo: () => ['instance', 'database'],
+	/** Asset storage backend metadata (server-side redacted) for the General settings page. */
+	assetStorageInfo: () => ['instance', 'asset-storage'],
 	/** Instance-wide mention resolution (global CEO chat), keyed by sorted candidates. */
 	instanceMentionsResolve: (key: KeyParam) => ['instance', 'mentions', 'resolve', key],
 	/** The single global CEO chat conversation (history + streamed messages). */

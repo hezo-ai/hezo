@@ -36,10 +36,13 @@ schema version it was taken at. For the **embedded** database, run it while the 
 is stopped. For an **external** database it can run any time — and pairs well with your
 provider's own snapshots or point-in-time recovery.
 
-**Also back up the data directory.** Uploaded assets, project workspaces, and keys live
-under `<data-dir>` (not in the database), so a complete instance backup is the
-`hezo backup` file **plus** a copy of the data directory (a file backup or volume
-snapshot works; stopped-server copies are cleanest).
+**Also back up the data directory.** Uploaded assets (under `<data-dir>/assets/`),
+project workspaces, and keys live under `<data-dir>` (not in the database), so a complete
+instance backup is the `hezo backup` file **plus** a copy of the data directory (a file
+backup or volume snapshot works; stopped-server copies are cleanest). If assets live in
+[S3-compatible object storage](/docs/deployment/configuration) instead, cover the bucket
+with your provider's versioning/replication — the data directory then holds no asset
+files.
 
 ## Restoring
 

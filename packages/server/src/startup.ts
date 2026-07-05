@@ -3,6 +3,9 @@ import { extname, join, resolve } from 'node:path';
 import { ATTACHMENT_MAX_BYTES } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { LocalAssetStore } from './assets/drivers/local';
+import { openAssetStorage } from './assets/open';
+import type { AssetStore } from './assets/store';
 import type { HezoConfig } from './cli';
 import type { Db } from './db/database';
 import { logger } from './logger';
@@ -15,6 +18,7 @@ import { openDatabase } from './db/open';
 import { BASE_SCHEMA } from './db/schema';
 import { registerAuditObserver } from './events/audit-observer';
 import { DomainEventBus } from './events/bus';
+import type { AssetStorageInfo } from './lib/asset-storage-info';
 import { trackBackground } from './lib/background';
 import type { StorageInfo } from './lib/db-info';
 import { getInstanceBaseUrl } from './lib/system-meta';
@@ -29,6 +33,7 @@ import { agentsRoutes } from './routes/agents';
 import { aiProvidersRoutes } from './routes/ai-providers';
 import { apiKeysRoutes } from './routes/api-keys';
 import { approvalsRoutes } from './routes/approvals';
+import { buildAssetStorageInfoRoutes } from './routes/asset-storage-info';
 import { assetsRoutes, publicAssetsRoutes } from './routes/assets';
 import { auditLogRoutes } from './routes/audit-log';
 import { authRoutes } from './routes/auth';
@@ -96,6 +101,11 @@ export type MasterKeyState = 'unset' | 'locked' | 'unlocked';
 export interface AppConfig {
 	dataDir: string;
 	webUrl: string;
+	/**
+	 * Port the HTTP server listens on — used to build the absolute
+	 * `host.docker.internal:<port>` asset download URLs handed to agents.
+	 */
+	serverPort?: number;
 	/** A master key was configured at startup (env/CLI), so the instance auto-unlocks after a restart. */
 	autoUnlock?: boolean;
 	/**
@@ -103,6 +113,8 @@ export interface AppConfig {
 	 * carries the raw connection URL — redaction happened at startup.
 	 */
 	storageInfo?: StorageInfo;
+	/** Pre-redacted asset-storage metadata — same contract as `storageInfo`. */
+	assetStorageInfo?: AssetStorageInfo;
 }
 
 export interface StartupResult {
@@ -113,6 +125,7 @@ export interface StartupResult {
 	ceoSessionManager: CeoSessionManager;
 	wsManager: WebSocketManager;
 	db: Db;
+	assetStore: AssetStore;
 	docker: DockerClient;
 	masterKeyManager: MasterKeyManager;
 	logs: LogStreamBroker;
@@ -150,6 +163,15 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	db = await runAvailableMigrations(db, config.dataDir);
 	setStartupPhase('seed');
 	await runSeed(db);
+
+	// Asset blob storage: local filesystem by default, S3-compatible object
+	// storage when configured. Like databaseUrl, the raw assetStorageUrl stops
+	// here — only the pre-redacted info travels further.
+	setStartupPhase('asset-storage');
+	const { store: assetStore, info: assetStorageInfo } = await openAssetStorage({
+		dataDir: config.dataDir,
+		assetStorageUrl: config.assetStorageUrl,
+	});
 
 	// Runtime model pricing: load the table into memory (migrations bake in a
 	// catalog snapshot, so it's never empty) and, unless disabled, refresh from
@@ -359,8 +381,10 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		{
 			dataDir: config.dataDir,
 			webUrl: config.webUrl,
+			serverPort: config.port,
 			autoUnlock: config.masterKey !== undefined,
 			storageInfo,
+			assetStorageInfo,
 		},
 		docker,
 		wsManager,
@@ -372,6 +396,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		events,
 		ceoSessionManager,
 		pricing,
+		assetStore,
 	);
 
 	return {
@@ -382,6 +407,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		ceoSessionManager,
 		wsManager,
 		db,
+		assetStore,
 		docker,
 		masterKeyManager,
 		logs,
@@ -405,9 +431,14 @@ export function buildApp(
 	events: DomainEventBus = new DomainEventBus(),
 	ceoSessionManager?: CeoSessionManager,
 	pricing?: PricingService,
+	assetStore?: AssetStore,
 ): Hono<Env> {
 	const app = new Hono<Env>();
 	const authChallenges = new AuthChallengeStore();
+	// Blob storage for assets. Startup passes the store selected by
+	// openAssetStorage; tests booting buildApp directly fall back to the local
+	// filesystem driver under the test data dir.
+	const assets = assetStore ?? new LocalAssetStore(config.dataDir);
 	logs.setWsManager(wsManager);
 	registerAuditObserver(events, db);
 
@@ -418,6 +449,7 @@ export function buildApp(
 
 	app.use('*', async (c, next) => {
 		c.set('db', db);
+		c.set('assetStore', assets);
 		c.set('masterKeyManager', masterKeyManager);
 		c.set('authChallenges', authChallenges);
 		c.set('docker', docker);
@@ -449,7 +481,16 @@ export function buildApp(
 		sshAgentServer,
 		egressCAPath: egressProxy?.caCertPath ?? null,
 	};
-	initMcpServer(db, config.dataDir, masterKeyManager, wsManager, events, mcpContainerDeps);
+	initMcpServer(
+		db,
+		config.dataDir,
+		masterKeyManager,
+		wsManager,
+		events,
+		mcpContainerDeps,
+		assets,
+		config.serverPort,
+	);
 
 	// Public routes
 	app.route('/', healthRoutes);
@@ -553,12 +594,18 @@ export function buildApp(
 	app.route('/api', mentionsRoutes);
 	app.route('/api', aiProvidersRoutes);
 	app.route('/api', instanceSettingsRoutes);
-	// Storage metadata card (General settings). Tests boot buildApp without a
-	// storageInfo — derive the embedded default so the endpoint stays truthful.
+	// Storage metadata cards (General settings). Tests boot buildApp without
+	// the infos — derive the local defaults so the endpoints stay truthful.
 	app.route(
 		'/api',
 		buildDatabaseInfoRoutes(
 			config.storageInfo ?? { backend: 'embedded', display: join(config.dataDir, 'pgdata') },
+		),
+	);
+	app.route(
+		'/api',
+		buildAssetStorageInfoRoutes(
+			config.assetStorageInfo ?? { backend: 'local', display: join(config.dataDir, 'assets') },
 		),
 	);
 	app.route('/api', modelPricingRoutes);

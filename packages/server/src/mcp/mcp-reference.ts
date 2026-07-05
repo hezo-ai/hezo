@@ -388,7 +388,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	read_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			"For a text asset, `{ filename, content_type, content }`. For a binary asset, `{ filename, content_type, byte_size, binary: true, path }` (a read-only container path). Returns `{ error }` if not found — match the full path, folder prefix included — or if the asset's archive state doesn't match `filter` (default `'active'`, so archived assets need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).",
+			"For a text asset, `{ filename, content_type, content }`. For a binary asset, `{ filename, content_type, byte_size, binary: true, url }` — a signed download URL valid for 24h; fetch it with plain `curl` (no auth header), and re-call the tool for a fresh one if it expires. Returns `{ error }` if not found — match the full path, folder prefix included — or if the asset's archive state doesn't match `filter` (default `'active'`, so archived assets need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).",
 	},
 	write_project_asset: {
 		category: 'Project docs & assets',

@@ -799,11 +799,10 @@ describe('provisionContainer broadcasting', () => {
 
 		const hostConfig = mockDocker.createContainer.mock.calls[0][1].HostConfig;
 		const binds = hostConfig.Binds as string[];
-		const assetsBind = binds.find((b) => b.endsWith(':/workspace/.hezo/assets:ro'));
-		expect(assetsBind).toBeDefined();
-		expect(assetsBind).toContain(
-			`${dataDir}/teams/${project.team_id}/projects/${project.id}/assets`,
-		);
+		// Assets are never mounted — agents reach them only via signed download
+		// URLs from the asset tools (the store may not even be a filesystem).
+		expect(binds.find((b) => b.includes('assets'))).toBeUndefined();
+		expect(binds.find((b) => b.endsWith(':/workspace:rw'))).toBeDefined();
 
 		expect(hostConfig.Memory).toBeUndefined();
 		expect(hostConfig.MemorySwap).toBeUndefined();

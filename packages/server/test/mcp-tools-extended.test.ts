@@ -1237,9 +1237,9 @@ describe('MCP project docs & assets', () => {
 		expect(result.error).toContain('text-based');
 	});
 
-	it('read_project_asset reports a binary asset as a container path', async () => {
+	it('read_project_asset reports a binary asset as a signed download url', async () => {
 		// Seed an asset row directly with a binary content type; the read path
-		// returns a path rather than inlining content.
+		// returns a download URL rather than inlining content.
 		const assetId = crypto.randomUUID();
 		await db.query(
 			`INSERT INTO assets (id, team_id, project_id, original_filename, content_type, byte_size, sha256)
@@ -1249,10 +1249,12 @@ describe('MCP project docs & assets', () => {
 		const result = (await callTool('read_project_asset', {
 			project: projectId,
 			filename: 'photo.png',
-		})) as { binary?: boolean; path?: string; content?: string; error?: string };
+		})) as { binary?: boolean; url?: string; content?: string; error?: string };
 		expect(result.error).toBeUndefined();
 		expect(result.binary).toBe(true);
-		expect(result.path).toContain(assetId);
+		expect(result.url).toMatch(
+			new RegExp(`^http://host\\.docker\\.internal:\\d+/api/assets/${assetId}\\?exp=\\d+&sig=`),
+		);
 		expect(result.content).toBeUndefined();
 	});
 });
