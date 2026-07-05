@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { renderApp } from './helpers/render';
+import { getTestContext, renderApp } from './helpers/render';
 import { type SeededWorkspace, seedProject, seedWorkspace } from './helpers/seed';
 
 function uniqueName(base: string): string {

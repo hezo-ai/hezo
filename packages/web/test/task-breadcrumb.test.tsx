@@ -43,6 +43,11 @@ test('sub-task header shows a breadcrumb link to its parent and navigates there'
 	const breadcrumb = await findByTestId('task-breadcrumb');
 	expect(breadcrumb.textContent).toContain(seeded.childIdentifier);
 
+	// ...starts with a "Tasks" link back to the project's task list...
+	const tasksLink = await findByTestId('task-breadcrumb-tasks');
+	expect(tasksLink.textContent).toBe('Tasks');
+	expect(tasksLink.getAttribute('href')).toContain(`/projects/${seeded.projectSlug}/tasks`);
+
 	// ...and is preceded by a link to the parent.
 	const parentLink = await findByTestId('task-breadcrumb-ancestor');
 	expect(parentLink.textContent).toBe(seeded.parentIdentifier);
@@ -55,9 +60,9 @@ test('sub-task header shows a breadcrumb link to its parent and navigates there'
 	);
 });
 
-test('top-level task header shows only its identifier with no ancestor links', async () => {
+test('top-level task header shows a Tasks crumb and its identifier with no ancestor links', async () => {
 	const seeded = { projectSlug: '', taskPath: '', identifier: '' };
-	const { findByTestId, queryByTestId, router } = await renderApp({
+	const { findByTestId, queryByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -76,6 +81,14 @@ test('top-level task header shows only its identifier with no ancestor links', a
 
 	const breadcrumb = await findByTestId('task-breadcrumb');
 	expect(breadcrumb.textContent).toContain(seeded.identifier);
-	// No parent → the breadcrumb is just the current identifier, no ancestor crumb.
+	// No parent → no ancestor crumb, but the Tasks list crumb is always there.
 	expect(queryByTestId('task-breadcrumb-ancestor')).toBeNull();
+	const tasksLink = await findByTestId('task-breadcrumb-tasks');
+	expect(tasksLink.getAttribute('href')).toContain(`/projects/${seeded.projectSlug}/tasks`);
+
+	// Clicking it navigates back to the task list.
+	await user.click(tasksLink);
+	await waitFor(() =>
+		expect(router.state.location.pathname).toBe(`/projects/${seeded.projectSlug}/tasks`),
+	);
 });
