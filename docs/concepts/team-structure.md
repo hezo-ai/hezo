@@ -65,8 +65,11 @@ You drive this in plain language through the
 [CEO chat](/docs/concepts/roles-and-coordination#chatting-with-the-ceo) — "this project
 needs a data analyst", "have QA report to the Architect" — and the CEO proposes the
 change and asks you to approve anything consequential. When a team's roster changes, the
-Captain runs a **coherence review** to re-align the reporting lines and role descriptions
-so the new structure hangs together.
+CEO runs a **coherence review** to re-align the reporting lines and role descriptions
+so the new structure hangs together. Part of that review is checking that every role's
+work is still **verified** — reviewed by someone other than the agent who produced it,
+whether by a manager, a dedicated reviewing role, or review steps written into the
+agents' prompts — and closing the gap when it isn't.
 
 ## Reusing a structure
 

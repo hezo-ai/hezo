@@ -22,7 +22,8 @@ across the whole instance:
 - **Coordination** — ask about any project's status, tasks, or roster; the CEO
   works across every team.
 - **Setup review** — before a new team starts planning, the CEO aligns its roster with the
-  goal. When the CEO creates a project with you, it sets the team up according to the plan
+  goal, including making sure each role's output has a path to being reviewed by another
+  agent. When the CEO creates a project with you, it sets the team up according to the plan
   you agreed — the roles to hire and how they fit together — then starts it; a project
   created directly from the form gets an automatic coherence check instead.
 - **Actioning changes** — hire new agents, retire ones a team no longer needs, adjust
