@@ -1,4 +1,4 @@
-import type { PGlite } from '@electric-sql/pglite';
+import type { Db } from '../db/database';
 import type { DockerClient, ExecLogChunk, ExecStartOpts } from './docker';
 
 const SYNTHETIC_EXEC_SCRIPT: Array<{
@@ -39,7 +39,7 @@ const RUN_ID_ENV_PREFIX = 'HEZO_HEARTBEAT_RUN_ID=';
  * Without this the completion path would treat every synthetic run as a no-op
  * and fail it. Pass `db` to enable; omit it for pure docker-surface stubs.
  */
-export function createFakeDockerClient(db?: PGlite): DockerClient {
+export function createFakeDockerClient(db?: Db): DockerClient {
 	const containers = new Map<string, { running: boolean }>();
 	const execRunIds = new Map<string, string | null>();
 	let execCounter = 0;

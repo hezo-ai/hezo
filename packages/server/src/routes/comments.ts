@@ -705,7 +705,7 @@ interface CommentAttachmentRow {
 }
 
 async function loadAttachmentsForComments(
-	db: import('@electric-sql/pglite').PGlite,
+	db: import('../db/database').Db,
 	commentIds: string[],
 	masterKeyManager: import('../crypto/master-key').MasterKeyManager,
 ): Promise<

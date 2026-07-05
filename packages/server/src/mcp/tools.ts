@@ -1,5 +1,4 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { PGlite } from '@electric-sql/pglite';
 import type { SearchScope } from '@hezo/shared';
 import {
 	ADMIN_MENTION_SLUG,
@@ -44,6 +43,7 @@ import {
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { MasterKeyManager } from '../crypto/master-key';
+import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
 import { isCoach, isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
@@ -211,7 +211,7 @@ function isErrorResult(result: unknown): boolean {
  * scoping (the task's team plus the HQ instance agents) and includes @admin.
  */
 async function buildUnlinkedMentionWarning(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	authorMemberId: string,
 	content: string,
@@ -246,7 +246,7 @@ async function buildUnlinkedMentionWarning(
  * buildUnlinkedMentionWarning.
  */
 async function buildBacktickedEntityWarning(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	projectId: string,
 	content: string,
@@ -330,7 +330,7 @@ async function buildBacktickedEntityWarning(
  * Best-effort and non-blocking, exactly like the builders above.
  */
 async function buildTerminalTaskAskWarning(
-	db: PGlite,
+	db: Db,
 	taskId: string,
 	content: string,
 ): Promise<string | null> {
@@ -354,7 +354,7 @@ async function buildTerminalTaskAskWarning(
  * swallowed and never block the already-persisted write.
  */
 async function withBacktickWarning<T extends object>(
-	db: PGlite,
+	db: Db,
 	auth: AuthInfo,
 	teamId: string,
 	projectId: string,
@@ -370,7 +370,7 @@ async function withBacktickWarning<T extends object>(
 }
 
 /** Flag an agent run as having produced output. Idempotent and self-contained. */
-async function markRunProducedOutput(db: PGlite, runId: string): Promise<void> {
+async function markRunProducedOutput(db: Db, runId: string): Promise<void> {
 	await db.query(
 		'UPDATE heartbeat_runs SET produced_output = true WHERE id = $1 AND produced_output = false',
 		[runId],
@@ -383,7 +383,7 @@ async function markRunProducedOutput(db: PGlite, runId: string): Promise<void> {
  * means the run wrote persisted data) so the completion path can treat a clean
  * no-op as a success without it masquerading as a productive run.
  */
-async function markRunReportedNoWork(db: PGlite, runId: string, reason: string): Promise<void> {
+async function markRunReportedNoWork(db: Db, runId: string, reason: string): Promise<void> {
 	await db.query(
 		'UPDATE heartbeat_runs SET reported_no_work = true, no_work_reason = $2 WHERE id = $1',
 		[runId, reason],
@@ -476,8 +476,8 @@ function tool(
 	name: string,
 	description: string,
 	schema: Record<string, z.ZodType>,
-	handler: (args: Record<string, unknown>, db: PGlite, auth: AuthInfo) => Promise<unknown>,
-	db: PGlite,
+	handler: (args: Record<string, unknown>, db: Db, auth: AuthInfo) => Promise<unknown>,
+	db: Db,
 ) {
 	registeredTools.push({
 		name,
@@ -552,7 +552,7 @@ const MAX_BATCH_CREATE_TASKS = 50;
 const MAX_BATCH_AGENT_SYSTEM_PROMPTS = 50;
 
 async function buildMcpCreateTaskCaller(
-	db: PGlite,
+	db: Db,
 	auth: AuthInfo,
 	teamId: string,
 ): Promise<CreateTaskCaller> {
@@ -603,7 +603,7 @@ export interface ToolScope {
  * the tool surface; it stays an internal key.
  */
 export async function resolveScope(
-	db: PGlite,
+	db: Db,
 	auth: AuthInfo,
 	args: Record<string, unknown>,
 ): Promise<ToolScope | { error: string }> {
@@ -629,11 +629,7 @@ export async function resolveScope(
 }
 
 /** Authorize `auth` to act inside `scope`. Returns an error string, or null when allowed. */
-async function authorizeScope(
-	db: PGlite,
-	auth: AuthInfo,
-	scope: ToolScope,
-): Promise<string | null> {
+async function authorizeScope(db: Db, auth: AuthInfo, scope: ToolScope): Promise<string | null> {
 	switch (auth.type) {
 		case AuthType.Agent:
 			// Instance principals (CEO chat session / cross-project runs) roam every project.
@@ -664,7 +660,7 @@ async function authorizeScope(
  * not from tool input. Used by the handful of tools keyed by a resource id whose
  * team is looked up server-side rather than passed in.
  */
-async function authorizeTeam(db: PGlite, auth: AuthInfo, teamId: string): Promise<string | null> {
+async function authorizeTeam(db: Db, auth: AuthInfo, teamId: string): Promise<string | null> {
 	switch (auth.type) {
 		case AuthType.Agent:
 			if (auth.crossTeam) return null;
@@ -691,7 +687,7 @@ async function authorizeTeam(db: PGlite, auth: AuthInfo, teamId: string): Promis
  * UUID) together, verifying the task belongs to the resolved project.
  */
 async function resolveTaskScope(
-	db: PGlite,
+	db: Db,
 	auth: AuthInfo,
 	args: Record<string, unknown>,
 ): Promise<(ToolScope & { taskId: string }) | { error: string }> {
@@ -722,7 +718,7 @@ const projectArg = () =>
 
 export function registerTools(
 	server: McpServer,
-	db: PGlite,
+	db: Db,
 	dataDir: string,
 	masterKeyManager: MasterKeyManager,
 	wsManager?: WebSocketManager,
@@ -4512,7 +4508,7 @@ export function registerTools(
  * HQ virtual member running inside the team — the latter covers the CEO/Coach
  * doing cross-team setup and coherence work.
  */
-async function canCoordinateTeam(db: PGlite, auth: AuthInfo, teamId: string): Promise<boolean> {
+async function canCoordinateTeam(db: Db, auth: AuthInfo, teamId: string): Promise<boolean> {
 	if (auth.type !== AuthType.Agent) return false;
 	if (await isVirtualHqMemberInTeam(db, auth, teamId)) return true;
 	const r = await db.query<{ slug: string }>(

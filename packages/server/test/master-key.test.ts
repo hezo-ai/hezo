@@ -1,7 +1,8 @@
-import { PGlite } from '@electric-sql/pglite';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { decrypt, deriveKey, encrypt, generateUnlockKey } from '../src/crypto/encryption';
 import { MasterKeyManager } from '../src/crypto/master-key';
+import { createMemoryDb } from '../src/db/client';
+import type { PgliteDb } from '../src/db/drivers/pglite';
 
 describe('encryption', () => {
 	it('encrypts and decrypts to original plaintext', async () => {
@@ -37,10 +38,10 @@ describe('encryption', () => {
 });
 
 describe('MasterKeyManager', () => {
-	let db: PGlite;
+	let db: PgliteDb;
 
 	beforeEach(async () => {
-		db = new PGlite();
+		db = await createMemoryDb();
 		await db.query(
 			'CREATE TABLE IF NOT EXISTS system_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
 		);

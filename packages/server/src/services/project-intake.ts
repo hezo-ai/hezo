@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	CEO_AGENT_SLUG,
 	CommentContentType,
@@ -8,6 +7,7 @@ import {
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
 import { recomputeDownstreamReadiness } from '../lib/dependencies';
 import { terminalStatusParams, withTransaction } from '../lib/sql';
@@ -113,7 +113,7 @@ ${input.description}
  * go-ahead, creates the project + team itself via the `create_project` tool.
  */
 export async function createProjectIntake(
-	db: PGlite,
+	db: Db,
 	input: CreateProjectIntakeInput,
 	wsManager?: WebSocketManager,
 ): Promise<ProjectIntakeResult | null> {
@@ -246,7 +246,7 @@ function extractCommentText(content: unknown): string {
  * enriched with the CEO's opening greeting and identity. All intakes live in HQ.
  */
 export async function getOpenProjectIntakeForHome(
-	db: PGlite,
+	db: Db,
 ): Promise<OpenProjectIntakeForHome | null> {
 	const open = await getOpenProjectIntakeTasks(db);
 	const first = open[0];
@@ -274,7 +274,7 @@ export async function getOpenProjectIntakeForHome(
 }
 
 /** All open project-intake conversations, instance-wide (they all live in HQ). */
-export async function getOpenProjectIntakeTasks(db: PGlite): Promise<OpenProjectIntake[]> {
+export async function getOpenProjectIntakeTasks(db: Db): Promise<OpenProjectIntake[]> {
 	const ts = terminalStatusParams(2);
 	const result = await db.query<{
 		task_id: string;
@@ -304,7 +304,7 @@ function buildProvisioningCompleteText(projectName: string, projectSlug: string)
  * the ticket is already terminal. Called by the CEO's `create_project` tool.
  */
 export async function completeProjectIntakeAfterProvisioning(
-	db: PGlite,
+	db: Db,
 	intakeTaskId: string,
 	projectName: string,
 	projectSlug: string,

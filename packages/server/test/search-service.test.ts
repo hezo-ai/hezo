@@ -1,11 +1,11 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { HIGHLIGHT_SENTINEL } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import { buildSearchTsQuery, fullTextSearch } from '../src/services/search';
 import { safeClose } from './helpers';
 import { createTestApp } from './helpers/app';
 
-let db: PGlite;
+let db: Db;
 let teamId: string;
 let projectId: string;
 

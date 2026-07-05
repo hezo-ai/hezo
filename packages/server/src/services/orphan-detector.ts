@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentRuntimeStatus,
 	ApprovalType,
@@ -7,6 +6,7 @@ import {
 	WakeupStatus,
 	wsRoom,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
 import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
@@ -23,7 +23,7 @@ const SAFETY_WINDOW_SECONDS = 30;
 export const STALE_STATE_GRACE_SECONDS = 120;
 
 export async function detectOrphans(
-	db: PGlite,
+	db: Db,
 	liveRunIds: Set<string>,
 	wsManager?: WebSocketManager,
 ): Promise<number> {
@@ -122,7 +122,7 @@ export async function detectOrphans(
  * wakeup) still says the agent is busy, which silently blocks every future
  * dispatch for that agent. Each step is independent and idempotent.
  */
-export async function healStaleRunState(db: PGlite, wsManager?: WebSocketManager): Promise<void> {
+export async function healStaleRunState(db: Db, wsManager?: WebSocketManager): Promise<void> {
 	const grace = String(STALE_STATE_GRACE_SECONDS);
 
 	// Locks whose holder has no queued/running run anymore.

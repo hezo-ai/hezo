@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { McpConnectionKind, McpInstallStatus } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { logger } from '../logger';
 import type { DockerClient } from './docker';
 import type { LocalMcpConfig } from './mcp-connections';
@@ -23,7 +23,7 @@ interface PendingRow {
 }
 
 export interface InstallerDeps {
-	db: PGlite;
+	db: Db;
 	docker: DockerClient;
 	containerId: string;
 	teamId: string;
@@ -157,7 +157,7 @@ async function runWithTimeout(
 }
 
 async function markStatus(
-	db: PGlite,
+	db: Db,
 	id: string,
 	status: McpInstallStatus,
 	error: string | null,

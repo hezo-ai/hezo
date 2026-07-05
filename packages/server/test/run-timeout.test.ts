@@ -1,8 +1,8 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { ContainerStatus, HeartbeatRunStatus, WakeupSource } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import { type RunnerDeps, runAgent } from '../src/services/agent-runner';
@@ -21,7 +21,7 @@ import { withRunUserStub } from './helpers/run-user-docker';
 // methods directly (the pattern used across job-manager-workflows.test.ts).
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let projectId: string;

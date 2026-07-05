@@ -1,10 +1,10 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentRuntimeStatus,
 	BUDGET_PAUSE_STATUSES,
 	HeartbeatRunStatus,
 	wsRoom,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
 import { checkOverBudget, type OverBudgetBlock } from './budget';
 import type { WebSocketManager } from './ws';
@@ -29,7 +29,7 @@ const BUDGET_PAUSE_STATUSES_PG = `{${BUDGET_PAUSE_STATUSES.join(',')}}`;
  * Returns true if the agent transitioned to idle, false otherwise.
  */
 export async function setAgentIdleIfNoActiveRuns(
-	db: PGlite,
+	db: Db,
 	memberId: string,
 	teamId: string,
 	excludeRunId: string | undefined,
@@ -79,7 +79,7 @@ export function budgetPauseStatus(block: OverBudgetBlock): AgentRuntimeStatus {
  * already-paused agent).
  */
 export async function pauseAgentForBudget(
-	db: PGlite,
+	db: Db,
 	memberId: string,
 	teamId: string,
 	block: OverBudgetBlock,
@@ -113,7 +113,7 @@ export async function pauseAgentForBudget(
  * changed, else null.
  */
 export async function reconcileBudgetPause(
-	db: PGlite,
+	db: Db,
 	memberId: string,
 	teamId: string,
 	projectId: string | null,

@@ -1,6 +1,6 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { CEO_AGENT_SLUG } from '@hezo/shared';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import {
 	completeProjectIntakeAfterProvisioning,
 	createProjectIntake,
@@ -22,7 +22,7 @@ import { createTestApp } from './helpers/app';
  *  - extractCommentText over object / null / string-JSON comment shapes
  */
 
-let db: PGlite;
+let db: Db;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -169,7 +169,7 @@ describe('extractCommentText (via getOpenProjectIntakeForHome)', () => {
 });
 
 describe('missing CEO / HQ project → null returns', () => {
-	let db2: PGlite;
+	let db2: Db;
 
 	beforeEach(async () => {
 		const ctx = await createTestApp();

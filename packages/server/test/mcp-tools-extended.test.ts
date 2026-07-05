@@ -1,8 +1,8 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { CEO_AGENT_SLUG, CredentialKind, DEFAULT_TEAM_ID, ReactionKind } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import {
@@ -24,7 +24,7 @@ import { compliantPrompt } from './helpers/prompt';
 // JSON result (an `error` field on the failure paths), not an HTTP 500.
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 

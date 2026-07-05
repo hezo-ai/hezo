@@ -9,8 +9,9 @@
  * (`manual`) rows win over feed (`pricepertoken`) rows; an unknown model
  * resolves to `$0` with a one-time warning.
  */
-import type { PGlite } from '@electric-sql/pglite';
+
 import { type CostTokens, costCentsFromRate, type ModelRate } from '@hezo/shared';
+import type { Db } from '../../db/database';
 import { trackBackground } from '../../lib/background';
 import { logger } from '../../logger';
 import { refreshPricingFromPricePerToken } from './refresher';
@@ -73,7 +74,7 @@ export class PricingService {
 	private warned = new Set<string>();
 	private fuzzyMatched = new Set<string>();
 
-	constructor(private readonly db: PGlite) {}
+	constructor(private readonly db: Db) {}
 
 	/**
 	 * Load into memory and (optionally) start the background refresh. `refresh`

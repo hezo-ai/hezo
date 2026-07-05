@@ -1,8 +1,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { PGlite } from '@electric-sql/pglite';
 import { createMemoryDb } from '../../src/db/client';
+import type { PgliteDb } from '../../src/db/drivers/pglite';
 import { type Migration, runMigrations } from '../../src/db/migrate';
 import { codeMigrations } from '../../src/db/migrations/code';
 
@@ -26,12 +26,9 @@ export function migrationsDir(): string {
 	}
 }
 
-/** Read a migration SQL file, stripping the pgcrypto extension PGlite loads built-in. */
+/** Read a migration SQL file verbatim (the schema needs no extensions — core Postgres only). */
 export function loadMigrationSql(file: string): string {
-	return readFileSync(join(migrationsDir(), file), 'utf-8').replace(
-		/CREATE EXTENSION IF NOT EXISTS "pgcrypto";/g,
-		'',
-	);
+	return readFileSync(join(migrationsDir(), file), 'utf-8');
 }
 
 /** Every bundled migration (SQL + code), merged and sorted exactly as the runner sees them. */
@@ -46,7 +43,7 @@ function allMigrations(): Record<string, Migration> {
 }
 
 export interface DataPreservationHarness {
-	db: PGlite;
+	db: PgliteDb;
 	/** Apply every bundled migration sorted strictly *before* `target` (the prior schema). */
 	applyUpToExclusive(target: string): Promise<void>;
 	/** Apply `target`; the runner skips the already-applied earlier migrations. */

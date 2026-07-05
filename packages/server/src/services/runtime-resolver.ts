@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	type AgentRuntime,
 	type AiProvider,
@@ -6,6 +5,7 @@ import {
 	PROVIDER_TO_RUNTIME,
 	PROVIDERS_BY_RUNTIME,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 
 export interface ResolvedRuntime {
 	runtime: AgentRuntime;
@@ -23,7 +23,7 @@ export interface ResolvedRuntime {
  * Returns null when no suitable active provider exists.
  */
 export async function resolveRuntimeForTask(
-	db: PGlite,
+	db: Db,
 	taskRuntimeType: AgentRuntime | null,
 ): Promise<ResolvedRuntime | null> {
 	if (taskRuntimeType) {

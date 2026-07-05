@@ -1,7 +1,7 @@
-import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { createConnection } from '../src/services/oauth/connection-store';
 import { safeClose } from './helpers';
@@ -9,7 +9,7 @@ import { authHeader, createTestApp, createTestProject, createTestTeam } from './
 import { createGitHubSim, type GitHubSim } from './helpers/github-sim';
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 let teamId: string;
 let projectId: string;

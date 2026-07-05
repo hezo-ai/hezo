@@ -1,13 +1,13 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { HEZO_DOCS_URL } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { createTestApp } from './helpers/app';
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();

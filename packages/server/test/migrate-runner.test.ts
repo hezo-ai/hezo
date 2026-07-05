@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openPersistentDb } from '../src/db/client';
+import type { Db } from '../src/db/database';
+import { PgliteDb } from '../src/db/drivers/pglite';
 import { type Migration, runMigrations } from '../src/db/migrate';
 import { DbNewerThanAppError, MigrationFailedError } from '../src/db/migrate-errors';
 import { applyPendingMigrations } from '../src/db/migrate-runner';
@@ -42,7 +44,7 @@ describe('applyPendingMigrations', () => {
 	}
 
 	async function seedExistingInstance(dir: string): Promise<void> {
-		const db = await openPersistentDb(dir);
+		const db = new PgliteDb(await openPersistentDb(dir));
 		await runMigrations(db, { '001_posts.sql': V1 });
 		await db.query(
 			"INSERT INTO posts (id, title, author) VALUES (1, 'A', 'Ada'), (2, 'B', 'Alan'), (3, 'C', 'Ada')",
@@ -54,7 +56,7 @@ describe('applyPendingMigrations', () => {
 		const dir = tempDir();
 		await seedExistingInstance(dir);
 
-		let db = await openPersistentDb(dir);
+		let db: Db = new PgliteDb(await openPersistentDb(dir));
 		db = await applyPendingMigrations(db, dir, {
 			'001_posts.sql': V1,
 			'002_extract_authors.sql': V2_EXTRACT_AUTHORS,
@@ -82,7 +84,7 @@ describe('applyPendingMigrations', () => {
 		const dir = tempDir();
 		await seedExistingInstance(dir);
 
-		const db = await openPersistentDb(dir);
+		const db = new PgliteDb(await openPersistentDb(dir));
 		await expect(
 			applyPendingMigrations(db, dir, {
 				'001_posts.sql': V1,
@@ -93,7 +95,7 @@ describe('applyPendingMigrations', () => {
 		// applyPendingMigrations closed the handle it was given; reopen the dir and
 		// confirm the original schema + data are exactly as before.
 		expect(existsSync(join(dir, '.migrate-tmp'))).toBe(false);
-		const reopened = await openPersistentDb(dir);
+		const reopened = new PgliteDb(await openPersistentDb(dir));
 		try {
 			const rows = await reopened.query<{ id: number; title: string; author: string }>(
 				'SELECT id, title, author FROM posts ORDER BY id',
@@ -114,7 +116,7 @@ describe('applyPendingMigrations', () => {
 
 	it('migrates a fresh install in place (no copy)', async () => {
 		const dir = tempDir();
-		const db = await openPersistentDb(dir);
+		const db = new PgliteDb(await openPersistentDb(dir));
 		try {
 			const returned = await applyPendingMigrations(db, dir, { '001_posts.sql': V1 });
 			expect(returned).toBe(db); // same handle — no swap
@@ -129,7 +131,7 @@ describe('applyPendingMigrations', () => {
 	it('refuses to run against a DB newer than the binary', async () => {
 		const dir = tempDir();
 		// DB has 001 + 002 applied...
-		let db = await openPersistentDb(dir);
+		let db = new PgliteDb(await openPersistentDb(dir));
 		await runMigrations(db, {
 			'001_posts.sql': V1,
 			'002_extra.sql': 'CREATE TABLE extra (id INT);',
@@ -137,7 +139,7 @@ describe('applyPendingMigrations', () => {
 		await safeClose(db);
 
 		// ...but this binary only knows 001.
-		db = await openPersistentDb(dir);
+		db = new PgliteDb(await openPersistentDb(dir));
 		try {
 			await expect(applyPendingMigrations(db, dir, { '001_posts.sql': V1 })).rejects.toBeInstanceOf(
 				DbNewerThanAppError,
@@ -153,7 +155,7 @@ describe('applyPendingMigrations', () => {
 	it('is a no-op when nothing is pending', async () => {
 		const dir = tempDir();
 		await seedExistingInstance(dir);
-		const db = await openPersistentDb(dir);
+		const db = new PgliteDb(await openPersistentDb(dir));
 		try {
 			const returned = await applyPendingMigrations(db, dir, { '001_posts.sql': V1 });
 			expect(returned).toBe(db);

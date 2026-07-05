@@ -420,7 +420,7 @@ async function issuePasswordSetupToken(c: Context<Env>) {
 }
 
 async function addUserToDefaultTeam(
-	db: import('@electric-sql/pglite').PGlite,
+	db: import('../db/database').Db,
 	userId: string,
 ): Promise<void> {
 	const existing = await db.query(

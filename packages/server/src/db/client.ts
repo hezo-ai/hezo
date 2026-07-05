@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { logger } from '../logger';
+import { PgliteDb } from './drivers/pglite';
 
 const log = logger.child('db');
 
@@ -104,6 +105,7 @@ export async function createDb(dataDir: string): Promise<PGlite> {
 	return openPersistentDb(dataDir);
 }
 
-export async function createMemoryDb(): Promise<PGlite> {
-	return new PGlite();
+/** In-memory database wrapped in the `Db` driver — the test-suite workhorse. */
+export async function createMemoryDb(): Promise<PgliteDb> {
+	return new PgliteDb(new PGlite());
 }

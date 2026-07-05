@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import {
 	deriveModelId,
 	fetchPricePerTokenPricing,
@@ -142,7 +142,7 @@ describe('fetchPricePerTokenPricing', () => {
 });
 
 describe('refreshPricingFromPricePerToken', () => {
-	let db: PGlite;
+	let db: Db;
 
 	beforeEach(async () => {
 		db = await createTestDbWithMigrations();

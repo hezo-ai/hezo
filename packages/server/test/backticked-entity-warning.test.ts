@@ -1,8 +1,8 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { extractBacktickedMentionCandidates } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import {
@@ -72,7 +72,7 @@ describe('extractBacktickedMentionCandidates', () => {
 
 describe('MCP tools warn when an existing entity is wrapped in backticks', () => {
 	let app: Hono<Env>;
-	let db: PGlite;
+	let db: Db;
 	let token: string;
 	let masterKeyManager: MasterKeyManager;
 

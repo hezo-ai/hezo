@@ -1,7 +1,7 @@
 import { createHash, generateKeyPairSync } from 'node:crypto';
-import type { PGlite } from '@electric-sql/pglite';
 import { decrypt, encrypt } from '../crypto/encryption';
 import type { MasterKeyManager } from '../crypto/master-key';
+import type { Db } from '../db/database';
 
 export interface SSHKeyResult {
 	publicKey: string;
@@ -9,7 +9,7 @@ export interface SSHKeyResult {
 }
 
 export async function generateTeamSSHKey(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	masterKeyManager: MasterKeyManager,
 ): Promise<SSHKeyResult> {
@@ -40,7 +40,7 @@ export async function generateTeamSSHKey(
 }
 
 export async function getTeamSSHKey(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	masterKeyManager: MasterKeyManager,
 ): Promise<{ publicKey: string; privateKey: string } | null> {

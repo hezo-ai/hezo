@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { AgentAdminStatus, CEO_AGENT_SLUG } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { terminalStatusParams } from '../lib/sql';
 
 /**
@@ -25,7 +25,7 @@ export interface TeamCoordinationContext {
 }
 
 export async function loadTeamCoordinationContext(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 ): Promise<TeamCoordinationContext | null> {
 	const ceo = await db.query<{ id: string }>(
@@ -40,7 +40,7 @@ export async function loadTeamCoordinationContext(
 	return { ceoMemberId: ceo.rows[0].id, teamProjectId: project.rows[0].id, teamId };
 }
 
-export async function loadCoordinationContext(db: PGlite): Promise<CoordinationContext | null> {
+export async function loadCoordinationContext(db: Db): Promise<CoordinationContext | null> {
 	const result = await db.query<{ ceo_id: string; project_id: string; team_id: string }>(
 		`SELECT ma.id AS ceo_id, p.id AS project_id, p.team_id AS team_id
 		 FROM projects p
@@ -58,7 +58,7 @@ export async function loadCoordinationContext(db: PGlite): Promise<CoordinationC
 
 /** The single open task carrying `label`, instance-wide (coordination lives in HQ). */
 export async function findOpenLabeledTask(
-	db: PGlite,
+	db: Db,
 	label: string,
 ): Promise<{ id: string; identifier: string; project_slug: string } | null> {
 	// $1 is the jsonb labels param below, so the terminal-status placeholders

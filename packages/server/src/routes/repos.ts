@@ -400,7 +400,7 @@ reposRoutes.get('/projects/:projectId/oauth-connections/:id/repos', async (c) =>
 });
 
 async function loadOAuthAccessToken(
-	db: import('@electric-sql/pglite').PGlite,
+	db: import('../db/database').Db,
 	masterKeyManager: import('../crypto/master-key').MasterKeyManager,
 	oauthConnectionId: string,
 ): Promise<string | null> {

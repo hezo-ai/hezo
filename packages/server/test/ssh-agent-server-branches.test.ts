@@ -2,9 +2,9 @@ import { mkdtempSync } from 'node:fs';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import {
 	FrameReader,
 	MSG_FAILURE,
@@ -17,7 +17,7 @@ import { generateTeamSSHKey } from '../src/services/ssh-keys';
 import { safeClose } from './helpers';
 import { createTestApp } from './helpers/app';
 
-let db: PGlite;
+let db: Db;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let agentId: string;

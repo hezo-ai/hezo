@@ -1,6 +1,6 @@
-import type { PGlite } from '@electric-sql/pglite';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
+import type { Db } from '../db/database';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import type { Env } from '../lib/types';
 import { requireAdminEquivalent } from '../middleware/auth';
@@ -15,7 +15,7 @@ export const auditLogRoutes = new Hono<Env>();
  */
 async function queryAuditLog(
 	c: Context<Env>,
-	db: PGlite,
+	db: Db,
 	scope: { kind: 'project'; projectId: string } | { kind: 'instance' },
 ): Promise<Response> {
 	const { page, perPage, offset } = parsePagination(c);

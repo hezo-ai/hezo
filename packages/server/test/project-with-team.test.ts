@@ -1,15 +1,15 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { CAPTAIN_AGENT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp } from './helpers/app';
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 

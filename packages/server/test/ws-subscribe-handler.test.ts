@@ -1,6 +1,6 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { AuthType, WsMessageType, wsRoom } from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Db } from '../src/db/database';
 import type { AuthInfo } from '../src/lib/types';
 import { canAuthAccessTeam } from '../src/middleware/auth';
 import { ContainerLogStreamer } from '../src/services/container-logs';
@@ -27,7 +27,7 @@ function createMockWs(auth: WsData['auth']): WsSocket & { _sent: string[] } {
 }
 
 async function seedTeamWithProject(
-	db: PGlite,
+	db: Db,
 	opts: { container_status?: 'running' | 'stopped' | null; container_id?: string | null } = {},
 ) {
 	const user = await db.query<{ id: string }>(
@@ -56,7 +56,7 @@ async function seedTeamWithProject(
 	return { userId, teamId, projectId: project.rows[0].id };
 }
 
-function canAccessTeamFactory(db: PGlite) {
+function canAccessTeamFactory(db: Db) {
 	// Delegate to the production predicate instead of re-implementing it, so this
 	// mock can't drift from the real team-access rule. WsData widens AuthInfo to a
 	// loose bag (the production `canAccessTeam` re-narrows the same way).
@@ -65,7 +65,7 @@ function canAccessTeamFactory(db: PGlite) {
 }
 
 describe('handleWsSubscribe', () => {
-	let db: PGlite;
+	let db: Db;
 	let wsManager: WebSocketManager;
 	let containerLogStreamer: ContainerLogStreamer;
 	let logs: LogStreamBroker;

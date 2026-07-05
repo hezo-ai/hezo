@@ -1,14 +1,14 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { AuthType } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { getAccessibleTeamIds } from '../src/middleware/auth';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestTeam, projectSlugForTeamSlug } from './helpers/app';
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 let projectSlug: string;
 

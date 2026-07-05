@@ -1,7 +1,6 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
 	buildLoginMessage,
@@ -18,6 +17,7 @@ import type { Hono } from 'hono';
 import { encrypt } from '../../src/crypto/encryption';
 import { MasterKeyManager } from '../../src/crypto/master-key';
 import { loadAgentRoles } from '../../src/db/agent-roles';
+import type { Db } from '../../src/db/database';
 import { seedBuiltins } from '../../src/db/seed';
 import { DomainEventBus } from '../../src/events/bus';
 import { toSlug, uniqueSlug } from '../../src/lib/slug';
@@ -242,7 +242,7 @@ export async function loginViaAuthApi(
  * Simulates a server restart over the same database: a fresh manager holds no
  * key material, so the canary leaves it 'locked' until an unlock-flow login.
  */
-export async function restartTestApp(db: PGlite, dataDir: string) {
+export async function restartTestApp(db: Db, dataDir: string) {
 	const masterKeyManager = new MasterKeyManager();
 	await masterKeyManager.initialize(db);
 	const app = buildApp(db, masterKeyManager, { dataDir, webUrl: '' }, createStubDocker());
@@ -254,7 +254,7 @@ export function authHeader(token: string) {
 }
 
 export async function createAgentRun(
-	db: PGlite,
+	db: Db,
 	agentId: string,
 	teamId: string,
 	taskId?: string | null,
@@ -279,7 +279,7 @@ export async function createAgentRun(
 }
 
 export async function mintAgentToken(
-	db: PGlite,
+	db: Db,
 	masterKeyManager: MasterKeyManager,
 	agentId: string,
 	teamId: string,
@@ -327,19 +327,19 @@ export async function mintAgentToken(
  * creating it idempotently. Lets tests that used to hit `internal-<teamSlug>`
  * resolve the team's real project handle inline.
  */
-export async function projectSlugFor(db: PGlite, teamId: string): Promise<string> {
+export async function projectSlugFor(db: Db, teamId: string): Promise<string> {
 	const res = await createTestProject(db, teamId, { name: 'Work Project' });
 	return (await res.json()).data.slug;
 }
 
 /** Same as {@link projectSlugFor} but keyed by the team's slug. */
-export async function projectSlugForTeamSlug(db: PGlite, teamSlug: string): Promise<string> {
+export async function projectSlugForTeamSlug(db: Db, teamSlug: string): Promise<string> {
 	const t = await db.query<{ id: string }>('SELECT id FROM teams WHERE slug = $1', [teamSlug]);
 	return projectSlugFor(db, t.rows[0].id);
 }
 
 /** The single instance-level Coach member id (lives in HQ). */
-export async function instanceCoachId(db: PGlite): Promise<string> {
+export async function instanceCoachId(db: Db): Promise<string> {
 	const r = await db.query<{ id: string }>(
 		"SELECT id FROM member_agents WHERE slug = 'coach' LIMIT 1",
 	);
@@ -347,7 +347,7 @@ export async function instanceCoachId(db: PGlite): Promise<string> {
 }
 
 /** The single instance-level CEO member id (lives in HQ). */
-export async function instanceCeoId(db: PGlite): Promise<string> {
+export async function instanceCeoId(db: Db): Promise<string> {
 	const r = await db.query<{ id: string }>(
 		"SELECT id FROM member_agents WHERE slug = 'ceo' LIMIT 1",
 	);
@@ -380,7 +380,7 @@ export interface CreatedTestProject {
  * after swapping the `app.request(...)` block for `createTestProject(...)`.
  */
 export async function createTestProject(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	input: {
 		name: string;
@@ -494,7 +494,7 @@ export async function createTestProject(
  * route created the team. Pass `creatorUserId` explicitly to override.
  */
 export async function createTestTeam(
-	db: PGlite,
+	db: Db,
 	input: { name: string; description?: string; template_id?: string; creatorUserId?: string },
 ): Promise<{ status: 201; json: () => Promise<{ data: CreatedTeamRow }> }> {
 	let creatorUserId = input.creatorUserId;
@@ -521,7 +521,7 @@ export async function createTestTeam(
 }
 
 export async function finalizeAgentRun(
-	db: PGlite,
+	db: Db,
 	runId: string,
 	status: 'succeeded' | 'failed' | 'cancelled' | 'timed_out' = 'succeeded',
 ): Promise<void> {

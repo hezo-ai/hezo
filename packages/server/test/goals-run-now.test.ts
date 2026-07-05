@@ -1,6 +1,6 @@
-import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
@@ -9,7 +9,7 @@ import { authHeader, createTestApp, createTestProject, createTestTeam } from './
 // (`dispatchProgressUpdateNow` → `tryDispatchProgressUpdate`). These cover the deterministic
 // decision paths — no due goals is a valid no-op (200), a due goal reaches run-gating — without
 // launching a real agent (the launch body is the same code the heartbeat already exercises).
-let db: PGlite;
+let db: Db;
 let app: Hono<Env>;
 let token: string;
 let projectSlug: string;

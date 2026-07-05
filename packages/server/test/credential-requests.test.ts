@@ -1,8 +1,8 @@
-import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { decrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { createConnection } from '../src/services/oauth/connection-store';
 import { safeClose } from './helpers';
@@ -16,7 +16,7 @@ import {
 } from './helpers/app';
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;

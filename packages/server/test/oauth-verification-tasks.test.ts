@@ -1,11 +1,11 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { DEFAULT_TEAM_ID, PlatformType, TaskStatus } from '@hezo/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import { enqueueOAuthVerificationTask } from '../src/services/oauth-verification-tasks';
 import { safeClose } from './helpers';
 import { createTestApp, instanceCeoId } from './helpers/app';
 
-let db: PGlite;
+let db: Db;
 // OAuth verification is instance-level work: the task lands in the HQ team's HQ
 // (the only internal) project and is owned by the CEO. Originating tickets used
 // by these flows therefore also live in HQ.

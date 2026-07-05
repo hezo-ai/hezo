@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { CAPTAIN_AGENT_SLUG, COACH_AGENT_SLUG, DocumentType, MemberType } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { withTransaction } from '../lib/sql';
 
 export interface SnapshotTeamInput {
@@ -39,7 +39,7 @@ interface RosterAgent {
  * (returned in `skipped_agents`).
  */
 export async function snapshotTeamAsTemplate(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	input: SnapshotTeamInput,
 ): Promise<SnapshotTeamResult> {

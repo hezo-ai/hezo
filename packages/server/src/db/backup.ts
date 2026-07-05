@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { PGlite } from '@electric-sql/pglite';
 import { logger } from '../logger';
+import type { PgliteDb } from './drivers/pglite';
 
 const log = logger.child('backup');
 
@@ -18,10 +18,11 @@ export interface BackupMeta {
  * migrations mutate it. Uses PGlite's `dumpDataDir` (a consistent gzipped
  * tarball of the open database) rather than copying the on-disk `pgdata`
  * directory, which can be torn mid-write. Returns the tarball path so a failed
- * migration can point the operator at it for a manual downgrade.
+ * migration can point the operator at it for a manual downgrade. Embedded-only
+ * by design — the tarball is a physical PGlite datadir.
  */
 export async function backupDataDir(
-	db: PGlite,
+	db: PgliteDb,
 	dataDir: string,
 	meta: BackupMeta,
 ): Promise<string> {
@@ -33,7 +34,7 @@ export async function backupDataDir(
 	const tarPath = join(backupsDir, `${base}.tar.gz`);
 	const metaPath = join(backupsDir, `${base}.json`);
 
-	const dump = await db.dumpDataDir('gzip');
+	const dump = await db.raw.dumpDataDir('gzip');
 	await writeFile(tarPath, Buffer.from(await dump.arrayBuffer()));
 	await writeFile(
 		metaPath,

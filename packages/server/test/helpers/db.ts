@@ -2,20 +2,21 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
+import { PgliteDb } from '../../src/db/drivers/pglite';
 import { type Migration, runMigrations } from '../../src/db/migrate';
 import { codeMigrations } from '../../src/db/migrations/code';
 import { BASE_SCHEMA } from '../../src/db/schema';
 
-/** Creates a fresh in-memory PGlite instance with base tables for testing. */
-export async function createTestDb(): Promise<PGlite> {
-	const db = new PGlite();
+/** Creates a fresh in-memory PGlite-backed Db with base tables for testing. */
+export async function createTestDb(): Promise<PgliteDb> {
+	const db = new PgliteDb(new PGlite());
 	await db.exec(BASE_SCHEMA);
 	return db;
 }
 
 /** Boots a fresh PGlite and applies the full migration sequence (SQL + code). */
-async function buildMigratedDb(): Promise<PGlite> {
-	const db = new PGlite();
+async function buildMigratedDb(): Promise<PgliteDb> {
+	const db = new PgliteDb(new PGlite());
 
 	// Load migration SQL directly from filesystem. fileURLToPath() (not
 	// .pathname) is required because Vite rewrites import.meta.url to a
@@ -48,11 +49,7 @@ async function buildMigratedDb(): Promise<PGlite> {
 		for (const file of readdirSync(migrationsDir)
 			.filter((f: string) => f.endsWith('.sql'))
 			.sort()) {
-			// PGlite loads pgcrypto built-in; strip only that.
-			migrations[file] = readFileSync(join(migrationsDir, file), 'utf-8').replace(
-				/CREATE EXTENSION IF NOT EXISTS "pgcrypto";/g,
-				'',
-			);
+			migrations[file] = readFileSync(join(migrationsDir, file), 'utf-8');
 		}
 	} catch (e) {
 		console.error('Migration loading failed:', e);
@@ -85,7 +82,7 @@ async function buildSnapshot(): Promise<Blob | File> {
 	try {
 		// 'none' (uncompressed): the snapshot lives in memory, so avoiding gzip
 		// decompression on every restore matters more than its ~30MB footprint.
-		return await template.dumpDataDir('none');
+		return await template.raw.dumpDataDir('none');
 	} finally {
 		await template.close();
 	}
@@ -97,7 +94,7 @@ async function buildSnapshot(): Promise<Blob | File> {
  * from scratch and caches the result; every later call restores from that
  * snapshot, which is byte-identical to a fresh migration but ~2x faster.
  */
-export async function createTestDbWithMigrations(): Promise<PGlite> {
+export async function createTestDbWithMigrations(): Promise<PgliteDb> {
 	if (!migratedSnapshot) migratedSnapshot = buildSnapshot();
-	return new PGlite({ loadDataDir: await migratedSnapshot });
+	return new PgliteDb(new PGlite({ loadDataDir: await migratedSnapshot }));
 }

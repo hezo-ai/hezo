@@ -1,10 +1,10 @@
 import { existsSync } from 'node:fs';
-import type { PGlite } from '@electric-sql/pglite';
 import { AuthType } from '@hezo/shared';
 import { app } from './app';
 import { parseConfig, runRestore, runVersion } from './cli';
 import type { MasterKeyManager } from './crypto/master-key';
 import { PgDataCorruptError } from './db/client';
+import type { Db } from './db/database';
 import { DbNewerThanAppError, MigrationFailedError } from './db/migrate-errors';
 import { browserAvailable, openBrowser } from './lib/open-browser';
 import type { AuthInfo } from './lib/types';
@@ -165,7 +165,7 @@ let serveFetch: (
 	server: Bun.Server<WsConnectionData>,
 ) => Response | Promise<Response> = app.fetch as typeof serveFetch;
 let wsManager: WebSocketManager | null = null;
-let dbRef: PGlite | null = null;
+let dbRef: Db | null = null;
 let mkmRef: MasterKeyManager | null = null;
 let dockerRef: import('./services/docker').DockerClient | null = null;
 let logsRef: LogStreamBroker | null = null;

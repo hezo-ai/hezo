@@ -13,10 +13,10 @@ import {
 	request as httpsRequest,
 } from 'node:https';
 import { connect as netConnect, type Socket } from 'node:net';
-import type { PGlite } from '@electric-sql/pglite';
 import type { CA } from 'mockttp/dist/util/certificates';
 import { getCA } from 'mockttp/dist/util/certificates';
 import type { MasterKeyManager } from '../../crypto/master-key';
+import type { Db } from '../../db/database';
 import { ref } from '../../lib/log-ref';
 import { closeServerWithDeadline } from '../../lib/net';
 import { logger } from '../../logger';
@@ -71,7 +71,7 @@ export class EgressProxyUnavailableError extends Error {
 }
 
 export interface EgressProxyDeps {
-	db: PGlite;
+	db: Db;
 	masterKeyManager: MasterKeyManager;
 	ca: HezoCA;
 	portAllocator?: PortAllocator;
@@ -228,7 +228,7 @@ interface RunProxyConfig {
 	scope: RunProxyScope;
 	port: number;
 	bindHost: string;
-	db: PGlite;
+	db: Db;
 	masterKeyManager: MasterKeyManager;
 	getMintCa: () => Promise<CA>;
 	upstreamTrustedCAs?: string | string[];

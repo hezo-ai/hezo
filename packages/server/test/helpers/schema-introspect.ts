@@ -1,4 +1,4 @@
-import type { PGlite } from '@electric-sql/pglite';
+import type { Db } from '../../src/db/database';
 
 /**
  * Deterministic, name-normalized snapshot of a Postgres schema for equivalence
@@ -21,7 +21,7 @@ function excludedList(): string {
 	return EXCLUDED_TABLES.map((t) => `'${t}'`).join(', ');
 }
 
-export async function introspectSchema(db: PGlite): Promise<string> {
+export async function introspectSchema(db: Db): Promise<string> {
 	const sections: string[] = [];
 
 	// 1. Tables (base tables only).

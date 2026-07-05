@@ -1,6 +1,6 @@
-import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
@@ -11,7 +11,7 @@ import { authHeader, createTestApp, createTestProject, createTestTeam } from './
 // revision restore), and the MCP read_project_doc exposure.
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 
 let projectSlug: string;

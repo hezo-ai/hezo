@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import type { AuditAction, AuditActorType, AuditEntityType } from '@hezo/shared';
+import type { Db } from '../db/database';
 
 export interface AuditLogInput {
 	/**
@@ -24,7 +24,7 @@ export interface AuditLogInput {
 	details?: Record<string, unknown>;
 }
 
-export async function auditLog(db: PGlite, input: AuditLogInput): Promise<void> {
+export async function auditLog(db: Db, input: AuditLogInput): Promise<void> {
 	await db.query(
 		`INSERT INTO audit_log (project_id, actor_type, actor_member_id, actor_api_key_id, action, entity_type, entity_id, details)
 		 VALUES ($1, $2::audit_actor_type, $3, $4, $5, $6, $7, $8::jsonb)`,

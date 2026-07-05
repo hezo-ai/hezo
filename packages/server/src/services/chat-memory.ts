@@ -1,4 +1,4 @@
-import type { PGlite } from '@electric-sql/pglite';
+import type { Db } from '../db/database';
 
 /**
  * Per-agent long-term chat memory + the byte-window math that drives automatic
@@ -19,7 +19,7 @@ export interface ChatMemory {
 }
 
 /** Read an agent's long-term memory, or null when it has none yet. */
-export async function getChatMemory(db: PGlite, memberId: string): Promise<ChatMemory | null> {
+export async function getChatMemory(db: Db, memberId: string): Promise<ChatMemory | null> {
 	const r = await db.query<ChatMemory>(
 		`SELECT content, updated_at FROM chat_memories WHERE member_id = $1`,
 		[memberId],
@@ -29,7 +29,7 @@ export async function getChatMemory(db: PGlite, memberId: string): Promise<ChatM
 
 /** Overwrite an agent's long-term memory (full rewrite; no revision history). */
 export async function upsertChatMemory(
-	db: PGlite,
+	db: Db,
 	memberId: string,
 	content: string,
 ): Promise<ChatMemory> {
@@ -54,10 +54,7 @@ export interface WindowMessage {
  * complete, non-empty messages count — streaming placeholders and failed turns
  * are neither shown nor replayed, so they shouldn't weigh on the byte budget.
  */
-export async function loadActiveWindow(
-	db: PGlite,
-	conversationId: string,
-): Promise<WindowMessage[]> {
+export async function loadActiveWindow(db: Db, conversationId: string): Promise<WindowMessage[]> {
 	const r = await db.query<WindowMessage>(
 		`SELECT id, role, content FROM ceo_messages
 		 WHERE conversation_id = $1 AND compacted_at IS NULL
@@ -69,7 +66,7 @@ export async function loadActiveWindow(
 }
 
 /** Mark a set of messages compacted (evicted from the active window). No-op for []. */
-export async function markCompacted(db: PGlite, ids: string[]): Promise<void> {
+export async function markCompacted(db: Db, ids: string[]): Promise<void> {
 	if (ids.length === 0) return;
 	await db.query(`UPDATE ceo_messages SET compacted_at = now() WHERE id = ANY($1::uuid[])`, [ids]);
 }

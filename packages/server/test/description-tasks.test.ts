@@ -1,6 +1,6 @@
-import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { enqueueTeamCoherenceReviewTask } from '../src/services/description-tasks';
 import { safeClose } from './helpers';
@@ -13,7 +13,7 @@ import {
 } from './helpers/app';
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 let teamId: string;
 let ceoMemberId: string;

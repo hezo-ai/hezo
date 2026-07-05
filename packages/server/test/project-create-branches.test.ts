@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import { DomainEventBus } from '../src/events/bus';
 import {
 	createProject,
@@ -22,7 +22,7 @@ import { authHeader, createStubDocker, createTestApp, createTestTeam } from './h
  *    actorUserId → member resolution.
  */
 
-let db: PGlite;
+let db: Db;
 let teamId: string;
 let captainMemberId: string;
 let startupTemplateId: string;

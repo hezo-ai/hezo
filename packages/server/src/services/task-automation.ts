@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
 	CAPTAIN_AGENT_SLUG,
@@ -9,6 +8,7 @@ import {
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
 import { recomputeDownstreamReadiness } from '../lib/dependencies';
@@ -42,7 +42,7 @@ function platformDisplayName(platform: string): string {
 }
 
 async function notifyParentOfOAuthVerification(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	taskId: string,
 	wsManager?: WebSocketManager,
@@ -112,11 +112,7 @@ async function notifyParentOfOAuthVerification(
  * into a single queued wakeup; the dispatch-time `assignmentWakeupAlreadyServed`
  * guard suppresses runs that already covered this state.
  */
-async function wakeParentIfChildrenClosed(
-	db: PGlite,
-	teamId: string,
-	taskId: string,
-): Promise<void> {
+async function wakeParentIfChildrenClosed(db: Db, teamId: string, taskId: string): Promise<void> {
 	const parentRow = await db.query<{ parent_task_id: string | null }>(
 		'SELECT parent_task_id FROM tasks WHERE id = $1 AND team_id = $2',
 		[taskId, teamId],
@@ -154,7 +150,7 @@ async function wakeParentIfChildrenClosed(
  * Called from both the REST handler and MCP tool to ensure consistent behavior.
  */
 export async function triggerStatusAutomations(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	taskId: string,
 	oldStatus: string,

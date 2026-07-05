@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	BUILTIN_AGENT_SLUGS,
 	CAPTAIN_AGENT_SLUG,
@@ -7,6 +6,7 @@ import {
 	DocumentType,
 	MemberType,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { logger } from '../logger';
 import { resolveAgentBudgets } from './agent-budget';
 import { enqueueTeamCoherenceReviewTask } from './description-tasks';
@@ -50,7 +50,7 @@ interface BuiltinEffectiveConfig {
  * `applyTemplateToTeam`. The CEO and Coach are instance-level singletons (see
  * `ensureInstanceCeo` / `ensureInstanceCoach`), not seeded per team.
  */
-export async function ensureBuiltinAgents(db: PGlite, teamId: string): Promise<string[]> {
+export async function ensureBuiltinAgents(db: Db, teamId: string): Promise<string[]> {
 	const inserted: string[] = [];
 	for (const slug of BUILTIN_AGENT_SLUGS) {
 		const existing = await db.query<{ id: string }>(
@@ -75,11 +75,7 @@ export async function ensureBuiltinAgents(db: PGlite, teamId: string): Promise<s
  * team). Idempotent — one per instance. Returns the member id (or null if the
  * agent type isn't seeded).
  */
-async function ensureInstanceAgent(
-	db: PGlite,
-	teamId: string,
-	slug: string,
-): Promise<string | null> {
+async function ensureInstanceAgent(db: Db, teamId: string, slug: string): Promise<string | null> {
 	const existing = await db.query<{ id: string }>(
 		`SELECT id FROM member_agents WHERE slug = $1 LIMIT 1`,
 		[slug],
@@ -100,12 +96,12 @@ async function ensureInstanceAgent(
 }
 
 /** Ensures the single instance-level CEO exists, in the HQ team. */
-export function ensureInstanceCeo(db: PGlite, teamId: string): Promise<string | null> {
+export function ensureInstanceCeo(db: Db, teamId: string): Promise<string | null> {
 	return ensureInstanceAgent(db, teamId, CEO_AGENT_SLUG);
 }
 
 /** Ensures the single instance-level Coach exists, in the HQ team. */
-export function ensureInstanceCoach(db: PGlite, teamId: string): Promise<string | null> {
+export function ensureInstanceCoach(db: Db, teamId: string): Promise<string | null> {
 	return ensureInstanceAgent(db, teamId, COACH_AGENT_SLUG);
 }
 
@@ -115,7 +111,7 @@ export function ensureInstanceCoach(db: PGlite, teamId: string): Promise<string 
  * so seed/test paths that never create a CEO stay safe. The CEO lives in the
  * default team, so for other teams this is a cross-team reporting line.
  */
-export async function linkTeamCaptainToInstanceCeo(db: PGlite, teamId: string): Promise<void> {
+export async function linkTeamCaptainToInstanceCeo(db: Db, teamId: string): Promise<void> {
 	const ceo = await db.query<{ id: string }>(
 		`SELECT id FROM member_agents WHERE slug = $1 LIMIT 1`,
 		[CEO_AGENT_SLUG],
@@ -150,7 +146,7 @@ export async function linkTeamCaptainToInstanceCeo(db: PGlite, teamId: string): 
  * Safe to call multiple times across different templates.
  */
 export async function applyTemplateToTeam(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	templateId: string,
 	options: ApplyTemplateOptions = {},
@@ -196,7 +192,7 @@ interface BuiltinUpsertResult {
 }
 
 async function upsertBuiltinAgentsWithTemplateOverrides(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	templateId: string,
 	wsManager: WebSocketManager | undefined,
@@ -229,10 +225,7 @@ async function upsertBuiltinAgentsWithTemplateOverrides(
 	return { inserted_slugs: inserted, updated_slugs: updated };
 }
 
-async function loadBuiltinDefaults(
-	db: PGlite,
-	slug: string,
-): Promise<BuiltinEffectiveConfig | null> {
+async function loadBuiltinDefaults(db: Db, slug: string): Promise<BuiltinEffectiveConfig | null> {
 	const result = await db.query<{
 		id: string;
 		name: string;
@@ -272,7 +265,7 @@ async function loadBuiltinDefaults(
 }
 
 async function resolveBuiltinEffectiveConfig(
-	db: PGlite,
+	db: Db,
 	templateId: string,
 	slug: string,
 ): Promise<{ config: BuiltinEffectiveConfig | null; templateProvidesOverride: boolean }> {
@@ -325,7 +318,7 @@ async function resolveBuiltinEffectiveConfig(
 }
 
 async function insertBuiltinAgent(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	config: BuiltinEffectiveConfig,
 ): Promise<void> {
@@ -367,7 +360,7 @@ async function insertBuiltinAgent(
 
 /** True when any builtin metadata or the system prompt actually changed. */
 async function updateBuiltinAgent(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	memberId: string,
 	config: BuiltinEffectiveConfig,

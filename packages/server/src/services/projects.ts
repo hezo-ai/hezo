@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { type ProjectProgress, wsRoom } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
 import type { WebSocketManager } from './ws';
 
@@ -14,7 +14,7 @@ export class ProjectProgressError extends Error {
 
 /** The Captain-maintained project progress summary shown at the top of the Progress page. */
 export async function getProjectProgress(
-	db: PGlite,
+	db: Db,
 	projectId: string,
 ): Promise<ProjectProgress | null> {
 	const r = await db.query<{ summary: string; updated_at: string | null }>(
@@ -30,7 +30,7 @@ export async function getProjectProgress(
  * projects, which have no Progress page. Broadcasts a projects UPDATE so open Progress pages refresh.
  */
 export async function updateProjectProgress(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	projectId: string,
 	summary: string,

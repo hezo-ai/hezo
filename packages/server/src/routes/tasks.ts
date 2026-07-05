@@ -1,6 +1,6 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { AuthType, TaskStatus, TERMINAL_TASK_STATUSES, WakeupSource, wsRoom } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
+import type { Db } from '../db/database';
 import { assertNoActiveRun } from '../lib/active-run';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
@@ -66,7 +66,7 @@ async function buildCreateTaskCaller(c: Context<Env>, teamId: string): Promise<C
 // trackBackground + catch so a rejection from either query can't surface as an
 // unhandled rejection or race test teardown (the tracker is drained on close).
 function wakeAgentIfAssigned(
-	db: PGlite,
+	db: Db,
 	assigneeId: string | null | undefined,
 	teamId: string,
 	taskId: string,

@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	ADMIN_MENTION_SLUG,
 	agentPath,
@@ -12,6 +11,7 @@ import {
 	taskPath,
 	transformMentionsOutsideCode,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { getInstanceBaseUrl } from '../lib/system-meta';
 import { resolveInstanceMentions } from './instance-mentions';
 
@@ -37,7 +37,7 @@ import { resolveInstanceMentions } from './instance-mentions';
  * never touched.
  */
 export async function renderCeoMessageForChannel(
-	db: PGlite,
+	db: Db,
 	content: string,
 	channel: CeoChannel,
 ): Promise<string> {

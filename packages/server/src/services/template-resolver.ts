@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { HEZO_DOCS_URL } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { terminalStatusParams } from '../lib/sql';
 import { buildHezoDocsBlock } from './docs-bundle';
 
@@ -217,7 +217,7 @@ const SHARED_INSTRUCTIONS = `
 `;
 
 export async function resolveSystemPrompt(
-	db: PGlite,
+	db: Db,
 	template: string,
 	ctx: ResolveContext,
 ): Promise<string> {
@@ -384,7 +384,7 @@ export async function resolveSystemPrompt(
 	return resolved;
 }
 
-async function buildTeamContextBlock(db: PGlite, ctx: ResolveContext): Promise<string> {
+async function buildTeamContextBlock(db: Db, ctx: ResolveContext): Promise<string> {
 	if (!ctx.agentId) return '';
 
 	const result = await db.query<{ team_context: string }>(
@@ -405,7 +405,7 @@ Your relationship to every other employee in the team, precomputed so you don't 
 ${content}`;
 }
 
-async function buildTeammatesBlock(db: PGlite, ctx: ResolveContext): Promise<string> {
+async function buildTeammatesBlock(db: Db, ctx: ResolveContext): Promise<string> {
 	const teammates = await db.query<{ slug: string; title: string }>(
 		`SELECT ma.slug, ma.title
 		 FROM member_agents ma
@@ -436,7 +436,7 @@ ${list}`;
 const PROJECT_STATE_RECENT_LIMIT = 20;
 const PROJECT_STATE_CREATED_LIMIT = 10;
 
-async function buildProjectStateBlock(db: PGlite, ctx: ResolveContext): Promise<string> {
+async function buildProjectStateBlock(db: Db, ctx: ResolveContext): Promise<string> {
 	if (!ctx.projectId) return '';
 
 	const terminal = terminalStatusParams(2, true);
@@ -535,7 +535,7 @@ function formatCreatedTicket(t: {
  * Uses slugs/names — never UUIDs — because this text is also what the CEO echoes
  * back to the operator in the chat box.
  */
-async function buildProjectsContext(db: PGlite): Promise<string> {
+async function buildProjectsContext(db: Db): Promise<string> {
 	const terminal = terminalStatusParams(1, true);
 	const projects = await db.query<{
 		name: string;
@@ -572,7 +572,7 @@ async function buildProjectsContext(db: PGlite): Promise<string> {
 	return `${intro}\n\n${lines}`;
 }
 
-async function buildRunContextBlock(db: PGlite, ctx: ResolveContext): Promise<string> {
+async function buildRunContextBlock(db: Db, ctx: ResolveContext): Promise<string> {
 	if (ctx.crossTeam) {
 		return `
 
@@ -627,7 +627,7 @@ interface RepoContextRow {
  * live DB state; omitted entirely when the project has no linked repo (a
  * code-touching run with no repo is gated upstream by the repo-setup approval).
  */
-async function buildRepositoryBlock(db: PGlite, ctx: ResolveContext): Promise<string> {
+async function buildRepositoryBlock(db: Db, ctx: ResolveContext): Promise<string> {
 	if (!ctx.projectId) return '';
 
 	const repos = await db.query<RepoContextRow>(

@@ -1,4 +1,4 @@
-import type { PGlite } from '@electric-sql/pglite';
+import type { Db } from '../db/database';
 import { broadcastCommentFamilyChange } from '../lib/broadcast';
 import type { WebSocketManager } from './ws';
 
@@ -35,7 +35,7 @@ interface ReviewBroadcastScope {
 }
 
 export async function listReviewComments(
-	db: PGlite,
+	db: Db,
 	documentId: string,
 ): Promise<DocumentReviewCommentRow[]> {
 	const result = await db.query<DocumentReviewCommentRow>(
@@ -60,7 +60,7 @@ export interface CreateReviewCommentInput extends ReviewBroadcastScope {
 }
 
 export async function createReviewComment(
-	db: PGlite,
+	db: Db,
 	wsManager: WebSocketManager | undefined,
 	input: CreateReviewCommentInput,
 ): Promise<DocumentReviewCommentRow | null> {
@@ -109,7 +109,7 @@ export interface UpdateReviewCommentInput extends ReviewBroadcastScope {
 }
 
 export async function updateReviewComment(
-	db: PGlite,
+	db: Db,
 	wsManager: WebSocketManager | undefined,
 	input: UpdateReviewCommentInput,
 ): Promise<DocumentReviewCommentRow | null> {
@@ -138,7 +138,7 @@ export interface DeleteReviewCommentInput extends ReviewBroadcastScope {
 }
 
 export async function deleteReviewComment(
-	db: PGlite,
+	db: Db,
 	wsManager: WebSocketManager | undefined,
 	input: DeleteReviewCommentInput,
 ): Promise<boolean> {
@@ -164,7 +164,7 @@ export interface ClearReviewCommentsInput extends ReviewBroadcastScope {
 }
 
 export async function clearReviewComments(
-	db: PGlite,
+	db: Db,
 	wsManager: WebSocketManager | undefined,
 	input: ClearReviewCommentsInput,
 ): Promise<number> {

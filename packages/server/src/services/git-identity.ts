@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import type { MasterKeyManager } from '../crypto/master-key';
+import type { Db } from '../db/database';
 import { listConnections } from './oauth/connection-store';
 
 /**
@@ -66,7 +66,7 @@ export function gitConfigEnv(identity: GitIdentity): string[] {
  * identity so `git commit` never fails for lack of a configured author.
  */
 export async function resolveGitIdentity(
-	db: PGlite,
+	db: Db,
 	masterKeyManager: MasterKeyManager,
 	teamId: string,
 ): Promise<GitIdentity> {
@@ -89,7 +89,7 @@ export async function resolveGitIdentity(
 
 /** Convenience: resolve the identity and return its `GIT_CONFIG_*` env entries. */
 export async function buildGitIdentityEnv(
-	db: PGlite,
+	db: Db,
 	masterKeyManager: MasterKeyManager,
 	teamId: string,
 ): Promise<string[]> {

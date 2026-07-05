@@ -1,10 +1,10 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { PGlite } from '@electric-sql/pglite';
 import { wsRoom } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import {
 	type ContainerDeps,
@@ -30,7 +30,7 @@ function deps(docker: DockerClient, wsManager?: WebSocketManager): ContainerDeps
 	return { db, docker, dataDir: '/tmp/hezo-test-unused', wsManager };
 }
 
-let db: PGlite;
+let db: Db;
 let app: Hono<Env>;
 let token: string;
 let teamId: string;

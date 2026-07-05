@@ -1,6 +1,6 @@
-import type { PGlite } from '@electric-sql/pglite';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import { getSystemMeta, INSTANCE_BASE_URL_KEY } from '../src/lib/system-meta';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
@@ -8,7 +8,7 @@ import { safeClose } from './helpers';
 import { authHeader, createTestApp, loginViaAuthApi } from './helpers/app';
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 let nonSuperuserToken: string;
 let mnemonic: string;

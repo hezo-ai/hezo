@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { HeartbeatRunStatus } from '@hezo/shared';
+import type { Db } from '../db/database';
 
 /**
  * DB-backed concurrency checks — the single source of truth for the two run
@@ -13,7 +13,7 @@ import { HeartbeatRunStatus } from '@hezo/shared';
  * different return shapes and are intentionally left untouched.
  */
 
-export async function isTaskBusyInDb(db: PGlite, taskId: string): Promise<boolean> {
+export async function isTaskBusyInDb(db: Db, taskId: string): Promise<boolean> {
 	const active = await db.query(
 		`SELECT 1 FROM heartbeat_runs
 		 WHERE task_id = $1
@@ -37,7 +37,7 @@ export interface ProjectConcurrency {
  * dispatch refcount (taking the larger of the two) before comparing to `limit`.
  */
 export async function getProjectConcurrency(
-	db: PGlite,
+	db: Db,
 	projectId: string,
 ): Promise<ProjectConcurrency> {
 	const row = await db.query<{ limit: number; active: number }>(
@@ -54,7 +54,7 @@ export async function getProjectConcurrency(
 	return { limit: r?.limit ?? 1, active: r?.active ?? 0 };
 }
 
-export async function isProjectAtCapacityInDb(db: PGlite, projectId: string): Promise<boolean> {
+export async function isProjectAtCapacityInDb(db: Db, projectId: string): Promise<boolean> {
 	const { limit, active } = await getProjectConcurrency(db, projectId);
 	return active >= limit;
 }
@@ -64,10 +64,7 @@ export async function isProjectAtCapacityInDb(db: PGlite, projectId: string): Pr
  * set whose per-agent dispatch slot is taken. The stateless run-now route uses
  * this to mirror `JobManager.isAgentBusyInProject` minus its in-memory guard.
  */
-export async function getBusyAgentIdsInProject(
-	db: PGlite,
-	projectId: string,
-): Promise<Set<string>> {
+export async function getBusyAgentIdsInProject(db: Db, projectId: string): Promise<Set<string>> {
 	const res = await db.query<{ member_id: string }>(
 		`SELECT DISTINCT hr.member_id FROM heartbeat_runs hr
 		 JOIN tasks t ON t.id = hr.task_id

@@ -1,11 +1,11 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import { skillProposalHandler } from '../src/services/approval-handlers/skill-proposal';
 import type { ApprovalSideEffectCtx } from '../src/services/approval-handlers/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestTeam } from './helpers/app';
 
-let db: PGlite;
+let db: Db;
 let memberId: string;
 
 beforeAll(async () => {

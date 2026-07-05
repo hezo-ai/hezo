@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { PGlite } from '@electric-sql/pglite';
 import { MemberType } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { deriveSkillSummary } from '../lib/skill-summary';
 import { toSlug } from '../lib/slug';
 import { withTransaction } from '../lib/sql';
@@ -49,7 +49,7 @@ export interface ProvisionTeamTemplateResult {
 	skipped_slugs: string[];
 }
 
-async function loadTemplateAgentTypes(db: PGlite, templateIds: string[]): Promise<AgentTypeRow[]> {
+async function loadTemplateAgentTypes(db: Db, templateIds: string[]): Promise<AgentTypeRow[]> {
 	const allRows: AgentTypeRow[] = [];
 	for (const typeId of templateIds) {
 		const joinRows = await db.query<AgentTypeRow>(
@@ -80,7 +80,7 @@ async function loadTemplateAgentTypes(db: PGlite, templateIds: string[]): Promis
 	return dedupedRows;
 }
 
-async function loadTemplateSkills(db: PGlite, templateId: string): Promise<TemplateSkillConfig[]> {
+async function loadTemplateSkills(db: Db, templateId: string): Promise<TemplateSkillConfig[]> {
 	const result = await db.query<{ skills_config: TemplateSkillConfig[] }>(
 		'SELECT skills_config FROM team_templates WHERE id = $1',
 		[templateId],
@@ -98,7 +98,7 @@ function templateSkillName(skill: TemplateSkillConfig): string {
  * provisioning transaction.
  */
 async function createInlineSkillsFromTemplate(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	templateId: string,
 ): Promise<void> {
@@ -125,7 +125,7 @@ async function createInlineSkillsFromTemplate(
  * network calls.
  */
 export async function createSkillsFromTemplate(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	templateId: string,
 ): Promise<void> {
@@ -159,7 +159,7 @@ export async function createSkillsFromTemplate(
  * Skips agent slugs that already exist when skipExistingSlugs is true (default).
  */
 export async function provisionTeamTemplate(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	templateId: string,
 	options?: { skipExistingSlugs?: boolean; dataDir?: string },

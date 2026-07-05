@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	ActionCommentKind,
 	ApprovalStatus,
@@ -9,6 +8,7 @@ import {
 	WakeupSource,
 	WakeupStatus,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { createWakeup } from './wakeup';
@@ -30,10 +30,7 @@ export interface EnsureResult {
 	commentRow?: Record<string, unknown>;
 }
 
-export async function ensureRepoSetupAction(
-	db: PGlite,
-	ctx: RepoSetupGateCtx,
-): Promise<EnsureResult> {
+export async function ensureRepoSetupAction(db: Db, ctx: RepoSetupGateCtx): Promise<EnsureResult> {
 	const { approvalId, commentId, approvalCreated, commentCreated } = await withTransaction(
 		db,
 		async () => {
@@ -118,7 +115,7 @@ export async function ensureRepoSetupAction(
 }
 
 async function findPendingApproval(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	projectId: string,
 ): Promise<string | null> {
@@ -161,7 +158,7 @@ export interface FinalizeResult {
  * this function returns.
  */
 export async function finalizePendingRepoSetup(
-	db: PGlite,
+	db: Db,
 	input: FinalizeInput,
 ): Promise<FinalizeResult> {
 	const approvalId = await findPendingApproval(db, input.teamId, input.projectId);
@@ -285,7 +282,7 @@ export interface MarkFailedResult {
  * inserted rows for broadcast.
  */
 export async function markRepoSetupFailed(
-	db: PGlite,
+	db: Db,
 	input: MarkFailedInput,
 ): Promise<MarkFailedResult> {
 	const approvalId = await findPendingApproval(db, input.teamId, input.projectId);
@@ -332,7 +329,7 @@ export async function markRepoSetupFailed(
  * terminal from the wakeup queue's perspective.
  */
 export async function enqueueRepoSetupResumeWakeups(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	repoId: string,
 	approvalId: string,

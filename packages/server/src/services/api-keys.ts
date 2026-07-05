@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
-import type { PGlite } from '@electric-sql/pglite';
 import { ApiKeyStatus, AuditAction, AuditActorType, AuditEntityType } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { auditLog } from '../lib/audit';
 import { logger } from '../logger';
 import { safeCompareHex } from '../middleware/auth';
@@ -37,7 +37,7 @@ function mintToken(): { token: string; prefix: string; keyHash: string } {
  * superuser who minted it. Returns the one-time raw token.
  */
 export async function createApiKey(
-	db: PGlite,
+	db: Db,
 	input: { name: string; createdByUserId: string },
 ): Promise<ApiKeyRow & { key: string }> {
 	const { token, prefix, keyHash } = mintToken();
@@ -62,7 +62,7 @@ export async function createApiKey(
  * row grants no access until an admin approves it.
  */
 export async function registerApiKey(
-	db: PGlite,
+	db: Db,
 	input: { name: string; clientInfo?: Record<string, unknown> },
 ): Promise<{ id: string; prefix: string; token: string; status: string }> {
 	const { token, prefix, keyHash } = mintToken();
@@ -90,7 +90,7 @@ export async function registerApiKey(
 
 /** Resolve a key's status from its raw bearer token (for registration polling). */
 export async function getApiKeyStatusByToken(
-	db: PGlite,
+	db: Db,
 	token: string,
 ): Promise<{ status: string } | null> {
 	if (!token.startsWith('hezo_')) return null;
@@ -104,7 +104,7 @@ export async function getApiKeyStatusByToken(
 	return { status: result.rows[0].status };
 }
 
-export async function listApiKeys(db: PGlite): Promise<ApiKeyRow[]> {
+export async function listApiKeys(db: Db): Promise<ApiKeyRow[]> {
 	const result = await db.query<ApiKeyRow>(
 		`SELECT ${PUBLIC_COLUMNS} FROM api_keys ORDER BY created_at DESC`,
 	);
@@ -112,7 +112,7 @@ export async function listApiKeys(db: PGlite): Promise<ApiKeyRow[]> {
 }
 
 export async function approveApiKey(
-	db: PGlite,
+	db: Db,
 	id: string,
 	approvedByUserId: string,
 ): Promise<ApiKeyRow | null> {
@@ -136,7 +136,7 @@ export async function approveApiKey(
 }
 
 /** Revoke. Deleting the row makes the token fail on the next request. */
-export async function deleteApiKey(db: PGlite, id: string): Promise<boolean> {
+export async function deleteApiKey(db: Db, id: string): Promise<boolean> {
 	const result = await db.query<{ id: string; name: string }>(
 		'DELETE FROM api_keys WHERE id = $1 RETURNING id, name',
 		[id],
@@ -154,7 +154,7 @@ export async function deleteApiKey(db: PGlite, id: string): Promise<boolean> {
 
 /** Instance-level audit write; logged-and-swallowed so it never breaks the op. */
 async function tryAudit(
-	db: PGlite,
+	db: Db,
 	input: {
 		action: (typeof AuditAction)[keyof typeof AuditAction];
 		actorType: (typeof AuditActorType)[keyof typeof AuditActorType];

@@ -346,7 +346,7 @@ projectDocsRoutes.put('/projects/:projectId/agents-md', async (c) => {
 });
 
 async function getDesignatedRepoInfo(
-	db: import('@electric-sql/pglite').PGlite,
+	db: import('../db/database').Db,
 	teamId: string,
 	projectId: string,
 ): Promise<{ teamSlug: string; projectSlug: string; repoName: string } | null> {

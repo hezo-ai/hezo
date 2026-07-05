@@ -1,16 +1,17 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
-import type { PGlite } from '@electric-sql/pglite';
 import { ATTACHMENT_MAX_BYTES } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { HezoConfig } from './cli';
+import type { Db } from './db/database';
 import { logger } from './logger';
 
 const log = logger.child('startup');
 
 import { MasterKeyManager } from './crypto/master-key';
 import { openPersistentDb } from './db/client';
+import { PgliteDb } from './db/drivers/pglite';
 import type { Migration } from './db/migrate';
 import { BASE_SCHEMA } from './db/schema';
 import { registerAuditObserver } from './events/audit-observer';
@@ -105,7 +106,7 @@ export interface StartupResult {
 	jobManager: JobManager;
 	ceoSessionManager: CeoSessionManager;
 	wsManager: WebSocketManager;
-	db: PGlite;
+	db: Db;
 	docker: DockerClient;
 	masterKeyManager: MasterKeyManager;
 	logs: LogStreamBroker;
@@ -127,7 +128,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	// `db` may be replaced by a fresh handle if migrations run against a copy and
 	// swap it in, so it's a `let` — every consumer below uses the post-migration handle.
 	setStartupPhase('database');
-	let db = await openPersistentDb(config.dataDir, { reset: config.reset });
+	let db: Db = new PgliteDb(await openPersistentDb(config.dataDir, { reset: config.reset }));
 
 	await db.exec(BASE_SCHEMA);
 	setStartupPhase('migrations');
@@ -375,7 +376,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 }
 
 export function buildApp(
-	db: PGlite,
+	db: Db,
 	masterKeyManager: MasterKeyManager,
 	config: AppConfig = { dataDir: '', webUrl: '' },
 	docker: DockerClient = new DockerClient(),
@@ -604,7 +605,7 @@ export function buildApp(
 	return app;
 }
 
-async function cleanupOrphanRunSockets(_db: PGlite, dataDir: string): Promise<void> {
+async function cleanupOrphanRunSockets(_db: Db, dataDir: string): Promise<void> {
 	const fs = await import('node:fs/promises');
 	const { join } = await import('node:path');
 	const { getRunSocketDir } = await import('./services/workspace.js');
@@ -641,7 +642,7 @@ async function loadMigrations(): Promise<Record<string, Migration> | null> {
 	return { ...sql, ...codeMigrations };
 }
 
-async function runAvailableMigrations(db: PGlite, dataDir: string): Promise<PGlite> {
+async function runAvailableMigrations(db: Db, dataDir: string): Promise<Db> {
 	const migrations = await loadMigrations();
 	if (!migrations) {
 		log.warn('No migrations found. Run build:migrations or add migration files.');
@@ -655,7 +656,7 @@ async function runAvailableMigrations(db: PGlite, dataDir: string): Promise<PGli
 	return applyPendingMigrations(db, dataDir, migrations);
 }
 
-async function runSeed(db: PGlite): Promise<void> {
+async function runSeed(db: Db): Promise<void> {
 	try {
 		const { loadAgentRoles } = await import('./db/agent-roles.js');
 		const { seedBuiltins } = await import('./db/seed.js');
@@ -673,7 +674,7 @@ async function runSeed(db: PGlite): Promise<void> {
 }
 
 async function resolveMasterKeyState(
-	db: PGlite,
+	db: Db,
 	masterKeyManager: MasterKeyManager,
 	masterKey?: { unlockKeyHex: string; publicKeyHex: string },
 ): Promise<MasterKeyState> {

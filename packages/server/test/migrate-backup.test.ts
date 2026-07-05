@@ -1,10 +1,10 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { PGlite } from '@electric-sql/pglite';
 import { describe, expect, it } from 'vitest';
 import { backupDataDir } from '../src/db/backup';
 import { openPersistentDb } from '../src/db/client';
+import { PgliteDb } from '../src/db/drivers/pglite';
 import { getPendingMigrations, runMigrations } from '../src/db/migrate';
 import { safeClose } from './helpers';
 
@@ -18,9 +18,9 @@ import { safeClose } from './helpers';
 describe('migration backup-then-migrate (persistent, production path)', () => {
 	it('snapshots pgdata before applying pending refactor migrations and preserves data', async () => {
 		const dir = mkdtempSync(join(tmpdir(), 'hezo-mig-backup-'));
-		let db: PGlite | undefined;
+		let db: PgliteDb | undefined;
 		try {
-			db = await openPersistentDb(dir);
+			db = new PgliteDb(await openPersistentDb(dir));
 
 			const migrations: Record<string, string> = {
 				'001_posts.sql': `

@@ -1,24 +1,17 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { TERMINAL_TASK_STATUSES } from '@hezo/shared';
+import type { Db } from '../db/database';
 
 /**
- * Run `fn` inside a BEGIN/COMMIT block. ROLLBACK on any thrown error before
- * rethrowing. Replaces hand-rolled `BEGIN`/try/COMMIT/catch/ROLLBACK scaffolding
- * at call sites — forgetting ROLLBACK becomes impossible.
+ * Run `fn` inside a database transaction. Queries `fn` issues on the same
+ * `db` are routed into the transaction (see `Db.transaction`), commit happens
+ * on success, rollback on any thrown error. Nested calls join the ambient
+ * transaction — the outermost block owns commit/rollback.
  *
- * PGlite has no nested transaction support, so do not call this from inside
- * another `withTransaction`.
+ * @deprecated Call `db.transaction(cb)` directly in new code; `cb` receives
+ * the pinned transaction handle explicitly.
  */
-export async function withTransaction<T>(db: PGlite, fn: () => Promise<T>): Promise<T> {
-	await db.query('BEGIN');
-	try {
-		const result = await fn();
-		await db.query('COMMIT');
-		return result;
-	} catch (e) {
-		await db.query('ROLLBACK');
-		throw e;
-	}
+export async function withTransaction<T>(db: Db, fn: () => Promise<T>): Promise<T> {
+	return db.transaction(() => fn());
 }
 
 export interface TerminalStatusParams {

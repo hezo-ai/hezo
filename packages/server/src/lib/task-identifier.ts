@@ -1,4 +1,4 @@
-import type { PGlite } from '@electric-sql/pglite';
+import type { Db } from '../db/database';
 
 export interface AllocatedIdentifier {
 	number: number;
@@ -6,7 +6,7 @@ export interface AllocatedIdentifier {
 }
 
 export async function allocateTaskIdentifier(
-	db: PGlite,
+	db: Db,
 	projectId: string,
 ): Promise<AllocatedIdentifier> {
 	const result = await db.query<{ task_prefix: string; number: number }>(

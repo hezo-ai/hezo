@@ -1,8 +1,8 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { CAPTAIN_AGENT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import { assertSubordinateAssignee } from '../src/lib/assignment-hierarchy';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
@@ -16,7 +16,7 @@ import {
 import { compliantPrompt } from './helpers/prompt';
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;

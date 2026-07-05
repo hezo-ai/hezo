@@ -1,12 +1,12 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { generateUnlockKey, MasterKeyManager } from '../src/crypto/master-key';
 import { loadAgentRoles } from '../src/db/agent-roles';
+import type { Db } from '../src/db/database';
 import { seedBuiltins } from '../src/db/seed';
 import { generateTeamSSHKey, getTeamSSHKey } from '../src/services/ssh-keys';
 import { createTestDbWithMigrations } from './helpers/db';
 
-let db: PGlite;
+let db: Db;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 

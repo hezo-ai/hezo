@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentRuntime,
 	AiAuthMethod,
@@ -30,6 +29,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
+import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { withTransaction } from '../lib/sql';
@@ -155,7 +155,7 @@ export interface RunResult {
 }
 
 export interface RunnerDeps {
-	db: PGlite;
+	db: Db;
 	docker: DockerClient;
 	masterKeyManager: MasterKeyManager;
 	serverPort: number;
@@ -686,7 +686,7 @@ function extractTriggeredBy(payload: Record<string, unknown> | undefined): Trigg
 }
 
 async function createSyntheticOnDemandWakeup(
-	db: PGlite,
+	db: Db,
 	memberId: string,
 	teamId: string,
 ): Promise<string> {
@@ -1527,7 +1527,7 @@ export interface MentionContext {
 }
 
 export async function loadMentionContext(
-	db: PGlite,
+	db: Db,
 	agentMemberId: string,
 	teamId: string,
 	wakeupPayload: Record<string, unknown>,
@@ -1601,7 +1601,7 @@ export interface AgentAttachment {
 export const AGENT_ATTACHMENT_DIR = '/workspace/.hezo/assets';
 
 export async function loadAgentAttachmentsForComments(
-	db: PGlite,
+	db: Db,
 	commentIds: string[],
 ): Promise<Map<string, AgentAttachment[]>> {
 	if (commentIds.length === 0) return new Map();
@@ -1810,7 +1810,7 @@ export interface ReplyContext {
 }
 
 export async function loadReplyContext(
-	db: PGlite,
+	db: Db,
 	wakeupPayload: Record<string, unknown>,
 ): Promise<ReplyContext | null> {
 	const replyCommentId =
@@ -1919,10 +1919,7 @@ export interface SpawnedFromTask {
 	spawnLine: string | null;
 }
 
-export async function loadSpawnedFromTask(
-	db: PGlite,
-	task: TaskInfo,
-): Promise<SpawnedFromTask | null> {
+export async function loadSpawnedFromTask(db: Db, task: TaskInfo): Promise<SpawnedFromTask | null> {
 	let spawningTask: { id: string; identifier: string; title: string } | null = null;
 	if (task.created_by_run_id) {
 		const row = await db.query<{ id: string; identifier: string; title: string }>(
@@ -1962,7 +1959,7 @@ export async function loadSpawnedFromTask(
 }
 
 export async function buildCoachReviewPrompt(
-	db: PGlite,
+	db: Db,
 	systemPrompt: string,
 	task: TaskInfo,
 	teamId: string,
@@ -2096,7 +2093,7 @@ export interface TriggeredBy {
 }
 
 export async function createHeartbeatRun(
-	db: PGlite,
+	db: Db,
 	agent: AgentInfo,
 	runTeamId: string,
 	task: TaskInfo | null,
@@ -2188,7 +2185,7 @@ export async function createHeartbeatRun(
 }
 
 async function markHeartbeatRunRunning(
-	db: PGlite,
+	db: Db,
 	runId: string,
 	broadcast: HeartbeatRunBroadcast,
 	adapter: { aiProviderConfigId: string | null; provider: AiProvider | null },
@@ -2215,7 +2212,7 @@ async function markHeartbeatRunRunning(
 }
 
 async function updateHeartbeatRun(
-	db: PGlite,
+	db: Db,
 	runId: string,
 	update: {
 		status: string;
@@ -2283,7 +2280,7 @@ async function updateHeartbeatRun(
  * `JobManager.reconcileOnStartup`).
  */
 export async function recordRunCostAndEnforce(
-	db: PGlite,
+	db: Db,
 	runId: string,
 	usage: AgentRunUsage | null,
 	broadcast: HeartbeatRunBroadcast,

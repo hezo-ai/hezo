@@ -1,8 +1,8 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { HeartbeatRunStatus, type WakeupSource, WakeupStatus } from '@hezo/shared';
+import type { Db } from '../db/database';
 
 export async function createWakeup(
-	db: PGlite,
+	db: Db,
 	memberId: string,
 	teamId: string,
 	source: WakeupSource,
@@ -87,7 +87,7 @@ export async function createWakeup(
  * precisely.
  */
 export async function createProgressUpdateWakeup(
-	db: PGlite,
+	db: Db,
 	captainMemberId: string,
 	teamId: string,
 	projectId: string,
@@ -131,7 +131,7 @@ export async function createProgressUpdateWakeup(
  * were absorbed so the caller can refresh any task-derived UI.
  */
 export async function absorbQueuedTaskWakeups(
-	db: PGlite,
+	db: Db,
 	memberId: string,
 	taskId: string,
 	exceptWakeupId: string,
@@ -160,7 +160,7 @@ export async function absorbQueuedTaskWakeups(
  * (`created_at > started_at`) is never suppressed.
  */
 export async function assignmentWakeupAlreadyServed(
-	db: PGlite,
+	db: Db,
 	memberId: string,
 	taskId: string,
 	wakeupCreatedAt: string,

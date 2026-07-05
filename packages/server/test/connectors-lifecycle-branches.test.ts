@@ -1,6 +1,6 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { McpConnectionKind } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import {
 	createOrFetchConnector,
 	getConnector,
@@ -24,7 +24,7 @@ import { createTestApp } from './helpers/app';
  *    an unknown connector id
  */
 
-let db: PGlite;
+let db: Db;
 const UNKNOWN = '00000000-0000-0000-0000-000000000000';
 
 let ocSeq = 0;

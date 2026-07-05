@@ -1,8 +1,8 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { WakeupSource } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import { detectUnlinkedTeammateReferences } from '../src/lib/mentions';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
@@ -61,7 +61,7 @@ describe('detectUnlinkedTeammateReferences', () => {
 
 describe('MCP create_comment warns on unlinked teammate references', () => {
 	let app: Hono<Env>;
-	let db: PGlite;
+	let db: Db;
 	let token: string;
 	let masterKeyManager: MasterKeyManager;
 

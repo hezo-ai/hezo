@@ -1,5 +1,5 @@
-import type { PGlite } from '@electric-sql/pglite';
 import type { MentionCandidates } from '@hezo/shared';
+import type { Db } from '../db/database';
 
 /**
  * Instance-wide mention resolution for the global CEO chat (and the per-channel
@@ -56,7 +56,7 @@ export interface InstanceMentionResolution {
 }
 
 export async function resolveInstanceMentions(
-	db: PGlite,
+	db: Db,
 	candidates: MentionCandidates,
 ): Promise<InstanceMentionResolution> {
 	const out: InstanceMentionResolution = {

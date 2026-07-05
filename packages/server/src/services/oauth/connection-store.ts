@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import type { PGlite } from '@electric-sql/pglite';
 import { encrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
+import type { Db } from '../../db/database';
 import { withTransaction } from '../../lib/sql';
 import { logger } from '../../logger';
 
@@ -23,7 +23,7 @@ export interface OAuthConnectionRow {
 }
 
 export interface ConnectionStoreDeps {
-	db: PGlite;
+	db: Db;
 	masterKeyManager: MasterKeyManager;
 }
 

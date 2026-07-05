@@ -1,8 +1,8 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { CAPTAIN_AGENT_SLUG, REQUIRED_SYSTEM_PROMPT_VARS } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import {
@@ -19,7 +19,7 @@ import { compliantPrompt } from './helpers/prompt';
 const NON_COMPLIANT = 'You are an agent. Do good work.';
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;

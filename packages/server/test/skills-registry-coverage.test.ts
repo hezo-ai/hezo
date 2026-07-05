@@ -1,8 +1,8 @@
 import { createServer, type Server } from 'node:http';
-import type { PGlite } from '@electric-sql/pglite';
 import { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { generateUnlockKey, MasterKeyManager } from '../src/crypto/master-key';
+import type { Db } from '../src/db/database';
 import { setSystemMeta } from '../src/lib/system-meta';
 import {
 	getRegistryToken,
@@ -63,7 +63,7 @@ async function createSim(): Promise<{ baseUrl: string; destroy: () => Promise<vo
 	};
 }
 
-let db: PGlite;
+let db: Db;
 let key: Buffer;
 let server: { baseUrl: string; destroy: () => Promise<void> };
 const prevBaseUrl = process.env.SKILLS_REGISTRY_BASE_URL;

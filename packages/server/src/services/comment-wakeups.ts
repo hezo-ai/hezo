@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	ADMIN_MENTION_SLUG,
 	CommentContentType,
@@ -6,6 +5,7 @@ import {
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
 import { extractMentionSlugs } from '../lib/mentions';
 import { logger } from '../logger';
@@ -15,7 +15,7 @@ import type { WebSocketManager } from './ws';
 const log = logger.child('comment-wakeups');
 
 export interface FireCommentWakeupsParams {
-	db: PGlite;
+	db: Db;
 	taskId: string;
 	teamId: string;
 	commentId: string;
@@ -137,7 +137,7 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 }
 
 interface ReplyWakeupCtx {
-	db: PGlite;
+	db: Db;
 	taskId: string;
 	teamId: string;
 	commentId: string;
@@ -201,7 +201,7 @@ async function fireExplicitReplyWakeup(ctx: ReplyWakeupCtx): Promise<void> {
 }
 
 export interface FireAdminMentionParams {
-	db: PGlite;
+	db: Db;
 	teamId: string;
 	taskId: string;
 	commentId: string;

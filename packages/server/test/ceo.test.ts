@@ -1,7 +1,7 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { AgentEffort, CAPTAIN_AGENT_SLUG, CEO_AGENT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { resolveEffort } from '../src/services/effort';
 import {
@@ -12,7 +12,7 @@ import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestTeam } from './helpers/app';
 
 let app: Hono<Env>;
-let db: PGlite;
+let db: Db;
 let token: string;
 
 beforeAll(async () => {

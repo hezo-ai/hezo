@@ -1,6 +1,6 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { type ChangeAction, WsMessageType, wsRoom } from '@hezo/shared';
 import type { Context } from 'hono';
+import type { Db } from '../db/database';
 import type { WebSocketManager } from '../services/ws';
 import type { Env } from './types';
 
@@ -78,7 +78,7 @@ export function broadcastProjectsChanged(wsManager: WebSocketManager | undefined
 }
 
 export async function broadcastProjectUpdate(
-	db: PGlite,
+	db: Db,
 	wsManager: WebSocketManager | undefined,
 	teamId: string,
 	projectId: string,

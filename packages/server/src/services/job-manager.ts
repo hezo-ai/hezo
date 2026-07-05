@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	AgentAdminStatus,
 	type AgentRuntime,
@@ -20,6 +19,7 @@ import {
 } from '@hezo/shared';
 import { Cron } from 'cron-async';
 import type { MasterKeyManager } from '../crypto/master-key';
+import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
 import { trackBackground } from '../lib/background';
 import { broadcastRowChange } from '../lib/broadcast';
@@ -164,7 +164,7 @@ export type ProgressUpdateDispatchResult =
 	| { queued: true; wakeupId: string };
 
 export interface JobManagerDeps {
-	db: PGlite;
+	db: Db;
 	docker: DockerClient;
 	masterKeyManager: MasterKeyManager;
 	serverPort: number;

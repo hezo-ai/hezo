@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import {
 	ApprovalStatus,
 	ApprovalType,
@@ -8,6 +7,7 @@ import {
 	isReservedAgentSlug,
 	requiredSystemPromptVarsError,
 } from '@hezo/shared';
+import type { Db } from '../db/database';
 import { budgetWindowsError } from '../lib/budget-validation';
 import { resolveAgentId } from '../lib/resolve';
 import { toSlug } from '../lib/slug';
@@ -52,7 +52,7 @@ export interface HireProposalPayload {
  * proposing the same slug).
  */
 export async function prepareHireProposal(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	input: HireProposalInput,
 ): Promise<{ error: string; conflict?: boolean } | { payload: HireProposalPayload }> {
@@ -140,7 +140,7 @@ export async function prepareHireProposal(
  * originating ticket.
  */
 export async function insertHireApproval(
-	db: PGlite,
+	db: Db,
 	teamId: string,
 	payload: HireProposalPayload,
 	requestedByMemberId: string | null,

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { PGlite } from '@electric-sql/pglite';
 import { logger } from '../logger';
+import type { Db, Queryable } from './database';
 
 const log = logger.child('migrate');
 
@@ -12,7 +12,7 @@ const log = logger.child('migrate');
  * issue its own BEGIN/COMMIT — the runner owns the transaction.
  */
 export type CodeMigration = {
-	run: (db: PGlite) => Promise<void>;
+	run: (db: Queryable) => Promise<void>;
 	/**
 	 * Stable identity for change-detection. Prefer setting this explicitly (a
 	 * minifier rewriting `run.toString()` would otherwise shift the checksum and
@@ -34,10 +34,7 @@ function checksumOf(m: Migration): string {
 	return createHash('sha256').update(m).digest('hex');
 }
 
-export async function runMigrations(
-	db: PGlite,
-	migrations: Record<string, Migration>,
-): Promise<void> {
+export async function runMigrations(db: Db, migrations: Record<string, Migration>): Promise<void> {
 	await db.exec(`
     CREATE TABLE IF NOT EXISTS _migrations (
       id          SERIAL PRIMARY KEY,
@@ -65,21 +62,20 @@ export async function runMigrations(
 			continue;
 		}
 
-		await db.exec('BEGIN');
 		try {
-			if (isCodeMigration(migration)) {
-				await migration.run(db);
-			} else {
-				await db.exec(migration);
-			}
-			await db.query('INSERT INTO _migrations (filename, checksum) VALUES ($1, $2)', [
-				filename,
-				checksum,
-			]);
-			await db.exec('COMMIT');
+			await db.transaction(async (tx) => {
+				if (isCodeMigration(migration)) {
+					await migration.run(tx);
+				} else {
+					await tx.exec(migration);
+				}
+				await tx.query('INSERT INTO _migrations (filename, checksum) VALUES ($1, $2)', [
+					filename,
+					checksum,
+				]);
+			});
 			log.info(`Applied migration: ${filename}`);
 		} catch (err) {
-			await db.exec('ROLLBACK');
 			throw new Error(`Migration ${filename} failed: ${err}`);
 		}
 	}
@@ -93,7 +89,7 @@ export async function runMigrations(
  * future". Returns `[]` when `_migrations` doesn't exist yet (brand-new DB).
  */
 export async function findUnknownAppliedMigrations(
-	db: PGlite,
+	db: Queryable,
 	migrations: Record<string, Migration>,
 ): Promise<string[]> {
 	let appliedRows: { filename: string }[];
@@ -112,7 +108,7 @@ export async function findUnknownAppliedMigrations(
 
 /** Bundled migration filenames (sorted) not yet recorded in `_migrations`. */
 export async function getPendingMigrations(
-	db: PGlite,
+	db: Queryable,
 	migrations: Record<string, Migration>,
 ): Promise<string[]> {
 	let appliedSet = new Set<string>();

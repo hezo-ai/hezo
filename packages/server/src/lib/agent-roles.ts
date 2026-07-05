@@ -1,8 +1,8 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { AuthType, COACH_AGENT_SLUG, DEFAULT_TEAM_ID } from '@hezo/shared';
+import type { Db } from '../db/database';
 import type { AuthInfo } from './types';
 
-export async function isCoach(db: PGlite, auth: AuthInfo): Promise<boolean> {
+export async function isCoach(db: Db, auth: AuthInfo): Promise<boolean> {
 	if (auth.type !== AuthType.Agent) return false;
 	const r = await db.query<{ slug: string }>('SELECT slug FROM member_agents WHERE id = $1', [
 		auth.memberId,
@@ -17,7 +17,7 @@ export async function isCoach(db: PGlite, auth: AuthInfo): Promise<boolean> {
  * running in. True when the caller is an HQ agent whose run is scoped to `teamId`.
  */
 export async function isVirtualHqMemberInTeam(
-	db: PGlite,
+	db: Db,
 	auth: AuthInfo,
 	teamId: string,
 ): Promise<boolean> {
@@ -37,7 +37,7 @@ export async function isVirtualHqMemberInTeam(
  * the CEO can take from anywhere; pair it with a per-team check when the action is
  * also open to that team's own Captain.
  */
-export async function isHqInstanceAgent(db: PGlite, auth: AuthInfo): Promise<boolean> {
+export async function isHqInstanceAgent(db: Db, auth: AuthInfo): Promise<boolean> {
 	if (auth.type !== AuthType.Agent) return false;
 	const r = await db.query<{ team_id: string }>('SELECT team_id FROM members WHERE id = $1', [
 		auth.memberId,

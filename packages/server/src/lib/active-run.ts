@@ -1,12 +1,12 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { HeartbeatRunStatus } from '@hezo/shared';
+import type { Db } from '../db/database';
 
 export type ActiveRunCheck = { ok: true } | { ok: false; message: string };
 
 export const ACTIVE_RUN_REASSIGN_ERROR =
 	'Cannot change assignee while an agent is running on this task';
 
-export async function assertNoActiveRun(db: PGlite, taskId: string): Promise<ActiveRunCheck> {
+export async function assertNoActiveRun(db: Db, taskId: string): Promise<ActiveRunCheck> {
 	const r = await db.query<{ has_active_run: boolean }>(
 		`SELECT EXISTS (
             SELECT 1 FROM heartbeat_runs
