@@ -60,7 +60,11 @@ test('can create, view, edit, and delete a project document', async () => {
 
 	await findByText('Updated content for the doc', undefined, { timeout: 15_000 });
 
-	// Delete via the confirm dialog.
+	// Deleting is a two-step flow: archive first (the reversible soft delete
+	// offered on active docs), then the hard delete appears on the archived doc.
+	await user.click(await findByRole('button', { name: 'Archive document' }));
+	await findByTestId('doc-archived-banner');
+
 	await user.click(await findByRole('button', { name: 'Delete document' }));
 	await user.click(await findByTestId('confirm-dialog-confirm'));
 
@@ -287,7 +291,7 @@ test('search input filters the document list as you type', async () => {
 	await findByText('brand-style-guide.md');
 	await findByText('content-calendar.md');
 
-	const search = await findByLabelText('Search documents');
+	const search = await findByLabelText('Filter documents');
 	await user.type(search, 'brand');
 
 	await findByText('brand-style-guide.md');

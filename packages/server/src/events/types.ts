@@ -80,6 +80,14 @@ export type DomainEvent =
 	  } & Scope &
 			Actor)
 	| ({
+			type: 'asset.archived';
+			assetId: string;
+			filename: string;
+			/** true = archived, false = restored. */
+			archived: boolean;
+	  } & Scope &
+			Actor)
+	| ({
 			type: 'document.created' | 'document.updated' | 'document.deleted';
 			documentId: string | null;
 			documentType: string;

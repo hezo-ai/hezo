@@ -14,9 +14,15 @@ import { Tooltip } from './ui/tooltip';
  * The thin left rail of project avatars. Projects are the primary navigation
  * axis: every visible project across every team appears here. Selecting one
  * opens its menu in the panel to the right. There is no team-level grouping —
- * each project is presented as a standalone entity. The create-project action
- * and the HQ entry are pinned below the scrolling avatar list (create-project
- * above HQ) so they stay in place as the avatar list scrolls.
+ * each project is presented as a standalone entity.
+ *
+ * The create-project action is the last item *inside* the scrolling avatar
+ * list, with `sticky bottom-0`: while the avatars fit the rail it simply flows
+ * right after the last one, and once they overflow it pins to the bottom of
+ * the visible area (the avatars scroll beneath it). Its elevation shadow is
+ * always on — it is the button's affordance in both states; there is no
+ * separator border in either. Only the HQ entry stays pinned below the
+ * scroll area, behind a border.
  *
  * `showHome` pins a Home button above the avatar list (separated by a border).
  * It's used in the mobile side drawer, where the header logo opens the drawer
@@ -91,22 +97,30 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 							</Tooltip>
 						);
 					})}
+					{me?.is_superuser && (
+						/*
+						  Sticky, not a pinned sibling: in flow it sits right after the
+						  last avatar; once the list overflows it stops at the viewport
+						  bottom while the avatars scroll beneath. The full-width opaque
+						  wrapper masks avatars sliding under. The shadow is always on
+						  (upward, so the overflow box can't clip it away in the stuck
+						  position) — there is no separator border in either state.
+						*/
+						<div className="sticky bottom-0 z-10 shrink-0 w-full flex justify-center py-1 bg-surface-2">
+							<Tooltip content="New project" side="right">
+								<button
+									type="button"
+									onClick={() => setCreateOpen(true)}
+									aria-label="New project"
+									data-testid="project-rail-new"
+									className="w-9 h-9 rounded-md flex items-center justify-center text-text-2 hover:text-text-1 hover:bg-surface border border-dashed border-border transition-colors shadow-up"
+								>
+									<Plus className="w-4 h-4" />
+								</button>
+							</Tooltip>
+						</div>
+					)}
 				</div>
-				{me?.is_superuser && (
-					<div className="shrink-0 pt-2 mt-2 w-full flex justify-center border-t border-border">
-						<Tooltip content="New project" side="right">
-							<button
-								type="button"
-								onClick={() => setCreateOpen(true)}
-								aria-label="New project"
-								data-testid="project-rail-new"
-								className="w-9 h-9 rounded-md flex items-center justify-center text-text-2 hover:text-text-1 hover:bg-surface border border-dashed border-border transition-colors"
-							>
-								<Plus className="w-4 h-4" />
-							</button>
-						</Tooltip>
-					</div>
-				)}
 				{hq && (
 					<div className="shrink-0 pt-2 mt-2 w-full flex justify-center border-t border-border">
 						<Tooltip content={hq.name} side="right">

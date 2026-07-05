@@ -293,6 +293,66 @@ test('lists API key + Subscription rows for a provider and flips the default', a
 	);
 });
 
+test('renames a provider config in place from the table', async () => {
+	const { findByRole, findByText, getByRole, queryByText, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+			const res = await postProvider({
+				provider: 'anthropic',
+				api_key: 'sk-ant-rename-component',
+				label: 'anthropic-old-name',
+			});
+			expect(res.status).toBe(201);
+		},
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await findByText('anthropic-old-name');
+
+	await user.click(getByRole('button', { name: 'Rename anthropic-old-name' }));
+	const input = getByRole('textbox', {
+		name: 'New name for anthropic-old-name',
+	}) as HTMLInputElement;
+	// The editor opens pre-filled with the current name.
+	expect(input.value).toBe('anthropic-old-name');
+	fireEvent.change(input, { target: { value: 'anthropic-shiny' } });
+	await user.click(getByRole('button', { name: 'Save name for anthropic-old-name' }));
+
+	// The row re-renders under the new name once the refetch lands.
+	await findByText('anthropic-shiny', undefined, { timeout: 15_000 });
+	await waitFor(() => expect(queryByText('anthropic-old-name')).toBeNull());
+});
+
+test('cancelling a rename restores the read-only label unchanged', async () => {
+	const { findByRole, findByText, getByRole, queryByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+			const res = await postProvider({
+				provider: 'anthropic',
+				api_key: 'sk-ant-rename-cancel',
+				label: 'anthropic-keep-name',
+			});
+			expect(res.status).toBe(201);
+		},
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await findByText('anthropic-keep-name');
+
+	await user.click(getByRole('button', { name: 'Rename anthropic-keep-name' }));
+	const input = getByRole('textbox', {
+		name: 'New name for anthropic-keep-name',
+	}) as HTMLInputElement;
+	fireEvent.change(input, { target: { value: 'discarded-edit' } });
+	await user.click(getByRole('button', { name: 'Cancel renaming anthropic-keep-name' }));
+
+	// Editor closes without saving; the original label still renders.
+	expect(queryByRole('textbox', { name: 'New name for anthropic-keep-name' })).toBeNull();
+	await findByText('anthropic-keep-name');
+});
+
 test('Add provider modal pre-fills a default name from the selected provider', async () => {
 	const { findByRole, getByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',

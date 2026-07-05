@@ -36,9 +36,12 @@ test('shows the running agent with a loader and a terminate button', async () =>
 	expect(row.textContent).toContain(seeded.agentTitle);
 	// The loader animation replaces the queued row's run-now button.
 	expect(row.querySelector('.animate-spin')).not.toBeNull();
-	// The delete button terminates the run.
+	// A running agent gets the canonical terminate control (the run viewer's
+	// filled stop square), not the queued row's trashcan.
 	const terminate = await findByTestId(`terminate-running-agent-${seeded.agentId}`);
-	expect(terminate).toBeTruthy();
+	const icon = terminate.querySelector('svg');
+	expect(icon?.classList.contains('lucide-square')).toBe(true);
+	expect(icon?.getAttribute('fill')).toBe('currentColor');
 });
 
 test('terminates the running run via the confirm dialog', async () => {
@@ -186,6 +189,12 @@ test('lists running agents above queued agents', async () => {
 	expect(
 		runningRow.compareDocumentPosition(queuedRow) & Node.DOCUMENT_POSITION_FOLLOWING,
 	).toBeTruthy();
+	// The running agent shows the canonical stop-square terminate button, while
+	// the not-yet-running queued agent keeps the trashcan cancel button.
+	const terminate = await findByTestId(`terminate-running-agent-${seeded.runningAgentId}`);
+	expect(terminate.querySelector('svg')?.classList.contains('lucide-square')).toBe(true);
+	const cancel = await findByTestId(`cancel-queued-wakeup-${seeded.wakeupId}`);
+	expect(cancel.querySelector('svg')?.classList.contains('lucide-trash-2')).toBe(true);
 });
 
 test('renders nothing when the task is fully idle (no running and no queued agents)', () => {

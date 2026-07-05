@@ -94,8 +94,8 @@ export function useAiProviderModels(configId: string, options: { enabled?: boole
 
 export function useUpdateAiProviderConfig(configId: string) {
 	return useMutation({
-		mutationFn: (data: { default_model: string | null }) =>
-			api.patch<{ updated: boolean; default_model: string | null }>(
+		mutationFn: (data: { default_model?: string | null; label?: string }) =>
+			api.patch<{ updated: boolean; default_model?: string | null; label?: string }>(
 				`/api/ai-providers/${configId}`,
 				data,
 			),

@@ -3,6 +3,7 @@ import {
 	AgentEffort,
 	AgentRuntimeStatus,
 	AiProvider,
+	ArchiveFilter,
 	assetBasename,
 	assetContentDisposition,
 	assetFolder,
@@ -16,9 +17,11 @@ import {
 	isAgentEffort,
 	isAllowedAttachmentExtension,
 	isAllowedAttachmentMime,
+	isArchiveFilter,
 	isBudgetPauseStatus,
 	isMarkdownDocSlug,
 	isReactionKind,
+	matchesArchiveFilter,
 	normalizeAssetFilename,
 	normalizeAssetFolder,
 	normalizeAssetPath,
@@ -59,6 +62,32 @@ describe('enum guards', () => {
 		expect(credentialKindRequiresAllowedHosts(CredentialKind.GithubPat)).toBe(true);
 		expect(credentialKindRequiresAllowedHosts(CredentialKind.SshPrivateKey)).toBe(false);
 		expect(credentialKindRequiresAllowedHosts(CredentialKind.Other)).toBe(false);
+	});
+});
+
+describe('archive filter', () => {
+	it('isArchiveFilter accepts exactly the three views', () => {
+		expect(isArchiveFilter('active')).toBe(true);
+		expect(isArchiveFilter('archived')).toBe(true);
+		expect(isArchiveFilter('all')).toBe(true);
+		expect(isArchiveFilter('deleted')).toBe(false);
+		expect(isArchiveFilter('')).toBe(false);
+		expect(isArchiveFilter(undefined)).toBe(false);
+		expect(isArchiveFilter(1)).toBe(false);
+	});
+
+	it('matchesArchiveFilter partitions rows by archived_at', () => {
+		const stamp = '2026-07-05T00:00:00Z';
+		// Active view: only unarchived rows (null or undefined stamp).
+		expect(matchesArchiveFilter(null, ArchiveFilter.Active)).toBe(true);
+		expect(matchesArchiveFilter(undefined, ArchiveFilter.Active)).toBe(true);
+		expect(matchesArchiveFilter(stamp, ArchiveFilter.Active)).toBe(false);
+		// Archived view: only stamped rows.
+		expect(matchesArchiveFilter(stamp, ArchiveFilter.Archived)).toBe(true);
+		expect(matchesArchiveFilter(null, ArchiveFilter.Archived)).toBe(false);
+		// All: everything.
+		expect(matchesArchiveFilter(stamp, ArchiveFilter.All)).toBe(true);
+		expect(matchesArchiveFilter(null, ArchiveFilter.All)).toBe(true);
 	});
 });
 

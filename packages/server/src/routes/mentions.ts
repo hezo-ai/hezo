@@ -313,11 +313,14 @@ mentionsRoutes.get('/projects/:projectId/mentions/search', async (c) => {
 	}
 
 	if (kinds.includes('doc') && projectSlug) {
+		// Suggestions are active-only — archived docs keep resolving in existing
+		// text (mentions/resolve) but are never offered for new references.
 		const r = await db.query<{ filename: string; project_slug: string }>(
 			`SELECT pd.slug AS filename, p.slug AS project_slug
 			 FROM documents pd
 			 JOIN projects p ON p.id = pd.project_id
 			 WHERE pd.type = 'project_doc' AND pd.team_id = $1
+			   AND pd.archived_at IS NULL
 			   AND LOWER(p.slug) = LOWER($4)
 			   AND ($2 = '' OR pd.slug ILIKE $3)
 			 ORDER BY pd.slug

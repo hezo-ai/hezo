@@ -91,7 +91,7 @@ test('the HQ project is pinned at the bottom of the rail and opens on click', as
 	await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/projects\/hq(\/|$)/));
 });
 
-test('the create-project button is pinned above the HQ button', async () => {
+test('the create-project button follows the avatar list, with HQ pinned below it', async () => {
 	const { findByTestId } = await renderApp({
 		initialPath: '/home',
 		seed: async () => {
@@ -100,16 +100,32 @@ test('the create-project button is pinned above the HQ button', async () => {
 		},
 	});
 
-	// Wait for both pinned controls to render before asserting their order.
-	await findByTestId('project-rail-new', undefined, { timeout: 15_000 });
-	await findByTestId('project-rail-hq', undefined, { timeout: 15_000 });
+	// Wait for both controls to render before asserting structure.
+	const newBtn = await findByTestId('project-rail-new', undefined, { timeout: 15_000 });
+	const hq = await findByTestId('project-rail-hq', undefined, { timeout: 15_000 });
 
+	// The create button lives INSIDE the scroll container as its last item, so
+	// it flows directly after the last avatar while the list fits the rail (and
+	// sticks to the visible bottom once the list overflows — a real-layout
+	// behaviour covered by the project-rail-create-button browser specs).
+	const scroll = await findByTestId('project-rail-scroll');
+	expect(scroll.contains(newBtn)).toBe(true);
+	const scrollItems = Array.from(
+		scroll.querySelectorAll(
+			'[data-testid^="project-rail-avatar-"], [data-testid="project-rail-new"]',
+		),
+	).map((el) => el.getAttribute('data-testid'));
+	expect(scrollItems.length).toBeGreaterThan(1);
+	expect(scrollItems[scrollItems.length - 1]).toBe('project-rail-new');
+
+	// HQ stays pinned outside (below) the scroll area, after the create button.
+	expect(scroll.contains(hq)).toBe(false);
 	const rail = await findByTestId('project-rail');
 	// querySelectorAll yields document order, so create-project must come first.
-	const pinned = Array.from(
+	const order = Array.from(
 		rail.querySelectorAll('[data-testid="project-rail-new"], [data-testid="project-rail-hq"]'),
 	).map((el) => el.getAttribute('data-testid'));
-	expect(pinned).toEqual(['project-rail-new', 'project-rail-hq']);
+	expect(order).toEqual(['project-rail-new', 'project-rail-hq']);
 });
 
 test('clicking a project avatar opens that project menu', async () => {
@@ -131,7 +147,7 @@ test('clicking a project avatar opens that project menu', async () => {
 	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
 });
 
-test('superuser creates a new project from the rail-pinned create button', async () => {
+test('superuser creates a new project from the rail create button', async () => {
 	const { findByTestId, user, router } = await renderApp({
 		initialPath: '/home',
 		seed: async () => {

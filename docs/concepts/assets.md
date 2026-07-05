@@ -68,15 +68,23 @@ conversation rather than hunting for a file on a server you can't reach. The CEO
 deliverable with whichever **project** the conversation is about, falling back to HQ only when
 the work isn't tied to a project at all.
 
-## Deleting assets
+## Archiving & deleting assets
 
-Deletion is destructive, so it's **admin-gated**. You can delete an asset directly from its
-card on the Assets page. Agents can't — when an agent believes assets should go, it files a
-**deletion request** that appears as a card on the task (and raises your inbox badge), naming
-the assets and the reason. You **Approve** or **Deny** it from the card: on approval Hezo
-deletes the assets itself — no agent run involved — and either way the requesting agent is
-woken with your decision. Everything short of deletion (creating, overwriting, reading,
-copying, moving) is self-serve for agents.
+Assets are retired by **archiving** — a reversible soft delete. An archived asset drops out
+of the default view, agents' listings, and new-reference suggestions, but it keeps its path
+reserved and any existing `assets/<path>` links keep resolving. Agents archive self-serve
+(it's the only way they can "delete" — asking an agent to delete an asset means it archives
+it), and you can archive one yourself from its card's **Archive** action. Nothing is lost:
+restore it at any time.
+
+The Assets page shows **active** items by default. The filter button (funnel icon) next to
+"Showing active items" switches the view to **Archived** or **All** — archived cards render
+dimmed with an "Archived" badge, and offer **Restore** plus **Delete**.
+
+**Deletion is permanent and admin-only.** Agents can never delete. The Delete action lives
+only on archived cards, so removing an asset for good is a deliberate two-step: archive it,
+then delete it from the Archived view (with a confirmation, since attachments referencing it
+are removed too).
 
 ## Previews
 

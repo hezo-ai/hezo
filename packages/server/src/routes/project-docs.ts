@@ -24,6 +24,7 @@ import {
 	listDocuments,
 	listRevisions,
 	restoreRevision,
+	setDocumentArchived,
 	setDocumentStatus,
 	upsertDocument,
 } from '../services/documents';
@@ -41,6 +42,8 @@ function toDocResponse(d: DocumentRowWithAuthor) {
 		updated_at: d.updated_at,
 		last_updated_by_name: d.last_updated_by_name,
 		last_updated_by_type: d.last_updated_by_type,
+		archived_at: d.archived_at,
+		archived_by_name: d.archived_by_name,
 	};
 }
 
@@ -50,15 +53,25 @@ projectDocsRoutes.get('/projects/:projectId/docs', async (c) => {
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
+	// The list carries archived docs too: the web UI filters client-side
+	// (Active / Archived / All with counts) and old references must keep
+	// resolving. Agent-facing surfaces (MCP, run context) stay active-only.
 	const docs = await listDocuments(db, {
 		type: DocumentType.ProjectDoc,
 		teamId: teamId,
 		projectId,
+		includeArchived: true,
 	});
 
 	return ok(
 		c,
-		docs.map((d) => ({ id: d.id, filename: d.slug, status: d.status, updated_at: d.updated_at })),
+		docs.map((d) => ({
+			id: d.id,
+			filename: d.slug,
+			status: d.status,
+			updated_at: d.updated_at,
+			archived_at: d.archived_at,
+		})),
 	);
 });
 
@@ -95,6 +108,18 @@ projectDocsRoutes.put('/projects/:projectId/docs/:filename', async (c) => {
 	const body = await c.req.json<{ content: string; change_summary?: string }>();
 	if (body.content === undefined) {
 		return err(c, 'INVALID_REQUEST', 'content is required', 400);
+	}
+
+	// Archived docs are read-only: restore first, then edit. Creating a new doc
+	// under an archived name would silently resurrect old history otherwise.
+	const prior = await getDocument(db, {
+		type: DocumentType.ProjectDoc,
+		teamId,
+		projectId,
+		slug: filename,
+	});
+	if (prior?.archived_at) {
+		return err(c, 'CONFLICT', `Document '${filename}' is archived — restore it first`, 409);
 	}
 
 	if (filename === 'prd.md' && auth.type === AuthType.Agent) {
@@ -150,7 +175,14 @@ projectDocsRoutes.put('/projects/:projectId/docs/:filename', async (c) => {
 	});
 	return ok(
 		c,
-		toDocResponse(saved ?? { ...doc, last_updated_by_name: null, last_updated_by_type: 'admin' }),
+		toDocResponse(
+			saved ?? {
+				...doc,
+				last_updated_by_name: null,
+				last_updated_by_type: 'admin',
+				archived_by_name: null,
+			},
+		),
 	);
 });
 
@@ -162,46 +194,78 @@ projectDocsRoutes.patch('/projects/:projectId/docs/:filename', async (c) => {
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const body = await c.req.json<{ status?: string }>();
-	if (!Object.values(DocumentStatus).includes(body.status as DocumentStatus)) {
-		return err(
-			c,
-			'INVALID_REQUEST',
-			`status must be one of: ${Object.values(DocumentStatus).join(', ')}`,
-			400,
-		);
+	const body = await c.req.json<{ status?: string; archived?: boolean }>();
+	const scope = { type: DocumentType.ProjectDoc, teamId, projectId, slug: filename } as const;
+	const audit = {
+		events: c.get('events'),
+		actorType: actorTypeFromAuth(auth),
+		actorApiKeyId: apiKeyIdFromAuth(auth),
+	};
+	const actorMemberId = await resolveActorMemberId(db, auth, teamId);
+
+	// Exactly one mutable field per call: a status flip and an archive flip are
+	// different actions with different guards.
+	const hasStatus = body.status !== undefined;
+	const hasArchived = body.archived !== undefined;
+	if (hasStatus === hasArchived) {
+		return err(c, 'INVALID_REQUEST', 'Provide exactly one of: status, archived', 400);
 	}
 
-	const actorMemberId = await resolveActorMemberId(db, auth, teamId);
-	const row = await setDocumentStatus(
-		db,
-		c.get('wsManager'),
-		{ type: DocumentType.ProjectDoc, teamId, projectId, slug: filename },
-		body.status as DocumentStatus,
-		actorMemberId,
-		{
-			events: c.get('events'),
-			actorType: actorTypeFromAuth(auth),
-			actorApiKeyId: apiKeyIdFromAuth(auth),
-		},
-	);
-	if (!row) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
+	if (hasArchived) {
+		if (typeof body.archived !== 'boolean') {
+			return err(c, 'INVALID_REQUEST', 'archived must be a boolean', 400);
+		}
+		const result = await setDocumentArchived(
+			db,
+			c.get('wsManager'),
+			scope,
+			body.archived,
+			actorMemberId,
+			audit,
+		);
+		if (!result) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
+	} else {
+		if (!Object.values(DocumentStatus).includes(body.status as DocumentStatus)) {
+			return err(
+				c,
+				'INVALID_REQUEST',
+				`status must be one of: ${Object.values(DocumentStatus).join(', ')}`,
+				400,
+			);
+		}
+		const current = await getDocument(db, scope);
+		if (!current) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
+		if (current.archived_at) {
+			return err(c, 'CONFLICT', `Document '${filename}' is archived — restore it first`, 409);
+		}
+		const row = await setDocumentStatus(
+			db,
+			c.get('wsManager'),
+			scope,
+			body.status as DocumentStatus,
+			actorMemberId,
+			audit,
+		);
+		if (!row) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
+	}
 
 	// Re-read WITH_AUTHOR so the response carries the resolved last editor.
-	const saved = await getDocument(db, {
-		type: DocumentType.ProjectDoc,
-		teamId,
-		projectId,
-		slug: filename,
-	});
-	return ok(
-		c,
-		toDocResponse(saved ?? { ...row, last_updated_by_name: null, last_updated_by_type: 'admin' }),
-	);
+	const saved = await getDocument(db, scope);
+	if (!saved) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
+	return ok(c, toDocResponse(saved));
 });
 
 projectDocsRoutes.delete('/projects/:projectId/docs/:filename', async (c) => {
 	const teamId = c.get('teamId') as string;
+	const auth = c.get('auth');
+	if (auth.type === AuthType.Agent) {
+		return err(
+			c,
+			'FORBIDDEN',
+			'Only the admin can delete documents — archive instead (archive_project_doc)',
+			403,
+		);
+	}
 	const db = c.get('db');
 	const filename = c.req.param('filename');
 	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
@@ -273,6 +337,9 @@ projectDocsRoutes.post('/projects/:projectId/docs/:filename/restore', async (c) 
 		slug: filename,
 	});
 	if (!doc) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
+	if (doc.archived_at) {
+		return err(c, 'CONFLICT', `Document '${filename}' is archived — restore it first`, 409);
+	}
 
 	const restoredByMemberId = await resolveActorMemberId(db, auth, teamId);
 	const restored = await restoreRevision(db, c.get('wsManager'), {
@@ -297,7 +364,12 @@ projectDocsRoutes.post('/projects/:projectId/docs/:filename/restore', async (c) 
 	return ok(
 		c,
 		toDocResponse(
-			saved ?? { ...restored, last_updated_by_name: null, last_updated_by_type: 'admin' },
+			saved ?? {
+				...restored,
+				last_updated_by_name: null,
+				last_updated_by_type: 'admin',
+				archived_by_name: null,
+			},
 		),
 	);
 });

@@ -170,14 +170,16 @@ test('groups the review-comment controls in a bordered cluster, apart from the d
 	expect(toolbar.className).toContain('bg-surface-2');
 
 	// The document-level meta actions sit OUTSIDE the review cluster — that
-	// separation is the whole point. In particular the two trash icons (clear the
-	// review vs. delete the document) now live in different groups.
+	// separation is the whole point. In particular the trash inside the cluster
+	// (clear the review) and the archive action beside it live in different
+	// groups (active docs offer Archive; the hard delete only shows once
+	// archived).
 	const popout = getByTestId('doc-popout');
 	const editButton = getByRole('button', { name: 'Edit' });
-	const deleteDoc = getByRole('button', { name: 'Delete document' });
+	const archiveDoc = getByRole('button', { name: 'Archive document' });
 	expect(toolbar.contains(popout)).toBe(false);
 	expect(toolbar.contains(editButton)).toBe(false);
-	expect(toolbar.contains(deleteDoc)).toBe(false);
+	expect(toolbar.contains(archiveDoc)).toBe(false);
 	// The clear-review trash, by contrast, is inside the cluster.
 	expect(toolbar.contains(getByTestId('review-clear'))).toBe(true);
 });
@@ -251,7 +253,7 @@ test('clear review deletes every comment after confirmation', async () => {
 	expect(container.querySelector('[data-testid="review-count-chip"]')).toBeNull();
 });
 
-test('action dialog shows the agent handoff and copies it to the clipboard', async () => {
+test('action dialog copies the handoff, closes, and shows no Add button outside a task view', async () => {
 	const { findByTestId, filename, user } = await setupDocumentsPage({
 		comments: [{ quote: 'target text', comment: 'Expand this' }],
 	});
@@ -281,12 +283,24 @@ test('action dialog shows the agent handoff and copies it to the clipboard', asy
 		expect(handoff.textContent).toContain(filename);
 		expect(handoff.textContent).toContain('automatically deletes every review comment');
 
+		// Task-less surface: no "Add to <task>" button, the lone copy button is
+		// centred, and the meta line carries the count + filename.
+		expect(document.body.querySelector('[data-testid="action-review-add"]')).toBeNull();
+		const footer = document.body.querySelector(
+			'[data-testid="action-review-footer"]',
+		) as HTMLElement;
+		expect(footer.className).toContain('justify-center');
+		const meta = document.body.querySelector('[data-testid="action-review-meta"]') as HTMLElement;
+		expect(meta.textContent).toContain('1 comment');
+		expect(meta.textContent).toContain(filename);
+
 		const copy = document.body.querySelector('[data-testid="action-review-copy"]') as HTMLElement;
 		await user.click(copy);
 		await waitFor(() => {
 			expect(written.length).toBe(1);
 			expect(written[0]).toContain(filename);
-			expect(copy.getAttribute('aria-label')).toBe('Copied');
+			// A successful copy closes the dialog.
+			expect(document.body.querySelector('[data-testid="action-review-dialog"]')).toBeNull();
 		});
 	} finally {
 		if (originalDesc) Object.defineProperty(navigator, 'clipboard', originalDesc);

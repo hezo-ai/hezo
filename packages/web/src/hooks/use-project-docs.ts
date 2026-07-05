@@ -12,6 +12,10 @@ export interface ProjectDoc {
 	status?: string;
 	updated_at: string;
 	content?: string;
+	/** Set when the doc is archived (soft-deleted); null = active. */
+	archived_at?: string | null;
+	/** Who archived it (resolved display name) — single-doc GET only. */
+	archived_by_name?: string | null;
 	/** Present on the single-doc GET (and after a save/restore); absent in the list. */
 	created_at?: string;
 	last_updated_by_name?: string | null;
@@ -85,6 +89,24 @@ export function useUpdateProjectDocStatus(projectId: string, filename: string | 
 			errorMessage: 'Failed to update document status',
 		},
 	);
+}
+
+/**
+ * Archive / restore a document. Response-driven (the server stamps
+ * archived_at/by): the doc cache is seeded from the response and the list
+ * refetches so filter counts stay honest.
+ */
+export function useArchiveProjectDoc(projectId: string) {
+	return useMutation({
+		mutationFn: ({ filename, archived }: { filename: string; archived: boolean }) =>
+			api.patch<ProjectDoc>(`/api/projects/${projectId}/docs/${filename}`, { archived }),
+		onSuccess: (saved, { filename }) => {
+			queryClient.setQueryData<ProjectDoc>(queryKeys.projects.doc(projectId, filename), saved);
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.projects.docs(projectId),
+			});
+		},
+	});
 }
 
 export function useDeleteProjectDoc(projectId: string) {

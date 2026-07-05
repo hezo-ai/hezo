@@ -231,7 +231,10 @@ only for `project_doc` (list + single GET, `list_project_docs`/`read_project_doc
 from a dropdown in the banner (`PATCH /projects/:projectId/docs/:filename`), agents via the
 `set_project_doc_status` MCP tool; both call `setDocumentStatus` (`services/documents.ts`), which
 records no revision and leaves `last_updated_by_member_id` untouched — a status flip is not a
-content edit (the row trigger still bumps `updated_at`). A **revision-history dialog** shows each version's changelog
+content edit (the row trigger still bumps `updated_at`). Project docs are also **archivable**
+(the soft delete — `archived_at`/`archived_by_member_id`, `setDocumentArchived`, same
+no-revision semantics; see the assets paragraph below for the full archival contract shared by
+docs and assets, incl. the Active/Archived/All web filter and the MCP `filter` key). A **revision-history dialog** shows each version's changelog
 rendered like a task comment; `buildDocVersionHistory`
 (`packages/web/src/lib/doc-version-history.ts`) pairs each version's content with the changelog
 that *produced* it (a one-step shift, since revisions snapshot prior content), so the current
@@ -253,15 +256,28 @@ under `uploads/<task-name>` (`taskUploadsFolder` in `@hezo/shared`: the title sa
 segment, task identifier as fallback), while direct library uploads land in the folder the
 uploader chose. Reorganization: `move_project_asset`/`copy_project_asset` (MCP) and
 `PATCH /api/projects/:id/assets/:assetId` (the web Move dialog, human-only) reorganize
-metadata only, erroring on destination collision. **Deletion is admin-gated**: agents call
-`request_asset_deletion`, which posts an `asset_deletion_request` task comment (snapshot of
-asset ids + paths + reason) and fans out `admin_mentions` rows so the inbox badge rises; a
-human resolves it via `POST …/comments/:commentId/resolve-asset-deletion` (agents get 403) —
-approve deletes rows + blobs server-side (re-selecting by id so renames/races are tolerated),
-deny keeps everything; both record `chosen_option`, post a system comment, mark the request's
-mentions read, and wake the requester (`asset_deletion_resolved`). `asset.created`,
-`asset.deletion_requested`, and `asset.deleted` domain events feed the audit log; asset
-row-changes broadcast on the team room so the Assets page live-refreshes. `project_icons`
+metadata only, erroring on destination collision. **Archival is the agent-facing soft
+delete** (docs and assets both carry `archived_at` + `archived_by_member_id`, migration
+016): agents call `archive_project_doc`/`archive_project_asset` (reversible via the
+`unarchive_*` twins, idempotent, no approval), humans archive via
+`PATCH …/docs/:filename { archived }` / `PATCH …/assets/:assetId { archived }`. An archived
+row keeps its slug/path reserved (uploads colliding with it auto-suffix) and existing
+references keep resolving (mentions/resolve, signed asset serving), but every *discovery*
+surface is active-only: the web pages default to an Active filter (Active/Archived/All is
+client-side; the REST lists return `archived_at` for all rows), the MCP doc/asset list+read
+tools take a `filter` key defaulting to `'active'` (`'archived'`/`'all'` opt in), full-text
+search, doc autocomplete, and the `{{project_docs_context}}` run manifest all exclude
+archived rows, and archived docs are read-only (writes/status/revision-restore return 409 /
+tool errors until restored). **Hard deletion is human/admin-only** (agents get 403 on both
+DELETE routes; in the UI Delete only appears on archived items — a deliberate two-step).
+The legacy `request_asset_deletion` tool is gone, but its resolve endpoint
+(`POST …/comments/:commentId/resolve-asset-deletion`, agents 403) and comment renderer
+remain so pending `asset_deletion_request` cards from older instances stay resolvable —
+approve deletes rows + blobs server-side, deny keeps everything, both wake the requester
+(`asset_deletion_resolved`). `asset.created`, `asset.archived`, `asset.deletion_requested`,
+and `asset.deleted` domain events feed the audit log (doc archival rides
+`document.updated`); asset row-changes broadcast on the team room so the Assets page
+live-refreshes. `project_icons`
 (1:1 with `projects`, `ON DELETE CASCADE`) holds an optional per-project icon image —
 unlike assets the **bytes live in the DB** (a `BYTEA` column) in a dedicated table so the
 hot `projects.*` list query never pulls the blob; it is rendered in the project rail and

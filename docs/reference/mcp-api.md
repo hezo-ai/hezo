@@ -945,29 +945,31 @@ Remove a registered MCP connection (instance-global — removing it affects ever
 
 _Read-only._
 
-List project documentation files (PRD, spec, implementation plan, etc.)
+List project documentation files (PRD, spec, implementation plan, etc.). Archived (soft-deleted) docs are excluded by default — set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag).
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `filter` | `active` \| `archived` \| `all` | No | Which archive states to consider: 'active' (default — archived items are excluded), 'archived' (only archived), or 'all'. |
 
-**Returns:** `{ files: [{ id, filename, title, status, updated_at }] }` — the markdown project docs. `status` is the doc's lifecycle status (`planning` or `approved`).
+**Returns:** `{ files: [{ id, filename, title, status, updated_at }] }` — the markdown project docs. `status` is the doc's lifecycle status (`planning` or `approved`). The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.
 
 ### `list_project_assets`
 
 _Read-only._
 
-List the project's assets — files in the assets library (UI mockups, wireframes, diagrams, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. You can author text-based assets with write_project_asset and reorganize with move_project_asset / copy_project_asset; deletion is admin-gated via request_asset_deletion. Binary assets (images, PDFs, media) are human-uploaded.
+List the project's assets — files in the assets library (UI mockups, wireframes, diagrams, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. You can author text-based assets with write_project_asset and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default — set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag). Binary assets (images, PDFs, media) are human-uploaded.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `filter` | `active` \| `archived` \| `all` | No | Which archive states to consider: 'active' (default — archived items are excluded), 'archived' (only archived), or 'all'. |
 
-**Returns:** `{ files: [{ id, filename, content_type, created_at }] }` — the project asset files. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`).
+**Returns:** `{ files: [{ id, filename, content_type, created_at }] }` — the project asset files. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`). The `filter` param defaults to `'active'` (archived assets excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.
 
 ### `write_project_asset`
 
@@ -983,13 +985,13 @@ Save a text-based file to the project assets library so a human can open it (an 
 | `filename` | `string` | Yes | Path to write, optionally foldered (e.g. "ui-mockups.html", "scripts/check.sh") |
 | `content` | `string` | Yes | File content |
 
-**Returns:** `{ written: true, id, reference: "assets/<path>" }`, or `{ error }` if the type is not text-based (`.html`, `.svg`, `.txt`, `.md`, or a script/text format: `.sh`, `.py`, `.js`, `.ts`, `.json`, `.csv`, `.yaml`, `.yml`), the path is invalid (max 2 folder levels), or the content exceeds 10 MB. Re-saving the same path overwrites it; matching is path-exact.
+**Returns:** `{ written: true, id, reference: "assets/<path>" }`, or `{ error }` if the type is not text-based (`.html`, `.svg`, `.txt`, `.md`, or a script/text format: `.sh`, `.py`, `.js`, `.ts`, `.json`, `.csv`, `.yaml`, `.yml`), the path is invalid (max 2 folder levels), the content exceeds 10 MB, or an archived asset holds the path (unarchive it first or pick another path). Re-saving the same path overwrites it; matching is path-exact.
 
 ### `read_project_asset`
 
 _Read-only._
 
-Read a project asset's contents by path (e.g. "ui-mockups.html" or "scripts/check.sh") — the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a read-only container path under /workspace/.hezo/assets/ to open directly. For markdown project docs use read_project_doc instead.
+Read a project asset's contents by path (e.g. "ui-mockups.html" or "scripts/check.sh") — the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Binary assets (images, PDFs, media) are not inlined; the response gives a read-only container path under /workspace/.hezo/assets/ to open directly. Archived assets are not readable by default — set filter: 'archived' or 'all' to read one. For markdown project docs use read_project_doc instead.
 
 **Parameters:**
 
@@ -997,14 +999,15 @@ Read a project asset's contents by path (e.g. "ui-mockups.html" or "scripts/chec
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filename` | `string` | Yes | Asset path to read (e.g. "ui-mockups.html", "launch/images/hero.png") |
+| `filter` | `active` \| `archived` \| `all` | No | Which archive states to consider: 'active' (default — archived items are excluded), 'archived' (only archived), or 'all'. |
 
-**Returns:** For a text asset, `{ filename, content_type, content }`. For a binary asset, `{ filename, content_type, byte_size, binary: true, path }` (a read-only container path). Returns `{ error }` if not found — match the full path, folder prefix included.
+**Returns:** For a text asset, `{ filename, content_type, content }`. For a binary asset, `{ filename, content_type, byte_size, binary: true, path }` (a read-only container path). Returns `{ error }` if not found — match the full path, folder prefix included — or if the asset's archive state doesn't match `filter` (default `'active'`, so archived assets need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).
 
 ### `move_project_asset`
 
 _Write tool._
 
-Move or rename a project asset within the assets library: change its folder (up to 2 levels deep), its filename, or both — folders spring into existence when the first asset lands in them and vanish with their last one. The stored file does not change, so the destination must keep the same extension. Moves never overwrite: if the destination path is taken the call fails. IMPORTANT: existing text references to the old `assets/<path>` in comments and docs are NOT rewritten — they degrade to plain text — so update the places that cite the old path, and prefer organizing assets early over moving them later. Agents cannot delete assets (deletion is admin-gated via request_asset_deletion); moving something obsolete into an archive folder is the self-serve alternative.
+Move or rename a project asset within the assets library: change its folder (up to 2 levels deep), its filename, or both — folders spring into existence when the first asset lands in them and vanish with their last one. The stored file does not change, so the destination must keep the same extension. Moves never overwrite: if the destination path is taken the call fails. IMPORTANT: existing text references to the old `assets/<path>` in comments and docs are NOT rewritten — they degrade to plain text — so update the places that cite the old path, and prefer organizing assets early over moving them later. To retire an obsolete asset, use archive_project_asset instead of moving it aside (hard deletion is admin-only).
 
 **Parameters:**
 
@@ -1014,7 +1017,7 @@ Move or rename a project asset within the assets library: change its folder (up 
 | `from` | `string` | Yes | Current asset path (e.g. "hero.png" or "launch/hero.png") |
 | `to` | `string` | Yes | Destination path (e.g. "launch/images/hero.png") |
 
-**Returns:** `{ moved: true, id, from, reference: "assets/<path>", note }`, or `{ error }` when the source is missing, the destination exists (moves never overwrite), the extension changes, or a path is invalid. Metadata-only — the stored bytes do not move. Existing text references to the old path are not rewritten.
+**Returns:** `{ moved: true, id, from, reference: "assets/<path>", note }`, or `{ error }` when the source is missing or archived, the destination exists (moves never overwrite; an archived asset still holds its path), the extension changes, or a path is invalid. Metadata-only — the stored bytes do not move. Existing text references to the old path are not rewritten.
 
 ### `copy_project_asset`
 
@@ -1030,32 +1033,45 @@ Copy a project asset to a new path in the assets library (any type, including bi
 | `from` | `string` | Yes | Source asset path (e.g. "templates/report.md") |
 | `to` | `string` | Yes | Destination path (e.g. "2026-q3/report.md") |
 
-**Returns:** `{ copied: true, id, reference: "assets/<path>" }` — a new asset with its own id, any type including binary. Returns `{ error }` when the source is missing, the destination exists (copies never overwrite), or a path is invalid.
+**Returns:** `{ copied: true, id, reference: "assets/<path>" }` — a new asset with its own id, any type including binary. Returns `{ error }` when the source is missing or archived, the destination exists (copies never overwrite), or a path is invalid.
 
-### `request_asset_deletion`
+### `archive_project_asset`
 
 _Write tool._
 
-Ask a human admin to approve deleting one or more project assets. Deletion is destructive, so agents can never delete directly — this posts an approval card on the task; an admin approves or denies it, on approval the backend deletes the assets (rows, attachments, and stored bytes; no further agent action needed), and you are woken with the outcome. Stop any work that depends on the deletion and wait. Everything short of deletion — create, overwrite, read, list, copy, move — is self-serve; consider moving obsolete-but-maybe-valuable assets into an archive folder (move_project_asset) instead of requesting deletion.
+Archive a project asset — the reversible soft delete, and the ONLY way an agent retires an asset (hard deletion is admin-only, so treat any "delete this asset" instruction as archive). The asset disappears from list_project_assets and default reads but keeps its path reserved; existing assets/<path> references in comments and docs keep resolving. Reverse with unarchive_project_asset. No approval needed.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `task_id` | `string` | Yes | Task identifier or UUID — the approval card is posted here (usually your current task) |
-| `filenames` | `string[]` | Yes | Asset paths to delete — full paths exactly as list_project_assets returns them (e.g. ["drafts/old-v1.md", "old-logo.png"]) |
-| `reason` | `string` | Yes | Why these assets should be deleted — shown to the approving admin |
+| `filename` | `string` | Yes | Asset path to archive — the full path exactly as list_project_assets returns it (e.g. "drafts/old-v1.md") |
 
-**Returns:** `{ comment_id, status: "pending", assets, note }`, or `{ ..., reused: true }` when an identical pending request already exists on the task, or `{ error }` when any path is missing or invalid (all-or-nothing). Posts an approval card on the named task and raises the admin inbox.
+**Returns:** `{ archived: true, reference: "assets/<path>", changed }` (`changed: false` when it was already archived — the call is idempotent), or `{ error }` if the asset is not found. The archived asset leaves listings and default reads but keeps its path reserved; existing `assets/<path>` references keep resolving.
 
-**Authorization:** Resolution is admin-only: a human approves or denies the card in the web app; on approval the backend deletes the assets and the requesting agent is woken with the outcome.
+**Authorization:** Archival is the agent-facing soft delete; hard deletion of assets is admin-only in the web app.
+
+### `unarchive_project_asset`
+
+_Write tool._
+
+Restore an archived project asset to active. It reappears in list_project_assets, becomes readable and writable again, and its assets/<path> reference links as before.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `filename` | `string` | Yes | Asset path to restore (the same path it was archived under) |
+
+**Returns:** `{ archived: false, reference: "assets/<path>", changed }` (`changed: false` when it was already active), or `{ error }` if the asset is not found.
 
 ### `read_project_doc`
 
 _Read-only._
 
-Read a markdown project doc by filename (e.g. "spec.md") — the high-level project context (PRDs, specs, architecture decisions, research) that list_project_docs returns; the full body comes back inline as `content`. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so do not reach for the Read/cat file tools — always load a doc through this tool by its bare filename. When the admin has left review feedback on the doc, the result includes `review_comments` — each anchors a `comment` to a `quote` (an exact text snippet; `occurrence` disambiguates repeated snippets). Action them when asked to. IMPORTANT: any write to the doc deletes ALL of its review comments, so capture every comment from this result BEFORE your first write_project_doc call — after one write they are gone. For non-markdown assets (mockups, wireframes, diagrams) use read_project_asset instead.
+Read a markdown project doc by filename (e.g. "spec.md") — the high-level project context (PRDs, specs, architecture decisions, research) that list_project_docs returns; the full body comes back inline as `content`. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so do not reach for the Read/cat file tools — always load a doc through this tool by its bare filename. Archived docs are not readable by default — set filter: 'archived' or 'all' to read one. When the admin has left review feedback on the doc, the result includes `review_comments` — each anchors a `comment` to a `quote` (an exact text snippet; `occurrence` disambiguates repeated snippets). Action them when asked to. IMPORTANT: any write to the doc deletes ALL of its review comments, so capture every comment from this result BEFORE your first write_project_doc call — after one write they are gone. For non-markdown assets (mockups, wireframes, diagrams) use read_project_asset instead.
 
 **Parameters:**
 
@@ -1063,8 +1079,9 @@ Read a markdown project doc by filename (e.g. "spec.md") — the high-level proj
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filename` | `string` | Yes | Filename to read (e.g. "spec.md") |
+| `filter` | `active` \| `archived` \| `all` | No | Which archive states to consider: 'active' (default — archived items are excluded), 'archived' (only archived), or 'all'. |
 
-**Returns:** `{ filename, content, status }` (the full markdown body plus the doc's lifecycle status, `planning` or `approved`), plus `review_comments: [{ id, quote, occurrence, comment, created_at }]` when the admin has left pending review feedback on the doc (each comment anchors to an exact `quote` snippet; `occurrence` disambiguates repeats). Any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found.
+**Returns:** `{ filename, content, status }` (the full markdown body plus the doc's lifecycle status, `planning` or `approved`), plus `review_comments: [{ id, quote, occurrence, comment, created_at }]` when the admin has left pending review feedback on the doc (each comment anchors to an exact `quote` snippet; `occurrence` disambiguates repeats). Any write to the doc deletes all of its review comments, so capture them before writing. Returns `{ error }` if the file is not found or its archive state doesn't match `filter` (default `'active'`, so archived docs need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).
 
 ### `write_project_doc`
 
@@ -1081,7 +1098,7 @@ Write a project documentation file. Project docs are markdown only — the filen
 | `content` | `string` | Yes | File content (markdown) |
 | `changelog` | `string` | No | Markdown summary of what changed in THIS update and why — recorded as the revision's changelog and shown in the document's revision history. Put update/status notes here, never in the document body. Reference tickets/docs/agents by bare identifier as in content. |
 
-**Returns:** `{ written: true, id, filename }`, or `{ error }` if the filename is not `.md`. Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `changelog` is stored as that revision's changelog and shown in the document's history — put update/status notes there, not in the document body.
+**Returns:** `{ written: true, id, filename }`, or `{ error }` if the filename is not `.md` or the doc is archived (unarchive first — archived docs are read-only). Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `changelog` is stored as that revision's changelog and shown in the document's history — put update/status notes there, not in the document body.
 
 ### `set_project_doc_status`
 
@@ -1097,7 +1114,39 @@ Set the lifecycle status of a project doc: "planning" (still being drafted/itera
 | `filename` | `string` | Yes | Doc filename (e.g. "spec.md") |
 | `status` | `planning` \| `approved` | Yes | New status: "planning" or "approved" |
 
-**Returns:** `{ updated: true, filename, status }`, or `{ error }` if the file is not found. Status is metadata only — no content change, no revision recorded.
+**Returns:** `{ updated: true, filename, status }`, or `{ error }` if the file is not found or archived. Status is metadata only — no content change, no revision recorded.
+
+### `archive_project_doc`
+
+_Write tool._
+
+Archive a project doc — the reversible soft delete, and the ONLY way an agent retires a doc (hard deletion is admin-only, so treat any "delete this doc" instruction as archive). The doc disappears from list_project_docs, default reads, and future runs' context, but keeps its filename reserved and its revision history; existing references keep resolving. Reverse with unarchive_project_doc. No approval needed.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `filename` | `string` | Yes | Doc filename to archive (e.g. "old-plan.md") |
+
+**Returns:** `{ archived: true, filename, changed }` (`changed: false` when it was already archived — the call is idempotent), or `{ error }` if the file is not found. The archived doc leaves listings, search, and agent-run context but keeps its filename reserved and its revision history.
+
+**Authorization:** Archival is the agent-facing soft delete; hard deletion of docs is admin-only in the web app.
+
+### `unarchive_project_doc`
+
+_Write tool._
+
+Restore an archived project doc to active. It reappears in list_project_docs and agent-run context, and becomes readable and writable again with its content and revision history intact.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `filename` | `string` | Yes | Doc filename to restore (e.g. "old-plan.md") |
+
+**Returns:** `{ archived: false, filename, changed }` (`changed: false` when it was already active), or `{ error }` if the file is not found.
 
 ## Costs
 
