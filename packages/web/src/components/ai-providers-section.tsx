@@ -1,5 +1,5 @@
 import { AI_PROVIDER_INFO, AiAuthMethod, type AiProvider } from '@hezo/shared';
-import { Loader2, Plus, ShieldCheck, Star, Trash2 } from 'lucide-react';
+import { Check, Loader2, Pencil, Plus, ShieldCheck, Star, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import {
 	type AiProviderConfig,
@@ -55,7 +55,7 @@ export function AiProvidersSection() {
 			header: 'Name',
 			render: (c) => (
 				<span className="flex items-center gap-2">
-					<span className="font-mono text-[13px]">{c.label}</span>
+					<ProviderNameCell config={c} />
 					{c.is_default && providerCount(c.provider) > 1 && <Badge color="accent">Default</Badge>}
 				</span>
 			),
@@ -180,6 +180,102 @@ export function AiProvidersSection() {
 
 			<AddAiProviderDialog open={addOpen} onOpenChange={setAddOpen} />
 		</section>
+	);
+}
+
+function ProviderNameCell({ config }: { config: AiProviderConfig }) {
+	const [editing, setEditing] = useState(false);
+	const [value, setValue] = useState(config.label);
+	const update = useUpdateAiProviderConfig(config.id);
+
+	function startEditing() {
+		setValue(config.label);
+		setEditing(true);
+	}
+
+	function cancel() {
+		setEditing(false);
+		setValue(config.label);
+	}
+
+	async function submit() {
+		const trimmed = value.trim();
+		if (!trimmed || trimmed === config.label) {
+			cancel();
+			return;
+		}
+		try {
+			await update.mutateAsync({ label: trimmed });
+			setEditing(false);
+		} catch (e) {
+			// Keep the editor open so the user can fix the name (e.g. a duplicate).
+			toast.error(e instanceof Error ? e.message : 'Could not rename provider');
+		}
+	}
+
+	if (!editing) {
+		return (
+			<span className="flex items-center gap-1.5">
+				<span className="font-mono text-[13px]">{config.label}</span>
+				<Tooltip content="Rename">
+					<button
+						type="button"
+						onClick={startEditing}
+						aria-label={`Rename ${config.label}`}
+						className="text-text-3 hover:text-text-1"
+					>
+						<Pencil className="w-3 h-3" />
+					</button>
+				</Tooltip>
+			</span>
+		);
+	}
+
+	return (
+		<span className="flex items-center gap-1.5">
+			<input
+				value={value}
+				onChange={(e) => setValue(e.target.value)}
+				onKeyDown={(e) => {
+					if (e.key === 'Enter') {
+						e.preventDefault();
+						submit();
+					}
+					if (e.key === 'Escape') cancel();
+				}}
+				aria-label={`New name for ${config.label}`}
+				// biome-ignore lint/a11y/noAutofocus: user just clicked the edit icon — focus follows their action
+				autoFocus
+				disabled={update.isPending}
+				className="w-28 sm:w-36 rounded-md border border-border bg-surface-2 px-2 py-1 font-mono text-xs text-text-1 outline-none focus:border-border-strong disabled:opacity-50"
+			/>
+			<Tooltip content="Save">
+				<button
+					type="button"
+					onClick={submit}
+					aria-label={`Save name for ${config.label}`}
+					disabled={update.isPending}
+					className="text-text-3 hover:text-text-1 disabled:opacity-50"
+				>
+					{update.isPending ? (
+						<Loader2 className="w-3.5 h-3.5 animate-spin" />
+					) : (
+						<Check className="w-3.5 h-3.5" />
+					)}
+				</button>
+			</Tooltip>
+			<Tooltip content="Cancel">
+				<button
+					type="button"
+					onClick={cancel}
+					aria-label={`Cancel renaming ${config.label}`}
+					disabled={update.isPending}
+					className="text-text-3 hover:text-text-1 disabled:opacity-50"
+				>
+					<X className="w-3.5 h-3.5" />
+				</button>
+			</Tooltip>
+		</span>
 	);
 }
 

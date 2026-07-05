@@ -7,6 +7,7 @@ import {
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
+import { isUniqueViolation } from '../lib/sql';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireAdminEquivalent } from '../middleware/auth';
@@ -16,8 +17,8 @@ import {
 	getProviderConfigCredential,
 	listAiProviders,
 	setDefaultAiProvider,
-	setProviderDefaultModel,
 	storeAiProviderKey,
+	updateAiProviderConfig,
 } from '../services/ai-provider-keys';
 import { validateSubscriptionBlob } from '../services/subscription-auth';
 
@@ -213,7 +214,7 @@ aiProvidersRoutes.post('/ai-providers/:configId/verify', async (c) => {
 	}
 });
 
-// Update a provider config — currently only `default_model`
+// Update a provider config — `label` (rename) and/or `default_model`
 aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
@@ -221,9 +222,16 @@ aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 	const db = c.get('db');
 	const configId = c.req.param('configId');
 
-	const body = await c.req.json<{ default_model?: string | null }>();
-	if (!('default_model' in body)) {
+	const body = await c.req.json<{ default_model?: string | null; label?: string }>();
+	const hasLabel = 'label' in body;
+	const hasModel = 'default_model' in body;
+	if (!hasLabel && !hasModel) {
 		return err(c, 'INVALID_REQUEST', 'Nothing to update', 400);
+	}
+
+	const label = hasLabel && typeof body.label === 'string' ? body.label.trim() : '';
+	if (hasLabel && !label) {
+		return err(c, 'INVALID_REQUEST', 'label must be a non-empty string', 400);
 	}
 
 	const model =
@@ -233,12 +241,26 @@ aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 				? body.default_model.trim() || null
 				: null;
 
-	const updated = await setProviderDefaultModel(db, configId, model);
-	if (!updated) {
-		return err(c, 'NOT_FOUND', 'AI provider config not found', 404);
+	try {
+		const updated = await updateAiProviderConfig(db, configId, {
+			...(hasLabel ? { label } : {}),
+			...(hasModel ? { defaultModel: model } : {}),
+		});
+		if (!updated) {
+			return err(c, 'NOT_FOUND', 'AI provider config not found', 404);
+		}
+	} catch (e) {
+		if (isUniqueViolation(e)) {
+			return err(c, 'DUPLICATE', 'A config with this provider and label already exists', 409);
+		}
+		throw e;
 	}
 
-	return ok(c, { updated: true, default_model: model });
+	return ok(c, {
+		updated: true,
+		...(hasLabel ? { label } : {}),
+		...(hasModel ? { default_model: model } : {}),
+	});
 });
 
 // List models available for this provider config, fetched live from the provider
