@@ -1,3 +1,4 @@
+import * as Popover from '@radix-ui/react-popover';
 import { Smile } from 'lucide-react';
 import { useState } from 'react';
 import { type ReactionGroup, useAddReaction, useRemoveReaction } from '../../hooks/use-comments';
@@ -66,21 +67,29 @@ export function CommentReactions({ comment, projectId, taskId }: Props) {
 				</Tooltip>
 			))}
 			{availableToAdd.length > 0 && (
-				<div className="relative">
-					<button
-						type="button"
-						onClick={() => setPickerOpen((open) => !open)}
-						disabled={busy}
-						aria-label="Add reaction"
-						data-testid="add-reaction-button"
-						className="inline-flex items-center justify-center min-w-[28px] min-h-[28px] px-1.5 rounded-full border border-border text-text-2 hover:text-text-1 hover:border-border-strong disabled:opacity-60"
-					>
-						<Smile className="w-3.5 h-3.5" />
-					</button>
-					{pickerOpen && (
-						<div
-							className="absolute z-10 mt-1 flex gap-1 rounded-md border border-border bg-surface p-1 shadow-md"
-							role="menu"
+				<Popover.Root open={pickerOpen} onOpenChange={setPickerOpen}>
+					<Popover.Trigger asChild>
+						<button
+							type="button"
+							disabled={busy}
+							aria-label="Add reaction"
+							data-testid="add-reaction-button"
+							className="inline-flex items-center justify-center min-w-[28px] min-h-[28px] px-1.5 rounded-full border border-border text-text-2 hover:text-text-1 hover:border-border-strong disabled:opacity-60"
+						>
+							<Smile className="w-3.5 h-3.5" />
+						</button>
+					</Popover.Trigger>
+					{/* Portal + z-50 so the picker escapes the comment card's
+					    `overflow-hidden` and the Virtuoso row's stacking context —
+					    an in-flow `absolute` popup was clipped and painted under the
+					    next comment. Radix flips it above the trigger near the
+					    viewport's bottom edge. */}
+					<Popover.Portal>
+						<Popover.Content
+							align="start"
+							side="bottom"
+							sideOffset={4}
+							className="z-50 flex gap-1 rounded-md border border-border bg-surface p-1 shadow-md"
 							data-testid="reaction-picker"
 						>
 							{availableToAdd.map((kind) => (
@@ -99,9 +108,9 @@ export function CommentReactions({ comment, projectId, taskId }: Props) {
 									</button>
 								</Tooltip>
 							))}
-						</div>
-					)}
-				</div>
+						</Popover.Content>
+					</Popover.Portal>
+				</Popover.Root>
 			)}
 		</div>
 	);
