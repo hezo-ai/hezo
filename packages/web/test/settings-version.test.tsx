@@ -133,13 +133,13 @@ test('an available update on a self-applying instance shows "Downloading new ver
 	}
 });
 
-test('a staged update on a self-applying instance shows an "Install & update" button', () => {
+test('a staged update on a self-applying instance shows an "Install & restart" button', () => {
 	const { getByTestId } = renderVersion({ state: UpdateState.Staged });
-	expect(getByTestId('settings-version-install').textContent).toContain('Install');
+	expect(getByTestId('settings-version-install').textContent).toContain('Install & restart');
 	expect(getByTestId('settings-version-result').textContent).toContain('0.2.0');
 });
 
-test('Install & update asks for confirmation (with master-key warning) then applies', async () => {
+test('Install & restart asks for confirmation (with master-key warning) then applies', async () => {
 	const user = userEvent.setup();
 	const postSpy = vi
 		.spyOn(api, 'post')

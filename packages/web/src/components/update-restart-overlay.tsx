@@ -42,20 +42,26 @@ export function UpdateRestartOverlay({ targetVersion }: { targetVersion: string 
 		};
 	}, []);
 
+	// The scrim (`--overlay`) is a dark, semi-transparent dim in both themes, so
+	// text rendered directly on it washes out in light mode. Mirror every other
+	// overlay consumer (dialogs/drawers) and float the copy in a `bg-surface` card
+	// so `text-1`/`text-2` keep their intended contrast in both themes.
 	return (
 		<div
 			data-testid="update-restart-overlay"
-			className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-4 bg-[var(--overlay)] backdrop-blur-sm p-6 text-center"
+			className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--overlay)] backdrop-blur-sm p-4 sm:p-6"
 		>
-			<Loader2 className="w-8 h-8 animate-spin text-text-1" />
-			<div className="text-base font-semibold text-text-1">
-				{reachableAgain ? 'Reloading…' : 'Updating Hezo…'}
+			<div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-lg border border-border bg-surface p-6 text-center shadow-lg sm:p-8">
+				<Loader2 className="w-8 h-8 animate-spin text-text-1" />
+				<div className="text-base font-semibold text-text-1">
+					{reachableAgain ? 'Reloading…' : 'Updating Hezo…'}
+				</div>
+				<p className="text-[13px] text-text-2 leading-relaxed">
+					{targetVersion ? `Restarting onto ${targetVersion}. ` : 'Restarting. '}
+					In-flight agent runs are paused and resume automatically. When Hezo comes back you'll need
+					your 12-word master key to unlock it again.
+				</p>
 			</div>
-			<p className="max-w-sm text-[13px] text-text-2 leading-relaxed">
-				{targetVersion ? `Restarting onto ${targetVersion}. ` : 'Restarting. '}
-				In-flight agent runs are paused and resume automatically. When Hezo comes back you'll need
-				your 12-word master key to unlock it again.
-			</p>
 		</div>
 	);
 }

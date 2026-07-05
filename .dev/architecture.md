@@ -1143,7 +1143,7 @@ section mirrors the banner's staged-update lifecycle **in place** — driven by
 `useUpdateStatus({ poll })`, which auto-refetches `GET /api/updates/status` every few seconds
 while the state is `checking`/`downloading`/`applying` so the section advances live without a
 reload: a self-applying instance shows **"Downloading new version…"** while staging, then an
-**"Install & update"** button (same restart confirmation) once `Staged`, or a **"Retry
+**"Install & restart"** button (same restart confirmation) once `Staged`, or a **"Retry
 download"** on `Error`; an instance that can't self-apply falls back to the **"Download"**
 release link.
 

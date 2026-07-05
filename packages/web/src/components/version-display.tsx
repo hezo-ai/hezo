@@ -26,7 +26,7 @@ const RELEASES_URL = 'https://github.com/hezo-ai/hezo/releases';
  * in place — surfacing the live staged-update lifecycle. On a self-applying
  * instance (supervised compiled binary) for a superuser it shows "Downloading new
  * version…" while the background download/verify/stage runs, then flips to an
- * "Install & update" button (with the same restart confirmation) once staged, or a
+ * "Install & restart" button (with the same restart confirmation) once staged, or a
  * "Retry download" if staging errored. Any instance that can't update in place
  * falls back to a "Download" link to the GitHub release. `useUpdateStatus({ poll })`
  * refetches while a download is in flight so the transition is live, no reload.
@@ -147,7 +147,7 @@ export function VersionDisplay() {
 									data-testid="settings-version-install"
 									onClick={() => setConfirmOpen(true)}
 								>
-									Install &amp; update
+									Install &amp; restart
 								</Button>
 							) : canApply && errored ? (
 								<>
